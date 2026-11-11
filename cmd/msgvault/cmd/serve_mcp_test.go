@@ -134,7 +134,6 @@ func TestNativeMCPBridge(t *testing.T) {
 			defer func() { release(); require.NoError(server.Shutdown(t.Context())) }()
 			cmd := &cobra.Command{Use: "serve"}
 			addServeConfigFlags(cmd)
-			// This mock engine has no store snapshot; this test exercises cancellation.
 			require.NoError(cmd.Flags().Set("mcp-reveal-verification", "true"))
 			require.NoError(installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
 			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
@@ -200,7 +199,6 @@ func TestNativeMCPBridge(t *testing.T) {
 		defer func() { release(); require.NoError(server.Shutdown(t.Context())) }()
 		cmd := &cobra.Command{Use: "serve"}
 		addServeConfigFlags(cmd)
-		// This mock engine has no store snapshot; this test exercises draining.
 		require.NoError(cmd.Flags().Set("mcp-reveal-verification", "true"))
 		serveCtx, cancel := context.WithCancel(t.Context())
 		defer cancel()

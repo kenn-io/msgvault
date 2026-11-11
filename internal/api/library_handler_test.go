@@ -12,7 +12,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/sourcescope"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 func newLibraryHandlerTestServer(t *testing.T) *Server {
@@ -181,5 +186,72 @@ func TestLibraryHandlerOwnsDaemonControls(t *testing.T) {
 	case <-stopped:
 	case <-time.After(5 * time.Second):
 		require.FailNow("caller-authorized shutdown did not reach the supplied callback")
+	}
+}
+
+func TestLibraryHandlerVerificationPolicy(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "verification", "Your verification code is 482913", "Your verification code is 482913")
+	require.NoError(t, err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+
+	for _, tc := range []struct {
+		name   string
+		path   string
+		marked bool
+		allow  bool
+		scoped bool
+	}{
+		{name: "normal health", path: "/api/v1/health", allow: true},
+		{name: "marked health", path: "/api/v1/health", marked: true, allow: true},
+		{name: "authorization refusal", path: "/api/v1/health", marked: true},
+		{name: "protected messages", path: "/api/v1/messages", marked: true, allow: true},
+		{name: "protected source scoped messages", path: "/api/v1/messages", marked: true, allow: true, scoped: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := srv.Handler(func(w http.ResponseWriter, _ *http.Request, _ Operation) bool {
+				if !tc.allow {
+					w.WriteHeader(http.StatusForbidden)
+				}
+				return tc.allow
+			})
+			ctx := t.Context()
+			if tc.scoped {
+				// Leave one slot available to catch nested snapshots.
+				srv.readSnapshotSlots <- struct{}{}
+				t.Cleanup(func() { <-srv.readSnapshotSlots })
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+				t.Cleanup(cancel)
+				ctx = sourcescope.WithSourceIDs(ctx, []int64{source.ID})
+			}
+			r := httptest.NewRequestWithContext(ctx, http.MethodGet, tc.path, nil)
+			if tc.marked {
+				r.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			if !tc.allow {
+				assert.Equal(t, http.StatusForbidden, w.Code)
+				assert.Empty(t, w.Header().Get(apiprotocol.VerificationHeader))
+				return
+			}
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			if tc.marked {
+				assert.Equal(t, apiprotocol.VerificationWithhold, w.Header().Get(apiprotocol.VerificationHeader))
+			} else {
+				assert.Empty(t, w.Header().Get(apiprotocol.VerificationHeader))
+			}
+			if tc.path == "/api/v1/messages" {
+				assert.Contains(t, w.Body.String(), verification.Masked)
+				assert.NotContains(t, w.Body.String(), "482913")
+				if tc.scoped {
+					assert.Len(t, srv.readSnapshotSlots, 1)
+				} else {
+					assert.Empty(t, srv.readSnapshotSlots)
+				}
+			}
+		})
 	}
 }

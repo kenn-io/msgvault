@@ -300,7 +300,7 @@ func querySQLDefinition() toolDefinition {
 	accepted.Schema = ""
 	definition := readDefinition(
 		ToolQuerySQL,
-		"Run read-only SQL against the analytics cache. Files outside the cache and network access are unavailable. Set fresh to request a coalesced background refresh; an accepted build returns a job ID instead of rows.",
+		"Run read-only SQL against the analytics cache. Protected owner sessions refuse this read. Files outside the cache and network access are unavailable. Set fresh to request a coalesced background refresh; an accepted build returns a job ID instead of rows.",
 		closedObject(map[string]*jsonschema.Schema{
 			"sql":   stringSchema("One read-only SQL statement"),
 			"fresh": booleanSchema("Request a background cache check including writes committed before this request"),
@@ -705,7 +705,7 @@ func exportEMLDefinition() toolDefinition {
 	offset, length := chunkInputSchemas("message")
 	return readDefinition(
 		ToolExportEML,
-		"Export one archived email as its original .eml bytes, exactly as the provider delivered them, in base64 chunks. "+
+		"Export one archived email as its original .eml bytes, exactly as the provider delivered them, in base64 chunks. Protected owner sessions refuse this read. "+
 			"Pass exactly one of id (msgvault message ID) or source_message_id (provider ID, such as a Gmail message ID); "+
 			"add account when a provider ID exists in more than one account. "+
 			"Call from offset 0, then offset += length until complete is true; concatenate the decoded chunks and verify them against size and sha256 (of the whole message). "+

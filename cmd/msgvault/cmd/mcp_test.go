@@ -81,6 +81,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
 			acknowledgeMCPVerification(w, r)
+			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "ok", "api_schema_version": api.APISchemaVersion,
 			})
@@ -658,12 +659,10 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 
 func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		acknowledge bool
-		reveal      bool
-		wantServe   bool
+		name      string
+		reveal    bool
+		wantServe bool
 	}{
-		{name: "current daemon defaults to withholding", acknowledge: true, wantServe: true},
 		{name: "old daemon fails closed"},
 		{name: "old daemon with reveal", reveal: true, wantServe: true},
 	} {
@@ -679,14 +678,8 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 				} else {
 					unmarked.Add(1)
 				}
-				if tc.acknowledge {
-					acknowledgeMCPVerification(w, r)
-				}
-				version := "5.0.0"
-				if tc.acknowledge {
-					version = api.APISchemaVersion
-				}
-				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version})
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "5.0.0"})
 			}))
 			t.Cleanup(daemon.Close)
 			setMCPTokenTestFlags(t, nil)

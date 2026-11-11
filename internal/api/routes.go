@@ -251,28 +251,36 @@ func withAPIKeySecurity(op huma.Operation) huma.Operation {
 	return op
 }
 
+// ownerVerificationPolicy acknowledges admitted requests and snapshots classified owner reads.
+func (s *Server) ownerVerificationPolicy(ctx huma.Context, req *http.Request, hasSnapshot bool) (func(), *apiHTTPError) {
+	noRelease := func() {}
+	auth := s.requestAuthentication(req)
+	if auth.Mode == AuthModeRequired || !s.withholdsVerification(req) {
+		return noRelease, nil
+	}
+	ctx.SetHeader(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+	if auth.Grant != nil || hasSnapshot {
+		return noRelease, nil
+	}
+	op := ctx.Operation()
+	if op == nil || !ownerVerificationSnapshotOperations[op.OperationID] {
+		return noRelease, nil
+	}
+	if op.OperationID == "searchMessages" && (req.URL.Query().Get("mode") == "vector" || req.URL.Query().Get("mode") == exploreSearchModeHybrid) {
+		return noRelease, nil // Ranking can wait on an embedding provider.
+	}
+	return s.beginAgentRead(req, op.OperationID, nil, "")
+}
+
 func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
 	auth := s.requestAuthentication(req)
-	if auth.Mode != AuthModeRequired && s.withholdsVerification(req) {
-		ctx.SetHeader(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
-		if auth.Grant == nil {
-			if op := ctx.Operation(); op != nil {
-				snapshot := ownerVerificationSnapshotOperations[op.OperationID]
-				if op.OperationID == "searchMessages" && (req.URL.Query().Get("mode") == "vector" || req.URL.Query().Get("mode") == exploreSearchModeHybrid) {
-					snapshot = false // Ranking can wait on an embedding provider.
-				}
-				if snapshot {
-					release, err := s.beginAgentRead(req, op.OperationID, nil, "")
-					if err != nil {
-						writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
-						return
-					}
-					defer release()
-				}
-			}
-		}
+	release, policyErr := s.ownerVerificationPolicy(ctx, req, false)
+	if policyErr != nil {
+		writeHumaError(ctx, policyErr.status, policyErr.ErrorResponse.Error, policyErr.Message)
+		return
 	}
+	defer release()
 	if auth.Mode == AuthModeDelegated {
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
 			permission, err := agentReadPermission(op.OperationID, auth.Grant)

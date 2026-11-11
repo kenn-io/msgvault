@@ -483,8 +483,14 @@ func TestRunArchiveSQLQueryPreservesRowsAndAcceptedBuild(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		assert.Equal("SELECT id FROM messages", request.SQL)
 		w.Header().Set("Content-Type", "application/json")
+		if request.SQL == "SELECT protected" {
+			w.WriteHeader(http.StatusForbidden)
+			_, err := w.Write([]byte(`{"error":"verification_masked","message":"verification content is withheld"}`))
+			assert.NoError(err)
+			return
+		}
+		assert.Equal("SELECT id FROM messages", request.SQL)
 		if request.Fresh {
 			w.WriteHeader(http.StatusAccepted)
 			_, err := w.Write([]byte(`{"status":"queued","job_id":"archive-build"}`))
@@ -508,6 +514,13 @@ func TestRunArchiveSQLQueryPreservesRowsAndAcceptedBuild(t *testing.T) {
 	require.NotNil(accepted)
 	assert.Equal("archive-build", accepted.JobID)
 	assert.Equal("queued", accepted.Status)
+	result, accepted, err = client.RunArchiveSQLQueryWithFresh(t.Context(), "SELECT protected", false)
+	require.Error(err)
+	assert.Nil(result)
+	assert.Nil(accepted)
+	var apiErr *APIError
+	require.ErrorAs(err, &apiErr)
+	assert.Equal("verification_masked", apiErr.APIErrorCode())
 }
 
 func TestGeneratedClientUsesConfiguredHTTPClient(t *testing.T) {

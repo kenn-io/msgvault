@@ -40,7 +40,7 @@ var ownerVerificationSnapshotOperations = map[string]bool{
 
 // Ranking runs before the owner snapshot, but hydration and classification share it.
 func (s *Server) beginOwnerVerificationSnapshot(w http.ResponseWriter, r *http.Request, operation string) (func(), bool) {
-	if !s.withholdsVerification(r) || s.requestAuthentication(r).Grant != nil {
+	if !s.withholdsVerification(r) || s.requestAuthentication(r).Grant != nil || sourcescope.Restricted(r.Context()) {
 		return func() {}, true
 	}
 	release, apiErr := s.beginAgentRead(r, operation, nil, "")
