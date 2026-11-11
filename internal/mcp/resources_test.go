@@ -1154,3 +1154,28 @@ func TestMCPInternalErrorIsolationPreservesSafeControls(t *testing.T) {
 	checks.Equal(true, vectorSentinel.Result["isError"])
 	checks.Contains(vectorRaw, "vector_not_enabled")
 }
+
+func TestAttachmentResourceVerificationRefusal(t *testing.T) {
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/cli/attachment", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, err := w.Write([]byte(`{"error":"verification_masked","message":"private daemon detail"}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(daemon.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AllowInsecure: true, HTTPClient: daemon.Client()})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, client.Close()) })
+	opts := task4ResourceOptions([]byte("unused"))
+	opts.AttachmentReader = client
+	response, raw := task4RawRequest(t, newMCPHTTPServer(opts, HTTPOptions{}).Handler, "resources/read", map[string]any{"uri": "msgvault://attachment/7"}, nil)
+	require.NotEmpty(t, response.Error, "response: %s", raw)
+	assert.InDelta(t, float64(jsonrpc.CodeInternalError), response.Error["code"], 0)
+	assert.Equal(t, verificationMaskedMessage, response.Error["message"])
+	assert.NotContains(t, raw, "private daemon detail")
+	result := translateDaemonRequestError(directoryPeopleError{code: "verification_masked"})
+	require.NotNil(t, result)
+	assert.Equal(t, verificationMaskedMessage, result.text)
+	assert.NotContains(t, result.text, "reveal flag")
+}

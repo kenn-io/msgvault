@@ -736,7 +736,7 @@ func listThreadDefinition() toolDefinition {
 			"Pass exactly one of id or source_message_id (any message in the thread) or thread_id (provider conversation ID, such as a Gmail threadId); "+
 			"add account when a provider ID exists in more than one account. "+
 			"Page with offset until has_more is false; total counts the whole conversation. "+
-			"has_raw marks messages whose original .eml can be fetched with export_eml. "+
+			"has_raw marks messages whose original .eml is stored. Verification policy can refuse export_eml. "+
 			"Messages deleted from the provider stay listed with deleted_from_source_at. "+
 			"last_sync_at is the account's latest sync activity: newer replies may not be archived yet. "+
 			"Hidden duplicates are excluded; last_sync_at does not establish conversation completeness.",

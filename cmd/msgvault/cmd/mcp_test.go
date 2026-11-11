@@ -23,6 +23,12 @@ import (
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 )
 
+func acknowledgeMCPVerification(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Msgvault-Verification") == "withhold" {
+		w.Header().Set("X-Msgvault-Verification", "withhold")
+	}
+}
+
 func TestMCPToolSummaryFlagsExist(t *testing.T) {
 	for _, summary := range mcpserver.ToolSummaries() {
 		if summary.Flag != "" {
@@ -74,6 +80,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
+			acknowledgeMCPVerification(w, r)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"status": "ok", "api_schema_version": api.APISchemaVersion,
 			})
@@ -647,4 +654,73 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	assert.False(opts.KataDocbank)
 	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
 	assert.Contains(logs.String(), "503")
+}
+
+func TestMCPStandaloneVerificationHandshake(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		acknowledge bool
+		reveal      bool
+		wantServe   bool
+	}{
+		{name: "current daemon defaults to withholding", acknowledge: true, wantServe: true},
+		{name: "old daemon fails closed"},
+		{name: "old daemon with reveal", reveal: true, wantServe: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var marked, unmarked atomic.Int32
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/health" {
+					http.NotFound(w, r)
+					return
+				}
+				if r.Header.Get("X-Msgvault-Verification") == "withhold" {
+					marked.Add(1)
+				} else {
+					unmarked.Add(1)
+				}
+				if tc.acknowledge {
+					acknowledgeMCPVerification(w, r)
+				}
+				version := "5.0.0"
+				if tc.acknowledge {
+					version = api.APISchemaVersion
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": version})
+			}))
+			t.Cleanup(daemon.Close)
+			setMCPTokenTestFlags(t, nil)
+			mcpHTTPAddr = ""
+			oldReveal, oldServe := mcpRevealVerification, serveMCPStdioWithOptions
+			revealFlag := mcpCmd.Flags().Lookup("reveal-verification")
+			require.NotNil(t, revealFlag)
+			oldChanged := revealFlag.Changed
+			t.Cleanup(func() {
+				mcpRevealVerification, serveMCPStdioWithOptions = oldReveal, oldServe
+				revealFlag.Changed = oldChanged
+			})
+			require.NoError(t, revealFlag.Value.Set(strconv.FormatBool(tc.reveal)))
+			served := false
+			stopped := errors.New("serve reached")
+			serveMCPStdioWithOptions = func(context.Context, mcpserver.ServeOptions) error {
+				served = true
+				return stopped
+			}
+			cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Remote: config.RemoteConfig{URL: daemon.URL, AllowInsecure: true}}
+			mcpCmd.SetContext(withStoreResolverConfig(t, cfg))
+			err := mcpCmd.RunE(mcpCmd, nil)
+			if tc.wantServe {
+				require.ErrorIs(t, err, stopped)
+			} else {
+				require.ErrorContains(t, err, "daemon did not acknowledge verification withholding")
+			}
+			assert.Equal(t, tc.wantServe, served)
+			if tc.reveal {
+				assert.Zero(t, marked.Load())
+				assert.Positive(t, unmarked.Load())
+			} else {
+				assert.Positive(t, marked.Load())
+			}
+		})
+	}
 }

@@ -43,7 +43,10 @@ func publishMCPRecoveryDaemon(t *testing.T, cfg *config.Config, count int) *http
 		w.Header().Set("Content-Type", "application/json")
 		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"message_count": count}))
 	})
-	server := httptest.NewServer(mux)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		acknowledgeMCPVerification(w, r)
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(server.Close)
 	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(cfg.Server.AuthenticationKey()))
 	_, err := daemonRuntimeStore(cfg.Data.DataDir).Write(rt.Record)

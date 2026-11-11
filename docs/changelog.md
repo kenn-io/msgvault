@@ -10,6 +10,8 @@ All notable changes to msgvault, grouped by release.
 
 - Owner MCP sessions can list staged deletion batches and inspect their lifecycle receipts without enabling writes.
 
+- Owner MCP withholds detected verification content by default and refuses original MIME exports and archive SQL. Use `--reveal-verification` or `serve --mcp-reveal-verification` to reveal it. Upgrade the daemon to use protected standalone MCP. See [verification protection](api-server.md#verification-content) for details.
+
 ## 0.24.0
 <small>2026-11-13</small>
 
