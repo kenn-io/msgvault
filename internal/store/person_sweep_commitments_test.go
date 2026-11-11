@@ -1063,3 +1063,69 @@ func TestCommitmentReopenSuppressesExistingFutureDatedFulfilment(t *testing.T) {
 	r.Len(items, 1)
 	a.Equal(LoopStateOpen, items[0].State, "the same retained proof cannot undo an owner reopen even with sender clock skew")
 }
+
+func TestCommitmentHistoricalReplayKeepsCompletionForNinthAnchor(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "historical-ninth-anchor", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	load := func() peoplesweep.CommitmentWindow {
+		window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+		r.NoError(err)
+		return window
+	}
+	apply := func(window peoplesweep.CommitmentWindow, promises []peoplesweep.CommitmentPromise) {
+		t.Helper()
+		_, err := st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
+		r.NoError(err)
+		f = nextCommitmentTestAttempt(t, f, "-page")
+	}
+	var body strings.Builder
+	var promises []peoplesweep.CommitmentPromise
+	for i := range 9 {
+		quote := fmt.Sprintf("I will send report %d.", i+1)
+		start := int64(body.Len())
+		body.WriteString(quote)
+		promises = append(promises, peoplesweep.CommitmentPromise{Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: quote, Start: start, End: int64(body.Len())})
+		body.WriteByte(' ')
+	}
+	promiseID := persist("nine-promises", strings.TrimSpace(body.String()), -2*time.Hour)
+	window := load()
+	for i := range promises {
+		promises[i].SourceID = commitmentSourceID(window, promiseID)
+	}
+	apply(window, promises)
+	for i := 0; i < 4 && len(load().Sources) > 0; i++ {
+		apply(load(), []peoplesweep.CommitmentPromise{})
+	}
+	r.Empty(load().Sources)
+	completionID := persist("completion", "I sent report 9.", -time.Hour)
+	for i := 0; i < 4 && len(load().Sources) > 0; i++ {
+		apply(load(), []peoplesweep.CommitmentPromise{})
+	}
+	r.Empty(load().Sources, "the completion is already consumed before the late import")
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow, 10, false)
+	r.NoError(err)
+	r.Len(items, 9)
+	ninthID := items[8].ID
+	const lateQuote = "I will check the venue."
+	lateID := persist("late-promise", lateQuote, -90*time.Minute)
+	window = load()
+	r.Empty(commitmentSourceID(window, completionID), "the current journal batch contains only the late import")
+	apply(window, []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, lateID), Direction: peoplesweep.CommitmentOwedTo, Quote: lateQuote, Summary: "Check venue", End: int64(len(lateQuote))}})
+	first := load()
+	r.Len(first.Anchors, 8)
+	r.NotEmpty(commitmentSourceID(first, completionID), "discovery restarts historical matching")
+	apply(first, []peoplesweep.CommitmentPromise{})
+	next := load()
+	var ninthPresent bool
+	for _, anchor := range next.Anchors {
+		ninthPresent = ninthPresent || anchor.ID == ninthID
+	}
+	r.True(ninthPresent, "the next bounded page includes the original ninth promise")
+	a.NotEmpty(commitmentSourceID(next, completionID), "every anchor must receive the same historical completion batch")
+}
