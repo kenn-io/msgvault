@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -156,6 +157,40 @@ func TestRemoteClientRoutes(t *testing.T) { //nolint:paralleltest // swaps the p
 		{reader, remoteClientTestReaderKey, http.MethodPost, "/api/v1/cli/sync", `{}`, http.StatusForbidden},
 		{reader, remoteClientTestReaderKey, http.MethodPost, "/api/v1/cli/collections", create, http.StatusForbidden},
 	})
+}
+
+func TestRemoteClientVerificationAdmission(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newRemoteClientFixture(t, false)
+	for range readSnapshotConcurrency {
+		f.srv.readSnapshotSlots <- struct{}{}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/messages", nil)
+	req.RemoteAddr = "127.0.0.1:4242"
+	req.Header.Set("X-Api-Key", remoteClientTestReaderKey)
+	req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+	w := httptest.NewRecorder()
+	f.srv.Router().ServeHTTP(w, req)
+	assert.Equal(http.StatusForbidden, w.Code, w.Body.String())
+	assert.Contains(w.Body.String(), `"error":"forbidden"`)
+	assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
+	assert.Len(f.srv.readSnapshotSlots, readSnapshotConcurrency)
+	for range readSnapshotConcurrency {
+		<-f.srv.readSnapshotSlots
+	}
+
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/message?id="+strconv.FormatInt(f.withRaw, 10), nil)
+	req.RemoteAddr = "127.0.0.1:4242"
+	req.Header.Set("X-Api-Key", remoteClientTestReaderKey)
+	req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+	w = httptest.NewRecorder()
+	f.srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(apiprotocol.VerificationWithhold, w.Header().Get(apiprotocol.VerificationHeader))
+	assert.Empty(f.srv.readSnapshotSlots)
 }
 
 type sizedAttachmentStore struct{ size int64 }

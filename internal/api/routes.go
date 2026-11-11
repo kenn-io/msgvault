@@ -275,6 +275,14 @@ func (s *Server) ownerVerificationPolicy(ctx huma.Context, req *http.Request, ha
 func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
 	auth := s.requestAuthentication(req)
+	if auth.Mode == AuthModeRemoteClient {
+		op := ctx.Operation()
+		if op == nil || !remoteClientOperationAllowed(op.OperationID, auth.RemoteClient.CollectionsWrite) {
+			s.logger.Warn("remote client operation denied", pathKey, req.URL.Path, "client_id", auth.RemoteClient.ClientID)
+			writeHumaError(ctx, http.StatusForbidden, "forbidden", "Operation is not available to remote clients")
+			return
+		}
+	}
 	release, policyErr := s.ownerVerificationPolicy(ctx, req, false)
 	if policyErr != nil {
 		writeHumaError(ctx, policyErr.status, policyErr.ErrorResponse.Error, policyErr.Message)
@@ -301,15 +309,6 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 		}
 		s.logUnauthorizedAPIRequest(req)
 		writeHumaError(ctx, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
-		return
-	}
-	if auth.Mode == AuthModeRemoteClient {
-		if op := ctx.Operation(); op != nil && remoteClientOperationAllowed(op.OperationID, auth.RemoteClient.CollectionsWrite) {
-			next(ctx)
-			return
-		}
-		s.logger.Warn("remote client operation denied", pathKey, req.URL.Path, "client_id", auth.RemoteClient.ClientID)
-		writeHumaError(ctx, http.StatusForbidden, "forbidden", "Operation is not available to remote clients")
 		return
 	}
 	if auth.Mode != AuthModeRequired {

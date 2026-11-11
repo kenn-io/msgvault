@@ -80,9 +80,9 @@ func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.
 	return permission, nil
 }
 
-// readSnapshotConcurrency stays below the SQLite pool size (4) because each agent
-// or caller-scoped read holds one connection for its snapshot; sync writes and
-// owner reads keep the rest.
+// readSnapshotConcurrency stays below the SQLite pool size (4). Agent,
+// caller-scoped, and protected owner reads each hold a connection for their
+// snapshot. Sync writes and other reads keep the rest.
 const readSnapshotConcurrency = 2
 
 type agentReadSnapshotStore interface {

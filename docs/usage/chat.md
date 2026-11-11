@@ -431,7 +431,7 @@ For an agent-oriented workflow, see the [agent quickstart](../guides/agent-quick
 
 ## Available Tools
 
-Owner MCP reads withhold detected verification content by default. Start standalone MCP with `--reveal-verification` or native MCP with `serve --mcp-reveal-verification` to reveal it. While withholding is active, `export_eml` and `query_sql` are refused. See the [verification protection scope](../api-server.md#verification-content) for covered paths and exclusions. Revealing content through a delegated grant requires `verification.read` alongside the underlying read permission, regardless of these flags.
+Owner MCP withholds detected verification content by default in message detail, thread, list, and keyword and vector search reads. Start standalone MCP with `--reveal-verification` or native MCP with `serve --mcp-reveal-verification` to reveal it. While withholding is active, `export_eml` and `query_sql` are refused. See the [verification protection scope](../api-server.md#verification-content) for covered paths and exclusions. Revealing content through a delegated grant requires `verification.read` alongside the underlying read permission, regardless of these flags.
 
 The MCP server exposes the following tools to connected AI clients:
 
