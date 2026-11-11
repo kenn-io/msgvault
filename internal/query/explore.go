@@ -564,7 +564,7 @@ func buildExploreSQL(conditions, candidateRankExpression, clustersGlob, ownersGl
     SELECT m.id AS message_id, cn.canonical_id
     FROM messages m
     JOIN canon cn ON cn.participant_id = m.owner_participant_id
-    WHERE m.is_from_me IS TRUE
+    WHERE m.is_from_me
 )
 SELECT
     entry_key,
@@ -752,7 +752,7 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
     SELECT m.id AS message_id, cn.canonical_id
     FROM messages m
     JOIN canon cn ON cn.participant_id = m.owner_participant_id
-    WHERE m.is_from_me IS TRUE
+    WHERE m.is_from_me
 )
 SELECT
     p.entry_key,

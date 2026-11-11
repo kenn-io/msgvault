@@ -79,8 +79,8 @@ WITH message_owner AS (
 	       (NOT is_meeting AND is_from_me IS FALSE AND is_author) AS received,
 	       CASE
 	           WHEN is_meeting THEN %[3]d::UTINYINT
-	           WHEN is_chat THEN %[4]d::UTINYINT
-	           ELSE %[5]d::UTINYINT
+	           WHEN is_chat AND is_from_me IS NOT NULL THEN %[4]d::UTINYINT
+	           WHEN is_from_me IS NOT NULL THEN %[5]d::UTINYINT ELSE 0::UTINYINT
 	       END AS modality_mask
 	FROM classified
 	WHERE qualifies

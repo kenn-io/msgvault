@@ -86,6 +86,24 @@ func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 	assert.Zero(t, count, "an owner-authored unsent chat contributes no daily contact activity")
 }
 
+func TestRelationshipTemperatureUnknownDirectionHasNoMethod(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	_, db := writeRelationshipBaseFixture(t, true)
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE unknown_direction_activity AS
+		SELECT *, false AS unsent FROM (VALUES
+			(1::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'group_chat'::VARCHAR, NULL::BOOLEAN, false, true, false, true),
+			(1::BIGINT, 2::BIGINT, TIMESTAMP '2026-01-02 12:00:00', true, 'item'::VARCHAR, 'group_chat'::VARCHAR, NULL::BOOLEAN, true, true, true, false)
+		) AS t(message_id, canonical_id, occurred_at, is_chat, entry_kind, conversation_type, is_from_me, is_direct, is_conversation_member, is_author, is_owner)`)
+	require.NoError(err)
+	var sent, received bool
+	var modality int
+	query := RelationshipTemperatureFactsSQL("unknown_direction_activity", time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC))
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT sent, received, modality_mask FROM (`+query+`) WHERE canonical_id = 2`).Scan(&sent, &received, &modality))
+	assert.False(sent)
+	assert.False(received)
+	assert.Zero(modality)
+}
+
 func TestRelationshipTemperatureCurrentHalfLifeKeepsOlderSignalsInWholeGraph(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

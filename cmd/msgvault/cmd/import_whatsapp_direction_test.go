@@ -116,3 +116,53 @@ func TestUnknownDirectionIncrementalCacheAndNoticeMedia(t *testing.T) {
 	assert.Equal(noticeID, files.Files[0].MessageID)
 	assert.Equal("notice.txt", files.Files[0].Filename)
 }
+
+func TestUnknownDirectionDoesNotAddRelationshipMethod(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
+	analyticsDir := filepath.Join(t.TempDir(), "analytics")
+	st, err := store.Open(dbPath)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(st.Close()) })
+	require.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
+	require.NoError(err)
+	owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	require.NoError(err)
+	person, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
+	require.NoError(err)
+	require.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "manual"))
+	mail, err := st.EnsureConversationWithType(source.ID, "mail", "email_thread", "Mail")
+	require.NoError(err)
+	now := time.Now().UTC()
+	message, err := st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "mail", ConversationID: mail, MessageType: "email", IsFromMe: true, SenderID: sql.NullInt64{Int64: owner, Valid: true}, SentAt: sql.NullTime{Time: now.Add(-time.Hour), Valid: true}})
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(message, "to", []int64{person}, []string{"Person"}))
+	chat, err := st.EnsureConversationWithType(source.ID, "chat", "direct_chat", "Chat")
+	require.NoError(err)
+	for _, participant := range []int64{owner, person} {
+		_, err = st.DB().ExecContext(t.Context(), `INSERT INTO conversation_participants (conversation_id, participant_id, role) VALUES (?, ?, 'member')`, chat, participant)
+		require.NoError(err)
+	}
+	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "unknown", ConversationID: chat, MessageType: "whatsapp", DirectionUnknown: true, SenderID: sql.NullInt64{Int64: person, Valid: true}, SentAt: sql.NullTime{Time: now, Valid: true}})
+	require.NoError(err)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
+	require.NoError(err)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", st.DB())
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(engine.Close()) })
+	for _, filter := range []query.Context{{}, {SourceIDs: []int64{source.ID}}} {
+		result, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Now: now, ShowAll: true, Context: filter})
+		require.NoError(err)
+		require.Len(result.Rows, 1)
+		assert.Equal(person, result.Rows[0].CanonicalID)
+		assert.Positive(result.Rows[0].Score)
+		assert.Equal(1, result.Rows[0].Signals.Modalities)
+	}
+	db, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(db.Close()) })
+	var methods int
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT bit_or(modality_mask) FROM read_parquet(?) WHERE canonical_id = ?`, filepath.Join(analyticsDir, identityindex.DatasetTemperatureContributions, "*.parquet"), person).Scan(&methods))
+	assert.Equal(int(identityindex.ModalityEmail), methods)
+}

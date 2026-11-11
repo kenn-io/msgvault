@@ -61,10 +61,10 @@ WITH contact_chat AS (
 )
 SELECT c.source_id, c.source_type, s.account_email,
 	   COUNT(DISTINCT c.conversation_id),
-	   COUNT(*) FILTER (WHERE c.is_from_me IS FALSE),
-	   COUNT(*) FILTER (WHERE c.is_from_me IS TRUE),
-	   MAX(c.occurred_at) FILTER (WHERE c.is_from_me IS FALSE),
-	   MAX(c.occurred_at) FILTER (WHERE c.is_from_me IS TRUE),
+	   COUNT(*) FILTER (WHERE NOT c.is_from_me),
+	   COUNT(*) FILTER (WHERE c.is_from_me),
+	   MAX(c.occurred_at) FILTER (WHERE NOT c.is_from_me),
+	   MAX(c.occurred_at) FILTER (WHERE c.is_from_me),
 	   MAX(c.occurred_at)
 FROM contact_chat c
 JOIN read_parquet('%s') s ON s.id = c.source_id

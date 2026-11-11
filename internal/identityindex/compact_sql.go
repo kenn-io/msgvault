@@ -146,10 +146,10 @@ WITH logical_people AS (
 	WHERE relation_kind = 1
 ), interactions AS (
 	SELECT p.*,
-	       CASE WHEN p.is_from_me IS TRUE
+	       CASE WHEN p.is_from_me
 	                 AND p.entry_kind IN ('email','conversation','item')
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS sent_units,
-	       CASE WHEN p.is_from_me IS FALSE
+	       CASE WHEN NOT p.is_from_me
 	                 AND (p.entry_kind = 'conversation'
 	                      OR (p.entry_kind IN ('email','item') AND p.is_author))
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS received_units,
@@ -157,8 +157,8 @@ WITH logical_people AS (
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS meeting_units,
 	       CASE
 	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner THEN %d::UTINYINT
-	           WHEN p.entry_kind = 'conversation' THEN %d::UTINYINT
-	           WHEN p.entry_kind IN ('email','item') THEN %d::UTINYINT
+	           WHEN p.entry_kind = 'conversation' AND p.is_from_me IS NOT NULL THEN %d::UTINYINT
+	           WHEN p.entry_kind IN ('email','item') AND p.is_from_me IS NOT NULL THEN %d::UTINYINT
 	           ELSE 0::UTINYINT
 	       END AS modality_mask
 	FROM logical_people p
