@@ -148,19 +148,21 @@ func pollPages(ctx context.Context, st *store.Store, sourceType, identifier stri
 	sum = &ImportSummary{}
 	done := false
 	checkpoint := func() *store.Checkpoint {
-		cp := &store.Checkpoint{MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
-		if !done {
-			// Never empty, so an unfinished run that starts from the top
-			// still replaces an older saved position.
-			blob, _ := json.Marshal(pageCursor{After: after})
-			cp.PageToken = string(blob)
-		}
-		return cp
+		// Never empty: the next sync ignores a run with an empty checkpoint
+		// and falls back to an older, possibly expired cursor. After the last
+		// page, after is "" and the next sync starts from the top.
+		blob, _ := json.Marshal(pageCursor{After: after})
+		return &store.Checkpoint{PageToken: string(blob), MessagesAdded: int64(sum.MessagesAdded), MessagesUpdated: int64(sum.MessagesUpdated), MessagesProcessed: int64(sum.MessagesProcessed)}
 	}
 	defer func() {
 		sum.Partial = retErr != nil || !done
 		retErr = finishSync(ctx, st, source.ID, syncID, checkpoint(), sum.Partial, retErr)
 	}()
+	// Publish the starting position before any request, so a crash before
+	// the first page cannot leave the next sync on an older cursor.
+	if err := scoped.UpdateSyncCheckpointContext(ctx, syncID, checkpoint()); err != nil {
+		return sum, err
+	}
 	maximum := opts.MaxRequests
 	if maximum == 0 {
 		maximum = DefaultMaxRequests
