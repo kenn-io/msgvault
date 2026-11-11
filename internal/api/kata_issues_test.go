@@ -290,12 +290,3 @@ func TestKataIssueBackendOpenCombinesRefAndTitle(t *testing.T) {
 		assert.NotEqual(t, exact.UID, match.UID)
 	}
 }
-
-func TestExactIssueFirstDeduplicates(t *testing.T) {
-	exact := taskclient.KataTask{UID: "exact"}
-	other := taskclient.KataTask{UID: "other"}
-	issues, truncated, err := exactIssueFirst(exact, true, []taskclient.KataTask{other, exact}, false, nil)
-	require.NoError(t, err)
-	assert.False(t, truncated)
-	assert.Equal(t, []taskclient.KataTask{exact, other}, issues)
-}

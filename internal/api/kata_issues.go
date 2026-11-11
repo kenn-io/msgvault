@@ -436,13 +436,7 @@ func (b *kataIssueBackend) Open(ctx context.Context, query string) ([]taskclient
 	if err != nil {
 		return nil, false, err
 	}
-	issues, truncated, err := client.SearchOpenIssues(ctx, project, query, 25)
-	return exactIssueFirst(issue, found, issues, truncated, err)
-}
-
-// exactIssueFirst puts the exact issue ahead of the lexical matches, drops its
-// duplicate by UID, and caps the list at 25.
-func exactIssueFirst(issue taskclient.KataTask, found bool, matches []taskclient.KataTask, truncated bool, err error) ([]taskclient.KataTask, bool, error) {
+	matches, truncated, err := client.SearchOpenIssues(ctx, project, query, 25)
 	if err != nil || !found {
 		return matches, truncated, err
 	}
