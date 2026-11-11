@@ -135,7 +135,7 @@ func TestArchivedSlackHuddleRejectsUnusableMessage(t *testing.T) {
 		{"wrong source", "discord", "slack_json", archivedSlackHuddle, false},
 		{"wrong format", "slack", "mime", archivedSlackHuddle, false},
 		{"malformed", "slack", "slack_json", `{`, false},
-		{"oversized", "slack", "slack_json", strings.Repeat(" ", callhistory.MaxRawBytes+1), false},
+		{"oversized", "slack", "slack_json", strings.TrimSuffix(archivedSlackHuddle, "}") + `,"padding":"` + strings.Repeat("x", callhistory.MaxRawBytes+1) + `"}`, false},
 		{"deleted", "slack", "slack_json", archivedSlackHuddle, true},
 		{"missing raw", "slack", "", ``, false},
 	} {
