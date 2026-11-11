@@ -268,7 +268,7 @@ describe('EverythingWorkspace', () => {
   it.each([
     { dimension: 'participant', key: '42', label: 'Person Example', bucket: '2026-07' },
     { dimension: 'domain', key: 'example.net', label: 'example.net', bucket: '2026-07' },
-    { dimension: 'source', key: '7', label: 'archive', bucket: '2026-07' },
+    { dimension: 'source', key: '7', label: 'person@example.com (mail.example.com:993)', bucket: '2026-07' },
     { dimension: 'kind', key: 'meeting', label: 'Meeting', bucket: '2026-07' },
     { dimension: 'message_type', key: 'email', label: 'Email', bucket: '2026-07' },
     { dimension: 'mailing_list', key: 'list@example.net', label: 'list@example.net', bucket: '2026-07' },
@@ -292,7 +292,7 @@ describe('EverythingWorkspace', () => {
       if (body.group_key) detailRequests.push(body);
       const narrowed = (body.filters?.length ?? 0) > 1;
       return Response.json({
-        rows: [{ key, label, count: narrowed ? 9 : 1, estimated_bytes: narrowed ? 99 : 42, latest_at: narrowed ? '2026-07-17T12:00:00Z' : '2026-07-18T12:00:00Z' }],
+        rows: [{ key, label: dimension === 'source' ? 'imaps://person@example.com@mail.example.com:993' : label, count: narrowed ? 9 : 1, estimated_bytes: narrowed ? 99 : 42, latest_at: narrowed ? '2026-07-17T12:00:00Z' : '2026-07-18T12:00:00Z' }],
         ...(body.group_key ? { overview: {
           first_at: narrowed ? '2026-07-17T12:00:00Z' : '2026-07-01T12:00:00Z',
           activity: [{ bucket, count: narrowed ? 9 : 1 }], co_participants: [{ key: '1', label: narrowed ? 'Wrong Person' : 'Selected Person', count: 1 }]
@@ -302,9 +302,19 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     state.replaceTransient({ groupingChain: [dimension], filters: [{ dimension: 'domain', values: ['example.com'] }] });
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    const baseClient = createAPIClient(fetchFn);
+    const client = { fetch: (async (input, init) => {
+      const url = input instanceof Request ? input.url : new URL(String(input), window.location.href);
+      if (new URL(url).pathname === '/api/v1/sources/status' && dimension === 'source') return Response.json({ sources: [
+        { id: 7, source_type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:993', display_name: null, can_sync: false, scheduled: false, active_sync: null, latest_sync: null, last_successful_sync: null, last_sync_at: null, next_sync_at: null, updated_at: '2026-07-18T12:00:00Z' },
+        { id: 8, source_type: 'gmail', identifier: 'person@example.com', display_name: null, can_sync: false, scheduled: false, active_sync: null, latest_sync: null, last_successful_sync: null, last_sync_at: null, next_sync_at: null, updated_at: '2026-07-18T12:00:00Z' }
+      ] });
+      return baseClient.fetch(input, init);
+    }) satisfies typeof fetch };
+    const rendered = render(AppShell, { client, state });
     try {
       const grid = await screen.findByRole('grid', { name: `Messages grouped by ${dimension}` });
+      if (dimension === 'source') expect(await within(grid).findByRole('button', { name: `Show items in ${label}` })).toBeDefined();
       await fireEvent.pointerDown(await within(grid).findByText(label));
       const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
       await waitFor(() => expect(detailRequests.length).toBeGreaterThan(0));
