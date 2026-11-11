@@ -452,6 +452,12 @@ smoke-web-release:
 	node --test scripts/smoke-web-release.test.mjs
 	bash scripts/smoke-web-release.sh
 
+# Run against an already built or extracted executable; never install/rebuild it.
+BINARY ?= ./msgvault
+.PHONY: smoke-standalone
+smoke-standalone:
+	sh scripts/smoke-standalone.sh "$(BINARY)"
+
 # Format code
 fmt:
 	go fmt ./...
@@ -652,6 +658,7 @@ help:
 	@echo "  web-embed      - Build, stage, and validate browser assets for Go embedding"
 	@echo "  web-assets-check - Validate the release asset graph and run the validator's tests"
 	@echo "  smoke-web-release - Build and exercise an isolated release-style daemon"
+	@echo "  smoke-standalone - Check a built/downloaded executable (BINARY=./msgvault)"
 	@echo "  install-hooks  - Install pre-commit and pre-push hooks via prek"
 	@echo "  clean          - Remove build artifacts"
 	@echo ""
