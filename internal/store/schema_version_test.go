@@ -120,6 +120,21 @@ func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+func TestSchemaVersionMeetingDecisionsParentUpgrade(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	_, err := f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decisions`)
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '41' WHERE key = 'schema_version'`)
+	require.NoError(err)
+	require.Error(f.Store.ValidateSchemaContext(ctx))
+	require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
+	var count int
+	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
+	require.Zero(count)
+}
+
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

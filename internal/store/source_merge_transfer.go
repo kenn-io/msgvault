@@ -36,7 +36,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			if err := s.copyLoopDecisionTx(ctx, tx, m.id, m.survivor); err != nil {
 				return err
 			}
-			if err := copyMeetingLinkDecisionsTx(ctx, tx, m.id, m.survivor); err != nil {
+			if err := copyMeetingLinkDecisionsTx(ctx, tx, m.id, m.survivor, false); err != nil {
 				return err
 			}
 		}

@@ -574,7 +574,7 @@ func (s *Store) MergeDuplicates(
 			if err := s.copyLoopDecisionTx(ctx, tx, dupID, survivorID); err != nil {
 				return err
 			}
-			if err := copyMeetingLinkDecisionsTx(ctx, tx, dupID, survivorID); err != nil {
+			if err := copyMeetingLinkDecisionsTx(ctx, tx, dupID, survivorID, true); err != nil {
 				return err
 			}
 		}
@@ -737,15 +737,26 @@ func (s *Store) StreamMessageRawContext(ctx context.Context, messageIDs []int64,
 // reversed — those changes are additive enrichment that leaves
 // survivors strictly better off.
 func (s *Store) UndoDedup(ctx context.Context, batchID string) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `
+	var count int64
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE dedup_origin_message_id IN (SELECT id FROM messages WHERE delete_batch_id = ?)`, batchID); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `
 		UPDATE messages
 		SET deleted_at = NULL, delete_batch_id = NULL
 		WHERE delete_batch_id = ?
 	`, batchID)
+		if err != nil {
+			return err
+		}
+		count, err = result.RowsAffected()
+		return err
+	})
 	if err != nil {
 		return 0, fmt.Errorf("undo dedup: %w", err)
 	}
-	return result.RowsAffected()
+	return count, nil
 }
 
 // DeleteDedupedBatch permanently deletes all hidden rows associated with a

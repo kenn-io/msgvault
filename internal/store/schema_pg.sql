@@ -4012,6 +4012,7 @@ CREATE TABLE IF NOT EXISTS meeting_link_decisions (
     right_key TEXT NOT NULL,
     right_anchor TEXT NOT NULL,
     decision TEXT NOT NULL CHECK (decision IN ('link', 'split')),
+    dedup_origin_message_id BIGINT REFERENCES messages(id) ON DELETE SET NULL,
     PRIMARY KEY (left_message_id, left_kind, left_key, right_message_id, right_kind, right_key)
 );
 CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_right ON meeting_link_decisions(right_message_id);

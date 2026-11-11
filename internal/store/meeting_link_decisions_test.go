@@ -127,7 +127,42 @@ func TestMeetingLinkDecisionSurvivesDedupAndUndo(t *testing.T) {
 	requirements.NoError(err)
 	record, err = st.MeetingRecordContext(t.Context(), dupRef)
 	requirements.NoError(err)
-	assertions.Contains(record.MessageIDs, other)
+	assertions.Equal([]int64{duplicate, other}, record.MessageIDs)
+	record, err = st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: survivor}})
+	requirements.NoError(err)
+	assertions.Equal([]int64{survivor}, record.MessageIDs)
+}
+
+func TestMeetingLinkDecisionUndoPreservesSurvivorChoices(t *testing.T) {
+	for _, timing := range []string{"before", "after"} {
+		t.Run(timing, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, survivor := projectionFixture(t, st, "keep-survivor", "meeting_json", `{}`)
+			_, duplicate := projectionFixture(t, st, "keep-duplicate", "meeting_json", `{}`)
+			_, other := projectionFixture(t, st, "keep-other", "meeting_json", `{}`)
+			survivorRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: survivor}}
+			duplicateRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: duplicate}}
+			otherRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: other}}
+			_, err := st.DecideMeetingLinkContext(t.Context(), duplicateRef, otherRef, "link")
+			requirements.NoError(err)
+			if timing == "before" {
+				_, err = st.DecideMeetingLinkContext(t.Context(), survivorRef, otherRef, "link")
+				requirements.NoError(err)
+			}
+			_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "keep")
+			requirements.NoError(err)
+			if timing == "after" {
+				_, err = st.DecideMeetingLinkContext(t.Context(), survivorRef, otherRef, "link")
+				requirements.NoError(err)
+			}
+			_, err = st.UndoDedup(t.Context(), "keep")
+			requirements.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), survivorRef)
+			requirements.NoError(err)
+			assertions.Equal([]int64{survivor, duplicate, other}, record.MessageIDs)
+		})
+	}
 }
 
 func TestMeetingLinkDecisionFollowsStandaloneIntoSeries(t *testing.T) {
@@ -369,13 +404,29 @@ func TestMeetingLinkDecisionSurvivesSourceMerge(t *testing.T) {
 	otherRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: other}}
 	_, err = st.DecideMeetingLinkContext(t.Context(), dupRef, otherRef, "link")
 	requirements.NoError(err)
+	_, hidden := projectionFixture(t, st, "source-dedup-hidden", "meeting_json", `{}`)
+	_, otherTwo := projectionFixture(t, st, "source-dedup-other", "meeting_json", `{}`)
+	hiddenRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: hidden}}
+	otherTwoRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: otherTwo}}
+	_, err = st.DecideMeetingLinkContext(t.Context(), hiddenRef, otherTwoRef, "link")
+	requirements.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), duplicate, []int64{hidden}, "source-dedup")
+	requirements.NoError(err)
 	var destination int64
 	requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT source_id FROM messages WHERE id=?`, survivor).Scan(&destination))
 	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: source.ID, IntoSourceID: destination})
 	requirements.NoError(err)
 	record, err := st.MeetingRecordContext(t.Context(), otherRef)
 	requirements.NoError(err)
+	assertions.Equal([]int64{survivor, other, otherTwo}, record.MessageIDs)
+	_, err = st.UndoDedup(t.Context(), "source-dedup")
+	requirements.NoError(err)
+	record, err = st.MeetingRecordContext(t.Context(), otherRef)
+	requirements.NoError(err)
 	assertions.Equal([]int64{survivor, other}, record.MessageIDs)
+	record, err = st.MeetingRecordContext(t.Context(), hiddenRef)
+	requirements.NoError(err)
+	assertions.Equal([]int64{hidden, otherTwo}, record.MessageIDs)
 }
 
 func TestMeetingLinkDecisionMovedOccurrenceStaysOnOriginalDate(t *testing.T) {
