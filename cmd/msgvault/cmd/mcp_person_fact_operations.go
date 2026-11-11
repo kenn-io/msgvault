@@ -36,31 +36,18 @@ func personFactMCPCapabilities(has mcpRouteCheck, caps *apiprotocol.MCPCapabilit
 	return names
 }
 
-type factPageArgs struct {
-	PersonID int64   `json:"person_id"`
-	Limit    *int64  `json:"limit,omitempty"`
-	Offset   *int64  `json:"offset,omitempty"`
-	Target   *string `json:"target,omitempty"`
-}
-type factStatusArgs struct {
-	PersonID    int64   `json:"person_id"`
-	Limit       *int64  `json:"limit,omitempty"`
-	Offset      *int64  `json:"offset,omitempty"`
-	EvidenceKey *string `json:"evidence_key,omitempty"`
-	Supported   *bool   `json:"supported,omitempty"`
-}
-type factPersonArgs struct {
-	PersonID int64 `json:"person_id"`
-}
-type factPinArgs struct {
-	PersonID int64  `json:"person_id"`
-	Kind     string `json:"kind"`
-	Key      string `json:"key"`
-	Pinned   *bool  `json:"pinned"`
-}
-type factTrackingArgs struct {
-	PersonID int64 `json:"person_id"`
-	Tracked  *bool `json:"tracked"`
+type factArgs struct {
+	PersonID         int64   `json:"person_id"`
+	Limit            *int64  `json:"limit,omitempty"`
+	Offset           *int64  `json:"offset,omitempty"`
+	Target           *string `json:"target,omitempty"`
+	EvidenceKey      *string `json:"evidence_key,omitempty"`
+	Supported        *bool   `json:"supported,omitempty"`
+	IncludeSensitive *bool   `json:"include_sensitive,omitempty"`
+	Kind             string  `json:"kind"`
+	Key              string  `json:"key"`
+	Pinned           *bool   `json:"pinned"`
+	Tracked          *bool   `json:"tracked"`
 }
 
 func factClassify(code string) bool {
@@ -77,16 +64,14 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 	}
 	switch name {
 	case "list_person_fact_targets":
-		a, e := decodeMCPOperationArguments[struct {
-			IncludeSensitive *bool `json:"include_sensitive,omitempty"`
-		}](args)
+		a, e := decodeMCPOperationArguments[factArgs](args)
 		if e != nil {
 			return invalid()
 		}
 		r, e := readMCPOperationJSONWithClassifier[generated.Catalog](ctx, b.client, http.MethodGet, "/api/v1/person-fact-targets", &generated.ListPersonFactTargetsRequestOptions{Query: &generated.ListPersonFactTargetsQuery{IncludeSensitive: a.IncludeSensitive}}, factClassify, http.StatusOK)
 		return r, true, e
 	case "list_person_fact_evidence", "list_person_fact_claims", "list_person_fact_decisions":
-		a, e := decodeMCPOperationArguments[factPageArgs](args)
+		a, e := decodeMCPOperationArguments[factArgs](args)
 		if e != nil || !validLoopID(a.PersonID) {
 			return invalid()
 		}
@@ -102,14 +87,14 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 			return r, true, e
 		}
 	case "list_person_fact_status_events":
-		a, e := decodeMCPOperationArguments[factStatusArgs](args)
+		a, e := decodeMCPOperationArguments[factArgs](args)
 		if e != nil || !validLoopID(a.PersonID) {
 			return invalid()
 		}
 		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactEvidenceStatusEventsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/fact-evidence-status-events", &generated.ListPersonFactEvidenceStatusEventsRequestOptions{PathParams: &generated.ListPersonFactEvidenceStatusEventsPath{ID: a.PersonID}, Query: &generated.ListPersonFactEvidenceStatusEventsQuery{EvidenceKey: a.EvidenceKey, Supported: a.Supported, Limit: a.Limit, Offset: a.Offset}}, factClassify, http.StatusOK)
 		return r, true, e
 	case "list_person_fact_pins", "get_person_tracking":
-		a, e := decodeMCPOperationArguments[factPersonArgs](args)
+		a, e := decodeMCPOperationArguments[factArgs](args)
 		if e != nil || !validLoopID(a.PersonID) {
 			return invalid()
 		}
@@ -120,14 +105,14 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 		r, e := readMCPOperationJSONWithClassifier[generated.PersonTracking](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/tracking", &generated.GetPersonTrackingRequestOptions{PathParams: &generated.GetPersonTrackingPath{ID: a.PersonID}}, factClassify, http.StatusOK)
 		return r, true, e
 	case "set_person_fact_pin":
-		a, e := decodeMCPOperationArguments[factPinArgs](args)
+		a, e := decodeMCPOperationArguments[factArgs](args)
 		if e != nil {
 			return invalid()
 		}
 		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactPinWrite](ctx, b.client, http.MethodPut, "/api/v1/people/{id}/fact-pins/{kind}/{key}", &generated.SetPersonFactPinRequestOptions{PathParams: &generated.SetPersonFactPinPath{ID: a.PersonID, Kind: generated.SetPersonFactPinPathKind(a.Kind), Key: url.PathEscape(a.Key)}, Body: &generated.SetPersonFactPinBody{Pinned: *a.Pinned}}, factClassify, http.StatusOK)
 		return r, true, e
 	case "set_person_tracking":
-		a, e := decodeMCPOperationArguments[factTrackingArgs](args)
+		a, e := decodeMCPOperationArguments[factArgs](args)
 		if e != nil {
 			return invalid()
 		}
@@ -140,13 +125,13 @@ func (b *daemonMCPOperations) personFactOperationDisclosure(name string, args ma
 	var effect string
 	switch name {
 	case "set_person_fact_pin":
-		a, e := decodeMCPOperationArguments[factPinArgs](args)
+		a, e := decodeMCPOperationArguments[factArgs](args)
 		if e != nil || a.Key == "" || a.Key != strings.TrimSpace(a.Key) {
 			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}
 		effect = "Re-resolves the effective value and may change profile and vCard projections; the person must be tracked. The native operation has no revision guard."
 	case "set_person_tracking":
-		a, e := decodeMCPOperationArguments[factTrackingArgs](args)
+		a, e := decodeMCPOperationArguments[factArgs](args)
 		if e != nil {
 			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}

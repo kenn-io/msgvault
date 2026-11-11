@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -175,6 +176,28 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 	data, err = json.Marshal(result.Output)
 	requirements.NoError(err)
 	assertions.JSONEq(`{"error":"person_profile_not_found","operation_may_have_completed":false}`, string(data))
+
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		body string
+	}{
+		{"set_person_tracking", map[string]any{"person_id": id, "tracked": false}, `{"error":"person_profile_failed"}`},
+		{"set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": "k", "pinned": true}, `{"error":"person_fact_failed"}`},
+	} {
+		stub := &daemonMCPOperations{client: newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+			assertions.Equal(http.MethodPut, r.Method)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(tc.body))
+		}), supported: []string{"set_person_tracking", "set_person_fact_pin"}}
+		result, err = stub.ExecuteOperation(t.Context(), tc.name, tc.args)
+		requirements.NoError(err)
+		requirements.True(result.IsError)
+		data, err = json.Marshal(result.Output)
+		requirements.NoError(err)
+		assertions.JSONEq(`{"error":"operation_refused","operation_may_have_completed":true}`, string(data))
+	}
 }
 
 func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {

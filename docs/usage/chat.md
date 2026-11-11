@@ -890,6 +890,28 @@ one second, then make a new call, which needs approval again. MCP never
 retries a write by itself. If a write reports
 `operation_may_have_completed: true`, list the loops again before retrying.
 
+## Person facts
+
+On unreleased `main`, an owner-connected assistant can read automatic-fact
+diagnostics. Delegated sessions get none of these tools. A tool appears only
+when the daemon offers its route.
+
+| Tool | Effect | Parameters |
+|---|---|---|
+| `list_person_fact_targets` | List automatic fact targets. | Optional `include_sensitive` |
+| `list_person_fact_evidence` | Read evidence, including excerpts. | `person_id`; optional `target`, `limit` (1–50, default 50), `offset` |
+| `list_person_fact_status_events` | Read evidence status events. | `person_id`; optional `evidence_key`, `supported`, `limit` (1–200, default 50), `offset` |
+| `list_person_fact_claims` | Read fact claims and values. | `person_id`; optional `target`, `limit` (1–200, default 50), `offset` |
+| `list_person_fact_decisions` | Read resolution decisions. | `person_id`; optional `target`, `limit` (1–200, default 50), `offset` |
+| `list_person_fact_pins` | Read effective pins. | `person_id` |
+| `get_person_tracking` | Read explicit tracking state. | `person_id` |
+| `set_person_fact_pin` | Set or clear an attribute or employment pin. | `person_id`, `kind`, `key`, `pinned` |
+| `set_person_tracking` | Change tracking state. | `person_id`, `tracked` |
+
+- Build `target` as `kind:key:revision` from a `list_person_fact_targets` entry.
+- Sensitive targets appear in the catalog only with `include_sensitive: true`. Evidence and claims pages still include rows for sensitive targets.
+- Writes require `--allow-person-fact-writes` and explicit client confirmation for each call; the client is responsible for user approval. The person must be tracked to set a pin. If a write reports `operation_may_have_completed: true`, read the pins or tracking again before retrying.
+
 ## Write controls
 
 Enable only the writes intended for the assistant's session:
