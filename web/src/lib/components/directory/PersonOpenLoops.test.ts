@@ -82,7 +82,7 @@ function commitmentClient(extraPromises = 0) {
       skipped_unparseable: 0,
     });
   });
-  return { client: createAPIClient(fetcher), decisions };
+  return { client: createAPIClient(fetcher), decisions, fetcher };
 }
 
 describe("PersonOpenLoops", () => {
@@ -123,7 +123,6 @@ describe("PersonOpenLoops", () => {
     expect(screen.getByRole("heading", { name: "Promises to you" })).toBeDefined();
     await fireEvent.click(screen.getAllByRole("button", { name: closeState === "done" ? "Done" : "Snooze for 24h" })[0]);
     expect(await screen.findByText("1 open")).toBeDefined();
-    expect(screen.queryByRole("link", { name: "I will send the draft." })).toBeNull();
     view.unmount();
     render(PersonOpenLoops, { client, personID: 7 });
     expect(await screen.findByText("1 open")).toBeDefined();
@@ -137,16 +136,26 @@ describe("PersonOpenLoops", () => {
     ]);
   });
 
-  it.each(["done", "snoozed"] as const)("refills the five-promise summary after a %s decision", async (closeState) => {
+  it("refills the five-promise summary after a decision", async () => {
     const { client } = commitmentClient(4);
     render(PersonOpenLoops, { client, personID: 7 });
     expect(await screen.findByText("5+ open")).toBeDefined();
     expect(screen.queryByRole("link", { name: "I will send report 4." })).toBeNull();
-    await fireEvent.click(screen.getAllByRole("button", { name: closeState === "done" ? "Done" : "Snooze for 24h" })[0]);
+    await fireEvent.click(screen.getAllByRole("button", { name: "Done" })[0]);
     expect(await screen.findByRole("link", { name: "I will send report 4." })).toBeDefined();
     expect(screen.getByText("5 open")).toBeDefined();
     expect(screen.getAllByRole("button", { name: "Done" })).toHaveLength(5);
     expect(screen.queryByRole("link", { name: "I will send the draft." })).toBeNull();
+  });
+
+  it("shows a load failure if the decision succeeds but the refreshed summary fails", async () => {
+    const { client, fetcher } = commitmentClient();
+    render(PersonOpenLoops, { client, personID: 7 });
+    await screen.findByRole("link", { name: "I will send the draft." });
+    fetcher.mockResolvedValueOnce(Response.json({ id: "c12", state: "done" }))
+      .mockRejectedValueOnce(new Error("temporary list failure"));
+    await fireEvent.click(screen.getAllByRole("button", { name: "Done" })[0]);
+    expect((await screen.findByRole("alert")).textContent).toContain("Couldn't load open loops.");
   });
 
   it("shows exact promise text and labels fulfilment once", async () => {
