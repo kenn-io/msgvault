@@ -14,13 +14,8 @@ type StructuredPersonRecord struct {
 	Profile generated.StructuredPersonProfile `json:"profile"`
 }
 type PersonMediaContent struct {
-	MediaType  string `json:"media_type"`
-	Offset     int64  `json:"offset"`
-	Length     int64  `json:"length"`
-	Size       int64  `json:"size"`
-	SHA256     string `json:"sha256"`
-	Complete   bool   `json:"complete"`
-	DataBase64 string `json:"data_base64"`
+	MediaType string `json:"media_type"`
+	byteChunk
 }
 
 // PersonMediaChunk applies the shared download contract to one bounded native media object.
@@ -35,7 +30,7 @@ func PersonMediaChunk(data []byte, mediaType string, args map[string]any) (Perso
 		return PersonMediaContent{}, errors.New("media digest changed")
 	}
 	chunk, err := sliceChunk(data, digest, req)
-	return PersonMediaContent{MediaType: mediaType, Offset: chunk.Offset, Length: chunk.Length, Size: chunk.Size, SHA256: chunk.SHA256, Complete: chunk.Complete, DataBase64: chunk.DataBase64}, err
+	return PersonMediaContent{MediaType: mediaType, byteChunk: chunk}, err
 }
 
 func personRecordDefinitions() []operationalDefinition {
