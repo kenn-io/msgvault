@@ -202,6 +202,28 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		}, a.diagnoseJSON("--all"))
 	})
 
+	t.Run("cleanup preserves fixed failures", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		a := newAcquisitionArchive(t, "gmail", true)
+		conversation, err := a.st.EnsureConversation(t.Context(), a.source, "thread", "Thread")
+		require.NoError(err)
+		_, err = a.st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: a.source, SourceMessageID: "cleaned", MessageType: "email"})
+		require.NoError(err)
+		a.record(a.source, false, acquisitionOutcome("cleaned", "ingest", "error", "attachment_error"))
+		a.record(a.source, false, acquisitionOutcome("cleaned", "fetch", "resolved", "acquired"))
+		a.record(a.source, false, acquisitionOutcome("cleaned", "fetch", "error", "fetch_error"))
+		require.NoError(a.st.MarkMessageDeleted(a.source, "cleaned"))
+		plan, err := a.st.PlanGCContext(t.Context())
+		require.NoError(err)
+		_, err = a.st.ExecuteGCContext(t.Context(), plan)
+		require.NoError(err)
+		assert.Equal([]map[string]string{
+			acquisitionJSON("cleaned", "ingest", "attachment_error", "resolved"),
+			acquisitionJSON("cleaned", "fetch", "fetch_error", "historical"),
+		}, a.diagnoseJSON("--all"))
+	})
+
 	t.Run("unknown", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)

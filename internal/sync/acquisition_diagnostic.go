@@ -80,13 +80,14 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 		var state string
 		switch {
 		case outcome.ErrorMessage == store.SyncRunItemFilesPendingMessage && next.resolved:
-		case outcome.Status == store.SyncRunItemStatusSkipped && op != acquisitionUnknown:
-			state = AcquisitionHistorical
-		case outcome.Status != store.SyncRunItemStatusError:
+		case outcome.Status != store.SyncRunItemStatusError && outcome.Status != store.SyncRunItemStatusSkipped:
 		case op == acquisitionDownload && next.skipped:
 			state = AcquisitionHistorical
 		case op != acquisitionUnknown && next.resolved:
 			state = AcquisitionResolved
+		case outcome.Status == store.SyncRunItemStatusSkipped && op != acquisitionUnknown:
+			state = AcquisitionHistorical
+		case outcome.Status == store.SyncRunItemStatusSkipped:
 		case op != acquisitionUnknown && covers(retries[outcome.SourceMessageID], outcome, op):
 			state = AcquisitionActive
 		default:
@@ -96,7 +97,10 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 		case store.SyncRunItemStatusResolved:
 			next.resolved, next.skipped = true, false
 		case store.SyncRunItemStatusSkipped:
-			next.skipped = true
+			// Cleanup changes failures to skipped; only a separate skip settles downloads.
+			if op == acquisitionUnknown {
+				next.skipped = true
+			}
 		}
 		seen[outcome.SourceMessageID] = next
 		key := [2]string{outcome.SourceMessageID, state}
