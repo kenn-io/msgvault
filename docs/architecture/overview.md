@@ -64,10 +64,14 @@ records. Attachments are addressed by their SHA-256 content hash so occurrences
 can share the same stored bytes. Repeated imports and syncs use source identity
 to update or skip records according to that provider's rules.
 
-Gmail commits required file work with the message's RAW, then publishes files
-and records their occurrences before settling that work. SQL and filesystem
-publication have separate boundaries. See the [Gmail durability protocol](storage.md#gmail-durability-protocol)
-for ownership, retry selection, cancellation, and completion limits.
+Gmail sync commits a message's raw MIME together with a record of the files it
+still has to save. It then writes the attachment and remote-image files,
+records them against the message, and only then marks the work done. The
+database and the filesystem cannot commit together, so a sync that stops
+partway leaves that record behind for a later sync to finish. The
+[Gmail durability protocol](storage.md#gmail-durability-protocol) covers who
+owns each step, how sync picks work to retry, what cancellation interrupts,
+and what a completed run does not prove.
 
 Meeting providers use the shared meeting archiver to write messages, raw
 evidence, search text, and meeting projections. Pocket discovers and reconciles
