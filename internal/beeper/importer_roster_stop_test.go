@@ -569,7 +569,7 @@ func TestRosterCleanupResumesAgainstChangedSnapshot(t *testing.T) {
 				}
 				return count <= 48
 			}}
-			_, _, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{}) //nolint:dogsled // Only the stop error is needed.
+			_, _, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{})
 			require.ErrorIs(err, errBeeperBudgetExpired)
 			if prune {
 				receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
@@ -608,7 +608,9 @@ func TestRosterCleanupResumesAgainstChangedSnapshot(t *testing.T) {
 			require.NoError(err)
 			expected := make([]string, 0, len(chat.Participants))
 			for _, member := range chat.Participants {
-				expected = append(expected, imp.res.identifierForUser(member["id"].(string)))
+				id, ok := member["id"].(string)
+				require.True(ok)
+				expected = append(expected, imp.res.identifierForUser(id))
 			}
 			actual := make([]string, 0, len(receipts))
 			for key := range receipts {

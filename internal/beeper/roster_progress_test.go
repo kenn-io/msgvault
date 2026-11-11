@@ -287,7 +287,9 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 				finalReceipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
 				require.NoError(err)
 				require.Len(finalReceipts, 1)
-				assert.Contains(finalReceipts, imp.res.identifierForUser(all[0]["id"].(string)))
+				id, ok := all[0]["id"].(string)
+				require.True(ok)
+				assert.Contains(finalReceipts, imp.res.identifierForUser(id))
 			}
 		})
 	}
