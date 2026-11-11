@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/google/jsonschema-go/jsonschema"
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
@@ -312,20 +311,5 @@ func briefPacketFromWindow(window BriefWindow) (EvidencePacket, error) {
 }
 
 func validateBriefOutput(output jsontext.Value) error {
-	var schema jsonschema.Schema
-	if err := decodeSingleJSON(briefSchema, &schema); err != nil {
-		return errors.New("frozen person brief schema is invalid")
-	}
-	resolved, err := schema.Resolve(nil)
-	if err != nil {
-		return errors.New("frozen person brief schema cannot be resolved")
-	}
-	var decoded any
-	if err := decodeJSONSchemaInstance(output, &decoded); err != nil {
-		return errors.New("person brief output is not one JSON value")
-	}
-	if err := resolved.Validate(decoded); err != nil {
-		return errors.New("person brief output does not match the closed schema")
-	}
-	return nil
+	return validateProgramOutput(output, briefSchema, "person brief")
 }

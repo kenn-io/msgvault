@@ -113,9 +113,6 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
 		return invalid()
 	}
-	if parsed.Promises == nil || parsed.Fulfilments == nil || len(parsed.Promises) > 32 || len(parsed.Fulfilments) > 8 {
-		return invalid()
-	}
 	sources := make(map[string]CommitmentSource, len(window.Sources))
 	for _, source := range window.Sources {
 		if source.ID == "" || source.MessageID <= 0 || (source.Direction != CommitmentOwedBy && source.Direction != CommitmentOwedTo) {
@@ -135,7 +132,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	for index := range parsed.Promises {
 		promise := &parsed.Promises[index]
 		source, ok := sources[promise.SourceID]
-		if !ok || promise.Direction != source.Direction || !source.MatchesQuote(promise.Quote, promise.Start, promise.End) || strings.TrimSpace(promise.Summary) == "" || utf8.RuneCountInString(promise.Summary) > 240 {
+		if !ok || promise.Direction != source.Direction || !source.MatchesQuote(promise.Quote, promise.Start, promise.End) || strings.TrimSpace(promise.Summary) == "" {
 			return invalid()
 		}
 		if promise.DueOn != nil {

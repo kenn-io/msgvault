@@ -71,15 +71,15 @@ describe("PersonOpenLoops", () => {
   it.each(["done", "snoozed"] as const)("hides a %s commitment until closed promises are shown", async (closeState) => {
     let state: "open" | "done" | "snoozed" = "open";
     const decisions: { path: string; state: string }[] = [];
-    const promise = (id: number, direction: 'owed_by' | 'owed_to', text: string, current: "open" | "done" | "snoozed" = "open") => ({
+    const promise = (id: number, direction: 'owed_by' | 'owed_to', text: string, current: "open" | "done" | "snoozed" | "fulfilled" = "open") => ({
       id: `c${id}`,
       person_id: 7,
       claim_id: id + 100,
       direction,
-      summary: text.slice(0, -1),
+      summary: text,
       promise: { message_id: id + 40, text, start: 0, end: text.length },
       promised_at: "2026-10-12T12:00:00Z",
-      due_on: "2026-11-15",
+      due_on: id === 12 ? "2026-11-15" : null,
       expires_at: "2026-12-15T00:00:00Z",
       state: current,
     });
@@ -97,6 +97,10 @@ describe("PersonOpenLoops", () => {
           ...(state === "open" || url.searchParams.get("include_closed") === "true"
             ? [promise(12, "owed_by", "I will send the draft.", state)] : []),
           promise(13, "owed_to", "I will check the venue."),
+          ...(url.searchParams.get("include_closed") === "true" ? [{
+            ...promise(14, "owed_by", "I will send the agenda.", "fulfilled"),
+            proposed_fulfilment: { message_id: 55, text: "I sent the agenda.", start: 0, end: 18 },
+          }] : []),
         ],
         truncated: false,
         coverage_incomplete: false,
@@ -107,6 +111,9 @@ describe("PersonOpenLoops", () => {
     const view = render(PersonOpenLoops, { client, personID: 7 });
     const cite = await screen.findByRole("link", { name: "I will send the draft." });
     expect(cite.getAttribute("href")).toBe("/messages/52");
+    expect(screen.getAllByText("I will send the draft.")).toHaveLength(1);
+    expect(screen.getByText("Due 2026-11-15")).toBeDefined();
+    expect(screen.getAllByText("I will check the venue.")).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
     expect(screen.getByRole("heading", { name: "Promises to you" })).toBeDefined();
     await fireEvent.click(screen.getAllByRole("button", { name: closeState === "done" ? "Done" : "Snooze for 24h" })[0]);
@@ -116,7 +123,9 @@ describe("PersonOpenLoops", () => {
     render(PersonOpenLoops, { client, personID: 7 });
     expect(await screen.findByText("1 open")).toBeDefined();
     await fireEvent.click(screen.getByRole("button", { name: "Show closed promises" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Reopen" }));
+    expect(await screen.findByRole("link", { name: "Fulfilment · I sent the agenda." })).toBeDefined();
+    expect(screen.queryByText("Fulfilled")).toBeNull();
+    await fireEvent.click(screen.getAllByRole("button", { name: "Reopen" })[0]);
     expect(await screen.findByText("2 open")).toBeDefined();
     expect(decisions).toEqual([
       { path: "/api/v1/loops/commitments/c12/decision", state: closeState },

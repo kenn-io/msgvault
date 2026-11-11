@@ -12,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/jsonschema-go/jsonschema"
-
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
@@ -32,22 +30,7 @@ func CommitmentProgramFingerprint() string {
 }
 
 func validateCommitmentOutput(output jsontext.Value) error {
-	var schema jsonschema.Schema
-	if err := decodeSingleJSON(commitmentSchema, &schema); err != nil {
-		return err
-	}
-	resolved, err := schema.Resolve(nil)
-	if err != nil {
-		return fmt.Errorf("resolve commitment output schema: %w", err)
-	}
-	var decoded any
-	if err := decodeJSONSchemaInstance(output, &decoded); err != nil {
-		return err
-	}
-	if err := resolved.Validate(decoded); err != nil {
-		return fmt.Errorf("validate commitment output: %w", err)
-	}
-	return nil
+	return validateProgramOutput(output, commitmentSchema, "commitment")
 }
 
 func commitmentRequest(window CommitmentWindow, maxOutputTokens int64) (StructuredRequest, error) {
