@@ -227,14 +227,8 @@ func (s *Store) supersedePersonAddressTx(
 
 func personAddressHasValue(input PersonAddressInput) bool {
 	if input.AddressKind == PersonAddressPostal {
-		if raw, ok, _ := postaladdress.DecodeOriginalInput(input.OriginalValue); ok {
-			// Interpret exactly one known storage envelope, never its literal raw text.
-			for _, value := range []string{raw.PostOfficeBox, raw.ExtendedAddress, raw.StreetAddress, raw.Locality, raw.Region, raw.PostalCode, raw.CountryName, raw.ExtendedComponents, raw.FreeText, raw.PlaceURI, raw.GeoURI, raw.Label, raw.CountryCode, raw.OriginalValue} {
-				if strings.TrimSpace(value) != "" {
-					return true
-				}
-			}
-		} else if strings.TrimSpace(input.OriginalValue) != "" {
+		_, snapshot, _ := postaladdress.DecodeOriginalInput(input.OriginalValue)
+		if !snapshot && strings.TrimSpace(input.OriginalValue) != "" {
 			return true
 		}
 	} else if strings.TrimSpace(input.OriginalValue) != "" {

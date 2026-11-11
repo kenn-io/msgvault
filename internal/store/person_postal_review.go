@@ -161,6 +161,14 @@ func (a PersonAddress) LocalPostalAssessment() (*postaladdress.Assessment, error
 	if ok {
 		original = raw
 		current.OriginalValue = raw.OriginalValue
+	} else {
+		a.Assessment = nil
+		public, err := a.PublicAddress()
+		if err != nil {
+			return nil, err
+		}
+		current = public.PostalInput()
+		original = current
 	}
 	assessment := postaladdress.Assess(current)
 	assessment.Original = original

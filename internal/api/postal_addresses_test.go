@@ -272,7 +272,7 @@ func TestPostalAddressCurrentTextRoundTripsWithoutChangingProvenance(t *testing.
 	id := seedAPIPerson(t, wrapped.Store)
 	raw := postaladdress.Input{AddressKind: "postal", OriginalValue: "  First raw address\nUnit 7  ", ExtendedComponents: `["raw"]`, Label: " original label "}
 	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-	body, err := json.Marshal(map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "original_input": raw, "envelope": map[string]any{"source": "user"}}}}})
+	body, err := json.Marshal(map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": raw.OriginalValue, "original_input": raw, "envelope": map[string]any{"source": "user"}}}}})
 	require.NoError(err)
 	created := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
 	require.Equal(http.StatusOK, created.Code, created.Body.String())
@@ -311,7 +311,7 @@ func TestPostalAddressCurrentTextRoundTripsWithoutChangingProvenance(t *testing.
 		assert.Equal(raw, historic.Assessment.Original)
 		if historic.Envelope.ID == before.Addresses[0].Envelope.ID {
 			assert.NotNil(historic.Envelope.SupersededAt)
-			assert.Nil(historic.FreeText)
+			assert.Equal(&raw.OriginalValue, historic.FreeText)
 		}
 	}
 }
@@ -490,5 +490,43 @@ func TestPostalAddressReadsRejectUnsupportedStoredSnapshots(t *testing.T) {
 				assert.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestPostalReplacementRequiresCurrentValue(t *testing.T) {
+	srv, wrapped := newIdentityLinkTestServer(t)
+	id := seedAPIPerson(t, wrapped.Store)
+	old, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, StreetAddress: new("Old street"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	require.NoError(t, err)
+	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
+	body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","free_text":"","original_input":{"address_kind":"postal","street_address":"Old street"},"envelope":{"source":"user"}}]}}`, old.Envelope.ID)
+	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
+	assert.Equal(t, http.StatusBadRequest, saved.Code, saved.Body.String())
+	profile, err := wrapped.GetPersonProfileContext(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, profile.Addresses, 1)
+	assert.Equal(t, old.Envelope.ID, profile.Addresses[0].Envelope.ID)
+}
+
+func TestLegacyPostalAssessmentMatchesPublicAddress(t *testing.T) {
+	srv, wrapped := newIdentityLinkTestServer(t)
+	id := seedAPIPerson(t, wrapped.Store)
+	_, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, OriginalValue: `;;12 Example Street;Example City;;;;Room\;3;Floor 2`, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	require.NoError(t, err)
+	for _, path := range []string{personProfilePath(id), personProfilePath(id) + "/history"} {
+		response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		var profile struct {
+			Addresses []store.PersonAddress `json:"addresses"`
+		}
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &profile))
+		require.Len(t, profile.Addresses, 1)
+		address := profile.Addresses[0]
+		require.NotNil(t, address.StreetAddress)
+		require.NotNil(t, address.Assessment)
+		assert.Equal(t, "12 Example Street", *address.StreetAddress)
+		assert.Equal(t, "12 Example Street", address.Assessment.Proposed.StreetAddress)
+		assert.NotContains(t, address.Assessment.ReasonCodes, "address_incomplete")
+		assert.Equal(t, []string{"Room;3", "Floor 2"}, address.Assessment.ProposedExtendedParts)
 	}
 }
