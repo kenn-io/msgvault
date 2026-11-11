@@ -45,6 +45,13 @@ Daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,
 tools appear only with `--allow-calendar-writes`; HTTP also requires
 `--http-allow-writes` and protocol `2026-07-28` or newer.
 
+All seven calendar tools advertise `openWorldHint=true` because availability
+and mutations contact Google Calendar. Updating, deleting, moving, or responding
+to an existing event advertises `destructiveHint=true`; creating an event and
+reading availability advertise `false`. Hints describe possible effects, so a
+dry run keeps the tool's mutation hints. Calendar consent and per-call approval
+still apply.
+
 For a non-dry-run mutation, the MCP server first asks the daemon to build and
 authorize a plan. It then presents that plan through client elicitation and
 requires explicit approval before writing. The server rechecks the plan before
