@@ -59,8 +59,7 @@ func TestSourceSetupFailuresAreRecorded(t *testing.T) {
 		run        func(context.Context, *store.Store) error
 	}{
 		{"youtube", "https://www.youtube.com/channel/UCfixture", "FIXTURE_YOUTUBE_CLIENT", func(ctx context.Context, st *store.Store) error {
-			t.Setenv("FIXTURE_YOUTUBE_CLIENT", "")
-			return runConfiguredYouTubeSync(ctx, st, config.YouTubeSource{Identifier: "work", ChannelID: "UCfixture", ClientIDEnv: "FIXTURE_YOUTUBE_CLIENT"})
+			return runConfiguredYouTubeSync(ctx, st, config.YouTubeSource{Identifier: "work", ChannelID: "UCfixture", ClientIDEnv: "FIXTURE_YOUTUBE_CLIENT", ClientSecretEnv: "FIXTURE_YOUTUBE_SECRET", TokenEnv: "FIXTURE_YOUTUBE_REFRESH"})
 		}},
 		{"granola", "work", "has no api_key", func(ctx context.Context, st *store.Store) error {
 			return runConfiguredGranolaSync(ctx, st, config.GranolaSource{Identifier: "work"})
@@ -85,6 +84,11 @@ func TestSourceSetupFailuresAreRecorded(t *testing.T) {
 		}},
 	} {
 		t.Run(tt.sourceType, func(t *testing.T) {
+			if tt.sourceType == "youtube" {
+				t.Setenv("FIXTURE_YOUTUBE_CLIENT", "")
+				t.Setenv("FIXTURE_YOUTUBE_SECRET", "fixture")
+				t.Setenv("FIXTURE_YOUTUBE_REFRESH", "fixture")
+			}
 			assert := assert.New(t)
 			require := require.New(t)
 			st := storetest.New(t)
