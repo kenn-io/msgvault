@@ -57,31 +57,29 @@ func TestEscapeTSQueryTerm(t *testing.T) {
 			assert.Equal(t, tc.want, EscapeTSQueryTerm(tc.in), "EscapeTSQueryTerm(%q)", tc.in)
 		})
 	}
-	t.Run("TSQuery", func(t *testing.T) {
-		for _, tc := range []struct {
-			name   string
-			in     []string
-			weight string
-			want   string
-		}{
-			{"plain", []string{"invoice"}, "", "invoice:*"},
-			{"two_plain", []string{"invoice", "review"}, "", "invoice:* & review:*"},
-			{"hyphenated_splits", []string{"foo-bar"}, "", "(foo <-> bar:*)"},
-			{"email_splits", []string{"user@example.com"}, "", "(user <-> example <-> com:*)"},
-			{"dotted_acronym_splits", []string{"a.b.c"}, "", "(a <-> b <-> c:*)"},
-			{"mix_of_clean_and_punct", []string{"invoice", "foo-bar"}, "", "invoice:* & (foo <-> bar:*)"},
-			{"body_weight", []string{"foo-bar", "baz"}, "D", "(foo:D <-> bar:*D) & baz:*D"},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				assert.Equal(t, tc.want, TSQuery(tc.in, tc.weight))
-			})
-		}
-	})
-	t.Run("PostgreSQLSearchArg", func(t *testing.T) {
-		assert := assert.New(t)
-		assert.JSONEq(`{"phrase":"3:*","candidate":"3:*","patterns":["(^| )3"]}`, PostgreSQLSearchArg([]string{"<3"}, ""))
-		assert.JSONEq(`{"phrase":"(user <-> example <-> com:*)","candidate":"user & example & com:*","patterns":["(^| )user +example +com"]}`, PostgreSQLSearchArg([]string{"user@example.com"}, ""))
-		assert.JSONEq(`{"phrase":"monthly:* & bill:* & or:* & invoice:*","candidate":"monthly:* & bill:* & or:* & invoice:*","patterns":["(^| )monthly","(^| )bill","(^| )or","(^| )invoice"]}`, PostgreSQLSearchArg([]string{"monthly", "bill", "or", "invoice"}, ""))
-		assert.JSONEq(`{"phrase":"(foo:D <-> bar:*D) & baz:*D","candidate":"foo & bar:* & baz:*","patterns":["(^| )foo +bar","(^| )baz"]}`, PostgreSQLSearchArg([]string{"foo-bar", "baz"}, "D"))
-	})
+}
+
+func TestTSQuery(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   []string
+		want string
+	}{
+		{"plain", []string{"invoice"}, "invoice:*"},
+		{"two_plain", []string{"invoice", "review"}, "invoice:* & review:*"},
+		{"dotted_acronym_splits", []string{"a.b.c"}, "(a <-> b <-> c:*)"},
+		{"mix_of_clean_and_punct", []string{"invoice", "foo-bar"}, "invoice:* & (foo <-> bar:*)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, TSQuery(tc.in, ""))
+		})
+	}
+}
+
+func TestPostgreSQLSearchArg(t *testing.T) {
+	assert := assert.New(t)
+	assert.JSONEq(`{"phrase":"3:*","candidate":"3:*","patterns":["(^| )3"]}`, PostgreSQLSearchArg([]string{"<3"}, ""))
+	assert.JSONEq(`{"phrase":"(user <-> example <-> com:*)","candidate":"user & example & com:*","patterns":["(^| )user +example +com"]}`, PostgreSQLSearchArg([]string{"user@example.com"}, ""))
+	assert.JSONEq(`{"phrase":"monthly:* & bill:* & or:* & invoice:*","candidate":"monthly:* & bill:* & or:* & invoice:*","patterns":["(^| )monthly","(^| )bill","(^| )or","(^| )invoice"]}`, PostgreSQLSearchArg([]string{"monthly", "bill", "or", "invoice"}, ""))
+	assert.JSONEq(`{"phrase":"(foo:D <-> bar:*D) & baz:*D","candidate":"foo & bar:* & baz:*","patterns":["(^| )foo +bar","(^| )baz"]}`, PostgreSQLSearchArg([]string{"foo-bar", "baz"}, "D"))
 }

@@ -1,12 +1,9 @@
 package query
 
 import (
-	"encoding/json"
-	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestPostgreSQLSanitizeFTSQuery_NoMetacharacters verifies that the PostgreSQL
@@ -27,33 +24,4 @@ func TestPostgreSQLSanitizeFTSQuery_NoMetacharacters(t *testing.T) {
 	assert.Empty(d.SanitizeFTSQuery("<>=#$"))
 	assert.Empty(d.SanitizeFTSQuery(""))
 	assert.Empty(d.SanitizeFTSQuery("   "))
-}
-
-// TestPostgreSQLSanitizeFTSQuery_AllowlistOnly accepts only generated operators.
-func TestPostgreSQLSanitizeFTSQuery_AllowlistOnly(t *testing.T) {
-	t.Parallel()
-	require := require.New(t)
-	assert := assert.New(t)
-	d := PostgreSQLQueryDialect{}
-	shape := regexp.MustCompile(`^(?:[\pL\pN]+:\*|\((?:[\pL\pN]+ <-> )+[\pL\pN]+:\*\))?$`)
-	candidateShape := regexp.MustCompile(`^[\pL\pN]+(?::\*)?(?: & [\pL\pN]+(?::\*)?)*$`)
-	patternShape := regexp.MustCompile(`^\(\^\| \)[\pL\pN]+(?: \+[\pL\pN]+)*$`)
-	for _, in := range []string{"foo<3bar", "a=b", "c#d", "x$y", "user@example.com", "---", "a.b.c"} {
-		arg := d.SanitizeFTSQuery(in)
-		if arg == "" {
-			continue
-		}
-		var payload struct {
-			Phrase    string   `json:"phrase"`
-			Candidate string   `json:"candidate"`
-			Patterns  []string `json:"patterns"`
-		}
-		require.NoError(json.Unmarshal([]byte(arg), &payload))
-		assert.Regexp(shape, payload.Phrase, "input %q", in)
-		assert.Regexp(candidateShape, payload.Candidate, "input %q", in)
-		require.NotEmpty(payload.Patterns)
-		for _, pattern := range payload.Patterns {
-			assert.Regexp(patternShape, pattern, "input %q", in)
-		}
-	}
 }

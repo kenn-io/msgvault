@@ -4,21 +4,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"go.kenn.io/msgvault/internal/sqldialect"
 )
-
-func TestPostgreSQLBuildFTSTerm(t *testing.T) {
-	t.Parallel()
-	expr, arg := (PostgreSQLQueryDialect{}).BuildFTSTerm([]string{"monthly", "bill", "or", "invoice"})
-	assert.Contains(t, expr, "indexed.search_fts_fields")
-	assert.Contains(t, arg, "monthly:*")
-}
 
 // TestSQLiteBuildFTSTerm asserts the SQLite dialect renders a
 // dialect-neutral term slice into an FTS5 MATCH argument: each term is
 // double-quote-wrapped with a trailing "*" for prefix matching, embedded
 // double-quotes are doubled (FTS5 escaping that neutralizes operator
 // injection), and stray "*" inside a term is stripped. This is the
-// injection-relevant counterpart to TestPostgreSQLBuildFTSTerm and keeps
+// injection-relevant check that keeps
 // dialect.go's FTS5 escaping (quote-doubling, star-stripping) under
 // direct test now that the hybrid path renders terms per-dialect.
 func TestSQLiteBuildFTSTerm(t *testing.T) {
@@ -58,11 +52,12 @@ func TestSQLiteBuildFTSTerm(t *testing.T) {
 
 func TestBuildFTSBodyTermScopesExactBodyField(t *testing.T) {
 	t.Parallel()
-	t.Run("PostgreSQL weight D", func(t *testing.T) {
-		expr, arg := (PostgreSQLQueryDialect{}).BuildFTSBodyTerm([]string{"foo-bar", "baz"})
-		assert.Contains(t, expr, "indexed.search_fts_fields[5:5]")
-		assert.Contains(t, arg, "foo:D")
-		assert.Contains(t, arg, "bar:*D")
+	t.Run("PostgreSQL", func(t *testing.T) {
+		d := PostgreSQLQueryDialect{}
+		expr, _ := d.BuildFTSTerm([]string{"foo-bar"})
+		assert.Equal(t, sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields"), expr)
+		expr, _ = d.BuildFTSBodyTerm([]string{"foo-bar"})
+		assert.Equal(t, sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields[5:5]"), expr)
 	})
 
 	t.Run("SQLite body column", func(t *testing.T) {

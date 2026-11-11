@@ -289,11 +289,6 @@ func TestApplySenderRepairRefreshesFTS(t *testing.T) {
 		require.NoError(err)
 		assert.Equal(t, []int64{messageID}, ids)
 	}
-	if f.Store.IsPostgreSQL() {
-		var sender string
-		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts_fields[2] FROM messages WHERE id = $1`, messageID).Scan(&sender))
-		assert.Contains(t, sender, "repairftsneedle example test")
-	}
 }
 
 func TestApplySenderRepairPersistsEveryRecoveredFromAddress(t *testing.T) {

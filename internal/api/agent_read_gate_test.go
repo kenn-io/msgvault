@@ -77,9 +77,10 @@ func (s *cancelableBackfillStore) BackfillFTSContext(ctx context.Context, _ func
 }
 
 func TestSearchBackfillStopsOnShutdown(t *testing.T) {
+	contextStore := testutil.NewTestStore(t)
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
-		st := &cancelableBackfillStore{mockStore: &mockStore{needsFTSBackfill: true, needsFTSBackfillQuick: true}, started: make(chan struct{}), release: make(chan struct{})}
+		st := &cancelableBackfillStore{mockStore: &mockStore{needsFTSBackfill: true, needsFTSBackfillQuick: true}, ContextCLIStore: contextStore, started: make(chan struct{}), release: make(chan struct{})}
 		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
 		srv.ensureCLISearchIndexAsync(st, true)
 		synctest.Wait()
@@ -123,7 +124,11 @@ func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
 		require.ErrorIs(<-done, http.ErrServerClosed)
 	})
 	require.NoError(srv.WaitStarted(t.Context()))
-	require.Eventually(func() bool { return srv.ftsIndexComplete.Load() }, 30*time.Second, 10*time.Millisecond)
+	require.Eventually(func() bool {
+		var version int
+		err := st.DB().QueryRowContext(t.Context(), `SELECT indexing_version FROM messages WHERE id = $1`, id).Scan(&version)
+		return err == nil && version == store.CurrentFTSIndexingVersion
+	}, 30*time.Second, 10*time.Millisecond)
 }
 
 func (s *agentReadGateStore) ListSourcesContext(ctx context.Context, kind string) ([]*store.Source, error) {

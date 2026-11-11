@@ -169,7 +169,7 @@ func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
 	check()
 }
 
-func TestPG_BackfillFTS_IndexesLargeMessages(t *testing.T) {
+func TestPG_BackfillFTS_ContinuesAcrossLargeMessagePages(t *testing.T) {
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
 	body := strings.Repeat("filler ", 83000) + "alice@example.com"

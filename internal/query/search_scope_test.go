@@ -466,7 +466,7 @@ func TestSearchMessageBodies_PhraseGrouping(t *testing.T) {
 	assert.Equal(adjacentID, messages.Messages[0].ID, "adjacent phrase hit")
 }
 
-func TestSearchMessageBodies_PostgreSQLSaturatedPhrase(t *testing.T) {
+func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
