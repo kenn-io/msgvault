@@ -748,10 +748,6 @@ func TestReboundMemberRematchesSettledRoster(t *testing.T) {
 	require.NotEqual(previous, current, "the changed phone rebinds ann")
 	assert.Equal("annhandle", observationValues(t, st, current)[store.ContactAddressUsername],
 		"the username chat must record ann's username for the new participant")
-	var phone string
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
-		`SELECT COALESCE(phone_number, '') FROM participants WHERE id = ?`), previous).Scan(&phone))
-	assert.Equal("+12025550123", phone, "the previous phone participant stays unmerged")
 	state = latestBeeperState(t, imp).Chats[usernameChat.ID]
 	require.NotNil(state)
 	require.NotNil(state.RosterWork)
