@@ -32,10 +32,6 @@ const (
 	PermissionGrantManage       Permission = "grant.manage"
 )
 
-type Role string
-
-const RoleAdmin Role = "admin"
-
 // Known capabilities are separate from the subset that grants may carry.
 var permissionDefinitions = map[Permission]bool{
 	PermissionVerificationRead:  true,
@@ -64,8 +60,6 @@ var permissionDefinitions = map[Permission]bool{
 	PermissionArchiveAdmin:      false,
 	PermissionGrantManage:       false,
 }
-
-type PermissionSet map[Permission]struct{}
 
 // KnownPermission accepts only exact names in the closed vocabulary.
 func KnownPermission(name string) (Permission, bool) {

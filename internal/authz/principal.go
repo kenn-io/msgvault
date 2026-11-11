@@ -18,21 +18,10 @@ type SourceRef struct {
 	SenderKeys []string
 }
 
-// Principal is authenticated authority. Has checks capabilities only; callers
-// must also authorize the requested sources and sender identity.
+// Principal identifies an authenticated credential. Authorization remains with
+// the credential-specific admission and resource checks.
 type Principal struct {
 	ID          string
 	Kind        Kind
 	DisplayName string
-	Role        Role
-	Permissions PermissionSet
-}
-
-func (p Principal) Has(permission Permission) bool {
-	_, known := permissionDefinitions[permission]
-	if !known {
-		return false
-	}
-	_, explicit := p.Permissions[permission]
-	return explicit || p.Role == RoleAdmin
 }

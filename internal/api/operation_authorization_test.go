@@ -43,13 +43,19 @@ func TestUnknownOperationRetainsCredentialBoundariesHTTP(t *testing.T) {
 	for _, tc := range []struct {
 		name, key, agent, cookie string
 		status                   int
+		keyless                  bool
 	}{
 		{name: "owner", key: "owner-key", status: http.StatusNoContent},
 		{name: "session", cookie: cookie, status: http.StatusNoContent},
 		{name: "remote", key: "remote-key", status: http.StatusForbidden},
 		{name: "grant", agent: token, status: http.StatusUnauthorized},
+		{name: "keyless", keyless: true, status: http.StatusNoContent},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.keyless {
+				srv.cfg.Server.APIKey = ""
+				defer func() { srv.cfg.Server.APIKey = "owner-key" }()
+			}
 			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/policy-test/unclassifiedTestOperation", nil)
 			if tc.key != "" {
 				r.Header.Set("X-Api-Key", tc.key)
@@ -67,7 +73,7 @@ func TestUnknownOperationRetainsCredentialBoundariesHTTP(t *testing.T) {
 	}
 }
 
-func TestPrivilegedPredicatesRequirePrincipalAndOwnerMode(t *testing.T) {
+func TestPrivilegedPredicatesRequireOwnerMode(t *testing.T) {
 	t.Parallel()
 	srv := &Server{}
 	for _, tc := range []struct {
@@ -76,12 +82,12 @@ func TestPrivilegedPredicatesRequirePrincipalAndOwnerMode(t *testing.T) {
 		principal         authz.Principal
 		privileged, owner bool
 	}{
-		{"key", AuthModeAPIKey, authz.Principal{Kind: authz.KindOwner, Role: authz.RoleAdmin}, true, true},
-		{"session", AuthModeSession, authz.Principal{Kind: authz.KindOwner, Role: authz.RoleAdmin}, true, false},
-		{"loopback", AuthModeLoopback, authz.Principal{Kind: authz.KindLoopback, Role: authz.RoleAdmin}, true, false},
-		{"caller", AuthModeCaller, authz.Principal{Kind: authz.KindCaller, Role: authz.RoleAdmin}, true, true},
-		{"remote", AuthModeRemoteClient, authz.Principal{Kind: authz.KindRemoteClient, Permissions: authz.PermissionSet{authz.PermissionCLIRead: {}}}, false, false},
-		{"grant", AuthModeDelegated, authz.Principal{Kind: authz.KindGrant, Permissions: authz.PermissionSet{authz.PermissionMessageRead: {}}}, false, false},
+		{"key", AuthModeAPIKey, authz.Principal{Kind: authz.KindOwner}, true, true},
+		{"session", AuthModeSession, authz.Principal{Kind: authz.KindOwner}, true, false},
+		{"loopback", AuthModeLoopback, authz.Principal{Kind: authz.KindLoopback}, true, false},
+		{"caller", AuthModeCaller, authz.Principal{Kind: authz.KindCaller}, true, true},
+		{"remote", AuthModeRemoteClient, authz.Principal{Kind: authz.KindRemoteClient}, false, false},
+		{"grant", AuthModeDelegated, authz.Principal{Kind: authz.KindGrant}, false, false},
 		{"unauthenticated", AuthModeRequired, authz.Principal{}, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

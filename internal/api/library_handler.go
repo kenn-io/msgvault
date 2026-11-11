@@ -54,7 +54,7 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 		security, _ := securityFromRequest(r)
 		security.auth = requestAuthentication{
 			Mode:      AuthModeCaller,
-			Principal: authz.Principal{ID: "caller", Kind: authz.KindCaller, Role: authz.RoleAdmin},
+			Principal: authz.Principal{ID: "caller", Kind: authz.KindCaller},
 		}
 		*r = *r.WithContext(context.WithValue(r.Context(), requestSecurityContextKey{}, security))
 		// Select timeout policy after admission. Keep Huma's request pointer in

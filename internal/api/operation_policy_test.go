@@ -40,7 +40,7 @@ func TestEveryAPIV1OperationIsClassified(t *testing.T) {
 		if !assert.True(ok, "unclassified %s %s %s", id, op.Method, op.Path) {
 			continue
 		}
-		_, known := authz.KnownPermission(string(policy.Permission))
+		_, known := authz.KnownPermission(string(policy.Classification))
 		assert.True(known, "%s", id)
 	}
 	for id := range operationPolicies {
@@ -55,7 +55,7 @@ func TestOperationPolicyDefaultsDenyCapabilities(t *testing.T) {
 	assert := assert.New(t)
 	for _, id := range []string{"", "unknown", "getPersonProfile.extra", "GETMESSAGE", "*"} {
 		policy := operationPolicy(id)
-		assert.Equal(authz.PermissionArchiveAdmin, policy.Permission)
+		assert.Equal(authz.PermissionArchiveAdmin, policy.Classification)
 		assert.Empty(policy.AgentReadPermission)
 		assert.False(policy.Delegated)
 		assert.False(policy.RemoteRead)

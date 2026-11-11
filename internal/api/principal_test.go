@@ -73,29 +73,14 @@ func TestAuthenticationPrincipals(t *testing.T) {
 				id += grantID
 			}
 			assert.Equal(id, auth.Principal.ID)
-			switch tc.mode {
-			case AuthModeAPIKey, AuthModeSession:
-				assert.Equal(authz.RoleAdmin, auth.Principal.Role)
-				assert.True(auth.Principal.Has(authz.PermissionArchiveAdmin))
-			case AuthModeRemoteClient:
-				assert.Empty(auth.Principal.Role)
-				assert.Equal(authz.PermissionSet{authz.PermissionCLIRead: {}}, auth.Principal.Permissions)
-				assert.False(auth.Principal.Has(authz.PermissionSystemRead))
-			case AuthModeDelegated:
-				assert.Empty(auth.Principal.Role)
+			if tc.mode == AuthModeDelegated {
 				assert.Equal("test reader", auth.Principal.DisplayName)
-				assert.Equal(authz.PermissionSet{authz.PermissionMessageRead: {}}, auth.Principal.Permissions)
-				assert.False(auth.Principal.Has(authz.PermissionSearchRead))
-			case AuthModeRequired:
-				assert.Equal(authz.Principal{}, auth.Principal)
-			case AuthModeLoopback, AuthModeCaller:
-				require.Fail("unexpected authentication mode in direct credential test", "%s", tc.mode)
 			}
 		})
 	}
 }
 
-func TestRemoteWriteAndKeylessPrincipals(t *testing.T) {
+func TestRemoteAndKeylessPrincipals(t *testing.T) {
 	assert := assert.New(t)
 	t.Parallel()
 	cfg := &config.Config{Server: config.ServerConfig{APIKey: "owner-key", RemoteClients: []config.RemoteClientConfig{{ClientID: "writer", APIKey: "remote-key", CollectionsWrite: true}}}}
@@ -103,8 +88,8 @@ func TestRemoteWriteAndKeylessPrincipals(t *testing.T) {
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 	r.Header.Set("X-Api-Key", "remote-key")
 	auth := srv.classifyAPIRequestDirect(r)
-	assert.Equal(authz.PermissionSet{authz.PermissionCLIRead: {}, authz.PermissionCollectionsWrite: {}}, auth.Principal.Permissions)
-	assert.False(auth.Principal.Has(authz.PermissionArchiveAdmin))
+	assert.Equal(authz.KindRemoteClient, auth.Principal.Kind)
+	assert.Equal("remote:writer", auth.Principal.ID)
 	cfg.Server.APIKey = ""
 	for _, address := range []string{"127.0.0.1:1234", "192.0.2.1:1234"} {
 		r.RemoteAddr = address
@@ -112,7 +97,6 @@ func TestRemoteWriteAndKeylessPrincipals(t *testing.T) {
 		assert.Equal(AuthModeLoopback, auth.Mode)
 		assert.Equal("loopback", auth.Principal.ID)
 		assert.Equal(authz.KindLoopback, auth.Principal.Kind)
-		assert.True(auth.Principal.Has(authz.PermissionArchiveAdmin))
 	}
 }
 
@@ -137,5 +121,4 @@ func TestLibraryCallerPrincipal(t *testing.T) {
 	assert.Equal(AuthModeCaller, auth.Mode)
 	assert.Equal("caller", auth.Principal.ID)
 	assert.Equal(authz.KindCaller, auth.Principal.Kind)
-	assert.True(auth.Principal.Has(authz.PermissionArchiveAdmin))
 }

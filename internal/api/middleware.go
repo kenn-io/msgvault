@@ -253,15 +253,10 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 			return requestAuthentication{Mode: AuthModeRequired}
 		}
 		if grant, ok := s.agentGrants.Lookup(agentVal); ok {
-			permissions := make(authz.PermissionSet, len(grant.Permissions))
-			for _, permission := range grant.Permissions {
-				permissions[permission] = struct{}{}
-			}
 			return requestAuthentication{
 				Mode: AuthModeDelegated, Grant: &grant,
 				Principal: authz.Principal{
 					ID: "grant:" + grant.ID, Kind: authz.KindGrant, DisplayName: grant.Label,
-					Permissions: permissions,
 				},
 			}
 		}
@@ -274,7 +269,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	if s.cfg.Server.AuthenticationKey() == "" {
 		return requestAuthentication{
 			Mode:                  AuthModeLoopback,
-			Principal:             authz.Principal{ID: "loopback", Kind: authz.KindLoopback, Role: authz.RoleAdmin},
+			Principal:             authz.Principal{ID: "loopback", Kind: authz.KindLoopback},
 			trustedForCLIDuration: isLoopbackRequest(r),
 		}
 	}
@@ -292,19 +287,15 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.AuthenticationKey()) {
 		return requestAuthentication{
 			Mode:                  AuthModeAPIKey,
-			Principal:             authz.Principal{ID: "owner", Kind: authz.KindOwner, Role: authz.RoleAdmin},
+			Principal:             authz.Principal{ID: "owner", Kind: authz.KindOwner},
 			trustedForCLIDuration: true,
 		}
 	}
 	for i := range s.cfg.Server.RemoteClients {
 		if client := &s.cfg.Server.RemoteClients[i]; client.APIKey != "" && constantTimeAPIKeyEqual(authHeader, client.APIKey) {
-			permissions := authz.PermissionSet{authz.PermissionCLIRead: {}}
-			if client.CollectionsWrite {
-				permissions[authz.PermissionCollectionsWrite] = struct{}{}
-			}
 			return requestAuthentication{
 				Mode:                  AuthModeRemoteClient,
-				Principal:             authz.Principal{ID: "remote:" + client.ClientID, Kind: authz.KindRemoteClient, DisplayName: client.ClientID, Permissions: permissions},
+				Principal:             authz.Principal{ID: "remote:" + client.ClientID, Kind: authz.KindRemoteClient, DisplayName: client.ClientID},
 				RemoteClient:          client,
 				trustedForCLIDuration: true,
 			}
@@ -315,7 +306,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 		if session, ok := s.sessions.lookup(cookie.Value); ok {
 			return requestAuthentication{
 				Mode:      AuthModeSession,
-				Principal: authz.Principal{ID: "owner", Kind: authz.KindOwner, Role: authz.RoleAdmin},
+				Principal: authz.Principal{ID: "owner", Kind: authz.KindOwner},
 				SessionID: cookie.Value,
 				Session:   session,
 			}
@@ -358,7 +349,12 @@ func ownerCredentialPresented(r *http.Request) bool {
 }
 
 func (s *Server) apiRequestAuthorized(r *http.Request) bool {
-	return s.requestAuthentication(r).Principal.Has(authz.PermissionArchiveAdmin)
+	switch s.requestAuthentication(r).Mode {
+	case AuthModeLoopback, AuthModeAPIKey, AuthModeSession, AuthModeCaller:
+		return true
+	default:
+		return false
+	}
 }
 
 // requestGateEligible reports whether the request should participate in the

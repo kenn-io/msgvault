@@ -6,17 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestExplicitAuthorityIsNotARole(t *testing.T) {
-	assert := assert.New(t)
-	t.Parallel()
-	p := Principal{Permissions: PermissionSet{PermissionMessageRead: {}}}
-	assert.True(p.Has(PermissionMessageRead))
-	assert.False(p.Has(PermissionSearchRead))
-	assert.False(p.Has(PermissionArchiveAdmin))
-	assert.False((Principal{Role: RoleAdmin}).Has("*"))
-	assert.False((Principal{Permissions: PermissionSet{"unknown": {}}}).Has("unknown"))
-}
-
 func FuzzPermissionVocabulary(f *testing.F) {
 	grantable := map[string]bool{
 		"verification.read": true, "search.read": true, "message.read": true,
@@ -48,6 +37,5 @@ func FuzzPermissionVocabulary(f *testing.F) {
 			assert.Empty(t, permission)
 		}
 		assert.Equal(t, grantable[value], Grantable(Permission(value)))
-		assert.Equal(t, wantKnown, (Principal{Role: RoleAdmin}).Has(Permission(value)))
 	})
 }
