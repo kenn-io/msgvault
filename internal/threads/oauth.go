@@ -31,15 +31,14 @@ type OAuthClientOptions struct {
 // OAuthRequest retains authorization material only in opaque, pointer-backed
 // storage. Neither fmt (including value %p) nor JSON exposes code or app secret.
 type OAuthRequest struct {
-	AppID          string
-	RedirectURI    string
-	RequiredScopes []string
-	secret         *oauthSecret
+	AppID       string
+	RedirectURI string
+	secret      *oauthSecret
 }
 type oauthSecret struct{ code, appSecret string }
 
-func NewOAuthRequest(appID, redirectURI, code, appSecret string, requiredScopes []string) OAuthRequest {
-	return OAuthRequest{AppID: appID, RedirectURI: redirectURI, RequiredScopes: append([]string(nil), requiredScopes...), secret: &oauthSecret{code, appSecret}}
+func NewOAuthRequest(appID, redirectURI, code, appSecret string) OAuthRequest {
+	return OAuthRequest{AppID: appID, RedirectURI: redirectURI, secret: &oauthSecret{code, appSecret}}
 }
 func (r OAuthRequest) Format(s fmt.State, _ rune) {
 	_, _ = io.WriteString(s, "Threads OAuth request [redacted]")
@@ -158,7 +157,6 @@ func ExchangeCredential(ctx context.Context, opts OAuthClientOptions, req OAuthR
 	if _, err := oauthCallbackURI(req.RedirectURI); err != nil {
 		return TokenRecord{}, err
 	}
-	required := append(append([]string(nil), requiredReadScopes...), req.RequiredScopes...)
 	c, err := newOAuthHTTP(opts)
 	if err != nil {
 		return TokenRecord{}, err
@@ -195,7 +193,7 @@ func ExchangeCredential(ctx context.Context, opts OAuthClientOptions, req OAuthR
 		}
 		// The documented debug response omits app_id. Same-app inspection with
 		// the app credential proves the app binding without persisting its secret.
-		record, err := c.verify(ctx, long.AccessToken, "TH|"+req.AppID+"|"+req.secret.appSecret, req.AppID, string(owner.ID), required)
+		record, err := c.verify(ctx, long.AccessToken, "TH|"+req.AppID+"|"+req.secret.appSecret, req.AppID, string(owner.ID), requiredReadScopes)
 		if err != nil {
 			return TokenRecord{}, err
 		}
@@ -346,7 +344,7 @@ func (c *oauthHTTP) verify(ctx context.Context, token, inspector, appID, ownerID
 	}
 	d := debug.Data
 	now := c.now()
-	if !d.Valid || (d.AppID != nil && string(*d.AppID) != appID) || string(d.UserID) != ownerID || !tokenValidID(ownerID) || d.IssuedAt <= 0 || time.Unix(d.IssuedAt, 0).After(now) || d.ExpiresAt <= now.Unix() || d.DataExpiresAt <= now.Unix() {
+	if !d.Valid || (d.AppID != nil && string(*d.AppID) != appID) || string(d.UserID) != ownerID || !tokenValidID(ownerID) || d.IssuedAt <= 0 || d.ExpiresAt <= now.Unix() || d.DataExpiresAt <= now.Unix() {
 		return TokenRecord{}, ErrReauthorizationRequired
 	}
 	for _, scope := range required {

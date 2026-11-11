@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -253,6 +255,42 @@ func TestAddThreadsRegistrationFailureRecovery(t *testing.T) {
 			sources, err := st.ListSourcesContext(t.Context(), sourceTypeThreads)
 			require.NoError(err)
 			assert.Len(sources, 1)
+		})
+	}
+}
+
+func TestAddThreadsPublishedTokenFailureExplainsRecovery(t *testing.T) {
+	for _, reconnect := range []bool{false, true} {
+		t.Run(strconv.FormatBool(reconnect), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			provider := newThreadsConnectFixture(t, "20")
+			deps := provider.deps(st, t.TempDir())
+			if reconnect {
+				_, err := executeAddThreadsFixture(t, deps, "123")
+				require.NoError(err)
+			}
+			deps.saveToken = func(ctx context.Context, manager *threads.TokenManager, record threads.TokenRecord) error {
+				if err := manager.Save(ctx, record); err != nil {
+					return err
+				}
+				return fmt.Errorf("private/path secret: %w", atomicfile.ErrPublished)
+			}
+			_, err := executeAddThreadsFixture(t, deps, "123")
+			require.ErrorIs(err, atomicfile.ErrPublished)
+			assert.Contains(err.Error(), "threads:123:20")
+			assert.Contains(err.Error(), "rerun add-threads")
+			assert.NotContains(err.Error(), "private/path")
+			assert.NotContains(err.Error(), "secret")
+			_, err = deps.tokenManager().Load("123", "20")
+			require.NoError(err)
+			_, err = st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
+			if reconnect {
+				require.NoError(err)
+			} else {
+				require.ErrorIs(err, store.ErrSourceNotFound)
+			}
 		})
 	}
 }

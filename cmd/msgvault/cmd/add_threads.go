@@ -14,6 +14,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/threads"
@@ -182,16 +183,28 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			}
 			_, priorErr := manager.Load(record.AppID, record.OwnerID)
 			if priorErr != nil && !errors.Is(priorErr, threads.ErrTokenNotFound) {
-				return priorErr
+				return fmt.Errorf("Threads token for %s could not be read; rerun add-threads, or inspect its token file using the add-threads documentation", identifier)
 			}
-			if err := manager.Save(ctx, record); err != nil {
-				return err
+			save := deps.saveToken
+			if save == nil {
+				save = func(ctx context.Context, manager *threads.TokenManager, record threads.TokenRecord) error {
+					return manager.Save(ctx, record)
+				}
 			}
-			saved, err := manager.Load(record.AppID, record.OwnerID)
-			if err != nil {
-				return err
+			if err := save(ctx, manager, record); err != nil {
+				if errors.Is(err, atomicfile.ErrPublished) {
+					return fmt.Errorf("Threads token may have been saved for %s; rerun add-threads, or locate its token file using the add-threads documentation: %w", identifier, atomicfile.ErrPublished)
+				}
+				message := fmt.Sprintf("Threads token for %s could not be saved; rerun add-threads, or inspect its token file using the add-threads documentation", identifier)
+				if errors.Is(err, context.Canceled) {
+					return fmt.Errorf("%s: %w", message, context.Canceled)
+				}
+				if errors.Is(err, context.DeadlineExceeded) {
+					return fmt.Errorf("%s: %w", message, context.DeadlineExceeded)
+				}
+				return errors.New(message)
 			}
-			source, err := deps.registerSource(ctx, st, saved)
+			source, err := deps.registerSource(ctx, st, record)
 			if err != nil {
 				if current == nil && errors.Is(priorErr, threads.ErrTokenNotFound) {
 					// Cleanup must complete under the lifecycle lock even if the request was cancelled.
@@ -229,7 +242,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 		})
 		return record, retErr
 	}
-	_, err = threads.ExchangeCredential(ctx, options, threads.NewOAuthRequest(appID, redirectURI, payload.Code, payload.AppSecret, nil))
+	_, err = threads.ExchangeCredential(ctx, options, threads.NewOAuthRequest(appID, redirectURI, payload.Code, payload.AppSecret))
 	return err
 }
 

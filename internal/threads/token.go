@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/fileutil"
 )
 
@@ -247,7 +248,7 @@ func (m *TokenManager) Load(appID, ownerID string) (TokenRecord, error) {
 	if err = json.Unmarshal(data, &stored); err != nil {
 		return TokenRecord{}, errors.New("invalid Threads credential file")
 	}
-	if stored.Version != 0 && stored.Version != tokenFormatVersion {
+	if stored.Version != tokenFormatVersion {
 		return TokenRecord{}, errors.New("unsupported Threads credential format")
 	}
 	r := TokenRecord(stored.tokenMetadata)
@@ -267,13 +268,22 @@ func (m *TokenManager) Save(ctx context.Context, record TokenRecord) error {
 	if err := validateThreadsToken(record); err != nil {
 		return err
 	}
-	return m.withFileLock(ctx, ".threads-token.lock", func() error {
+	published := false
+	err := m.withFileLock(ctx, ".threads-token.lock", func() error {
 		_, err := m.Load(record.AppID, record.OwnerID)
 		if err != nil && !errors.Is(err, ErrTokenNotFound) {
 			return err
 		}
-		return m.writeToken(record)
+		if err := m.writeToken(record); err != nil {
+			return err
+		}
+		published = true
+		return nil
 	})
+	if err != nil && published {
+		return publishedCredentialError()
+	}
+	return err
 }
 func validateThreadsToken(r TokenRecord) error {
 	if _, err := tokenFilename(r.AppID, r.OwnerID); err != nil {
@@ -316,9 +326,24 @@ func (m *TokenManager) writeToken(r TokenRecord) error {
 		return errors.New("serialize Threads credential")
 	}
 	if err = fileutil.SecureReplaceFile(path, data, 0600); err != nil {
-		return errors.New("persist Threads credential")
+		return credentialWriteError(err)
 	}
-	return m.inspectRoot(false)
+	if err = m.inspectRoot(false); err != nil {
+		return publishedCredentialError()
+	}
+	return nil
+}
+
+// Report only publication state; the underlying filesystem error can contain paths.
+func credentialWriteError(err error) error {
+	if errors.Is(err, atomicfile.ErrPublished) {
+		return publishedCredentialError()
+	}
+	return errors.New("persist Threads credential")
+}
+
+func publishedCredentialError() error {
+	return fmt.Errorf("persist Threads credential: %w", atomicfile.ErrPublished)
 }
 
 func (m *TokenManager) Delete(ctx context.Context, appID, ownerID string) error {

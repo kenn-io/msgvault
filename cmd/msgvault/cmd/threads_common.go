@@ -16,6 +16,7 @@ type threadsCommandDeps struct {
 	bind                 func(context.Context) threadsCommandDeps
 	openStore            func() (*store.Store, func(), error)
 	tokenManager         func() *threads.TokenManager
+	saveToken            func(context.Context, *threads.TokenManager, threads.TokenRecord) error
 	oauthOptions         func() threads.OAuthClientOptions
 	oauthPayload         func() string
 	registerSource       func(context.Context, *store.Store, threads.TokenRecord) (*store.Source, error)

@@ -174,7 +174,7 @@ func (f *oauthFixture) options() OAuthClientOptions {
 	return OAuthClientOptions{HTTPClient: f.server.Client(), OAuthBaseURL: f.server.URL, Now: func() time.Time { return oauthTestNow }}
 }
 func testOAuthRequest() OAuthRequest {
-	return NewOAuthRequest("123", oauthTestCallback, "authorization-code", "app-secret", []string{"threads_basic", "threads_read_replies"})
+	return NewOAuthRequest("123", oauthTestCallback, "authorization-code", "app-secret")
 }
 
 func TestThreadsTokenLifecycleExchange(t *testing.T) {
@@ -202,6 +202,13 @@ func TestThreadsTokenLifecycleExchange(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, f.redirectURI, r.RedirectURI)
 	})
+	t.Run("provider issuance ahead of local clock", func(t *testing.T) {
+		f := newOAuthFixture(t)
+		f.issued = oauthTestNow.Add(2 * time.Second)
+		r, err := ExchangeCredential(t.Context(), f.options(), testOAuthRequest())
+		require.NoError(t, err)
+		assert.Equal(t, f.issued, r.IssuedAt)
+	})
 	t.Run("documented debug response omits app ID", func(t *testing.T) {
 		f := newOAuthFixture(t)
 		f.debugApp = ""
@@ -220,7 +227,7 @@ func TestThreadsTokenLifecycleExchange(t *testing.T) {
 		{"data expired", func(f *oauthFixture) { f.dataExpires = oauthTestNow }},
 		{"token expired", func(f *oauthFixture) { f.expires = oauthTestNow }},
 		{"missing data expiry", func(f *oauthFixture) { f.dataExpires = time.Unix(0, 0) }},
-		{"future issuance", func(f *oauthFixture) { f.issued = oauthTestNow.Add(time.Hour) }},
+		{"missing issuance", func(f *oauthFixture) { f.issued = time.Unix(0, 0) }},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

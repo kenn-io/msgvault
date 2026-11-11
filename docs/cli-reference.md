@@ -804,14 +804,18 @@ reconnect when it expires. Reconnecting with a different app ID creates a
 separate source. Remove the old source explicitly with `remove-account` when
 it is no longer needed.
 
-If account registration fails, retry the connection. When a new token cannot
-be cleaned up and no source exists, the error reports its identifier and the
-owner can remove the token file from the configured tokens directory. Its name
-is `threads_<app-id>_<owner-id>.json`, or `threads_sha256_<digest>.json` for
+If connection or account registration fails, retry the connection. An error
+identifies the account if its token cannot be read or saved, or if a new token
+cannot be cleaned up. Inspect the token file in the configured tokens directory;
+when no source exists, you can remove an unwanted token manually. Its name is `threads_<app-id>_<owner-id>.json`, or `threads_sha256_<digest>.json` for
 long IDs, where the digest is SHA-256 of `threads:<app-id>:<owner-id>`.
-`remove-account` deletes the saved token when a source exists. OAuth handoff
-requires a literal loopback IP for HTTP; remote HTTPS requires an owner API key.
-The handoff does not follow redirects.
+`remove-account` deletes the saved token when a source exists. If cleanup fails
+after source removal, it warns; remove the token file manually using the naming
+rules above. To revoke the app's access, also revoke its authorization in
+Threads. OAuth handoff requires a literal loopback IP for HTTP; remote HTTPS
+requires an owner API key. The handoff does not follow redirects.
+
+---
 
 ## add-discord
 

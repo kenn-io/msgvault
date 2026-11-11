@@ -17,6 +17,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/atomicfile"
 )
 
 const oauthTestSource = "threads:123:9007199254740993123"
@@ -187,7 +188,8 @@ func TestThreadsTokenRejectsNewerFormat(t *testing.T) {
 	require.NotEqual(string(original), legacy)
 	require.NoError(os.WriteFile(path, []byte(legacy), 0600))
 	_, err = manager.Load("123", oauthTestOwner)
-	require.NoError(err)
+	require.ErrorContains(err, "unsupported Threads credential format")
+	require.ErrorContains(manager.Save(t.Context(), testTokenRecord()), "unsupported Threads credential format")
 	newer := strings.Replace(string(original), `"version":1`, `"version":2`, 1)
 	require.NotEqual(string(original), newer)
 	require.NoError(os.WriteFile(path, []byte(newer), 0600))
@@ -197,6 +199,17 @@ func TestThreadsTokenRejectsNewerFormat(t *testing.T) {
 	after, err := os.ReadFile(path)
 	require.NoError(err)
 	assert.Equal(t, newer, string(after))
+}
+
+func TestThreadsCredentialWriteErrorRedactsPublishedCause(t *testing.T) {
+	cause := fmt.Errorf("private/path and secret: %w", atomicfile.ErrPublished)
+	err := credentialWriteError(cause)
+	require.ErrorIs(t, err, atomicfile.ErrPublished)
+	assert.NotContains(t, err.Error(), "private/path")
+	assert.NotContains(t, err.Error(), "secret")
+	ordinary := credentialWriteError(errors.New("private/path and secret"))
+	assert.NotContains(t, ordinary.Error(), "private/path")
+	assert.NotContains(t, ordinary.Error(), "secret")
 }
 
 // lockWaitContext signals after flock has failed to acquire the held lock.
