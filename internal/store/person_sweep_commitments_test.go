@@ -905,3 +905,38 @@ func TestCommitmentReopenSuppressesExistingFutureDatedFulfilment(t *testing.T) {
 	r.Len(items, 1)
 	a.Equal(LoopStateOpen, items[0].State, "the same retained proof cannot undo an owner reopen even with sender clock skew")
 }
+
+func TestCommitmentAgendaAutomaticFilingWaitsForInitialMatchingReplay(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f, commitment, _ := newCommitmentAgendaReceiptFixture(t)
+	st, now := f.store, f.request.CompletedAt
+	candidates, err := st.ListCommitmentAgendaCandidatesContext(ctx, now, 8)
+	r.NoError(err)
+	a.Empty(candidates, "new promises must finish bounded matching before automatic preparation")
+	start, end := int(commitment.Start), int(commitment.End)
+	evidence, err := kataevidence.New(st).Prepare(ctx, []kataevidence.Selector{{Kind: "message", MessageID: commitment.AnchorMessageID, StartRune: &start, EndRune: &end}})
+	r.NoError(err)
+	r.Len(evidence, 1)
+	item, err := st.EnqueueCommitmentAgendaContext(ctx, CommitmentAgendaSuggestion{
+		CommitmentID: commitment.ID, TargetKey: commitment.TargetKey, Quote: commitment.Quote,
+		Request: kataissues.CreateInput{Title: commitment.Summary, List: "commitments", PersonUID: "synthetic-uid", Evidence: []kataevidence.Reference{evidence[0].Reference}},
+	})
+	r.NoError(err)
+	pending, err := st.ListPendingCommitmentAgendaContext(ctx, now, 8)
+	r.NoError(err)
+	a.Empty(pending, "manual preparation must not let scheduled drain bypass matching")
+	marked, err := st.MarkCommitmentAgendaAttemptContext(ctx, item, now, true)
+	r.NoError(err)
+	a.False(marked)
+	marked, err = st.MarkCommitmentAgendaAttemptContext(ctx, item, now, false)
+	r.NoError(err)
+	a.True(marked, "explicit manual filing remains available")
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	f = nextCommitmentTestAttempt(t, f, "-complete-matching")
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	pending, err = st.ListPendingCommitmentAgendaContext(ctx, now, 8)
+	r.NoError(err)
+	a.Len(pending, 1, "the existing receipt becomes eligible once bounded matching completes")
+}

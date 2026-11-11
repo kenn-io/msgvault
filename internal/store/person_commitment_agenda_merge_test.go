@@ -132,8 +132,12 @@ func insertAgendaMergeFixture(t *testing.T, st *Store, personID, messageID int64
 }
 
 func TestCommitmentAgendaReattachesExactPersonMergeCitation(t *testing.T) {
-	for _, requote := range []bool{false, true} {
-		t.Run(map[bool]string{false: "exact", true: "requote"}[requote], func(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		requote, collision bool
+	}{{"exact", false, false}, {"requote", true, false}, {"exact_collision", false, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			requote := tc.requote
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
 			f := newPersonSweepApplyFixture(t, "agenda-reattach", false)
 			st := f.store
@@ -152,6 +156,9 @@ func TestCommitmentAgendaReattachesExactPersonMergeCitation(t *testing.T) {
 			owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
 			r.NoError(err)
 			r.NoError(st.ReplaceConversationParticipants(conversationID, []ConversationParticipantRef{{ParticipantID: owner, Role: "member"}, {ParticipantID: participant, Role: "member"}}))
+			if tc.collision {
+				insertAgendaMergeFixture(t, st, f.personID, messageID, "unattempted-survivor", false, false)
+			}
 			id := insertAgendaMergeFixture(t, st, absorbed.ID, messageID, "frozen-before-merge", true, false)
 			frozen, err := st.GetCommitmentAgendaContext(ctx, id)
 			r.NoError(err)
