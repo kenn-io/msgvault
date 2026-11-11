@@ -123,10 +123,9 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	loopWritesFlag := mcpCmd.Flags().Lookup("allow-loop-writes")
 	require.NotNil(loopWritesFlag)
 	require.NoError(loopWritesFlag.Value.Set("true"))
-	requirements := require.New(t)
 	providerFlag := mcpCmd.Flags().Lookup("allow-provider-writes")
-	requirements.NotNil(providerFlag)
-	requirements.NoError(providerFlag.Value.Set("true"))
+	require.NotNil(providerFlag)
+	require.NoError(providerFlag.Value.Set("true"))
 	mcpAllowSourceWrites = false
 	mcpAllowProfileWrites = true
 	mcpAllowIdentityDecisions = true
