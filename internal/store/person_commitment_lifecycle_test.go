@@ -274,3 +274,40 @@ func TestCommitmentDecisionSurvivesDuplicateMergeUndo(t *testing.T) {
 		})
 	}
 }
+
+func TestCommitmentMergeDoesNotCloseDifferentSurvivorPromise(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-different-survivor", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	const original, replacement = "I will send the draft.", "I will book the venue."
+	survivor := persist("survivor", replacement, -time.Hour)
+	absorbed := persist("absorbed", original, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
+		AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+	}, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 2)
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, absorbed), Direction: peoplesweep.CommitmentOwedTo,
+			Quote: original, Summary: "Send draft", End: int64(len(original))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	}))
+	r.NoError(err)
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+	r.NoError(err)
+	r.Len(items, 1)
+	_, err = st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, f.request.CompletedAt)
+	r.NoError(err)
+	_, err = st.MergeDuplicates(ctx, survivor, []int64{absorbed}, "commitment-different-survivor")
+	r.NoError(err)
+	f = nextCommitmentTestAttempt(t, f, "-survivor")
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+	r.NoError(err)
+	r.Len(items, 1)
+	a.Equal(replacement, items[0].Quote)
+	a.Equal(LoopStateOpen, items[0].State, "a different promise at overlapping coordinates does not inherit done")
+}
