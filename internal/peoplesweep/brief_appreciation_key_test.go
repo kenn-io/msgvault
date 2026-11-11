@@ -9,17 +9,19 @@ import (
 )
 
 func TestAppreciationContributionKey(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	key, err := AppreciationContributionKey("chat", "account", "message")
-	require.NoError(t, err)
-	assert.Regexp(t, `^[0-9a-f]{64}$`, key)
+	require.NoError(err)
+	assert.Regexp(`^[0-9a-f]{64}$`, key)
 	for _, parts := range [][3]string{{"chat2", "account", "message"}, {"chat", "account2", "message"}, {"chat", "account", "message2"}} {
 		other, err := AppreciationContributionKey(parts[0], parts[1], parts[2])
-		require.NoError(t, err)
-		assert.NotEqual(t, key, other)
+		require.NoError(err)
+		assert.NotEqual(key, other)
 	}
 	for _, parts := range [][3]string{{"", "a", "b"}, {"a", "", "b"}, {"a", "b", ""}, {"a", "b", "\xff"}} {
 		_, err := AppreciationContributionKey(parts[0], parts[1], parts[2])
-		assert.Error(t, err)
+		assert.Error(err)
 	}
 }
 
@@ -38,29 +40,33 @@ func TestAppreciationContributionKeyV1Vectors(t *testing.T) {
 }
 
 func TestAppreciationKeyFieldBoundaries(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	a, err := AppreciationContributionKey("ab", "c", "m")
-	require.NoError(t, err)
+	require.NoError(err)
 	b, err := AppreciationContributionKey("a", "bc", "m")
-	require.NoError(t, err)
-	assert.NotEqual(t, a, b)
+	require.NoError(err)
+	assert.NotEqual(a, b)
 	// NUL and non-ASCII coordinates remain distinct, valid identity data.
 	c, err := AppreciationContributionKey("chat", "a\x00b", "世界")
-	require.NoError(t, err)
+	require.NoError(err)
 	d, err := AppreciationContributionKey("chat", "ab", "世界")
-	require.NoError(t, err)
-	assert.NotEqual(t, c, d)
+	require.NoError(err)
+	assert.NotEqual(c, d)
 }
 
 func TestAppreciationKeyIdentityProperty(t *testing.T) {
 	hegel.Test(t, func(ht *hegel.T) {
+		require := require.New(ht)
+		assert := assert.New(ht)
 		value := hegel.Draw(ht, hegel.Text())
 		a, err := AppreciationContributionKey("chat", "account", "x"+value)
-		require.NoError(ht, err)
+		require.NoError(err)
 		b, err := AppreciationContributionKey("chat", "account", "x"+value)
-		require.NoError(ht, err)
-		assert.Equal(ht, a, b)
+		require.NoError(err)
+		assert.Equal(a, b)
 		c, err := AppreciationContributionKey("chat", "account", "x"+value+"!")
-		require.NoError(ht, err)
-		assert.NotEqual(ht, a, c)
+		require.NoError(err)
+		assert.NotEqual(a, c)
 	}, hegel.WithTestCases(100), hegel.WithDatabase(""))
 }
