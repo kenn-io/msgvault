@@ -144,12 +144,12 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 	all, err := named.GetCardDAVConnectionStatus(t.Context(), nil)
 	require.NoError(err)
 	assert.Nil(all.Account)
-	// Both connections are disabled; aggregate sync is a no-op, while selecting
-	// work reaches its unavailable runtime instead of silently syncing all.
+	// Neither disabled connection has a sync runtime; aggregate sync has no
+	// eligible connections and the named sync also returns unavailable.
 	_, err = named.SyncCardDAVConnection(t.Context(), false, nil)
-	require.NoError(err)
+	require.ErrorContains(err, "API error (503)")
 	_, err = named.SyncCardDAVConnection(t.Context(), false, new("work"))
-	require.Error(err)
+	require.ErrorContains(err, "API error (503)")
 	for i := range caps.Routes {
 		if caps.Routes[i].OperationID == "syncCardDAV" {
 			caps.Routes[i].RequestProperties = slices.DeleteFunc(caps.Routes[i].RequestProperties, func(s string) bool { return s == "connection" })
