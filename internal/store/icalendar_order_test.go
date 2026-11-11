@@ -86,3 +86,22 @@ func TestICalendarCancelledDetailsStamp(t *testing.T) {
 	assertions.Equal("Latest", row.Subject)
 	assertions.Equal("cancelled", row.Event.Status)
 }
+
+func TestICalendarSparseCancellationKeepsDetails(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	for _, fields := range []string{
+		"SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Cancelled meeting",
+		"SEQUENCE:2",
+	} {
+		_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", fields))
+		requirements.NoError(err)
+	}
+	ids := emailEvents(t, st, source)
+	requirements.Len(ids, 1)
+	row := calendarRows(t, st, ids[0])[0]
+	requirements.Equal("Cancelled meeting", row.Subject)
+	requirements.NotNil(row.Event.Start)
+	requirements.Equal("2027-03-02T12:00:00Z", row.Event.Start.Format(time.RFC3339))
+}
