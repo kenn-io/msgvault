@@ -8,31 +8,32 @@ import (
 )
 
 func TestAttributeCatalogAvailabilityAndIndependentWriteGate(t *testing.T) {
+	assertions := assert.New(t)
 	names := []string{"list_person_attributes", "set_person_attribute", "clear_person_attribute", "list_attribute_definitions", "get_attribute_definition", "create_attribute_definition", "patch_attribute_definition", "delete_attribute_definition"}
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: names}
 	read := toolsByName(t, rawListTools(t, opts, true))
 	for _, name := range []string{"list_person_attributes", "list_attribute_definitions", "get_attribute_definition"} {
-		assert.Contains(t, read, name)
+		assertions.Contains(read, name)
 	}
 	for _, name := range []string{"set_person_attribute", "clear_person_attribute", "create_attribute_definition", "patch_attribute_definition", "delete_attribute_definition"} {
-		assert.NotContains(t, read, name)
+		assertions.NotContains(read, name)
 	}
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyRecords}
-	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, true)), "set_person_attribute")
+	assertions.NotContains(toolsByName(t, rawListTools(t, opts, true)), "set_person_attribute")
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyAttributes}
 	all := toolsByName(t, rawListTools(t, opts, true))
 	for _, name := range names {
-		assert.Contains(t, all, name)
+		assertions.Contains(all, name)
 	}
 	for _, definition := range operationalCatalog(opts, true) {
 		name := definition.definition.name
 		switch name {
 		case "list_person_attributes", "list_attribute_definitions", "get_attribute_definition":
-			assert.True(t, definition.definition.annotations.ReadOnlyHint)
+			assertions.True(definition.definition.annotations.ReadOnlyHint)
 		default:
-			assert.False(t, definition.definition.annotations.ReadOnlyHint)
+			assertions.False(definition.definition.annotations.ReadOnlyHint)
 		}
 		require.NotNil(t, definition.definition.annotations.DestructiveHint)
-		assert.Equal(t, name == "patch_attribute_definition" || name == "delete_attribute_definition", *definition.definition.annotations.DestructiveHint)
+		assertions.Equal(name == "patch_attribute_definition" || name == "delete_attribute_definition", *definition.definition.annotations.DestructiveHint)
 	}
 }
