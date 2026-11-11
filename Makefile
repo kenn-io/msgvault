@@ -67,7 +67,7 @@ SQLITE_SHARDED_TEST_PKGS := $(sort $(SHARDED_TEST_PKGS) ./internal/query)
 SQLITE_SHARD_TARGETS := $(addprefix test-sqlite-shard/,$(SQLITE_SHARDED_TEST_PKGS))
 GOLANGCI_LINT_VERSION ?= v2.14.0
 GOVULNCHECK_VERSION ?= v1.7.0
-HUMA_CHECK_VERSION := 3e1f59e9011e878ec595aa04aebc8a77c5292c4d
+HUMA_CHECK_VERSION := v0.48.4
 GO_INSTALL_BIN := $(shell go env GOBIN)
 ifeq ($(strip $(GO_INSTALL_BIN)),)
 GO_INSTALL_BIN := $(shell go env GOPATH)/bin
@@ -452,6 +452,12 @@ smoke-web-release:
 	node --test scripts/smoke-web-release.test.mjs
 	bash scripts/smoke-web-release.sh
 
+# Run against an already built or extracted executable; never install/rebuild it.
+BINARY ?= ./msgvault
+.PHONY: smoke-standalone
+smoke-standalone:
+	sh scripts/smoke-standalone.sh "$(BINARY)"
+
 # Format code
 fmt:
 	go fmt ./...
@@ -479,19 +485,9 @@ lint: custom-gcl
 	TMPDIR="$(GOLANGCI_LINT_TMP)" "$(CUSTOM_GCL_BIN)" run --fix ./...
 
 # Check the shared Huma API contract.
-# The dedicated adapter targets a foreign host even when its route matches this API.
 huma-check:
 	@go run go.kenn.io/kit/cmd/huma-check@$(HUMA_CHECK_VERSION) -h >/dev/null 2>&1 || :; \
-	status=0; out=$$(go run go.kenn.io/kit/cmd/huma-check@$(HUMA_CHECK_VERSION) ./... 2>&1) || status=$$?; \
-	if [ $$status -eq 1 ] && printf '%s\n' "$$out" | awk ' \
-		/^internal[\\\/]docbankmedia[\\\/][^\\\/]+\.go:[1-9][0-9]*:[1-9][0-9]*: hand-rolled HTTP request to this module\047s own Huma route \/[^ ;]*; call it through the generated API client \(client\)$$/ { foreign++; next } \
-		$$0 == "exit status 1" && !wrapper { wrapper = 1; next } \
-		{ bad = 1 } \
-		END { exit !(foreign && wrapper && !bad) }'; then \
-		echo "huma-check: accepted foreign-service client diagnostics in internal/docbankmedia"; \
-	else \
-		[ -z "$$out" ] || printf '%s\n' "$$out"; exit $$status; \
-	fi
+	go run go.kenn.io/kit/cmd/huma-check@$(HUMA_CHECK_VERSION) ./...
 
 .PHONY: huma-check
 
@@ -652,6 +648,7 @@ help:
 	@echo "  web-embed      - Build, stage, and validate browser assets for Go embedding"
 	@echo "  web-assets-check - Validate the release asset graph and run the validator's tests"
 	@echo "  smoke-web-release - Build and exercise an isolated release-style daemon"
+	@echo "  smoke-standalone - Check a built/downloaded executable (BINARY=./msgvault)"
 	@echo "  install-hooks  - Install pre-commit and pre-push hooks via prek"
 	@echo "  clean          - Remove build artifacts"
 	@echo ""
