@@ -198,7 +198,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 		archivedGroups = make(map[string][]string)
 		for id := range metadata {
 			if strings.HasPrefix(id, "ig:v") && !strings.HasPrefix(id, "ig:v1:") {
-				return summary, errors.New("instagram: this archive uses an unsupported import format")
+				return summary, errors.New("instagram: this archive uses an unsupported import format; upgrade msgvault")
 			}
 			if i := strings.LastIndexByte(id, ':'); i >= 0 {
 				archivedGroups[id[:i+1]] = append(archivedGroups[id[:i+1]], id)

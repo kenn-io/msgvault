@@ -22,6 +22,11 @@ func TestInstagramImportReplay(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	assert.Equal("39151bedba35d941336e56ea21fd767503efe5c6f0ddc63dcfd58ffaaa600733", instagramFingerprint(rawJSONMessage{SenderName: "Nova <Example>", Content: "&\u2028\u2029"}))
+	assert.Equal("11a22c256e70769d0395b256aab31a3ef6a1c94d23406ee0dd114fa485ea9aa8", instagramFingerprint(rawJSONMessage{
+		SenderName: "Nova Example", TimestampMs: 1730500000123, Content: "hello",
+		Share:  &rawJSONShare{Link: "https://example.org/x", ShareText: "A & B", OriginalContentOwner: "Mira Example"},
+		Photos: []rawJSONPhoto{{URI: "photos/a.jpg"}}, Media: []rawJSONPhoto{{URI: "docs/one.pdf"}},
+	}))
 	st := testutil.NewTestStore(t)
 	opts := ImportOptions{Source: "instagram", RootDir: "testdata/instagram", Account: "orbit.example", SelfName: "Nova Example", AttachmentsDir: t.TempDir()}
 	summary, err := ImportDYI(t.Context(), st, opts)
@@ -468,6 +473,7 @@ func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 }
 
 func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
@@ -481,8 +487,8 @@ func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
 		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_message_id = ? || substr(source_message_id, 7)`), version)
 		require.NoError(err)
 		_, err = ImportDYI(t.Context(), st, opts)
-		require.ErrorContains(err, "this archive uses an unsupported import format")
-		assert.Equal(t, 1, countMessages(t, st, ""))
+		require.ErrorContains(err, "this archive uses an unsupported import format; upgrade msgvault")
+		assert.Equal(1, countMessages(t, st, ""))
 	}
 }
 
