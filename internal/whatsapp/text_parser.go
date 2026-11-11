@@ -69,7 +69,7 @@ func parseText(ctx context.Context, reader io.Reader, order string, loc *time.Lo
 		match := textHeader.FindStringSubmatch(header)
 		if match == nil {
 			if len(rows) == 0 || textDateStart.MatchString(header) {
-				return nil, "", fmt.Errorf("line %d: unsupported or malformed TXT header", line)
+				return nil, "", fmt.Errorf("line %d: unsupported or malformed TXT header; edit the line if it is message text", line)
 			}
 			row := &rows[len(rows)-1]
 			if rawRecord.Len()+1+len(raw) > limits.RecordBytes {

@@ -2351,12 +2351,12 @@ The `--phone` flag is required and must be in E.164 format (e.g., `+447700900000
 | `--date-order` | Text | `dmy`, `mdy` or `ymd`; no guessing; fixed per `--chat-id` |
 | `--timezone` | Text | Concrete IANA zone or UTC; caller assumption |
 | `--phone` | Yes | Your phone number in E.164 format (must start with `+`) |
-| `--contacts` | No | Path to contacts `.vcf` file for name resolution |
+| `--contacts` | No | Database only: path to contacts `.vcf` file for name resolution |
 | `--media-dir` | No | Android Media directory or unpacked TXT export media directory; Apple database imports are text-only |
-| `--limit` | No | Limit number of messages (for testing) |
+| `--limit` | No | Database only: limit number of messages for testing |
 | `--after` | No | Apple only: import messages on or after this date (`YYYY-MM-DD`, local time) |
 | `--before` | No | Apple only: import messages before this date (`YYYY-MM-DD`, local time) |
-| `--display-name` | No | Display name for the phone owner |
+| `--display-name` | No | Database only: display name for the phone owner |
 | `--full` | No | Apple only: compare every message, including chats unchanged since the last import |
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
 
