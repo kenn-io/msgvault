@@ -207,4 +207,5 @@ archive citation, which you can use when the local address is out of reach.
 Set `auto_agenda = true` in `[people.sweep.commitments]` to let the scheduled
 sweep file open commitments in batches of up to eight. This includes promises
 already open when you enable the setting. Automatic creation is off by default.
-The manual command works without that setting. Both filing methods require daemon API schema 5.3.0 or newer.
+The manual command works without that setting. Both filing methods require
+daemon API schema 5.3.0 or newer.

@@ -292,6 +292,9 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 				return err
 			}
 			if p.existingID != 0 {
+				if err := s.reattachCommitmentAgendaTx(ctx, tx, personID, p); err != nil {
+					return err
+				}
 				result, err := tx.ExecContext(ctx, `UPDATE person_commitments SET current_claim_id = ?, target_key = ?,
 					quote = ?, quote_start = ?, quote_end = ?, summary = ?, due_on = ?, promised_at = ?, expires_at = ?
 					WHERE id = ? AND person_id = ? AND anchor_message_id = ? AND direction = ?`,

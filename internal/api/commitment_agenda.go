@@ -23,6 +23,8 @@ import (
 
 const commitmentAgendaBatchSize = 8
 
+var errCommitmentAgendaCitation = errors.New("the earlier filing citation changed and no created issue was found. File the current evidence with msgvault kata create if needed.")
+
 var errCommitmentAgendaDestination = errors.New("the configured Kata destination changed after the suggestion was saved")
 
 type commitmentAgendaArchive interface {
@@ -174,7 +176,11 @@ func (a *CommitmentAgenda) refresh(ctx context.Context, commitment store.PersonC
 		return item, errCommitmentAgendaDestination
 	}
 	if commitment.TargetKey != item.TargetKey || commitment.Quote != item.Quote {
-		return a.retire(ctx, item)
+		retired, err := a.retire(ctx, item)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = errCommitmentAgendaCitation
+		}
+		return retired, err
 	}
 	if item.State == store.CommitmentAgendaRetired {
 		return a.archive.ReopenCommitmentAgendaContext(ctx, item.IdempotencyKey)
@@ -346,6 +352,8 @@ func (s *Server) handleCommitmentAgenda(w http.ResponseWriter, r *http.Request) 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		writeError(w, http.StatusNotFound, "commitment_not_found", "Open commitment not found")
+	case errors.Is(err, errCommitmentAgendaCitation):
+		writeError(w, http.StatusConflict, "kata_citation_changed", err.Error())
 	case errors.Is(err, errCommitmentAgendaDestination):
 		writeError(w, http.StatusConflict, "kata_destination_changed", err.Error())
 	case err != nil:

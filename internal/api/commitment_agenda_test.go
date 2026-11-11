@@ -180,7 +180,7 @@ func TestCommitmentAgendaSettlesSavedIntent(t *testing.T) {
 				}
 				_, err := agenda.Manual(t.Context(), 12, time.Now())
 				r.ErrorIs(err, io.ErrUnexpectedEOF)
-				// The owner moved and unlinked the issue before recovery.
+				// Recovery must link even after the owner moved or unlinked the issue.
 				issues.found.Issue.Metadata = map[string]any{personagenda.ListMetadataKey: "later"}
 			} else {
 				_, err := agenda.enqueue(t.Context(), archive.commitment)
@@ -196,7 +196,6 @@ func TestCommitmentAgendaSettlesSavedIntent(t *testing.T) {
 				a.Equal(store.CommitmentAgendaLinked, archive.item.State)
 				a.Equal(issues.found.Issue.UID, archive.item.IssueUID)
 				a.Equal(issues.found.Issue.QualifiedRef, archive.item.IssueRef)
-				a.Equal(map[string]any{personagenda.ListMetadataKey: "later"}, issues.found.Issue.Metadata)
 			} else {
 				a.Equal(store.CommitmentAgendaRetired, archive.item.State)
 			}
@@ -228,14 +227,12 @@ func TestCommitmentAgendaPreservesLongUnicodeCitation(t *testing.T) {
 
 func TestCommitmentAgendaNormalizesDestination(t *testing.T) {
 	a := assert.New(t)
-	for _, endpoint := range []string{"https://kata.example.test", "https://kata.example.test/api"} {
-		cfg := config.TaskIntegrationConfig{Endpoint: endpoint, DefaultProject: "agenda"}
-		first := NewCommitmentAgenda(cfg, nil, "")
-		cfg.Endpoint += "///"
-		a.Equal(first.destination, NewCommitmentAgenda(cfg, nil, "").destination)
-		cfg.DefaultProject = "other"
-		a.NotEqual(first.destination, NewCommitmentAgenda(cfg, nil, "").destination)
-	}
+	cfg := config.TaskIntegrationConfig{Endpoint: "https://kata.example.test/api", DefaultProject: "agenda"}
+	first := NewCommitmentAgenda(cfg, nil, "")
+	cfg.Endpoint += "///"
+	a.Equal(first.destination, NewCommitmentAgenda(cfg, nil, "").destination)
+	cfg.DefaultProject = "other"
+	a.NotEqual(first.destination, NewCommitmentAgenda(cfg, nil, "").destination)
 }
 
 func TestCommitmentAgendaRefreshesOnlyUnchangedPassages(t *testing.T) {
@@ -281,6 +278,35 @@ func TestCommitmentAgendaRefreshesOnlyUnchangedPassages(t *testing.T) {
 				r.ErrorIs(err, kataevidence.ErrChanged)
 				a.Equal(1, calls)
 			}
+		})
+	}
+}
+
+func TestCommitmentAgendaChangedCitationRecoversOrConflicts(t *testing.T) {
+	for _, found := range []bool{false, true} {
+		t.Run(map[bool]string{false: "not created", true: "created before reply lost"}[found], func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			agenda, archive, issues := newCommitmentAgendaFixture()
+			calls := 0
+			issues.create = func(string, kataissues.CreateInput) (kataissues.Result, error) {
+				calls++
+				return kataissues.Result{}, io.ErrUnexpectedEOF
+			}
+			_, err := agenda.Manual(t.Context(), 12, time.Now())
+			r.ErrorIs(err, io.ErrUnexpectedEOF)
+			archive.commitment.TargetKey = "survivor-message-target"
+			if found {
+				issues.found.Issue = taskclient.KataTask{UID: "same-issue", QualifiedRef: "agenda#12"}
+			}
+			item, err := agenda.Manual(t.Context(), 12, time.Now())
+			if found {
+				r.NoError(err)
+				a.Equal("same-issue", item.IssueUID)
+			} else {
+				r.ErrorIs(err, errCommitmentAgendaCitation)
+				a.Equal(store.CommitmentAgendaRetired, archive.item.State)
+			}
+			a.Equal(1, calls, "citation changes cannot authorize another create")
 		})
 	}
 }

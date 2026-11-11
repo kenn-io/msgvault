@@ -216,3 +216,40 @@ func (s *Store) ReopenCommitmentAgendaContext(ctx context.Context, key string) (
 		SET state = CASE WHEN state = 'retired' THEN 'pending' ELSE state END
 		WHERE idempotency_key = ? RETURNING `+commitmentAgendaColumns), key))
 }
+
+// Revalidation may replace a detached person's target while preserving its exact
+// message citation. Retain the attempted request and key through that change.
+func (s *Store) reattachCommitmentAgendaTx(ctx context.Context, tx *loggedTx, personID int64, p preparedCommitmentPromise) error {
+	item, err := scanCommitmentAgenda(tx.QueryRowContext(ctx, commitmentAgendaByID+` AND target_key = (SELECT target_key FROM person_commitments WHERE id = ?)`, p.existingID, p.existingID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !item.Attempted || item.State == CommitmentAgendaLinked || item.TargetKey == p.promise.TargetKey || item.Quote != p.promise.Quote || len(item.Request.Evidence) == 0 {
+		return nil
+	}
+	start := p.promise.Start
+	for _, ref := range item.Request.Evidence {
+		from, to := ref.Range()
+		if ref.Kind != "message" || ref.Message == nil || to <= from || ref.MessageID != p.source.MessageID || int64(from) != start || int64(to) > p.promise.End {
+			return nil
+		}
+		start = int64(to)
+	}
+	if start != p.promise.End {
+		return nil
+	}
+	var samePerson bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM persons WHERE id = ? AND vcard_uid = ?)
+  OR EXISTS(SELECT 1 FROM person_uid_aliases WHERE surviving_person_id = ? AND retired_uid = ?)`, personID, item.Request.PersonUID, personID, item.Request.PersonUID).Scan(&samePerson); err != nil {
+		return err
+	}
+	if !samePerson {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE person_commitment_agenda SET target_key = ?, state = 'pending'
+  WHERE idempotency_key = ? AND target_key = ? AND attempted_at IS NOT NULL AND state <> 'linked'`, p.promise.TargetKey, item.IdempotencyKey, item.TargetKey)
+	return err
+}

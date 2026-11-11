@@ -99,9 +99,6 @@ func TestApplyCommitmentOnlySweepPreservesDecisionAcrossRequote(t *testing.T) {
 	_, err = st.DecidePersonCommitmentContext(ctx, decision.ID, LoopStateSnoozed, nil, request.CompletedAt)
 	a.ErrorIs(err, ErrInvalidActivityRequest)
 
-	t.Run("agenda receipt refreshes until attempted", func(t *testing.T) {
-		testCommitmentAgendaReceipt(t, st, items[0], request.CompletedAt)
-	})
 }
 
 func newCommitmentTestConversation(t *testing.T, f personSweepApplyFixture) (int64, func(string, string, time.Duration) int64) {
@@ -414,8 +411,9 @@ func TestEmptyCommitmentScanKeepsProviderFrontierAndWaitsForNewWork(t *testing.T
 	a.True(due)
 }
 
-func testCommitmentAgendaReceipt(t *testing.T, st *Store, commitment PersonCommitment, now time.Time) {
-	t.Helper()
+func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
+	f, commitment := newCommitmentAgendaReceiptFixture(t)
+	st, now := f.store, f.request.CompletedAt
 	r, a := require.New(t), assert.New(t)
 	ctx := t.Context()
 	start, end := int(commitment.Start), int(commitment.End)
@@ -464,8 +462,10 @@ func testCommitmentAgendaReceipt(t *testing.T, st *Store, commitment PersonCommi
 	r.NoError(err)
 	a.Equal(key, reopened.IdempotencyKey)
 	a.Equal(CommitmentAgendaPending, reopened.State)
-	_, err = st.ReopenCommitmentAgendaContext(ctx, key)
+	reopened, err = st.ReopenCommitmentAgendaContext(ctx, key)
 	r.NoError(err)
+	a.Equal(key, reopened.IdempotencyKey)
+	a.Equal(CommitmentAgendaPending, reopened.State)
 	r.NoError(st.RetireCommitmentAgendaContext(ctx, key))
 	linked, err := st.LinkCommitmentAgendaContext(ctx, key, "issue-uid", "synthetic#7")
 	r.NoError(err)
@@ -540,4 +540,25 @@ func testCommitmentConsumedCompletion(t *testing.T, detached bool) {
 	r.Len(items, 1)
 	r.NotNil(items[0].Fulfilment)
 	a.Equal(completed, items[0].Fulfilment.Quote)
+}
+
+func newCommitmentAgendaReceiptFixture(t *testing.T) (personSweepApplyFixture, PersonCommitment) {
+	t.Helper()
+	r := require.New(t)
+	f := newPersonSweepApplyFixture(t, "agenda-receipt", false)
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send the report."
+	persist("agenda-promise", quote, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	window, err := f.store.LoadPersonCommitmentWindow(t.Context(), f.personID, peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	_, err = f.store.ApplyPersonSweep(t.Context(), commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send report", End: int64(len(quote))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
+	r.NoError(err)
+	items, err := f.store.ListPersonCommitmentsContext(t.Context(), f.personID, f.request.CompletedAt, 5, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	return f, items[0]
 }
