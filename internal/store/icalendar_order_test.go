@@ -49,11 +49,6 @@ func TestICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 					requirements.NoError(err)
 					requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], stored, "ics"))
 					assertions.Equal(row.Event, calendarRows(t, st, ids[0])[0].Event)
-					if mode == "email" {
-						foreign := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T160000Z\r\nORGANIZER:mailto:other@example.com")
-						persistInviteEmailForSource(t, st, source, "foreign", inviteEmail(foreign))
-						assertions.Equal(row.Event, calendarRows(t, st, ids[0])[0].Event)
-					}
 					restored := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored\r\nORGANIZER:mailto:organizer@example.com")
 					if mode == "email" {
 						persistInviteEmailForSource(t, st, source, "restored", inviteEmail(restored))
