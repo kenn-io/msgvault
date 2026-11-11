@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	assertpkg "github.com/stretchr/testify/assert"
-	requirepkg "github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -24,6 +24,7 @@ import (
 
 type sweepCLIFixture struct {
 	*storeAPIAdapter
+
 	deps    personSweepCommandDeps
 	request api.CLIRunRequest
 }
@@ -49,7 +50,7 @@ func (f *sweepCLIFixture) RunCLICommand(ctx context.Context, req api.CLIRunReque
 }
 
 func TestPeopleSweepThroughDaemonRouterAndCobra(t *testing.T) {
-	require, assert := requirepkg.New(t), assertpkg.New(t)
+	require, assert := require.New(t), assert.New(t)
 	st, personID, cfg := newPersonSweepCommandStore(t, false)
 	profile, err := cfg.Profile()
 	require.NoError(err)
@@ -122,16 +123,20 @@ func TestPeopleSweepThroughDaemonRouterAndCobra(t *testing.T) {
 }
 
 func TestPeopleSweepFixedArgumentsAndSafeErrors(t *testing.T) {
-	require, assert := requirepkg.New(t), assertpkg.New(t)
+	must, check := require.New(t), assert.New(t)
 	cmd, pos, _, err := sweepCommand("list_people_sweep_history", map[string]any{"provider": "example", "person_id": int64(2), "limit": 3})
-	require.NoError(err)
+	must.NoError(err)
 	args, err := daemonCLIArgsFromCobra(cmd, pos)
-	require.NoError(err)
-	assert.Equal([]string{"person", "provider", "history", "--json", "--limit=3", "--person=2", "example"}, args)
-	_, _, _, err = sweepCommand("list_people_sweep_history", map[string]any{"provider": ""})
-	require.Error(err)
-	_, _, _, err = sweepCommand("list_people_sweep_history", map[string]any{"provider": "--bad"})
-	require.Error(err)
+	must.NoError(err)
+	check.Equal([]string{"person", "provider", "history", "--json", "--limit=3", "--person=2", "example"}, args)
+	cmd, pos, _, err = sweepCommand("list_people_sweep_history", map[string]any{"provider": ""})
+	must.Error(err)
+	check.Nil(cmd)
+	check.Nil(pos)
+	cmd, pos, _, err = sweepCommand("list_people_sweep_history", map[string]any{"provider": "--bad"})
+	must.Error(err)
+	check.Nil(cmd)
+	check.Nil(pos)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"error":"operation_in_progress","message":"private diagnostic"}`))
@@ -139,11 +144,11 @@ func TestPeopleSweepFixedArgumentsAndSafeErrors(t *testing.T) {
 	backend := newDaemonMCPOperations(client, nil)
 	backend.supported = []string{"get_people_sweep_status"}
 	result, err := backend.ExecuteOperation(t.Context(), "get_people_sweep_status", nil)
-	require.NoError(err)
-	require.True(result.IsError)
+	must.NoError(err)
+	must.True(result.IsError)
 	data, err := json.Marshal(result.Output)
-	require.NoError(err)
-	assert.JSONEq(`{"error":"operation_in_progress","operation_may_have_completed":false}`, string(data))
+	must.NoError(err)
+	check.JSONEq(`{"error":"operation_in_progress","operation_may_have_completed":false}`, string(data))
 	for _, tc := range []struct {
 		name, stderr, body, want string
 		status                   int
@@ -162,7 +167,7 @@ func TestPeopleSweepFixedArgumentsAndSafeErrors(t *testing.T) {
 		{name: "proxy failure", status: 502, body: "proxy error", want: "operation_refused", uncertain: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require, assert := requirepkg.New(t), assertpkg.New(t)
+			require, assert := require.New(t), assert.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if tc.status != 0 {
 					w.WriteHeader(tc.status)

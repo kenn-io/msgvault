@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -55,28 +56,28 @@ func sweepCommand(name string, args map[string]any) (*cobra.Command, []string, m
 	}
 	cmd, _, err := person.Find(path)
 	if err != nil {
-		return nil, nil, input, err
+		return nil, nil, input, fmt.Errorf("find sweep command: %w", err)
 	}
 	if input.PersonID != nil {
 		if err := cmd.Flags().Set("person", strconv.FormatInt(*input.PersonID, 10)); err != nil {
-			return nil, nil, input, err
+			return nil, nil, input, fmt.Errorf("set person flag: %w", err)
 		}
 	}
 	if input.Limit != nil {
 		if err := cmd.Flags().Set("limit", strconv.Itoa(*input.Limit)); err != nil {
-			return nil, nil, input, err
+			return nil, nil, input, fmt.Errorf("set limit flag: %w", err)
 		}
 	}
 	if input.Backstop {
 		if err := cmd.Flags().Set("backstop", "true"); err != nil {
-			return nil, nil, input, err
+			return nil, nil, input, fmt.Errorf("set backstop flag: %w", err)
 		}
 	}
 	if err := cmd.Flags().Set("json", "true"); err != nil {
-		return nil, nil, input, err
+		return nil, nil, input, fmt.Errorf("set json flag: %w", err)
 	}
 	if err := cmd.ValidateArgs(positional); err != nil {
-		return nil, nil, input, err
+		return nil, nil, input, fmt.Errorf("validate sweep arguments: %w", err)
 	}
 	return cmd, positional, input, nil
 }
@@ -107,22 +108,22 @@ func (b *daemonMCPOperations) executePeopleSweep(ctx context.Context, name strin
 	writes := name == "run_people_sweep"
 	cmd, positional, _, err := sweepCommand(name, args)
 	if err != nil {
-		return operationFailure("invalid_arguments", false), true, nil //nolint:nilerr // Invalid input is a structured refusal.
+		return operationFailure("invalid_arguments", false), true, nil
 	}
 	argv, err := daemonCLIArgsFromCobra(cmd, positional)
 	if err != nil {
-		return operationFailure("invalid_arguments", false), true, nil //nolint:nilerr // Invalid input is a structured refusal.
+		return operationFailure("invalid_arguments", false), true, nil
 	}
 	body := generated.RunCLIBody{Args: argv}
 	response, err := b.client.DoGeneratedStreamingRequestWithContext(ctx, http.MethodPost, "/api/v1/cli/run", &generated.RunCLIRequestOptions{Body: &body})
 	if err != nil {
-		return operationFailure("operation_failed", writes), true, nil //nolint:nilerr // Transport failure becomes a safe structured refusal.
+		return operationFailure("operation_failed", writes), true, nil
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		data, readErr := io.ReadAll(io.LimitReader(response.Body, 65537))
 		if readErr != nil || len(data) > 65536 {
-			return operationFailure("operation_response_failed", writes), true, nil //nolint:nilerr // A failed or oversized error body is a safe refusal.
+			return operationFailure("operation_response_failed", writes), true, nil
 		}
 		var failure struct {
 			Error string `json:"error"`
@@ -146,7 +147,7 @@ func (b *daemonMCPOperations) executePeopleSweep(ctx context.Context, name strin
 		case "error":
 			code, uncertain := "operation_refused", writes
 			diagnostic := ""
-			for _, line := range strings.Split(stderr.String(), "\n") {
+			for line := range strings.SplitSeq(stderr.String(), "\n") {
 				if strings.HasPrefix(line, "Error: ") {
 					diagnostic = strings.TrimSuffix(line, "\r")
 				}
@@ -172,7 +173,7 @@ func (b *daemonMCPOperations) executePeopleSweep(ctx context.Context, name strin
 		return failure, true, nil
 	}
 	if err != nil {
-		return operationFailure("operation_response_failed", writes), true, nil //nolint:nilerr // Stream failure becomes a safe structured refusal.
+		return operationFailure("operation_response_failed", writes), true, nil
 	}
 	var output any
 	switch name {
@@ -184,7 +185,7 @@ func (b *daemonMCPOperations) executePeopleSweep(ctx context.Context, name strin
 		output = &mcpserver.SweepRun{}
 	}
 	if err := json.Unmarshal(bytes.TrimSpace([]byte(stdout.String())), output); err != nil {
-		return operationFailure("invalid_operation_response", writes), true, nil //nolint:nilerr // Invalid output becomes a safe structured refusal.
+		return operationFailure("invalid_operation_response", writes), true, nil
 	}
 	return &mcpserver.OperationResult{Output: output}, true, nil
 }
