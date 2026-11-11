@@ -418,3 +418,42 @@ func TestRosterBudgetAlternatesMessagesAndKeepsCheckpointSmall(t *testing.T) {
 		})
 	}
 }
+
+// A quiet-room repair that stops during matching keeps the verified roster
+// resolved and keeps its matching progress for the next repair.
+func TestQuietRosterBudgetStopKeepsVerifiedMembershipResolved(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!quiet-verified:example.test", 1, time.Now().Add(-48*time.Hour))
+	chat.Type = "group"
+	chat.Participants = append(chat.Participants,
+		map[string]any{"id": "@signal_q1:beeper.local", "fullName": "Quinn One"},
+		map[string]any{"id": "@signal_q2:beeper.local", "fullName": "Quinn Two"})
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
+	require.NotContains(unresolved, chat.ID)
+	runID, err := st.StartSync(sum.SourceID, sourceTypeBeeper)
+	require.NoError(err)
+	cs := &ChatState{Done: true}
+	stopped, err := imp.repairQuietRoster(t.Context(), runID, sum.SourceID, chat.ID, ImportOptions{
+		AccountID: "signal", NoMedia: true,
+		ShouldStop: func() bool {
+			return cs.RosterWork != nil && cs.RosterWork.Phase == "matching" && cs.RosterWork.Next >= 1
+		},
+	}, cs, time.Now(), &ImportSummary{})
+	require.NoError(err)
+	require.True(stopped)
+	require.NotNil(cs.RosterWork)
+	assert.True(cs.RosterWork.Verified, "membership was verified before the stop")
+	assert.Equal("matching", cs.RosterWork.Phase)
+	assert.Equal(1, cs.RosterWork.Next, "matching progress is kept for the next repair")
+	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
+	assert.NotContains(unresolved, chat.ID, "verified membership stays resolved while quiet matching is deferred")
+	require.NoError(st.CompleteSync(runID, ""))
+}
