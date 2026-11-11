@@ -99,7 +99,7 @@ func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		h, dir := newTestHandler(t)
 		var applied []string
-		flaky, down := 0, 0
+		flaky, invalid, down, alsoDown := 0, 0, 0, 0
 		feed := func(ctx context.Context, change Change) error {
 			value := string(change.Values[0])
 			switch value {
@@ -109,9 +109,13 @@ func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
 					return errors.New("source busy")
 				}
 			case `"invalid"`:
+				invalid++
 				return fmt.Errorf("%w: not archivable", ErrUnrecoverable)
 			case `"down"`:
 				down++
+				return errors.New("graph unavailable")
+			case `"also down"`:
+				alsoDown++
 				return errors.New("graph unavailable")
 			}
 			applied = append(applied, change.App+":"+change.EntryID+":"+value)
@@ -128,8 +132,8 @@ func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
 			require.NoError(h.store("9", []byte(body)))
 		}
 		require.NoError(h.store("9", []byte(`{"object":`)))
-		store(`"first"`, `"flaky"`)
-		store(`"down"`, `"invalid"`, `"later"`)
+		store(`"first"`, `"invalid"`, `"flaky"`)
+		store(`"down"`, `"also down"`, `"later"`)
 		store(`"after"`)
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error)
@@ -139,6 +143,7 @@ func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
 		synctest.Wait()
 		assert.Equal([]string{`9:100:"first"`, `9:100:"flaky"`}, applied,
 			"a retried change does not apply the changes before it again; a failing change blocks the rest")
+		assert.Equal(1, invalid, "an unrecoverable change is skipped at once, without retries")
 		assert.Equal(3, flaky)
 		assert.Len(pendingFiles(t, dir), 2, "the failing delivery and the one after it wait")
 
@@ -146,6 +151,8 @@ func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
 		synctest.Wait()
 		assert.Equal([]string{`9:100:"first"`, `9:100:"flaky"`, `9:100:"later"`, `9:100:"after"`}, applied,
 			"after an hour the failing change is skipped and the rest of its delivery and later deliveries apply")
+		assert.Equal(1, alsoDown, "with the retry budget spent, a later failing change gets a single attempt")
+		assert.Equal(1, invalid)
 		assert.Empty(pendingFiles(t, dir), "applied and dropped deliveries are deleted")
 		attempts := down
 
