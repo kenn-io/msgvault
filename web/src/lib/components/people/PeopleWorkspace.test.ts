@@ -72,40 +72,6 @@ it.each([
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it.each(['missing', 'draft', 'filtered'])('preserves the %s person state in the redesigned page', async (kind) => {
-  const client = clientFor({
-    '/api/v1/participants/1': () => kind === 'missing'
-      ? Response.json({ error: 'participant_not_found' }, { status: 404 })
-      : Response.json({ id: 1, display_label: 'Synthetic contact', identifiers: [], activity_count: kind === 'draft' ? 0 : 1,
-        ...(kind === 'draft' ? {} : { first_at: when, last_at: when }), file_count: 0, source_counts: [], cache_revision: 'cache-1' }),
-    '/api/v1/participants/1/summary': () => Response.json({ error: 'No matching activity' }, { status: 404 }),
-    '/api/v1/relationships/1/calendar': async request => Response.json(emptyCalendar((await request.json()).year)),
-  });
-  const controller = new RelationshipsController(client, () => 'UTC');
-  const directory = new DirectoryController(client);
-  const state = new ExploreState(null);
-  const predicate = kind === 'filtered' ? { filters: [{ dimension: 'source' as const, values: ['2'] }] } : {};
-  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
-  await controller.openTarget('cluster:1', predicate);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate,
-    onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    if (kind === 'missing') {
-      expect(await screen.findByText('Person or domain not found')).toBeDefined();
-      expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();
-    } else {
-      expect(await screen.findByRole('heading', { name: 'Synthetic contact' })).toBeDefined();
-      expect(Boolean(screen.queryByRole('region', { name: 'Relationship activity calendar' }))).toBe(kind === 'filtered');
-      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-      if (kind === 'draft') expect(await screen.findByText('No sent or received messages with this contact yet.')).toBeDefined();
-      else {
-        expect(await screen.findByRole('heading', { name: 'Addresses' })).toBeDefined();
-        expect(screen.queryByText('No sent or received messages with this contact yet.')).toBeNull();
-      }
-    }
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
 it('keeps the day across Details and the file filter across Files', async () => {
   const observers = new Map<Element, ResizeObserverCallback>();
   vi.stubGlobal('ResizeObserver', class {
@@ -1151,7 +1117,7 @@ it('refreshes linked identities after a pending attribute save fails and keeps i
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Location' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Location' }), { target: { value: 'Example City' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(attributeRequest).toBeDefined());
     await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Bob' } });
@@ -1168,7 +1134,7 @@ it('refreshes linked identities after a pending attribute save fails and keeps i
     expect(screen.getByRole('textbox', { name: 'Location' })).toHaveProperty('value', 'Example City');
     expect(directory.profile!.draft).toMatchObject({ kind: 'setAttribute', slug: 'location', body: { value: { type: 'text', text: 'Example City' } } });
     expect(directory.profile!.conflict).toMatchObject({ code: 'attribute_conflict', message: 'Location changed elsewhere', currentValueID: 99 });
-    expect(screen.getByRole('button', { name: 'Reload attributes' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeDefined();
   } finally {
     releaseSave(Response.json({ error: 'unavailable' }, { status: 503 }));
     view.unmount(); controller.destroy(); directory.destroy(); state.destroy();

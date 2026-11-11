@@ -2236,6 +2236,105 @@ func TestCooperativeJobKeepsRequestContextLiveAndResumes(t *testing.T) {
 	})
 }
 
+func TestCooperativeJobDeferralAfterYieldEndsTheChain(t *testing.T) {
+	for _, joined := range []bool{false, true} {
+		t.Run(strconv.FormatBool(joined), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				tracker := &yieldingWorkTracker{}
+				boundary := make(chan struct{})
+				runs := 0
+				askedToYield := false
+				s := New(nil).WithWorkTracker(tracker).WithLogger(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+				defer func() { <-s.Stop().Done() }()
+				require.NoError(s.AddJob(Job{Name: "pass", Preemptible: true, CooperativePreemption: true, Schedule: "0 0 1 1 *", Run: func(ctx context.Context) error {
+					runs++
+					<-boundary
+					askedToYield = jobctx.PreemptionRequested(ctx)
+					tracker.yield.Store(false)
+					if joined {
+						return errors.Join(ErrDeferUntilNextTrigger, errors.New("synthetic account failure"))
+					}
+					return ErrDeferUntilNextTrigger
+				}}))
+				_, err := s.StartJob("pass", false)
+				require.NoError(err)
+				synctest.Wait()
+				tracker.yield.Store(true)
+				time.Sleep(2 * yieldPollInterval)
+				close(boundary)
+				synctest.Wait()
+				require.True(askedToYield)
+				assert.Equal(1, runs, "a deferral after a yield request queues no follow-up")
+				status := s.JobStatus()[0]
+				assert.False(status.Pending)
+				assert.False(status.Running)
+				if joined {
+					assert.Equal("synthetic account failure", status.LastError)
+					assert.True(status.LastRun.IsZero())
+				} else {
+					assert.Empty(status.LastError)
+					assert.False(status.LastRun.IsZero())
+				}
+			})
+		})
+	}
+}
+
+func TestYieldFollowUpIsContinuationUntilARequestMerges(t *testing.T) {
+	for _, tc := range []struct {
+		merge        string
+		continuation bool
+	}{
+		{merge: "none", continuation: true},
+		{merge: "while running", continuation: false},
+		{merge: "while follow-up waits", continuation: false},
+	} {
+		t.Run(tc.merge, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				require := require.New(t)
+				releaseOther := make(chan struct{})
+				var continuations []bool
+				s := New(nil).WithWorkTracker(newSerialWorkTracker()).WithLogger(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+				defer func() { <-s.Stop().Done() }()
+				require.NoError(s.AddJob(Job{Name: "pass", Preemptible: true, CooperativePreemption: true, Schedule: "0 0 1 1 *", Run: func(ctx context.Context) error {
+					continuations = append(continuations, jobctx.Continuation(ctx))
+					if len(continuations) > 1 {
+						return nil
+					}
+					<-jobctx.PreemptionSignal(ctx)
+					if tc.merge == "while running" {
+						_, _ = s.StartJob("pass", true)
+					}
+					return nil
+				}}))
+				require.NoError(s.AddJob(Job{Name: "other", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
+					<-releaseOther
+					return nil
+				}}))
+
+				_, err := s.StartJob("pass", false)
+				require.NoError(err)
+				synctest.Wait()
+				_, err = s.StartJob("other", false)
+				require.NoError(err)
+				// Queued work asks "pass" to yield; its follow-up then waits behind "other".
+				time.Sleep(preemptAfter + 2*yieldPollInterval)
+				synctest.Wait()
+				if tc.merge == "while follow-up waits" {
+					_, err = s.StartJob("pass", true)
+					require.NoError(err)
+				}
+				close(releaseOther)
+				synctest.Wait()
+
+				assert.Equal(t, []bool{false, tc.continuation}, continuations)
+			})
+		})
+	}
+}
+
 func TestGenericJobYieldContextFinishesCleanly(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)

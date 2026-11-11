@@ -109,7 +109,8 @@ func testSetupPGSchema(t *testing.T, db *sql.DB) {
 			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 			message_id BIGINT NOT NULL,
 			recipient_type TEXT NOT NULL,
-			participant_id BIGINT NOT NULL
+			participant_id BIGINT NOT NULL,
+			is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 		);
 		CREATE TABLE message_labels (
 			message_id BIGINT NOT NULL,

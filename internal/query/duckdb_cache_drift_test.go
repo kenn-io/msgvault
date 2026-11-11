@@ -45,7 +45,7 @@ func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
 		`).
 		addTable("sources", "sources", "sources.parquet", sourcesCols, `(1::BIGINT, 'test@gmail.com', 'gmail')`).
 		addTable("participants", "participants", "participants.parquet", participantsCols, `(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', '')`).
-		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `(1::BIGINT, 1::BIGINT, 'from', 'Alice')`).
+		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsColsWithEnvelope, `(1::BIGINT, 1::BIGINT, 'from', 'Alice', NULL::VARCHAR, NULL::VARCHAR, false)`).
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
 		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 1::BIGINT, 100::BIGINT, 'x', '')`).
@@ -315,7 +315,7 @@ func TestDuckDBEngine_SearchFastWithStatsRejectsMessageParquetDrift(t *testing.T
 		`).
 		addTable("sources", "sources", "sources.parquet", sourcesCols, `(1::BIGINT, 'test@gmail.com', 'gmail')`).
 		addTable("participants", "participants", "participants.parquet", participantsCols, `(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', '')`).
-		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `(1::BIGINT, 1::BIGINT, 'from', 'Alice')`).
+		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsColsWithEnvelope, `(1::BIGINT, 1::BIGINT, 'from', 'Alice', NULL::VARCHAR, NULL::VARCHAR, false)`).
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
 		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 1::BIGINT, 100::BIGINT, 'x', '')`).
@@ -362,7 +362,7 @@ func TestDuckDBEngine_SearchFastWithStatsRejectsAttachmentParquetDrift(t *testin
 		`).
 		addTable("sources", "sources", "sources.parquet", sourcesCols, `(1::BIGINT, 'test@gmail.com', 'gmail')`).
 		addTable("participants", "participants", "participants.parquet", participantsCols, `(1::BIGINT, 'alice@test.com', 'test.com', 'Alice', '')`).
-		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsCols, `(1::BIGINT, 1::BIGINT, 'from', 'Alice')`).
+		addTable("message_recipients", "message_recipients", "message_recipients.parquet", messageRecipientsColsWithEnvelope, `(1::BIGINT, 1::BIGINT, 'from', 'Alice', NULL::VARCHAR, NULL::VARCHAR, false)`).
 		addEmptyTable("labels", "labels", "labels.parquet", labelsCols, `(1::BIGINT, 'x')`).
 		addEmptyTable("message_labels", "message_labels", "message_labels.parquet", messageLabelsCols, `(1::BIGINT, 1::BIGINT)`).
 		addEmptyTable("attachments", "attachments", "attachments.parquet", attachmentsCols, `(1::BIGINT, 1::BIGINT, 100::BIGINT, 'x', '')`).
