@@ -183,7 +183,9 @@ func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSCo
 		if len(retained) > MaxRawBytes {
 			return nil, fmt.Errorf("VEVENT %d: retained calendar exceeds %d bytes", index+1, MaxRawBytes)
 		}
-		normalizeICSParams(comp.Props, zones)
+		if err := normalizeICSParams(comp.Props, zones); err != nil {
+			return nil, fmt.Errorf("VEVENT %d: %w", index+1, err)
+		}
 		result, err := parseICSEvent(comp, method, loc)
 		if err != nil {
 			return nil, fmt.Errorf("VEVENT %d: %w", index+1, err)
@@ -224,16 +226,22 @@ func propText(props ical.Props, name string) (string, error) {
 }
 
 // Resolve Windows IDs and libical's prefixed IANA names.
-func normalizeICSParams(props ical.Props, zones map[string]string) {
+func normalizeICSParams(props ical.Props, zones map[string]string) error {
 	for _, values := range props {
 		for _, prop := range values {
 			zone := normalizeICSZone(prop.Params.Get("TZID"))
 			if custom := zones[zone]; custom != "" {
 				zone = custom
 			}
+			if zone != "" {
+				if _, err := LoadZone(zone); err != nil {
+					return err
+				}
+			}
 			prop.Params.Set("TZID", zone)
 		}
 	}
+	return nil
 }
 
 func normalizeICSZone(zone string) string {
