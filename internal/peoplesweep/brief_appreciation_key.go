@@ -3,14 +3,15 @@ package peoplesweep
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"unicode/utf8"
 )
 
 // AppreciationContributionKey identifies a native message independently of
 // person membership, local database coordinates, and message content. Version 1
-// uses the encoding/json v1 format, including its escaping. Changing that format
+// uses the original JSON format, including HTML and JavaScript escaping. Changing it
 // requires an archive migration that preserves existing dismissal tombstones.
 func AppreciationContributionKey(sourceType, sourceIdentifier, sourceMessageID string) (string, error) {
 	for _, value := range []string{sourceType, sourceIdentifier, sourceMessageID} {
@@ -24,7 +25,7 @@ func AppreciationContributionKey(sourceType, sourceIdentifier, sourceMessageID s
 		SourceIdentifier string `json:"source_identifier"`
 		SourceMessageID  string `json:"source_message_id"`
 	}{1, sourceType, sourceIdentifier, sourceMessageID}
-	data, err := json.Marshal(identity)
+	data, err := json.Marshal(identity, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return "", err
 	}

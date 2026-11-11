@@ -30,6 +30,7 @@ func TestAppreciationContributionKeyV1Vectors(t *testing.T) {
 	tests := []struct{ sourceType, identifier, messageID, want string }{
 		{"chat", "account", "message", "9c1277d8afdfc4ed0e323abc735b283c9b0acb0c626b1b6b0e4f542b02d6e2d1"},
 		{"chat", "<>&", "m", "807b5193f92660f09bcce474007b0ff622ea630c896d5f2aec08d43fd2ec6992"},
+		{"chat", "\u2028\u2029", "m", "d93f28a9014d4f4b2ae93f9c630fa960dd8e1ffb1b629cfb28ada9c5b5f3b565"},
 		{"聊天", "a\"b\\c\n", "雪", "9d37f96e8f1cb98c9e7b5c804cd0f40d2b71be8ac47a4effe2e24110a910a4c7"},
 	}
 	for _, tc := range tests {
