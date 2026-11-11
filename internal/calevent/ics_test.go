@@ -52,7 +52,6 @@ func TestICSLibicalTZID(t *testing.T) {
 			assertions.Equal("America/New_York", components[0].Event.EventTimeZone)
 		})
 	}
-
 }
 
 func TestICSWindowsZoneRecurrence(t *testing.T) {

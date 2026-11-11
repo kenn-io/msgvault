@@ -35,8 +35,7 @@ func readICS(path string) ([]byte, []error, error) {
 		return nil, nil, fmt.Errorf("read ICS file: %w", err)
 	}
 	_, err = calevent.ParseICS(raw, "", "")
-	var skipped *calevent.SkippedEvents
-	if errors.As(err, &skipped) {
+	if skipped, ok := errors.AsType[*calevent.SkippedEventsError](err); ok {
 		return raw, skipped.Errs, nil
 	}
 	return raw, nil, err
