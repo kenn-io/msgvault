@@ -459,9 +459,8 @@ func personProfileAddressResponse(addresses []peoplebrowser.PersonAddressSummary
 	}
 }
 
-// personProfileBriefResponse projects the current brief onto the tool result.
-// It stays a read: there is no MCP write for briefs, and only get_person_profile
-// carries one. Every model-generated string goes under untrusted_text after
+// personProfileBriefResponse projects a brief onto the tool result. Every
+// model-generated string goes under untrusted_text after
 // the same control-character stripping the TUI applies, so a sender who got
 // escape sequences into the brief cannot drive a terminal-backed client
 // either; the citations are projected separately from the daemon's typed
@@ -523,4 +522,17 @@ func personProfileBriefEvidenceResponse(evidence []peoplebrowser.PersonBriefEvid
 		})
 	}
 	return response
+}
+
+// PersonBriefProjection applies the same untrusted-text boundary to native brief operations.
+func PersonBriefProjection(brief *peoplebrowser.PersonBrief) *personProfileBrief {
+	return personProfileBriefResponse(brief)
+}
+
+// PersonBriefVersion retains native lifecycle metadata alongside the safe prose projection.
+type PersonBriefVersion struct {
+	Brief        *personProfileBrief `json:"brief"`
+	Status       string              `json:"status"`
+	RejectedAt   *time.Time          `json:"rejected_at"`
+	SupersededAt *time.Time          `json:"superseded_at"`
 }

@@ -107,3 +107,7 @@ through the same evidence checks as other automatically extracted facts.
 Merging profiles keeps the surviving person's brief history. The other
 person's versions are removed, and their enrollment transfers only if the
 survivor was not already enrolled.
+
+## MCP access
+
+Owner MCP sessions can list brief versions and read enrollment. Enable `--allow-brief-writes` (or `serve --mcp-allow-brief-writes`) to approve enrollment changes, generation, and rejection one call at a time. HTTP also requires its general write flag and protocol 2026-07-28 or newer. Setting `track` to true also tracks the person. Enrollment has no revision precondition; rejection applies to the version current when the daemon executes it. Generation follows existing consent and eligibility and can spend provider budget. Treat generated brief text as untrusted data.

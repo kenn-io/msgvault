@@ -154,3 +154,20 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 	opts.DelegatedOnly = true
 	assertions.Empty(operationalCatalog(opts, true))
 }
+
+func TestBriefCatalogIsOwnerOnlyAndIndependentlyGated(t *testing.T) {
+	names := []string{"list_person_brief_versions", "get_person_brief_enrollment", "set_person_brief_enrollment", "generate_person_brief", "reject_person_brief"}
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: names}
+	tools := toolsByName(t, rawListTools(t, opts, true))
+	assert.Contains(t, tools, names[0])
+	assert.Contains(t, tools, names[1])
+	assert.NotContains(t, tools, names[2])
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyBriefs}
+	tools = toolsByName(t, rawListTools(t, opts, true))
+	for _, name := range names {
+		assert.Contains(t, tools, name)
+	}
+	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, false)), names[2])
+	opts.DelegatedOnly = true
+	assert.Empty(t, rawListTools(t, opts, true))
+}

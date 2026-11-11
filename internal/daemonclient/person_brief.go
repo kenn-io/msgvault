@@ -67,7 +67,7 @@ func (b *PeopleBrowser) GetPersonBrief(
 	if resp.JSON200 == nil {
 		return nil, errors.New("get person brief: empty response")
 	}
-	return personBriefFromGenerated(*resp.JSON200), nil
+	return PersonBriefFromGenerated(*resp.JSON200), nil
 }
 
 // SetPersonBriefEnrollment replaces a person's brief enrollment. Track adds the
@@ -150,7 +150,7 @@ func (b *PeopleBrowser) RejectPersonBrief(
 	if resp.JSON200 == nil {
 		return nil, errors.New("reject person brief: empty response")
 	}
-	return personBriefFromGenerated(*resp.JSON200), nil
+	return PersonBriefFromGenerated(*resp.JSON200), nil
 }
 
 // absentPersonBrief reports the daemon's "this person has no current version"
@@ -163,7 +163,8 @@ func absentPersonBrief(err error) bool {
 		apiErr.APIErrorCode() == personBriefNotFoundCode
 }
 
-func personBriefFromGenerated(brief generated.PersonBrief) *peoplebrowser.PersonBrief {
+// PersonBriefFromGenerated projects the native response into the shared brief model.
+func PersonBriefFromGenerated(brief generated.PersonBrief) *peoplebrowser.PersonBrief {
 	converted := &peoplebrowser.PersonBrief{
 		Version: int(brief.Version), Status: brief.Status, GeneratedAt: brief.GeneratedAt,
 		RenderedText: brief.RenderedText, DroppedItemCount: int(brief.DroppedItemCount),
