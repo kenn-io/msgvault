@@ -1,6 +1,7 @@
 package providercredentials
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -417,7 +418,7 @@ func TestImportIfAbsentHoldsStoreLockUntilRetired(t *testing.T) {
 	deleted := make(chan error, 1)
 	load := func() (string, bool, error) {
 		go func() {
-			_, deleteErr := mutate(dir, func(current Snapshot) error {
+			_, deleteErr := mutate(dir, Filename, func(current Snapshot) error {
 				sawRetired <- retired.Load()
 				if !current.Stored(id) {
 					return ErrConflict
@@ -449,7 +450,7 @@ func TestEventsCredentialUsesInternalIDAndOrigin(t *testing.T) {
 	dir := t.TempDir()
 	id := EventsID("0123456789abcdef0123456789abcdef")
 	require.Error(ValidateID(id))
-	snapshot, err := Read(dir)
+	snapshot, err := ReadEvents(dir)
 	require.NoError(err)
 	revision, err := snapshot.Revision(id)
 	require.NoError(err)
@@ -460,4 +461,121 @@ func TestEventsCredentialUsesInternalIDAndOrigin(t *testing.T) {
 	assert.Equal("fixture", value)
 	_, err = PutIfRevision(dir, revision, id, "https://example.test", "stale")
 	assert.ErrorIs(err, ErrConflict)
+}
+
+func TestEventsCredentialsSeparatedAndMigrated(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	id := EventsID("0123456789abcdef0123456789abcdef")
+	empty, err := Read(dir)
+	requirements.NoError(err)
+	_, err = Put(dir, empty.ETag, VectorEmbeddingsID, "https://example.test", "vector")
+	requirements.NoError(err)
+	events, err := ReadEvents(dir)
+	requirements.NoError(err)
+	revision, err := events.Revision(id)
+	requirements.NoError(err)
+	_, err = PutIfRevision(dir, revision, id, "https://example.test", "event")
+	requirements.NoError(err)
+	shared, err := Read(dir)
+	requirements.NoError(err)
+	for _, metadata := range shared.Metadata() {
+		assertions.NoError(ValidateID(metadata.ID))
+	}
+	events, err = ReadEvents(dir)
+	requirements.NoError(err)
+	value, _, err := events.Resolve(id, "https://example.test", "", nil)
+	requirements.NoError(err)
+	assertions.Equal("event", value)
+
+	// Seed the format produced by the published draft, including a people key.
+	_, err = locked(dir, Filename, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
+		credentials := maps.Clone(current.credentials)
+		credentials[id] = record{ID: id, Kind: recordKind(id), Value: "old", Origin: "https://example.test", Revision: 42}
+		people := PeopleProviderID("fixture")
+		credentials[people] = record{ID: people, Kind: recordKind(people), Value: "people", Origin: "https://example.test", Revision: 17}
+		return persist(dir, Filename, permissions, credentials)
+	})
+	requirements.NoError(err)
+	before, err := Read(dir)
+	requirements.NoError(err)
+	vectorBefore := before.credentials[VectorEmbeddingsID]
+	peopleBefore := before.credentials[PeopleProviderID("fixture")]
+	// The already-published destination wins over the draft copy.
+	requirements.NoError(MigrateEvents(dir))
+	shared, err = Read(dir)
+	requirements.NoError(err)
+	assertions.False(shared.Stored(id))
+	assertions.Equal(vectorBefore, shared.credentials[VectorEmbeddingsID])
+	assertions.Equal(peopleBefore, shared.credentials[PeopleProviderID("fixture")])
+	events, err = ReadEvents(dir)
+	requirements.NoError(err)
+	value, _, err = events.Resolve(id, "https://example.test", "", nil)
+	requirements.NoError(err)
+	assertions.Equal("event", value)
+}
+
+func TestEventsMigrationPreservesRevisionAndFailureOrdering(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	id := EventsID("0123456789abcdef0123456789abcdef")
+	_, err := locked(dir, Filename, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
+		credentials := maps.Clone(current.credentials)
+		credentials[id] = record{ID: id, Kind: recordKind(id), Value: "draft", Origin: "https://example.test", Revision: 42}
+		return persist(dir, Filename, permissions, credentials)
+	})
+	requirements.NoError(err)
+	shared, err := Read(dir)
+	requirements.NoError(err)
+	revision, err := shared.Revision(id)
+	requirements.NoError(err)
+	before, err := os.ReadFile(filepath.Join(dir, Filename))
+	requirements.NoError(err)
+	requirements.NoError(os.Mkdir(filepath.Join(dir, EventsFilename), 0700))
+	assertions.Error(MigrateEvents(dir))
+	after, err := os.ReadFile(filepath.Join(dir, Filename))
+	requirements.NoError(err)
+	assertions.Equal(before, after)
+	requirements.NoError(os.Remove(filepath.Join(dir, EventsFilename)))
+	requirements.NoError(MigrateEvents(dir))
+	events, err := ReadEvents(dir)
+	requirements.NoError(err)
+	movedRevision, err := events.Revision(id)
+	requirements.NoError(err)
+	assertions.Equal(revision, movedRevision)
+	shared, err = Read(dir)
+	requirements.NoError(err)
+	assertions.False(shared.Stored(id))
+	missing := filepath.Join(t.TempDir(), "absent")
+	requirements.NoError(MigrateEvents(missing))
+	_, err = os.Stat(missing)
+	assertions.ErrorIs(err, os.ErrNotExist)
+}
+
+func TestEventsMigrationPublicationFailureKeepsSharedBytes(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	oldID := EventsID("0123456789abcdef0123456789abcdef")
+	newID := EventsID("fedcba9876543210fedcba9876543210")
+	_, err := locked(dir, Filename, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
+		return persist(dir, Filename, permissions, map[string]record{
+			oldID: {ID: oldID, Kind: recordKind(oldID), Value: strings.Repeat("x", 8192), Origin: "https://example.test", Revision: 2},
+		})
+	})
+	requirements.NoError(err)
+	_, err = locked(dir, EventsFilename, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
+		return persist(dir, EventsFilename, permissions, map[string]record{
+			newID: {ID: newID, Kind: recordKind(newID), Value: strings.Repeat("y", int(maximumCredentialStoreBytes)-4096), Origin: "https://example.test", Revision: 3},
+		})
+	})
+	requirements.NoError(err)
+	before, err := os.ReadFile(filepath.Join(dir, Filename))
+	requirements.NoError(err)
+	assertions.Error(MigrateEvents(dir))
+	after, err := os.ReadFile(filepath.Join(dir, Filename))
+	requirements.NoError(err)
+	assertions.Equal(before, after)
 }

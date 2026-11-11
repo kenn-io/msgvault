@@ -52,6 +52,7 @@ import (
 	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/plaud"
 	"go.kenn.io/msgvault/internal/pocket"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/rederive"
@@ -590,6 +591,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if err := configureRecordingReferenceJob(ctx, mediaSched, operationGate, s, cfg.Integrations.Docbank, logger); err != nil {
 		logger.Warn("Recording reference submission unavailable", "error", err)
+	}
+	if err := providercredentials.MigrateEvents(cfg.TokensDir()); err != nil {
+		logger.Warn("events credential migration unavailable", "category", "credential_unavailable")
 	}
 	eventsService := &mcpevents.Service{Store: s, TokensDir: cfg.TokensDir(), Enabled: cfg.MCPEvents.Enabled, ConfigTargets: len(cfg.Wakeups), Logger: logger}
 	if err := configureWakeupJob(ctx, mediaSched, operationGate, s, cfg, logger, eventsService); err != nil {

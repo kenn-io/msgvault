@@ -67,7 +67,7 @@ func callbackOrigin(raw string) (string, error) {
 }
 
 func (s *Service) credentialSnapshot(id string) (providercredentials.Snapshot, string, error) {
-	snapshot, err := providercredentials.Read(s.TokensDir)
+	snapshot, err := providercredentials.ReadEvents(s.TokensDir)
 	if err != nil {
 		return snapshot, "", err
 	}
@@ -149,7 +149,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 		if err != nil {
 			return out, failure(InvalidParams, "invalid_callback")
 		}
-		_, revision, credentialErr := s.credentialSnapshot(id)
+		previous, revision, credentialErr := s.credentialSnapshot(id)
 		if credentialErr != nil {
 			return out, failure(Unavailable, "credential_unavailable")
 		}
@@ -187,6 +187,10 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 		status.LastDeliveryAt = state.LastDeliveryAt
 		status.LastError = state.LastError
 		status.FailedSince = state.FailedSince
+		if index >= 0 && !previous.Stored(providercredentials.EventsID(id)) {
+			status.LastError = "secret_unavailable"
+			status.FailedSince = nil
+		}
 		return MCPEventsSubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: status}, nil
 	}
 }
@@ -267,7 +271,7 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 	if err != nil || len(entries) == 0 {
 		return nil, err
 	}
-	credentials, err := providercredentials.Read(s.TokensDir)
+	credentials, err := providercredentials.ReadEvents(s.TokensDir)
 	if err != nil {
 		return nil, err
 	}

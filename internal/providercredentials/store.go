@@ -30,7 +30,8 @@ import (
 )
 
 const (
-	Filename                                 = "provider-credentials.json" // #nosec G101 -- filename, not a credential.
+	EventsFilename                           = "mcp-events-credentials.json" // #nosec G101 -- filename, not a credential.
+	Filename                                 = "provider-credentials.json"   // #nosec G101 -- filename, not a credential.
 	VectorEmbeddingsID                       = "vector.embeddings"
 	VectorMultimodalID                       = "vector.multimodal"
 	PersonEnrichmentSuppressionID            = "people.enrichment/suppression"
@@ -178,11 +179,23 @@ func emptyStore() storeFile {
 }
 
 func Read(tokenDir string) (Snapshot, error) {
-	return readWithPermissions(tokenDir, nativePermissions{})
+	return readWithPermissions(tokenDir, Filename, nativePermissions{})
 }
 
-func readWithPermissions(tokenDir string, permissions permissionBackend) (Snapshot, error) {
-	path := filepath.Join(tokenDir, Filename)
+// ReadEvents reads the separate MCP Events credential file.
+func ReadEvents(tokenDir string) (Snapshot, error) {
+	return readWithPermissions(tokenDir, EventsFilename, nativePermissions{})
+}
+
+func fileFor(id string) string {
+	if strings.HasPrefix(id, eventsCredentialIDPrefix) {
+		return EventsFilename
+	}
+	return Filename
+}
+
+func readWithPermissions(tokenDir, name string, permissions permissionBackend) (Snapshot, error) {
+	path := filepath.Join(tokenDir, name)
 	file, err := openStoreFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		empty := emptyStore()
@@ -367,7 +380,7 @@ func Put(tokenDir, ifMatch, id, endpoint, value string) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return mutate(tokenDir, etagMatches(ifMatch), putRecord(id, origin, value))
+	return mutate(tokenDir, Filename, etagMatches(ifMatch), putRecord(id, origin, value))
 }
 
 // PutIfRevision stores one credential only while its observed Revision is
@@ -383,7 +396,7 @@ func PutIfRevision(tokenDir, expected, id, endpoint, value string) (Snapshot, er
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return mutate(tokenDir, revisionMatches(id, expected), putRecord(id, origin, value))
+	return mutate(tokenDir, fileFor(id), revisionMatches(id, expected), putRecord(id, origin, value))
 }
 
 // DeleteIfRevision removes one credential only while its observed Revision
@@ -393,7 +406,7 @@ func DeleteIfRevision(tokenDir, expected, id string, retire func() error) (Snaps
 	if err := validateRecordID(id); err != nil {
 		return Snapshot{}, err
 	}
-	return locked(tokenDir, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
+	return locked(tokenDir, fileFor(id), func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
 		if err := revisionMatches(id, expected)(current); err != nil {
 			return Snapshot{}, err
 		}
@@ -402,7 +415,7 @@ func DeleteIfRevision(tokenDir, expected, id string, retire func() error) (Snaps
 		}
 		credentials := maps.Clone(current.credentials)
 		delete(credentials, id)
-		return persist(tokenDir, permissions, credentials)
+		return persist(tokenDir, fileFor(id), permissions, credentials)
 	})
 }
 
@@ -449,7 +462,7 @@ func PutSuppression(tokenDir, ifMatch, value string) (Snapshot, error) {
 	if value == "" {
 		return Snapshot{}, errors.New("suppression key cannot be empty")
 	}
-	return mutate(tokenDir, etagMatches(ifMatch), func(credentials map[string]record) {
+	return mutate(tokenDir, Filename, etagMatches(ifMatch), func(credentials map[string]record) {
 		credentials[PersonEnrichmentSuppressionID] = record{
 			ID: PersonEnrichmentSuppressionID, Kind: recordKind(PersonEnrichmentSuppressionID),
 			Value: value, Revision: nextRevision(credentials, PersonEnrichmentSuppressionID),
@@ -464,7 +477,7 @@ func DeleteSuppressionIfValue(tokenDir, value string) (Snapshot, error) {
 	if value == "" {
 		return Snapshot{}, errors.New("suppression key cannot be empty")
 	}
-	return locked(tokenDir, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
+	return locked(tokenDir, Filename, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
 		stored, ok := current.credentials[PersonEnrichmentSuppressionID]
 		if !ok {
 			return current, nil
@@ -474,7 +487,7 @@ func DeleteSuppressionIfValue(tokenDir, value string) (Snapshot, error) {
 		}
 		credentials := maps.Clone(current.credentials)
 		delete(credentials, PersonEnrichmentSuppressionID)
-		return persist(tokenDir, permissions, credentials)
+		return persist(tokenDir, Filename, permissions, credentials)
 	})
 }
 
@@ -482,7 +495,7 @@ func Delete(tokenDir, ifMatch, id string) (Snapshot, error) {
 	if err := ValidateID(id); err != nil {
 		return Snapshot{}, err
 	}
-	return mutate(tokenDir, etagMatches(ifMatch), func(credentials map[string]record) {
+	return mutate(tokenDir, Filename, etagMatches(ifMatch), func(credentials map[string]record) {
 		delete(credentials, id)
 	})
 }
@@ -500,7 +513,7 @@ func ImportIfAbsent(tokenDir, id, endpoint string, load func() (string, bool, er
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return locked(tokenDir, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
+	return locked(tokenDir, fileFor(id), func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
 		if current.Stored(id) {
 			// The stored key wins; a stale or malformed old copy is only retired.
 			return current, retire()
@@ -515,7 +528,7 @@ func ImportIfAbsent(tokenDir, id, endpoint string, load func() (string, bool, er
 			}
 			credentials := maps.Clone(current.credentials)
 			putRecord(id, origin, value)(credentials)
-			if current, err = persist(tokenDir, permissions, credentials); err != nil {
+			if current, err = persist(tokenDir, fileFor(id), permissions, credentials); err != nil {
 				return Snapshot{}, err
 			}
 		}
@@ -523,19 +536,70 @@ func ImportIfAbsent(tokenDir, id, endpoint string, load func() (string, bool, er
 	})
 }
 
-func mutate(tokenDir string, precondition func(Snapshot) error, mutation func(map[string]record)) (Snapshot, error) {
-	return locked(tokenDir, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
+func mutate(tokenDir, name string, precondition func(Snapshot) error, mutation func(map[string]record)) (Snapshot, error) {
+	return locked(tokenDir, name, func(current Snapshot, permissions permissionBackend) (Snapshot, error) {
 		if err := precondition(current); err != nil {
 			return Snapshot{}, err
 		}
 		credentials := maps.Clone(current.credentials)
 		mutation(credentials)
-		return persist(tokenDir, permissions, credentials)
+		return persist(tokenDir, name, permissions, credentials)
 	})
 }
 
+// MigrateEvents moves draft Events records to their separate file under the
+// same lock, publishing the destination before removing any shared records.
+func MigrateEvents(tokenDir string) error {
+	probe, err := Read(tokenDir)
+	if err != nil {
+		return fmt.Errorf("read shared credentials for Events migration: %w", err)
+	}
+	hasEvents := func(snapshot Snapshot) bool {
+		for id := range snapshot.credentials {
+			if strings.HasPrefix(id, eventsCredentialIDPrefix) {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasEvents(probe) {
+		return nil
+	}
+	_, err = locked(tokenDir, Filename, func(shared Snapshot, permissions permissionBackend) (Snapshot, error) {
+		if !hasEvents(shared) {
+			return shared, nil
+		}
+		destination, err := readWithPermissions(tokenDir, EventsFilename, permissions)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		remaining := maps.Clone(shared.credentials)
+		moved := maps.Clone(destination.credentials)
+		copied := false
+		for id, value := range shared.credentials {
+			if strings.HasPrefix(id, eventsCredentialIDPrefix) {
+				if _, exists := moved[id]; !exists {
+					moved[id] = value
+					copied = true
+				}
+				delete(remaining, id)
+			}
+		}
+		if copied {
+			if _, err := persist(tokenDir, EventsFilename, permissions, moved); err != nil {
+				return Snapshot{}, err
+			}
+		}
+		return persist(tokenDir, Filename, permissions, remaining)
+	})
+	if err != nil {
+		return fmt.Errorf("migrate Events credentials: %w", err)
+	}
+	return nil
+}
+
 // locked runs fn against a fresh read while holding the store lock.
-func locked(tokenDir string, fn func(Snapshot, permissionBackend) (Snapshot, error)) (Snapshot, error) {
+func locked(tokenDir, name string, fn func(Snapshot, permissionBackend) (Snapshot, error)) (Snapshot, error) {
 	permissions := nativePermissions{}
 	if err := permissions.prepareDirectory(tokenDir); err != nil {
 		return Snapshot{}, fmt.Errorf("create credential directory: %w", err)
@@ -546,7 +610,7 @@ func locked(tokenDir string, fn func(Snapshot, permissionBackend) (Snapshot, err
 		if err := permissions.secureDirectory(tokenDir); err != nil {
 			return fmt.Errorf("secure credential directory: %w", err)
 		}
-		current, err := readWithPermissions(tokenDir, permissions)
+		current, err := readWithPermissions(tokenDir, name, permissions)
 		if err != nil {
 			return err
 		}
@@ -556,7 +620,7 @@ func locked(tokenDir string, fn func(Snapshot, permissionBackend) (Snapshot, err
 	return result, err
 }
 
-func persist(tokenDir string, permissions permissionBackend, credentials map[string]record) (Snapshot, error) {
+func persist(tokenDir, name string, permissions permissionBackend, credentials map[string]record) (Snapshot, error) {
 	saved := storeFile{Version: credentialStoreVersion, Credentials: credentials}
 	encoded, err := json.Marshal(saved, json.Deterministic(true))
 	if err != nil {
@@ -567,14 +631,14 @@ func persist(tokenDir string, permissions permissionBackend, credentials map[str
 		// Publishing it would make every stored credential unreadable.
 		return Snapshot{}, errors.New("credential store would exceed its size limit")
 	}
-	published, err := publish(tokenDir, permissions, encoded)
+	published, err := publish(tokenDir, name, permissions, encoded)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	return snapshotFrom(saved, published), nil
 }
 
-func publish(tokenDir string, permissions permissionBackend, encoded []byte) ([]byte, error) {
+func publish(tokenDir, name string, permissions permissionBackend, encoded []byte) ([]byte, error) {
 	// Kit's WithPrivate permits SYSTEM and Administrators on Windows; this
 	// store requires and verifies a DACL containing only the current user.
 	temporary, err := os.CreateTemp(tokenDir, ".provider-credentials-*.json")
@@ -601,7 +665,7 @@ func publish(tokenDir string, permissions permissionBackend, encoded []byte) ([]
 	if err := temporary.Close(); err != nil {
 		return nil, fmt.Errorf("close credential candidate: %w", err)
 	}
-	if err := atomicfile.Replace(temporaryPath, filepath.Join(tokenDir, Filename)); err != nil {
+	if err := atomicfile.Replace(temporaryPath, filepath.Join(tokenDir, name)); err != nil {
 		return nil, fmt.Errorf("publish credential store: %w", err)
 	}
 	published = true
