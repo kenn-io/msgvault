@@ -256,10 +256,6 @@ not interchangeable with disposable analytics or semantic indexes.
 
 SQLite uses an FTS5 virtual table named `messages_fts`. PostgreSQL uses a `search_fts` `tsvector` column on `messages` with a GIN index.
 
-PostgreSQL also stores bounded normalized search fields in nullable
-`messages.search_fts_fields` when the vector reaches a position limit. Search
-uses those fields to check phrase order.
-
 Both power `msgvault search`, but the rankers differ. See [Search Ranking Across Backends](/docs/architecture/search-ranking/).
 
 ### Relationships

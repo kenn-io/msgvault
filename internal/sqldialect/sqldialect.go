@@ -11,7 +11,6 @@
 package sqldialect
 
 import (
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"strings"
@@ -58,14 +57,11 @@ func PostgreSQLSearchArg(terms []string, weight string) string {
 		parts[len(parts)-1] += ":*"
 		candidates = append(candidates, strings.Join(parts, " & "))
 	}
-	data, err := json.Marshal(struct {
+	data, _ := json.Marshal(struct {
 		Phrase    string   `json:"phrase"`
 		Candidate string   `json:"candidate"`
 		Patterns  []string `json:"patterns"`
-	}{phrase, strings.Join(candidates, " & "), patterns}, jsontext.EscapeForHTML(true))
-	if err != nil {
-		panic(err) // Strings and string slices are always JSON encodable.
-	}
+	}{phrase, strings.Join(candidates, " & "), patterns})
 	return string(data)
 }
 
@@ -83,10 +79,18 @@ func PostgreSQLSearchPredicate(arg, fields string) string {
 	fields = strings.ReplaceAll(fields, "m.", "indexed.")
 	return `m.id IN (WITH fts AS MATERIALIZED (SELECT * FROM jsonb_to_record(` + arg + `::jsonb) AS payload(phrase text, candidate text, patterns text[]))
 		SELECT indexed.id FROM fts CROSS JOIN messages indexed WHERE
-		(indexed.search_fts_fields IS NULL AND indexed.search_fts @@ to_tsquery('simple', fts.phrase)) OR
-		(indexed.search_fts_fields IS NOT NULL AND indexed.search_fts @@ to_tsquery('simple', fts.candidate) AND
+		(indexed.search_fts_fields IS NULL AND indexed.search_fts @@ to_tsquery('simple', fts.phrase)) OR ` + compactFTSMatch(fields) + ` OR
+		(cardinality(indexed.search_fts_fields) > 3 AND indexed.search_fts @@ to_tsquery('simple', fts.candidate) AND
 		 NOT EXISTS (SELECT 1 FROM unnest(fts.patterns) AS pattern WHERE NOT EXISTS
 		 (SELECT 1 FROM unnest(` + fields + `) AS field WHERE field ~* pattern))))`
+}
+
+// Three fields hold legacy text; primary fields still have complete positions.
+// TSQuery joins one phrase per term with " & "; normalized terms cannot contain it.
+func compactFTSMatch(fields string) string {
+	return `(cardinality(indexed.search_fts_fields) = 3 AND indexed.search_fts @@ to_tsquery('simple', fts.candidate) AND
+		NOT EXISTS (SELECT 1 FROM unnest(fts.patterns, string_to_array(fts.phrase, ' & ')) AS term(pattern, phrase)
+		WHERE NOT (indexed.search_fts @@ to_tsquery('simple', term.phrase) OR EXISTS (SELECT 1 FROM unnest(` + fields + `) AS field WHERE field ~* term.pattern))))`
 }
 
 // tokenSpans returns byte offsets of Unicode letter and digit runs.
@@ -111,9 +115,8 @@ func tokenSpans(s string) [][2]int {
 
 // EscapeTSQueryTerm splits a search term into Unicode letter and digit runs.
 func EscapeTSQueryTerm(s string) []string {
-	spans := tokenSpans(s)
 	var lexemes []string
-	for _, span := range spans {
+	for _, span := range tokenSpans(s) {
 		lexemes = append(lexemes, s[span[0]:span[1]])
 	}
 	return lexemes

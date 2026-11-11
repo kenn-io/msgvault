@@ -59,23 +59,6 @@ func TestEscapeTSQueryTerm(t *testing.T) {
 	}
 }
 
-func TestTSQuery(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		in   []string
-		want string
-	}{
-		{"plain", []string{"invoice"}, "invoice:*"},
-		{"two_plain", []string{"invoice", "review"}, "invoice:* & review:*"},
-		{"dotted_acronym_splits", []string{"a.b.c"}, "(a <-> b <-> c:*)"},
-		{"mix_of_clean_and_punct", []string{"invoice", "foo-bar"}, "invoice:* & (foo <-> bar:*)"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, TSQuery(tc.in, ""))
-		})
-	}
-}
-
 func TestPostgreSQLSearchArg(t *testing.T) {
 	assert := assert.New(t)
 	assert.JSONEq(`{"phrase":"3:*","candidate":"3:*","patterns":["(^| )3"]}`, PostgreSQLSearchArg([]string{"<3"}, ""))

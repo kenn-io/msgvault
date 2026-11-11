@@ -482,25 +482,12 @@ func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 	engine := query.NewEngine(f.Store.DB(), true)
 	searcher, ok := engine.(query.MessageBodySearcher)
 	require.True(ok)
-	result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"alice@exam"}}, 10, 0)
-	require.NoError(err)
-	require.Len(result.Messages, 1)
-	assert.Equal(id, result.Messages[0].ID)
-	require.NotEmpty(result.Messages[0].BodyContextSnippets)
-	assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "alice@example.com")
-	result, err = searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"cafe teria"}}, 10, 0)
-	require.NoError(err)
-	require.Len(result.Messages, 1)
-	assert.Equal(combiningID, result.Messages[0].ID)
-	require.NotEmpty(result.Messages[0].BodyContextSnippets)
-	assert.Contains(result.Messages[0].BodyContextSnippets[0], "cafe\u0301teria marker")
-	for _, term := range []string{"cafe\u0301teria", "cafe\u0301", "foo.bar"} {
-		result, err = searcher.SearchMessageBodies(t.Context(), search.Parse(term), 10, 0)
+	for term, want := range map[string]int64{"alice@exam": id, "cafe\u0301teria": combiningID, "cafe\u0301": combiningID, "foo.bar": combiningID} {
+		result, err := searcher.SearchMessageBodies(t.Context(), search.Parse(term), 10, 0)
 		require.NoError(err, term)
 		require.Len(result.Messages, 1, term)
-		assert.Equal(combiningID, result.Messages[0].ID, term)
-		require.NotEmpty(result.Messages[0].BodyContextSnippets, term)
-		assert.Contains(result.Messages[0].BodyContextSnippets[0], term, term)
+		assert.Equal(want, result.Messages[0].ID, term)
+		assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), term, term)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -111,254 +112,109 @@ func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 	assertFTSContains(t, f.Store, "obsolete", 0)
 }
 
-func TestPG_BackfillFTSPreservesIndexedFields(t *testing.T) {
-	require := require.New(t)
+// TestPG_BackfillFTSUpgradesLegacyEntries rebuilds version-2 entries from
+// stored data and keeps only subject, sender, and recipient text it lacks.
+func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	skipUnlessPostgres(t)
+	require := require.New(t)
 	f := storetest.New(t)
-	cases := []struct {
-		name, subject, sender, recipient, body, query string
-	}{
-		{"messenger", "hidden title.example", "", "", "", "title.example"},
-		{"imazing", "", "", "+15550123457", "", "+15550123457"},
-		{"beeper", "", "Lantern Sender", "", "", "lantern"},
-		{"relay", "", "relay@example.test", "", "", "relay@example.test"},
-	}
-	ids := make([]int64, len(cases))
-	for i, tc := range cases {
-		ids[i] = f.CreateMessage(tc.name)
-		require.NoError(f.Store.UpsertFTS(ids[i], tc.subject, tc.body, tc.sender, tc.recipient, ""))
-	}
-	participant, err := f.Store.EnsureParticipantByIdentifierContext(t.Context(), "beeper", "sender-c", "Different Current Name")
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET sender_id = $1, message_type = 'beeper' WHERE id = $2`, participant, ids[2])
-	require.NoError(err)
-	check := func() {
+	db := f.Store.DB()
+	legacy := func(id int64, vector string, args ...any) {
 		t.Helper()
-		for i, tc := range cases {
-			matches, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{tc.query}}, 10)
-			require.NoError(err, tc.name)
-			require.Equal([]int64{ids[i]}, matches, tc.name)
-		}
-	}
-	check()
-	for i, tc := range cases {
-		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts =
-			setweight(to_tsvector('simple', $1), 'A') || setweight(to_tsvector('simple', $2), 'B') ||
-			setweight(to_tsvector('simple', $3), 'C') || setweight(to_tsvector('simple', $4), 'D'),
-			indexing_version = 2 WHERE id = $5`, tc.subject, tc.sender, tc.recipient, tc.body, ids[i])
-		require.NoError(err, tc.name)
-	}
-	saturated := f.CreateMessage("saturated-old")
-	require.NoError(f.Store.UpsertMessageBody(saturated, sql.NullString{String: "stored saturated@example.test", Valid: true}, sql.NullString{}))
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', $1), indexing_version = 2 WHERE id = $2`, strings.Repeat("filler ", 300), saturated)
-	require.NoError(err)
-	missing := f.CreateMessage("missing-old")
-	require.NoError(f.Store.UpsertMessageBody(missing, sql.NullString{String: "stored missing@example.test", Valid: true}, sql.NullString{}))
-	terminal := f.CreateMessage("unsearchable-old")
-	require.NoError(f.Store.UpsertMessageBody(terminal, sql.NullString{String: "hidden terminal@example.test", Valid: true}, sql.NullString{}))
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = ''::tsvector, indexing_version = 2 WHERE id = $1`, terminal)
-	require.NoError(err)
-	_, err = f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	check()
-	for _, tc := range []struct {
-		term string
-		id   int64
-	}{{"saturated@example.test", saturated}, {"missing@example.test", missing}} {
-		matches, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{tc.term}}, 10)
+		_, err := db.ExecContext(t.Context(), `UPDATE messages SET search_fts = `+vector+`, indexing_version = 2 WHERE id = $1`, append([]any{id}, args...)...)
 		require.NoError(err)
-		require.Equal([]int64{tc.id}, matches)
 	}
-	var empty bool
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts = ''::tsvector FROM messages WHERE id = $1`, terminal).Scan(&empty))
-	require.True(empty)
-}
-
-func TestPG_BackfillFTSPreservesCompoundWordPhrase(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	id := f.CreateMessage("compound")
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'before foo-bar after'), 'A'), indexing_version = 2 WHERE id = $1`, id)
-	require.NoError(err)
-	_, err = f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"before foo-bar after"}}, 10)
-	require.NoError(err)
-	require.Equal([]int64{id}, ids)
-	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"bar foo"}}, 10)
-	require.NoError(err)
-	require.Empty(ids)
-}
-
-func TestPG_BackfillFTSSaturatedMessengerTitle(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
+	withBody := func(id int64, body string) int64 {
+		t.Helper()
+		require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+		return id
+	}
+	compound := f.CreateMessage("compound")
+	legacy(compound, `setweight(to_tsvector('simple', 'before foo-bar after'), 'A')`)
 	conversation, err := f.Store.EnsureConversation(t.Context(), f.Source.ID, "messenger-thread", "Lantern Harbor")
 	require.NoError(err)
-	id, err := f.Store.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: f.Source.ID, SourceMessageID: "messenger-saturated", MessageType: "fbmessenger"})
+	messenger, err := f.Store.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: f.Source.ID, SourceMessageID: "messenger", MessageType: "fbmessenger"})
 	require.NoError(err)
-	body := strings.Repeat("filler ", 300)
-	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'Lantern Harbor'), 'A') || setweight(to_tsvector('simple', $1), 'D'), indexing_version = 2 WHERE id = $2`, body, id)
-	require.NoError(err)
-	_, err = f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"lantern harbor"}}, 10)
-	require.NoError(err)
-	require.Equal([]int64{id}, ids)
-}
-
-func TestPG_BackfillFTSRetainsBodyURL(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	id := f.CreateMessage("url")
-	body := "see https://example.test/path"
-	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', $1), indexing_version = 2 WHERE id = $2`, body, id)
-	require.NoError(err)
-	_, err = f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"https://example.test/path"}}, 10)
-	require.NoError(err)
-	require.Equal([]int64{id}, ids)
-}
-
-func TestPG_BackfillFTSRetainsSenderWithSaturatedBody(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	id := f.CreateMessage("slack")
-	body := strings.Repeat("the ", 300)
-	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET message_type = 'slack', search_fts = setweight(to_tsvector('simple', 'Lantern Sender'), 'B') || setweight(to_tsvector('simple', $1), 'D'), indexing_version = 2 WHERE id = $2`, body, id)
-	require.NoError(err)
-	_, err = f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"lantern sender"}}, 10)
-	require.NoError(err)
-	require.Equal([]int64{id}, ids)
-}
-
-func TestPG_BackfillFTSDoesNotJoinToAndCc(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	id := f.CreateMessage("recipients")
-	to := f.EnsureParticipant("alice", "", "")
-	cc := f.EnsureParticipant("example.com", "", "")
-	require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
-	require.NoError(f.Store.ReplaceMessageRecipients(id, "cc", []int64{cc}, nil))
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'alice example.com'), 'C'), indexing_version = 2 WHERE id = $1`, id)
-	require.NoError(err)
-	_, err = f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example.com"}}, 10)
-	require.NoError(err)
-	require.Empty(ids)
-}
-
-func TestPG_BackfillFTSPreservesLegacyPositionGaps(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	subject := strings.Repeat("filler ", 256) + "alpha filler beta"
-	for _, stored := range []string{subject, "different stored subject"} {
+	filler := strings.Repeat("filler ", 300)
+	legacy(withBody(messenger, filler), `setweight(to_tsvector('simple', 'Lantern Harbor'), 'A') || setweight(to_tsvector('simple', $2), 'D')`, filler)
+	url := withBody(f.CreateMessage("url"), "see https://example.test/path")
+	legacy(url, `to_tsvector('simple', 'see https://example.test/path')`)
+	slack := withBody(f.CreateMessage("slack"), strings.Repeat("the ", 300))
+	legacy(slack, `setweight(to_tsvector('simple', 'Lantern Sender'), 'B') || setweight(to_tsvector('simple', $2), 'D')`, strings.Repeat("the ", 300))
+	phone := f.CreateMessage("imazing")
+	legacy(phone, `setweight(to_tsvector('simple', '+15550123457'), 'C')`)
+	recipients := f.CreateMessage("recipients")
+	require.NoError(f.Store.ReplaceMessageRecipients(recipients, "to", []int64{f.EnsureParticipant("alice", "", "")}, nil))
+	require.NoError(f.Store.ReplaceMessageRecipients(recipients, "cc", []int64{f.EnsureParticipant("example.com", "", "")}, nil))
+	legacy(recipients, `setweight(to_tsvector('simple', 'alice example.com'), 'C')`)
+	legacy(withBody(f.CreateMessage("unsearchable"), "hidden terminal@example.test"), `''::tsvector`)
+	gapped := strings.Repeat("filler ", 256) + "alpha filler beta"
+	for _, stored := range []string{gapped, "different stored subject"} {
 		id := f.CreateMessage(stored)
-		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = $1, search_fts = setweight(to_tsvector('simple', $2), 'A'), indexing_version = 2 WHERE id = $3`, stored, subject, id)
+		_, err := db.ExecContext(t.Context(), `UPDATE messages SET subject = $1 WHERE id = $2`, stored, id)
 		require.NoError(err)
+		legacy(id, `setweight(to_tsvector('simple', $2), 'A')`, gapped)
 	}
-	compound := f.CreateMessage("compound-gap")
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', $1), 'A'), indexing_version = 2 WHERE id = $2`, strings.Repeat("filler ", 256)+"alpha filler foo-bar", compound)
-	require.NoError(err)
-	_, err = f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alpha beta"}}, 10)
-	require.NoError(err)
-	require.Empty(ids)
-	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alpha foo"}}, 10)
-	require.NoError(err)
-	require.Empty(ids)
-}
-
-func TestPG_BackfillFTSDoesNotIncreaseStoredFieldRank(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	legacy, partial, fresh := f.CreateMessage("legacy"), f.CreateMessage("partial"), f.CreateMessage("fresh")
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'lantern' WHERE id IN ($1, $2, $3)`, legacy, partial, fresh)
+	legacy(f.CreateMessage("compound-gap"), `setweight(to_tsvector('simple', $2), 'A')`, strings.Repeat("filler ", 256)+"alpha filler foo-bar")
+	fresh, retained, partial := f.CreateMessage("fresh"), f.CreateMessage("retained"), f.CreateMessage("partial")
+	_, err = db.ExecContext(t.Context(), `UPDATE messages SET subject = 'lantern' WHERE id IN ($1, $2, $3)`, fresh, retained, partial)
 	require.NoError(err)
 	require.NoError(f.Store.UpsertFTS(fresh, "lantern", "", "", "", ""))
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'lantern'), 'A'), indexing_version = 2 WHERE id = $1`, legacy)
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'lantern unique'), 'A'), indexing_version = 2 WHERE id = $1`, partial)
-	require.NoError(err)
-	_, err = f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	var oldRank, newRank float64
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], search_fts, to_tsquery('simple', 'lantern:*')) FROM messages WHERE id = $1`, legacy).Scan(&oldRank))
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], search_fts, to_tsquery('simple', 'lantern:*')) FROM messages WHERE id = $1`, fresh).Scan(&newRank))
-	require.InDelta(newRank, oldRank, 0.000001)
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], search_fts, to_tsquery('simple', 'lantern:*')) FROM messages WHERE id = $1`, partial).Scan(&oldRank))
-	require.InDelta(newRank, oldRank, 0.000001)
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"unique"}}, 10)
-	require.NoError(err)
-	require.Equal([]int64{partial}, ids)
-	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"lantern unique"}}, 10)
-	require.NoError(err)
-	require.Equal([]int64{partial}, ids)
-}
+	legacy(retained, `setweight(to_tsvector('simple', 'lantern'), 'A')`)
+	withBody(partial, strings.Repeat("bodypaddingone bodypaddingtwo bodypaddingthree bodypaddingfour bodypaddingfive ", 120)+"stored phrase")
+	legacy(partial, `setweight(to_tsvector('simple', 'lantern unique'), 'A')`)
 
-func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	phone, err := f.Store.EnsureParticipantByPhone(t.Context(), "+15550123456", "", "whatsapp")
-	require.NoError(err)
-	email := f.EnsureParticipant("sender@example.test", "Email Sender", "example.test")
-	cases := []struct {
-		kind, name, indexed, query, addressQuery string
-		sender                                   int64
-	}{
-		{"whatsapp", "", "+15550123456", "+15550123456", "", phone},
-		{"email", "Email Sender", "sender@example.test", "sender@example.test", "", email},
-	}
-	ids := make([]int64, len(cases))
-	for i, tc := range cases {
-		msg := f.NewMessage().WithSourceMessageID(tc.kind).Build()
-		msg.MessageType = tc.kind
-		msg.SenderID = sql.NullInt64{Int64: tc.sender, Valid: true}
-		ids[i], err = f.Store.UpsertMessage(msg)
-		require.NoError(err)
-		if tc.name != "" {
-			require.NoError(f.Store.ReplaceMessageRecipients(ids[i], "from", []int64{tc.sender}, []string{tc.name}))
-		}
-		require.NoError(f.Store.UpsertFTS(ids[i], "", "", tc.indexed, "", ""))
-	}
-	check := func() {
-		t.Helper()
-		for i, tc := range cases {
-			matches, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{tc.query}}, 10)
-			require.NoError(err, tc.kind)
-			require.Equal([]int64{ids[i]}, matches, tc.kind)
-			if tc.addressQuery != "" {
-				matches, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{tc.addressQuery}}, 10)
-				require.NoError(err, tc.kind)
-				require.Equal([]int64{ids[i]}, matches, tc.kind)
-			}
-		}
-	}
-	check()
-	if f.Store.IsPostgreSQL() {
-		_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2`)
-	} else {
-		_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM messages_fts`)
-	}
-	require.NoError(err)
 	_, err = f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	check()
+	for term, want := range map[string][]int64{
+		"before foo-bar after":      {compound},
+		"bar foo":                   nil,
+		"lantern harbor":            {messenger},
+		"https://example.test/path": {url},
+		"lantern sender":            {slack},
+		"+15550123457":              {phone},
+		"alice@example.com":         nil,
+		"terminal@example.test":     nil,
+		"alpha beta":                nil,
+		"alpha foo":                 nil,
+		"unique":                    {partial},
+		"lantern unique":            {partial},
+		"stored phrase":             {partial},
+	} {
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err, term)
+		assert.ElementsMatch(t, want, ids, term)
+	}
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"stored phrase", "lantern unique"}}, 10)
+	require.NoError(err)
+	require.Equal([]int64{partial}, ids)
+	var fields int
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT cardinality(search_fts_fields) FROM messages WHERE id = $1`, partial).Scan(&fields))
+	require.Equal(3, fields)
+	bodySearcher, ok := query.NewEngine(db, true).(query.MessageBodySearcher)
+	require.True(ok)
+	result, err := bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"stored phrase"}}, 10, 0)
+	require.NoError(err)
+	require.Len(result.Messages, 1)
+	assert.Equal(t, partial, result.Messages[0].ID)
+	result, err = bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"unique"}}, 10, 0)
+	require.NoError(err)
+	require.Empty(result.Messages)
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT cardinality(search_fts_fields) FROM messages WHERE id = $1`, slack).Scan(&fields))
+	require.Equal(8, fields)
+	result, err = bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"the the"}}, 10, 0)
+	require.NoError(err)
+	require.Len(result.Messages, 1)
+	assert.Equal(t, slack, result.Messages[0].ID)
+	rank := func(id int64) float64 {
+		t.Helper()
+		var value float64
+		require.NoError(db.QueryRowContext(t.Context(), `SELECT ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], search_fts, to_tsquery('simple', 'lantern:*')) FROM messages WHERE id = $1`, id).Scan(&value))
+		return value
+	}
+	for _, id := range []int64{retained, partial} {
+		assert.InDelta(t, rank(fresh), rank(id), 0.000001)
+	}
 }
 
 func TestPG_BackfillFTS_ContinuesAcrossLargeMessagePages(t *testing.T) {

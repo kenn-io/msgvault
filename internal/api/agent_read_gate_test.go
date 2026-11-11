@@ -46,59 +46,6 @@ type agentReadGateStore struct {
 	sourceLists, sourceLookups atomic.Int32
 }
 
-type cancelableBackfillStore struct {
-	*mockStore
-	ContextCLIStore
-
-	started chan struct{}
-	release chan struct{}
-}
-
-var _ ContextCLIStore = (*cancelableBackfillStore)(nil)
-
-func (s *cancelableBackfillStore) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) (*store.Stats, error) {
-	return s.mockStore.GetStatsForScopeContext(ctx, sourceIDs)
-}
-
-func (s *cancelableBackfillStore) NeedsFTSBackfillContext(context.Context) (bool, error) {
-	return true, nil
-}
-
-func (s *cancelableBackfillStore) BackfillFTS(func(int64, int64)) (int64, error) {
-	close(s.started)
-	<-s.release
-	return 0, nil
-}
-
-func (s *cancelableBackfillStore) BackfillFTSContext(ctx context.Context, _ func(int64, int64)) (int64, error) {
-	close(s.started)
-	<-ctx.Done()
-	return 0, ctx.Err()
-}
-
-func TestSearchBackfillStopsOnShutdown(t *testing.T) {
-	contextStore := testutil.NewTestStore(t)
-	synctest.Test(t, func(t *testing.T) {
-		require := require.New(t)
-		st := &cancelableBackfillStore{mockStore: &mockStore{needsFTSBackfill: true, needsFTSBackfillQuick: true}, ContextCLIStore: contextStore, started: make(chan struct{}), release: make(chan struct{})}
-		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
-		srv.ensureCLISearchIndexAsync(st, true)
-		synctest.Wait()
-		select {
-		case <-st.started:
-		default:
-			close(st.release)
-			require.FailNow("backfill did not start")
-		}
-		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-		defer cancel()
-		err := srv.Shutdown(ctx)
-		close(st.release)
-		synctest.Wait()
-		require.NoError(err, "shutdown must cancel the running backfill")
-	})
-}
-
 func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

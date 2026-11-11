@@ -2584,7 +2584,7 @@ func TestHandleCLISearchQuickCheckReportsBuildingImmediately(t *testing.T) {
 type postgresBackfillStore struct {
 	*store.Store
 
-	started, release chan struct{}
+	started chan struct{}
 }
 
 func (*postgresBackfillStore) IsPostgreSQL() bool                                { return true }
@@ -2592,10 +2592,10 @@ func (*postgresBackfillStore) NeedsFTSBackfillQuickContext(context.Context) bool
 func (*postgresBackfillStore) NeedsFTSBackfillContext(context.Context) (bool, error) {
 	return true, nil
 }
-func (s *postgresBackfillStore) BackfillFTSContext(context.Context, func(int64, int64)) (int64, error) {
+func (s *postgresBackfillStore) BackfillFTSContext(ctx context.Context, _ func(int64, int64)) (int64, error) {
 	close(s.started)
-	<-s.release
-	return 1, nil
+	<-ctx.Done()
+	return 0, ctx.Err()
 }
 
 func TestHandleCLISearchPostgresBackfillAllowsOtherOperations(t *testing.T) {
@@ -2603,24 +2603,25 @@ func TestHandleCLISearchPostgresBackfillAllowsOtherOperations(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		gate := NewSerialOperationGate()
-		started, release := make(chan struct{}), make(chan struct{})
-		st := &postgresBackfillStore{Store: base, started: started, release: release}
-		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), OperationGate: gate})
-		defer func() { close(release); require.NoError(srv.Shutdown(t.Context())) }()
-		wrapped := bindCLIStoreContext(t.Context(), st)
-		require.IsType(&requestCLIStore{}, wrapped)
-		srv.ensureCLISearchIndexAsync(wrapped, true)
+		idle := newIdleTrackerFixture(t, 20*time.Millisecond)
+		st := &postgresBackfillStore{Store: base, started: make(chan struct{})}
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), OperationGate: gate, IdleTracker: idle.tracker})
+		defer srv.cancelImports()
+		srv.ensureCLISearchIndexAsync(bindCLIStoreContext(t.Context(), st), true)
 		synctest.Wait()
 		select {
-		case <-started:
+		case <-st.started:
 		default:
 			require.FailNow("backfill did not start")
 		}
+		idle.run(t)
+		idle.requireNotFiredWithin(t, 35*time.Millisecond, "idle fired while search repair was active")
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		done, ok := gate.BeginRequestWorkContext(ctx, "another operation")
 		require.True(ok, "operation must start while backfill is running")
 		done()
+		require.NoError(srv.Shutdown(ctx), "shutdown must cancel the running backfill")
 	})
 }
 
