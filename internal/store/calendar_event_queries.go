@@ -290,10 +290,6 @@ func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master C
 		return row, fmt.Errorf("read cancellation evidence: %w", err)
 	}
 	if format.String == rawFormatICS {
-		// An ICS cancellation keeps its own details unless it omits the times.
-		if row.Event.Start != nil {
-			return row, nil
-		}
 		supplied := map[string]any{}
 		if row.Subject != "" {
 			supplied["summary"] = true
