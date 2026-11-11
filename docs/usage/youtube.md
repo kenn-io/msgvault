@@ -57,8 +57,8 @@ profiles with a cron schedule.
 Sync lists the uploads playlist, including accessible private and unlisted
 videos. It polls published, held-for-review and likely-spam thread filters and
 fetches remaining reply pages when an inline thread response is incomplete.
-Each comment's explicit moderation status supplies its current label; the
-filter that found its thread does not. Missing status preserves an earlier
+Each comment's recognized moderation status supplies its current label; the
+filter that found its thread does not. Missing or unknown status preserves an earlier
 observation. Commenters with equal names remain separate people when their
 channel IDs differ. A previously known author is retained when a later response omits the channel ID or name. When a comment has a name but no channel ID, its author name is shown without linking it to other comments.
 

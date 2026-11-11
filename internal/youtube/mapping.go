@@ -77,8 +77,8 @@ func resolveLabels(ctx context.Context, st *store.Store, sourceID int64, refs []
 }
 
 func persistVideoSDK(ctx context.Context, st *store.Store, sourceID int64, channelID string, v *yt.Video) (int64, messageChange, error) {
-	if v == nil || v.Snippet == nil || v.Status == nil || !validID(v.Id) || v.Snippet.ChannelId != channelID {
-		return 0, messageUnchanged, errors.New("YouTube video does not belong to configured channel")
+	if v.Status == nil {
+		return 0, messageUnchanged, errors.New("YouTube video status is missing")
 	}
 	published, err := providerTime(v.Snippet.PublishedAt)
 	if err != nil {
@@ -251,9 +251,6 @@ func persistCommentSDK(ctx context.Context, st *store.Store, sourceID int64, cha
 	switch c.Snippet.ModerationStatus {
 	case "published", "heldForReview", "likelySpam", "rejected":
 		meta.ModerationStatus = c.Snippet.ModerationStatus
-	case "":
-	default:
-		return 0, messageUnchanged, errors.New("unknown YouTube moderation status")
 	}
 	published, err := providerTime(c.Snippet.PublishedAt)
 	if err != nil {

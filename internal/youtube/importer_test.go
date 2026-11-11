@@ -829,3 +829,60 @@ func TestVideoBatchRefreshesStatsBeforeLaterFailure(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), src.ID, "oldvideo").Scan(&count))
 	require.Equal(1, count)
 }
+
+func TestUnknownModerationDoesNotBlockLaterVideos(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	client := archiveFixture(t, false, nil, nil)
+	original := client.api.Transport
+	unknown := false
+	client.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp, err := original.RoundTrip(req)
+		if err != nil || req.URL.Path != "/youtube/v3/commentThreads" || !unknown {
+			return resp, err
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		if err := resp.Body.Close(); err != nil {
+			return nil, err
+		}
+		text := strings.ReplaceAll(string(body), `"moderationStatus":"published"`, `"moderationStatus":"futureStatus"`)
+		if req.URL.Query().Get("videoId") == "newvideo" && req.URL.Query().Get("moderationStatus") == "published" {
+			text = `{"items":[{"snippet":{"videoId":"newvideo","topLevelComment":{"id":"later-comment","snippet":{"videoId":"newvideo","textDisplay":"Later","moderationStatus":"futureStatus"}}}}]}`
+		}
+		resp.Body = io.NopCloser(strings.NewReader(text))
+		return resp, nil
+	})
+	// Include a later video in the uploads page.
+	base := client.api.Transport
+	client.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp, err := base.RoundTrip(req)
+		if err == nil && req.URL.Path == "/youtube/v3/playlistItems" {
+			if err := resp.Body.Close(); err != nil {
+				return nil, err
+			}
+			resp.Body = io.NopCloser(strings.NewReader(`{"items":[{"contentDetails":{"videoId":"oldvideo"}},{"contentDetails":{"videoId":"newvideo"}}]}`))
+		}
+		return resp, err
+	})
+	imp := NewImporter(st, client)
+	src, err := imp.Register(t.Context(), "UCfixture")
+	require.NoError(err)
+	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
+	require.NoError(err)
+	unknown = true
+	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
+	require.NoError(err)
+	require.False(sum.Partial)
+	rows, err := st.MessageMetadataBatch(t.Context(), src.ID, []string{"parent", "later-comment"})
+	require.NoError(err)
+	require.Contains(rows, "later-comment")
+	var metadata commentMetadata
+	require.NoError(json.Unmarshal([]byte(rows["parent"].Metadata.String), &metadata))
+	require.Equal("published", metadata.ModerationStatus)
+	labels, err := st.MessageLabelIDsContext(t.Context(), rows["later-comment"].ID)
+	require.NoError(err)
+	require.Empty(labels)
+}

@@ -150,16 +150,10 @@ func runConfiguredYouTubeSync(ctx context.Context, st *store.Store, src config.Y
 	if !ok {
 		return errors.New("invalid YouTube scheduler channel")
 	}
-	// Resolve registration before validating credentials so a merged source's
-	// obsolete scheduled job can exit cleanly without contacting YouTube.
-	registered, err := st.GetSourceByTypeAndIdentifier(ctx, youtube.SourceType, youtube.SourceIdentifier(src.ChannelID))
-	if err != nil {
-		return err
-	}
-	if registered.MergedIntoSourceID != 0 {
+	_, err := syncYouTubeProfile(ctx, st, src, 1000)
+	if errors.Is(err, store.ErrSourceRetired) {
 		return nil
 	}
-	_, err = syncYouTubeProfile(ctx, st, src, 1000)
 	return errors.Join(err, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), job))
 }
 
