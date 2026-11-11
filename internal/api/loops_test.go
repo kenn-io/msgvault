@@ -316,6 +316,7 @@ func TestLoopReopenWithoutDecisionIsNotFound(t *testing.T) {
 
 type pausedLoopStore struct {
 	*store.Store
+
 	reads     atomic.Int64
 	pauseAt   int64
 	paused    chan struct{}
@@ -435,6 +436,7 @@ func TestLoopBackfillStopsWhenServerShutsDown(t *testing.T) {
 
 type scopePausingStore struct {
 	*pausedLoopStore
+
 	target      atomic.Int64
 	reached     chan struct{}
 	resumeScope chan struct{}
