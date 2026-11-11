@@ -99,9 +99,6 @@ func (s *Store) matchCommitmentLocator(ctx context.Context, personID, messageID 
 
 func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.ApplyRequest) (*preparedCommitmentSweep, error) {
 	result := request.Commitment
-	if result == nil {
-		return nil, nil
-	}
 	window := result.Window
 	if len(window.Sources) == 0 {
 		return &preparedCommitmentSweep{through: window.ThroughSequence, snapshot: window.SnapshotSequence, observedOnly: true, backfillMessageID: window.BackfillMessageID}, nil
@@ -116,7 +113,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	}
 	location, err := time.LoadLocation(window.Timezone)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load commitment timezone: %w", err)
 	}
 	sources := make(map[string]peoplesweep.CommitmentSource, len(window.Sources))
 	for _, source := range window.Sources {
@@ -185,7 +182,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		if promise.DueOn != nil {
 			day, err := time.ParseInLocation(time.DateOnly, *promise.DueOn, location)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("parse commitment due date: %w", err)
 			}
 			expires = day.AddDate(0, 0, 1).Add(result.Config.ExpireAfterDue).UTC()
 		}
@@ -265,8 +262,8 @@ func (s *Store) withdrawnCommitmentFulfilment(ctx context.Context, personID int6
 	if !evidence.Supported || anchor.ReopenedAt != nil && !evidence.Input.EventTime.After(*anchor.ReopenedAt) {
 		return evidence.ID, nil
 	}
-	citation, err := s.currentCommitmentCitation(ctx, personID, anchor.Direction, evidence.Input)
-	if err == nil && citation == nil {
+	_, live, err := s.currentCommitmentCitation(ctx, personID, anchor.Direction, evidence.Input)
+	if err == nil && !live {
 		return evidence.ID, nil
 	}
 	return 0, err
@@ -387,7 +384,7 @@ func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID
 	var conversationID int64
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
 		FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND `+s.loopLiveMessageSQL("m", "src")), messageID).Scan(&conversationID)
+		WHERE m.id = ? AND m.conversation_id IS NOT NULL AND `+s.loopLiveMessageSQL("src")), messageID).Scan(&conversationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return peoplesweep.CommitmentSource{}, false, nil
 	}

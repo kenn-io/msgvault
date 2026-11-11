@@ -603,7 +603,7 @@ func (w *Worker) runPerson(
 	}
 	ordinaryAllowed := true
 	if authority, ok := w.Runner.(interface {
-		OrdinaryInferenceAllowed(context.Context) (bool, error)
+		OrdinaryInferenceAllowed(ctx context.Context) (bool, error)
 	}); ok && commitmentPlanned {
 		allowed, err := authority.OrdinaryInferenceAllowed(ctx)
 		if err != nil {
