@@ -14,6 +14,7 @@ const SOURCE_TYPES: Readonly<Record<string, string>> = {
   apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger',
   facebook_comments: 'Facebook Page comments',
   instagram_comments: 'Instagram comments',
+  youtube: 'YouTube',
   'google-groups': 'Google Groups'
 };
 export function sourceTypeLabel(code: string): string {

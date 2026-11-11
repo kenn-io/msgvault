@@ -361,3 +361,65 @@ func TestCommentWithoutChannelIDPreservesDistinctAuthorNames(t *testing.T) {
 	require.NoError(err)
 	require.Equal("Alice Updated", summaries[0].FromName)
 }
+
+func TestYouTubeSyncPreservesPersonalLabels(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(SourceType, SourceIdentifier("UCfixture"))
+	require.NoError(err)
+	video := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture"}, Status: &yt.VideoStatus{PrivacyStatus: "public"}}
+	videoID, _, err := persistVideo(t.Context(), st, src.ID, video)
+	require.NoError(err)
+	comment := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{TextDisplay: "hello", ModerationStatus: "heldForReview"}}
+	commentID, _, err := persistComment(t.Context(), st, src.ID, video, comment)
+	require.NoError(err)
+	personal, err := st.EnsureLabelsBatch(t.Context(), src.ID, map[string]store.LabelInfo{"personal": {Name: "Personal", Type: "user"}})
+	require.NoError(err)
+	for _, id := range []int64{videoID, commentID} {
+		require.NoError(st.AddMessageLabels(t.Context(), id, []int64{personal["personal"]}))
+	}
+	_, videoChange, err := persistVideo(t.Context(), st, src.ID, video)
+	require.NoError(err)
+	require.Equal(messageUnchanged, videoChange)
+	_, commentChange, err := persistComment(t.Context(), st, src.ID, video, comment)
+	require.NoError(err)
+	require.Equal(messageUnchanged, commentChange)
+	for _, id := range []int64{videoID, commentID} {
+		labels, err := st.MessageLabelIDsContext(t.Context(), id)
+		require.NoError(err)
+		require.Contains(labels, personal["personal"])
+	}
+	video.Snippet.Description = "edited video"
+	comment.Snippet.TextDisplay = "edited comment"
+	_, _, err = persistVideo(t.Context(), st, src.ID, video)
+	require.NoError(err)
+	_, _, err = persistComment(t.Context(), st, src.ID, video, comment)
+	require.NoError(err)
+	for _, id := range []int64{videoID, commentID} {
+		labels, err := st.MessageLabelIDsContext(t.Context(), id)
+		require.NoError(err)
+		require.Contains(labels, personal["personal"])
+	}
+	video.Status.PrivacyStatus = "private"
+	comment.Snippet.ModerationStatus = "published"
+	_, _, err = persistVideo(t.Context(), st, src.ID, video)
+	require.NoError(err)
+	_, _, err = persistComment(t.Context(), st, src.ID, video, comment)
+	require.NoError(err)
+	for _, id := range []int64{videoID, commentID} {
+		labels, err := st.MessageLabelIDsContext(t.Context(), id)
+		require.NoError(err)
+		require.Contains(labels, personal["personal"])
+	}
+	provider, err := st.EnsureLabelsBatch(t.Context(), src.ID, map[string]store.LabelInfo{
+		"youtube:privacy:private":      {Name: "YouTube privacy: private", Type: "user"},
+		"youtube:moderation:published": {Name: "YouTube moderation: published", Type: "user"},
+	})
+	require.NoError(err)
+	labels, err := st.MessageLabelIDsContext(t.Context(), videoID)
+	require.NoError(err)
+	require.ElementsMatch([]int64{personal["personal"], provider["youtube:privacy:private"]}, labels)
+	labels, err = st.MessageLabelIDsContext(t.Context(), commentID)
+	require.NoError(err)
+	require.ElementsMatch([]int64{personal["personal"], provider["youtube:moderation:published"]}, labels)
+}
