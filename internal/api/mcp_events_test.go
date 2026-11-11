@@ -120,14 +120,13 @@ func TestGeneratedEventsCatalogDecodes(t *testing.T) {
 	requirements.Len(response.JSON200.Events, 1)
 	assertions.Equal("object", response.JSON200.Events[0].InputSchema["type"])
 	assertions.Equal("object", response.JSON200.Events[0].PayloadSchema["type"])
-
 }
 
 // decodedEventsError inspects only the generated, decoded response field, not raw bytes.
 func decodedEventsError(t *testing.T, response any) map[string]any {
 	t.Helper()
 	value := reflect.ValueOf(response).Elem()
-	for i := 0; i < value.NumField(); i++ {
+	for i := range value.NumField() {
 		field := value.Field(i)
 		if strings.HasPrefix(value.Type().Field(i).Name, "JSON") && field.Kind() == reflect.Pointer && !field.IsNil() {
 			data, err := json.Marshal(field.Interface())

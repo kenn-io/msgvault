@@ -96,7 +96,6 @@ func TestMCPEventsBackupRestoreTokens(t *testing.T) {
 			targets, err := recovered.Native(t.Context())
 			require.NoError(err)
 			assert.Equal(include && tc.missing != providercredentials.EventsFilename, len(targets) == 1)
-
 		})
 	}
 }
