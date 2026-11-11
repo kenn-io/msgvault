@@ -300,7 +300,13 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 	if remaining <= 0 {
 		return resolved, 0, requestLimit, nil
 	}
-	occurrences, count, err := calrecur.Expand(ctx, set, duration, days, from.Add(-calendarCandidateMargin), calendarExpansionEnd(set.Zone, to.Add(calendarCandidateMargin), boundary), min(remaining, calrecur.SeriesReadBudget))
+	end := calendarExpansionEnd(set.Zone, to.Add(calendarCandidateMargin), boundary)
+	start := from.Add(-calendarCandidateMargin)
+	if !start.Before(end) {
+		// Keep long occurrences crossing the cutoff; the caller filters the query window.
+		start = end.Add(-time.Nanosecond)
+	}
+	occurrences, count, err := calrecur.Expand(ctx, set, duration, days, start, end, min(remaining, calrecur.SeriesReadBudget))
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, count, "", ctx.Err()

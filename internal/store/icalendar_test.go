@@ -173,6 +173,40 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 	}
 }
 
+func TestICalendarRangeAfterBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name, master string
+		from         time.Time
+		wantStart    string
+	}{
+		{"long occurrence", "DTSTART:20270302T120000Z\r\nDURATION:P7D\r\nRRULE:FREQ=WEEKLY", time.Date(2027, 3, 7, 0, 0, 0, 0, time.UTC), "2027-03-02T12:00:00Z"},
+		{"generation budget", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY", time.Date(2200, 3, 7, 0, 0, 0, 0, time.UTC), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			for _, event := range [][]byte{
+				calendarDocument("REQUEST", tc.master),
+				calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T130000Z"),
+			} {
+				_, err := st.PersistICalendarContext(t.Context(), source, event)
+				requirements.NoError(err)
+			}
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), tc.from, tc.from.AddDate(0, 0, 1))
+			requirements.NoError(err)
+			requirements.Len(page.Unexpandable, 1)
+			requirements.Contains(page.Unexpandable[0].Reason, "unsupported recurrence range")
+			if tc.wantStart == "" {
+				requirements.Empty(page.Occurrences)
+			} else {
+				requirements.Len(page.Occurrences, 1)
+				requirements.Equal(tc.wantStart, page.Occurrences[0].Start.Format(time.RFC3339))
+			}
+		})
+	}
+}
+
 func TestICalendarRangeReportsIncompletePrefix(t *testing.T) {
 	for _, tc := range []struct{ name, master, want string }{
 		{"budget", "DTSTART:18000101T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY", "recurrence generation budget exceeded"},
