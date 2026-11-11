@@ -784,6 +784,34 @@ func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T
 			a.Equal(LoopStateOpen, items[0].State)
 			a.True(corrected.Equal(items[0].PromisedAt))
 			a.Nil(items[0].Fulfilment)
+
+			// Finish the correction's frozen matching pass before admitting a
+			// newly imported completion from a later source batch.
+			f = nextCommitmentTestAttempt(t, f, "-finish-correction")
+			window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+			r.NoError(err)
+			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+				Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+			}))
+			r.NoError(err)
+			newer := persist("newer-completion", reply, -30*time.Minute)
+			f = nextCommitmentTestAttempt(t, f, "-newer-completion")
+			window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+			r.NoError(err)
+			r.NotEmpty(commitmentSourceID(window, newer))
+			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+				Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{{
+					CommitmentID: commitmentID, SourceID: commitmentSourceID(window, newer), Quote: reply, End: int64(len(reply)), Confirmed: true,
+				}},
+			}))
+			r.NoError(err)
+			items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+			r.NoError(err)
+			r.Len(items, 1)
+			a.Equal(commitmentID, items[0].ID)
+			a.Equal(CommitmentStateFulfilled, items[0].State)
+			r.NotNil(items[0].Fulfilment)
+			a.Equal(newer, items[0].Fulfilment.MessageID)
 		})
 	}
 }
