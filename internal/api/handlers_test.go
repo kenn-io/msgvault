@@ -2581,23 +2581,35 @@ func TestHandleCLISearchQuickCheckReportsBuildingImmediately(t *testing.T) {
 		"a stale tail must be reported as building on the first response")
 }
 
-type postgresBackfillStore struct{ *mockStore }
+type postgresBackfillStore struct {
+	*store.Store
 
-func (*postgresBackfillStore) IsPostgreSQL() bool { return true }
+	started, release chan struct{}
+}
+
+func (*postgresBackfillStore) IsPostgreSQL() bool                                { return true }
+func (*postgresBackfillStore) NeedsFTSBackfillQuickContext(context.Context) bool { return true }
+func (*postgresBackfillStore) NeedsFTSBackfillContext(context.Context) (bool, error) {
+	return true, nil
+}
+func (s *postgresBackfillStore) BackfillFTSContext(context.Context, func(int64, int64)) (int64, error) {
+	close(s.started)
+	<-s.release
+	return 1, nil
+}
 
 func TestHandleCLISearchPostgresBackfillAllowsOtherOperations(t *testing.T) {
+	base := testutil.NewTestStore(t)
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
 		gate := NewSerialOperationGate()
 		started, release := make(chan struct{}), make(chan struct{})
-		st := &postgresBackfillStore{&mockStore{needsFTSBackfill: true, backfillFTSFunc: func(func(int64, int64)) (int64, error) {
-			close(started)
-			<-release
-			return 1, nil
-		}}}
+		st := &postgresBackfillStore{Store: base, started: started, release: release}
 		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), OperationGate: gate})
 		defer func() { close(release); require.NoError(srv.Shutdown(t.Context())) }()
-		srv.ensureCLISearchIndexAsync(st, true)
+		wrapped := bindCLIStoreContext(t.Context(), st)
+		require.IsType(&requestCLIStore{}, wrapped)
+		srv.ensureCLISearchIndexAsync(wrapped, true)
 		synctest.Wait()
 		select {
 		case <-started:

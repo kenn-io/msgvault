@@ -7005,8 +7005,9 @@ func legacyFTSText(old, stored string) string {
 
 // legacyFTSVector reserves an unused word for each gap, then removes it while
 // retaining its position. The overflow text keeps the corresponding ! marker.
-func legacyFTSVector(field string) string {
-	return `(SELECT ts_delete(to_tsvector('simple', replace(` + field + `, ' ! ', ' ' || marker || ' ')), marker)
+// Words already present in the stored field need no second ranked occurrence.
+func legacyFTSVector(field, stored string) string {
+	return `(SELECT ts_delete(ts_delete(to_tsvector('simple', replace(` + field + `, ' ! ', ' ' || marker || ' ')), marker), tsvector_to_array(to_tsvector('simple', ` + stored + `)))
 		FROM (SELECT 'ftsbreak' || n AS marker FROM generate_series(1, length(` + field + `) + 1) n WHERE strpos(lower(` + field + `), 'ftsbreak' || n) = 0 LIMIT 1) gap)`
 }
 
@@ -7039,8 +7040,8 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	replace := strings.NewReplacer("$2", "u.subject", "$3", "u.body", "$4", "u.sender", "$5", "u.to_addrs", "$6", "u.cc_addrs")
 	vector = replace.Replace(vector)
 	hasOld := `u.old_subject <> '' OR u.old_sender <> '' OR u.old_recipient <> ''`
-	vector += ` || CASE WHEN ` + hasOld + ` THEN '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_subject") + `, 'A') || '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_sender") + `, 'B') || '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_recipient") + `, 'C') ELSE ''::tsvector END`
-	fields := replace.Replace(pgFTSOverflowFields("u.vector", ` || CASE WHEN `+hasOld+` THEN ARRAY[u.old_subject, u.old_sender, u.old_recipient] ELSE ARRAY[]::text[] END`))
+	vector += ` || CASE WHEN ` + hasOld + ` THEN '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_subject", "u.subject") + `, 'A') || '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_sender", "u.sender") + `, 'B') || '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_recipient", "u.to_addrs") + `, 'C') ELSE ''::tsvector END`
+	fields := `CASE WHEN ` + hasOld + ` THEN ARRAY[u.subject, u.sender, u.to_addrs, u.cc_addrs, u.body, u.old_subject, u.old_sender, u.old_recipient] ELSE ` + replace.Replace(pgFTSOverflowFields("u.vector")) + ` END`
 	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::boolean[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, terminal, old_subject, old_sender, old_recipient)), v AS (SELECT u.*, CASE WHEN u.terminal THEN ''::tsvector ELSE ` + vector + ` END AS vector FROM u) UPDATE messages m SET search_fts = u.vector, search_fts_fields = ` + fields + `, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
 	var affected int64
 	for fromID < toID {

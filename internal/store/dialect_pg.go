@@ -414,7 +414,7 @@ func truncateBytesRuneSafe(s string) string {
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	vector, args := pgFTSVector(doc)
 	_, err := q.Exec(
-		`UPDATE messages SET search_fts = v.vector, search_fts_fields = `+pgFTSOverflowFields("v.vector", "")+`,
+		`UPDATE messages SET search_fts = v.vector, search_fts_fields = `+pgFTSOverflowFields("v.vector")+`,
 			indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`
 		FROM (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -428,7 +428,7 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 	var matches bool
 	err := q.QueryRow(
 		`SELECT COALESCE(search_fts = v.vector
-			AND search_fts_fields IS NOT DISTINCT FROM `+pgFTSOverflowFields("v.vector", "")+`
+			AND search_fts_fields IS NOT DISTINCT FROM `+pgFTSOverflowFields("v.vector")+`
 			AND indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`, FALSE)
 		FROM messages, (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -441,9 +441,9 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 
 // PostgreSQL caps positions at 16383 and stores at most 255 per lexeme.
 // Inspect the completed vector so concatenated fields share the same limit.
-func pgFTSOverflowFields(vector, extraFields string) string {
+func pgFTSOverflowFields(vector string) string {
 	charCap := strconv.Itoa(maxFTSBodyChars)
-	return `CASE WHEN ` + vector + `::text ~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' OR ` + vector + `::text ~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)' THEN ARRAY[LEFT($2, ` + charCap + `), LEFT($4, ` + charCap + `), LEFT($5, ` + charCap + `), LEFT($6, ` + charCap + `), LEFT($3, ` + charCap + `)]` + extraFields + ` ELSE NULL END`
+	return `CASE WHEN ` + vector + `::text ~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' OR ` + vector + `::text ~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)' THEN ARRAY[LEFT($2, ` + charCap + `), LEFT($4, ` + charCap + `), LEFT($5, ` + charCap + `), LEFT($6, ` + charCap + `), LEFT($3, ` + charCap + `)] ELSE NULL END`
 }
 
 // pgFTSVector returns the bounded tsvector expression for doc and its
