@@ -560,6 +560,18 @@ unknown extensions, and raw values. Keep new registry elements covered by an
 explicit handling declaration so an upstream addition cannot be silently
 ignored.
 
+## API schema version maintenance
+
+When the generated HTTP API documents change, bump `APISchemaVersion` in
+`internal/api/openapi.go` and run `make api-generate` and `make web-generate`.
+`TestAPISchemaVersionContract` hashes both complete documents, except for
+`info.version`, and prints the path of an empty marker to add under
+`internal/api/testdata/api-version-contracts/`. Keep existing markers. If two
+changes use the same version, take the next minor version and move any feature
+minimum constants introduced by your change to that version. Description changes
+also require a bump. Handler changes that leave the documents unchanged still
+need an explicit version bump when they change the API contract.
+
 ## Archive schema version maintenance
 
 `internal/store/schema_version.go` owns `store.SchemaVersion`, the monotonic
