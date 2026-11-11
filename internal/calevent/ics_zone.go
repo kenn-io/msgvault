@@ -71,21 +71,32 @@ func customICSZones(cal *ical.Calendar, used map[string]bool) (map[string]string
 }
 
 // eventICSZones resolves an event's custom zones. A POSIX rule applies to every
-// year, so a zone with an observance that starts after the event's DTSTART is unsupported.
+// year, so a zone with an observance that starts after a referenced date is unsupported.
 func eventICSZones(cal *ical.Calendar, event *ical.Component) (map[string]string, error) {
 	zones, err := customICSZones(cal, icsEventZones(event))
-	start := event.Props.Get(ical.PropDateTimeStart)
-	if err != nil || start == nil || zones[normalizeICSZone(start.Params.Get("TZID"))] == "" {
+	if err != nil {
 		return zones, err
 	}
-	id := normalizeICSZone(start.Params.Get("TZID"))
 	for _, zone := range cal.Children {
-		if zone.Name != ical.CompTimezone || normalizeICSZone(zone.Props.Get("TZID").Value) != id {
+		if zone.Name != ical.CompTimezone {
 			continue
 		}
-		for _, part := range zone.Children {
-			if start.Value < part.Props.Get("DTSTART").Value {
-				return nil, fmt.Errorf("unsupported VTIMEZONE %q: an observance starts after the event's DTSTART", id)
+		id := normalizeICSZone(zone.Props.Get("TZID").Value)
+		if zones[id] == "" {
+			continue
+		}
+		for _, props := range event.Props {
+			for _, prop := range props {
+				if normalizeICSZone(prop.Params.Get("TZID")) != id {
+					continue
+				}
+				for _, value := range strings.Split(prop.Value, ",") {
+					for _, part := range zone.Children {
+						if value < part.Props.Get("DTSTART").Value {
+							return nil, fmt.Errorf("unsupported VTIMEZONE %q: an observance starts after the event's date", id)
+						}
+					}
+				}
 			}
 		}
 	}
