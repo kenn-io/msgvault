@@ -76,6 +76,8 @@ func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
 		{"markLoopDone", http.MethodPost, "/api/v1/loops/{message_id}/done"},
 		{"snoozeLoop", http.MethodPost, "/api/v1/loops/{message_id}/snooze"},
 		{"reopenLoop", http.MethodPost, "/api/v1/loops/{message_id}/reopen"},
+		{"getDocbankAttachmentStatus", http.MethodGet, "/api/v1/integrations/docbank/attachments"},
+		{"backfillDocbankAttachments", http.MethodPost, "/api/v1/integrations/docbank/attachments/backfill"},
 	} {
 		requirements.Contains(routes, tc.id)
 		assertions.Equal(tc.method, routes[tc.id].Method)

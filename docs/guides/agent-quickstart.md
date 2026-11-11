@@ -78,6 +78,11 @@ so it needs `--allow-loop-writes` and the owner's approval for each call; see
 [Open loops](../usage/chat.md#open-loops). Owner clients only; on unreleased
 `main`, requires daemon API schema 3.44.0 or newer.
 
+On unreleased `main`, owner clients can inspect the configured Docbank attachment
+mirror with `get_docbank_attachment_status`. Retrying failed external uploads
+requires `--allow-document-writes`, existing upload consent, and approval for
+each call. Scheduling is not completion. See [Attachment mirror](../usage/chat.md#attachment-mirror).
+
 Use `list_thread` with exactly one of `id`, `source_message_id`, or `thread_id`
 to list messages oldest first, paging with `offset` and `limit`. Use
 `get_message` with the message `id` to read each body. Its response includes
@@ -217,6 +222,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `calendar_update` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `approve_carddav_publication` | carddav_write | `--allow-carddav-writes` | owner-only |
 | `sync_carddav` | carddav_write | `--allow-carddav-writes` | owner-only |
+| `retry_docbank_attachment_mirror` | document_write | `--allow-document-writes` | owner-only |
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
@@ -245,6 +251,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
+| `get_docbank_attachment_status` | read | — | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
 | `get_kata_issue_context` | read | — | owner-only |

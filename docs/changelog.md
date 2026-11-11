@@ -64,6 +64,9 @@ All notable changes to msgvault, grouped by release.
 - MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Findings in recognized quoted or forwarded history carry `quoted: true`. Drafts are still written unchanged.
 - See a saved person's open loops on their **Details** tab in People. When
   more history remains, **Check more** continues the scan.
+- Let an owner inspect the Docbank attachment mirror through MCP and, with
+  `--allow-document-writes` and per-call approval, retry failed external uploads.
+  HTTP writes also need the general write opt-in and protocol `2026-07-28` or newer.
 - Let an MCP assistant list open loops. With `--allow-loop-writes`, it can
   also mark loops done, snooze them, or reopen them, with your approval for
   each call. Over HTTP, decisions also need `--http-allow-writes` and protocol
@@ -74,7 +77,7 @@ All notable changes to msgvault, grouped by release.
 
 - Document text search now uses the Docbank mirror and Docbank processing. Search with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or Web Everything. Use `media search --person <id> --direction from_person` in place of `person files --lane documents`.
 
-  The `documents` commands, `/api/v1/documents/*`, MCP `search_document_attachments`, document operation lanes, Mistral probe and consent (use `docbank processing probe`, Docbank v0.17.0 or later), and file-based Kata issue actions are removed. Remove `[attachments.documents]` and drop `document_text` from `allowed_sources`; the loader warns and ignores these retired settings. A people sweep configured only for `document_text` is disabled.
+  The `documents` commands, `/api/v1/documents/*`, MCP `search_document_attachments`, the retired local document operation lanes, Mistral probe and consent (use `docbank processing probe`, Docbank v0.17.0 or later), and file-based Kata issue actions are removed. Remove `[attachments.documents]` and drop `document_text` from `allowed_sources`; the loader warns and ignores these retired settings. A people sweep configured only for `document_text` is disabled.
 
   A people inference provider profile that listed `document_text` gets a new fingerprint when that source is removed. Checks and consent are bound to the exact fingerprint. Run `msgvault person provider check <name>`, review the updated policy, then run `msgvault person provider consent <name> --yes` before inference resumes.
 

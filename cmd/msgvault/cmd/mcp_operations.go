@@ -49,6 +49,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	if hasRoute("triggerSync", http.MethodPost, "/api/v1/sync/{account}", "source_type") && hasRoute("listSourceStatus", http.MethodGet, "/api/v1/sources/status", "source_type") {
 		backend.supported = append(backend.supported, "sync_source")
 	}
+	backend.supported = append(backend.supported, documentMCPCapabilities(hasRoute)...)
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	return backend
@@ -70,6 +71,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.TriggerSyncResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if result, handled, err := b.executeDocumentOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeLoopOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -82,6 +86,12 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if name == "retry_docbank_attachment_mirror" {
+			if len(args) != 0 {
+				return "", &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			}
+			return "Retry failed external attachment mirror uploads and restart discovery using existing attachment upload consent. Scheduling is not completion.", nil
+		}
 		if disclosure, handled, err := b.loopOperationDisclosure(name, args); handled {
 			return disclosure, err
 		}
