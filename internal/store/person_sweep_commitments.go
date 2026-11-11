@@ -651,7 +651,7 @@ func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, req
 // Identical extraction converges even when a promise cannot be its own older
 // anchor. Changed, detached or newly supported citations need matching replay.
 func (s *Store) commitmentClaimCurrent(ctx context.Context, c PersonCommitment, source peoplesweep.CommitmentSource, changes []personfacts.EvidenceStatusChange) (bool, error) {
-	if c.ClaimID == nil {
+	if c.ClaimID == nil || !c.PromisedAt.Equal(source.EventTime) {
 		return false, nil
 	}
 	var key string
