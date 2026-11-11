@@ -2208,11 +2208,8 @@ func TestStoreAPIAdapterInterruptedSyncOperationIsFailed(t *testing.T) {
 	err = adapter.runCLISyncOperationWithRunner(t.Context(), api.CLISyncRequest{Full: true, OperationID: "operation-1"}, func(event api.CLISyncEvent) error {
 		events = append(events, event)
 		return nil
-	}, func(_ context.Context, _ []string, emit func(string, string) error) error {
-		if err := emit("outcome", "interrupted"); err != nil {
-			return err
-		}
-		return errors.New(cliSubprocessExitSentinel)
+	}, func(ctx context.Context, args []string, emit func(string, string) error) error {
+		return classifyDaemonCLIWaitErr(helperProcessCommand(ctx, "interrupted").Run(), args, emit)
 	})
 	require.EqualError(t, err, cliSubprocessExitSentinel)
 	assert.Equal(t, []api.CLISyncEvent{{Type: "outcome", Data: "interrupted"}}, events)

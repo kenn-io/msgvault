@@ -59,17 +59,31 @@ func helperProcessCommand(ctx context.Context, mode string) *exec.Cmd {
 }
 
 func TestClassifyDaemonCLIWaitErrExitStatus(t *testing.T) {
-	for _, mode := range []string{"exit3", "paused", "interrupted"} {
+	for _, mode := range []string{"exit3", "paused", "interrupted", "interrupted-emit-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
-			waitErr := helperProcessCommand(t.Context(), mode).Run()
+			childMode := mode
+			if mode == "interrupted-emit-failure" {
+				childMode = "interrupted"
+			}
+			waitErr := helperProcessCommand(t.Context(), childMode).Run()
 			require.Error(waitErr)
 			var events []string
-			got := classifyDaemonCLIWaitErr(waitErr, []string{"sync-full"}, func(stream, data string) error {
+			args := []string{"sync-omi"}
+			if childMode == "interrupted" {
+				args = []string{"sync-full"}
+			}
+			want := errors.New("stream closed")
+			got := classifyDaemonCLIWaitErr(waitErr, args, func(stream, data string) error {
+				if mode == "interrupted-emit-failure" {
+					return want
+				}
 				events = append(events, stream+"="+data)
 				return nil
 			})
-			if mode == "paused" {
+			if mode == "interrupted-emit-failure" {
+				assert.ErrorIs(got, want)
+			} else if mode == "paused" {
 				require.NoError(got)
 				assert.Equal([]string{"outcome=" + mode}, events)
 			} else if mode == "interrupted" {
@@ -81,14 +95,6 @@ func TestClassifyDaemonCLIWaitErrExitStatus(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestClassifyInterruptedSyncPropagatesEmitFailure(t *testing.T) {
-	want := errors.New("stream closed")
-	waitErr := helperProcessCommand(t.Context(), "interrupted").Run()
-	require.Error(t, waitErr)
-	err := classifyDaemonCLIWaitErr(waitErr, []string{"sync-full"}, func(string, string) error { return want })
-	assert.ErrorIs(t, err, want)
 }
 
 // TestClassifyDaemonCLIWaitErrSignalTerminated verifies a signal-terminated
