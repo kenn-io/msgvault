@@ -102,18 +102,17 @@ func TestWebhookFailureCategories(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
 		client     func(*testing.T) webhookClient
-		timeout    bool
 	}{
 		{"unsafe target", "invalid_callback", func(t *testing.T) webhookClient {
+			t.Helper()
 			return webhookClient{timeout: time.Second, resolver: staticResolver{netip.MustParseAddr("203.0.113.1"), netip.MustParseAddr("127.0.0.1")}}
-		}, false},
+		}},
 		{"dns", "dns_error", func(t *testing.T) webhookClient {
+			t.Helper()
 			return webhookClient{timeout: time.Second, resolver: failingResolver{}}
-		}, false},
-		{"timeout", "timeout", func(t *testing.T) webhookClient {
-			return webhookClient{timeout: 50 * time.Millisecond, resolver: staticResolver{netip.MustParseAddr("203.0.113.1")}, dial: func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }}
-		}, true},
+		}},
 		{"redirect", "http_3xx", func(t *testing.T) webhookClient {
+			t.Helper()
 			hits := 0
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				hits++
@@ -122,18 +121,17 @@ func TestWebhookFailureCategories(t *testing.T) {
 			}))
 			t.Cleanup(func() { server.Close(); Assert.Equal(t, 1, hits) })
 			return testWebhookClient(t, server)
-		}, false},
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			run := func(t *testing.T) {
-				client := tc.client(t)
-				Assert.Equal(t, tc.want, client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
-			}
-			if tc.timeout {
-				synctest.Test(t, run)
-			} else {
-				run(t)
-			}
+			client := tc.client(t)
+			Assert.Equal(t, tc.want, client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 		})
 	}
+	t.Run("timeout", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			client := webhookClient{timeout: 50 * time.Millisecond, resolver: staticResolver{netip.MustParseAddr("203.0.113.1")}, dial: func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }}
+			Assert.Equal(t, "timeout", client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
+		})
+	})
 }

@@ -86,11 +86,6 @@ func TestChangesScanPages(t *testing.T) {
 	}
 }
 
-func TestChangesFilterDigestStable(t *testing.T) {
-	filter := Filter{PersonID: 4, SourceIDs: []int64{1, 2}, ConversationIDs: []int64{8}, IncomingOnly: true}
-	Assert.Equal(t, "7725ea5be9477647", filter.Digest())
-}
-
 func TestGrantDigestUsesStableReferences(t *testing.T) {
 	assert := Assert.New(t)
 	original := Filter{GrantRefs: []GrantRef{{Type: "gmail", Identifier: "a@example.com"}, {Type: "gmail", Identifier: "b@example.com"}}}

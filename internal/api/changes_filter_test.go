@@ -16,7 +16,7 @@ import (
 func TestChangesFilteredCursorPagination(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	r := httptest.NewRequest(http.MethodGet, "/?person_id=4&source_id=2&source_id=1&source_id=2&conversation_id=8&incoming_only=true", nil)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?person_id=4&source_id=2&source_id=1&source_id=2&conversation_id=8&incoming_only=true", nil)
 	filter, err := parseChangesFilter(r)
 	requirements.NoError(err)
 	assertions.Equal([]int64{1, 2}, filter.SourceIDs)

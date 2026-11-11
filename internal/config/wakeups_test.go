@@ -11,6 +11,7 @@ import (
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep constructors available in nested test scopes.
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep constructors available in nested test scopes.
+	"go.kenn.io/msgvault/internal/fileutil"
 )
 
 func TestWakeupValidationAndDefaults(t *testing.T) {
@@ -82,7 +83,7 @@ func TestWakeupSecretFileResolutionPreservesConfig(t *testing.T) {
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)
 	secret := "whsec_" + base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 32)))
-	require.NoError(os.WriteFile(filepath.Join(dir, "secret"), []byte(secret), 0600))
+	require.NoError(fileutil.SecureWriteFile(filepath.Join(dir, "secret"), []byte(secret), 0600))
 	path := filepath.Join(dir, "config.toml")
 	require.NoError(os.WriteFile(path, []byte("[[wakeups]]\nname='relative'\nurl='https://example.com'\nsecret_file='secret'\n[[wakeups]]\nname='home'\nurl='https://example.com'\nsecret_file='~/secret'\n"), 0600))
 	cfg, err := Load(path, "")
