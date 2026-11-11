@@ -16,6 +16,7 @@ import (
 	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -576,6 +577,63 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 	assert.False(sum.Stopped)
 	assert.Equal(3, countBeeperMessages(t, imp), "the next run resumes the interrupted page")
 	assert.Equal("done", latestBeeperState(t, imp).Chats[chat.ID].RosterWork.Phase, "roster proof stays after messages advance")
+}
+
+func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	f := newFakeBeeper(t)
+	chat := mediaGroupChat(4)
+	chat.ParticipantsTotalUnknown = true
+	f.addChat(chat)
+	f.setAsset("mxc://beeper.local/photo1", []byte("first photo"))
+	f.setAsset("mxc://beeper.local/photo2", []byte("second photo"))
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	opts := mediaImportOptions(t)
+	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
+	sum, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	run, err := st.GetLastSuccessfulSync(sum.SourceID)
+	require.NoError(err)
+	state, err := LoadSyncState(run.CursorAfter.String)
+	require.NoError(err)
+	work := state.Chats[chat.ID].RosterWork
+	require.True(work.Verified)
+	work.MemberFirst = false
+	work.Phase = "matching"
+	work.Next = 1
+	var metadataBefore string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT metadata FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&metadataBefore))
+	blob, err := state.Marshal()
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
+	require.NoError(err)
+	f.appendMsg(chat.ID, fakeMsg{ID: "message-turn", SortKey: 10, Timestamp: time.Now(), Type: "IMAGE", SenderID: "@signal_member0:beeper.local", Attachments: []map[string]any{{"id": "mxc://beeper.local/photo2", "type": "img", "mimeType": "image/png", "fileName": "photo.png", "fileSize": 12}}})
+	f.resetRequests()
+	f.blockChatGetFor(chat.ID)
+	imp = NewImporter(st, imp.client)
+	synctest.Test(t, func(t *testing.T) {
+		opts.StopAt = time.Now().Add(2 * time.Second)
+		sum, err = imp.Import(t.Context(), opts)
+		require.NoError(err)
+		assert.False(sum.Stopped)
+	})
+	for _, request := range f.requests() {
+		assert.NotContains(request, "/v1/chats/"+chat.ID+"?", "message turn fetched chat detail")
+	}
+	var stateName string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo2'`).Scan(&stateName))
+	assert.Equal("stored", stateName)
+	work = latestBeeperState(t, imp).Chats[chat.ID].RosterWork
+	assert.True(work.Verified)
+	assert.Equal("matching", work.Phase)
+	assert.Equal(1, work.Next)
+	var metadataAfter string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT metadata FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&metadataAfter))
+	assert.JSONEq(metadataBefore, metadataAfter)
+	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
+	assert.NotContains(unresolved, chat.ID)
 }
 
 func TestImportStopsAfterReconcilePage(t *testing.T) {

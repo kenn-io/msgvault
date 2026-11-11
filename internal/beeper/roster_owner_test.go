@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +45,8 @@ func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 			require.NoError(err)
 			state, err := LoadSyncState(run.CursorAfter.String)
 			require.NoError(err)
+			initialWatermark := parseWatermark(state.ListWatermark)
+			require.False(initialWatermark.IsZero())
 			work := state.Chats[old.ID].RosterWork
 			require.True(work.Verified)
 			work.MemberFirst = false
@@ -69,11 +72,21 @@ func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 					f.appendMsg(healthy.ID, fakeMsg{ID: messageID, SortKey: 100 + attempt, Timestamp: now.Add(time.Duration(attempt+2) * time.Second), SenderID: "@signal_user:example.test", Text: "healthy"})
 				}
 				imp = NewImporter(st, imp.client)
+				f.resetRequests()
 				sum, err = imp.Import(t.Context(), opts)
-				var partial *PartialSyncError
-				require.ErrorAs(err, &partial)
-				require.Positive(sum.FetchErrors)
-				require.Positive(sum.Errors)
+				if attempt == 0 || tc.incomplete {
+					require.NoError(err)
+					require.Zero(sum.FetchErrors)
+				} else {
+					var partial *PartialSyncError
+					require.ErrorAs(err, &partial)
+					require.Positive(sum.FetchErrors)
+				}
+				if attempt == 0 {
+					for _, request := range f.requests() {
+						require.False(strings.HasPrefix(request, "/v1/chats/"+old.ID+"?"))
+					}
+				}
 				var count int
 				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, messageID).Scan(&count))
 				require.Equal(1, count)
@@ -82,7 +95,15 @@ func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 				require.Equal(oldOwner, sender)
 				unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 				require.NoError(err)
-				require.Contains(unresolved, old.ID)
+				if attempt == 1 {
+					require.Contains(unresolved, old.ID)
+					if tc.incomplete {
+						var deferred int
+						require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM sync_run_items WHERE source_message_id = ? AND error_kind = 'beeper_roster_verification_deferred'`), old.ID).Scan(&deferred))
+						require.Positive(deferred)
+						require.True(parseWatermark(latestBeeperState(t, imp).ListWatermark).After(initialWatermark))
+					}
+				}
 			}
 			if !tc.omitted {
 				f.mu.Lock()
@@ -91,8 +112,7 @@ func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 				f.appendMsg(old.ID, fakeMsg{ID: "old-changed-phone", SortKey: 102, Timestamp: now.Add(5 * time.Second), SenderID: "@signal_user:example.test", Text: "changed"})
 				imp = NewImporter(st, imp.client)
 				_, err = imp.Import(t.Context(), opts)
-				var partial *PartialSyncError
-				require.ErrorAs(err, &partial)
+				require.NoError(err)
 				changedOwner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550125", "", "signal")
 				require.NoError(err)
 				var sender int64
@@ -106,6 +126,12 @@ func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 			imp = NewImporter(st, imp.client)
 			_, err = imp.Import(t.Context(), opts)
 			require.NoError(err)
+			imp = NewImporter(st, imp.client)
+			_, err = imp.Import(t.Context(), opts)
+			require.NoError(err)
+			unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+			require.NoError(err)
+			require.NotContains(unresolved, old.ID)
 			var sender int64
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "old-new-0").Scan(&sender))
 			require.Equal(oldOwner, sender)

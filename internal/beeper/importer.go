@@ -996,7 +996,7 @@ func (m chatMembership) policyCount(policy attachmentpolicy.Policy) int {
 }
 
 // ensureConversation upserts the conversation row and its membership,
-// fetching the full participant list when the search listing truncated it
+// fetching the full participant list on roster turns when search truncated it
 // (chat search returns at most 20 participants per chat). It archives the
 // roster media policy weighs — the reported total, or the unknown marker
 // when there is none and the list is incomplete — so backfill and purge
@@ -1008,7 +1008,7 @@ func (imp *Importer) ensureConversation(
 	listingSignature := rosterSignature(ch, opts.AccountID)
 	detail := ch
 	membershipComplete := !ch.Participants.HasMore
-	if !opts.rosterDetailFetched && (ch.Participants.HasMore || (!opts.skipRoster && opts.rosterState != nil && opts.rosterState.DetailBacked)) {
+	if !opts.skipRoster && !opts.rosterDetailFetched && (ch.Participants.HasMore || (opts.rosterState != nil && opts.rosterState.DetailBacked)) {
 		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, ch.ID); err != nil {
 			return 0, false, chatMembership{}, fmt.Errorf("invalidate route evidence before Beeper roster refresh for chat %q: %w", ch.ID, err)
 		}
@@ -1016,9 +1016,6 @@ func (imp *Importer) ensureConversation(
 		d, gerr := imp.client.GetChat(requestCtx, ch.ID)
 		cancel()
 		gerr = opts.budgetError(ctx, gerr)
-		if gerr == nil && (d == nil || d.Participants.HasMore) {
-			gerr = errors.New("beeper chat detail has an incomplete roster")
-		}
 		if errors.Is(gerr, errBeeperBudgetExpired) {
 			return 0, false, chatMembership{}, gerr
 		}
@@ -1066,6 +1063,22 @@ func (imp *Importer) ensureConversation(
 		routeEvidence.Failure = "chat_binding_mismatch"
 	}
 	if opts.skipRoster {
+		if ch.Participants.HasMore && opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature {
+			if !membership.known {
+				metadata, err := imp.store.GetConversationMetadataContext(ctx, convID)
+				if err != nil {
+					return convID, false, membership, err
+				}
+				var record struct {
+					MemberCount *int `json:"member_count"`
+					Unknown     bool `json:"member_count_unknown"`
+				}
+				if metadata.Valid && json.Unmarshal([]byte(metadata.String), &record) == nil && record.MemberCount != nil && !record.Unknown {
+					membership = chatMembership{count: *record.MemberCount, known: true}
+				}
+			}
+			return convID, true, membership, nil
+		}
 		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature && opts.rosterState.Signature == rosterSignature(detail, opts.AccountID) {
 			keys := imp.rosterKeys(detail.Participants.Items)
 			settled, err := imp.refreshRosterProof(ctx, sourceID, convID, rosterProvider(ch.ID), detail, detail.Participants.Items, keys, opts.AccountID, routeEvidence, membership)
