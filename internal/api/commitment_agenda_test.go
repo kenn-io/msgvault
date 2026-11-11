@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,4 +197,26 @@ func TestCommitmentAgendaSettlesSavedIntent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCommitmentAgendaPreservesLongUnicodeCitation(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	agenda, archive, _ := newCommitmentAgendaFixture()
+	quote := strings.Repeat("é", kataevidence.MaxChars+5)
+	archive.commitment.Quote = quote
+	archive.commitment.End = archive.commitment.Start + kataevidence.MaxChars + 5
+	archive.source.Text = "Très bien. " + quote + " Thanks!"
+	sum := sha256.Sum256([]byte(archive.source.Text))
+	hash := hex.EncodeToString(sum[:])
+	archive.source.Reference.Message.BodySHA256 = hash
+	item, err := agenda.enqueue(t.Context(), archive.commitment)
+	r.NoError(err)
+	a.Equal(quote, item.Quote)
+	r.Len(item.Request.Evidence, 2)
+	first, second := item.Request.Evidence[0].Message, item.Request.Evidence[1].Message
+	a.Equal(int(archive.commitment.Start), first.StartRune)
+	a.Equal(first.EndRune, second.StartRune)
+	a.Equal(int(archive.commitment.End), second.EndRune)
+	a.Equal(hash, first.BodySHA256)
+	a.Equal(hash, second.BodySHA256)
 }

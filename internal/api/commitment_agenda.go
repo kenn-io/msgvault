@@ -203,9 +203,16 @@ func (a *CommitmentAgenda) submit(ctx context.Context, item store.CommitmentAgen
 	}
 	if item.State == store.CommitmentAgendaRetired || item.DestinationKey != a.destination ||
 		commitment.TargetKey != item.TargetKey || commitment.Quote != item.Quote {
-		item, err = a.refresh(ctx, commitment, item)
-		if err != nil || item.State == store.CommitmentAgendaLinked {
+		refreshed, err := a.refresh(ctx, commitment, item)
+		if err != nil {
+			if automatic && !item.Attempted && !errors.Is(err, sql.ErrNoRows) {
+				err = errors.Join(err, a.archive.DeferCommitmentAgendaContext(ctx, commitment, a.destination, now))
+			}
 			return item, err
+		}
+		item = refreshed
+		if item.State == store.CommitmentAgendaLinked {
+			return item, nil
 		}
 	}
 	if item.DestinationKey != a.destination || commitment.TargetKey != item.TargetKey || commitment.Quote != item.Quote {

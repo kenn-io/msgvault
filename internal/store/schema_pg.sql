@@ -891,7 +891,8 @@ CREATE TABLE IF NOT EXISTS person_sweep_attempts (
     latency_milliseconds        BIGINT NOT NULL DEFAULT 0 CHECK (latency_milliseconds >= 0),
     retry_at                    TIMESTAMPTZ,
     started_at                  TIMESTAMPTZ NOT NULL,
-    completed_at                TIMESTAMPTZ
+    completed_at                TIMESTAMPTZ,
+    commitment_failure_class    TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_person_sweep_attempts_person_started
@@ -4024,7 +4025,10 @@ CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  through_sequence INTEGER NOT NULL,
  processed_at TIMESTAMPTZ NOT NULL,
  observed_sequence BIGINT,
- backfill_message_id BIGINT NOT NULL DEFAULT 0
+ backfill_message_id BIGINT NOT NULL DEFAULT 0,
+ anchor_after_id BIGINT NOT NULL DEFAULT 0,
+ anchor_through_sequence BIGINT NOT NULL DEFAULT 0,
+ anchor_backfill_id BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS person_commitment_agenda (

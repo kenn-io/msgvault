@@ -20,34 +20,11 @@ func TestApplyCommitmentOnlySweepPreservesDecisionAcrossRequote(t *testing.T) {
 	ctx := t.Context()
 	f := newPersonSweepApplyFixture(t, "commitments", false)
 	st := f.store
-	source, err := st.GetOrCreateSource("whatsapp", "commitment-test")
-	r.NoError(err)
-	owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
-	r.NoError(err)
-	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	r.NoError(err)
-	r.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "manual"))
-	thread, err := st.EnsureConversationWithType(source.ID, "direct", "direct_chat", "Planning")
-	r.NoError(err)
-	r.NoError(st.EnsureConversationParticipant(thread, owner, "member"))
-	r.NoError(st.EnsureConversationParticipant(thread, alice, "member"))
+	sourceID, persist := newCommitmentTestConversation(t, f)
 	const first, second = "I will send the draft.", "I will check the venue."
 	text := first + " " + second
-	id, err := st.PersistMessageContext(ctx, &MessagePersistData{
-		Message: &Message{
-			SourceID: source.ID, ConversationID: thread, MessageType: "whatsapp", SourceMessageID: "two-promises",
-			SenderID: sql.NullInt64{Int64: alice, Valid: true},
-			SentAt:   sql.NullTime{Time: personFactLedgerNow.Add(-time.Hour), Valid: true},
-		},
-		BodyText: sql.NullString{String: text, Valid: true},
-	})
-	r.NoError(err)
+	id := persist("two-promises", text, -time.Hour)
 	profile := f.request.Generation.Policy.ProviderPolicyFingerprint
-	_, err = st.db.ExecContext(ctx, `UPDATE person_inference_profiles SET allow_sensitive = TRUE,
-		allowed_sources = '["conversation_text"]', source_since = '2026-01-01' WHERE fingerprint = ?`, profile)
-	r.NoError(err)
-	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile, "test")
-	r.NoError(err)
 	active, err := st.HasActivePersonInferenceConsent(ctx, profile)
 	r.NoError(err)
 	a.False(active)
@@ -85,7 +62,7 @@ func TestApplyCommitmentOnlySweepPreservesDecisionAcrossRequote(t *testing.T) {
 	a.Equal(LoopStateDone, decision.State)
 	// Both ordinary journal consumers can read the ledger after commitment
 	// evidence has been added.
-	change := peoplesweep.ArchiveChange{PersonID: f.personID, SourceID: source.ID, MessageID: id,
+	change := peoplesweep.ArchiveChange{PersonID: f.personID, SourceID: sourceID, MessageID: id,
 		SourceLane: peoplesweep.SourceConversationText, EvidenceEffect: peoplesweep.EvidenceEffectSourceEdited}
 	changes, err := st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, []peoplesweep.ArchiveChange{change})
 	r.NoError(err)
@@ -103,23 +80,7 @@ func TestApplyCommitmentOnlySweepPreservesDecisionAcrossRequote(t *testing.T) {
 	})
 	r.NoError(err)
 
-	_, err = st.EnsurePersonSweepWork(ctx, f.personID, true)
-	r.NoError(err)
-	lease, err := st.ClaimPersonSweep(ctx, peoplesweep.ClaimRequest{
-		PersonID: f.personID, WorkerID: "requote-worker", LeaseDuration: time.Hour,
-	})
-	r.NoError(err)
-	r.NotNil(lease)
-	f.lease, f.request.Lease = *lease, *lease
-	f.attemptID += "-requote"
-	f.request.AttemptID = f.attemptID
-	envelopeHash, err := personSweepRawEnvelopeHash(f.request.CursorEnvelope)
-	r.NoError(err)
-	r.NoError(st.StartPersonSweepAttempt(ctx, peoplesweep.StartAttempt{
-		ID: f.attemptID, RunID: f.runID, PersonID: f.personID, LeaseFence: lease.Fence,
-		Mode: peoplesweep.RunIncremental, CursorEnvelope: f.request.CursorEnvelope,
-		EnvelopeHash: envelopeHash, StartedAt: f.request.Generation.ResolvedAt,
-	}))
+	f = nextCommitmentTestAttempt(t, f, "-requote")
 	// Shortening a valid citation keeps the existing done decision. The other
 	// disjoint promise in the same original message stays open.
 	requote := strings.TrimSuffix(first, ".")
@@ -149,6 +110,148 @@ func TestApplyCommitmentOnlySweepPreservesDecisionAcrossRequote(t *testing.T) {
 	})
 }
 
+func newCommitmentTestConversation(t *testing.T, f personSweepApplyFixture) (int64, func(string, string, time.Duration) int64) {
+	t.Helper()
+	r, ctx, st := require.New(t), t.Context(), f.store
+	source, err := st.GetOrCreateSource("whatsapp", "commitment-test")
+	r.NoError(err)
+	owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	r.NoError(err)
+	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	r.NoError(err)
+	r.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "manual"))
+	thread, err := st.EnsureConversationWithType(source.ID, "direct", "direct_chat", "Planning")
+	r.NoError(err)
+	r.NoError(st.EnsureConversationParticipant(thread, owner, "member"))
+	r.NoError(st.EnsureConversationParticipant(thread, alice, "member"))
+	profile := f.request.Generation.Policy.ProviderPolicyFingerprint
+	_, err = st.db.ExecContext(ctx, `UPDATE person_inference_profiles SET allow_sensitive = TRUE,
+		allowed_sources = '["conversation_text"]', source_since = '2026-01-01' WHERE fingerprint = ?`, profile)
+	r.NoError(err)
+	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile, "test")
+	r.NoError(err)
+	return source.ID, func(key, text string, offset time.Duration) int64 {
+		t.Helper()
+		id, err := st.PersistMessageContext(ctx, &MessagePersistData{
+			Message: &Message{
+				SourceID: source.ID, ConversationID: thread, MessageType: "whatsapp", SourceMessageID: key,
+				SenderID: sql.NullInt64{Int64: alice, Valid: true},
+				SentAt:   sql.NullTime{Time: personFactLedgerNow.Add(offset), Valid: true},
+			},
+			BodyText: sql.NullString{String: text, Valid: true},
+		})
+		r.NoError(err)
+		return id
+	}
+}
+
+func nextCommitmentTestAttempt(t *testing.T, f personSweepApplyFixture, suffix string) personSweepApplyFixture {
+	t.Helper()
+	r, ctx, st := require.New(t), t.Context(), f.store
+	_, err := st.EnsurePersonSweepWork(ctx, f.personID, true)
+	r.NoError(err)
+	lease, err := st.ClaimPersonSweep(ctx, peoplesweep.ClaimRequest{
+		PersonID: f.personID, WorkerID: "commitment-page-worker", LeaseDuration: time.Hour,
+	})
+	r.NoError(err)
+	r.NotNil(lease)
+	f.lease, f.request.Lease = *lease, *lease
+	f.attemptID += suffix
+	f.request.AttemptID = f.attemptID
+	envelopeHash, err := personSweepRawEnvelopeHash(f.request.CursorEnvelope)
+	r.NoError(err)
+	r.NoError(st.StartPersonSweepAttempt(ctx, peoplesweep.StartAttempt{
+		ID: f.attemptID, RunID: f.runID, PersonID: f.personID, LeaseFence: lease.Fence,
+		Mode: peoplesweep.RunIncremental, CursorEnvelope: f.request.CursorEnvelope,
+		EnvelopeHash: envelopeHash, StartedAt: f.request.Generation.ResolvedAt,
+	}))
+	return f
+}
+
+func TestCommitmentWindowReplaysNewEvidenceForNinthOpenPromise(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-anchor-pages", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	var body strings.Builder
+	var promises []peoplesweep.CommitmentPromise
+	for i := range 9 {
+		quote := fmt.Sprintf("I will send report %d.", i+1)
+		start := int64(body.Len())
+		body.WriteString(quote)
+		promises = append(promises, peoplesweep.CommitmentPromise{
+			Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: quote, Start: start, End: int64(body.Len()),
+		})
+		body.WriteByte(' ')
+	}
+	dueDate := personFactLedgerNow.AddDate(0, 0, 120).Format(time.DateOnly)
+	promises[8].DueOn = &dueDate
+	persist("nine-promises", strings.TrimSpace(body.String()), -2*time.Hour)
+	initial, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(initial.Sources, 1)
+	for i := range promises {
+		promises[i].SourceID = initial.Sources[0].ID
+	}
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, initial, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
+	r.NoError(err)
+
+	const completed = "I sent report 9."
+	persist("ninth-fulfilment", completed, -time.Hour)
+	first, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(first.Anchors, 8)
+	r.Len(first.Sources, 1)
+	a.Equal(completed, first.Sources[0].Text)
+	a.Equal(first.Anchors[7].ID, first.AnchorAfterID)
+	f = nextCommitmentTestAttempt(t, f, "-first")
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, first, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	}))
+	r.NoError(err)
+
+	due, err := st.PersonCommitmentsDue(ctx, f.personID, f.request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window)
+	r.NoError(err)
+	a.True(due)
+	persist("new-activity", "A newer message.", -30*time.Minute)
+	second, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(second.Anchors, 1)
+	r.Len(second.Sources, 1)
+	a.Equal(promises[8].Quote, second.Anchors[0].Quote)
+	a.Equal(first.Sources[0].MessageID, second.Sources[0].MessageID)
+	a.Equal(first.ThroughSequence, second.ThroughSequence)
+	a.Zero(second.AnchorAfterID)
+	f = nextCommitmentTestAttempt(t, f, "-second")
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, second, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{},
+		Fulfilments: []peoplesweep.CommitmentFulfilment{{
+			CommitmentID: second.Anchors[0].ID, SourceID: second.Sources[0].ID, Quote: completed, End: int64(len(completed)),
+		}},
+	}))
+	r.NoError(err)
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 9, false)
+	r.NoError(err)
+	r.Len(items, 9)
+	r.NotNil(items[8].Fulfilment)
+	a.Equal(completed, items[8].Fulfilment.Quote)
+	current, err := st.DecidePersonCommitmentContext(ctx, items[8].ID, LoopStateOpen, nil, f.request.CompletedAt)
+	r.NoError(err)
+	a.Nil(current.ReopenedAt)
+	a.NotNil(current.Fulfilment)
+
+	duringDatedPromise, err := st.ListPersonCommitmentsContext(ctx, f.personID, personFactLedgerNow.AddDate(0, 0, 100), 9, false)
+	r.NoError(err)
+	r.Len(duringDatedPromise, 1)
+	a.Equal(items[8].ID, duringDatedPromise[0].ID)
+	_, err = st.DecidePersonCommitmentContext(ctx, items[8].ID, LoopStateDone, nil, items[8].ExpiresAt)
+	a.ErrorIs(err, sql.ErrNoRows)
+}
 func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, parsed peoplesweep.ParsedCommitments) peoplesweep.ApplyRequest {
 	t.Helper()
 	ctx, r := t.Context(), require.New(t)

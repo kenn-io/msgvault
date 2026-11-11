@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	CommitmentAgendaPending = "pending"
-	CommitmentAgendaLinked  = "linked"
-	CommitmentAgendaRetired = "retired"
+	CommitmentAgendaPending  = "pending"
+	CommitmentAgendaLinked   = "linked"
+	CommitmentAgendaRetired  = "retired"
+	commitmentAgendaDeferFor = time.Hour
 )
 
 // CommitmentAgendaSuggestion is the exact create intent saved before Kata I/O.
@@ -94,8 +95,8 @@ func (s *Store) ListPendingCommitmentAgendaContext(ctx context.Context, destinat
 		AND (deferred_at IS NULL OR `+s.loopTimeKey("deferred_at")+` <= `+s.loopTimeKey("?")+`)
 		AND NOT EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
 			AND c.owner_state = 'snoozed' AND `+s.loopTimeKey("c.snoozed_until")+` > `+s.loopTimeKey("?")+`)
-		ORDER BY attempted_at IS NOT NULL, attempted_at, commitment_id LIMIT ?`),
-		destination, s.dialect.TimestampParam(now.Add(-time.Hour)), s.dialect.TimestampParam(now), limit)
+		ORDER BY deferred_at IS NOT NULL, deferred_at, attempted_at IS NOT NULL, attempted_at, commitment_id LIMIT ?`),
+		destination, s.dialect.TimestampParam(now.Add(-commitmentAgendaDeferFor)), s.dialect.TimestampParam(now), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -116,8 +117,9 @@ func (s *Store) MarkCommitmentAgendaAttemptContext(ctx context.Context, item Com
 		WHERE commitment_id = ? AND state = 'pending' AND target_key = ? AND quote = ? AND destination_key = ?
 		AND EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
 			AND c.target_key = person_commitment_agenda.target_key AND c.quote = person_commitment_agenda.quote
-			AND c.current_claim_id IS NOT NULL AND c.owner_state <> 'done'`
-	args := []any{s.dialect.TimestampParam(now), item.CommitmentID, item.TargetKey, item.Quote, item.DestinationKey}
+			AND c.current_claim_id IS NOT NULL AND c.owner_state <> 'done'
+			AND ` + s.loopTimeKey("c.expires_at") + ` > ` + s.loopTimeKey("?")
+	args := []any{s.dialect.TimestampParam(now), item.CommitmentID, item.TargetKey, item.Quote, item.DestinationKey, s.dialect.TimestampParam(now)}
 	if automatic {
 		query += ` AND (c.owner_state <> 'snoozed' OR ` + s.loopTimeKey("c.snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
 		args = append(args, s.dialect.TimestampParam(now))

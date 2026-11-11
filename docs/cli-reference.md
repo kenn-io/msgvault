@@ -3350,12 +3350,12 @@ grant consent to a provider or enroll a person in briefs.
 | `person provider use <name>` | Select a checked profile and enable sweeps |
 | `person provider check [name]` | Run fixed synthetic input without granting consent |
 | `person provider consent [name] [--commitments] --yes` | Grant consent to the exact checked policy. `--commitments` grants the two-sided commitment lane. |
-| `person provider revoke [name]` | Revoke that policy's consent; `--all` revokes all stored sweep policies |
+| `person provider revoke [name] [--commitments]` | Revoke consent for that provider. Use `--commitments` to stop only commitment extraction, or `--all` to revoke all stored sweep policies. |
 | `person provider remove <name>` | Remove a configured profile and its stored key. For a profile no longer in the config, delete its leftover stored key and revoke consent for the policies that used it |
 | `person provider history [name] [--person <id>]` | Inspect redacted runs and attempts |
 | `person sweep run [--person <id>] [--limit 25]` | Run a bounded maintenance pass for tracked people |
 | `person sweep status` | Read redacted progress and usage |
-| `person sweep history [--person <id>] [--limit 20]` | Read recent maintenance attempts |
+| `person sweep history [--person <id>] [--limit 20]` | Read recent maintenance attempts, including any commitment-lane failure class |
 | `person facts catalog [--include-sensitive]` | List eligible fields, their keys, and revisions |
 | `person facts evidence <person-id>` | Inspect saved supporting evidence |
 | `person facts evidence-status <person-id>` | Inspect changes to evidence support |

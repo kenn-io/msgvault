@@ -38,6 +38,8 @@ type preparedCommitmentSweep struct {
 	autoFulfil        bool
 	observedOnly      bool
 	backfillMessageID int64
+	anchorAfterID     int64
+	anchorBackfillID  int64
 }
 
 func commitmentEvidence(personID int64, source peoplesweep.CommitmentSource, role, quote string, start, end int64) personfacts.EvidenceInput {
@@ -136,7 +138,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		}
 		return source, nil
 	}
-	prepared := &preparedCommitmentSweep{through: window.ThroughSequence, snapshot: window.SnapshotSequence, backfillMessageID: window.BackfillMessageID, autoFulfil: result.Config.AutoFulfil}
+	prepared := &preparedCommitmentSweep{through: window.ThroughSequence, snapshot: window.SnapshotSequence, backfillMessageID: window.BackfillMessageID, anchorAfterID: window.AnchorAfterID, anchorBackfillID: window.AnchorBackfillID, autoFulfil: result.Config.AutoFulfil}
 	generation := request.Generation
 	generation.ProgramID = peoplesweep.CommitmentProgramID
 	generation.ProgramVersion = peoplesweep.CommitmentProgramVersion
@@ -279,7 +281,7 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			(person_id, through_sequence, processed_at, observed_sequence, backfill_message_id) VALUES (?, 0, ?, ?, ?)
 			ON CONFLICT (person_id) DO UPDATE SET
 			processed_at = excluded.processed_at, observed_sequence = excluded.observed_sequence,
-			backfill_message_id = excluded.backfill_message_id
+			backfill_message_id = excluded.backfill_message_id, anchor_after_id = 0, anchor_through_sequence = 0, anchor_backfill_id = 0
 			WHERE COALESCE(person_commitment_frontiers.observed_sequence, person_commitment_frontiers.through_sequence)
 				<= excluded.observed_sequence`, personID, s.dialect.TimestampParam(request.CompletedAt), prepared.through, prepared.backfillMessageID)
 		return err
@@ -352,10 +354,19 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			return fmt.Errorf("persist commitment fulfilment: %w", err)
 		}
 	}
+	if prepared.anchorAfterID > 0 {
+		_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers
+			(person_id, through_sequence, processed_at, backfill_message_id, anchor_after_id, anchor_through_sequence, anchor_backfill_id)
+			VALUES (?, 0, ?, ?, ?, ?, ?) ON CONFLICT (person_id) DO UPDATE SET
+			processed_at = excluded.processed_at, anchor_after_id = excluded.anchor_after_id,
+			anchor_through_sequence = excluded.anchor_through_sequence, anchor_backfill_id = excluded.anchor_backfill_id`,
+			personID, s.dialect.TimestampParam(request.CompletedAt), prepared.backfillMessageID, prepared.anchorAfterID, prepared.through, prepared.anchorBackfillID)
+		return err
+	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id)
 		VALUES (?, ?, ?, ?) ON CONFLICT (person_id) DO UPDATE SET
 		through_sequence = excluded.through_sequence, processed_at = excluded.processed_at, observed_sequence = NULL,
-		backfill_message_id = excluded.backfill_message_id
+		backfill_message_id = excluded.backfill_message_id, anchor_after_id = 0, anchor_through_sequence = 0, anchor_backfill_id = 0
 		WHERE person_commitment_frontiers.through_sequence <= excluded.through_sequence`,
 		personID, prepared.through, s.dialect.TimestampParam(request.CompletedAt), prepared.backfillMessageID)
 	return err
@@ -425,9 +436,12 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 	window := result.Window
 	if !request.Generation.Policy.AllowSensitive || !result.Config.Enabled ||
 		window.PersonID != request.Lease.PersonID || !window.Now.Equal(request.Generation.ResolvedAt) ||
-		window.BackfillMessageID < -1 || window.ThroughSequence < 0 || window.SnapshotSequence < window.ThroughSequence ||
+		window.BackfillMessageID < -1 || window.AnchorAfterID < 0 || window.AnchorBackfillID < 0 || window.ThroughSequence < 0 || window.SnapshotSequence < window.ThroughSequence ||
 		len(window.Sources) > result.Config.MaxItems || len(window.Anchors) > result.Config.MaxOpenAnchors {
 		return errors.New("commitment result does not match the attempt")
+	}
+	if window.AnchorAfterID > 0 && (len(window.Anchors) != result.Config.MaxOpenAnchors || len(window.Anchors) == 0 || window.Anchors[len(window.Anchors)-1].ID != window.AnchorAfterID) {
+		return errors.New("commitment continuation must match the last open anchor")
 	}
 	if hasCall == (len(window.Sources) == 0) ||
 		(!hasCall && (len(window.Anchors) != 0 || len(result.Output.Promises) != 0 || len(result.Output.Fulfilments) != 0)) {

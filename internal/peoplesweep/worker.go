@@ -120,6 +120,7 @@ type ApplyResult struct {
 	Mutations  ApplyMutationMetadata
 	// AttemptProjectedWrites includes writes committed by an earlier status phase.
 	AttemptProjectedWrites int
+	CommitmentFailureClass FailureClass
 }
 
 type sequenceCursorCoordinate struct {
@@ -392,9 +393,10 @@ type PersonRunResult struct {
 	BriefVersion int
 	// BriefFailureClass is why a brief call produced no version while the
 	// attempt succeeded. Empty when no brief ran or the brief was stored.
-	BriefFailureClass FailureClass
-	CursorAdvances    []CursorAdvance
-	Usage             Usage
+	BriefFailureClass      FailureClass
+	CommitmentFailureClass FailureClass
+	CursorAdvances         []CursorAdvance
+	Usage                  Usage
 }
 
 type Worker struct {
@@ -1156,8 +1158,8 @@ func (w *Worker) runPerson(
 	}
 	return PersonRunResult{PersonID: lease.PersonID, AttemptID: attemptID,
 		commitmentOnly: commitmentOnly, ProjectedWrites: apply.AttemptProjectedWrites, BriefVersion: apply.Mutations.BriefVersion,
-		BriefFailureClass: briefFailure,
-		CursorAdvances:    advances, Usage: accounting.totalUsage}, nil
+		BriefFailureClass: briefFailure, CommitmentFailureClass: apply.CommitmentFailureClass,
+		CursorAdvances: advances, Usage: accounting.totalUsage}, nil
 }
 
 func hasEvidenceRetraction(changes []personfacts.EvidenceStatusChange) bool {
