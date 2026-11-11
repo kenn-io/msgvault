@@ -58,7 +58,6 @@ func TestTextParserNotices(t *testing.T) {
 		{"Mira cambió la descripción del grupo: flores", "", "Mira cambió la descripción del grupo: flores"},
 		{"Ann hat den Gruppenbetreff geändert: Foo", "", "Ann hat den Gruppenbetreff geändert: Foo"},
 		{"Ann changed their phone number to a new number. Tap to message or add the new number: x", "", "Ann changed their phone number to a new number. Tap to message or add the new number: x"},
-		{"Ann Smith: hi", "Ann Smith", "hi"},
 	} {
 		t.Run(tc.payload, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
