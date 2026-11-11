@@ -75,15 +75,6 @@ func briefRetainedEvents(
 		if !ok || h.LifeEvent == nil {
 			continue
 		}
-		for _, id := range h.EvidenceIDs {
-			if _, exists := byID[id]; !exists {
-				ok = false
-				break
-			}
-		}
-		if !ok {
-			continue
-		}
 		events = append(events, h)
 		for _, id := range h.EvidenceIDs {
 			protected[id] = true
