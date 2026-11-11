@@ -189,7 +189,9 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
 		if classify != nil && classify(code) {
-			return operationFailure(code, false), nil
+			result := operationFailure(code, false)
+			result.RefusalBody = data
+			return result, nil
 		}
 		switch code {
 		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable":

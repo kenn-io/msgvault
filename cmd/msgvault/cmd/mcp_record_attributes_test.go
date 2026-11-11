@@ -107,9 +107,20 @@ func TestMCPPersonAttributeDryRunOrdinalAndCAS(t *testing.T) {
 	require.NotNil(t, written.Value)
 	assert.Equal(t, int64(2), written.Value.Ordinal)
 	args["expected_value_id"] = written.Value.ID + 1
-	attributeError(t, attributeOperation(t, b, "set_person_attribute", args), "attribute_value_conflict")
+	conflict := attributeOperation(t, b, "set_person_attribute", args)
+	attributeError(t, conflict, "attribute_value_conflict")
+	conflictData, err := json.Marshal(conflict.Output)
+	require.NoError(t, err)
+	var snapshot struct {
+		CurrentValueID int64 `json:"current_value_id"`
+	}
+	require.NoError(t, json.Unmarshal(conflictData, &snapshot))
+	assert.Equal(t, written.Value.ID, snapshot.CurrentValueID)
 	attributeError(t, attributeOperation(t, b, "delete_attribute_definition", map[string]any{"definition_id": created.Definition.ID, "etag": created.ETag}), "attribute_definition_has_values")
 	clear := map[string]any{"person_id": person, "slug": "favorite_tea", "ordinal": int64(2), "expected_value_id": written.Value.ID, "dry_run": true}
+	disclosure, err = b.OperationDisclosure(t.Context(), "clear_person_attribute", clear)
+	require.NoError(t, err)
+	assert.Contains(t, disclosure, "green")
 	dry := operationOutput[generated.PersonAttributeWrite](t, attributeOperation(t, b, "clear_person_attribute", clear))
 	assert.True(t, dry.DryRun)
 	listed := operationOutput[generated.PersonAttributesResponse](t, attributeOperation(t, b, "list_person_attributes", map[string]any{"person_id": person, "slug": "favorite_tea", "history": true}))
@@ -143,6 +154,12 @@ func TestMCPAttributeCapabilitiesRejectMissingNativeContracts(t *testing.T) {
 	assert.NotContains(t, withoutRead.capabilities(), "patch_attribute_definition")
 	assert.NotContains(t, withoutRead.capabilities(), "delete_attribute_definition")
 	assert.Contains(t, withoutRead.capabilities(), "create_attribute_definition")
+	capabilities.Routes = slices.DeleteFunc(capabilities.Routes, func(route apiprotocol.MCPRouteDescriptor) bool {
+		return route.OperationID == "listPersonAttributes"
+	})
+	withoutList := newDaemonMCPOperations(b.client, capabilities)
+	assert.NotContains(t, withoutList.capabilities(), "set_person_attribute")
+	assert.NotContains(t, withoutList.capabilities(), "clear_person_attribute")
 }
 
 func TestMCPAttributeSDKConfirmationAndNativeEffects(t *testing.T) {
@@ -188,6 +205,9 @@ func TestMCPAttributeSDKConfirmationAndNativeEffects(t *testing.T) {
 	data, err := json.Marshal(listed.StructuredContent)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"level":"green"`)
+	before := approvals
+	assert.True(t, call("set_person_attribute", map[string]any{"person_id": person, "slug": "metadata", "value": map[string]any{"type": "json", "json": map[string]any{"n": int64(9007199254740993)}}}).IsError)
+	assert.Equal(t, before, approvals)
 }
 
 func TestMCPAttributeInvalidArgumentsDoNotReachNativeRoute(t *testing.T) {
