@@ -121,7 +121,7 @@ func TestWhatsAppTextCommandPreflightArchive(t *testing.T) {
 			command.SetErr(&out)
 			args := []string{"import-whatsapp", path, "--format", "text", "--phone", "+12025550123", "--chat-id", "garden", "--chat-type", "group", "--timezone", "UTC", "--date-order", "dmy"}
 			command.SetArgs(args)
-			require.Error(command.Execute())
+			require.ErrorContains(command.Execute(), "line 2: unsupported or malformed TXT header")
 			assert.NotContains(out.String(), "Import complete:")
 			assert.NotContains(out.String(), "Import incomplete:")
 			if !existing {

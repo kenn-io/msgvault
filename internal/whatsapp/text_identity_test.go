@@ -5,12 +5,37 @@ import (
 	"encoding/json/v2"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestTextSenderIsNotAuthenticatedForPersonAnalysis(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := importTextForTest(t.Context(), NewImporter(st, nil), textFile(t, "13/6/26, 10:00 - Mira: I started a new role\n"), textOptions())
+	require.NoError(err)
+	var txtID, senderID, sourceID, conversationID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id, sender_id, source_id, conversation_id FROM messages`).Scan(&txtID, &senderID, &sourceID, &conversationID))
+	person, _, err := st.CreatePersonFromParticipant(senderID)
+	require.NoError(err)
+	nativeID, err := st.UpsertMessage(&store.Message{SourceID: sourceID, SourceMessageID: "native-message", ConversationID: conversationID, MessageType: "whatsapp", SenderID: sql.NullInt64{Int64: senderID, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC), Valid: true}, Snippet: sql.NullString{String: "Native message", Valid: true}})
+	require.NoError(err)
+	items, err := st.HydratePersonSweepMessages(t.Context(), person.ID, []int64{txtID, nativeID}, 0)
+	require.NoError(err)
+	require.Len(items, 2)
+	assert.Nil(items[0].SubjectPersonID)
+	assert.Contains(items[0].Excerpt, "I started a new role")
+	require.NotNil(items[1].SubjectPersonID)
+	assert.Equal(person.ID, *items[1].SubjectPersonID)
+	candidates, err := st.ListPersonSweepHistoricalCandidates(t.Context(), peoplesweep.HistoricalCandidateRequest{PersonID: person.ID, AuthoredByPerson: true, Limit: 1})
+	require.NoError(err)
+	assert.Equal([]int64{nativeID}, candidates)
+}
 
 func TestTextPersistedKeys(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
