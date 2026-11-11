@@ -818,6 +818,89 @@ func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T
 			a.Equal(newer, items[0].Fulfilment.MessageID)
 		})
 	}
+	t.Run("corrected_before_processed_completion_with_ordinary_backlog", func(t *testing.T) {
+		r, a, ctx := require.New(t), assert.New(t), t.Context()
+		f := newPersonSweepApplyFixture(t, "promise-time-before-completion", false)
+		st := f.store
+		_, persist := newCommitmentTestConversation(t, f)
+		backlog := persist("ordinary-backlog", "We discussed the project.", -4*time.Hour)
+		const promise, reply = "I will send the report.", "I sent the report."
+		id := persist("promise", promise, -time.Hour)
+		completion := persist("completion", reply, -2*time.Hour)
+		cfg := peoplesweep.Config{}
+		cfg.ApplyDefaults()
+		cfg.Commitments.Enabled, cfg.Commitments.AutoFulfil = true, true
+		profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+			AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+		fingerprint := f.request.Generation.Policy.ProviderPolicyFingerprint
+		_, _, err := st.GrantPersonInferenceConsent(ctx, fingerprint, "test-owner")
+		r.NoError(err)
+		_, err = st.RevokePersonInferenceConsent(ctx, fingerprint, "test-owner")
+		r.NoError(err)
+		allowed, err := st.HasActivePersonInferenceConsent(ctx, fingerprint)
+		r.NoError(err)
+		r.False(allowed)
+		pending, err := st.LoadPersonSweepWindow(ctx, peoplesweep.WindowRequest{PersonID: f.personID,
+			Lane: peoplesweep.SourceConversationText, Mode: peoplesweep.GenerationCursorOptimistic, Limit: 1})
+		r.NoError(err)
+		r.Len(pending.Seeds, 1)
+		r.Equal(backlog, pending.Seeds[0].Ref.MessageID)
+
+		load := func() peoplesweep.CommitmentWindow {
+			t.Helper()
+			window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+			r.NoError(err)
+			return window
+		}
+		apply := func(window peoplesweep.CommitmentWindow, fulfilled int64) {
+			t.Helper()
+			output := peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{
+				SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo,
+				Quote: promise, Summary: "Send report", End: int64(len(promise)),
+			}}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}
+			if fulfilled != 0 {
+				output.Fulfilments = append(output.Fulfilments, peoplesweep.CommitmentFulfilment{
+					CommitmentID: fulfilled, SourceID: commitmentSourceID(window, completion), Quote: reply, End: int64(len(reply)), Confirmed: true,
+				})
+			}
+			_, err := st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+			r.NoError(err)
+		}
+		apply(load(), 0)
+		f = nextCommitmentTestAttempt(t, f, "-initial-replay")
+		apply(load(), 0)
+		r.Empty(load().Sources, "identical extraction must finish its bounded replay")
+		items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+		r.NoError(err)
+		r.Len(items, 1)
+		r.Equal(LoopStateOpen, items[0].State)
+		commitmentID := items[0].ID
+		corrected := personFactLedgerNow.Add(-3 * time.Hour)
+		_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE messages SET sent_at = ? WHERE id = ?"), st.dialect.TimestampParam(corrected), id)
+		r.NoError(err)
+		f = nextCommitmentTestAttempt(t, f, "-corrected")
+		apply(load(), 0)
+		f = nextCommitmentTestAttempt(t, f, "-corrected-replay")
+		window := load()
+		r.NotEmpty(commitmentSourceID(window, completion), "the newly earlier promise must reconsider the already processed newer completion")
+		r.Len(window.Anchors, 1)
+		r.Equal(commitmentID, window.Anchors[0].ID)
+		apply(window, commitmentID)
+		items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+		r.NoError(err)
+		r.Len(items, 1)
+		a.Equal(commitmentID, items[0].ID)
+		a.True(corrected.Equal(items[0].PromisedAt))
+		a.Equal(CommitmentStateFulfilled, items[0].State)
+		r.NotNil(items[0].Fulfilment)
+		a.Equal(completion, items[0].Fulfilment.MessageID)
+		a.Empty(load().Sources, "the identical corrected extraction must converge after matching")
+		var ordinaryThrough int64
+		r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT optimistic_sequence FROM person_sweep_cursors
+			WHERE person_id = ? AND source_lane = ?`), f.personID, peoplesweep.SourceConversationText).Scan(&ordinaryThrough))
+		a.Zero(ordinaryThrough, "commitment-only replay must leave provider-bearing ordinary work paused")
+	})
+
 }
 
 func TestCommitmentReopenSuppressesExistingFutureDatedFulfilment(t *testing.T) {
