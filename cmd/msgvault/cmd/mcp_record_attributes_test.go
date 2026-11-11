@@ -166,8 +166,8 @@ func TestMCPAttributeCapabilitiesRejectMissingNativeContracts(t *testing.T) {
 		return route.OperationID == "listPersonAttributes"
 	})
 	withoutList := newDaemonMCPOperations(b.client, capabilities)
-	assertions.NotContains(withoutList.capabilities(), "set_person_attribute")
-	assertions.NotContains(withoutList.capabilities(), "clear_person_attribute")
+	assertions.Contains(withoutList.capabilities(), "set_person_attribute")
+	assertions.Contains(withoutList.capabilities(), "clear_person_attribute")
 }
 
 func TestMCPAttributeSDKConfirmationAndNativeEffects(t *testing.T) {

@@ -153,11 +153,13 @@ func mcpSyncArguments(args map[string]any) (string, string, error) {
 	return account, sourceType, nil
 }
 
+type mcpOperationFailure struct {
+	Error                     string `json:"error"`
+	OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
+}
+
 func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
-	return &mcpserver.OperationResult{IsError: true, Output: struct {
-		Error                     string `json:"error"`
-		OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
-	}{code, uncertain}}
+	return &mcpserver.OperationResult{IsError: true, Output: mcpOperationFailure{code, uncertain}}
 }
 
 // The fixed route/request chosen by an adapter uses existing authentication and
@@ -167,7 +169,7 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 	return readMCPOperationJSONWithClassifier[T](ctx, client, method, path, options, nil, success...)
 }
 
-func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
+func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string, []byte) (any, bool), success ...int) (*mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
@@ -196,10 +198,13 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 		}
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
-		if classify != nil && classify(code) {
-			result := operationFailure(code, false)
-			result.RefusalBody = data
-			return result, nil
+		if classify != nil {
+			if output, ok := classify(code, data); ok {
+				if output == nil {
+					output = mcpOperationFailure{code, false}
+				}
+				return &mcpserver.OperationResult{IsError: true, Output: output}, nil
+			}
 		}
 		switch code {
 		case "unauthorized", "not_found", "scheduler_unavailable", "source_not_schedulable", "store_unavailable", "missing_account", "sync_error", "operation_in_progress", "settings_conflict", "settings_edit_rejected", "if_match_required", "person_revision_conflict", "person_profile_not_found", "person_enrichment_dispatch_in_progress", "persons_unavailable", "cache_build_not_found", "cache_build_unavailable", "bad_request", "invalid_participant_id", "participant_not_found", "analytical_cache_unavailable", "query_resource_exhausted", "engine_unavailable":

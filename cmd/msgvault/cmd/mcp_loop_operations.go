@@ -186,5 +186,5 @@ func loopRefusal(code string) bool {
 }
 
 func readMCPLoopJSON[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions) (*mcpserver.OperationResult, error) {
-	return readMCPOperationJSONWithClassifier[T](ctx, client, method, path, options, loopRefusal, http.StatusOK)
+	return readMCPOperationJSONWithClassifier[T](ctx, client, method, path, options, func(code string, _ []byte) (any, bool) { return nil, loopRefusal(code) }, http.StatusOK)
 }

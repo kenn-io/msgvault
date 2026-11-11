@@ -26,8 +26,6 @@ type OperationResult struct {
 	IsError bool
 	// ETag is adapter metadata. It is exposed only by an owning typed projection.
 	ETag string
-	// RefusalBody is adapter metadata, exposed only by an owning typed projection.
-	RefusalBody []byte
 }
 
 // OperationRefusalError exposes a fixed safe code selected by the owning adapter;
