@@ -137,6 +137,24 @@ func (s *Store) listPersonCommitments(ctx context.Context, filter commitmentList
 	if filter.personID < 0 || limit < 1 || limit > 201 {
 		return nil, ErrInvalidActivityRequest
 	}
+	owners, err := s.loopOwnerIdentities(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Share only raw source reads for this list; each citation still validates
+	// its own version, author, time and exact rune range.
+	sources := make(map[[2]int64]peoplesweep.CommitmentSource)
+	lookup := func(ctx context.Context, personID, messageID int64) (peoplesweep.CommitmentSource, bool, error) {
+		key := [2]int64{personID, messageID}
+		if source, found := sources[key]; found {
+			return source, source.MessageID != 0, nil
+		}
+		source, live, err := s.currentCommitmentSourceWithOwners(ctx, personID, messageID, owners)
+		if err == nil {
+			sources[key] = source
+		}
+		return source, live, err
+	}
 	result := make([]PersonCommitment, 0, limit)
 	var after PersonCommitment
 	if filter.afterID != nil {
@@ -152,7 +170,7 @@ func (s *Store) listPersonCommitments(ctx context.Context, filter commitmentList
 			if filter.eligible != nil && !filter.eligible(candidate.commitment) {
 				continue
 			}
-			c, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now)
+			c, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now, lookup)
 			if err != nil {
 				return nil, err
 			}
@@ -283,18 +301,18 @@ func (s *Store) loadCommitmentCandidateEvidenceTx(ctx context.Context, tx *logge
 	return nil
 }
 
-func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commitmentCandidate, now time.Time) (PersonCommitment, bool, error) {
+func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commitmentCandidate, now time.Time, lookup func(context.Context, int64, int64) (peoplesweep.CommitmentSource, bool, error)) (PersonCommitment, bool, error) {
 	c := candidate.commitment
 	if candidate.promise.ID == 0 || !c.ExpiresAt.After(now) {
 		return c, false, nil
 	}
-	promise, live, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, candidate.promise.Input)
+	promise, live, err := s.currentCommitmentCitationWithSource(ctx, c.PersonID, c.Direction, candidate.promise.Input, lookup)
 	if err != nil || !live || promise.MessageID != c.AnchorMessageID || promise.Quote != c.Quote || promise.Start != c.Start || promise.End != c.End {
 		return c, false, err
 	}
 	if evidence := candidate.fulfilment; evidence != nil && evidence.Supported &&
 		(c.ReopenedAt == nil || evidence.Input.EventTime.After(*c.ReopenedAt)) {
-		fulfilment, live, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, evidence.Input)
+		fulfilment, live, err := s.currentCommitmentCitationWithSource(ctx, c.PersonID, c.Direction, evidence.Input, lookup)
 		if err != nil {
 			return c, false, err
 		}
@@ -326,6 +344,10 @@ func (s *Store) loadCommitmentFulfilmentTx(ctx context.Context, tx *loggedTx, id
 }
 
 func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput) (CommitmentCitation, bool, error) {
+	return s.currentCommitmentCitationWithSource(ctx, personID, direction, input, s.currentCommitmentSource)
+}
+
+func (s *Store) currentCommitmentCitationWithSource(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput, lookup func(context.Context, int64, int64) (peoplesweep.CommitmentSource, bool, error)) (CommitmentCitation, bool, error) {
 	message, found := strings.CutPrefix(input.SourceRef, personfacts.CommitmentMessageRefPrefix)
 	if !found {
 		return CommitmentCitation{}, false, nil
@@ -337,7 +359,7 @@ func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, d
 	if id <= 0 || input.SpanStart == nil || input.SpanEnd == nil {
 		return CommitmentCitation{}, false, nil
 	}
-	source, live, err := s.currentCommitmentSource(ctx, personID, id)
+	source, live, err := lookup(ctx, personID, id)
 	if err != nil || !live || source.Direction != direction || source.SourceVersion != input.SourceVersion ||
 		source.ContentSHA256 != input.ContentSHA256 ||
 		!personFactPortableTime(source.EventTime).Equal(input.EventTime) ||
@@ -366,7 +388,7 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 	if err != nil {
 		return PersonCommitment{}, err
 	}
-	current, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now)
+	current, visible, err := s.hydrateCommitmentCandidate(ctx, candidate, now, s.currentCommitmentSource)
 	if err != nil {
 		return PersonCommitment{}, err
 	}

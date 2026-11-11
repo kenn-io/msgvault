@@ -492,6 +492,14 @@ func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, requ
 }
 
 func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID int64) (peoplesweep.CommitmentSource, bool, error) {
+	owners, err := s.loopOwnerIdentities(ctx)
+	if err != nil {
+		return peoplesweep.CommitmentSource{}, false, err
+	}
+	return s.currentCommitmentSourceWithOwners(ctx, personID, messageID, owners)
+}
+
+func (s *Store) currentCommitmentSourceWithOwners(ctx context.Context, personID, messageID int64, owners loopOwners) (peoplesweep.CommitmentSource, bool, error) {
 	var conversationID int64
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
 		FROM messages m JOIN sources src ON src.id = m.source_id
@@ -502,14 +510,15 @@ func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID
 	if err != nil {
 		return peoplesweep.CommitmentSource{}, false, err
 	}
-	for conversation, err := range s.LoopConversationsContext(ctx, LoopQuery{PersonID: personID, ConversationID: conversationID}) {
-		if err != nil {
-			return peoplesweep.CommitmentSource{}, false, err
-		}
-		owners, err := s.loopOwnerIdentities(ctx)
-		if err != nil {
-			return peoplesweep.CommitmentSource{}, false, err
-		}
+	heads, err := s.loopConversationHeads(ctx, LoopQuery{PersonID: personID, ConversationID: conversationID})
+	if err != nil {
+		return peoplesweep.CommitmentSource{}, false, err
+	}
+	conversations, err := s.loopChunk(ctx, heads, owners)
+	if err != nil {
+		return peoplesweep.CommitmentSource{}, false, err
+	}
+	for _, conversation := range conversations {
 		messages, err := s.loopMessages(ctx, []int64{messageID}, owners)
 		if err != nil {
 			return peoplesweep.CommitmentSource{}, false, err

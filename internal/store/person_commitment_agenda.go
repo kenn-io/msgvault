@@ -144,7 +144,7 @@ func (s *Store) MarkCommitmentAgendaAttemptContext(ctx context.Context, item Com
 	if err != nil || len(candidates) == 0 {
 		return false, err
 	}
-	current, live, err := s.hydrateCommitmentCandidate(ctx, candidates[0], now)
+	current, live, err := s.hydrateCommitmentCandidate(ctx, candidates[0], now, s.currentCommitmentSource)
 	if err != nil || !live || current.FulfilmentConfirmed {
 		return false, err
 	}
