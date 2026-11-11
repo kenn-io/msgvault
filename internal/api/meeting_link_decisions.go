@@ -37,8 +37,8 @@ func (s *Server) handleMeetingDecision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_argument", err.Error())
 		return
 	}
-	if request.Decision != "link" && request.Decision != "unlink" && request.Decision != "clear" || left == right {
-		writeError(w, 400, "invalid_argument", "Choose two different references and link, unlink, or clear")
+	if err := store.ValidateMeetingLinkDecision(left, right, request.Decision); err != nil {
+		writeError(w, 400, "invalid_argument", err.Error())
 		return
 	}
 	backend, ok := s.store.(MeetingDecisionStore)

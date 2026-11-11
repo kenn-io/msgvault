@@ -249,6 +249,47 @@ func TestMeetingLinkDecisionFollowsStandaloneIntoSeries(t *testing.T) {
 	assertions.Empty(record.MessageIDs)
 }
 
+func TestMeetingLinkDecisionSplitExcludesOtherGroupWarnings(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, event := calendarFixture(t, st, "warning-event", `{"id":"warning-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "warning-note", "meeting_json", `{}`)
+	noteRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}
+	eventRef := MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: event}}
+	_, err := st.DecideMeetingLinkContext(t.Context(), noteRef, eventRef, "unlink")
+	requirements.NoError(err)
+	data.RawMIME = []byte(`{"id":"warning-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
+	_, err = st.PersistMessage(data)
+	requirements.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), noteRef)
+	requirements.NoError(err)
+	assertions.Equal([]int64{note}, record.MessageIDs)
+	assertions.Empty(record.Links)
+	assertions.Empty(record.Unexpandable)
+	eventRef.Identity = occurrenceIdentity(t, "20270314T100000Z")
+	record, err = st.MeetingRecordContext(t.Context(), eventRef)
+	requirements.NoError(err)
+	assertions.Equal([]CalendarUnexpandable{{MessageID: event, Reason: "unsupported recurrence"}}, record.Unexpandable)
+}
+
+func TestMeetingLinkDecisionLinkedGroupRetainsWarnings(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, event := calendarFixture(t, st, "linked-warning-event", `{"id":"warning-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "linked-warning-note", "meeting_json", `{}`)
+	noteRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}
+	eventRef := MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: event}}
+	_, err := st.DecideMeetingLinkContext(t.Context(), noteRef, eventRef, "link")
+	requirements.NoError(err)
+	data.RawMIME = []byte(`{"id":"warning-event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
+	_, err = st.PersistMessage(data)
+	requirements.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), noteRef)
+	requirements.NoError(err)
+	assertions.Equal([]int64{note}, record.MessageIDs)
+	assertions.Equal([]CalendarUnexpandable{{MessageID: event, Reason: "unsupported recurrence"}}, record.Unexpandable)
+}
+
 func TestMeetingLinkDecisionSubsetRetainsSelectedPairs(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	path := filepath.Join(t.TempDir(), "source.db")

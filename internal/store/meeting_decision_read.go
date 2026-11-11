@@ -82,6 +82,11 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 	}
 	seed := endpointFromRef(ref)
 	add(seed, nil)
+	type warningSource struct {
+		endpoint meetingDecisionEndpoint
+		warning  CalendarUnexpandable
+	}
+	var warnings []warningSource
 	var groups [][]meetingDecisionEndpoint
 	var explicit, splits []meetingDecisionEdge
 	seenDecisions := map[string]bool{}
@@ -110,7 +115,9 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 			if err != nil {
 				return result, err
 			}
-			result.Unexpandable = append(result.Unexpandable, record.Unexpandable...)
+			for _, warning := range record.Unexpandable {
+				warnings = append(warnings, warningSource{endpoint, warning})
+			}
 			members := []meetingDecisionEndpoint{endpoint}
 			memberSet := map[string]bool{endpoint.ref(): true}
 			addMember := func(member meetingDecisionEndpoint) {
@@ -260,6 +267,19 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 		}
 	}
 	seedRoot := root(seed.ref())
+	visibleEvents := map[int64]bool{}
+	for key, n := range nodes {
+		if n.endpoint.Kind == "evt" {
+			visibleEvents[n.endpoint.ID] = visibleEvents[n.endpoint.ID] || root(key) == seedRoot
+		}
+	}
+	// Keep a warning with its event when known, or with the group that found it.
+	for _, entry := range warnings {
+		visible, present := visibleEvents[entry.warning.MessageID]
+		if visible || !present && root(entry.endpoint.ref()) == seedRoot {
+			result.Unexpandable = append(result.Unexpandable, entry.warning)
+		}
+	}
 	for key, n := range nodes {
 		if root(key) != seedRoot {
 			continue

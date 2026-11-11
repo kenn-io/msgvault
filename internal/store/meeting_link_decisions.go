@@ -44,15 +44,11 @@ func endpointFromRef(ref MeetingLinkRef) meetingDecisionEndpoint {
 }
 
 func (e meetingDecisionEndpoint) meetingRef() (MeetingLinkRef, error) {
-	ref := MeetingLinkRef{Kind: e.Kind, OccurrenceRef: OccurrenceRef{MessageID: e.ID}}
+	ref := fmt.Sprintf("%s:%d", e.Kind, e.ID)
 	if e.Key != "" {
-		_, identity, ok := calrecur.ParseInstanceID("event_" + e.Key)
-		if !ok {
-			return ref, fmt.Errorf("invalid stored occurrence key %q", e.Key)
-		}
-		ref.Identity = identity
+		ref += "@" + e.Key
 	}
-	return ref, nil
+	return ParseMeetingLinkRef(ref)
 }
 
 func compareMeetingEndpoints(a, b meetingDecisionEndpoint) int {
@@ -68,15 +64,24 @@ func compareMeetingEndpoints(a, b meetingDecisionEndpoint) int {
 	return strings.Compare(a.Key, b.Key)
 }
 
-// DecideMeetingLinkContext saves or clears a choice between two copies.
-func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right MeetingLinkRef, decision string) (result MeetingLinkDecisionResult, err error) {
+// ValidateMeetingLinkDecision checks the choice and its references.
+func ValidateMeetingLinkDecision(left, right MeetingLinkRef, decision string) error {
 	if decision != "link" && decision != "unlink" && decision != "clear" {
-		return result, errors.New("decision must be link, unlink, or clear")
+		return errors.New("decision must be link, unlink, or clear")
 	}
 	a, b := endpointFromRef(left), endpointFromRef(right)
 	if a.ID <= 0 || b.ID <= 0 || (a.Kind != "msg" && a.Kind != "evt") || (b.Kind != "msg" && b.Kind != "evt") || compareMeetingEndpoints(a, b) == 0 {
-		return result, errors.New("invalid meeting decision endpoints")
+		return errors.New("invalid meeting decision endpoints")
 	}
+	return nil
+}
+
+// DecideMeetingLinkContext saves or clears a choice between two copies.
+func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right MeetingLinkRef, decision string) (result MeetingLinkDecisionResult, err error) {
+	if err := ValidateMeetingLinkDecision(left, right, decision); err != nil {
+		return result, err
+	}
+	a, b := endpointFromRef(left), endpointFromRef(right)
 	if compareMeetingEndpoints(a, b) > 0 {
 		a, b = b, a
 	}

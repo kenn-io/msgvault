@@ -60,6 +60,8 @@ func TestMeetingDecisionOwnerAndDelegatedHTTP(t *testing.T) {
 		status      int
 		state       string
 	}{
+		{ids[0], ids[1], "invalid", http.StatusBadRequest, ""},
+		{ids[0], ids[0], "link", http.StatusBadRequest, ""},
 		{ids[1], ids[2], "link", http.StatusOK, "link"},
 		{ids[0], ids[2], "unlink", http.StatusConflict, ""},
 		{ids[2], ids[1], "clear", http.StatusOK, "automatic"},
