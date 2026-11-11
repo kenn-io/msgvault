@@ -168,6 +168,8 @@ The API publishes its generated OpenAPI contract at `/openapi.json`.
 opening an archive. OpenAPI `info.version` is the **API schema version**;
 it is separate from the binary release version. The current schema is **5.1.0**.
 
+Schema 5.2.0 adds owner-only [contact delivery policy](#contact-delivery-policies) routes.
+
 Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
 Schema 5.0.0 changes `content_available` in file lists and suggestions from a
@@ -291,8 +293,6 @@ conflict when one UID resolves to multiple people. Person responses expose
 
 Schema 3.11.0 adds structured `account_scopes` filters, the Explore account
 filter, and the virtual account catalog on `/cli/accounts`.
-
-Schema 3.44.0 adds the unreleased [contact delivery policy](#contact-delivery-policies) routes.
 
 Schema 3.1.0 adds [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
@@ -3469,7 +3469,7 @@ first. It does not send anything, disable drafting, change existing drafts, or
 replace provider credentials and platform confirmation. Policies are managed
 over HTTP, MCP, and the owner CLI commands [person read-delivery-policy, set-delivery-policy, and clear-delivery-policy](cli-reference.md#person-delivery-policies).
 
-These owner-only routes require API schema 3.44.0:
+These owner-only routes require API schema 5.1.0:
 
 | Operation | POST path | Request |
 | --- | --- | --- |
