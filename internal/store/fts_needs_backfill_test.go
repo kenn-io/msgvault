@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -153,9 +154,9 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 
 	_, err = f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	var compact bool
-	require.NoError(db.QueryRowContext(t.Context(), `SELECT search_fts_fields[1] IS NULL AND search_fts_fields[5] IS NULL AND array_length(search_fts_fields, 1) = 8 FROM messages WHERE id = $1`, partial).Scan(&compact))
-	assert.True(compact, "legacy fields must not copy unsaturated stored text")
+	var currentFields bool
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT search_fts_fields[1] = 'lantern' AND search_fts_fields[5] LIKE '%stored phrase' FROM messages WHERE id = $1`, partial).Scan(&currentFields))
+	assert.True(currentFields, "legacy rows must retain current fields for phrase checks")
 	for term, want := range map[string][]int64{
 		"before foo-bar after":      {compound},
 		"bar foo":                   nil,
@@ -209,41 +210,59 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 // recipient text does not join To and Cc into one phrase.
 func TestPG_BackfillFTSKeepsMergedRecipientAlias(t *testing.T) {
 	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	from := f.EnsureParticipant("sender@example.com", "", "example.com")
-	alias := f.EnsureParticipant("old.alias@example.com", "", "example.com")
-	kept := f.EnsureParticipant("kept@example.net", "", "example.net")
-	carol := f.EnsureParticipant("carol@example.org", "", "example.org")
-	id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
-		Message: &store.Message{
-			SourceID: f.Source.ID, ConversationID: f.ConvID, MessageType: store.MessageTypeEmail,
-			SourceMessageID: "merged-alias", SenderID: sql.NullInt64{Int64: from, Valid: true},
-		},
-		Recipients: []store.RecipientSet{
-			{Type: "from", ParticipantIDs: []int64{from}, EmailAddresses: []string{"sender@example.com"}},
-			{Type: "to", ParticipantIDs: []int64{alias}, EmailAddresses: []string{"old.alias@example.com"}},
-			{Type: "cc", ParticipantIDs: []int64{carol}, EmailAddresses: []string{"carol@example.org"}},
-		},
-	})
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2,
+	for _, snapshot := range []bool{true, false} {
+		t.Run(fmt.Sprintf("snapshot=%t", snapshot), func(t *testing.T) {
+			require := require.New(t)
+			f := storetest.New(t)
+			from := f.EnsureParticipant("sender@example.com", "", "example.com")
+			alias := f.EnsureParticipant("old.alias@example.com", "", "example.com")
+			kept := f.EnsureParticipant("kept@example.net", "", "example.net")
+			carol := f.EnsureParticipant("carol@example.org", "", "example.org")
+			var toAddresses []string
+			if snapshot {
+				toAddresses = []string{"old.alias@example.com"}
+			}
+			id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID: f.Source.ID, ConversationID: f.ConvID, MessageType: store.MessageTypeEmail,
+					SourceMessageID: "merged-alias", SenderID: sql.NullInt64{Int64: from, Valid: true},
+				},
+				Recipients: []store.RecipientSet{
+					{Type: "from", ParticipantIDs: []int64{from}, EmailAddresses: []string{"sender@example.com"}},
+					{Type: "to", ParticipantIDs: []int64{alias}, EmailAddresses: toAddresses},
+					{Type: "cc", ParticipantIDs: []int64{carol}, EmailAddresses: []string{"carol@example.org"}},
+				},
+			})
+			require.NoError(err)
+			if !snapshot {
+				var address sql.NullString
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT email_address FROM message_recipients WHERE message_id = $1 AND recipient_type = 'to'`, id).Scan(&address))
+				require.False(address.Valid)
+			}
+			_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2,
 		search_fts = setweight(to_tsvector('simple', 'sender@example.com'), 'B') || setweight(to_tsvector('simple', 'old.alias@example.com carol@example.org'), 'C')
 		WHERE id = $1`, id)
-	require.NoError(err)
-	require.NoError(f.Store.MergeParticipantsContext(t.Context(), alias, kept))
-	assert.Equal(t, kept, f.GetSingleRecipientID(id, "to"))
+			require.NoError(err)
+			require.NoError(f.Store.MergeParticipantsContext(t.Context(), alias, kept))
+			assert.Equal(t, kept, f.GetSingleRecipientID(id, "to"))
 
-	_, err = f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	for term, want := range map[string][]int64{
-		"old.alias@example.com": {id},
-		"carol@example.org":     {id},
-		"example.com carol":     nil,
-	} {
-		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
-		require.NoError(err, term)
-		assert.ElementsMatch(t, want, ids, term)
+			_, err = f.Store.BackfillFTS(nil)
+			require.NoError(err)
+			count, err := f.Store.BackfillFTS(nil)
+			require.NoError(err)
+			require.Zero(count)
+			for term, want := range map[string][]int64{
+				"old":                   {id},
+				"old.alias@example.com": {id},
+				"carol@example.org":     {id},
+				"example.com carol":     nil,
+				"carol example.com":     nil,
+			} {
+				ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+				require.NoError(err, term)
+				assert.ElementsMatch(t, want, ids, term)
+			}
+		})
 	}
 }
 
