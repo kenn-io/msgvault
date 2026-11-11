@@ -799,7 +799,7 @@ masked terminal prompt, open the displayed authorization URL, and paste the
 complete returned callback URL. The daemon verifies the account and stores its
 token in an owner-only JSON file (mode 0600); the file is not encrypted.
 Connecting does not import or sync Threads content. The success
-message shows the provider-reported token expiry; rerun `add-threads` to
+message shows the provider-reported token expiry; save the date and rerun `add-threads` to
 reconnect when it expires. Reconnecting with a different app ID creates a
 separate source. Remove the old source explicitly with `remove-account` when
 it is no longer needed.
