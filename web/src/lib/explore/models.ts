@@ -56,6 +56,10 @@ export type PersonFileSearchRow = GeneratedPersonFileSearchRow;
 export type PersonFileProvenance = GeneratedPersonFileProvenance;
 export type PersonFileDirection = NonNullable<PersonFileSearchRequest['directions']>[number];
 export interface FileViewerTarget {
+  occurred_at?: FileSearchRow['occurred_at'];
+  containing_title?: FileSearchRow['containing_title'];
+  participant_labels?: FileSearchRow['participant_labels'];
+  mime_family?: FileSearchRow['mime_family'];
   id: FileSearchRow['id'];
   key?: FileSearchRow['key'];
   entry_key?: FileSearchRow['entry_key'];

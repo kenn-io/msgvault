@@ -76,6 +76,20 @@ func TestMetadataTrigramLifecycle(t *testing.T) {
 	assert.Zero(metadataTrigramCount(t, st, "recipients_metadata_fts", "inserted"), "foreign key cascade deletes alias index")
 }
 
+func TestMetadataTrigramIndexesRelayAddress(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := metadataTrigramStore(t)
+	requirements.NoError(st.InitSchema())
+	_, err := st.DB().ExecContext(t.Context(), `UPDATE message_recipients SET recipient_type='from', email_address='relay@example.test', is_relayed=TRUE WHERE id=1`)
+	requirements.NoError(err)
+	assertions.Equal(1, metadataTrigramCount(t, st, "recipients_metadata_fts", "relay@example.test"))
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value='1' WHERE key='metadata_fts_version'`)
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchema())
+	assertions.Equal(1, metadataTrigramCount(t, st, "recipients_metadata_fts", "relay@example.test"))
+}
+
 func TestMetadataTrigramRepairsMissingIndex(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

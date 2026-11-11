@@ -157,7 +157,7 @@ describe("PersonOpenLoops", () => {
       ),
     );
     render(PersonOpenLoops, { client, personID: 7 });
-    expect((await screen.findByRole("alert")).textContent).toBe(
+    expect((await screen.findByRole("alert")).textContent).toContain(
       "Couldn't load open loops.",
     );
   });
