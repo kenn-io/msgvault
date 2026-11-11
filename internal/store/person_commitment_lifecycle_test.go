@@ -276,38 +276,52 @@ func TestCommitmentDecisionSurvivesDuplicateMergeUndo(t *testing.T) {
 }
 
 func TestCommitmentMergeDoesNotCloseDifferentSurvivorPromise(t *testing.T) {
-	r, a, ctx := require.New(t), assert.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "commitment-different-survivor", false)
-	st := f.store
-	_, persist := newCommitmentTestConversation(t, f)
-	const original, replacement = "I will send the draft.", "I will book the venue."
-	survivor := persist("survivor", replacement, -time.Hour)
-	absorbed := persist("absorbed", original, -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
-		AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-	}, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
-	r.NoError(err)
-	r.Len(window.Sources, 2)
-	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
-		Promises: []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, absorbed), Direction: peoplesweep.CommitmentOwedTo,
-			Quote: original, Summary: "Send draft", End: int64(len(original))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
-	}))
-	r.NoError(err)
-	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
-	r.NoError(err)
-	r.Len(items, 1)
-	_, err = st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, f.request.CompletedAt)
-	r.NoError(err)
-	_, err = st.MergeDuplicates(ctx, survivor, []int64{absorbed}, "commitment-different-survivor")
-	r.NoError(err)
-	f = nextCommitmentTestAttempt(t, f, "-survivor")
-	applyCommitmentTestSources(t, f, cfg.Commitments)
-	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
-	r.NoError(err)
-	r.Len(items, 1)
-	a.Equal(replacement, items[0].Quote)
-	a.Equal(LoopStateOpen, items[0].State, "a different promise at overlapping coordinates does not inherit done")
+	const original = "I will send the draft."
+	for _, tc := range []struct{ name, quote, prefix, state string }{
+		{"different", "I will book the venue.", "", LoopStateOpen},
+		{"shifted_exact", original, "Copied history ends here. 📬 ", LoopStateDone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a, ctx := require.New(t), assert.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "commitment-different-survivor", false)
+			st := f.store
+			_, persist := newCommitmentTestConversation(t, f)
+			survivor := persist("survivor", tc.prefix+tc.quote, -time.Hour)
+			absorbed := persist("absorbed", original, -time.Hour)
+			cfg := peoplesweep.Config{}
+			cfg.ApplyDefaults()
+			cfg.Commitments.Enabled = true
+			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+				AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+			window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+			r.NoError(err)
+			r.Len(window.Sources, 2)
+			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+				Promises: []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, absorbed), Direction: peoplesweep.CommitmentOwedTo,
+					Quote: original, Summary: "Send draft", End: int64(len(original))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+			}))
+			r.NoError(err)
+			items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+			r.NoError(err)
+			r.Len(items, 1)
+			_, err = st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, f.request.CompletedAt)
+			r.NoError(err)
+			_, err = st.MergeDuplicates(ctx, survivor, []int64{absorbed}, "commitment-different-survivor")
+			r.NoError(err)
+			f = nextCommitmentTestAttempt(t, f, "-survivor")
+			window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+			r.NoError(err)
+			start := int64(len([]rune(tc.prefix)))
+			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+				Promises: []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, survivor), Direction: peoplesweep.CommitmentOwedTo,
+					Quote: tc.quote, Summary: "Survivor promise", Start: start, End: start + int64(len(tc.quote))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+			}))
+			r.NoError(err)
+			items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+			r.NoError(err)
+			r.Len(items, 1)
+			a.Equal(tc.quote, items[0].Quote)
+			a.Equal(tc.state, items[0].State)
+		})
+	}
 }
