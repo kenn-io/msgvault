@@ -279,6 +279,7 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 	const original = "I will send the draft."
 	for _, tc := range []struct{ name, quote, prefix, state string }{
 		{"different", "I will book the venue.", "", LoopStateOpen},
+		{"punctuation", "I will send the draft", "", LoopStateDone},
 		{"shifted_exact", original, "Copied history ends here. 📬 ", LoopStateDone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -324,4 +325,92 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 			a.Equal(tc.state, items[0].State)
 		})
 	}
+}
+
+func TestCommitmentEditedSourceDoesNotTransferDoneToReplacement(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-edited-replacement", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	const original, replacement = "I will send the draft.", "I will book the venue."
+	id := persist("promise", original, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+	r.NoError(err)
+	r.Len(items, 1)
+	_, err = st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, f.request.CompletedAt)
+	r.NoError(err)
+	_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), replacement, id)
+	r.NoError(err)
+	f = nextCommitmentTestAttempt(t, f, "-replacement")
+	f.request.Generation.ResolvedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+	f.request.CompletedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+	r.NoError(err)
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises:    []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo, Quote: replacement, Summary: "Book venue", End: int64(len(replacement))}},
+		Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	}))
+	r.NoError(err)
+	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+	r.NoError(err)
+	r.Len(items, 1)
+	a.Equal(replacement, items[0].Quote)
+	a.Equal(LoopStateOpen, items[0].State, "a different obligation at overlapping source offsets is not the owner's completed promise")
+}
+
+func TestCommitmentRestoredEditRevalidatesEvidenceDuringExtraction(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-restored-edit", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send the draft."
+	id := persist("promise", quote, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	before, err := st.LatestPersonSweepChangeSequence(ctx)
+	r.NoError(err)
+	_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), "Changed source", id)
+	r.NoError(err)
+	journal, err := st.ScanPersonSweepChanges(ctx, f.personID, before, 100)
+	r.NoError(err)
+	r.NotEmpty(journal)
+	changes, err := st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, journal)
+	r.NoError(err)
+	r.NotEmpty(changes)
+	f = nextCommitmentTestAttempt(t, f, "-withdraw")
+	request := f.request
+	request.CommitmentOnly = true
+	request.Generation.Policy.AllowSensitive = true
+	request.Generation.ResolvedAt = request.Generation.ResolvedAt.Add(time.Minute)
+	request.CompletedAt = request.Generation.ResolvedAt.Add(time.Minute)
+	request.Generation.EvidenceStatusChanges = changes
+	_, err = st.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), quote, id)
+	r.NoError(err)
+	f = nextCommitmentTestAttempt(t, f, "-restore-extract")
+	f.request.Generation.ResolvedAt = request.Generation.ResolvedAt.Add(time.Minute)
+	f.request.CompletedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+	r.NoError(err)
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises:    []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send draft", End: int64(len(quote))}},
+		Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	}))
+	r.NoError(err)
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+	r.NoError(err)
+	a.Len(items, 1, "successful current-source extraction must restore the supported original promise")
+	evidence, err := st.ListPersonFactEvidenceContext(ctx, f.personID, personfacts.EvidenceFilter{Limit: 10})
+	r.NoError(err)
+	r.Len(evidence, 1)
+	a.True(evidence[0].Supported)
 }
