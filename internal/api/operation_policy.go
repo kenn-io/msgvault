@@ -88,7 +88,7 @@ var operationPolicies = map[string]OperationPolicy{
 	"deleteCLICollection":        {Permission: authz.PermissionCollectionsWrite, RemoteCollectionsWrite: true},
 	"removeCLICollectionSources": {Permission: authz.PermissionCollectionsWrite, RemoteCollectionsWrite: true},
 
-	"executeCLIDeleteDeduped": {Permission: authz.PermissionDeletionStage},
+	"executeCLIDeleteDeduped": {Permission: authz.PermissionArchiveAdmin},
 	"planCLIDeduplicate":      {Permission: authz.PermissionArchiveAdmin},
 	"planCLIDeleteDeduped":    {Permission: authz.PermissionDeletionStage},
 

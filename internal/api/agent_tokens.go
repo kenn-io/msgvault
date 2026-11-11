@@ -175,7 +175,7 @@ func senderKeysForSource(
 // caller's admission of this operation.
 func (s *Server) ownerAccessAuthorized(r *http.Request) bool {
 	auth := s.requestAuthentication(r)
-	return (auth.Mode == AuthModeAPIKey || auth.Mode == AuthModeCaller) && s.apiRequestAuthorized(r)
+	return auth.Mode == AuthModeAPIKey || auth.Mode == AuthModeCaller
 }
 
 // handleIssueAgentToken issues a new restricted agent grant.
