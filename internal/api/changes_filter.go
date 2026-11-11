@@ -84,23 +84,13 @@ func (f changesFilter) digest() string {
 	if !f.hasSelectors() && f.grantRefs == nil {
 		return ""
 	}
-	// Keep the owner encoding unchanged; delegated digests include the grant references.
-	if f.grantRefs != nil {
-		data, err := json.Marshal(struct {
-			OwnerDigest string
-			GrantRefs   []changeGrantRef
-		}{changesFilter{PersonID: f.PersonID, SourceIDs: f.SourceIDs, ConversationIDs: f.ConversationIDs, IncomingOnly: f.IncomingOnly}.digest(), f.grantRefs}, json.Deterministic(true))
-		if err != nil {
-			panic(err)
-		}
-		sum := sha256.Sum256(data)
-		return hex.EncodeToString(sum[:8])
-	}
+	// Omit nil grant references to preserve the owner's filter encoding.
 	data, err := json.Marshal(struct {
 		PersonID                   int64
 		SourceIDs, ConversationIDs []int64
 		IncomingOnly               bool
-	}{f.PersonID, f.SourceIDs, f.ConversationIDs, f.IncomingOnly}, json.Deterministic(true))
+		GrantRefs                  []changeGrantRef `json:",omitzero"`
+	}{f.PersonID, f.SourceIDs, f.ConversationIDs, f.IncomingOnly, f.grantRefs}, json.Deterministic(true))
 	if err != nil {
 		panic(err)
 	}

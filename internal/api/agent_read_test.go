@@ -1020,6 +1020,10 @@ func TestChangeFeedGrantDigestUsesStableSourceReferences(t *testing.T) {
 	assertions.Equal(original.digest(), same.digest())
 	assertions.NotEqual(original.digest(), filter(a).digest())
 	assertions.NotEqual(original.digest(), (changesFilter{}).digest())
+	emptyGrant := filter()
+	assertions.NotEmpty(emptyGrant.digest())
+	assertions.NotEqual(emptyGrant.digest(), (changesFilter{}).digest())
+	assertions.NotEqual(emptyGrant.digest(), original.digest())
 }
 
 func TestAgentChangeFeedDoesNotExposeOtherSourcePositions(t *testing.T) {
