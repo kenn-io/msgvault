@@ -758,9 +758,10 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 		SentAt:  sql.NullTime{Time: time.Date(2024, 5, 2, 12, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(err, "insert calendar event")
+	evidence := callhistory.Evidence{Version: 1, Provider: "zoom_phone", Account: "example/account", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2024, 5, 3, 12, 0, 0, 0, time.UTC)}
 	call := callhistory.Observation{
-		Evidence: callhistory.Evidence{Version: 1, Provider: "zoom_phone", Account: "example/account", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
-			OccurredAt: time.Date(2024, 5, 3, 12, 0, 0, 0, time.UTC)},
+		Evidence: evidence,
 		RecordID: "call-record-1", Raw: []byte(`{"call_id":"call-1"}`),
 	}
 	callSource, err := s.GetOrCreateSource(callhistory.SourceType, call.SourceIdentifier())

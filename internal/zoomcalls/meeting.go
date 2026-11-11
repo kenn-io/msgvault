@@ -118,9 +118,9 @@ func Meeting(account, owner, uuid string, raw []byte, bindings map[string]int64)
 			end = row.Leave
 		}
 	}
-	o := &callhistory.Observation{
-		Evidence: callhistory.Evidence{Version: 1, Provider: "zoom_meetings", Account: AccountNamespace(account, owner), Outcome: "answered", Direction: "unknown", OwnerParticipation: "joined",
-			OccurredAt: start.UTC(), EndedAt: &end}, RecordID: uuid, Raw: jsontext.Value(raw)}
+	callEvidence := callhistory.Evidence{Version: 1, Provider: "zoom_meetings", Account: AccountNamespace(account, owner), Outcome: "answered", Direction: "unknown", OwnerParticipation: "joined",
+		OccurredAt: start.UTC(), EndedAt: &end}
+	o := &callhistory.Observation{Evidence: callEvidence, RecordID: uuid, Raw: jsontext.Value(raw)}
 	joined := false
 	ids := map[int64]bool{}
 	for native, rows := range groups {

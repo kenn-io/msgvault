@@ -140,7 +140,8 @@ func stageZoomMeetings(ctx context.Context, client callCommandClient, o zoomOpti
 			if err != nil {
 				return nil, skipped, err
 			}
-			observation = &callhistory.Observation{Evidence: callhistory.Evidence{Version: int(prior.Version), Provider: prior.Provider, Account: prior.Account, Direction: prior.Direction, OccurredAt: prior.OccurredAt, EndedAt: prior.EndedAt}, RecordID: record.UUID, Raw: evidence}
+			priorEvidence := callhistory.Evidence{Version: int(prior.Version), Provider: prior.Provider, Account: prior.Account, Direction: prior.Direction, OccurredAt: prior.OccurredAt, EndedAt: prior.EndedAt}
+			observation = &callhistory.Observation{Evidence: priorEvidence, RecordID: record.UUID, Raw: evidence}
 			observation.Outcome, observation.OwnerParticipation = "unknown", "unknown"
 			observation.DurationSeconds = nil
 		}
@@ -161,14 +162,14 @@ func priorZoomObservations(ctx context.Context, client callCommandClient, accoun
 			return nil, err
 		}
 		if len(page.Items) > 100 {
-			return nil, errors.New("Zoom returned more than 100 calls")
+			return nil, errors.New("zoom returned more than 100 calls")
 		}
 		if len(page.Items) == 0 {
 			return found, nil
 		}
 		for _, item := range page.Items {
 			if item.MessageID <= after {
-				return nil, errors.New("Zoom history lookup stalled")
+				return nil, errors.New("zoom history lookup stalled")
 			}
 			after = item.MessageID
 			scanned++
@@ -183,7 +184,7 @@ func priorZoomObservations(ctx context.Context, client callCommandClient, accoun
 			return found, nil
 		}
 	}
-	return nil, errors.New("Zoom history lookup reached 10000 calls; no evidence changed")
+	return nil, errors.New("zoom history lookup reached 10000 calls; no evidence changed")
 }
 
 func postZoomObservations(cmd *cobra.Command, client callCommandClient, observations []callhistory.Observation, skipped int, write callWriter) error {
@@ -202,7 +203,7 @@ func postZoomObservations(cmd *cobra.Command, client callCommandClient, observat
 			if outputErr := write(cmd, counts); outputErr != nil {
 				return outputErr
 			}
-			return fmt.Errorf("Zoom import stopped; %d calls saved: %w", counts.Upserted, err)
+			return fmt.Errorf("zoom import stopped; %d calls saved: %w", counts.Upserted, err)
 		}
 		counts.Upserted++
 	}
