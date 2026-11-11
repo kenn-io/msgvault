@@ -457,7 +457,7 @@ func decodeProfilePatchRequest(
 		return patch, false
 	}
 	if err := capturePostalPatchOriginals(request, &patch); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "Invalid postal address input")
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid postal address input: "+err.Error())
 		return patch, false
 	}
 	return patch, true

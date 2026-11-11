@@ -530,3 +530,19 @@ func TestLegacyPostalAssessmentMatchesPublicAddress(t *testing.T) {
 		assert.Equal(t, []string{"Room;3", "Floor 2"}, address.Assessment.ProposedExtendedParts)
 	}
 }
+
+func TestPostalPatchExplainsInvalidOriginalInput(t *testing.T) {
+	for _, tc := range []struct{ body, explanation string }{
+		{`{"addresses":{"add":[{"address_kind":"birth_place","original_input":{"address_kind":"postal"},"envelope":{"source":"user"}}]}}`, "original_input is only available for postal addresses"},
+		{`{"addresses":{"add":[{"address_kind":"postal","original_input":{"address_kind":"birth_place"},"envelope":{"source":"user"}}]}}`, "original_input must be postal"},
+	} {
+		t.Run(tc.explanation, func(t *testing.T) {
+			srv, wrapped := newIdentityLinkTestServer(t)
+			id := seedAPIPerson(t, wrapped.Store)
+			read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
+			response := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), []byte(tc.body), map[string]string{"If-Match": read.Header().Get("ETag")})
+			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			assert.Contains(t, response.Body.String(), tc.explanation)
+		})
+	}
+}

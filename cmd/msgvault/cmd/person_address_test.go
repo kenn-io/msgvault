@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -107,4 +108,19 @@ func TestPostalAddressCLIListCarriesAssessment(t *testing.T) {
 	assert.Equal("GET", daemon.method)
 	assert.Equal("/api/v1/people/7/profile", daemon.path)
 	assert.Contains(output, `"status":"needs_review"`)
+}
+
+func TestPostalAddressCLIRejectsOversizedInput(t *testing.T) {
+	daemon := newPersonBriefTestDaemon(t, `{}`)
+	path := filepath.Join(t.TempDir(), "postal.json")
+	value := `{"address_kind":"postal","street_address":"12 Example St"}`
+	input := value + strings.Repeat(" ", (1<<20)-len(value)) + ` {}`
+	require.NoError(t, os.WriteFile(path, []byte(input), 0o600))
+	_, err := runPostalCLI(daemon.ctx, t, "apply", "7", "--input", path, "--revision", "4", "--add")
+	require.Error(t, err)
+	assert.Zero(t, daemon.requests.Load())
+	require.NoError(t, os.WriteFile(path, []byte(value+strings.Repeat(" ", (1<<20)-len(value))), 0o600))
+	_, err = runPostalCLI(daemon.ctx, t, "apply", "7", "--input", path, "--revision", "4", "--add")
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, daemon.requests.Load())
 }

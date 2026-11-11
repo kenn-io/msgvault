@@ -150,7 +150,14 @@ func readPostalCLIInput(path string, value any) error {
 		return fmt.Errorf("open address input: %w", err)
 	}
 	defer func() { _ = file.Close() }()
-	if err := json.UnmarshalRead(io.LimitReader(file, 1<<20), value, json.RejectUnknownMembers(true)); err != nil {
+	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	if err != nil {
+		return fmt.Errorf("read address input: %w", err)
+	}
+	if len(data) > 1<<20 {
+		return errors.New("address input exceeds 1 MiB")
+	}
+	if err := json.Unmarshal(data, value, json.RejectUnknownMembers(true)); err != nil {
 		return fmt.Errorf("decode address input: %w", err)
 	}
 	return nil
