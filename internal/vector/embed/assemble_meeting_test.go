@@ -27,6 +27,16 @@ func TestAssembleMeetingDocument_PacksWholeTurnsAndKeepsSourceSpans(t *testing.T
 	}
 }
 
+func TestAssembleMeetingDocumentCarriesEmbeddingRevision(t *testing.T) {
+	row := meetingRow(19, meetingBodyLF())
+	row.EmbeddingRevision = 42
+
+	doc, err := embed.AssembleMeetingDocument(row, embed.AssemblyPolicy{MaxChunkRunes: 80})
+	require.NoError(t, err)
+	require.Len(t, doc.Versions, 1)
+	assert.Equal(t, int64(42), doc.Versions[0].EmbeddingRevision)
+}
+
 func TestAssembleMeetingDocument_NoteOnlyProducesContextualNoteChunks(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

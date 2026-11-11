@@ -50,6 +50,21 @@ func (w *Worker) publish(
 	vector []float32,
 	result *WorkerResult,
 ) error {
+	ctx = store.WithConversationPolicyVisualTokens(ctx, []string{token})
+	if err := store.CheckConversationPolicyAdmission(ctx); err != nil {
+		if work.policyContext != nil {
+			if policyErr := store.CheckConversationPolicyAdmission(store.WithConversationPolicyVisualTokens(ctx, nil)); policyErr != nil {
+				return policyErr
+			}
+		}
+		if !errors.Is(err, store.ErrConversationPolicyStale) {
+			return err
+		}
+		w.discardToken(ctx, work, token, result)
+		_ = w.archive.ReleaseVisualWork(ctx, work.Claim)
+		result.Obsolete++
+		return nil
+	}
 	vectorToken := VectorToken(token)
 	if err := w.backend.PutUnpublished(ctx, vectorToken, vector); err != nil {
 		w.discardToken(ctx, work, token, result)

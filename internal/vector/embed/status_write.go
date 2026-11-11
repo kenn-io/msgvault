@@ -7,6 +7,7 @@ import (
 	"maps"
 
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -20,6 +21,9 @@ func (w *Worker) upsertMeasured(ctx context.Context, gen vector.GenerationID, ch
 // Each provider request is saved before the next is sent, and saved output
 // is reused instead of requested again.
 func (w *ContextWorker) embedDocumentsMeasured(ctx context.Context, inputs []DocumentInput, page *contextEmbeddingPage) ([][][]float32, error) {
+	if err := store.CheckConversationPolicyAdmission(ctx); err != nil {
+		return nil, err
+	}
 	if page.vectors == nil {
 		page.vectors = make(map[string][][]float32)
 	}

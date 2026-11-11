@@ -94,3 +94,32 @@ func windowsDriveFileURI(dsn string) (encodedPath, rawQuery string, ok bool) {
 	}
 	return encodedPath, rawQuery, true
 }
+
+// ExistingReadWriteDSN returns a mode=rw DSN for opening an existing database
+// without creating a missing file. Other caller options survive.
+func ExistingReadWriteDSN(dsn string) (existingDSN, filesystemPath string, err error) {
+	normalized, path, err := ResolveDSN(dsn)
+	if err != nil {
+		return "", "", err
+	}
+	base, rawQuery, _ := strings.Cut(normalized, "?")
+	params, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return "", "", fmt.Errorf("parse SQLite options: %w", err)
+	}
+	if !strings.HasPrefix(base, "file:") {
+		path, err = filepath.Abs(path)
+		if err != nil {
+			return "", "", err
+		}
+		uriPath := filepath.ToSlash(path)
+		// URL.Path needs the slash before a Windows drive; otherwise net/url
+		// renders the drive as an authority and SQLite opens a different path.
+		if volume := filepath.VolumeName(path); len(volume) == 2 && volume[1] == ':' {
+			uriPath = "/" + uriPath
+		}
+		base = (&url.URL{Scheme: "file", Path: uriPath}).String()
+	}
+	params.Set("mode", "rw")
+	return base + "?" + params.Encode(), path, nil
+}
