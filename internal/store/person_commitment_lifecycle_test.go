@@ -588,3 +588,63 @@ func TestCommitmentRestoredOriginalEvidenceKeepsMergeCopyDetached(t *testing.T) 
 	r.Len(items, 1)
 	a.Equal(absorbed, items[0].AnchorMessageID)
 }
+
+func TestCommitmentPersonMergeKeepsAmbiguousDetachedDecision(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "ambiguous-person-merge", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	const first, second = "I will send the report.", "I will check the venue."
+	const body = first + " " + second
+	messageID := persist("two-promises", body, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	promises := []peoplesweep.CommitmentPromise{
+		{SourceID: commitmentSourceID(window, messageID), Direction: peoplesweep.CommitmentOwedTo, Quote: first, Summary: "Send report", End: int64(len(first))},
+		{SourceID: commitmentSourceID(window, messageID), Direction: peoplesweep.CommitmentOwedTo, Quote: second, Summary: "Check venue", Start: int64(len(first) + 1), End: int64(len(body))},
+	}
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
+	r.NoError(err)
+	participant, err := st.EnsureParticipant("duplicate@example.test", "Duplicate", "example.test")
+	r.NoError(err)
+	absorbed, _, err := st.CreatePersonFromParticipant(participant)
+	r.NoError(err)
+	// A previous extraction can have a broader exact citation. Its detached
+	// decision still belongs to that promise, not either narrower survivor.
+	var broadID int64
+	r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`INSERT INTO person_commitments
+		(person_id,target_key,anchor_message_id,direction,quote,quote_start,quote_end,summary,promised_at,expires_at,owner_state)
+		VALUES (?, 'broad-promise', ?, 'owed_to', ?, 0, ?, 'Send report and check venue', ?, ?, 'done') RETURNING id`),
+		absorbed.ID, messageID, body, len(body), st.dialect.TimestampParam(personFactLedgerNow.Add(-time.Hour)), st.dialect.TimestampParam(personFactLedgerNow.Add(24*time.Hour))).Scan(&broadID))
+	person, err := st.GetPersonContext(ctx, f.personID)
+	r.NoError(err)
+	_, err = st.MergePersonsContext(ctx, PersonMergeRequest{SurvivorID: person.ID, AbsorbedID: absorbed.ID, ExpectedSurvivorRevision: person.Revision, ExpectedAbsorbedRevision: absorbed.Revision, IdempotencyKey: "ambiguous-promises", Actor: "test"})
+	r.NoError(err)
+	var detachedID int64
+	var claim sql.NullInt64
+	var state string
+	r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT id,current_claim_id,owner_state FROM person_commitments WHERE person_id = ? AND quote = ?`), f.personID, body).Scan(&detachedID, &claim, &state))
+	a.NotEqual(broadID, detachedID)
+	a.False(claim.Valid)
+	a.Equal(LoopStateDone, state)
+	for _, quote := range []string{first, second} {
+		r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT owner_state FROM person_commitments WHERE person_id = ? AND quote = ?`), f.personID, quote).Scan(&state))
+		a.Equal(LoopStateOpen, state, "an ambiguous broad decision cannot close a narrow promise")
+	}
+	f = nextCommitmentTestAttempt(t, f, "-after-person-merge")
+	window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.NotEmpty(commitmentSourceID(window, messageID))
+	for i := range promises {
+		promises[i].SourceID = commitmentSourceID(window, messageID)
+	}
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
+	r.NoError(err, "re-extracting the two narrow promises must leave the broad decision detached")
+	r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT current_claim_id,owner_state FROM person_commitments WHERE id = ?`), detachedID).Scan(&claim, &state))
+	a.False(claim.Valid)
+	a.Equal(LoopStateDone, state)
+}
