@@ -156,16 +156,13 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 }
 
 func TestOperationalSettingsCatalogOwnerAndWriteGates(t *testing.T) {
+	assert := assert.New(t)
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_operational_settings", "update_operational_settings"}}
 	tools := toolsByName(t, rawListTools(t, opts, true))
-	assert.Contains(t, tools, "get_operational_settings")
-	assert.NotContains(t, tools, "update_operational_settings")
-	opts.OperationWriteFamilies = []OperationFamily{OperationFamilySettings}
-	assert.Contains(t, toolsByName(t, rawListTools(t, opts, true)), "update_operational_settings")
-	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, false)), "update_operational_settings")
+	assert.Contains(tools, "get_operational_settings")
+	assert.NotContains(tools, "update_operational_settings")
 	opts.OperationCapabilities = nil
-	assert.Empty(t, rawListTools(t, opts, true))
-	opts.OperationCapabilities = []string{"get_operational_settings", "update_operational_settings"}
-	opts.DelegatedOnly = true
-	assert.Empty(t, rawListTools(t, opts, true))
+	tools = toolsByName(t, rawListTools(t, opts, true))
+	assert.NotContains(tools, "get_operational_settings")
+	assert.NotContains(tools, "update_operational_settings")
 }

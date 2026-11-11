@@ -229,12 +229,8 @@ func slackPolicyProjection(result *mcpserver.OperationResult, writes bool) *mcps
 func slackSettingUpdates(input slackPolicyArguments) ([]generated.SettingUpdate, error) {
 	var updates []generated.SettingUpdate
 	appendValue := func(key, kind string, value any) error {
-		data, err := json.Marshal(map[string]any{kind: value})
+		settingValue, err := mcpSettingValue(map[string]any{kind: value})
 		if err != nil {
-			return err
-		}
-		var settingValue generated.SettingValue
-		if err := json.Unmarshal(data, &settingValue); err != nil {
 			return err
 		}
 		updates = append(updates, generated.SettingUpdate{Key: key, Value: &settingValue})
@@ -261,6 +257,15 @@ func slackSettingUpdates(input slackPolicyArguments) ([]generated.SettingUpdate,
 		}
 	}
 	return updates, nil
+}
+
+func mcpSettingValue(value map[string]any) (generated.SettingValue, error) {
+	var settingValue generated.SettingValue
+	data, err := json.Marshal(value)
+	if err == nil {
+		err = json.Unmarshal(data, &settingValue)
+	}
+	return settingValue, err
 }
 
 func (b *daemonMCPOperations) sourceOperationDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {

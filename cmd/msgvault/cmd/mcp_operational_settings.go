@@ -41,13 +41,11 @@ func operationalUpdates(args map[string]any) (operationalSettingArguments, []gen
 	if err != nil || input.ETag == "" || len(input.Updates) == 0 {
 		return input, nil, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
-	seen := map[string]bool{}
 	updates := make([]generated.SettingUpdate, 0, len(input.Updates))
 	for _, update := range input.Updates {
-		if !slices.Contains(operationalSettingKeys, update.Key) || seen[update.Key] || len(update.Value) != 1 {
+		if !slices.Contains(operationalSettingKeys, update.Key) || len(update.Value) != 1 {
 			return input, nil, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}
-		seen[update.Key] = true
 		for kind, value := range update.Value {
 			valid := false
 			switch kind {
@@ -62,12 +60,8 @@ func operationalUpdates(args map[string]any) (operationalSettingArguments, []gen
 				return input, nil, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 			}
 		}
-		data, err := json.Marshal(update.Value)
+		value, err := mcpSettingValue(update.Value)
 		if err != nil {
-			return input, nil, err
-		}
-		var value generated.SettingValue
-		if err := json.Unmarshal(data, &value); err != nil {
 			return input, nil, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}
 		updates = append(updates, generated.SettingUpdate{Key: update.Key, Value: &value})
@@ -128,17 +122,23 @@ func (b *daemonMCPOperations) operationalSettingsDisclosure(ctx context.Context,
 	if current.ETag != input.ETag {
 		return "", true, &mcpserver.OperationRefusalError{Code: "settings_conflict"}
 	}
-	settings := current.Output.(mcpserver.OperationalSettings)
+	settings, ok := current.Output.(mcpserver.OperationalSettings)
+	if !ok {
+		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+	}
+	selected := make([]generated.Setting, 0, len(input.Updates))
 	for _, update := range input.Updates {
-		if !slices.ContainsFunc(settings.Settings, func(s generated.Setting) bool { return s.Key == update.Key }) {
+		index := slices.IndexFunc(settings.Settings, func(s generated.Setting) bool { return s.Key == update.Key })
+		if index < 0 {
 			return "", true, &mcpserver.OperationRefusalError{Code: "settings_edit_rejected"}
 		}
+		selected = append(selected, settings.Settings[index])
 	}
 	data, err := json.Marshal(struct {
 		Operation string `json:"operation"`
 		Current   any    `json:"current"`
 		Changes   any    `json:"changes"`
 		Effect    string `json:"effect"`
-	}{name, current.Output, input.Updates, "Persist the requested settings; daemon restart may be required."}, json.Deterministic(true))
+	}{name, selected, input.Updates, "Persist the requested settings; daemon restart may be required. The daemon may also delete stored provider credentials whose configured destination no longer matches."}, json.Deterministic(true))
 	return string(data), true, err
 }

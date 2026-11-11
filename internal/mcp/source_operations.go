@@ -20,10 +20,20 @@ type PersonEditContext struct {
 // visible to reflection. Declare its real wire variants for MCP validation.
 func slackPolicyOutputSchema() *jsonschema.Schema {
 	schema := outputSchemaFor[SlackSyncPolicy]()
-	schema.Properties["settings"].Items.Properties["value"] = &jsonschema.Schema{OneOf: []*jsonschema.Schema{
-		closedObject(map[string]*jsonschema.Schema{"boolean": booleanSchema("Selected boolean value")}, "boolean"),
-		closedObject(map[string]*jsonschema.Schema{"strings": {Type: schemaTypeArray, Items: stringSchema("Selected channel")}}, "strings"),
-	}}
+	schema.Properties["settings"].Items.Properties["value"] = settingValueSchema("boolean", "strings")
+	return schema
+}
+
+func settingValueSchema(kinds ...string) *jsonschema.Schema {
+	fields := map[string]*jsonschema.Schema{
+		"boolean": booleanSchema("Boolean value"), "string": stringSchema("String value"),
+		"integer": {Type: "integer"}, "number": {Type: "number"},
+		"strings": {Type: schemaTypeArray, Items: stringSchema("String value")},
+	}
+	schema := &jsonschema.Schema{}
+	for _, kind := range kinds {
+		schema.OneOf = append(schema.OneOf, closedObject(map[string]*jsonschema.Schema{kind: fields[kind]}, kind))
+	}
 	return schema
 }
 
