@@ -94,12 +94,7 @@ func (s *Server) handleAssessPersonPostalAddress(w http.ResponseWriter, r *http.
 			reason = "provider_not_configured"
 		default:
 			// Deliberate single call; never retry billed work or persist its result.
-			checked, err := s.postalAddressValidator.Check(r.Context(), *input.Address, input.PreviousResponseID)
-			assessment = checked
-			if err != nil && assessment.Status != postaladdress.StatusUnavailable {
-				assessment = postaladdress.Assess(*input.Address)
-				reason = "provider_unavailable"
-			}
+			assessment, _ = s.postalAddressValidator.Check(r.Context(), *input.Address, input.PreviousResponseID)
 		}
 		if reason != "" {
 			assessment.Status = postaladdress.StatusUnavailable

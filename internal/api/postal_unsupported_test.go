@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -39,4 +40,23 @@ func TestPostalUnsupportedSnapshotDoesNotHideOtherAddresses(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPostalUnsupportedSnapshotCannotBeReplaced(t *testing.T) {
+	srv, wrapped := newIdentityLinkTestServer(t)
+	id := seedAPIPerson(t, wrapped.Store)
+	address, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, StreetAddress: new("12 Example Street"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	require.NoError(t, err)
+	_, err = wrapped.DB().ExecContext(t.Context(), wrapped.Rebind(`UPDATE person_addresses SET original_value = ? WHERE id = ?`), "msgvault:postal-input:v2\n{}", address.Envelope.ID)
+	require.NoError(t, err)
+	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","street_address":"34 Example Street","original_input":{"address_kind":"postal"},"envelope":{"source":"user"}}]}}`, address.Envelope.ID)
+	response := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
+	assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "unsupported_postal_snapshot")
+	rows, err := wrapped.ListPersonAddressesContext(t.Context(), id, true)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "msgvault:postal-input:v2\n{}", rows[0].OriginalValue)
 }

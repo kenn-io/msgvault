@@ -22,11 +22,8 @@ export function postalInputKey(input: Input): string {
 export type PostalAssessmentCheck = (personID: number, input: Input, external: boolean, signal: AbortSignal, previousResponseID?: string) => Promise<Assessment>;
 export interface PostalCandidate { input: Input; sourceRef: string; personRevision: number }
 
-let editorGeneration = 0;
-
 /** Transient review state. Destroying or editing invalidates even A → B → A. */
 export class PostalReviewSession {
-  readonly editorGeneration = ++editorGeneration;
   result = $state<Assessment | null>(null);
   pending = $state(false);
   error = $state<string | null>(null);

@@ -220,6 +220,15 @@ func (s *Store) listPersonAddressesTx(
 func (s *Store) supersedePersonAddressTx(
 	ctx context.Context, tx *loggedTx, personID, addressID int64, activeUntil *time.Time,
 ) error {
+	address, err := getPersonAddressTx(ctx, tx, personID, addressID)
+	if err != nil {
+		return err
+	}
+	if address.AddressKind == PersonAddressPostal {
+		if _, _, err := postaladdress.DecodeOriginalInput(address.OriginalValue); err != nil {
+			return err
+		}
+	}
 	return s.supersedeProfileValueTx(
 		ctx, tx, "person_addresses", personID, addressID, activeUntil,
 	)
