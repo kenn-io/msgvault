@@ -217,7 +217,7 @@ func (b *daemonMCPOperations) cardDAVOperationDisclosure(ctx context.Context, na
 			if a.Choice == "keep_remote" {
 				resolveEffect = "resolve the conflict by keeping the remote version; this can change the local person"
 			}
-			effect := map[string]string{"update_carddav_book_roles": "replace all three address book roles; setting the write target releases the previous target; removing subscription or lookup can demote or remove local CardDAV resource mappings", "resolve_carddav_conflict": resolveEffect, "unpublish_carddav_person": "unpublish the person; this can remove a remote contact while retaining the local person"}[name]
+			effect := map[string]string{"update_carddav_book_roles": "replace all three address book roles; setting the write target releases the previous target; removing subscription or lookup can demote or remove local CardDAV resource mappings; removing subscription can delete untouched imported local people", "resolve_carddav_conflict": resolveEffect, "unpublish_carddav_person": "unpublish the person; this can remove a remote contact while retaining the local person"}[name]
 			data, e := json.Marshal(struct {
 				Operation      string                         `json:"operation"`
 				Connection     string                         `json:"connection"`

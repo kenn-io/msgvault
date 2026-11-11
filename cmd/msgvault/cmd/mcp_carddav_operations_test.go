@@ -51,7 +51,7 @@ func TestCardDAVRoleApprovalUsesRealStore(t *testing.T) {
 	transfer, err := backend.OperationDisclosure(t.Context(), "update_carddav_book_roles", map[string]any{"book_id": id, "write_target": true, "subscribed": true, "lookup_source": true})
 	require.NoError(err)
 	assert.Contains(transfer, `"previous_write_target"`)
-	assert.Contains(transfer, "remove local CardDAV resource mappings")
+	assert.Contains(transfer, "removing subscription can delete untouched imported local people")
 	approved := false
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, req *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		assert.Contains(req.Params.Message, `"connection":"work"`)

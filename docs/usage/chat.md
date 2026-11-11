@@ -436,10 +436,15 @@ On unreleased `main`, owner sessions can use `list_carddav_connections`,
 `list_carddav_books`, `list_carddav_runs`, `list_carddav_conflicts` and
 `get_carddav_conflict` to inspect configured CardDAV state. Books and runs
 accept an optional exact `connection`; runs also accept `limit` (1–100) and
-`before_id`. Use the returned durable IDs with `update_carddav_book_roles`,
-`resolve_carddav_conflict` and `unpublish_carddav_person`. Each of those
-writes requires the CardDAV write flag and approval; unpublication can remove
-the remote contact immediately. `sync_carddav` and `get_carddav_sync_status`
+`before_id`. Use the returned book and conflict IDs with
+`update_carddav_book_roles` and `resolve_carddav_conflict`. For
+`unpublish_carddav_person`, use a durable person ID from Directory or profile
+reads. Each write requires approval. Standalone `msgvault mcp` requires
+`--allow-carddav-writes`, plus `--http-allow-writes` for HTTP. Native
+`msgvault serve` requires `--mcp-allow-writes` and
+`--mcp-allow-carddav-writes` on `/mcp/writes`. Both HTTP paths require
+protocol `2026-07-28` or newer. Unpublication can remove the remote contact
+immediately. `sync_carddav` and `get_carddav_sync_status`
 also accept `connection`; a named selection is refused when the daemon cannot
 prove it supports the selector. Tools are advertised only when their native
 contracts are available. An archive with only orphaned saved connections also

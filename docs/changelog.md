@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- MCP owners can inspect CardDAV connections, books, sync runs and conflicts, and approve book-role changes, conflict resolution and unpublication. Sync and status can select a named connection when the daemon supports it. CardDAV writes require `--allow-carddav-writes` and per-call approval; HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer.
+- MCP owners can inspect CardDAV connections, books, sync runs and conflicts, and approve book-role changes, conflict resolution and unpublication. Sync and status can select a named connection when the daemon supports it. CardDAV writes require per-call approval. Standalone `msgvault mcp` needs `--allow-carddav-writes`, plus `--http-allow-writes` for HTTP. Native `msgvault serve` needs `--mcp-allow-writes` and `--mcp-allow-carddav-writes` on `/mcp/writes`. Both HTTP paths require protocol `2026-07-28` or newer.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
