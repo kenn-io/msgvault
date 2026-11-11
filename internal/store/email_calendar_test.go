@@ -74,8 +74,6 @@ func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 	}
 	source, err := st.GetOrCreateSource("imap", "imap://owner@example.com:143")
 	requirements.NoError(err)
-	_, err = st.EnsureParticipant("existing@example.com", "Existing", "example.com")
-	requirements.NoError(err)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	blocker, err := st.db.BeginTx(ctx, nil)

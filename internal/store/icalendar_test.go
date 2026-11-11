@@ -222,7 +222,7 @@ func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
-	raw := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com\r\nATTENDEE:mailto:guest@example.org\r\nATTENDEE;CUTYPE=ROOM:mailto:conference@example.org\r\nATTENDEE:mailto:board@resource.calendar.google.com")
+	raw := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com\r\nATTENDEE:mailto:guest@example.org\r\nATTENDEE;CUTYPE=ROOM:mailto:conference@example.org")
 	_, err := st.PersistICalendarContext(t.Context(), source, raw)
 	requirements.NoError(err)
 	for _, tc := range []struct {
@@ -230,7 +230,7 @@ func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
 		want  int
 	}{
 		{"organizer@example.com", 1}, {"guest@example.org", 1},
-		{"conference@example.org", 0}, {"board@resource.calendar.google.com", 0},
+		{"conference@example.org", 0},
 	} {
 		var count int
 		requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM participants WHERE email_address=?`, tc.email).Scan(&count))

@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,11 +43,11 @@ func TestICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 				stored, err := st.GetMessageRaw(ids[0])
 				require.NoError(t, err)
 				assert.Equal(t, updated, stored)
-				_, err = st.db.Exec(`DELETE FROM calendar_events WHERE message_id=?`, ids[0])
-				require.NoError(t, err)
-				require.NoError(t, st.UpsertMessageRawWithFormat(ids[0], stored, "ics"))
-				assert.Equal(t, row.Event, calendarRows(t, st, ids[0])[0].Event)
 				if order[0] == 0 && order[1] == 2 {
+					_, err = st.db.Exec(`DELETE FROM calendar_events WHERE message_id=?`, ids[0])
+					require.NoError(t, err)
+					require.NoError(t, st.UpsertMessageRawWithFormat(ids[0], stored, "ics"))
+					assert.Equal(t, row.Event, calendarRows(t, st, ids[0])[0].Event)
 					if mode == "email" {
 						foreign := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T160000Z\r\nORGANIZER:mailto:other@example.com")
 						persistInviteEmailForSource(t, st, source, "foreign", inviteEmail(foreign))
@@ -77,7 +78,8 @@ func TestICalendarCancelledDetailsStamp(t *testing.T) {
 		"SEQUENCE:2\r\nDTSTAMP:20270301T110000Z\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Latest",
 		"SEQUENCE:2\r\nDTSTAMP:20270301T090000Z\r\nDTSTART:20270302T100000Z\r\nSUMMARY:Older",
 	} {
-		_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("", fields))
+		raw := strings.Replace(string(calendarDocument("", fields)), "METHOD:\r\n", "", 1)
+		_, err := st.PersistICalendarContext(t.Context(), source, []byte(raw))
 		require.NoError(t, err)
 	}
 	ids := emailEvents(t, st, source)

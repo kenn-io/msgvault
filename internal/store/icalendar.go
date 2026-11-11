@@ -143,9 +143,6 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				item.meta.Details = &calevent.ICSRevision{Sequence: item.component.Sequence, Stamp: item.component.Stamp}
 				if !apply {
 					item.meta.Sequence, item.meta.Stamp, item.meta.Status = old.Sequence, old.Stamp, old.Status
-					if item.meta.Organizer == "" {
-						item.meta.Organizer = old.Organizer
-					}
 				}
 			}
 			if err := s.persistICSDetailsWith(ctx, tx, sourceID, sourceMessageID, familyKey, item); err != nil {
