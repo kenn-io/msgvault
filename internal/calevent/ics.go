@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"regexp"
 	"slices"
@@ -94,16 +95,18 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 }
 
 // icsEventZoneComponents keeps only the VTIMEZONE definitions an event references.
-func icsEventZoneComponents(cal *ical.Calendar, event *ical.Component) []*ical.Component {
+func icsEventZoneComponents(cal *ical.Calendar, event *ical.Component, calendarZone string) []*ical.Component {
 	used := icsEventZones(event)
+	used[calendarZone] = true
 	return slices.DeleteFunc(slices.Clone(cal.Children), func(comp *ical.Component) bool {
 		return comp.Name != ical.CompTimezone || !used[normalizeICSZone(comp.Props.Get("TZID").Value)]
 	})
 }
 
-func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Component) ([]byte, error) {
+func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Component, calendarZone string) ([]byte, error) {
 	retained := ical.NewCalendar()
-	retained.Props = cal.Props
+	retained.Props = maps.Clone(cal.Props)
+	retained.Props.SetText("X-WR-TIMEZONE", calendarZone)
 	retained.Children = append(slices.Clone(zones), event)
 	var buf bytes.Buffer
 	err := ical.NewEncoder(&buf).Encode(retained)
@@ -143,13 +146,13 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	case "REPLY", "ADD", "REFRESH", "COUNTER", "DECLINECOUNTER":
 		return nil, nil
 	}
-	calendarZone = cmp.Or(calendarZone, "UTC")
+	declaredZone, err := propText(cal.Props, "X-WR-TIMEZONE")
+	if err != nil {
+		return nil, err
+	}
+	calendarZone = normalizeICSZone(cmp.Or(calendarZone, strings.TrimSpace(declaredZone), "UTC"))
 	if calendarZone == "Local" {
 		return nil, fmt.Errorf("calendar time zone %q: host-dependent", calendarZone)
-	}
-	loc, err := time.LoadLocation(calendarZone)
-	if err != nil {
-		return nil, fmt.Errorf("calendar time zone: %w", err)
 	}
 	events := cal.Events()
 	if len(events) == 0 {
@@ -157,13 +160,18 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	}
 	for index, event := range events {
 		comp := event.Component
-		zones, err := eventICSZones(cal, comp)
+		zones, err := eventICSZones(cal, comp, calendarZone)
 		if err != nil {
 			return nil, fmt.Errorf("VEVENT %d: %w", index+1, err)
 		}
+		zone := cmp.Or(zones[calendarZone], calendarZone)
+		loc, err := LoadZone(zone)
+		if err != nil {
+			return nil, fmt.Errorf("calendar time zone: %w", err)
+		}
 		retained := raw
 		if len(events) > 1 {
-			retained, err = encodeICSEvent(cal, icsEventZoneComponents(cal, comp), comp)
+			retained, err = encodeICSEvent(cal, icsEventZoneComponents(cal, comp, calendarZone), comp, calendarZone)
 			if err != nil {
 				return nil, fmt.Errorf("retain VEVENT %d: %w", index+1, err)
 			}

@@ -26,6 +26,39 @@ func icsSource(t *testing.T, st *Store) int64 {
 	return source.ID
 }
 
+func TestICalendarDeclaredTimeZone(t *testing.T) {
+	for _, mode := range []string{"file", "email"} {
+		t.Run(mode, func(t *testing.T) {
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			text := string(calendarDocument("REQUEST", "DTSTAMP:20270101T000000Z\r\nDTSTART:20270115T090000"))
+			text = strings.Replace(text, "BEGIN:VEVENT", "X-WR-TIMEZONE:America/New_York\r\nBEGIN:VEVENT", 1)
+			text = strings.Replace(text, "END:VCALENDAR", "BEGIN:VEVENT\r\nUID:second@example.com\r\nDTSTAMP:20270101T000000Z\r\nDTSTART:20270115T090000\r\nEND:VEVENT\r\nEND:VCALENDAR", 1)
+			raw := []byte(text)
+			var source int64
+			if mode == "file" {
+				source = icsSource(t, st)
+				_, err := st.PersistICalendarContext(t.Context(), source, raw)
+				requirements.NoError(err)
+			} else {
+				_, source = persistInviteEmail(t, st, "declared-zone", inviteEmail(raw))
+			}
+			ids := emailEvents(t, st, source)
+			requirements.Len(ids, 2)
+			for _, id := range ids {
+				row := calendarRows(t, st, id)[0]
+				requirements.NotNil(row.Event.Start)
+				requirements.Equal("2027-01-15T14:00:00Z", row.Event.Start.Format(time.RFC3339))
+				requirements.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error {
+					return st.refreshCalendarEventProjectionWith(t.Context(), tx, id)
+				}))
+				row = calendarRows(t, st, id)[0]
+				requirements.Equal("2027-01-15T14:00:00Z", row.Event.Start.Format(time.RFC3339))
+			}
+		})
+	}
+}
+
 func TestICalendarRangeKeepsSiblingsAndReportsSeries(t *testing.T) {
 	master := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=10\r\nSUMMARY:Series")
 	rangeEvent := calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H\r\nSUMMARY:Moved")

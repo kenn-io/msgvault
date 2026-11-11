@@ -72,8 +72,10 @@ func customICSZones(cal *ical.Calendar, used map[string]bool) (map[string]string
 
 // eventICSZones resolves an event's custom zones. A POSIX rule applies to every
 // year, so a zone with an observance that starts after a referenced date is unsupported.
-func eventICSZones(cal *ical.Calendar, event *ical.Component) (map[string]string, error) {
-	zones, err := customICSZones(cal, icsEventZones(event))
+func eventICSZones(cal *ical.Calendar, event *ical.Component, calendarZone string) (map[string]string, error) {
+	used := icsEventZones(event)
+	used[calendarZone] = true
+	zones, err := customICSZones(cal, used)
 	if err != nil {
 		return zones, err
 	}
@@ -85,9 +87,13 @@ func eventICSZones(cal *ical.Calendar, event *ical.Component) (map[string]string
 		if zones[id] == "" {
 			continue
 		}
-		for _, props := range event.Props {
+		for name, props := range event.Props {
 			for _, prop := range props {
-				if normalizeICSZone(prop.Params.Get("TZID")) != id {
+				propZone := normalizeICSZone(prop.Params.Get("TZID"))
+				if propZone == "" && (name == "DTSTART" || name == "DTEND" || name == "RECURRENCE-ID" || name == "RDATE" || name == "EXDATE") && !strings.HasSuffix(prop.Value, "Z") {
+					propZone = calendarZone
+				}
+				if propZone != id {
 					continue
 				}
 				for _, value := range strings.Split(prop.Value, ",") {
