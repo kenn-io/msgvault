@@ -22,6 +22,8 @@ type CalendarEventRow struct {
 	Subject             string
 	DeletedFromSource   bool
 	Event               calevent.Event
+	replies             icsReplies
+	icsMetadata         calevent.ICSMetadata
 }
 
 const maxCalendarSeries = 2000
@@ -32,7 +34,8 @@ var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject,
  m.deleted_from_source_at IS NOT NULL,
  e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
- e.event_time_zone, e.calendar_time_zone, e.start_local, e.duration_days, e.duration_elapsed_ns, e.recurrence_json
+ e.event_time_zone, e.calendar_time_zone, e.start_local, e.duration_days, e.duration_elapsed_ns, e.recurrence_json,
+ m.metadata, (SELECT c.metadata FROM conversations c WHERE c.id=m.conversation_id)
  ` + calendarEventFrom
 
 var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
@@ -92,9 +95,10 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		e := &row.Event
 		var original, start, end sql.NullTime
 		var originalDate, recurrence string
+		var messageMetadata, conversationMetadata sql.NullString
 		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource,
 			&e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
-			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &e.StartLocal, &e.DurationDays, &e.DurationElapsedNS, &recurrence)
+			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &e.StartLocal, &e.DurationDays, &e.DurationElapsedNS, &recurrence, &messageMetadata, &conversationMetadata)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
@@ -115,6 +119,19 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		if err := json.Unmarshal([]byte(recurrence), &e.Recurrence); err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("decode calendar recurrence %d: %w", row.MessageID, err)
+		}
+		if conversationMetadata.Valid {
+			row.replies, err = readReplies([]byte(conversationMetadata.String))
+			if err != nil {
+				_ = result.Close()
+				return nil, fmt.Errorf("decode calendar reply ledger: %w", err)
+			}
+			if len(row.replies) > 0 && messageMetadata.Valid {
+				if err := json.Unmarshal([]byte(messageMetadata.String), &row.icsMetadata); err != nil {
+					_ = result.Close()
+					return nil, fmt.Errorf("decode calendar revision: %w", err)
+				}
+			}
 		}
 		out = append(out, row)
 	}

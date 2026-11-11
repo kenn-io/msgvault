@@ -73,6 +73,21 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	if !ok {
 		return clearProjection()
 	}
+	if format.String == rawFormatICS {
+		var conversationMetadata sql.NullString
+		if err := q.QueryRow(`SELECT c.metadata FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE m.id=?`, messageID).Scan(&conversationMetadata); err != nil {
+			return fmt.Errorf("read calendar reply ledger: %w", err)
+		}
+		replies, err := readReplies([]byte(conversationMetadata.String))
+		if err != nil {
+			return fmt.Errorf("decode calendar reply ledger: %w", err)
+		}
+		var meta calevent.ICSMetadata
+		if err := json.Unmarshal([]byte(metadata.String), &meta); err != nil {
+			return fmt.Errorf("decode calendar revision: %w", err)
+		}
+		applyICSReplies(event.Attendees, nil, replies, meta, "")
+	}
 	canonical, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("hash calendar projection: %w", err)

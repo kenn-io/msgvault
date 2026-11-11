@@ -148,7 +148,7 @@ func TestICSStatus(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
 		raw := strings.Replace(icsExample, "METHOD:REQUEST\r\n", "", 1)
-		components, err := ParseEmailICS([]byte(raw), "REPLY", "")
+		components, err := ParseEmailICS([]byte(raw), "ADD", "")
 		requirements.NoError(err)
 		assertions.Empty(components)
 		components, err = ParseICS([]byte(raw), "CANCEL", "")
@@ -290,6 +290,19 @@ func TestICSRejectsUnsupportedFileMethods(t *testing.T) {
 			require.ErrorContains(t, err, `unsupported calendar method "`+method+`"`)
 		})
 	}
+}
+
+func TestICSReplyWithoutStart(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	raw := "BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nBEGIN:VEVENT\r\nUID:reply@example.com\r\nSEQUENCE:2\r\nDTSTAMP:20270301T110000Z\r\nRECURRENCE-ID:20270303T120000Z\r\nORGANIZER:mailto:organizer@example.com\r\nATTENDEE;PARTSTAT=DECLINED:mailto:guest@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	components, err := ParseEmailICS([]byte(raw), "REPLY", "")
+	requirements.NoError(err)
+	requirements.Len(components, 1)
+	assertions.Equal("REPLY", components[0].Method)
+	assertions.Equal("declined", components[0].Event.Attendees[0].RSVP)
+	assertions.Equal("20270303T120000Z", components[0].Event.Original.Key())
+	_, err = ParseEmailICS([]byte(strings.Replace(raw, "PARTSTAT=DECLINED", "PARTSTAT=INVALID", 1)), "REPLY", "")
+	assertions.ErrorContains(err, "PARTSTAT")
 }
 
 func TestParseICSCustomizedZone(t *testing.T) {
