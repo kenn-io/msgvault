@@ -237,8 +237,16 @@ func TestCommitmentAgendaRefreshesOnlyUnchangedPassages(t *testing.T) {
 				a.Equal(2, calls)
 				a.Equal(frozen.Request, item.Request, "the durable request remains frozen")
 			} else {
-				r.ErrorIs(err, kataevidence.ErrChanged)
+				wantError := map[string]error{
+					"quote": errCommitmentAgendaCitation, "occurrence": errCommitmentAgendaCitation,
+					"archive read failure": kataevidence.ErrArchiveUnavailable,
+				}[change]
+				r.ErrorIs(err, wantError)
 				a.Equal(1, calls)
+				if change == "archive read failure" {
+					r.ErrorIs(err, io.ErrUnexpectedEOF)
+					a.Equal(store.CommitmentAgendaPending, archive.item.State)
+				}
 			}
 		})
 	}
