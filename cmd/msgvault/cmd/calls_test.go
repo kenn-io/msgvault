@@ -129,7 +129,7 @@ func TestCallsImportSlackThroughDaemon(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("slack", "T_EXAMPLE:U_OWNER")
 	require.NoError(err)
-	convID, err := st.EnsureConversation(source.ID, "C", "Example channel")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "C", "Example channel")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{ConversationID: convID, SourceID: source.ID, SourceMessageID: "C:1", MessageType: "slack"})
 	require.NoError(err)
