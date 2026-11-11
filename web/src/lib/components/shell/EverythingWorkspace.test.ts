@@ -314,7 +314,7 @@ describe('EverythingWorkspace', () => {
     try {
       const grid = await screen.findByRole('grid', { name: `Messages grouped by ${dimension}` });
       if (dimension === 'source') expect(await within(grid).findByRole('button', { name: `Show items in ${label}` })).toBeDefined();
-      await fireEvent.pointerDown(await within(grid).findByText(label));
+      await fireEvent.click(await within(grid).findByText(label));
       const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
       await waitFor(() => expect(detailRequests.length).toBeGreaterThan(0));
       expect(detailRequests.at(-1)!.group_key).toBe(key);
@@ -376,7 +376,7 @@ describe('EverythingWorkspace', () => {
     const view = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
       const grid = await screen.findByRole('grid', { name: `Messages grouped by ${dimension}` });
-      await fireEvent.pointerDown(await within(grid).findByText(label));
+      await fireEvent.click(await within(grid).findByText(label));
       const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
       expect(await within(pane).findByText('Overview Person')).toBeDefined();
       const reload = await within(pane).findByRole('button', { name: 'Reload meeting activity' });
@@ -427,9 +427,9 @@ describe('EverythingWorkspace', () => {
     const view = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
       const grid = await screen.findByRole('grid', { name: 'Messages grouped by participant' });
-      await fireEvent.pointerDown(await within(grid).findByText('First Person'));
+      await fireEvent.click(await within(grid).findByText('First Person'));
       await waitFor(() => expect(resolveFirst).toBeDefined());
-      await fireEvent.pointerDown(within(grid).getByText('Second Person'));
+      await fireEvent.click(within(grid).getByText('Second Person'));
       await waitFor(() => expect(firstSignal?.aborted).toBe(true));
       const pane = await screen.findByRole('complementary', { name: 'Reading pane: Second Person' });
       await within(pane).findByText(/4 meetings/);
