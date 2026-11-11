@@ -1,4 +1,4 @@
-import { localBoundary } from './date-bound';
+import { editedBoundary } from './date-bound';
 import { isGroupingDimension } from '../grouping/catalog';
 import type { ExploreFilter, ExploreGroupDimension } from './models';
 
@@ -32,7 +32,7 @@ export function filtersForGroup(
   }
   if (dimension === 'year' && /^\d{4}$/.test(key)) {
     const year = Number(key);
-    return replaceTimeFilters(filters, utc ? new Date(Date.UTC(year, 0, 1)).toISOString() : localBoundary(new Date(year, 0, 1)), utc ? new Date(Date.UTC(year + 1, 0, 1)).toISOString() : localBoundary(new Date(year + 1, 0, 1)));
+    return replaceTimeFilters(filters, editedBoundary(`${year}-01-01`, false, !utc), editedBoundary(`${year + 1}-01-01`, false, !utc));
   }
   if (dimension === 'month' && /^\d{4}-(0[1-9]|1[0-2])$/.test(key)) {
     const [year, month] = key.split('-').map(Number) as [number, number];
@@ -40,8 +40,8 @@ export function filtersForGroup(
     const nextMonth = month === 12 ? 1 : month + 1;
     return replaceTimeFilters(
       filters,
-      utc ? new Date(Date.UTC(year, month - 1, 1)).toISOString() : localBoundary(new Date(year, month - 1, 1)),
-      utc ? new Date(Date.UTC(nextYear, nextMonth - 1, 1)).toISOString() : localBoundary(new Date(nextYear, nextMonth - 1, 1))
+      editedBoundary(`${year}-${month}-01`, false, !utc),
+      editedBoundary(`${nextYear}-${nextMonth}-01`, false, !utc)
     );
   }
   return undefined;
