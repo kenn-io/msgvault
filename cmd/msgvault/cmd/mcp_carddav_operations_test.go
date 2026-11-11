@@ -166,7 +166,10 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 		refused, callErr := legacySession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: tool, Arguments: map[string]any{"connection": "work"}})
 		require.NoError(callErr)
 		assert.True(refused.IsError)
-		assert.Contains(fmt.Sprint(refused.Content), "named CardDAV connection is not supported")
+		require.Len(refused.Content, 1)
+		content, ok := refused.Content[0].(*sdkmcp.TextContent)
+		require.True(ok)
+		assert.Contains(content.Text, "named CardDAV connection is not supported")
 	}
 	assert.False(prompted)
 	for i := range caps.Routes {
