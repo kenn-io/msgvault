@@ -508,7 +508,7 @@ func TestDraftCatalogRefreshPreservesPosition(t *testing.T) {
 	old, err := st.LoadMCPEventsCatalog(t.Context())
 	requirements.NoError(err)
 	expires := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
-	draft := fmt.Sprintf(`[{"id":%q,"owner":"owner","arguments":{"source_id":1,"incoming_only":false},"url":%q,"expires_at":%q},{"id":"0123456789abcdef0123456789abcdef","owner":"owner","arguments":{"source_id":1,"incoming_only":false},"url":"https://example.com/random","expires_at":%q}]`, first.ID, in.Delivery.URL, expires, expires)
+	draft := fmt.Sprintf(`[{"id":%q,"owner":"owner","arguments":{"source_id":1,"incoming_only":%t},"url":%q,"expires_at":%q},{"id":"0123456789abcdef0123456789abcdef","owner":"owner","arguments":{"source_id":1,"incoming_only":false},"url":"https://example.com/random","expires_at":%q}]`, first.ID, *in.Arguments.IncomingOnly, in.Delivery.URL, expires, expires)
 	ok, err := st.SwapMCPEventsCatalog(t.Context(), old, []byte(draft), "", nil, "")
 	requirements.NoError(err)
 	requirements.True(ok)
