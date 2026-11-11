@@ -2015,6 +2015,10 @@ type ListChangedMessagesErrorResponse = ErrorResponse
 
 type ListChangedMessagesErrorResponseJSON = ErrorResponse
 
+type ListChangedMessagesErrorResponseJSON404 = ErrorResponse
+
+type ListChangedMessagesErrorResponseJSON422 = ErrorResponse
+
 type ListChangedMessagesErrorResponseJSON429 = ErrorResponse
 
 type ListChangedMessagesErrorResponseJSON500 = ErrorResponse
@@ -5928,6 +5932,8 @@ type ListChangedMessagesResp struct {
 	JSON200      *ListChangedMessagesResponse
 	JSON400      *ListChangedMessagesErrorResponse
 	JSON401      *ListChangedMessagesErrorResponseJSON
+	JSON404      *ListChangedMessagesErrorResponseJSON404
+	JSON422      *ListChangedMessagesErrorResponseJSON422
 	JSON429      *ListChangedMessagesErrorResponseJSON429
 	JSON500      *ListChangedMessagesErrorResponseJSON500
 	JSON503      *ListChangedMessagesErrorResponseJSON503

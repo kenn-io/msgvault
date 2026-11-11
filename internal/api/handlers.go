@@ -3245,6 +3245,11 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
+	filter, err := parseChangesFilter(r)
+	if err != nil {
+		s.rejectBadParam(w, err)
+		return
+	}
 	limit, ok, err := queryInt(r, "limit")
 	if err != nil {
 		s.rejectBadParam(w, err)
@@ -3281,11 +3286,6 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := position.boundTo(archiveUID); err != nil {
-		s.rejectBadParam(w, err)
-		return
-	}
-	filter, err := parseChangesFilter(r)
-	if err != nil {
 		s.rejectBadParam(w, err)
 		return
 	}

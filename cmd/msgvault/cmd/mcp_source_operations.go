@@ -147,7 +147,7 @@ func (b *daemonMCPOperations) executeSourceOperation(ctx context.Context, name s
 		if decodeErr != nil {
 			return invalid()
 		}
-		result, err = readMCPOperationJSON[generated.ChangesResponse](ctx, b.client, http.MethodGet, "/api/v1/messages/changes", &generated.ListChangedMessagesRequestOptions{Query: &generated.ListChangedMessagesQuery{Cursor: input.Cursor, Limit: input.Limit, PersonID: input.PersonID, SourceID: input.SourceIDs, ConversationID: input.ConversationIDs, IncomingOnly: input.IncomingOnly}}, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.ChangesResponse](ctx, b.client, http.MethodGet, "/api/v1/messages/changes", &generated.ListChangedMessagesRequestOptions{Query: &generated.ListChangedMessagesQuery{Cursor: input.Cursor, Limit: input.Limit, PersonID: input.PersonID, SourceID: input.SourceIDs, ConversationID: input.ConversationIDs, IncomingOnly: input.IncomingOnly}}, changesRefusal, http.StatusOK)
 	case "list_source_status":
 		input, decodeErr := decodeMCPOperationArguments[sourceStatusArguments](args)
 		if decodeErr != nil {
@@ -331,4 +331,13 @@ func (b *daemonMCPOperations) sourceOperationDisclosure(ctx context.Context, nam
 		err = errors.New("empty operation disclosure")
 	}
 	return string(data), true, err
+}
+
+func changesRefusal(code string) bool {
+	switch code {
+	case "invalid_cursor", "invalid_person_id", "invalid_source_id", "invalid_conversation_id", "invalid_incoming_only", "invalid_limit", "person_not_found", "person_scope_empty", "person_scope_unavailable", "person_scope_failed", "person_binding_conflict", "rate_limit_exceeded", "feature_unavailable", "query_timeout", "query_canceled":
+		return true
+	default:
+		return false
+	}
 }

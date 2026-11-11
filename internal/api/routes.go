@@ -600,8 +600,9 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[AggregateResponse](apiV1, "getSubAggregates", http.MethodGet, "/aggregates/sub", "Get nested aggregate rows", s.handleSubAggregates)
 	registerAPIV1RawHumaJSONRoute[FilteredMessagesResponse](apiV1, "filterMessages", http.MethodGet, "/messages/filter", "List filtered messages", s.handleFilteredMessages)
 	// The change feed's error statuses are contract, not incident: a 400 means
-	// a cursor the consumer must abandon, while 401, 429, 500 and 503 are
-	// conditions to retry from the same cursor. Declaring them keeps that
+	// invalid input or an incompatible cursor; 404 and 422 describe a person
+	// scope that cannot be used. Other failures can be retried from the same
+	// cursor. Declaring them keeps that
 	// distinction in the generated client rather than in every consumer's
 	// hand-written decode.
 	//
@@ -616,6 +617,8 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		"List messages whose content changed since a cursor", s.changeFeedGuard(s.handleMessageChanges),
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
+		http.StatusNotFound,
+		http.StatusUnprocessableEntity,
 		http.StatusTooManyRequests,
 		http.StatusInternalServerError,
 		http.StatusServiceUnavailable,

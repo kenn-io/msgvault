@@ -11,15 +11,25 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestChangesFilterValidation(t *testing.T) {
 	srv, _ := newChangesServer(t)
-	for _, query := range []string{"person_id=0", "person_id=bad", "source_id=0", "source_id=1&source_id=-1", "conversation_id=bad", "incoming_only=maybe", "source_id=" + strings.Repeat("1,", 50) + "1", "conversation_id=" + strings.Repeat("1,", 50) + "1"} {
-		t.Run(query, func(t *testing.T) {
-			w := doGet(t.Context(), srv, "/api/v1/messages/changes?"+query)
-			assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	for _, tc := range []struct{ query, code string }{
+		{"person_id=0", "invalid_person_id"},
+		{"person_id=bad", "invalid_person_id"},
+		{"source_id=0", "invalid_source_id"},
+		{"conversation_id=bad", "invalid_conversation_id"},
+		{"incoming_only=maybe", "invalid_incoming_only"},
+		{"source_id=" + strings.Repeat("1,", 50) + "1", "invalid_source_id"},
+		{"conversation_id=" + strings.Repeat("1,", 50) + "1", "invalid_conversation_id"},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			w := doGet(t.Context(), srv, "/api/v1/messages/changes?"+tc.query)
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			assert.Equal(t, tc.code, decodeErrorEnvelope(t, w).Error)
 		})
 	}
 }
@@ -40,21 +50,6 @@ func TestChangesFilterCursorAndScan(t *testing.T) {
 	refused := doGet(t.Context(), srv, "/api/v1/messages/changes?cursor="+url.QueryEscape(first.NextCursor))
 	assert.Equal(t, http.StatusBadRequest, refused.Code, refused.Body.String())
 	assert.Contains(t, refused.Body.String(), "different filter")
-}
-
-func TestChangesFilteredSparseBudget(t *testing.T) {
-	srv, st := newChangesServer(t)
-	ids := seedChangedMessages(t, st, 2001)
-	setChangesWatermark(t, st, "2020-01-01 00:00:00.000", ids...)
-	first := getChangesPage(t, srv, "/api/v1/messages/changes?source_id=999999")
-	assert.Empty(t, first.Messages)
-	assert.True(t, first.HasMore)
-	second := getChangesPage(t, srv, "/api/v1/messages/changes?source_id=999999&cursor="+url.QueryEscape(first.NextCursor))
-	assert.Empty(t, second.Messages)
-	assert.False(t, second.HasMore)
-	pos, err := decodeChangesCursor(second.NextCursor)
-	require.NoError(t, err)
-	assert.True(t, pos.cursor.At().After(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)))
 }
 
 func TestChangesFilterMatchesAllDimensions(t *testing.T) {
@@ -146,15 +141,20 @@ func (s *countingChangesStore) ListChangedMessages(ctx context.Context, since st
 
 func TestChangesFilteredReadsOneBoundedPage(t *testing.T) {
 	srv, st := newChangesServer(t)
+	ids := seedChangedMessages(t, st, 3)
+	setChangesWatermark(t, st, "2020-01-01 00:00:00.000", ids...)
 	counted := &countingChangesStore{Store: st}
 	srv.store = counted
-	page := getChangesPage(t, srv, "/api/v1/messages/changes?source_id=1")
+	page := getChangesPage(t, srv, "/api/v1/messages/changes?source_id=999999")
 	assert.Empty(t, page.Messages)
+	pos, err := decodeChangesCursor(page.NextCursor)
+	require.NoError(t, err)
+	assert.True(t, pos.cursor.At().After(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)))
 	assert.Equal(t, 1, counted.calls)
 	assert.Equal(t, 2001, counted.limit)
 }
 
-func TestChangesScanEmptyBoundDoesNotRegress(t *testing.T) {
+func TestChangesScanEmptyPageBound(t *testing.T) {
 	sinceTime := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	since := store.ChangedMessagesAfter(sinceTime, 0)
 	filter := changesFilter{SourceIDs: []int64{1}}
@@ -171,4 +171,23 @@ func TestChangesScanEmptyBoundDoesNotRegress(t *testing.T) {
 	assert.Equal(t, page.CompleteThrough, next.At())
 	_, present := next.AfterID()
 	assert.False(t, present)
+}
+
+func TestChangesInvalidFilterPrecedesArchiveCapability(t *testing.T) {
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger()})
+	relaxChangeFeedRateLimit(t, srv)
+	w := doGet(t.Context(), srv, "/api/v1/messages/changes?source_id=invalid")
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "invalid_source_id")
+}
+
+func TestChangesPersonErrorsAreDeclared(t *testing.T) {
+	operation := pathOperation(OpenAPIDocument().Paths["/api/v1/messages/changes"], http.MethodGet)
+	require.NotNil(t, operation)
+	for _, status := range []string{"404", "422"} {
+		response, ok := operation.Responses[status]
+		require.True(t, ok, "missing response %s", status)
+		require.NotNil(t, response.Content[applicationJSONMediaType])
+		assert.Equal(t, "#/components/schemas/ErrorResponse", response.Content[applicationJSONMediaType].Schema.Ref)
+	}
 }

@@ -657,3 +657,30 @@ func TestListChangesRequiresAllFilterCapabilities(t *testing.T) {
 		assert.NotContains(t, sourceMCPCapabilities(check(missing), nil), "list_changes")
 	}
 }
+
+func TestListChangesPreservesActionableRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		code   string
+		status int
+	}{
+		{"invalid_cursor", http.StatusBadRequest}, {"rate_limit_exceeded", http.StatusTooManyRequests},
+		{"person_not_found", http.StatusNotFound}, {"person_scope_empty", http.StatusUnprocessableEntity},
+		{"invalid_source_id", http.StatusBadRequest}, {"person_scope_unavailable", http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(`{"error":"` + tc.code + `"}`))
+			})
+			backend := &daemonMCPOperations{client: client}
+			result, handled, err := backend.executeSourceOperation(t.Context(), "list_changes", nil)
+			require.NoError(t, err)
+			require.True(t, handled)
+			require.True(t, result.IsError)
+			data, err := json.Marshal(result.Output)
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"error":"`+tc.code+`","operation_may_have_completed":false}`, string(data))
+		})
+	}
+}

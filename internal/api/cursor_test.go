@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func TestChangesCursorRoundTripsSubSecondPrecision(t *testing.T) {
 	at := time.Date(2026, 7, 26, 10, 0, 0, 731123456, time.UTC)
 	require.NotZero(at.Nanosecond(), "this test is meaningless without a sub-second part")
 
-	got, err := decodeChangesCursor(encodeChangesCursor(testArchiveUID, changesAfter(at, 918)))
+	got, err := decodeChangesCursor(encodeChangesCursor(testArchiveUID, changesAfter(at, 918), ""))
 	require.NoError(err, "decode the cursor just encoded")
 	require.NoError(got.boundTo(testArchiveUID), "the cursor must belong to the archive that issued it")
 	assert.True(got.cursor.At().Equal(at), "watermark: want %s, got %s", at, got.cursor.At())
@@ -65,14 +66,14 @@ func TestChangesCursorRoundTripsInUTC(t *testing.T) {
 	zone := time.FixedZone("UTC-7", -7*60*60)
 	at := time.Date(2026, 7, 26, 3, 0, 0, 731123456, zone)
 
-	token := encodeChangesCursor(testArchiveUID, changesAfter(at, 42))
+	token := encodeChangesCursor(testArchiveUID, changesAfter(at, 42), "")
 	got, err := decodeChangesCursor(token)
 	require.NoError(err, "decode")
 	require.NoError(got.boundTo(testArchiveUID), "the cursor must belong to the archive that issued it")
 	assert.True(got.cursor.At().Equal(at), "instant: want %s, got %s", at, got.cursor.At())
 	assert.Equal(time.UTC, got.cursor.At().Location(), "the decoded watermark must be UTC")
 	assert.Equal(int64(42), cursorAfterID(t, got), "id tiebreak")
-	assert.Equal(encodeChangesCursor(testArchiveUID, changesAfter(at.UTC(), 42)), token,
+	assert.Equal(encodeChangesCursor(testArchiveUID, changesAfter(at.UTC(), 42), ""), token,
 		"the same instant in two locations must encode to the same cursor")
 }
 
@@ -84,7 +85,7 @@ func TestChangesCursorRoundTripsTheStartOfTheArchive(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 
-	token := encodeChangesCursor(testArchiveUID, store.ChangedMessagesCursor{})
+	token := encodeChangesCursor(testArchiveUID, store.ChangedMessagesCursor{}, "")
 	require.NotEmpty(token, "a cursor is always publishable, the start of the archive included")
 
 	got, err := decodeChangesCursor(token)
@@ -108,7 +109,7 @@ func TestChangesCursorRoundTripsTheStartOfAnInstant(t *testing.T) {
 	assert := assert.New(t)
 
 	at := time.Date(2026, 7, 26, 10, 0, 0, 731123456, time.UTC)
-	token := encodeChangesCursor(testArchiveUID, store.ChangedMessagesFrom(at))
+	token := encodeChangesCursor(testArchiveUID, store.ChangedMessagesFrom(at), "")
 
 	got, err := decodeChangesCursor(token)
 	require.NoError(err, "decode")
@@ -119,7 +120,7 @@ func TestChangesCursorRoundTripsTheStartOfAnInstant(t *testing.T) {
 		"a position at the start of an instant must not come back carrying a "+
 			"tiebreak (got %d): the store would then skip every row stamped there "+
 			"at or below it", id)
-	assert.NotEqual(encodeChangesCursor(testArchiveUID, changesAfter(at, 0)), token,
+	assert.NotEqual(encodeChangesCursor(testArchiveUID, changesAfter(at, 0), ""), token,
 		"and it must not encode to the same token as the position after id 0, "+
 			"which is the position that dropped the rows at id 0 and below")
 }
@@ -223,7 +224,7 @@ func TestChangesCursorIsBoundToTheArchiveThatIssuedIt(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 
-			got, err := decodeChangesCursor(encodeChangesCursor(issuedBy, changesAfter(at, 918)))
+			got, err := decodeChangesCursor(encodeChangesCursor(issuedBy, changesAfter(at, 918), ""))
 			require.NoError(err, "the token's shape is fine; only where it belongs is wrong")
 
 			err = got.boundTo(testArchiveUID)
@@ -255,13 +256,13 @@ func TestChangesCursorForTheStartOfTheArchiveBelongsToEveryArchive(t *testing.T)
 // "invalid" is not reasonable.
 func TestChangesCursorFromAnotherVersionSaysHowToRecover(t *testing.T) {
 	t.Parallel()
-	raw := "2." + base64.RawURLEncoding.EncodeToString([]byte(`{"t":"2026-07-26T10:00:00Z","i":1}`))
+	raw := "3." + base64.RawURLEncoding.EncodeToString([]byte(`{"t":"2026-07-26T10:00:00Z","i":1}`))
 
 	_, err := decodeChangesCursor(raw)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "from the beginning",
 		"the message must name the repair: the sync restarts from the beginning")
-	assert.Contains(t, err.Error(), "2", "and it must report the version it found")
+	assert.Contains(t, err.Error(), "3", "and it must report the version it found")
 }
 
 // TestChangesCursorFromAnotherVersionIsRecognisedWhateverItWraps is why the
@@ -274,8 +275,8 @@ func TestChangesCursorFromAnotherVersionSaysHowToRecover(t *testing.T) {
 func TestChangesCursorFromAnotherVersionIsRecognisedWhateverItWraps(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{
-		"a payload that is not base64url at all": "2.\x00\x01binary, signed, who knows",
-		"a payload this server cannot even see":  "2.",
+		"a payload that is not base64url at all": "3.\x00\x01binary, signed, who knows",
+		"a payload this server cannot even see":  "3.",
 		"a far future version":                   "37." + base64.RawURLEncoding.EncodeToString([]byte("a signed token, say")),
 	}
 	for name, raw := range tests {
@@ -300,7 +301,7 @@ func TestChangesCursorNeedsNoEscapingInAQueryString(t *testing.T) {
 	assert := assert.New(t)
 
 	token := encodeChangesCursor(testArchiveUID,
-		changesAfter(time.Date(2026, 7, 26, 10, 0, 0, 731123456, time.UTC), 918))
+		changesAfter(time.Date(2026, 7, 26, 10, 0, 0, 731123456, time.UTC), 918), "")
 	assert.Equal(token, url.QueryEscape(token), "the token must need no escaping")
 
 	target := "/api/v1/messages/changes?cursor=" + token
@@ -337,4 +338,28 @@ func TestChangesCursorParamReadsAnEmptyValueAsAbsent(t *testing.T) {
 		_, hasID := position.cursor.AfterID()
 		assert.Falsef(hasID, "%q must carry no tiebreak", target)
 	}
+}
+
+func TestChangesCursorVersionsSeparateFilterSemantics(t *testing.T) {
+	at := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
+	legacy := "1." + base64.RawURLEncoding.EncodeToString([]byte(`{"t":"2026-07-26T10:00:00Z","i":7,"a":"`+testArchiveUID+`"}`))
+	assert.Equal(t, legacy, encodeChangesCursor(testArchiveUID, changesAfter(at, 7), ""))
+	position, err := decodeChangesCursor(legacy)
+	require.NoError(t, err)
+	assert.Empty(t, position.filter)
+	legacyUnknown := "1." + base64.RawURLEncoding.EncodeToString([]byte(`{"t":"2026-07-26T10:00:00Z","i":7,"a":"`+testArchiveUID+`","f":123}`))
+	position, err = decodeChangesCursor(legacyUnknown)
+	require.NoError(t, err)
+	assert.Empty(t, position.filter)
+	filtered := encodeChangesCursor(testArchiveUID, changesAfter(at, 7), "1234567890abcdef")
+	assert.True(t, strings.HasPrefix(filtered, "2."))
+	position, err = decodeChangesCursor(filtered)
+	require.NoError(t, err)
+	assert.Equal(t, "1234567890abcdef", position.filter)
+	// A legacy reader rejects the envelope before it can ignore filter binding.
+	prefix, _, _ := strings.Cut(filtered, ".")
+	assert.NotEqual(t, "1", prefix)
+	malformed := "2." + base64.RawURLEncoding.EncodeToString([]byte(`{"t":"2026-07-26T10:00:00Z","a":"`+testArchiveUID+`"}`))
+	_, err = decodeChangesCursor(malformed)
+	assert.Error(t, err)
 }

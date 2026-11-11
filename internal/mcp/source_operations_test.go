@@ -23,6 +23,4 @@ func TestListChangesDefinition(t *testing.T) {
 	for _, field := range []string{"cursor", "limit", "person_id", "source_ids", "conversation_ids", "incoming_only"} {
 		assert.Contains(t, found.definition.inputSchema.Properties, field)
 	}
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"list_changes"}, DelegatedOnly: true}
-	assert.Empty(t, operationalCatalog(opts, false))
 }

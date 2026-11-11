@@ -1238,7 +1238,8 @@ identities, repeated `source_id` or `conversation_id` values to select those
 sources or conversations, and `incoming_only=true` to exclude owner-sent
 messages. Different filters combine with AND; values within a list combine with
 OR. Each list accepts up to 50 positive IDs. The owner can also call the MCP
-`list_changes` tool.
+`list_changes` tool. A newly linked identity contributes later changes; include
+its older history with a fresh walk.
 
 A filtered request examines at most 2,000 changes and can return an empty page
 with `has_more=true`; keep following `next_cursor`. A first walk over 400,000
@@ -1246,14 +1247,15 @@ non-matching changes therefore needs about 200 requests. Once the available
 range is exhausted, the cursor can advance through the empty tail to the commit
 bound. A filtered cursor is bound to its selectors: changing or removing them
 returns `invalid_cursor`. Start again with an unfiltered cursor or the original
-filter. After downgrading to a server that ignores this binding, restart the
-walk to avoid omissions.
+filter. Older servers reject filtered cursors because they do not understand
+their format.
 
-Linking a new identity to a person applies to later changes without invalidating
-the cursor; start a fresh walk to include its older history. A row that leaves a
+A filtered feed reports arrivals and in-scope edits. A row that leaves a
 filter's scope, for example through a conversation move, sender re-attribution,
-or source consolidation, is not reported to that filter, so consumers caching
-rows must reconcile them. Direction (`is_from_me`) is not tracked: correcting
+or source consolidation, is not reported to that filter. Consumers caching
+rows must reconcile them with a periodic unfiltered or wider-scope re-read.
+Linking a new identity does not invalidate the cursor; a fresh walk is needed
+to reconcile that identity's older history. Direction (`is_from_me`) is not tracked: correcting
 it alone does not redeliver a message.
 
 **What it is.** An invalidation feed over one projection of a message: the
