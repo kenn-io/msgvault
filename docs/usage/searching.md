@@ -239,8 +239,9 @@ and hybrid search. Vector and hybrid queries still need free text.
 If you imported a Telegram Desktop export and also synced those chats through
 Beeper, search can return both archived copies. This recipe suits focused
 searches in a few chats. To search one whole source instead, use the
-[`--account` filter](#account-and-collection-filters). To choose one copy of
-each selected chat:
+[`--account` filter](#account-and-collection-filters) with the source identifier
+or display name shown by `msgvault list-accounts`. To choose one copy of each
+selected chat:
 
 1. Find candidates by title or participant name:
 
