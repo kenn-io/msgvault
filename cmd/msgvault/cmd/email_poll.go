@@ -33,7 +33,7 @@ func validatePollingTargets(ctx context.Context, accounts []config.AccountSchedu
 		names[key] = true
 		source, err := catalog[i].source, catalog[i].err
 		if err != nil {
-			targets[i] = pollingTarget{err: fmt.Errorf("polling account %q: %w", account.Email, err)}
+			targets[i] = pollingTarget{err: err}
 			continue
 		}
 		if seen[source.ID] {
@@ -64,7 +64,7 @@ func pollingCatalog(ctx context.Context, accounts []config.AccountSchedule, s *s
 	}
 	for i, account := range accounts {
 		if err != nil {
-			result[i] = pollingTarget{err: fmt.Errorf("look up polling source: %w", err)}
+			result[i] = pollingTarget{err: fmt.Errorf("polling account %q: look up polling source: %w", account.Email, err)}
 			continue
 		}
 		source, matchErr := pollingSourceFromRows(account.Email, index[strings.ToLower(account.Email)], state)

@@ -82,6 +82,7 @@ func TestPollingTargetsRejectDuplicateSource(t *testing.T) {
 	cfg.Accounts = append([]config.AccountSchedule{{Email: "missing@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}, cfg.Accounts...)
 	targets := validatePollingTargets(t.Context(), cfg.Accounts, st, state)
 	requirements.ErrorContains(targets[0].err, "no active")
+	checks.Equal(1, strings.Count(targets[0].err.Error(), "missing@example.test"))
 	requirements.NoError(targets[1].err)
 	checks.Equal(source.ID, targets[1].source.ID)
 	duplicate := cfg.Accounts[1]
