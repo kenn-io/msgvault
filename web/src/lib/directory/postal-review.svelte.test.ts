@@ -89,8 +89,8 @@ describe('PostalReviewSession', () => {
   it('checks locally and externally', async () => {
     const result = await assessment();
     const unavailable = { ...result, status: 'unavailable' as const, reason_codes: ['not_verified', 'provider_request_failed'] };
-    const check = vi.fn(async (_personID: number, _input: Input, external: boolean, _signal: AbortSignal): Promise<Assessment> =>
-      external ? unavailable : { ...result, status: 'normalized_unverified', provider: undefined }).mockResolvedValueOnce({ ...result, status: 'normalized_unverified', provider: undefined }).mockResolvedValueOnce(unavailable).mockResolvedValueOnce(result);
+    const check = vi.fn<(_personID: number, _input: Input, external: boolean, _signal: AbortSignal) => Promise<Assessment>>()
+      .mockResolvedValueOnce({ ...result, status: 'normalized_unverified', provider: undefined }).mockResolvedValueOnce(unavailable).mockResolvedValueOnce(result);
     const state = new PostalReviewSession(7, check);
     await state.check(input, false);
     expect(state.result?.status).toBe('normalized_unverified');

@@ -178,7 +178,13 @@ func TestPostalSuggestionsMatchOnlyCurrentAddressComponents(t *testing.T) {
 	assert := assert.New(t)
 	st, id, _ := newPersonFactProjectionStore(t)
 	target := projectionTargetBySlug(t, st, "postal_address")
-	_, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new(" 12 Example Street "), ExtendedAddress: new(" Unit 7 "), CountryCode: new(" ca "), Label: new("home"), OriginalValue: "Entered by hand", Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
+	_, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new(" 12 Example Street "), ExtendedAddress: new(" Unit 7 "), CountryCode: new(" ca "), Label: new("home"), FreeText: new(""), OriginalValue: "Entered by hand", Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
+	require.NoError(err)
+	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("Second Street"), FreeText: new("Use rear entrance"), CountryCode: new("CA"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
+	require.NoError(err)
+	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("Third Street"), OriginalValue: "Use side door", CountryCode: new("CA"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
+	require.NoError(err)
+	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, OriginalValue: "12 Main St", PostalCode: new("10001"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
 	require.NoError(err)
 	old, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("Old Street"), CountryCode: new("CA"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
 	require.NoError(err)
@@ -190,6 +196,9 @@ func TestPostalSuggestionsMatchOnlyCurrentAddressComponents(t *testing.T) {
 	for _, tc := range []struct{ suffix, value string }{
 		{"first", `{"street_address":"12 Example Street","extended_address":"Unit 7","country_code":"CA","source_text":"first evidence"}`},
 		{"second", `{"street_address":"12 Example Street","extended_address":"Unit 7","country_code":"CA","source_text":"second evidence"}`},
+		{"different note", `{"street_address":"Second Street","country_code":"CA","source_text":"without delivery note"}`},
+		{"legacy note", `{"street_address":"Third Street","country_code":"CA","source_text":"without legacy note"}`},
+		{"text only", `{"free_text":"12 Main St","postal_code":"10001","source_text":"legacy text"}`},
 		{"different unit", `{"street_address":"12 Example Street","extended_address":"Unit 8","country_code":"CA","source_text":"other unit"}`},
 		{"history", `{"street_address":"Old Street","country_code":"CA","source_text":"former home"}`},
 		{"different extended components", `{"street_address":"12 Example Street","extended_address":"Unit 7","country_code":"CA","extended_components":";;;;;;;Floor 2","source_text":"other floor"}`},
@@ -201,8 +210,8 @@ func TestPostalSuggestionsMatchOnlyCurrentAddressComponents(t *testing.T) {
 	}
 	claims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 10})
 	require.NoError(err)
-	require.Len(claims, 6)
-	wantEligible := map[string]bool{"first evidence": false, "second evidence": false, "other unit": true, "former home": true, "other floor": true, "earlier draft": true}
+	require.Len(claims, 9)
+	wantEligible := map[string]bool{"first evidence": false, "second evidence": false, "other unit": true, "former home": true, "other floor": true, "earlier draft": true, "without delivery note": true, "without legacy note": true, "legacy text": false}
 	for _, claim := range claims {
 		require.NotNil(claim.PostalReview)
 		require.NotNil(claim.PostalReview.Assessment)
