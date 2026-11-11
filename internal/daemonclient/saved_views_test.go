@@ -106,7 +106,7 @@ func TestRunSavedViewDecodesGroupAndFilePages(t *testing.T) {
 		{
 			name: "groups",
 			body: `{"saved_view":` + savedViewFixtureJSON + `,"result_kind":"groups",
-				"groups":[{"key":"example.com","label":"example.com","count":4,"estimated_bytes":512,"latest_at":"2026-08-18T07:00:00Z"}],
+				"groups":[{"key":"example.com","label":"example.com","count":4,"total_items":40,"estimated_bytes":512,"latest_at":"2026-08-18T07:00:00Z"}],
 				"total_count":1,"cache_revision":"cache-9","search_provenance":{}}`,
 			kind: savedview.ResultGroups,
 			want: func(t *testing.T, page *savedview.RunPage) {
@@ -114,6 +114,7 @@ func TestRunSavedViewDecodesGroupAndFilePages(t *testing.T) {
 				require.Len(t, page.Groups, 1)
 				assert.Equal(t, "example.com", page.Groups[0].Key)
 				assert.Equal(t, int64(4), page.Groups[0].Count)
+				assert.Equal(t, int64(40), page.Groups[0].TotalItems)
 				assert.Empty(t, page.Rows)
 			},
 		},

@@ -169,7 +169,7 @@ func runPageFromGenerated(result generated.RunSavedViewResponse) (*savedview.Run
 		page.Groups = make([]query.ExploreGroupRow, len(result.Groups))
 		for i, group := range result.Groups {
 			page.Groups[i] = query.ExploreGroupRow{
-				Key: group.Key, Label: group.Label, Count: group.Count,
+				Key: group.Key, Label: group.Label, Count: group.Count, TotalItems: int64Value(group.TotalItems),
 				EstimatedBytes: group.EstimatedBytes, LatestAt: group.LatestAt,
 			}
 		}
