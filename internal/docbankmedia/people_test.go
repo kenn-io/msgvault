@@ -9,46 +9,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveExternalPersonEscapesIdentifiers(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "a&b", r.URL.Query().Get("archive_id"))
-		assert.Equal(t, "u+id", r.URL.Query().Get("uid"))
-		_, _ = w.Write([]byte(`{"person_id":"p1","system":"msgvault","archive_id":"a&b","requested_uid":"u+id","resolved_uid":"u+id","uid_state":"current","forwarded":false}`))
-	}))
-	defer server.Close()
-	client, err := NewClient(server.URL, nil)
-	require.NoError(t, err)
-	resolved, err := client.ResolveExternalPerson(t.Context(), "a&b", "u+id")
-	require.NoError(t, err)
-	require.Equal(t, "p1", resolved.PersonID)
-}
-
-func TestPersonProtocolRejectsMalformedAndPreservesStatuses(t *testing.T) {
+func TestResolveExternalPerson(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		status     int
-		body       string
-		wantStatus int
+		name   string
+		status int
+		body   string
 	}{
-		{"malformed", 200, `{"person_id":"p","system":"msgvault","archive_id":"wrong","requested_uid":"u","resolved_uid":"u","uid_state":"current"}`, 0},
-		{"not found", 404, `{}`, 404},
+		{"escaping", 200, `{"person_id":"p1","system":"msgvault","archive_id":"a&b","requested_uid":"u+id","resolved_uid":"u+id","uid_state":"current","forwarded":false}`},
+		{"malformed", 200, `{"person_id":"p1","system":"msgvault","archive_id":"wrong","requested_uid":"u+id","resolved_uid":"u+id","uid_state":"current"}`},
+		{"not found", 404, `{"code":"not_found"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "a&b", r.URL.Query().Get("archive_id"))
+				assert.Equal(t, "u+id", r.URL.Query().Get("uid"))
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
 			client, err := NewClient(server.URL, nil)
 			require.NoError(err)
-			_, err = client.ResolveExternalPerson(t.Context(), "archive", "u")
-			if tc.wantStatus == 0 {
+			resolved, err := client.ResolveExternalPerson(t.Context(), "a&b", "u+id")
+			switch tc.name {
+			case "escaping":
+				require.NoError(err)
+				require.Equal("p1", resolved.PersonID)
+			case "malformed":
 				require.ErrorIs(err, ErrInvalidReceipt)
-			} else {
+			default:
 				var remote *HTTPError
 				require.ErrorAs(err, &remote)
-				require.Equal(tc.wantStatus, remote.Status)
+				require.Equal("not_found", remote.Reason)
 			}
 		})
 	}
@@ -77,7 +69,6 @@ func TestPersonAssertionsRejectsInvalidPage(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "1", r.URL.Query().Get("assertion_limit"))
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()

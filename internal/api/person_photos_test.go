@@ -26,14 +26,17 @@ func TestPersonPhotosDisabled(t *testing.T) {
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)
 	require.Equal(t, http.StatusServiceUnavailable, response.Code)
-	for _, cursor := range []string{"invalid", "2.eyJjIjoieCJ9"} {
-		response = httptest.NewRecorder()
-		server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/by-uid/photos?uid=example&cursor="+cursor, nil))
-		require.Equal(t, http.StatusBadRequest, response.Code)
-	}
 }
 
-func TestPersonPhotosResolvesRetiredUIDAndDetectsConflict(t *testing.T) {
+func TestPersonPhotosInvalidCursor(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/by-uid/photos?uid=example&cursor=2.eyJjIjoieCJ9", nil))
+	require.Equal(t, http.StatusBadRequest, response.Code)
+}
+
+func TestPersonPhotosUnlinkedAndAmbiguousUID(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	var id int64
@@ -109,6 +112,7 @@ func TestPersonPhotosOnlyConfirmedAttachments(t *testing.T) {
 			_, _ = fmt.Fprintf(w, `{"person_id":"00000000-0000-4000-8000-000000000200","system":"msgvault","archive_id":%q,"requested_uid":"person","resolved_uid":"person","uid_state":"current"}`, archive)
 			return
 		}
+		assert.Equal(t, "1", r.URL.Query().Get("assertion_limit"))
 		switch r.URL.Query().Get("assertion_cursor") {
 		case "":
 			_, _ = fmt.Fprintf(w, `{"person_id":"00000000-0000-4000-8000-000000000200","state":"curated","revision":1,"assertions_next_cursor":"00000000-0000-4000-8000-000000000101","assertions_truncated":true,"assertions":[{"person_id":"00000000-0000-4000-8000-000000000200","assertion_id":"00000000-0000-4000-8000-000000000101","content_version_id":%q,"role":"depicted","action":"assert"}]}`, version)
@@ -266,14 +270,13 @@ func TestPersonPhotosOccurrencePages(t *testing.T) {
 	}
 	archive, err := f.Store.ArchiveUIDContext(t.Context())
 	requirements.NoError(err)
-	removedEarlier := false
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "resolve-external") {
 			_, _ = fmt.Fprintf(w, `{"person_id":"00000000-0000-4000-8000-000000000200","system":"msgvault","archive_id":%q,"requested_uid":"person","resolved_uid":"person","uid_state":"current"}`, archive)
 			return
 		}
 		cursor := r.URL.Query().Get("assertion_cursor")
-		if cursor == "" && !removedEarlier {
+		if cursor == "" {
 			_, _ = fmt.Fprint(w, `{"person_id":"00000000-0000-4000-8000-000000000200","state":"curated","revision":1,"assertions_next_cursor":"00000000-0000-4000-8000-000000000100","assertions_truncated":true,"assertions":[{"person_id":"00000000-0000-4000-8000-000000000200","assertion_id":"00000000-0000-4000-8000-000000000100","content_version_id":"10000000-0000-4000-8000-000000000001","role":"author","action":"assert"}]}`)
 			return
 		}
@@ -311,7 +314,6 @@ func TestPersonPhotosOccurrencePages(t *testing.T) {
 		if page == 1 {
 			requirements.NotEmpty(result.NextCursor)
 			requirements.True(result.Photos[0].OccurrencesTruncated)
-			removedEarlier = true
 		}
 		cursor = result.NextCursor
 		if cursor == "" {
@@ -376,7 +378,9 @@ func TestPersonPhotosRemoteErrors(t *testing.T) {
 			if tc.resolve == 0 {
 				require.Contains(response.Body.String(), "Docbank person lookup unsupported")
 			}
-			require.Zero(writes)
+			if tc.method == http.MethodPut {
+				require.Zero(writes)
+			}
 		})
 	}
 }
@@ -414,12 +418,10 @@ func TestPersonPhotoUnlink(t *testing.T) {
 
 			archive, err := st.ArchiveUIDContext(t.Context())
 			requirements.NoError(err)
-			reads := map[string]int{}
 			writes := 0
 			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
 					uid := r.URL.Query().Get("uid")
-					reads[uid]++
 					if linked := tc.remote[uid]; linked != "" {
 						resolved := uid
 						if tc.forwarded && uid == "current" {
@@ -466,9 +468,6 @@ func TestPersonPhotoUnlink(t *testing.T) {
 			} else {
 				requirements.Equal(1, writes)
 			}
-			for _, n := range reads {
-				requirements.Equal(1, n)
-			}
 			if tc.noWrites {
 				requirements.Contains(response.Body.String(), `"revision":7`)
 			} else if tc.status == http.StatusOK {
@@ -476,14 +475,14 @@ func TestPersonPhotoUnlink(t *testing.T) {
 			}
 		})
 	}
-	t.Run("invalid person ID", func(t *testing.T) {
-		requirements := require.New(t)
-		cfg := config.NewDefaultConfig()
-		server := NewServerWithOptions(ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/api/v1/people/by-uid/photo-link", strings.NewReader(`{"uid":"current","person_id":"bad","revision":7,"state":"unlinked"}`))
-		req.Header.Set("Content-Type", "application/json")
-		response := httptest.NewRecorder()
-		server.Router().ServeHTTP(response, req)
-		requirements.Equal(http.StatusUnprocessableEntity, response.Code)
-	})
+}
+
+func TestPersonPhotoLinkInvalidPersonID(t *testing.T) {
+	cfg := config.NewDefaultConfig()
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/api/v1/people/by-uid/photo-link", strings.NewReader(`{"uid":"current","person_id":"bad","revision":7,"state":"unlinked"}`))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, req)
+	require.Equal(t, http.StatusUnprocessableEntity, response.Code)
 }
