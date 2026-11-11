@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -210,18 +211,14 @@ func TestMeetingClientPropagatesDaemonErrorsAndRequestContext(t *testing.T) {
 	})
 }
 
-func TestMeetingDecisionClientJoinsAndUndoes(t *testing.T) {
+func TestMeetingDecisionClientRoundTrip(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	client, imported := newMeetingDaemonClient(t)
 	left := fmt.Sprintf("msg:%d", imported[0].MessageID)
 	right := fmt.Sprintf("msg:%d", imported[1].MessageID)
-	result, err := client.DecideMeetingLink(t.Context(), left, right, "link")
-	requirements.NoError(err)
-	assertions.Equal("link", result.State)
-	result, err = client.DecideMeetingLink(t.Context(), left, right, "unlink")
-	requirements.NoError(err)
-	assertions.Equal("split", result.State)
-	result, err = client.DecideMeetingLink(t.Context(), left, right, "clear")
-	requirements.NoError(err)
-	assertions.Equal("automatic", result.State)
+	for _, tc := range []struct{ decision, state string }{{"link", "link"}, {"unlink", "split"}, {"clear", "automatic"}} {
+		result, err := client.DecideMeetingLink(t.Context(), left, right, tc.decision)
+		requirements.NoError(err)
+		assertions.Equal(store.MeetingLinkDecisionResult{Left: left, Right: right, State: tc.state}, result)
+	}
 }

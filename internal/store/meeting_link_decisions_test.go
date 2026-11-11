@@ -258,120 +258,6 @@ func TestMeetingLinkDecisionUndoKeepsDuplicateChoices(t *testing.T) {
 	}
 }
 
-func TestMeetingLinkDecisionChainedDedupUndo(t *testing.T) {
-	for _, tc := range []struct{ name, firstUndo, timing string }{
-		{"first", "first", ""}, {"second", "second", ""},
-		{"survivor_before", "first", "before"}, {"survivor_after", "first", "after"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			var ids []int64
-			for _, name := range []string{"chain-a", "chain-b", "chain-c", "chain-d"} {
-				_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
-				ids = append(ids, id)
-			}
-			ref := func(id int64) MeetingLinkRef {
-				return MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}}
-			}
-			_, err := st.DecideMeetingLinkContext(t.Context(), ref(ids[0]), ref(ids[3]), "link")
-			requirements.NoError(err)
-			if tc.timing == "before" {
-				_, err = st.DecideMeetingLinkContext(t.Context(), ref(ids[2]), ref(ids[3]), "link")
-				requirements.NoError(err)
-			}
-			_, err = st.MergeDuplicates(t.Context(), ids[1], []int64{ids[0]}, "first")
-			requirements.NoError(err)
-			if tc.timing == "" {
-				record, err := st.MeetingRecordContext(t.Context(), ref(ids[3]))
-				requirements.NoError(err)
-				assertions.Equal([]int64{ids[1], ids[3]}, record.MessageIDs)
-			}
-			_, err = st.MergeDuplicates(t.Context(), ids[2], []int64{ids[1]}, "second")
-			requirements.NoError(err)
-			if tc.timing == "after" {
-				_, err = st.DecideMeetingLinkContext(t.Context(), ref(ids[2]), ref(ids[3]), "link")
-				requirements.NoError(err)
-			}
-			record, err := st.MeetingRecordContext(t.Context(), ref(ids[3]))
-			requirements.NoError(err)
-			assertions.Equal([]int64{ids[2], ids[3]}, record.MessageIDs)
-			_, err = st.UndoDedup(t.Context(), tc.firstUndo)
-			requirements.NoError(err)
-			record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
-			requirements.NoError(err)
-			if tc.timing != "" {
-				assertions.Equal([]int64{ids[0], ids[2], ids[3]}, record.MessageIDs)
-				return
-			}
-			remaining := "first"
-			if tc.firstUndo == "first" {
-				assertions.Equal([]int64{ids[0], ids[3]}, record.MessageIDs)
-				remaining = "second"
-			} else {
-				assertions.Equal([]int64{ids[1], ids[3]}, record.MessageIDs)
-			}
-			_, err = st.UndoDedup(t.Context(), remaining)
-			requirements.NoError(err)
-			record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
-			requirements.NoError(err)
-			assertions.Equal([]int64{ids[0], ids[3]}, record.MessageIDs)
-		})
-	}
-}
-
-func TestMeetingLinkDecisionChainedSplitUndo(t *testing.T) {
-	for _, firstUndo := range []string{"first", "second"} {
-		t.Run(firstUndo, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			var ids []int64
-			for i, name := range []string{"split-a", "split-b", "split-c", "split-d"} {
-				key := "shared"
-				if i == 0 {
-					key = "separate"
-				}
-				raw := fmt.Sprintf(`{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"%s_20270314T100000Z"}}`, key)
-				_, id := projectionFixture(t, st, name, "granola_json", raw)
-				ids = append(ids, id)
-			}
-			ref := func(id int64) MeetingLinkRef {
-				return MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}}
-			}
-			_, err := st.DecideMeetingLinkContext(t.Context(), ref(ids[0]), ref(ids[3]), "unlink")
-			requirements.NoError(err)
-			_, err = st.MergeDuplicates(t.Context(), ids[1], []int64{ids[0]}, "split-first")
-			requirements.NoError(err)
-			record, err := st.MeetingRecordContext(t.Context(), ref(ids[3]))
-			requirements.NoError(err)
-			assertions.Equal([]int64{ids[3]}, record.MessageIDs)
-			_, err = st.MergeDuplicates(t.Context(), ids[2], []int64{ids[1]}, "split-second")
-			requirements.NoError(err)
-			record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
-			requirements.NoError(err)
-			assertions.Equal([]int64{ids[3]}, record.MessageIDs)
-			_, err = st.UndoDedup(t.Context(), "split-"+firstUndo)
-			requirements.NoError(err)
-			record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
-			requirements.NoError(err)
-			if firstUndo == "first" {
-				assertions.Equal([]int64{ids[2], ids[3]}, record.MessageIDs)
-			} else {
-				assertions.Equal([]int64{ids[3]}, record.MessageIDs)
-			}
-			remaining := "split-first"
-			if firstUndo == "first" {
-				remaining = "split-second"
-			}
-			_, err = st.UndoDedup(t.Context(), remaining)
-			requirements.NoError(err)
-			record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
-			requirements.NoError(err)
-			assertions.Equal([]int64{ids[1], ids[2], ids[3]}, record.MessageIDs)
-		})
-	}
-}
-
 func TestMeetingLinkDecisionFollowsStandaloneIntoSeries(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -547,15 +433,7 @@ func TestMeetingLinkDecisionSubsetOmitsHiddenOrigin(t *testing.T) {
 			} else {
 				assertions.Equal([]int64{other}, record.MessageIDs)
 			}
-			_, err = st.UndoDedup(t.Context(), "subset-undo")
-			requirements.NoError(err)
-			record, err = st.MeetingRecordContext(t.Context(), otherRef)
-			requirements.NoError(err)
-			if action == "link" {
-				assertions.Equal([]int64{other, duplicate}, record.MessageIDs)
-			} else {
-				assertions.Equal([]int64{survivor, other}, record.MessageIDs)
-			}
+
 		})
 	}
 }
@@ -871,20 +749,36 @@ func TestMeetingLinkDecisionClearAfterBothCopiesDedup(t *testing.T) {
 		requirements.Len(record.Links, 1)
 		requirements.Equal(fmt.Sprintf("evt:%d@20270321T100000Z", event), record.Links[0].Ref)
 	})
+	t.Run("interleaved_after_purge", func(t *testing.T) { checkMeetingInterleavedCleanupUndo(t, "opposite", true) })
 }
 
 func TestMeetingLinkDecisionSurvivesPermanentDuplicateDeletion(t *testing.T) {
-	for _, purge := range []string{"first", "second", "all", "gc", "source", "source-serialized"} {
-		t.Run(purge, func(t *testing.T) {
+	for _, tc := range []struct{ name, decision, purge, firstUndo, timing string }{
+		{"link_undo_first", "link", "", "first", ""}, {"link_undo_second", "link", "", "second", ""},
+		{"split_undo_first", "unlink", "", "first", ""}, {"split_undo_second", "unlink", "", "second", ""},
+		{"survivor_before", "link", "", "first", "before"}, {"survivor_after", "link", "", "first", "after"},
+		{"purge_first", "link", "first", "", ""}, {"purge_second", "link", "second", "", ""},
+		{"purge_all", "link", "all", "", ""}, {"purge_gc", "link", "gc", "", ""},
+		{"purge_source", "link", "source", "", ""}, {"purge_source_serialized", "link", "source-serialized", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			r := require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			var ids []int64
-			for _, name := range []string{"purge-original", "purge-intermediate", "purge-survivor", "purge-other"} {
-				_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
+			for i, name := range []string{"chain-original", "chain-intermediate", "chain-survivor", "chain-other"} {
+				format, raw := "meeting_json", `{}`
+				if tc.decision == "unlink" {
+					key := "shared"
+					if i == 0 {
+						key = "separate"
+					}
+					format, raw = "granola_json", fmt.Sprintf(`{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"%s_20270314T100000Z"}}`, key)
+				}
+				_, id := projectionFixture(t, st, name, format, raw)
 				ids = append(ids, id)
 			}
 			var sourceID int64
-			if purge == "source" || purge == "source-serialized" {
+			if tc.purge == "source" || tc.purge == "source-serialized" {
 				source, err := st.GetOrCreateSource("meeting_import", "purge@example.com")
 				r.NoError(err)
 				sourceID = source.ID
@@ -894,17 +788,35 @@ func TestMeetingLinkDecisionSurvivesPermanentDuplicateDeletion(t *testing.T) {
 			ref := func(id int64) MeetingLinkRef {
 				return MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}}
 			}
-			_, err := st.DecideMeetingLinkContext(t.Context(), ref(ids[0]), ref(ids[3]), "link")
+			_, err := st.DecideMeetingLinkContext(t.Context(), ref(ids[0]), ref(ids[3]), tc.decision)
 			r.NoError(err)
+			if tc.timing == "before" {
+				_, err = st.DecideMeetingLinkContext(t.Context(), ref(ids[2]), ref(ids[3]), "link")
+				r.NoError(err)
+			}
 			_, err = st.MergeDuplicates(t.Context(), ids[1], []int64{ids[0]}, "first")
 			r.NoError(err)
+			if tc.firstUndo != "" && tc.timing == "" {
+				record, err := st.MeetingRecordContext(t.Context(), ref(ids[3]))
+				r.NoError(err)
+				if tc.decision == "unlink" {
+					r.Equal([]int64{ids[3]}, record.MessageIDs)
+				} else {
+					r.Equal([]int64{ids[1], ids[3]}, record.MessageIDs)
+				}
+			}
 			_, err = st.MergeDuplicates(t.Context(), ids[2], []int64{ids[1]}, "second")
 			r.NoError(err)
-			if purge == "source" {
+			if tc.timing == "after" {
+				_, err = st.DecideMeetingLinkContext(t.Context(), ref(ids[2]), ref(ids[3]), "link")
+				r.NoError(err)
+			}
+			switch tc.purge {
+			case "source":
 				err = st.RemoveSource(sourceID)
-			} else if purge == "source-serialized" {
+			case "source-serialized":
 				_, _, err = st.RemoveSourceSerialized(t.Context(), sourceID)
-			} else if purge == "gc" {
+			case "gc":
 				if st.IsPostgreSQL() {
 					t.Skip("archive garbage collection is SQLite-only")
 				}
@@ -918,26 +830,62 @@ func TestMeetingLinkDecisionSurvivesPermanentDuplicateDeletion(t *testing.T) {
 				var remaining int
 				r.NoError(st.db.QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE id=?`, ids[0]).Scan(&remaining))
 				r.Zero(remaining)
-			} else if purge == "all" {
+			case "all":
 				_, _, err = st.DeleteAllDedupedContext(t.Context())
-			} else {
-				_, err = st.DeleteDedupedBatchContext(t.Context(), purge)
+			case "first", "second":
+				_, err = st.DeleteDedupedBatchContext(t.Context(), tc.purge)
 			}
 			r.NoError(err)
 			record, err := st.MeetingRecordContext(t.Context(), ref(ids[3]))
 			r.NoError(err)
-			r.Equal([]int64{ids[2], ids[3]}, record.MessageIDs)
-			if purge == "first" || purge == "gc" || purge == "source" || purge == "source-serialized" {
-				_, err = st.UndoDedup(t.Context(), "second")
-				r.NoError(err)
-				record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
-				r.NoError(err)
+			if tc.decision == "unlink" {
+				r.Equal([]int64{ids[3]}, record.MessageIDs)
+			} else {
+				r.Equal([]int64{ids[2], ids[3]}, record.MessageIDs)
+			}
+			firstUndo := tc.firstUndo
+			if tc.purge == "first" || tc.purge == "gc" || tc.purge == "source" || tc.purge == "source-serialized" {
+				firstUndo = "second"
+			}
+			if tc.purge == "second" {
+				firstUndo = "first"
+			}
+			if firstUndo == "" {
+				return
+			}
+			_, err = st.UndoDedup(t.Context(), firstUndo)
+			r.NoError(err)
+			record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
+			r.NoError(err)
+			if tc.timing != "" {
+				r.Equal([]int64{ids[0], ids[2], ids[3]}, record.MessageIDs)
+				return
+			}
+			if tc.decision == "unlink" {
+				if firstUndo == "first" {
+					r.Equal([]int64{ids[2], ids[3]}, record.MessageIDs)
+				} else {
+					r.Equal([]int64{ids[3]}, record.MessageIDs)
+				}
+			} else if firstUndo == "first" {
+				r.Equal([]int64{ids[0], ids[3]}, record.MessageIDs)
+			} else {
 				r.Equal([]int64{ids[1], ids[3]}, record.MessageIDs)
-			} else if purge == "second" {
-				_, err = st.UndoDedup(t.Context(), "first")
-				r.NoError(err)
-				record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
-				r.NoError(err)
+			}
+			if tc.purge != "" {
+				return
+			}
+			remaining := "first"
+			if firstUndo == "first" {
+				remaining = "second"
+			}
+			_, err = st.UndoDedup(t.Context(), remaining)
+			r.NoError(err)
+			record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
+			r.NoError(err)
+			if tc.decision == "unlink" {
+				r.Equal([]int64{ids[1], ids[2], ids[3]}, record.MessageIDs)
+			} else {
 				r.Equal([]int64{ids[0], ids[3]}, record.MessageIDs)
 			}
 		})
@@ -988,7 +936,7 @@ func TestMeetingLinkDecisionConcurrentClearAndDedup(t *testing.T) {
 			select {
 			case <-ticker.C:
 			case <-ctx.Done():
-				t.Fatal("decision and dedup did not overlap")
+				requirements.FailNow("decision and dedup did not overlap")
 			}
 		}
 	}
@@ -1023,70 +971,68 @@ func TestMeetingLinkDecisionConcurrentClearAndDedup(t *testing.T) {
 }
 
 func TestMeetingLinkDecisionInterleavedCleanupUndo(t *testing.T) {
-	for _, tc := range []struct {
-		name, purge string
-		reset       bool
-	}{
-		{"purge_intermediate", "second", false}, {"purge_opposite", "opposite", false}, {"reset_after_purge", "opposite", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			var ids []int64
-			for _, name := range []string{"history-a", "history-b", "history-c", "history-x", "history-y"} {
-				_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
-				ids = append(ids, id)
-			}
-			ref := func(i int) MeetingLinkRef {
-				return MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: ids[i]}}
-			}
-			_, err := st.DecideMeetingLinkContext(t.Context(), ref(0), ref(3), "link")
-			r.NoError(err)
-			_, err = st.MergeDuplicates(t.Context(), ids[1], []int64{ids[0]}, "first")
-			r.NoError(err)
-			if tc.purge == "opposite" {
-				_, err = st.MergeDuplicates(t.Context(), ids[2], []int64{ids[1]}, "second")
-				r.NoError(err)
-			}
-			_, err = st.MergeDuplicates(t.Context(), ids[4], []int64{ids[3]}, "opposite")
-			r.NoError(err)
-			if tc.purge == "second" {
-				_, err = st.MergeDuplicates(t.Context(), ids[2], []int64{ids[1]}, "second")
-				r.NoError(err)
-			}
-			_, err = st.DeleteDedupedBatchContext(t.Context(), tc.purge)
-			r.NoError(err)
-			if tc.reset {
-				_, err = st.DecideMeetingLinkContext(t.Context(), ref(2), ref(4), "clear")
-				r.NoError(err)
-			}
-			_, err = st.UndoDedup(t.Context(), "first")
-			r.NoError(err)
-			record, err := st.MeetingRecordContext(t.Context(), ref(4))
-			r.NoError(err)
-			if tc.reset {
-				r.Equal([]int64{ids[4]}, record.MessageIDs)
-			} else {
-				r.Equal([]int64{ids[0], ids[4]}, record.MessageIDs)
-			}
-			remaining := "second"
-			if tc.purge == "second" {
-				remaining = "opposite"
-			}
-			_, err = st.UndoDedup(t.Context(), remaining)
-			r.NoError(err)
-			seed := 4
-			if remaining == "opposite" {
-				seed = 3
-			}
-			record, err = st.MeetingRecordContext(t.Context(), ref(seed))
-			r.NoError(err)
-			if tc.reset {
-				r.Equal([]int64{ids[seed]}, record.MessageIDs)
-			} else {
-				r.Equal([]int64{ids[0], ids[seed]}, record.MessageIDs)
-			}
-		})
+	for _, tc := range []struct{ name, purge string }{{"purge_intermediate", "second"}, {"purge_opposite", "opposite"}} {
+		t.Run(tc.name, func(t *testing.T) { checkMeetingInterleavedCleanupUndo(t, tc.purge, false) })
+	}
+}
+
+func checkMeetingInterleavedCleanupUndo(t *testing.T, purge string, reset bool) {
+	t.Helper()
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	var ids []int64
+	for _, name := range []string{"history-a", "history-b", "history-c", "history-x", "history-y"} {
+		_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
+		ids = append(ids, id)
+	}
+	ref := func(i int) MeetingLinkRef {
+		return MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: ids[i]}}
+	}
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(0), ref(3), "link")
+	r.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), ids[1], []int64{ids[0]}, "first")
+	r.NoError(err)
+	if purge == "opposite" {
+		_, err = st.MergeDuplicates(t.Context(), ids[2], []int64{ids[1]}, "second")
+		r.NoError(err)
+	}
+	_, err = st.MergeDuplicates(t.Context(), ids[4], []int64{ids[3]}, "opposite")
+	r.NoError(err)
+	if purge == "second" {
+		_, err = st.MergeDuplicates(t.Context(), ids[2], []int64{ids[1]}, "second")
+		r.NoError(err)
+	}
+	_, err = st.DeleteDedupedBatchContext(t.Context(), purge)
+	r.NoError(err)
+	if reset {
+		_, err = st.DecideMeetingLinkContext(t.Context(), ref(2), ref(4), "clear")
+		r.NoError(err)
+	}
+	_, err = st.UndoDedup(t.Context(), "first")
+	r.NoError(err)
+	record, err := st.MeetingRecordContext(t.Context(), ref(4))
+	r.NoError(err)
+	if reset {
+		r.Equal([]int64{ids[4]}, record.MessageIDs)
+	} else {
+		r.Equal([]int64{ids[0], ids[4]}, record.MessageIDs)
+	}
+	remaining := "second"
+	if purge == "second" {
+		remaining = "opposite"
+	}
+	_, err = st.UndoDedup(t.Context(), remaining)
+	r.NoError(err)
+	seed := 4
+	if remaining == "opposite" {
+		seed = 3
+	}
+	record, err = st.MeetingRecordContext(t.Context(), ref(seed))
+	r.NoError(err)
+	if reset {
+		r.Equal([]int64{ids[seed]}, record.MessageIDs)
+	} else {
+		r.Equal([]int64{ids[0], ids[seed]}, record.MessageIDs)
 	}
 }
 
