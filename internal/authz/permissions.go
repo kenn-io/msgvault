@@ -34,45 +34,35 @@ const (
 
 type Role string
 
-const (
-	RoleViewer Role = "viewer"
-	RoleMember Role = "member"
-	RoleAdmin  Role = "admin"
-)
+const RoleAdmin Role = "admin"
 
-type permissionDefinition struct {
-	minimumRole Role
-	grantable   bool
-}
-
-// Keep role membership and grantability separate: administrative capabilities
-// must not become valid grant permissions merely because their name is known.
-var permissionDefinitions = map[Permission]permissionDefinition{
-	PermissionVerificationRead:  {RoleViewer, true},
-	PermissionSearchRead:        {RoleViewer, true},
-	PermissionMessageRead:       {RoleViewer, true},
-	PermissionAttachmentRead:    {RoleViewer, true},
-	PermissionStatsRead:         {RoleViewer, true},
-	PermissionCalendarRead:      {RoleViewer, true},
-	PermissionCalendarEventRead: {RoleViewer, true},
-	PermissionPersonRead:        {RoleViewer, false},
-	PermissionSystemRead:        {RoleViewer, false},
-	PermissionCLIRead:           {RoleViewer, false},
-	PermissionCurationWrite:     {RoleMember, false},
-	PermissionDraftCreate:       {RoleMember, true},
-	PermissionDraftEdit:         {RoleMember, true},
-	PermissionDraftDelete:       {RoleMember, true},
-	PermissionCalendarWrite:     {RoleMember, true},
-	PermissionCalendarInvite:    {RoleMember, true},
-	PermissionPersonEdit:        {RoleMember, false},
-	PermissionPersonMerge:       {RoleMember, false},
-	PermissionCardDAVWrite:      {RoleMember, false},
-	PermissionCollectionsWrite:  {RoleAdmin, false},
-	PermissionArchiveExport:     {RoleAdmin, false},
-	PermissionDeletionStage:     {RoleAdmin, false},
-	PermissionSQLRead:           {RoleAdmin, false},
-	PermissionArchiveAdmin:      {RoleAdmin, false},
-	PermissionGrantManage:       {RoleAdmin, false},
+// Known capabilities are separate from the subset that grants may carry.
+var permissionDefinitions = map[Permission]bool{
+	PermissionVerificationRead:  true,
+	PermissionSearchRead:        true,
+	PermissionMessageRead:       true,
+	PermissionAttachmentRead:    true,
+	PermissionStatsRead:         true,
+	PermissionCalendarRead:      true,
+	PermissionCalendarEventRead: true,
+	PermissionPersonRead:        false,
+	PermissionSystemRead:        false,
+	PermissionCLIRead:           false,
+	PermissionCurationWrite:     false,
+	PermissionDraftCreate:       true,
+	PermissionDraftEdit:         true,
+	PermissionDraftDelete:       true,
+	PermissionCalendarWrite:     true,
+	PermissionCalendarInvite:    true,
+	PermissionPersonEdit:        false,
+	PermissionPersonMerge:       false,
+	PermissionCardDAVWrite:      false,
+	PermissionCollectionsWrite:  false,
+	PermissionArchiveExport:     false,
+	PermissionDeletionStage:     false,
+	PermissionSQLRead:           false,
+	PermissionArchiveAdmin:      false,
+	PermissionGrantManage:       false,
 }
 
 type PermissionSet map[Permission]struct{}
@@ -89,18 +79,5 @@ func KnownPermission(name string) (Permission, bool) {
 
 // Grantable reports whether the permission may be issued to an agent grant.
 func Grantable(permission Permission) bool {
-	return permissionDefinitions[permission].grantable
-}
-
-func roleRank(role Role) int {
-	switch role {
-	case RoleViewer:
-		return 1
-	case RoleMember:
-		return 2
-	case RoleAdmin:
-		return 3
-	default:
-		return 0
-	}
+	return permissionDefinitions[permission]
 }

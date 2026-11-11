@@ -6,33 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestRoleAuthority(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		role                  Role
-		read, curate, operate bool
-	}{
-		{"", false, false, false},
-		{"unknown", false, false, false},
-		{RoleViewer, true, false, false},
-		{RoleMember, true, true, false},
-		{RoleAdmin, true, true, true},
-	} {
-		t.Run(string(tc.role), func(t *testing.T) {
-			p := Principal{Role: tc.role}
-			for _, perm := range []Permission{PermissionSearchRead, PermissionMessageRead, PermissionAttachmentRead, PermissionStatsRead, PermissionCalendarRead, PermissionCalendarEventRead, PermissionPersonRead, PermissionSystemRead, PermissionCLIRead} {
-				assert.Equal(t, tc.read, p.Has(perm), "%s", perm)
-			}
-			for _, perm := range []Permission{PermissionCurationWrite, PermissionDraftCreate, PermissionDraftEdit, PermissionDraftDelete, PermissionCalendarWrite, PermissionCalendarInvite, PermissionPersonEdit, PermissionPersonMerge, PermissionCardDAVWrite} {
-				assert.Equal(t, tc.curate, p.Has(perm), "%s", perm)
-			}
-			for _, perm := range []Permission{PermissionCollectionsWrite, PermissionArchiveExport, PermissionDeletionStage, PermissionSQLRead, PermissionArchiveAdmin, PermissionGrantManage} {
-				assert.Equal(t, tc.operate, p.Has(perm), "%s", perm)
-			}
-		})
-	}
-}
-
 func TestExplicitAuthorityIsNotARole(t *testing.T) {
 	assert := assert.New(t)
 	t.Parallel()

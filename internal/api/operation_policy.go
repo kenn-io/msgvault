@@ -2,8 +2,7 @@ package api
 
 import "go.kenn.io/msgvault/internal/authz"
 
-// OperationPolicy separates role authority from existing credential contracts.
-// Mixed-action operations need further handler checks before role admission.
+// OperationPolicy classifies capabilities and preserves existing credential admission.
 type OperationPolicy struct {
 	Permission             authz.Permission
 	AgentReadPermission    authz.Permission

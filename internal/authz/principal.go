@@ -29,10 +29,10 @@ type Principal struct {
 }
 
 func (p Principal) Has(permission Permission) bool {
-	definition, known := permissionDefinitions[permission]
+	_, known := permissionDefinitions[permission]
 	if !known {
 		return false
 	}
 	_, explicit := p.Permissions[permission]
-	return explicit || roleRank(p.Role) >= roleRank(definition.minimumRole)
+	return explicit || p.Role == RoleAdmin
 }

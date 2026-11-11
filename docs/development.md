@@ -598,14 +598,14 @@ remote clients. `TestEveryAPIV1OperationIsClassified` walks the registered
 client OpenAPI document, including hidden CLI routes, and rejects missing or
 stale entries.
 
-The table keeps role permissions separate from legacy credential admission.
+The table keeps capability classifications separate from credential admission.
 `AgentReadPermission` selects an existing grant-aware read path. `Delegated`
 admits other grant-aware handlers, which still check their selected resources.
-The remote-client fields preserve the remote CLI contract. A role permission
-alone does not admit either credential class.
+The remote-client fields preserve the remote CLI contract. A capability alone
+does not admit either credential class.
 
 Mixed-action operations need action, target and sender checks before broader
-role admission. Until those exist, keep them administrative.
+admission. Until those exist, keep them administrative.
 
 ## SQL Guidelines
 
