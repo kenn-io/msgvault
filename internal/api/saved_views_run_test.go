@@ -15,6 +15,8 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/explorecatalog"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/savedview"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -136,41 +138,35 @@ func TestRunSavedViewExecutesGroupsAtTheFirstChainLevel(t *testing.T) {
 }
 
 func TestRunSavedViewCalendarGroupsUseRequestedTimezoneAndNewestFirst(t *testing.T) {
-	messages := `(1::BIGINT, 1::BIGINT, 'm1', 101::BIGINT, 'Old one', '', TIMESTAMP '2024-12-01 12:00:00', 1::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2024, 12),
-		(2::BIGINT, 1::BIGINT, 'm2', 102::BIGINT, 'Old two', '', TIMESTAMP '2024-12-02 12:00:00', 1::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2024, 12),
-		(3::BIGINT, 1::BIGINT, 'm3', 103::BIGINT, 'Boundary', '', TIMESTAMP '2026-01-01 02:00:00', 1::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 1),
-		(4::BIGINT, 1::BIGINT, 'm4', 104::BIGINT, 'New one', '', TIMESTAMP '2026-07-01 12:00:00', 1::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7),
-		(5::BIGINT, 1::BIGINT, 'm5', 105::BIGINT, 'New two', '', TIMESTAMP '2026-07-02 12:00:00', 1::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`
-	engine, _ := newExploreDuckDBFixtureWithMessages(t, messages, 5)
 	st := testutil.NewSQLiteTestStore(t)
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, groupResult: &query.ExploreGroupResponse{
+		Rows: []query.ExploreGroupRow{{Key: "2026-07", Count: 1}}, TotalCount: 2, CacheRevision: "cache-1",
+	}}
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: &mockStore{}, SavedViewStore: st, Engine: engine, Logger: testLogger()})
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
-	for _, tc := range []struct {
-		dimension, localFirst, localSecond, utcFirst, utcSecond string
-	}{
-		{"month", "2026-07", "2025-12", "2026-07", "2026-01"},
-		{"year", "2026", "2025", "2026", "2024"},
-	} {
-		t.Run(tc.dimension, func(t *testing.T) {
-			view := createRunTestView(t, st, tc.dimension, `{"grouping":["`+tc.dimension+`"]}`)
-			for _, zone := range []struct{ name, field, first, second string }{
-				{"local", `,"timezone":"America/New_York"`, tc.localFirst, tc.localSecond},
-				{"default UTC", "", tc.utcFirst, tc.utcSecond},
-			} {
-				t.Run(zone.name, func(t *testing.T) {
-					requirements := require.New(t)
-					assertions := assert.New(t)
-					response, page := runSavedView(t, srv, view.ID, `{"limit":1`+zone.field+`}`)
-					requirements.Equal(http.StatusOK, response.Code, response.Body.String())
-					requirements.Len(page.Groups, 1)
-					assertions.Equal(zone.first, page.Groups[0].Key)
-					requirements.NotEmpty(page.NextCursor)
-					nextResponse, next := runSavedView(t, srv, view.ID, `{"limit":1,"cursor":"`+page.NextCursor+`"`+zone.field+`}`)
-					requirements.Equal(http.StatusOK, nextResponse.Code, nextResponse.Body.String())
-					requirements.Len(next.Groups, 1)
-					assertions.Equal(zone.second, next.Groups[0].Key)
-				})
-			}
+	for _, dimension := range []string{"month", "year"} {
+		t.Run(dimension, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			view := createRunTestView(t, st, dimension, `{"grouping":["`+dimension+`"]}`)
+			response, page := runSavedView(t, srv, view.ID, `{"limit":1,"timezone":"America/New_York"}`)
+			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+			assertions.Equal("America/New_York", engine.groupRequest.Timezone)
+			assertions.Equal(query.SortSpec{Field: "key", Direction: "desc"}, engine.groupRequest.Sort)
+			requirements.NotEmpty(page.NextCursor)
+			response, _ = runSavedView(t, srv, view.ID, `{"limit":1,"timezone":"America/New_York","cursor":"`+page.NextCursor+`"}`)
+			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+			assertions.Equal(1, engine.groupRequest.Page.Offset)
+			response, _ = runSavedView(t, srv, view.ID, `{"limit":1,"timezone":"UTC","cursor":"`+page.NextCursor+`"}`)
+			assertions.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+			response, _ = runSavedView(t, srv, view.ID, `{"limit":1}`)
+			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+			assertions.Empty(engine.groupRequest.Timezone, "the engine defaults an omitted timezone to UTC")
+			engine.peopleErr = query.ErrInvalidExploreRequest
+			response, _ = runSavedView(t, srv, view.ID, `{"timezone":"Invalid/Zone"}`)
+			assertions.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+			assertions.Equal("Invalid/Zone", engine.groupRequest.Timezone)
+			engine.peopleErr = nil
 		})
 	}
 }

@@ -204,7 +204,7 @@ describe('EverythingWorkspace', () => {
     const view = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
       const grid = await screen.findByRole('grid', { name: 'Files grouped by kind' });
-      await fireEvent.pointerDown(await within(grid).findByText('File'));
+      await fireEvent.click(await within(grid).findByText('File'));
       expect(state.current.selectedRow).toBeNull();
       expect(screen.queryByText(/selected group is not available/i)).toBeNull();
       expect(within(grid).queryByRole('button', { name: 'Show items in File' })).toBeNull();
@@ -347,11 +347,14 @@ describe('EverythingWorkspace', () => {
       const path = new URL(request.url).pathname;
       if (path.endsWith('/coverage')) return Response.json({ status: 'ready', eligible_count: 1, embedded_count: 1, percentage: 100, vector_generation: 7, cache_revision: 'cache-1', actions: [] });
       if (path.endsWith('/explore/files')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1' });
-      if (path.endsWith('/explore/groups')) return Response.json({
-        rows: [{ key, label, count: 8, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
-        overview: { activity: [{ bucket: '2026-07', count: 8 }], co_participants: [{ key: '1', label: 'Overview Person', count: 1 }] },
-        total_count: 1, cache_revision: 'cache-1', search_provenance: { vector_generation: 7 }, candidate_snapshot_id: 'table-snapshot'
-      });
+      if (path.endsWith('/explore/groups')) {
+        const body = await request.clone().json();
+        return Response.json({
+          rows: [{ key, label, count: 8, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+          ...(body.group_key ? { overview: { activity: [{ bucket: '2026-07', count: 8 }], co_participants: [{ key: '1', label: 'Overview Person', count: 1 }] } } : {}),
+          total_count: 1, cache_revision: 'cache-1', search_provenance: { vector_generation: 7 }, candidate_snapshot_id: 'table-snapshot'
+        });
+      }
       if (path === '/api/v1/explore') {
         const body = await request.clone().json();
         expect(body).toMatchObject({ query: 'planning', search_mode: searchMode, filters: [{ dimension, values: [key] }], limit: 1 });
@@ -405,7 +408,8 @@ describe('EverythingWorkspace', () => {
       if (path.endsWith('/explore/groups')) {
         const body = await request.clone().json();
         const rows = [{ key: '1', label: 'First Person', count: 1 }, { key: '2', label: 'Second Person', count: 2 }];
-        return Response.json({ rows: body.group_key ? rows.filter(row => row.key === body.group_key) : rows, total_count: 2, cache_revision: 'cache-1', search_provenance: { vector_generation: 7 }, candidate_snapshot_id: 'table-snapshot' });
+        const selected = rows.find(row => row.key === body.group_key);
+        return Response.json({ rows: body.group_key ? rows.filter(row => row.key === body.group_key) : rows, ...(selected ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: selected.count }], co_participants: [] } } : {}), total_count: body.group_key ? 1 : 2, cache_revision: 'cache-1', search_provenance: { vector_generation: 7 }, candidate_snapshot_id: 'table-snapshot' });
       }
       if (path === '/api/v1/explore') {
         const body = await request.clone().json();
@@ -1779,11 +1783,14 @@ describe('EverythingWorkspace', () => {
       const path = new URL(request.url).pathname;
       const meetingResponse = meetingFixtureResponse(path);
       if (meetingResponse) return meetingResponse;
-      if (path.endsWith('/groups')) return Response.json({
-        rows: [{ key, label, count: 3, estimated_bytes: 512, latest_at: '2026-07-18T12:00:00Z' }],
-        overview: { first_at: '2026-07-18T12:00:00Z', activity: [{ bucket: '2026-07', count: 3 }], co_participants: [] },
-        total_count: 1, cache_revision: 'cache-1', search_provenance: {},
-      });
+      if (path.endsWith('/groups')) {
+        const body = await request.clone().json();
+        return Response.json({
+          rows: [{ key, label, count: 3, estimated_bytes: 512, latest_at: '2026-07-18T12:00:00Z' }],
+          ...(body.group_key ? { overview: { first_at: '2026-07-18T12:00:00Z', activity: [{ bucket: '2026-07', count: 3 }], co_participants: [] } } : {}),
+          total_count: 1, cache_revision: 'cache-1', search_provenance: {},
+        });
+      }
       if (path.endsWith('/explore/files')) {
         fileRequests.push(request);
         return Response.json({

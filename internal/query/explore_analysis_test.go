@@ -906,9 +906,6 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 				assert.Equal(row.Count, count)
 				assert.False(detail.Overview.FirstAt.IsZero())
 				assert.False(detail.Overview.FirstAt.After(row.LatestAt))
-				if dimension == "month" && row.Key == "2024-05" {
-					assert.Equal(at.Add(-47*time.Hour), detail.Overview.FirstAt)
-				}
 				for _, co := range detail.Overview.CoParticipants {
 					assert.NotEqual(strconv.FormatInt(owner, 10), co.Key)
 					if dimension == "participant" {
@@ -925,5 +922,6 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 	month := ExploreGroupRequest{Dimension: "month", Timezone: "America/New_York", GroupKey: "2024-05"}
 	detail, err := engine.ExploreGroups(t.Context(), month)
 	requirements.NoError(err)
+	assertions.Equal(at.Add(-47*time.Hour), detail.Overview.FirstAt)
 	assertions.Equal([]ExploreGroupActivity{{Bucket: "2024-05-29", Count: 1}, {Bucket: "2024-05-30", Count: 1}, {Bucket: "2024-05-31", Count: 1}}, detail.Overview.Activity)
 }

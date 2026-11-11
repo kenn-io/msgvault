@@ -288,7 +288,6 @@ describe('GroupTable', () => {
   });
 
   it('marks the inspected aggregate independently from keyboard focus', () => {
-    const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
     render(GroupTable, {
       rows,
       dimension: 'source',
@@ -298,7 +297,6 @@ describe('GroupTable', () => {
     });
     expect(screen.getByRole('row', { name: /Example source/ }).getAttribute('aria-current')).toBeNull();
     expect(screen.getByRole('row', { name: /Second source/ }).getAttribute('aria-current')).toBe('true');
-    clientWidth.mockRestore();
   });
   it('keeps a later month page share relative to every grouped item', () => {
     const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);

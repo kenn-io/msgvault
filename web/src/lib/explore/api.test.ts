@@ -125,7 +125,7 @@ describe('ExploreAPI routing', () => {
     });
   });
 
-  it('defaults Day to UTC and Month to the browser timezone', async () => {
+  it('sets group timezones and newest-first calendar sorting', async () => {
     vi.stubEnv('TZ', 'America/Chicago');
     try {
       const requests: Request[] = [];
