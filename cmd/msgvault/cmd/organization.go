@@ -532,7 +532,7 @@ func init() {
 	}
 	organizationListCmd.Flags().Int64Var(&organizationLimit, "limit", 0, "Maximum results")
 	organizationListCmd.Flags().Int64Var(&organizationOffset, "offset", 0, "Results to skip")
-	organizationListCmd.Flags().StringVar(&organizationQuery, "query", "", "Normalized-name search")
+	organizationListCmd.Flags().StringVar(&organizationQuery, "query", "", "Canonical name or current alias prefix")
 	organizationListCmd.Flags().BoolVar(&organizationIncludeRetired, "include-retired", false, "Include retired organizations")
 	for _, command := range []*cobra.Command{organizationCreateCmd, organizationSetCmd} {
 		command.Flags().StringVar(&organizationKind, "kind", "", "Organization kind")
