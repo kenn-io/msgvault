@@ -457,7 +457,7 @@ func TestEmptyCommitmentScanKeepsProviderFrontierAndWaitsForNewWork(t *testing.T
 }
 
 func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
-	f, commitment := newCommitmentAgendaReceiptFixture(t)
+	f, commitment, persist := newCommitmentAgendaReceiptFixture(t)
 	st, now := f.store, f.request.CompletedAt
 	r, a := require.New(t), assert.New(t)
 	ctx := t.Context()
@@ -481,22 +481,19 @@ func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
 	candidates, err = st.ListCommitmentAgendaCandidatesContext(ctx, now, 1)
 	r.NoError(err)
 	a.Empty(candidates, "a deferred promise waits for its retry interval")
-	_, persist := newCommitmentTestConversation(t, f)
 	freshMessage := persist("fresh-agenda-promise", "I will book the venue.", -30*time.Minute)
 	f = nextCommitmentTestAttempt(t, f, "-fresh-agenda")
 	applyCommitmentTestSources(t, f, cfg.Commitments)
 	candidates, err = st.ListCommitmentAgendaCandidatesContext(ctx, now, 1)
 	r.NoError(err)
 	r.Len(candidates, 1)
-	a.Equal(freshMessage, candidates[0].AnchorMessageID, "fresh promises precede deferred retries")
+	a.Equal(freshMessage, candidates[0].AnchorMessageID, "a full fresh batch needs no deferred retry")
 	fresh := candidates[0]
 	candidates, err = st.ListCommitmentAgendaCandidatesContext(ctx, now.Add(commitmentAgendaDeferFor), 2)
 	r.NoError(err)
 	r.Len(candidates, 2)
 	a.Equal(fresh.ID, candidates[0].ID)
 	a.Equal(commitment.ID, candidates[1].ID, "a mature deferred promise returns after fresh work")
-	_, err = st.DecidePersonCommitmentContext(ctx, fresh.ID, LoopStateDone, nil, now)
-	r.NoError(err)
 	start, end := int(commitment.Start), int(commitment.End)
 	evidence, err := kataevidence.New(st).Prepare(ctx, []kataevidence.Selector{{
 		Kind: "message", MessageID: commitment.AnchorMessageID, StartRune: &start, EndRune: &end,
@@ -642,7 +639,7 @@ func testCommitmentConsumedCompletion(t *testing.T, detached bool) {
 	a.Equal(completed, items[0].Fulfilment.Quote)
 }
 
-func newCommitmentAgendaReceiptFixture(t *testing.T) (personSweepApplyFixture, PersonCommitment) {
+func newCommitmentAgendaReceiptFixture(t *testing.T) (personSweepApplyFixture, PersonCommitment, func(string, string, time.Duration) int64) {
 	t.Helper()
 	r := require.New(t)
 	f := newPersonSweepApplyFixture(t, "agenda-receipt", false)
@@ -660,7 +657,7 @@ func newCommitmentAgendaReceiptFixture(t *testing.T) (personSweepApplyFixture, P
 	items, err := f.store.ListPersonCommitmentsContext(t.Context(), f.personID, f.request.CompletedAt, 5, false)
 	r.NoError(err)
 	r.Len(items, 1)
-	return f, items[0]
+	return f, items[0], persist
 }
 
 func TestCommitmentRequoteReconcilesLocators(t *testing.T) {
