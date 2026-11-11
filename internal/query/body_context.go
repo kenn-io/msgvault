@@ -925,8 +925,11 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 		if lexemeCount <= 1 {
 			for _, span := range item.spans {
 				if bodyContextSpanIsSafe(chunk, item.spanInChunk(span), state) {
-					accepted[parsedIndex] = []bodyContextSpan{span}
-					break
+					if len(accepted[parsedIndex]) == 0 {
+						accepted[parsedIndex] = []bodyContextSpan{span}
+					} else if !bodyContextSpanInSnippet(item.plain, accepted[parsedIndex], span) {
+						parsed[parsedIndex].truncated = true
+					}
 				}
 			}
 			if len(accepted[parsedIndex]) == 0 {
@@ -940,6 +943,7 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 			for width := 1; width <= lexemeCount && start+width <= len(item.spans); width++ {
 				if len(candidates) >= messageBodyContextMaxCandidates {
 					uncertain[key] = struct{}{}
+					parsed[parsedIndex].truncated = true
 					foundBudget = true
 					break
 				}
@@ -956,6 +960,7 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 				fragment := item.plain[fragmentStart:fragmentEnd]
 				if totalCandidateBytes+len(fragment) > messageBodyContextMaxCandidateBytes {
 					uncertain[key] = struct{}{}
+					parsed[parsedIndex].truncated = true
 					foundBudget = true
 					break
 				}
@@ -1000,7 +1005,12 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 			return nil, nil, fmt.Errorf("scan PostgreSQL body-context validation: %w", err)
 		}
 		candidate := candidates[candidateID]
-		if _, alreadyAccepted := accepted[candidate.parsedIndex]; alreadyAccepted {
+		if first := accepted[candidate.parsedIndex]; len(first) > 0 {
+			for _, span := range candidate.spans {
+				if !bodyContextSpanInSnippet(parsed[candidate.parsedIndex].plain, first, span) {
+					parsed[candidate.parsedIndex].truncated = true
+				}
+			}
 			continue
 		}
 		accepted[candidate.parsedIndex] = candidate.spans
@@ -1017,6 +1027,11 @@ func (e *SQLiteEngine) validatePostgresBodyContextCandidates(
 		}
 	}
 	return accepted, uncertain, nil
+}
+
+func bodyContextSpanInSnippet(body string, first []bodyContextSpan, span bodyContextSpan) bool {
+	start, end := bodyContextWindow(len(body), first[0].start, min(first[0].end-first[0].start, MessageBodyContextSnippetBytes), MessageBodyContextSnippetBytes)
+	return span.start >= start && span.end <= end
 }
 
 func parseMarkedBodyContext(

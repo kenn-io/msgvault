@@ -6,10 +6,31 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestStoreRebuildFTSMergedRecipientAddresses(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	old := f.EnsureParticipant("old.alias@example.com", "", "example.com")
+	kept := f.EnsureParticipant("kept@example.net", "", "example.net")
+	id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message:    &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, MessageType: store.MessageTypeEmail, SourceMessageID: "merged-recipient"},
+		Recipients: []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{old}, EmailAddresses: []string{"old.alias@example.com"}}},
+	})
+	require.NoError(err)
+	require.NoError(f.Store.MergeParticipantsContext(t.Context(), old, kept))
+	_, err = f.Store.RebuildFTS(nil)
+	require.NoError(err)
+	for _, term := range []string{"old.alias@example.com", "kept@example.net"} {
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err)
+		require.Equal([]int64{id}, ids, term)
+	}
+}
 
 // assertFTSContains verifies that exactly wantCount messages match the given
 // term through the SAME production search pipeline the app uses

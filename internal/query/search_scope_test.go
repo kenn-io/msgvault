@@ -490,6 +490,24 @@ func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 	}
 }
 
+func TestSearchMessageBodies_PostgreSQLReportsOmittedMatches(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL body context")
+	}
+	body := "needle " + strings.Repeat("padding ", 45) + "needle tail-marker"
+	createSearchScopeMessage(t, f, "overlapping-context", "ordinary", "ordinary", body, 0, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
+	require.True(ok)
+	result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"needle"}}, 10, 0)
+	require.NoError(err)
+	require.Len(result.Messages, 1)
+	assert.True(t, result.Messages[0].BodyContextSnippetsTruncated || strings.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "tail-marker"))
+}
+
 func TestSearchMessageBodies_IgnoresUnsearchableContextGroups(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

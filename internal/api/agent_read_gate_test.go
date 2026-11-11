@@ -74,7 +74,7 @@ func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
 			done := make(chan error, 1)
 			go func() { done <- srv.StartOnListener(listener) }()
 			t.Cleanup(func() {
-				_ = srv.Shutdown(context.Background())
+				_ = srv.Shutdown(context.WithoutCancel(t.Context()))
 				require.ErrorIs(<-done, http.ErrServerClosed)
 			})
 			require.NoError(srv.WaitStarted(t.Context()))
@@ -88,9 +88,14 @@ func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
 				require.FailNow("startup did not begin search indexing")
 			}
 			if cancelProbe {
-				ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
-				defer cancel()
-				require.NoError(srv.Shutdown(ctx))
+				shutdown := make(chan error, 1)
+				go func() { shutdown <- srv.Shutdown(t.Context()) }()
+				select {
+				case err := <-shutdown:
+					require.NoError(err)
+				case <-time.After(5 * time.Second):
+					require.FailNow("shutdown did not cancel the search probe")
+				}
 			}
 		})
 	}
