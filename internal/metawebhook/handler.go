@@ -23,12 +23,18 @@ import (
 	"go.kenn.io/kit/atomicfile"
 )
 
-// maxBodyBytes bounds one delivery. Meta batches at most 1,000 changes.
-const maxBodyBytes = 8 << 20
+const (
+	// maxBodyBytes bounds one delivery. Meta batches at most 1,000 changes.
+	maxBodyBytes = 8 << 20
+	// maxConcurrentBodies bounds the POST bodies read at once, so request
+	// bodies hold at most 64 MiB.
+	maxConcurrentBodies = 8
+)
 
 var (
 	appPattern       = regexp.MustCompile(`^[1-9][0-9]*$`)
 	challengePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	signaturePattern = regexp.MustCompile(`^sha256=[0-9A-Fa-f]{64}$`)
 )
 
 // App holds one Meta app's webhook credentials.
@@ -40,11 +46,14 @@ type App struct {
 // Handler serves /meta/webhook/{app_id}. GET answers Meta's subscription
 // challenge. POST verifies the delivery signature and writes the body to the
 // pending directory before it answers 200, so an accepted delivery survives a
-// restart.
+// restart. A POST without a well-formed signature header gets 401 before its
+// body is read, and one that finds maxConcurrentBodies bodies being read gets
+// 503 at once.
 type Handler struct {
 	apps    map[string]App
 	pending string
 	wake    func()
+	bodies  chan struct{}
 
 	// mu makes deliveries visible in the order of their names, so the
 	// worker never sees a newer delivery before an older one.
@@ -63,7 +72,7 @@ func NewHandler(apps map[string]App, pending string, wake func()) (*Handler, err
 	if err := os.MkdirAll(pending, 0o700); err != nil {
 		return nil, fmt.Errorf("create Meta webhook directory: %w", err)
 	}
-	return &Handler{apps: apps, pending: pending, wake: wake}, nil
+	return &Handler{apps: apps, pending: pending, wake: wake, bodies: make(chan struct{}, maxConcurrentBodies)}, nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +93,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = io.WriteString(w, challenge) // #nosec G705 -- challengePattern allows only letters, digits, '-' and '_'; the response is text/plain.
 	case http.MethodPost:
+		signature := r.Header.Get("X-Hub-Signature-256")
+		if !signaturePattern.MatchString(signature) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		select {
+		case h.bodies <- struct{}{}:
+			defer func() { <-h.bodies }()
+		default:
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 		if err != nil {
 			if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
@@ -93,7 +114,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if !validSignature(credentials.Secret, body, r.Header.Get("X-Hub-Signature-256")) {
+		if !validSignature(credentials.Secret, body, signature) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -47,6 +48,73 @@ func pendingFiles(t *testing.T, dir string) []string {
 	return names
 }
 
+// post serves one POST and returns the status. It runs on any goroutine.
+func post(t *testing.T, h *Handler, signature string, body io.Reader) int {
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/meta/webhook/9", body)
+	req.Header.Set("X-Hub-Signature-256", signature)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// readRecorder records whether the handler read the request body.
+type readRecorder struct {
+	io.Reader
+	read bool
+}
+
+func (r *readRecorder) Read(p []byte) (int, error) {
+	r.read = true
+	return r.Reader.Read(p)
+}
+
+func TestHandlerRefusesMalformedSignatureBeforeReadingBody(t *testing.T) {
+	sum := strings.Repeat("ab", sha256.Size)
+	for _, tc := range []struct{ name, header string }{
+		{"missing", ""},
+		{"short", "sha256=00"},
+		{"long", "sha256=" + sum + "00"},
+		{"not hex", "sha256=" + strings.Repeat("zz", sha256.Size)},
+		{"other algorithm", "sha1=" + sum},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := newTestHandler(t)
+			body := &readRecorder{Reader: strings.NewReader(`{"object":"page","entry":[]}`)}
+			assert.Equal(t, http.StatusUnauthorized, post(t, h, tc.header, body))
+			assert.False(t, body.read, "the body is not read")
+		})
+	}
+}
+
+func TestHandlerRefusesPostsAboveTheBodyLimit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		h, dir := newTestHandler(t)
+		writers := make([]*io.PipeWriter, maxConcurrentBodies)
+		codes := make(chan int, len(writers))
+		for i := range writers {
+			r, w := io.Pipe()
+			writers[i] = w
+			go func() { codes <- post(t, h, sign("other"), r) }()
+		}
+		synctest.Wait() // every slot holds a request blocked reading its body
+
+		body := `{"object":"page","entry":[]}`
+		extra := &readRecorder{Reader: strings.NewReader(body)}
+		assert.Equal(http.StatusServiceUnavailable, post(t, h, sign(body), extra))
+		assert.False(extra.read, "a refused request's body is not read")
+
+		for _, w := range writers {
+			_ = w.Close()
+		}
+		for range writers {
+			assert.Equal(http.StatusUnauthorized, <-codes)
+		}
+		assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)), "released slots admit new deliveries")
+		assert.Len(pendingFiles(t, dir), 1)
+	})
+}
+
 func TestHandlerChallenge(t *testing.T) {
 	h, _ := newTestHandler(t)
 	for _, tc := range []struct {
@@ -82,7 +150,7 @@ func TestHandlerStoresOnlySignedDeliveries(t *testing.T) {
 	assert.Equal(http.StatusUnauthorized, post("/meta/webhook/9", "", body))
 	assert.Equal(http.StatusUnauthorized, post("/meta/webhook/9", sign(body+" "), body))
 	assert.Equal(http.StatusNotFound, post("/meta/webhook/10", sign(body), body), "unknown app")
-	assert.Equal(http.StatusRequestEntityTooLarge, post("/meta/webhook/9", "sha256=00", strings.Repeat(" ", maxBodyBytes+1)))
+	assert.Equal(http.StatusRequestEntityTooLarge, post("/meta/webhook/9", sign(body), strings.Repeat(" ", maxBodyBytes+1)))
 	assert.Empty(pendingFiles(t, dir))
 
 	assert.Equal(http.StatusOK, post("/meta/webhook/9", sign(body), body))
