@@ -194,6 +194,7 @@ func (s *Store) loadCommitmentCandidates(ctx context.Context, filter commitmentL
 		}
 		if filter.agendaCandidates {
 			query += ` AND EXISTS (SELECT 1 FROM person_tracking pt WHERE pt.person_id = person_commitments.person_id)
+				AND ` + commitmentAgendaMatchingCompleteSQL("person_commitments.person_id") + `
 				AND NOT EXISTS (SELECT 1 FROM person_commitment_agenda a
 				WHERE a.commitment_id = person_commitments.id AND (a.state <> 'retired'
 					OR (a.attempted_at IS NOT NULL AND (a.target_key <> person_commitments.target_key OR a.quote <> person_commitments.quote))))`

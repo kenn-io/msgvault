@@ -35,6 +35,14 @@ const commitmentAgendaColumns = `commitment_id, target_key, idempotency_key, CAS
 	quote, state, attempted_at IS NOT NULL, COALESCE(issue_uid, ''), COALESCE(issue_ref, '')`
 const commitmentAgendaByID = `SELECT ` + commitmentAgendaColumns + ` FROM person_commitment_agenda WHERE commitment_id = ?`
 
+// Automatic filing waits for the existing bounded completion matching cycle.
+// Missing progress is pending; attempted receipts may still recover a write.
+func commitmentAgendaMatchingCompleteSQL(personID string) string {
+	return `EXISTS (SELECT 1 FROM person_commitment_frontiers f WHERE f.person_id = ` + personID + `
+		AND f.backfill_message_id < 0 AND f.anchor_after_id = 0
+		AND f.anchor_through_sequence = 0 AND f.anchor_backfill_id = 0)`
+}
+
 func scanCommitmentAgenda(row scanner) (CommitmentAgendaSuggestion, error) {
 	var item CommitmentAgendaSuggestion
 	var request string
@@ -109,7 +117,8 @@ func (s *Store) ListPendingCommitmentAgendaContext(ctx context.Context, now time
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+commitmentAgendaColumns+
 		` FROM person_commitment_agenda WHERE state = 'pending'
 		AND EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
-			AND EXISTS (SELECT 1 FROM person_tracking pt WHERE pt.person_id = c.person_id))
+			AND EXISTS (SELECT 1 FROM person_tracking pt WHERE pt.person_id = c.person_id)
+			AND (attempted_at IS NOT NULL OR `+commitmentAgendaMatchingCompleteSQL("c.person_id")+`))
 		AND (deferred_at IS NULL OR `+s.loopTimeKey("deferred_at")+` <= `+s.loopTimeKey("?")+`)
 		AND NOT EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
 			AND c.owner_state = 'snoozed' AND `+s.loopTimeKey("c.snoozed_until")+` > `+s.loopTimeKey("?")+`)
@@ -140,6 +149,7 @@ func (s *Store) MarkCommitmentAgendaAttemptContext(ctx context.Context, item Com
 	args := []any{s.dialect.TimestampParam(now), item.CommitmentID, item.IdempotencyKey, item.TargetKey, item.Quote, s.dialect.TimestampParam(now)}
 	if automatic {
 		query += ` AND EXISTS (SELECT 1 FROM person_tracking pt WHERE pt.person_id = c.person_id)
+			AND (person_commitment_agenda.attempted_at IS NOT NULL OR ` + commitmentAgendaMatchingCompleteSQL("c.person_id") + `)
 			AND (c.owner_state <> 'snoozed' OR ` + s.loopTimeKey("c.snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
 		args = append(args, s.dialect.TimestampParam(now))
 	}

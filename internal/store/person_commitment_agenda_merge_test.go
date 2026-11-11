@@ -186,7 +186,8 @@ func TestCommitmentAgendaReattachesExactPersonMergeCitation(t *testing.T) {
 			r.NoError(err)
 			a.Equal(frozen.IdempotencyKey, current.IdempotencyKey)
 			a.Equal(frozen.Request, current.Request)
-			if requote {
+			if requote || tc.collision {
+				// The approved old-target guard also retains a colliding winner.
 				a.Equal(CommitmentAgendaRetired, current.State)
 				a.Equal(frozen.TargetKey, current.TargetKey)
 			} else {
