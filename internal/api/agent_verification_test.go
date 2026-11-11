@@ -25,6 +25,8 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/verification"
 )
 
@@ -296,6 +298,14 @@ func TestAgentVerificationFields(t *testing.T) {
 			assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 			assertions.NotContains(w.Body.String(), "4829")
 			assertions.Contains(w.Body.String(), "[verification content masked]")
+			ownerReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), nil)
+			ownerReq.Header.Set("X-Api-Key", "owner")
+			ownerReq.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+			owner := httptest.NewRecorder()
+			srv.Router().ServeHTTP(owner, ownerReq)
+			assertions.Equal(http.StatusOK, owner.Code, owner.Body.String())
+			assertions.NotContains(owner.Body.String(), "4829")
+			assertions.Contains(owner.Body.String(), verification.Masked)
 		})
 	}
 }
@@ -387,10 +397,11 @@ func TestAgentVerificationAttachments(t *testing.T) {
 			}
 			backends := []bool{false}
 			endpoints := []string{"/attachments/" + hash + "/content"}
-			callers := []string{"masked", "owner-masked"}
+			callers := []string{"masked"}
 			if tc.name == "code.txt" || tc.name == "ordinary.txt" || strings.HasSuffix(tc.name, ".png") {
 				backends = append(backends, true)
 				endpoints = append(endpoints, "/cli/attachment?content_hash="+hash)
+				callers = append(callers, "owner-masked")
 				switch tc.name {
 				case "code.txt":
 					callers = append(callers, "reveal", "owner")
@@ -411,6 +422,9 @@ func TestAgentVerificationAttachments(t *testing.T) {
 				}
 				for _, endpoint := range endpoints {
 					for _, mode := range callers {
+						if mode == "owner-masked" && !strings.HasPrefix(endpoint, "/cli/attachment?") {
+							continue
+						}
 						req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1"+endpoint, nil)
 						requestCount++
 						req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", requestCount)
@@ -512,6 +526,7 @@ func TestOwnerVerificationRefusesOriginalAndSQL(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	for _, tc := range []struct{ method, path, body string }{
 		{http.MethodGet, "/api/v1/cli/message/original?id=1", ""},
+		{http.MethodGet, "/api/v1/cli/message/raw?id=1", ""},
 		{http.MethodPost, "/api/v1/query/archive", `{"sql":"SELECT 1"}`},
 	} {
 		req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(tc.body))
@@ -521,5 +536,44 @@ func TestOwnerVerificationRefusesOriginalAndSQL(t *testing.T) {
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
 		requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
+	}
+}
+
+func TestOwnerVerificationVectorResults(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	_, seed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "seed", "Ordinary", "Ordinary")
+	require.NoError(t, err)
+	_, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
+	require.NoError(t, err)
+	cfg := vector.Config{Embeddings: vector.EmbeddingsConfig{Model: "fake", Dimension: 4}}
+	backend := &fakeFusingBackend{
+		fakeVectorBackend: &fakeVectorBackend{
+			active:  &vector.Generation{ID: 7, Model: "fake", Dimension: 4, Fingerprint: cfg.GenerationFingerprint(), State: vector.GenerationActive},
+			loadVec: []float32{1, 0, 0, 0}, searchHits: []vector.Hit{{MessageID: id, Score: 0.9, Rank: 1}},
+		},
+		fusedHits: []vector.FusedHit{{MessageID: id, RRFScore: 0.9, VectorScore: 0.9}},
+	}
+	engine := hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{ExpectedFingerprint: cfg.GenerationFingerprint(), RRFK: 60, KPerSignal: 10})
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Backend: backend, HybridEngine: engine, VectorCfg: cfg, VectorStatus: VectorStatusReady, Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	for _, path := range []string{"/api/v1/search?q=verification&mode=vector", "/api/v1/search?q=verification&mode=hybrid", fmt.Sprintf("/api/v1/search/similar?message_id=%d", seed)} {
+		t.Run(path, func(t *testing.T) {
+			for _, withhold := range []bool{false, true} {
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+				req.Header.Set("X-Api-Key", "owner")
+				if withhold {
+					req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+				}
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, req)
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				if withhold {
+					assert.NotContains(t, w.Body.String(), "482913")
+					assert.Contains(t, w.Body.String(), verification.Masked)
+				} else {
+					assert.Contains(t, w.Body.String(), "482913")
+				}
+			}
+		})
 	}
 }

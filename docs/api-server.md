@@ -166,7 +166,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.2.0**.
+it is separate from the binary release version. The current schema is **5.3.0**.
+
+Schema 5.3.0 adds owner-requested verification withholding for canonical message reads, search rows and attachment downloads. Protected raw MIME and archive SQL requests are refused. See [verification content](#verification-content) for the header contract and its limits.
 
 Schema 5.2.0 adds open Kata issue search and optional task search queries.
 
@@ -3443,6 +3445,8 @@ MCP exposes the same response through `get_embeddings_status` on API 3.21.0 or n
 ## Verification content
 
 Delegated HTTP, CLI, and MCP message reads without `verification.read` and owner MCP reads by default replace detected verification messages' subjects, snippets, excerpts, bodies, conversation titles, and attachment filenames with `[verification content masked]`, and clear their HTML. Sender, date, labels, and IDs remain available. The modifier requires the operation's existing read permission and source grant. Stored messages and ordinary owner API reads stay unchanged.
+
+Authenticated owner clients can request this policy with `X-Msgvault-Verification: withhold`. Admitted API responses echo that header; clients must check the acknowledgement on every successful response. The contract covers canonical message detail, thread, list, keyword and vector search, attachment metadata and downloads, and the CLI raw and original MIME and archive SQL routes. Inline MIME parts and Explore are outside this contract even when a response echoes the header. Attachment hashes without associated metadata are refused because their MIME type, filename and parent cannot be classified.
 
 Owner MCP uses `--reveal-verification` to permit originals; native `/mcp` and `/mcp/writes` use `serve --mcp-reveal-verification`. Delegated grants cannot be widened by these flags. Protected standalone MCP requires daemon API 5.1.0 and checks acknowledgement on every successful request, including after reconnection. Protected original MIME exports and archive SQL return `verification_masked`.
 

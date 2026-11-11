@@ -30,6 +30,27 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"listCLIAccounts":  agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
 }
 
+// Owner snapshots are needed only where message content is classified.
+var ownerVerificationSnapshotOperations = map[string]bool{
+	"searchCLI": true, "searchMessages": true, "fastSearch": true, "deepSearch": true,
+	"filterMessages": true, "listMessages": true, "searchMessagesByDomains": true,
+	"getCLIMessageThread": true, "getMessage": true, "getCLIMessage": true,
+	"getAttachment": true, "getAttachmentContent": true, "getCLIAttachment": true,
+}
+
+// Ranking runs before the owner snapshot, but hydration and classification share it.
+func (s *Server) beginOwnerVerificationSnapshot(w http.ResponseWriter, r *http.Request, operation string) (func(), bool) {
+	if !s.withholdsVerification(r) || s.requestAuthentication(r).Grant != nil {
+		return func() {}, true
+	}
+	release, apiErr := s.beginAgentRead(r, operation, nil, "")
+	if apiErr != nil {
+		writeAPIHTTPError(w, apiErr)
+		return nil, false
+	}
+	return release, true
+}
+
 func agentReadDenied(permission agentgrant.Permission) *apiHTTPError {
 	return newAPIHTTPError(http.StatusForbidden, "permission_denied", "Agent grant requires "+string(permission)+" on the requested sources")
 }

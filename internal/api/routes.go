@@ -258,8 +258,11 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 		ctx.SetHeader(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 		if auth.Grant == nil {
 			if op := ctx.Operation(); op != nil {
-				_, snapshot := agentReadPermissions[op.OperationID]
-				if snapshot || op.OperationID == "findSimilarMessages" {
+				snapshot := ownerVerificationSnapshotOperations[op.OperationID]
+				if op.OperationID == "searchMessages" && (req.URL.Query().Get("mode") == "vector" || req.URL.Query().Get("mode") == exploreSearchModeHybrid) {
+					snapshot = false // Ranking can wait on an embedding provider.
+				}
+				if snapshot {
 					release, err := s.beginAgentRead(req, op.OperationID, nil, "")
 					if err != nil {
 						writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
