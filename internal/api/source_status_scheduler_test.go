@@ -79,7 +79,6 @@ func TestSourceStatusReportsAliasSchedule(t *testing.T) {
 	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{Alias: &alias})
 	requirements.NoError(err)
 	sched := newMockScheduler()
-	sched.scheduled[alias] = true
 	sched.statuses = []AccountStatus{{Email: alias, Schedule: "0 * * * *", NextRun: time.Now().Add(time.Minute)}}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
 	status := sourceStatusFor(t, srv)

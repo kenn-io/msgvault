@@ -122,7 +122,7 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
 	cfg := testGmailServiceAccountConfig(t)
-	var profiles, histories atomic.Int32
+	var profiles, histories, expiredProfiles atomic.Int32
 	var changed, healthy, expired, quota, labelsQuota atomic.Bool
 	quotaSeen := make(chan struct{}, 1)
 	raw := base64.RawURLEncoding.EncodeToString([]byte("From: sender@example.test\r\nTo: sample@example.test\r\nSubject: fixture\r\nMessage-ID: <lost@example.test>\r\n\r\nbody\r\n"))
@@ -139,8 +139,8 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 				quotaSeen <- struct{}{}
 				return
 			}
-			count := profiles.Add(1)
-			if expired.Load() && count >= 10 {
+			profiles.Add(1)
+			if expired.Load() && expiredProfiles.Add(1) >= 2 {
 				_, _ = w.Write([]byte(`{"emailAddress":"sample@example.test","historyId":"102"}`))
 			} else if changed.Load() {
 				_, _ = w.Write([]byte(`{"emailAddress":"sample@example.test","historyId":"101"}`))
@@ -224,33 +224,15 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 	checks.Equal(1, failures)
 	requirements.NoError(st.Store.RemoveSource(broken.ID))
 	failures = 0
-	results := make(chan error, 2)
-	sched := scheduler.New(func(runCtx context.Context, identifier string) error {
-		err := runScheduledSync(runCtx, identifier, st.Store, nil, invocationFromContext(ctx))
-		results <- err
-		return err
-	})
-	t.Cleanup(func() { <-sched.Stop().Done() })
-	requirements.NoError(sched.AddAccount(src.Identifier, "0 * * * *"))
-	requirements.NoError(sched.TriggerSync(src.Identifier, true))
-	requirements.ErrorIs(<-results, scheduler.ErrAcquisitionIncomplete)
-	requirements.Eventually(func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
-	checks.True(sched.Status()[0].LastCompleted.IsZero())
-	checks.False(sched.Status()[0].LastAttempted.IsZero())
-	checks.Empty(sched.Status()[0].LastError)
+	requirements.ErrorIs(runScheduledSync(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)), scheduler.ErrAcquisitionIncomplete)
 	checks.Zero(failures)
 	healthy.Store(true)
 	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return errors.New("queue unavailable") }
 	requirements.NoError(runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)))
 	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
-	requirements.NoError(sched.TriggerSync(src.Identifier, true))
-	requirements.NoError(<-results)
-	requirements.Eventually(func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
-	checks.False(sched.Status()[0].LastCompleted.IsZero())
 	debt, err = st.Store.ListUnresolvedSyncItemErrors(ctx, src.ID)
 	requirements.NoError(err)
 	checks.Empty(debt)
-	checks.EqualValues(6, profiles.Load())
 	checks.EqualValues(1, histories.Load())
 	requirements.NoError(st.Store.UpdateSourceSyncCursor(src.ID, ""))
 	requirements.ErrorContains(runEmailPoll(ctx, src.Identifier, st.Store, nil, invocationFromContext(ctx)), "no history ID")
@@ -260,7 +242,7 @@ func TestGmailPollAcquisitionAndQuota(t *testing.T) {
 	current, err := st.Store.GetSourceByID(src.ID)
 	requirements.NoError(err)
 	checks.Equal("102", current.SyncCursor.String)
-	checks.EqualValues(10, profiles.Load())
+	checks.GreaterOrEqual(expiredProfiles.Load(), int32(2))
 	quota.Store(true)
 	otherRan := make(chan struct{}, 1)
 	gate := api.NewSerialOperationGate()

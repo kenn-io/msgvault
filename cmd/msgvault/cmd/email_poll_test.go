@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"net"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -12,8 +14,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -110,43 +115,56 @@ func TestPollingSourceArchiveAlias(t *testing.T) {
 }
 
 func TestPollingSourceRecoversOnNextAttempt(t *testing.T) {
-	st := storetest.New(t).Store
-	source, err := st.GetOrCreateSource(sourceTypeIMAP, "imaps://user@example.test")
-	require.NoError(t, err)
+	requirements := require.New(t)
+	baseline := scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{scriptedRFC7162Inbox(77, 2, 1, newScriptedRFC7162Message(1, "existing@example.test"))}}
+	addr, server := startScriptedRFC7162Server(t, baseline)
+	host, portText, err := net.SplitHostPort(addr)
+	requirements.NoError(err)
+	port, err := strconv.Atoi(portText)
+	requirements.NoError(err)
+	ic := &imap.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
 	cfg := config.NewDefaultConfig()
+	cfg.HomeDir, cfg.Data.DataDir = t.TempDir(), t.TempDir()
+	requirements.NoError(imap.SaveCredentials(cfg.TokensDir(), ic.Identifier(), testutil.IMAPTestPassword))
+	st := storetest.New(t).Store
+	source, err := st.GetOrCreateSource(sourceTypeIMAP, ic.Identifier())
+	requirements.NoError(err)
+	blob, err := ic.ToJSON()
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, blob))
 	cfg.Accounts = []config.AccountSchedule{{Email: "mailbox@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 15 * time.Second}}
 	state := invocationFromContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	state.pollAccounts = append([]config.AccountSchedule(nil), cfg.Accounts...)
+	state.syncFailures = &telemetry.SyncFailures{}
+	original := rebuildCacheAfterScheduledSourceRun
+	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
+	t.Cleanup(func() { rebuildCacheAfterScheduledSourceRun = original })
 	synctest.Test(t, func(t *testing.T) {
 		requirements := require.New(t)
-		checks := assert.New(t)
-		calls := 0
-		sched := scheduler.New(func(context.Context, string) error { return nil }).WithAccountPoll(func(ctx context.Context, _ string) error {
-			target := validatePollingTargets(ctx, cfg.Accounts, st, state)[0]
-			if target.err != nil {
-				return target.err
-			}
-			checks.Equal(source.ID, target.source.ID)
-			calls++
-			return nil
+		sched := scheduler.New(func(context.Context, string) error { return nil }).WithAccountPoll(func(ctx context.Context, identifier string) error {
+			return runEmailPoll(withInvocation(ctx, state), identifier, st, nil, state)
 		})
+		defer func() { <-sched.Stop().Done() }()
 		count, errs := sched.AddAccountsFromConfig(cfg)
 		requirements.Empty(errs)
 		requirements.Equal(1, count)
 		sched.Start()
 		synctest.Wait()
-		checks.Contains(sched.Status()[0].LastError, "no active")
-		checks.Equal("0 * * * *", sched.Status()[0].Schedule)
+		requirements.Contains(sched.Status()[0].LastError, "no active")
 		requirements.NoError(st.UpdateSourceDisplayName(source.ID, cfg.Accounts[0].Email))
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
-		checks.Equal(1, calls)
-		checks.Empty(sched.Status()[0].LastError)
-		requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"folders":["INBOX"]}`))
+		requirements.Empty(sched.Status()[0].LastError)
+		requirements.False(sched.Status()[0].LastCompleted.IsZero())
+		connections := server.connectionCount()
+		ic.Folders = []string{"INBOX"}
+		filtered, err := ic.ToJSON()
+		requirements.NoError(err)
+		requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, filtered))
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
-		checks.Equal(1, calls)
-		checks.Contains(sched.Status()[0].LastError, "folder filter")
-		<-sched.Stop().Done()
+		requirements.Contains(sched.Status()[0].LastError, "folder filter")
+		requirements.Equal(connections, server.connectionCount())
 	})
 }
 
@@ -179,7 +197,7 @@ func TestPollingWhileAccountsChange(t *testing.T) {
 		}
 	}()
 	for range 100 {
-		_ = runEmailPoll(ctx, "missing@example.test", st, nil, invocationFromContext(ctx))
+		require.ErrorContains(t, runEmailPoll(ctx, "missing@example.test", st, nil, invocationFromContext(ctx)), "no active")
 	}
 	<-done
 }
@@ -199,12 +217,12 @@ func TestPollingTargetsUseOneCatalogQuery(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true})
 	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}); slog.SetDefault(old) })
-	targets := validatePollingTargets(t.Context(), cfg.Accounts, st, state)
+	targets := validatePollingTargets(store.WithRequestID(t.Context(), "poll-catalog-test"), cfg.Accounts, st, state)
 	requirements.NoError(targets[0].err)
 	requirements.NoError(targets[1].err)
 	count := 0
 	for line := range strings.SplitSeq(logs.String(), "\n") {
-		if strings.Contains(line, "FROM sources") {
+		if strings.Contains(line, "FROM sources") && strings.Contains(line, "request_id=poll-catalog-test") {
 			count++
 		}
 	}
@@ -225,7 +243,5 @@ func TestInvalidCronDoesNotClaimPollingSource(t *testing.T) {
 	state := invocationFromContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	state.configurePolling(cfg.Accounts, nil)
 	requirements.Len(state.pollAccounts, 1)
-	target := validatePollingTargets(t.Context(), state.pollAccounts, st, state)[0]
-	requirements.NoError(target.err)
-	assert.Equal(t, source.ID, target.source.ID)
+	assert.Equal(t, "mailbox@example.test", state.pollAccounts[0].Email)
 }

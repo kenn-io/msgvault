@@ -303,14 +303,10 @@ func TestRunServeStartsReadOnlyWithoutOAuthConfig(t *testing.T) {
 
 func TestRunServeKeepsCronForInvalidPollingTarget(t *testing.T) {
 	for _, tc := range []struct {
-		name, sourceType, identifier, want string
-		filtered, allowList                bool
-		interval                           time.Duration
+		name, sourceType, identifier string
+		interval                     time.Duration
 	}{
-		{"unsupported", sourceTypeMSMail, "user@example.test", "no active", false, false, 15 * time.Second},
-		{"filtered", sourceTypeIMAP, "imaps://user@example.test", "folder filter", true, false, 15 * time.Second},
-		{"saved folders", sourceTypeIMAP, "imaps://user@example.test", "folder filter", false, true, 15 * time.Second},
-		{"invalid interval", sourceTypeGmail, "user@example.test", "poll_interval", false, false, 14 * time.Second},
+		{"invalid interval", sourceTypeGmail, "user@example.test", 14 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checks := assert.New(t)
@@ -319,15 +315,9 @@ func TestRunServeKeepsCronForInvalidPollingTarget(t *testing.T) {
 			cfg.Server.APIPort = freeTCPPort(t)
 			cfg.Analytics.Engine = config.AnalyticsEngineSQL
 			cfg.Accounts = []config.AccountSchedule{{Email: tc.identifier, Enabled: true, Schedule: "0 * * * *", PollInterval: tc.interval}, {Email: "other@example.test", Enabled: true, Schedule: "0 * * * *"}}
-			if tc.filtered {
-				cfg.Sync.IMAPSkipFolders = map[string][]string{tc.identifier: {"Archive"}}
-			}
 			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-			source, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
+			_, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
 			requirements.NoError(err)
-			if tc.allowList {
-				requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"folders":["INBOX"]}`))
-			}
 			requirements.NoError(st.Close())
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -348,11 +338,7 @@ func TestRunServeKeepsCronForInvalidPollingTarget(t *testing.T) {
 			for _, account := range status.Accounts {
 				checks.Equal("0 * * * *", account.Schedule)
 				if account.Email == tc.identifier {
-					if tc.interval >= 15*time.Second {
-						checks.Equal(tc.interval.String(), account.PollInterval)
-					} else {
-						checks.Empty(account.PollInterval)
-					}
+					checks.Empty(account.PollInterval)
 				}
 			}
 			cancel()

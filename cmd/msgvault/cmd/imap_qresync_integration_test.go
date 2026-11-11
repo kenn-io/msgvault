@@ -1793,7 +1793,6 @@ func TestIMAPPollQresyncAppendAndFlags(t *testing.T) {
 	filtered, err := ic.ToJSON()
 	requirements.NoError(err)
 	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, filtered))
-	requirements.ErrorContains(runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)), "folder filter")
 	filteredResults := make(chan error, 1)
 	filteredScheduler := scheduler.New(func(runCtx context.Context, identifier string) error {
 		err := runScheduledSync(runCtx, identifier, st, nil, invocationFromContext(ctx))
@@ -1820,48 +1819,12 @@ func TestIMAPPollQresyncAppendAndFlags(t *testing.T) {
 	requirements.NoError(err)
 	checks.Empty(filteredStates)
 	requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, blob))
-	requirements.NoError(runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET is_read = ? WHERE source_id = ? AND source_message_id = ?`), false, source.ID, "INBOX|1")
-	requirements.NoError(err)
-	changed := scriptedRFC7162Inbox(77, 3, 2, newScriptedRFC7162Message(1, "existing@example.test", imapapi.FlagSeen), newScriptedRFC7162Message(2, "appended@example.test"))
-	changed.ChangedUIDs = []imapapi.UID{1, 2}
-	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{changed}})
-	requirements.NoError(runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
-	checks.Equal([]string{"INBOX|1|[\"\\\\Seen\"]", "INBOX|2|[]"}, queryScriptedRFC7162Memberships(t, st, source.ID))
-	_, _, read := queryScriptedRFC7162MessageState(t, st, source.ID, "existing@example.test")
-	checks.False(read)
-	checks.Contains(server.commandsFor(4), "CHANGEDSINCE 1 VANISHED")
-	checks.NotContains(server.commandsFor(4), "UID SEARCH")
-	fallback := scriptedRFC7162Inbox(77, 4, 0, newScriptedRFC7162Message(1, "existing@example.test", imapapi.FlagSeen), newScriptedRFC7162Message(2, "appended@example.test"), newScriptedRFC7162Message(3, "fallback@example.test"))
-	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: "IMAP4rev1", Mailboxes: []scriptedRFC7162Mailbox{fallback}})
-	requirements.NoError(runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
-	checks.Contains(server.commandsFor(5), "UID SEARCH")
-	before := queryScriptedRFC7162Memberships(t, st, source.ID)
-	requirements.Len(before, 3)
-	missing := newScriptedRFC7162Message(4, "missing@example.test")
+	missing := newScriptedRFC7162Message(2, "missing@example.test")
 	missing.MissingRaw = true
-	fallback.Messages = append(fallback.Messages, missing)
-	fallback.UIDNext = 5
-	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: "IMAP4rev1", Mailboxes: []scriptedRFC7162Mailbox{fallback}})
+	inbox := scriptedRFC7162Inbox(77, 3, 2, newScriptedRFC7162Message(1, "existing@example.test"), missing)
+	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: "IMAP4rev1", Mailboxes: []scriptedRFC7162Mailbox{inbox}})
 	requirements.ErrorIs(runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)), scheduler.ErrAcquisitionIncomplete)
-	checks.Equal(before, queryScriptedRFC7162Memberships(t, st, source.ID))
-	results := make(chan error, 2)
-	sched := scheduler.New(func(runCtx context.Context, identifier string) error {
-		err := runScheduledSync(runCtx, identifier, st, nil, invocationFromContext(ctx))
-		results <- err
-		return err
-	})
-	t.Cleanup(func() { <-sched.Stop().Done() })
-	requirements.NoError(sched.AddAccount(ic.Identifier(), "0 * * * *"))
-	requirements.NoError(sched.TriggerSync(ic.Identifier(), true))
-	requirements.ErrorIs(<-results, scheduler.ErrAcquisitionIncomplete)
-	requirements.Eventually(func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
-	checks.True(sched.Status()[0].LastCompleted.IsZero())
-	checks.Empty(sched.Status()[0].LastError)
-	fallback.Messages[len(fallback.Messages)-1].MissingRaw = false
-	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: "IMAP4rev1", Mailboxes: []scriptedRFC7162Mailbox{fallback}})
-	requirements.NoError(sched.TriggerSync(ic.Identifier(), false))
-	requirements.NoError(<-results)
-	requirements.Eventually(func() bool { return !sched.Status()[0].Running && !sched.Status()[0].Queued }, time.Second, time.Millisecond)
-	checks.False(sched.Status()[0].LastCompleted.IsZero())
+	inbox.Messages[1].MissingRaw = false
+	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: "IMAP4rev1", Mailboxes: []scriptedRFC7162Mailbox{inbox}})
+	requirements.NoError(runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
 }

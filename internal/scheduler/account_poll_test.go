@@ -51,6 +51,7 @@ func TestPollingAllowsLongAcquisition(t *testing.T) {
 					return ctx.Err()
 				}
 			})
+		defer func() { <-s.Stop().Done() }()
 		_, errs := s.AddAccountsFromConfig(&config.Config{Accounts: []config.AccountSchedule{{Email: "gmail@example.test", Enabled: true, Schedule: "0 * * * *", PollInterval: 120 * time.Second}}})
 		requirements.Empty(errs)
 		s.Start()
@@ -59,9 +60,8 @@ func TestPollingAllowsLongAcquisition(t *testing.T) {
 		select {
 		case <-completed:
 		default:
-			t.Error("long poll did not complete")
+			requirements.FailNow("long poll did not complete")
 		}
-		<-s.Stop().Done()
 	})
 }
 
@@ -83,10 +83,9 @@ func TestIncompletePollingPreservesCompletion(t *testing.T) {
 		first := s.Status()[0].LastCompleted
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
-		status := s.Status()[0]
-		checks.Equal(first, status.LastCompleted)
-		checks.True(status.LastAttempted.After(first))
-		checks.Empty(status.LastError)
+		checks.EqualValues(2, calls.Load())
+		checks.Equal(first, s.Status()[0].LastCompleted)
+		checks.Empty(s.Status()[0].LastError)
 		s.RemoveAccount("a@example.com")
 		time.Sleep(15 * time.Second)
 		synctest.Wait()

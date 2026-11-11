@@ -381,15 +381,15 @@ func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 // addAccountPoll registers an account's optional polling interval. Its cron
 // schedule stays registered when the interval is invalid.
 func (s *Scheduler) addAccountPoll(acc config.AccountSchedule) error {
+	if acc.PollInterval == 0 {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if old, ok := s.pollJobs[acc.Email]; ok {
 		s.cron.Remove(old)
 		delete(s.pollJobs, acc.Email)
 		delete(s.pollIntervals, acc.Email)
-	}
-	if acc.PollInterval == 0 {
-		return nil
 	}
 	if err := config.ValidatePollInterval(acc); err != nil {
 		return err
