@@ -435,8 +435,18 @@ func (b *kataIssueBackend) Open(ctx context.Context, query string) ([]taskclient
 	if err != nil {
 		return nil, false, err
 	}
-	if found {
-		return []taskclient.KataTask{issue}, false, nil
+	issues, truncated, err := client.SearchOpenIssues(ctx, project, query, 25)
+	if err != nil || !found {
+		return issues, truncated, err
 	}
-	return client.SearchOpenIssues(ctx, project, query, 25)
+	result := []taskclient.KataTask{issue}
+	for _, match := range issues {
+		if match.UID != issue.UID {
+			result = append(result, match)
+		}
+	}
+	if len(result) > 25 {
+		result, truncated = result[:25], true
+	}
+	return result, truncated, nil
 }

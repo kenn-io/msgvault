@@ -55,26 +55,6 @@ describe('KataEvidenceDialog', () => {
     expect(sent).toEqual({ title: 'Follow up', evidence: [passages[500].reference] });
   });
 
-  it.each([false, true])('keeps Escape inside the Kata dialog while saving=%s', async (saving) => {
-    let finish!: (response: Response) => void;
-    const pending = new Promise<Response>(resolve => { finish = resolve; });
-    const h = harness(async () => pending);
-    const onclose = vi.fn();
-    render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up', onclose });
-    await screen.findByText('Opening passage');
-    if (saving) await fireEvent.click(screen.getByRole('button', { name: 'Create issue' }));
-    const close = screen.getAllByRole('button', { name: 'Close' })[0];
-    close.focus();
-    await fireEvent.keyDown(close, { key: 'Escape' });
-    expect(onclose).toHaveBeenCalledTimes(saving ? 0 : 1);
-    if (saving) {
-      finish(Response.json({ issue, replayed: false }, { status: 201 }));
-      await screen.findByText('example#abcd');
-      await fireEvent.keyDown(screen.getAllByRole('button', { name: 'Close' })[0], { key: 'Escape' });
-    }
-    expect(onclose).toHaveBeenCalledOnce();
-  });
-
   it.each([false, true])('narrows a message citation to the selected text, counting runes, earlier=%s', async (earlier) => {
     const passage = 'Café 🙂 send the budget by Friday';
     const text = earlier ? 'x'.repeat(500) + passage + 'y'.repeat(500) : passage;
@@ -180,7 +160,7 @@ describe('KataEvidenceDialog', () => {
       posts.push(request);
       return Response.json({ issue, replayed: false });
     });
-    render(KataEvidenceDialog, { client, selector, embedded: true });
+    render(KataEvidenceDialog, { client, selector });
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await screen.findByRole('radio', { name: 'Follow up · example#abcd' });
@@ -202,7 +182,7 @@ describe('KataEvidenceDialog', () => {
       }
       return Response.json({ evidence: [passages[0]] });
     });
-    render(KataEvidenceDialog, { client, selector, embedded: true });
+    render(KataEvidenceDialog, { client, selector });
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     const filter = screen.getByRole('searchbox', { name: 'Filter open issues' });
@@ -234,7 +214,7 @@ describe('KataEvidenceDialog', () => {
       if (new URL(request.url).pathname.endsWith('/open-issues')) return Response.json({ message: 'List unavailable' }, { status: 503 });
       return Response.json({ evidence: [passages[0]] });
     });
-    render(KataEvidenceDialog, { client, selector, embedded: true });
+    render(KataEvidenceDialog, { client, selector });
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await screen.findByRole('alert');

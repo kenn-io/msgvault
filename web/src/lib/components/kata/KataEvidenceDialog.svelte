@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { appShortcuts, Button, escapeCloses, Modal, SegmentedControl, TextInput } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { Button, SegmentedControl, TextInput } from '@kenn-io/kit-ui';
+  import { onDestroy, untrack } from 'svelte';
   import { createKataIssue, linkKataEvidence, prepareKataEvidence, listOpenKataIssues } from '../../api/generated/api/api';
   import TaskIssuePicker from '../common/TaskIssuePicker.svelte';
   import type { APIClient } from '../../api/client';
@@ -8,9 +8,8 @@
   import { errorMessage } from '../../api/session.svelte';
   import { EVIDENCE_STEP, EVIDENCE_WINDOW, retryKey, type EvidenceSelector, type PreparedEvidence } from '../../kata/evidence';
 
-  let { client, selector, defaultTitle = '', defaultBrief = '', onclose = () => undefined, embedded = false, busy = $bindable(false), receipt = $bindable(undefined) }: {
+  let { client, selector, defaultTitle = '', defaultBrief = '', onclose = () => undefined, busy = $bindable(false), receipt = $bindable(undefined) }: {
     client: APIClient;
-    embedded?: boolean;
     busy?: boolean;
     receipt?: KataIssueReceipt;
     selector: EvidenceSelector;
@@ -55,7 +54,6 @@
   }
 
   $effect(() => { void prepare(start, narrowed); });
-  onMount(() => { if (!embedded) return appShortcuts.pushScope('kata-evidence-dialog'); });
   onDestroy(() => { generation++; controller?.abort(); });
 
   async function prepare(from: number, exact: { start: number; end: number } | undefined): Promise<void> {
@@ -141,18 +139,6 @@
   }
 </script>
 
-<!-- Claim Escape during capture so a modal underneath, such as the file viewer, stays open; a save in flight keeps the dialog open too. -->
-<svelte:window onkeydowncapture={(event) => { if (!embedded) escapeCloses(() => { if (!busy) onclose(); })(event); }} />
-
-{#if embedded}
-  {@render body()}
-{:else}
-  <Modal width="520px" maxWidth="calc(100vw - 32px)" title="Kata issue" onclose={() => { if (!busy) onclose(); }}>
-    {@render body()}
-  </Modal>
-{/if}
-
-{#snippet body()}
   <div class="kata-dialog" class:has-receipt={!!receipt}>
     {#if receipt}
       {#if replayed}
@@ -198,7 +184,6 @@
     {/if}
     {#if receipt}<div class="actions"><Button label="Done" tone="info" surface="solid" disabled={busy} onclick={onclose} /></div>{/if}
   </div>
-{/snippet}
 
 <style>
   .kata-dialog, form { display: grid; gap: var(--space-6); min-width: 0; }
