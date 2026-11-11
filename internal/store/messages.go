@@ -23,7 +23,6 @@ import (
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplesweep"
-	"go.kenn.io/msgvault/internal/sqldialect"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -4227,7 +4226,7 @@ func (s *Store) backfillFTSBatchContext(
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		if s.IsPostgreSQL() {
 			var err error
-			affected, err = s.backfillPostgresFTS(ctx, tx, batchSQL, fromID, toID, batchSQL != s.dialect.FTSBackfillBatchSQL())
+			affected, err = s.backfillPostgresFTS(ctx, tx, batchSQL, fromID, toID)
 			return err
 		}
 		result, err := tx.ExecContext(ctx, batchSQL, fromID, toID)
@@ -6991,30 +6990,19 @@ func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *lo
 }
 
 // backfillPostgresFTS locks and indexes bounded pages inside the batch transaction.
-func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query string, fromID, toID int64, useLegacy bool) (int64, error) {
+func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query string, fromID, toID int64) (int64, error) {
 	env := storedFTSEnvelopeSQL("STRING_AGG")
 	lockSQL := `SELECT m.id FROM messages m WHERE m.id IN (` + query + `) ORDER BY m.id LIMIT 64 FOR UPDATE OF m`
 	charCap := strconv.Itoa(maxFTSBodyChars)
 	stale := `m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM ` + strconv.Itoa(CurrentFTSIndexingVersion)
-	if !useLegacy {
+	if query == s.dialect.FTSBackfillBatchSQL() {
 		stale = "TRUE"
 	}
-	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `),
-        COALESCE((SELECT json_agg(json_build_object('lexeme', x.lexeme, 'position', x.positions[i], 'weight', x.weights[i]) ORDER BY x.positions[i])
-          FROM unnest(ts_filter(m.search_fts, '{a,b,c}')) x, generate_subscripts(x.positions, 1) i), '[]'::json)
+	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `)
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ANY(?::bigint[]) AND (` + stale + `) ORDER BY m.id`
 	metadata := pgFTSMetadataFields("u.subject", "u.sender", "u.to_addrs", "u.cc_addrs")
 	bodyVector := pgFTSBodyField("u.body")
-	carry := `''::tsvector`
-	if useLegacy {
-		old := `ts_filter(m.search_fts, '{a,b,c}')`
-		// Older indexes may be the only record of a merged recipient address.
-		// Split each punctuated lexeme and leave a gap between recovered values.
-		punctuated := `(SELECT COALESCE(string_agg(regexp_replace(lexeme, '[[:punct:]]+', ' ', 'g'), ' ftsseparator '), '') FROM unnest(` + old + `) WHERE lexeme ~ '[[:punct:]]')`
-		carry = `CASE WHEN m.indexing_version IS DISTINCT FROM ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` AND m.search_fts IS NOT NULL THEN '''!'':1'::tsvector || ` + old + ` || '''!'':1'::tsvector || setweight(ts_delete(to_tsvector('simple', ` + punctuated + `), 'ftsseparator'), 'C') ELSE ''::tsvector END`
-	}
-	completeVector := `(u.metadata || ` + carry + ` || u.body_vector)`
-	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, fields)), v AS (SELECT u.*, ` + metadata + ` AS metadata, ` + bodyVector + ` AS body_vector FROM u) UPDATE messages m SET search_fts = ` + completeVector + `, search_fts_fields = CASE WHEN jsonb_array_length(u.fields::jsonb) > 5 THEN ARRAY(SELECT jsonb_array_elements_text(u.fields::jsonb)) ELSE ` + pgFTSFields(completeVector, "ARRAY(SELECT jsonb_array_elements_text(u.fields::jsonb))") + ` END, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
+	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, fields)), v AS (SELECT u.*, ` + metadata + ` AS metadata, ` + bodyVector + ` AS body_vector FROM u) UPDATE messages m SET search_fts = u.metadata || u.body_vector, search_fts_fields = CASE WHEN u.fields::jsonb = 'null'::jsonb THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u.fields::jsonb)) END, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
 	var affected int64
 	for fromID < toID {
 		rows, err := tx.QueryContext(ctx, lockSQL, fromID, toID)
@@ -7051,21 +7039,12 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 		bytes := 0
 		for rows.Next() {
 			var doc FTSDoc
-			var legacyJSON []byte
-			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &legacyJSON); err != nil {
+			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs); err != nil {
 				_ = rows.Close()
 				return 0, err
 			}
 			doc, fields := preparePostgresFTSDoc(doc)
-			if useLegacy {
-				legacy, err := postgresLegacyFTSFields(legacyJSON)
-				if err != nil {
-					_ = rows.Close()
-					return 0, err
-				}
-				fields = append(fields, legacy...)
-			}
-			encoded, err := json.Marshal(fields)
+			encoded, err := json.Marshal(fields, json.FormatNilSliceAsNull(true))
 			if err != nil {
 				_ = rows.Close()
 				return 0, err
@@ -7101,37 +7080,6 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 		fromID = ids[len(ids)-1] + 1
 	}
 	return affected, nil
-}
-
-// postgresLegacyFTSFields retains only adjacency established by the old vector.
-func postgresLegacyFTSFields(data []byte) ([]string, error) {
-	var entries []struct {
-		Lexeme   string `json:"lexeme"`
-		Position int    `json:"position"`
-		Weight   string `json:"weight"`
-	}
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("decode legacy search vector: %w", err)
-	}
-	var fields []string
-	lastIndex := -1
-	for i, entry := range entries {
-		text := sqldialect.CanonicalFTSText(entry.Lexeme)
-		if text == "" {
-			continue
-		}
-		adjacent := lastIndex == i-1 && i > 0 && entry.Weight != "C" &&
-			entry.Weight == entries[i-1].Weight && entry.Position == entries[i-1].Position+1 &&
-			entry.Position < 16383 && (i+1 == len(entries) || entries[i+1].Position != entry.Position) &&
-			(i < 2 || entries[i-2].Position != entries[i-1].Position)
-		if adjacent && len(fields) > 0 {
-			fields[len(fields)-1] += " " + text
-		} else {
-			fields = append(fields, text)
-		}
-		lastIndex = i
-	}
-	return fields, nil
 }
 
 // derivedEmailText is a retained email's stored text and the search document

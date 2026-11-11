@@ -401,19 +401,13 @@ func truncateBytesRuneSafe(s string) string {
 // PostgreSQL stores the FTS index inline on `messages.search_fts`, so there
 // is no separate virtual table — the operation is an UPDATE, not an INSERT.
 //
-// ALL FIVE tsvector inputs (subject, body, from, to, cc) are bounded twice on
-// this sync path: byte-truncated to maxFTSBodyBytes in Go here (rune-safe,
-// robust against multibyte input that the SQL char cap cannot bound) and
-// additionally LEFT-capped to maxFTSBodyChars in SQL. The SQL LEFT char cap
-// cannot bound multibyte input, so a multibyte subject/recipient list could
-// otherwise still trip SQLSTATE 54000 and leave search_fts NULL — the Go
-// byte-truncation closes that gap for every field, not just the body. A
-// residual 54000 is still possible for dense distinct tokens; the message
-// write handles it in upsertFTSOrUnsearchable.
+// All five inputs are bounded by bytes and characters in Go. Dense distinct
+// tokens can still exceed PostgreSQL limits; upsertFTSOrUnsearchable handles
+// that case.
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	vector, args := pgFTSVector(doc)
 	_, err := q.Exec(
-		`UPDATE messages SET search_fts = v.vector, search_fts_fields = `+pgFTSFields("v.vector", "ARRAY[$7, $8, $9, $10, $11]")+`,
+		`UPDATE messages SET search_fts = v.vector, search_fts_fields = $7::text[],
 			indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`
 		FROM (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -427,7 +421,7 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 	var matches bool
 	err := q.QueryRow(
 		`SELECT COALESCE(search_fts = v.vector
-			AND search_fts_fields IS NOT DISTINCT FROM `+pgFTSFields("v.vector", "ARRAY[$7, $8, $9, $10, $11]")+`
+			AND search_fts_fields IS NOT DISTINCT FROM $7::text[]
 			AND indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`, FALSE)
 		FROM messages, (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -438,23 +432,13 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 	return matches, err
 }
 
-// PostgreSQL caps positions at 16383 and stores at most 255 per lexeme.
-// Inspect the completed vector so concatenated fields share the same limit.
-func pgFTSIsSaturated(vector string) string {
-	return `((` + vector + `)::text ~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' OR (` + vector + `)::text ~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)')`
-}
-
-func pgFTSFields(vector, fields string) string {
-	return `CASE WHEN ` + pgFTSIsSaturated(vector) + ` THEN ` + fields + ` ELSE NULL END`
-}
-
 // pgFTSVector returns the bounded tsvector expression for doc and its
 // arguments, with $1 bound to doc.MessageID. The punctuation lexeme inserts
 // a position between fields and cannot appear in a normalized search term.
 func pgFTSVector(doc FTSDoc) (string, []any) {
 	doc, fields := preparePostgresFTSDoc(doc)
 	vector := pgFTSVectorFields("$2", "$3", "$4", "$5", "$6")
-	return vector, []any{doc.MessageID, doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, fields[0], fields[1], fields[2], fields[3], fields[4]}
+	return vector, []any{doc.MessageID, doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, fields}
 }
 
 func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
@@ -472,8 +456,27 @@ func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
 	doc.ToAddrs = prepare(doc.ToAddrs)
 	doc.CcAddrs = prepare(doc.CcAddrs)
 	fields := []string{doc.Subject, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.Body}
+	counts := make(map[string]int)
+	positions := 4 // Separator lexemes between the five fields.
+	saturated := false
+	for _, field := range fields {
+		for _, token := range strings.Fields(field) {
+			positions++
+			counts[token]++
+			if positions > 16000 || counts[token] > 200 {
+				saturated = true
+				break
+			}
+		}
+		if saturated {
+			break
+		}
+	}
+	if !saturated {
+		return doc, nil
+	}
 	for i := range fields {
-		fields[i] = sqldialect.CanonicalFTSText(fields[i])
+		fields[i] = strings.Join(strings.Fields(fields[i]), " ")
 	}
 	return doc, fields
 }
@@ -483,15 +486,14 @@ func pgFTSVectorFields(subject, body, sender, to, cc string) string {
 }
 
 func pgFTSMetadataFields(subject, sender, to, cc string) string {
-	charCap := strconv.Itoa(maxFTSBodyChars)
-	return `setweight(to_tsvector('simple', LEFT(COALESCE(` + subject + `, ''), ` + charCap + `)), 'A') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', LEFT(COALESCE(` + sender + `, ''), ` + charCap + `)), 'B') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', LEFT(COALESCE(` + to + `, ''), ` + charCap + `)), 'C') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', LEFT(COALESCE(` + cc + `, ''), ` + charCap + `)), 'C') || '''!'':1'::tsvector`
+	return `setweight(to_tsvector('simple', COALESCE(` + subject + `, '')), 'A') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', COALESCE(` + sender + `, '')), 'B') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', COALESCE(` + to + `, '')), 'C') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', COALESCE(` + cc + `, '')), 'C') || '''!'':1'::tsvector`
 }
 
 func pgFTSBodyField(body string) string {
-	return `setweight(to_tsvector('simple', LEFT(COALESCE(` + body + `, ''), ` + strconv.Itoa(maxFTSBodyChars) + `)), 'D')`
+	return `setweight(to_tsvector('simple', COALESCE(` + body + `, '')), 'D')`
 }
 
 // FTSSearchClause returns SQL fragments for tsvector full-text search.

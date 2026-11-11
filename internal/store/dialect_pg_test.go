@@ -149,14 +149,14 @@ func TestPostgreSQLDialect_FTSLayoutVersioned(t *testing.T) {
 		CcAddrs:   "cc@example.com",
 	}), "FTSUpsert")
 
-	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($2, '')", "subject vector")
+	assert.Contains(q.query, "setweight(to_tsvector('simple', COALESCE($2, '')", "subject vector")
 	assert.Contains(q.query, "), 'A')", "subject weight")
-	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($4, '')", "sender vector")
+	assert.Contains(q.query, "setweight(to_tsvector('simple', COALESCE($4, '')", "sender vector")
 	assert.Contains(q.query, "), 'B')", "sender weight")
-	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($5, '')", "to vector")
-	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($6, '')", "cc vector")
+	assert.Contains(q.query, "setweight(to_tsvector('simple', COALESCE($5, '')", "to vector")
+	assert.Contains(q.query, "setweight(to_tsvector('simple', COALESCE($6, '')", "cc vector")
 	assert.Contains(q.query, "), 'C')", "recipient weight")
-	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($3, '')", "body vector")
+	assert.Contains(q.query, "setweight(to_tsvector('simple', COALESCE($3, '')", "body vector")
 	assert.Contains(q.query, "), 'D')", "body weight")
 	assert.Contains(q.query, "indexing_version = 3", "layout version stamp")
 }

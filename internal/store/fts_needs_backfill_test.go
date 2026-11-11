@@ -93,99 +93,26 @@ func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
 	assertFTSContains(t, f.Store, "orchard", 2)
 }
 
-// TestPG_BackfillFTSUpgradesLegacyEntries keeps old sender phrases when
-// an archive predates the current indexing version.
+// TestPG_BackfillFTSUpgradesLegacyEntries reindexes older rows from stored text.
 func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
 	ids := f.CreateMessages(2)
-	for i, id := range ids {
-		require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: strings.Repeat("filler ", 17000), Valid: true}, sql.NullString{}))
-		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'lantern', search_fts = setweight(to_tsvector('simple', 'Lantern Sender'), 'B'), indexing_version = $2 WHERE id = $1`, id, []any{2, nil}[i])
-		require.NoError(err)
-	}
-	crossField := f.CreateMessage("legacy-cross-field")
-	require.NoError(f.Store.UpsertMessageBody(crossField, sql.NullString{String: strings.Repeat("filler ", 17000), Valid: true}, sql.NullString{}))
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'alpha'), 'A') || setweight(to_tsvector('simple', 'beta'), 'B'), indexing_version = 2 WHERE id = $1`, crossField)
-	require.NoError(err)
-
-	for i, vector := range []string{
-		`'alpha':1B 'beta':3B`,
-		`'alpha':1B 'other':1B 'beta':2B`,
-		`'alpha':16382B 'beta':16383B`,
-	} {
-		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("legacy-position-%d", i)).Create(t, f.Store)
-		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = $2::tsvector, indexing_version = 2 WHERE id = $1`, id, vector)
+	for i, version := range []sql.NullInt64{{Int64: 2, Valid: true}, {}} {
+		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'stored marker', search_fts = setweight(to_tsvector('simple', 'obsolete phantom-marker'), 'B'), indexing_version = $2 WHERE id = $1`, ids[i], version)
 		require.NoError(err)
 	}
 	current := f.CreateMessage("current-index")
 	require.NoError(f.Store.UpsertFTS(current, "current marker", "", "", "", ""))
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = search_fts || to_tsvector('simple', 'obsolete') WHERE id = $1`, crossField)
-	require.NoError(err)
 	n, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	assert.Equal(int64(6), n)
-	for term, want := range map[string][]int64{"lantern sender": ids, "sender lantern": nil, "sender filler": nil, "alpha beta": nil, "obsolete": nil, "current marker": {current}} {
+	assert.Equal(int64(2), n)
+	for term, want := range map[string][]int64{"stored marker": ids, "obsolete": nil, "phantom marker": nil, "current marker": {current}} {
 		got, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
 		require.NoError(err)
 		assert.ElementsMatch(want, got, term)
-	}
-}
-
-// TestPG_BackfillFTSKeepsMergedRecipientAlias repairs a version-2 entry after
-// a participant merge: the original To alias stays searchable and recovered
-// recipient text does not join To and Cc into one phrase.
-func TestPG_BackfillFTSKeepsMergedRecipientAlias(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	from := f.EnsureParticipant("sender@example.com", "", "example.com")
-	alias := f.EnsureParticipant("old.alias@example.com", "", "example.com")
-	kept := f.EnsureParticipant("kept@example.net", "", "example.net")
-	carol := f.EnsureParticipant("carol@example.org", "", "example.org")
-	id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
-		Message: &store.Message{
-			SourceID: f.Source.ID, ConversationID: f.ConvID, MessageType: store.MessageTypeEmail,
-			SourceMessageID: "merged-alias", SenderID: sql.NullInt64{Int64: from, Valid: true},
-		},
-		Recipients: []store.RecipientSet{
-			{Type: "from", ParticipantIDs: []int64{from}, EmailAddresses: []string{"sender@example.com"}},
-			{Type: "to", ParticipantIDs: []int64{alias}, EmailAddresses: nil},
-			{Type: "cc", ParticipantIDs: []int64{carol}, EmailAddresses: []string{"carol@example.org"}},
-		},
-	})
-	require.NoError(err)
-	var address sql.NullString
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT email_address FROM message_recipients WHERE message_id = $1 AND recipient_type = 'to'`, id).Scan(&address))
-	require.False(address.Valid)
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2,
-search_fts = setweight(to_tsvector('simple', 'sender@example.com'), 'B') || setweight(to_tsvector('simple', 'old.alias@example.com old.alias@example.com carol@example.org'), 'C')
-WHERE id = $1`, id)
-	require.NoError(err)
-	require.NoError(f.Store.MergeParticipantsContext(t.Context(), alias, kept))
-	assert.Equal(t, kept, f.GetSingleRecipientID(id, "to"))
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"old"}}, 10)
-	require.NoError(err)
-	assert.Equal(t, []int64{id}, ids, "old alias must match before backfill")
-
-	_, err = f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	count, err := f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	require.Zero(count)
-	for term, want := range map[string][]int64{
-		"old":                   {id},
-		"old.alias@example.com": {id},
-		"kept@example.net":      {id},
-		"carol@example.org":     {id},
-		"example.com carol":     nil,
-		"carol example.com":     nil,
-	} {
-		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
-		require.NoError(err, term)
-		assert.ElementsMatch(t, want, ids, term)
 	}
 }
 
