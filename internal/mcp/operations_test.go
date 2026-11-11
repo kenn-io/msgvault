@@ -154,3 +154,19 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 	opts.DelegatedOnly = true
 	assertions.Empty(operationalCatalog(opts, true))
 }
+
+func TestPersonRecordCatalogRequiresCuratedWriteOptIn(t *testing.T) {
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_person_record", "get_person_record_history", "get_person_record_media", "patch_person_record"}}
+	names := func(opts ServeOptions, allowWrites bool) []string {
+		var result []string
+		for _, definition := range operationalCatalog(opts, allowWrites) {
+			result = append(result, definition.definition.name)
+		}
+		return result
+	}
+	assert.ElementsMatch(t, []string{"get_person_record", "get_person_record_history", "get_person_record_media"}, names(opts, true))
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyRecords}
+	assert.NotContains(t, names(opts, true), "patch_person_record")
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyCurated}
+	assert.Contains(t, names(opts, true), "patch_person_record")
+}
