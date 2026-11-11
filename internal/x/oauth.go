@@ -117,7 +117,7 @@ func Authorize(parent context.Context, opts OAuthOptions) (TokenRecord, error) {
 	}
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(opts.CallbackPort))
 	cfg.RedirectURL = "http://" + address + "/callback"
-	listener, err := net.Listen("tcp4", address)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", address)
 	if err != nil {
 		return TokenRecord{}, errors.New("cannot listen on X loopback callback port")
 	}

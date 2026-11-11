@@ -65,7 +65,7 @@ func xTestRecord(access string) xapi.TokenRecord {
 }
 func xTestCallbackPort(t *testing.T) int {
 	t.Helper()
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	address, ok := listener.Addr().(*net.TCPAddr)
 	require.True(t, ok)
@@ -118,7 +118,7 @@ func newXRegistrationFixture(t *testing.T, ownerKeys ...string) *xRegistrationFi
 	f.deps.oauthOptions.OpenBrowser = func(_ context.Context, raw string) error {
 		u, err := url.Parse(raw)
 		require.NoError(t, err)
-		resp, err := http.Get(u.Query().Get("redirect_uri") + "?code=example-code&state=" + url.QueryEscape(u.Query().Get("state")))
+		resp, err := xTestHTTPGet(t, http.DefaultClient, u.Query().Get("redirect_uri")+"?code=example-code&state="+url.QueryEscape(u.Query().Get("state")))
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
 		return nil
@@ -206,7 +206,7 @@ func TestAddXRemoteAuthorizationDoesNotRegisterLocalPath(t *testing.T) {
 	_testRequire.Len(identities, 1)
 	_testAssert.Equal("1001", identities[0].Address)
 	var owners int
-	_testRequire.NoError(f.st.DB().QueryRow(`SELECT count(*) FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1001'`).Scan(&owners))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1001'`).Scan(&owners))
 	_testAssert.Equal(1, owners)
 }
 
@@ -231,9 +231,9 @@ func TestRegisterXGenerationRecoveryPreservesHistory(t *testing.T) {
 			walk := store.XWalk{Endpoint: "own", Fingerprint: "frozen-window", Token: "saved-page", Watermark: "200"}
 			_, err = f.st.UpdateXControlContext(t.Context(), source.ID, state.Revision, store.XControlPatch{OwnerID: "1001", Generation: &generation, CredentialError: &credentialError, Own: &walk, SpendBuckets: &spend, Reservations: &reservations})
 			_testRequire.NoError(err)
-			_, err = f.st.DB().Exec(f.st.Rebind(`INSERT INTO x_post_versions(source_id,post_id,canonical_id,version_position) VALUES(?,?,?,?)`), source.ID, "200", "200", 0)
+			_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind(`INSERT INTO x_post_versions(source_id,post_id,canonical_id,version_position) VALUES(?,?,?,?)`), source.ID, "200", "200", 0)
 			_testRequire.NoError(err)
-			_, err = f.st.DB().Exec(f.st.Rebind(`INSERT INTO x_reply_attempts(source_id,owner_id,draft_id,attempt_id,draft_revision,target_post_id,source_conversation_id,body_digest,state,reservation_id) VALUES(?,?,?,?,?,?,?,?,?,?)`), source.ID, "1001", "draft-example", "attempt-example", 1, "200", "200", "synthetic-digest", "remote_unknown", "reservation-1")
+			_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind(`INSERT INTO x_reply_attempts(source_id,owner_id,draft_id,attempt_id,draft_revision,target_post_id,source_conversation_id,body_digest,state,reservation_id) VALUES(?,?,?,?,?,?,?,?,?,?)`), source.ID, "1001", "draft-example", "attempt-example", 1, "200", "200", "synthetic-digest", "remote_unknown", "reservation-1")
 			_testRequire.NoError(err)
 			record := xTestRecord("new-access")
 			record.GrantedScopes = []string{"tweet.read", "users.read", "offline.access"}
@@ -261,8 +261,8 @@ func TestRegisterXGenerationRecoveryPreservesHistory(t *testing.T) {
 			_testAssert.Equal(int64(101), loaded.Generation)
 			_testAssert.NotContains(loaded.GrantedScopes, "tweet.write")
 			var aliases, attempts int
-			_testRequire.NoError(f.st.DB().QueryRow(`SELECT count(*) FROM x_post_versions`).Scan(&aliases))
-			_testRequire.NoError(f.st.DB().QueryRow(`SELECT count(*) FROM x_reply_attempts`).Scan(&attempts))
+			_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM x_post_versions`).Scan(&aliases))
+			_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM x_reply_attempts`).Scan(&attempts))
 			_testAssert.Equal(1, aliases)
 			_testAssert.Equal(1, attempts)
 			_, err = f.st.UpdateXControlContext(t.Context(), source.ID, after.Revision, store.XControlPatch{OwnerID: "1001", Generation: &generation, CredentialError: &credentialError})
@@ -380,7 +380,7 @@ func TestRegisterXHTTPRejectsEnvironmentCwdAndRemoteAuthorization(t *testing.T) 
 	for _, request := range []api.CLIRunRequest{{Args: valid, Cwd: "/tmp"}, {Args: valid, Env: map[string]string{clirun.EnvDiscordToken: "synthetic-secret"}}, {Args: []string{"add-x", "--client-id", "example-client"}}, {Args: []string{"add-x", "--register", "--user-id", "1001", "--token-file", "/tmp/example"}}} {
 		body, err := json.Marshal(request)
 		_testRequire.NoError(err)
-		response, err := http.Post(f.server.URL+"/api/v1/cli/run", "application/json", bytes.NewReader(body))
+		response, err := xTestHTTPPost(t, http.DefaultClient, f.server.URL+"/api/v1/cli/run", "application/json", bytes.NewReader(body))
 		_testRequire.NoError(err)
 		_testRequire.NoError(response.Body.Close())
 		_testAssert.Equal(http.StatusBadRequest, response.StatusCode)

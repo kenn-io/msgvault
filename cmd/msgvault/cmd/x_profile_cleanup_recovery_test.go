@@ -42,7 +42,7 @@ func TestXProfileOnlyCleanupPersistsFenceAcrossReopen(t *testing.T) {
 	cleaner.beforePublish = func() error { return errors.New("synthetic publication failure") }
 	require.ErrorContains(cleaner.Resume(t.Context()), "synthetic publication failure")
 	var name sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
 	assert.Empty(name.String, "SQL purge precedes the interrupted derived cleanup")
 	pending, err = st.XCleanupPendingContext(t.Context())
 	require.NoError(err)
@@ -56,7 +56,7 @@ func TestXProfileOnlyCleanupPersistsFenceAcrossReopen(t *testing.T) {
 	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: reopened, config: cfg}, Engine: query.NewEngine(reopened.DB(), false), Logger: slog.New(slog.DiscardHandler), ContentReadGuard: recovery.AcquireRead})
 	recovery.SetServer(server)
 	read := func() *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
 		r.Header.Set("X-Api-Key", cfg.Server.APIKey)
 		out := httptest.NewRecorder()
 		server.Router().ServeHTTP(out, r)
@@ -73,7 +73,7 @@ func TestXProfileOnlyCleanupPersistsFenceAcrossReopen(t *testing.T) {
 	assert.Equal(http.StatusOK, out.Code, out.Body.String())
 	assert.NotContains(out.Body.String(), "Former Public Label")
 	var anchors int
-	require.NoError(reopened.DB().QueryRow(reopened.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id=? AND identifier_type='x_user_id'`), pid).Scan(&anchors))
+	require.NoError(reopened.DB().QueryRowContext(t.Context(), reopened.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id=? AND identifier_type='x_user_id'`), pid).Scan(&anchors))
 	assert.Equal(1, anchors)
 }
 
@@ -94,10 +94,10 @@ func TestXRestoreReplaysProtectedProfileWithoutPostRemovals(t *testing.T) {
 	require.NoError(err)
 	defer func() { assert.NoError(restored.Close()) }()
 	var name sql.NullString
-	require.NoError(restored.DB().QueryRow(restored.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
+	require.NoError(restored.DB().QueryRowContext(t.Context(), restored.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
 	assert.Empty(name.String, "current protected-author authority must erase the snapshot's unsupported profile")
 	var usernames int
-	require.NoError(restored.DB().QueryRow(restored.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND source='archive_observation'`), pid).Scan(&usernames))
+	require.NoError(restored.DB().QueryRowContext(t.Context(), restored.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND source='archive_observation'`), pid).Scan(&usernames))
 	assert.Zero(usernames)
 	assert.Zero(f.providerCalls.Load())
 }
@@ -121,9 +121,9 @@ func TestXProfileCleanupRetainsNewerPublicEvidence(t *testing.T) {
 	require.NoError(f.st.QueueXAuthorRemovalContext(t.Context(), f.source.ID, "1001", at.Add(time.Minute)))
 	require.NoError(NewXContentCleanup(f.st, f.cfg, nil).Resume(t.Context()))
 	var oldRows, newRows int
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND normalized_value='former_handle'`), pid).Scan(&oldRows))
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND normalized_value='former_handle'`), pid).Scan(&oldRows))
 	assert.Zero(oldRows)
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND normalized_value='new_handle'`), pid).Scan(&newRows))
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND normalized_value='new_handle'`), pid).Scan(&newRows))
 	assert.Equal(1, newRows)
 	record, head := f.record(t)
 	target, err := f.restore(t, snapshot, record, head)
@@ -132,11 +132,11 @@ func TestXProfileCleanupRetainsNewerPublicEvidence(t *testing.T) {
 	require.NoError(err)
 	defer func() { assert.NoError(restored.Close()) }()
 	var name sql.NullString
-	require.NoError(restored.DB().QueryRow(restored.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
+	require.NoError(restored.DB().QueryRowContext(t.Context(), restored.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
 	assert.Empty(name.String, "a newer username alone cannot support the old display label")
-	require.NoError(restored.DB().QueryRow(restored.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND normalized_value='former_handle'`), pid).Scan(&oldRows))
+	require.NoError(restored.DB().QueryRowContext(t.Context(), restored.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND normalized_value='former_handle'`), pid).Scan(&oldRows))
 	assert.Zero(oldRows)
-	require.NoError(restored.DB().QueryRow(restored.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND normalized_value='new_handle'`), pid).Scan(&newRows))
+	require.NoError(restored.DB().QueryRowContext(t.Context(), restored.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND normalized_value='new_handle'`), pid).Scan(&newRows))
 	assert.Equal(1, newRows)
 	assert.Zero(f.providerCalls.Load())
 }

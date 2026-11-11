@@ -61,15 +61,15 @@ func TestXAuthorQueueCoversForeignOnlyChainsWithoutForeignPurge(t *testing.T) {
 		}
 	}
 	_testAssert.True(foreignReasonChecked)
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT cleanup_pending FROM x_post_versions WHERE source_id=? AND post_id=?"), foreign.ID, "601").Scan(&foreignPending))
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT cleanup_pending FROM x_post_versions WHERE source_id=? AND post_id=?"), foreign.ID, "701").Scan(&unrelatedPending))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT cleanup_pending FROM x_post_versions WHERE source_id=? AND post_id=?"), foreign.ID, "601").Scan(&foreignPending))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT cleanup_pending FROM x_post_versions WHERE source_id=? AND post_id=?"), foreign.ID, "701").Scan(&unrelatedPending))
 	_testAssert.True(foreignPending)
 	_testAssert.False(unrelatedPending)
 	_, err = scoped.RemoveXPostContentContext(t.Context(), foreign.ID, "601", "protected")
 	_testRequire.Error(err)
 	for _, id := range messages {
 		var body string
-		_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT body_text FROM message_bodies WHERE message_id=?"), id).Scan(&body))
+		_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT body_text FROM message_bodies WHERE message_id=?"), id).Scan(&body))
 		_testAssert.Equal("synthetic queued author body", body, "queueing never purges under another source's execution")
 	}
 	_testRequire.NoError(st.CompleteSyncContext(t.Context(), run, ""))

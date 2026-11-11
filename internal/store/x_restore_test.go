@@ -54,7 +54,7 @@ func TestXRemovalRecordCapturesCompleteBoundedIdentitySet(t *testing.T) {
 	seedXRestoreInstance(t, st, source, instance)
 	_, err := st.PersistXPostContext(t.Context(), xPostInput(source, "102", "100", "synthetic aurora payload", "100", "102"))
 	_testRequire.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE x_post_versions SET suppressed_at=CURRENT_TIMESTAMP,availability='removed',cleanup_pending=0 WHERE source_id=?`), source)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE x_post_versions SET suppressed_at=CURRENT_TIMESTAMP,availability='removed',cleanup_pending=0 WHERE source_id=?`), source)
 	_testRequire.NoError(err)
 	other, err := st.GetOrCreateSource("x", "2001")
 	_testRequire.NoError(err)
@@ -95,7 +95,7 @@ func TestXRemovalRecordRejectsPendingOrUnboundSource(t *testing.T) {
 	seedXRestoreInstance(t, st, source, strings.Repeat("a", 64))
 	_, err = st.PersistXPostContext(t.Context(), xPostInput(source, "100", "100", "synthetic pending payload"))
 	_testRequire.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE x_post_versions SET suppressed_at=CURRENT_TIMESTAMP,availability='removed',cleanup_pending=1 WHERE source_id=?`), source)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE x_post_versions SET suppressed_at=CURRENT_TIMESTAMP,availability='removed',cleanup_pending=1 WHERE source_id=?`), source)
 	_testRequire.NoError(err)
 	_, _, err = st.ExportXRemovalRecordContext(t.Context())
 	_testRequire.Error(err, "a pending operation cannot publish complete removal authority")
@@ -192,7 +192,7 @@ func seedXRestoreInstance(t *testing.T, st *store.Store, source int64, instance 
 	state.InstanceID = instance
 	encoded, err := json.Marshal(state)
 	require.NoError(t, err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET sync_cursor=? WHERE id=?`), string(encoded), source)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET sync_cursor=? WHERE id=?`), string(encoded), source)
 	require.NoError(t, err)
 }
 
@@ -204,17 +204,17 @@ func TestXRemovalRecordMatchesRestoredSourceAndKnownSuppressions(t *testing.T) {
 	seedXRestoreInstance(t, st, source, instance)
 	_, err := st.PersistXPostContext(t.Context(), xPostInput(source, "102", "100", "synthetic aurora payload", "100", "102"))
 	_testRequire.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE x_post_versions SET suppressed_at=CURRENT_TIMESTAMP,availability='removed',cleanup_pending=1 WHERE source_id=?`), source)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE x_post_versions SET suppressed_at=CURRENT_TIMESTAMP,availability='removed',cleanup_pending=1 WHERE source_id=?`), source)
 	_testRequire.NoError(err)
 	uid, err := st.ArchiveUIDContext(t.Context())
 	_testRequire.NoError(err)
 	// Capture completed current authority, then restore the pending scratch
 	// flag to prove validation allows the same local cleanup to resume.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE x_post_versions SET cleanup_pending=0 WHERE source_id=?`), source)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE x_post_versions SET cleanup_pending=0 WHERE source_id=?`), source)
 	_testRequire.NoError(err)
 	record, _, err := st.ExportXRemovalRecordContext(t.Context())
 	_testRequire.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE x_post_versions SET cleanup_pending=1 WHERE source_id=?`), source)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE x_post_versions SET cleanup_pending=1 WHERE source_id=?`), source)
 	_testRequire.NoError(err)
 	assert.Equal(t, uid, record.ArchiveUID)
 	head := xRestoreRecordHead(t, record)

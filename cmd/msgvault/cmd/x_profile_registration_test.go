@@ -37,7 +37,7 @@ func TestRegisterXDelayedPublicCannotRestoreNewerProtectedProfile(t *testing.T) 
 			})
 			require.NoError(err)
 			var pid int64
-			require.NoError(st.DB().QueryRow(`SELECT participant_id FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1001'`).Scan(&pid))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT participant_id FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1001'`).Scan(&pid))
 			require.NoError(xapi.NewTokenManager(xStagedTokensDir(cfg)).Save(t.Context(), xTestRecord("example-access")))
 			var clock atomic.Int64
 			clock.Store(at.UnixNano())
@@ -61,10 +61,10 @@ func TestRegisterXDelayedPublicCannotRestoreNewerProtectedProfile(t *testing.T) 
 			_, err = registerXAccountWithDeps(t.Context(), st, cfg, "1001", deps)
 			require.NoError(err)
 			var name sql.NullString
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
 			assert.Empty(name.String, "the older public response cannot recreate an erased label")
 			var usernames int
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND source='archive_observation'`), pid).Scan(&usernames))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND source='archive_observation'`), pid).Scan(&usernames))
 			assert.Zero(usernames, "no current or historical provider username may be recreated")
 		})
 	}
@@ -92,7 +92,7 @@ func TestRegisterXProtectedWithoutPostsErasesUnsupportedProfile(t *testing.T) {
 			source, err := registerXAccountWithDeps(t.Context(), st, cfg, "1001", deps)
 			require.NoError(err)
 			var pid int64
-			require.NoError(st.DB().QueryRow(`SELECT participant_id FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1001'`).Scan(&pid))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT participant_id FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1001'`).Scan(&pid))
 			if curated {
 				_, _, err := st.CreatePersonFromParticipant(pid)
 				require.NoError(err)
@@ -103,18 +103,18 @@ func TestRegisterXProtectedWithoutPostsErasesUnsupportedProfile(t *testing.T) {
 			_, err = registerXAccountWithDeps(t.Context(), st, cfg, "1001", deps)
 			require.NoError(err)
 			var posts, usernames, anchors int
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM x_post_versions WHERE source_id=?`), source.ID).Scan(&posts))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM x_post_versions WHERE source_id=?`), source.ID).Scan(&posts))
 			assert.Zero(posts, "registration never collected a post")
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND source='archive_observation'`), pid).Scan(&usernames))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username' AND source='archive_observation'`), pid).Scan(&usernames))
 			assert.Zero(usernames, "including historical superseded usernames")
 			var name sql.NullString
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
 			if curated {
 				assert.Equal("Former Public Label", name.String)
 			} else {
 				assert.Empty(name.String)
 			}
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id=? AND identifier_type='x_user_id' AND identifier_value='1001'`), pid).Scan(&anchors))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id=? AND identifier_type='x_user_id' AND identifier_value='1001'`), pid).Scan(&anchors))
 			assert.Equal(1, anchors)
 			pending, err := st.XCleanupPendingContext(t.Context())
 			require.NoError(err)

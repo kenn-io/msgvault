@@ -25,7 +25,7 @@ func TestXAuthorStoreRequiresNumericXSource(t *testing.T) {
 		_testRequire.Error(err)
 	}
 	var count int
-	_testRequire.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participant_identifiers WHERE identifier_type='x_user_id'`).Scan(&count))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_identifiers WHERE identifier_type='x_user_id'`).Scan(&count))
 	assert.Zero(t, count)
 }
 
@@ -65,7 +65,7 @@ func TestXAuthorStoreRejectsCrossSourceScope(t *testing.T) {
 	_, err = scoped.RecordXAuthorContext(t.Context(), store.XAuthorInput{SourceID: other.ID, UserID: "1001", FetchedAt: time.Now()})
 	_testRequire.Error(err)
 	var count int
-	_testRequire.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participant_identifiers WHERE identifier_type='x_user_id'`).Scan(&count))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_identifiers WHERE identifier_type='x_user_id'`).Scan(&count))
 	_testAssert.Zero(count)
 	_testRequire.NoError(st.FailSync(run, "synthetic scope test complete"))
 }

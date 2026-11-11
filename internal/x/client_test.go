@@ -1,7 +1,6 @@
 package x
 
 import (
-	"context"
 	"encoding/json/v2"
 	"fmt"
 	"io"
@@ -42,7 +41,7 @@ func TestClientDecodesAliasesWithoutFallback(t *testing.T) {
 
 			post := strings.TrimSuffix(rootJSON, "}") + fmt.Sprintf(`,"edit_history_%s_ids":["9007199254740993"],"referenced_%ss":[{"type":"quoted","id":"91"}],"note_%s":{"text":"Full example"}}`, spelling, spelling, spelling)
 			client, calls := servePage(t, `{"data":[`+post+`]}`)
-			page, err := client.Timeline(context.Background(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
+			page, err := client.Timeline(t.Context(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
 			_testRequire.NoError(err)
 			_testRequire.Len(page.Posts, 1)
 			_testAssert.Equal("9007199254740993", page.Posts[0].ID)
@@ -66,7 +65,7 @@ func TestClientDecodesAliasesWithoutFallback(t *testing.T) {
 	for name, post := range cases {
 		t.Run(name, func(t *testing.T) {
 			client, calls := servePage(t, `{"data":[`+rootJSON+`,`+post+`]}`)
-			_, err := client.Timeline(context.Background(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
+			_, err := client.Timeline(t.Context(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
 			require.Error(t, err)
 			assert.Equal(t, int64(1), calls.Load())
 		})
@@ -74,7 +73,7 @@ func TestClientDecodesAliasesWithoutFallback(t *testing.T) {
 	for _, id := range []string{"", "0", "01", "-1", "１２", strings.Repeat("9", 129)} {
 		t.Run("id_"+id, func(t *testing.T) {
 			client, _ := servePage(t, `{"data":[`+strings.ReplaceAll(rootJSON, "9007199254740993", id)+`]}`)
-			_, err := client.Timeline(context.Background(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
+			_, err := client.Timeline(t.Context(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
 			require.Error(t, err)
 		})
 	}
@@ -84,7 +83,7 @@ func TestClientDecodesAliasesWithoutFallback(t *testing.T) {
 
 		id := strings.Repeat("9", 128)
 		client, _ := servePage(t, `{"data":[`+strings.ReplaceAll(rootJSON, "9007199254740993", id)+`]}`)
-		page, err := client.Timeline(context.Background(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
+		page, err := client.Timeline(t.Context(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
 		_testRequire.NoError(err)
 		_testRequire.Len(page.Posts, 1)
 		_testAssert.Equal(id, page.Posts[0].ID)
@@ -98,7 +97,7 @@ func TestClientDecodesAliasesWithoutFallback(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			client, _ := servePage(t, body)
-			_, err := client.Timeline(context.Background(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
+			_, err := client.Timeline(t.Context(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
 			require.Error(t, err)
 		})
 	}
@@ -108,7 +107,7 @@ func TestClientRequestContracts(t *testing.T) {
 	_testAssert := assert.New(t)
 	_testRequire := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	var calls atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -184,11 +183,11 @@ func TestClientRejectsInvalidRequestsBeforeHTTP(t *testing.T) {
 	client, calls := servePage(t, `{"data":[]}`)
 	now := time.Now()
 	for _, r := range []TimelineRequest{{OwnerID: "01", MaxResults: 5}, {OwnerID: "1001", MaxResults: 4}, {OwnerID: "1001", MaxResults: 101}, {OwnerID: "1001", SinceID: "9", After: now, MaxResults: 5}, {OwnerID: "1001", After: now, Before: now, MaxResults: 5}, {OwnerID: "1001", SinceID: "-9", MaxResults: 5}} {
-		_, err := client.Timeline(context.Background(), r)
+		_, err := client.Timeline(t.Context(), r)
 		_testRequire.Error(err)
 	}
 	for _, r := range []SearchRequest{{Query: "query", MaxResults: 9}, {Query: "query", MaxResults: 501}, {MaxResults: 10}, {Query: "query", After: now, Before: now, MaxResults: 10}} {
-		_, err := client.SearchAll(context.Background(), r)
+		_, err := client.SearchAll(t.Context(), r)
 		_testRequire.Error(err)
 	}
 	tooManyUniqueIDs := make([]string, 101)
@@ -196,7 +195,7 @@ func TestClientRejectsInvalidRequestsBeforeHTTP(t *testing.T) {
 		tooManyUniqueIDs[i] = strconv.Itoa(i + 1)
 	}
 	for _, ids := range [][]string{nil, {"91", "91"}, {"01"}, tooManyUniqueIDs} {
-		_, err := client.Lookup(context.Background(), ids)
+		_, err := client.Lookup(t.Context(), ids)
 		_testRequire.Error(err)
 	}
 	assert.Zero(t, calls.Load())
@@ -219,14 +218,14 @@ func TestClientSingleRequestErrorsAndRedirects(t *testing.T) {
 			}))
 			defer srv.Close()
 			client := NewClient(srv.URL, srv.Client())
-			_, err := client.Timeline(context.Background(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
+			_, err := client.Timeline(t.Context(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
 			var apiErr *APIError
 			_testRequire.ErrorAs(err, &apiErr)
 			_testAssert.Equal(status, apiErr.StatusCode)
 			_testAssert.NotContains(err.Error(), "secret")
 			_testAssert.Equal("9", apiErr.RetryAfter)
 			_testAssert.Equal(status >= 400 && status < 500, apiErr.Definite)
-			_, err = client.CreateReply(context.Background(), "Example", "91")
+			_, err = client.CreateReply(t.Context(), "Example", "91")
 			_testRequire.Error(err)
 			_testAssert.Equal(int64(2), calls.Load())
 		})
@@ -239,7 +238,7 @@ func TestClientSingleRequestErrorsAndRedirects(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"data":{"id":"01"}}`)
 		}))
 		defer srv.Close()
-		_, err := NewClient(srv.URL, srv.Client()).CreateReply(context.Background(), "Example", "91")
+		_, err := NewClient(srv.URL, srv.Client()).CreateReply(t.Context(), "Example", "91")
 		require.ErrorIs(t, err, ErrDecodeResponse)
 		assert.Equal(t, int64(1), calls.Load())
 	})
@@ -254,7 +253,7 @@ func TestClientRejectsUnadmittedResourceShape(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			client, _ := servePage(t, body)
-			_, err := client.Timeline(context.Background(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
+			_, err := client.Timeline(t.Context(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
 			require.ErrorIs(t, err, ErrResponseShape)
 		})
 	}
@@ -267,7 +266,7 @@ func TestClientAcceptsAgreeingAliasFixture(t *testing.T) {
 	body, err := os.ReadFile("testdata/wire_aliases.json")
 	_testRequire.NoError(err)
 	client, _ := servePage(t, string(body))
-	page, err := client.Timeline(context.Background(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
+	page, err := client.Timeline(t.Context(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
 	_testRequire.NoError(err)
 	_testRequire.Len(page.Posts, 1)
 	_testAssert.Equal("9007199254740993", page.Posts[0].ID)
@@ -278,7 +277,7 @@ func TestClientRejectsMissingPageShape(t *testing.T) {
 	for name, body := range map[string]string{"null": "null", "missing data": "{}", "null data": `{"data":null}`, "duplicate key": `{"data":[],"data":[]}`} {
 		t.Run(name, func(t *testing.T) {
 			client, _ := servePage(t, body)
-			_, err := client.Timeline(context.Background(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
+			_, err := client.Timeline(t.Context(), TimelineRequest{OwnerID: "1001", MaxResults: 5})
 			require.ErrorIs(t, err, ErrDecodeResponse)
 		})
 	}

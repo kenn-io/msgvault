@@ -40,7 +40,7 @@ func TestXSchedulingThroughSourceStatus(t *testing.T) {
 	_testRequire.NoError(sched.AddAccount("2001", "0 0 1 1 *"))
 	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: st, Scheduler: sched, Logger: slog.New(slog.DiscardHandler)})
 	request := func(method, path string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, path, nil)
+		req := httptest.NewRequestWithContext(t.Context(), method, path, nil)
 		req.Header.Set("X-Api-Key", cfg.Server.APIKey)
 		response := httptest.NewRecorder()
 		server.Router().ServeHTTP(response, req)

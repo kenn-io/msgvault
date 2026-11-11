@@ -124,7 +124,7 @@ func TestXReplyRoutesFinishProtectedAdoptionCleanup(t *testing.T) {
 				_testAssert.Zero(bodies, "retain the tombstone row while purging its actual archived body")
 				_testAssert.Equal("removed", target.Availability)
 				_testRequire.ErrorIs(ctx.Err(), context.Canceled, "cleanup hook must run")
-				request := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", f.parent), nil)
+				request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", f.parent), nil)
 				request.Header.Set("Authorization", "Bearer "+f.cfg.Server.AuthenticationKey())
 				read := httptest.NewRecorder()
 				f.handler.ServeHTTP(read, request)
@@ -193,7 +193,7 @@ func TestXReplyMismatchKeepsUnavailableAdoptionEvidence(t *testing.T) {
 				"draft_id": f.draft.DraftID, "revision": 1, "adopt_post": "9001",
 			})
 			_testRequire.NoError(err)
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/x/replies/prepare", bytes.NewReader(body))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/x/replies/prepare", bytes.NewReader(body))
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Authorization", "Bearer "+f.cfg.Server.AuthenticationKey())
 			out := httptest.NewRecorder()

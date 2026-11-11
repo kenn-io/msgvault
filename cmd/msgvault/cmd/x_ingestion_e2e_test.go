@@ -32,7 +32,7 @@ func TestXScheduledDiscoveryUsesExactNumericOwner(t *testing.T) {
 	other, err := f.st.GetOrCreateSource("x", "1002")
 	_testRequire.NoError(err)
 	// Imported/legacy rows can predate today's source-label conflict validator.
-	_, err = f.st.DB().Exec(f.st.Rebind("UPDATE sources SET display_name=? WHERE id=?"), "1001", other.ID)
+	_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind("UPDATE sources SET display_name=? WHERE id=?"), "1001", other.ID)
 	_testRequire.NoError(err)
 	_, err = f.st.GetOrCreateSource("discord", "1001")
 	_testRequire.NoError(err)
@@ -154,7 +154,7 @@ func TestXIngestionThroughDaemonAndScheduler(t *testing.T) {
 	if !f.st.IsPostgreSQL() {
 		var seq int
 		var name, path string
-		_testRequire.NoError(f.st.DB().QueryRow("PRAGMA database_list").Scan(&seq, &name, &path))
+		_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&seq, &name, &path))
 		f.cfg.Data.DatabaseURL = path
 	}
 	built := make(chan error, 4)
@@ -169,7 +169,7 @@ func TestXIngestionThroughDaemonAndScheduler(t *testing.T) {
 	})
 	t.Cleanup(func() {
 		cancelJobs()
-		ctx, cancel := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), serveLifecycleTestTimeout)
 		defer cancel()
 		require.True(t, jobs.waitContext(ctx))
 	})
@@ -225,8 +225,8 @@ func TestXIngestionThroughDaemonAndScheduler(t *testing.T) {
 		_testRequire.NoError(<-built)
 	}
 	var graphBefore, ownersBefore int
-	_testRequire.NoError(f.st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&graphBefore))
-	_testRequire.NoError(f.st.DB().QueryRow("SELECT count(*) FROM account_identities").Scan(&ownersBefore))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&graphBefore))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM account_identities").Scan(&ownersBefore))
 	_testRequire.NoError(sched.TriggerSync("1001", false))
 	select {
 	case err = <-completed:
@@ -236,8 +236,8 @@ func TestXIngestionThroughDaemonAndScheduler(t *testing.T) {
 	}
 	_testRequire.NoError(<-built)
 	var graphAfter, ownersAfter int
-	_testRequire.NoError(f.st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&graphAfter))
-	_testRequire.NoError(f.st.DB().QueryRow("SELECT count(*) FROM account_identities").Scan(&ownersAfter))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&graphAfter))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM account_identities").Scan(&ownersAfter))
 	_testAssert.Equal(graphBefore, graphAfter)
 	_testAssert.Equal(ownersBefore, ownersAfter)
 	_testAssert.Positive(ownersAfter)
@@ -249,7 +249,7 @@ func TestXIngestionThroughDaemonAndScheduler(t *testing.T) {
 	target, err := f.st.ResolveXPostContext(t.Context(), f.source.ID, "201")
 	_testRequire.NoError(err)
 	var participant int64
-	_testRequire.NoError(f.st.DB().QueryRow("SELECT participant_id FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1002'").Scan(&participant))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "SELECT participant_id FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1002'").Scan(&participant))
 	_, _, err = f.st.CreatePersonFromParticipantWithDisplayNameContext(t.Context(), participant, new("Curated Reply"))
 	_testRequire.NoError(err)
 	rootPost, err := f.st.ResolveXPostContext(t.Context(), f.source.ID, "101")
@@ -531,7 +531,7 @@ func installXAliasPersistenceProbe(t *testing.T, st *store.Store) {
 	t.Helper()
 	require := require.New(t)
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`CREATE TABLE x_test_alias_persistence (
+		_, err := st.DB().ExecContext(t.Context(), `CREATE TABLE x_test_alias_persistence (
 			source_id BIGINT NOT NULL,
 			post_id TEXT NOT NULL,
 			suppressed BOOLEAN NOT NULL,
@@ -540,7 +540,7 @@ func installXAliasPersistenceProbe(t *testing.T, st *store.Store) {
 			PRIMARY KEY (source_id, post_id)
 		)`)
 		require.NoError(err)
-		_, err = st.DB().Exec(`CREATE FUNCTION x_test_record_alias_persistence() RETURNS trigger
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION x_test_record_alias_persistence() RETURNS trigger
 			LANGUAGE plpgsql AS $$
 			BEGIN
 				INSERT INTO x_test_alias_persistence(source_id,post_id,suppressed,cleanup_pending,suppression_reason)
@@ -549,12 +549,12 @@ func installXAliasPersistenceProbe(t *testing.T, st *store.Store) {
 			END;
 			$$`)
 		require.NoError(err)
-		_, err = st.DB().Exec(`CREATE TRIGGER x_test_alias_insert AFTER INSERT ON x_post_versions
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER x_test_alias_insert AFTER INSERT ON x_post_versions
 			FOR EACH ROW EXECUTE FUNCTION x_test_record_alias_persistence()`)
 		require.NoError(err)
 		return
 	}
-	_, err := st.DB().Exec(`CREATE TABLE x_test_alias_persistence (
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TABLE x_test_alias_persistence (
 		source_id INTEGER NOT NULL,
 		post_id TEXT NOT NULL,
 		suppressed BOOLEAN NOT NULL,
@@ -563,7 +563,7 @@ func installXAliasPersistenceProbe(t *testing.T, st *store.Store) {
 		PRIMARY KEY (source_id, post_id)
 	)`)
 	require.NoError(err)
-	_, err = st.DB().Exec(`CREATE TRIGGER x_test_alias_insert AFTER INSERT ON x_post_versions
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER x_test_alias_insert AFTER INSERT ON x_post_versions
 		BEGIN
 			INSERT INTO x_test_alias_persistence(source_id,post_id,suppressed,cleanup_pending,suppression_reason)
 			VALUES(NEW.source_id,NEW.post_id,NEW.suppressed_at IS NOT NULL,NEW.cleanup_pending,NEW.suppression_reason);
@@ -586,7 +586,7 @@ func TestXScheduledSyncRetiresDaemonReaders(t *testing.T) {
 	if !f.st.IsPostgreSQL() {
 		var seq int
 		var name, path string
-		_testRequire.NoError(f.st.DB().QueryRow("PRAGMA database_list").Scan(&seq, &name, &path))
+		_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&seq, &name, &path))
 		f.cfg.Data.DatabaseURL = path
 		_, err = buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 		_testRequire.NoError(err)
@@ -600,7 +600,7 @@ func TestXScheduledSyncRetiresDaemonReaders(t *testing.T) {
 	server := api.NewServerWithOptions(api.ServerOptions{Config: f.cfg, Store: f.adapter, Engine: engine, Logger: slog.New(slog.DiscardHandler), ContentReadGuard: cleaner.AcquireRead})
 	cleaner.SetServer(server)
 	read := func() string {
-		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", saved.MessageID), nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", saved.MessageID), nil)
 		req.Header.Set("X-Api-Key", f.cfg.Server.APIKey)
 		response := httptest.NewRecorder()
 		server.Router().ServeHTTP(response, req)

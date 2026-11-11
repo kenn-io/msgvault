@@ -32,7 +32,7 @@ func TestXSourceMergeRefusesBeforeMutation(t *testing.T) {
 		_testRequire.NoError(err)
 		_testAssert.Equal(post.MessageID, target.MessageID)
 		var sourceID int64
-		_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT source_id FROM messages WHERE id=?"), post.MessageID).Scan(&sourceID))
+		_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT source_id FROM messages WHERE id=?"), post.MessageID).Scan(&sourceID))
 		_testAssert.Equal(from.ID, sourceID)
 	}
 }
@@ -56,6 +56,6 @@ func TestXMergeGuardPreservesImportedProviderMerges(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.Equal(into.ID, current.MergedIntoSourceID)
 	var sourceID int64
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT source_id FROM messages WHERE id=?"), message).Scan(&sourceID))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT source_id FROM messages WHERE id=?"), message).Scan(&sourceID))
 	_testAssert.Equal(into.ID, sourceID)
 }

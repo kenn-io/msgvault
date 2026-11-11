@@ -65,7 +65,7 @@ func TestXCheckpointLateParentAndRemovalViaDaemonReads(t *testing.T) {
 	var parent sql.NullInt64
 	readParent := func() {
 		t.Helper()
-		require.NoError(t, f.st.DB().QueryRow(f.st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), child.MessageID).Scan(&parent))
+		require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), child.MessageID).Scan(&parent))
 	}
 	readParent()
 	_testAssert.False(parent.Valid)

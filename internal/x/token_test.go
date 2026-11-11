@@ -68,7 +68,7 @@ func TestRefreshPersistsRotationBeforeUse(t *testing.T) {
 			if fail {
 				_testRequire.Error(err)
 				_testAssert.Zero(snapshot.Generation)
-				response, useErr := creds.HTTPClient().Get(server.URL + "/resource")
+				response, useErr := xTestHTTPGet(t, creds.HTTPClient(), server.URL+"/resource")
 				_testRequire.Error(useErr)
 				if response != nil {
 					_testRequire.NoError(response.Body.Close())
@@ -80,7 +80,7 @@ func TestRefreshPersistsRotationBeforeUse(t *testing.T) {
 				_testRequire.NoError(err)
 				_testAssert.Equal("rotated-refresh", saved.RefreshToken())
 				_testAssert.Equal([]string{"tweet.read", "users.read"}, snapshot.GrantedScopes)
-				resp, err := creds.HTTPClient().Get(server.URL + "/resource")
+				resp, err := xTestHTTPGet(t, creds.HTTPClient(), server.URL+"/resource")
 				_testRequire.NoError(err)
 				_testRequire.NoError(resp.Body.Close())
 			}
@@ -196,7 +196,7 @@ func TestBearerNeverRefreshesOrReplaysPOST(t *testing.T) {
 	c := m.Credentials(r.OwnerID, nil)
 	_, err := c.Prepare(t.Context())
 	_testRequire.NoError(err)
-	resp, err := c.HTTPClient().Post(server.URL, "text/plain", strings.NewReader("example"))
+	resp, err := xTestHTTPPost(t, c.HTTPClient(), server.URL, "text/plain", strings.NewReader("example"))
 	_testRequire.NoError(err)
 	_testRequire.NoError(resp.Body.Close())
 	_testAssert.Equal(401, resp.StatusCode)
@@ -401,7 +401,7 @@ func TestBearerRefusesRedirectsAndUseBeforePrepare(t *testing.T) {
 	r.Expiry = time.Now().Add(time.Hour)
 	_testRequire.NoError(m.Save(t.Context(), r))
 	c := m.Credentials(r.OwnerID, nil)
-	resp, err := c.HTTPClient().Post(origin.URL, "text/plain", strings.NewReader("example"))
+	resp, err := xTestHTTPPost(t, c.HTTPClient(), origin.URL, "text/plain", strings.NewReader("example"))
 	_testRequire.Error(err)
 	if resp != nil {
 		_testRequire.NoError(resp.Body.Close())
@@ -409,7 +409,7 @@ func TestBearerRefusesRedirectsAndUseBeforePrepare(t *testing.T) {
 	_testAssert.Nil(resp)
 	_, err = c.Prepare(t.Context())
 	_testRequire.NoError(err)
-	resp, err = c.HTTPClient().Post(origin.URL, "text/plain", strings.NewReader("example"))
+	resp, err = xTestHTTPPost(t, c.HTTPClient(), origin.URL, "text/plain", strings.NewReader("example"))
 	_testRequire.NoError(err)
 	_testRequire.NoError(resp.Body.Close())
 	_testAssert.Equal(307, resp.StatusCode)
@@ -449,7 +449,7 @@ func TestFailedRotationInvalidatesPreparedBearer(t *testing.T) {
 	_testRequire.NoError(err)
 	_, err = c.Refresh(t.Context(), snapshot.Generation)
 	_testRequire.Error(err)
-	resp, err := c.HTTPClient().Get(server.URL + "/resource")
+	resp, err := xTestHTTPGet(t, c.HTTPClient(), server.URL+"/resource")
 	_testRequire.Error(err)
 	if resp != nil {
 		_testRequire.NoError(resp.Body.Close())
@@ -532,7 +532,7 @@ func TestInvalidRefreshGenerationClearsBearer(t *testing.T) {
 	_testRequire.NoError(err)
 	_, err = c.Refresh(t.Context(), 0)
 	_testRequire.Error(err)
-	resp, err := c.HTTPClient().Get(server.URL)
+	resp, err := xTestHTTPGet(t, c.HTTPClient(), server.URL)
 	_testRequire.Error(err)
 	if resp != nil {
 		_testRequire.NoError(resp.Body.Close())

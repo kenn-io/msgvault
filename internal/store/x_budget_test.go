@@ -101,46 +101,48 @@ func TestBudgetSurvivesRestartAndUTCMonth(t *testing.T) {
 }
 
 func TestXBudgetEmptyPollsPreserveCostAcrossRollover(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st, id, cost := xBudgetFixture(t)
 	state, err := st.LoadXControlContext(t.Context(), id)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	job := store.XArchiveJob{ID: "archive-empty", Fingerprint: "frozen", Username: "example_user", After: cost.At.Add(-24 * time.Hour), Before: cost.At, CapMicros: 30_000_000,
 		Own:      &store.XWalk{Fingerprint: "own", Endpoint: "search_all", Query: "from:example_user -is:retweet", After: cost.At.Add(-24 * time.Hour), Before: cost.At},
 		Mentions: &store.XWalk{Fingerprint: "mentions", Endpoint: "search_all", Query: "to:example_user -is:retweet", After: cost.At.Add(-24 * time.Hour), Before: cost.At}}
 	_, err = st.UpdateXControlContext(t.Context(), id, state.Revision, store.XControlPatch{OwnerID: "100", Jobs: &[]store.XArchiveJob{job}})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	cost.MonthlyBudgetMicros = 30_000_000
 	send := cost
 	send.Kind, send.RequestedResults, send.CreateReservationMicros, send.AllowSend = store.XRequestCreate, 0, 200_000, true
 	send.GrantedScopes = append(send.GrantedScopes, "tweet.write")
 	uncertain, err := st.ReserveXRequestContext(t.Context(), id, send)
-	require.NoError(t, err)
-	require.NoError(t, st.SettleXRequestContext(t.Context(), id, uncertain.ID, store.XResourceUsage{Persisted: true, Complete: true}))
+	requirements.NoError(err)
+	requirements.NoError(st.SettleXRequestContext(t.Context(), id, uncertain.ID, store.XResourceUsage{Persisted: true, Complete: true}))
 	cost.RequestedResults = 5
 	cost.JobID, cost.JobFingerprint = job.ID, job.Fingerprint
 	const perMonth = 130
-	for month := 0; month < 2; month++ {
+	for range 2 {
 		for range perMonth {
 			reservation, err := st.ReserveXRequestContext(t.Context(), id, cost)
-			require.NoError(t, err)
-			require.NoError(t, st.SettleXRequestContext(t.Context(), id, reservation.ID, store.XResourceUsage{Persisted: true, Complete: true}))
+			requirements.NoError(err)
+			requirements.NoError(st.SettleXRequestContext(t.Context(), id, reservation.ID, store.XResourceUsage{Persisted: true, Complete: true}))
 		}
 		cost.At = cost.At.Add(2 * time.Minute)
 	}
 	state, err = st.LoadXControlContext(t.Context(), id)
-	require.NoError(t, err)
-	require.Len(t, state.SpendBuckets, 2)
-	assert.Equal(t, int64(perMonth*75_000), state.SpendBuckets[0].SpentMicros)
-	assert.Equal(t, int64(200_000), state.SpendBuckets[0].ReservedMicros)
-	assert.Equal(t, int64(perMonth*75_000), state.SpendBuckets[1].SpentMicros)
-	assert.Zero(t, state.SpendBuckets[1].ReservedMicros)
-	require.Len(t, state.Jobs, 1)
-	assert.Equal(t, int64(2*perMonth*75_000), state.Jobs[0].SpentMicros)
-	assert.Zero(t, state.Jobs[0].ReservedMicros)
-	require.Len(t, state.Reservations, 2)
-	assert.Equal(t, uncertain.ID, state.Reservations[0].ID)
-	assert.Equal(t, "pending", state.Reservations[0].State)
+	requirements.NoError(err)
+	requirements.Len(state.SpendBuckets, 2)
+	assertions.Equal(int64(perMonth*75_000), state.SpendBuckets[0].SpentMicros)
+	assertions.Equal(int64(200_000), state.SpendBuckets[0].ReservedMicros)
+	assertions.Equal(int64(perMonth*75_000), state.SpendBuckets[1].SpentMicros)
+	assertions.Zero(state.SpendBuckets[1].ReservedMicros)
+	requirements.Len(state.Jobs, 1)
+	assertions.Equal(int64(2*perMonth*75_000), state.Jobs[0].SpentMicros)
+	assertions.Zero(state.Jobs[0].ReservedMicros)
+	requirements.Len(state.Reservations, 2)
+	assertions.Equal(uncertain.ID, state.Reservations[0].ID)
+	assertions.Equal("pending", state.Reservations[0].State)
 }
 
 func TestXBudgetConcurrentAdmissionHasOneWinner(t *testing.T) {
@@ -319,7 +321,7 @@ func TestXBudgetModelAcknowledgementDoesNotUnfenceSend(t *testing.T) {
 	_testRequire.NoError(err)
 	// Schema fixture: Task14 owns attempt admission; this existing uncertain row
 	// proves a read-model acknowledgement cannot erase its separate send fence.
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO x_reply_attempts(source_id,owner_id,draft_id,attempt_id,draft_revision,target_post_id,source_conversation_id,body_digest,state,reservation_id,reserved_micros) VALUES(?,?,?,?,?,?,?,?,?,?,?)`), id, "100", "model-draft", "attempt-1", 1, "201", "200", "synthetic-digest", "remote_unknown", send.ID, send.AmountMicros)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO x_reply_attempts(source_id,owner_id,draft_id,attempt_id,draft_revision,target_post_id,source_conversation_id,body_digest,state,reservation_id,reserved_micros) VALUES(?,?,?,?,?,?,?,?,?,?,?)`), id, "100", "model-draft", "attempt-1", 1, "201", "200", "synthetic-digest", "remote_unknown", send.ID, send.AmountMicros)
 	_testRequire.NoError(err)
 	read, err := st.ReserveXRequestContext(t.Context(), id, cost)
 	_testRequire.NoError(err)
@@ -334,9 +336,9 @@ func TestXBudgetModelAcknowledgementDoesNotUnfenceSend(t *testing.T) {
 	_testAssert.Equal(before.SpendBuckets, after.SpendBuckets)
 	_testAssert.Equal(int64(275_000), after.SpendBuckets[0].ReservedMicros)
 	var state string
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT state FROM x_reply_attempts WHERE source_id=? AND draft_id=? AND attempt_id=?"), id, "model-draft", "attempt-1").Scan(&state))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT state FROM x_reply_attempts WHERE source_id=? AND draft_id=? AND attempt_id=?"), id, "model-draft", "attempt-1").Scan(&state))
 	_testAssert.Equal("remote_unknown", state)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO x_reply_attempts(source_id,owner_id,draft_id,attempt_id,draft_revision,target_post_id,source_conversation_id,body_digest,state,reservation_id) VALUES(?,?,?,?,?,?,?,?,?,?)`), id, "100", "model-draft", "attempt-2", 1, "201", "200", "synthetic-digest", "admitted", "new-attempt")
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO x_reply_attempts(source_id,owner_id,draft_id,attempt_id,draft_revision,target_post_id,source_conversation_id,body_digest,state,reservation_id) VALUES(?,?,?,?,?,?,?,?,?,?)`), id, "100", "model-draft", "attempt-2", 1, "201", "200", "synthetic-digest", "admitted", "new-attempt")
 	_testRequire.Error(err)
 }
 

@@ -63,7 +63,7 @@ func TestXPendingRemovalFencesCLIExportAndAllowsCleanup(t *testing.T) {
 		// Bound a stuck cleanup lease without requiring any polling throughput.
 		ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 		defer cancel()
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", bytes.NewReader(encoded)).WithContext(ctx)
+		r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/cli/run", bytes.NewReader(encoded))
 		r.Header.Set("X-Api-Key", f.cfg.Server.APIKey)
 		r.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
@@ -87,7 +87,7 @@ func TestXPendingRemovalFencesCLIExportAndAllowsCleanup(t *testing.T) {
 	runner.beforeEmit = nil
 	require.NoError(f.st.QueueXAuthorRemovalContext(t.Context(), f.source.ID, "1002", time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC)))
 	var retained string
-	require.NoError(f.st.DB().QueryRow("SELECT body_text FROM message_bodies WHERE message_id=?", f.message).Scan(&retained))
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), "SELECT body_text FROM message_bodies WHERE message_id=?", f.message).Scan(&retained))
 	require.Equal("synthetic aurora payload", retained, "simulate cancellation after suppression is queued but before purge")
 	response = request(export...)
 	assert.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())

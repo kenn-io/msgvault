@@ -177,7 +177,7 @@ func (s *Store) PrepareXArchiveJobContext(ctx context.Context, sourceID int64, s
 		}
 		if !spec.Preview {
 			if len(state.Jobs) >= XMaxArchiveJobs {
-				return ErrXBudgetCapacity
+				return fmt.Errorf("%w: %d archive jobs", ErrXBudgetCapacity, XMaxArchiveJobs)
 			}
 			job.ID = "xjob_" + rand.Text()
 			state.Jobs = append(state.Jobs, job)

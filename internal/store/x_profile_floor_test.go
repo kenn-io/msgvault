@@ -33,14 +33,14 @@ func TestXAuthorProtectionSurvivesSourceRemoval(t *testing.T) {
 			pid, err := st.RecordXAuthorContext(t.Context(), store.XAuthorInput{SourceID: other.ID, UserID: "1001", Username: "old_handle", DisplayName: "Old Public Label", FetchedAt: at.Add(-time.Minute)})
 			require.NoError(err)
 			var name sql.NullString
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
 			assert.Empty(name.String)
 			var count int
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username'`), pid).Scan(&count))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM participant_contact_observations WHERE participant_id=? AND address_kind='username'`), pid).Scan(&count))
 			assert.Zero(count)
 			_, err = st.RecordXAuthorContext(t.Context(), store.XAuthorInput{SourceID: other.ID, UserID: "1001", Username: "new_handle", DisplayName: "New Public Label", FetchedAt: at.Add(time.Minute)})
 			require.NoError(err)
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT display_name FROM participants WHERE id=?`), pid).Scan(&name))
 			assert.Equal("New Public Label", name.String)
 		})
 	}

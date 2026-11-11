@@ -59,11 +59,12 @@ the developer app and qualifies for that endpoint's pricing. Expanded authors,
 refreshes and retries also cost money. Prices and reserved amounts are estimates,
 not an X invoice; the console cap remains the external spending stop.
 
-Empty and failed responses retain their full reservations while their billing
-is unverified. Repeated quiet polls can exhaust the local allowance or bounded
-reservation capacity. Further calls then stop. Reauthorization and read-model
-acknowledgement do not release these amounts. Resolving this billing uncertainty
-is a draft release condition.
+Complete empty reads and definite send rejections charge their full reserved
+amount to the original month. They can exhaust the local allowance, but their
+settled reservations can be compacted. Failed or incomplete reads and sends
+with uncertain outcomes retain their reservations and can exhaust the 256-entry
+reservation capacity. Reauthorization and read-model acknowledgement do not
+release these amounts. Billing qualification remains a draft release condition.
 
 A response that exceeds the reserved resource model pauses further read
 requests across restarts. Verify the adapter and price assumptions before clearing
@@ -99,7 +100,10 @@ a completed job does not silently grant a fresh cap. Without `--max-spend`,
 selecting an existing job also previews it. To resume paid collection, include
 its existing cap or a higher one. An explicit zero cap admits no resource calls.
 The account's monthly limit still applies. The scheduler never starts archive
-searches.
+jobs automatically. The archive keeps at most 64 jobs and 120 monthly spending
+buckets per X source. At 64 jobs, new jobs stop; existing jobs can still resume.
+At 120 distinct spending months, a new month cannot reserve reads or sends.
+Completed financial history is retained for spending and restore checks.
 
 Paid archive collection stops with `refresh_required` when existing content is
 due for refresh or an earlier sweep is incomplete. Run `msgvault source x sync
@@ -114,8 +118,10 @@ retention failures remain visible in source/run status.
 
 Timelines reach at most 3,200 recent own posts and 800 mentions. Saturation or
 outages can leave gaps; msgvault does not buy additional searches automatically.
-Each collection walk stores at most 1,000 page checkpoints. Reaching that cap
-stops the walk incomplete instead of reporting full coverage.
+Each collection walk remembers its latest 1,000 page tokens to detect recent
+pagination cycles; cycles longer than that window may not be detected. A run
+stops each walk after 1,000 page requests. Resume the same job or sync to
+continue from its saved cursor without resetting its frozen interval or cap.
 Backfill uses the stored handle and explicit from/to queries across the entire
 interval. It cannot promise old-handle history, every bare mention, quote,
 nested reply or hidden reply. Unavailable content is not recoverable through
@@ -154,7 +160,8 @@ setup flag requests write scope; it does not enable this policy.
 
 Direct parent/body mode prints the prepared draft ID and revision on stderr
 before it admits a POST. Keep that handle for recovery if stdout is lost. MCP
-prepares one managed draft and confirms that same revision.
+prepares one managed draft and confirms that same revision. If confirmation is
+cancelled or expires, the draft remains available to the owner for reuse or deletion.
 
 Review the exact draft revision. The native target version is pinned; edited
 or unavailable targets require new review. Every send reserves at least $0.200 conservatively,

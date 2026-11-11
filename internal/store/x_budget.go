@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"time"
@@ -161,7 +162,7 @@ func (s *Store) reserveXRequestTx(ctx context.Context, tx *loggedTx, sourceID in
 	}
 	if bucketIndex < 0 {
 		if len(state.SpendBuckets) >= XMaxSpendBuckets {
-			return XReservation{}, ErrXBudgetCapacity
+			return XReservation{}, fmt.Errorf("%w: %d monthly spending buckets", ErrXBudgetCapacity, XMaxSpendBuckets)
 		}
 		state.SpendBuckets = append(state.SpendBuckets, XSpendBucket{Month: month})
 		bucketIndex = len(state.SpendBuckets) - 1
@@ -209,7 +210,7 @@ func (s *Store) reserveXRequestTx(ctx context.Context, tx *loggedTx, sourceID in
 	// original bucket/job totals; unknown obligations are never evicted.
 	state.Reservations = slices.DeleteFunc(state.Reservations, func(r XReservation) bool { return r.State == "settled" })
 	if len(state.Reservations) >= XMaxReservations {
-		return XReservation{}, ErrXBudgetCapacity
+		return XReservation{}, fmt.Errorf("%w: %d pending reservations", ErrXBudgetCapacity, XMaxReservations)
 	}
 	reservation := XReservation{ID: "xreq_" + rand.Text(), Kind: spec.Kind, Month: month, JobID: spec.JobID, State: statusPending, AmountMicros: amount}
 	if minimum > 0 {
@@ -270,6 +271,11 @@ func (s *Store) SettleXRequestContext(ctx context.Context, sourceID int64, reser
 
 // settleXRequestTx is reusable by atomic message/receipt finalization.
 func (s *Store) settleXRequestTx(ctx context.Context, tx *loggedTx, sourceID int64, id string, usage XResourceUsage) error {
+	return s.settleXRequestResultTx(ctx, tx, sourceID, id, usage, false)
+}
+
+// A definite rejection is terminal but does not prove that X billed nothing.
+func (s *Store) settleXRequestResultTx(ctx context.Context, tx *loggedTx, sourceID int64, id string, usage XResourceUsage, rejected bool) error {
 	state, err := s.loadXControlTx(ctx, tx, sourceID)
 	if err != nil {
 		return err
@@ -291,7 +297,7 @@ func (s *Store) settleXRequestTx(ctx context.Context, tx *loggedTx, sourceID int
 	if reservation.State == "settled" {
 		return nil
 	}
-	if usage.Posts < 0 || usage.Users < 0 || usage.Posts > reservation.MaxPosts || usage.Users > reservation.MaxUsers || (usage.Created && reservation.Kind != XRequestCreate) {
+	if usage.Posts < 0 || usage.Users < 0 || usage.Posts > reservation.MaxPosts || usage.Users > reservation.MaxUsers || ((usage.Created || rejected) && reservation.Kind != XRequestCreate) {
 		return ErrXReservationUsage
 	}
 	if !usage.Persisted || !usage.Complete {
@@ -299,7 +305,7 @@ func (s *Store) settleXRequestTx(ctx context.Context, tx *loggedTx, sourceID int
 	}
 	actual := reservation.AmountMicros
 	if reservation.Kind == XRequestCreate {
-		if !usage.Created {
+		if !usage.Created && !rejected {
 			return nil
 		}
 	} else if usage.Posts != 0 || usage.Users != 0 {

@@ -68,7 +68,7 @@ func wireImportPage(w http.ResponseWriter, posts []string, next string) {
 
 func archivedXIDs(t *testing.T, st *store.Store, sourceID int64) []string {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`SELECT source_message_id FROM messages WHERE source_id=? ORDER BY source_message_id`), sourceID)
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT source_message_id FROM messages WHERE source_id=? ORDER BY source_message_id`), sourceID)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, rows.Close()) }()
 	var ids []string
@@ -194,6 +194,8 @@ func TestXInterruptedWindowDoesNotPublishNewestID(t *testing.T) {
 }
 
 func TestXImportRepairsParentsAfterInterruptedRun(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source := importTestSource(t, st)
 	now := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
@@ -205,19 +207,19 @@ func TestXImportRepairsParentsAfterInterruptedRun(t *testing.T) {
 	// Simulate interruption after both pages were persisted but before the final scan.
 	for _, post := range posts {
 		_, err := writePageWithSummary(t.Context(), st, source.ID, "1001", Page{Posts: []Post{post}, Users: []User{user}, FetchedAt: now}, now)
-		require.NoError(t, err)
+		requirements.NoError(err)
 	}
 	root, err := st.ResolveXPostContext(t.Context(), source.ID, "109")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	child, err := st.ResolveXPostContext(t.Context(), source.ID, "110")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	readParent := func() sql.NullInt64 {
 		t.Helper()
 		var parent sql.NullInt64
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child.MessageID).Scan(&parent))
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child.MessageID).Scan(&parent))
 		return parent
 	}
-	assert.False(t, readParent().Valid)
+	assertions.False(readParent().Valid)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 	}))
@@ -226,10 +228,10 @@ func TestXImportRepairsParentsAfterInterruptedRun(t *testing.T) {
 	imp := NewImporter(st, NewClient(server.URL, server.Client()), importTestPolicy(t), credentials)
 	imp.now = func() time.Time { return now }
 	_, err = imp.Import(t.Context(), ImportOptions{SourceID: source.ID, OwnerID: "1001"})
-	require.Error(t, err)
+	requirements.Error(err)
 	parent := readParent()
-	assert.True(t, parent.Valid)
-	assert.Equal(t, root.MessageID, parent.Int64)
+	assertions.True(parent.Valid)
+	assertions.Equal(root.MessageID, parent.Int64)
 }
 
 func TestXDelayedCrossSourceImportCannotOutrankProtectedObservation(t *testing.T) {
@@ -318,7 +320,7 @@ func TestXDelayedCrossSourceImportCannotOutrankProtectedObservation(t *testing.T
 	_testAssert.Equal("removed", target.Availability, "a response completing after protection cannot outrank a request that started before it")
 	_testAssert.Zero(target.MessageID)
 	var messages int
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&messages))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&messages))
 	_testAssert.Zero(messages, "stale public text must not enter the archive")
 	pending, err := st.XCleanupPendingContext(t.Context())
 	_testRequire.NoError(err)
@@ -519,7 +521,7 @@ func TestXPageBoundariesReplayWithoutSkipping(t *testing.T) {
 			case "checkpoint":
 				trigger = `CREATE TRIGGER x_fail BEFORE UPDATE OF cursor_before ON sync_runs WHEN EXISTS(SELECT 1 FROM messages WHERE source_id=NEW.source_id) AND NEW.status='running' BEGIN SELECT RAISE(ABORT,'synthetic checkpoint failure'); END`
 			}
-			_, err := st.DB().Exec(trigger)
+			_, err := st.DB().ExecContext(t.Context(), trigger)
 			_testRequire.NoError(err)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasSuffix(r.URL.Path, "/mentions") || r.URL.Query().Get("start_time") != "" {
@@ -545,7 +547,7 @@ func TestXPageBoundariesReplayWithoutSkipping(t *testing.T) {
 			_testRequire.NoError(err)
 			_testAssert.Empty(state.Own.Watermark)
 			_testAssert.False(state.Own.Complete)
-			_, err = st.DB().Exec(`DROP TRIGGER x_fail`)
+			_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER x_fail`)
 			_testRequire.NoError(err)
 			summary, err := makeImporter().Import(t.Context(), ImportOptions{SourceID: source.ID, OwnerID: "1001"})
 			_testRequire.NoError(err)

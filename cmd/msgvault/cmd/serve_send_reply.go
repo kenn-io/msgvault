@@ -165,7 +165,7 @@ func (a *storeAPIAdapter) runCLISendReply(ctx context.Context, req api.CLIRunReq
 		}
 	}()
 	if result.DraftID != "" {
-		data := fmt.Sprintf("%s: draft %s revision %d, attempt %s, remote ID %s, reserved USD %d.%06d\n", result.Status, result.DraftID, result.Revision, result.AttemptID, result.RemoteID, result.ReservedMicros/1000000, result.ReservedMicros%1000000)
+		data := fmt.Sprintf("%s: draft %s revision %d, remote ID %s, reserved USD %d.%06d\n", result.Status, result.DraftID, result.Revision, result.RemoteID, result.ReservedMicros/1000000, result.ReservedMicros%1000000)
 		if intent.JSON {
 			encoded, err := json.Marshal(result)
 			if err != nil {

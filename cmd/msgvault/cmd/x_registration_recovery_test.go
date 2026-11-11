@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -173,9 +172,9 @@ func testXRegistrationRecovery(t *testing.T, beforePublication bool) {
 	require.NoError(t, err)
 	if beforePublication {
 		if st.IsPostgreSQL() {
-			_, err = st.DB().Exec(`CREATE FUNCTION fail_x_registration_publish_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic publication interruption'; END $$; CREATE TRIGGER fail_x_registration_publish BEFORE UPDATE OF sync_cursor ON sources FOR EACH ROW EXECUTE FUNCTION fail_x_registration_publish_fn()`)
+			_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_x_registration_publish_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic publication interruption'; END $$; CREATE TRIGGER fail_x_registration_publish BEFORE UPDATE OF sync_cursor ON sources FOR EACH ROW EXECUTE FUNCTION fail_x_registration_publish_fn()`)
 		} else {
-			_, err = st.DB().Exec(`CREATE TRIGGER fail_x_registration_publish BEFORE UPDATE OF sync_cursor ON sources BEGIN SELECT RAISE(ABORT, 'synthetic publication interruption'); END`)
+			_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_x_registration_publish BEFORE UPDATE OF sync_cursor ON sources BEGIN SELECT RAISE(ABORT, 'synthetic publication interruption'); END`)
 		}
 		require.NoError(t, err)
 	}
@@ -184,9 +183,9 @@ func testXRegistrationRecovery(t *testing.T, beforePublication bool) {
 	if beforePublication {
 		require.ErrorContains(t, err, "synthetic publication interruption")
 		if st.IsPostgreSQL() {
-			_, err = st.DB().Exec(`DROP TRIGGER fail_x_registration_publish ON sources; DROP FUNCTION fail_x_registration_publish_fn()`)
+			_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_x_registration_publish ON sources; DROP FUNCTION fail_x_registration_publish_fn()`)
 		} else {
-			_, err = st.DB().Exec(`DROP TRIGGER fail_x_registration_publish`)
+			_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_x_registration_publish`)
 		}
 		require.NoError(t, err)
 	} else {
@@ -242,7 +241,7 @@ func testXRegistrationRecovery(t *testing.T, beforePublication bool) {
 	assert.Equal(t, spend, afterControl.SpendBuckets)
 	_, err = stage.Load(t.Context(), "1001")
 	require.ErrorIs(t, err, os.ErrNotExist)
-	_, err = manager.Credentials("1001", provider.Client()).Refresh(context.Background(), afterRetry.Generation)
+	_, err = manager.Credentials("1001", provider.Client()).Refresh(t.Context(), afterRetry.Generation)
 	require.NoError(t, err)
 	mu.Lock()
 	assert.Equal(t, []string{"example-refresh", "rotated-refresh-2"}, refreshTokens)

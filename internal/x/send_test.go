@@ -114,21 +114,21 @@ func sendFailure(t *testing.T, st *store.Store, table, condition string) func() 
 	require.Contains(t, []string{"message_bodies", "x_reply_attempts"}, table)
 	name := "fail_send_" + table
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec("CREATE FUNCTION " + name + "() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF " + condition + " THEN RAISE EXCEPTION 'synthetic send persistence failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER " + name + " BEFORE INSERT OR UPDATE ON " + table + " FOR EACH ROW EXECUTE FUNCTION " + name + "()")
+		_, err := st.DB().ExecContext(t.Context(), "CREATE FUNCTION "+name+"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF "+condition+" THEN RAISE EXCEPTION 'synthetic send persistence failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER "+name+" BEFORE INSERT OR UPDATE ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+name+"()")
 		require.NoError(t, err)
 	} else {
-		_, err := st.DB().Exec("CREATE TRIGGER " + name + " BEFORE INSERT ON " + table + " WHEN " + condition + " BEGIN SELECT RAISE(ABORT,'synthetic send persistence failure'); END")
+		_, err := st.DB().ExecContext(t.Context(), "CREATE TRIGGER "+name+" BEFORE INSERT ON "+table+" WHEN "+condition+" BEGIN SELECT RAISE(ABORT,'synthetic send persistence failure'); END")
 		if table == "x_reply_attempts" {
-			_, err = st.DB().Exec("DROP TRIGGER " + name + "; CREATE TRIGGER " + name + " BEFORE UPDATE ON " + table + " WHEN " + condition + " BEGIN SELECT RAISE(ABORT,'synthetic send persistence failure'); END")
+			_, err = st.DB().ExecContext(t.Context(), "DROP TRIGGER "+name+"; CREATE TRIGGER "+name+" BEFORE UPDATE ON "+table+" WHEN "+condition+" BEGIN SELECT RAISE(ABORT,'synthetic send persistence failure'); END")
 		}
 		require.NoError(t, err)
 	}
 	return func() {
 		var err error
 		if st.IsPostgreSQL() {
-			_, err = st.DB().Exec("DROP TRIGGER " + name + " ON " + table + "; DROP FUNCTION " + name + "()")
+			_, err = st.DB().ExecContext(t.Context(), "DROP TRIGGER "+name+" ON "+table+"; DROP FUNCTION "+name+"()")
 		} else {
-			_, err = st.DB().Exec("DROP TRIGGER " + name)
+			_, err = st.DB().ExecContext(t.Context(), "DROP TRIGGER "+name)
 		}
 		require.NoError(t, err)
 	}
@@ -143,7 +143,7 @@ func openSendStore(t *testing.T, st *store.Store, closeOld bool) *store.Store {
 	var path string
 	if st.IsPostgreSQL() {
 		var database, schema string
-		require.NoError(t, st.DB().QueryRow("SELECT current_database(),current_schema()").Scan(&database, &schema))
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT current_database(),current_schema()").Scan(&database, &schema))
 		u, err := url.Parse(os.Getenv("MSGVAULT_TEST_DB"))
 		require.NoError(t, err)
 		u.Path = "/" + database
@@ -152,7 +152,7 @@ func openSendStore(t *testing.T, st *store.Store, closeOld bool) *store.Store {
 		u.RawQuery = q.Encode()
 		path = u.String()
 	} else {
-		require.NoError(t, st.DB().QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path))
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path))
 	}
 	if closeOld {
 		require.NoError(t, st.Close())

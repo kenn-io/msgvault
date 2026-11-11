@@ -53,7 +53,7 @@ func TestXContentPendingFencesEveryAuthenticatedReader(t *testing.T) {
 	_testRequire.NoError(err)
 	credentials := []struct{ name, header, key string }{{"owner", "X-Api-Key", cfg.Server.APIKey}, {"agent", apiprotocol.AgentTokenHeader, token}, {"remote-reader", "X-Api-Key", "example-reader-key"}}
 	read := func(header, key, path string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 		request.Header.Set(header, key)
 		response := httptest.NewRecorder()
 		server.Router().ServeHTTP(response, request)
@@ -78,7 +78,7 @@ func TestXContentPendingFencesEveryAuthenticatedReader(t *testing.T) {
 		})
 	}
 	for _, queryPath := range []string{"/api/v1/query", "/api/v1/query/archive"} {
-		request := httptest.NewRequest(http.MethodPost, queryPath, strings.NewReader(`{"sql":"SELECT snippet FROM messages"}`))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, queryPath, strings.NewReader(`{"sql":"SELECT snippet FROM messages"}`))
 		request.Header.Set("X-Api-Key", cfg.Server.APIKey)
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()

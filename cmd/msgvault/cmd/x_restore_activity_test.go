@@ -389,24 +389,24 @@ func (p *xRestoreSendProbe) recover(t *testing.T, st *store.Store, accepted bool
 func xRestoreFailReplyArchive(t *testing.T, st *store.Store) func() {
 	t.Helper()
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`CREATE FUNCTION fail_x_restore_reply() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic archive failure'; END; $$`)
+		_, err := st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_x_restore_reply() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic archive failure'; END; $$`)
 		require.NoError(t, err)
-		_, err = st.DB().Exec(`CREATE TRIGGER fail_x_restore_reply BEFORE INSERT ON message_bodies FOR EACH ROW EXECUTE FUNCTION fail_x_restore_reply()`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_x_restore_reply BEFORE INSERT ON message_bodies FOR EACH ROW EXECUTE FUNCTION fail_x_restore_reply()`)
 		require.NoError(t, err)
 	} else {
-		_, err := st.DB().Exec(`CREATE TRIGGER fail_x_restore_reply BEFORE INSERT ON message_bodies BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`)
+		_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_x_restore_reply BEFORE INSERT ON message_bodies BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`)
 		require.NoError(t, err)
 	}
 	var once sync.Once
 	undo := func() {
 		once.Do(func() {
 			if st.IsPostgreSQL() {
-				_, err := st.DB().Exec(`DROP TRIGGER fail_x_restore_reply ON message_bodies`)
+				_, err := st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_x_restore_reply ON message_bodies`)
 				assert.NoError(t, err)
-				_, err = st.DB().Exec(`DROP FUNCTION fail_x_restore_reply()`)
+				_, err = st.DB().ExecContext(t.Context(), `DROP FUNCTION fail_x_restore_reply()`)
 				assert.NoError(t, err)
 			} else {
-				_, err := st.DB().Exec(`DROP TRIGGER fail_x_restore_reply`)
+				_, err := st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_x_restore_reply`)
 				assert.NoError(t, err)
 			}
 		})

@@ -69,13 +69,21 @@ func TestXAcceptedRepairRetainsForeignSuppressionAfterSourceRemoval(t *testing.T
 	_testRequire.NoError(err)
 	execution, err := f.st.AcquireSyncExecutionContext(t.Context(), foreign.ID)
 	_testRequire.NoError(err)
-	_, err = f.st.RemoveXPostContentContext(t.Context(), foreign.ID, "9001", "removed")
+	work, err := f.st.RemoveXPostContentContext(t.Context(), foreign.ID, "9001", "removed")
 	_testRequire.NoError(err)
 	_testRequire.NoError(execution.Release())
 	sendReadOnly(t, f)
 	result, err = f.sender().Send(t.Context(), f.request())
 	_testRequire.NoError(err)
 	_testAssert.Equal("sent", result.Status)
+	_testRequire.ErrorIs(f.st.RemoveSource(foreign.ID), store.ErrXRemovalPending)
+	_testRequire.Empty(work.MessageIDs)
+	_testRequire.Empty(work.EvidenceIDs)
+	work.DerivedComplete = true // This first-seen ID has no derived content to remove.
+	execution, err = f.st.AcquireSyncExecutionContext(t.Context(), foreign.ID)
+	_testRequire.NoError(err)
+	_testRequire.NoError(f.st.FinishXRemovalContext(t.Context(), foreign.ID, work))
+	_testRequire.NoError(execution.Release())
 	_testRequire.NoError(f.st.RemoveSource(foreign.ID))
 	// Repair must retain native-ID suppression in the sender's surviving source,
 	// so removing the other account cannot reopen the accepted post to ingestion.

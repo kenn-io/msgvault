@@ -69,7 +69,7 @@ func TestXAuthorRenameDoesNotTransferRecycledHandle(t *testing.T) {
 	}
 	_testAssert.True(curated)
 	var service string
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind(`SELECT cs.slug FROM participant_identifiers pi JOIN communication_services cs ON cs.id=pi.service_id WHERE pi.identifier_type='x_user_id' AND pi.identifier_value=?`), "1001").Scan(&service))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT cs.slug FROM participant_identifiers pi JOIN communication_services cs ON cs.id=pi.service_id WHERE pi.identifier_type='x_user_id' AND pi.identifier_value=?`), "1001").Scan(&service))
 	_testAssert.Equal("x", service)
 }
 
@@ -84,11 +84,11 @@ func TestXAuthorObservationFailureRollsBackRenameAndParticipant(t *testing.T) {
 	pid, err := RecordAuthor(t.Context(), st, source.ID, User{ProtectedKnown: true, ID: "1001", Username: "current"}, now)
 	_testRequire.NoError(err)
 	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`CREATE FUNCTION x_observation_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.original_value = 'fail_handle' THEN RAISE EXCEPTION 'synthetic observation failure'; END IF; RETURN NEW; END $$`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION x_observation_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.original_value = 'fail_handle' THEN RAISE EXCEPTION 'synthetic observation failure'; END IF; RETURN NEW; END $$`)
 		_testRequire.NoError(err)
-		_, err = st.DB().Exec(`CREATE TRIGGER x_observation_failure BEFORE INSERT ON participant_contact_observations FOR EACH ROW EXECUTE FUNCTION x_observation_failure()`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER x_observation_failure BEFORE INSERT ON participant_contact_observations FOR EACH ROW EXECUTE FUNCTION x_observation_failure()`)
 	} else {
-		_, err = st.DB().Exec(`CREATE TRIGGER x_observation_failure BEFORE INSERT ON participant_contact_observations WHEN NEW.original_value = 'fail_handle' BEGIN SELECT RAISE(FAIL,'synthetic observation failure'); END`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER x_observation_failure BEFORE INSERT ON participant_contact_observations WHEN NEW.original_value = 'fail_handle' BEGIN SELECT RAISE(FAIL,'synthetic observation failure'); END`)
 	}
 	_testRequire.NoError(err)
 	_, err = RecordAuthor(t.Context(), st, source.ID, User{ProtectedKnown: true, ID: "1001", Username: "fail_handle"}, now.Add(time.Hour))
@@ -105,7 +105,7 @@ func TestXAuthorObservationFailureRollsBackRenameAndParticipant(t *testing.T) {
 	}
 	_testAssert.Equal([]string{"current"}, current)
 	var count int
-	_testRequire.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1002'`).Scan(&count))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1002'`).Scan(&count))
 	_testAssert.Zero(count)
 }
 

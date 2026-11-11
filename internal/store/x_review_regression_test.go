@@ -123,10 +123,10 @@ func TestXSuppressedReplayCannotRecreateErasedAuthorProfile(t *testing.T) {
 			checkErased := func() {
 				t.Helper()
 				var names int
-				require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participant_contact_observations WHERE address_kind='username' AND source='archive_observation'`).Scan(&names))
+				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_contact_observations WHERE address_kind='username' AND source='archive_observation'`).Scan(&names))
 				assert.Zero(names, "completed suppression must not republish an erased username")
 				var name sql.NullString
-				require.NoError(st.DB().QueryRow(`SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='x_user_id' AND pi.identifier_value='1002')`).Scan(&name))
+				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.display_name FROM participants p WHERE EXISTS(SELECT 1 FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='x_user_id' AND pi.identifier_value='1002')`).Scan(&name))
 				assert.Empty(name.String, "numeric anchors do not authorize profile text")
 			}
 			checkErased()

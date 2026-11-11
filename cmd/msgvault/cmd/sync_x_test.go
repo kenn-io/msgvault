@@ -111,7 +111,7 @@ func newXCollectionFixture(t *testing.T) *xCollectionFixture {
 	jobs := newCacheBuildJobs(jobsCtx, nil, func(context.Context, buildCacheMode) error { f.cacheCalls.Add(1); return nil })
 	t.Cleanup(func() {
 		cancelJobs()
-		ctx, cancel := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), serveLifecycleTestTimeout)
 		defer cancel()
 		require.True(t, jobs.waitContext(ctx))
 	})
@@ -173,12 +173,12 @@ func TestSyncXSelectedDaemonExactSummary(t *testing.T) {
 	_testAssert.True(summary.MentionsComplete)
 	_testAssert.Equal("101", summary.OwnWatermark)
 	_testAssert.Equal("201", summary.MentionsWatermark)
-	_testAssert.Equal(int64(30_000), summary.RunEstimatedMicros)
-	_testAssert.Equal(int64(3_000_000), summary.RunReservedMicros)
-	_testAssert.Equal(int64(30_000), summary.EstimatedMicros)
-	_testAssert.Equal(int64(3_000_000), summary.ReservedMicros)
+	_testAssert.Equal(int64(3_030_000), summary.RunEstimatedMicros)
+	_testAssert.Zero(summary.RunReservedMicros)
+	_testAssert.Equal(int64(3_030_000), summary.EstimatedMicros)
+	_testAssert.Zero(summary.ReservedMicros)
 	var messages int
-	_testRequire.NoError(f.st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&messages))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&messages))
 	_testAssert.Equal(2, messages)
 	_, err = os.Stat(cfg.DatabaseDSN())
 	_testRequire.ErrorIs(err, os.ErrNotExist, "client must not create a second archive")
@@ -226,7 +226,7 @@ func TestSyncXExclusiveAfterAndInvalidSelection(t *testing.T) {
 	_testRequire.NoError(err)
 	retired, err := f.st.GetOrCreateSource("x", "1003")
 	_testRequire.NoError(err)
-	_, err = f.st.DB().Exec(f.st.Rebind("INSERT INTO source_settings(merged_into_source_id,source_id,history_only,retired_at) VALUES(?,?,TRUE,CURRENT_TIMESTAMP) ON CONFLICT(source_id) DO UPDATE SET merged_into_source_id=excluded.merged_into_source_id,history_only=TRUE,retired_at=excluded.retired_at"), f.source.ID, retired.ID)
+	_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind("INSERT INTO source_settings(merged_into_source_id,source_id,history_only,retired_at) VALUES(?,?,TRUE,CURRENT_TIMESTAMP) ON CONFLICT(source_id) DO UPDATE SET merged_into_source_id=excluded.merged_into_source_id,history_only=TRUE,retired_at=excluded.retired_at"), f.source.ID, retired.ID)
 	_testRequire.NoError(err)
 	for _, id := range []int64{wrong.ID, badOwner.ID, retired.ID, 999999} {
 		_, _, err = f.run(t, f.clientConfig(t), "--source-id", strconv.FormatInt(id, 10), "--json")
@@ -252,9 +252,9 @@ func TestSyncXReadModelAcknowledgementIsLocalAndPreservesState(t *testing.T) {
 	_testRequire.NoError(err)
 	// Static schema fixtures prove acknowledgement cannot erase suppression or
 	// durable receipts; no future draft/send API is invoked.
-	_, err = f.st.DB().Exec(f.st.Rebind("INSERT INTO x_post_versions(source_id,post_id,canonical_id,version_position,availability,suppressed_at) VALUES(?,'500','500',0,'removed',?)"), f.source.ID, f.at)
+	_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind("INSERT INTO x_post_versions(source_id,post_id,canonical_id,version_position,availability,suppressed_at) VALUES(?,'500','500',0,'removed',?)"), f.source.ID, f.at)
 	_testRequire.NoError(err)
-	_, err = f.st.DB().Exec(f.st.Rebind("INSERT INTO x_reply_attempts(draft_id,attempt_id,source_id,owner_id,draft_revision,target_post_id,source_conversation_id,body_digest,state,reservation_id,reserved_micros) VALUES('fixture-draft','fixture-attempt',?,'1001',7,'500','500','synthetic-digest','remote_unknown','held',500)"), f.source.ID)
+	_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind("INSERT INTO x_reply_attempts(draft_id,attempt_id,source_id,owner_id,draft_revision,target_post_id,source_conversation_id,body_digest,state,reservation_id,reserved_micros) VALUES('fixture-draft','fixture-attempt',?,'1001',7,'500','500','synthetic-digest','remote_unknown','held',500)"), f.source.ID)
 	_testRequire.NoError(err)
 	beforeTarget, err := f.st.ResolveXPostContext(t.Context(), f.source.ID, "500")
 	_testRequire.NoError(err)
@@ -287,11 +287,11 @@ func TestSyncXReadModelAcknowledgementIsLocalAndPreservesState(t *testing.T) {
 	_testAssert.Equal(beforeTarget, afterTarget)
 	var receiptState string
 	var reserved int64
-	_testRequire.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT state,reserved_micros FROM x_reply_attempts WHERE source_id=? AND draft_id='fixture-draft' AND attempt_id='fixture-attempt'"), f.source.ID).Scan(&receiptState, &reserved))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT state,reserved_micros FROM x_reply_attempts WHERE source_id=? AND draft_id='fixture-draft' AND attempt_id='fixture-attempt'"), f.source.ID).Scan(&receiptState, &reserved))
 	_testAssert.Equal("remote_unknown", receiptState)
 	_testAssert.Equal(int64(500), reserved)
 	var runs int
-	_testRequire.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT count(*) FROM sync_runs WHERE source_id=?"), f.source.ID).Scan(&runs))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT count(*) FROM sync_runs WHERE source_id=?"), f.source.ID).Scan(&runs))
 	_testAssert.Zero(runs)
 	_testAssert.Zero(f.calls.Load())
 	_testAssert.Zero(f.cacheCalls.Load())
@@ -764,9 +764,9 @@ func TestSyncXArchiveOwnAuthorBoundaryStillChargesOriginalResources(t *testing.T
 	_testAssert.Equal(int64(1), summary.MessagesAdded)
 	_testAssert.Equal(int64(30_000), summary.Archive.SpentMicros)
 	var ownPosts, replies int
-	_testRequire.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT count(*) FROM messages WHERE source_id=? AND source_message_id='301'"), f.source.ID).Scan(&ownPosts))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT count(*) FROM messages WHERE source_id=? AND source_message_id='301'"), f.source.ID).Scan(&ownPosts))
 	_testAssert.Zero(ownPosts)
-	_testRequire.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT count(*) FROM messages WHERE source_id=? AND source_message_id='302'"), f.source.ID).Scan(&replies))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT count(*) FROM messages WHERE source_id=? AND source_message_id='302'"), f.source.ID).Scan(&replies))
 	_testAssert.Equal(1, replies, "mixed-author to: results stay eligible")
 	state, err := f.st.LoadXControlContext(t.Context(), f.source.ID)
 	_testRequire.NoError(err)
@@ -857,6 +857,6 @@ func TestXSyncSummaryUsesCanonicalRefreshHint(t *testing.T) {
 		Archive: &xapi.ArchiveSummary{JobID: "job-1"},
 	})
 	_testAssert.Contains(summary, "hint: run 'msgvault source x sync --source-id 42' without --archive before resuming this job.")
-	_testAssert.Contains(summary, "Resume job job-1 with --job-id and an explicit --max-spend")
+	_testAssert.Contains(summary, "Resume this job with --job-id and an explicit --max-spend")
 	_testAssert.NotContains(summary, "Resolve the reported provider, credential or coverage error")
 }

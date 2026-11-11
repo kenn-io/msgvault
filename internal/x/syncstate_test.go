@@ -1,6 +1,7 @@
 package x
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -8,6 +9,25 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestXWalkContinuesPastTokenHistoryLimit(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	now := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
+	walk, err := prepareTimelineWalk("1001", "timeline", nil, time.Time{}, now)
+	requirements.NoError(err)
+	for i := range 1001 {
+		walk, err = advanceWalk(walk, Page{NextToken: strconv.Itoa(i + 1)})
+		requirements.NoError(err)
+	}
+	assertions.Len(walk.SeenTokens, 1000)
+	assertions.Equal("1001", walk.Token)
+	_, err = advanceWalk(walk, Page{NextToken: "1000"})
+	assertions.ErrorIs(err, ErrRepeatedPageToken)
+	walk, err = advanceWalk(walk, Page{})
+	requirements.NoError(err)
+	assertions.True(walk.Complete)
+}
 
 func TestXFrozenWalkRetainsBoundsAndCompleteWatermark(t *testing.T) {
 	_testAssert := assert.New(t)

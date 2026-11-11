@@ -1,11 +1,15 @@
-Add and sync provider sources
+Add and sync provider sources. Provider setup and collection commands live under source <provider>.
 
 Usage:
   msgvault source [command]
 
+Examples:
+  msgvault source x --help
+
 Available Commands:
   facebook-comments  Archive comments from a configured Facebook Page
   instagram-comments Archive comments from a linked Instagram account
+  x                  Authorize and sync X archive sources
 
 Flags:
   -h, --help   help for source

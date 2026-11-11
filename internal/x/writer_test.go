@@ -103,7 +103,7 @@ func TestWritePageSummaryDoesNotChangeBillableCounts(t *testing.T) {
 	target, err := st.ResolveXPostContext(t.Context(), source.ID, "100")
 	_testRequire.NoError(err)
 	var owned bool
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT source_is_from_me FROM messages WHERE id=?"), target.MessageID).Scan(&owned))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT source_is_from_me FROM messages WHERE id=?"), target.MessageID).Scan(&owned))
 	_testAssert.True(owned)
 	raw, err := st.GetMessageMetadata(target.MessageID)
 	_testRequire.NoError(err)
@@ -126,11 +126,11 @@ func TestWritePageKeepsQuotesAndIDBackedMentions(t *testing.T) {
 	target, err := st.ResolveXPostContext(t.Context(), source.ID, "100")
 	_testRequire.NoError(err)
 	var parents, mentions, bare int
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM messages WHERE reply_to_message_id IS NOT NULL").Scan(&parents))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE reply_to_message_id IS NOT NULL").Scan(&parents))
 	_testAssert.Zero(parents)
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM message_recipients WHERE recipient_type='to'").Scan(&mentions))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM message_recipients WHERE recipient_type='to'").Scan(&mentions))
 	_testAssert.Equal(1, mentions)
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM participant_identifiers WHERE identifier_value='bare_handle'").Scan(&bare))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_identifiers WHERE identifier_value='bare_handle'").Scan(&bare))
 	_testAssert.Zero(bare)
 	raw, err := st.GetMessageMetadata(target.MessageID)
 	_testRequire.NoError(err)
@@ -172,7 +172,7 @@ func TestWritePageUnknownProtectionKeepsKnownPrivateAuthor(t *testing.T) {
 	_testAssert.NotEqual("public", target.Availability)
 	_testAssert.Zero(target.MessageID)
 	var handles int
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM participant_contact_observations WHERE address_kind='username' AND superseded_at IS NULL AND active_until IS NULL").Scan(&handles))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_contact_observations WHERE address_kind='username' AND superseded_at IS NULL AND active_until IS NULL").Scan(&handles))
 	_testAssert.Zero(handles)
 }
 
@@ -219,7 +219,7 @@ func TestXPropertyMinimalDelayedParent(t *testing.T) {
 	child, err := st.ResolveXPostContext(t.Context(), source.ID, "10000")
 	_testRequire.NoError(err)
 	var parent int64
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), child.MessageID).Scan(&parent))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), child.MessageID).Scan(&parent))
 	assert.Equal(t, root.MessageID, parent)
 }
 

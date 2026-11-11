@@ -19,7 +19,7 @@ func xReplyPeer(t *testing.T, st *store.Store) *store.Store {
 	var path string
 	if st.IsPostgreSQL() {
 		var database, schema string
-		require.NoError(t, st.DB().QueryRow("SELECT current_database(),current_schema()").Scan(&database, &schema))
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT current_database(),current_schema()").Scan(&database, &schema))
 		address, err := url.Parse(os.Getenv("MSGVAULT_TEST_DB"))
 		require.NoError(t, err)
 		address.Path = "/" + database
@@ -28,7 +28,7 @@ func xReplyPeer(t *testing.T, st *store.Store) *store.Store {
 		address.RawQuery = query.Encode()
 		path = address.String()
 	} else {
-		require.NoError(t, st.DB().QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path))
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path))
 	}
 	peer, err := store.OpenForTest(t.Context(), path)
 	require.NoError(t, err)
@@ -141,16 +141,16 @@ func xReplyFailInsert(t *testing.T, st *store.Store, table string) func() {
 	name := "reject_reply_" + table
 	var err error
 	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec("CREATE FUNCTION " + name + "() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic reply write failure'; END $$; CREATE TRIGGER " + name + " BEFORE INSERT OR UPDATE ON " + table + " FOR EACH ROW EXECUTE FUNCTION " + name + "()")
+		_, err = st.DB().ExecContext(t.Context(), "CREATE FUNCTION "+name+"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic reply write failure'; END $$; CREATE TRIGGER "+name+" BEFORE INSERT OR UPDATE ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+name+"()")
 	} else {
-		_, err = st.DB().Exec("CREATE TRIGGER " + name + " BEFORE INSERT ON " + table + " BEGIN SELECT RAISE(ABORT,'synthetic reply write failure'); END")
+		_, err = st.DB().ExecContext(t.Context(), "CREATE TRIGGER "+name+" BEFORE INSERT ON "+table+" BEGIN SELECT RAISE(ABORT,'synthetic reply write failure'); END")
 	}
 	require.NoError(t, err)
 	return func() {
 		if st.IsPostgreSQL() {
-			_, err = st.DB().Exec("DROP TRIGGER " + name + " ON " + table + "; DROP FUNCTION " + name + "()")
+			_, err = st.DB().ExecContext(t.Context(), "DROP TRIGGER "+name+" ON "+table+"; DROP FUNCTION "+name+"()")
 		} else {
-			_, err = st.DB().Exec("DROP TRIGGER " + name)
+			_, err = st.DB().ExecContext(t.Context(), "DROP TRIGGER "+name)
 		}
 		require.NoError(t, err)
 	}
@@ -186,7 +186,7 @@ func TestXDraftTransactionsRollBackReservationAndFinalization(t *testing.T) {
 	_testAssert.Equal("remote_accepted", receipt.State)
 	_testAssert.Equal("9001", receipt.RemoteID)
 	var count int
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM x_post_versions WHERE source_id=? AND post_id='9001'"), d.SourceID).Scan(&count))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM x_post_versions WHERE source_id=? AND post_id='9001'"), d.SourceID).Scan(&count))
 	_testAssert.Zero(count)
 	after, err = st.LoadXControlContext(t.Context(), d.SourceID)
 	_testRequire.NoError(err)

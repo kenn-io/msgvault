@@ -45,8 +45,8 @@ func prepareTimelineWalk(owner, endpoint string, previous *store.XWalk, after, n
 }
 
 func advanceWalk(walk *store.XWalk, page Page) (*store.XWalk, error) {
-	if walk == nil || walk.Complete || len(walk.SeenTokens) >= 1000 {
-		return nil, errors.New("x walk is complete or has reached page capacity")
+	if walk == nil || walk.Complete {
+		return nil, errors.New("x walk is complete")
 	}
 	if page.NextToken != "" && (page.NextToken == walk.Token || slices.Contains(walk.SeenTokens, page.NextToken)) {
 		return nil, ErrRepeatedPageToken
@@ -96,6 +96,9 @@ func advanceWalk(walk *store.XWalk, page Page) (*store.XWalk, error) {
 	// token. An empty next token plus a nonempty history therefore represents
 	// exhaustion even while identified item obligations are still outstanding.
 	result.SeenTokens = append(result.SeenTokens, walk.Token)
+	if len(result.SeenTokens) > 1000 {
+		result.SeenTokens = slices.Clone(result.SeenTokens[len(result.SeenTokens)-1000:])
+	}
 	result.Token = page.NextToken
 	finishWalk(result)
 	return result, nil

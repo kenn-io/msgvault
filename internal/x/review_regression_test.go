@@ -29,16 +29,16 @@ func TestXFullObligationCheckpointRecoversUnidentifiedPage(t *testing.T) {
 	walk.Token, walk.SeenTokens, walk.UnresolvedPage = "retry-page", []string{""}, true
 	// A prior run has completed cleanup for 900 identified results. One
 	// identified result and an unidentified page error still need provider I/O.
-	tx, err := st.DB().Begin()
+	tx, err := st.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	stmt, err := tx.Prepare(st.Rebind(`INSERT INTO x_post_versions(source_id,post_id,canonical_id,version_position,availability,suppressed_at,cleanup_pending) VALUES(?,?,?,0,'deleted',?,0)`))
+	stmt, err := tx.PrepareContext(t.Context(), st.Rebind(`INSERT INTO x_post_versions(source_id,post_id,canonical_id,version_position,availability,suppressed_at,cleanup_pending) VALUES(?,?,?,0,'deleted',?,0)`))
 	require.NoError(err)
 	for i := range 901 {
 		id := strconv.Itoa(10000 + i)
 		walk.UnresolvedIDs = append(walk.UnresolvedIDs, id)
 		if i < 900 {
-			_, err = stmt.Exec(source.ID, id, id, now)
+			_, err = stmt.ExecContext(t.Context(), source.ID, id, id, now)
 			require.NoError(err)
 		}
 	}

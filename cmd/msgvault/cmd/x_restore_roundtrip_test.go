@@ -218,7 +218,7 @@ func TestXRestoreCurrentRecordPurgesOldAndFreshSnapshots(t *testing.T) {
 			cleaner.SetServer(server)
 			host := httptest.NewServer(server.Router())
 			t.Cleanup(host.Close)
-			response, err := host.Client().Get(fmt.Sprintf("%s/api/v1/messages/%d", host.URL, f.message))
+			response, err := xTestHTTPGet(t, host.Client(), fmt.Sprintf("%s/api/v1/messages/%d", host.URL, f.message))
 			_testRequire.NoError(err)
 			data, err := io.ReadAll(response.Body)
 			_testRequire.NoError(err)

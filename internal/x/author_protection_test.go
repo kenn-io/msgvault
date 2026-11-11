@@ -51,7 +51,7 @@ func TestXUnknownProtectionDoesNotReopenAuthor(t *testing.T) {
 			_testAssert.Equal(store.ContactAddressProviderIdentity, observations[0].AddressKind)
 			_testAssert.Contains(observations[0].Envelope.TypeTokens, "x_author_protected")
 			var label string
-			_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT COALESCE(display_name,'') FROM participants WHERE id=?"), pid).Scan(&label))
+			_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COALESCE(display_name,'') FROM participants WHERE id=?"), pid).Scan(&label))
 			_testAssert.Empty(label)
 		})
 	}

@@ -61,12 +61,12 @@ func TestXOldEditCannotRollbackAtomicProjection(t *testing.T) {
 	_testAssert.Equal(newer.Raw, raw)
 	var snippet, authorName, toID string
 	var sent sql.NullTime
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT snippet,sent_at FROM messages WHERE id=?"), first.MessageID).Scan(&snippet, &sent))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT snippet,sent_at FROM messages WHERE id=?"), first.MessageID).Scan(&snippet, &sent))
 	_testAssert.Equal("current constellation", snippet)
 	_testAssert.WithinDuration(xPostTime, sent.Time, time.Microsecond)
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'"), first.MessageID).Scan(&authorName))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'"), first.MessageID).Scan(&authorName))
 	_testAssert.Equal("Example Author", authorName)
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT pi.identifier_value FROM message_recipients mr JOIN participant_identifiers pi ON pi.participant_id=mr.participant_id WHERE mr.message_id=? AND mr.recipient_type='to' AND pi.identifier_type='x_user_id'"), first.MessageID).Scan(&toID))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT pi.identifier_value FROM message_recipients mr JOIN participant_identifiers pi ON pi.participant_id=mr.participant_id WHERE mr.message_id=? AND mr.recipient_type='to' AND pi.identifier_type='x_user_id'"), first.MessageID).Scan(&toID))
 	_testAssert.Equal("1003", toID)
 	hits, count, err := st.SearchMessages("constellation", 0, 10)
 	_testRequire.NoError(err)
@@ -94,12 +94,12 @@ func TestXPostProjectionRollsBackEveryDependent(t *testing.T) {
 	_testRequire.NoError(err)
 	_testRequire.NoError(st.EnableEmbeddingChangeJournal(t.Context()))
 	var journalBefore, observationsBefore int
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM embedding_changes").Scan(&journalBefore))
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM participant_contact_observations").Scan(&observationsBefore))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM embedding_changes").Scan(&journalBefore))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_contact_observations").Scan(&observationsBefore))
 	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`CREATE FUNCTION reject_x_raw() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic X raw failure'; END $$; CREATE TRIGGER reject_x_raw BEFORE INSERT OR UPDATE ON message_raw FOR EACH ROW EXECUTE FUNCTION reject_x_raw()`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION reject_x_raw() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic X raw failure'; END $$; CREATE TRIGGER reject_x_raw BEFORE INSERT OR UPDATE ON message_raw FOR EACH ROW EXECUTE FUNCTION reject_x_raw()`)
 	} else {
-		_, err = st.DB().Exec(`CREATE TRIGGER reject_x_raw BEFORE INSERT ON message_raw BEGIN SELECT RAISE(ABORT,'synthetic X raw failure'); END`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_x_raw BEFORE INSERT ON message_raw BEGIN SELECT RAISE(ABORT,'synthetic X raw failure'); END`)
 	}
 	_testRequire.NoError(err)
 	change := xPostInput(source, "102", "100", "must roll back", "100", "102")
@@ -116,13 +116,13 @@ func TestXPostProjectionRollsBackEveryDependent(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.Equal(seed.Raw, raw)
 	var aliases, journalAfter, observationsAfter, mentions int
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM x_post_versions").Scan(&aliases))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM x_post_versions").Scan(&aliases))
 	_testAssert.Equal(1, aliases)
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM embedding_changes").Scan(&journalAfter))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM embedding_changes").Scan(&journalAfter))
 	_testAssert.Equal(journalBefore, journalAfter)
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM participant_contact_observations").Scan(&observationsAfter))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_contact_observations").Scan(&observationsAfter))
 	_testAssert.Equal(observationsBefore, observationsAfter)
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM message_recipients WHERE recipient_type='to'").Scan(&mentions))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM message_recipients WHERE recipient_type='to'").Scan(&mentions))
 	_testAssert.Zero(mentions)
 }
 
@@ -186,7 +186,7 @@ func TestXLateRootConsolidationKeepsMessageIDs(t *testing.T) {
 		id, native, parent string
 		conversation       int64
 	}{{"left-draft", "100", "200", lt.ConversationID}, {"right-draft", "102", "201", rt.ConversationID}} {
-		_, err = st.DB().Exec(st.Rebind(`INSERT INTO chat_drafts(draft_id,source_id,conversation_id,source_conversation_id,conversation_type,reply_to_source_message_id,body,revision) VALUES(?,?,?,?,?,?,?,?)`), draft.id, source, draft.conversation, draft.native, "channel", draft.parent, "reviewed synthetic reply", 7)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO chat_drafts(draft_id,source_id,conversation_id,source_conversation_id,conversation_type,reply_to_source_message_id,body,revision) VALUES(?,?,?,?,?,?,?,?)`), draft.id, source, draft.conversation, draft.native, "channel", draft.parent, "reviewed synthetic reply", 7)
 		_testRequire.NoError(err)
 	}
 	root := xPostInput(source, "102", "102", "edited root", "100", "102")
@@ -206,19 +206,19 @@ func TestXLateRootConsolidationKeepsMessageIDs(t *testing.T) {
 		_testAssert.Equal(item.id, target.MessageID)
 		_testAssert.Equal(lt.ConversationID, target.ConversationID)
 		var parent sql.NullInt64
-		_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), item.id).Scan(&parent))
+		_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), item.id).Scan(&parent))
 		_testRequire.True(parent.Valid)
 		_testAssert.Equal(rootResult.MessageID, parent.Int64)
 	}
 	var conversations, messages int
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM conversations WHERE source_id=?"), source).Scan(&conversations))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM conversations WHERE source_id=?"), source).Scan(&conversations))
 	_testAssert.Equal(1, conversations)
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT message_count FROM conversations WHERE id=?"), lt.ConversationID).Scan(&messages))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT message_count FROM conversations WHERE id=?"), lt.ConversationID).Scan(&messages))
 	_testAssert.Equal(3, messages)
 	for _, draft := range []struct{ id, native, parent string }{{"left-draft", "100", "200"}, {"right-draft", "102", "201"}} {
 		var conversation, revision int64
 		var native, parent, body string
-		_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT conversation_id,source_conversation_id,reply_to_source_message_id,body,revision FROM chat_drafts WHERE draft_id=?"), draft.id).Scan(&conversation, &native, &parent, &body, &revision))
+		_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT conversation_id,source_conversation_id,reply_to_source_message_id,body,revision FROM chat_drafts WHERE draft_id=?"), draft.id).Scan(&conversation, &native, &parent, &body, &revision))
 		_testAssert.Equal(lt.ConversationID, conversation)
 		_testAssert.Equal(draft.native, native)
 		_testAssert.Equal(draft.parent, parent)
@@ -240,7 +240,7 @@ func TestXParentResolvesAfterMonths(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.Equal(result.MessageID, next)
 	var parent sql.NullInt64
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), result.MessageID).Scan(&parent))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), result.MessageID).Scan(&parent))
 	_testAssert.False(parent.Valid)
 	root := xPostInput(source, "102", "100", "root months later", "100", "102")
 	root.FetchedAt = xPostTime.AddDate(0, 4, 0)
@@ -249,7 +249,7 @@ func TestXParentResolvesAfterMonths(t *testing.T) {
 	_testRequire.NoError(err)
 	_, err = st.ResolveXParentsContext(t.Context(), source, 0, 1)
 	_testRequire.NoError(err)
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), result.MessageID).Scan(&parent))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), result.MessageID).Scan(&parent))
 	_testRequire.True(parent.Valid)
 	_testAssert.Equal(saved.MessageID, parent.Int64)
 }
@@ -283,7 +283,7 @@ func TestXPostRejectsCyclesAndForeignParents(t *testing.T) {
 	_, err = st.ResolveXParentsContext(t.Context(), source, 0, 100)
 	_testRequire.NoError(err)
 	var linked sql.NullInt64
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), child.MessageID).Scan(&linked))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), child.MessageID).Scan(&linked))
 	assert.False(t, linked.Valid)
 }
 
@@ -301,7 +301,7 @@ func TestXUnavailableAndSuppressedPostsNeverIngestText(t *testing.T) {
 			_testRequire.NoError(err)
 			_testAssert.True(result.Skipped)
 			var messages int
-			_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&messages))
+			_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&messages))
 			_testAssert.Zero(messages)
 			target, err := st.ResolveXPostContext(t.Context(), source, "100")
 			_testRequire.NoError(err)
@@ -317,7 +317,7 @@ func TestXUnavailableAndSuppressedPostsNeverIngestText(t *testing.T) {
 			result, err = st.PersistXPostContext(t.Context(), newer)
 			_testRequire.NoError(err)
 			_testAssert.True(result.Skipped)
-			_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&messages))
+			_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&messages))
 			_testAssert.Zero(messages)
 		})
 	}
@@ -352,7 +352,7 @@ func TestXProtectedAuthorObservationAppliesAcrossSources(t *testing.T) {
 	_testAssert.Equal("removed", target.Availability)
 	_testAssert.Zero(target.MessageID)
 	var messages int
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&messages))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&messages))
 	_testAssert.Zero(messages)
 
 	unknown := xPostInput(otherSource.ID, "201", "201", "unknown author protection")
@@ -363,7 +363,7 @@ func TestXProtectedAuthorObservationAppliesAcrossSources(t *testing.T) {
 	result, err = st.PersistXPostContext(t.Context(), unknown)
 	_testRequire.NoError(err)
 	_testAssert.True(result.Skipped, "an unverified author observation cannot clear cross-source protection")
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&messages))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&messages))
 	_testAssert.Zero(messages)
 
 	newerPublic := xPostInput(otherSource.ID, "202", "202", "public after confirmation")
@@ -407,7 +407,7 @@ func TestXCompletedRemovalReplayPreservesFinishedCleanup(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.Empty(pending, "a replayed completed tombstone must not queue derived cleanup again")
 	var cleanupPending int
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind(`SELECT cleanup_pending FROM x_post_versions WHERE source_id=? AND post_id=?`), source, post.PostID).Scan(&cleanupPending))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT cleanup_pending FROM x_post_versions WHERE source_id=? AND post_id=?`), source, post.PostID).Scan(&cleanupPending))
 	_testAssert.Zero(cleanupPending)
 }
 
@@ -422,7 +422,7 @@ func TestXPostRequiresSourceOwnerAndCanonicalIDs(t *testing.T) {
 		require.Error(t, err)
 	}
 	var count int
-	require.NoError(t, st.DB().QueryRow("SELECT count(*) FROM messages").Scan(&count))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages").Scan(&count))
 	assert.Zero(t, count)
 }
 
@@ -459,7 +459,7 @@ func TestXUnknownAvailabilityKeepsProtectedEvidence(t *testing.T) {
 	_testAssert.NotEqual("public", target.Availability)
 	_testAssert.Zero(target.MessageID)
 	var usernames int
-	_testRequire.NoError(st.DB().QueryRow("SELECT count(*) FROM participant_contact_observations WHERE address_kind='username' AND superseded_at IS NULL AND active_until IS NULL").Scan(&usernames))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM participant_contact_observations WHERE address_kind='username' AND superseded_at IS NULL AND active_until IS NULL").Scan(&usernames))
 	_testAssert.Zero(usernames)
 }
 
@@ -489,11 +489,11 @@ func TestXSameVersionEvidenceEnrichesWithoutLosingText(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.Equal("complete constellation text", body)
 	var linked sql.NullInt64
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), saved.MessageID).Scan(&linked))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), saved.MessageID).Scan(&linked))
 	_testRequire.True(linked.Valid)
 	_testAssert.Equal(p.MessageID, linked.Int64)
 	var mentions int
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM message_recipients WHERE message_id=? AND recipient_type='to'"), saved.MessageID).Scan(&mentions))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM message_recipients WHERE message_id=? AND recipient_type='to'"), saved.MessageID).Scan(&mentions))
 	_testAssert.Equal(1, mentions)
 	raw, err := st.GetMessageRaw(saved.MessageID)
 	_testRequire.NoError(err)
@@ -510,9 +510,9 @@ func TestXSameVersionEvidenceEnrichesWithoutLosingText(t *testing.T) {
 	evidence.FetchedAt = evidence.FetchedAt.Add(time.Hour)
 	_, err = st.PersistXPostContext(t.Context(), evidence)
 	_testRequire.NoError(err)
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM message_recipients WHERE message_id=? AND recipient_type='to'"), saved.MessageID).Scan(&mentions))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM message_recipients WHERE message_id=? AND recipient_type='to'"), saved.MessageID).Scan(&mentions))
 	_testAssert.Equal(1, mentions)
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), saved.MessageID).Scan(&linked))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), saved.MessageID).Scan(&linked))
 	_testRequire.True(linked.Valid)
 	_testAssert.Equal(p.MessageID, linked.Int64)
 	metadata := xMessageMetadata(t, st, saved.MessageID)
@@ -546,17 +546,17 @@ func TestXFullTextEnrichmentRetainsKnownEvidence(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.Equal(full.Text, body)
 	var parentID sql.NullInt64
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), saved.MessageID).Scan(&parentID))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT reply_to_message_id FROM messages WHERE id=?"), saved.MessageID).Scan(&parentID))
 	_testRequire.True(parentID.Valid)
 	_testAssert.Equal(p.MessageID, parentID.Int64)
 	var mentions int
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM message_recipients WHERE message_id=? AND recipient_type='to'"), saved.MessageID).Scan(&mentions))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM message_recipients WHERE message_id=? AND recipient_type='to'"), saved.MessageID).Scan(&mentions))
 	_testAssert.Equal(1, mentions)
 	metadata := xMessageMetadata(t, st, saved.MessageID)
 	_testAssert.Equal("300", metadata["referenced_message_id"])
 	_testAssert.Equal("400", metadata["quoted_post_id"])
 	var fromName string
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'"), saved.MessageID).Scan(&fromName))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'"), saved.MessageID).Scan(&fromName))
 	_testAssert.Equal("Example Author", fromName)
 	raw, err := st.GetMessageRaw(saved.MessageID)
 	_testRequire.NoError(err)
@@ -582,8 +582,8 @@ func TestXProtectionEvidenceUsesExactAuthorAfterParticipantMerge(t *testing.T) {
 	_, err = st.PersistXPostContext(t.Context(), private)
 	_testRequire.NoError(err)
 	var publicID, privateID int64
-	_testRequire.NoError(st.DB().QueryRow("SELECT participant_id FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1002'").Scan(&publicID))
-	_testRequire.NoError(st.DB().QueryRow("SELECT participant_id FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1003'").Scan(&privateID))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT participant_id FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1002'").Scan(&publicID))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), "SELECT participant_id FROM participant_identifiers WHERE identifier_type='x_user_id' AND identifier_value='1003'").Scan(&privateID))
 	_testRequire.NoError(st.MergeParticipants(privateID, publicID))
 	unknown := xPostInput(source, "300", "300", "must stay private")
 	unknown.AuthorID = "1003"
@@ -595,7 +595,7 @@ func TestXProtectionEvidenceUsesExactAuthorAfterParticipantMerge(t *testing.T) {
 	_testAssert.True(result.Skipped)
 	_testAssert.Zero(result.MessageID)
 	var count int
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT count(*) FROM messages WHERE source_id=?"), source).Scan(&count))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT count(*) FROM messages WHERE source_id=?"), source).Scan(&count))
 	_testAssert.Equal(1, count)
 	stillPublic := public
 	stillPublic.PostID = "400"

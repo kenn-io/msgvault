@@ -143,8 +143,8 @@ func TestXArchiveResumeDoesNotRenewCap(t *testing.T) {
 	_testRequire.NotNil(first.Archive)
 	_testRequire.NotEmpty(first.Archive.JobID)
 	jobID := first.Archive.JobID
-	_testAssert.Equal(int64(15_000), first.Archive.SpentMicros)
-	_testAssert.Equal(int64(3_000_000), first.Archive.ReservedMicros)
+	_testAssert.Equal(int64(1_515_000), first.Archive.SpentMicros)
+	_testAssert.Equal(int64(1_500_000), first.Archive.ReservedMicros)
 	_testRequire.NotNil(first.Archive.RemainingMicros)
 	_testAssert.Equal(int64(21_985_000), *first.Archive.RemainingMicros)
 	state, err = st.LoadXControlContext(t.Context(), source.ID)
@@ -173,8 +173,8 @@ func TestXArchiveResumeDoesNotRenewCap(t *testing.T) {
 	_testAssert.Equal(int64(15_000), resumed.RunEstimatedMicros)
 	_testAssert.Equal(int64(15_000), resumed.EstimatedMicros)
 	_testAssert.Zero(resumed.ReservedMicros)
-	_testAssert.Equal(int64(30_000), resumed.Archive.SpentMicros)
-	_testAssert.Equal(int64(3_000_000), resumed.Archive.ReservedMicros)
+	_testAssert.Equal(int64(1_530_000), resumed.Archive.SpentMicros)
+	_testAssert.Equal(int64(1_500_000), resumed.Archive.ReservedMicros)
 	_testAssert.Equal([]string{"101", "102"}, archivedXIDs(t, st, source.ID))
 	beforeRepeat := calls.Load()
 	repeated, err := makeImporter(now.AddDate(0, 2, 0)).Import(t.Context(), opts)
@@ -185,7 +185,7 @@ func TestXArchiveResumeDoesNotRenewCap(t *testing.T) {
 	state, err = st.LoadXControlContext(t.Context(), source.ID)
 	_testRequire.NoError(err)
 	_testRequire.Len(state.SpendBuckets, 2)
-	_testAssert.Equal([]store.XSpendBucket{{Month: "2026-10", SpentMicros: 15_000, ReservedMicros: 3_000_000}, {Month: "2026-11", SpentMicros: 15_000}}, state.SpendBuckets)
+	_testAssert.Equal([]store.XSpendBucket{{Month: "2026-10", SpentMicros: 1_515_000, ReservedMicros: 1_500_000}, {Month: "2026-11", SpentMicros: 15_000}}, state.SpendBuckets)
 }
 
 func TestXArchiveMinimumPagesRespectRaisedLifetimeAndMonthlyCaps(t *testing.T) {
@@ -251,8 +251,8 @@ func TestXArchiveMinimumPagesRespectRaisedLifetimeAndMonthlyCaps(t *testing.T) {
 			_testRequire.NoError(err)
 			_testAssert.Equal(id, summary.Archive.JobID)
 			_testAssert.Equal(int64(3), calls.Load())
-			_testAssert.Equal(int64(450_000), summary.Archive.ReservedMicros)
-			_testAssert.Zero(summary.Archive.SpentMicros)
+			_testAssert.Zero(summary.Archive.ReservedMicros)
+			_testAssert.Equal(int64(450_000), summary.Archive.SpentMicros)
 		})
 	}
 }
@@ -300,7 +300,8 @@ func TestXArchiveTokenReplayKeepsStoredWindow(t *testing.T) {
 	_testAssert.Equal([]string{"101", "102"}, archivedXIDs(t, st, source.ID))
 	_testAssert.Equal(int64(2), summary.MessagesAdded)
 	_testAssert.True(summary.Archive.OwnComplete)
-	_testAssert.Equal(int64(3_000_000), summary.Archive.ReservedMicros)
+	_testAssert.Equal(int64(1_500_000), summary.Archive.ReservedMicros)
+	_testAssert.Equal(int64(1_545_000), summary.Archive.SpentMicros)
 }
 
 func TestXArchivePreviewWorksWhileReadsAreDisabled(t *testing.T) {
@@ -433,7 +434,7 @@ func TestXArchiveOwnQueryKeepsNumericOwnerBoundary(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.Equal([]string{"101"}, archivedXIDs(t, st, source.ID))
 	_testAssert.Equal(int64(1), summary.MessagesAdded)
-	_testAssert.Equal(int64(20_000), summary.Archive.SpentMicros, "all returned posts and users remain billable, including scope exclusions")
+	_testAssert.Equal(int64(1_520_000), summary.Archive.SpentMicros, "returned resources and the complete empty page remain charged")
 	state, err = st.LoadXControlContext(t.Context(), source.ID)
 	_testRequire.NoError(err)
 	_testAssert.Equal("101", state.Jobs[0].Own.Watermark)

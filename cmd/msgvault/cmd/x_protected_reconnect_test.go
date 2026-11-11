@@ -28,7 +28,7 @@ func TestXVerifiedProtectedReconnectRemovesKnownOwnerChains(t *testing.T) {
 			// rebuild or reopened backend. The provider fixture's Store is isolated.
 			if f.st.IsPostgreSQL() {
 				var database, schema string
-				_testRequire.NoError(f.st.DB().QueryRow("SELECT current_database(),current_schema()").Scan(&database, &schema))
+				_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "SELECT current_database(),current_schema()").Scan(&database, &schema))
 				dsn, err := url.Parse(os.Getenv("MSGVAULT_TEST_DB"))
 				_testRequire.NoError(err)
 				dsn.Path = "/" + database
@@ -39,7 +39,7 @@ func TestXVerifiedProtectedReconnectRemovesKnownOwnerChains(t *testing.T) {
 			} else {
 				var seq int
 				var name, path string
-				_testRequire.NoError(f.st.DB().QueryRow("PRAGMA database_list").Scan(&seq, &name, &path))
+				_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&seq, &name, &path))
 				f.cfg.Data.DatabaseURL = path
 			}
 			at := time.Now().UTC().Add(-time.Hour)
@@ -87,7 +87,7 @@ func TestXVerifiedProtectedReconnectRemovesKnownOwnerChains(t *testing.T) {
 			_testAssert.Zero(f.calls.Load())
 			for i, id := range ids {
 				var body string
-				err := f.st.DB().QueryRow(f.st.Rebind("SELECT body_text FROM message_bodies WHERE message_id=?"), id).Scan(&body)
+				err := f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT body_text FROM message_bodies WHERE message_id=?"), id).Scan(&body)
 				if protection != "" && i < 2 {
 					_testRequire.ErrorIs(err, sql.ErrNoRows)
 				} else {
@@ -96,7 +96,7 @@ func TestXVerifiedProtectedReconnectRemovesKnownOwnerChains(t *testing.T) {
 				}
 			}
 			var foreignBody string
-			err = f.st.DB().QueryRow(f.st.Rebind("SELECT body_text FROM message_bodies WHERE message_id=?"), saved.MessageID).Scan(&foreignBody)
+			err = f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT body_text FROM message_bodies WHERE message_id=?"), saved.MessageID).Scan(&foreignBody)
 			if protection != "" {
 				_testRequire.ErrorIs(err, sql.ErrNoRows, "protected Me must remove a known author post even when only another source knows its native ID")
 			} else {

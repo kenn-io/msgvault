@@ -19,6 +19,10 @@ var ErrIncompleteCoverage = errors.New("x collection has unresolved coverage")
 
 var ErrArchiveRefreshRequired = errors.New("x refresh is due or incomplete")
 
+var ErrPageBatchLimit = errors.New("x page batch limit reached; resume to continue")
+
+const maxPagesPerWalkRun = 1000
+
 var errRunCostEstimate = errors.New("x run cost estimate cannot be reconciled")
 
 // ImportOptions pins collection to an existing verified numeric account.
@@ -272,6 +276,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 
 func (imp *Importer) collectWalk(ctx context.Context, api API, summary *ImportSummary, owner, segment string, walk *store.XWalk) error {
 	replayed := false
+	pages := 0
 	for !walk.Complete {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -289,9 +294,10 @@ func (imp *Importer) collectWalk(ctx context.Context, api API, summary *ImportSu
 				return ErrIncompleteCoverage
 			}
 		}
-		if len(walk.SeenTokens) >= 1000 {
-			return errors.New("x page checkpoint capacity reached")
+		if pages >= maxPagesPerWalkRun {
+			return ErrPageBatchLimit
 		}
+		pages++
 		var page Page
 		var err error
 		if walk.Endpoint == store.XRequestSearch {
@@ -571,6 +577,10 @@ func importErrorCode(err error) string {
 		return "archive_scope"
 	case errors.Is(err, store.ErrXBudgetExceeded):
 		return "budget_exhausted"
+	case errors.Is(err, store.ErrXBudgetCapacity):
+		return "budget_capacity"
+	case errors.Is(err, ErrPageBatchLimit):
+		return "page_batch_limit"
 	case errors.Is(err, store.ErrXModelError), errors.Is(err, ErrReadModelExceeded):
 		return "read_model_error"
 	case errors.Is(err, store.ErrXBudgetIdentity):

@@ -376,7 +376,7 @@ var (
 		38: "5244b660c5b79ef46144ba5a9fa9470f84a15fe6b2cb1a3ffd11d2a39157ec32",
 		39: "77f763ebf58ff6f1df95dac4e187489afb6cc3521177cac60e7eef0894a8306a",
 		40: "fd168ca80dd687aba404bf05be9a932eb5530303b9ac0cd73f91cc7ee01c14f2",
-		41: "", // Pending CI PostgreSQL catalog digest.
+		41: "492095a4f6fb3204e29ae9e2c234521caa695291117a7f7ebad25915e628a6eb",
 	}
 )
 

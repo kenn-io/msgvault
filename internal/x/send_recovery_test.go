@@ -107,7 +107,7 @@ func TestXSendExplicitAdoptionOnlyForMatchingFrozenAttempt(t *testing.T) {
 				_testRequire.NoError(err)
 				var owner, id string
 				var confirmed bool
-				_testRequire.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT adoption_owner_id,adopted_post_id,adoption_confirmed_at IS NOT NULL FROM x_reply_attempts WHERE source_id=? AND draft_id=? AND attempt_id=?`), a.SourceID, a.DraftID, a.AttemptID).Scan(&owner, &id, &confirmed))
+				_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT adoption_owner_id,adopted_post_id,adoption_confirmed_at IS NOT NULL FROM x_reply_attempts WHERE source_id=? AND draft_id=? AND attempt_id=?`), a.SourceID, a.DraftID, a.AttemptID).Scan(&owner, &id, &confirmed))
 				_testAssert.Equal("1001", owner)
 				_testAssert.Equal("9001", id)
 				_testAssert.True(confirmed)

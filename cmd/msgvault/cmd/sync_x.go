@@ -251,7 +251,7 @@ func (a *storeAPIAdapter) runCLISyncX(ctx context.Context, req api.CLIRunRequest
 		if request.JSON {
 			return emitXSyncJSON(result, emit)
 		}
-		return emitXSyncText(fmt.Sprintf("Acknowledged X read-model hold for source %d (revision %d).\n", result.SourceID, result.Revision), emit)
+		return emitXSyncText(fmt.Sprintf("Acknowledged X read-model hold for source %d.\n", result.SourceID), emit)
 	}
 	d := defaultXCommandDeps()
 	if a.xDeps != nil {
@@ -342,18 +342,18 @@ func writeXArchiveSummary(out *strings.Builder, a *xapi.ArchiveSummary, code str
 	fmt.Fprintf(out, "  Archive own walk complete: %t\n  Archive mentions walk complete: %t\n", a.OwnComplete, a.MentionsComplete)
 	if a.TotalUnknown {
 		fmt.Fprintln(out, "  Total estimate: unknown")
-	} else {
-		fmt.Fprintf(out, "  Total estimate: USD %s\n", xUSDMicros(a.SpentMicros))
 	}
 	if a.Preview {
 		fmt.Fprintln(out, "Repeat with an explicit --max-spend to run or resume; preview creates no job or resource request.")
 	} else if code != "" {
 		if code == "budget_exhausted" {
 			fmt.Fprintln(out, "Budget stop: review the monthly budget or explicitly raise this job's lifetime cap before retrying.")
+		} else if code == "page_batch_limit" {
+			fmt.Fprintln(out, "Page batch limit reached; the next run continues from the saved cursor.")
 		} else if code != "refresh_required" {
 			fmt.Fprintln(out, "Resolve the reported provider, credential or coverage error before retrying; unsettled requests remain reserved.")
 		}
-		fmt.Fprintf(out, "Resume job %s with --job-id and an explicit --max-spend; repeating a cap never renews it.\n", a.JobID)
+		fmt.Fprintln(out, "Resume this job with --job-id and an explicit --max-spend; repeating a cap never renews it.")
 	}
 	fmt.Fprintln(out, "Limits: historical handles are unverified; old bare mentions, quotes and nested replies may be absent.")
 	fmt.Fprintln(out, "Unavailable content cannot be retrieved. Estimates are not an exact invoice or a recovery guarantee.")

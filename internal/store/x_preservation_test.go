@@ -24,8 +24,8 @@ func TestXRemovalKeepsUnsupportedPersonEvidenceOutOfLedger(t *testing.T) {
 	saved, err := st.PersistXPostContext(t.Context(), XPersistPostInput{SourceID: source.ID, OwnerID: "1001", PostID: "100", AuthorID: "1002", ConversationID: "100", EditHistory: []string{"100"}, Text: "retained constellation excerpt", CreatedAt: at, FetchedAt: at, Availability: "public", Author: &XAuthorInput{UserID: "1002", Username: "example_author", DisplayName: "Example Author", FetchedAt: at}})
 	_testRequire.NoError(err)
 	var pid int64
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE id=?`), saved.MessageID).Scan(&pid))
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO person_participants(person_id,participant_id) VALUES(?,?)`), personID, pid)
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE id=?`), saved.MessageID).Scan(&pid))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_participants(person_id,participant_id) VALUES(?,?)`), personID, pid)
 	_testRequire.NoError(err)
 	_, err = st.SetPersonTrackingContext(t.Context(), personID, true)
 	_testRequire.NoError(err)

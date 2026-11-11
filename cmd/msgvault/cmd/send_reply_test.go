@@ -109,7 +109,7 @@ func (f *replySurfaceFixture) request(t *testing.T, path string, body any) *http
 	t.Helper()
 	encoded, err := json.Marshal(body)
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(encoded))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, bytes.NewReader(encoded))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+f.cfg.Server.AuthenticationKey())
 	out := httptest.NewRecorder()
@@ -451,7 +451,7 @@ func TestXSendHTTPRejectsDelegationAndUnsafeTransport(t *testing.T) {
 		}
 		encoded, err := json.Marshal(body)
 		_testRequire.NoError(err)
-		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(encoded))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, bytes.NewReader(encoded))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, grant.Secret)
 		out := httptest.NewRecorder()

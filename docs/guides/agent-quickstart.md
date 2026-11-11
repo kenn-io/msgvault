@@ -300,6 +300,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `draft_recover` | write | — | backend-dependent |
 | `draft_reply` | write | — | backend-dependent |
 | `export_attachment` | write | — | owner-only |
+| `send_reply` | write | — | owner-only |
 | `stage_deletion` | write | — | owner-only |
 | `update_message_tags` | write | — | owner-only |
 | `update_saved_view` | write | — | owner-only |

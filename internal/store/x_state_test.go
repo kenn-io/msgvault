@@ -56,7 +56,7 @@ func TestXControlCompletionPreservesReservation(t *testing.T) {
 	_testAssert.True(got.Own.Complete)
 	var status, checkpoint string
 	var processed, added, updated int64
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT status,cursor_before,messages_processed,messages_added,messages_updated FROM sync_runs WHERE id=?"), run).Scan(&status, &checkpoint, &processed, &added, &updated))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT status,cursor_before,messages_processed,messages_added,messages_updated FROM sync_runs WHERE id=?"), run).Scan(&status, &checkpoint, &processed, &added, &updated))
 	_testAssert.Equal("completed", status)
 	_testAssert.Equal("diagnostic-only", checkpoint)
 	_testAssert.Equal(int64(3), processed)
@@ -143,9 +143,9 @@ func TestXCompletionRollbackAndSourceScope(t *testing.T) {
 	_testRequire.Error(err)
 	_testRequire.Error(st.CompleteXSyncContext(t.Context(), run, store.XControlPatch{OwnerID: "100", ExpectedRevision: state.Revision}))
 	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`CREATE FUNCTION reject_x_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status='completed' THEN RAISE EXCEPTION 'synthetic completion failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_x_completion BEFORE UPDATE ON sync_runs FOR EACH ROW EXECUTE FUNCTION reject_x_completion()`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION reject_x_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status='completed' THEN RAISE EXCEPTION 'synthetic completion failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_x_completion BEFORE UPDATE ON sync_runs FOR EACH ROW EXECUTE FUNCTION reject_x_completion()`)
 	} else {
-		_, err = st.DB().Exec(`CREATE TRIGGER reject_x_completion BEFORE UPDATE ON sync_runs WHEN NEW.status='completed' BEGIN SELECT RAISE(ABORT,'synthetic completion failure'); END`)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_x_completion BEFORE UPDATE ON sync_runs WHEN NEW.status='completed' BEGIN SELECT RAISE(ABORT,'synthetic completion failure'); END`)
 	}
 	_testRequire.NoError(err)
 	walk := store.XWalk{Endpoint: "own", Fingerprint: "synthetic-window", Complete: true}
@@ -155,12 +155,12 @@ func TestXCompletionRollbackAndSourceScope(t *testing.T) {
 	_testAssert.Equal(state.Revision, got.Revision)
 	_testAssert.Nil(got.Own)
 	var status string
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT status FROM sync_runs WHERE id=?"), run).Scan(&status))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT status FROM sync_runs WHERE id=?"), run).Scan(&status))
 	_testAssert.Equal("running", status)
 	execution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
 	_testRequire.NoError(err)
 	_testRequire.NoError(execution.Release())
-	_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT status FROM sync_runs WHERE id=?"), run).Scan(&status))
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT status FROM sync_runs WHERE id=?"), run).Scan(&status))
 	_testAssert.Equal("failed", status)
 }
 
@@ -195,7 +195,7 @@ func TestXControlReservationShapeAndRates(t *testing.T) {
 			_testRequire.NoError(err)
 			_testAssert.Equal(reservations, got.Reservations)
 			var raw string
-			_testRequire.NoError(st.DB().QueryRow(st.Rebind("SELECT sync_cursor FROM sources WHERE id=?"), source.ID).Scan(&raw))
+			_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT sync_cursor FROM sources WHERE id=?"), source.ID).Scan(&raw))
 			var encoded map[string]any
 			_testRequire.NoError(json.Unmarshal([]byte(raw), &encoded))
 			reservationValues, ok := encoded["reservations"].([]any)

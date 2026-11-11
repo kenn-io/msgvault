@@ -1990,35 +1990,6 @@ func cliRunPersonEnrichmentFlags(args []string) (*pflag.FlagSet, bool) {
 	}
 }
 
-func cliRunStrictFlagValues(args []string) (map[string]string, []string, bool) {
-	values := make(map[string]string)
-	positionals := make([]string, 0)
-	for _, arg := range args {
-		if !strings.HasPrefix(arg, "--") {
-			positionals = append(positionals, arg)
-			continue
-		}
-		nameValue := strings.TrimPrefix(arg, "--")
-		name, value, hasValue := strings.Cut(nameValue, "=")
-		if name == "" {
-			return nil, nil, false
-		}
-		if !hasValue {
-			value = booleanTrueValue
-		}
-		if _, duplicate := values[name]; duplicate {
-			return nil, nil, false
-		}
-		values[name] = value
-	}
-	return values, positionals, true
-}
-
-func cliRunPositiveInt(value string) bool {
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	return err == nil && parsed > 0
-}
-
 func cliRunSafeToken(value string) bool {
 	if len(value) == 0 || len(value) > 128 {
 		return false

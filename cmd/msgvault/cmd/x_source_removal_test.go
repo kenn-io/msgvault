@@ -95,7 +95,7 @@ func TestXSourceRemovalWaitsForCrossSourceContentCleanup(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.Equal("surviving source copy", body)
 	var pending int
-	_testRequire.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT cleanup_pending FROM x_post_versions WHERE source_id=? AND post_id=?`), f.source.ID, "900").Scan(&pending))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT cleanup_pending FROM x_post_versions WHERE source_id=? AND post_id=?`), f.source.ID, "900").Scan(&pending))
 	_testAssert.Equal(1, pending)
 
 	copyPost.FetchedAt = copyPost.FetchedAt.Add(time.Minute)
@@ -132,10 +132,10 @@ func TestXRemoveRacesWithSync(t *testing.T) {
 	target, err := f.st.ResolveXPostContext(t.Context(), f.source.ID, "101")
 	_testRequire.NoError(err)
 	var conversation int64
-	_testRequire.NoError(f.st.DB().QueryRow(f.st.Rebind("SELECT conversation_id FROM messages WHERE id=?"), target.MessageID).Scan(&conversation))
-	_, err = f.st.DB().Exec(f.st.Rebind(`INSERT INTO chat_drafts(draft_id,source_id,conversation_id,source_conversation_id,conversation_type,reply_to_source_message_id,body,revision) VALUES(?,?,?,?,?,?,?,?)`), "removal-draft", f.source.ID, conversation, "101", "channel", "101", "synthetic reviewed body", 1)
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind("SELECT conversation_id FROM messages WHERE id=?"), target.MessageID).Scan(&conversation))
+	_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind(`INSERT INTO chat_drafts(draft_id,source_id,conversation_id,source_conversation_id,conversation_type,reply_to_source_message_id,body,revision) VALUES(?,?,?,?,?,?,?,?)`), "removal-draft", f.source.ID, conversation, "101", "channel", "101", "synthetic reviewed body", 1)
 	_testRequire.NoError(err)
-	_, err = f.st.DB().Exec(f.st.Rebind(`INSERT INTO x_reply_attempts(source_id,owner_id,draft_id,attempt_id,draft_revision,target_post_id,source_conversation_id,body_digest,state,reservation_id) VALUES(?,?,?,?,?,?,?,?,?,?)`), f.source.ID, "1001", "removal-draft", "attempt-1", 1, "101", "101", "synthetic-digest", "remote_unknown", "reservation-1")
+	_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind(`INSERT INTO x_reply_attempts(source_id,owner_id,draft_id,attempt_id,draft_revision,target_post_id,source_conversation_id,body_digest,state,reservation_id) VALUES(?,?,?,?,?,?,?,?,?,?)`), f.source.ID, "1001", "removal-draft", "attempt-1", 1, "101", "101", "synthetic-digest", "remote_unknown", "reservation-1")
 	_testRequire.NoError(err)
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	t.Cleanup(provider.Close)
@@ -146,8 +146,8 @@ func TestXRemoveRacesWithSync(t *testing.T) {
 	_, err = f.st.GetSourceByID(f.source.ID)
 	_testRequire.ErrorIs(err, store.ErrSourceNotFound)
 	var aliases, attempts int
-	_testRequire.NoError(f.st.DB().QueryRow("SELECT count(*) FROM x_post_versions").Scan(&aliases))
-	_testRequire.NoError(f.st.DB().QueryRow("SELECT count(*) FROM x_reply_attempts").Scan(&attempts))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM x_post_versions").Scan(&aliases))
+	_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM x_reply_attempts").Scan(&attempts))
 	_testAssert.Zero(aliases)
 	_testAssert.Zero(attempts)
 }

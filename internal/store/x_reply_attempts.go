@@ -306,13 +306,15 @@ func (s *Store) RejectXReplyContext(ctx context.Context, key XAttemptKey, code s
 	}
 	return s.transitionXReply(ctx, key, func(tx *loggedTx, a XReplyAttempt) error {
 		if a.State == "rejected" && a.Code == code {
-			return nil
+			return s.settleXRequestResultTx(ctx, tx, a.SourceID, a.ReservationID, XResourceUsage{Persisted: true, Complete: true}, true)
 		}
 		if a.State != "admitted" {
 			return ErrXAttemptState
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE x_reply_attempts SET state='rejected',result_code=?,updated_at=`+s.dialect.Now()+` WHERE source_id=? AND draft_id=? AND attempt_id=?`, code, key.SourceID, key.DraftID, key.AttemptID)
-		return err
+		if _, err := tx.ExecContext(ctx, `UPDATE x_reply_attempts SET state='rejected',result_code=?,updated_at=`+s.dialect.Now()+` WHERE source_id=? AND draft_id=? AND attempt_id=?`, code, key.SourceID, key.DraftID, key.AttemptID); err != nil {
+			return err
+		}
+		return s.settleXRequestResultTx(ctx, tx, a.SourceID, a.ReservationID, XResourceUsage{Persisted: true, Complete: true}, true)
 	})
 }
 func (s *Store) MarkXReplyUnknownContext(ctx context.Context, key XAttemptKey) error {

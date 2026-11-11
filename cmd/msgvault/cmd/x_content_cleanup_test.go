@@ -72,7 +72,7 @@ func newXCleanupFixture(t *testing.T) *xCleanupFixture {
 		f.st = testutil.NewTestStore(t)
 		// Reopening helpers must stay in this fixture's actual clone/schema.
 		var database, schema string
-		require.NoError(t, f.st.DB().QueryRow(`SELECT current_database(),current_schema()`).Scan(&database, &schema))
+		require.NoError(t, f.st.DB().QueryRowContext(t.Context(), `SELECT current_database(),current_schema()`).Scan(&database, &schema))
 		dsn, err := url.Parse(os.Getenv("MSGVAULT_TEST_DB"))
 		require.NoError(t, err)
 		dsn.Path = "/" + database
@@ -138,7 +138,7 @@ func TestXRemovalLeavesNoReadableCopy(t *testing.T) {
 	host := httptest.NewServer(server.Router())
 	t.Cleanup(host.Close)
 	for _, path := range []string{fmt.Sprintf("/api/v1/messages/%d", f.message), fmt.Sprintf("/api/v1/cli/message/raw?id=%d", f.message), "/api/v1/search?q=constellation"} {
-		response, err := host.Client().Get(host.URL + path)
+		response, err := xTestHTTPGet(t, host.Client(), host.URL+path)
 		_testRequire.NoError(err)
 		data, err := io.ReadAll(response.Body)
 		_testRequire.NoError(err)
@@ -165,7 +165,7 @@ func TestXRemovalLeavesNoReadableCopy(t *testing.T) {
 		_testAssert.Zero(stats.EmbeddingCount)
 	}
 	for _, path := range []string{fmt.Sprintf("/api/v1/messages/%d", f.message), fmt.Sprintf("/api/v1/cli/message/raw?id=%d", f.message), "/api/v1/search?q=constellation"} {
-		response, err := http.Get(host.URL + path)
+		response, err := xTestHTTPGet(t, http.DefaultClient, host.URL+path)
 		_testRequire.NoError(err)
 		body, err := io.ReadAll(response.Body)
 		_testRequire.NoError(err)
@@ -240,14 +240,14 @@ func TestXRemovalPendingFenceOnRealDetailRoute(t *testing.T) {
 	_, err = f.st.RemoveXPostContentContext(t.Context(), f.source, "100", "removed")
 	_testRequire.NoError(err)
 	_testRequire.NoError(execution.Release())
-	response, err := http.Get(fmt.Sprintf("%s/api/v1/messages/%d", host.URL, f.message))
+	response, err := xTestHTTPGet(t, http.DefaultClient, fmt.Sprintf("%s/api/v1/messages/%d", host.URL, f.message))
 	_testRequire.NoError(err)
 	_testRequire.NoError(response.Body.Close())
 	_testAssert.Equal(http.StatusServiceUnavailable, response.StatusCode)
 	// A restarted cleaner resumes without tokens, budgets, schedules or API.
 	restarted := NewXContentCleanup(f.st, f.cfg, f.backend)
-	_testRequire.NoError(restarted.Resume(context.Background()))
-	response, err = http.Get(fmt.Sprintf("%s/api/v1/messages/%d", host.URL, f.message))
+	_testRequire.NoError(restarted.Resume(t.Context()))
+	response, err = xTestHTTPGet(t, http.DefaultClient, fmt.Sprintf("%s/api/v1/messages/%d", host.URL, f.message))
 	_testRequire.NoError(err)
 	bytes, err := io.ReadAll(response.Body)
 	_testRequire.NoError(err)
@@ -335,7 +335,7 @@ func TestXRemovalClosesRetiredAnalyticsAndOwnedTempDirectories(t *testing.T) {
 		"cleanup must publish a fresh analytics engine after rebuilding the cache")
 
 	explore := httptest.NewRecorder()
-	exploreRequest := httptest.NewRequest(http.MethodPost, "/api/v1/explore", strings.NewReader(fmt.Sprintf(
+	exploreRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/explore", strings.NewReader(fmt.Sprintf(
 		`{"filters":[{"dimension":"source","values":["%d"]}],"limit":1}`,
 		f.source,
 	)))
@@ -413,11 +413,11 @@ func TestXRemovalDuringSQLFallbackInitializationReopensFreshAnalytics(t *testing
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(tracker.release) }) }
 	initializer := startDaemonAnalyticsInitializer(
-		context.Background(), f.cfg, f.st, startupCacheBuildIntentNone, server, nil, tracker,
+		t.Context(), f.cfg, f.st, startupCacheBuildIntentNone, server, nil, tracker,
 	)
 	t.Cleanup(func() {
 		release()
-		waitCtx, cancel := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+		waitCtx, cancel := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
 		defer cancel()
 		require.True(initializer.WaitContext(waitCtx), "analytics initializer must finish before engines close")
 		require.NoError(closeDaemonAnalyticsEngines(server, initial, initializer))
@@ -439,7 +439,7 @@ func TestXRemovalDuringSQLFallbackInitializationReopensFreshAnalytics(t *testing
 		"cleanup must reopen analytics when startup was serving SQL fallback")
 
 	explore := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/explore", strings.NewReader(
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/explore", strings.NewReader(
 		fmt.Sprintf(`{"filters":[{"dimension":"source","values":["%d"]}],"limit":1}`, f.source),
 	))
 	request.Header.Set("Content-Type", "application/json")
@@ -448,7 +448,7 @@ func TestXRemovalDuringSQLFallbackInitializationReopensFreshAnalytics(t *testing
 	require.Equal(http.StatusOK, explore.Code, explore.Body.String())
 
 	release()
-	waitCtx, cancel := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+	waitCtx, cancel := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
 	defer cancel()
 	require.True(initializer.WaitContext(waitCtx), "stale initializer must finish after cleanup")
 	require.NoError(initializer.Err())
@@ -458,7 +458,7 @@ func TestXRemovalDuringSQLFallbackInitializationReopensFreshAnalytics(t *testing
 		"rejecting a stale initializer must leave the cleanup-installed engine available")
 
 	afterInit := httptest.NewRecorder()
-	afterInitRequest := httptest.NewRequest(http.MethodPost, "/api/v1/explore", strings.NewReader(
+	afterInitRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/explore", strings.NewReader(
 		fmt.Sprintf(`{"filters":[{"dimension":"source","values":["%d"]}],"limit":1}`, f.source),
 	))
 	afterInitRequest.Header.Set("Content-Type", "application/json")
@@ -511,7 +511,7 @@ func TestXRemovalBetweenAnalyticsSnapshotAndRetirementReopensFreshAnalytics(t *t
 		if initializer == nil {
 			return
 		}
-		waitCtx, cancel := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+		waitCtx, cancel := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
 		defer cancel()
 		require.True(initializer.WaitContext(waitCtx), "analytics initializer must finish before engines close")
 		require.NoError(closeDaemonAnalyticsEngines(server, initial, initializer))
@@ -522,7 +522,7 @@ func TestXRemovalBetweenAnalyticsSnapshotAndRetirementReopensFreshAnalytics(t *t
 		assert.False(server.AnalyticsInitializationActive(),
 			"cleanup must first observe the SQL-fallback startup state")
 		initializer = startDaemonAnalyticsInitializer(
-			context.Background(), f.cfg, f.st, startupCacheBuildIntentNone, server, nil, tracker,
+			t.Context(), f.cfg, f.st, startupCacheBuildIntentNone, server, nil, tracker,
 		)
 		select {
 		case <-tracker.started:
@@ -540,7 +540,7 @@ func TestXRemovalBetweenAnalyticsSnapshotAndRetirementReopensFreshAnalytics(t *t
 	assert.True(server.AnalyticsInitializationActive())
 
 	explore := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/explore", strings.NewReader(
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/explore", strings.NewReader(
 		fmt.Sprintf(`{"filters":[{"dimension":"source","values":["%d"]}],"limit":1}`, f.source),
 	))
 	request.Header.Set("Content-Type", "application/json")
@@ -550,7 +550,7 @@ func TestXRemovalBetweenAnalyticsSnapshotAndRetirementReopensFreshAnalytics(t *t
 		"cleanup must reopen Explore if initialization begins after its initial state sample")
 
 	release()
-	waitCtx, cancel := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+	waitCtx, cancel := context.WithTimeout(t.Context(), serveLifecycleTestTimeout)
 	defer cancel()
 	require.True(initializer.WaitContext(waitCtx), "stale initializer must finish after cleanup")
 	require.NoError(initializer.Err())
@@ -560,7 +560,7 @@ func TestXRemovalBetweenAnalyticsSnapshotAndRetirementReopensFreshAnalytics(t *t
 		"rejection of the stale initializer must preserve the cleanup-installed engine")
 
 	afterInit := httptest.NewRecorder()
-	afterInitRequest := httptest.NewRequest(http.MethodPost, "/api/v1/explore", strings.NewReader(
+	afterInitRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/explore", strings.NewReader(
 		fmt.Sprintf(`{"filters":[{"dimension":"source","values":["%d"]}],"limit":1}`, f.source),
 	))
 	afterInitRequest.Header.Set("Content-Type", "application/json")
@@ -703,7 +703,7 @@ func TestXRemovalStartupFence(t *testing.T) {
 	host := httptest.NewServer(apiServer.Router())
 	defer host.Close()
 	for _, path := range []string{fmt.Sprintf("/api/v1/messages/%d", f.message), fmt.Sprintf("/api/v1/cli/message/raw?id=%d", f.message), "/api/v1/messages?q=constellation"} {
-		response, err := host.Client().Get(host.URL + path)
+		response, err := xTestHTTPGet(t, host.Client(), host.URL+path)
 		_testRequire.NoError(err)
 		data, err := io.ReadAll(response.Body)
 		_testRequire.NoError(err)
@@ -749,7 +749,7 @@ func TestXRemovalDrainsAnAlreadyLoadedHTTPResponse(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		server.Router().ServeHTTP(writer, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", f.message), nil))
+		server.Router().ServeHTTP(writer, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", f.message), nil))
 	}()
 	select {
 	case <-writer.entered:
@@ -768,7 +768,7 @@ func TestXRemovalDrainsAnAlreadyLoadedHTTPResponse(t *testing.T) {
 	_, err = cleaner.RemovePost(t.Context(), f.source, "100", "removed")
 	_testRequire.NoError(err)
 	response := httptest.NewRecorder()
-	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", f.message), nil))
+	server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", f.message), nil))
 	_testAssert.NotContains(response.Body.String(), "constellation secret")
 }
 
@@ -786,7 +786,7 @@ func TestXRemovalSemanticRouteUsesActualDeletedVectors(t *testing.T) {
 	cleaner.SetServer(server)
 	read := func() []int64 {
 		response := httptest.NewRecorder()
-		server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/search/similar?message_id=%d", seed.MessageID), nil))
+		server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/search/similar?message_id=%d", seed.MessageID), nil))
 		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		var result struct {
 			Messages []struct {
@@ -888,11 +888,11 @@ func TestXRemovalCallerHandlerPendingFence(t *testing.T) {
 	_testRequire.NoError(execution.Release())
 	path := fmt.Sprintf("/api/v1/messages/%d", f.message)
 	response := httptest.NewRecorder()
-	server.Handler(nil).ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+	server.Handler(nil).ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	_testRequire.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
 	_testRequire.NoError(cleaner.Resume(t.Context()))
 	response = httptest.NewRecorder()
-	server.Handler(nil).ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+	server.Handler(nil).ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	_testRequire.Equal(http.StatusOK, response.Code, response.Body.String())
 	assert.NotContains(t, response.Body.String(), "constellation secret")
 }

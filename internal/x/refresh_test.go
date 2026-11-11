@@ -209,7 +209,7 @@ func TestXRefreshCompletionRequiresDurableCheckpoint(t *testing.T) {
 	source := importTestSource(t, st)
 	// Fail the actual Store checkpoint publication, after the empty sweep has
 	// done all of its local work. No provider or replacement Store is involved.
-	_, err := st.DB().Exec(`CREATE TRIGGER reject_x_refresh_completion BEFORE UPDATE OF sync_cursor ON sources WHEN json_type(NEW.sync_cursor,'$.refresh.last_complete_at') IS NOT NULL BEGIN SELECT RAISE(ABORT,'synthetic refresh checkpoint failure'); END`)
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_x_refresh_completion BEFORE UPDATE OF sync_cursor ON sources WHEN json_type(NEW.sync_cursor,'$.refresh.last_complete_at') IS NOT NULL BEGIN SELECT RAISE(ABORT,'synthetic refresh checkpoint failure'); END`)
 	_testRequire.NoError(err)
 	policy := importTestPolicy(t)
 	policy.MonthlyBudgetMicros = 0
@@ -222,7 +222,7 @@ func TestXRefreshCompletionRequiresDurableCheckpoint(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.True(state.Refresh.LastCompleteAt.IsZero())
 	_testAssert.False(state.Refresh.SweepStartedAt.IsZero())
-	_, err = st.DB().Exec(`DROP TRIGGER reject_x_refresh_completion`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER reject_x_refresh_completion`)
 	_testRequire.NoError(err)
 	result, err = imp.Refresh(t.Context(), RefreshOptions{SourceID: source.ID, OwnerID: "1001"})
 	_testRequire.NoError(err)

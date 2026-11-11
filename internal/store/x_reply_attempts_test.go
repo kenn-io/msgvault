@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -98,7 +99,7 @@ func TestXDraftAdmissionFreezesAndRetainsReceipt(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.Equal(d.Body, body)
 	// Receipts are independent of drafts, but source removal owns their lifetime.
-	_, err = st.DB().Exec(st.Rebind("DELETE FROM sources WHERE id=?"), d.SourceID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("DELETE FROM sources WHERE id=?"), d.SourceID)
 	_testRequire.NoError(err)
 	_, err = st.GetXReplyReceiptContext(t.Context(), d.DraftID)
 	_testRequire.ErrorIs(err, store.ErrXReplyReceiptNotFound)
@@ -125,11 +126,11 @@ func TestXDraftChangedAndInvalidAdmissionRollBack(t *testing.T) {
 				input.Cost.MonthlyBudgetMicros = 199_999
 				expected = store.ErrXBudgetExceeded
 			case "unverified":
-				_, err := st.DB().Exec(st.Rebind("UPDATE x_post_versions SET availability='unverified' WHERE source_id=?"), d.SourceID)
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind("UPDATE x_post_versions SET availability='unverified' WHERE source_id=?"), d.SourceID)
 				_testRequire.NoError(err)
 				expected = store.ErrChatDraftInvalidDestination
 			case "consolidated":
-				_, err := st.DB().Exec(st.Rebind("UPDATE conversations SET source_conversation_id='99' WHERE id=?"), d.ConversationID)
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind("UPDATE conversations SET source_conversation_id='99' WHERE id=?"), d.ConversationID)
 				_testRequire.NoError(err)
 			}
 			_, err := st.AdmitXReplyContext(t.Context(), input)
@@ -173,5 +174,55 @@ func TestXDraftRejectedHistoryAndStaleAttemptKeys(t *testing.T) {
 	_testAssert.Equal("remote_unknown", again.Attempt.State)
 	state, err := st.LoadXControlContext(t.Context(), d.SourceID)
 	_testRequire.NoError(err)
-	_testAssert.Equal(int64(400_000), state.SpendBuckets[0].ReservedMicros, "no unproved rejection refund")
+	_testAssert.Equal(int64(200_000), state.SpendBuckets[0].ReservedMicros, "unknown send remains reserved")
+	_testAssert.Equal(int64(200_000), state.SpendBuckets[0].SpentMicros, "rejection is conservatively charged")
+}
+
+func TestXRejectedRepliesSettleWithoutExhaustingReceiptCapacity(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, d, input := xReplyFixture(t)
+	input.Cost.MonthlyBudgetMicros = 30_000_000
+	input.Cost.At = time.Date(2026, 10, 31, 23, 59, 0, 0, time.UTC)
+	state, err := st.LoadXControlContext(t.Context(), d.SourceID)
+	requirements.NoError(err)
+	job := store.XArchiveJob{ID: "archive-send", Fingerprint: "frozen", Username: "example_user", After: input.Cost.At.Add(-24 * time.Hour), Before: input.Cost.At, CapMicros: 60_000_000,
+		Own:      &store.XWalk{Fingerprint: "own", Endpoint: "search_all", Query: "from:example_user -is:retweet", After: input.Cost.At.Add(-24 * time.Hour), Before: input.Cost.At},
+		Mentions: &store.XWalk{Fingerprint: "mentions", Endpoint: "search_all", Query: "to:example_user -is:retweet", After: input.Cost.At.Add(-24 * time.Hour), Before: input.Cost.At}}
+	_, err = st.UpdateXControlContext(t.Context(), d.SourceID, state.Revision, store.XControlPatch{OwnerID: "1001", Jobs: &[]store.XArchiveJob{job}})
+	requirements.NoError(err)
+	input.Cost.JobID, input.Cost.JobFingerprint = job.ID, job.Fingerprint
+	const perMonth = 130
+	var first store.XAttemptKey
+	for month := range 2 {
+		for n := range perMonth {
+			admission, err := st.AdmitXReplyContext(t.Context(), input)
+			requirements.NoError(err)
+			requirements.True(admission.Created)
+			if month == 0 && n == 0 {
+				first = admission.Attempt.XAttemptKey
+			}
+			requirements.NoError(st.RejectXReplyContext(t.Context(), admission.Attempt.XAttemptKey, "provider_rejected"))
+		}
+		input.Cost.At = input.Cost.At.Add(2 * time.Minute)
+	}
+	requirements.NoError(st.RejectXReplyContext(t.Context(), first, "provider_rejected"))
+	unknown, err := st.AdmitXReplyContext(t.Context(), input)
+	requirements.NoError(err)
+	requirements.NoError(st.MarkXReplyUnknownContext(t.Context(), unknown.Attempt.XAttemptKey))
+	replay, err := st.AdmitXReplyContext(t.Context(), input)
+	requirements.NoError(err)
+	assertions.False(replay.Created)
+	assertions.Equal(unknown.Attempt.AttemptID, replay.Attempt.AttemptID)
+	state, err = st.LoadXControlContext(t.Context(), d.SourceID)
+	requirements.NoError(err)
+	requirements.Len(state.SpendBuckets, 2)
+	assertions.Equal(int64(perMonth*200_000), state.SpendBuckets[0].SpentMicros)
+	assertions.Equal(int64(perMonth*200_000), state.SpendBuckets[1].SpentMicros)
+	assertions.Equal(int64(200_000), state.SpendBuckets[1].ReservedMicros)
+	requirements.Len(state.Jobs, 1)
+	assertions.Equal(int64(2*perMonth*200_000), state.Jobs[0].SpentMicros)
+	assertions.Equal(int64(200_000), state.Jobs[0].ReservedMicros)
+	requirements.Len(state.Reservations, 1)
+	assertions.Equal(unknown.Attempt.ReservationID, state.Reservations[0].ID)
 }
