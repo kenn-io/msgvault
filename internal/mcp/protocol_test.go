@@ -400,7 +400,7 @@ func TestMCPHTTPConfirmationWritesRequireModernProtocol(t *testing.T) {
 		Calendar: calendar, AllowCalendarWrites: true,
 		Operations:             operationalTestBackend{},
 		OperationCapabilities:  []string{"get_source_scheduler_status", "sync_source", "update_slack_sync_policy", "set_person_display_name", "list_open_loops", "close_open_loop", "snooze_open_loop", "reopen_open_loop", "list_carddav_books", "update_carddav_book_roles", "resolve_carddav_conflict", "unpublish_carddav_person"},
-		OperationWriteFamilies: []OperationFamily{OperationFamilySources, OperationFamilyRecords, OperationFamilyLoops},
+		OperationWriteFamilies: []OperationFamily{OperationFamilySources, OperationFamilyRecords, OperationFamilyLoops, OperationFamilyCardDAV},
 		PeopleBackend:          &namedPromotionTestBackend{recordingPeopleBackend: &recordingPeopleBackend{}}, AllowProfileWrites: true,
 	}
 	handler := newMCPHTTPServer(opts, HTTPOptions{AllowWrites: true}).Handler

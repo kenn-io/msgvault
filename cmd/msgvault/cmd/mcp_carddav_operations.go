@@ -8,7 +8,6 @@ import (
 	"slices"
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -21,22 +20,10 @@ type daemonMCPCardDAV struct {
 
 func newDaemonMCPCardDAV(client *daemonclient.Client, caps *apiprotocol.MCPCapabilities) *daemonMCPCardDAV {
 	b := &daemonMCPCardDAV{Client: client}
-	if caps == nil {
-		return b
-	}
-	var syncSelector, statusSelector bool
-	for _, route := range caps.Routes {
-		if route.OperationID == "listCardDAVConnections" && route.Method == "GET" && route.Path == "/api/v1/carddav/connections" {
-			b.connectionList = true
-		}
-		if route.OperationID == "syncCardDAV" && route.Method == "POST" && route.Path == "/api/v1/carddav/sync" && slices.Contains(route.RequestProperties, "connection") {
-			syncSelector = true
-		}
-		if route.OperationID == "getCardDAVStatus" && route.Method == "GET" && route.Path == "/api/v1/carddav/status" && slices.Contains(route.QueryParameters, "connection") {
-			statusSelector = true
-		}
-	}
-	b.selector = syncSelector && statusSelector
+	b.connectionList = hasRoute(caps, "listCardDAVConnections", http.MethodGet, "/api/v1/carddav/connections")
+	b.selector = hasRoute(caps, "syncCardDAV", http.MethodPost, "/api/v1/carddav/sync") &&
+		mcpRequestPropertiesPresent(caps, "syncCardDAV", "connection") &&
+		hasRoute(caps, "getCardDAVStatus", http.MethodGet, "/api/v1/carddav/status", "connection")
 	return b
 }
 
@@ -114,9 +101,6 @@ type cardDAVArguments struct {
 }
 
 func validCardDAVArguments(name string, a cardDAVArguments) bool {
-	if a.Connection != nil && config.ValidateCardDAVConnectionName(*a.Connection) != nil {
-		return false
-	}
 	switch name {
 	case "list_carddav_connections", "list_carddav_conflicts", "list_carddav_books":
 		return true
@@ -140,6 +124,15 @@ func cardDAVRoleRefusal(code string) bool {
 		return true
 	}
 	return false
+}
+
+// Native recovery and post-prepare stages can return these fixed refusals
+// after a remote or local mutation has already occurred.
+func cardDAVUncertainRefusals(enabled bool) []string {
+	if !enabled {
+		return nil
+	}
+	return []string{"conflict", "carddav_conflict_stale", "carddav_conflict_pending", "carddav_publication_pending", "carddav_retry_after", "carddav_remote_protected", "carddav_remote_invalid", "carddav_inference_review_required", "carddav_review_stale", "carddav_icloud_reconnect_required", "google_authorization_required", "microsoft_authorization_required", "carddav_preview_too_large", "microsoft_contact_too_large", "carddav_upstream_failed", "carddav_storage_failed"}
 }
 
 func (b *daemonMCPOperations) executeCardDAVOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
@@ -179,8 +172,8 @@ func (b *daemonMCPOperations) executeCardDAVOperation(ctx context.Context, name 
 	case "update_carddav_book_roles":
 		result, err = readMCPOperationJSONWithCertainty[generated.CardDAVBookResponse](ctx, b.client, "PATCH", "/api/v1/carddav/books/{id}", &generated.UpdateCardDAVBookRolesRequestOptions{PathParams: &generated.UpdateCardDAVBookRolesPath{ID: a.BookID}, Body: &generated.UpdateCardDAVBookRolesBody{WriteTarget: *a.WriteTarget, Subscribed: *a.Subscribed, LookupSource: *a.LookupSource}}, cardDAVRoleRefusal, true, 200)
 	case "resolve_carddav_conflict":
-		result, err = readMCPOperationJSONWithCertainty[generated.CardDAVConflictResolutionResponse](ctx, b.client, "POST", "/api/v1/carddav/conflicts/{id}/resolve", &generated.ResolveCardDAVConflictRequestOptions{PathParams: &generated.ResolveCardDAVConflictPath{ID: a.ConflictID}, Body: &generated.ResolveCardDAVConflictBody{Choice: generated.CardDAVResolveRequestChoice(a.Choice)}}, func(code string) bool {
-			if code == "carddav_unavailable" {
+		result, err = readMCPOperationJSONWithUncertainCodes[generated.CardDAVConflictResolutionResponse](ctx, b.client, "POST", "/api/v1/carddav/conflicts/{id}/resolve", &generated.ResolveCardDAVConflictRequestOptions{PathParams: &generated.ResolveCardDAVConflictPath{ID: a.ConflictID}, Body: &generated.ResolveCardDAVConflictBody{Choice: generated.CardDAVResolveRequestChoice(a.Choice)}}, func(code string) bool {
+			if code == "carddav_unavailable" || code == "server_busy" {
 				return true
 			}
 			if a.Choice == "keep_remote" {
@@ -190,9 +183,9 @@ func (b *daemonMCPOperations) executeCardDAVOperation(ctx context.Context, name 
 				}
 			}
 			return false
-		}, a.Choice == "keep_local", 200)
+		}, a.Choice == "keep_local", cardDAVUncertainRefusals(a.Choice == "keep_local"), 200)
 	case "unpublish_carddav_person":
-		result, err = readMCPOperationJSONWithCertainty[generated.CardDAVPublicationResponse](ctx, b.client, "DELETE", "/api/v1/carddav/publications/{person_id}", &generated.UnpublishCardDAVPersonRequestOptions{PathParams: &generated.UnpublishCardDAVPersonPath{PersonID: a.PersonID}}, func(code string) bool { return code == "carddav_unavailable" }, true, 200)
+		result, err = readMCPOperationJSONWithUncertainCodes[generated.CardDAVPublicationResponse](ctx, b.client, "DELETE", "/api/v1/carddav/publications/{person_id}", &generated.UnpublishCardDAVPersonRequestOptions{PathParams: &generated.UnpublishCardDAVPersonPath{PersonID: a.PersonID}}, func(code string) bool { return code == "carddav_unavailable" || code == "server_busy" }, true, cardDAVUncertainRefusals(true), 200)
 	}
 	return result, true, err
 }
@@ -207,6 +200,7 @@ func (b *daemonMCPOperations) cardDAVOperationDisclosure(ctx context.Context, na
 	}
 	bookID := a.BookID
 	var current any
+	unpublishEffect := "unpublish the person; this can remove a remote contact while retaining the local person"
 	switch name {
 	case "resolve_carddav_conflict":
 		r, _, e := b.executeCardDAVOperation(ctx, "get_carddav_conflict", map[string]any{"conflict_id": a.ConflictID})
@@ -228,6 +222,9 @@ func (b *daemonMCPOperations) cardDAVOperationDisclosure(ctx context.Context, na
 			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 		}
 		bookID, current = v.AddressBook.ID, v
+		if v.State == "unpublished" && !v.Desired && v.PendingOperation == nil {
+			unpublishEffect = "the person is currently unpublished; retain the local person and remove a remote contact if one remains"
+		}
 	}
 	r, _, e := b.executeCardDAVOperation(ctx, "list_carddav_books", nil)
 	if e != nil || r == nil || r.IsError {
@@ -240,7 +237,7 @@ func (b *daemonMCPOperations) cardDAVOperationDisclosure(ctx context.Context, na
 	var previousTarget *generated.CardDAVBookResponse
 	if name == "update_carddav_book_roles" && *a.WriteTarget {
 		for i := range books.Books {
-			if books.Books[i].WriteTarget {
+			if books.Books[i].WriteTarget && books.Books[i].ID != bookID {
 				previousTarget = &books.Books[i]
 				break
 			}
@@ -254,7 +251,7 @@ func (b *daemonMCPOperations) cardDAVOperationDisclosure(ctx context.Context, na
 			if current == nil {
 				current = book
 			}
-			effect := map[string]string{"update_carddav_book_roles": "replace all three address book roles; setting the write target releases the previous target; removing subscription or lookup can demote or remove local CardDAV resource mappings", "resolve_carddav_conflict": "resolve the conflict; this can create, update or remove a remote contact or change the local person", "unpublish_carddav_person": "remove the published remote contact while retaining the local person"}[name]
+			effect := map[string]string{"update_carddav_book_roles": "replace all three address book roles; setting the write target releases the previous target; removing subscription or lookup can demote or remove local CardDAV resource mappings", "resolve_carddav_conflict": "resolve the conflict; this can create, update or remove a remote contact or change the local person", "unpublish_carddav_person": unpublishEffect}[name]
 			data, e := json.Marshal(struct {
 				Operation      string                         `json:"operation"`
 				Connection     string                         `json:"connection"`

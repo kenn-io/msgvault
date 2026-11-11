@@ -46,7 +46,7 @@ func cardDAVOperationFixture(t *testing.T) (*daemonMCPOperations, int64, *store.
 func TestCardDAVRoleApprovalUsesRealStore(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	backend, id, _ := cardDAVOperationFixture(t)
+	backend, id, st := cardDAVOperationFixture(t)
 	transfer, err := backend.OperationDisclosure(t.Context(), "update_carddav_book_roles", map[string]any{"book_id": id, "write_target": true, "subscribed": true, "lookup_source": true})
 	require.NoError(err)
 	assert.Contains(transfer, `"previous_write_target"`)
@@ -70,6 +70,10 @@ func TestCardDAVRoleApprovalUsesRealStore(t *testing.T) {
 	changedDisclosure, err := backend.OperationDisclosure(t.Context(), "update_carddav_book_roles", map[string]any{"book_id": id, "write_target": false, "subscribed": false, "lookup_source": true})
 	require.NoError(err)
 	assert.Contains(changedDisclosure, `"lookup_source":true`)
+	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), id, store.CardDAVBookRoles{IsWriteTarget: true, IsSubscribed: true}))
+	selfDisclosure, err := backend.OperationDisclosure(t.Context(), "update_carddav_book_roles", map[string]any{"book_id": id, "write_target": true, "subscribed": true, "lookup_source": true})
+	require.NoError(err)
+	assert.NotContains(selfDisclosure, `"previous_write_target"`)
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_carddav_book_roles", Arguments: map[string]any{"book_id": id, "write_target": true, "subscribed": false, "lookup_source": false}})
 	require.NoError(err)
 	failure := loopToolFailure(t, result)
@@ -206,11 +210,13 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 		{"resolve_carddav_conflict", "not_found", "not_found", map[string]any{"conflict_id": 1, "choice": "keep_remote"}, false},
 		{"resolve_carddav_conflict", "not_found", "not_found", map[string]any{"conflict_id": 1, "choice": "keep_local"}, true},
 		{"resolve_carddav_conflict", "carddav_conflict_stale", "carddav_conflict_stale", map[string]any{"conflict_id": 1, "choice": "keep_remote"}, false},
-		{"resolve_carddav_conflict", "carddav_conflict_stale", "operation_refused", map[string]any{"conflict_id": 1, "choice": "keep_local"}, true},
+		{"resolve_carddav_conflict", "carddav_conflict_stale", "carddav_conflict_stale", map[string]any{"conflict_id": 1, "choice": "keep_local"}, true},
 		{"resolve_carddav_conflict", "carddav_remote_protected", "carddav_remote_protected", map[string]any{"conflict_id": 1, "choice": "keep_remote"}, false},
 		{"resolve_carddav_conflict", "carddav_publication_pending", "carddav_publication_pending", map[string]any{"conflict_id": 1, "choice": "keep_remote"}, false},
-		{"unpublish_carddav_person", "carddav_publication_pending", "operation_refused", map[string]any{"person_id": 1}, true},
-		{"unpublish_carddav_person", "conflict", "operation_refused", map[string]any{"person_id": 1}, true},
+		{"unpublish_carddav_person", "carddav_publication_pending", "carddav_publication_pending", map[string]any{"person_id": 1}, true},
+		{"unpublish_carddav_person", "conflict", "conflict", map[string]any{"person_id": 1}, true},
+		{"unpublish_carddav_person", "server_busy", "server_busy", map[string]any{"person_id": 1}, false},
+		{"resolve_carddav_conflict", "server_busy", "server_busy", map[string]any{"conflict_id": 1, "choice": "keep_local"}, false},
 	} {
 		daemonCode = tc.code
 		got, callErr := adapter.ExecuteOperation(t.Context(), tc.name, tc.args)
@@ -271,7 +277,7 @@ func TestCardDAVUnpublishDisclosesOwnerAndKeepsPersonOnUnavailableConnection(t *
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approved = true
 		assert.Contains(request.Params.Message, `"connection":"work"`)
-		assert.Contains(request.Params.Message, "remove the published remote contact")
+		assert.Contains(request.Params.Message, "the person is currently unpublished; retain the local person and remove a remote contact if one remains")
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "unpublish_carddav_person", Arguments: args})

@@ -29,30 +29,37 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	if capabilities == nil {
 		return backend
 	}
-	hasRoute := func(id, method, path string, query ...string) bool {
-		for _, route := range capabilities.Routes {
-			if route.OperationID != id || route.Method != method || route.Path != path {
-				continue
-			}
-			for _, name := range query {
-				if !slices.Contains(route.QueryParameters, name) {
-					return false
-				}
-			}
-			return true
-		}
-		return false
+	routeCheck := func(id, method, path string, query ...string) bool {
+		return hasRoute(capabilities, id, method, path, query...)
 	}
-	if hasRoute("getSchedulerStatus", http.MethodGet, "/api/v1/scheduler/status") {
+	if routeCheck("getSchedulerStatus", http.MethodGet, "/api/v1/scheduler/status") {
 		backend.supported = append(backend.supported, "get_source_scheduler_status")
 	}
-	if hasRoute("triggerSync", http.MethodPost, "/api/v1/sync/{account}", "source_type") && hasRoute("listSourceStatus", http.MethodGet, "/api/v1/sources/status", "source_type") {
+	if routeCheck("triggerSync", http.MethodPost, "/api/v1/sync/{account}", "source_type") && routeCheck("listSourceStatus", http.MethodGet, "/api/v1/sources/status", "source_type") {
 		backend.supported = append(backend.supported, "sync_source")
 	}
-	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
-	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
-	backend.supported = append(backend.supported, cardDAVMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, loopMCPCapabilities(routeCheck, capabilities)...)
+	backend.supported = append(backend.supported, sourceMCPCapabilities(routeCheck, capabilities)...)
+	backend.supported = append(backend.supported, cardDAVMCPCapabilities(routeCheck, capabilities)...)
 	return backend
+}
+
+func hasRoute(capabilities *apiprotocol.MCPCapabilities, id, method, path string, query ...string) bool {
+	if capabilities == nil {
+		return false
+	}
+	for _, route := range capabilities.Routes {
+		if route.OperationID != id || route.Method != method || route.Path != path {
+			continue
+		}
+		for _, name := range query {
+			if !slices.Contains(route.QueryParameters, name) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func (b *daemonMCPOperations) capabilities() []string { return slices.Clone(b.supported) }
@@ -170,6 +177,10 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 }
 
 func readMCPOperationJSONWithCertainty[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, uncertainNotFound bool, success ...int) (*mcpserver.OperationResult, error) {
+	return readMCPOperationJSONWithUncertainCodes[T](ctx, client, method, path, options, classify, uncertainNotFound, nil, success...)
+}
+
+func readMCPOperationJSONWithUncertainCodes[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, uncertainNotFound bool, uncertainCodes []string, success ...int) (*mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
@@ -193,6 +204,9 @@ func readMCPOperationJSONWithCertainty[T any](ctx context.Context, client *daemo
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
 		if uncertainNotFound && code == "not_found" {
+			return operationFailure(code, true), nil
+		}
+		if slices.Contains(uncertainCodes, code) {
 			return operationFailure(code, true), nil
 		}
 		if classify != nil && classify(code) {

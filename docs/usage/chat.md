@@ -442,7 +442,10 @@ writes requires the CardDAV write flag and approval; unpublication can remove
 the remote contact immediately. `sync_carddav` and `get_carddav_sync_status`
 also accept `connection`; a named selection is refused when the daemon cannot
 prove it supports the selector. Tools are advertised only when their native
-contracts are available. Publication preview and approval remain separate.
+contracts are available. An archive with only orphaned saved connections also
+exposes the existing publication and sync tools when their contracts are available;
+their native availability checks still apply. Publication preview and approval
+remain separate.
 
 `query_sql` needs a SQLite daemon with API schema 2.31.0 or newer. It can read archive
 analytics files and views; DuckDB file access outside the analytics directory,
