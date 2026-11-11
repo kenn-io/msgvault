@@ -31,13 +31,17 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func operationMCPSession(t *testing.T, backend *daemonMCPOperations, families []mcpserver.OperationFamily, clientOptions *sdkmcp.ClientOptions) *sdkmcp.ClientSession {
+func operationMCPSession(t *testing.T, backend *daemonMCPOperations, families []mcpserver.OperationFamily, clientOptions *sdkmcp.ClientOptions, personBackend ...mcpserver.PersonCardDAVBackend) *sdkmcp.ClientSession {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	directory := filepath.Join(t.TempDir(), "mcp")
 	opts := daemonMCPServeOptions(ctx, backend.client, nil)
+	if len(personBackend) > 0 {
+		opts.PersonCardDAV = personBackend[0]
+	}
 	opts.OperationWriteFamilies = families
 	opts.AllowProfileWrites = slices.Contains(families, mcpserver.OperationFamilyRecords)
+	opts.AllowCardDAVWrites = slices.Contains(families, mcpserver.OperationFamilyCardDAV)
 	done := make(chan error, 1)
 	go func() {
 		done <- mcpserver.ServeHTTPWithOptions(ctx, opts, mcpserver.HTTPOptions{Addr: "127.0.0.1:0", DiscoveryDirectory: directory, AllowWrites: true})

@@ -650,6 +650,9 @@ func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.Serve
 	opts.AllowPersonMerges, _ = cmd.Flags().GetBool(prefix + "allow-person-merges")
 	opts.AllowKataWrites, _ = cmd.Flags().GetBool(prefix + "allow-kata-writes")
 	opts.AllowCardDAVWrites, _ = cmd.Flags().GetBool(prefix + "allow-carddav-writes")
+	if opts.AllowCardDAVWrites {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyCardDAV)
+	}
 	opts.AllowCalendarWrites, _ = cmd.Flags().GetBool(prefix + "allow-calendar-writes")
 	if opts.AllowProfileWrites {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)

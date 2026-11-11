@@ -157,7 +157,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	err := mcpCmd.RunE(mcpCmd, nil)
 
 	require.ErrorIs(err, wantErr)
-	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
+	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV, mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
 	assert.True(gotServeOpts.AllowProfileWrites)
 	assert.True(gotServeOpts.AllowIdentityDecisions)
 	assert.True(gotServeOpts.AllowIdentityScoring)

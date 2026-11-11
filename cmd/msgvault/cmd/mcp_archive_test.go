@@ -110,7 +110,7 @@ func TestMCPArchiveIntegrationProbes(t *testing.T) {
 		carddav, kata                       bool
 	}{
 		{"named CardDAV", `[{"connection":"work"}]`, `[]`, "", true, false},
-		{"orphaned CardDAV", `[{"connection":"old","orphaned":true}]`, `[]`, "", false, false},
+		{"orphaned CardDAV", `[{"connection":"old","orphaned":true}]`, `[]`, "", true, false},
 		{"Kata enabled", `[]`, kataSettings, "", false, true},
 		{"Kata empty endpoint", `[]`, `[{"key":"integrations.kata.enabled","value":{"boolean":true}},{"key":"integrations.kata.endpoint","value":{"string":""}}]`, "", false, false},
 		{"source timeout", `[{"connection":"default"}]`, kataSettings, "/api/v1/sources/status", true, true},
@@ -147,9 +147,18 @@ func TestMCPArchiveIntegrationProbes(t *testing.T) {
 				if tc.failed != "" {
 					assert.Equal(10*time.Second, time.Since(started))
 				}
-				listed := archiveMCPCatalog(t, mcpserver.ServeOptions{Calendar: client, PersonCardDAV: client, Kata: client, KataLookup: true, PersonAgendaBackend: client, Families: families})
+				listed := archiveMCPCatalog(t, mcpserver.ServeOptions{Calendar: client, PersonCardDAV: client, Kata: client, KataLookup: true, PersonAgendaBackend: client, Families: families, Operations: &daemonMCPOperations{client: client, supported: []string{"list_carddav_connections"}}, OperationCapabilities: []string{"list_carddav_connections"}})
 				assert.Equal(tc.failed != "/api/v1/sources/status", slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "calendar_freebusy" }))
 				assert.Equal(tc.carddav, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "get_carddav_publication" }))
+				assert.Equal(tc.carddav, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "list_carddav_connections" }))
+				if tc.name == "orphaned CardDAV" {
+					backend := &daemonMCPOperations{client: client, supported: []string{"list_carddav_connections"}}
+					result, err := backend.ExecuteOperation(t.Context(), "list_carddav_connections", nil)
+					require.NoError(err)
+					connections := operationOutput[mcpserver.CardDAVConnections](t, result)
+					require.Len(connections.Connections, 1)
+					assert.True(connections.Connections[0].Orphaned)
+				}
 				assert.Equal(tc.kata, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "get_person_agenda" }))
 				assert.Equal(tc.kata, slices.ContainsFunc(listed.Tools, func(tool *sdkmcp.Tool) bool { return tool.Name == "find_kata_issues" }))
 			})

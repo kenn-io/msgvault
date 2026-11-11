@@ -64,7 +64,7 @@ func operationalCatalog(opts ServeOptions, allowWrites bool) []operationalDefini
 		if !opts.Families.allows(definition.definition.name) || !slices.Contains(opts.OperationCapabilities, definition.definition.name) {
 			continue
 		}
-		if definition.writes && (!allowWrites || !(slices.Contains(opts.OperationWriteFamilies, definition.family) || definition.family == OperationFamilyCardDAV && opts.AllowCardDAVWrites)) {
+		if definition.writes && (!allowWrites || !slices.Contains(opts.OperationWriteFamilies, definition.family)) {
 			continue
 		}
 		definitions = append(definitions, definition)

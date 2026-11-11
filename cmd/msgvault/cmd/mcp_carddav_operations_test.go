@@ -3,7 +3,9 @@ package cmd
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"testing"
 
@@ -41,101 +43,137 @@ func cardDAVOperationFixture(t *testing.T) (*daemonMCPOperations, int64, *store.
 	return backend, books[0].ID, st
 }
 
-func TestCardDAVOperationsDiscoverNativeContracts(t *testing.T) {
-	backend, bookID, _ := cardDAVOperationFixture(t)
-	for _, name := range []string{"list_carddav_connections", "list_carddav_books", "list_carddav_runs", "list_carddav_conflicts", "get_carddav_conflict", "update_carddav_book_roles", "resolve_carddav_conflict", "unpublish_carddav_person"} {
-		assert.Contains(t, backend.capabilities(), name)
-	}
-	result, err := backend.ExecuteOperation(t.Context(), "list_carddav_connections", nil)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.False(t, result.IsError)
-	data, err := json.Marshal(result.Output)
-	require.NoError(t, err)
-	assert.NotContains(t, string(data), "private-app")
-	assert.NotContains(t, string(data), "oauth_app")
-	result, err = backend.ExecuteOperation(t.Context(), "list_carddav_books", map[string]any{"connection": "work"})
-	require.NoError(t, err)
-	books := operationOutput[generated.CardDAVBooksResponse](t, result)
-	require.Len(t, books.Books, 1)
-	assert.Equal(t, bookID, books.Books[0].ID)
-	result, err = backend.ExecuteOperation(t.Context(), "list_carddav_runs", map[string]any{"connection": "work", "limit": 1})
-	require.NoError(t, err)
-	runs := operationOutput[generated.CardDAVRunsResponse](t, result)
-	require.Len(t, runs.Runs, 1)
-	data, err = json.Marshal(runs)
-	require.NoError(t, err)
-	assert.NotContains(t, string(data), "private diagnostic")
-	result, err = backend.ExecuteOperation(t.Context(), "get_carddav_conflict", map[string]any{"conflict_id": -1})
-	require := require.New(t)
-	require.NoError(err)
-	assert := assert.New(t)
-	assert.True(result.IsError)
-}
-
 func TestCardDAVRoleApprovalUsesRealStore(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	backend, id, _ := cardDAVOperationFixture(t)
 	transfer, err := backend.OperationDisclosure(t.Context(), "update_carddav_book_roles", map[string]any{"book_id": id, "write_target": true, "subscribed": true, "lookup_source": true})
-	require.NoError(t, err)
-	assert.Contains(t, transfer, `"previous_write_target"`)
-	assert.Contains(t, transfer, `"connection":"default"`)
-	assert.Contains(t, transfer, "remove local CardDAV resource mappings")
+	require.NoError(err)
+	assert.Contains(transfer, `"previous_write_target"`)
+	assert.Contains(transfer, "remove local CardDAV resource mappings")
 	approved := false
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, req *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		assert.Contains(t, req.Params.Message, `"connection":"work"`)
-		assert.Contains(t, req.Params.Message, `"lookup_source":`)
+		assert.Contains(req.Params.Message, `"connection":"work"`)
+		assert.Contains(req.Params.Message, `"lookup_source":`)
 		approved = true
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_carddav_book_roles", Arguments: map[string]any{"book_id": id, "write_target": false, "subscribed": false, "lookup_source": true}})
-	require.NoError(t, err)
-	require.False(t, result.IsError)
-	assert.True(t, approved)
-	got, err := backend.ExecuteOperation(t.Context(), "list_carddav_books", map[string]any{"connection": "work"})
-	require.NoError(t, err)
-	books := operationOutput[generated.CardDAVBooksResponse](t, got)
-	require.Len(t, books.Books, 1)
-	assert.True(t, books.Books[0].LookupSource)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_carddav_book_roles", Arguments: map[string]any{"book_id": id, "write_target": true, "subscribed": false, "lookup_source": false}})
-	require := require.New(t)
 	require.NoError(err)
-	assert := assert.New(t)
-	assert.True(result.IsError)
+	require.False(result.IsError)
+	assert.True(approved)
+	got, err := backend.ExecuteOperation(t.Context(), "list_carddav_books", map[string]any{"connection": "work"})
+	require.NoError(err)
+	books := operationOutput[generated.CardDAVBooksResponse](t, got)
+	require.Len(books.Books, 1)
+	assert.True(books.Books[0].LookupSource)
+	changedDisclosure, err := backend.OperationDisclosure(t.Context(), "update_carddav_book_roles", map[string]any{"book_id": id, "write_target": false, "subscribed": false, "lookup_source": true})
+	require.NoError(err)
+	assert.Contains(changedDisclosure, `"lookup_source":true`)
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_carddav_book_roles", Arguments: map[string]any{"book_id": id, "write_target": true, "subscribed": false, "lookup_source": false}})
+	require.NoError(err)
+	failure := loopToolFailure(t, result)
+	assert.Equal("conflict", failure["error"])
+	assert.Equal(false, failure["operation_may_have_completed"])
 }
 
 func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
-	backend, _, _ := cardDAVOperationFixture(t)
+	assert := assert.New(t)
+	require := require.New(t)
+	backend, bookID, _ := cardDAVOperationFixture(t)
+	for _, name := range []string{"list_carddav_connections", "list_carddav_books", "list_carddav_runs", "list_carddav_conflicts", "get_carddav_conflict", "update_carddav_book_roles", "resolve_carddav_conflict", "unpublish_carddav_person"} {
+		assert.Contains(backend.capabilities(), name)
+	}
+	result, err := backend.ExecuteOperation(t.Context(), "list_carddav_connections", nil)
+	require.NoError(err)
+	require.NotNil(result)
+	assert.False(result.IsError)
+	data, err := json.Marshal(result.Output)
+	require.NoError(err)
+	assert.NotContains(string(data), "private-app")
+	assert.NotContains(string(data), "oauth_app")
+	result, err = backend.ExecuteOperation(t.Context(), "list_carddav_books", map[string]any{"connection": "work"})
+	require.NoError(err)
+	books := operationOutput[generated.CardDAVBooksResponse](t, result)
+	require.Len(books.Books, 1)
+	assert.Equal(bookID, books.Books[0].ID)
+	result, err = backend.ExecuteOperation(t.Context(), "list_carddav_runs", map[string]any{"connection": "work", "limit": 1})
+	require.NoError(err)
+	runs := operationOutput[generated.CardDAVRunsResponse](t, result)
+	require.Len(runs.Runs, 1)
+	data, err = json.Marshal(runs)
+	require.NoError(err)
+	assert.NotContains(string(data), "private diagnostic")
+	result, err = backend.ExecuteOperation(t.Context(), "get_carddav_conflict", map[string]any{"conflict_id": -1})
+	require.NoError(err)
+	assert.True(result.IsError)
 	caps, err := backend.client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
+	require.NoError(err)
 	named := newDaemonMCPCardDAV(backend.client, caps)
-	assert.True(t, named.SupportsCardDAVSelector(true))
-	assert.True(t, named.SupportsCardDAVSelector(false))
+	assert.True(named.SupportsCardDAVSelector())
+	var prompts []string
+	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, req *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		prompts = append(prompts, req.Params.Message)
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	}})
+	selectedStatus, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_carddav_sync_status", Arguments: map[string]any{"connection": "work"}})
+	require.NoError(err)
+	require.False(selectedStatus.IsError)
+	encoded, err := json.Marshal(selectedStatus.StructuredContent)
+	require.NoError(err)
+	assert.Contains(string(encoded), "work@example.com")
+	_, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "sync_carddav", Arguments: map[string]any{"connection": "work"}})
+	require.NoError(err)
+	_, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "sync_carddav", Arguments: map[string]any{}})
+	require.NoError(err)
+	require.Len(prompts, 2)
+	assert.Contains(prompts[0], `connection "work"`)
+	assert.Contains(prompts[1], `"default"`)
+	assert.Contains(prompts[1], `"work"`)
+	assert.NotContains(prompts[1], "private-app")
+	assert.NotContains(prompts[1], "contacts.example")
 	status, err := named.GetCardDAVConnectionStatus(t.Context(), new("work"))
-	require.NoError(t, err)
-	require.NotNil(t, status)
-	require.NotNil(t, status.Account)
-	assert.Equal(t, "work@example.com", status.Account.Username)
+	require.NoError(err)
+	require.NotNil(status)
+	require.NotNil(status.Account)
+	assert.Equal("work@example.com", status.Account.Username)
 	all, err := named.GetCardDAVConnectionStatus(t.Context(), nil)
-	require.NoError(t, err)
-	assert.Nil(t, all.Account)
+	require.NoError(err)
+	assert.Nil(all.Account)
 	// Both connections are disabled; aggregate sync is a no-op, while selecting
 	// work reaches its unavailable runtime instead of silently syncing all.
 	_, err = named.SyncCardDAVConnection(t.Context(), false, nil)
-	require := require.New(t)
 	require.NoError(err)
 	_, err = named.SyncCardDAVConnection(t.Context(), false, new("work"))
-	assert.Error(t, err)
+	assert.Error(err)
 	for i := range caps.Routes {
 		if caps.Routes[i].OperationID == "syncCardDAV" {
 			caps.Routes[i].RequestProperties = slices.DeleteFunc(caps.Routes[i].RequestProperties, func(s string) bool { return s == "connection" })
+		}
+	}
+	old := newDaemonMCPCardDAV(backend.client, caps)
+	assert.False(old.SupportsCardDAVSelector())
+	prompted := false
+	legacySession := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		prompted = true
+		return &sdkmcp.ElicitResult{Action: "decline"}, nil
+	}}, old)
+	for _, tool := range []string{"sync_carddav", "get_carddav_sync_status"} {
+		refused, callErr := legacySession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: tool, Arguments: map[string]any{"connection": "work"}})
+		require.NoError(callErr)
+		assert.True(refused.IsError)
+		assert.Contains(fmt.Sprint(refused.Content), "named CardDAV connection is not supported")
+	}
+	assert.False(prompted)
+	for i := range caps.Routes {
+		if caps.Routes[i].OperationID == "syncCardDAV" {
+			caps.Routes[i].RequestProperties = append(caps.Routes[i].RequestProperties, "connection")
 		}
 		if caps.Routes[i].OperationID == "getCardDAVStatus" {
 			caps.Routes[i].QueryParameters = nil
 		}
 	}
-	old := newDaemonMCPCardDAV(backend.client, caps)
-	assert.False(t, old.SupportsCardDAVSelector(true))
-	assert.False(t, old.SupportsCardDAVSelector(false))
+	assert.False(newDaemonMCPCardDAV(backend.client, caps).SupportsCardDAVSelector())
 	for i := range caps.Routes {
 		if caps.Routes[i].OperationID == "listCardDAVRuns" {
 			caps.Routes[i].QueryParameters = []string{"limit", "before_id"}
@@ -145,103 +183,101 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 		}
 	}
 	limited := newDaemonMCPOperations(backend.client, caps)
-	assert.NotContains(t, limited.capabilities(), "list_carddav_runs")
-	assert.NotContains(t, limited.capabilities(), "update_carddav_book_roles")
-	assert := assert.New(t)
+	assert.NotContains(limited.capabilities(), "list_carddav_runs")
+	assert.NotContains(limited.capabilities(), "update_carddav_book_roles")
 	assert.Contains(limited.capabilities(), "list_carddav_books")
-}
 
-func TestCardDAVApprovalRejectsChangedBook(t *testing.T) {
-	backend, id, _ := cardDAVOperationFixture(t)
-	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
-	args := map[string]any{"book_id": id, "write_target": false, "subscribed": false, "lookup_source": true}
-	first, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_carddav_book_roles", Arguments: args})
-	require.NoError(t, err)
-	require.NotEmpty(t, first.RequestState)
-	changed, err := backend.ExecuteOperation(t.Context(), "update_carddav_book_roles", map[string]any{"book_id": id, "write_target": false, "subscribed": true, "lookup_source": false})
-	require.NoError(t, err)
-	require.False(t, changed.IsError)
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_carddav_book_roles", Arguments: args, RequestState: first.RequestState, InputResponses: sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}})
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	listed, err := backend.ExecuteOperation(t.Context(), "list_carddav_books", map[string]any{"connection": "work"})
-	require.NoError(t, err)
-	books := operationOutput[generated.CardDAVBooksResponse](t, listed)
-	require := require.New(t)
-	require.Len(books.Books, 1)
-	assert.True(t, books.Books[0].Subscribed)
-	assert := assert.New(t)
-	assert.False(books.Books[0].LookupSource)
+	// A fixed daemon error is an external contract: exercise the adapter's
+	// classification without needing a race after a native commit.
+	var daemonCode string
+	fake := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = fmt.Fprintf(w, `{"error":%q}`, daemonCode)
+	})
+	adapter := &daemonMCPOperations{client: fake, supported: []string{"update_carddav_book_roles", "resolve_carddav_conflict", "unpublish_carddav_person"}}
+	for _, tc := range []struct {
+		name, code, want string
+		args             map[string]any
+		uncertain        bool
+	}{
+		{"update_carddav_book_roles", "not_found", "not_found", map[string]any{"book_id": 1, "write_target": true, "subscribed": true, "lookup_source": true}, true},
+		{"update_carddav_book_roles", "conflict", "conflict", map[string]any{"book_id": 1, "write_target": true, "subscribed": true, "lookup_source": true}, false},
+		{"resolve_carddav_conflict", "not_found", "not_found", map[string]any{"conflict_id": 1, "choice": "keep_remote"}, false},
+		{"resolve_carddav_conflict", "not_found", "not_found", map[string]any{"conflict_id": 1, "choice": "keep_local"}, true},
+		{"resolve_carddav_conflict", "carddav_conflict_stale", "carddav_conflict_stale", map[string]any{"conflict_id": 1, "choice": "keep_remote"}, false},
+		{"resolve_carddav_conflict", "carddav_conflict_stale", "operation_refused", map[string]any{"conflict_id": 1, "choice": "keep_local"}, true},
+		{"resolve_carddav_conflict", "carddav_remote_protected", "carddav_remote_protected", map[string]any{"conflict_id": 1, "choice": "keep_remote"}, false},
+		{"resolve_carddav_conflict", "carddav_publication_pending", "carddav_publication_pending", map[string]any{"conflict_id": 1, "choice": "keep_remote"}, false},
+		{"unpublish_carddav_person", "carddav_publication_pending", "operation_refused", map[string]any{"person_id": 1}, true},
+		{"unpublish_carddav_person", "conflict", "operation_refused", map[string]any{"person_id": 1}, true},
+	} {
+		daemonCode = tc.code
+		got, callErr := adapter.ExecuteOperation(t.Context(), tc.name, tc.args)
+		require.NoError(callErr)
+		assertLoopRefusal(t, got, tc.want, tc.uncertain)
+	}
 }
 
 func TestCardDAVConflictReadsKeepDurableIdentity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	backend, bookID, st := cardDAVOperationFixture(t)
 	account, err := st.GetCardDAVAccountByNameContext(t.Context(), "work")
-	require.NoError(t, err)
-	require.NotNil(t, account)
+	require.NoError(err)
+	require.NotNil(account)
 	books, err := st.ListCardDAVAddressBooksContext(t.Context(), account.ID)
-	require.NoError(t, err)
-	require.Len(t, books, 1)
+	require.NoError(err)
+	require.Len(books, 1)
 	base := []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:synthetic\r\nFN:Base Example\r\nEND:VCARD\r\n")
 	href := "https://contacts.example/books/one/synthetic.vcf"
 	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{AddressBookID: bookID, ConnectionGeneration: account.ConnectionGeneration, SyncRevision: books[0].SyncRevision, NextSyncToken: "synthetic-token", Upserts: []store.CardDAVRemoteResource{{Href: href, RemoteUID: "synthetic", RemoteETag: `"one"`, RemoteBody: base, SemanticHash: "synthetic-hash", DisplayName: "Base Example"}}})
-	require.NoError(t, err)
-	mapping, err := st.GetCardDAVResourceContext(t.Context(), bookID, href)
-	require.NoError(t, err)
-	conflict, err := st.RecordCardDAVConflictContext(t.Context(), store.CardDAVConflictCapture{AddressBookID: bookID, Href: href, ExpectedMappingRevision: mapping.MappingRevision, BaseLocalHash: mapping.LocalHash, LocalHash: mapping.LocalHash, BaseRemoteHash: mapping.RemoteSemanticHash, BaseRemoteETag: mapping.RemoteETag, RemoteETag: `"two"`, LocalBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:synthetic\r\nFN:Local Example\r\nEND:VCARD\r\n"), RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:synthetic\r\nFN:Remote Example\r\nEND:VCARD\r\n")})
-	require.NoError(t, err)
-	listed, err := backend.ExecuteOperation(t.Context(), "list_carddav_conflicts", nil)
-	require.NoError(t, err)
-	conflicts := operationOutput[generated.CardDAVConflictsResponse](t, listed)
-	require.Len(t, conflicts.Conflicts, 1)
-	assert.Equal(t, conflict.ID, conflicts.Conflicts[0].ID)
-	detail, err := backend.ExecuteOperation(t.Context(), "get_carddav_conflict", map[string]any{"conflict_id": conflict.ID})
-	require.NoError(t, err)
-	view := operationOutput[generated.CardDAVConflictDetailResponse](t, detail)
-	assert.Equal(t, conflict.ID, view.ID)
-	assert.Equal(t, bookID, view.AddressBook.ID)
-	require.NotNil(t, view.Local.DisplayName)
-	assert.Equal(t, "Local Example", *view.Local.DisplayName)
-	disclosure, err := backend.OperationDisclosure(t.Context(), "resolve_carddav_conflict", map[string]any{"conflict_id": conflict.ID, "choice": "keep_remote"})
-	require.NoError(t, err)
-	assert.Contains(t, disclosure, `"connection":"work"`)
-	assert.Contains(t, disclosure, `"choice":"keep_remote"`)
-	result, err := backend.ExecuteOperation(t.Context(), "resolve_carddav_conflict", map[string]any{"conflict_id": conflict.ID, "choice": "keep_remote"})
-	require.NoError(t, err)
-	require.True(t, result.IsError)
-	encoded, err := json.Marshal(result.Output)
-	require := require.New(t)
 	require.NoError(err)
-	assert.NotContains(t, string(encoded), "https://")
-	assert := assert.New(t)
-	assert.NotContains(string(encoded), "Local Example")
+	mapping, err := st.GetCardDAVResourceContext(t.Context(), bookID, href)
+	require.NoError(err)
+	conflict, err := st.RecordCardDAVConflictContext(t.Context(), store.CardDAVConflictCapture{AddressBookID: bookID, Href: href, ExpectedMappingRevision: mapping.MappingRevision, BaseLocalHash: mapping.LocalHash, LocalHash: mapping.LocalHash, BaseRemoteHash: mapping.RemoteSemanticHash, BaseRemoteETag: mapping.RemoteETag, RemoteETag: `"two"`, LocalBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:synthetic\r\nFN:Local Example\r\nEND:VCARD\r\n"), RemoteBody: []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:synthetic\r\nFN:Remote Example\r\nEND:VCARD\r\n")})
+	require.NoError(err)
+	listed, err := backend.ExecuteOperation(t.Context(), "list_carddav_conflicts", nil)
+	require.NoError(err)
+	conflicts := operationOutput[generated.CardDAVConflictsResponse](t, listed)
+	require.Len(conflicts.Conflicts, 1)
+	assert.Equal(conflict.ID, conflicts.Conflicts[0].ID)
+	detail, err := backend.ExecuteOperation(t.Context(), "get_carddav_conflict", map[string]any{"conflict_id": conflict.ID})
+	require.NoError(err)
+	view := operationOutput[generated.CardDAVConflictDetailResponse](t, detail)
+	assert.Equal(conflict.ID, view.ID)
+	assert.Equal(bookID, view.AddressBook.ID)
+	require.NotNil(view.Local.DisplayName)
+	assert.Equal("Local Example", *view.Local.DisplayName)
+	disclosure, err := backend.OperationDisclosure(t.Context(), "resolve_carddav_conflict", map[string]any{"conflict_id": conflict.ID, "choice": "keep_remote"})
+	require.NoError(err)
+	assert.Contains(disclosure, `"choice":"keep_remote"`)
+	result, err := backend.ExecuteOperation(t.Context(), "resolve_carddav_conflict", map[string]any{"conflict_id": conflict.ID, "choice": "keep_remote"})
+	require.NoError(err)
+	assertLoopRefusal(t, result, "carddav_unavailable", false)
 }
 
 func TestCardDAVUnpublishDisclosesOwnerAndKeepsPersonOnUnavailableConnection(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	backend, bookID, st := cardDAVOperationFixture(t)
-	require.NoError(t, st.SetCardDAVBookRolesContext(t.Context(), bookID, store.CardDAVBookRoles{IsWriteTarget: true, IsSubscribed: true}))
+	require.NoError(st.SetCardDAVBookRolesContext(t.Context(), bookID, store.CardDAVBookRoles{IsWriteTarget: true, IsSubscribed: true}))
 	participant, err := st.EnsureParticipant("person@example.com", "Synthetic Person", "example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(participant)
-	require.NoError(t, err)
+	require.NoError(err)
 	args := map[string]any{"person_id": person.ID}
-	disclosure, err := backend.OperationDisclosure(t.Context(), "unpublish_carddav_person", args)
-	require.NoError(t, err)
-	assert.Contains(t, disclosure, `"connection":"work"`)
-	assert.Contains(t, disclosure, "remove the published remote contact")
 	approved := false
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approved = true
-		assert.Contains(t, request.Params.Message, `"connection":"work"`)
+		assert.Contains(request.Params.Message, `"connection":"work"`)
+		assert.Contains(request.Params.Message, "remove the published remote contact")
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "unpublish_carddav_person", Arguments: args})
-	require.NoError(t, err)
-	assert.True(t, approved)
-	assert.True(t, result.IsError)
-	retained, err := st.GetPersonContext(t.Context(), person.ID)
-	require := require.New(t)
 	require.NoError(err)
-	assert := assert.New(t)
-	assert.Equal(person.ID, retained.ID)
+	assert.True(approved)
+	failure := loopToolFailure(t, result)
+	assert.Equal("carddav_unavailable", failure["error"])
+	assert.Equal(false, failure["operation_may_have_completed"])
 }

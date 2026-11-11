@@ -166,6 +166,10 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 }
 
 func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, success ...int) (*mcpserver.OperationResult, error) {
+	return readMCPOperationJSONWithCertainty[T](ctx, client, method, path, options, classify, false, success...)
+}
+
+func readMCPOperationJSONWithCertainty[T any](ctx context.Context, client *daemonclient.Client, method, path string, options runtime.RequestOptions, classify func(string) bool, uncertainNotFound bool, success ...int) (*mcpserver.OperationResult, error) {
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
@@ -188,6 +192,9 @@ func readMCPOperationJSONWithClassifier[T any](ctx context.Context, client *daem
 		}
 		_ = json.Unmarshal(data, &failure)
 		code := failure.Error
+		if uncertainNotFound && code == "not_found" {
+			return operationFailure(code, true), nil
+		}
 		if classify != nil && classify(code) {
 			return operationFailure(code, false), nil
 		}

@@ -54,11 +54,7 @@ func discoverMCPFamilies(ctx context.Context, st *daemonclient.Client, log *slog
 	if err != nil || connections.JSON200 == nil {
 		log.Warn("MCP CardDAV tools hidden because connection discovery failed", "error", err)
 	} else {
-		for _, connection := range connections.JSON200.Connections {
-			if !connection.Orphaned {
-				families.CardDAV = true
-			}
-		}
+		families.CardDAV = len(connections.JSON200.Connections) > 0
 	}
 	probeCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
 	settings, err := client.GetSettingsWithResponse(probeCtx)

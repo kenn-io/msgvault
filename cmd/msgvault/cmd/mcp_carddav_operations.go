@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"slices"
 
@@ -15,7 +16,7 @@ import (
 
 type daemonMCPCardDAV struct {
 	*daemonclient.Client
-	syncSelector, statusSelector bool
+	selector, connectionList bool
 }
 
 func newDaemonMCPCardDAV(client *daemonclient.Client, caps *apiprotocol.MCPCapabilities) *daemonMCPCardDAV {
@@ -23,22 +24,46 @@ func newDaemonMCPCardDAV(client *daemonclient.Client, caps *apiprotocol.MCPCapab
 	if caps == nil {
 		return b
 	}
+	var syncSelector, statusSelector bool
 	for _, route := range caps.Routes {
+		if route.OperationID == "listCardDAVConnections" && route.Method == "GET" && route.Path == "/api/v1/carddav/connections" {
+			b.connectionList = true
+		}
 		if route.OperationID == "syncCardDAV" && route.Method == "POST" && route.Path == "/api/v1/carddav/sync" && slices.Contains(route.RequestProperties, "connection") {
-			b.syncSelector = true
+			syncSelector = true
 		}
 		if route.OperationID == "getCardDAVStatus" && route.Method == "GET" && route.Path == "/api/v1/carddav/status" && slices.Contains(route.QueryParameters, "connection") {
-			b.statusSelector = true
+			statusSelector = true
 		}
 	}
+	b.selector = syncSelector && statusSelector
 	return b
 }
 
-func (b *daemonMCPCardDAV) SupportsCardDAVSelector(sync bool) bool {
-	if sync {
-		return b.syncSelector
+func (b *daemonMCPCardDAV) SupportsCardDAVSelector() bool { return b.selector }
+
+func (b *daemonMCPCardDAV) CardDAVConnectionNames(ctx context.Context) ([]string, error) {
+	if !b.connectionList {
+		return nil, nil
 	}
-	return b.statusSelector
+	client, err := b.GeneratedClient()
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.ListCardDAVConnectionsWithResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if response.JSON200 == nil {
+		return nil, fmt.Errorf("CardDAV connection list unavailable")
+	}
+	names := make([]string, 0, len(response.JSON200.Connections))
+	for _, connection := range response.JSON200.Connections {
+		if !connection.Orphaned {
+			names = append(names, connection.Connection)
+		}
+	}
+	return names, nil
 }
 func cardDAVMCPCapabilities(has mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
@@ -111,7 +136,7 @@ func validCardDAVArguments(name string, a cardDAVArguments) bool {
 
 func cardDAVRoleRefusal(code string) bool {
 	switch code {
-	case "conflict", "server_busy":
+	case "conflict", "server_busy", "carddav_unavailable":
 		return true
 	}
 	return false
@@ -133,13 +158,15 @@ func (b *daemonMCPOperations) executeCardDAVOperation(ctx context.Context, name 
 	case "list_carddav_connections":
 		result, err = readMCPOperationJSON[generated.CardDAVConnectionsResponse](ctx, b.client, "GET", "/api/v1/carddav/connections", nil, 200)
 		if result != nil && !result.IsError {
-			if out, ok := result.Output.(generated.CardDAVConnectionsResponse); ok {
-				items := make([]mcpserver.CardDAVConnection, 0, len(out.Connections))
-				for _, c := range out.Connections {
-					items = append(items, mcpserver.CardDAVConnection{AccountID: c.AccountID, Connection: c.Connection, Orphaned: c.Orphaned, Provider: c.Provider, Status: c.Status})
-				}
-				result.Output = mcpserver.CardDAVConnections{Connections: items}
+			out, ok := result.Output.(generated.CardDAVConnectionsResponse)
+			if !ok {
+				return operationFailure("invalid_operation_response", false), true, nil
 			}
+			items := make([]mcpserver.CardDAVConnection, 0, len(out.Connections))
+			for _, c := range out.Connections {
+				items = append(items, mcpserver.CardDAVConnection{AccountID: c.AccountID, Connection: c.Connection, Orphaned: c.Orphaned, Provider: c.Provider, Status: c.Status})
+			}
+			result.Output = mcpserver.CardDAVConnections{Connections: items}
 		}
 	case "list_carddav_books":
 		result, err = readMCPOperationJSON[generated.CardDAVBooksResponse](ctx, b.client, "GET", "/api/v1/carddav/books", &generated.ListCardDAVBooksRequestOptions{Query: &generated.ListCardDAVBooksQuery{Connection: a.Connection}}, 200)
@@ -150,11 +177,22 @@ func (b *daemonMCPOperations) executeCardDAVOperation(ctx context.Context, name 
 	case "get_carddav_conflict":
 		result, err = readMCPOperationJSON[generated.CardDAVConflictDetailResponse](ctx, b.client, "GET", "/api/v1/carddav/conflicts/{id}", &generated.GetCardDAVConflictRequestOptions{PathParams: &generated.GetCardDAVConflictPath{ID: a.ConflictID}}, 200)
 	case "update_carddav_book_roles":
-		result, err = readMCPOperationJSONWithClassifier[generated.CardDAVBookResponse](ctx, b.client, "PATCH", "/api/v1/carddav/books/{id}", &generated.UpdateCardDAVBookRolesRequestOptions{PathParams: &generated.UpdateCardDAVBookRolesPath{ID: a.BookID}, Body: &generated.UpdateCardDAVBookRolesBody{WriteTarget: *a.WriteTarget, Subscribed: *a.Subscribed, LookupSource: *a.LookupSource}}, cardDAVRoleRefusal, 200)
+		result, err = readMCPOperationJSONWithCertainty[generated.CardDAVBookResponse](ctx, b.client, "PATCH", "/api/v1/carddav/books/{id}", &generated.UpdateCardDAVBookRolesRequestOptions{PathParams: &generated.UpdateCardDAVBookRolesPath{ID: a.BookID}, Body: &generated.UpdateCardDAVBookRolesBody{WriteTarget: *a.WriteTarget, Subscribed: *a.Subscribed, LookupSource: *a.LookupSource}}, cardDAVRoleRefusal, true, 200)
 	case "resolve_carddav_conflict":
-		result, err = readMCPOperationJSONWithClassifier[generated.CardDAVConflictResolutionResponse](ctx, b.client, "POST", "/api/v1/carddav/conflicts/{id}/resolve", &generated.ResolveCardDAVConflictRequestOptions{PathParams: &generated.ResolveCardDAVConflictPath{ID: a.ConflictID}, Body: &generated.ResolveCardDAVConflictBody{Choice: generated.CardDAVResolveRequestChoice(a.Choice)}}, func(code string) bool { return a.Choice == "keep_remote" && code == "carddav_conflict_stale" }, 200)
+		result, err = readMCPOperationJSONWithCertainty[generated.CardDAVConflictResolutionResponse](ctx, b.client, "POST", "/api/v1/carddav/conflicts/{id}/resolve", &generated.ResolveCardDAVConflictRequestOptions{PathParams: &generated.ResolveCardDAVConflictPath{ID: a.ConflictID}, Body: &generated.ResolveCardDAVConflictBody{Choice: generated.CardDAVResolveRequestChoice(a.Choice)}}, func(code string) bool {
+			if code == "carddav_unavailable" {
+				return true
+			}
+			if a.Choice == "keep_remote" {
+				switch code {
+				case "carddav_conflict_stale", "carddav_remote_protected", "carddav_remote_invalid", "carddav_retry_after", "carddav_publication_pending":
+					return true
+				}
+			}
+			return false
+		}, a.Choice == "keep_local", 200)
 	case "unpublish_carddav_person":
-		result, err = readMCPOperationJSON[generated.CardDAVPublicationResponse](ctx, b.client, "DELETE", "/api/v1/carddav/publications/{person_id}", &generated.UnpublishCardDAVPersonRequestOptions{PathParams: &generated.UnpublishCardDAVPersonPath{PersonID: a.PersonID}}, 200)
+		result, err = readMCPOperationJSONWithCertainty[generated.CardDAVPublicationResponse](ctx, b.client, "DELETE", "/api/v1/carddav/publications/{person_id}", &generated.UnpublishCardDAVPersonRequestOptions{PathParams: &generated.UnpublishCardDAVPersonPath{PersonID: a.PersonID}}, func(code string) bool { return code == "carddav_unavailable" }, true, 200)
 	}
 	return result, true, err
 }
