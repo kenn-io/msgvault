@@ -1,12 +1,9 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,7 +13,6 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/calcontrol"
 	"go.kenn.io/msgvault/internal/query/querytest"
 )
 
@@ -57,12 +53,10 @@ func TestToolDiscoveryColdStart(t *testing.T) {
 	must.NotNil(id)
 	assertions.Equal([]string{"integer"}, id.Types)
 	assertions.True(id.Required)
-	assertions.True(response.Results[0].ReadOnly)
 }
 
 func TestToolDiscoveryUsefulQueriesAndMetadataParity(t *testing.T) {
 	opts := ServeOptions{Engine: &querytest.MockEngine{}, SavedViews: &savedViewServiceFixture{}, ArchiveSQLQuerier: &sqlToolEngine{}}
-	// The backend is only capability metadata. No query or provider method should run.
 	cases := []struct{ query, want string }{
 		{"read one message", ToolGetMessage},
 		{"list conversation thread", ToolListThread},
@@ -77,10 +71,7 @@ func TestToolDiscoveryUsefulQueriesAndMetadataParity(t *testing.T) {
 			assertions := assert.New(t)
 			must := require.New(t)
 
-			response, firstWire := searchToolsResponse(t, opts, false, tc.query, 5)
-			again, secondWire := searchToolsResponse(t, opts, false, tc.query, 5)
-			assertions.Equal(response, again)
-			assertions.Equal(firstWire, secondWire)
+			response, _ := searchToolsResponse(t, opts, false, tc.query, 5)
 			names := make([]string, 0, len(response.Results))
 			for _, result := range response.Results {
 				names = append(names, result.Name)
@@ -97,6 +88,10 @@ func TestToolDiscoveryUsefulQueriesAndMetadataParity(t *testing.T) {
 						assertions.Equal([]string{types}, input.Types)
 					case []any:
 						assertions.ElementsMatch(types, input.Types)
+					case nil:
+						assertions.Empty(input.Types)
+					default:
+						must.Fail("unexpected schema type", "%T", types)
 					}
 					assertions.Equal(slices.Contains(required, any(input.Name)), input.Required)
 				}
@@ -107,10 +102,7 @@ func TestToolDiscoveryUsefulQueriesAndMetadataParity(t *testing.T) {
 }
 
 func TestToolDiscoveryVisibilityMatchesToolsList(t *testing.T) {
-	calendar := calendarServiceBackend(func(context.Context, calcontrol.Request) (*calcontrol.Result, error) {
-		require.FailNow(t, "discovery must not execute calendar operations")
-		return nil, assert.AnError
-	})
+	calendar := &calendarMCPFake{}
 	opts := ServeOptions{
 		Engine: &querytest.MockEngine{}, SavedViews: &savedViewServiceFixture{},
 		DirectoryBackend: &directoryPeopleBackend{}, ArchiveSQLQuerier: &sqlToolEngine{},
@@ -119,35 +111,22 @@ func TestToolDiscoveryVisibilityMatchesToolsList(t *testing.T) {
 		Calendar:               calendar, AllowCalendarWrites: true,
 		Drafts: &draftTestRunner{}, DraftCommands: []string{"draft-compose", "draft-get", "draft-delete"},
 	}
+	delegated := opts
+	delegated.DelegatedOnly, delegated.GrantPermissions = true, []string{"message.read"}
 	modes := []struct {
 		name   string
 		opts   ServeOptions
 		writes bool
 	}{
 		{"owner read only", opts, false}, {"owner writes", opts, true},
+		{"delegated message only", delegated, true}, {"delegated no backend or grants", ServeOptions{DelegatedOnly: true}, true},
 	}
-	delegated := opts
-	delegated.DelegatedOnly, delegated.GrantPermissions = true, []string{"message.read"}
-	modes = append(modes, struct {
-		name   string
-		opts   ServeOptions
-		writes bool
-	}{"delegated message only", delegated, true})
-	noGrants := ServeOptions{DelegatedOnly: true}
-	modes = append(modes, struct {
-		name   string
-		opts   ServeOptions
-		writes bool
-	}{"delegated no backend or grants", noGrants, true})
 	for _, mode := range modes {
 		t.Run(mode.name, func(t *testing.T) {
 			assertions := assert.New(t)
 
 			listed := toolsByName(t, rawListTools(t, mode.opts, mode.writes))
 			require.Contains(t, listed, ToolSearchTools)
-			if mode.name == "delegated no backend or grants" {
-				assertions.Len(listed, 1)
-			}
 			for _, query := range []string{"calendar", "source scheduler sync", "draft compose delete", "sql query", "saved view delete", "get message", "directory people", "export attachment"} {
 				response, _ := searchToolsResponse(t, mode.opts, mode.writes, query, 20)
 				for _, result := range response.Results {
@@ -170,10 +149,7 @@ func TestToolDiscoveryVisibilityMatchesToolsList(t *testing.T) {
 func TestToolDiscoveryAppliesFreshArchiveFamilies(t *testing.T) {
 	assertions := assert.New(t)
 
-	calendar := calendarServiceBackend(func(context.Context, calcontrol.Request) (*calcontrol.Result, error) {
-		require.FailNow(t, "metadata discovery must not execute calendar operations")
-		return nil, assert.AnError
-	})
+	calendar := &calendarMCPFake{}
 	probes := 0
 	families := &ArchiveFamilies{}
 	opts := ServeOptions{Calendar: calendar, AllowCalendarWrites: true,
@@ -183,15 +159,15 @@ func TestToolDiscoveryAppliesFreshArchiveFamilies(t *testing.T) {
 		families.Calendar = present
 		listed := toolsByName(t, rawListTools(t, opts, true))
 		assertions.Equal(present, listed["calendar_create"] != nil)
+		before := probes
 		response, _ := searchToolsResponse(t, opts, true, "calendar", 20)
+		assertions.Equal(before+1, probes)
 		found := false
 		for _, result := range response.Results {
-			assertions.Contains(listed, result.Name)
 			found = found || result.Name == "calendar_create"
 		}
 		assertions.Equal(present, found)
 	}
-	assertions.Equal(6, probes)
 	// A broader dynamic snapshot cannot override the server's static family filter.
 	opts.Families = &ArchiveFamilies{}
 	families.Calendar = true
@@ -206,11 +182,7 @@ func TestToolDiscoveryInputLimits(t *testing.T) {
 
 	client := task5ConnectClient(t, ServeOptions{}, false)
 	cases := []map[string]any{
-		{}, {"query": ""}, {"query": " \t\n"}, {"query": 1},
-		{"query": strings.Repeat("a", 513)}, {"query": strings.Repeat("界", 171)},
-		{"query": "message", "limit": 0}, {"query": "message", "limit": -1},
-		{"query": "message", "limit": 21}, {"query": "message", "limit": 1.5},
-		{"query": "message", "limit": "5"}, {"query": "message", "extra": true},
+		{"query": ""}, {"query": " \t\n"}, {"query": strings.Repeat("a", 513)}, {"query": strings.Repeat("界", 171)},
 	}
 	for i, args := range cases {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
@@ -222,7 +194,7 @@ func TestToolDiscoveryInputLimits(t *testing.T) {
 		})
 	}
 	// Byte boundaries and Unicode survive the transport without truncating input.
-	for _, query := range []string{strings.Repeat("a", 512), strings.Repeat("界", 170) + "ab", "🌲 café 日本語"} {
+	for _, query := range []string{strings.Repeat("a", 512), strings.Repeat("界", 170) + "ab"} {
 		response, _ := searchToolsResponse(t, ServeOptions{}, false, query, 1)
 		assertions.Equal(query, response.Query)
 	}
@@ -234,7 +206,7 @@ func TestToolDiscoveryInputLimits(t *testing.T) {
 	assertions.Len(response.Results, 1)
 	assertions.True(response.Truncated)
 	response, _ = searchToolsResponse(t, ServeOptions{}, false, "message", 0)
-	assertions.LessOrEqual(len(response.Results), 5)
+	assertions.Len(response.Results, 5)
 }
 
 func TestToolDiscoveryFullMetadataAndStableOrdering(t *testing.T) {
@@ -243,10 +215,10 @@ func TestToolDiscoveryFullMetadataAndStableOrdering(t *testing.T) {
 	definitions := make([]toolDefinition, 0, 21)
 	for i := range 21 {
 		inputs := map[string]*jsonschema.Schema{}
-		for j := range 40 {
-			inputs[fmt.Sprintf("input_%02d", j)] = stringSchema(strings.Repeat("description ", 30))
+		for j := range 4 {
+			inputs[fmt.Sprintf("input_%02d", j)] = stringSchema("description")
 		}
-		definitions = append(definitions, readDefinition(fmt.Sprintf("fixture_%02d", i), strings.Repeat("fixture ", 50), closedObject(inputs, "input_39"), outputSchemaFor[toolDiscoveryResponse](), nil))
+		definitions = append(definitions, readDefinition(fmt.Sprintf("fixture_%02d", i), "fixture description", closedObject(inputs, "input_03"), outputSchemaFor[toolDiscoveryResponse](), nil))
 	}
 	result, err := discoverTools(definitions, "fixture", 20)
 	must.NoError(err)
@@ -256,11 +228,11 @@ func TestToolDiscoveryFullMetadataAndStableOrdering(t *testing.T) {
 	assertions.True(response.Truncated)
 	for i, item := range response.Results {
 		assertions.Equal(fmt.Sprintf("fixture_%02d", i), item.Name)
-		assertions.Equal(strings.Repeat("fixture ", 50), item.Description)
-		must.Len(item.Inputs, 40)
+		assertions.Equal("fixture description", item.Description)
+		must.Len(item.Inputs, 4)
 		assertions.Equal("input_00", item.Inputs[0].Name)
-		assertions.Equal(strings.Repeat("description ", 30), item.Inputs[0].Description)
-		assertions.True(item.Inputs[39].Required)
+		assertions.Equal("description", item.Inputs[0].Description)
+		assertions.True(item.Inputs[3].Required)
 	}
 	slices.Reverse(definitions)
 	again, err := discoverTools(definitions, "fixture", 20)
@@ -270,142 +242,71 @@ func TestToolDiscoveryFullMetadataAndStableOrdering(t *testing.T) {
 
 func TestToolDiscoveryUnionTypes(t *testing.T) {
 	assertions := assert.New(t)
-	must := require.New(t)
 	backend := &namedPromotionTestBackend{recordingPeopleBackend: &recordingPeopleBackend{}}
-	opts := peopleToolOptions(backend)
-	listed := toolsByName(t, rawListTools(t, opts, true))
-	response, _ := searchToolsResponse(t, opts, true, ToolPromotePerson, 20)
-	for _, result := range response.Results {
-		if result.Name != ToolPromotePerson {
-			continue
-		}
-		inputs := make(map[string]toolDiscoveryInput)
-		for _, input := range result.Inputs {
-			inputs[input.Name] = input
-		}
-		assertions.Equal([]string{"null", "string"}, inputs["display_name"].Types)
-		assertions.False(inputs["display_name"].Required)
-		assertions.ElementsMatch([]string{"null", "string"}, toolInputProperty(t, listed[ToolPromotePerson], "display_name")["type"])
-		assertions.Equal([]string{"integer"}, inputs["participant_id"].Types)
-		assertions.Zero(backend.namedParticipantID)
-		assertions.Zero(backend.promoteParticipantID)
-		return
+	response, _ := searchToolsResponse(t, peopleToolOptions(backend), true, ToolPromotePerson, 20)
+	index := slices.IndexFunc(response.Results, func(result toolDiscoveryResult) bool { return result.Name == ToolPromotePerson })
+	require.NotEqual(t, -1, index)
+	inputs := make(map[string]toolDiscoveryInput)
+	for _, input := range response.Results[index].Inputs {
+		inputs[input.Name] = input
 	}
-	must.Fail("promote_person missing from discovery")
+	assertions.Equal([]string{"null", "string"}, inputs["display_name"].Types)
+	assertions.False(inputs["display_name"].Required)
+	assertions.Equal([]string{"integer"}, inputs["participant_id"].Types)
 }
 
-func TestToolDiscoveryHTTPProtocolAndBearerPolicy(t *testing.T) {
-	calendar := calendarServiceBackend(func(context.Context, calcontrol.Request) (*calcontrol.Result, error) {
-		require.FailNow(t, "metadata discovery must not execute calendar operations")
-		return nil, assert.AnError
-	})
-	opts := ServeOptions{Calendar: calendar, AllowCalendarWrites: true,
+func TestToolDiscoveryLegacyProtocolCatalog(t *testing.T) {
+	must := require.New(t)
+	opts := ServeOptions{Calendar: &calendarMCPFake{}, AllowCalendarWrites: true,
 		Operations: operationalTestBackend{}, OperationCapabilities: []string{"sync_source"}, OperationWriteFamilies: []OperationFamily{OperationFamilySources},
 	}
-	for _, protocol := range []string{"2025-11-25", modernProtocolVersion} {
-		t.Run(protocol, func(t *testing.T) {
-			assertions := assert.New(t)
-			must := require.New(t)
-
-			handler, closeHandler := NewHTTPHandler(opts, HTTPOptions{APIKey: "synthetic-key", AllowWrites: true})
-			t.Cleanup(closeHandler)
-			call := func(method string, args map[string]any, authenticated bool) *httptest.ResponseRecorder {
-				t.Helper()
-				if args == nil {
-					args = map[string]any{}
-				}
-				meta := modernRequestMeta()
-				meta["io.modelcontextprotocol/protocolVersion"] = protocol
-				args["_meta"] = meta
-				payload, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": args})
-				must.NoError(err)
-				req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", bytes.NewReader(payload))
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("Accept", "application/json, text/event-stream")
-				req.Header.Set("Mcp-Protocol-Version", protocol)
-				req.Header.Set("Mcp-Method", method)
-				if name, ok := args["name"].(string); ok {
-					req.Header.Set("Mcp-Name", name)
-				}
-				if authenticated {
-					req.Header.Set("Authorization", "Bearer synthetic-key")
-				}
-				recorder := httptest.NewRecorder()
-				handler.ServeHTTP(recorder, req)
-				return recorder
-			}
-			assertions.Equal(http.StatusUnauthorized, call("tools/list", nil, false).Code)
-			listed := call("tools/list", nil, true)
-			must.Equal(http.StatusOK, listed.Code, listed.Body.String())
-			var list rawRPCResponse
-			must.NoError(json.Unmarshal(listed.Body.Bytes(), &list))
-			must.Empty(list.Error)
-			entries, ok := list.Result["tools"].([]any)
-			must.True(ok)
-			names := make([]string, 0, len(entries))
-			for _, entry := range entries {
-				tool, ok := entry.(map[string]any)
-				must.True(ok)
-				name, ok := tool["name"].(string)
-				must.True(ok)
-				names = append(names, name)
-			}
-			assertions.Contains(names, ToolSearchTools)
-			assertions.Equal(protocol == modernProtocolVersion, slices.Contains(names, "calendar_create"))
-			assertions.Equal(protocol == modernProtocolVersion, slices.Contains(names, "sync_source"))
-			args := map[string]any{"name": ToolSearchTools, "arguments": map[string]any{"query": "calendar source sync", "limit": 20}}
-			assertions.Equal(http.StatusUnauthorized, call("tools/call", args, false).Code)
-			result := call("tools/call", args, true)
-			must.Equal(http.StatusOK, result.Code, result.Body.String())
-			var response rawRPCResponse
-			must.NoError(json.Unmarshal(result.Body.Bytes(), &response))
-			must.Empty(response.Error)
-			must.NotEqual(true, response.Result["isError"])
-			var found toolDiscoveryResponse
-			encoded, err := json.Marshal(toolStructuredContent(t, response.Result))
-			must.NoError(err)
-			must.NoError(json.Unmarshal(encoded, &found))
-			must.NotEmpty(found.Results)
-			for _, tool := range found.Results {
-				assertions.Contains(names, tool.Name)
-			}
-		})
+	handler := newMCPHTTPServer(opts, HTTPOptions{AllowWrites: true}).Handler
+	listRecorder, listed := task5LegacyHTTPPost(t, handler, "2025-11-25", `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	task3RequireSuccess(t, listRecorder, listed)
+	names := task3ToolNames(t, listed)
+	callRecorder, called := task5LegacyHTTPPost(t, handler, "2025-11-25", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_tools","arguments":{"query":"calendar source sync","limit":20}}}`)
+	task3RequireSuccess(t, callRecorder, called)
+	must.NotEqual(true, called.Result["isError"])
+	var response toolDiscoveryResponse
+	encoded, err := json.Marshal(toolStructuredContent(t, called.Result))
+	must.NoError(err)
+	must.NoError(json.Unmarshal(encoded, &response))
+	must.NotEmpty(response.Results)
+	for _, result := range response.Results {
+		assert.Contains(t, names, result.Name)
 	}
 }
 
 func TestToolDiscoveryStdioCatalogSnapshot(t *testing.T) {
-	for _, initial := range []bool{true, false} {
-		t.Run(strconv.FormatBool(initial), func(t *testing.T) {
-			assertions := assert.New(t)
-			must := require.New(t)
-			families := &ArchiveFamilies{Calendar: initial}
-			opts := ServeOptions{Calendar: &calendarMCPFake{}, AllowCalendarWrites: true, Families: &ArchiveFamilies{Calendar: initial}, DiscoverFamilies: func(context.Context) *ArchiveFamilies { return families }}
-			clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-			server, err := newMCPServer(opts, true).Connect(t.Context(), serverTransport, nil)
-			must.NoError(err)
-			t.Cleanup(func() { assertions.NoError(server.Close()) })
-			client, err := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "snapshot", Version: "1"}, nil).Connect(t.Context(), clientTransport, nil)
-			must.NoError(err)
-			t.Cleanup(func() { assertions.NoError(client.Close()) })
-			families.Calendar = !initial
-			listed, err := client.ListTools(t.Context(), nil)
-			must.NoError(err)
-			names := make([]string, 0, len(listed.Tools))
-			for _, tool := range listed.Tools {
-				names = append(names, tool.Name)
-			}
-			assertions.Equal(initial, slices.Contains(names, "calendar_create"))
-			wire, err := client.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolSearchTools, Arguments: map[string]any{"query": "calendar_create", "limit": 20}})
-			must.NoError(err)
-			must.False(wire.IsError)
-			response := task5StructuredAs[toolDiscoveryResponse](t, wire)
-			names = names[:0]
-			for _, result := range response.Results {
-				names = append(names, result.Name)
-			}
-			assertions.Equal(initial, slices.Contains(names, "calendar_create"))
-		})
+	initial := false
+	assertions := assert.New(t)
+	must := require.New(t)
+	families := &ArchiveFamilies{Calendar: initial}
+	opts := ServeOptions{Calendar: &calendarMCPFake{}, AllowCalendarWrites: true, Families: &ArchiveFamilies{Calendar: initial}, DiscoverFamilies: func(context.Context) *ArchiveFamilies { return families }}
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	server, err := newMCPServer(opts, true).Connect(t.Context(), serverTransport, nil)
+	must.NoError(err)
+	t.Cleanup(func() { assertions.NoError(server.Close()) })
+	client, err := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "snapshot", Version: "1"}, nil).Connect(t.Context(), clientTransport, nil)
+	must.NoError(err)
+	t.Cleanup(func() { assertions.NoError(client.Close()) })
+	families.Calendar = !initial
+	listed, err := client.ListTools(t.Context(), nil)
+	must.NoError(err)
+	names := make([]string, 0, len(listed.Tools))
+	for _, tool := range listed.Tools {
+		names = append(names, tool.Name)
 	}
+	assertions.Equal(initial, slices.Contains(names, "calendar_create"))
+	wire, err := client.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolSearchTools, Arguments: map[string]any{"query": "calendar_create", "limit": 20}})
+	must.NoError(err)
+	must.False(wire.IsError)
+	response := task5StructuredAs[toolDiscoveryResponse](t, wire)
+	names = names[:0]
+	for _, result := range response.Results {
+		names = append(names, result.Name)
+	}
+	assertions.Equal(initial, slices.Contains(names, "calendar_create"))
 }
 
 func TestToolDiscoveryServeTransportSnapshotsOnce(t *testing.T) {

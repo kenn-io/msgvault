@@ -193,7 +193,7 @@ MCP lists calendar, meeting, chat, Slack, and draft tools when the archive has a
 
 Delegated sessions select tools from the grant's sources and permissions. They require daemon API schema 3.9.0 or newer; upgrade the daemon when the bridge requests it.
 
-The complete default stdio `tools/list` response, including output schemas, measures 174,915 bytes for an mbox-only archive and 227,565 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, based on earlier measurements rounded up with 10% headroom. Optional write flags are off in both measurements.
+The complete default stdio `tools/list` response, including output schemas, measures 174,872 bytes for an mbox-only archive and 227,522 bytes with every family available. Tests cap these at 191,000 and 249,000 bytes, respectively, based on earlier measurements rounded up with 10% headroom. Optional write flags are off in both measurements.
 
 ### Claude Desktop Configuration
 
@@ -409,8 +409,8 @@ Discovery uses this server's capability, write, transport, delegated-grant,
 and archive-family filters. It is available even without archive read grants,
 but only describes the tools the session can list. Stdio keeps the catalog it
 advertised when the connection started. HTTP refreshes archive families on each
-request. Results grant no additional access or permission to act. Older servers may omit `search_tools`; use
-`tools/list` directly in that case.
+request. Results grant no additional access or permission to act. Older servers
+may omit `search_tools`; use `tools/list` directly in that case.
 
 ## Available Tools
 

@@ -2,9 +2,9 @@ package mcp
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/spf13/cobra"
@@ -28,7 +28,6 @@ type toolDiscoveryInput struct {
 type toolDiscoveryResult struct {
 	Name        string               `json:"name"`
 	Description string               `json:"description"`
-	ReadOnly    bool                 `json:"read_only"`
 	Inputs      []toolDiscoveryInput `json:"inputs"`
 }
 
@@ -63,12 +62,9 @@ func authorizedOperationCatalog(opts ServeOptions, allowWrites bool) []toolDefin
 }
 
 func (h *handlers) searchTools(ctx context.Context, req toolRequest) (*toolResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	args := req.GetArguments()
 	query, _ := args["query"].(string)
-	if !utf8.ValidString(query) || len(query) > maxToolDiscoveryQueryBytes || strings.TrimSpace(query) == "" {
+	if len(query) > maxToolDiscoveryQueryBytes || strings.TrimSpace(query) == "" {
 		return toolErrorResult("query must contain 1-512 UTF-8 bytes of non-whitespace text"), nil
 	}
 	limit := limitArg(args, "limit", 5)
@@ -93,7 +89,6 @@ func discoverTools(definitions []toolDefinition, query string, limit int) (*tool
 		for name, input := range definition.inputSchema.Properties {
 			keywords = append(keywords, name+" "+input.Description)
 		}
-		slices.Sort(keywords)
 		clisearch.SetKeywords(command, keywords...)
 		root.AddCommand(command)
 		byName[definition.name] = definition
@@ -113,20 +108,11 @@ func discoverTools(definitions []toolDefinition, query string, limit int) (*tool
 func discoveryResult(definition toolDefinition) toolDiscoveryResult {
 	result := toolDiscoveryResult{
 		Name: definition.name, Description: definition.description,
-		ReadOnly: definition.annotations != nil && definition.annotations.ReadOnlyHint,
-		Inputs:   make([]toolDiscoveryInput, 0, len(definition.inputSchema.Properties)),
+		Inputs: make([]toolDiscoveryInput, 0, len(definition.inputSchema.Properties)),
 	}
-	names := make([]string, 0, len(definition.inputSchema.Properties))
-	for name := range definition.inputSchema.Properties {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(definition.inputSchema.Properties)) {
 		input := definition.inputSchema.Properties[name]
-		types := slices.Clone(input.Types)
-		if types == nil {
-			types = []string{}
-		}
+		types := append([]string{}, input.Types...)
 		if input.Type != "" {
 			types = append(types, input.Type)
 		}

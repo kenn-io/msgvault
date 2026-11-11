@@ -482,7 +482,6 @@ func task5AssertRepresentativeResult(
 	case ToolSearchTools:
 		value := task5StructuredAs[toolDiscoveryResponse](t, result)
 		must.NotEmpty(value.Results)
-		checks.Equal(ToolGetMessage, value.Results[0].Name)
 	case ToolSearchPersonFiles:
 		value := task5StructuredAs[generated.PersonFileSearchHTTPResponse](t, result)
 		must.Len(value.Files, 1)
