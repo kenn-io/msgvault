@@ -364,7 +364,16 @@ func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 	var errors []error
 	scheduled := 0
 
-	for _, acc := range cfg.ScheduledAccounts() {
+	for _, acc := range cfg.Accounts {
+		if !acc.Enabled {
+			continue
+		}
+		if acc.Schedule == "" {
+			if acc.PollInterval != 0 {
+				errors = append(errors, fmt.Errorf("%s: %w", acc.Email, config.ValidatePollInterval(acc)))
+			}
+			continue
+		}
 		if err := s.AddAccount(acc.Email, acc.Schedule); err != nil {
 			errors = append(errors, fmt.Errorf("%s: %w", acc.Email, err))
 		} else {

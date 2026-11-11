@@ -25,6 +25,10 @@ func TestPollingAccountConfig(t *testing.T) {
 	requirements.NoError(os.WriteFile(path, []byte("[[accounts]]\nemail = 'user@example.com'\nschedule = '0 * * * *'\nenabled = true\npoll_interval = '14s'\n"), 0600))
 	_, err = Load(path, "")
 	requirements.NoError(err)
+	requirements.NoError(os.WriteFile(path, []byte("[[accounts]]\nemail = 'user@example.com'\nschedule = '0 * * * *'\nenabled = true\npoll_interval = 30\n"), 0600))
+	cfg, err = Load(path, "")
+	requirements.NoError(err)
+	requirements.ErrorContains(ValidatePollInterval(cfg.Accounts[0]), `"30s"`)
 }
 
 func TestPollingAccountValidation(t *testing.T) {
