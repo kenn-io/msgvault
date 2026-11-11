@@ -258,7 +258,7 @@ func (s *Service) purgeExpired(ctx context.Context) error {
 			return err
 		}
 		if credentialErr != nil {
-			return credentialErr
+			slog.Default().Warn("expired wakeup credential cleanup failed", "id", entries[index].ID, "category", "credential_unavailable")
 		}
 	}
 }
@@ -299,7 +299,7 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		encoded, _, err := credentials.Resolve(providercredentials.EventsID(e.ID), origin, "", nil)
 		secret, decodeErr := base64.StdEncoding.DecodeString(encoded)
 		if err != nil || decodeErr != nil || len(secret) == 0 {
-			logger.Warn("native wakeup unavailable", "id", e.ID, "category", "secret_unavailable")
+			logger.Debug("native wakeup unavailable", "id", e.ID, "category", "secret_unavailable")
 			continue
 		}
 		if e.Arguments.IncomingOnly == nil {
