@@ -9,17 +9,17 @@ describe('TaskIssuePicker', () => {
   it('keeps issue search guidance visible while filtering', async () => {
     let respond!: (result: { items: typeof item[]; truncated: boolean }) => void;
     const load = (query: string) => query ? new Promise<{ items: typeof item[]; truncated: boolean }>(resolve => { respond = resolve; }) : Promise.resolve({ items: [item], truncated: true });
-    render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues yet.', hint: 'Search by whole word.' });
+    render(TaskIssuePicker, { load, noun: 'open issues', empty: 'No open issues yet.', hint: 'Search by whole word. The list is capped at 25.' });
     await screen.findByRole('radio', { name: item.label });
-    expect(screen.getByText('Search by whole word.')).toBeDefined();
+    expect(screen.getByText('Search by whole word. The list is capped at 25.')).toBeDefined();
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
-    expect(screen.getByText('Search by whole word.')).toBeDefined();
+    expect(screen.getByText('Search by whole word. The list is capped at 25.')).toBeDefined();
     await waitFor(() => expect(respond).toBeTypeOf('function'));
     expect(screen.getByRole('status').textContent).toBe('Loading…');
-    expect(screen.getByText('Search by whole word.')).toBeDefined();
+    expect(screen.getByText('Search by whole word. The list is capped at 25.')).toBeDefined();
     respond({ items: [item], truncated: false });
     await screen.findByRole('radio', { name: item.label });
-    expect(screen.getByText('Search by whole word.')).toBeDefined();
+    expect(screen.getByText('Search by whole word. The list is capped at 25.')).toBeDefined();
   });
 
   it('loads immediately, filters, and ignores late replies', async () => {
