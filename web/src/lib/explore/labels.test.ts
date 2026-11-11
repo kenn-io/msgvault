@@ -140,3 +140,19 @@ it('disambiguates source labels using the full inventory', () => {
   expect(groupRowName('source', '5', 'work.example', sources).name).toBe('Google Calendar (work.example)');
   expect(groupRowName('source', '6', 'home.example', sources).name).toBe('Google Calendar (home.example)');
 });
+
+it('avoids repeating a mailbox name in colliding source labels', () => {
+  const gmailAndImap = new Map([
+    ['7', { type: 'gmail', identifier: 'person@example.com' }],
+    ['8', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com' }]
+  ]);
+  expect(groupRowName('source', '7', 'person@example.com', gmailAndImap).name).toBe('person@example.com (7)');
+  expect(groupRowName('source', '8', 'imaps://person@example.com@mail.example.com', gmailAndImap).name).toBe('person@example.com (imaps://person@example.com@mail.example.com)');
+
+  const gmailAndMicrosoft = new Map([
+    ['7', { type: 'gmail', identifier: 'person@example.com' }],
+    ['9', { type: 'msmail', identifier: 'person@example.com' }]
+  ]);
+  expect(groupRowName('source', '7', 'person@example.com', gmailAndMicrosoft).name).toBe('person@example.com (7)');
+  expect(groupRowName('source', '9', 'person@example.com', gmailAndMicrosoft).name).toBe('person@example.com (9)');
+});

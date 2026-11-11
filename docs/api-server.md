@@ -2981,18 +2981,19 @@ that endpoint applies:
 - Every other view runs `POST /api/v1/explore` as a table. Timeline is a
   client-side rendering of the same entry rows.
 
-Grouped runs use Explore's defaults: UTC for calendar grouping and group count in descending order. The saved sort applies to entry results.
+Grouped runs use UTC by default. Month and Year groups sort newest first; other groups sort by descending count. The saved sort applies to entry results.
 
 ```json
 {
   "limit": 20,
-  "cursor": "eyJvZmZzZXQiOjIwLC..."
+  "cursor": "eyJvZmZzZXQiOjIwLC...",
+  "timezone": "America/New_York"
 }
 ```
 
 `limit` is `1` to `100` and defaults to `100`. `cursor` is the opaque
 `next_cursor` from the previous page and is omitted for the first page. An
-empty object `{}` is a valid body.
+empty object `{}` is a valid body. `timezone` is an optional IANA time zone for calendar groups; use the same zone for each page.
 
 ```json
 {

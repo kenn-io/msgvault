@@ -19,7 +19,7 @@ import (
 type Reader interface {
 	ListSavedViews(ctx context.Context) ([]store.SavedView, error)
 	GetSavedView(ctx context.Context, id int64) (*store.SavedView, error)
-	RunSavedView(ctx context.Context, id int64, limit int, cursor string) (*RunPage, error)
+	RunSavedView(ctx context.Context, id int64, limit int, cursor, timezone string) (*RunPage, error)
 }
 
 // Writer mutates Saved Views while preserving the store/API optimistic

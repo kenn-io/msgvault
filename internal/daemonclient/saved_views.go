@@ -121,10 +121,14 @@ func (c *Client) RunSavedView(
 	id int64,
 	limit int,
 	cursor string,
+	timezone string,
 ) (*savedview.RunPage, error) {
 	body := generated.RunSavedViewRequest{Limit: new(int64(limit))}
 	if cursor != "" {
 		body.Cursor = &cursor
+	}
+	if timezone != "" {
+		body.Timezone = &timezone
 	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.RunSavedViewResp, error) {
 		return client.RunSavedViewWithResponse(ctx, &generated.RunSavedViewRequestOptions{

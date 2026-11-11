@@ -78,11 +78,12 @@ func getSavedViewDefinition(_ *handlers) toolDefinition {
 func runSavedViewDefinition(_ *handlers) toolDefinition {
 	return savedViewTool(readDefinition(
 		ToolRunSavedView,
-		"Run a persistent reusable msgvault Saved View through its canonical Explore query. Prefer this tool over manually reconstructing a known Saved View. Returns typed entries, groups, or files according to the saved definition; semantic and hybrid views require vector search. Grouped runs use UTC and sort by descending group count.",
+		"Run a persistent reusable msgvault Saved View through its canonical Explore query. Prefer this tool over manually reconstructing a known Saved View. Returns typed entries, groups, or files according to the saved definition; semantic and hybrid views require vector search. Calendar groups use the requested timezone or UTC; Month and Year sort newest first, and other groups sort by descending count.",
 		closedObject(map[string]*jsonschema.Schema{
-			"id":     safeIDSchema("Stable Saved View ID returned by list_saved_views"),
-			"limit":  searchLimitProperty(),
-			"cursor": stringSchema("Opaque next_cursor from the previous run_saved_view page; omit for the first page"),
+			"id":       safeIDSchema("Stable Saved View ID returned by list_saved_views"),
+			"limit":    searchLimitProperty(),
+			"cursor":   stringSchema("Opaque next_cursor from the previous run_saved_view page; omit for the first page"),
+			"timezone": stringSchema("IANA timezone for calendar groups; defaults to UTC and must match between pages"),
 		}, "id"),
 		outputSchemaFor[runSavedViewResponse](),
 		(*handlers).runSavedView,
@@ -172,7 +173,8 @@ func (h *handlers) runSavedView(ctx context.Context, req toolRequest) (*toolResu
 		return toolErrorResult(err.Error()), nil
 	}
 	cursor, _ := args["cursor"].(string)
-	page, err := h.savedViews.RunSavedView(ctx, id, searchLimitArg(args), cursor)
+	timezone, _ := args["timezone"].(string)
+	page, err := h.savedViews.RunSavedView(ctx, id, searchLimitArg(args), cursor, timezone)
 	if err != nil {
 		return savedViewHandlerError("run Saved View", err)
 	}

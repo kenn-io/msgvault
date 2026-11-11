@@ -285,6 +285,51 @@ describe('EverythingWorkspace', () => {
     state.destroy();
   });
 
+  it.each([
+    { dimension: 'month', key: '2026-07', label: 'Jul 2026', bucket: '2026-07-18', unit: 'day', date: 'Jul 18, 2026' },
+    { dimension: 'year', key: '2026', label: '2026', bucket: '2026-07', unit: 'month', date: 'Jul 2026' }
+  ] as const)('opens the selected $dimension row using the table scope', async ({ dimension, key, label, bucket, unit, date }) => {
+    vi.stubEnv('TZ', 'America/New_York');
+    window.history.replaceState(null, '', '/');
+    const detailRequests: Array<{ group_key?: string; filters?: Array<{ dimension: string; values: string[] }> }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      if (!new URL(request.url).pathname.endsWith('/groups')) return Response.json(exploreResponse());
+      const body = await request.clone().json() as typeof detailRequests[number];
+      if (body.group_key) detailRequests.push(body);
+      const clipped = body.filters?.some(filter => filter.dimension === 'after' || filter.dimension === 'before');
+      const count = clipped ? 2 : 1;
+      return Response.json({
+        rows: [{ key, label, count, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+        ...(body.group_key ? { overview: {
+          first_at: clipped ? '2026-07-01T12:00:00Z' : '2026-07-18T12:00:00Z',
+          activity: [{ bucket, count }], co_participants: [{ key: '1', label: clipped ? 'Wrong Person' : 'Selected Person', count }]
+        } } : {}),
+        total_count: 1, cache_revision: 'cache-1', search_provenance: {}
+      });
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ groupingChain: [dimension], filters: [{ dimension: 'domain', values: ['example.com'] }] });
+    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: `Messages grouped by ${dimension}` });
+      await fireEvent.pointerDown(await within(grid).findByText(label));
+      const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
+      await waitFor(() => expect(detailRequests.length).toBeGreaterThan(0));
+      expect(detailRequests.at(-1)!.group_key).toBe(key);
+      expect(detailRequests.at(-1)!.filters).toEqual([{ dimension: 'domain', values: ['example.com'] }]);
+      expect(await within(pane).findByText('1 item')).toBeDefined();
+      expect(within(pane).getByText('Jul 18, 2026')).toBeDefined();
+      expect(within(pane).getByRole('img', { name: `Activity by ${unit}: ${date}, 1 item` })).toBeDefined();
+      expect(within(pane).getByText('Selected Person')).toBeDefined();
+      expect(within(pane).queryByText('Wrong Person')).toBeNull();
+    } finally {
+      rendered.unmount();
+      state.destroy();
+      vi.unstubAllEnvs();
+    }
+  });
+
   function entry(index: number) {
     return {
       key: `message:${index}`,

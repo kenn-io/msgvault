@@ -14686,6 +14686,9 @@ components:
           maximum: 100
           minimum: 0
           type: integer
+        timezone:
+          description: IANA timezone for calendar grouping; defaults to UTC
+          type: string
       type: object
     RunSavedViewResponse:
       additionalProperties: true

@@ -365,7 +365,7 @@
       cursor: undefined,
       candidate_snapshot_id: undefined,
       grouping: undefined,
-      filters,
+      filters: target.dimension === 'month' || target.dimension === 'year' ? predicate.filters : filters,
       presentation: 'table' as const,
     };
     // Filtering by target.key does not make it the top-ranked group: every
@@ -391,7 +391,7 @@
           estimatedBytes: lookup.row.estimated_bytes,
           latestAt: lookup.row.latest_at,
           overview: lookup.overview,
-          meetingScope: exploreMeetingScope(detailPredicate, lookup.authority).explore,
+          meetingScope: exploreMeetingScope({ ...detailPredicate, filters }, lookup.authority).explore,
         };
         session.readingDetailFingerprint = loadedKey;
       })

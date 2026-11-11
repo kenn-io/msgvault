@@ -217,7 +217,8 @@ export function groupRowName(dimension: ExploreGroupDimension, key: string, labe
     const base = sourceDisplayName(source?.type, source?.identifier ?? label);
     const collisions = [...(sources ?? [])].filter(([, item]) => sourceDisplayName(item.type, item.identifier) === base);
     const sameIdentifier = collisions.filter(([, item]) => item.identifier === source?.identifier).length > 1;
-    const name = source && collisions.length > 1 ? `${base} (${source.identifier}${sameIdentifier ? ` · ${key}` : ''})` : base;
+    const suffix = source?.identifier === base ? key : `${source?.identifier}${sameIdentifier ? ` · ${key}` : ''}`;
+    const name = source && collisions.length > 1 ? `${base} (${suffix})` : base;
     return { name, icon: source?.type ? sourceIcon(source.type) : undefined, title: label };
   }
   if (dimension === 'kind' || dimension === 'message_type') {

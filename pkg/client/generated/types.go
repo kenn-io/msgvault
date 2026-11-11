@@ -14625,6 +14625,9 @@ func (r Result) Validate() error {
 type RunSavedViewRequest struct {
 	Cursor *string `json:"cursor,omitzero"`
 	Limit  *int64  `json:"limit,omitempty" validate:"omitempty,gte=0,lte=100"`
+
+	// Timezone IANA timezone for calendar grouping; defaults to UTC
+	Timezone *string `json:"timezone,omitzero"`
 }
 
 func (r RunSavedViewRequest) Validate() error {

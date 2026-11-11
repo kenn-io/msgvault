@@ -145,6 +145,56 @@ func TestRunSavedViewExecutesGroupsAtTheFirstChainLevel(t *testing.T) {
 	assertions.Empty(page.Rows)
 }
 
+func TestRunSavedViewCalendarGroupsUseRequestedTimezoneAndNewestFirst(t *testing.T) {
+	messages := `(1::BIGINT, 1::BIGINT, 'm1', 101::BIGINT, 'Old one', '', TIMESTAMP '2024-12-01 12:00:00', 1::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2024, 12),
+		(2::BIGINT, 1::BIGINT, 'm2', 102::BIGINT, 'Old two', '', TIMESTAMP '2024-12-02 12:00:00', 1::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2024, 12),
+		(3::BIGINT, 1::BIGINT, 'm3', 103::BIGINT, 'Boundary', '', TIMESTAMP '2026-01-01 02:00:00', 1::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 1),
+		(4::BIGINT, 1::BIGINT, 'm4', 104::BIGINT, 'New one', '', TIMESTAMP '2026-07-01 12:00:00', 1::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7),
+		(5::BIGINT, 1::BIGINT, 'm5', 105::BIGINT, 'New two', '', TIMESTAMP '2026-07-02 12:00:00', 1::BIGINT, false, 0::INTEGER, NULL::TIMESTAMP, NULL::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`
+	engine, _ := newExploreDuckDBFixtureWithMessages(t, messages, 5)
+	st := testutil.NewSQLiteTestStore(t)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: &mockStore{}, SavedViewStore: st, Engine: engine, Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	for _, tc := range []struct {
+		dimension, localFirst, localSecond, utcFirst, utcSecond string
+	}{
+		{"month", "2026-07", "2025-12", "2026-07", "2026-01"},
+		{"year", "2026", "2025", "2026", "2024"},
+	} {
+		t.Run(tc.dimension, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			view := createRunTestView(t, st, tc.dimension, `{"grouping":["`+tc.dimension+`"]}`)
+			for _, zone := range []struct{ name, field, first, second string }{
+				{"local", `,"timezone":"America/New_York"`, tc.localFirst, tc.localSecond},
+				{"default UTC", "", tc.utcFirst, tc.utcSecond},
+			} {
+				t.Run(zone.name, func(t *testing.T) {
+					requirements := require.New(t)
+					assertions := assert.New(t)
+					response, page := runSavedView(t, srv, view.ID, `{"limit":1`+zone.field+`}`)
+					requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+					requirements.Len(page.Groups, 1)
+					assertions.Equal(zone.first, page.Groups[0].Key)
+					requirements.NotEmpty(page.NextCursor)
+					nextResponse, next := runSavedView(t, srv, view.ID, `{"limit":1,"cursor":"`+page.NextCursor+`"`+zone.field+`}`)
+					requirements.Equal(http.StatusOK, nextResponse.Code, nextResponse.Body.String())
+					requirements.Len(next.Groups, 1)
+					assertions.Equal(zone.second, next.Groups[0].Key)
+				})
+			}
+			first, page := runSavedView(t, srv, view.ID, `{"limit":1,"timezone":"America/New_York"}`)
+			requirements.Equal(http.StatusOK, first.Code, first.Body.String())
+			requirements.NotEmpty(page.NextCursor)
+			changed, _ := runSavedView(t, srv, view.ID, `{"limit":1,"cursor":"`+page.NextCursor+`","timezone":"UTC"}`)
+			assertions.Equal(http.StatusBadRequest, changed.Code, changed.Body.String())
+			assertions.Contains(changed.Body.String(), "invalid_cursor")
+			invalid, _ := runSavedView(t, srv, view.ID, `{"timezone":"Invalid/Zone"}`)
+			assertions.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
+		})
+	}
+}
+
 func TestRunSavedViewExecutesFilesPresentation(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)
@@ -281,7 +331,7 @@ func TestSavedViewLifecycleThroughDaemonClient(t *testing.T) {
 	_, err = client.UpdateSavedView(ctx, created.ID, created.Revision, savedview.Patch{Name: &name})
 	requirements.ErrorIs(err, store.ErrSavedViewRevisionConflict)
 
-	page, err := client.RunSavedView(ctx, created.ID, 10, "")
+	page, err := client.RunSavedView(ctx, created.ID, 10, "", "")
 	requirements.NoError(err)
 	assertions.Equal("Receipts", page.View.Name)
 	assertions.Equal(savedview.ResultEntries, page.ResultKind)
@@ -293,7 +343,7 @@ func TestSavedViewLifecycleThroughDaemonClient(t *testing.T) {
 	requirements.NoError(client.DeleteSavedView(ctx, created.ID, updated.Revision))
 	_, err = client.GetSavedView(ctx, created.ID)
 	requirements.ErrorIs(err, store.ErrSavedViewNotFound)
-	_, err = client.RunSavedView(ctx, created.ID, 10, "")
+	_, err = client.RunSavedView(ctx, created.ID, 10, "", "")
 	requirements.ErrorIs(err, store.ErrSavedViewNotFound)
 }
 
