@@ -15,8 +15,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"go.kenn.io/msgvault/internal/search"
 )
 
 // skipUnlessPostgresInternal skips the calling internal (package store) test
@@ -572,39 +570,4 @@ func TestConversationPolicyMaintenanceLock(t *testing.T) {
  AND mode='ExclusiveLock' AND granted)
  `).Scan(&locked))
 	assert.True(t, locked, "account removal must fence conversation policy writers")
-}
-
-func TestPG_FTSSearchUsesIndex(t *testing.T) {
-	skipUnlessPostgresInternal(t)
-	require := require.New(t)
-	st := newPGStoreInternal(t)
-	_, err := st.DB().ExecContext(t.Context(), `WITH src AS (
-		INSERT INTO sources (source_type, identifier) VALUES ('gmail', 'search-plan') RETURNING id
-	), conv AS (
-		INSERT INTO conversations (source_id) SELECT id FROM src RETURNING id, source_id
-	)
-	INSERT INTO messages (source_id, conversation_id, search_fts)
-	SELECT conv.source_id, conv.id, to_tsvector('simple', CASE WHEN n = 1 THEN 'lantern unique' ELSE 'ordinary' END)
-	FROM conv CROSS JOIN generate_series(1, 2000) n`)
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), `ANALYZE messages`)
-	require.NoError(err)
-	tx, err := st.DB().BeginTx(t.Context(), nil)
-	require.NoError(err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-	_, err = tx.ExecContext(t.Context(), `SET LOCAL enable_seqscan = off; SET LOCAL enable_indexscan = off`)
-	require.NoError(err)
-	plan := st.buildMessageSearchSQL(t.Context(), &search.Query{TextTerms: []string{"lantern unique"}}, true)
-	rows, err := tx.QueryContext(t.Context(), st.Rebind(`EXPLAIN SELECT m.id FROM messages m `+plan.join+` WHERE `+plan.where), plan.args...)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(rows.Close()) })
-	var lines []string
-	for rows.Next() {
-		var line string
-		require.NoError(rows.Scan(&line))
-		lines = append(lines, line)
-	}
-	require.NoError(rows.Err())
-	assert.Contains(t, strings.Join(lines, "\n"), "Bitmap Index Scan on messages_search_fts_idx")
-	assert.Equal(t, 1, strings.Count(strings.Join(lines, "\n"), " on messages "), "search must scan messages once")
 }

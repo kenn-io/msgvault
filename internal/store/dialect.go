@@ -33,17 +33,10 @@ type ftsEnvelopeExpressions struct {
 
 // storedFTSEnvelopeSQL keeps archive comparison, repair, and backfill on the
 // same stored subject, sender fallback, and recipient selection.
-// Recipients retain both the imported address and the current participant
-// address when a merge makes them different.
 // The enclosing query must alias messages as m.
 func storedFTSEnvelopeSQL(aggregate string) ftsEnvelopeExpressions {
 	recipients := func(kind string) string {
-		address := `COALESCE(NULLIF(mr.email_address, ''), p.email_address) ||
-			CASE WHEN NULLIF(mr.email_address, '') IS NOT NULL AND p.email_address != mr.email_address
-			THEN ' ' || p.email_address ELSE '' END`
-		if kind == "from" {
-			address = identityindex.SenderAddressExpr("mr", "p")
-		}
+		address := identityindex.SenderAddressExpr("mr", "p")
 		return fmt.Sprintf("COALESCE((SELECT %s(%s, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = '%s'), '')", aggregate, address, kind)
 	}
 	return ftsEnvelopeExpressions{

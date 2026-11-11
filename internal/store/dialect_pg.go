@@ -772,9 +772,6 @@ func (d *PostgreSQLDialect) EnsureFTSIndex(q querier) error {
 	); err != nil {
 		return fmt.Errorf("create %s: %w", staleIndexName, err)
 	}
-	if _, err := q.Exec("DROP INDEX IF EXISTS idx_messages_search_fts_stale_v2"); err != nil {
-		return fmt.Errorf("drop obsolete FTS stale index: %w", err)
-	}
 	return nil
 }
 
