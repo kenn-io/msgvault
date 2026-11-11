@@ -23,7 +23,7 @@ import (
 
 const commitmentAgendaBatchSize = 8
 
-var errCommitmentAgendaCitation = errors.New("the earlier filing citation changed and no created issue was found. File the current evidence with msgvault kata create if needed.")
+var errCommitmentAgendaCitation = errors.New("the earlier filing citation changed and no created issue was found. File the current evidence with msgvault kata create if needed")
 
 type commitmentAgendaArchive interface {
 	kataevidence.SourceReader
