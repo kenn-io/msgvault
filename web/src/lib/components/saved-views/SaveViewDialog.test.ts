@@ -57,15 +57,20 @@ describe('SaveViewDialog', () => {
     expect(save.disabled).toBe(false);
   });
 
-  it.each(['full_text', 'semantic', 'hybrid'] as const)(
-    'posts the canonical %s state without session details and reports the saved view',
-    async (searchMode) => {
+  it.each([
+    { name: 'full_text', searchMode: 'full_text', filters: state.filters, version: 2, savedFilters: [{ field: 'source', operator: 'in', values: ['1'] }] },
+    { name: 'semantic', searchMode: 'semantic', filters: state.filters, version: 2, savedFilters: [{ field: 'source', operator: 'in', values: ['1'] }] },
+    { name: 'hybrid', searchMode: 'hybrid', filters: state.filters, version: 2, savedFilters: [{ field: 'source', operator: 'in', values: ['1'] }] },
+    { name: 'local date', searchMode: 'full_text', filters: [{ dimension: 'after', values: ['2026-07-01T00:00:00-04:00'] }], version: 3, savedFilters: [{ field: 'after', operator: 'in', values: ['2026-07-01T00:00:00-04:00'] }] }
+  ] as const)(
+    'posts the canonical $name state without session details and reports the saved view',
+    async ({ searchMode, filters, version, savedFilters }) => {
       const requests: Request[] = [];
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         requests.push(input instanceof Request ? input : new Request(input));
         return Response.json({ ...view(7, 'Invoices'), description: 'Quarterly review' }, { status: 201 });
       });
-      const { onSaved } = renderDialog(fetchFn, { searchMode, activeRow: 'message:9' });
+      const { onSaved } = renderDialog(fetchFn, { searchMode, filters: [...filters].map(filter => ({ ...filter, values: [...filter.values] })), activeRow: 'message:9' });
 
       await fireEvent.input(screen.getByLabelText('Name'), { target: { value: ' Invoices ' } });
       await fireEvent.input(
@@ -79,10 +84,10 @@ describe('SaveViewDialog', () => {
       expect(requests[0]!.method).toBe('POST');
       const body = await requests[0]!.clone().json();
       expect(body).toEqual({
-        name: 'Invoices', description: 'Quarterly review', schema_version: 2,
+        name: 'Invoices', description: 'Quarterly review', schema_version: version,
         canonical_state: {
           query: 'invoice', search_mode: searchMode,
-          filters: [{ field: 'source', operator: 'in', values: ['1'] }],
+          filters: savedFilters,
           grouping: ['domain'], presentation: 'table',
           sort: [{ field: 'occurred_at', direction: 'desc' }],
           columns: ['kind', 'title']

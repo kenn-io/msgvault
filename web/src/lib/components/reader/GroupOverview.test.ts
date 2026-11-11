@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import GroupOverview from './GroupOverview.svelte';
 
 describe('GroupOverview', () => {
-  it('shows the complete range, daily strip, and people from a month overview', async () => {
-    const selection = {
+  it.each([
+    { name: 'daily', selection: {
       kind: 'group' as const,
       dimension: 'month' as const,
       key: '2024-05',
@@ -16,13 +16,20 @@ describe('GroupOverview', () => {
         activity: [{ bucket: '2024-05-03', count: 3 }, { bucket: '2024-05-31', count: 1 }],
         co_participants: [{ key: '1', label: 'Person Example', count: 2 }]
       }
-    };
+    }, range: 'May 3, 2024 – May 31, 2024', showRange: false,
+    image: 'Activity by day, May 3, 2024 to May 31, 2024, busiest May 3, 2024 with 3 items', dates: ['May 3, 2024', 'May 31, 2024'] },
+    { name: 'monthly', selection: {
+      kind: 'group' as const, dimension: 'participant' as const, key: '42', label: 'Person Example', count: 3, latestAt: '2024-06-20T12:00:00Z',
+      overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 2 }, { bucket: '2024-06', count: 1 }], co_participants: [{ key: '1', label: 'Person Example', count: 2 }] }
+    }, range: 'May 3, 2024 – Jun 20, 2024', showRange: true,
+    image: 'Activity by month, May 2024 to Jun 2024, busiest May 2024 with 2 items', dates: [] }
+  ])('shows the range, $name strip, and people', async ({ selection, range, showRange, image, dates }) => {
     const view = render(GroupOverview, { selection });
 
-    expect(screen.queryByText('May 3, 2024 – May 31, 2024')).toBeNull();
-    expect(screen.getByRole('img', { name: 'Activity by day, May 3, 2024 to May 31, 2024, busiest May 3, 2024 with 3 items' })).toBeDefined();
-    expect(screen.getByText('May 3, 2024')).toBeDefined();
-    expect(screen.getByText('May 31, 2024')).toBeDefined();
+    if (showRange) expect(screen.getByText(range)).toBeDefined();
+    else expect(screen.queryByText(range)).toBeNull();
+    expect(screen.getByRole('img', { name: image })).toBeDefined();
+    for (const date of dates) expect(screen.getByText(date)).toBeDefined();
     expect(screen.getByText('Most often with')).toBeDefined();
     expect(screen.getByText('Person Example')).toBeDefined();
 
@@ -46,12 +53,5 @@ describe('GroupOverview', () => {
 
     expect(screen.getByRole('img', { name: `Activity by ${unit}: ${label}, 3 items` })).toBeDefined();
     for (const text of visibleText) expect(screen.getAllByText(text)).toHaveLength(1);
-  });
-
-  it('retains the date range alongside monthly activity', () => {
-    const selection = { kind: 'group' as const, dimension: 'participant' as const, key: '42', label: 'Person Example', count: 3, latestAt: '2024-06-20T12:00:00Z', overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 2 }, { bucket: '2024-06', count: 1 }], co_participants: [] } };
-    render(GroupOverview, { selection });
-    expect(screen.getByText('May 3, 2024 – Jun 20, 2024')).toBeDefined();
-    expect(screen.getByRole('img', { name: 'Activity by month, May 2024 to Jun 2024, busiest May 2024 with 2 items' })).toBeDefined();
   });
 });

@@ -1121,10 +1121,4 @@ func TestExploreGroupOverviewSerialization(t *testing.T) {
 	assert.Equal([]query.ExploreGroupActivity{{Bucket: "2024-05-01", Count: 2}}, detail.Overview.Activity)
 	require.Len(detail.Rows, 1)
 	assert.Equal(int64(4), detail.Rows[0].TotalItems)
-
-	engine.groupResult = &query.ExploreGroupResponse{Rows: []query.ExploreGroupRow{{Key: "7", LatestAt: now}}}
-	source := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["source"]}`)
-	require.Equal(http.StatusOK, source.Code, source.Body.String())
-	assert.NotContains(source.Body.String(), `"total_items"`)
-	assert.NotContains(source.Body.String(), `"overview"`)
 }

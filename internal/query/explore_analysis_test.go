@@ -35,6 +35,8 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 }
 
 func TestExploreGroupsSourceIgnoresInvalidTimezone(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("archive@example.com", "gmail")
 	b.AddMessage(MessageOpt{SourceID: source})
@@ -42,10 +44,10 @@ func TestExploreGroupsSourceIgnoresInvalidTimezone(t *testing.T) {
 	result, err := b.BuildEngine().ExploreGroups(t.Context(), ExploreGroupRequest{
 		Dimension: "source", Timezone: "Invalid/Zone",
 	})
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	assert.Equal(t, strconv.FormatInt(source, 10), result.Rows[0].Key)
-	assert.Equal(t, int64(1), result.Rows[0].Count)
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 1)
+	assertions.Equal(strconv.FormatInt(source, 10), result.Rows[0].Key)
+	assertions.Equal(int64(1), result.Rows[0].Count)
 }
 
 func TestPersonGroupLabelAvoidsParticipantPageProduct(t *testing.T) {

@@ -4,6 +4,7 @@ import { setTemporaryDensity } from './kit-ui';
 const total = 300;
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/sources/status', (route) => route.fulfill({ json: { sources: [] } }));
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'loopback', https: false, plain_http_warning: false }
   }));

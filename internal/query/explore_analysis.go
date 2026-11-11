@@ -5,7 +5,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -104,7 +103,7 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 		if request.Dimension == timeGranularityMonth {
 			bucketFormat = "%Y-%m-%d"
 		}
-		aggregateExtra = ", MIN(occurred_at) AS first_at, " + spec.groupBy + " AS selected_group_value, CAST(to_json(histogram(strftime(timezone(?, timezone('UTC', occurred_at)), '" + bucketFormat + "'))) AS VARCHAR) AS activity"
+		aggregateExtra = ", MIN(occurred_at) AS first_at, " + spec.groupBy + " AS selected_group_value, CAST(to_json(list_sort(list_transform(map_entries(histogram(strftime(timezone(?, timezone('UTC', occurred_at)), '" + bucketFormat + "'))), lambda e: struct_pack(bucket := e.key, count := e.value)))) AS VARCHAR) AS activity"
 		args = append(args, zone)
 		pageExtra += ", first_at, activity, (" + e.exploreGroupPeopleSQL(spec, request.Dimension) + ") AS people"
 	}
@@ -149,14 +148,9 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 		}
 		if overview {
 			detail := &ExploreGroupOverview{FirstAt: firstAt, Activity: []ExploreGroupActivity{}, CoParticipants: []ExploreGroupCoParticipant{}}
-			var buckets map[string]int64
-			if err := json.Unmarshal([]byte(activityJSON), &buckets, jsontext.AllowInvalidUTF8(true)); err != nil {
+			if err := json.Unmarshal([]byte(activityJSON), &detail.Activity, jsontext.AllowInvalidUTF8(true)); err != nil {
 				return nil, fmt.Errorf("decode group activity: %w", err)
 			}
-			for bucket, count := range buckets {
-				detail.Activity = append(detail.Activity, ExploreGroupActivity{Bucket: bucket, Count: count})
-			}
-			sort.Slice(detail.Activity, func(i, j int) bool { return detail.Activity[i].Bucket < detail.Activity[j].Bucket })
 			if err := json.Unmarshal([]byte(peopleJSON), &detail.CoParticipants, jsontext.AllowInvalidUTF8(true)); err != nil {
 				return nil, fmt.Errorf("decode group people: %w", err)
 			}

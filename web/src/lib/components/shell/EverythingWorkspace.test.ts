@@ -2496,8 +2496,10 @@ describe('EverythingWorkspace', () => {
     expect(await screen.findByRole('grid', { name: 'Messages grouped by source' })).toBeDefined();
     expect(state.current.selectedRow).toBeNull();
 
+    const previousDetailRequests = detailRequests.length;
     window.history.forward();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
+    await waitFor(() => expect(detailRequests.length).toBeGreaterThan(previousDetailRequests));
     expect(await screen.findByRole('complementary', { name: 'Reading pane: Slack (alpha.example)' })).toBeDefined();
     expect(state.current.selectedRow).toBe('group:source:7');
     rendered.unmount();

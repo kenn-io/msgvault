@@ -246,7 +246,6 @@ first, Filename A–Z, Filename Z–A, Largest first, and Smallest first. The
 Documents, Archives, Other). Grouping replaces the table with groups and hides
 Sort and Visual search; Filename and Type remain editable in Filter, and active
 filters stay visible as chips.
-Existing date bounds keep their calendar when edited.
 **Save view…** saves the search, filters, and grouping, but not the Filename
 filter, Type filter, or file sort.
 

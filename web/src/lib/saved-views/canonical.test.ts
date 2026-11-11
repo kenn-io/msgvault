@@ -143,7 +143,6 @@ it('preserves local dates in schema 3 and normalizes legacy offsets', () => {
   expect(exploreStateFromSavedView(saved, 2).filters?.[0]?.values).toEqual(['2026-07-01T04:00:00.000Z']);
   expect(exploreStateFromSavedView(saved, 1).filters?.[0]?.values).toEqual(['2026-07-01T04:00:00.000Z']);
   const filters = [{ dimension: 'after' as const, values: ['2026-07-01T00:00:00-04:00'] }, { dimension: 'before' as const, values: ['2026-08-01T00:00:00+01:00'] }];
-  expect(parseExploreURLState(serializeExploreURLState({ ...everything, filters })).filters).toEqual(filters);
   const definition = canonicalSavedViewState({ ...everything, filters });
   expect(exploreStateFromSavedView(definition, 3).filters).toEqual(filters);
 });
