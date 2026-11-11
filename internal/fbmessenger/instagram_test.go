@@ -27,6 +27,12 @@ func TestInstagramFingerprint(t *testing.T) {
 		Share:  &rawJSONShare{Link: "https://example.org/x", ShareText: "A & B", OriginalContentOwner: "Mira Example"},
 		Photos: []rawJSONPhoto{{URI: "photos/a.jpg"}}, Media: []rawJSONPhoto{{URI: "docs/one.pdf"}},
 	}))
+	duration := int64(10)
+	assert.Equal("0d95a897c44227897c749a3d6e24e5ad2bee36f48e8b12e70237a60d18955485", instagramFingerprint(rawJSONMessage{
+		Type: "Call", CallDuration: &duration,
+		Audio: []rawJSONPhoto{{URI: "a.ogg"}}, Videos: []rawJSONPhoto{{URI: "b.mp4"}},
+		Gifs: []rawJSONPhoto{{URI: "c.gif"}}, Sticker: &rawJSONSticker{URI: "d.webp"},
+	}))
 }
 
 func TestInstagramImportReplay(t *testing.T) {
