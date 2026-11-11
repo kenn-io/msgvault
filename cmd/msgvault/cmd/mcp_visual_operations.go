@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func visualMCPCapabilities(caps *apiprotocol.MCPCapabilities) []string {
+func visualMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
 	for _, route := range []struct {
 		name, id, method, path string
@@ -29,11 +29,8 @@ func visualMCPCapabilities(caps *apiprotocol.MCPCapabilities) []string {
 		{"retry_visual_attachment_owner", "retryVisualAttachmentOwner", http.MethodPost, "/api/v1/multimodal/retry", []string{"message_id", "blob_hash"}},
 		{"retire_visual_attachment_generation", "retireVisualAttachmentGeneration", http.MethodPost, "/api/v1/multimodal/retire", []string{"generation_id"}},
 	} {
-		for _, descriptor := range caps.Routes {
-			if descriptor.OperationID == route.id && descriptor.Method == route.method && descriptor.Path == route.path && !slices.ContainsFunc(route.fields, func(field string) bool { return !slices.Contains(descriptor.RequestProperties, field) }) {
-				names = append(names, route.name)
-				break
-			}
+		if hasRoute(route.id, route.method, route.path) && mcpRequestPropertiesPresent(caps, route.id, route.fields...) {
+			names = append(names, route.name)
 		}
 	}
 	return names
@@ -69,7 +66,10 @@ func visualInput(name string, args map[string]any) (visualArguments, error) {
 		}
 	case "retry_visual_attachment_owner":
 		input.BlobHash = strings.ToLower(strings.TrimSpace(input.BlobHash))
-		if !validLoopID(input.MessageID) || input.BlobHash == "" {
+		if !validLoopID(input.MessageID) || len(input.BlobHash) != 64 {
+			return input, errors.New("invalid owner")
+		}
+		if _, err := hex.DecodeString(input.BlobHash); err != nil {
 			return input, errors.New("invalid owner")
 		}
 	case "retire_visual_attachment_generation":
@@ -151,11 +151,18 @@ func (b *daemonMCPOperations) executeVisualOperation(ctx context.Context, name s
 		}
 		result.Output = mcpserver.VisualOperationStatus{
 			Generation: mcpserver.VisualGenerationStatus{ID: status.Generation.ID, State: string(status.Generation.State), Consented: status.Generation.Consented},
-			Eligible:   status.Eligible, Current: status.Current, Stale: status.Stale, Tombstoned: status.Tombstoned,
-			Retryable: status.Retryable, Terminal: status.Terminal, UnknownRole: status.UnknownRole, Unavailable: status.Unavailable,
+			Current:    status.Current, Stale: status.Stale, Tombstoned: status.Tombstoned,
+			Retryable: status.Retryable, Terminal: status.Terminal,
 			ActiveLeases: status.ActiveLeases, JournalHighWater: status.JournalHighWater, JournalCursor: status.JournalCursor,
 			ReconciliationComplete: status.ReconciliationComplete, JournalLag: status.JournalLag, Converged: status.Converged,
-			ConvergenceTotal: status.ConvergenceTotal, ConvergenceRatio: status.ConvergenceRatio, Formats: status.Formats, Usage: status.Usage,
+			ConvergenceTotal: status.ConvergenceTotal, ConvergenceRatio: status.ConvergenceRatio, Usage: status.Usage,
+			DuplicateCost: mcpserver.VisualDuplicateCost{AtLeastOnce: status.DuplicateCost.AtLeastOnce, ProviderIdempotent: status.DuplicateCost.ProviderIdempotent},
+		}
+		if name == "get_visual_attachment_status" && input.Coverage {
+			projection := result.Output.(mcpserver.VisualOperationStatus)
+			projection.Eligible, projection.UnknownRole, projection.Unavailable = &status.Eligible, &status.UnknownRole, &status.Unavailable
+			projection.Formats = &status.Formats
+			result.Output = projection
 		}
 	}
 	return result, true, err
@@ -192,7 +199,7 @@ func (b *daemonMCPOperations) retireVisualGeneration(ctx context.Context, option
 
 func visualRefusal(code string) bool {
 	switch code {
-	case "visual_consent_required", "invalid_visual_owner", "invalid_visual_generation", "visual_search_not_ready", "visual_operation_active", "visual_generation_changed", "visual_coverage_busy", "cross_origin_loopback":
+	case "visual_consent_required", "invalid_visual_owner", "invalid_visual_generation", "visual_search_not_ready", "visual_operation_active", "visual_generation_changed", "visual_coverage_busy", "cross_origin_loopback", "operation_history_unavailable", "rate_limit_exceeded", "visual_operation_scope_failed", "unauthorized", "forbidden", "not_found", "bad_request":
 		return true
 	default:
 		return false

@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -84,114 +85,182 @@ func TestMCPVisualNativeOperationsAndApproval(t *testing.T) {
 	require.NoError(err)
 	assert.NotContains(string(encoded), "synthetic")
 	assert.NotContains(string(encoded), "fingerprint")
-	approved := false
-	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyVisual}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		if approved {
-			return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
-		}
-		return &sdkmcp.ElicitResult{Action: "decline"}, nil
+	assert.NotContains(string(encoded), `"eligible"`)
+	assert.NotContains(string(encoded), `"unknown_role"`)
+	assert.NotContains(string(encoded), `"unavailable"`)
+	assert.NotContains(string(encoded), `"formats"`)
+	var prompt string
+	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyVisual}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		prompt = request.Params.Message
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "start_visual_attachment_build", Arguments: map[string]any{"consent": true}})
-	require.NoError(err)
-	require.True(result.IsError)
-	assert.Equal(0, builds)
-	approved = true
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "start_visual_attachment_build", Arguments: map[string]any{"consent": true}})
-	require.NoError(err)
-	require.False(result.IsError)
-	assert.Equal(1, builds)
-	current, err := st.GetVisualGeneration(t.Context(), generation.ID)
-	require.NoError(err)
-	assert.True(current.Consented)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "resume_visual_attachment_build", Arguments: map[string]any{}})
-	require.NoError(err)
-	require.False(result.IsError)
-	assert.Equal(1, resumes)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "retry_visual_attachment_owner", Arguments: map[string]any{"message_id": 42, "blob_hash": "ABCD"}})
-	require.NoError(err)
-	require.False(result.IsError)
-	assert.Equal(1, retries)
-	assert.Equal(int64(42), ownerID)
-	assert.Equal("abcd", hash)
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "retire_visual_attachment_generation", Arguments: map[string]any{"generation_id": generation.ID + 1}})
-	require.NoError(err)
-	require.True(result.IsError)
-	assert.Equal(0, retires)
-	data, err := json.Marshal(result.StructuredContent)
-	require.NoError(err)
-	assert.Contains(string(data), "visual_generation_changed")
-	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "retire_visual_attachment_generation", Arguments: map[string]any{"generation_id": generation.ID}})
-	require.NoError(err)
-	require.False(result.IsError)
-	current, err = st.GetVisualGeneration(t.Context(), generation.ID)
-	require.NoError(err)
-	assert.Equal(store.VisualGenerationRetired, current.State)
-	assert.Equal(1, retires)
+	call := func(t *testing.T, name string, args map[string]any) *sdkmcp.CallToolResult {
+		t.Helper()
+		require := require.New(t)
+		assert := assert.New(t)
+		want, handled, err := backend.visualOperationDisclosure(name, args)
+		require.NoError(err)
+		require.True(handled)
+		result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: args})
+		require.NoError(err)
+		assert.Equal(want, prompt)
+		return result
+	}
+	t.Run("build", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		result := call(t, "start_visual_attachment_build", map[string]any{"consent": true})
+		require.False(result.IsError)
+		assert.Equal(1, builds)
+		current, err := st.GetVisualGeneration(t.Context(), generation.ID)
+		require.NoError(err)
+		assert.True(current.Consented)
+	})
+	t.Run("resume", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		result := call(t, "resume_visual_attachment_build", map[string]any{})
+		require.False(result.IsError)
+		assert.Equal(1, resumes)
+	})
+	t.Run("retry", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		result := call(t, "retry_visual_attachment_owner", map[string]any{"message_id": 42, "blob_hash": strings.Repeat("AB", 32)})
+		require.False(result.IsError)
+		assert.Equal(1, retries)
+		assert.Equal(int64(42), ownerID)
+		assert.Equal(strings.Repeat("ab", 32), hash)
+	})
+	t.Run("retire", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		result := call(t, "retire_visual_attachment_generation", map[string]any{"generation_id": generation.ID + 1})
+		require.True(result.IsError)
+		assert.Equal(0, retires)
+		data, err := json.Marshal(result.StructuredContent)
+		require.NoError(err)
+		assert.Contains(string(data), "visual_generation_changed")
+		assert.Contains(string(data), `"operation_may_have_completed":false`)
+		result = call(t, "retire_visual_attachment_generation", map[string]any{"generation_id": generation.ID})
+		require.False(result.IsError)
+		current, err := st.GetVisualGeneration(t.Context(), generation.ID)
+		require.NoError(err)
+		assert.Equal(store.VisualGenerationRetired, current.State)
+		assert.Equal(1, retires)
+	})
 }
 
 func TestMCPVisualMutationFailureIsUncertainAndRedacted(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	fixture := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: testutil.NewTestStore(t), Logger: slog.New(slog.DiscardHandler)})
-	fixture.SetVisualOperations(nil, func(context.Context, operations.PassScope) error {
-		return errors.New("synthetic private diagnostic")
-	}, nil, func(context.Context, bool) (visual.Status, error) { return visual.Status{}, nil }, nil)
-	backend := sourceOperationFixture(t, fixture)
-	result, err := backend.ExecuteOperation(t.Context(), "resume_visual_attachment_build", nil)
-	require.NoError(err)
-	require.True(result.IsError)
-	data, err := json.Marshal(result.Output)
-	require.NoError(err)
-	assert.Contains(string(data), `"operation_may_have_completed":true`)
-	assert.NotContains(string(data), "synthetic private diagnostic")
+	for _, name := range []string{"resume_visual_attachment_build", "retire_visual_attachment_generation"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := config.NewDefaultConfig()
+			cfg.Data.DataDir = t.TempDir()
+			fixture := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
+			failure := errors.New("synthetic private diagnostic")
+			fixture.SetVisualOperations(nil, func(context.Context, operations.PassScope) error { return failure }, nil,
+				func(context.Context, bool) (visual.Status, error) {
+					return visual.Status{Generation: store.VisualGeneration{ID: 1}}, nil
+				},
+				func(context.Context) error { return failure })
+			backend := sourceOperationFixture(t, fixture)
+			args := map[string]any{}
+			if name == "retire_visual_attachment_generation" {
+				args["generation_id"] = 1
+			}
+			result, err := backend.ExecuteOperation(t.Context(), name, args)
+			require.NoError(t, err)
+			require.True(t, result.IsError)
+			data, err := json.Marshal(result.Output)
+			require.NoError(t, err)
+			assert.Contains(t, string(data), `"operation_may_have_completed":true`)
+			assert.NotContains(t, string(data), "synthetic private diagnostic")
+		})
+	}
 }
 
 func TestMCPVisualDiscoveryRequiresNativeFields(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)}))
-	capabilities, err := backend.client.MCPCapabilities(t.Context())
-	require.NoError(err)
-	for i := range capabilities.Routes {
-		if capabilities.Routes[i].OperationID == "retryVisualAttachmentOwner" {
-			capabilities.Routes[i].RequestProperties = nil
-		}
+	for _, tc := range []struct{ name, id, field string }{
+		{"get_visual_attachment_status", "getVisualAttachmentStatus", ""},
+		{"start_visual_attachment_build", "startVisualAttachmentBuild", "consent"},
+		{"resume_visual_attachment_build", "resumeVisualAttachmentBuild", ""},
+		{"retry_visual_attachment_owner", "retryVisualAttachmentOwner", "message_id"},
+		{"retry_visual_attachment_owner", "retryVisualAttachmentOwner", "blob_hash"},
+		{"retire_visual_attachment_generation", "retireVisualAttachmentGeneration", "generation_id"},
+	} {
+		t.Run(tc.name+tc.field, func(t *testing.T) {
+			for _, missing := range []string{"method", "path", "field"} {
+				if missing == "field" && tc.field == "" {
+					continue
+				}
+				caps, err := backend.client.MCPCapabilities(t.Context())
+				require.NoError(t, err)
+				for i := range caps.Routes {
+					route := &caps.Routes[i]
+					if route.OperationID != tc.id {
+						continue
+					}
+					switch missing {
+					case "method":
+						route.Method = "DELETE"
+					case "path":
+						route.Path = "/missing"
+					case "field":
+						for j, property := range route.RequestProperties {
+							if property == tc.field {
+								route.RequestProperties = append(route.RequestProperties[:j], route.RequestProperties[j+1:]...)
+								break
+							}
+						}
+					}
+				}
+				assert.NotContains(t, newDaemonMCPOperations(backend.client, caps).capabilities(), tc.name)
+			}
+		})
 	}
-	assert.NotContains(newDaemonMCPOperations(backend.client, capabilities).capabilities(), "retry_visual_attachment_owner")
-	result, err := backend.ExecuteOperation(t.Context(), "get_visual_attachment_status", map[string]any{"coverage": true})
-	require.NoError(err)
-	require.True(result.IsError)
-	data, err := json.Marshal(result.Output)
-	require.NoError(err)
-	assert.Contains(string(data), "operation_not_supported")
 }
 
 func TestMCPVisualCoverageRequiresAdvertisedQuery(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	fixture := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: testutil.NewTestStore(t), Logger: slog.New(slog.DiscardHandler)})
-	coverage := false
-	fixture.SetVisualOperations(nil, nil, nil, func(_ context.Context, requested bool) (visual.Status, error) {
-		coverage = requested
-		return visual.Status{Formats: []visual.FormatCoverage{}}, nil
-	}, nil)
-	backend := sourceOperationFixture(t, fixture)
-	capabilities, err := backend.client.MCPCapabilities(t.Context())
-	require.NoError(err)
-	for i := range capabilities.Routes {
-		if capabilities.Routes[i].OperationID == "getVisualAttachmentStatus" {
-			capabilities.Routes[i].QueryParameters = append(capabilities.Routes[i].QueryParameters, "coverage")
-		}
+	for _, advertised := range []bool{false, true} {
+		t.Run(map[bool]string{false: "current daemon", true: "future daemon"}[advertised], func(t *testing.T) {
+			cfg := config.NewDefaultConfig()
+			cfg.Data.DataDir = t.TempDir()
+			fixture := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
+			called, coverage := false, false
+			fixture.SetVisualOperations(nil, nil, nil, func(_ context.Context, requested bool) (visual.Status, error) {
+				called, coverage = true, requested
+				return visual.Status{Formats: []visual.FormatCoverage{}, DuplicateCost: visual.DuplicateCostRisk{AtLeastOnce: true, Detail: "private diagnostic"}}, nil
+			}, nil)
+			backend := sourceOperationFixture(t, fixture)
+			if advertised {
+				caps, err := backend.client.MCPCapabilities(t.Context())
+				require.NoError(t, err)
+				for i := range caps.Routes {
+					if caps.Routes[i].OperationID == "getVisualAttachmentStatus" {
+						caps.Routes[i].QueryParameters = append(caps.Routes[i].QueryParameters, "coverage")
+					}
+				}
+				backend = newDaemonMCPOperations(backend.client, caps)
+			}
+			result, err := backend.ExecuteOperation(t.Context(), "get_visual_attachment_status", map[string]any{"coverage": true})
+			require.NoError(t, err)
+			data, err := json.Marshal(result.Output)
+			require.NoError(t, err)
+			if !advertised {
+				assert.True(t, result.IsError)
+				assert.Contains(t, string(data), "operation_not_supported")
+				assert.False(t, called)
+				return
+			}
+			assert.False(t, result.IsError)
+			assert.True(t, called)
+			assert.True(t, coverage)
+			assert.Contains(t, string(data), `"eligible":0`)
+			assert.Contains(t, string(data), `"at_least_once":true`)
+			assert.NotContains(t, string(data), "private diagnostic")
+		})
 	}
-	backend = newDaemonMCPOperations(backend.client, capabilities)
-	result, err := backend.ExecuteOperation(t.Context(), "get_visual_attachment_status", map[string]any{"coverage": true})
-	require.NoError(err)
-	require.False(result.IsError)
-	assert.True(coverage)
 }

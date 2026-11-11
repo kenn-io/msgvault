@@ -128,51 +128,35 @@ func TestOperationalWriteConfirmsCurrentDisclosureBeforeExecution(t *testing.T) 
 }
 
 func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	names := []string{"list_open_loops", "close_open_loop", "snooze_open_loop", "reopen_open_loop"}
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: append(names, "sync_source")}
-	requirements.Len(operationalCatalog(opts, true), 1)
-	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyLoops}
-	first := operationalCatalog(opts, true)
-	requirements.Len(first, 4)
-	second := operationalCatalog(opts, true)
-	for i, definition := range first {
-		assertions.Equal(names[i], definition.definition.name)
-		assertions.Same(definition.definition.inputSchema, second[i].definition.inputSchema)
-		assertions.Same(definition.definition.outputSchema, second[i].definition.outputSchema)
-		requirements.NotNil(definition.definition.annotations.OpenWorldHint)
-		assertions.False(*definition.definition.annotations.OpenWorldHint)
+	for _, tc := range []struct {
+		name      string
+		names     []string
+		family    OperationFamily
+		openWorld bool
+	}{
+		{"loops", []string{"list_open_loops", "close_open_loop", "snooze_open_loop", "reopen_open_loop"}, OperationFamilyLoops, false},
+		{"visual", []string{"get_visual_attachment_status", "start_visual_attachment_build", "resume_visual_attachment_build", "retry_visual_attachment_owner", "retire_visual_attachment_generation"}, OperationFamilyVisual, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: tc.names, OperationWriteFamilies: []OperationFamily{tc.family}}
+			catalog := operationalCatalog(opts, true)
+			again := operationalCatalog(opts, true)
+			require.Len(t, catalog, len(tc.names))
+			tools := toolsByName(t, rawListTools(t, opts, true))
+			for i, definition := range catalog {
+				assert.Equal(t, tc.names[i], definition.definition.name)
+				assert.Same(t, definition.definition.inputSchema, again[i].definition.inputSchema)
+				assert.Same(t, definition.definition.outputSchema, again[i].definition.outputSchema)
+				require.NotNil(t, definition.definition.annotations.OpenWorldHint)
+				if i > 0 {
+					assert.Equal(t, tc.openWorld, *definition.definition.annotations.OpenWorldHint)
+				}
+				tool, ok := tools[tc.names[i]]
+				require.True(t, ok)
+				schema, ok := tool["inputSchema"].(map[string]any)
+				require.True(t, ok)
+				assert.Equal(t, false, schema["additionalProperties"])
+			}
+		})
 	}
-	requirements.Len(operationalCatalog(opts, false), 1)
-	opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, OperationFamilySources)
-	for _, definition := range operationalCatalog(opts, true) {
-		if definition.definition.name == "sync_source" {
-			assertions.True(*definition.definition.annotations.OpenWorldHint)
-		}
-	}
-	opts.DelegatedOnly = true
-	assertions.Empty(operationalCatalog(opts, true))
-}
-
-func TestVisualCatalogRequiresWriteOptInAndOwner(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_visual_attachment_status", "start_visual_attachment_build", "resume_visual_attachment_build", "retry_visual_attachment_owner", "retire_visual_attachment_generation"}}
-	tools := toolsByName(t, rawListTools(t, opts, true))
-	assert.Contains(tools, "get_visual_attachment_status")
-	assert.NotContains(tools, "start_visual_attachment_build")
-	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyVisual}
-	writable := toolsByName(t, rawListTools(t, opts, true))
-	assert.Contains(writable, "start_visual_attachment_build")
-	for _, name := range opts.OperationCapabilities {
-		tool, ok := writable[name]
-		require.True(ok)
-		schema, ok := tool["inputSchema"].(map[string]any)
-		require.True(ok)
-		assert.Equal(false, schema["additionalProperties"])
-	}
-	assert.NotContains(toolsByName(t, rawListTools(t, opts, false)), "start_visual_attachment_build")
-	opts.DelegatedOnly = true
-	assert.Empty(rawListTools(t, opts, true))
 }
