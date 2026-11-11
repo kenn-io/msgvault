@@ -96,9 +96,19 @@ func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, 
 }
 
 func instagramArchivedRecord(stored store.StoredMessage) (rawJSONMessage, bool) {
+	return instagramDecodeRecord(stored.Raw)
+}
+
+func instagramDecodeRecord(raw []byte) (rawJSONMessage, bool) {
 	var wrapper instagramRaw
 	var record rawJSONMessage
-	return record, json.Unmarshal(stored.Raw, &wrapper) == nil && json.Unmarshal(wrapper.Record, &record) == nil
+	if json.Unmarshal(raw, &wrapper) != nil || json.Unmarshal(wrapper.Record, &record) != nil {
+		return record, false
+	}
+	if wrapper.DerivedReactions != nil {
+		record.Reactions = *wrapper.DerivedReactions
+	}
+	return record, true
 }
 
 // matchInstagramGroup assigns archived IDs sharing a fingerprint prefix: first
@@ -187,7 +197,7 @@ func reconcileInstagramCopies(remaining map[string][]*instagramPending, unused m
 
 // addInstagramSurplus turns the first n copies into identical new messages
 // built from the copy whose record sorts lowest, keeping only the reactions all
-// copies share and rewriting raw to match, and skips the rest.
+// copies share, and skips the rest.
 func addInstagramSurplus(items []*instagramPending, n int) {
 	bare := func(p *instagramPending) string {
 		record := p.record
@@ -213,19 +223,30 @@ func addInstagramSurplus(items []*instagramPending, n int) {
 			base.record.Reactions = append(base.record.Reactions, r)
 		}
 	}
-	var envelope instagramRaw
-	_ = json.Unmarshal(base.message.rawData, &envelope)
-	var fields map[string]jsontext.Value
-	_ = json.Unmarshal(envelope.Record, &fields)
-	fields["reactions"], _ = json.Marshal(base.record.Reactions)
-	envelope.Record, _ = json.Marshal(fields, json.Deterministic(true), jsontext.PreserveRawStrings(true))
-	raw, _ := json.Marshal(envelope, jsontext.PreserveRawStrings(true))
+	raw := instagramSurplusRaw(items, n, base.record.Reactions)
 	base.message = instagramJSONMessage(base.record)
-	base.message.rawData = raw
 	base.message.SentAt = items[0].message.SentAt
-	for _, p := range items[:n] {
+	for i, p := range items[:n] {
 		*p = base
+		p.message.rawData = raw[i]
 	}
+}
+
+func instagramSurplusRaw(items []*instagramPending, n int, reactions []rawJSONReaction) [][]byte {
+	if reactions == nil {
+		reactions = []rawJSONReaction{}
+	}
+	raw := make([][]byte, n)
+	for i := range n {
+		var envelope instagramRaw
+		_ = json.Unmarshal(items[i].message.rawData, &envelope)
+		for j := i; j < len(items); j += n {
+			envelope.Candidates = append(envelope.Candidates, items[j].message.rawData)
+		}
+		envelope.DerivedReactions = &reactions
+		raw[i], _ = json.Marshal(envelope, jsontext.PreserveRawStrings(true))
+	}
+	return raw
 }
 
 // numberInstagramGroup gives each unmatched message the next free ordinal.

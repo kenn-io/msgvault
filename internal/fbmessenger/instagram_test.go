@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -459,6 +460,18 @@ func TestInstagramAddsOnlySurplusCopiesWithSharedReactions(t *testing.T) {
 			assert.Equal(int64(1), summary.MessagesAdded)
 			assert.True(summary.Incomplete)
 			assert.Equal(3, countMessages(t, st, ""))
+			var newID int64
+			for _, id := range instagramIDs(t, st) {
+				if !slices.Contains(original, id) {
+					require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), id).Scan(&newID))
+				}
+			}
+			require.NotZero(newID)
+			raw, err := st.GetMessageRawContext(t.Context(), newID)
+			require.NoError(err)
+			for _, reaction := range []string{"d", "e", "f"} {
+				assert.Contains(string(raw), `"reaction":"`+reaction+`"`)
+			}
 			var count int
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value IN ('a','b')`).Scan(&count))
 			assert.Equal(2, count)
@@ -471,8 +484,75 @@ func TestInstagramAddsOnlySurplusCopiesWithSharedReactions(t *testing.T) {
 			require.NoError(err)
 			assert.Zero(summary.MessagesAdded)
 			assert.Equal(3, countMessages(t, st, ""))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value IN ('d','e','f')`).Scan(&count))
+			assert.Zero(count)
 		})
 	}
+}
+
+func TestInstagramReportsConversationStatsFailure(t *testing.T) {
+	require := require.New(t)
+	testutil.SkipIfPostgres(t, "SQLite trigger injects a stats update failure")
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("same"))
+	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_stats BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(FAIL, 'stats failed'); END`)
+	require.NoError(err)
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.ErrorContains(err, "stats failed")
+}
+
+func TestInstagramDistributesSurplusEvidence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	copyOf := func(reaction string) map[string]any {
+		record := instagramTestRecord("same")
+		record["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": reaction}}
+		return record
+	}
+	instagramTestShard(t, root, "circle", "message_1.json", copyOf("a"))
+	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	original := instagramIDs(t, st)
+	instagramTestShard(t, root, "circle", "message_1.json", copyOf("d"), copyOf("e"), copyOf("f"))
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	check := func() {
+		var candidates []string
+		for _, id := range instagramIDs(t, st) {
+			if slices.Contains(original, id) {
+				continue
+			}
+			var messageID int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), id).Scan(&messageID))
+			raw, err := st.GetMessageRawContext(t.Context(), messageID)
+			require.NoError(err)
+			var envelope instagramRaw
+			require.NoError(json.Unmarshal(raw, &envelope))
+			for _, candidate := range envelope.Candidates {
+				var source instagramRaw
+				require.NoError(json.Unmarshal(candidate, &source))
+				var record rawJSONMessage
+				require.NoError(json.Unmarshal(source.Record, &record))
+				require.Len(record.Reactions, 1)
+				candidates = append(candidates, record.Reactions[0].Reaction)
+			}
+		}
+		assert.ElementsMatch([]string{"d", "e", "f"}, candidates)
+	}
+	check()
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	check()
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM reactions WHERE reaction_value IN ('d','e','f')`).Scan(&count))
+	assert.Zero(count)
 }
 
 func TestInstagramDistinctCallContent(t *testing.T) {

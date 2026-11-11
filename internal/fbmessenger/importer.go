@@ -325,7 +325,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 	// import is stopping. This runs before the sync run is finalized.
 	defer func() {
 		if err := st.RecomputeConversationStatsContext(context.WithoutCancel(ctx), source.ID); err != nil {
-			logger.Warn("fbmessenger: recompute stats", "err", err)
+			syncErr, retErr = errors.Join(syncErr, err), errors.Join(retErr, err)
 		}
 	}()
 

@@ -362,8 +362,7 @@ msgvault import-instagram --account orbit.example --self-name "Nova Example" ./e
 Only `your_instagram_activity/messages/inbox/<thread>/message_<N>.json` is
 supported. HTML, ZIP files and other message sections/layouts are unsupported.
 Multipart ZIP containers are not assembled by this importer.
-The summary reports sent records, skipped records/files, missing or rejected media,
-and bounded input diagnostics naming unsupported sections such as message requests.
+The summary reports sent records, skipped records/files, and missing or rejected media.
 If no sender matches `--self-name`, re-run with the exact exported display name
 to repair direction. Deleted, unsent, encrypted and unexported history cannot
 be recovered. No official versioned message schema or exhaustive real-account
@@ -378,7 +377,7 @@ identical display names merge, including
 across direct and group chats; distinct names remain distinct.
 
 Each run starts from the beginning. Messages use content fingerprints and occurrence counts within a thread. Reordered copies keep their IDs when their rendered content and reactions match, and a single changed copy keeps its ID when it is the only unmatched copy. Changed copies that cannot be told apart are skipped, their originals keep their reactions, and the run reports incomplete coverage. When an export has more changed copies than the archive holds, the surplus is added with only the reactions every copy shares. Missing media and interrupted ancillary writes retry on replay. Later exports never delete archived messages or stored media. Edited content or renamed thread keys cannot be reconciled without native message IDs.
-Original records and shard provenance are retained, with the title and members stored once per shard; timestamps preserve integer
+Original records and shard provenance are retained with the title and members; timestamps preserve integer
 milliseconds, and missing sender evidence remains unknown. Records with missing
 or unsupported timestamps are skipped. Reaction times remain unknown.
 

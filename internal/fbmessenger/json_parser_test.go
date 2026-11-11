@@ -75,6 +75,8 @@ func TestParseJSONThread_Corrupt(t *testing.T) {
 }
 
 func TestParseJSONThread_Attachments(t *testing.T) {
+	req := require.New(t)
+	checks := assert.New(t)
 	for _, test := range []struct{ name, field, extension, kind, mime string }{
 		{"photo", "photos", ".png", "photo", "image/png"},
 		{"generic media", "media", ".png", "file", "image/png"},
@@ -109,11 +111,11 @@ func TestParseJSONThread_Attachments(t *testing.T) {
 		})
 	}
 	uri := filepath.Join("testdata", "json_with_media", "your_activity_across_facebook", "messages", "inbox", "bob_XYZ789", "photos", "tiny.png")
-	require.FileExists(t, uri)
+	req.FileExists(uri)
 	attachments := resolveAttachments("", rawJSONMessage{Photos: []rawJSONPhoto{{URI: uri}}})
-	require.Len(t, attachments, 1)
-	assert.Empty(t, attachments[0].AbsPath)
-	assert.Equal(t, uri, attachments[0].URI)
+	req.Len(attachments, 1)
+	checks.Empty(attachments[0].AbsPath)
+	checks.Equal(uri, attachments[0].URI)
 }
 
 func TestParseJSONThread_Attachments_AltLayout(t *testing.T) {

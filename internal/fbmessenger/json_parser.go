@@ -36,7 +36,9 @@ type instagramRaw struct {
 		Title        string               `json:"title"`
 		Participants []rawJSONParticipant `json:"participants"`
 	} `json:"header"`
-	Record jsontext.Value `json:"record"`
+	Record           jsontext.Value     `json:"record"`
+	Candidates       []jsontext.Value   `json:"candidates,omitempty"`
+	DerivedReactions *[]rawJSONReaction `json:"derived_reactions,omitzero"`
 }
 
 type rawJSONPhoto struct {
