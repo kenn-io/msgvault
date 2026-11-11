@@ -307,11 +307,16 @@ func TestCommitmentDecisionSurvivesDuplicateMergeUndo(t *testing.T) {
 
 func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) {
 	const original = "I will send the draft."
-	for _, tc := range []struct{ name, quote, prefix, state string }{
-		{"different", "I will book the venue.", "", LoopStateOpen},
-		{"punctuation", "I will send the draft", "", LoopStateDone},
-		{"shifted_exact", original, "Copied history ends here. 📬 ", LoopStateDone},
-		{"stale_survivor", original, "", LoopStateDone},
+	for _, tc := range []struct {
+		name, quote, prefix, state              string
+		survivorBody, survivorQuote, editedBody string
+	}{
+		{name: "different", quote: "I will book the venue.", state: LoopStateOpen},
+		{name: "punctuation", quote: "I will send the draft", state: LoopStateDone,
+			survivorBody: original, survivorQuote: "I will send the draft"},
+		{name: "shifted_exact", quote: original, prefix: "Copied history ends here. 📬 ", state: LoopStateDone},
+		{name: "stale_survivor", quote: original, state: LoopStateDone,
+			survivorBody: "I will book the venue.", survivorQuote: "I will book the venue.", editedBody: original},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, a, ctx := require.New(t), assert.New(t), t.Context()
@@ -319,11 +324,8 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 			st := f.store
 			_, persist := newCommitmentTestConversation(t, f)
 			survivorBody := tc.prefix + tc.quote
-			if tc.name == "punctuation" {
-				survivorBody = original
-			}
-			if tc.name == "stale_survivor" {
-				survivorBody = "I will book the venue."
+			if tc.survivorBody != "" {
+				survivorBody = tc.survivorBody
 			}
 			survivor := persist("survivor", survivorBody, -time.Hour)
 			absorbed := persist("absorbed", original, -time.Hour)
@@ -337,11 +339,9 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 			r.Len(window.Sources, 2)
 			promises := []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, absorbed), Direction: peoplesweep.CommitmentOwedTo,
 				Quote: original, Summary: "Send draft", End: int64(len(original))}}
-			if tc.name == "punctuation" {
-				promises = append(promises, peoplesweep.CommitmentPromise{SourceID: commitmentSourceID(window, survivor), Direction: peoplesweep.CommitmentOwedTo, Quote: tc.quote, Summary: "Send draft", End: int64(len(tc.quote))})
-			}
-			if tc.name == "stale_survivor" {
-				promises = append(promises, peoplesweep.CommitmentPromise{SourceID: commitmentSourceID(window, survivor), Direction: peoplesweep.CommitmentOwedTo, Quote: survivorBody, Summary: "Book venue", End: int64(len(survivorBody))})
+			if tc.survivorQuote != "" {
+				promises = append(promises, peoplesweep.CommitmentPromise{SourceID: commitmentSourceID(window, survivor), Direction: peoplesweep.CommitmentOwedTo,
+					Quote: tc.survivorQuote, Summary: "Survivor promise", End: int64(len(tc.survivorQuote))})
 			}
 			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
 			r.NoError(err)
@@ -357,8 +357,8 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 			r.Positive(absorbedID)
 			_, err = st.DecidePersonCommitmentContext(ctx, absorbedID, LoopStateDone, nil, f.request.CompletedAt)
 			r.NoError(err)
-			if tc.name == "stale_survivor" {
-				_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), original, survivor)
+			if tc.editedBody != "" {
+				_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), tc.editedBody, survivor)
 				r.NoError(err)
 			}
 			_, err = st.MergeDuplicates(ctx, survivor, []int64{absorbed}, "commitment-different-survivor")

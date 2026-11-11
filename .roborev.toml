@@ -9,11 +9,11 @@ review-fix cycles.
 People inference uses consented model outputs for semantic interpretation.
 Deterministic checks enforce source provenance, exact quoted spans,
 source-author binding and chronology under each lane's current source trust
-contract. They do not prove semantic entailment: a model can infer an
-unsupported date or misread fulfilment. Confirmed automatic commitment
+contract. They do not prove semantic entailment. Model interpretation can
+produce an unsupported date or misread fulfilment. Confirmed automatic commitment
 fulfilment requires explicit `auto_fulfil` opt-in, and the owner can reopen it.
 Assess evidence, authorization and provenance bypasses separately from model
-semantic errors; do not assume model correctness or an additional deterministic
+semantic errors. Do not assume model correctness or an additional deterministic
 entailment oracle.
 
 CI already builds and tests this project. Do not assert that code fails

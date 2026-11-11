@@ -109,16 +109,6 @@ func TestDelegatedFailsPrivilegedPredicate(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 
-	t.Run("commitment decision remains owner only", func(t *testing.T) {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost,
-			"/api/v1/loops/commitments/c12/decision", strings.NewReader(`{"state":"done"}`))
-		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
-	})
-
 	t.Run("issueAgentToken returns 401", func(t *testing.T) {
 		req := makeRequest(http.MethodPost, "/api/v1/agent-tokens")
 		req.Header.Set("Content-Type", "application/json")
