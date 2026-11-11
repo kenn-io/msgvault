@@ -321,6 +321,39 @@ func TestPG_BackfillFTS_SeesConcurrentBodyUpdate(t *testing.T) {
 	assertFTSContains(t, f.Store, "old", 0)
 }
 
+func TestPG_BackfillFTS_SkipsEntryRefreshedWhileWaiting(t *testing.T) {
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	ids := f.CreateMessages(65)
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'old'), indexing_version = 2`)
+	require.NoError(t, err)
+	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	dialect := &store.PostgreSQLDialect{}
+	for _, id := range ids[:64] {
+		require.NoError(t, dialect.FTSUpsert(tx, store.FTSDoc{MessageID: id, FromAddr: "slackdisplayname"}))
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.Store.BackfillFTSContext(ctx, nil)
+		done <- err
+	}()
+	require.Eventually(t, func() bool {
+		var waiting bool
+		err := f.Store.DB().QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'SELECT m.id FROM messages m WHERE m.id IN (%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&waiting)
+		return err == nil && waiting
+	}, 30*time.Second, 20*time.Millisecond)
+	require.NoError(t, tx.Commit())
+	require.NoError(t, <-done)
+	assertFTSContains(t, f.Store, "slackdisplayname", 64)
+	var version int
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT indexing_version FROM messages WHERE id = $1`, ids[64]).Scan(&version))
+	assert.Equal(t, store.CurrentFTSIndexingVersion, version)
+}
+
 // isPostgresTestDB reports whether the active test backend is PostgreSQL,
 // inferred from MSGVAULT_TEST_DB. Used by backend-portable tests that must issue
 // dialect-specific SQL to set up a scenario (e.g. punching a hole in the FTS

@@ -7033,13 +7033,15 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	charCap := strconv.Itoa(maxFTSBodyChars)
 	legacy := `m.indexing_version = 2 AND m.search_fts IS NOT NULL`
 	terminal := `m.indexing_version IS NOT NULL AND m.search_fts = ''::tsvector`
+	stale := `m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM ` + strconv.Itoa(CurrentFTSIndexingVersion)
 	if !useLegacy {
 		legacy, terminal = "FALSE", "FALSE"
+		stale = "TRUE"
 	}
 	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), COALESCE(` + terminal + `, FALSE),
 		LEFT(COALESCE(old.subject, ''), ` + charCap + `), LEFT(COALESCE(old.sender, ''), ` + charCap + `), LEFT(COALESCE(old.recipient, ''), ` + charCap + `)
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id
-		` + legacyFTSOldJoinSQL(legacy) + ` WHERE m.id = ANY(?::bigint[]) ORDER BY m.id`
+		` + legacyFTSOldJoinSQL(legacy) + ` WHERE m.id = ANY(?::bigint[]) AND (` + stale + `) ORDER BY m.id`
 	vector, _ := pgFTSVector(FTSDoc{})
 	replace := strings.NewReplacer("$2", "u.subject", "$3", "u.body", "$4", "u.sender", "$5", "u.to_addrs", "$6", "u.cc_addrs")
 	vector = replace.Replace(vector)
@@ -7115,7 +7117,8 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 			return 0, err
 		}
 		if len(ids) == 0 {
-			break
+			fromID = lockedIDs[len(lockedIDs)-1] + 1
+			continue
 		}
 		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs, terminals, oldSubjects, oldSenders, oldRecipients); err != nil {
 			return 0, err
