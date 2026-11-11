@@ -102,6 +102,9 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				a.NotNil(claims[0].Freshness.LatestSupportedAt)
 				// Re-resolving this same generation must reuse its ledger decisions.
 				target := claims[0].Target
+				var beforeResolution, beforeDecision, afterResolution, afterDecision int64
+				r.NoError(st.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM person_fact_resolutions`).Scan(&beforeResolution))
+				r.NoError(st.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM person_fact_decisions`).Scan(&beforeDecision))
 				r.NoError(st.withTxContext(ctx, func(tx *loggedTx) error {
 					generation, err := st.loadPersonFactGenerationRowTx(ctx, tx, f.personID, restored.Generation.GenerationKey)
 					if err != nil {
@@ -111,6 +114,10 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 						personfacts.TargetDescriptor{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, nil)
 					return err
 				}))
+				r.NoError(st.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM person_fact_resolutions`).Scan(&afterResolution))
+				r.NoError(st.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM person_fact_decisions`).Scan(&afterDecision))
+				a.Equal(beforeResolution, afterResolution)
+				a.Equal(beforeDecision, afterDecision)
 			})
 		}
 	}
@@ -132,6 +139,12 @@ func TestCommitmentPublicIDIsNotReusedAfterDuplicateMerge(t *testing.T) {
 	r.NoError(err)
 	r.Len(items, 2)
 	highest := max(items[0].ID, items[1].ID)
+	for _, item := range items {
+		if item.AnchorMessageID == absorbed {
+			_, err = st.DecidePersonCommitmentContext(ctx, item.ID, LoopStateDone, nil, f.request.CompletedAt)
+			r.NoError(err)
+		}
+	}
 	r.NoError(st.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := st.copyLoopDecisionTx(ctx, tx, absorbed, survivor); err != nil {
 			return err
@@ -139,10 +152,14 @@ func TestCommitmentPublicIDIsNotReusedAfterDuplicateMerge(t *testing.T) {
 		_, err := tx.ExecContext(ctx, "DELETE FROM messages WHERE id = ?", absorbed)
 		return err
 	}))
+	merged, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+	r.NoError(err)
+	r.Len(merged, 1)
+	a.Equal(LoopStateDone, merged[0].State)
 	newMessage := persist("new-promise", "I will check the venue.", -time.Minute)
 	f = nextCommitmentTestAttempt(t, f, "-new-promise")
 	applyCommitmentTestSources(t, f, cfg.Commitments)
-	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, false)
+	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
 	r.NoError(err)
 	r.Len(items, 2)
 	for _, item := range items {
