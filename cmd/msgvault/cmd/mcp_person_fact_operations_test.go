@@ -174,7 +174,8 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 }
 
 func TestPersonFactCapabilitiesRequireExactContracts(t *testing.T) {
-	backend, _, _, _ := factFixture(t)
+	backend, _, _, target := factFixture(t)
+	require.NotEmpty(t, target.Key)
 	caps, err := backend.client.MCPCapabilities(t.Context())
 	require.NoError(t, err)
 	for _, tc := range []struct {

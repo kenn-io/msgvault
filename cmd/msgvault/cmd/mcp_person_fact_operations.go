@@ -137,7 +137,7 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 	return nil, false, nil
 }
 func (b *daemonMCPOperations) personFactOperationDisclosure(name string, args map[string]any) (string, bool, error) {
-	effect := ""
+	var effect string
 	switch name {
 	case "set_person_fact_pin":
 		a, e := decodeMCPOperationArguments[factPinArgs](args)
