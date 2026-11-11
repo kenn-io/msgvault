@@ -369,6 +369,14 @@ jobs:
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
+      - name: Fetch API contract base
+        if: ${{ matrix.name == 'api' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
+
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 

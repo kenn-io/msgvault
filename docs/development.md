@@ -572,6 +572,11 @@ minimum constants introduced by your change to that version. Description changes
 also require a bump. Handler changes that leave the documents unchanged still
 need an explicit version bump when they change the API contract.
 
+Add the change to the version-history comment above `APISchemaVersion`. The test
+compares markers with `origin/main` when available. To reproduce the CI history
+check against a specific commit, set `MSGVAULT_API_CONTRACT_BASE` to its SHA or
+ref. The test requires that explicit base to exist locally.
+
 ## Archive schema version maintenance
 
 `internal/store/schema_version.go` owns `store.SchemaVersion`, the monotonic
