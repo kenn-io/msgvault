@@ -158,7 +158,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, checkpoint.PageToken)
 		}
 	}()
-	if err = run.dropDeletedFrames(ctx); err != nil {
+	if _, err = run.dropDeletedFrames(ctx); err != nil {
 		return sum, err
 	}
 	// Publish the inherited state before any new request, so a crash cannot
@@ -202,23 +202,26 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 // msgvault since the checkpoint was saved: frames reading their replies and
 // saved copies still waiting to be archived. Meta has no replies left to read
 // there, so asking would fail on every run. The run holds the source lock, so
-// no comment is deleted while it traverses.
-func (r *importRun) dropDeletedFrames(ctx context.Context) error {
+// no comment is deleted while it traverses. It reports whether it dropped
+// anything.
+func (r *importRun) dropDeletedFrames(ctx context.Context) (bool, error) {
 	deleted := func(id string) (bool, error) {
 		return r.imp.store.MessageDeletedFromSourceContext(ctx, r.source.ID, id)
 	}
+	changed := false
 	for _, p := range r.state.Phases {
 		for i := range p.Stack {
 			f := &p.Stack[i]
 			if f.Parent != f.Root {
 				gone, err := deleted(f.Parent)
 				if err != nil {
-					return err
+					return changed, err
 				}
 				if gone {
 					// Each frame's comment was already taken from the frame
 					// below, so cutting here loses only its own subtree.
 					p.Stack = p.Stack[:i]
+					changed = true
 					break
 				}
 			}
@@ -227,16 +230,17 @@ func (r *importRun) dropDeletedFrames(ctx context.Context) error {
 			for _, child := range f.Pending {
 				gone, err := deleted(child.ID)
 				if err != nil {
-					return err
+					return changed, err
 				}
 				if !gone {
 					pending = append(pending, child)
 				}
 			}
+			changed = changed || len(pending) != len(f.Pending)
 			f.Pending = pending
 		}
 	}
-	return nil
+	return changed, nil
 }
 
 func (r *importRun) verify(ctx context.Context) error {

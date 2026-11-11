@@ -128,8 +128,10 @@ works for Facebook Page comments and [Instagram comments](instagram-comments.md)
    msgvault comment moderate 42 --delete --yes
    ```
 
-After Meta accepts the change, msgvault records it. A hidden comment stays
-hidden in the archive across later syncs. A deleted comment stays in the
+After Meta accepts the change, msgvault records it. msgvault remembers a hide
+made with this command and shows it as `[hidden]` in `--dry-run`, but the
+comment still appears in search and the Web UI. Hides and unhides made on
+Facebook or Instagram are not synced. A deleted comment stays in the
 archive, marked as deleted from its source, like other messages removed from a
 provider. Its archived replies are marked deleted with it. A comment already
 deleted from Meta cannot be changed. Posts and media captions cannot be changed
