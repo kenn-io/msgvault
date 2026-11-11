@@ -383,9 +383,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 				return summary, err
 			}
 			if errors.Is(err, errLimitReached) {
-				if instagram {
-					summary.LimitReached = true
-				}
+				summary.LimitReached = true
 				// Limit tripped mid-thread: do not advance the
 				// checkpoint past this thread, so a subsequent
 				// non-limited run re-scans it and picks up the
