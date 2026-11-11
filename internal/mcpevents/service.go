@@ -105,7 +105,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 			return out, failure(Unavailable, "key_unavailable")
 		}
 		index := find(entries, in.Arguments, in.Delivery.URL)
-		id := ""
+		var id string
 		var initial *store.WakeupState
 		if index >= 0 {
 			id = entries[index].ID

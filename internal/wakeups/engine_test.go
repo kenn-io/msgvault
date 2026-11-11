@@ -3,9 +3,9 @@ package wakeups
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -168,7 +168,7 @@ func TestEngineTruncatesIDsWithoutLosingCount(t *testing.T) {
 
 func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 	for _, status := range []int{http.StatusGone, http.StatusRequestEntityTooLarge, http.StatusInternalServerError} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
 			st := testutil.NewTestStore(t)
@@ -191,8 +191,8 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 				var body map[string]any
 				_ = json.NewDecoder(r.Body).Decode(&body)
 				bodies = append(bodies, body)
-				ids = append(ids, r.Header.Get("webhook-id"))
-				assert.Equal("sub-x", r.Header.Get("X-MCP-Subscription-Id"))
+				ids = append(ids, r.Header.Get("Webhook-Id"))
+				assert.Equal("sub-x", r.Header.Get("X-Mcp-Subscription-Id"))
 				w.WriteHeader(status)
 			}))
 			defer server.Close()

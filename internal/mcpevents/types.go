@@ -78,14 +78,14 @@ func (t *TTL) UnmarshalJSON(b []byte) error {
 	}
 	return json.Unmarshal(b, &t.ms)
 }
-func (t TTL) MarshalJSON() ([]byte, error) {
+func (t *TTL) MarshalJSON() ([]byte, error) {
 	if !t.set || t.null {
 		return []byte("null"), nil
 	}
 	return json.Marshal(t.ms)
 }
-func (t TTL) IsZero() bool { return !t.set }
-func (t TTL) Duration() time.Duration {
+func (t *TTL) IsZero() bool { return !t.set }
+func (t *TTL) Duration() time.Duration {
 	if !t.set {
 		return 24 * time.Hour
 	}

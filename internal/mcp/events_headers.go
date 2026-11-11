@@ -116,7 +116,7 @@ func eventsRequestName(body []byte) (name string, id jsontext.Value, ok bool) {
 		return "", nil, false
 	}
 	if ids := top["id"]; len(ids) == 1 {
-		id = jsontext.Value(ids[0])
+		id = ids[0]
 	}
 	if len(top["params"]) != 1 {
 		return "", id, false

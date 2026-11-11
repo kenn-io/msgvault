@@ -98,7 +98,7 @@ func (c webhookClient) sendEvent(ctx context.Context, endpoint, id, subscription
 	req.Header.Set("Webhook-Signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 	req.Header.Set("User-Agent", "msgvault")
 	if subscriptionID != "" {
-		req.Header.Set("X-MCP-Subscription-Id", subscriptionID)
+		req.Header.Set("X-Mcp-Subscription-Id", subscriptionID)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

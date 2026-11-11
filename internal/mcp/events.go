@@ -12,12 +12,13 @@ import (
 )
 
 type EventsBackend interface {
-	MCPEventsList(context.Context) (mcpevents.MCPEventsListResult, error)
-	MCPEventsSubscribe(context.Context, mcpevents.MCPEventsSubscribeRequest) (mcpevents.MCPEventsSubscribeResult, error)
-	MCPEventsUnsubscribe(context.Context, mcpevents.MCPEventsUnsubscribeRequest) error
+	MCPEventsList(ctx context.Context) (mcpevents.MCPEventsListResult, error)
+	MCPEventsSubscribe(ctx context.Context, request mcpevents.MCPEventsSubscribeRequest) (mcpevents.MCPEventsSubscribeResult, error)
+	MCPEventsUnsubscribe(ctx context.Context, request mcpevents.MCPEventsUnsubscribeRequest) error
 }
 type nativeEventParams struct {
 	sdkmcp.ParamsBase
+
 	raw jsontext.Value
 }
 
@@ -57,6 +58,7 @@ func (p *nativeEventParams) subscribe() (mcpevents.MCPEventsSubscribeRequest, er
 
 type nativeEventResult struct {
 	sdkmcp.ResultBase
+
 	value    any
 	complete bool
 }

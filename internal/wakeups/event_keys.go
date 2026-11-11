@@ -22,7 +22,7 @@ func LoadEventKey(home string, create bool) (EventKey, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) && create {
 		if _, err = rand.Read(key[:]); err != nil {
-			return EventKey{}, err
+			return EventKey{}, fmt.Errorf("generate events key: %w", err)
 		}
 		if err = atomicfile.WriteNew(path, key[:], atomicfile.WithPrivate()); err != nil {
 			if !errors.Is(err, os.ErrExist) {
@@ -53,9 +53,13 @@ func eventAAD(archive, id string) []byte {
 func (k EventKey) aead() (cipher.AEAD, error) {
 	block, err := aes.NewCipher(k[:])
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("initialize events cipher: %w", err)
 	}
-	return cipher.NewGCM(block)
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("initialize events encryption: %w", err)
+	}
+	return aead, nil
 }
 
 func (k EventKey) Seal(archive, id string, secret []byte) ([]byte, error) {
@@ -65,7 +69,7 @@ func (k EventKey) Seal(archive, id string, secret []byte) ([]byte, error) {
 	}
 	nonce := make([]byte, aead.NonceSize())
 	if _, err = rand.Read(nonce); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("generate events nonce: %w", err)
 	}
 	return aead.Seal(nonce, nonce, secret, eventAAD(archive, id)), nil
 }
@@ -78,5 +82,9 @@ func (k EventKey) Open(archive, id string, sealed []byte) ([]byte, error) {
 	if len(sealed) < aead.NonceSize() {
 		return nil, errors.New("invalid sealed events secret")
 	}
-	return aead.Open(nil, sealed[:aead.NonceSize()], sealed[aead.NonceSize():], eventAAD(archive, id))
+	plain, err := aead.Open(nil, sealed[:aead.NonceSize()], sealed[aead.NonceSize():], eventAAD(archive, id))
+	if err != nil {
+		return nil, fmt.Errorf("open events secret: %w", err)
+	}
+	return plain, nil
 }

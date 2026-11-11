@@ -109,13 +109,23 @@ func TestDecodeSubscribeRejectsInvalidArgumentsAndNulls(t *testing.T) {
 }
 
 func TestTTLClampAndDefaults(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	for _, tc := range []struct {
 		raw  string
 		want time.Duration
-	}{{`{}`, 24 * time.Hour}, {`{"ttlMs":null}`, 30 * 24 * time.Hour}, {`{"ttlMs":1}`, time.Minute}, {`{"ttlMs":999999999999}`, 30 * 24 * time.Hour}} {
+		wire string
+	}{{`{}`, 24 * time.Hour, ""}, {`{"ttlMs":null}`, 30 * 24 * time.Hour, `"ttlMs":null`}, {`{"ttlMs":1}`, time.Minute, `"ttlMs":1`}, {`{"ttlMs":999999999999}`, 30 * 24 * time.Hour, `"ttlMs":999999999999`}} {
 		var request MCPEventsSubscribeRequest
-		require.NoError(t, json.Unmarshal([]byte(tc.raw), &request))
-		assert.Equal(t, tc.want, request.TTL.Duration())
+		requirements.NoError(json.Unmarshal([]byte(tc.raw), &request))
+		assertions.Equal(tc.want, request.TTL.Duration())
+		wire, err := json.Marshal(request)
+		requirements.NoError(err)
+		if tc.wire == "" {
+			assertions.NotContains(string(wire), `"ttlMs"`)
+		} else {
+			assertions.Contains(string(wire), tc.wire)
+		}
 	}
 }
 

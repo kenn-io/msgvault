@@ -42,7 +42,7 @@ func TestOwnerEventsDisabledAndInvalidSubscription(t *testing.T) {
 	events := &mcpevents.Service{Store: st, Home: cfg.HomeDir}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
 	request := func(body string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)

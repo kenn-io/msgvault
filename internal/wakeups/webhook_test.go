@@ -28,8 +28,8 @@ func TestWebhookSigns(t *testing.T) {
 
 		var signature, id, stamp, subscription string
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id, stamp, signature = r.Header.Get("webhook-id"), r.Header.Get("webhook-timestamp"), r.Header.Get("webhook-signature")
-			subscription = r.Header.Get("X-MCP-Subscription-Id")
+			id, stamp, signature = r.Header.Get("Webhook-Id"), r.Header.Get("Webhook-Timestamp"), r.Header.Get("Webhook-Signature")
+			subscription = r.Header.Get("X-Mcp-Subscription-Id")
 			w.WriteHeader(http.StatusNoContent)
 		}))
 		defer server.Close()
