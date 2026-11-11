@@ -355,21 +355,22 @@ func TestUnsupportedRosterVersionStopsImport(t *testing.T) {
 }
 
 func TestUnsupportedRosterSourceVersionStopsImport(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	t.Cleanup(func() { require.NoError(st.Close()) })
 	sourceID := newBeeperTestSource(t, st, "signal")
 	const want = "saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume"
-	require.NoError(t, st.UpdateSourceSyncState(t.Context(), sourceID, `{"chats":{"room":{"roster_work":{"version":2}}}}`))
+	require.NoError(st.UpdateSourceSyncState(t.Context(), sourceID, `{"chats":{"room":{"roster_work":{"version":2}}}}`))
 	for _, full := range []bool{false, true} {
 		_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Full: full})
-		require.ErrorContains(t, err, want)
+		require.ErrorContains(err, want)
 	}
 	_, err := imp.BackfillMedia(t.Context(), ImportOptions{AccountID: "signal", AttachmentsDir: t.TempDir()})
-	require.ErrorContains(t, err, want)
+	require.ErrorContains(err, want)
 	var runs int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&runs))
-	assert.Zero(t, runs, "no media run starts over newer progress")
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM sync_runs WHERE source_id = ?`), sourceID).Scan(&runs))
+	assert.Zero(runs, "no media run starts over newer progress")
 }
 
 func TestRosterJoinRefreshesExistingMatchEvidence(t *testing.T) {
