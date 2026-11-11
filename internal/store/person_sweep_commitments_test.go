@@ -471,6 +471,29 @@ func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
 	a.Empty(candidates, "untracked promises are not automatic candidates")
 	_, err = st.SetPersonTrackingContext(ctx, f.personID, true)
 	r.NoError(err)
+	r.NoError(st.DeferCommitmentAgendaContext(ctx, commitment, now))
+	candidates, err = st.ListCommitmentAgendaCandidatesContext(ctx, now, 1)
+	r.NoError(err)
+	a.Empty(candidates, "a deferred promise waits for its retry interval")
+	_, persist := newCommitmentTestConversation(t, f)
+	freshMessage := persist("fresh-agenda-promise", "I will book the venue.", -30*time.Minute)
+	f = nextCommitmentTestAttempt(t, f, "-fresh-agenda")
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	applyCommitmentTestSources(t, f, cfg.Commitments)
+	candidates, err = st.ListCommitmentAgendaCandidatesContext(ctx, now, 1)
+	r.NoError(err)
+	r.Len(candidates, 1)
+	a.Equal(freshMessage, candidates[0].AnchorMessageID, "fresh promises precede deferred retries")
+	fresh := candidates[0]
+	candidates, err = st.ListCommitmentAgendaCandidatesContext(ctx, now.Add(commitmentAgendaDeferFor), 2)
+	r.NoError(err)
+	r.Len(candidates, 2)
+	a.Equal(fresh.ID, candidates[0].ID)
+	a.Equal(commitment.ID, candidates[1].ID, "a mature deferred promise returns after fresh work")
+	_, err = st.DecidePersonCommitmentContext(ctx, fresh.ID, LoopStateDone, nil, now)
+	r.NoError(err)
 	start, end := int(commitment.Start), int(commitment.End)
 	evidence, err := kataevidence.New(st).Prepare(ctx, []kataevidence.Selector{{
 		Kind: "message", MessageID: commitment.AnchorMessageID, StartRune: &start, EndRune: &end,
