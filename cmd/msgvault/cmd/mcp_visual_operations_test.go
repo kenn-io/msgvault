@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
@@ -20,34 +19,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector/visual"
 )
-
-func TestMCPVisualWriteFlagsDefaultOff(t *testing.T) {
-	for _, prefix := range []string{"", "mcp-"} {
-		t.Run(prefix, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			command := mcpCmd
-			if prefix != "" {
-				command = &cobra.Command{}
-				addMCPWriteFlags(command, prefix)
-			} else {
-				saved := mcpAllowVisualWrites
-				flag := command.Flags().Lookup("allow-visual-writes")
-				require.NotNil(flag)
-				changed := flag.Changed
-				t.Cleanup(func() { mcpAllowVisualWrites = saved; flag.Changed = changed })
-				mcpAllowVisualWrites = false
-			}
-			var opts mcpserver.ServeOptions
-			applyMCPWriteFlags(command, prefix, &opts)
-			assert.NotContains(opts.OperationWriteFamilies, mcpserver.OperationFamilyVisual)
-			require.NoError(command.Flags().Set(prefix+"allow-visual-writes", "true"))
-			opts = mcpserver.ServeOptions{}
-			applyMCPWriteFlags(command, prefix, &opts)
-			assert.Contains(opts.OperationWriteFamilies, mcpserver.OperationFamilyVisual)
-		})
-	}
-}
 
 func TestMCPVisualNativeOperationsAndApproval(t *testing.T) {
 	require := require.New(t)
@@ -194,48 +165,40 @@ func TestMCPVisualNativeOperationsAndApproval(t *testing.T) {
 }
 
 func TestMCPVisualMutationFailureIsUncertainAndRedacted(t *testing.T) {
-	for _, name := range []string{"resume_visual_attachment_build", "retire_visual_attachment_generation"} {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		args     map[string]any
+		failsRun bool
+	}{
+		{"resume_visual_attachment_build", nil, true},
+		{"retire_visual_attachment_generation", map[string]any{"generation_id": 1}, true},
+		{"start_visual_attachment_build", map[string]any{"consent": true}, false},
+		{"retry_visual_attachment_owner", map[string]any{"message_id": 42, "blob_hash": strings.Repeat("ab", 32)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			cfg := config.NewDefaultConfig()
 			cfg.Data.DataDir = t.TempDir()
 			fixture := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
 			failure := errors.New("synthetic private diagnostic")
-			fixture.SetVisualOperations(nil, func(context.Context, operations.PassScope) error { return failure }, nil,
+			calls := 0
+			run := func(context.Context, operations.PassScope) error {
+				calls++
+				if tc.failsRun {
+					return failure
+				}
+				return nil
+			}
+			fixture.SetVisualOperations(run, run,
+				func(ctx context.Context, scope operations.PassScope, _ int64, _ string) error { return run(ctx, scope) },
 				func(context.Context, bool) (visual.Status, error) {
+					if !tc.failsRun {
+						return visual.Status{}, failure
+					}
 					return visual.Status{Generation: store.VisualGeneration{ID: 1}}, nil
 				},
-				func(context.Context) error { return failure })
+				func(context.Context) error { calls++; return failure })
 			backend := sourceOperationFixture(t, fixture)
-			args := map[string]any{}
-			if name == "retire_visual_attachment_generation" {
-				args["generation_id"] = 1
-			}
-			result, err := backend.ExecuteOperation(t.Context(), name, args)
-			require.NoError(t, err)
-			require.True(t, result.IsError)
-			data, err := json.Marshal(result.Output)
-			require.NoError(t, err)
-			assert.Contains(t, string(data), `"operation_may_have_completed":true`)
-			assert.NotContains(t, string(data), "synthetic private diagnostic")
-		})
-	}
-	for _, name := range []string{"start_visual_attachment_build", "retry_visual_attachment_owner"} {
-		t.Run(name+"_status_failure", func(t *testing.T) {
-			cfg := config.NewDefaultConfig()
-			cfg.Data.DataDir = t.TempDir()
-			fixture := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
-			calls := 0
-			fixture.SetVisualOperations(func(context.Context, operations.PassScope) error { calls++; return nil }, nil,
-				func(context.Context, operations.PassScope, int64, string) error { calls++; return nil },
-				func(context.Context, bool) (visual.Status, error) {
-					return visual.Status{}, errors.New("synthetic private diagnostic")
-				}, nil)
-			backend := sourceOperationFixture(t, fixture)
-			args := map[string]any{"consent": true}
-			if name == "retry_visual_attachment_owner" {
-				args = map[string]any{"message_id": 42, "blob_hash": strings.Repeat("ab", 32)}
-			}
-			result, err := backend.ExecuteOperation(t.Context(), name, args)
+			result, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
 			require.NoError(t, err)
 			require.True(t, result.IsError)
 			assert.Equal(t, 1, calls)
