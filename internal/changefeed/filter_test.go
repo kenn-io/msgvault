@@ -33,18 +33,70 @@ func TestResolveFilterTracksNewPersonLinks(t *testing.T) {
 	_, err = ResolveFilter(t.Context(), st, Filter{PersonID: 99999999})
 	require.Error(err)
 }
-func TestScanStopsAtBudgetAndResumes(t *testing.T) {
-	assert := Assert.New(t)
-
-	at := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	page := store.ChangedMessagePage{ServerTime: at.Add(time.Hour), CompleteThrough: at.Add(time.Minute)}
-	for i := range 2001 {
-		page.Messages = append(page.Messages, store.ChangedMessage{ID: int64(i), ContentChangedAt: at, SourceID: 1})
+func TestChangesFilterMatchesAllDimensions(t *testing.T) {
+	f := Filter{PersonID: 4, Participants: []int64{10, 11}, SourceIDs: []int64{1, 2}, ConversationIDs: []int64{8}, IncomingOnly: true}
+	for _, tc := range []struct {
+		name string
+		row  store.ChangedMessage
+		want bool
+	}{
+		{"first identity", store.ChangedMessage{SenderID: 10, SourceID: 1, ConversationID: 8}, true},
+		{"second identity", store.ChangedMessage{SenderID: 11, SourceID: 2, ConversationID: 8}, true},
+		{"other sender", store.ChangedMessage{SenderID: 12, SourceID: 1, ConversationID: 8}, false},
+		{"other source", store.ChangedMessage{SenderID: 10, SourceID: 3, ConversationID: 8}, false},
+		{"other conversation", store.ChangedMessage{SenderID: 10, SourceID: 1, ConversationID: 9}, false},
+		{"outgoing", store.ChangedMessage{SenderID: 10, SourceID: 1, ConversationID: 8, IsFromMe: true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) { Assert.Equal(t, tc.want, f.Matches(tc.row)) })
 	}
-	rows, next, more := Scan(page, store.ChangedMessagesFrom(at), Filter{SourceIDs: []int64{2}}, 2000)
-	assert.Empty(rows)
-	assert.True(more)
-	id, ok := next.AfterID()
-	Require.True(t, ok)
-	assert.Equal(int64(1999), id)
+}
+
+func TestChangesScanPages(t *testing.T) {
+	at := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	bound := at.Add(time.Hour)
+	rows := make([]store.ChangedMessage, 2001)
+	for i := range rows {
+		rows[i] = store.ChangedMessage{ID: int64(i + 1), SourceID: 1, ContentChangedAt: at}
+	}
+	from := store.ChangedMessagesFrom(at)
+	after := store.ChangedMessagesAfter(at, 0)
+	for _, tc := range []struct {
+		name         string
+		page         store.ChangedMessagePage
+		since        store.ChangedMessagesCursor
+		source       int64
+		limit, count int
+		next         store.ChangedMessagesCursor
+		more         bool
+	}{
+		{"limit", store.ChangedMessagePage{Messages: rows, ServerTime: bound.Add(time.Second), CompleteThrough: bound}, from, 1, 1, 1, store.ChangedMessagesAfter(at, 1), true},
+		{"sentinel", store.ChangedMessagePage{Messages: rows, ServerTime: bound.Add(time.Second), CompleteThrough: bound}, from, 2, 100, 0, store.ChangedMessagesAfter(at, 2000), true},
+		{"exhaustion", store.ChangedMessagePage{Messages: rows[:2000], ServerTime: bound.Add(time.Second), CompleteThrough: bound}, from, 2, 100, 0, store.ChangedMessagesFrom(bound), false},
+		{"no bound", store.ChangedMessagePage{ServerTime: bound}, after, 1, 1, 0, after, false},
+		{"earlier bound", store.ChangedMessagePage{ServerTime: bound, CompleteThrough: at.Add(-time.Second)}, after, 1, 1, 0, after, false},
+		{"equal bound", store.ChangedMessagePage{ServerTime: bound, CompleteThrough: at}, after, 1, 1, 0, after, false},
+		{"above clock", store.ChangedMessagePage{ServerTime: at.Add(-time.Second), CompleteThrough: at.Add(-2 * time.Second)}, after, 1, 1, 0, store.ChangedMessagesFrom(at.Add(-2 * time.Second)), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, next, more := Scan(tc.page, tc.since, Filter{SourceIDs: []int64{tc.source}}, tc.limit)
+			Assert.Len(t, got, tc.count)
+			Assert.Equal(t, tc.next, next)
+			Assert.Equal(t, tc.more, more)
+		})
+	}
+}
+
+func TestChangesFilterDigestStable(t *testing.T) {
+	filter := Filter{PersonID: 4, SourceIDs: []int64{1, 2}, ConversationIDs: []int64{8}, IncomingOnly: true}
+	Assert.Equal(t, "7725ea5be9477647", filter.Digest())
+}
+
+func TestGrantDigestUsesStableReferences(t *testing.T) {
+	assert := Assert.New(t)
+	original := Filter{GrantRefs: []GrantRef{{Type: "gmail", Identifier: "a@example.com"}, {Type: "gmail", Identifier: "b@example.com"}}}
+	same := Filter{GrantRefs: []GrantRef{{Type: "gmail", Identifier: "a@example.com"}, {Type: "gmail", Identifier: "b@example.com"}}}
+	assert.NotEmpty(original.Digest())
+	assert.Equal(original.Digest(), same.Digest())
+	assert.NotEqual(original.Digest(), (Filter{GrantRefs: same.GrantRefs[:1]}).Digest())
+	assert.NotEqual(original.Digest(), (Filter{}).Digest())
 }

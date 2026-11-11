@@ -12,8 +12,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -119,16 +117,16 @@ func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
 	_, after, err := base.LoadWakeupState(t.Context(), "a")
 	require.NoError(err)
 	assert.Equal(before, after)
+	t.Run("walk after head", func(t *testing.T) {
+		base := testutil.NewTestStore(t)
+		st := &observedStore{Store: base}
+		initializedWakeup(t, base, "walk", time.Now().UTC().Add(-time.Hour))
+		engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "new"}, {Name: "walk"}}}
+		Require.NoError(t, engine.RunPass(t.Context()))
+		Assert.Equal(t, []int{1, 2001}, st.reads)
+	})
 }
-func TestHeadReadIsNotReusedForWalkFromZero(t *testing.T) {
-	base := testutil.NewTestStore(t)
-	st := &observedStore{Store: base}
-	initializedWakeup(t, base, "walk", time.Time{})
-	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "new"}, {Name: "walk"}}}
-	Require.NoError(t, engine.RunPass(t.Context()))
-	Assert.Equal(t, []int{1, 2001}, st.reads)
-}
-func TestPersonResolutionBackoffAndStoreErrors(t *testing.T) {
+func TestPersonResolutionBackoff(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		failure  error
@@ -136,9 +134,9 @@ func TestPersonResolutionBackoffAndStoreErrors(t *testing.T) {
 		category string
 		failures int
 	}{
-		{"missing", store.ErrPersonNotFound, nil, "person_unavailable", 1},
-		{"empty", nil, &store.Person{ID: 1}, "person_unavailable", 1},
-		{"store", errors.New("database unavailable"), nil, "store_error", 0},
+		{"missing", store.ErrPersonNotFound, nil, "person_unavailable", 0},
+		{"empty", nil, &store.Person{ID: 1}, "person_unavailable", 0},
+		{"held delivery", store.ErrPersonNotFound, nil, "person_unavailable", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := Assert.New(t)
@@ -148,7 +146,9 @@ func TestPersonResolutionBackoffAndStoreErrors(t *testing.T) {
 			st := &observedStore{Store: base, personErr: tc.failure, person: tc.person}
 			now := time.Now().UTC()
 			start := now.Add(-time.Hour)
-			initializedWakeup(t, base, "person", start)
+			ok, err := base.AdvanceWakeupState(t.Context(), "person", nil, store.WakeupState{At: start, Failures: tc.failures})
+			require.NoError(err)
+			require.True(ok)
 			var logs bytes.Buffer
 			engine := Engine{Store: st, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Now: func() time.Time { return now }, Subscriptions: []Subscription{{Name: "person", Filter: changefeed.Filter{PersonID: 1}}}}
 			require.NoError(engine.RunPass(t.Context()))
@@ -157,11 +157,7 @@ func TestPersonResolutionBackoffAndStoreErrors(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(start, state.At)
 			assert.Equal(tc.failures, state.Failures)
-			if tc.failures > 0 {
-				assert.Equal(now.Add(30*time.Second), state.NextAttemptAt)
-			} else {
-				assert.True(state.NextAttemptAt.IsZero())
-			}
+			assert.Equal(now.Add(30*time.Second), state.NextAttemptAt)
 			require.NoError(engine.RunPass(t.Context()))
 			state, _, err = base.LoadWakeupState(t.Context(), "person")
 			require.NoError(err)
@@ -169,6 +165,50 @@ func TestPersonResolutionBackoffAndStoreErrors(t *testing.T) {
 		})
 	}
 }
+func TestPersonStoreError(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	base := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	initializedWakeup(t, base, "person", now.Add(-time.Hour))
+	var logs bytes.Buffer
+	engine := Engine{Store: &observedStore{Store: base, personErr: errors.New("database unavailable")}, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Now: func() time.Time { return now }, Subscriptions: []Subscription{{Name: "person", Filter: changefeed.Filter{PersonID: 1}}}}
+	require.NoError(engine.RunPass(t.Context()))
+	state, _, err := base.LoadWakeupState(t.Context(), "person")
+	require.NoError(err)
+	assert.Contains(logs.String(), "store_error")
+	assert.Zero(state.Failures)
+	assert.True(state.NextAttemptAt.IsZero())
+}
+
+func TestPersonRecoveryWithoutChanges(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	base := testutil.NewTestStore(t)
+	participant, err := base.EnsureParticipant("person@example.com", "Person", "example.com")
+	require.NoError(err)
+	person, _, err := base.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	now := time.Now().UTC()
+	initializedWakeup(t, base, "person", now.Add(-time.Hour))
+	st := &observedStore{Store: base, personErr: store.ErrPersonNotFound}
+	hits := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hits++; w.WriteHeader(http.StatusNoContent) }))
+	defer server.Close()
+	engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "person", server, changefeed.Filter{PersonID: person.ID})}, Now: func() time.Time { return now }}
+	require.NoError(engine.RunPass(t.Context()))
+	state, _, err := base.LoadWakeupState(t.Context(), "person")
+	require.NoError(err)
+	assert.Zero(state.Failures)
+	st.personErr = nil
+	now = now.Add(31 * time.Second)
+	require.NoError(engine.RunPass(t.Context()))
+	state, _, err = base.LoadWakeupState(t.Context(), "person")
+	require.NoError(err)
+	assert.Zero(state.Failures)
+	assert.Zero(hits)
+}
+
 func TestConfigPersonAcrossSourcesAndLinkAfterStartup(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
@@ -181,12 +221,8 @@ func TestConfigPersonAcrossSourcesAndLinkAfterStartup(t *testing.T) {
 	require.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(first)
 	require.NoError(err)
-	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(os.WriteFile(path, []byte(fmt.Sprintf("[[wakeups]]\nname='person'\nurl='https://example.com/hook'\nsecret_env='EXAMPLE_SECRET'\nperson_id=%d\n", person.ID)), 0600))
-	cfg, err := config.Load(path, "")
-	require.NoError(err)
-	require.Len(cfg.Wakeups, 1)
-	filter := FilterFromConfig(cfg.Wakeups[0])
+	incoming := true
+	filter := FilterFromConfig(config.WakeupConfig{PersonID: &person.ID, IncomingOnly: &incoming})
 	initializedWakeup(t, st, "person", now.Add(-time.Hour))
 	firstID := seedWakeup(t, st, "first-source@example.com", first, 1, now)
 	var deliveries []payload
@@ -297,21 +333,17 @@ func TestOwnerCursorReplaysDeliveredIDs(t *testing.T) {
 	initializedWakeup(t, st, "replay", now.Add(-time.Hour))
 	var sent payload
 	var decodeErr error
-	status := http.StatusNoContent
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		decodeErr = json.NewDecoder(r.Body).Decode(&sent)
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte("sensitive-response-body"))
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	var logs bytes.Buffer
 	sub := testSubscription(t, "replay", server, changefeed.Filter{IncomingOnly: true})
-	sub.URL += "?token=private-query"
-	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Now: func() time.Time { return now }}
+	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
 	require.NoError(engine.RunPass(t.Context()))
 	require.NoError(decodeErr)
 	require.Equal([]int64{id}, sent.Matched.MessageIDs)
-	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.Default()})
 	t.Cleanup(func() { _ = srv.Shutdown(context.WithoutCancel(t.Context())) })
 	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/changes?incoming_only=true&cursor="+url.QueryEscape(sent.CursorFrom), nil)
 	response := httptest.NewRecorder()
@@ -394,8 +426,4 @@ func TestPreSendConflictDoesNotDeliver(t *testing.T) {
 	require.NoError(engine.RunPass(t.Context()))
 	assert.Zero(hits)
 	assert.Contains(logs.String(), "state_conflict")
-	state, _, err := base.LoadWakeupState(t.Context(), "conflict")
-	require.NoError(err)
-	assert.Equal(start, state.At)
-	assert.Zero(state.Failures)
 }

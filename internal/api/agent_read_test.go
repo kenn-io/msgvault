@@ -1044,7 +1044,7 @@ func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 	}
 }
 
-func TestChangeFeedGrantDigestUsesStableSourceReferences(t *testing.T) {
+func TestChangeFeedGrantBindsStableSourceReferences(t *testing.T) {
 	assertions := assert.New(t)
 	a := agentgrant.SourceRef{ID: 1, Type: "gmail", Identifier: "a@example.com", SenderKeys: []string{"old"}}
 	b := agentgrant.SourceRef{ID: 2, Type: "gmail", Identifier: "b@example.com"}
@@ -1065,4 +1065,7 @@ func TestChangeFeedGrantDigestUsesStableSourceReferences(t *testing.T) {
 	assertions.NotEmpty(emptyGrant.Digest())
 	assertions.NotEqual(emptyGrant.Digest(), (changefeed.Filter{}).Digest())
 	assertions.NotEqual(emptyGrant.Digest(), original.Digest())
+	assertions.Equal([]changefeed.GrantRef{{Type: "gmail", Identifier: "a@example.com"}, {Type: "gmail", Identifier: "b@example.com"}}, original.GrantRefs)
+	assertions.Equal(original.GrantRefs, same.GrantRefs)
+	assertions.NotNil(filter().GrantRefs)
 }

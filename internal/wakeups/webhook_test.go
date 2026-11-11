@@ -79,12 +79,12 @@ func testWebhookClient(t *testing.T, server *httptest.Server) webhookClient {
 		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
 	}}
 }
-func TestWebhookRefusesMixedDNSWithoutDialing(t *testing.T) {
+func TestWebhookMapsUnsafeTarget(t *testing.T) {
 	client := webhookClient{timeout: time.Second, resolver: staticResolver{netip.MustParseAddr("203.0.113.1"), netip.MustParseAddr("127.0.0.1")}}
 	Assert.Equal(t, "invalid_callback", client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 }
 
-func TestWebhookUsesOnlyTrustedPinAndTimesOut(t *testing.T) {
+func TestWebhookUsesOnlyTrustedPin(t *testing.T) {
 	assert := Assert.New(t)
 
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
@@ -105,8 +105,21 @@ func TestWebhookUsesOnlyTrustedPinAndTimesOut(t *testing.T) {
 	client.roots.ServerName = "example.com"
 	assert.Empty(client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 	assert.Equal([]string{"10.0.0.5:443"}, dialed)
+}
+func TestWebhookTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		timeout := webhookClient{timeout: 50 * time.Millisecond, resolver: staticResolver{netip.MustParseAddr("203.0.113.1")}, dial: func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }}
 		Assert.Equal(t, "timeout", timeout.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 	})
+}
+
+type failingResolver struct{}
+
+func (failingResolver) LookupNetIP(_ context.Context, _, _ string) ([]netip.Addr, error) {
+	return nil, &net.DNSError{Err: "lookup failed", Name: "example.com"}
+}
+
+func TestWebhookDNSFailure(t *testing.T) {
+	client := webhookClient{timeout: time.Second, resolver: failingResolver{}}
+	Assert.Equal(t, "dns_error", client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 }

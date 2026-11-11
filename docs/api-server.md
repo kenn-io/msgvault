@@ -3517,8 +3517,7 @@ A notification contains `schema_version`, `type` (`msgvault.wakeup`),
 content or addresses. The message date is the first available of `sent_at`,
 `received_at` and `internal_date`; undated, old and deleted messages do not
 trigger a ping, but the cursor advances past them. After a failed delivery,
-the retry is sent even if its messages no longer qualify (`matched.count` 0);
-the same happens once after a person who could not be resolved resolves again.
+the retry is sent even if its messages no longer qualify (`matched.count` 0).
 
 Read the feed with the same selectors from `cursor_from` to replay the range.
 A delegated client uses its own authorized feed cursor: its cursor is bound to
@@ -3527,7 +3526,7 @@ failures keep the cursor and retry after 30 seconds, doubling to at most one
 hour with no attempt limit. Redirects are not followed and log `http_3xx`.
 Delivery is at least once. A retry of the same range has the same delivery ID;
 a retry whose range end moved has a new ID. Logs report the wake-up name,
-error category and failure count.
+error category and failure count. DNS lookup failures use `dns_error`.
 
 To verify a signature, base64-decode the value after `whsec_` in the configured
 secret. Compute HMAC-SHA256 over `webhook-id + "." + webhook-timestamp + "." +

@@ -65,6 +65,9 @@ func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, bo
 		if errors.Is(err, context.DeadlineExceeded) {
 			return "timeout"
 		}
+		if _, ok := errors.AsType[*net.DNSError](err); ok {
+			return "dns_error"
+		}
 		if errors.Is(err, netguard.ErrUnsafeTarget) {
 			return "invalid_callback"
 		}

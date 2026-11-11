@@ -126,12 +126,12 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		var matches []store.ChangedMessage
 		var uid string
 		var ready bool
-		advance := func(before []byte) error {
+		advance := func(before []byte) (bool, error) {
 			swapped, err := e.Store.AdvanceWakeupState(ctx, sub.Name, before, state)
 			if err == nil && !swapped {
 				logger.Warn("wakeup state conflict", "name", sub.Name, "category", "state_conflict")
 			}
-			return err
+			return swapped, err
 		}
 		err := e.gated(ctx, func() error {
 			var err error
@@ -159,16 +159,16 @@ func (e *Engine) RunPass(ctx context.Context) error {
 					return nil
 				}
 				state.At = page.CompleteThrough
-				return advance(nil)
+				_, err = advance(nil)
+				return err
 			}
 			filter, err := changefeed.ResolveFilter(ctx, e.Store, sub.Filter)
 			if err != nil {
 				if !errors.Is(err, store.ErrPersonNotFound) && !errors.Is(err, resolver.ErrEmptyPopulation) {
 					return err
 				}
-				state.Failures++
-				state.NextAttemptAt = now.Add(retryDelay(state.Failures))
-				err = advance(raw)
+				state.NextAttemptAt = now.Add(retryDelay(1))
+				_, err = advance(raw)
 				if err == nil {
 					logger.Warn("wakeup failed", "name", sub.Name, "category", "person_unavailable", "failures", state.Failures)
 				}
@@ -199,7 +199,8 @@ func (e *Engine) RunPass(ctx context.Context) error {
 					state.At = next.At()
 					state.AfterID, state.AfterRow = next.AfterID()
 					state.NextAttemptAt = time.Time{}
-					return advance(raw)
+					_, err = advance(raw)
+					return err
 				}
 				return nil
 			}
@@ -209,12 +210,11 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			swapped, err := e.Store.AdvanceWakeupState(ctx, sub.Name, raw, state)
+			swapped, err := advance(raw)
 			if err != nil {
 				return err
 			}
 			if !swapped {
-				logger.Warn("wakeup state conflict", "name", sub.Name, "category", "state_conflict")
 				return nil
 			}
 			raw = nextRaw
@@ -248,16 +248,15 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if category == "" {
-			state.At = next.At()
-			state.AfterID, state.AfterRow = next.AfterID()
-			state.Failures = 0
-			state.NextAttemptAt = time.Time{}
-		} else {
-			state.NextAttemptAt = e.now().Add(retryDelay(state.Failures))
+		if category != "" {
 			logger.Warn("wakeup failed", "name", sub.Name, "category", category, "failures", state.Failures)
+			continue
 		}
-		err = e.gated(ctx, func() error { return advance(raw) })
+		state.At = next.At()
+		state.AfterID, state.AfterRow = next.AfterID()
+		state.Failures = 0
+		state.NextAttemptAt = time.Time{}
+		err = e.gated(ctx, func() error { _, err := advance(raw); return err })
 		if err != nil {
 			logger.Warn("wakeup store step failed", "name", sub.Name, "category", "store_error")
 		}

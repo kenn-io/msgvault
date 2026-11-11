@@ -3,12 +3,9 @@ package api
 import (
 	"context"
 	"fmt"
-	"go.kenn.io/msgvault/internal/changefeed"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,66 +39,6 @@ func TestChangesFilteredCursorPagination(t *testing.T) {
 	refused = doGet(t.Context(), srv, "/api/v1/messages/changes?source_id=999999&cursor="+url.QueryEscape(first.NextCursor))
 	assertions.Equal(http.StatusBadRequest, refused.Code, refused.Body.String())
 	assertions.Contains(refused.Body.String(), "different filter")
-}
-
-func TestChangesFilterMatchesAllDimensions(t *testing.T) {
-	f := changefeed.Filter{PersonID: 4, Participants: []int64{10, 11}, SourceIDs: []int64{1, 2}, ConversationIDs: []int64{8}, IncomingOnly: true}
-	for _, tc := range []struct {
-		name string
-		row  store.ChangedMessage
-		want bool
-	}{
-		{"first identity", store.ChangedMessage{SenderID: 10, SourceID: 1, ConversationID: 8}, true},
-		{"second identity", store.ChangedMessage{SenderID: 11, SourceID: 2, ConversationID: 8}, true},
-		{"other sender", store.ChangedMessage{SenderID: 12, SourceID: 1, ConversationID: 8}, false},
-		{"other source", store.ChangedMessage{SenderID: 10, SourceID: 3, ConversationID: 8}, false},
-		{"other conversation", store.ChangedMessage{SenderID: 10, SourceID: 1, ConversationID: 9}, false},
-		{"outgoing", store.ChangedMessage{SenderID: 10, SourceID: 1, ConversationID: 8, IsFromMe: true}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, f.Matches(tc.row)) })
-	}
-}
-
-func TestChangesScanPages(t *testing.T) {
-	at := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-	bound := at.Add(time.Hour)
-	rows := make([]store.ChangedMessage, 2001)
-	for i := range rows {
-		rows[i] = store.ChangedMessage{ID: int64(i + 1), SourceID: 1, ContentChangedAt: at}
-	}
-	from := store.ChangedMessagesFrom(at)
-	after := store.ChangedMessagesAfter(at, 0)
-	for _, tc := range []struct {
-		name         string
-		page         store.ChangedMessagePage
-		since        store.ChangedMessagesCursor
-		source       int64
-		limit, count int
-		next         store.ChangedMessagesCursor
-		more         bool
-	}{
-		{"limit", store.ChangedMessagePage{Messages: rows, ServerTime: bound.Add(time.Second), CompleteThrough: bound}, from, 1, 1, 1, store.ChangedMessagesAfter(at, 1), true},
-		{"sentinel", store.ChangedMessagePage{Messages: rows, ServerTime: bound.Add(time.Second), CompleteThrough: bound}, from, 2, 100, 0, store.ChangedMessagesAfter(at, 2000), true},
-		{"exhaustion", store.ChangedMessagePage{Messages: rows[:2000], ServerTime: bound.Add(time.Second), CompleteThrough: bound}, from, 2, 100, 0, store.ChangedMessagesFrom(bound), false},
-		{"no bound", store.ChangedMessagePage{ServerTime: bound}, after, 1, 1, 0, after, false},
-		{"earlier bound", store.ChangedMessagePage{ServerTime: bound, CompleteThrough: at.Add(-time.Second)}, after, 1, 1, 0, after, false},
-		{"equal bound", store.ChangedMessagePage{ServerTime: bound, CompleteThrough: at}, after, 1, 1, 0, after, false},
-		{"above clock", store.ChangedMessagePage{ServerTime: at.Add(-time.Second), CompleteThrough: at.Add(-2 * time.Second)}, after, 1, 1, 0, store.ChangedMessagesFrom(at.Add(-2 * time.Second)), false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, next, more := changefeed.Scan(tc.page, tc.since, changefeed.Filter{SourceIDs: []int64{tc.source}}, tc.limit)
-			assert.Len(t, got, tc.count)
-			assert.Equal(t, tc.next, next)
-			assert.Equal(t, tc.more, more)
-		})
-	}
-}
-
-func TestChangesFilterDigestStable(t *testing.T) {
-	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?person_id=4&source_id=2&source_id=1&source_id=2&conversation_id=8&incoming_only=true", nil)
-	filter, err := parseChangesFilter(r)
-	require.NoError(t, err)
-	assert.Equal(t, "7725ea5be9477647", filter.Digest())
 }
 
 func TestChangesPersonMatchesLinkedSenders(t *testing.T) {
