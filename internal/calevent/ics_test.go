@@ -160,7 +160,6 @@ func TestICSStatus(t *testing.T) {
 		requirements.Len(components, 1)
 		assertions.Equal("confirmed", components[0].Event.Status)
 	})
-
 }
 
 func TestICSRetainsEachEventWithItsTimeZones(t *testing.T) {

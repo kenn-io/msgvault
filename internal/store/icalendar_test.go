@@ -273,7 +273,6 @@ func TestICalendarCancellationInheritsMissingEnd(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestICalendarCancellationKeepsImplicitAllDayEnd(t *testing.T) {
