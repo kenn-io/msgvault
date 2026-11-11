@@ -48,7 +48,7 @@
         );
         if (controller.signal.aborted) return;
         if (!result.data) throw new Error('Commitment decision was refused.');
-        await load(true);
+        await load();
       } catch {
         if (!controller.signal.aborted) decisionFailed = true;
       } finally {
