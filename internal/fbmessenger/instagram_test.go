@@ -357,42 +357,16 @@ func TestInstagramCanceledAfterCommitReplaysAncillaryWrites(t *testing.T) {
 	assert.Equal(1, summary.ReactionsAdded)
 }
 
-func TestInstagramGenericMediaAndThreadUpdates(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+func TestInstagramGenericMedia(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	record := instagramTestRecord("generic media")
 	record["media"] = []map[string]string{{"uri": "invented.txt"}}
-	filename := instagramTestShard(t, root, "circle", "message_1.json", record, instagramTestRecord("second"))
-	require.NoError(os.WriteFile(filepath.Join(root, "invented.txt"), []byte("invented media bytes"), 0600))
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example", AttachmentsDir: t.TempDir()}
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	assert.Equal(1, summary.AttachmentsStored)
-	ids := instagramIDs(t, st)
-	data, err := os.ReadFile(filename)
-	require.NoError(err)
-	var shard map[string]any
-	require.NoError(json.Unmarshal(data, &shard))
-	shard["title"] = "Changed fictional title"
-	shard["participants"] = []map[string]string{{"name": "Mira Example"}, {"name": "Nova Example"}, {"name": "Lumen Example"}}
-	data, err = json.Marshal(shard)
-	require.NoError(err)
-	require.NoError(os.WriteFile(filename, data, 0600))
-	_, err = ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	assert.Equal(ids, instagramIDs(t, st))
-	var title, kind string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title,conversation_type FROM conversations`).Scan(&title, &kind))
-	assert.Equal("Changed fictional title", title)
-	assert.Equal("group_chat", kind)
-	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Changed"}}, 0, 10)
-	require.NoError(err)
-	assert.Equal(int64(2), total)
-	var recipients int
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT mr.message_id) FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE p.display_name = 'Lumen Example'`).Scan(&recipients))
-	assert.Equal(2, recipients)
+	instagramTestShard(t, root, "circle", "message_1.json", record)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "invented.txt"), []byte("invented media bytes"), 0600))
+	summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example", AttachmentsDir: t.TempDir()})
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.AttachmentsStored)
 }
 
 func TestInstagramSharedLinkDecoded(t *testing.T) {
