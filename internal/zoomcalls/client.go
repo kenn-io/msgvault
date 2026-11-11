@@ -195,7 +195,7 @@ func (c *Client) Meeting(ctx context.Context, uuid string) ([]byte, error) {
 		return nil, errors.New("zoom instance UUID required")
 	}
 	encoded := url.PathEscape(uuid)
-	if strings.HasPrefix(uuid, "/") || strings.Contains(uuid, "//") {
+	if strings.Contains(uuid, "/") {
 		encoded = url.PathEscape(encoded)
 	}
 	pages, err := c.pages(ctx, "/past_meetings/"+encoded+"/participants", "participants", url.Values{"page_size": {"300"}}, 10000)

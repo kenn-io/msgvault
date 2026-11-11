@@ -48,6 +48,26 @@ func TestFetchMeetingPagination(t *testing.T) {
 	require.NotNil(o)
 }
 
+func TestFetchMeetingUUIDEncoding(t *testing.T) {
+	for _, tc := range []struct {
+		uuid, escaped string
+	}{
+		{"plain-instance", "plain-instance"},
+		{"internal/slash", "internal%252Fslash"},
+		{"/leading", "%252Fleading"},
+		{"double//slash", "double%252F%252Fslash"},
+	} {
+		t.Run(tc.uuid, func(t *testing.T) {
+			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/past_meetings/"+tc.escaped+"/participants", r.URL.EscapedPath())
+				_, _ = fmt.Fprint(w, roster)
+			})
+			_, err := c.Meeting(t.Context(), tc.uuid)
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestFetchRejectsIncompleteResponses(t *testing.T) {
 	oversizedJSON := `{"participants":[],"padding":"` + strings.Repeat("x", (1<<20)+1) + `"}`
 	tests := []struct {
@@ -211,14 +231,12 @@ func FuzzZoomUUIDSurvivesRequestPath(f *testing.F) {
 		}
 		c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 			got := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/past_meetings/"), "/participants")
-			if double {
-				decoded, err := url.PathUnescape(got)
-				if err != nil {
-					http.Error(w, "invalid escaped path", http.StatusBadRequest)
-					return
-				}
-				got = decoded
+			decoded, err := url.PathUnescape(got)
+			if err != nil {
+				http.Error(w, "invalid escaped path", http.StatusBadRequest)
+				return
 			}
+			got = decoded
 			assert.Equal(t, uuid, got)
 			_, _ = fmt.Fprint(w, roster)
 		})

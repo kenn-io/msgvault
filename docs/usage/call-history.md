@@ -122,8 +122,8 @@ Omit `--roster` and supply `--token-command` to retrieve the entire participant
 roster from Zoom. Use your own OAuth app with the new read scope
 `meeting:read:list_past_participants`. A paid Pro or higher plan is required;
 participant retention is at most 15 months. Instance UUIDs are used exactly,
-including Zoom's required double encoding for slash-prefixed or double-slash
-UUIDs. No new Go dependencies are added.
+including Zoom's required double encoding for UUIDs containing a slash. No new
+Go dependencies are added.
 
 ```sh
 msgvault calls import-zoom-meeting --uuid INSTANCE_UUID \
