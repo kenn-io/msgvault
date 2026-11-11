@@ -156,6 +156,35 @@ func TestEmailCalendarSourceCountsExcludeDerivedEvents(t *testing.T) {
 	}
 }
 
+func TestEmailCalendarActivityCandidates(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := calendarDocument("REQUEST", "DTSTART:20270302T120000Z")
+	_, mailSource := persistInviteEmail(t, st, "activity-invite", inviteEmail(raw))
+	mailEvents := emailEvents(t, st, mailSource)
+	requirements.Len(mailEvents, 1)
+	icsSource := icsSource(t, st)
+	_, err := st.PersistICalendarContext(t.Context(), icsSource, raw)
+	requirements.NoError(err)
+	icsEvents := emailEvents(t, st, icsSource)
+	requirements.Len(icsEvents, 1)
+	gcalData, gcalID := calendarFixture(t, st, "activity-gcal", calendarRaw)
+	gcalData.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), Valid: true}
+	_, err = st.PersistMessageContext(t.Context(), gcalData)
+	requirements.NoError(err)
+
+	candidates, err := st.LoadQueuedActivityCandidatesContext(t.Context(), 100)
+	requirements.NoError(err)
+	eligible := make(map[int64]bool)
+	for _, candidate := range candidates {
+		eligible[candidate.MessageID] = candidate.Eligible
+	}
+	requirements.Contains(eligible, mailEvents[0])
+	assertions.False(eligible[mailEvents[0]])
+	assertions.True(eligible[icsEvents[0]])
+	assertions.True(eligible[gcalID])
+}
+
 func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
