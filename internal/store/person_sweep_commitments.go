@@ -42,6 +42,7 @@ type preparedCommitmentFulfilment struct {
 	anchor            peoplesweep.CommitmentAnchor
 	input             personfacts.EvidenceInput
 	replaceEvidenceID int64
+	messageID         int64
 }
 
 type preparedCommitmentSweep struct {
@@ -274,7 +275,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 			return nil, err
 		}
 		prepared.fulfilments = append(prepared.fulfilments, preparedCommitmentFulfilment{
-			change: fulfilment, anchor: anchor, input: input, replaceEvidenceID: replace,
+			change: fulfilment, anchor: anchor, input: input, replaceEvidenceID: replace, messageID: source.MessageID,
 		})
 	}
 	if len(generation.Claims) != 0 {
@@ -394,9 +395,9 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 		if err != nil {
 			return err
 		}
-		confirmed := 0
-		if prepared.autoFulfil && f.change.Confirmed {
-			confirmed = 1
+		confirmed, err := s.commitmentFulfilmentConfirmedTx(ctx, tx, prepared.autoFulfil, f)
+		if err != nil {
+			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE person_commitments SET
 			fulfilment_evidence_id = ?, fulfilment_confirmed = ?
@@ -411,6 +412,30 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 		}
 	}
 	return s.saveCommitmentFrontierTx(ctx, tx, request, prepared, newAnchorNeedsReplay)
+}
+
+// Automatic fulfilment needs the owner's opt-in and the model's confirmation.
+// An owner's completion email also needs the Sent provenance the loop reader
+// trusts, so an inbox copy stays an exact proposal. Returns the stored 0 or 1.
+func (s *Store) commitmentFulfilmentConfirmedTx(ctx context.Context, tx *loggedTx, autoFulfil bool, f preparedCommitmentFulfilment) (int, error) {
+	if !autoFulfil || !f.change.Confirmed {
+		return 0, nil
+	}
+	if f.anchor.Direction != peoplesweep.CommitmentOwedBy {
+		return 1, nil
+	}
+	var trusted bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM messages m
+		JOIN sources src ON src.id = m.source_id JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.id = ? AND (c.conversation_type <> 'email_thread' OR `+sentConfirmedSQL(s.dialect, "", "m", "src")+`))`,
+		f.messageID).Scan(&trusted)
+	if err != nil {
+		return 0, fmt.Errorf("check commitment completion provenance: %w", err)
+	}
+	if trusted {
+		return 1, nil
+	}
+	return 0, nil
 }
 
 // Vacate every refreshed locator, and any other row still occupying a final

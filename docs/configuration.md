@@ -439,7 +439,7 @@ direct conversations within the active provider's source and date scope.
 | `max_open_anchors` | `8` | Older open promises a call may revisit, up to 8. |
 | `expire_after_due` | `720h` | Time after the due date ends in the activity timezone; expiry is stored at extraction or refresh. |
 | `max_duration` | `2160h` | Maximum age without a due date; expiry is stored at extraction or refresh. |
-| `auto_fulfil` | `false` | Close promises on future explicit, newer supported confirmations; the owner can reopen them. |
+| `auto_fulfil` | `false` | Close promises on future explicit, newer supported confirmations. Your email completions also need Sent provenance. The owner can reopen them. |
 
 See [Open loops](usage/open-loops.md#see-cited-commitments) for consent and
 owner controls.
