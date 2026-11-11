@@ -104,25 +104,22 @@ func TestSplitThunderbirdReplyHeaders(t *testing.T) {
 				assert.Equal(t, []Segment{{Quoted, 0, len(body), 1}}, Split(body).Segments)
 				assert.False(t, IsDatedAttribution(tc.header), "CLI attribution recognition must stay unchanged")
 			})
+			t.Run("authored sentence", func(t *testing.T) {
+				body := tc.header + "\nNew text"
+				assert.Equal(t, []Segment{{Authored, 0, len(body), 0}}, Split(body).Segments)
+			})
+			t.Run("requires time", func(t *testing.T) {
+				header := strings.Replace(tc.header, "10:00", "noon", 1) + "\n"
+				body := header + "> old"
+				assert.Equal(t, []Segment{{Authored, 0, len(header), 0}, {Quoted, len(header), len(body), 1}}, Split(body).Segments)
+			})
 		})
 	}
-	t.Run("authored sentence without quote", func(t *testing.T) {
-		body := "El 11/5/2026 a las 10:00, Alex escribió:\nNew text"
-		assert.Equal(t, []Segment{{Authored, 0, len(body), 0}}, Split(body).Segments)
+	t.Run("no numeric date", func(t *testing.T) {
+		header := "El informe a las 10:00, Alex escribió:\n"
+		body := header + "> old"
+		assert.Equal(t, []Segment{{Authored, 0, len(header), 0}, {Quoted, len(header), len(body), 1}}, Split(body).Segments)
 	})
-	for _, tc := range []struct {
-		name, header string
-	}{
-		{"no numeric date", "El informe a las 10:00, Alex escribió:"},
-		{"Italian requires time", "Alex ha scritto il 11/5/2026 alle noon:"},
-		{"Portuguese requires time", "Às noon de 11/5/2026, Alex escreveu:"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			header := tc.header + "\n"
-			body := header + "> old"
-			assert.Equal(t, []Segment{{Authored, 0, len(header), 0}, {Quoted, len(header), len(body), 1}}, Split(body).Segments)
-		})
-	}
 }
 
 func TestSplitScanLimit(t *testing.T) {

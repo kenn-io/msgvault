@@ -1952,7 +1952,7 @@ func TestGetMessage(t *testing.T) {
 					assert.Equal(t, "unsupported_format", got.SegmentsUnavailable)
 					assert.Empty(t, got.SegmentsVersion)
 				} else {
-					assert.NotEmpty(t, got.SegmentsVersion)
+					assert.Equal(t, msgsegment.Version, got.SegmentsVersion)
 					assert.Empty(t, got.SegmentsUnavailable)
 				}
 			})
