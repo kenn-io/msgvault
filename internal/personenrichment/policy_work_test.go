@@ -59,10 +59,19 @@ func TestWorkerColdPolicyRetainsOriginalWorkThroughDispatchAndCommit(t *testing.
 			worker := f.newWorker(t, map[string]personenrichment.ProviderFactory{f.config.Name: factory}, map[string]personenrichment.ProviderConfig{f.config.Name: f.config}, func(string) (string, bool) { return "synthetic-key", true })
 			processed, err := worker.RunOnce(ctx, f.run.ID)
 			assertions.True(processed)
-			if phase == "current" {
+			switch phase {
+			case "current":
 				requirements.NoError(err)
-			} else {
+			case "dispatch":
 				requirements.ErrorIs(err, store.ErrConversationPolicyStale)
+			default:
+				// The provider call ran, so its attempt ends without publishing.
+				requirements.NoError(err)
+				var state, failure string
+				requirements.NoError(f.store.DB().QueryRowContext(ctx,
+					`SELECT state, failure_class FROM person_enrichment_attempts`).Scan(&state, &failure))
+				assertions.Equal("terminal", state)
+				assertions.Equal(string(personenrichment.FailurePolicy), failure)
 			}
 			wantCalls := int32(1)
 			if phase == "dispatch" {
