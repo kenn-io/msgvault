@@ -1,5 +1,4 @@
-Archive email, chats, and meetings offline. Use the daemon
-or config.toml's [remote].url; --local forces local.
+Archive email, chats, and meetings offline.
 
 Start here:
   msgvault list-accounts --json
@@ -12,9 +11,9 @@ Start here:
   msgvault setup status --json
 
 Output:
-  --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
-  --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
-  More: msgvault quickstart.
+  --json writes JSON to stdout (JSONL for export-messages).
+  Logs and progress go to stderr. Exit: 0 OK, 1 error, 130 interrupted.
+  See msgvault quickstart.
 
 Usage:
   msgvault [command]
