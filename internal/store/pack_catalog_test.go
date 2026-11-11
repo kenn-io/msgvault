@@ -443,8 +443,11 @@ func TestPackVerificationCanceledCheckpointReplaysWindow(t *testing.T) {
 	root := t.TempDir()
 	id := pack.NewPackID()
 	hash := fmt.Sprintf("%064x", 1)
-	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{PackID: id, EntryCount: 1, StoredBytes: 1, CreatedAt: time.Now()},
-		[]store.PackIndexEntry{{BlobHash: hash, PackID: id, Offset: 6, StoredLen: 1, RawLen: 1}}))
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{PackID: id, EntryCount: 2, StoredBytes: 2, CreatedAt: time.Now()},
+		[]store.PackIndexEntry{
+			{BlobHash: hash, PackID: id, Offset: 6, StoredLen: 1, RawLen: 1},
+			{BlobHash: fmt.Sprintf("%064x", 2), PackID: id, Offset: 7, StoredLen: 1, RawLen: 1},
+		}))
 	catalog := store.NewMaintenancePackCatalog(st, root)
 	ctx, pass, err := st.BeginPackVerification(t.Context(), 1, 100)
 	require.NoError(err)
@@ -455,11 +458,14 @@ func TestPackVerificationCanceledCheckpointReplaysWindow(t *testing.T) {
 	cancel()
 	_, err = st.FinishPackVerification(canceled, pass)
 	require.Error(err)
-	ctx, _, err = st.BeginPackVerification(t.Context(), 1, 100)
+	ctx, replayPass, err := st.BeginPackVerification(t.Context(), 1, 100)
 	require.NoError(err)
 	replayed, err := catalog.ListIndexed(ctx)
 	require.NoError(err)
 	assert.Equal(first, replayed)
+	more, err := st.FinishPackVerification(t.Context(), replayPass)
+	require.NoError(err)
+	assert.True(more, "a successful checkpoint advances this window")
 }
 
 func TestPackVerificationWindowFindsIndexedHashAfterUnindexedFiles(t *testing.T) {

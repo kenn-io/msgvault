@@ -81,7 +81,8 @@ func (s *Store) listPackVerificationWindow(ctx context.Context, pass *PackVerifi
 	}
 	var entries []PackIndexEntry
 	var bytes int64
-	for start := sort.Search(len(hashes), func(i int) bool { return hashes[i] > pass.start }); start < len(hashes) && !pass.more; start += 256 {
+	start := sort.Search(len(hashes), func(i int) bool { return hashes[i] > pass.start })
+	for ; start < len(hashes) && !pass.more; start += 256 {
 		batch, err := s.listPackVerificationCandidates(ctx, hashes[start:min(start+256, len(hashes))])
 		if err != nil {
 			return nil, err
