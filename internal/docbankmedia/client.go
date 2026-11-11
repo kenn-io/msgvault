@@ -511,6 +511,9 @@ func writeMultipart(
 	return err
 }
 
+// newJSONRequest targets the configured Docbank service.
+//
+//huma-check:external
 func (c *Client) newJSONRequest(ctx context.Context, method, endpoint string, body any, requestLimit int64) (*http.Request, error) {
 	var reader io.Reader
 	if body != nil {
