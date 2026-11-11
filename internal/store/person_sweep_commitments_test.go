@@ -252,6 +252,66 @@ func TestCommitmentWindowReplaysNewEvidenceForNinthOpenPromise(t *testing.T) {
 	_, err = st.DecidePersonCommitmentContext(ctx, items[8].ID, LoopStateDone, nil, items[8].ExpiresAt)
 	a.ErrorIs(err, sql.ErrNoRows)
 }
+func TestCommitmentWindowReplaysSameBatchReplyForNewSnoozedPromise(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "new-snoozed-anchor", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	const promise, reply = "I will send the report.", "I sent the report."
+	promiseID := persist("new-promise", promise, -2*time.Hour)
+	replyID := persist("same-batch-reply", reply, -time.Hour)
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	first, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Empty(first.Anchors)
+	r.Len(first.Sources, 2)
+	sourceByMessage := func(window peoplesweep.CommitmentWindow, messageID int64) string {
+		for _, source := range window.Sources {
+			if source.MessageID == messageID {
+				return source.ID
+			}
+		}
+		return ""
+	}
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, first, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{{
+			SourceID: sourceByMessage(first, promiseID), Direction: peoplesweep.CommitmentOwedTo,
+			Quote: promise, Summary: "Send the report", End: int64(len(promise)),
+		}},
+		Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	}))
+	r.NoError(err)
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 2, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	until := f.request.CompletedAt.Add(48 * time.Hour)
+	_, err = st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateSnoozed, &until, f.request.CompletedAt)
+	r.NoError(err)
+	next, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(next.Anchors, 1)
+	a.Equal(items[0].ID, next.Anchors[0].ID)
+	a.Equal(first.ThroughSequence, next.ThroughSequence)
+	f = nextCommitmentTestAttempt(t, f, "-fulfilment")
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, next, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{},
+		Fulfilments: []peoplesweep.CommitmentFulfilment{{
+			CommitmentID: next.Anchors[0].ID, SourceID: sourceByMessage(next, replyID), Quote: reply, End: int64(len(reply)),
+		}},
+	}))
+	r.NoError(err)
+	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 2, true)
+	r.NoError(err)
+	r.Len(items, 1)
+	r.NotNil(items[0].Fulfilment)
+	a.Equal(LoopStateSnoozed, items[0].State)
+	a.Equal(reply, items[0].Fulfilment.Quote)
+}
+
 func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, parsed peoplesweep.ParsedCommitments) peoplesweep.ApplyRequest {
 	t.Helper()
 	ctx, r := t.Context(), require.New(t)
