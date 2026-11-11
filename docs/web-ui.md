@@ -116,7 +116,7 @@ and Forward restore them.
 
 One toolbar sits above the results:
 
-- **Filter** holds Kind, Account, Identity, and optional From and To dates. Dates include the selected UTC calendar days. From must be on or before To.
+- **Filter** holds Kind, Account, Identity, and optional From and To dates. A new date range uses UTC. Month and Year drills create dates in your browser's time zone; editing those dates keeps them local. From must be on or before To.
 - **Group by** adds a grouping level, including Entry kind. Month and Year list newest first in your time zone, with bars showing each group's share of all items. Add more levels to group within groups.
 - **Show as** switches between Table, Timeline, and Files.
 - **Sort** shows the fixed newest-first Messages order.
@@ -246,6 +246,7 @@ first, Filename A–Z, Filename Z–A, Largest first, and Smallest first. The
 Documents, Archives, Other). Grouping replaces the table with groups and hides
 Sort and Visual search; Filename and Type remain editable in Filter, and active
 filters stay visible as chips.
+An unbounded Files date range starts in UTC. Existing date bounds keep their calendar when edited.
 **Save view…** saves the search, filters, and grouping, but not the Filename
 filter, Type filter, or file sort.
 

@@ -716,10 +716,9 @@ array. Request the next page by passing the opaque `next_cursor` as `cursor`;
 
 The daemon executes the view. `run_saved_view` calls
 `POST /api/v1/saved-views/{id}/run`, which hands the stored definition to the
-same Explore endpoint the Web UI uses, so the query, search mode, filters,
-grouping, presentation, and sort run exactly as saved. A grouped view runs at
-the first level of its grouping chain, the level the Web UI shows when it
-opens that view, and a timeline view returns the same entry rows as a table.
+same Explore endpoint the Web UI uses. A grouped view runs at the first level
+of its grouping chain, using Explore's default UTC calendar and descending
+group count order. A timeline view returns the same entry rows as a table.
 The tools are offered only when the daemon serves that endpoint (API schema
 2.21.0 or later); an older daemon omits them from the tool list.
 

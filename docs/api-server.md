@@ -166,7 +166,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.0.0**.
+it is separate from the binary release version. The current schema is **5.1.0**.
+
+Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 
 Schema 5.0.0 changes `content_available` in file lists and suggestions from a
 boolean to a nullable boolean. A null value means storage has not been checked;
@@ -2807,11 +2809,13 @@ Grouping, person filters, semantic and hybrid search, per-row exact-match counts
 `message_type`, `mailing_list`, `kind`, `year`, `month`, or `day`.
 `day` returns `YYYY-MM-DD` keys and counts individual messages; other
 dimensions count entries, with chats collapsed into conversations.
-`timezone` sets the IANA time zone for day grouping and defaults to `UTC`.
+`timezone` sets the IANA time zone for day, month, and year grouping and defaults to `UTC`. It also sets the calendar dates in a keyed group's activity overview.
 Day rows include `level` for calendar shading only when the page contains every day row. It ranks each count across that complete day set; partial pages and keyed lookups omit `level`.
 `sent_only: true` excludes drafts and unsent items from the counts.
 Day grouping is request-only and cannot be stored in a saved view.
 Files grouping (`POST /api/v1/files/groups`) uses UTC days and has no `timezone` parameter.
+
+Month and year rows include `total_items`, the number of entries across all matching time groups before pagination. A `group_key` lookup for a matching non-day group adds `overview` with its `first_at` timestamp, an `activity` series, and up to three `co_participants`. Activity buckets are days for month groups and months for other groups.
 
 ### Preflight an analytical selection {#post-apiv1explorepreflight}
 
@@ -2976,6 +2980,8 @@ that endpoint applies:
 - A view with `presentation: "files"` runs `POST /api/v1/explore/files`.
 - Every other view runs `POST /api/v1/explore` as a table. Timeline is a
   client-side rendering of the same entry rows.
+
+Grouped runs use Explore's defaults: UTC for calendar grouping and group count in descending order. The saved sort applies to entry results.
 
 ```json
 {
