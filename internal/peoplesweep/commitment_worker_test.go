@@ -166,3 +166,59 @@ func TestCommitmentOptionalCallRepairBudgetAndRevocation(t *testing.T) {
 		})
 	}
 }
+
+// The worker owns applying local support changes before a consent-only defer.
+type commitmentStatusSink struct {
+	workerProductionSink
+
+	statuses []StatusOnlyApplyRequest
+}
+
+func (s *commitmentStatusSink) ApplyPersonSweepStatusOnly(_ context.Context, request StatusOnlyApplyRequest) (Lease, error) {
+	s.statuses = append(s.statuses, request)
+	return request.Lease, nil
+}
+
+func newConsentOnlyCommitmentWorker(t *testing.T, due bool) (Worker, *commitmentWorkerFixture, *commitmentStatusSink) {
+	t.Helper()
+	cfg, catalog := workerTestConfig(t)
+	mutateTestProvider(&cfg, func(provider *ProviderConfig) { provider.AllowSensitive = true })
+	cfg.Commitments.Enabled = true
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	st := &commitmentWorkerFixture{due: due}
+	st.cursor = Cursor{ReconciliationComplete: true, LastBackstopAt: &now}
+	st.lease = &Lease{PersonID: 7, WorkerID: "consent-worker", Fence: 1, ExpiresAt: now.Add(time.Hour)}
+	sink := &commitmentStatusSink{}
+	worker := Worker{Config: cfg, Store: st, Source: workerFailureSource{},
+		Context: NewContextRetriever(workerFailureSource{}), Sink: sink, Runner: commitmentOnlyRunner{},
+		Catalog: workerFailureCatalog{catalog: catalog}, Clock: func() time.Time { return now },
+		NewID: func() string { return "consent-attempt" }, WorkerID: "consent-worker"}
+	return worker, st, sink
+}
+
+func TestCommitmentConsentDeferralAppliesLocalEvidenceInvalidation(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	worker, st, sink := newConsentOnlyCommitmentWorker(t, false)
+	result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
+	r.NoError(err)
+	r.Len(sink.statuses, 1)
+	r.Len(sink.statuses[0].Generation.EvidenceStatusChanges, 1)
+	a.False(sink.statuses[0].Generation.EvidenceStatusChanges[0].Supported)
+	a.Empty(sink.requests, "no provider output or cursor progress is applied")
+	a.Zero(result.PeopleSucceeded)
+	a.Equal(1, st.deferred)
+	a.Empty(st.finalized)
+	a.Empty(st.failed)
+	a.Zero(st.cursor.OptimisticSequence)
+}
+
+func TestForcedBriefRefusesCommitmentOnlyConsent(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	worker, st, sink := newConsentOnlyCommitmentWorker(t, true)
+	worker.Brief = &briefFakeStore{enrolled: true, trackedWork: true}
+	_, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental,
+		PersonID: 7, Brief: BriefModeForce})
+	r.ErrorIs(err, ErrPersonBriefPolicyRefused)
+	a.Empty(sink.requests, "a forced brief must not silently become a successful promise sweep")
+	a.Empty(st.failed)
+}
