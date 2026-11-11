@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/callhistory"
+	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -364,4 +365,32 @@ func TestCallObservationUTCWindow(t *testing.T) {
 	assert.Equal("2026-10-01T04:30:00Z", calls[0].OccurredAt.UTC().Format(time.RFC3339))
 	require.NotNil(calls[0].EndedAt)
 	assert.Equal("2026-10-01T04:31:00Z", calls[0].EndedAt.UTC().Format(time.RFC3339))
+}
+
+func TestCallReadersIgnoreGenericImportedCallRecord(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	peer, err := st.EnsureParticipantByPhone(t.Context(), "+12025550101", "Example", "signal")
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(peer)
+	requirements.NoError(err)
+	o, sourceID := validCallObservation(t, st)
+	o.Participants = []callhistory.Participant{{ID: peer, Participation: "joined"}}
+	callID, err := st.PutCallObservationContext(t.Context(), sourceID, o)
+	requirements.NoError(err)
+	_, err = messageimport.NewImporter(st, messageimport.Hooks{}).Import(t.Context(), messageimport.Request{
+		Source: messageimport.MessageImportSource{Identifier: "example", AccountEmail: "owner@example.com"},
+		Message: messageimport.ImportedMessage{ExternalID: "generic", MessageType: "call_record",
+			Conversation: messageimport.MessageImportConversation{ExternalID: "channel"},
+			Sender:       messageimport.MessageImportSender{Name: "Example"}, Title: "Generic entry", SentAt: "2026-10-01T10:00:00Z"},
+	})
+	requirements.NoError(err)
+	items, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
+	requirements.NoError(err)
+	requirements.Len(items, 1)
+	assertions.Equal(callID, items[0].MessageID)
+	summary, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{})
+	requirements.NoError(err)
+	assertions.Equal([]store.PersonCallSummary{{PersonID: person.ID, Answered: 1, ExampleMessageID: callID}}, summary)
 }
