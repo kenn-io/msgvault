@@ -13,14 +13,18 @@ import (
 
 func TestDeletionReviewCatalogReadOnly(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"list_deletions", "get_deletion"}}
 	definitions := operationalCatalog(opts, false)
-	require.Len(t, definitions, 2)
+	require.Len(definitions, 2)
 	for _, definition := range definitions {
 		assert.False(definition.writes)
 		assert.True(definition.definition.annotations.ReadOnlyHint)
 	}
-	assert.Equal([]any{"pending", "in_progress", "completed", "failed", "cancelled"}, definitions[0].definition.inputSchema.Properties["status"].Enum)
+	schema, err := definitions[0].definition.inputSchema.Resolve(nil)
+	require.NoError(err)
+	assert.NoError(schema.Validate(map[string]any{"status": "future_status"}))
+	assert.Error(schema.Validate(map[string]any{"status": "pending", "extra": true}))
 	assert.Equal([]string{"batch_id"}, definitions[1].definition.inputSchema.Required)
 	opts.OperationCapabilities = []string{"get_deletion"}
 	assert.Len(operationalCatalog(opts, false), 1)
