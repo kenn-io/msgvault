@@ -19,7 +19,8 @@ func zoomTokenCommand(text string) ([]string, error) {
 func addZoomFetchMode(cmd *cobra.Command, o *zoomOptions, open callOpener, write callWriter) {
 	var tokenCommand string
 	cmd.Flags().StringVar(&tokenCommand, "token-command", "", "JSON argv of a command that prints a Zoom access token; requires meeting:read:list_past_participants")
-	cmd.Short = "Import Zoom attendance from a supplied roster or an exact past instance"
+	cmd.Short = "Import Zoom meeting attendance"
+	cmd.Long = "Import Zoom meeting attendance from a supplied roster or fetch an exact past meeting instance."
 	cmd.Flags().Lookup("roster").Usage = "Complete participant API JSON file; omit to fetch from Zoom"
 	supplied := cmd.RunE
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {

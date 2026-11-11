@@ -121,11 +121,11 @@ func (c *zoomMetadataClient) ListCallObservations(_ context.Context, q store.Cal
 	return &page, nil
 }
 
-func TestZoomReconciliationBudgetIsPerRun(t *testing.T) {
+func TestZoomReconciliationUnresolvedIDReachesBudget(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	client := &zoomMetadataClient{}
-	items := []zoomcalls.MeetingRecord{{UUID: "first", Roster: []byte(`{"participants":[]}`)}, {UUID: "second", Roster: []byte(`{"participants":[]}`)}}
+	items := []zoomcalls.MeetingRecord{{UUID: "second", Roster: []byte(`{"participants":[]}`)}}
 	_, _, err := stageZoomMeetings(t.Context(), client, zoomOptions{account: "account", owner: "owner"}, items, nil)
 	require.ErrorContains(err, "10000")
 	assert.Equal(100, client.calls)
