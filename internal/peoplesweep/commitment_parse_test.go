@@ -2,6 +2,7 @@ package peoplesweep
 
 import (
 	"encoding/json/jsontext"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,4 +63,30 @@ func TestParseCommitmentsRequiresFulfilmentNewerThanPromise(t *testing.T) {
 	window.Anchors[0].PromisedAt = now
 	_, err = ParseCommitments(output, window)
 	assert.Error(t, err)
+}
+
+func TestCommitmentRequestSendsOnlyPromptFields(t *testing.T) {
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	window := CommitmentWindow{
+		PersonID: 2, Now: now, Timezone: "UTC", ThroughSequence: 9,
+		Sources: []CommitmentSource{{
+			ID: "m3", MessageID: 3, SourceID: 4, RecordedTime: now,
+			Direction: CommitmentOwedTo, Text: "I sent it.", Start: 5, EventTime: now,
+			SourceRef: "commitment-message:3", SourceVersion: "v1", ContentSHA256: "digest",
+		}},
+		Anchors: []CommitmentAnchor{{
+			ID: 6, TargetKey: "local-key", Direction: CommitmentOwedTo,
+			Quote: "I will send it.", PromisedAt: now, ReopenedAt: &now,
+		}},
+	}
+	request, err := commitmentRequest(window, 1024)
+	require.NoError(t, err)
+	_, packet, found := strings.Cut(request.InputText, "\n")
+	require.True(t, found)
+	assert.JSONEq(t, `{
+		"sources": [{"id":"m3","direction":"owed_to","text":"I sent it.","start":5,"event_time":"2026-10-19T12:00:00Z"}],
+		"open_anchors": [{"id":6,"direction":"owed_to","quote":"I will send it.","promised_at":"2026-10-19T12:00:00Z","reopened_at":"2026-10-19T12:00:00Z"}],
+		"now": "2026-10-19T12:00:00Z",
+		"timezone": "UTC"
+	}`, packet)
 }
