@@ -323,21 +323,22 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 	})
 	_ = testCtx
 	tests := []struct {
-		name               string
-		schemaVersion      string
-		wantPeople         bool
-		wantDirectory      bool
-		wantChatDiscovery  bool
-		wantSavedViews     bool
-		wantMeetings       bool
-		wantMeetingRecords bool
-		wantAgenda         bool
-		wantArchiveSQL     bool
-		wantReview         bool
-		wantScoring        bool
-		wantCardDAV        bool
-		wantMessageTags    bool
-		wantContacts       bool
+		name                 string
+		schemaVersion        string
+		wantPeople           bool
+		wantDirectory        bool
+		wantChatDiscovery    bool
+		wantSavedViews       bool
+		wantMeetings         bool
+		wantMeetingRecords   bool
+		wantMeetingDecisions bool
+		wantAgenda           bool
+		wantArchiveSQL       bool
+		wantReview           bool
+		wantScoring          bool
+		wantCardDAV          bool
+		wantMessageTags      bool
+		wantContacts         bool
 	}{
 		{name: "people schema", schemaVersion: "2.10.0", wantPeople: true},
 		{name: "directory predecessor", schemaVersion: "2.12.9", wantPeople: true},
@@ -358,7 +359,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 		{name: "native message tags schema", schemaVersion: "3.15.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
 		{name: "meeting record predecessor", schemaVersion: "5.0.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "meeting record schema", schemaVersion: "5.1.0", wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
-		{name: "current schema", schemaVersion: api.APISchemaVersion, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
+		{name: "current schema", schemaVersion: api.APISchemaVersion, wantPeople: true, wantChatDiscovery: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantMeetingRecords: true, wantMeetingDecisions: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true, wantContacts: true},
 		{name: "tags predecessor 3.14.0", schemaVersion: "3.14.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true},
 		{name: "before contact schema", schemaVersion: "3.19.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantMessageTags: true},
 		{name: "contact schema", schemaVersion: "3.20.0", wantPeople: true, wantDirectory: true, wantSavedViews: true, wantMeetings: true, wantAgenda: true, wantArchiveSQL: true, wantCardDAV: true, wantReview: true, wantScoring: true, wantContacts: true, wantMessageTags: true},
@@ -398,7 +399,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 			assert.Equal(tt.wantChatDiscovery, opts.ChatDiscoveryBackend != nil)
 			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
 			assert.Equal(tt.wantMeetingRecords, opts.MeetingRecords)
-			assert.Equal(tt.schemaVersion == api.APISchemaVersion, opts.MeetingDecisions)
+			assert.Equal(tt.wantMeetingDecisions, opts.MeetingDecisions)
 			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
 			assert.Equal(tt.wantContacts, opts.ContactRoutesBackend != nil)
 			assert.Equal(tt.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)

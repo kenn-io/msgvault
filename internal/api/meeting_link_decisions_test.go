@@ -131,4 +131,5 @@ func TestMeetingDecisionRejectsTwoReferencesToSameOccurrence(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 	requirements.Equal(http.StatusBadRequest, w.Code, w.Body.String())
+	requirements.Contains(w.Body.String(), store.ErrMeetingLinkSameCopy.Error())
 }
