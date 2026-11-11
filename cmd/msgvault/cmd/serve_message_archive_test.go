@@ -383,10 +383,15 @@ func TestArchiveOnlyGrantFailureBodyHidesLabels(t *testing.T) {
 			requirementsForTest := require.New(t)
 			_, source, id, _, serverURL, owner, provider := newArchiveDaemon(t)
 			permissions := []string{"message.archive"}
+			var incomingSenders map[int64][]string
 			if caller == "archive-reader" {
 				permissions = append(permissions, "message.read")
+				incomingSenders = map[int64][]string{source.ID: {"codes@example.test"}}
+				snapshot, err := provider.client.MessageTags(t.Context(), provider.messageID, nil)
+				requirementsForTest.NoError(err)
+				requirementsForTest.NotEmpty(snapshot.AvailableTags)
 			}
-			token, err := owner.IssueAgentToken(t.Context(), caller, permissions, []int64{source.ID}, nil, nil, time.Time{})
+			token, err := owner.IssueAgentToken(t.Context(), caller, permissions, []int64{source.ID}, nil, incomingSenders, time.Time{})
 			requirementsForTest.NoError(err)
 			client, err := daemonclient.New(daemonclient.Config{URL: serverURL, AgentToken: token.Secret, AllowInsecure: true})
 			requirementsForTest.NoError(err)
@@ -403,6 +408,8 @@ func TestArchiveOnlyGrantFailureBodyHidesLabels(t *testing.T) {
 				requirementsForTest.NotNil(failure.Result)
 				assertionsForTest.Contains(failure.Result.Tags, "Label_keep")
 				assertionsForTest.Contains(failure.Result.Before, "INBOX")
+				assertionsForTest.False(failure.Result.Verified)
+				assertionsForTest.Empty(failure.Result.AvailableTags)
 			}
 		})
 	}
