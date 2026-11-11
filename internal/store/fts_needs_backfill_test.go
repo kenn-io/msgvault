@@ -260,6 +260,47 @@ func TestPG_BackfillFTSDoesNotJoinToAndCc(t *testing.T) {
 	require.Empty(ids)
 }
 
+func TestPG_BackfillFTSPreservesLegacyPositionGaps(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	subject := strings.Repeat("filler ", 256) + "alpha filler beta"
+	for _, stored := range []string{subject, "different stored subject"} {
+		id := f.CreateMessage(stored)
+		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = $1, search_fts = setweight(to_tsvector('simple', $2), 'A'), indexing_version = 2 WHERE id = $3`, stored, subject, id)
+		require.NoError(err)
+	}
+	compound := f.CreateMessage("compound-gap")
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', $1), 'A'), indexing_version = 2 WHERE id = $2`, strings.Repeat("filler ", 256)+"alpha filler foo-bar", compound)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alpha beta"}}, 10)
+	require.NoError(err)
+	require.Empty(ids)
+	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alpha foo"}}, 10)
+	require.NoError(err)
+	require.Empty(ids)
+}
+
+func TestPG_BackfillFTSDoesNotIncreaseStoredFieldRank(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	legacy, fresh := f.CreateMessage("legacy"), f.CreateMessage("fresh")
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'lantern' WHERE id IN ($1, $2)`, legacy, fresh)
+	require.NoError(err)
+	require.NoError(f.Store.UpsertFTS(fresh, "lantern", "", "", "", ""))
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'lantern'), 'A'), indexing_version = 2 WHERE id = $1`, legacy)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	var oldRank, newRank float64
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], search_fts, to_tsquery('simple', 'lantern:*')) FROM messages WHERE id = $1`, legacy).Scan(&oldRank))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], search_fts, to_tsquery('simple', 'lantern:*')) FROM messages WHERE id = $1`, fresh).Scan(&newRank))
+	require.InDelta(newRank, oldRank, 0.000001)
+}
+
 func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

@@ -2581,6 +2581,37 @@ func TestHandleCLISearchQuickCheckReportsBuildingImmediately(t *testing.T) {
 		"a stale tail must be reported as building on the first response")
 }
 
+type postgresBackfillStore struct{ *mockStore }
+
+func (*postgresBackfillStore) IsPostgreSQL() bool { return true }
+
+func TestHandleCLISearchPostgresBackfillAllowsOtherOperations(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		gate := NewSerialOperationGate()
+		started, release := make(chan struct{}), make(chan struct{})
+		st := &postgresBackfillStore{&mockStore{needsFTSBackfill: true, backfillFTSFunc: func(func(int64, int64)) (int64, error) {
+			close(started)
+			<-release
+			return 1, nil
+		}}}
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), OperationGate: gate})
+		defer func() { close(release); require.NoError(srv.Shutdown(t.Context())) }()
+		srv.ensureCLISearchIndexAsync(st, true)
+		synctest.Wait()
+		select {
+		case <-started:
+		default:
+			require.FailNow("backfill did not start")
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		done, ok := gate.BeginRequestWorkContext(ctx, "another operation")
+		require.True(ok, "operation must start while backfill is running")
+		done()
+	})
+}
+
 func TestHandleCLISearchBackfillUsesOperationGate(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
