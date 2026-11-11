@@ -47,7 +47,7 @@ type personPatchArgs struct {
 
 func personRecordRefusal(code string) bool {
 	switch code {
-	case "profile_values_unavailable", "profile_media_not_found", "profile_media_content_unavailable", "profile_value_not_found", "invalid_profile_value", "profile_patch_too_large", "person_category_duplicate", "service_alias_conflict", "invalid_profile_media_id", "invalid_if_match", "server_busy":
+	case "profile_values_unavailable", "profile_media_not_found", "profile_media_content_unavailable", "profile_value_not_found", "invalid_profile_value", "profile_patch_too_large", "person_category_duplicate", "service_alias_conflict", "invalid_if_match", "server_busy":
 		return true
 	}
 	return false
