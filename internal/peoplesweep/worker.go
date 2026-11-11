@@ -536,9 +536,8 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 			}
 			continue
 		}
-		if person.commitmentOnly {
-			// Ordinary cursors remain pending when this attempt was authorized
-			// solely for commitments. Leave them for the next run.
+		if person.commitmentOnly && request.PersonID == 0 {
+			// Preserve ordinary work without reclaiming this person in this run.
 			deferredPeople = append(deferredPeople, lease.PersonID)
 		}
 		result.PeopleSucceeded++
@@ -547,6 +546,9 @@ func (w *Worker) Run(ctx context.Context, request RunRequest) (RunResult, error)
 		result.Usage, err = addUsage(result.Usage, person.Usage)
 		if err != nil {
 			firstErr = err
+			break
+		}
+		if person.commitmentOnly && request.PersonID > 0 {
 			break
 		}
 	}
@@ -604,7 +606,7 @@ func (w *Worker) runPerson(
 	ordinaryAllowed := true
 	if authority, ok := w.Runner.(interface {
 		OrdinaryInferenceAllowed(ctx context.Context) (bool, error)
-	}); ok && commitmentPlanned {
+	}); ok {
 		allowed, err := authority.OrdinaryInferenceAllowed(ctx)
 		if err != nil {
 			return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
@@ -710,6 +712,12 @@ func (w *Worker) runPerson(
 		}
 		attemptStarted, attemptEnvelopeHash = true, hash
 		return nil
+	}
+	if !ordinaryAllowed && !commitmentPlanned {
+		if err := startAttempt(progress.CursorEnvelope); err != nil {
+			return PersonRunResult{}, err
+		}
+		return PersonRunResult{}, w.deferAttempt(ctx, lease, attemptID, resolvedAt)
 	}
 	// applyStatusOnly commits support changes under a renewed lease without
 	// advancing cursors, so the next packet reads the updated projection.

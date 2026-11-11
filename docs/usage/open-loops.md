@@ -159,6 +159,8 @@ Use `msgvault person provider consent --commitments` to see the provider,
 source dates, and what the request discloses. Repeat with `--yes` to consent
 to sending conversation text from both sides of verified direct chats and
 email. Each message contributes at most 2,000 runes of authored text.
+Changing the provider source dates or commitment window and batch limits restarts
+recent discovery while keeping saved promise decisions.
 The profile must allow sensitive `conversation_text` sources. Check the grant
 with `msgvault person provider status`. Use `msgvault person provider revoke`
 to revoke both the ordinary inference and commitment grants for the profile.

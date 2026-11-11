@@ -4423,7 +4423,9 @@ CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  backfill_message_id INTEGER NOT NULL DEFAULT 0,
  anchor_after_id INTEGER NOT NULL DEFAULT 0,
  anchor_through_sequence INTEGER NOT NULL DEFAULT 0,
- anchor_backfill_id INTEGER NOT NULL DEFAULT 0
+ anchor_backfill_id INTEGER NOT NULL DEFAULT 0,
+ scope_fingerprint TEXT NOT NULL DEFAULT '',
+ selection_at DATETIME
 );
 
 -- Frozen intent survives owner closure. Purging the cited promise deletes
