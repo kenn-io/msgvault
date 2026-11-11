@@ -363,6 +363,44 @@ func (s *Store) applyPersonSweepWithAligner(
 			if validateErr != nil {
 				return validateErr
 			}
+			resolved := 0
+			for _, memory := range request.Brief.Boundary.AppreciationMemory {
+				if memory.Suggestion.State == "already_thanked" {
+					resolved++
+				}
+			}
+			for i, memory := range request.Brief.Boundary.AppreciationMemory {
+				if memory.Suggestion.State != "suggested" {
+					continue
+				}
+				var proofID sql.NullInt64
+				err := tx.QueryRowContext(ctx, `SELECT thanks_brief_id FROM person_appreciation_state WHERE contribution_key = ?`, memory.Suggestion.Key).Scan(&proofID)
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return err
+				}
+				if !proofID.Valid {
+					continue
+				}
+				proof, valid, err := s.validAppreciationProofTx(ctx, tx, request.Lease.PersonID, memory.Suggestion.Key, proofID.Int64, request.Brief.ValidationProfile, true)
+				if err != nil {
+					return err
+				}
+				if valid {
+					if resolved == 3 {
+						delete(current, memory.Suggestion.Key)
+						continue
+					}
+					memory.Suggestion.State, memory.Suggestion.PriorThanks = "already_thanked", "evidenced"
+					memory.Suggestion.Thanked, memory.OwnerRef, memory.OwnerRawSHA256 = proof.Suggestion.Thanked, proof.OwnerRef, proof.OwnerRawSHA256
+					request.Brief.Boundary.AppreciationMemory[i] = memory
+					current[memory.Suggestion.Key] = memory
+					resolved++
+				}
+			}
+			request.Brief.Boundary.AppreciationMemory = slices.DeleteFunc(request.Brief.Boundary.AppreciationMemory, func(memory peoplesweep.BriefAppreciationMemory) bool {
+				_, keep := current[memory.Suggestion.Key]
+				return !keep
+			})
 			if err := peoplesweep.FilterBriefAppreciations(request.Brief, current); err != nil {
 				return err
 			}

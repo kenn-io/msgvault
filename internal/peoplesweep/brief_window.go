@@ -50,7 +50,7 @@ type BriefArchive interface {
 	) ([]EvidenceItem, error)
 	PersonSweepAppreciationPeers(ctx context.Context, personID int64, items []EvidenceItem, throughSequence int64) ([]BriefAppreciationPeer, error)
 	PersonSweepAppreciationOwners(ctx context.Context, personID int64, peers []BriefAppreciationPeer, profile ProviderProfile, throughSequence int64, limit int) ([]BriefAppreciationOwner, error)
-	PersonSweepAppreciationDismissed(ctx context.Context, keys []string) (map[string]bool, error)
+	PersonSweepAppreciationRetired(ctx context.Context, personID int64, keys []string, profile ProviderProfile) (map[string]bool, error)
 	PersonSweepLastContact(ctx context.Context, personID int64) (BriefLastContact, bool, error)
 }
 
@@ -351,7 +351,7 @@ func BuildBriefWindow(
 	for _, peer := range peers {
 		keys = append(keys, peer.ContributionKey)
 	}
-	dismissed, err := archive.PersonSweepAppreciationDismissed(ctx, keys)
+	dismissed, err := archive.PersonSweepAppreciationRetired(ctx, request.PersonID, keys, request.Profile)
 	if err != nil {
 		return BriefWindow{}, fmt.Errorf("load appreciation dismissals: %w", err)
 	}
@@ -359,25 +359,6 @@ func BuildBriefWindow(
 	owners, err := archive.PersonSweepAppreciationOwners(ctx, request.PersonID, peers, request.Profile, request.ThroughSequence, request.MaxItems)
 	if err != nil {
 		return BriefWindow{}, fmt.Errorf("load appreciation owner context: %w", err)
-	}
-	// Leave one slot for useful later owner evidence when an optional seed can
-	// be removed without displacing the peer, mandatory contact, or memory.
-	if len(selected) == request.MaxItems {
-		for index := range slices.Backward(selected) {
-			item := selected[index]
-			if protected[packetEvidenceID(item)] || mandatory != nil && item.Ref == mandatory.Ref {
-				continue
-			}
-			useful := slices.ContainsFunc(peers, func(peer BriefAppreciationPeer) bool {
-				return peer.Ref != item.Ref && slices.ContainsFunc(owners, func(owner BriefAppreciationOwner) bool {
-					return owner.ConversationID == peer.ConversationID && owner.Ref.SourceID == peer.Ref.SourceID && owner.EventTime.After(peer.EventTime)
-				})
-			})
-			if useful {
-				selected = slices.Delete(selected, index, index+1)
-				break
-			}
-		}
 	}
 	for {
 		request.appreciationPeers = slices.DeleteFunc(slices.Clone(peers), func(peer BriefAppreciationPeer) bool {
@@ -417,6 +398,7 @@ func BuildBriefWindow(
 		trimmed, ok := briefDropUnprotected(selected, mandatory, protected)
 		if !ok {
 			request.retainedEvents, ok = briefRetireCapacityEvent(request.retainedEvents, protected)
+			// Event retirement rebuilds the set; restore appreciation protection.
 			for id := range appreciationProtected {
 				protected[id] = true
 			}

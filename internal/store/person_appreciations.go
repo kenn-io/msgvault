@@ -71,7 +71,8 @@ func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, person
 }
 
 // validAppreciationProofTx checks the exact immutable proof under the caller's
-// snapshot or locks. Unsupported or malformed evidence is not proof; I/O fails.
+// snapshot or locks. Unsupported evidence is not proof; corrupt boundaries and
+// operational failures are returned to the caller.
 func (s *Store) validAppreciationProofTx(ctx context.Context, tx *loggedTx, personID int64, key string, proofID int64, profile peoplesweep.ProviderProfile, lock bool) (peoplesweep.BriefAppreciationMemory, bool, error) {
 	var raw, version string
 	err := tx.QueryRowContext(ctx, `SELECT CAST(boundary_json AS TEXT), program_version FROM person_briefs WHERE id = ?`, proofID).Scan(&raw, &version)
@@ -83,7 +84,7 @@ func (s *Store) validAppreciationProofTx(ctx context.Context, tx *loggedTx, pers
 	}
 	var boundary peoplesweep.BriefBoundary
 	if err := json.Unmarshal([]byte(raw), &boundary); err != nil || !peoplesweep.ValidBriefAppreciationMemory(boundary.AppreciationMemory) {
-		return peoplesweep.BriefAppreciationMemory{}, false, nil
+		return peoplesweep.BriefAppreciationMemory{}, false, errors.New("invalid appreciation proof boundary")
 	}
 	for _, proof := range boundary.AppreciationMemory {
 		if proof.Suggestion.Key != key || proof.Suggestion.State != "already_thanked" {

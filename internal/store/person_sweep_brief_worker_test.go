@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -449,12 +450,93 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	require.Len(t, projection.Appreciations, 1)
 	assert.Equal(t, 202, projection.Brief.Version)
 	assert.Equal(t, "already_thanked", projection.Appreciations[0].Suggestion.State, "the exact proof is older than the recent-version window")
+	retired, err := st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
+	require.NoError(t, err)
+	assert.True(t, retired[key], "a valid old proof frees the active slot before provider input")
+	// Simulate another apply publishing the proof while this provider call is
+	// in flight. The apply fence must suppress the re-admitted contribution.
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_appreciation_state SET thanks_brief_id = NULL WHERE contribution_key = ?`), key)
+	require.NoError(t, err)
+	f.runner.candidate = func(packet map[string]any) json.RawMessage {
+		for _, value := range packet["appreciation_peers"].([]any) {
+			peer := value.(map[string]any)
+			if peer["contribution_key"] == key {
+				anchor := peer["anchor_id"].(string)
+				return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":{"evidence_id":%q,"summary":"they helped"},"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"carrying boxes","anchor_id":%q,"quote":"carried your boxes","thanked":null}],"uncertainties":[],"possible_attributes":[]}`, anchor, anchor))
+			}
+		}
+		require.FailNow(t, "expected contribution before proof is restored")
+		return nil
+	}
+	f.runner.afterBrief = func() {
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_appreciation_state SET thanks_brief_id = ? WHERE contribution_key = ?`), proofID, key)
+		require.NoError(t, err)
+	}
+	var raceID int
+	f.worker.NewID = func() string { raceID++; return fmt.Sprintf("proof-race-%d", raceID) }
+	run, err = f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+		PersonID: journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
+	require.NoError(t, err)
+	require.Equal(t, 1, run.PeopleSucceeded)
+	brief, err := st.GetPersonBriefContext(t.Context(), journal.alicePersonID, 0)
+	require.NoError(t, err)
+	var raceBoundary peoplesweep.BriefBoundary
+	require.NoError(t, json.Unmarshal(brief.Boundary, &raceBoundary))
+	require.Len(t, raceBoundary.AppreciationMemory, 1)
+	assert.Equal(t, "already_thanked", raceBoundary.AppreciationMemory[0].Suggestion.State, "proof published during inference retires the in-flight item")
+	assert.Contains(t, brief.RenderedText, "You already thanked them")
+	f.runner.afterBrief = nil
+	// Restore the independently seeded version with the contribution so the
+	// following read exercises stale proof against an otherwise live snapshot.
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'superseded' WHERE id = ?`), brief.ID)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'current' WHERE person_id = ? AND version = 202`), journal.alicePersonID)
+	require.NoError(t, err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "Edited thanks", ownerID)
 	require.NoError(t, err)
 	projection, err = st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
 	require.NoError(t, err)
 	require.Len(t, projection.Appreciations, 1)
 	assert.Equal(t, "unknown", projection.Appreciations[0].Suggestion.PriorThanks)
+	retired, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
+	require.NoError(t, err)
+	assert.False(t, retired[key], "stale proof does not prevent a fresh suggestion")
+	newOwnerID := journal.insertMessage(t, "new-owner-thanks", "chat", journal.bobID, f.now.Add(-30*time.Minute))
+	addSweepBody(t, journal, newOwnerID, "Thank you for carrying the boxes!")
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_is_from_me = TRUE, is_sent = TRUE WHERE id = ?`), newOwnerID)
+	require.NoError(t, err)
+	f.runner.candidate = func(packet map[string]any) json.RawMessage {
+		var anchor, owner string
+		for _, value := range packet["appreciation_peers"].([]any) {
+			peer := value.(map[string]any)
+			if peer["contribution_key"] == key {
+				anchor = peer["anchor_id"].(string)
+			}
+		}
+		for _, value := range packet["appreciation_owners"].([]any) {
+			entry := value.(map[string]any)
+			if entry["exact_excerpt"] == "Thank you for carrying the boxes!" {
+				owner = entry["evidence_id"].(string)
+			}
+		}
+		require.NotEmpty(t, anchor)
+		require.NotEmpty(t, owner)
+		return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":{"evidence_id":%q,"summary":"they helped"},"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"carrying boxes","anchor_id":%q,"quote":"carried your boxes","thanked":{"evidence_id":%q,"quote":"Thank you for carrying the boxes!"}}],"uncertainties":[],"possible_attributes":[]}`, anchor, anchor, owner))
+	}
+	var nextID int
+	f.worker.NewID = func() string { nextID++; return fmt.Sprintf("new-proof-%d", nextID) }
+	run, err = f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+		PersonID: journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
+	require.NoError(t, err)
+	require.Equal(t, 1, run.PeopleSucceeded)
+	states, err = st.GetPersonAppreciationStatesContext(t.Context(), []string{key})
+	require.NoError(t, err)
+	require.NotNil(t, states[key].ThanksBriefID)
+	assert.NotEqual(t, proofID, *states[key].ThanksBriefID)
+	projection, err = st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
+	require.NoError(t, err)
+	require.Len(t, projection.Appreciations, 1)
+	assert.Equal(t, "evidenced", projection.Appreciations[0].Suggestion.PriorThanks)
 	first, err := st.DismissPersonAppreciationContext(t.Context(), journal.alicePersonID, key, "owner", f.now, profile)
 	require.NoError(t, err)
 	retry, err := st.DismissPersonAppreciationContext(t.Context(), journal.alicePersonID, key, "other", f.now.Add(time.Hour), profile)
@@ -1237,4 +1319,38 @@ func TestAppreciationDismissalDoesNotAuthorizeRetryAfterPersonSplit(t *testing.T
 	states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{key})
 	require.NoError(t, err)
 	assert.Equal(t, first, states[key])
+}
+
+func TestPersonSweepEmptyAfterConcurrentDismissalPreservesExtraction(t *testing.T) {
+	f := newBriefWorkerEndToEndFixture(t, "appreciation-empty-race")
+	key, err := peoplesweep.AppreciationContributionKey("slack", "person-sweep-journal", "brief-e2e-1-appreciation-empty-race")
+	require.NoError(t, err)
+	f.runner.candidate = func(packet map[string]any) json.RawMessage {
+		for _, value := range packet["appreciation_peers"].([]any) {
+			peer := value.(map[string]any)
+			if peer["contribution_key"] == key {
+				return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"helping with the move","anchor_id":%q,"quote":"finished the move","thanked":null}],"uncertainties":[],"possible_attributes":[]}`, peer["anchor_id"].(string)))
+			}
+		}
+		require.FailNow(t, "expected contribution in brief input")
+		return nil
+	}
+	f.runner.afterBrief = func() {
+		_, err := f.journal.store.RecordPersonAppreciationDismissalContext(t.Context(), key, "person-a", "owner", f.now)
+		require.NoError(t, err)
+	}
+	run, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+		PersonID: f.journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
+	require.NoError(t, err)
+	require.Equal(t, 1, run.PeopleSucceeded)
+	require.Len(t, run.People, 1)
+	assert.Equal(t, peoplesweep.FailureInvalidOutput, run.People[0].BriefFailureClass)
+	_, err = f.journal.store.GetPersonBriefContext(t.Context(), f.journal.alicePersonID, 0)
+	assert.ErrorIs(t, err, store.ErrPersonBriefNotFound)
+	var successfulBatches int
+	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT COUNT(*) FROM person_sweep_batches WHERE attempt_id = ? AND status = 'succeeded'`), run.People[0].AttemptID).Scan(&successfulBatches))
+	assert.GreaterOrEqual(t, successfulBatches, 2, "paid extraction and brief calls are recorded")
+	var generationID sql.NullInt64
+	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT generation_id FROM person_sweep_attempts WHERE id = ?`), run.People[0].AttemptID).Scan(&generationID))
+	assert.True(t, generationID.Valid, "extraction generation is committed")
 }

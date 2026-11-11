@@ -32,11 +32,6 @@ type PersonAppreciationsResponse struct {
 	Appreciations []PersonAppreciation `json:"appreciations"`
 }
 
-type PersonAppreciationDismissal struct {
-	ContributionKey string     `json:"contribution_key"`
-	DismissedAt     *time.Time `json:"dismissed_at,omitempty"`
-}
-
 func (s *Server) registerPersonAppreciationRoutes(api huma.API) {
 	list := rawAPIV1Operation("listPersonAppreciations", http.MethodGet, "/people/{id}/appreciations", "List supported appreciation suggestions")
 	addPersonIDParameter(&list)
@@ -48,7 +43,7 @@ func (s *Server) registerPersonAppreciationRoutes(api huma.API) {
 	addPersonIDParameter(&dismiss)
 	dismiss.Parameters = append(dismiss.Parameters, &huma.Param{Name: "key", In: pathKey, Required: true,
 		Description: "Contribution key: exactly 64 lowercase hexadecimal characters", Schema: &huma.Schema{Type: huma.TypeString}})
-	dismiss.Responses = jsonResponsesFor[PersonAppreciationDismissal](api)
+	dismiss.Responses = jsonResponsesFor[store.PersonAppreciationState](api)
 	addErrorResponses(api, dismiss.Responses, http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, dismiss, s.handleDismissPersonAppreciation)
 }
@@ -133,7 +128,7 @@ func (s *Server) handleDismissPersonAppreciation(w http.ResponseWriter, r *http.
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, PersonAppreciationDismissal{ContributionKey: state.ContributionKey, DismissedAt: state.DismissedAt})
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (s *Server) projectCurrentBrief(w http.ResponseWriter, response *PersonBrief, projection store.PersonAppreciationProjection) bool {

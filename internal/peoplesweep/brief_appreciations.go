@@ -137,7 +137,7 @@ func retainedAppreciations(ctx context.Context, archive BriefArchive, request Br
 			keys = append(keys, memory.Suggestion.Key)
 		}
 	}
-	dismissed, err := archive.PersonSweepAppreciationDismissed(ctx, keys)
+	dismissed, err := archive.PersonSweepAppreciationRetired(ctx, request.PersonID, keys, request.Profile)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read retained appreciation dismissals: %w", err)
 	}

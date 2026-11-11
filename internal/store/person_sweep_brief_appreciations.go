@@ -12,16 +12,65 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
-func (s *Store) PersonSweepAppreciationDismissed(ctx context.Context, keys []string) (map[string]bool, error) {
-	states, err := s.GetPersonAppreciationStatesContext(ctx, keys)
+func (s *Store) PersonSweepAppreciationRetired(ctx context.Context, personID int64, keys []string, profile peoplesweep.ProviderProfile) (map[string]bool, error) {
+	var retired map[string]bool
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		var err error
+		retired, err = s.appreciationRetiredTx(ctx, tx, personID, keys, profile, false)
+		return err
+	})
+	return retired, err
+}
+
+// appreciationRetiredTx checks explicit keys in one snapshot, then validates
+// any exact proof in that same snapshot. No nested store transaction is opened.
+func (s *Store) appreciationRetiredTx(ctx context.Context, tx *loggedTx, personID int64, keys []string, profile peoplesweep.ProviderProfile, lock bool) (map[string]bool, error) {
+	retired := make(map[string]bool)
+	if len(keys) > MaxPersonAppreciationStateKeys {
+		return nil, ErrTooManyPersonAppreciationKeys
+	}
+	if len(keys) == 0 {
+		return retired, nil
+	}
+	args := make([]any, len(keys))
+	for i, key := range keys {
+		if !validAppreciationKey(key) {
+			return nil, ErrInvalidPersonAppreciationKey
+		}
+		args[i] = key
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT contribution_key, dismissed_at, thanks_brief_id FROM person_appreciation_state WHERE contribution_key IN (`+placeholders(len(keys))+`)`, args...)
 	if err != nil {
+		return nil, fmt.Errorf("read appreciation retirement: %w", err)
+	}
+	proofs := make(map[string]int64)
+	for rows.Next() {
+		var key string
+		var dismissed sql.NullTime
+		var proof sql.NullInt64
+		if err := rows.Scan(&key, &dismissed, &proof); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if dismissed.Valid {
+			retired[key] = true
+		} else if proof.Valid {
+			proofs[key] = proof.Int64
+		}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
 	}
-	dismissed := make(map[string]bool, len(states))
-	for key, state := range states {
-		dismissed[key] = state.DismissedAt != nil
+	for key, proofID := range proofs {
+		_, valid, err := s.validAppreciationProofTx(ctx, tx, personID, key, proofID, profile, lock)
+		if err != nil {
+			return nil, err
+		}
+		if valid {
+			retired[key] = true
+		}
 	}
-	return dismissed, nil
+	return retired, nil
 }
 
 // PersonSweepAppreciationPeers resolves exact body text only for peer messages
@@ -102,6 +151,7 @@ func (s *Store) PersonSweepAppreciationPeers(
 // PersonSweepAppreciationOwners loads only positively native-owner messages
 // from a complete direct roster shared with an admitted peer. The provider's
 // membership count establishes completeness; accumulated rows alone do not.
+// Sampling is bounded and newest-first, so absence does not prove no thanks.
 func (s *Store) PersonSweepAppreciationOwners(
 	ctx context.Context, personID int64, peers []peoplesweep.BriefAppreciationPeer,
 	profile peoplesweep.ProviderProfile, throughSequence int64, limit int,

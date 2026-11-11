@@ -49,7 +49,7 @@ func (a *briefFakeArchive) PersonSweepAppreciationOwners(_ context.Context, _ in
 	return a.appreciationOwners, nil
 }
 
-func (a *briefFakeArchive) PersonSweepAppreciationDismissed(_ context.Context, _ []string) (map[string]bool, error) {
+func (a *briefFakeArchive) PersonSweepAppreciationRetired(_ context.Context, _ int64, _ []string, _ ProviderProfile) (map[string]bool, error) {
 	return a.dismissedAppreciations, nil
 }
 
@@ -817,30 +817,6 @@ func TestBriefWindowExcludesDismissedContributionsBeforeModelCap(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("%064x", 4), window.Batch.Packet.BriefPeers[0].ContributionKey)
 }
 
-func TestBriefWindowReservesOwnerEvidenceForRetainedContribution(t *testing.T) {
-	peer := briefWindowItem(10, SourceConversationText, 10, "I carried your boxes upstairs.")
-	optional := briefWindowItem(11, SourceConversationText, 12, "An unrelated update.")
-	key, hash := strings.Repeat("a", 64), strings.Repeat("b", 64)
-	archive := &briefFakeArchive{items: []EvidenceItem{peer, optional}, appreciationPeers: []BriefAppreciationPeer{{
-		Ref: peer.Ref, ConversationID: 42, ContributionKey: key, RawSHA256: hash, ExactExcerpt: peer.Excerpt, EventTime: peer.EventTime,
-	}}, appreciationOwners: []BriefAppreciationOwner{{
-		EvidenceID: "owner:test", Ref: EvidenceRef{SourceLane: SourceConversationText, SourceID: peer.Ref.SourceID, MessageID: 99},
-		ConversationID: 42, RawSHA256: strings.Repeat("c", 64), ExactExcerpt: "Thanks for carrying my boxes!", EventTime: peer.EventTime.Add(time.Hour),
-	}}}
-	request := briefWindowRequest(t)
-	request.MaxItems = 2
-	request.Previous = &BriefBoundary{AppreciationMemory: []BriefAppreciationMemory{{
-		Suggestion: BriefThanksSuggestion{Text: "carrying boxes", Quote: "carried your boxes", Key: key, State: "suggested"},
-		PeerRef:    peer.Ref, PeerRawSHA256: hash, ConversationID: 42,
-	}}}
-	window, err := BuildBriefWindow(t.Context(), archive, request)
-	require.NoError(t, err)
-	require.Len(t, window.Items, 1)
-	assert.Equal(t, peer.Ref.MessageID, window.Items[0].Ref.MessageID)
-	require.Len(t, window.Batch.Packet.BriefOwners, 1)
-	assert.Equal(t, 2, window.Boundary.ItemCount)
-}
-
 func TestRetainedThanksFreesSlotBeforeNewContribution(t *testing.T) {
 	request := briefWindowRequest(t)
 	request.MaxItems = 6
@@ -885,4 +861,30 @@ func TestRetainedThanksFreesSlotBeforeNewContribution(t *testing.T) {
 	replayed, err := BuildBriefWindow(t.Context(), archive, request)
 	require.NoError(t, err)
 	assert.Len(t, replayed.Request.retainedAppreciations, 3)
+}
+
+func TestFullBriefWindowLeavesOwnerThanksUnknown(t *testing.T) {
+	peer := briefWindowItem(10, SourceConversationText, 10, "I carried your boxes upstairs.")
+	optional := briefWindowItem(11, SourceConversationText, 12, "An unrelated update.")
+	key, hash := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	archive := &briefFakeArchive{items: []EvidenceItem{peer, optional}, appreciationPeers: []BriefAppreciationPeer{{
+		Ref: peer.Ref, ConversationID: 42, ContributionKey: key, RawSHA256: hash, ExactExcerpt: peer.Excerpt, EventTime: peer.EventTime,
+	}}, appreciationOwners: []BriefAppreciationOwner{{
+		EvidenceID: "owner:test", Ref: EvidenceRef{SourceLane: SourceConversationText, SourceID: peer.Ref.SourceID, MessageID: 99},
+		ConversationID: 42, RawSHA256: strings.Repeat("c", 64), ExactExcerpt: "Thanks for carrying my boxes!", EventTime: peer.EventTime.Add(time.Hour),
+	}}}
+	request := briefWindowRequest(t)
+	request.MaxItems = 2
+	request.Previous = &BriefBoundary{AppreciationMemory: []BriefAppreciationMemory{{
+		Suggestion: BriefThanksSuggestion{Text: "carrying boxes", Quote: "carried your boxes", Key: key, State: "suggested", PriorThanks: "unknown"},
+		PeerRef:    peer.Ref, PeerRawSHA256: hash, ConversationID: 42,
+	}}}
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	assert.Len(t, window.Items, 2)
+	assert.Empty(t, window.Batch.Packet.BriefOwners)
+	parsed, err := ParseBrief(briefOutputJSON{}.raw(), window, request.Profile)
+	require.NoError(t, err)
+	require.Len(t, parsed.Output.ThanksSuggestions, 1)
+	assert.Equal(t, "unknown", parsed.Output.ThanksSuggestions[0].PriorThanks)
 }
