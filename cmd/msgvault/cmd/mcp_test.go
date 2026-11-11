@@ -655,12 +655,16 @@ func TestDaemonMCPEventsRequireCurrentDaemon(t *testing.T) {
 	for _, tc := range []struct {
 		name, version string
 		want          bool
-	}{{"old", "5.2.0", false}, {"current", api.APISchemaVersion, true}} {
+	}{{"old", "5.2.0", false}, {"current", api.APISchemaVersion, true}, {"health unavailable", "", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			eventsCalls := 0
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
+					if tc.version == "" {
+						http.Error(w, "unavailable", http.StatusServiceUnavailable)
+						return
+					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version})
 				case "/api/v1/mcp-events/list":
 					eventsCalls++

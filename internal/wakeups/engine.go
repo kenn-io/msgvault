@@ -96,7 +96,7 @@ func (e *Engine) initializeMissing(ctx context.Context, name string, head *initi
 	if head.page.CompleteThrough.IsZero() {
 		return nil
 	}
-	swapped, err := e.Store.AdvanceWakeupState(ctx, name, nil, store.WakeupState{At: head.page.CompleteThrough})
+	swapped, err := e.Store.AdvanceWakeupStateKey(ctx, store.WakeupStateKey(name), nil, store.WakeupState{At: head.page.CompleteThrough})
 	if err == nil && !swapped {
 		logger := e.Logger
 		if logger == nil {
@@ -112,7 +112,7 @@ func (e *Engine) InitializeMissing(ctx context.Context) error {
 	var head initialHead
 	var loadErr error
 	for _, sub := range e.Subscriptions {
-		_, raw, err := e.Store.LoadWakeupState(ctx, sub.Name)
+		_, raw, err := e.Store.LoadWakeupStateKey(ctx, sub.StateKey)
 		if err != nil {
 			if loadErr == nil {
 				loadErr = err
@@ -285,6 +285,11 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				}
 				return err
 			}
+			recovered := sub.Native && state.Failures == 0 && state.LastError == "person_unavailable"
+			if recovered {
+				state.LastError = ""
+				state.FailedSince = nil
+			}
 			rows, position, _ := changefeed.Scan(page, since, filter, changefeed.ScanBudget)
 			next = position
 			for _, row := range rows {
@@ -298,8 +303,10 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				return err
 			}
 			if len(matches) == 0 && state.Failures == 0 {
-				if len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime)) {
-					skipTo(next)
+				if len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime)) || recovered {
+					if len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime)) {
+						skipTo(next)
+					}
 					_, err = advance(raw)
 					return err
 				}

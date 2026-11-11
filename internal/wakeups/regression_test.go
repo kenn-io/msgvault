@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/changefeed"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 type observedStore struct {
@@ -418,7 +419,7 @@ func TestSetupInitializesBeforeFirstPass(t *testing.T) {
 	now := time.Now().UTC()
 	seedWakeup(t, base, "old@example.com", 0, 1, now)
 	existing := store.WakeupState{At: now.Add(-time.Hour), Failures: 2, NextAttemptAt: now.Add(time.Hour)}
-	ok, err := base.AdvanceWakeupState(t.Context(), "existing", nil, existing)
+	ok, err := base.AdvanceWakeupStateKey(t.Context(), store.WakeupStateKey("existing"), nil, existing)
 	require.NoError(err)
 	require.True(ok)
 	var deliveries []payload
@@ -434,7 +435,7 @@ func TestSetupInitializesBeforeFirstPass(t *testing.T) {
 	filter := changefeed.Filter{IncomingOnly: true}
 	engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "new", server, filter), testSubscription(t, "existing", server, filter)}, Now: func() time.Time { return now }}
 	require.NoError(engine.GatedSetup(t.Context(), func() error { return engine.InitializeMissing(t.Context()) }))
-	state, _, err := base.LoadWakeupState(t.Context(), "existing")
+	state, _, err := base.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("existing"))
 	require.NoError(err)
 	assert.Equal(existing, state)
 	id := seedWakeup(t, base, "new@example.com", 0, 2, now.Add(45*time.Second))
@@ -458,20 +459,20 @@ func TestSetupInitializationFallback(t *testing.T) {
 			require := Require.New(t)
 			base := testutil.NewTestStore(t)
 			st := &observedStore{Store: base, zeroBound: tc.zero, listErr: tc.failure}
-			engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "new"}}}
+			engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "new", StateKey: store.WakeupStateKey("new")}}}
 			err := engine.InitializeMissing(t.Context())
 			if tc.failure != nil {
 				require.ErrorIs(err, tc.failure)
 			} else {
 				require.NoError(err)
 			}
-			_, raw, err := base.LoadWakeupState(t.Context(), "new")
+			_, raw, err := base.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("new"))
 			require.NoError(err)
 			assert.Nil(raw)
 			st.zeroBound, st.listErr = false, nil
 			st.fixedBound = time.Now().UTC()
 			require.NoError(engine.RunPass(t.Context()))
-			_, raw, err = base.LoadWakeupState(t.Context(), "new")
+			_, raw, err = base.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("new"))
 			require.NoError(err)
 			assert.NotNil(raw)
 		})
@@ -486,9 +487,9 @@ func TestSetupInitializesOtherEntriesAfterStateLoadError(t *testing.T) {
 	_, err := base.DB().ExecContext(t.Context(), base.Rebind(`INSERT INTO archive_metadata (key, value) VALUES (?, ?)`), "wakeup:v1:a", invalid)
 	require.NoError(err)
 	bound := time.Now().UTC().Add(-30 * time.Second)
-	engine := Engine{Store: &observedStore{Store: base, fixedBound: bound}, Subscriptions: []Subscription{{Name: "a"}, {Name: "b"}}}
+	engine := Engine{Store: &observedStore{Store: base, fixedBound: bound}, Subscriptions: []Subscription{{Name: "a", StateKey: store.WakeupStateKey("a")}, {Name: "b", StateKey: store.WakeupStateKey("b")}}}
 	require.Error(engine.InitializeMissing(t.Context()))
-	state, raw, err := base.LoadWakeupState(t.Context(), "b")
+	state, raw, err := base.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("b"))
 	require.NoError(err)
 	require.NotNil(raw)
 	assert.Equal(bound, state.At)
@@ -548,4 +549,47 @@ func TestWakeupPersonIncludesIdentityLinkedBeforePage(t *testing.T) {
 	assert.Equal([]int64{id}, deliveries[0].Matched.MessageIDs)
 	require.NoError(engine.RunPass(t.Context()))
 	assert.Len(deliveries, 1)
+}
+
+func TestNativePersonRecoveryClearsOnlyQuietStatus(t *testing.T) {
+	require := Require.New(t)
+	f := storetest.New(t)
+	participant := f.EnsureParticipant("recover@example.test", "recover", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	now := time.Now().UTC()
+	for _, tc := range []struct {
+		name, category string
+		failures       int
+		clear          bool
+	}{
+		{"recovered", "person_unavailable", 0, true},
+		{"delivery failure", "http_5xx", 0, false},
+		{"pending delivery", "person_unavailable", 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := Assert.New(t)
+			require := Require.New(t)
+			key := store.MCPEventsPositionKey(tc.name)
+			failed := now.Add(-time.Hour)
+			initial := store.WakeupState{At: now, Failures: tc.failures, LastError: tc.category, FailedSince: &failed}
+			if tc.failures > 0 {
+				initial.NextAttemptAt = now.Add(time.Hour)
+			}
+			ok, err := f.Store.AdvanceWakeupStateKey(t.Context(), key, nil, initial)
+			require.NoError(err)
+			require.True(ok)
+			engine := Engine{Store: f.Store, Now: func() time.Time { return now }, Subscriptions: []Subscription{{Name: tc.name, StateKey: key, Native: true, Filter: changefeed.Filter{PersonID: person.ID}}}}
+			Require.NoError(t, engine.RunPass(t.Context()))
+			got, _, err := f.Store.LoadWakeupStateKey(t.Context(), key)
+			require.NoError(err)
+			if tc.clear {
+				assert.Empty(got.LastError)
+				assert.Nil(got.FailedSince)
+			} else {
+				assert.Equal(tc.category, got.LastError)
+				assert.NotNil(got.FailedSince)
+			}
+		})
+	}
 }

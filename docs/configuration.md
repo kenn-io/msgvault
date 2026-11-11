@@ -2802,10 +2802,12 @@ enabled = true
 ```
 
 The default is false. The daemon delivers Events while it is running, and
-resumes from each subscription's saved position after a restart. The private
-`mcp-events.key` in the msgvault home encrypts callback secrets; backups omit
-it. Back up this key separately and restore it with the archive to keep existing
-subscriptions available. Configured wake-ups and Events subscriptions share a limit of 32 targets.
+resumes from each subscription's saved position after a restart. Callback secrets are kept in the private provider credential store outside the archive.
+A default restore resumes each subscription after its client refreshes its secret;
+backups made with `--include-tokens` also restore the credentials. If you downgrade
+to a version that predates Events credentials, that version cannot read any stored
+provider credentials until the Events records are removed. Configured wake-ups
+and Events subscriptions share a limit of 32 targets.
 See [MCP Events](usage/chat.md#mcp-events) for subscription and verification.
 
 ### Wake-up webhooks

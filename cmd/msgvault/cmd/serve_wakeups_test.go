@@ -53,10 +53,10 @@ func TestWakeupJobOnlyForUsableEntries(t *testing.T) {
 	assert.Nil(raw)
 	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, cfg, nil))
 	assert.True(sched.IsJobScheduled("wakeups"))
-	_, raw, err = st.LoadWakeupState(t.Context(), "good")
+	_, raw, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("good"))
 	require.NoError(err)
 	assert.NotNil(raw)
-	_, raw, err = st.LoadWakeupState(t.Context(), "file")
+	_, raw, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("file"))
 	require.NoError(err)
 	assert.NotNil(raw)
 }
@@ -88,13 +88,13 @@ func TestWakeupJobRecoversAfterSetupGateFailure(t *testing.T) {
 	sched := scheduler.New(nil)
 	require.NoError(configureWakeupJob(t.Context(), sched, gate, st, cfg, nil))
 	assert.True(sched.IsJobScheduled("wakeups"))
-	_, raw, err := st.LoadWakeupState(t.Context(), "good")
+	_, raw, err := st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("good"))
 	require.NoError(err)
 	assert.Nil(raw)
 	gate.refuse = false
 	defer func() { <-sched.Stop().Done() }()
 	require.NoError(sched.TriggerJob("wakeups"))
-	_, raw, err = st.LoadWakeupState(t.Context(), "good")
+	_, raw, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("good"))
 	require.NoError(err)
 	assert.NotNil(raw)
 }
@@ -121,7 +121,7 @@ func TestWakeupSetupSafeDiagnostics(t *testing.T) {
 func TestWakeupJobWithOnlyEvents(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	sched := scheduler.New(nil)
-	service := &mcpevents.Service{Store: st, Home: t.TempDir(), Enabled: true}
+	service := &mcpevents.Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 	Require.NoError(t, configureWakeupJob(t.Context(), sched, nil, st, &config.Config{}, nil, service))
 	Assert.True(t, sched.IsJobScheduled("wakeups"))
 }

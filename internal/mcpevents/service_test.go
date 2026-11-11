@@ -18,32 +18,36 @@ import (
 	"go.kenn.io/msgvault/internal/wakeups"
 )
 
-func TestNativeSkipsUnreadableSubscription(t *testing.T) {
+func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	var logs bytes.Buffer
-	service := Service{Store: st, Home: t.TempDir(), Enabled: true, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/one", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook?token=x", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	first, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
-	in.Delivery.URL = "https://example.com/two"
-	second, err := service.Subscribe(t.Context(), in)
+	key := store.MCPEventsPositionKey(first.ID)
+	state, raw, err := st.LoadWakeupStateKey(t.Context(), key)
 	require.NoError(err)
-	entries, raw, err := service.catalog(t.Context())
-	require.NoError(err)
-	entries[0].Secret = []byte("corrupt")
-	next, err := json.Marshal(entries)
-	require.NoError(err)
-	ok, err := st.SwapMCPEventsCatalog(t.Context(), raw, next, "", nil, "")
+	state.Failures = 2
+	ok, err := st.AdvanceWakeupStateKey(t.Context(), key, raw, state)
 	require.NoError(err)
 	require.True(ok)
+	require.NoError(os.Remove(filepath.Join(service.TokensDir, "provider-credentials.json")))
+	assert.True(service.Available(t.Context()))
 	targets, err := service.Native(t.Context())
 	require.NoError(err)
+	assert.Empty(targets)
+	second, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	assert.Equal(first.ID, second.ID)
+	got, _, err := st.LoadWakeupStateKey(t.Context(), key)
+	require.NoError(err)
+	assert.Equal(state, got)
+	targets, err = service.Native(t.Context())
+	require.NoError(err)
 	require.Len(targets, 1)
-	assert.Equal(second.ID, targets[0].Name)
-	assert.Contains(logs.String(), first.ID)
-	assert.Contains(logs.String(), "secret_unavailable")
+	assert.Equal(first.ID, targets[0].Name)
 }
 
 func preparedSubscribe(t *testing.T, in MCPEventsSubscribeRequest) MCPEventsSubscribeRequest {
@@ -55,28 +59,33 @@ func preparedSubscribe(t *testing.T, in MCPEventsSubscribeRequest) MCPEventsSubs
 	return out
 }
 
-func TestEventsKeyIsCreatedOnlyBySubscribe(t *testing.T) {
-	assert := assert.New(t)
+func TestLegacyCatalogRefreshPreservesPosition(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	now := time.Now().UTC()
-	service := Service{Store: st, Home: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
-	path := filepath.Join(service.Home, "mcp-events.key")
-	assert.True(service.Available(t.Context()))
-	_, err := service.Native(t.Context())
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	first, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
-	assert.NoFileExists(path)
-	in, err := DecodeSubscribe([]byte(`{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`))
+	_, before, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
 	require.NoError(err)
-	_, err = service.Subscribe(t.Context(), in)
+	raw, err := st.LoadMCPEventsCatalog(t.Context())
 	require.NoError(err)
-	require.NoError(os.Remove(path))
-	assert.False(service.Available(t.Context()))
-	unsubscribe, err := DecodeUnsubscribe([]byte(`{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook"}}`))
+	var entries []map[string]any
+	require.NoError(json.Unmarshal(raw, &entries))
+	entries[0]["sealed_secret"] = "b2xk"
+	legacy, err := json.Marshal(entries)
 	require.NoError(err)
-	require.NoError(service.Unsubscribe(t.Context(), unsubscribe))
-	assert.True(service.Available(t.Context()))
-	assert.NoFileExists(path)
+	ok, err := st.SwapMCPEventsCatalog(t.Context(), raw, legacy, "", nil, "")
+	require.NoError(err)
+	require.True(ok)
+	require.NoError(os.Remove(filepath.Join(service.TokensDir, "provider-credentials.json")))
+	second, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	assert.Equal(first.ID, second.ID)
+	_, after, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
+	require.NoError(err)
+	assert.Equal(before, after)
 }
 
 func TestDecodeSubscribeRejectsInvalidArgumentsAndNulls(t *testing.T) {
@@ -133,7 +142,7 @@ func TestSubscribeRefreshPreservesPosition(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	service := Service{Store: st, Home: t.TempDir(), Enabled: true}
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 	input := MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
 	input = preparedSubscribe(t, input)
 	first, err := service.Subscribe(t.Context(), input)
@@ -179,12 +188,12 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	now := time.Now().UTC()
-	service := Service{Store: st, Home: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
 	in := MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
 	in = preparedSubscribe(t, in)
 	result, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
-	require.NoError(os.Remove(filepath.Join(service.Home, "mcp-events.key")))
+	require.NoError(os.Remove(filepath.Join(service.TokensDir, "provider-credentials.json")))
 	now = now.Add(25 * time.Hour)
 	targets, err := service.Native(t.Context())
 	require.NoError(err)
@@ -199,7 +208,7 @@ func TestExpiredGrantEntryPurgedByOwnerService(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	now := time.Now().UTC()
-	service := Service{Store: st, Home: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	result, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
@@ -226,7 +235,7 @@ func TestExpiredGrantEntryPurgedByOwnerService(t *testing.T) {
 
 func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	service := Service{Store: st, Home: t.TempDir(), Enabled: true, ConfigTargets: 31}
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, ConfigTargets: 31}
 	makeRequest := func(url string) MCPEventsSubscribeRequest {
 		return preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: url, Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	}
@@ -268,7 +277,7 @@ func TestNativeRespectsConfiguredTargetLimitAfterRestart(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	var logs bytes.Buffer
-	service := Service{Store: st, Home: t.TempDir(), Enabled: true, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
 	var ids []string
 	for i := range 32 {
 		in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: fmt.Sprintf("https://example.com/%d", i), Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
@@ -297,7 +306,7 @@ func TestUnsubscribeWhileDisabledRemovesPosition(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	service := Service{Store: st, Home: t.TempDir(), Enabled: true}
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	result, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
@@ -309,4 +318,100 @@ func TestUnsubscribeWhileDisabledRemovesPosition(t *testing.T) {
 	_, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
 	require.NoError(err)
 	assert.Nil(raw)
+}
+
+func TestCredentialWriteFailureLeavesRecoverableCatalog(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "blocked")
+	require.NoError(os.WriteFile(blocked, []byte("not a directory"), 0600))
+	service := Service{Store: st, TokensDir: filepath.Join(blocked, "tokens"), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	_, err := service.Subscribe(t.Context(), in)
+	require.Error(err)
+	entries, _, err := service.catalog(t.Context())
+	require.NoError(err)
+	require.Len(entries, 1)
+	service.TokensDir = filepath.Join(dir, "tokens")
+	result, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	assert.Equal(entries[0].ID, result.ID)
+}
+
+func TestOwnerServiceRejectsOtherCatalogOwners(t *testing.T) {
+	for _, owner := range []string{"", "grant:fixture", "unknown"} {
+		t.Run(owner, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			_, err := service.Subscribe(t.Context(), in)
+			require.NoError(err)
+			entries, raw, err := service.catalog(t.Context())
+			require.NoError(err)
+			entries[0].Owner = owner
+			next, err := json.Marshal(entries)
+			require.NoError(err)
+			ok, err := st.SwapMCPEventsCatalog(t.Context(), raw, next, "", nil, "")
+			require.NoError(err)
+			require.True(ok)
+			targets, err := service.Native(t.Context())
+			require.NoError(err)
+			assert.Empty(t, targets)
+			assert.Equal(t, -1, find(entries, in.Arguments, in.Delivery.URL))
+		})
+	}
+}
+
+func TestCredentialCleanupFailureRetainsLiveButExpiresOldEntry(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	result, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	require.NoError(os.WriteFile(filepath.Join(service.TokensDir, "provider-credentials.json"), []byte("invalid"), 0600))
+	err = service.Unsubscribe(t.Context(), MCPEventsUnsubscribeRequest{Name: in.Name, Arguments: in.Arguments, Delivery: in.Delivery})
+	require.Error(err)
+	entries, _, err := service.catalog(t.Context())
+	require.NoError(err)
+	require.Len(entries, 1)
+	assert.Equal(result.ID, entries[0].ID)
+	now = now.Add(25 * time.Hour)
+	_, err = service.Native(t.Context())
+	require.Error(err)
+	entries, _, err = service.catalog(t.Context())
+	require.NoError(err)
+	assert.Empty(entries)
+	_, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+	require.NoError(err)
+	assert.Nil(raw)
+}
+
+func TestConcurrentRefreshRetainsOneUsableSecret(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	first, err := service.Subscribe(t.Context(), in)
+	require.NoError(err)
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { _, err := service.Subscribe(t.Context(), in); results <- err }()
+	}
+	success := 0
+	for range 2 {
+		if <-results == nil {
+			success++
+		}
+	}
+	require.Positive(success)
+	targets, err := service.Native(t.Context())
+	require.NoError(err)
+	require.Len(targets, 1)
+	assert.Equal(t, first.ID, targets[0].Name)
 }

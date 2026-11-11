@@ -40,7 +40,7 @@ func TestEventsMutationsUseOperationGate(t *testing.T) {
 func TestOwnerEventsDisabledAndInvalidSubscription(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	cfg := &config.Config{HomeDir: t.TempDir()}
-	events := &mcpevents.Service{Store: st, Home: cfg.HomeDir}
+	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir()}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
 	request := func(body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
@@ -85,7 +85,7 @@ func TestEventsRouterSerialGate(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	cfg := &config.Config{HomeDir: t.TempDir()}
-	events := &mcpevents.Service{Store: st, Home: cfg.HomeDir, Enabled: true}
+	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, OperationGate: NewSerialOperationGate(), Logger: testLogger()})
 	body := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
 	for _, path := range []string{"/api/v1/mcp-events/subscribe", "/api/v1/mcp-events/unsubscribe"} {
@@ -104,7 +104,7 @@ func TestGeneratedEventsCatalogDecodes(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	cfg := &config.Config{HomeDir: t.TempDir()}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: &mcpevents.Service{Store: st, Home: cfg.HomeDir, Enabled: true}, Logger: testLogger()})
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}, Logger: testLogger()})
 	server := httptest.NewServer(srv.Router())
 	defer server.Close()
 	client, err := pkgclient.New(server.URL)

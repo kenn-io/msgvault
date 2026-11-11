@@ -476,7 +476,7 @@ func TestNativeMCPStartup(t *testing.T) {
 func TestNativeDaemonMCPEventsOverModernHTTP(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	cfg := &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", BindAddr: "127.0.0.1"}, MCPEvents: config.MCPEventsConfig{Enabled: true}}
-	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, MCPEvents: &mcpevents.Service{Store: st, Home: cfg.HomeDir, Enabled: true}, Logger: slog.New(slog.DiscardHandler)})
+	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, MCPEvents: &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}, Logger: slog.New(slog.DiscardHandler)})
 	t.Cleanup(func() { _ = server.Shutdown(context.WithoutCancel(t.Context())) })
 	cmd := &cobra.Command{Use: "serve"}
 	addServeConfigFlags(cmd)

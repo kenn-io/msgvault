@@ -37,13 +37,28 @@ func (b *eventTestBackend) MCPEventsSubscribe(_ context.Context, in mcpevents.MC
 	return mcpevents.MCPEventsSubscribeResult{ID: "fixture", RefreshBefore: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), DeliveryStatus: mcpevents.MCPEventsDeliveryStatus{Active: true}}, nil
 }
 
-func TestEventsUnavailableStillListsEmpty(t *testing.T) {
+func TestEventsDisabledListsEmptyAndUnavailableReturnsError(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	backend := &eventTestBackend{disabled: true}
 	response := rawModernCall(t, ServeOptions{Events: backend}, HTTPOptions{}, "events/list", nil)
-	assert.Empty(t, response.Result["events"])
+	assertions.Empty(response.Result["events"])
 	backend.listErr = errors.New("daemon offline")
 	response = rawModernCall(t, ServeOptions{Events: backend}, HTTPOptions{}, "events/list", nil)
-	assert.Empty(t, response.Result["events"])
+	assertions.Equal(float64(mcpevents.Unavailable), response.Error["code"])
+	ct, st := sdkmcp.NewInMemoryTransports()
+	server, err := newMCPServer(ServeOptions{Events: backend}, false).Connect(t.Context(), st, nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = server.Close() })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "test", Version: "1"}, nil)
+	requirements.NoError(sdkmcp.AddSendingCustomMethod[*eventListParams, *eventListResult](client, "events/list"))
+	session, err := client.Connect(t.Context(), ct, nil)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = session.Close() })
+	_, err = sdkmcp.CallCustomMethod[*eventListParams, *eventListResult](t.Context(), session, "events/list", &eventListParams{})
+	var rpcErr *jsonrpc.Error
+	requirements.ErrorAs(err, &rpcErr)
+	assertions.Equal(int64(mcpevents.Unavailable), rpcErr.Code)
 }
 func (b *eventTestBackend) MCPEventsUnsubscribe(_ context.Context, in mcpevents.MCPEventsUnsubscribeRequest) error {
 	b.calls++

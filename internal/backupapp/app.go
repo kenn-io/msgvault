@@ -91,7 +91,7 @@ func computeManifestStats(ctx context.Context, q rowQuerier) (Stats, error) {
 }
 
 // manifestExcluded names the live-archive paths a snapshot never captures.
-var manifestExcluded = []string{"vectors.db", "analytics/", "logs/", "imports/", "tmp/", "locks", "mcp-events.key"}
+var manifestExcluded = []string{"vectors.db", "analytics/", "logs/", "imports/", "tmp/", "locks"}
 
 // App implements backup.App for msgvault.
 type App struct{ version string }

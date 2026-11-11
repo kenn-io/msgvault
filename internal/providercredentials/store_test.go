@@ -442,3 +442,24 @@ func TestImportIfAbsentHoldsStoreLockUntilRetired(t *testing.T) {
 }
 
 func noRetire() error { return nil }
+
+func TestEventsCredentialUsesInternalIDAndOrigin(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dir := t.TempDir()
+	id := EventsID("0123456789abcdef0123456789abcdef")
+	require.Error(ValidateID(id))
+	snapshot, err := Read(dir)
+	require.NoError(err)
+	revision, err := snapshot.Revision(id)
+	require.NoError(err)
+	snapshot, err = PutIfRevision(dir, revision, id, "https://example.test", "fixture")
+	require.NoError(err)
+	value, _, err := snapshot.Resolve(id, "https://example.test", "", nil)
+	require.NoError(err)
+	assert.Equal("fixture", value)
+	_, _, err = snapshot.Resolve(id, "https://other.example.test", "", nil)
+	assert.ErrorIs(err, ErrOriginMismatch)
+	_, err = PutIfRevision(dir, revision, id, "https://example.test", "stale")
+	assert.ErrorIs(err, ErrConflict)
+}

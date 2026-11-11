@@ -49,7 +49,7 @@ a public HTTPS URL on port 443 or 8443, and a Standard Webhooks `whsec_` secret
 containing 24–64 bytes. The subscription lasts 24 hours by default; `ttlMs`
 is clamped to one minute through 30 days, and null selects 30 days. Refreshing
 with the same event, arguments and URL replaces the secret and lease while
-keeping the saved position. `events/unsubscribe` uses the same identity.
+keeping the saved position. After a default restore, refresh the secret to resume; a backup with `--include-tokens` restores it. `events/unsubscribe` uses the same identity.
 
 After subscribing, read `list_changes` once from your own cursor to catch up.
 Each signed ping contains only a subscription ID and a null cursor. Verify the

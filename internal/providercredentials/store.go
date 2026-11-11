@@ -37,6 +37,7 @@ const (
 	StoredSuppressionEnvironment             = "MSGVAULT_STORED_PERSON_ENRICHMENT_SUPPRESSION_KEY"
 	personEnrichmentCredentialIDPrefix       = "people.enrichment/"
 	peopleProviderCredentialIDPrefix         = "people.provider/"
+	eventsCredentialIDPrefix                 = "mcp.events/"
 	credentialStoreVersion                   = 1
 	maximumCredentialStoreBytes        int64 = 1 << 20
 )
@@ -45,6 +46,7 @@ var (
 	ErrConflict       = errors.New("provider credential store changed")
 	ErrUnavailable    = errors.New("provider credential store unavailable")
 	ErrOriginMismatch = errors.New("stored provider credential is bound to a different endpoint origin")
+	eventsIDRE        = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	providerNameRE    = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
 	revisionKey       struct {
 		once sync.Once
@@ -104,7 +106,16 @@ func PeopleProviderID(name string) string {
 	return peopleProviderCredentialIDPrefix + name
 }
 
+// EventsID names a private MCP Events callback credential.
+func EventsID(id string) string { return eventsCredentialIDPrefix + id }
+
 func validateRecordID(id string) error {
+	if name, ok := strings.CutPrefix(id, eventsCredentialIDPrefix); ok {
+		if len(name) != 32 || !eventsIDRE.MatchString(name) {
+			return errors.New("invalid events credential ID")
+		}
+		return nil
+	}
 	if name, ok := strings.CutPrefix(id, peopleProviderCredentialIDPrefix); ok {
 		if name == "" || !providerNameRE.MatchString(name) {
 			return errors.New("invalid people provider credential ID")
@@ -608,6 +619,9 @@ func recordKind(id string) string {
 		return "vector_multimodal"
 	case PersonEnrichmentSuppressionID:
 		return "person_enrichment_suppression"
+	}
+	if strings.HasPrefix(id, eventsCredentialIDPrefix) {
+		return "mcp_events"
 	}
 	if strings.HasPrefix(id, peopleProviderCredentialIDPrefix) {
 		return "people_provider"
