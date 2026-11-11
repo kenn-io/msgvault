@@ -65,15 +65,7 @@ func mcpEnrichmentPropertiesExact(capabilities *apiprotocol.MCPCapabilities, pro
 	}
 	for _, route := range capabilities.Routes {
 		if route.OperationID == "putSettingsPersonEnrichmentProvider" {
-			if len(route.RequestProperties) != len(properties) {
-				return false
-			}
-			for _, property := range properties {
-				if !slices.Contains(route.RequestProperties, property) {
-					return false
-				}
-			}
-			return true
+			return len(route.RequestProperties) == len(properties) && !slices.ContainsFunc(properties, func(property string) bool { return !slices.Contains(route.RequestProperties, property) })
 		}
 	}
 	return false

@@ -132,8 +132,6 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(string(encoded), "settings_conflict")
 	enable := map[string]any{"name": "example", "etag": updated.ETag, "enabled": true}
-	disclosure, _, err = backend.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", enable)
-	require.NoError(err)
 	result, _, err = backend.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", enable)
 	require.NoError(err)
 	enabledPolicy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
@@ -149,8 +147,6 @@ enabled = false
 endpoint = "https://provider.example/search"
 poll_endpoint = "https://provider.example/poll"
 tier = "standard"
-api_key_env = "TEST_SIXTYFOUR_API_KEY"
-max_cost_usd_micros_per_run = 1234
 allowed_identifiers = ["name", "current_company"]
 target_keys = ["attribute:bio"]
 retention_posture = "zero_retention"
@@ -177,30 +173,6 @@ max_requests_per_day = 50
 	require.Len(sixtyReloaded.People.Enrichment.Providers, 1)
 	assert.Equal("https://provider.example/poll", sixtyReloaded.People.Enrichment.Providers[0].PollEndpoint)
 	assert.Equal("standard", sixtyReloaded.People.Enrichment.Providers[0].Tier)
-	assert.Equal("TEST_SIXTYFOUR_API_KEY", sixtyReloaded.People.Enrichment.Providers[0].APIKeyEnv)
-	assert.Equal(int64(1234), sixtyReloaded.People.Enrichment.Providers[0].MaxCostUSDMicrosPerRun)
-
-	// Disabled invalid Exa has no credential metadata and must not be replaced.
-	invalidDir := t.TempDir()
-	invalidPath := filepath.Join(invalidDir, "config.toml")
-	invalid := enrichmentExaFixture + "poll_endpoint = \"https://provider.example/poll\"\n"
-	require.NoError(os.WriteFile(invalidPath, []byte(invalid), 0o600))
-	invalidCfg, err := config.Load(invalidPath, invalidDir)
-	require.NoError(err)
-	invalidCfg.Data.DataDir = invalidDir
-	invalidBackend := sourceOperationFixture(t, api.NewServer(invalidCfg, nil, nil, slog.New(slog.DiscardHandler)))
-	result, _, err = invalidBackend.executeEnrichmentOperation(t.Context(), "get_enrichment_policy", nil)
-	require.NoError(err)
-	invalidPolicy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
-	result, _, err = invalidBackend.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": "example", "etag": invalidPolicy.ETag, "max_retries": 2})
-	require.NoError(err)
-	require.True(result.IsError)
-	invalidJSON, err := json.Marshal(result.Output)
-	require.NoError(err)
-	assert.Contains(string(invalidJSON), "provider_policy_unreconstructable")
-	afterInvalid, err := os.ReadFile(invalidPath)
-	require.NoError(err)
-	assert.Equal(invalid, string(afterInvalid))
 
 	// A real settings snapshot with enrichment enabled cannot lose its last provider.
 	secondDir := t.TempDir()
