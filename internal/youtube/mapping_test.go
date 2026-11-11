@@ -67,7 +67,7 @@ func TestCommentCannotMoveBetweenVideos(t *testing.T) {
 	assertions.Contains(rows["comment"].Metadata.String, `"video_id":"videoone"`)
 }
 
-func TestYouTubeUnchangedReplayAvoidsWritesAndJournalRows(t *testing.T) {
+func TestYouTubeContentAndUnchangedReplay(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)

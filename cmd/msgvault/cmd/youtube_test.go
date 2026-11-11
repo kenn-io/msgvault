@@ -87,5 +87,5 @@ func TestRunServeWarnsAboutYouTubeWithoutSchedule(t *testing.T) {
 		require.FailNow("daemon did not stop")
 	}
 	require.Contains(logs.String(), "YouTube profile is enabled but has no schedule")
-	require.Contains(logs.String(), "fixture")
+	require.Contains(logs.String(), "profile=fixture")
 }

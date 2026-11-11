@@ -275,6 +275,8 @@ func TestEmbeddingSlotKind(t *testing.T) {
 		{label: "synctech-sms:+15555550100", held: true, want: "sync"},
 		{label: "facebook_comments:app:9:page:100", held: true, want: "sync"},
 		{label: "youtube:UCfixture", held: true, want: "sync"},
+		{label: "youtube:", held: true, want: "other"},
+		{label: "youtube:UCfixture/other", held: true, want: "other"},
 		{label: "facebook_comments:example-page", held: true, want: "other"},
 	}
 	for _, tt := range tests {
