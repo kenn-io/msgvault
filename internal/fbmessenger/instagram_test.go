@@ -208,7 +208,7 @@ func TestInstagramMediaRecoveryAndContainment(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(summary.MessagesAdded)
 	assert.Equal(rejected, summary.MediaRejected)
-	assert.Equal(2, summary.AttachmentsStored)
+	assert.Equal(1, summary.AttachmentsStored)
 	require.NoError(os.Remove(full))
 	_, err = ImportDYI(t.Context(), st, opts)
 	require.NoError(err)
@@ -216,6 +216,35 @@ func TestInstagramMediaRecoveryAndContainment(t *testing.T) {
 	assert.Equal(2, n)
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments`).Scan(&n))
 	assert.Equal(attachmentCount, n)
+}
+
+func TestInstagramReplayPreservesReplacedMedia(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	media := filepath.Join(root, "photo.jpg")
+	require.NoError(os.WriteFile(media, []byte("first image"), 0600))
+	record := instagramTestRecord("photo")
+	record["photos"] = []map[string]string{{"uri": "photo.jpg"}}
+	instagramTestShard(t, root, "circle", "message_1.json", record)
+	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example", AttachmentsDir: t.TempDir()}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	var original, storedPath string
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT content_hash, storage_path FROM attachments`).Scan(&original, &storedPath))
+	require.NotEmpty(original)
+	require.NoError(os.WriteFile(media, []byte("different image"), 0600))
+	summary, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	assert.Zero(summary.MessagesAdded)
+	assert.Zero(summary.AttachmentsStored)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM attachments WHERE content_hash = ?`), original).Scan(&count))
+	assert.Equal(1, count, "original media must remain attached to the message")
+	data, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, filepath.FromSlash(storedPath)))
+	require.NoError(err)
+	assert.Equal("first image", string(data))
 }
 
 func TestInstagramConflictingThreadPaths(t *testing.T) {

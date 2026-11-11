@@ -888,6 +888,14 @@ func writeThreadToStore(
 			if instagram {
 				slot := "instagram:media:" + instagramHash(att.Kind+":"+path.Clean(att.URI))
 				write := store.AttachmentWrite{Filename: path.Base(att.URI), MIMEType: att.MimeType, SourcePartKey: slot, SourceAttachmentID: slot, MediaType: att.Kind, Role: role, RoleSource: roleSource}
+				existing, err := st.MessageProviderAttachments(ctx, messageID, "instagram:media:")
+				if err != nil {
+					return err
+				}
+				prev, found := existing[slot]
+				if found && prev.StoragePath != "" {
+					write.StoragePath, write.ContentHash, write.Size = prev.StoragePath, prev.ContentHash, int64(prev.Size)
+				}
 				filename := resolveAttachmentURI(absRoot, att.URI)
 				if filename == "" {
 					summary.MediaRejected++
@@ -898,7 +906,7 @@ func writeThreadToStore(
 				} else if err != nil || !info.Mode().IsRegular() {
 					summary.MediaRejected++
 					summary.Incomplete = true
-				} else if opts.AttachmentsDir != "" {
+				} else if opts.AttachmentsDir != "" && write.StoragePath == "" {
 					var err error
 					write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentFromPath(ctx, opts.AttachmentsDir, filename, 0)
 					if err != nil {
@@ -907,14 +915,7 @@ func writeThreadToStore(
 					summary.AttachmentsStored++
 				}
 
-				existing, err := st.MessageProviderAttachments(ctx, messageID, "instagram:media:")
-				if err != nil {
-					return err
-				}
-				if prev, ok := existing[slot]; ok {
-					if write.StoragePath == "" && write.ContentHash == "" && prev.StoragePath != "" {
-						write.StoragePath, write.ContentHash, write.Size = prev.StoragePath, prev.ContentHash, int64(prev.Size)
-					}
+				if found {
 					if prev.Filename == write.Filename && prev.MimeType == write.MIMEType && prev.StoragePath == write.StoragePath && prev.ContentHash == write.ContentHash && int64(prev.Size) == write.Size && prev.MediaType == write.MediaType && prev.Role == write.Role && prev.RoleSource == write.RoleSource && prev.SourcePartKey == write.SourcePartKey {
 						continue
 					}
