@@ -405,11 +405,11 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 		_, err = tx.ExecContext(ctx, `UPDATE person_commitments SET
 			fulfilment_evidence_id = ?, fulfilment_confirmed = ?
 			WHERE id = ? AND person_id = ? AND target_key = ? AND current_claim_id IS NOT NULL
-			AND `+s.loopTimeKey("promised_at")+` < `+s.loopTimeKey("?")+` AND (reopened_at IS NULL OR reopened_at < ?)
+			AND `+s.loopTimeKey("promised_at")+` < `+s.loopTimeKey("?")+` AND (reopened_at IS NULL OR `+s.loopTimeKey("reopened_at")+` < `+s.loopTimeKey("?")+`)
 			AND (fulfilment_evidence_id IS NULL OR fulfilment_evidence_id = ? OR (fulfilment_confirmed = 0 AND EXISTS (
 			  SELECT 1 FROM person_fact_evidence e WHERE e.id = person_commitments.fulfilment_evidence_id
 			  AND `+s.loopTimeKey("e.event_time")+` <= `+s.loopTimeKey("?")+`)))`, evidence.ID, confirmed, f.anchor.ID, personID, f.anchor.TargetKey,
-			f.input.EventTime, s.dialect.TimestampParam(f.input.EventTime), f.replaceEvidenceID, f.input.EventTime)
+			f.input.EventTime, personFactPortableTime(f.input.EventTime), f.replaceEvidenceID, f.input.EventTime)
 		if err != nil {
 			return fmt.Errorf("persist commitment fulfilment: %w", err)
 		}

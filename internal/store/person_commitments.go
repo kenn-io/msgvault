@@ -414,7 +414,7 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 			if candidate.fulfilment != nil && candidate.fulfilment.Input.EventTime.After(now) {
 				now = candidate.fulfilment.Input.EventTime
 			}
-			reopened = s.dialect.TimestampParam(now)
+			reopened = personFactPortableTime(now)
 		}
 		previous := candidate.commitment
 		var fulfilmentID int64
