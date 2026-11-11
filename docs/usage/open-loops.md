@@ -160,8 +160,8 @@ source dates, and what the request discloses. Repeat with `--yes` to consent
 to sending conversation text from both sides of verified direct chats and
 email. Each message contributes its first 2,000 runes after leading quoted
 history and whitespace, with embedded quoted history masked.
-Changing the provider source dates or commitment window and batch limits restarts
-recent discovery while keeping saved promise decisions.
+Changing provider source dates, the commitment window, or message, byte and
+open-promise selection limits restarts recent discovery while keeping saved decisions.
 The profile must allow sensitive `conversation_text` sources. Check the grant
 with `msgvault person provider status`. Use `msgvault person provider revoke`
 to revoke both the ordinary inference and commitment grants for the profile.
