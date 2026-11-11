@@ -6995,37 +6995,32 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	env := storedFTSEnvelopeSQL("STRING_AGG")
 	lockSQL := `SELECT m.id FROM messages m WHERE m.id IN (` + query + `) ORDER BY m.id LIMIT 64 FOR UPDATE OF m`
 	charCap := strconv.Itoa(maxFTSBodyChars)
-	legacy := `m.indexing_version = 2 AND m.search_fts IS NOT NULL AND m.search_fts::text !~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' AND m.search_fts::text !~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)'`
+	legacy := `m.indexing_version = 2 AND m.search_fts IS NOT NULL`
 	if !useLegacy {
 		legacy = "FALSE"
-	}
-	field := func(legacyField, stored string) string {
-		return `LEFT(CASE WHEN ` + legacy + ` THEN COALESCE(old.` + legacyField + `, '') ELSE ` + stored + ` END, ` + charCap + `)`
 	}
 	terminal := `m.indexing_version IS NOT NULL AND m.search_fts = ''::tsvector`
 	if !useLegacy {
 		terminal = "FALSE"
 	}
-	subject := env.subject
-	if useLegacy {
-		subject = `CASE WHEN m.indexing_version = 2 AND m.search_fts IS NOT NULL AND m.message_type = 'fbmessenger' THEN COALESCE((SELECT c.title FROM conversations c WHERE c.id = m.conversation_id), '') ELSE ` + subject + ` END`
-	}
 	// PostgreSQL indexes both a compound word and its parts at successive
 	// positions. Keep the parts so normalization does not repeat the phrase.
-	selectSQL := `SELECT m.id, ` + field("subject", subject) + `, ` + field("body", `COALESCE(b.body_text, '')`) + `, ` + field("sender", env.fromAddr) + `, ` + field("recipient", env.toAddrs) + `, ` + field("cc", env.ccAddrs) + `, COALESCE(` + terminal + `, FALSE)
+	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), COALESCE(` + terminal + `, FALSE),
+		LEFT(COALESCE(old.subject, ''), ` + charCap + `), LEFT(COALESCE(old.sender, ''), ` + charCap + `), LEFT(CASE WHEN EXISTS (SELECT 1 FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'cc') THEN '' ELSE COALESCE(old.recipient, '') END, ` + charCap + `)
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id
 		LEFT JOIN LATERAL (SELECT
 			string_agg(e.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'A') AS subject,
 			string_agg(e.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'B') AS sender,
-			string_agg(e.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'C') AS recipient,
-			string_agg(e.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'D') AS body,
-			'' AS cc FROM unnest(m.search_fts) e CROSS JOIN LATERAL unnest(e.positions, e.weights) p(pos, weight)
-			WHERE ` + legacy + ` AND (strpos(e.lexeme, '-') = 0 OR NOT EXISTS (SELECT 1 FROM ts_debug('simple', e.lexeme) d WHERE d.token = e.lexeme AND d.alias IN ('asciihword', 'hword', 'numhword')))) old ON TRUE WHERE m.id = ANY(?::bigint[]) ORDER BY m.id`
+			string_agg(e.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'C') AS recipient
+			FROM unnest(m.search_fts) e CROSS JOIN LATERAL unnest(e.positions, e.weights) p(pos, weight)
+			WHERE ` + legacy + ` AND p.weight IN ('A', 'B', 'C') AND (strpos(e.lexeme, '-') = 0 OR NOT EXISTS (SELECT 1 FROM ts_debug('simple', e.lexeme) d WHERE d.token = e.lexeme AND d.alias IN ('asciihword', 'hword', 'numhword')))) old ON TRUE WHERE m.id = ANY(?::bigint[]) ORDER BY m.id`
 	vector, _ := pgFTSVector(FTSDoc{})
 	replace := strings.NewReplacer("$2", "u.subject", "$3", "u.body", "$4", "u.sender", "$5", "u.to_addrs", "$6", "u.cc_addrs")
 	vector = replace.Replace(vector)
-	fields := replace.Replace(pgFTSOverflowFields("u.vector"))
-	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::boolean[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, terminal)), v AS (SELECT u.*, CASE WHEN u.terminal THEN ''::tsvector ELSE ` + vector + ` END AS vector FROM u) UPDATE messages m SET search_fts = u.vector, search_fts_fields = ` + fields + `, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
+	hasOld := `u.old_subject <> '' OR u.old_sender <> '' OR u.old_recipient <> ''`
+	vector += ` || CASE WHEN ` + hasOld + ` THEN '''!'':1'::tsvector || setweight(to_tsvector('simple', u.old_subject), 'A') || '''!'':1'::tsvector || setweight(to_tsvector('simple', u.old_sender), 'B') || '''!'':1'::tsvector || setweight(to_tsvector('simple', u.old_recipient), 'C') ELSE ''::tsvector END`
+	fields := replace.Replace(pgFTSOverflowFields("u.vector", ` || CASE WHEN `+hasOld+` THEN ARRAY[u.old_subject, u.old_sender, u.old_recipient] ELSE ARRAY[]::text[] END`))
+	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::boolean[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, terminal, old_subject, old_sender, old_recipient)), v AS (SELECT u.*, CASE WHEN u.terminal THEN ''::tsvector ELSE ` + vector + ` END AS vector FROM u) UPDATE messages m SET search_fts = u.vector, search_fts_fields = ` + fields + `, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
 	var affected int64
 	for fromID < toID {
 		rows, err := tx.QueryContext(ctx, lockSQL, fromID, toID)
@@ -7058,16 +7053,18 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 		}
 		var ids []int64
 		var subjects, bodies, senders, tos, ccs []string
+		var oldSubjects, oldSenders, oldRecipients []string
 		var terminals []bool
 		bytes := 0
 		for rows.Next() {
 			var doc FTSDoc
 			var isTerminal bool
-			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &isTerminal); err != nil {
+			var oldSubject, oldSender, oldRecipient string
+			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &isTerminal, &oldSubject, &oldSender, &oldRecipient); err != nil {
 				_ = rows.Close()
 				return 0, err
 			}
-			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs)
+			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs) + len(oldSubject) + len(oldSender) + len(oldRecipient)
 			if len(ids) > 0 && bytes+size > 4*1024*1024 {
 				break
 			}
@@ -7077,6 +7074,9 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 			senders = append(senders, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.FromAddr)))
 			tos = append(tos, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.ToAddrs)))
 			ccs = append(ccs, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.CcAddrs)))
+			oldSubjects = append(oldSubjects, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(oldSubject)))
+			oldSenders = append(oldSenders, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(oldSender)))
+			oldRecipients = append(oldRecipients, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(oldRecipient)))
 			terminals = append(terminals, isTerminal)
 			bytes += size
 			if bytes >= 4*1024*1024 {
@@ -7093,7 +7093,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 		if len(ids) == 0 {
 			break
 		}
-		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs, terminals); err != nil {
+		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs, terminals, oldSubjects, oldSenders, oldRecipients); err != nil {
 			return 0, err
 		}
 		affected += int64(len(ids))

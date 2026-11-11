@@ -108,7 +108,7 @@ func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 	n, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
 	assert.Equal(int64(1), n, "only the outdated entry needs backfill")
-	assertFTSContains(t, f.Store, "obsolete", 1)
+	assertFTSContains(t, f.Store, "obsolete", 0)
 }
 
 func TestPG_BackfillFTSPreservesIndexedFields(t *testing.T) {
@@ -179,7 +179,7 @@ func TestPG_BackfillFTSPreservesCompoundWordPhrase(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	id := f.CreateMessage("compound")
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'before foo-bar after'), 'D'), indexing_version = 2 WHERE id = $1`, id)
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'before foo-bar after'), 'A'), indexing_version = 2 WHERE id = $1`, id)
 	require.NoError(err)
 	_, err = f.Store.BackfillFTS(nil)
 	require.NoError(err)
@@ -208,6 +208,56 @@ func TestPG_BackfillFTSSaturatedMessengerTitle(t *testing.T) {
 	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"lantern harbor"}}, 10)
 	require.NoError(err)
 	require.Equal([]int64{id}, ids)
+}
+
+func TestPG_BackfillFTSRetainsBodyURL(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.CreateMessage("url")
+	body := "see https://example.test/path"
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', $1), indexing_version = 2 WHERE id = $2`, body, id)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"https://example.test/path"}}, 10)
+	require.NoError(err)
+	require.Equal([]int64{id}, ids)
+}
+
+func TestPG_BackfillFTSRetainsSenderWithSaturatedBody(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.CreateMessage("slack")
+	body := strings.Repeat("the ", 300)
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET message_type = 'slack', search_fts = setweight(to_tsvector('simple', 'Lantern Sender'), 'B') || setweight(to_tsvector('simple', $1), 'D'), indexing_version = 2 WHERE id = $2`, body, id)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"lantern sender"}}, 10)
+	require.NoError(err)
+	require.Equal([]int64{id}, ids)
+}
+
+func TestPG_BackfillFTSDoesNotJoinToAndCc(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.CreateMessage("recipients")
+	to := f.EnsureParticipant("alice", "", "")
+	cc := f.EnsureParticipant("example.com", "", "")
+	require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
+	require.NoError(f.Store.ReplaceMessageRecipients(id, "cc", []int64{cc}, nil))
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'alice example.com'), 'C'), indexing_version = 2 WHERE id = $1`, id)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example.com"}}, 10)
+	require.NoError(err)
+	require.Empty(ids)
 }
 
 func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
