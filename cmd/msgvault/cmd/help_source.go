@@ -165,7 +165,8 @@ func sourceNotConfigured(provider string, err error) error {
 	if err == nil {
 		return nil
 	}
-	setup := "msgvault source " + provider + " add"
+	setupCommand := "msgvault source " + provider + " add"
+	setup := setupCommand
 	switch provider {
 	case sourceTypeGmail, "calendar":
 		setup += " you@gmail.com"
@@ -178,9 +179,13 @@ func sourceNotConfigured(provider string, err error) error {
 	case "synctech-sms":
 		setup += " phone-backups --folder-id example-drive-folder --google-account you@gmail.com --owner-phone +15551234567"
 	}
+	hint := "configure this provider as shown by '" + setupCommand + " --help', then run '" + setup + "' with your account details"
+	if strings.Contains(err.Error(), setupCommand) {
+		hint = "run '" + setupCommand + " --help' for flags and examples"
+	}
 	return &cliError{
 		Kind: "uninitialized", Code: "source_not_configured", ExitCode: 5,
 		Message: err.Error(), Err: err,
-		Hint: "configure this provider as shown by 'msgvault source " + provider + " add --help', then run '" + setup + "' with your account details",
+		Hint: hint,
 	}
 }

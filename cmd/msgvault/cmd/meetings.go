@@ -221,7 +221,7 @@ func (flags *meetingScopeFlags) request(command *cobra.Command) (*generated.Meet
 	}
 	flags.deletion = strings.ToLower(strings.TrimSpace(flags.deletion))
 	if flags.deletion != "any" && flags.deletion != "active" && flags.deletion != "deleted" {
-		return nil, errors.New("--deletion must be any, active, or deleted")
+		return nil, validationErr(command, errors.New("--deletion must be any, active, or deleted"))
 	}
 	deletion := generated.MeetingScopeRequestDeletion(flags.deletion)
 	scope := &generated.MeetingScopeRequest{
@@ -278,7 +278,10 @@ func newMeetingActionsCommand(deps meetingCommandDeps) *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error {
 			scope, err := scopeFlags.request(command)
 			if err != nil {
-				return withHint(validationErr(command, err), "inspect 'msgvault meetings --help'; dates use YYYY-MM-DD, IDs come from meeting search, and --deletion accepts any, active, or deleted")
+				if _, ok := errors.AsType[*cliError](err); ok {
+					return err
+				}
+				return withHint(validationErr(command, err), "inspect 'msgvault meetings --help'; dates use YYYY-MM-DD, IDs come from meeting search")
 			}
 			if limit < 1 || limit > 200 {
 				return withHint(validationErr(command, errors.New("--limit must be between 1 and 200")), "default is 50; use next_cursor as the next --cursor")
@@ -383,7 +386,10 @@ func newMeetingMetricsCommand(deps meetingCommandDeps) *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error {
 			scope, err := scopeFlags.request(command)
 			if err != nil {
-				return withHint(validationErr(command, err), "inspect 'msgvault meetings --help'; dates use YYYY-MM-DD, IDs come from meeting search, and --deletion accepts any, active, or deleted")
+				if _, ok := errors.AsType[*cliError](err); ok {
+					return err
+				}
+				return withHint(validationErr(command, err), "inspect 'msgvault meetings --help'; dates use YYYY-MM-DD, IDs come from meeting search")
 			}
 			client, cleanup, err := openMeetingCommandClient(command.Context(), deps)
 			if err != nil {

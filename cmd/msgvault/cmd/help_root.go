@@ -41,8 +41,8 @@ Exit codes:
 
 Environment:
   MSGVAULT_IMAP_PASSWORD supplies an IMAP
-  password. MSGVAULT_REMOTE_URL and MSGVAULT_REMOTE_API_KEY are used by account
-  export-token. VOYAGE_API_KEY / OPENAI_API_KEY supply configured embeddings.
+  password. MSGVAULT_REMOTE_URL and MSGVAULT_REMOTE_API_KEY are used by
+  account export-token. VOYAGE_API_KEY / OPENAI_API_KEY supply configured embeddings.
   MSGVAULT_ENABLE_REMOTE_DELETE is owner opt-in for remote deletion.
   Check a command's --help for its provider-specific setup and flags.
 

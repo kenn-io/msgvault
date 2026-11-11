@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -164,6 +165,24 @@ func TestSourceMissingProviderSetup(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, 5, ExitCode(err))
 			assert.Contains(t, classifyCLIError(nil, err).Hint, "msgvault source "+tc.provider+" add")
+		})
+	}
+}
+
+func TestSourceNotConfiguredSetupHint(t *testing.T) {
+	for _, tc := range []struct {
+		message, wantHint string
+	}{
+		{"no Slack workspaces registered", "then run 'msgvault source slack add'"},
+		{"run 'msgvault source slack add' first", "run 'msgvault source slack add --help' for flags and examples"},
+	} {
+		t.Run(tc.message, func(t *testing.T) {
+			assertions := assert.New(t)
+			cause := errors.New(tc.message)
+			err := sourceNotConfigured("slack", cause)
+			assertions.ErrorIs(err, cause)
+			assertions.Equal(5, ExitCode(err))
+			assertions.Contains(recoveryHint(err), tc.wantHint)
 		})
 	}
 }

@@ -235,3 +235,20 @@ func TestMeetingsCommandsReportMissingDaemonRoute(t *testing.T) {
 	requirements.ErrorContains(err, "meeting intelligence is unavailable")
 	requirements.ErrorContains(err, "upgrade it to API schema 2.27.0 or newer")
 }
+
+func TestMeetingsInvalidDeletionShowsCommandHelp(t *testing.T) {
+	for _, name := range []string{"actions", "metrics"} {
+		t.Run(name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			_, _, err := executeMeetingsCommand(t, nil, name, "--deletion", "invalid")
+			requirements.Error(err)
+			assertions.Equal(3, ExitCode(err))
+			assertions.Contains(err.Error(), "--deletion must be any, active, or deleted")
+			hint := recoveryHint(err)
+			assertions.Contains(hint, "meetings "+name+" --help")
+			assertions.NotContains(hint, "YYYY-MM-DD")
+			assertions.NotContains(hint, "active, or deleted")
+		})
+	}
+}
