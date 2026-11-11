@@ -125,7 +125,6 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		var page store.ChangedMessagePage
 		var matches []store.ChangedMessage
 		var uid string
-		var category string
 		var ready bool
 		advance := func(before []byte) error {
 			swapped, err := e.Store.AdvanceWakeupState(ctx, sub.Name, before, state)
@@ -167,10 +166,13 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				if !errors.Is(err, store.ErrPersonNotFound) && !errors.Is(err, resolver.ErrEmptyPopulation) {
 					return err
 				}
-				category = "person_unavailable"
 				state.Failures++
 				state.NextAttemptAt = now.Add(retryDelay(state.Failures))
-				return advance(raw)
+				err = advance(raw)
+				if err == nil {
+					logger.Warn("wakeup failed", "name", sub.Name, "category", "person_unavailable", "failures", state.Failures)
+				}
+				return err
 			}
 			uid, err = e.Store.ArchiveUIDContext(ctx)
 			if err != nil {
@@ -208,10 +210,6 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			logger.Warn("wakeup store step failed", "name", sub.Name, "category", "store_error")
 			continue
 		}
-		if category != "" {
-			logger.Warn("wakeup failed", "name", sub.Name, "category", category, "failures", state.Failures)
-			continue
-		}
 		if !ready || (len(matches) == 0 && state.Failures == 0) {
 			continue
 		}
@@ -228,7 +226,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			logger.Warn("wakeup failed", "name", sub.Name, "category", "invalid_callback")
 			continue
 		}
-		category = sub.Client.send(ctx, sub.URL, id, sub.Secret, body)
+		category := sub.Client.send(ctx, sub.URL, id, sub.Secret, body)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
