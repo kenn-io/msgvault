@@ -590,7 +590,7 @@ func TestPersonSweepWorkerDoesNotRestoreRejectedEventMemoryFromAnInFlightWindow(
 		f.journal.aliceID, time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC))
 	addSweepBody(t, f.journal, message, quote)
 	f.runner.candidate = func(packet map[string]any) json.RawMessage {
-		return storeEventCandidate(t, packet, quote, "2026-09-10")
+		return storeEventCandidate(t, packet, quote, "2026-09-10", "their move", "How did the move go?")
 	}
 	f.worker.Clock = func() time.Time { return f.now }
 	id := 0
@@ -625,6 +625,7 @@ func TestPersonSweepWorkerDoesNotRestoreRejectedEventMemoryFromAnInFlightWindow(
 	require.Len(second.People, 1)
 	assert.Zero(second.People[0].BriefVersion,
 		"a result based on rejected event memory is not stored")
+	assert.Equal(peoplesweep.FailureInvalidOutput, second.People[0].BriefFailureClass)
 	require.Len(f.runner.briefPackets, 2)
 	assert.Len(briefPacketEventContextEvents(t, f.runner.briefPackets[1]), 1,
 		"the rejected event was present in the in-flight packet")

@@ -17,17 +17,13 @@ func emptyEventBrief() json.RawMessage {
 	return json.RawMessage(`{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],"appreciations":[],"uncertainties":[],"possible_attributes":[]}`)
 }
 
-func storeEventCandidate(t *testing.T, packet map[string]any, announcement, date string) json.RawMessage {
+func storeEventCandidate(t *testing.T, packet map[string]any, announcement, date, text, question string) json.RawMessage {
 	t.Helper()
 	var highlight map[string]any
 	if context, ok := packet["brief_context"].(map[string]any); ok {
 		if events, ok := context["events"].([]any); ok && len(events) > 0 {
 			highlight, _ = events[0].(map[string]any)
 		}
-	}
-	text, question := "their interview", "How did the interview go?"
-	if announcement != "I interview on September 2." {
-		text, question = "their move", "How did the move go?"
 	}
 	var resolutionID, resolutionQuote string
 	seeds, ok := packet["seeds"].([]any)
@@ -79,7 +75,7 @@ func newStoreEventFixture(t *testing.T, suffix string) (briefWorkerEndToEndFixtu
 	sequence := 0
 	f.worker.NewID = func() string { sequence++; return fmt.Sprintf("event-%s-%d", suffix, sequence) }
 	f.runner.candidate = func(packet map[string]any) json.RawMessage {
-		return storeEventCandidate(t, packet, "I interview on September 2.", "2026-09-02")
+		return storeEventCandidate(t, packet, "I interview on September 2.", "2026-09-02", "their interview", "How did the interview go?")
 	}
 	return f, &now, anchor
 }
@@ -131,7 +127,7 @@ func TestPersonSweepEventLifecyclePersistsDateOnlyRefreshAndResolution(t *testin
 	resolution := f.journal.insertMessage(t, "event-resolution", "chat", f.journal.aliceID, now.Add(time.Hour))
 	addSweepBody(t, f.journal, resolution, "I cancelled the interview.")
 	f.runner.candidate = func(packet map[string]any) json.RawMessage {
-		return storeEventCandidate(t, packet, "I interview on September 2.", "2026-09-02")
+		return storeEventCandidate(t, packet, "I interview on September 2.", "2026-09-02", "their interview", "How did the interview go?")
 	}
 	*now = now.Add(2 * time.Hour)
 	resolved := runStoreEvent(t, f, peoplesweep.BriefModeAuto)
@@ -263,7 +259,7 @@ func TestPersonSweepEventBootstrapsLegacyBriefWithoutActivityBeyondOverlap(t *te
 		SET program_version = 'v1', boundary_json = ? WHERE id = ?`), string(legacyBoundary), current.ID)
 	require.NoError(err)
 	f.runner.candidate = func(packet map[string]any) json.RawMessage {
-		return storeEventCandidate(t, packet, "I interview on September 2.", "2026-09-02")
+		return storeEventCandidate(t, packet, "I interview on September 2.", "2026-09-02", "their interview", "How did the interview go?")
 	}
 	*now = now.Add(time.Minute)
 	result := runStoreEvent(t, f, peoplesweep.BriefModeAuto)

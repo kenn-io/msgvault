@@ -179,31 +179,19 @@ func TestBriefEventCapacityOmitsUnretainedOutput(t *testing.T) {
 
 func eventCapacityUndatedByte(t *testing.T) {
 	t.Helper()
-	for _, extraBytes := range []int{0} {
-		name := "at current packet size"
-		if extraBytes > 0 {
-			name = "one byte of slack"
-		}
-		t.Run(name, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
-			window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil,
-				"2026-08-14T12:00:00Z")
-			window.Request.MaxBytes = window.Boundary.InputBytes + extraBytes
-			highlight := eventHighlight(anchor, "")
-			parsed, err := ParseBrief(eventCandidate(t, highlight), window, window.Request.Profile)
-			requirements.NoError(err)
-			parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
-
-			result, err := renderBriefResult(parsed, window, window.Request.AsOf)
-
-			requirements.NoError(err)
-			assertions.Empty(result.Boundary.EventMemory,
-				"future memory retires when the lowered cap cannot preserve it")
-			assertions.NotContains(result.Rendered.Text, highlight.LifeEvent.Question)
-		})
-	}
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
+	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T12:00:00Z")
+	window.Request.MaxBytes = window.Boundary.InputBytes
+	highlight := eventHighlight(anchor, "")
+	parsed, err := ParseBrief(eventCandidate(t, highlight), window, window.Request.Profile)
+	requirements.NoError(err)
+	parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
+	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
+	requirements.NoError(err)
+	assertions.Empty(result.Boundary.EventMemory, "future memory retires when the lowered cap cannot preserve it")
+	assertions.NotContains(result.Rendered.Text, highlight.LifeEvent.Question)
 }
 
 func TestBriefEventAdmissionSurvivesRegressingWindowAndJSONRestart(t *testing.T) {
