@@ -900,7 +900,6 @@ func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T
 			WHERE person_id = ? AND source_lane = ?`), f.personID, peoplesweep.SourceConversationText).Scan(&ordinaryThrough))
 		a.Zero(ordinaryThrough, "commitment-only replay must leave provider-bearing ordinary work paused")
 	})
-
 }
 
 func TestCommitmentReopenSuppressesExistingFutureDatedFulfilment(t *testing.T) {
