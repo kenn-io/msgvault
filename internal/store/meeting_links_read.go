@@ -95,7 +95,7 @@ func meetingBound(at time.Time) *time.Time {
 func (s *Store) meetingRowsForKey(ctx context.Context, key meetingLinkKey, budget *int) ([]CalendarEventRow, error) {
 	if key[0] == "google_event_id" {
 		base, _, _ := calrecur.ParseInstanceID(key[2])
-		return s.meetingEventRows(ctx, `e.provider_event_id IN (?, ?)`, []any{key[2], base}, budget)
+		return s.meetingEventRows(ctx, `e.provider_event_id IN (?, ?)`, []any{key[2], cmp.Or(base, key[2])}, budget)
 	}
 	layout := time.RFC3339Nano
 	if key[0] == "ical_date" {
