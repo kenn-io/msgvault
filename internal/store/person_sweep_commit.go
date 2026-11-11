@@ -1005,7 +1005,7 @@ func preparePersonSweepBriefEvidence(
 			}
 			if errors.Is(err, peoplesweep.ErrSourceTextUnavailable) {
 				if mandatory[input.SourceRef] {
-					return nil, peoplesweep.ErrBriefEventEvidenceChanged
+					return nil, errors.Join(peoplesweep.ErrBriefEventEvidenceChanged, peoplesweep.ErrInvalidStructuredOutput)
 				}
 				continue
 			}
@@ -1014,8 +1014,8 @@ func preparePersonSweepBriefEvidence(
 			}
 			return nil, fmt.Errorf("align person brief evidence: %w", err)
 		}
-		if mandatory[input.SourceRef] && (!result.Accepted || result.SourceVersion != input.SourceVersion || result.ContentSHA256 != input.ContentSHA256) {
-			return nil, peoplesweep.ErrBriefEventEvidenceChanged
+		if mandatory[input.SourceRef] && !result.Accepted {
+			return nil, errors.Join(peoplesweep.ErrBriefEventEvidenceChanged, peoplesweep.ErrInvalidStructuredOutput)
 		}
 		delete(mandatory, input.SourceRef)
 		if !result.Accepted {
@@ -1034,7 +1034,7 @@ func preparePersonSweepBriefEvidence(
 		prepared = append(prepared, preparedBriefEvidence{key: key, input: input})
 	}
 	if len(mandatory) != 0 {
-		return nil, peoplesweep.ErrBriefEventEvidenceChanged
+		return nil, errors.Join(peoplesweep.ErrBriefEventEvidenceChanged, peoplesweep.ErrInvalidStructuredOutput)
 	}
 	return prepared, nil
 }

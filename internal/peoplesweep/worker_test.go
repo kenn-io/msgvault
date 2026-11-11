@@ -888,6 +888,7 @@ type workerProductionSink struct {
 	// stored brief; zero leaves the applied result without one.
 	briefVersion int
 	err          error
+	briefErr     error
 }
 
 func (s *workerProductionSink) ApplyPersonSweepStatusOnly(_ context.Context, request StatusOnlyApplyRequest) (Lease, error) {
@@ -905,6 +906,9 @@ func (s *workerProductionSink) ApplyPersonSweep(ctx context.Context, request App
 		return ApplyResult{}, err
 	}
 	s.requests = append(s.requests, request)
+	if request.Brief != nil && s.briefErr != nil {
+		return ApplyResult{}, s.briefErr
+	}
 	mutations := ApplyMutationMetadata{ProjectionRowsWritten: 1}
 	if request.Brief != nil {
 		mutations.BriefVersion = s.briefVersion

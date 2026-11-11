@@ -1135,7 +1135,7 @@ func (w *Worker) runPerson(
 		errors.Is(applyErr, ErrBriefEventMemoryChanged)) {
 		// The first apply refused before writing. Preserve paid usage and
 		// extraction, and let the normal brief-only retry retain its work.
-		briefFailure = FailureInvalidOutput
+		briefFailure = briefFailureClass(applyErr)
 		applyRequest.Brief = nil
 		applyRequest.BriefFailureClass = briefFailure
 		applyRequest.BriefRetryAt = completedAt.Add(personSweepRetryDelay(attemptID,

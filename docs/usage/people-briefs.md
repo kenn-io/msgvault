@@ -104,9 +104,11 @@ window. Supported prior events survive a provider omission, and a supported
 resolution cannot be reopened by omitting its outcome. Unresolved events remain
 eligible for refresh until an outcome or source loss. Resolved entries can make
 room under evidence-window limits. If supported active memory and its sources
-cannot fit, the refresh defers and preserves the current brief; rejecting the
-brief clears its derived event memory. The paragraph limit is soft when needed
-to keep retained event summaries and questions visible; ordinary items are still trimmed.
+cannot fit, the refresh defers and preserves the current brief. This deferral may
+appear as an internal failure; increase `max_items` or `max_bytes` under
+`[people.sweep.brief]`, or reject the brief to clear its derived event memory.
+The paragraph limit is soft when needed to keep retained event summaries and
+questions visible; ordinary items are still trimmed.
 All retained event sentences keep their source links.
 
 The evidence window is bounded, so this is not a complete event ledger. A burst
@@ -118,9 +120,9 @@ imports and rediscoveries with an event timestamp equal to the admission date
 are also excluded.
 Date normalization and classification are model interpretations, even though
 source identity and exact quotes are checked separately. A saved event’s date
-remains fixed, including when it was initially unknown, even if later evidence
-supplies a date. A reschedule needs a new announcement and an explicit resolution
-of the previous event. Retiring a typed event does not semantically suppress
+can change when an update cites a later message from the person with a revised
+date. Without new evidence, the saved date remains unchanged, including when
+it was initially unknown. Retiring a typed event does not semantically suppress
 free-form model follow-ups on ordinary highlights.
 
 If sources change or fall outside the provider's allowed dates, the next sweep
@@ -128,7 +130,9 @@ revalidates the event before reusing it. When no admissible evidence remains,
 it retires the current event-aware paragraph while preserving its history. If
 some evidence remains, a validated empty replacement after memory loss also
 retires the current paragraph. Provider, parse, budget, and operational read
-failures leave the current version intact for retry.
+failures leave the current version intact for retry. After partial source loss,
+a failed rebuild leaves the previous brief current until a retry succeeds; deleted
+sources are flagged as unsupported when their status has been projected.
 Rejecting a brief clears that version's carried event memory and requests
 regeneration. The admission date stays in place, so replaying an old
 announcement cannot restore it. There is no individual event dismissal command.

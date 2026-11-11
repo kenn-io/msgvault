@@ -114,14 +114,6 @@ func briefRetireCapacityEvent(
 	return events, true
 }
 
-func briefEventEvidenceByID(items []EvidenceItem) map[string]EvidenceItem {
-	evidence := make(map[string]EvidenceItem, len(items))
-	for _, item := range items {
-		evidence[packetEvidenceID(item)] = item
-	}
-	return evidence
-}
-
 // briefReserveEventItems protects supported event sources while preserving the
 // mandatory contact item. Resolved memory may retire under changed caps;
 // supported active memory must fit in full.
@@ -179,7 +171,7 @@ func briefEventContext(request BriefWindowRequest) *BriefEventContext {
 	return context
 }
 
-func freezeBriefEventMemory(window BriefWindow, events []BriefHighlight) BriefBoundary {
+func freezeBriefEventMemory(window BriefWindow, events []BriefHighlight, byID map[string]EvidenceItem) BriefBoundary {
 	boundary := window.Boundary.Canonical()
 	boundary.EventMemoryVersion = 1
 	boundary.AdmissionThroughEventTime = boundary.ThroughEventTime
@@ -191,7 +183,6 @@ func freezeBriefEventMemory(window BriefWindow, events []BriefHighlight) BriefBo
 	if previous := window.Request.Previous; previous != nil && previous.AdmissionThroughEventTime.After(boundary.AdmissionThroughEventTime) {
 		boundary.AdmissionThroughEventTime = previous.AdmissionThroughEventTime
 	}
-	byID := briefEventEvidenceByID(window.Items)
 	for _, highlight := range events {
 		memory := BriefEventMemory{Highlight: highlight}
 		for _, id := range highlight.EvidenceIDs {

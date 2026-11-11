@@ -206,9 +206,16 @@ func mergeBriefEvents(
 					continue
 				}
 				if old.State != BriefEventResolved {
-					// An announcement's date is stable; a reschedule needs a new
-					// announcement and an explicit resolution of the old one.
-					h.LifeEvent.Date = old.Date
+					oldIDs := kept[index].EvidenceIDs
+					anchor := evidence[old.AnchorID]
+					newEvidence := slices.ContainsFunc(h.EvidenceIDs, func(id string) bool {
+						item := evidence[id]
+						return !slices.Contains(oldIDs, id) && item.EventTime.After(anchor.EventTime) &&
+							briefEventQuoteSupported(item, item.Excerpt, personID)
+					})
+					if !newEvidence {
+						h.LifeEvent.Date = old.Date
+					}
 					h.LifeEvent.State, _ = briefLifeEventState(*h.LifeEvent, asOf)
 					kept[index] = h
 				}

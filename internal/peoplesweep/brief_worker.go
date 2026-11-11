@@ -170,9 +170,15 @@ func (w *Worker) planPersonBrief(
 		mode.normalized() == BriefModeSkip {
 		return briefPlan{}, nil
 	}
+	preflightFailure := func(err error) (briefPlan, error) {
+		if fatal := briefFatalError(ctx, err); fatal != nil {
+			return briefPlan{}, fatal
+		}
+		return briefPlan{run: true, preflightFailure: err}, nil
+	}
 	eligibility, enrolled, err := w.Brief.PersonSweepBriefEligibility(ctx, personID)
 	if err != nil {
-		return briefPlan{run: true, preflightFailure: err}, nil
+		return preflightFailure(err)
 	}
 	if !enrolled {
 		return briefPlan{}, nil
@@ -188,7 +194,7 @@ func (w *Worker) planPersonBrief(
 	}
 	through, err := w.Brief.LatestPersonSweepChangeSequence(ctx)
 	if err != nil {
-		return briefPlan{}, err
+		return preflightFailure(err)
 	}
 	plan := briefPlan{previous: eligibility.Boundary, throughSequence: through, asOf: now.UTC()}
 	plan.bootstrap = eligibility.Status == BriefStatusCurrent && eligibility.ProgramVersion == "v1"
@@ -223,7 +229,7 @@ func (w *Worker) planPersonBrief(
 	fresh, err := w.Brief.HasPersonSweepChangesAfter(
 		ctx, personID, eligibility.Boundary.ThroughSequence)
 	if err != nil {
-		return briefPlan{}, err
+		return preflightFailure(err)
 	}
 	if !fresh {
 		return plan, nil
@@ -239,7 +245,7 @@ func (w *Worker) planPersonBrief(
 	}
 	dueAt, hasDue, err := w.Brief.PersonSweepCadenceDueAt(ctx, personID, now)
 	if err != nil {
-		return briefPlan{}, err
+		return preflightFailure(err)
 	}
 	// A cadence that is already overdue is inside the window too: the owner is
 	// about to reach out and the brief is what they need before they do.
@@ -321,11 +327,15 @@ func newBriefResult(
 	if len(rendered.Sentences) == 0 || rendered.Text == "" {
 		return BriefResult{}, ErrEmptyBrief
 	}
+	evidence, err := extractionEvidenceByID(window.Batch.Packet)
+	if err != nil {
+		return BriefResult{}, err
+	}
 	return BriefResult{
 		ProgramID: BriefProgramID, ProgramVersion: BriefProgramVersion,
 		ProgramFingerprint:       BriefProgramFingerprint(),
 		EventMemorySourceVersion: window.Request.retainedEventMemoryVersion,
-		Boundary:                 freezeBriefEventMemory(window, eventMemory), Structured: structured, Rendered: rendered,
+		Boundary:                 freezeBriefEventMemory(window, eventMemory, evidence), Structured: structured, Rendered: rendered,
 		Evidence: briefEvidenceInputs(parsed), DroppedItemCount: parsed.DroppedItemCount,
 		GeneratedAt: generatedAt.UTC(),
 	}, nil

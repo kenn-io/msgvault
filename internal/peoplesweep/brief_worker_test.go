@@ -31,6 +31,9 @@ type briefFakeStore struct {
 	ensuredWork         []int64
 	trackedWork         bool
 	eligibilityErr      error
+	highWaterErr        error
+	activityErr         error
+	cadenceErr          error
 	eligibilityFailures map[int64]error
 	unenrolledPeople    map[int64]bool
 	eligibilityReads    []int64
@@ -59,6 +62,9 @@ func (s *briefFakeStore) PersonSweepBriefEligibility(
 func (s *briefFakeStore) PersonSweepCadenceDueAt(
 	_ context.Context, _ int64, _ time.Time,
 ) (time.Time, bool, error) {
+	if s.cadenceErr != nil {
+		return time.Time{}, false, s.cadenceErr
+	}
 	if s.cadenceDueAt == nil {
 		return time.Time{}, false, nil
 	}
@@ -68,11 +74,11 @@ func (s *briefFakeStore) PersonSweepCadenceDueAt(
 func (s *briefFakeStore) HasPersonSweepChangesAfter(
 	_ context.Context, _ int64, sequence int64,
 ) (bool, error) {
-	return s.changedAfter > sequence, nil
+	return s.changedAfter > sequence, s.activityErr
 }
 
 func (s *briefFakeStore) LatestPersonSweepChangeSequence(context.Context) (int64, error) {
-	return s.highWater, nil
+	return s.highWater, s.highWaterErr
 }
 
 func (s *briefFakeStore) EnsurePersonSweepWork(_ context.Context, personID int64, _ bool) (bool, error) {
@@ -140,9 +146,10 @@ type briefWorkerCase struct {
 	runRequest *RunRequest
 	// leaseHeld makes the store refuse every claim, which is how another
 	// worker holding the person's lease looks to this one.
-	leaseHeld   bool
-	renewExpiry *time.Time
-	gapResults  []GapResult
+	leaseHeld     bool
+	renewExpiry   *time.Time
+	gapResults    []GapResult
+	applyBriefErr error
 }
 
 type briefWorkerOutcome struct {
@@ -187,7 +194,7 @@ func runBriefWorkerCase(t *testing.T, testCase briefWorkerCase) briefWorkerOutco
 			Sequence: 1, PersonID: 7, SourceLane: SourceConversationText}}, NextSequence: 1},
 	}}
 	driver := &workerRepairDriver{responses: testCase.responses}
-	sink := &workerProductionSink{}
+	sink := &workerProductionSink{briefErr: testCase.applyBriefErr}
 	archive := testCase.archive
 	if archive == nil {
 		archive = &briefFakeArchive{items: briefWorkerArchiveItems()}
@@ -257,30 +264,57 @@ func TestPersonSweepWorkerAppendsBriefAfterExtractionBatches(t *testing.T) {
 }
 
 func TestPersonSweepWorkerReportsBriefSchedulingEligibilityFailure(t *testing.T) {
-	t.Run("scheduled", func(t *testing.T) {
-		checks := assert.New(t)
-		required := require.New(t)
-		cause := errors.New("unsupported event memory version")
-		brief := &briefFakeStore{enrolled: true, eligibilityFailures: map[int64]error{7: cause},
-			unenrolledPeople: map[int64]bool{8: true}}
-		outcome := runBriefWorkerCase(t, briefWorkerCase{brief: brief,
-			gapResults: []GapResult{{PeopleScanned: 2, PersonIDs: []int64{7, 8}, NextPersonID: 8}},
-			responses:  []DriverResponse{briefDriverResponse(json.RawMessage(`{"claims":[]}`), "request-extraction")},
-			runRequest: &RunRequest{Kind: RunScheduled, Mode: RunIncremental, Limit: 1}})
-		required.NoError(outcome.err)
-		checks.Contains(brief.eligibilityReads, int64(8), "one unreadable brief must not stop reconciliation")
-		checks.Equal([]RunStatus{RunSucceeded}, outcome.store.finished)
-		required.Len(outcome.sink.requests, 1)
-		applied := outcome.sink.requests[0]
-		checks.Equal(FailureInternal, applied.BriefFailureClass)
-		checks.False(applied.BriefRetryAt.IsZero())
-		checks.Nil(applied.Brief)
-		checks.NotEmpty(applied.CursorAdvances)
-		checks.Equal(1, applied.Usage.Requests)
-		checks.Equal(1, outcome.driver.calls)
-		checks.Empty(brief.retireCalls)
-		checks.Empty(outcome.archive.candidateCalls)
-		checks.Empty(outcome.archive.hydrateCalls)
+	for _, stage := range []string{"eligibility", "high water", "activity", "cadence"} {
+		t.Run(stage, func(t *testing.T) {
+			checks := assert.New(t)
+			required := require.New(t)
+			cause := errors.New("brief read failed")
+			now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+			brief := &briefFakeStore{enrolled: true, unenrolledPeople: map[int64]bool{8: true},
+				changedAfter: 2, eligibility: BriefEligibility{Version: 1, Status: BriefStatusCurrent,
+					Boundary: &BriefBoundary{ThroughSequence: 1}, GeneratedAt: &now}}
+			switch stage {
+			case "eligibility":
+				brief.eligibilityFailures = map[int64]error{7: cause}
+			case "high water":
+				brief.highWaterErr = cause
+			case "activity":
+				brief.activityErr = cause
+			case "cadence":
+				brief.cadenceErr = cause
+			}
+			outcome := runBriefWorkerCase(t, briefWorkerCase{brief: brief,
+				gapResults: []GapResult{{PeopleScanned: 2, PersonIDs: []int64{7, 8}, NextPersonID: 8}},
+				responses:  []DriverResponse{briefDriverResponse(json.RawMessage(`{"claims":[]}`), "request-extraction")},
+				runRequest: &RunRequest{Kind: RunScheduled, Mode: RunIncremental, Limit: 1}})
+			required.NoError(outcome.err)
+			checks.Contains(brief.eligibilityReads, int64(8))
+			checks.Equal([]RunStatus{RunSucceeded}, outcome.store.finished)
+			required.Len(outcome.sink.requests, 1)
+			applied := outcome.sink.requests[0]
+			checks.Equal(FailureInternal, applied.BriefFailureClass)
+			checks.False(applied.BriefRetryAt.IsZero())
+			checks.Nil(applied.Brief)
+			checks.NotEmpty(applied.CursorAdvances)
+			checks.Equal(1, applied.Usage.Requests)
+			checks.Equal(1, outcome.driver.calls)
+			checks.Empty(brief.retireCalls)
+			checks.Empty(outcome.archive.candidateCalls)
+			checks.Empty(outcome.archive.hydrateCalls)
+		})
+	}
+
+	t.Run("lost lease remains fatal", func(t *testing.T) {
+		worker := Worker{Config: mustDefaultedBriefConfig(t),
+			Brief:   &briefFakeStore{enrolled: true, highWaterErr: ErrLeaseLost},
+			Archive: &briefFakeArchive{}}
+		_, err := worker.planPersonBrief(t.Context(), 7, BriefModeAuto, briefWindowProfile(), time.Now())
+		require.ErrorIs(t, err, ErrLeaseLost)
+		worker.Brief.(*briefFakeStore).highWaterErr = errors.New("read failed")
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err = worker.planPersonBrief(ctx, 7, BriefModeAuto, briefWindowProfile(), time.Now())
+		require.ErrorIs(t, err, context.Canceled)
 	})
 	t.Run("forced person refuses", func(t *testing.T) {
 		cause := errors.New("unsupported event memory version")
@@ -290,6 +324,39 @@ func TestPersonSweepWorkerReportsBriefSchedulingEligibilityFailure(t *testing.T)
 		assert.Empty(t, outcome.store.finished)
 		assert.Empty(t, outcome.sink.requests)
 	})
+}
+
+func TestPersonSweepWorkerRetriesEventAlignmentFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause error
+		want  FailureClass
+	}{
+		{"operational", fmt.Errorf("%w: database unavailable", ErrBriefEventEvidenceChanged), FailureInternal},
+		{"source changed", errors.Join(ErrBriefEventEvidenceChanged, ErrInvalidStructuredOutput), FailureInvalidOutput},
+		{"memory changed", errors.Join(ErrBriefEventMemoryChanged, ErrInvalidStructuredOutput), FailureInvalidOutput},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks, required := assert.New(t), require.New(t)
+			items := briefWorkerArchiveItems()
+			outcome := runBriefWorkerCase(t, briefWorkerCase{
+				brief: &briefFakeStore{enrolled: true}, applyBriefErr: tc.cause,
+				responses: []DriverResponse{
+					briefDriverResponse(json.RawMessage(`{"claims":[]}`), "request-extraction"),
+					briefDriverResponse(briefWorkerCandidate(items), "request-brief"),
+				},
+			})
+			required.NoError(outcome.err)
+			required.Len(outcome.sink.requests, 2)
+			checks.NotNil(outcome.sink.requests[0].Brief)
+			retry := outcome.sink.requests[1]
+			checks.Nil(retry.Brief)
+			checks.Equal(tc.want, retry.BriefFailureClass)
+			checks.Equal(2, retry.Usage.Requests)
+			checks.NotEmpty(retry.CursorAdvances)
+			checks.False(retry.BriefRetryAt.IsZero())
+		})
+	}
 }
 
 func TestPersonSweepWorkerRunsBriefOnStatusOnlyExtraction(t *testing.T) {

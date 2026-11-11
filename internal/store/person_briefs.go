@@ -522,7 +522,7 @@ func (s *Store) insertPersonBriefTx(
 			return PersonBrief{}, fmt.Errorf("supersede event memory source brief for person %d: %w", input.PersonID, err)
 		}
 		if changed != 1 {
-			return PersonBrief{}, peoplesweep.ErrBriefEventMemoryChanged
+			return PersonBrief{}, errors.Join(peoplesweep.ErrBriefEventMemoryChanged, peoplesweep.ErrInvalidStructuredOutput)
 		}
 	} else if _, err := tx.ExecContext(ctx, `UPDATE person_briefs
 		SET status = ?, superseded_at = ?
