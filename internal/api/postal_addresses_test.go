@@ -247,6 +247,17 @@ func TestPostalAddressAssessmentRequiresPresentAddress(t *testing.T) {
 	}
 }
 
+func TestPostalAddressAssessmentExplainsUnknownField(t *testing.T) {
+	srv, wrapped := newIdentityLinkTestServer(t)
+	id := seedAPIPerson(t, wrapped.Store)
+	response := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(id), []byte(`{"address":{"postal_cod":"12345"}}`), nil)
+	require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	var failure ErrorResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
+	assert.Contains(t, failure.Message, "postal_cod")
+	assert.Contains(t, failure.Message, "unknown")
+}
+
 func TestPostalReplacementRequiresCurrentValue(t *testing.T) {
 	srv, wrapped := newIdentityLinkTestServer(t)
 	id := seedAPIPerson(t, wrapped.Store)

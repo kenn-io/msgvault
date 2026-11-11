@@ -66,7 +66,7 @@ func (s *Server) handleAssessPersonPostalAddress(w http.ResponseWriter, r *http.
 	var input postalAssessmentWire
 	decoder := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20), json.RejectUnknownMembers(true))
 	if err := json.UnmarshalDecode(decoder, &input); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "Invalid postal address assessment request")
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid postal address assessment request: "+err.Error())
 		return
 	}
 	if !requireSingleJSONValue(w, decoder, "bad_request") {
