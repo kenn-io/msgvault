@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
-	"go.kenn.io/msgvault/internal/authz"
 	"go.kenn.io/msgvault/internal/config"
 )
 
@@ -79,20 +78,19 @@ func TestPrivilegedPredicatesRequireOwnerMode(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
 		mode              AuthMode
-		principal         authz.Principal
 		privileged, owner bool
 	}{
-		{"key", AuthModeAPIKey, authz.Principal{Kind: authz.KindOwner}, true, true},
-		{"session", AuthModeSession, authz.Principal{Kind: authz.KindOwner}, true, false},
-		{"loopback", AuthModeLoopback, authz.Principal{Kind: authz.KindLoopback}, true, false},
-		{"caller", AuthModeCaller, authz.Principal{Kind: authz.KindCaller}, true, true},
-		{"remote", AuthModeRemoteClient, authz.Principal{Kind: authz.KindRemoteClient}, false, false},
-		{"grant", AuthModeDelegated, authz.Principal{Kind: authz.KindGrant}, false, false},
-		{"unauthenticated", AuthModeRequired, authz.Principal{}, false, false},
+		{"key", AuthModeAPIKey, true, true},
+		{"session", AuthModeSession, true, false},
+		{"loopback", AuthModeLoopback, true, false},
+		{"caller", AuthModeCaller, true, true},
+		{"remote", AuthModeRemoteClient, false, false},
+		{"grant", AuthModeDelegated, false, false},
+		{"unauthenticated", AuthModeRequired, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/agent-tokens", nil)
-			security := requestSecurity{auth: requestAuthentication{Mode: tc.mode, Principal: tc.principal}}
+			security := requestSecurity{auth: requestAuthentication{Mode: tc.mode}}
 			r = r.WithContext(context.WithValue(r.Context(), requestSecurityContextKey{}, security))
 			assert.Equal(t, tc.privileged, srv.apiRequestAuthorized(r))
 			assert.Equal(t, tc.owner, srv.ownerAccessAuthorized(r))

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -67,20 +68,7 @@ func TestOperationPolicyDefaultsDenyCapabilities(t *testing.T) {
 
 func TestLegacyOperationAdmissionIsPreserved(t *testing.T) {
 	assert := assert.New(t)
-	wantReads := map[string]authz.Permission{
-		"searchCLI": authz.PermissionSearchRead, "searchMessages": authz.PermissionSearchRead,
-		"fastSearch": authz.PermissionSearchRead, "deepSearch": authz.PermissionSearchRead,
-		"getAggregates": authz.PermissionSearchRead, "getSubAggregates": authz.PermissionSearchRead,
-		"filterMessages": authz.PermissionSearchRead, "listMessages": authz.PermissionSearchRead,
-		"searchMessagesByDomains": authz.PermissionSearchRead,
-		"getStats":                authz.PermissionStatsRead, "getCLIStats": authz.PermissionStatsRead, "getTotalStats": authz.PermissionStatsRead,
-		"getCLIMessageThread": authz.PermissionMessageRead, "getMessage": authz.PermissionMessageRead, "getCLIMessage": authz.PermissionMessageRead,
-		"getAttachment": authz.PermissionAttachmentRead, "getAttachmentContent": authz.PermissionAttachmentRead, "getCLIAttachment": authz.PermissionAttachmentRead,
-		"listCLIAccounts": authz.PermissionSearchRead, "listCLICollections": authz.PermissionSearchRead,
-	}
-	wantSpecialDelegated := map[string]bool{
-		"runCLI": true, "getHealth": true, "controlCalendar": true, "getAgentTokenSelf": true,
-	}
+	wantReads := delegatedReads("", 0, 0, "")
 	wantRemoteRead := map[string]bool{
 		"getHealth": true, "getCLIStats": true, "searchCLI": true, "listCLIAccounts": true, "getCLICacheStats": true,
 		"getCLIMessage": true, "getCLIMessageOriginal": true, "getCLIMessageThread": true, "getCLIMessageRaw": true,
@@ -92,10 +80,10 @@ func TestLegacyOperationAdmissionIsPreserved(t *testing.T) {
 	operations := apiV1PolicyOperations(t)
 	operations["unknown"] = nil
 	for id := range operations {
-		_, read := wantReads[id]
-		assert.Equal(read || wantSpecialDelegated[id], delegatedOperationAllowed(id), "%s", id)
+		read, isRead := wantReads[id]
+		assert.Equal(isRead || slices.Contains(allowedDelegatedOps, id), delegatedOperationAllowed(id), "%s", id)
 		assert.Equal(wantRemoteRead[id], remoteClientOperationAllowed(id, false), "%s", id)
 		assert.Equal(wantRemoteRead[id] || wantRemoteWrite[id], remoteClientOperationAllowed(id, true), "%s", id)
-		assert.Equal(wantReads[id], operationPolicy(id).AgentReadPermission, "%s", id)
+		assert.Equal(read.permission, operationPolicy(id).AgentReadPermission, "%s", id)
 	}
 }
