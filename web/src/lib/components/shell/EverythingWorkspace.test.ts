@@ -275,7 +275,6 @@ describe('EverythingWorkspace', () => {
     { dimension: 'month', key: '2026-07', label: 'Jul 2026', bucket: '2026-07-18' },
     { dimension: 'year', key: '2026', label: '2026', bucket: '2026-07' }
   ] as const)('opens the selected $dimension row using the table scope', async ({ dimension, key, label, bucket }) => {
-    vi.stubEnv('TZ', 'America/New_York');
     window.history.replaceState(null, '', '/');
     const detailRequests: Array<{ group_key?: string; filters?: Array<{ dimension: string; values: string[] }> }> = [];
     const meetingRequests: Array<{ explore?: { predicate?: { filters?: Array<{ dimension: string; values: string[] }> } } }> = [];
@@ -330,7 +329,6 @@ describe('EverythingWorkspace', () => {
     } finally {
       rendered.unmount();
       state.destroy();
-      vi.unstubAllEnvs();
     }
   });
 
