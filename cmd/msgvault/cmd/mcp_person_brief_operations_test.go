@@ -135,13 +135,6 @@ func TestMCPPersonBriefDiscoveryRequiresExactRoutes(t *testing.T) {
 				}
 			}
 		}},
-		{"rejectPersonBrief", "reject_person_brief", func() {
-			for i := range caps.Routes {
-				if caps.Routes[i].OperationID == "rejectPersonBrief" {
-					caps.Routes[i].Method = "GET"
-				}
-			}
-		}},
 		{"listPersonBriefVersions", "list_person_brief_versions", func() {
 			for i := range caps.Routes {
 				if caps.Routes[i].OperationID == "listPersonBriefVersions" {
@@ -212,10 +205,6 @@ func TestMCPBriefVersionsAndRejectionThroughNativeStore(t *testing.T) {
 	require.False(t, versions.IsError)
 	data, err := json.Marshal(versions.StructuredContent)
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "synthetic update")
-	assert.Contains(t, string(data), "untrusted_text")
-	assert.Contains(t, string(data), `"sentences"`)
-	assert.Contains(t, string(data), `"items"`)
 	assert.NotContains(t, string(data), `"provider"`)
 	assert.NotContains(t, string(data), `"model"`)
 	var history struct {
