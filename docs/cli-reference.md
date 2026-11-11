@@ -794,9 +794,10 @@ msgvault add-threads --app-id <app-id> --redirect-uri <https-callback>
 ```
 
 Create a Threads app in [Meta for Developers](https://developers.facebook.com/docs/threads/),
-add your account as a tester when required, and obtain the app ID and secret.
+add your account as a tester when required, and obtain the Threads app ID and
+Threads app secret.
 Configure a registered HTTPS callback and request the `threads_basic` and
-`threads_read_replies` permissions; see Meta’s [Threads documentation](https://developers.facebook.com/docs/threads/).
+`threads_read_replies` permissions.
 
 On unreleased `main`, connect an owner-operated Threads app using its registered
 HTTPS callback. Set `MSGVAULT_THREADS_APP_SECRET` or enter the secret at the
