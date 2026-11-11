@@ -50,7 +50,7 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	go.kenn.io/docbank v0.17.0
 	go.kenn.io/kata v0.23.0
-	go.kenn.io/kit v0.50.2-0.20261110210734-f52774537ae3
+	go.kenn.io/kit v0.51.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
