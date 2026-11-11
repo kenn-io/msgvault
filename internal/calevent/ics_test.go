@@ -27,15 +27,16 @@ func TestICSFloatingRecurrenceUsesSourceZone(t *testing.T) {
 			assertions.Equal(tc.original, components[0].Event.Original.Instant.Format(time.RFC3339))
 		})
 	}
-	t.Run("period recurrence", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		const period = "RDATE;VALUE=PERIOD:20270315T090000Z/20270315T100000Z"
-		raw := strings.Replace(icsExample, "SUMMARY:", period+"\r\nSUMMARY:", 1)
-		components, err := ParseICS([]byte(raw), "", "")
-		requirements.NoError(err)
-		requirements.Len(components, 1)
-		assertions.Equal([]string{period}, components[0].Event.Recurrence)
-	})
+}
+
+func TestICSPeriodRecurrence(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	const period = "RDATE;VALUE=PERIOD:20270315T090000Z/20270315T100000Z"
+	raw := strings.Replace(icsExample, "SUMMARY:", period+"\r\nSUMMARY:", 1)
+	components, err := ParseICS([]byte(raw), "", "")
+	requirements.NoError(err)
+	requirements.Len(components, 1)
+	assertions.Equal([]string{period}, components[0].Event.Recurrence)
 }
 
 func TestICSLibicalTZID(t *testing.T) {
@@ -52,18 +53,19 @@ func TestICSLibicalTZID(t *testing.T) {
 		})
 	}
 
-	t.Run("outlook", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		raw, err := os.ReadFile("testdata/outlook.ics")
-		requirements.NoError(err)
-		components, err := ParseICS(raw, "", "")
-		requirements.NoError(err)
-		requirements.Len(components, 1)
-		e := components[0].Event
-		assertions.Equal("2027-07-06T13:00:00Z", e.Start.Format(time.RFC3339))
-		assertions.Equal("America/New_York", e.EventTimeZone)
-		assertions.Equal([]string{"RDATE;TZID=America/New_York:20270707T090000"}, e.Recurrence)
-	})
+}
+
+func TestICSWindowsZoneRecurrence(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	raw, err := os.ReadFile("testdata/outlook.ics")
+	requirements.NoError(err)
+	components, err := ParseICS(raw, "", "")
+	requirements.NoError(err)
+	requirements.Len(components, 1)
+	e := components[0].Event
+	assertions.Equal("2027-07-06T13:00:00Z", e.Start.Format(time.RFC3339))
+	assertions.Equal("America/New_York", e.EventTimeZone)
+	assertions.Equal([]string{"RDATE;TZID=America/New_York:20270707T090000"}, e.Recurrence)
 }
 
 const icsExample = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:invite@example.com\r\nSEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART;TZID=America/New_York:20270314T090000\r\nDTEND;TZID=America/New_York:20270314T100000\r\nSUMMARY:Example\\, meeting\r\nDESCRIPTION:First line\\nSecond\r\n line\r\nORGANIZER:mailto:ORGANIZER@EXAMPLE.COM\r\nATTENDEE;CN=Guest;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nATTENDEE;CUTYPE=ROOM:mailto:room@example.com\r\nLOCATION:https://meet.google.com/abc-defg-hij\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"

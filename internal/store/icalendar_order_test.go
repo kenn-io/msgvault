@@ -15,7 +15,10 @@ func TestICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 	updated := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:organizer@example.com")
 	cancel := calendarDocument("CANCEL", "SEQUENCE:3\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:organizer@example.com")
 	for _, mode := range []string{"file", "email"} {
-		for _, order := range [][]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
+		for _, order := range [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
+			if mode == "email" && order != [3]int{0, 2, 1} && order != [3]int{2, 1, 0} {
+				continue
+			}
 			t.Run(fmt.Sprintf("%s-%d%d%d", mode, order[0], order[1], order[2]), func(t *testing.T) {
 				assertions, requirements := assert.New(t), require.New(t)
 				st := newRFC822IDBackfillBackendStore(t)

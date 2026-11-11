@@ -34,7 +34,7 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 	assertions.NotEmpty(result.CacheRevision)
 }
 
-func TestExploreGroupsIncludeEmailInviteParticipants(t *testing.T) {
+func TestExploreGroupsCountEmailInvitesOnce(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("owner@example.test", "gmail")
