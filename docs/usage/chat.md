@@ -913,10 +913,8 @@ endpoints, credentials, host paths, and operator setup. Use that ETag with
 validation, and a stale ETag is refused. Omitted settings are preserved. A write
 accepts integer values from -9007199254740991 to 9007199254740991; use native
 Settings for larger integers. JSON numeric values are processed as float64;
-fractions may round before integer validation. A read returns
-`settings_integer_out_of_range` if an editable setting has a larger integer,
-so it cannot report a rounded value. A write may also remove stored provider
-credentials whose configured destination no longer matches. A
+fractions may round before integer validation. A write may also remove stored
+provider credentials whose configured destination no longer matches. A
 `validation_failed` response may arise before the settings commit or during
 credential cleanup afterward; check settings before retrying.
 

@@ -17,8 +17,7 @@ func operationalSettingsDefinitions() []operationalDefinition {
 	output.Properties["settings"].Items.Properties["value"] = settingValueSchema("boolean", "string", "integer", "number")
 	value := settingValueSchema("boolean", "string", "integer", "number")
 	// The SDK validates and re-encodes inputs through float64 before the handler.
-	value.OneOf[2].Properties["integer"].Minimum = new(float64(-9007199254740991))
-	value.OneOf[2].Properties["integer"].Maximum = new(float64(9007199254740991))
+	value.OneOf[2].Properties["integer"] = boundedIntegerSchema("", -maxJSONSafeInteger, maxJSONSafeInteger)
 	update := closedObject(map[string]*jsonschema.Schema{"key": stringSchema("Exact key returned by get_operational_settings"), "value": value}, "key", "value")
 	return []operationalDefinition{
 		newOperationalDefinition("get_operational_settings", "Read allowlisted operational settings, the exact settings ETag and pending restart state. Endpoints, credentials, paths and operator setup are excluded.", OperationFamilySettings, closedObject(nil), output, false),

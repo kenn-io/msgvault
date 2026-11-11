@@ -107,13 +107,6 @@ func TestMCPOperationalSettingsRealRouteAndApproval(t *testing.T) {
 	encoded, err = json.Marshal(result.StructuredContent)
 	require.NoError(err)
 	assert.Contains(string(encoded), "settings_conflict")
-	require.NoError(os.WriteFile(path, []byte("[analytics]\nbuilder_threads = 9007199254740993\n"), 0600))
-	result, err = approved.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_operational_settings", Arguments: map[string]any{}})
-	require.NoError(err)
-	require.True(result.IsError)
-	encoded, err = json.Marshal(result.StructuredContent)
-	require.NoError(err)
-	assert.Contains(string(encoded), "settings_integer_out_of_range")
 }
 
 func TestOperationalSettingsCapabilitiesRequireExactRoutes(t *testing.T) {

@@ -83,18 +83,6 @@ func (b *daemonMCPOperations) executeOperationalSettings(ctx context.Context, na
 	projected := mcpserver.OperationalSettings{ETag: result.ETag, PendingRestart: settings.PendingRestart, Settings: []generated.Setting{}}
 	for _, setting := range settings.Settings {
 		if slices.Contains(operationalSettingKeys, setting.Key) {
-			if setting.Value != nil {
-				var value struct {
-					Integer *int64 `json:"integer"`
-				}
-				data, marshalErr := json.Marshal(setting.Value)
-				if marshalErr != nil || json.Unmarshal(data, &value) != nil {
-					return operationFailure("invalid_operation_response", name == "update_operational_settings"), true, nil
-				}
-				if value.Integer != nil && (*value.Integer < -9007199254740991 || *value.Integer > 9007199254740991) {
-					return operationFailure("settings_integer_out_of_range", name == "update_operational_settings"), true, nil
-				}
-			}
 			projected.Settings = append(projected.Settings, setting)
 		}
 	}
@@ -116,7 +104,7 @@ func (b *daemonMCPOperations) operationalSettingsDisclosure(ctx context.Context,
 	}
 	if current == nil || current.IsError {
 		if current != nil {
-			if failure, ok := current.Output.(operationFailureOutput); ok && (failure.Error == "settings_read_failed" || failure.Error == "settings_integer_out_of_range") {
+			if failure, ok := current.Output.(operationFailureOutput); ok && failure.Error == "settings_read_failed" {
 				return "", true, &mcpserver.OperationRefusalError{Code: failure.Error}
 			}
 		}
