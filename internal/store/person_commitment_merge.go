@@ -68,6 +68,8 @@ func (s *Store) transferCommitmentDecisionTx(ctx context.Context, tx *loggedTx, 
 	if ambiguous {
 		return nil // Retain the source decision for undo; no unique survivor owns it.
 	}
+	// No live survivor matched. A stale row at the same unique locator is
+	// a replacement, so it receives only the revalidated incoming decision.
 	if current.ID == 0 {
 		err = tx.QueryRowContext(ctx, `INSERT INTO person_commitments
 			(person_id, anchor_message_id, current_claim_id, target_key, direction,
@@ -76,7 +78,13 @@ func (s *Store) transferCommitmentDecisionTx(ctx context.Context, tx *loggedTx, 
 			SELECT ?, ?, NULL, target_key, direction,
 			quote, ?, ?, summary, due_on, promised_at, expires_at,
 			?, ?, ?, NULL, 0
-			FROM person_commitments WHERE id = ? RETURNING id`, personID, messageID, from.Start, from.End, from.State,
+			FROM person_commitments WHERE id = ?
+			ON CONFLICT (person_id, anchor_message_id, direction, quote_start, quote_end) DO UPDATE SET
+				current_claim_id = NULL, target_key = excluded.target_key, quote = excluded.quote,
+				summary = excluded.summary, due_on = excluded.due_on,
+				promised_at = excluded.promised_at, expires_at = excluded.expires_at,
+				owner_state = excluded.owner_state, snoozed_until = excluded.snoozed_until,
+				reopened_at = excluded.reopened_at, fulfilment_evidence_id = NULL, fulfilment_confirmed = 0 RETURNING id`, personID, messageID, from.Start, from.End, from.State,
 			s.commitmentTimestamp(from.SnoozedUntil), s.commitmentTimestamp(from.ReopenedAt), from.ID).Scan(&current.ID)
 	} else if err == nil {
 		state, snooze := current.State, laterCommitmentTime(current.SnoozedUntil, from.SnoozedUntil)
