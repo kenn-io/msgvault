@@ -998,7 +998,7 @@ func TestCommitmentAgendaFinalMarkRechecksCurrentEvidence(t *testing.T) {
 				r.NoError(err)
 				var claim sql.NullInt64
 				r.NoError(st.db.QueryRowContext(ctx, st.Rebind("SELECT current_claim_id FROM person_commitments WHERE id = ?"), commitment.ID).Scan(&claim))
-				r.True(claim.Valid, "production withdrawal leaves a referenced claim, so the existing nonnull guard is insufficient")
+				r.False(claim.Valid, "production withdrawal detaches the claim; the existing nonnull fence already covers it")
 			}
 			_, err = st.GetOpenPersonCommitmentContext(ctx, commitment.ID, now)
 			r.ErrorIs(err, sql.ErrNoRows, "the final read already rejects this changed commitment")
