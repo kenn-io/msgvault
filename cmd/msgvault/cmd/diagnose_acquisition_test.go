@@ -143,6 +143,12 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		a := newAcquisitionArchive(t, "gmail", false)
+		pending := acquisitionOutcome("saved", "ingest", "error", "attachment_error")
+		pending.ErrorMessage = store.SyncRunItemFilesPendingMessage
+		a.record(a.source, false, pending, acquisitionOutcome("older", "fetch", "error", "fetch_error"))
+		pending.SourceMessageID = "older"
+		a.record(a.source, false, pending)
+		a.record(a.source, false, acquisitionOutcome("saved", "ingest", "resolved", "acquired"), acquisitionOutcome("older", "ingest", "resolved", "acquired"))
 		a.record(a.source, false, acquisitionOutcome("reopened", "fetch", "error", "fetch_error"))
 		a.record(a.source, false, acquisitionOutcome("reopened", "fetch", "resolved", "acquired"))
 		a.record(a.source, false, acquisitionOutcome("reopened", "ingest", "error", "ingest_error"))
@@ -151,8 +157,9 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		assert.Equal("reopened\tstill failing\tmessage processing failed\n", output)
 		output, err = a.diagnose("", "--all")
 		require.NoError(err)
-		assert.Equal("reopened\tfixed\tmessage download failed\nreopened\tstill failing\tmessage processing failed\n", output)
+		assert.Equal("older\tfixed\tmessage download failed\nreopened\tfixed\tmessage download failed\nreopened\tstill failing\tmessage processing failed\n", output)
 		assert.Equal([]map[string]string{
+			acquisitionJSON("older", "fetch", "fetch_error", "resolved"),
 			acquisitionJSON("reopened", "fetch", "fetch_error", "resolved"),
 			acquisitionJSON("reopened", "ingest", "ingest_error", "active"),
 		}, a.diagnoseJSON("--all"))

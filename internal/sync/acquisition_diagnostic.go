@@ -83,7 +83,9 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 			state = AcquisitionHistorical
 		case outcome.Status != store.SyncRunItemStatusError:
 		case op != acquisitionUnknown && next.resolved:
-			state = AcquisitionResolved
+			if outcome.ErrorMessage != store.SyncRunItemFilesPendingMessage {
+				state = AcquisitionResolved
+			}
 		case op == acquisitionDownload && next.skipped:
 			state = AcquisitionHistorical
 		case op != acquisitionUnknown && covers(retries[outcome.SourceMessageID], outcome, op):
