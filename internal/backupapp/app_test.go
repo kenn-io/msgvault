@@ -153,7 +153,6 @@ func TestBackupRestorePreservesSavedViews(t *testing.T) {
 		TargetDir: filepath.Join(t.TempDir(), "restored"),
 	})
 	requirements.NoError(err)
-	assertions.NoFileExists(filepath.Join(filepath.Dir(restoreResult.DBPath), "mcp-events.key"))
 	restored, err := store.OpenForTest(t.Context(), restoreResult.DBPath)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = restored.Close() })

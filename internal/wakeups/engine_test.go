@@ -89,46 +89,6 @@ func TestEngineRetriesFailedDeliveryAndAdvancesAfterSuccess(t *testing.T) {
 		assert.True(state.At.After(start))
 		assert.Zero(state.Failures)
 	})
-	t.Run("empty rescan", func(t *testing.T) {
-		assert := Assert.New(t)
-		require := Require.New(t)
-
-		st := testutil.NewTestStore(t)
-		now := time.Now().UTC()
-		start := now.Add(-time.Hour)
-		seedWakeup(t, st, "empty-retry@example.com", 0, 1, now)
-		initializedWakeup(t, st, "empty-retry", start)
-		var bodies []payload
-		status := http.StatusInternalServerError
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var p payload
-			if err := json.NewDecoder(r.Body).Decode(&p); err == nil {
-				bodies = append(bodies, p)
-			}
-			w.WriteHeader(status)
-		}))
-		defer server.Close()
-		engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "empty-retry", server, changefeed.Filter{IncomingOnly: true})}, Now: func() time.Time { return now }}
-		require.NoError(engine.RunPass(t.Context()))
-		require.Len(bodies, 1)
-		now = now.Add(73 * time.Hour)
-		require.NoError(engine.RunPass(t.Context()))
-		require.Len(bodies, 2)
-		assert.Equal(bodies[0].CursorFrom, bodies[1].CursorFrom)
-		assert.Zero(bodies[1].Matched.Count)
-		assert.Empty(bodies[1].Matched.MessageIDs)
-		state, _, err := st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("empty-retry"))
-		require.NoError(err)
-		assert.Equal(start, state.At)
-		status = http.StatusNoContent
-		now = now.Add(time.Minute)
-		require.NoError(engine.RunPass(t.Context()))
-		require.Len(bodies, 3)
-		state, _, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("empty-retry"))
-		require.NoError(err)
-		assert.True(state.At.After(start))
-		assert.Zero(state.Failures)
-	})
 	t.Run("range changed", func(t *testing.T) {
 		assert := Assert.New(t)
 		require := Require.New(t)

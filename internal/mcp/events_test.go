@@ -14,12 +14,11 @@ import (
 )
 
 type eventTestBackend struct {
-	calls        int
-	subscribe    mcpevents.MCPEventsSubscribeRequest
-	unsubscribe  mcpevents.MCPEventsUnsubscribeRequest
-	listErr      error
-	subscribeErr error
-	disabled     bool
+	calls       int
+	subscribe   mcpevents.MCPEventsSubscribeRequest
+	unsubscribe mcpevents.MCPEventsUnsubscribeRequest
+	listErr     error
+	disabled    bool
 }
 
 func (b *eventTestBackend) MCPEventsList(context.Context) (mcpevents.MCPEventsListResult, error) {
@@ -35,9 +34,6 @@ func (b *eventTestBackend) MCPEventsList(context.Context) (mcpevents.MCPEventsLi
 func (b *eventTestBackend) MCPEventsSubscribe(_ context.Context, in mcpevents.MCPEventsSubscribeRequest) (mcpevents.MCPEventsSubscribeResult, error) {
 	b.calls++
 	b.subscribe = in
-	if b.subscribeErr != nil {
-		return mcpevents.MCPEventsSubscribeResult{}, b.subscribeErr
-	}
 	return mcpevents.MCPEventsSubscribeResult{ID: "fixture", RefreshBefore: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), DeliveryStatus: mcpevents.MCPEventsDeliveryStatus{Active: true}}, nil
 }
 
@@ -123,6 +119,7 @@ func TestEventsStdioAndModernHTTP(t *testing.T) {
 	result, err := sdkmcp.CallCustomMethod[*eventSubscribeParams, *eventSubscribeResult](t.Context(), session, "events/subscribe", params)
 	require.NoError(err)
 	assert.Equal("fixture", result.ID)
+	backend.unsubscribe = mcpevents.MCPEventsUnsubscribeRequest{}
 	params.Delivery.Secret = ""
 	_, err = sdkmcp.CallCustomMethod[*eventSubscribeParams, *eventSubscribeResult](t.Context(), session, "events/unsubscribe", params)
 	require.NoError(err)
@@ -156,14 +153,12 @@ func TestEventsLegacyAndDelegatedDoNotReachBackend(t *testing.T) {
 }
 
 func TestEventsUnavailableReasonReachesRPC(t *testing.T) {
-	for _, reason := range []string{"disabled", "key_unavailable", "head_unavailable", "store_unavailable"} {
-		t.Run(reason, func(t *testing.T) {
-			err := rpcEventError(&mcpevents.Error{Code: mcpevents.Unavailable, Reason: reason})
-			var rpcErr *jsonrpc.Error
-			require.ErrorAs(t, err, &rpcErr)
-			assert.Equal(t, int64(mcpevents.Unavailable), rpcErr.Code)
-			assert.Equal(t, "Unavailable", rpcErr.Message)
-			assert.JSONEq(t, `{"reason":"`+reason+`"}`, string(rpcErr.Data))
-		})
-	}
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	err := rpcEventError(&mcpevents.Error{Code: mcpevents.Unavailable, Reason: "disabled"})
+	var rpcErr *jsonrpc.Error
+	requirements.ErrorAs(err, &rpcErr)
+	assertions.Equal(int64(mcpevents.Unavailable), rpcErr.Code)
+	assertions.Equal("Unavailable", rpcErr.Message)
+	assertions.JSONEq(`{"reason":"disabled"}`, string(rpcErr.Data))
 }

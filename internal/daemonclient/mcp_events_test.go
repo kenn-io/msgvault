@@ -25,27 +25,16 @@ func TestMCPEventsListReadsDaemonEnabledState(t *testing.T) {
 	assert.True(t, got.Enabled)
 }
 
-func TestMCPEventsKeepsSafeInvalidScopeReason(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"code":-32602,"reason":"invalid_scope"}`))
-	}))
-	defer server.Close()
-	c, err := New(Config{URL: server.URL, AllowInsecure: true})
-	require.NoError(t, err)
-	defer c.Close()
-	_, err = c.MCPEventsSubscribe(t.Context(), mcpevents.MCPEventsSubscribeRequest{})
-	var eventErr *mcpevents.Error
-	require.ErrorAs(t, err, &eventErr)
-	assert.Equal(t, "invalid_scope", eventErr.Reason)
-}
-
 func TestMCPEventsPreservesUnavailableReasons(t *testing.T) {
-	for _, reason := range []string{"disabled", "key_unavailable", "head_unavailable", "store_unavailable"} {
+	for _, tc := range []struct {
+		reason       string
+		status, code int
+	}{{"disabled", 503, -32010}, {"key_unavailable", 503, -32010}, {"head_unavailable", 503, -32010}, {"store_unavailable", 503, -32010}, {"invalid_scope", 400, -32602}} {
+		reason := tc.reason
 		t.Run(reason, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_, _ = fmt.Fprintf(w, `{"code":-32010,"reason":%q}`, reason)
+				w.WriteHeader(tc.status)
+				_, _ = fmt.Fprintf(w, `{"code":%d,"reason":%q}`, tc.code, reason)
 			}))
 			defer server.Close()
 			c, err := New(Config{URL: server.URL, AllowInsecure: true})

@@ -269,6 +269,14 @@ func TestCancelledAttemptSurvivesRestartAndEmptyRescan(t *testing.T) {
 	assert.Equal(start, state.At)
 	assert.Equal(2, state.Failures)
 	assert.Equal(now.Add(time.Minute), state.NextAttemptAt)
+	status = http.StatusNoContent
+	now = now.Add(time.Minute)
+	require.NoError(engine.RunPass(t.Context()))
+	require.Len(bodies, 2)
+	state, _, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("cancel"))
+	require.NoError(err)
+	assert.True(state.At.After(start))
+	assert.Zero(state.Failures)
 }
 
 func TestPreSendConflictDoesNotDeliver(t *testing.T) {

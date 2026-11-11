@@ -80,35 +80,31 @@ func TestEventsKeyIsCreatedOnlyBySubscribe(t *testing.T) {
 }
 
 func TestDecodeSubscribeRejectsInvalidArgumentsAndNulls(t *testing.T) {
-	for _, raw := range []string{
-		`{"name":null,"arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`,
-		`{"name":"msgvault.messages.changed","arguments":{"person_id":1,"source_id":2},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`,
-		`{"name":"msgvault.messages.changed","arguments":{"person_id":null},"delivery":{}}`,
-		`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"source_id":2},"delivery":{}}`,
-		`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"unknown":true},"delivery":{}}`,
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	for _, tc := range []struct {
+		raw         string
+		unsubscribe bool
+	}{
+		{`{"name":null,"arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
+		{`{"name":"msgvault.messages.changed","arguments":{"person_id":1,"source_id":2},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
+		{`{"name":"msgvault.messages.changed","arguments":{"person_id":null},"delivery":{}}`, false},
+		{`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"source_id":2},"delivery":{}}`, false},
+		{`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"unknown":true},"delivery":{}}`, false},
+		{`{"name":"msgvault.messages.changed","arguments":{"person_id":1,"source_id":0},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, true},
+		{`{"name":"msgvault.messages.changed","arguments":{"person_id":0,"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, true},
 	} {
-		_, err := DecodeSubscribe([]byte(raw))
-		assert.Error(t, err, raw)
+		_, err := DecodeSubscribe([]byte(tc.raw))
 		var eventErr *Error
-		require.ErrorAs(t, err, &eventErr)
-		assert.Equal(t, InvalidParams, eventErr.Code)
-	}
-}
-
-func TestDecodeRejectsPresentZeroSelector(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	for _, arguments := range []string{`{"person_id":1,"source_id":0}`, `{"person_id":0,"source_id":1}`} {
-		raw := `{"name":"msgvault.messages.changed","arguments":` + arguments + `,"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
-		_, err := DecodeSubscribe([]byte(raw))
-		var eventErr *Error
-		require.ErrorAs(err, &eventErr)
-		assert.Equal(InvalidParams, eventErr.Code)
-		assert.Equal("invalid_arguments", eventErr.Reason)
-		_, err = DecodeUnsubscribe([]byte(raw))
-		require.ErrorAs(err, &eventErr)
-		assert.Equal(InvalidParams, eventErr.Code)
-		assert.Equal("invalid_arguments", eventErr.Reason)
+		requirements.ErrorAs(err, &eventErr)
+		assertions.Equal(InvalidParams, eventErr.Code, tc.raw)
+		if tc.unsubscribe {
+			assertions.Equal("invalid_arguments", eventErr.Reason)
+			_, err = DecodeUnsubscribe([]byte(tc.raw))
+			requirements.ErrorAs(err, &eventErr)
+			assertions.Equal(InvalidParams, eventErr.Code)
+			assertions.Equal("invalid_arguments", eventErr.Reason)
+		}
 	}
 }
 

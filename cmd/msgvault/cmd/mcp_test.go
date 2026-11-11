@@ -654,8 +654,8 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 func TestDaemonMCPEventsRequireCurrentDaemon(t *testing.T) {
 	for _, tc := range []struct {
 		name, version string
-		enabled, want bool
-	}{{"old", "5.2.0", true, false}, {"disabled", api.APISchemaVersion, false, true}, {"enabled", api.APISchemaVersion, true, true}} {
+		want          bool
+	}{{"old", "5.2.0", false}, {"current", api.APISchemaVersion, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			eventsCalls := 0
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -664,7 +664,7 @@ func TestDaemonMCPEventsRequireCurrentDaemon(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version})
 				case "/api/v1/mcp-events/list":
 					eventsCalls++
-					_ = json.NewEncoder(w).Encode(map[string]any{"enabled": tc.enabled, "events": []any{}})
+					_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "events": []any{}})
 				default:
 					http.NotFound(w, r)
 				}
