@@ -49,6 +49,7 @@ type agentReadGateStore struct {
 type cancelableBackfillStore struct {
 	*mockStore
 	ContextCLIStore
+
 	started chan struct{}
 	release chan struct{}
 }
