@@ -6,7 +6,7 @@ Start here:
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
+  msgvault export-messages --help
   msgvault person --help
   msgvault daemon status
   msgvault setup status --json
@@ -122,6 +122,7 @@ Import local exports:
   import-mbox         Import an MBOX export into msgvault
   import-messenger    Import Facebook Messenger from a Meta data export
   import-pst          Import a PST (Outlook) archive into msgvault
+  import-reddit       Import a Reddit account-data export
   import-slackdump    Import a Slackdump export
   import-synctech-sms Import SMS Backup & Restore exports
   import-telegram     Import a Telegram export

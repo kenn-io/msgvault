@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-reddit](#import-reddit), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -2443,6 +2443,26 @@ The directory must be the "Voice" folder from a Google Takeout export, containin
 | `--no-default-identity` | `false` | Do not auto-confirm the phone number as this source's "me" identity |
 
 See [Google Voice imports](usage/text-messages.md#import-gvoice) for voicemail audio behavior and usage examples.
+
+---
+
+## import-reddit
+
+Unreleased: import an extracted Reddit account-data CSV directory.
+
+```bash
+msgvault import-reddit <export-dir>
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--me` | from `statistics.csv` | Reddit handle fallback; conflicts are refused |
+| `--no-default-identity` | `false` | Skip default identity creation |
+
+Prints per-file coverage and partial results on failure. See
+[Reddit imports](usage/text-messages.md#import-reddit) for supported files,
+read limits, failure and retry behavior, original retention, live browsing,
+and unknown-value and media coverage.
 
 ---
 
