@@ -315,7 +315,7 @@ func (s *Store) withdrawnCommitmentFulfilment(ctx context.Context, personID int6
 	if !evidence.Supported || anchor.ReopenedAt != nil && !evidence.Input.EventTime.After(*anchor.ReopenedAt) {
 		return evidence.ID, nil
 	}
-	_, live, err := s.currentCommitmentCitation(ctx, personID, anchor.Direction, evidence.Input)
+	_, live, err := s.currentCommitmentCitation(ctx, personID, anchor.Direction, evidence.Input, s.currentCommitmentSource)
 	if err == nil && !live {
 		return evidence.ID, nil
 	}

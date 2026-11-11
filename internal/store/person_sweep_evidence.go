@@ -898,7 +898,7 @@ func (s *Store) reactivatePersonSweepEvidence(ctx context.Context, input personf
 	} else if input.SubjectPersonID == nil || *input.SubjectPersonID != input.PersonID {
 		return personfacts.AlignmentResult{}, nil
 	}
-	_, live, err := s.currentCommitmentCitation(ctx, input.PersonID, direction, input)
+	_, live, err := s.currentCommitmentCitation(ctx, input.PersonID, direction, input, s.currentCommitmentSource)
 	return personfacts.AlignmentResult{Accepted: live}, err
 }
 
