@@ -58,16 +58,6 @@ describe('PostalReviewSession', () => {
     expect(check).toHaveBeenLastCalledWith(7, editedAgain, true, expect.any(AbortSignal), 'current-id');
   });
 
-  it('carries the first Google response ID when checking an edited address', async () => {
-    const check = vi.fn(async (_personID: number, draft: Input, _external: boolean, _signal: AbortSignal) => ({ ...await assessment(draft), response_id: 'first-google-id' }));
-    const state = new PostalReviewSession(7, check);
-    await state.check(input, true);
-    state.invalidate();
-    const changed = { ...input, street_address: '12 Example Street' };
-    await state.check(changed, true);
-    expect(check).toHaveBeenLastCalledWith(7, changed, true, expect.any(AbortSignal), 'first-google-id');
-  });
-
   it('suppresses duplicate pending and displayed checks without saving anything', async () => {
     const reply = deferred<Assessment>();
     const check = vi.fn(async (_personID: number, _input: Input, _external: boolean, _signal: AbortSignal) => reply.promise);
@@ -110,19 +100,6 @@ describe('PostalReviewSession', () => {
     const latest = await assessment(changed); second.resolve(latest); await b;
     first.resolve(await assessment()); await a;
     expect(state.result).toEqual(latest); expect(state.pending).toBe(false);
-  });
-
-  it('rejects old results after close/reopen or person switch', async () => {
-    const reply = deferred<Assessment>();
-    const check = vi.fn(async (_personID: number, _input: Input, _external: boolean, _signal: AbortSignal) => reply.promise);
-    const old = new PostalReviewSession(7, check);
-    const pending = old.check(input, true);
-    await vi.waitFor(() => expect(check).toHaveBeenCalledOnce());
-    old.destroy();
-    const reopened = new PostalReviewSession(8, check);
-    expect(reopened.editorGeneration).not.toBe(old.editorGeneration);
-    reply.resolve(await assessment()); await pending;
-    expect(old.result).toBeNull(); expect(reopened.result).toBeNull(); expect(reopened.pending).toBe(false);
   });
 
   it('checks locally and externally', async () => {

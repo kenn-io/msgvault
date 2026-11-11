@@ -86,6 +86,8 @@ func TestPostalAddressSweepExtractionRetainsWithoutProjection(t *testing.T) {
 	assert.True(rows[0].PostalReview.Eligible)
 	assert.NotEmpty(rows[0].PostalReview.SupportingEvidenceIDs)
 	require.NotNil(rows[0].PostalReview.Assessment)
+	assert.Equal([]string{"Room;3", "Floor 2"}, rows[0].PostalReview.Assessment.OriginalExtendedParts)
+	assert.Equal([]string{"Room;3", "Floor 2"}, rows[0].PostalReview.Assessment.ProposedExtendedParts)
 	addresses, err := f.store.ListPersonAddressesContext(t.Context(), f.personID, false)
 	require.NoError(err)
 	assert.Empty(addresses)
@@ -204,10 +206,6 @@ func TestPostalAddressPacketBoundsBacklogAndExcludesAdoptedHistory(t *testing.T)
 	state, err := st.LoadPersonFactState(t.Context(), id, catalog)
 	require.NoError(err)
 	require.Len(state.Unresolved, 100)
-	selected := map[string]bool{}
-	for _, claim := range state.Unresolved {
-		selected[claim.ClaimKey] = true
-	}
 	assert := assert.New(t)
 	selectedKey := state.Unresolved[0].ClaimKey
 	ref := "person-fact-claim:" + selectedKey
@@ -215,7 +213,7 @@ func TestPostalAddressPacketBoundsBacklogAndExcludesAdoptedHistory(t *testing.T)
 	require.NoError(err)
 	state, err = st.LoadPersonFactState(t.Context(), id, catalog)
 	require.NoError(err)
-	selected = map[string]bool{}
+	selected := map[string]bool{}
 	for _, claim := range state.Unresolved {
 		selected[claim.ClaimKey] = true
 	}
@@ -260,8 +258,10 @@ func TestPostalAddressRejectsUnsupportedSnapshots(t *testing.T) {
 	require.ErrorIs(t, err, ErrPersonAddressValueMissing)
 	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}", StreetAddress: new("12 Example Street"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
 	require.Error(t, err)
-	_, err = (PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}"}).PublicAddress()
+	public, err := (PersonAddress{AddressKind: PersonAddressPostal, StreetAddress: new("12 Example Street"), OriginalValue: "msgvault:postal-input:v2\n{}"}).PublicAddress()
 	require.NoError(t, err)
+	assert.Equal(t, "12 Example Street", *public.StreetAddress)
+	assert.Empty(t, public.OriginalValue)
 	address, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, OriginalValue: "12 Example Street", Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
 	require.NoError(t, err)
 	_, err = st.db.ExecContext(t.Context(), st.Rebind(`UPDATE person_addresses SET original_value = ? WHERE id = ?`), "msgvault:postal-input:v2\n{}", address.Envelope.ID)

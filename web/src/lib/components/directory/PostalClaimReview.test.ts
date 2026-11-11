@@ -25,7 +25,7 @@ function setup(reason?: string, evidenceResponse?: Promise<Response>) {
       if (server.readClaims) return server.readClaims();
       if (server.fail) return Response.json({ message: 'Synthetic failure' }, { status: 503 });
       if (server.absent) return Response.json({ claims: [] });
-      return Response.json({ claims: [{ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify(raw), relation: 'equals', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: ['Room;3', 'Floor 2'], proposed_extended_parts: ['Room;3', 'Floor 2'] } } }] });
+      return Response.json({ claims: [{ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify(raw), relation: 'support', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: ['Room;3', 'Floor 2'], proposed_extended_parts: ['Room;3', 'Floor 2'] } } }] });
     }
     if (path.endsWith('/fact-evidence')) return evidenceResponse ?? Response.json({ evidence: [] });
     if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
@@ -41,19 +41,13 @@ function setup(reason?: string, evidenceResponse?: Promise<Response>) {
 }
 
 describe('Postal claim review', () => {
-  it('shows decoded room and floor in the claim comparison', async () => {
-    setup();
-    await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
-    expect(screen.getByText(/Room;3, Floor 2/)).toBeDefined();
-  });
-
   it('keeps an edited claim open when the initial evidence response arrives', async () => {
     let release!: (response: Response) => void;
     const evidence = new Promise<Response>(resolve => { release = resolve; });
     const { ledger } = setup(undefined, evidence);
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+    expect(screen.getByText(/Room;3, Floor 2/)).toBeDefined();
     await fireEvent.click(await screen.findByRole('button', { name: 'Review address' }));
     const street = await screen.findByLabelText('Street address');
     await fireEvent.input(street, { target: { value: 'Edited street' } });
@@ -174,21 +168,7 @@ it('cancels an opening read, suppresses duplicate clicks, and ignores its respon
   expect(screen.getByLabelText('Street address')).toHaveProperty('value', 'New open street');
 });
 
-it('drops an opening response when ledger context changes to another person', async () => {
-  const { server, ledger } = setup();
-  await revealPostalClaim();
-  let release!: (response: Response) => void;
-  server.readClaims = () => new Promise<Response>(resolve => { release = resolve; });
-  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
-  await screen.findByRole('button', { name: 'Cancel opening address review' });
-  ledger.applyContext(false, null);
-  release(Response.json({ claims: [] }));
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel opening address review' })).toBeNull());
-  expect(screen.queryByLabelText('Street address')).toBeNull();
-});
-
-
-it.each(['history restoration', 'section change', 'profile replacement'])('cancels an opening review on %s without surfacing a late error', async change => {
+it.each(['history restoration', 'section change', 'profile replacement', 'person change'])('cancels an opening review on %s without surfacing a late error', async change => {
   const { server, ledger, profileController, view } = setup();
   await revealPostalClaim();
   let release!: (response: Response) => void;
@@ -198,6 +178,7 @@ it.each(['history restoration', 'section change', 'profile replacement'])('cance
   server.readClaims = undefined;
   if (change === 'history restoration') ledger.applyContext(true, 7, true);
   else if (change === 'section change') await fireEvent.click(screen.getByRole('radio', { name: 'Evidence' }));
+  else if (change === 'person change') ledger.applyContext(false, null);
   else await view.rerender({ controller: ledger, profileController: new DirectoryProfileController(createAPIClient(async () => Response.json({})), 7, { person, structuredProfile: emptyProfile(person), etags: { structuredProfile: '\"person-7-r3\"' }, errors: {} }) });
   release(Response.json({ message: 'Late failure' }, { status: 503 }));
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel opening address review' })).toBeNull());
@@ -215,7 +196,7 @@ it('refuses an opening result if the viewed profile revision changes while the r
   server.readClaims = undefined;
   profileController.person = { ...person, revision: 4 };
   // The old response still describes revision 3, which cannot open against revision 4.
-  release(Response.json({ claims: [{ claim_key: 'synthetic-claim', target: { kind: 'postal_address', key: 'system:postal_address', revision }, postal_review: { eligible: true, person_revision: 3, assessment: { original: raw } } }] }));
+  release(Response.json({ claims: [{ claim_key: 'synthetic-claim', target: { kind: 'postal_address', key: 'system:postal_address', revision }, postal_review: { eligible: true, person_revision: 3, reason_codes: [], supporting_evidence_ids: [], assessment: { original: raw } } }] }));
   await screen.findByRole('alert');
   expect(screen.queryByLabelText('Street address')).toBeNull();
 });

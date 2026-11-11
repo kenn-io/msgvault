@@ -31,10 +31,18 @@ func TestAssessPreservesInternationalInput(t *testing.T) {
 }
 
 func TestAssessDoesNotAssertValidity(t *testing.T) {
-	for _, input := range []Input{{}, {CountryCode: "US"}, {StreetAddress: "somewhere"}, {StreetAddress: "somewhere", CountryCode: "ZZ"}} {
-		got := Assess(input)
+	for _, tc := range []struct {
+		input   Input
+		reasons []string
+	}{
+		{Input{}, []string{"not_verified", "country_missing", "address_incomplete"}},
+		{Input{CountryCode: "US"}, []string{"not_verified", "address_incomplete"}},
+		{Input{StreetAddress: "somewhere"}, []string{"not_verified", "country_missing"}},
+		{Input{StreetAddress: "somewhere", CountryCode: "ZZ"}, []string{"not_verified", "country_unknown"}},
+	} {
+		got := Assess(tc.input)
 		assert.Equal(t, StatusNeedsReview, got.Status)
-		assert.Contains(t, got.ReasonCodes, "not_verified")
+		assert.ElementsMatch(t, tc.reasons, got.ReasonCodes)
 	}
 }
 

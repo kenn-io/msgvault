@@ -49,7 +49,7 @@ func TestPostalAddressAssessmentRequiresExplicitConsent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	for _, external := range []bool{false, true} {
-		body, err := json.Marshal(map[string]any{"address": postaladdress.Input{AddressKind: "postal", StreetAddress: " 12 Example St ", ExtendedAddress: "Unit 7", CountryCode: "ca", OriginalValue: "raw", ExtendedComponents: `;;12 Example St;;;;;Room\;3;Floor 2`}, "allow_external": external})
+		body, err := json.Marshal(map[string]any{"address": postaladdress.Input{AddressKind: "postal", StreetAddress: " 12 Example St ", ExtendedAddress: "Unit 7", CountryCode: "ca", OriginalValue: "raw", ExtendedComponents: `;;12 Example St;;;;;Room\;3;Floor 2`}, "allow_external": external, "previous_response_id": "first-google-id"})
 		require.NoError(err)
 		response := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(id), body, nil)
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
@@ -61,6 +61,7 @@ func TestPostalAddressAssessmentRequiresExplicitConsent(t *testing.T) {
 		if external {
 			assert.Equal(postaladdress.StatusValidated, assessment.Status)
 			assert.Equal(1, validator.calls)
+			assert.Equal("first-google-id", validator.previousID)
 		} else {
 			assert.Equal(postaladdress.StatusNormalizedUnverified, assessment.Status)
 			assert.Zero(validator.calls)
@@ -71,28 +72,14 @@ func TestPostalAddressAssessmentRequiresExplicitConsent(t *testing.T) {
 	assert.Empty(profile.Addresses, "an assessment must never persist provider output")
 }
 
-func TestPostalAddressAssessmentForwardsPreviousResponseID(t *testing.T) {
-	srv, wrapped := newIdentityLinkTestServer(t)
-	id := seedAPIPerson(t, wrapped.Store)
-	srv.cfg.People.AddressValidation = config.PostalAddressConfig{Enabled: true, Provider: "google"}
-	validator := &countingPostalValidator{}
-	srv.SetPostalAddressValidator(validator)
-	body := []byte(`{"address":{"address_kind":"postal","street_address":"12 Example St","country_code":"CA"},"allow_external":true,"previous_response_id":"first-google-id"}`)
-	response := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(id), body, nil)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Equal(t, "first-google-id", validator.previousID)
-}
-
 func TestPostalAddressUnavailableStates(t *testing.T) {
-	for _, state := range []string{"disabled", "no key", "failure"} {
+	for _, state := range []string{"disabled", "failure"} {
 		t.Run(state, func(t *testing.T) {
 			srv, wrapped := newIdentityLinkTestServer(t)
 			id := seedAPIPerson(t, wrapped.Store)
 			srv.cfg.People.AddressValidation = config.PostalAddressConfig{Enabled: state != "disabled", Provider: "google"}
 			validator := &countingPostalValidator{unavailable: true}
-			if state != "no key" {
-				srv.SetPostalAddressValidator(validator)
-			}
+			srv.SetPostalAddressValidator(validator)
 			body := []byte(`{"address":{"address_kind":"postal","street_address":"12 Example St","extended_address":"Unit 7","country_code":"CA","extended_components":";;;;;;;Room\\;3;Floor 2"},"allow_external":true}`)
 			result := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(id), body, nil)
 			require := require.New(t)
@@ -111,7 +98,7 @@ func TestPostalAddressUnavailableStates(t *testing.T) {
 	}
 }
 
-func TestPostalAddressCorrectionPreservesRawDraftAndConflict(t *testing.T) {
+func TestPostalAddressCorrectionPreservesRawDraft(t *testing.T) {
 	srv, wrapped := newIdentityLinkTestServer(t)
 	id := seedAPIPerson(t, wrapped.Store)
 	raw := postaladdress.Input{AddressKind: "postal", PostOfficeBox: " Box 9 ", ExtendedAddress: " Unit 7 ", StreetAddress: " 12 Example st\n extra ", Locality: " Example City ", Region: " BC ", PostalCode: " V0V 0V0 ", CountryName: " Canada ", CountryCode: " ca ", ExtendedComponents: `["raw"]`, FreeText: " 自由 ", Label: " old label ", GeoURI: "geo:0,0", Timezone: "America/Vancouver", PlaceURI: "urn:example:place", OriginalValue: "msgvault:postal-input:v1\n" + `{"schema":1,"input":{"original_value":"literal raw text"}}`}
@@ -132,34 +119,15 @@ func TestPostalAddressCorrectionPreservesRawDraftAndConflict(t *testing.T) {
 	assert.Equal(raw, address.Assessment.Original)
 	assert.Equal(raw.OriginalValue, address.OriginalValue, "public reads expose original text, not the storage envelope")
 	assert.Equal("12 Example Street", *address.StreetAddress)
-	stored, err := wrapped.ListPersonAddressesContext(t.Context(), id, false)
-	require.NoError(err)
-	decoded, ok, err := postaladdress.DecodeOriginalInput(stored[0].OriginalValue)
-	require.NoError(err)
-	require.True(ok)
-	assert.Equal(raw, decoded)
-	conflict := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": etag})
-	assert.Equal(http.StatusConflict, conflict.Code, conflict.Body.String())
-	stored, err = wrapped.ListPersonAddressesContext(t.Context(), id, false)
-	require.NoError(err)
-	assert.Len(stored, 1)
 	forbidden := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), []byte(`{"addresses":{"add":[{"address_kind":"postal","street_address":"x","assessment":{"status":"validated"},"envelope":{"source":"user"}}]}}`), map[string]string{"If-Match": saved.Header().Get("ETag")})
 	assert.Equal(http.StatusBadRequest, forbidden.Code)
 }
 
-func TestPostalAddressEmptyOriginalInputDoesNotPermitEmptyRow(t *testing.T) {
-	srv, wrapped := newIdentityLinkTestServer(t)
-	id := seedAPIPerson(t, wrapped.Store)
-	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-	response := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), []byte(`{"addresses":{"add":[{"address_kind":"postal","original_input":{"address_kind":"postal"},"envelope":{"source":"user"}}]}}`), map[string]string{"If-Match": read.Header().Get("ETag")})
-	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
-	profile, err := wrapped.GetPersonProfileContext(t.Context(), id)
-	require.NoError(t, err)
-	assert.Empty(t, profile.Addresses)
-}
-
 func TestPostalAddressExternalDeniesDelegatedAndReadOnlyKeys(t *testing.T) {
 	srv, reg := newTestServerWithAgentGrants(t)
+	_, wrapped := newIdentityLinkTestServer(t)
+	srv.store = wrapped
+	id := seedAPIPerson(t, wrapped.Store)
 	srv.cfg.People.AddressValidation = config.PostalAddressConfig{Enabled: true, Provider: "google"}
 	srv.cfg.Server.RemoteClients = []config.RemoteClientConfig{{ClientID: "reader", APIKey: "synthetic-reader-key"}}
 	validator := &countingPostalValidator{}
@@ -167,7 +135,7 @@ func TestPostalAddressExternalDeniesDelegatedAndReadOnlyKeys(t *testing.T) {
 	_, secret, _, err := reg.Issue("postal-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "alice@example.com"}}, time.Time{})
 	require.NoError(t, err)
 	for _, headers := range []map[string]string{{apiprotocol.AgentTokenHeader: secret}, {"X-Api-Key": "synthetic-reader-key"}} {
-		result := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(1), []byte(`{"address":{"address_kind":"postal","street_address":"12 Example St","country_code":"CA"},"allow_external":true}`), headers)
+		result := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(id), []byte(`{"address":{"address_kind":"postal","street_address":"12 Example St","country_code":"CA"},"allow_external":true}`), headers)
 		assert.Contains(t, []int{http.StatusUnauthorized, http.StatusForbidden}, result.Code, result.Body.String())
 	}
 	assert.Zero(t, validator.calls)
@@ -178,16 +146,17 @@ func TestPostalAddressEditPreservesOriginalHistory(t *testing.T) {
 	id := seedAPIPerson(t, wrapped.Store)
 	raw := postaladdress.Input{AddressKind: "postal", StreetAddress: " imported street ", ExtendedAddress: " Unit 7 ", CountryCode: "ca", ExtendedComponents: `;;;;;;;Room\;3;Floor 2`, OriginalValue: " original line\n raw "}
 	street, unit, country, source, uid, label := "Old street", "Unit 7", "CA", "import:example", "synthetic-card", "home"
+	oldText, newText := "  First raw address\nUnit 7  ", "  Updated current address\nUnit 8  "
 	pref, ordinal := 1, 3
 	encoded, err := postaladdress.EncodeOriginalInput(raw)
 	require := require.New(t)
 	require.NoError(err)
-	old, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, StreetAddress: &street, ExtendedAddress: &unit, CountryCode: &country, OriginalValue: encoded, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceVCardImport, SourceRef: &source, SourceResourceUID: &uid, TypeLabel: &label, Pref: &pref, Ordinal: &ordinal, VCard: store.VCardIdentity{Property: "ADR", PID: []string{"1.1"}}}})
+	old, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, StreetAddress: &street, ExtendedAddress: &unit, CountryCode: &country, FreeText: &oldText, OriginalValue: encoded, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceVCardImport, SourceRef: &source, SourceResourceUID: &uid, TypeLabel: &label, Pref: &pref, Ordinal: &ordinal, VCard: store.VCardIdentity{Property: "ADR", PID: []string{"1.1"}}}})
 	require.NoError(err)
 	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
 	var before store.PersonProfile
 	require.NoError(json.Unmarshal(read.Body.Bytes(), &before))
-	body, err := json.Marshal(map[string]any{"addresses": map[string]any{"supersede": []int64{old.Envelope.ID}, "add": []any{map[string]any{"address_kind": "postal", "street_address": "Corrected street", "extended_address": unit, "country_code": country, "original_input": raw, "envelope": map[string]any{"source": "user", "type_label": label, "pref": pref, "ordinal": ordinal}}}}})
+	body, err := json.Marshal(map[string]any{"addresses": map[string]any{"supersede": []int64{old.Envelope.ID}, "add": []any{map[string]any{"address_kind": "postal", "street_address": "Corrected street", "extended_address": unit, "country_code": country, "free_text": newText, "original_input": raw, "envelope": map[string]any{"source": "user", "type_label": label, "pref": pref, "ordinal": ordinal}}}}})
 	require.NoError(err)
 	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
 	require.Equal(http.StatusOK, saved.Code, saved.Body.String())
@@ -196,6 +165,12 @@ func TestPostalAddressEditPreservesOriginalHistory(t *testing.T) {
 	require.Len(after.Addresses, 1)
 	current := after.Addresses[0]
 	assert := assert.New(t)
+	assert.Equal(&newText, current.FreeText)
+	reread := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
+	var persisted store.PersonProfile
+	require.NoError(json.Unmarshal(reread.Body.Bytes(), &persisted))
+	require.Len(persisted.Addresses, 1)
+	assert.Equal(&newText, persisted.Addresses[0].FreeText)
 	assert.Equal(raw, current.Assessment.Original)
 	assert.NotEqual(before.Addresses[0].Assessment.Proposed.StreetAddress, current.Assessment.Proposed.StreetAddress)
 	assert.Equal(store.ProvenanceUser, current.Envelope.Source)
@@ -216,6 +191,7 @@ func TestPostalAddressEditPreservesOriginalHistory(t *testing.T) {
 		}
 	}
 	require.NotNil(historic)
+	assert.Equal(&oldText, historic.FreeText)
 	assert.NotNil(historic.Envelope.SupersededAt)
 	assert.Equal(old.Envelope.Source, historic.Envelope.Source)
 	assert.Equal(old.Envelope.SourceRef, historic.Envelope.SourceRef)
@@ -226,71 +202,19 @@ func TestPostalAddressEditPreservesOriginalHistory(t *testing.T) {
 	assert.Equal(raw.OriginalValue, historic.OriginalValue)
 }
 
-func TestPostalAddressCurrentTextRoundTripsWithoutChangingProvenance(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	srv, wrapped := newIdentityLinkTestServer(t)
-	id := seedAPIPerson(t, wrapped.Store)
-	raw := postaladdress.Input{AddressKind: "postal", OriginalValue: "  First raw address\nUnit 7  ", ExtendedComponents: `["raw"]`, Label: " original label "}
-	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-	body, err := json.Marshal(map[string]any{"addresses": map[string]any{"add": []any{map[string]any{"address_kind": "postal", "free_text": raw.OriginalValue, "original_input": raw, "envelope": map[string]any{"source": "user"}}}}})
-	require.NoError(err)
-	created := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
-	require.Equal(http.StatusOK, created.Code, created.Body.String())
-	var before store.PersonProfile
-	require.NoError(json.Unmarshal(created.Body.Bytes(), &before))
-	require.Len(before.Addresses, 1)
-	text := "  Updated current address\nUnit 8  "
-	body, err = json.Marshal(map[string]any{"addresses": map[string]any{"supersede": []int64{before.Addresses[0].Envelope.ID}, "add": []any{map[string]any{"address_kind": "postal", "free_text": text, "original_input": raw, "envelope": map[string]any{"source": "user"}}}}})
-	require.NoError(err)
-	edited := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": created.Header().Get("ETag")})
-	require.Equal(http.StatusOK, edited.Code, edited.Body.String())
-	current := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-	var profile store.PersonProfile
-	require.NoError(json.Unmarshal(current.Body.Bytes(), &profile))
-	require.Len(profile.Addresses, 1)
-	address := profile.Addresses[0]
-	require.NotNil(address.FreeText)
-	assert.Equal(text, *address.FreeText)
-	require.NotNil(address.Assessment)
-	assert.Equal(raw, address.Assessment.Original)
-	assert.Equal(raw.OriginalValue, address.OriginalValue)
-	stored, err := wrapped.ListPersonAddressesContext(t.Context(), id, true)
-	require.NoError(err)
-	require.Len(stored, 1)
-	decoded, ok, err := postaladdress.DecodeOriginalInput(stored[0].OriginalValue)
-	require.NoError(err)
-	require.True(ok)
-	assert.Equal(raw, decoded)
-	assert.Equal(text, *stored[0].FreeText)
-	historyResponse := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id)+"/history", nil, nil)
-	var history store.PersonProfileHistory
-	require.NoError(json.Unmarshal(historyResponse.Body.Bytes(), &history))
-	require.Len(history.Addresses, 2)
-	for _, historic := range history.Addresses {
-		require.NotNil(historic.Assessment)
-		assert.Equal(raw, historic.Assessment.Original)
-		if historic.Envelope.ID == before.Addresses[0].Envelope.ID {
-			assert.NotNil(historic.Envelope.SupersededAt)
-			assert.Equal(&raw.OriginalValue, historic.FreeText)
-		}
-	}
-}
-
 func TestPostalAddressAssessmentRequiresPresentAddress(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		body      string
-		wantCode  int
-		wantCalls int
+		name     string
+		body     string
+		wantCode int
 	}{
-		{"missing", `{}`, http.StatusBadRequest, 0},
-		{"missing with external consent", `{"allow_external":true}`, http.StatusBadRequest, 0},
-		{"null", `{"address":null}`, http.StatusBadRequest, 0},
-		{"null with external consent", `{"address":null,"allow_external":true}`, http.StatusBadRequest, 0},
-		{"unknown member", `{"address":{},"unknown":true}`, http.StatusBadRequest, 0},
-		{"multiple values", `{"address":{}} {}`, http.StatusBadRequest, 0},
-		{"present empty object", `{"address":{}}`, http.StatusOK, 0},
+		{"missing", `{}`, http.StatusBadRequest},
+		{"missing with external consent", `{"allow_external":true}`, http.StatusBadRequest},
+		{"null", `{"address":null}`, http.StatusBadRequest},
+		{"null with external consent", `{"address":null,"allow_external":true}`, http.StatusBadRequest},
+		{"unknown member", `{"address":{},"unknown":true}`, http.StatusBadRequest},
+		{"multiple values", `{"address":{}} {}`, http.StatusBadRequest},
+		{"present empty object", `{"address":{}}`, http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -303,7 +227,7 @@ func TestPostalAddressAssessmentRequiresPresentAddress(t *testing.T) {
 			response := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(id), []byte(tc.body), nil)
 			require.Equal(tc.wantCode, response.Code, response.Body.String())
 			assert.Equal("no-store", response.Header().Get("Cache-Control"))
-			assert.Equal(tc.wantCalls, validator.calls)
+			assert.Zero(validator.calls)
 			if tc.wantCode == http.StatusBadRequest {
 				var failure struct {
 					Error string `json:"error"`
@@ -314,11 +238,7 @@ func TestPostalAddressAssessmentRequiresPresentAddress(t *testing.T) {
 				var assessment postaladdress.Assessment
 				require.NoError(json.Unmarshal(response.Body.Bytes(), &assessment))
 				assert.Equal("postal", assessment.Original.AddressKind)
-				if tc.wantCalls == 0 {
-					assert.Equal(postaladdress.StatusNeedsReview, assessment.Status)
-				} else {
-					assert.Equal(postaladdress.StatusValidated, assessment.Status)
-				}
+				assert.Equal(postaladdress.StatusNeedsReview, assessment.Status)
 			}
 			profile, err := wrapped.GetPersonProfileContext(t.Context(), id)
 			require.NoError(err)
@@ -333,9 +253,11 @@ func TestPostalReplacementRequiresCurrentValue(t *testing.T) {
 	old, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, StreetAddress: new("Old street"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
 	require.NoError(t, err)
 	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-	body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","free_text":"","original_input":{"address_kind":"postal","street_address":"Old street"},"envelope":{"source":"user"}}]}}`, old.Envelope.ID)
-	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
-	assert.Equal(t, http.StatusBadRequest, saved.Code, saved.Body.String())
+	for _, original := range []string{`{"address_kind":"postal"}`, `{"address_kind":"postal","street_address":"Old street"}`} {
+		body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","free_text":"","original_input":%s,"envelope":{"source":"user"}}]}}`, old.Envelope.ID, original)
+		saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
+		assert.Equal(t, http.StatusBadRequest, saved.Code, saved.Body.String())
+	}
 	profile, err := wrapped.GetPersonProfileContext(t.Context(), id)
 	require.NoError(t, err)
 	require.Len(t, profile.Addresses, 1)

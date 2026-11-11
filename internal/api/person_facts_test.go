@@ -453,7 +453,7 @@ func mapKeysAny(values map[string]any) []string {
 	return keys
 }
 
-func TestPostalClaimResponseIncludesDecodedComponents(t *testing.T) {
+func TestPostalClaimResponseIncludesReview(t *testing.T) {
 	srv, st, id, targets := newPersonFactAPIFixtureWithoutClaims(t)
 	target := targets["postal_address"]
 	require.NotEmpty(t, target.Key)
@@ -467,6 +467,4 @@ func TestPostalClaimResponseIncludesDecodedComponents(t *testing.T) {
 	require.Len(t, body.Claims, 1)
 	require.NotNil(t, body.Claims[0].PostalReview)
 	require.NotNil(t, body.Claims[0].PostalReview.Assessment)
-	assert.Equal(t, []string{"Room;3", "Floor 2"}, body.Claims[0].PostalReview.Assessment.OriginalExtendedParts)
-	assert.Equal(t, []string{"Room;3", "Floor 2"}, body.Claims[0].PostalReview.Assessment.ProposedExtendedParts)
 }

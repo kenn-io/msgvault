@@ -13,13 +13,17 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
+func TestPostalAddressPinIsRejected(t *testing.T) {
+	st, personID, _ := newPersonFactProjectionStore(t)
+	postal := projectionTargetBySlug(t, st, "postal_address")
+	_, err := st.SetPersonFactPinContext(t.Context(), personID, personfacts.TargetRef{Kind: postal.Kind, Key: postal.Key, Revision: postal.Revision}, true, "owner")
+	require.ErrorContains(t, err, "postal address pins are unsupported")
+}
+
 func TestPersonFactImplicitPinUnpinRerunsAndManualSetRepins(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, personID, targets := newPersonFactProjectionStore(t)
-	postal := projectionTargetBySlug(t, st, "postal_address")
-	_, err := st.SetPersonFactPinContext(t.Context(), personID, personfacts.TargetRef{Kind: postal.Kind, Key: postal.Key, Revision: postal.Revision}, true, "owner")
-	require.ErrorContains(err, "postal address pins are unsupported")
 	target := targets[AttributeSlugPrimaryChannel]
 	activeFrom := personFactLedgerNow.Add(-24 * time.Hour)
 	manual, err := st.SetPersonAttributeValueContext(t.Context(), PersonAttributeValueInput{
