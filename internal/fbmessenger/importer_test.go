@@ -868,7 +868,7 @@ func TestImportDYI_NonTextMessageBodies(t *testing.T) {
 	_ = importFixture(t, st, "testdata/json_nontext")
 	want := map[string]string{
 		"inbox/sam_NONTXT__0": "[system] Sam left the chat",
-		"inbox/sam_NONTXT__1": "[shared link] https://example.com/article\nExample share text",
+		"inbox/sam_NONTXT__1": "[shared link] https://example.com/café\nExample share text",
 		"inbox/sam_NONTXT__2": "[call: missed, 0s]",
 		"inbox/sam_NONTXT__3": "[call: 3m 12s]",
 		"inbox/sam_NONTXT__4": "[photo]",
