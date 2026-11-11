@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -52,7 +51,7 @@ func meetingLinksRef(arg string) (string, error) {
 		return arg, nil
 	}
 	id, err := strconv.ParseInt(arg, 10, 64)
-	if err != nil || id <= 0 || id > apiprotocol.MaxJSONSafeInteger {
+	if err != nil || id <= 0 || id > maxJSONSafeInteger {
 		return "", errors.New("note-id must be a positive message ID or a msg:/evt: reference")
 	}
 	return fmt.Sprintf("msg:%d", id), nil
