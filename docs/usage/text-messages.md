@@ -104,10 +104,11 @@ over 128 MiB, 250,000 records or 1 MiB per record also fail before archive write
 caller assumptions, not original exported timezone evidence. Raw timestamps,
 precision, line spans and the input file digest remain in provenance. During
 a repeated autumn hour, msgvault chooses the earlier instant; nonexistent
-spring-forward times fail with line context. Changing timezone, date order or
-chat type for an existing chat fails rather than reinterpreting it. Exports of
-the same conversation with a different date order, for example from a phone
-with different locale settings, need a different `--chat-id`.
+spring-forward times fail with line context. Reuse the exact timezone name,
+date order and chat type for an existing chat. Timezone aliases such as `UTC`
+and `Etc/UTC` count as different names. Exports of the same conversation with
+a different date order, for example from a phone with different locale settings,
+need a different `--chat-id`.
 
 Repeat or overlapping exports add new evidence and retain absent records and
 labels. Message keys include normalized wall time, precision and the exact payload
