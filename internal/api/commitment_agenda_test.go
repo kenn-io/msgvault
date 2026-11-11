@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/kataissues"
 	"go.kenn.io/msgvault/internal/personagenda"
@@ -179,6 +180,8 @@ func TestCommitmentAgendaSettlesSavedIntent(t *testing.T) {
 				}
 				_, err := agenda.Manual(t.Context(), 12, time.Now())
 				r.ErrorIs(err, io.ErrUnexpectedEOF)
+				// The owner moved and unlinked the issue before recovery.
+				issues.found.Issue.Metadata = map[string]any{personagenda.ListMetadataKey: "later"}
 			} else {
 				_, err := agenda.enqueue(t.Context(), archive.commitment)
 				r.NoError(err)
@@ -193,6 +196,7 @@ func TestCommitmentAgendaSettlesSavedIntent(t *testing.T) {
 				a.Equal(store.CommitmentAgendaLinked, archive.item.State)
 				a.Equal(issues.found.Issue.UID, archive.item.IssueUID)
 				a.Equal(issues.found.Issue.QualifiedRef, archive.item.IssueRef)
+				a.Equal(map[string]any{personagenda.ListMetadataKey: "later"}, issues.found.Issue.Metadata)
 			} else {
 				a.Equal(store.CommitmentAgendaRetired, archive.item.State)
 			}
@@ -220,4 +224,63 @@ func TestCommitmentAgendaPreservesLongUnicodeCitation(t *testing.T) {
 	a.Equal(int(archive.commitment.End), second.EndRune)
 	a.Equal(hash, first.BodySHA256)
 	a.Equal(hash, second.BodySHA256)
+}
+
+func TestCommitmentAgendaNormalizesDestination(t *testing.T) {
+	a := assert.New(t)
+	for _, endpoint := range []string{"https://kata.example.test", "https://kata.example.test/api"} {
+		cfg := config.TaskIntegrationConfig{Endpoint: endpoint, DefaultProject: "agenda"}
+		first := NewCommitmentAgenda(cfg, nil, "")
+		cfg.Endpoint += "///"
+		a.Equal(first.destination, NewCommitmentAgenda(cfg, nil, "").destination)
+		cfg.DefaultProject = "other"
+		a.NotEqual(first.destination, NewCommitmentAgenda(cfg, nil, "").destination)
+	}
+}
+
+func TestCommitmentAgendaRefreshesOnlyUnchangedPassages(t *testing.T) {
+	for _, change := range []string{"outside quote", "quote", "occurrence"} {
+		t.Run(change, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			agenda, archive, issues := newCommitmentAgendaFixture()
+			frozen, err := agenda.enqueue(t.Context(), archive.commitment)
+			r.NoError(err)
+			archive.source.Text += " New ending."
+			if change == "quote" {
+				archive.source.Text = strings.Replace(archive.source.Text, "draft", "notes", 1)
+			}
+			if change == "occurrence" {
+				archive.source.Reference.SourceMessageID = "another-message"
+			}
+			sum := sha256.Sum256([]byte(archive.source.Text))
+			archive.source.Reference.Message.BodySHA256 = hex.EncodeToString(sum[:])
+			calls := 0
+			issues.create = func(key string, input kataissues.CreateInput) (kataissues.Result, error) {
+				calls++
+				a.Equal(frozen.IdempotencyKey, key)
+				if calls == 1 {
+					a.Equal(frozen.Request, input)
+					return kataissues.Result{}, kataevidence.ErrChanged
+				}
+				a.Equal(frozen.Request.Title, input.Title)
+				a.Equal(frozen.Request.Brief, input.Brief)
+				a.Equal(frozen.Request.PersonUID, input.PersonUID)
+				a.Equal(frozen.Request.List, input.List)
+				r.Len(input.Evidence, 1)
+				a.Equal(kataevidence.PassageLocation(frozen.Request.Evidence[0]), kataevidence.PassageLocation(input.Evidence[0]))
+				a.Equal(archive.source.Reference.Message.BodySHA256, input.Evidence[0].Message.BodySHA256)
+				return kataissues.Result{Issue: taskclient.KataTask{UID: "issue-1", QualifiedRef: "agenda#12"}}, nil
+			}
+			item, err := agenda.Manual(t.Context(), archive.commitment.ID, time.Now())
+			if change == "outside quote" {
+				r.NoError(err)
+				a.Equal("issue-1", item.IssueUID)
+				a.Equal(2, calls)
+				a.Equal(frozen.Request, item.Request, "the durable request remains frozen")
+			} else {
+				r.ErrorIs(err, kataevidence.ErrChanged)
+				a.Equal(1, calls)
+			}
+		})
+	}
 }

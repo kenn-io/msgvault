@@ -30,13 +30,13 @@ func TestCommitmentAgendaReceiptFollowsMessageSurvivor(t *testing.T) {
 	a.Equal(survivor, item.CommitmentID)
 	a.Equal("agenda#4", item.IssueRef)
 	_, err = st.GetCommitmentAgendaContext(ctx, absorbed)
-	a.ErrorIs(err, sql.ErrNoRows)
+	r.ErrorIs(err, sql.ErrNoRows)
 	_, err = st.db.ExecContext(ctx, st.Rebind(`DELETE FROM messages WHERE id = ?`), survivorMessage)
 	r.NoError(err)
 	_, err = st.GetCommitmentAgendaContext(ctx, survivor)
-	a.ErrorIs(err, sql.ErrNoRows)
+	r.ErrorIs(err, sql.ErrNoRows)
 	_, err = st.LinkCommitmentAgendaContext(ctx, "absorbed-key", "in-flight-issue", "agenda#4")
-	a.ErrorIs(err, sql.ErrNoRows)
+	r.ErrorIs(err, sql.ErrNoRows)
 }
 
 func TestCommitmentAgendaReceiptFollowsPersonSurvivor(t *testing.T) {
@@ -64,11 +64,11 @@ func TestCommitmentAgendaReceiptFollowsPersonSurvivor(t *testing.T) {
 	a.Equal("absorbed-key", item.IdempotencyKey)
 	a.Equal("agenda#3", item.IssueRef)
 	_, err = st.GetCommitmentAgendaContext(ctx, absorbed)
-	a.ErrorIs(err, sql.ErrNoRows)
+	r.ErrorIs(err, sql.ErrNoRows)
 }
 
 func TestCommitmentAgendaReceiptPurgesWithPerson(t *testing.T) {
-	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	r, ctx := require.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "agenda-person-purge", false)
 	st := f.store
 	_, persist := newCommitmentTestConversation(t, f)
@@ -86,9 +86,9 @@ func TestCommitmentAgendaReceiptPurgesWithPerson(t *testing.T) {
 	r.NoError(err)
 	r.NoError(st.DeletePersonContext(ctx, person.ID, person.Revision))
 	_, err = st.GetCommitmentAgendaContext(ctx, linked)
-	a.ErrorIs(err, sql.ErrNoRows)
+	r.ErrorIs(err, sql.ErrNoRows)
 	_, err = st.GetCommitmentAgendaContext(ctx, retired)
-	a.ErrorIs(err, sql.ErrNoRows)
+	r.ErrorIs(err, sql.ErrNoRows)
 }
 
 func insertAgendaMergeFixture(t *testing.T, st *Store, personID, messageID int64, key string, attempted, linked bool) int64 {

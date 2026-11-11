@@ -29,21 +29,21 @@ type commitmentAgendaArchive interface {
 	kataevidence.SourceReader
 	kataissues.Archive
 	personagenda.IdentityStore
-	GetOpenPersonCommitmentContext(context.Context, int64, time.Time) (store.PersonCommitment, error)
-	ListCommitmentAgendaCandidatesContext(context.Context, string, time.Time, int) ([]store.PersonCommitment, error)
-	GetCommitmentAgendaContext(context.Context, int64) (store.CommitmentAgendaSuggestion, error)
-	EnqueueCommitmentAgendaContext(context.Context, store.CommitmentAgendaSuggestion) (store.CommitmentAgendaSuggestion, error)
-	ListPendingCommitmentAgendaContext(context.Context, string, time.Time, int) ([]store.CommitmentAgendaSuggestion, error)
-	MarkCommitmentAgendaAttemptContext(context.Context, store.CommitmentAgendaSuggestion, time.Time, bool) (bool, error)
-	RetireCommitmentAgendaContext(context.Context, string) error
-	DeferCommitmentAgendaContext(context.Context, store.PersonCommitment, string, time.Time) error
-	LinkCommitmentAgendaContext(context.Context, string, string, string) (store.CommitmentAgendaSuggestion, error)
-	ReopenCommitmentAgendaContext(context.Context, string) (store.CommitmentAgendaSuggestion, error)
+	GetOpenPersonCommitmentContext(ctx context.Context, id int64, now time.Time) (store.PersonCommitment, error)
+	ListCommitmentAgendaCandidatesContext(ctx context.Context, destination string, now time.Time, limit int) ([]store.PersonCommitment, error)
+	GetCommitmentAgendaContext(ctx context.Context, id int64) (store.CommitmentAgendaSuggestion, error)
+	EnqueueCommitmentAgendaContext(ctx context.Context, item store.CommitmentAgendaSuggestion) (store.CommitmentAgendaSuggestion, error)
+	ListPendingCommitmentAgendaContext(ctx context.Context, destination string, now time.Time, limit int) ([]store.CommitmentAgendaSuggestion, error)
+	MarkCommitmentAgendaAttemptContext(ctx context.Context, item store.CommitmentAgendaSuggestion, now time.Time, automatic bool) (bool, error)
+	RetireCommitmentAgendaContext(ctx context.Context, key string) error
+	DeferCommitmentAgendaContext(ctx context.Context, commitment store.PersonCommitment, destination string, now time.Time) error
+	LinkCommitmentAgendaContext(ctx context.Context, key, uid, ref string) (store.CommitmentAgendaSuggestion, error)
+	ReopenCommitmentAgendaContext(ctx context.Context, key string) (store.CommitmentAgendaSuggestion, error)
 }
 
 type commitmentAgendaIssues interface {
-	Create(context.Context, string, kataissues.CreateInput) (kataissues.Result, error)
-	FindCreated(context.Context, string, kataissues.CreateInput) (kataissues.Result, bool, error)
+	Create(ctx context.Context, key string, input kataissues.CreateInput) (kataissues.Result, error)
+	FindCreated(ctx context.Context, key string, input kataissues.CreateInput) (kataissues.Result, bool, error)
 }
 
 // CommitmentAgenda prepares local citations and submits durable create intents.
@@ -63,7 +63,7 @@ func NewCommitmentAgenda(cfg config.TaskIntegrationConfig, archive *store.Store,
 	backend := &kataIssueBackend{config: cfg, store: archive, evidence: evidence}
 	return &CommitmentAgenda{
 		archive: archive, evidence: evidence, enabled: cfg.Enabled, origin: origin,
-		destination: kataevidence.Digest("msgvault.commitment.agenda.destination.v1", strings.TrimSpace(cfg.Endpoint), project),
+		destination: kataevidence.Digest("msgvault.commitment.agenda.destination.v1", strings.TrimRight(strings.TrimSpace(cfg.Endpoint), "/"), project),
 		issues: func(ctx context.Context) (commitmentAgendaIssues, error) {
 			return backend.service(ctx)
 		},
@@ -240,10 +240,51 @@ func (a *CommitmentAgenda) submit(ctx context.Context, item store.CommitmentAgen
 		return current, kataevidence.ErrChanged
 	}
 	result, err := issues.Create(ctx, item.IdempotencyKey, item.Request)
+	if errors.Is(err, kataevidence.ErrChanged) {
+		request, refreshErr := a.refreshCitation(ctx, item)
+		if refreshErr != nil {
+			return item, refreshErr
+		}
+		result, err = issues.Create(ctx, item.IdempotencyKey, request)
+	}
 	if err != nil {
 		return item, err
 	}
 	return a.link(ctx, item, result.Issue)
+}
+
+// Refresh only content hashes when the same original passages still quote the
+// frozen promise. The create key and all other request fields remain unchanged.
+func (a *CommitmentAgenda) refreshCitation(ctx context.Context, item store.CommitmentAgendaSuggestion) (kataissues.CreateInput, error) {
+	selectors := make([]kataevidence.Selector, 0, len(item.Request.Evidence))
+	for _, ref := range item.Request.Evidence {
+		if ref.Kind != "message" {
+			return item.Request, kataevidence.ErrChanged
+		}
+		start, end := ref.Range()
+		selectors = append(selectors, kataevidence.Selector{Kind: ref.Kind, MessageID: ref.MessageID, StartRune: &start, EndRune: &end})
+	}
+	evidence, err := a.evidence.Prepare(ctx, selectors)
+	if err != nil {
+		return item.Request, err
+	}
+	if len(evidence) != len(item.Request.Evidence) {
+		return item.Request, kataevidence.ErrChanged
+	}
+	request := item.Request
+	request.Evidence = make([]kataevidence.Reference, len(evidence))
+	var quote strings.Builder
+	for i, citation := range evidence {
+		if kataevidence.PassageLocation(citation.Reference) != kataevidence.PassageLocation(item.Request.Evidence[i]) {
+			return item.Request, kataevidence.ErrChanged
+		}
+		request.Evidence[i] = citation.Reference
+		quote.WriteString(citation.Excerpt)
+	}
+	if quote.String() != item.Quote {
+		return item.Request, kataevidence.ErrChanged
+	}
+	return request, nil
 }
 
 func (a *CommitmentAgenda) retire(ctx context.Context, item store.CommitmentAgendaSuggestion) (store.CommitmentAgendaSuggestion, error) {
@@ -267,11 +308,8 @@ func (a *CommitmentAgenda) retire(ctx context.Context, item store.CommitmentAgen
 }
 
 func (a *CommitmentAgenda) link(ctx context.Context, item store.CommitmentAgendaSuggestion, issue taskclient.KataTask) (store.CommitmentAgendaSuggestion, error) {
-	uid, _ := issue.Metadata[personagenda.PersonMetadataKey].(string)
-	list, _ := issue.Metadata[personagenda.ListMetadataKey].(string)
-	if uid != item.Request.PersonUID || uid == "" || list != item.Request.List {
-		return item, personagenda.ErrUnsafePersonMetadata
-	}
+	// kataissues verifies the original create marker and request hash. Current
+	// agenda metadata may reflect later owner edits and must stay untouched.
 	// A successful remote create must be recorded even if the HTTP caller
 	// disconnected after Kata committed it.
 	save, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
