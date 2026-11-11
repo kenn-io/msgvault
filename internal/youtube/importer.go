@@ -225,6 +225,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				}
 				state.Queue = appendUniqueWork(state.Queue[1:], individual...)
 			case (job.Kind == "video" || job.Kind == "threads" || job.Kind == "replies") && (apiErr.Reason == "videoNotFound" || apiErr.Reason == "commentNotFound" || apiErr.Reason == "commentsDisabled" || apiErr.Reason == "forbidden" && apiErr.StatusCode == http.StatusForbidden):
+				if apiErr.Reason == "forbidden" && apiErr.StatusCode == http.StatusForbidden {
+					slog.WarnContext(ctx, "YouTube resource skipped after forbidden response", "source_id", src.ID, "kind", job.Kind, "video_id", job.VideoID, "parent_id", job.Parent, "pass", job.Pass)
+				}
 				state.Queue = state.Queue[1:]
 			default:
 				return sum, err

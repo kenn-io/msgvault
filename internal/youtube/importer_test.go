@@ -1,10 +1,12 @@
 package youtube
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -445,6 +447,10 @@ func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testi
 	for _, kind := range []string{"video forbidden", "threads forbidden", "replies forbidden", "video missing", "video missing error", "replies missing"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
 			st := testutil.NewTestStore(t)
 			c := archiveFixture(t, false, nil, nil)
 			original := c.api.Transport
@@ -511,6 +517,12 @@ func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testi
 			sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
 			require.NoError(err)
 			require.False(sum.Partial)
+			if strings.HasSuffix(kind, "forbidden") {
+				require.Contains(logs.String(), "YouTube resource skipped after forbidden response")
+				require.Contains(logs.String(), "video_id=oldvideo")
+			} else {
+				require.NotContains(logs.String(), "YouTube resource skipped after forbidden response")
+			}
 			rows, err = st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:oldvideo", "parent", "parent.reply1", "parent.reply2", "other-comment"})
 			require.NoError(err)
 			for _, id := range []string{"video:oldvideo", "parent", "parent.reply1", "parent.reply2", "other-comment"} {
