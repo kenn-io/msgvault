@@ -3389,81 +3389,83 @@ func TestCopySubset_ExcludesSoftDeleted(t *testing.T) {
 }
 
 func TestCopySubset_ReactionParticipants(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	srcDir := t.TempDir()
-	dstDir := filepath.Join(t.TempDir(), "dst")
+	for _, sourceType := range []string{"matrix", "beeper"} {
+		t.Run(sourceType, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			srcDir := t.TempDir()
+			dstDir := filepath.Join(t.TempDir(), "dst")
 
-	srcDB := createTestSourceDB(t, srcDir, 5)
+			srcDB := createTestSourceDB(t, srcDir, 5)
 
-	// Add a reactor participant who is neither sender nor recipient
-	db, err := sql.Open(sqliteutil.DriverName(), srcDB+"?_foreign_keys=OFF")
-	require.NoError(err)
-	_, err = db.ExecContext(t.Context(), `
+			// Add a reactor participant who is neither sender nor recipient
+			db, err := sql.Open(sqliteutil.DriverName(), srcDB+"?_foreign_keys=OFF")
+			require.NoError(err)
+			_, err = db.ExecContext(t.Context(), `
 		INSERT INTO participants
 			(id, email_address, display_name, domain)
 		VALUES (100, 'reactor@example.com', 'Reactor', 'example.com')`)
-	require.NoError(err, "insert reactor")
-	_, err = db.ExecContext(t.Context(), `
+			require.NoError(err, "insert reactor")
+			_, err = db.ExecContext(t.Context(), `
 		INSERT INTO reactions
 			(id, message_id, participant_id,
 			 reaction_type, reaction_value)
 		VALUES (1, 1, 100, 'emoji', 'thumbsup')`)
-	require.NoError(err, "insert reaction")
-	_, err = db.ExecContext(t.Context(), `
+			require.NoError(err, "insert reaction")
+			_, err = db.ExecContext(t.Context(), `
 		INSERT INTO reaction_source_events (source_id, source_reaction_id, reaction_id)
 		SELECT source_id, '$reaction', 1 FROM messages WHERE id = 1`)
-	require.NoError(err, "insert reaction source event")
-	_, err = db.ExecContext(t.Context(), `UPDATE sources SET source_type = 'matrix', sync_cursor = '{"rooms":{"!private":{"deferred_relations":["secret"]}}}'
-		WHERE id = (SELECT source_id FROM messages WHERE id = 1)`)
-	require.NoError(err, "seed Matrix cursor")
-	_ = db.Close()
+			require.NoError(err, "insert reaction source event")
+			_, err = db.ExecContext(t.Context(), `UPDATE sources SET source_type = ?, sync_cursor = '{"private":"secret"}'
+		WHERE id = (SELECT source_id FROM messages WHERE id = 1)`, sourceType)
+			require.NoError(err, "seed cursor")
+			_ = db.Close()
 
-	result, err := CopySubset(t.Context(), srcDB, dstDir, 5, false)
-	require.NoError(err, "CopySubset")
-	assert.Equal(int64(5), result.Messages, "Messages")
+			result, err := CopySubset(t.Context(), srcDB, dstDir, 5, false)
+			require.NoError(err, "CopySubset")
+			assert.Equal(int64(5), result.Messages, "Messages")
 
-	dstDB, err := sql.Open(sqliteutil.DriverName(),
-		filepath.Join(dstDir, "msgvault.db"))
-	require.NoError(err)
-	defer func() { _ = dstDB.Close() }()
+			dstDB, err := sql.Open(sqliteutil.DriverName(),
+				filepath.Join(dstDir, "msgvault.db"))
+			require.NoError(err)
+			defer func() { _ = dstDB.Close() }()
 
-	// Reactor participant must be present
-	var reactorCount int64
-	require.NoError(dstDB.QueryRowContext(t.Context(), `
+			// Reactor participant must be present
+			var reactorCount int64
+			require.NoError(dstDB.QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM participants
 		WHERE email_address = 'reactor@example.com'`,
-	).Scan(&reactorCount))
-	assert.Equal(int64(1), reactorCount, "reactor participant count")
+			).Scan(&reactorCount))
+			assert.Equal(int64(1), reactorCount, "reactor participant count")
 
-	// Reaction must be present
-	var rxnCount int64
-	require.NoError(dstDB.QueryRowContext(
-		t.Context(),
-		"SELECT COUNT(*) FROM reactions",
-	).Scan(&rxnCount))
-	var sourceEventCount int64
-	require.NoError(dstDB.QueryRowContext(
-		t.Context(),
-		"SELECT COUNT(*) FROM reaction_source_events WHERE source_reaction_id = '$reaction'",
-	).Scan(&sourceEventCount))
-	assert.Equal(int64(1), sourceEventCount, "reaction source events")
-	var cursor sql.NullString
-	require.NoError(dstDB.QueryRowContext(t.Context(), "SELECT sync_cursor FROM sources WHERE source_type = 'matrix'").Scan(&cursor))
-	assert.False(cursor.Valid, "Matrix cursors stay out of subsets")
-	assert.Equal(int64(1), rxnCount, "reactions count")
+			// Reaction must be present
+			var rxnCount int64
+			require.NoError(dstDB.QueryRowContext(
+				t.Context(),
+				"SELECT COUNT(*) FROM reactions",
+			).Scan(&rxnCount))
+			var sourceEventCount int64
+			require.NoError(dstDB.QueryRowContext(
+				t.Context(),
+				"SELECT COUNT(*) FROM reaction_source_events WHERE source_reaction_id = '$reaction'",
+			).Scan(&sourceEventCount))
+			assert.Equal(int64(1), sourceEventCount, "reaction source events")
+			var cursor sql.NullString
+			require.NoError(dstDB.QueryRowContext(t.Context(), "SELECT sync_cursor FROM sources WHERE source_type = ?", sourceType).Scan(&cursor))
+			assert.False(cursor.Valid, "source cursors stay out of subsets")
+			assert.Equal(int64(1), rxnCount, "reactions count")
 
-	// FK integrity
-	fkRows, err := dstDB.QueryContext(t.Context(), "PRAGMA foreign_key_check")
-	require.NoError(err)
-	defer func() { _ = fkRows.Close() }()
-	hasViolation := fkRows.Next()
-	require.NoError(fkRows.Err(), "foreign_key_check rows")
-	assert.False(hasViolation, "FK violations with reaction participants")
+			// FK integrity
+			fkRows, err := dstDB.QueryContext(t.Context(), "PRAGMA foreign_key_check")
+			require.NoError(err)
+			defer func() { _ = fkRows.Close() }()
+			hasViolation := fkRows.Next()
+			require.NoError(fkRows.Err(), "foreign_key_check rows")
+			assert.False(hasViolation, "FK violations with reaction participants")
+		})
+	}
 }
 
-// TestCopySubset_NullSourceIDLabels verifies that user-created labels
-// with NULL source_id are preserved when attached to selected messages.
 func TestCopySubset_NullSourceIDLabels(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

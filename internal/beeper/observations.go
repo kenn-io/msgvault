@@ -92,15 +92,6 @@ func (r *observationRecorder) memberServiceLocked(
 	return service, validBridgeServicePrefix(bridgePrefix), err
 }
 
-// memberRoute is memberServiceLocked for callers outside capture.
-func (r *observationRecorder) memberRoute(
-	ctx context.Context, u *User, cc captureContext,
-) (*store.CommunicationService, string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.memberServiceLocked(ctx, u, cc)
-}
-
 // capture records every address observed on u for participantID and returns
 // one result per write attempted, so the caller can count and match them.
 // A partial slice is returned alongside an error: what was written stays

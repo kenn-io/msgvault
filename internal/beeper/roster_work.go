@@ -7,47 +7,22 @@ import (
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
 	"slices"
+
+	"go.kenn.io/msgvault/internal/store"
 )
 
-type rosterMemberWork struct {
-	Inputs   string `json:"inputs"`
-	Enriched bool   `json:"enriched,omitzero"`
-}
+const rosterMatchFailed = "failed"
 
-// rosterWork is one chat's roster progress in the sync state. Every sync run
-// stores the whole state, so Members holds per-member progress only while
-// matching is unfinished. Settled replaces it once every member at Signature
-// is matched; a later roster change matches every member again.
 type rosterWork struct {
-	Version           int                         `json:"version"`
-	MatchingFirst     bool                        `json:"matching_first,omitzero"`
-	RefreshMatches    bool                        `json:"refresh_matches,omitzero"`
-	Signature         string                      `json:"signature"`
-	Members           map[string]rosterMemberWork `json:"members,omitempty"`
-	Settled           bool                        `json:"settled,omitzero"`
-	MembershipApplied bool                        `json:"membership_applied,omitzero"`
-	MatchingPending   bool                        `json:"matching_pending,omitzero"`
-	DetailBacked      bool                        `json:"detail_backed,omitzero"`
-	// Routes digests how this roster's bridge prefixes map to services when
-	// its matching last started, so a catalog change matches every member again.
-	Routes string `json:"routes,omitempty"`
-}
-
-func (w *rosterWork) setSignature(signature string) {
-	if w.Signature != signature {
-		w.Signature = signature
-		w.MembershipApplied = false
-		w.RefreshMatches = true
-		w.Settled = false
-	}
-}
-
-// settle drops per-member progress once matching finished for the signature.
-func (w *rosterWork) settle() {
-	w.Members = map[string]rosterMemberWork{}
-	w.Settled = true
-	w.MatchingPending = false
+	Phase        string `json:"phase,omitempty"`
+	Next         int    `json:"next,omitzero"`
+	MemberFirst  bool   `json:"member_first,omitzero"`
+	Verified     bool   `json:"verified,omitzero"`
+	Version      int    `json:"version"`
+	Signature    string `json:"signature"`
+	DetailBacked bool   `json:"detail_backed,omitzero"`
 }
 
 // shortDigest keeps 128 bits of SHA-256, enough to detect a changed input
@@ -55,81 +30,6 @@ func (w *rosterWork) settle() {
 func shortDigest(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:16])
-}
-
-// rosterRoutes digests each member's bridge prefix with the service capture
-// resolves for it and that service's scope and normalization rules. Scope also
-// depends on the member and account IDs, which the roster signature covers.
-// It polls the cooperative stop between members and uses the run's resolver
-// cache, so it reads the catalog once per distinct prefix.
-func (imp *Importer) rosterRoutes(ctx context.Context, opts ImportOptions, roster *rosterObservations) (string, error) {
-	type route struct {
-		Prefix               string
-		ServiceID            int64
-		Slug                 string
-		ScopePolicy          string
-		Normalization        string
-		NormalizationVersion int
-	}
-	cc := captureContext{AccountID: opts.AccountID, Network: roster.detail.Network, BridgePrefix: roster.bridgePrefix}
-	seen := make(map[route]bool)
-	routes := make([]jsontext.Value, 0, 1)
-	for _, member := range roster.members {
-		if err := opts.rosterStop(ctx); err != nil {
-			return "", err
-		}
-		service, prefix, err := imp.obs.memberRoute(ctx, member.user, cc)
-		if err != nil {
-			return "", err
-		}
-		item := route{Prefix: prefix}
-		if service != nil {
-			item.ServiceID, item.Slug, item.ScopePolicy = service.ID, service.Slug, service.ScopePolicy
-			item.Normalization, item.NormalizationVersion = service.Normalization, service.NormalizationVersion
-		}
-		if seen[item] {
-			continue
-		}
-		seen[item] = true
-		data, err := json.Marshal(item, json.Deterministic(true))
-		if err != nil {
-			return "", err
-		}
-		routes = append(routes, data)
-	}
-	slices.SortFunc(routes, func(a, b jsontext.Value) int { return bytes.Compare(a, b) })
-	data, err := json.Marshal(routes, json.Deterministic(true))
-	if err != nil {
-		return "", err
-	}
-	return shortDigest(data), nil
-}
-
-func (imp *Importer) completeRoster(ctx context.Context, convID int64, complete bool, members []resolvedMember, work *rosterWork) error {
-	work.MembershipApplied = complete
-	if !complete || !work.RefreshMatches {
-		return nil
-	}
-	ids, err := imp.store.ConversationCandidateParticipantsContext(ctx, convID)
-	if err != nil {
-		work.MembershipApplied = false
-		return err
-	}
-	for _, member := range members {
-		if ids[member.participantID] {
-			progress := work.Members[member.key]
-			progress.Enriched = false
-			work.Members[member.key] = progress
-			work.MatchingPending = true
-			work.Settled = false
-		}
-	}
-	if len(ids) > 0 {
-		imp.obs = newObservationRecorder(imp.store)
-		imp.matcher = newIdentityMatcher(imp.store)
-	}
-	work.RefreshMatches = false
-	return nil
 }
 
 func rosterSignature(ch *Chat, accountID string) string {
@@ -162,4 +62,243 @@ func rosterMemberSignature(u *User, ch *Chat, accountID, bridgePrefix string) st
 	}{u.ID, u.Username, u.PhoneNumber, u.Email, u.FullName, native, ch.Network, accountID, bridgePrefix, u.IsSelf}
 	data, _ := json.Marshal(projection, json.Deterministic(true))
 	return shortDigest(data)
+}
+
+func rosterProvider(chatID string) string {
+	return fmt.Sprintf("beeper-roster:%x", sha256.Sum256([]byte(chatID)))
+}
+
+// matchRosterMembers records failures separately from the resumable scan.
+func (imp *Importer) matchRosterMembers(ctx context.Context, sourceID int64, provider string, detail *Chat, items []Participant, opts ImportOptions, bridgePrefix string, work *rosterWork, sum *ImportSummary) error {
+	receipts, err := imp.store.BeeperRosterReceiptsContext(ctx, sourceID, provider)
+	if err != nil {
+		return err
+	}
+	for i := work.Next; i < len(items); i++ {
+		p := &items[i]
+		key := imp.res.identifierForUser(p.ID)
+		receipt, ok := receipts[key]
+		if !ok || (work.Phase == "matching_retry" && receipt.Status != rosterMatchFailed) {
+			work.Next = i + 1
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if opts.stopRequested() {
+			return errBeeperBudgetExpired
+		}
+		owners, err := imp.store.BeeperRosterOwnersContext(ctx, []string{key})
+		if err != nil {
+			return err
+		}
+		before := sum.Errors
+		imp.captureObservations(ctx, owners[key], &p.User, detail, sourceID, opts.AccountID, bridgePrefix, sum)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		status := "resolved"
+		if sum.Errors != before {
+			status = rosterMatchFailed
+		}
+		if receipt.Status != status {
+			if err := imp.store.SetBeeperRosterMatchFailureContext(ctx, sourceID, provider, key, receipt.Checksum, status); err != nil {
+				return err
+			}
+			receipt.Status = status
+			receipts[key] = receipt
+		}
+		work.Next = i + 1
+	}
+	for i := range items {
+		if receipts[imp.res.identifierForUser(items[i].ID)].Status == rosterMatchFailed {
+			work.Phase = "matching_retry"
+			work.Next = 0
+			return nil
+		}
+	}
+	if !work.Verified {
+		work.Phase = "members"
+		work.Next = len(items)
+	} else {
+		work.Phase = "cleanup"
+	}
+	return nil
+}
+
+// cleanRosterReceipts discards departed members in bounded transactions.
+func (imp *Importer) cleanRosterReceipts(ctx context.Context, sourceID int64, provider string, items []Participant, opts ImportOptions) error {
+	receipts, err := imp.store.BeeperRosterReceiptsContext(ctx, sourceID, provider)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		delete(receipts, imp.res.identifierForUser(items[i].ID))
+	}
+	keys := make([]string, 0, len(receipts))
+	for key := range receipts {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for len(keys) > 0 {
+		if opts.stopRequested() {
+			return errBeeperBudgetExpired
+		}
+		n := min(16, len(keys))
+		if err := imp.store.DeleteBeeperRosterReceiptsContext(ctx, sourceID, provider, keys[:n]); err != nil {
+			return err
+		}
+		keys = keys[n:]
+	}
+	return nil
+}
+
+// replaceRosterMembership repairs changed owners before removing stale members.
+func (imp *Importer) replaceRosterMembership(ctx context.Context, sourceID, convID int64, provider string, keys []string, items []Participant, opts ImportOptions) (map[string]int64, error) {
+	owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := imp.store.ConversationParticipantsContext(ctx, convID)
+	if err != nil {
+		return nil, err
+	}
+	present := make(map[int64]bool, len(existing))
+	for _, member := range existing {
+		present[member.ParticipantID] = true
+	}
+	for i, key := range keys {
+		id := owners[key]
+		if id != 0 && present[id] {
+			continue
+		}
+		if opts.stopRequested() {
+			return nil, errBeeperBudgetExpired
+		}
+		if id == 0 {
+			id, err = imp.res.resolveUser(ctx, &items[i].User)
+			if err != nil {
+				return nil, err
+			}
+			if id == 0 {
+				continue
+			}
+		}
+		role := "member"
+		if items[i].IsAdmin {
+			role = "admin"
+		}
+		id, err = imp.store.ApplyBeeperRosterMemberContext(ctx, sourceID, convID, key, role, provider, "")
+		if err != nil {
+			return nil, err
+		}
+		owners[key] = id
+		present[id] = true
+	}
+	desired := make(map[int64]bool, len(owners))
+	for _, id := range owners {
+		desired[id] = true
+	}
+	for _, member := range existing {
+		if desired[member.ParticipantID] {
+			continue
+		}
+		if opts.stopRequested() {
+			return nil, errBeeperBudgetExpired
+		}
+		if err := imp.store.RemoveBeeperRosterMemberContext(ctx, convID, member.ParticipantID); err != nil {
+			return nil, err
+		}
+	}
+	return owners, nil
+}
+
+func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, keys []string, opts ImportOptions, bridgePrefix string, work *rosterWork) error {
+	receipts, err := imp.store.BeeperRosterReceiptsContext(ctx, sourceID, provider)
+	if err != nil {
+		return err
+	}
+	owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		p := &items[i]
+		key := keys[i]
+		role := "member"
+		if p.IsAdmin {
+			role = "admin"
+		}
+		checksum := rosterMemberInputs(p, detail, opts.AccountID, bridgePrefix)
+		if receipt, ok := receipts[key]; ok && owners[key] != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(checksum, owners[key]) {
+			imp.res.rememberRosterOwner(p.ID, owners[key])
+			work.Next = i + 1
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if opts.stopRequested() {
+			return errBeeperBudgetExpired
+		}
+		imp.res.forgetUser(p.ID)
+		pid, err := imp.res.resolveUser(ctx, &p.User)
+		if err != nil {
+			return err
+		}
+		if pid != 0 {
+			if _, err := imp.store.ApplyBeeperRosterMemberContext(ctx, sourceID, convID, key, role, provider, checksum); err != nil {
+				return err
+			}
+		}
+		work.Next = i + 1
+	}
+	return nil
+}
+
+func (imp *Importer) rosterKeys(items []Participant) []string {
+	keys := make([]string, len(items))
+	for i := range items {
+		keys[i] = imp.res.identifierForUser(items[i].ID)
+	}
+	return keys
+}
+
+func (imp *Importer) publishRosterEvidence(ctx context.Context, convID int64, evidence store.MessagingRouteEvidence, items []Participant, keys []string, owners map[string]int64, membership chatMembership) error {
+	evidence.MembershipComplete = membership.known && len(owners) == membership.count
+	for i, key := range keys {
+		if id := owners[key]; id != 0 {
+			evidence.ParticipantIDs = append(evidence.ParticipantIDs, id)
+			if items[i].IsSelf {
+				evidence.SelfParticipantIDs = append(evidence.SelfParticipantIDs, id)
+			}
+		}
+	}
+	return imp.store.SetConversationMessagingRouteEvidence(ctx, convID, evidence)
+}
+
+func (imp *Importer) rosterOwnersSettled(ctx context.Context, sourceID int64, provider string, detail *Chat, items []Participant, keys []string, owners map[string]int64, accountID string) (bool, error) {
+	receipts, err := imp.store.BeeperRosterReceiptsContext(ctx, sourceID, provider)
+	if err != nil {
+		return false, err
+	}
+	bridgePrefix := ""
+	if !detail.Participants.HasMore {
+		bridgePrefix = participantBridgePrefix(detail.Participants.Items)
+	}
+	for i, key := range keys {
+		inputs := rosterMemberInputs(&items[i], detail, accountID, bridgePrefix)
+		if owners[key] == 0 || receipts[key].Checksum != store.BeeperRosterReceiptChecksum(inputs, owners[key]) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func rosterMemberInputs(p *Participant, detail *Chat, accountID, bridgePrefix string) string {
+	role := "member"
+	if p.IsAdmin {
+		role = "admin"
+	}
+	return "v1:" + rosterMemberSignature(&p.User, detail, accountID, bridgePrefix) + ":" + role
 }

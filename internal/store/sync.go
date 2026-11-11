@@ -434,6 +434,47 @@ type SourceImportItem struct {
 	ErrorMessage    sql.NullString
 }
 
+// BeeperRosterReceiptsContext reads the active member receipts for one room.
+func (s *Store) BeeperRosterReceiptsContext(ctx context.Context, sourceID int64, provider string) (map[string]SourceImportItem, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT provider_id, COALESCE(checksum, ''), status FROM source_import_items WHERE source_id = ? AND provider = ?`, sourceID, provider)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	items := make(map[string]SourceImportItem)
+	for rows.Next() {
+		item := SourceImportItem{SourceID: sourceID, Provider: provider}
+		if err := rows.Scan(&item.ProviderID, &item.Checksum, &item.Status); err != nil {
+			return nil, err
+		}
+		items[item.ProviderID] = item
+	}
+	return items, rows.Err()
+}
+
+// DeleteBeeperRosterReceiptsContext removes a bounded set of departed members.
+func (s *Store) DeleteBeeperRosterReceiptsContext(ctx context.Context, sourceID int64, provider string, identifiers []string) error {
+	if len(identifiers) == 0 {
+		return nil
+	}
+	args := []any{sourceID, provider}
+	for _, id := range identifiers {
+		args = append(args, id)
+	}
+	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
+		_, err := q.Exec(`DELETE FROM source_import_items WHERE source_id = ? AND provider = ? AND provider_id IN (`+placeholders(len(identifiers))+`)`, args...)
+		return err
+	})
+}
+
+// SetBeeperRosterMatchFailureContext records retryable matching failures.
+func (s *Store) SetBeeperRosterMatchFailureContext(ctx context.Context, sourceID int64, provider, identifier, checksum, status string) error {
+	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
+		_, err := q.Exec(`UPDATE source_import_items SET status = ? WHERE source_id = ? AND provider = ? AND provider_id = ? AND checksum = ? AND status <> ?`, status, sourceID, provider, identifier, checksum, status)
+		return err
+	})
+}
+
 // StartSync creates a new sync run record and returns its ID. It first takes a
 // non-blocking execution lock for the source and holds that lock until the run
 // completes or fails. SQLite uses an OS file lock; PostgreSQL uses a session

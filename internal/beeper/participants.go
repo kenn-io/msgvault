@@ -45,9 +45,10 @@ type participantResolver struct {
 	// accountID is the authoritative Beeper account selected by the import.
 	// Beeper user IDs are only unique inside that account, so every persisted
 	// fallback identifier and every run-local cache key must carry it.
-	accountID string
-	rich      map[string]richEntry // phone/email-based resolutions
-	fallback  map[string]int64     // bare-ID fallbacks; upgraded when metadata appears
+	accountID    string
+	rich         map[string]richEntry // phone/email-based resolutions
+	fallback     map[string]int64     // bare-ID fallbacks; upgraded when metadata appears
+	messageUsers map[string]User
 }
 
 func newParticipantResolver(s *store.Store, accountIDs ...string) *participantResolver {
@@ -76,16 +77,6 @@ func (r *participantResolver) identifierForUser(userID string) string {
 	return beeperidentity.Fallback(r.accountID, userID)
 }
 
-func (r *participantResolver) seedUser(u *User, binding store.ParticipantBinding) {
-	key := r.identifierForUser(u.ID)
-	if binding.HasPhone || identityKind(u) != identityFallback {
-		r.rich[key] = richEntry{pid: binding.ID, byPhone: binding.HasPhone}
-		delete(r.fallback, key)
-	} else {
-		r.fallback[key] = binding.ID
-	}
-}
-
 type userIdentityKind int
 
 const (
@@ -104,21 +95,6 @@ func identityKind(u *User) userIdentityKind {
 	return identityFallback
 }
 
-// bindingSatisfiesUser follows the resolver's precedence and name backfill rules.
-func bindingSatisfiesUser(u *User, b store.ParticipantBinding) bool {
-	if b.ID == 0 {
-		return false
-	}
-	switch identityKind(u) {
-	case identityPhone:
-		return b.Phone == u.PhoneNumber && (strings.TrimSpace(b.DisplayName) != "" || u.FullName == "")
-	case identityEmail:
-		return b.HasPhone || strings.EqualFold(b.Email, u.Email)
-	default:
-		return b.DisplayName != "" || u.FullName == ""
-	}
-}
-
 func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, error) {
 	if u == nil || u.ID == "" {
 		return 0, nil
@@ -129,9 +105,7 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 	}
 	kind := identityKind(u)
 	hasPhone := kind == identityPhone
-	// The roster calls this only after the saved binding failed to match, so
-	// an explicit phone always takes the phone rung; a cached phone may be
-	// stale.
+	// An explicit phone always takes the phone rung; a cached phone may be stale.
 	if e, ok := r.rich[identifier]; ok && !hasPhone {
 		return e.pid, nil
 	}
@@ -213,6 +187,26 @@ func (r *participantResolver) recordRich(ctx context.Context, userID string, pid
 // with an optional display name. Cache misses fall through to rung 3 of the
 // ladder since no phone/email is available on bare IDs.
 func (r *participantResolver) resolveID(ctx context.Context, userID, displayName string) (int64, error) {
+	if user, ok := r.messageUsers[userID]; ok {
+		delete(r.messageUsers, userID)
+		r.forgetUser(userID)
+		return r.resolveUser(ctx, &user)
+	}
+	return r.resolveIDFallback(ctx, userID, displayName)
+}
+
+func (r *participantResolver) forgetUser(userID string) {
+	key := r.identifierForUser(userID)
+	delete(r.rich, key)
+	delete(r.fallback, key)
+}
+
+func (r *participantResolver) rememberRosterOwner(userID string, owner int64) {
+	r.forgetUser(userID)
+	r.fallback[r.identifierForUser(userID)] = owner
+}
+
+func (r *participantResolver) resolveIDFallback(ctx context.Context, userID, displayName string) (int64, error) {
 	if userID == "" {
 		return 0, nil
 	}
@@ -235,6 +229,21 @@ func (r *participantResolver) resolveID(ctx context.Context, userID, displayName
 	}
 	r.fallback[identifier] = pid
 	return pid, nil
+}
+
+func (r *participantResolver) useMessageRoster(items []Participant, enabled bool) {
+	r.messageUsers = nil
+	if !enabled {
+		return
+	}
+	for _, item := range items {
+		if strings.HasPrefix(item.PhoneNumber, "+") || strings.Contains(item.Email, "@") {
+			if r.messageUsers == nil {
+				r.messageUsers = make(map[string]User)
+			}
+			r.messageUsers[item.ID] = item.User
+		}
+	}
 }
 
 // adoptLegacyIdentifier upgrades an existing unscoped Beeper identifier in

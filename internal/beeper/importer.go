@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
@@ -134,18 +135,6 @@ func (o ImportOptions) budgetError(parent context.Context, err error) error {
 	return err
 }
 
-// rosterStop polls between roster operations; an in-flight transaction keeps
-// the parent context so an identical scheduled retry can retain its work.
-func (o ImportOptions) rosterStop(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if o.stopRequested() {
-		return errBeeperBudgetExpired
-	}
-	return nil
-}
-
 func (o ImportOptions) budgetExpired() bool {
 	return !o.StopAt.IsZero() && !time.Now().Before(o.StopAt)
 }
@@ -221,7 +210,7 @@ func resumeState(prev, cp *store.SyncRun, full bool) (*SyncState, error) {
 	load := func(blob string) (*SyncState, error) {
 		state, err := LoadSyncState(blob)
 		if err != nil {
-			return nil, fmt.Errorf("read saved Beeper sync progress: %w (a full sync with 'msgvault sync-beeper --full' rebuilds it)", err)
+			return nil, fmt.Errorf("read saved Beeper sync progress: %w", err)
 		}
 		return state, nil
 	}
@@ -231,7 +220,7 @@ func resumeState(prev, cp *store.SyncRun, full bool) (*SyncState, error) {
 			if err != nil {
 				return NewSyncState(), nil //nolint:nilerr // Full sync verifies the archive when no cursor can be decoded.
 			}
-			return state, nil
+			return validateRosterProgress(state)
 		}
 	}
 	state := NewSyncState()
@@ -279,6 +268,17 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	state, err := load(ctx, src.ID)
 	if err != nil {
 		return nil, err
+	}
+	if src.SyncCursor.Valid && src.SyncCursor.String != "" {
+		current, err := LoadSyncState(src.SyncCursor.String)
+		if err != nil {
+			return nil, fmt.Errorf("load Beeper source progress: %w", err)
+		}
+		for id, room := range current.Chats {
+			if room != nil {
+				state.EnsureChat(id).RosterWork = room.RosterWork
+			}
+		}
 	}
 	if opts.Full {
 		// Repair path: drop all cursors so every message is re-fetched and
@@ -848,8 +848,14 @@ func chatActivityCutoff(opts ImportOptions, state *SyncState, reconcileCutoff ti
 // count, whether the chat work completed, and any fatal error.
 func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, state *SyncState, reconcileCutoff time.Time, tailScan, tailOnly bool, sum *ImportSummary) (_ int64, chatComplete bool, err error) {
 	cs := state.EnsureChat(ch.ID)
-	convID, membershipComplete, membership, observations, err := imp.ensureConversation(
-		ctx, syncID, sourceID, ch, opts, sum, cs,
+	if cs.RosterWork == nil {
+		cs.RosterWork = &rosterWork{Version: 1, MemberFirst: true}
+	}
+	opts.rosterState = cs.RosterWork
+	opts.skipRoster = !cs.RosterWork.MemberFirst
+	cs.RosterWork.MemberFirst = !cs.RosterWork.MemberFirst
+	convID, membershipComplete, membership, err := imp.ensureRosterWork(
+		ctx, syncID, sourceID, ch, opts, sum,
 	)
 	defer func() {
 		if convID == 0 {
@@ -862,7 +868,9 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		statsErr = opts.budgetError(ctx, statsErr)
 		if opts.stopRequested() {
 			sum.Stopped = true
-			if statsErr != nil && (errors.Is(statsErr, errBeeperBudgetExpired) || errors.Is(statsErr, context.Canceled) || errors.Is(statsErr, context.DeadlineExceeded) || ctx.Err() != nil) {
+			if statsErr != nil && (errors.Is(statsErr, errBeeperBudgetExpired) ||
+				errors.Is(statsErr, context.Canceled) ||
+				errors.Is(statsErr, context.DeadlineExceeded) || ctx.Err() != nil) {
 				chatComplete = false
 				statsErr = nil
 			}
@@ -880,12 +888,8 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 				statsErr = fmt.Errorf("clear roster repair pending marker after active sync: %w", clearErr)
 			}
 		}
-		if (!statsRefreshed || statsErr != nil) && cs.RosterWork != nil {
-			cs.RosterWork.MembershipApplied = false
-		}
 		err = errors.Join(err, statsErr)
 	}()
-
 	if errors.Is(err, errBeeperBudgetExpired) {
 		sum.Stopped = true
 		return 0, false, nil
@@ -893,43 +897,10 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 	if err != nil {
 		return 0, false, err
 	}
-	if opts.stopRequested() {
-		sum.Stopped = true
-		return 0, false, nil
+	if cs.RosterWork.Phase == "done" {
+		cs.RosterWork = nil
 	}
-	if observations != nil {
-		capture := func() {
-			if err != nil || sum.Stopped {
-				return
-			}
-			// A stop or cancellation before capture starts leaves its retry
-			// state pending without undoing finished message work.
-			if opts.stopRequested() {
-				sum.Stopped = true
-				return
-			}
-			if ctx.Err() != nil {
-				return
-			}
-			err = imp.captureRosterObservations(ctx, sourceID, opts, observations, sum)
-			if errors.Is(err, errBeeperBudgetExpired) {
-				sum.Stopped = true
-				chatComplete = false
-				err = nil
-			}
-		}
-		if observations.work.MatchingFirst {
-			observations.work.MatchingFirst = false
-			capture()
-			if err != nil || sum.Stopped {
-				return 0, false, err
-			}
-		} else {
-			observations.work.MatchingFirst = true
-			defer capture()
-		}
-	}
-	if membershipComplete {
+	if membership.known {
 		cs.RosterRetryAfter = ""
 	}
 	cc := &chatScope{
@@ -1029,319 +1000,206 @@ func (m chatMembership) policyCount(policy attachmentpolicy.Policy) int {
 // when there is none and the list is incomplete — so backfill and purge
 // evaluate the same membership rather than the participant rows, which a
 // truncated listing undercounts.
-func (imp *Importer) ensureConversation(
-	ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, sum *ImportSummary, cs *ChatState,
-) (int64, bool, chatMembership, *rosterObservations, error) {
+func (imp *Importer) ensureRosterWork(
+	ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, sum *ImportSummary,
+) (int64, bool, chatMembership, error) {
 	detail := ch
-	complete := !ch.Participants.HasMore
-	work := cs.RosterWork
-	if work == nil {
-		work = &rosterWork{Version: 1, Members: make(map[string]rosterMemberWork)}
-		cs.RosterWork = work
-	}
-	if work.Members == nil {
-		work.Members = make(map[string]rosterMemberWork)
-	}
-	if !opts.rosterDetailFetched && (ch.Participants.HasMore || work.DetailBacked) {
+	membershipComplete := !ch.Participants.HasMore
+	if !opts.skipRoster && !opts.rosterDetailFetched && (ch.Participants.HasMore || (opts.rosterState != nil && opts.rosterState.DetailBacked)) {
 		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, ch.ID); err != nil {
-			return 0, false, chatMembership{}, nil, err
+			return 0, false, chatMembership{}, fmt.Errorf("invalidate route evidence before Beeper roster refresh for chat %q: %w", ch.ID, err)
 		}
 		requestCtx, cancel := opts.requestContext(ctx)
-		fetched, fetchErr := imp.client.GetChat(requestCtx, ch.ID)
+		d, gerr := imp.client.GetChat(requestCtx, ch.ID)
 		cancel()
-		fetchErr = opts.budgetError(ctx, fetchErr)
-		if errors.Is(fetchErr, errBeeperBudgetExpired) {
-			return 0, false, chatMembership{}, nil, fetchErr
+		gerr = opts.budgetError(ctx, gerr)
+		if errors.Is(gerr, errBeeperBudgetExpired) {
+			return 0, false, chatMembership{}, gerr
 		}
-		if fetchErr != nil {
+		if gerr != nil {
 			if ctx.Err() != nil {
-				return 0, false, chatMembership{}, nil, ctx.Err()
+				return 0, false, chatMembership{}, ctx.Err()
 			}
-			imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", fetchErr)
-			sum.failChat(ch.ID, false, fetchErr)
-			sum.FetchErrors++
-			sum.Errors++
-			complete = false
+			if ch.Participants.HasMore {
+				imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", gerr)
+				sum.failChat(ch.ID, false, gerr)
+				sum.FetchErrors++
+				sum.Errors++
+			} else {
+				imp.recordItem(syncID, ch.ID, "membership", store.SyncRunItemStatusSkipped, "beeper_roster_verification_deferred", gerr)
+			}
+			membershipComplete = false
 		} else {
-			detail = fetched
-			complete = !detail.Participants.HasMore
-			work.DetailBacked = true
+			detail = d
+			membershipComplete = !d.Participants.HasMore
+			if opts.rosterState != nil {
+				opts.rosterState.DetailBacked = true
+			}
 		}
+	}
+	membership := chatMembershipOf(detail, membershipComplete)
+	convID, err := imp.store.EnsureConversationWithTypeContext(
+		ctx, sourceID, ch.ID, conversationType(ch.Type), ch.Title,
+	)
+	if err != nil {
+		return 0, false, chatMembership{}, err
+	}
+	imp.res.accountID = opts.AccountID
+	imp.res.useMessageRoster(detail.Participants.Items, opts.skipRoster)
+	routeEvidence := routeEvidenceFor(detail, opts)
+	if ch.AccountID != opts.AccountID || detail.AccountID != opts.AccountID {
+		routeEvidence.Failure = "account_binding_mismatch"
+	}
+	routeEvidence.ChatID = ch.ID
+	if detail.ID != ch.ID {
+		routeEvidence.Failure = "chat_binding_mismatch"
+	}
+	if opts.skipRoster {
+		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.Signature == rosterSignature(detail, opts.AccountID) {
+			keys := imp.rosterKeys(detail.Participants.Items)
+			owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
+			if err != nil {
+				return convID, false, membership, err
+			}
+			settled, err := imp.rosterOwnersSettled(ctx, sourceID, rosterProvider(ch.ID), detail, detail.Participants.Items, keys, owners, opts.AccountID)
+			if err != nil {
+				return convID, false, membership, err
+			}
+			if settled {
+				if err := imp.publishRosterEvidence(ctx, convID, routeEvidence, detail.Participants.Items, keys, owners, membership); err != nil {
+					return convID, false, membership, err
+				}
+				return convID, true, membership, nil
+			}
+			opts.rosterState.Verified = false
+			opts.rosterState.Phase = "members"
+			opts.rosterState.Next = 0
+		}
+		if err := imp.store.SetConversationRosterRepairPendingContext(ctx, convID, true); err != nil {
+			return convID, false, membership, err
+		}
+		if err := imp.store.InvalidateConversationMessagingRouteEvidence(ctx, convID); err != nil {
+			return convID, false, membership, err
+		}
+		return convID, false, membership, nil
+	}
+	work := opts.rosterState
+	if work == nil {
+		work = &rosterWork{}
 	}
 	signature := rosterSignature(detail, opts.AccountID)
-	work.setSignature(signature)
-	membership := chatMembershipOf(detail, complete)
-	convID, err := imp.store.EnsureConversationWithTypeContext(ctx, sourceID, ch.ID, conversationType(ch.Type), ch.Title)
-	if err != nil {
-		return 0, false, chatMembership{}, nil, err
+	if work.Signature != signature {
+		work.Signature = signature
+		work.Phase = "members"
+		work.Next = 0
+		work.Verified = false
 	}
-	evidence := routeEvidenceFor(detail, opts)
-	evidence.ChatID = ch.ID
-	if ch.AccountID != opts.AccountID {
-		evidence.Failure = "account_binding_mismatch"
+	if work.Phase == "" {
+		work.Phase = "members"
 	}
-	if detail.ID != ch.ID {
-		evidence.Failure = "chat_binding_mismatch"
+	// Invalidate earlier proof before any roster writes. An interrupted refresh
+	// cannot retain a complete route snapshot beside partially updated members.
+	if work.Phase == "members" {
+		if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
+			return 0, false, chatMembership{}, err
+		}
 	}
-	if err := imp.store.SetConversationRosterRepairPendingContext(ctx, convID, true); err != nil {
-		return convID, false, chatMembership{}, nil, err
-	}
-	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, evidence); err != nil {
-		return convID, false, chatMembership{}, nil, err
-	}
-	if err := opts.rosterStop(ctx); err != nil {
-		return convID, false, chatMembership{}, nil, err
-	}
+
 	if membership.known {
 		err = imp.store.SetConversationMemberCountContext(ctx, convID, membership.count)
 	} else {
 		err = imp.store.MarkConversationMemberCountUnknownContext(ctx, convID)
 	}
 	if err != nil {
-		return convID, false, chatMembership{}, nil, err
+		return 0, false, chatMembership{}, err
 	}
-	imp.res.accountID = opts.AccountID
-	keys := make([]string, 0, len(detail.Participants.Items))
-	for i := range detail.Participants.Items {
-		keys = append(keys, imp.res.identifierForUser(detail.Participants.Items[i].ID))
-	}
-	bindings, err := imp.store.ParticipantsByIdentifiersContext(ctx, participantIdentifierType, keys)
-	if err != nil {
-		return convID, false, chatMembership{}, nil, err
-	}
+	provider := rosterProvider(ch.ID)
+	items := slices.Clone(detail.Participants.Items)
+	slices.SortStableFunc(items, func(a, b Participant) int { return strings.Compare(a.ID, b.ID) })
+	keys := imp.rosterKeys(items)
 	var bridgePrefix string
-	if complete {
+	if membershipComplete {
 		bridgePrefix = participantBridgePrefix(detail.Participants.Items)
 	}
-	resolved := make([]resolvedMember, 0, len(detail.Participants.Items))
-	active := make(map[string]bool, len(detail.Participants.Items))
-	for i := range detail.Participants.Items {
-		if err := opts.rosterStop(ctx); err != nil {
-			return convID, false, chatMembership{}, nil, err
+	if work.Verified && (work.Phase == "matching" || work.Phase == "matching_retry" || work.Phase == "cleanup") {
+		owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
+		if err != nil {
+			return convID, false, membership, err
 		}
-		p := &detail.Participants.Items[i]
-		key := imp.res.identifierForUser(p.ID)
-		binding := bindings[key]
-		var pid int64
-		if bindingSatisfiesUser(&p.User, binding) {
-			pid = binding.ID
-			imp.res.seedUser(&p.User, binding)
+		settled, err := imp.rosterOwnersSettled(ctx, sourceID, provider, detail, items, keys, owners, opts.AccountID)
+		if err != nil {
+			return convID, false, membership, err
+		}
+		if settled {
+			err = imp.publishRosterEvidence(ctx, convID, routeEvidence, items, keys, owners, membership)
 		} else {
-			pid, err = imp.res.resolveUser(ctx, &p.User)
-			if err != nil {
-				return convID, false, chatMembership{}, nil, err
-			}
+			work.Verified = false
+			work.Phase = "members"
+			work.Next = 0
+			err = imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence)
 		}
-		if pid == 0 {
-			continue
-		}
-		active[key] = true
-		// A settled roster has no per-member progress; its unchanged signature
-		// already shows every member is matched.
-		if !work.Settled {
-			inputs := rosterMemberSignature(&p.User, detail, opts.AccountID, bridgePrefix)
-			if progress := work.Members[key]; progress.Inputs != inputs {
-				work.Members[key] = rosterMemberWork{Inputs: inputs}
-				work.MatchingPending = true
-			}
-		}
-		role := "member"
-		if p.IsAdmin {
-			role = "admin"
-		}
-		resolved = append(resolved, resolvedMember{participantID: pid, user: &p.User, key: key, role: role})
-	}
-	if complete {
-		for key := range work.Members {
-			if !active[key] {
-				delete(work.Members, key)
-			}
+		if err != nil {
+			return convID, false, membership, err
 		}
 	}
-	keys = keys[:0]
-	for _, member := range resolved {
-		keys = append(keys, member.key)
-	}
-	bindings, err = imp.store.ParticipantsByIdentifiersContext(ctx, participantIdentifierType, keys)
-	if err != nil {
-		return convID, false, chatMembership{}, nil, err
-	}
-	desired := make(map[int64]string, len(resolved))
-	for i := range resolved {
-		binding, ok := bindings[resolved[i].key]
-		if !ok {
-			work.MembershipApplied = false
-			return convID, false, chatMembership{}, nil, errors.New("participant binding disappeared during roster refresh")
+	if work.Phase == "members" {
+		if err := imp.store.SetConversationRosterRepairPendingContext(ctx, convID, true); err != nil {
+			return convID, false, membership, err
 		}
-		resolved[i].participantID = binding.ID
-		imp.res.seedUser(resolved[i].user, binding)
-		desired[binding.ID] = resolved[i].role
-	}
-	archived, err := imp.store.ConversationParticipantsContext(ctx, convID)
-	if err != nil {
-		return convID, false, chatMembership{}, nil, err
-	}
-	existing := make(map[int64]string, len(archived))
-	for _, member := range archived {
-		existing[member.ParticipantID] = member.Role
-	}
-	ids := make([]int64, 0, len(desired))
-	for id := range desired {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	var additions []store.ConversationParticipantRef
-	for _, id := range ids {
-		if role, ok := existing[id]; !ok || role != desired[id] {
-			additions = append(additions, store.ConversationParticipantRef{ParticipantID: id, Role: desired[id]})
+		if err := imp.resolveRosterMembers(ctx, sourceID, convID, provider, detail, items, keys, opts, bridgePrefix, work); err != nil {
+			return convID, false, membership, err
 		}
-	}
-	var removals []int64
-	if complete {
-		for _, member := range archived {
-			if _, ok := desired[member.ParticipantID]; !ok {
-				removals = append(removals, member.ParticipantID)
-			}
+		var verified *Chat
+		var verifyErr error
+		if membershipComplete {
+			requestCtx, cancel := opts.requestContext(ctx)
+			verified, verifyErr = imp.client.GetChat(requestCtx, ch.ID)
+			cancel()
+			verifyErr = opts.budgetError(ctx, verifyErr)
+		} else {
+			verifyErr = errors.New("beeper roster is incomplete")
 		}
-	}
-	if len(additions) > 0 || len(removals) > 0 {
-		work.MembershipApplied = false
-	}
-	for len(additions) > 0 {
-		if err := opts.rosterStop(ctx); err != nil {
-			return convID, false, chatMembership{}, nil, err
-		}
-		n := min(16, len(additions))
-		if err := imp.store.ApplyConversationParticipantBatchContext(ctx, convID, additions[:n], nil); err != nil {
-			return convID, false, chatMembership{}, nil, err
-		}
-		additions = additions[n:]
-	}
-	if err := opts.rosterStop(ctx); err != nil {
-		return convID, false, chatMembership{}, nil, err
-	}
-	// Removing members needs a fresh roster read; additions alone do not.
-	if complete && len(removals) > 0 {
-		requestCtx, cancel := opts.requestContext(ctx)
-		verified, verifyErr := imp.client.GetChat(requestCtx, ch.ID)
-		cancel()
-		verifyErr = opts.budgetError(ctx, verifyErr)
 		if errors.Is(verifyErr, errBeeperBudgetExpired) {
-			return convID, false, chatMembership{}, nil, verifyErr
+			return convID, false, membership, verifyErr
 		}
-		if ctx.Err() != nil {
-			return convID, false, chatMembership{}, nil, ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return convID, false, membership, err
 		}
-		// The signature covers the payload's account. A mismatch with the
-		// requested account is a route-evidence failure, not a changed roster.
 		if verifyErr == nil && (verified == nil || verified.ID != ch.ID || verified.Participants.HasMore || rosterSignature(verified, opts.AccountID) != signature) {
 			verifyErr = errors.New("beeper roster changed or became incomplete during verification")
 			work.DetailBacked = true
 		}
 		if verifyErr != nil {
-			imp.recordItem(syncID, ch.ID, "fetch", store.SyncRunItemStatusError, "beeper_fetch_error", verifyErr)
-			sum.failChat(ch.ID, false, verifyErr)
-			sum.FetchErrors++
-			sum.Errors++
-			return convID, false, membership, &rosterObservations{detail: detail, members: resolved, bridgePrefix: bridgePrefix, work: work}, nil
-		}
-		if err := opts.rosterStop(ctx); err != nil {
-			return convID, false, chatMembership{}, nil, err
-		}
-		for len(removals) > 0 {
-			if err := opts.rosterStop(ctx); err != nil {
-				return convID, false, chatMembership{}, nil, err
+			imp.recordItem(syncID, ch.ID, "membership", store.SyncRunItemStatusSkipped, "beeper_roster_verification_deferred", verifyErr)
+			membership.known = membership.known && verified == nil
+			work.Verified = false
+		} else {
+			owners, err := imp.replaceRosterMembership(ctx, sourceID, convID, provider, keys, items, opts)
+			if err != nil {
+				return convID, false, membership, err
 			}
-			n := min(16, len(removals))
-			if err := imp.store.ApplyConversationParticipantBatchContext(ctx, convID, nil, removals[:n]); err != nil {
-				return convID, false, chatMembership{}, nil, err
+			if err := imp.publishRosterEvidence(ctx, convID, routeEvidence, items, keys, owners, membership); err != nil {
+				return convID, false, membership, err
 			}
-			removals = removals[n:]
+			work.Verified = true
+			imp.obs = newObservationRecorder(imp.store)
+			imp.matcher = newIdentityMatcher(imp.store)
+		}
+		work.Phase = "matching"
+		work.Next = 0
+	}
+	if work.Phase == "matching" || work.Phase == "matching_retry" {
+		if err := imp.matchRosterMembers(ctx, sourceID, provider, detail, items, opts, bridgePrefix, work, sum); err != nil {
+			return convID, work.Verified, membership, err
 		}
 	}
-	evidence.MembershipComplete = complete && membership.known && len(resolved) == membership.count
-	for _, member := range resolved {
-		evidence.ParticipantIDs = append(evidence.ParticipantIDs, member.participantID)
-		if member.user.IsSelf {
-			evidence.SelfParticipantIDs = append(evidence.SelfParticipantIDs, member.participantID)
+	if work.Phase == "cleanup" {
+		if err := imp.cleanRosterReceipts(ctx, sourceID, provider, items, opts); err != nil {
+			return convID, true, membership, err
 		}
+		work.Phase = "done"
 	}
-	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, evidence); err != nil {
-		return convID, false, chatMembership{}, nil, err
-	}
-	if err := imp.completeRoster(ctx, convID, evidence.MembershipComplete, resolved, work); err != nil {
-		return convID, false, membership, nil, err
-	}
-	return convID, evidence.MembershipComplete, membership, &rosterObservations{detail: detail, members: resolved, bridgePrefix: bridgePrefix, work: work, complete: complete}, nil
-}
-
-type resolvedMember struct {
-	role          string
-	key           string
-	participantID int64
-	user          *User
-}
-
-type rosterObservations struct {
-	work         *rosterWork
-	detail       *Chat
-	members      []resolvedMember
-	bridgePrefix string
-	complete     bool
-}
-
-// Capture follows committed membership and alternates with message work.
-// A member already in flight may finish its own transactions before yielding.
-func (imp *Importer) captureRosterObservations(ctx context.Context, sourceID int64, opts ImportOptions, roster *rosterObservations, sum *ImportSummary) error {
-	// A service registered or changed after matching must reach unchanged
-	// members too, so a changed routing digest matches every member again.
-	routes, err := imp.rosterRoutes(ctx, opts, roster)
-	if cerr := ctx.Err(); cerr != nil {
-		return cerr
-	}
-	switch {
-	case errors.Is(err, errBeeperBudgetExpired):
-		return err
-	case err != nil:
-		// The saved completion stands; the next visit checks the routes again.
-		slog.Warn("beeper roster service routes unavailable", "chat_id", roster.detail.ID, "error", err)
-	case routes != roster.work.Routes:
-		roster.work.Routes = routes
-		roster.work.Settled = false
-		roster.work.MatchingPending = true
-		// Matched members are filled in below; the next visit's roster
-		// pass fills the inputs of any member still unmatched.
-		roster.work.Members = make(map[string]rosterMemberWork)
-	}
-	if roster.work.Settled {
-		return nil
-	}
-	for _, member := range roster.members {
-		if err := opts.rosterStop(ctx); err != nil {
-			return err
-		}
-		progress := roster.work.Members[member.key]
-		if progress.Enriched {
-			continue
-		}
-		if imp.captureObservations(ctx, member.participantID, member.user, roster.detail,
-			sourceID, opts.AccountID, roster.bridgePrefix, sum) {
-			if progress.Inputs == "" {
-				progress.Inputs = rosterMemberSignature(member.user, roster.detail, opts.AccountID, roster.bridgePrefix)
-			}
-			progress.Enriched = true
-			roster.work.Members[member.key] = progress
-		}
-	}
-	for _, member := range roster.members {
-		if !roster.work.Members[member.key].Enriched {
-			return ctx.Err()
-		}
-	}
-	if roster.complete {
-		roster.work.settle()
-	}
-	return ctx.Err()
+	return convID, work.Verified, membership, nil
 }
 
 // recordChatFetchError records a failed message-page read for one chat. Route
@@ -2203,6 +2061,9 @@ func (imp *Importer) checkpointNow(ctx context.Context, syncID int64, state *Syn
 func (imp *Importer) checkpointNowContext(ctx context.Context, syncID int64, state *SyncState, sum *ImportSummary) error {
 	blob, err := state.Marshal()
 	if err != nil {
+		return err
+	}
+	if err := imp.store.UpdateSourceSyncState(ctx, sum.SourceID, blob); err != nil {
 		return err
 	}
 	err = imp.store.UpdateSyncCheckpointContext(ctx, syncID, &store.Checkpoint{

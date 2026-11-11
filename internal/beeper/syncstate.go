@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -108,9 +109,25 @@ func LoadSyncState(blob string) (*SyncState, error) {
 	if err != nil {
 		return nil, err
 	}
+	return validateRosterProgress(s)
+}
+
+func validateRosterProgress(s *SyncState) (*SyncState, error) {
 	for _, chat := range s.Chats {
-		if chat != nil && chat.RosterWork != nil && chat.RosterWork.Version != 1 {
-			return nil, fmt.Errorf("saved Beeper roster progress uses unsupported version %d; update msgvault to resume it", chat.RosterWork.Version)
+		if chat == nil || chat.RosterWork == nil {
+			continue
+		}
+		work := chat.RosterWork
+		if work.Version != 1 {
+			return nil, fmt.Errorf("saved Beeper roster progress uses unsupported version %d; update msgvault to resume it", work.Version)
+		}
+		if work.Next < 0 {
+			return nil, errors.New("saved Beeper roster progress has an invalid position")
+		}
+		switch work.Phase {
+		case "", "members", "matching", "matching_retry", "cleanup", "done":
+		default:
+			return nil, fmt.Errorf("saved Beeper roster progress uses unsupported phase %q", work.Phase)
 		}
 	}
 	return s, nil

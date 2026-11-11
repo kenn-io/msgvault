@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -25,18 +24,15 @@ func (imp *Importer) repairQuietRosters(ctx context.Context, syncID, sourceID in
 	if err != nil {
 		return false, err
 	}
-	known := make(map[string]bool, len(ids))
+	queued := make(map[string]bool, len(ids))
 	for _, id := range ids {
-		known[id] = true
+		queued[id] = true
 	}
-	var enrichmentIDs []string
-	for id, cs := range state.Chats {
-		if cs != nil && cs.RosterWork != nil && cs.RosterWork.MatchingPending && !known[id] {
-			enrichmentIDs = append(enrichmentIDs, id)
+	for id, room := range state.Chats {
+		if room != nil && room.RosterWork != nil && !queued[id] {
+			ids = append(ids, id)
 		}
 	}
-	slices.Sort(enrichmentIDs)
-	ids = append(ids, enrichmentIDs...)
 	seen := make(map[string]bool, len(chats))
 	for _, chat := range chats {
 		seen[chat.ID] = true // Normal sync already attempted these rosters.
@@ -91,26 +87,21 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 
 	// Like chat discovery's probe, clear the route's membership proof before the
 	// request and record a fetch failure only if the request actually fails.
-	if cs.RosterWork == nil || !cs.RosterWork.MembershipApplied {
-		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
-			return failed(fmt.Errorf("invalidate route before roster repair: %w", err))
-		}
+	if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
+		return failed(fmt.Errorf("invalidate route before roster repair: %w", err))
 	}
 	// The probe timeout bounds only the provider request. Roster writes for a
-	// large room can outlast it; roster batches use the parent context.
+	// large room can outlast it, so they share the run's budget instead.
 	requestCtx, cancelRequest := opts.requestContext(ctx)
+	defer cancelRequest()
 	probeCtx, cancelProbe := context.WithTimeout(requestCtx, routeProbeTimeout)
 	detail, fetchErr := imp.client.GetChat(probeCtx, chatID)
 	timedOut := errors.Is(probeCtx.Err(), context.DeadlineExceeded)
 	cancelProbe()
-	cancelRequest()
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	if errors.Is(fetchErr, ErrNotFound) {
-		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, chatID); err != nil {
-			return failed(fmt.Errorf("invalidate route for missing chat: %w", err))
-		}
 		// A chat Beeper no longer has keeps its invalidated route proof without a
 		// fetch-failure marker, and later runs stop probing it.
 		cs.Gone = true
@@ -128,57 +119,55 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 		return stop || timedOut || opts.budgetExpired(), err
 	}
 
-	opts.rosterDetailFetched = true
-	repairSummary := &ImportSummary{}
-	conversationID, complete, _, observations, err := imp.ensureConversation(ctx, syncID, sourceID, detail, opts, repairSummary, cs)
-	if conversationID != 0 {
-		statsCtx, cancelStats := opts.conversationStatsContext(ctx)
-		statsErr := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, conversationID)
-		cancelStats()
-		if statsErr == nil && complete {
-			pendingCtx := ctx
-			var cancelPending context.CancelFunc
-			if opts.stopRequested() {
-				pendingCtx, cancelPending = opts.finalizeContext(ctx)
-			}
-			if cancelPending != nil {
-				defer cancelPending()
-			}
-			statsErr = imp.store.SetConversationRosterRepairPendingContext(pendingCtx, conversationID, false)
-		}
-		if statsErr != nil {
-			if cs.RosterWork != nil {
-				cs.RosterWork.MembershipApplied = false
-			}
-			return failed(fmt.Errorf("recompute conversation stats after roster repair: %w", statsErr))
-		}
+	// Metadata-only failures are recorded separately from missing messages.
+	// Reuse the normal roster writer and its exact count. The pending marker
+	// keeps the room unresolved until every step below has finished.
+	if err := imp.store.SetSourceConversationRosterRepairPendingContext(ctx, sourceID, chatID, true); err != nil {
+		return failed(fmt.Errorf("mark roster repair pending: %w", err))
 	}
+	if cs.RosterWork == nil {
+		cs.RosterWork = &rosterWork{Version: 1, MemberFirst: true}
+	}
+	opts.rosterState = cs.RosterWork
+	opts.rosterDetailFetched = true
+	conversationID, complete, _, err := imp.ensureRosterWork(ctx, syncID, sourceID, detail, opts, &ImportSummary{})
+	err = imp.finishQuietRosterStep(ctx, opts, conversationID, err)
 	if errors.Is(err, errBeeperBudgetExpired) {
 		return true, nil
 	}
 	if err != nil {
 		return failed(fmt.Errorf("repair archived roster: %w", err))
 	}
-	if repairSummary.FetchErrors > 0 {
-		return failed(errors.New("roster verification failed"))
+	pendingCtx := ctx
+	if opts.stopRequested() {
+		var cancelPending context.CancelFunc
+		pendingCtx, cancelPending = opts.finalizeContext(ctx)
+		defer cancelPending()
 	}
-	if observations != nil {
-		err = imp.captureRosterObservations(ctx, sourceID, opts, observations, repairSummary)
+	if complete {
+		if err := imp.store.SetSourceConversationRosterRepairPendingContext(pendingCtx, sourceID, chatID, false); err != nil {
+			return failed(fmt.Errorf("clear roster repair pending marker: %w", err))
+		}
 	}
-	if errors.Is(err, errBeeperBudgetExpired) {
-		return true, nil
+	if cs.RosterWork.Phase == "done" {
+		cs.RosterWork = nil
 	}
-	if err != nil {
-		return failed(fmt.Errorf("capture roster observations: %w", err))
-	}
-
 	if !complete {
 		stop, err := deferRoom("beeper_roster_repair_deferred", store.SyncRunItemStatusSkipped, nil)
 		return stop || opts.budgetExpired(), err
 	}
-	if cs.RosterWork != nil && cs.RosterWork.MatchingPending {
-		return deferRoom("beeper_roster_repair_failed", store.SyncRunItemStatusError, errors.New("roster enrichment incomplete"))
-	}
 	cs.RosterRetryAfter = ""
 	return opts.stopRequested(), nil
+}
+
+func (imp *Importer) finishQuietRosterStep(ctx context.Context, opts ImportOptions, conversationID int64, rosterErr error) error {
+	if conversationID == 0 {
+		return rosterErr
+	}
+	statsCtx, cancel := opts.conversationStatsContext(ctx)
+	defer cancel()
+	if err := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, conversationID); err != nil {
+		return fmt.Errorf("recompute conversation stats after roster repair: %w", err)
+	}
+	return rosterErr
 }

@@ -212,7 +212,9 @@ type ImportOptions struct {
 	// Route proof is obtained from the exact account endpoint during this run.
 	// Neither a display label nor a user/account identifier can replace it.
 	routeAccount        *Account
+	rosterState         *rosterWork
 	rosterDetailFetched bool
+	skipRoster          bool
 	// AccountID is the Beeper account to sync (e.g. "whatsapp", "signal").
 	// It doubles as the msgvault source identifier.
 	AccountID string
