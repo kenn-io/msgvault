@@ -61,7 +61,7 @@ func TestMCPDelegatedReadAndArchiveSenderScope(t *testing.T) {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			t.Error("MCP server did not stop")
+			assert.Fail(t, "MCP server did not stop")
 		}
 	})
 	session, err = sdkmcp.NewClient(&sdkmcp.Implementation{Name: "scope-test", Version: "1"}, nil).Connect(ctx, clientTransport, nil)
