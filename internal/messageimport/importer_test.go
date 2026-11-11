@@ -116,6 +116,23 @@ func TestImporterCreatesMessageAndSyncRun(t *testing.T) {
 	assert.Equal(int64(0), latest.MessagesUpdated)
 }
 
+func TestImportedCalendarEventIsEligibleForActivity(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	req := validRequest(t)
+	req.Message.MessageType = "calendar_event"
+	result, err := NewImporter(st, Hooks{}).Import(t.Context(), req)
+	require.NoError(t, err)
+	candidates, err := st.ScanAllActivityCandidatesContext(t.Context(), 0, 100)
+	require.NoError(t, err)
+	for _, candidate := range candidates {
+		if candidate.MessageID == result.MessageID {
+			assert.True(t, candidate.Eligible)
+			return
+		}
+	}
+	t.Fatal("imported calendar event was not returned as an activity candidate")
+}
+
 func TestImporterUnchangedRetryKeepsTheStoredMessage(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
