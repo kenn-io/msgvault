@@ -21,30 +21,14 @@ import (
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"go.kenn.io/msgvault/pkg/client/generated"
 )
-
-func TestPeopleProviderProjectionAndRefusals(t *testing.T) {
-	a, r := assert.New(t), require.New(t)
-	secret := "synthetic-private"
-	result := projectPeopleProviderSettings(&mcpserver.OperationResult{ETag: `"exact"`, Output: generated.PeopleInferenceSettingsResponse{Profiles: []generated.PeopleInferenceProfileSetting{{Name: "primary", Endpoint: &secret, CredentialEnv: &secret, Fingerprint: &secret, CredentialSource: secret, Checked: true}}}}, false)
-	data, err := json.Marshal(result.Output)
-	r.NoError(err)
-	a.NotContains(string(data), secret)
-	a.Contains(string(data), `"etag":"\"exact\""`)
-	a.Contains(string(data), `"checked":true`)
-	for _, code := range []string{"check_required", "consent_required", "provider_not_found", "invalid_provider", "people_inference_unavailable", "if_match_required", "settings_conflict"} {
-		a.True(peopleProviderDefinite(code), code)
-	}
-	a.False(peopleProviderDefinite("settings_read_failed"))
-}
 
 func TestPeopleProviderNativeApprovalAndConsent(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	r.NoError(os.WriteFile(path, []byte(`[people.sweep]
-enabled = true
+enabled = false
 provider = "primary"
 [people.sweep.providers.primary]
 protocol = "openai_chat"
@@ -60,12 +44,14 @@ training_posture = "no_training"
 allowed_sources = ["conversation_text"]
 source_since = "2025-01-01"
 request_timeout = "45s"
-`), 0600))
+`), 0o600))
 	cfg, err := config.Load(path, dir)
 	r.NoError(err)
 	cfg.Data.DataDir = dir
 	st := testutil.NewTestStore(t)
-	profile, err := cfg.People.Sweep.Profile()
+	candidate := cfg.People.Sweep
+	candidate.Enabled = true
+	profile, err := candidate.Profile()
 	r.NoError(err)
 	_, err = st.EnsurePersonInferenceProfile(t.Context(), profile)
 	r.NoError(err)
@@ -73,11 +59,14 @@ request_timeout = "45s"
 	_, _, err = st.GrantPersonInferenceConsent(t.Context(), profile.Fingerprint, "test")
 	r.NoError(err)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)}))
-	a.Subset(backend.capabilities(), []string{"get_people_provider_settings", "select_people_provider", "disable_people_inference"})
 	approved := 0
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyProviders}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, req *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		a.Contains(req.Params.Message, "revoke active consent")
-		a.Contains(req.Params.Message, "re-consent")
+		if approved == 0 {
+			a.Contains(req.Params.Message, "Enable people inference with the selected provider")
+		} else if approved == 1 {
+			a.Contains(req.Params.Message, "revoke active consent")
+			a.Contains(req.Params.Message, "re-consent")
+		}
 		approved++
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
@@ -88,30 +77,51 @@ request_timeout = "45s"
 	r.NoError(err)
 	a.NotContains(string(data), "api.example.test")
 	a.NotContains(string(data), "SYNTHETIC_KEY")
+	a.NotContains(string(data), "fingerprint")
+	a.NotContains(string(data), "credential_")
 	var view mcpserver.PeopleProviderSettings
 	r.NoError(json.Unmarshal(data, &view))
 	r.NotEmpty(view.ETag)
-	disabled, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "disable_people_inference", Arguments: map[string]any{"etag": view.ETag}})
+	a.False(view.ConfiguredEnabled)
+	selected, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "select_people_provider", Arguments: map[string]any{"etag": view.ETag, "name": "primary"}})
 	r.NoError(err)
-	a.False(disabled.IsError)
-	a.Equal(1, approved)
+	r.False(selected.IsError)
+	data, err = json.Marshal(selected.StructuredContent)
+	r.NoError(err)
+	var selectedView mcpserver.PeopleProviderSettings
+	r.NoError(json.Unmarshal(data, &selectedView))
+	a.True(selectedView.ConfiguredEnabled)
+	a.True(selectedView.PendingRestart)
+	r.NotEmpty(selectedView.ETag)
+	disabled, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "disable_people_inference", Arguments: map[string]any{"etag": selectedView.ETag}})
+	r.NoError(err)
+	r.False(disabled.IsError)
+	data, err = json.Marshal(disabled.StructuredContent)
+	r.NoError(err)
+	var disabledView mcpserver.PeopleProviderSettings
+	r.NoError(json.Unmarshal(data, &disabledView))
+	a.True(disabledView.PendingRestart)
+	a.Equal(2, approved)
 	active, err := st.HasActivePersonInferenceConsent(t.Context(), profile.Fingerprint)
 	r.NoError(err)
 	a.False(active)
-	stale, err := backend.ExecuteOperation(t.Context(), "disable_people_inference", map[string]any{"etag": view.ETag})
+	stale, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "disable_people_inference", Arguments: map[string]any{"etag": selectedView.ETag}})
 	r.NoError(err)
 	r.True(stale.IsError)
-	data, err = json.Marshal(stale.Output)
+	data, err = json.Marshal(stale.StructuredContent)
 	r.NoError(err)
 	a.Contains(string(data), "settings_conflict")
-	current, err := backend.ExecuteOperation(t.Context(), "get_people_provider_settings", nil)
+	a.NotContains(string(data), "operation_may_have_completed") // Disclosure refused before any mutation.
+	invalid, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "select_people_provider", Arguments: map[string]any{"etag": disabledView.ETag, "name": " "}})
 	r.NoError(err)
-	newView := operationOutput[mcpserver.PeopleProviderSettings](t, current)
-	a.True(newView.PendingRestart)
-	refused, err := backend.ExecuteOperation(t.Context(), "select_people_provider", map[string]any{"etag": newView.ETag, "name": "primary"})
+	r.True(invalid.IsError)
+	data, err = json.Marshal(invalid.StructuredContent)
+	r.NoError(err)
+	a.Contains(string(data), "invalid_arguments")
+	refused, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "select_people_provider", Arguments: map[string]any{"etag": disabledView.ETag, "name": "primary"}})
 	r.NoError(err)
 	r.True(refused.IsError)
-	data, err = json.Marshal(refused.Output)
+	data, err = json.Marshal(refused.StructuredContent)
 	r.NoError(err)
 	a.Contains(string(data), "consent_required")
 	a.Contains(string(data), `"operation_may_have_completed":false`)
@@ -134,19 +144,43 @@ func TestPeopleProviderDiscoveryRequiresEachNativeContract(t *testing.T) {
 
 func TestPeopleProviderPostCommitFailureIsUncertain(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var code string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		a.Equal(`"revision"`, req.Header.Get("If-Match"))
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"settings_read_failed","message":"synthetic private diagnostic"}`))
+		_, _ = w.Write([]byte(`{"error":"` + code + `","message":"synthetic private diagnostic"}`))
 	}))
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	r.NoError(err)
-	backend := &daemonMCPOperations{client: client, supported: []string{"disable_people_inference"}}
-	result, err := backend.ExecuteOperation(t.Context(), "disable_people_inference", map[string]any{"etag": `"revision"`})
-	r.NoError(err)
-	r.True(result.IsError)
-	data, err := json.Marshal(result.Output)
-	r.NoError(err)
-	a.Contains(string(data), `"operation_may_have_completed":true`)
-	a.NotContains(string(data), "synthetic private diagnostic")
+	backend := &daemonMCPOperations{client: client, supported: []string{"disable_people_inference", "select_people_provider"}}
+	for _, tc := range []struct {
+		name, code string
+		uncertain  bool
+	}{
+		{"disable_people_inference", "settings_conflict", true},
+		{"disable_people_inference", "settings_edit_rejected", true},
+		{"select_people_provider", "settings_conflict", true},
+		{"select_people_provider", "settings_edit_rejected", true},
+		{"disable_people_inference", "settings_read_failed", true},
+		{"select_people_provider", "server_busy", false},
+	} {
+		code = tc.code
+		args := map[string]any{"etag": `"revision"`}
+		if tc.name == "select_people_provider" {
+			args["name"] = "primary"
+		}
+		result, err := backend.ExecuteOperation(t.Context(), tc.name, args)
+		r.NoError(err)
+		r.True(result.IsError)
+		failure, ok := result.Output.(operationFailureOutput)
+		r.True(ok)
+		if tc.code != "settings_read_failed" {
+			a.Equal(tc.code, failure.Error)
+		}
+		a.Equal(tc.uncertain, failure.OperationMayHaveCompleted)
+		data, err := json.Marshal(result.Output)
+		r.NoError(err)
+		a.NotContains(string(data), "synthetic private diagnostic")
+	}
 }

@@ -28,9 +28,11 @@ type PeopleProviderSettings struct {
 
 func peopleProviderOperationalDefinitions() []operationalDefinition {
 	output := outputSchemaFor[PeopleProviderSettings]()
-	return []operationalDefinition{
+	definitions := []operationalDefinition{
 		newOperationalDefinition("get_people_provider_settings", "Read safe configured and running people inference policy and exact settings ETag.", OperationFamilyProviders, closedObject(nil), output, false),
 		newOperationalDefinition("select_people_provider", "Select an already checked and consented configured provider using the exact ETag. Requires approval.", OperationFamilyProviders, closedObject(map[string]*jsonschema.Schema{"etag": stringSchema("Exact ETag from get_people_provider_settings"), "name": stringSchema("Configured provider name")}, "etag", "name"), output, true),
 		newOperationalDefinition("disable_people_inference", "Disable inference and revoke active consent using the exact ETag. Operator re-consent is required to enable later. Requires approval.", OperationFamilyProviders, closedObject(map[string]*jsonschema.Schema{"etag": stringSchema("Exact ETag from get_people_provider_settings")}, "etag"), output, true),
 	}
+	definitions[2].definition.annotations.DestructiveHint = new(true)
+	return definitions
 }

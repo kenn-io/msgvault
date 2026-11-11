@@ -151,11 +151,13 @@ func mcpSyncArguments(args map[string]any) (string, string, error) {
 	return account, sourceType, nil
 }
 
+type operationFailureOutput struct {
+	Error                     string `json:"error"`
+	OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
+}
+
 func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
-	return &mcpserver.OperationResult{IsError: true, Output: struct {
-		Error                     string `json:"error"`
-		OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
-	}{code, uncertain}}
+	return &mcpserver.OperationResult{IsError: true, Output: operationFailureOutput{code, uncertain}}
 }
 
 // The fixed route/request chosen by an adapter uses existing authentication and

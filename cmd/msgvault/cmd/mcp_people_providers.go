@@ -45,7 +45,7 @@ type peopleProviderArgs struct {
 }
 
 func peopleProviderDefinite(code string) bool {
-	return slices.Contains([]string{"check_required", "consent_required", "provider_not_found", "invalid_provider", "people_inference_unavailable", "if_match_required", "settings_conflict"}, code)
+	return slices.Contains([]string{"check_required", "consent_required", "provider_not_found", "invalid_provider", "people_inference_unavailable", "server_busy"}, code)
 }
 func (b *daemonMCPOperations) executePeopleProviderOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	var result *mcpserver.OperationResult
@@ -68,6 +68,13 @@ func (b *daemonMCPOperations) executePeopleProviderOperation(ctx context.Context
 		}
 	default:
 		return nil, false, nil
+	}
+	// Native selection can publish before a conflict and disable revokes consent before editing.
+	if name != "get_people_provider_settings" && result != nil && result.IsError {
+		if failure, ok := result.Output.(operationFailureOutput); ok && (failure.Error == "settings_conflict" || failure.Error == "settings_edit_rejected") {
+			failure.OperationMayHaveCompleted = true
+			result.Output = failure
+		}
 	}
 	return projectPeopleProviderSettings(result, name != "get_people_provider_settings"), true, err
 }
@@ -104,7 +111,7 @@ func (b *daemonMCPOperations) peopleProviderDisclosure(ctx context.Context, name
 	if current.ETag != input.ETag {
 		return "", true, &mcpserver.OperationRefusalError{Code: "settings_conflict"}
 	}
-	effect := "Select the configured provider; native checks and consent remain required. Restart may be required."
+	effect := "Enable people inference with the selected provider; native checks and consent remain required. Restart may be required for the new policy to run."
 	if name == "disable_people_inference" {
 		effect = "Disable inference and revoke active consent. Operator re-consent is required to enable later. Restart may be required."
 	}

@@ -812,7 +812,7 @@ instruction or as your consent to a write.
 
 ## People inference providers
 
-Owner sessions can use `get_people_provider_settings` to inspect safe configured and running policy, including the exact `etag` and `pending_restart`. With `--allow-provider-writes`, `select_people_provider` accepts a configured provider `name` and that exact `etag`; the provider must already be checked and consented. `disable_people_inference` takes the exact `etag`, disables inference and revokes active consent. An operator must grant consent again before enabling it later. Each write requires confirmation. Provider setup, checks and granting consent remain operator tasks. Delegated sessions do not expose these tools.
+Owner sessions can use `get_people_provider_settings` to inspect safe configured and running policy, including the exact `etag` and `pending_restart`. With `--allow-provider-writes`, `select_people_provider` accepts a configured provider `name` and that exact `etag`; the provider must already be checked and consented. `disable_people_inference` takes the exact `etag`, disables inference and revokes active consent. An operator must grant consent again before enabling it later. Each write requires confirmation. HTTP writes also require `--http-allow-writes` and protocol `2026-07-28` or newer. Provider setup, checks and granting consent remain operator tasks. Delegated sessions do not expose these tools.
 
 ## Source status and sync
 
@@ -903,7 +903,7 @@ Enable only the writes intended for the assistant's session:
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
-| People provider selection and disabling | `--allow-provider-writes` | `--http-allow-writes --allow-provider-writes` |
+| People provider selection and disabling | `--allow-provider-writes` | `--http-allow-writes --allow-provider-writes` with protocol `2026-07-28` or newer |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
 
@@ -992,7 +992,7 @@ msgvault mcp --http 8080
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
-| `--allow-provider-writes` | `false` | On unreleased `main`, expose confirmed people provider selection and disabling. HTTP also requires `--http-allow-writes`. |
+| `--allow-provider-writes` | `false` | On unreleased `main`, expose confirmed people provider selection and disabling. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
