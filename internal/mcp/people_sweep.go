@@ -62,12 +62,9 @@ type SweepHistory struct {
 
 func peopleSweepDefinitions() []operationalDefinition {
 	person := func() *jsonschema.Schema { return safeIDSchema("Tracked durable person ID") }
-	limit := func(max float64) *jsonschema.Schema {
-		return &jsonschema.Schema{Type: "integer", Minimum: new(float64(1)), Maximum: &max}
-	}
 	return []operationalDefinition{
 		newOperationalDefinition("get_people_sweep_status", "Read redacted people sweep status. Maintenance may return operation_in_progress; retry later.", OperationFamilySweep, closedObject(map[string]*jsonschema.Schema{}), outputSchemaFor[SweepStatus](), false),
-		newOperationalDefinition("list_people_sweep_history", "Read redacted sweep history, optionally for a configured provider. Maintenance may return operation_in_progress; retry later.", OperationFamilySweep, closedObject(map[string]*jsonschema.Schema{"person_id": person(), "limit": limit(200), "provider": stringSchema("Configured provider profile name")}), outputSchemaFor[SweepHistory](), false),
+		newOperationalDefinition("list_people_sweep_history", "Read redacted sweep history, optionally for a configured provider. Maintenance may return operation_in_progress; retry later.", OperationFamilySweep, closedObject(map[string]*jsonschema.Schema{"person_id": person(), "limit": boundedIntegerSchema("Maximum runs and attempts", 1, 200), "provider": stringSchema("Configured provider profile name")}), outputSchemaFor[SweepHistory](), false),
 		newOperationalDefinition("run_people_sweep", "Run bounded people maintenance using the daemon's configured provider and existing consent. Requires approval; limit must fit the configured work batch size.", OperationFamilySweep, closedObject(map[string]*jsonschema.Schema{"person_id": person(), "limit": {Type: "integer", Minimum: new(float64(1))}, "backstop": {Type: "boolean"}}), outputSchemaFor[SweepRun](), true),
 	}
 }

@@ -35,37 +35,27 @@ func sweepCommand(name string, args map[string]any) (*cobra.Command, []string, m
 	if _, provided := args["provider"]; provided && input.Provider == "" {
 		return nil, nil, input, errors.New("invalid provider")
 	}
-	var cmd *cobra.Command
-	var positional []string
 	root := &cobra.Command{Use: "msgvault"}
 	person := &cobra.Command{Use: "person"}
 	root.AddCommand(person)
+	person.AddCommand(newPersonSweepCommand(defaultPersonSweepCommandDeps()), newPersonProviderCommand(defaultPersonProviderCommandDeps()))
+	var path, positional []string
 	switch name {
 	case "get_people_sweep_status":
-		cmd = newPersonSweepStatusCommand(defaultPersonSweepCommandDeps())
-		sweep := &cobra.Command{Use: "sweep"}
-		person.AddCommand(sweep)
-		sweep.AddCommand(cmd)
+		path = []string{"sweep", "status"}
 	case "list_people_sweep_history":
+		path = []string{"provider", "history"}
 		if input.Provider != "" {
-			provider := &cobra.Command{Use: "provider"}
-			person.AddCommand(provider)
-			cmd = newPersonProviderHistoryCommand(defaultPersonProviderCommandDeps())
-			provider.AddCommand(cmd)
 			positional = []string{input.Provider}
-		} else {
-			sweep := &cobra.Command{Use: "sweep"}
-			person.AddCommand(sweep)
-			cmd = newPersonSweepHistoryCommand(defaultPersonSweepCommandDeps())
-			sweep.AddCommand(cmd)
 		}
 	case "run_people_sweep":
-		sweep := &cobra.Command{Use: "sweep"}
-		person.AddCommand(sweep)
-		cmd = newPersonSweepRunCommand(defaultPersonSweepCommandDeps())
-		sweep.AddCommand(cmd)
+		path = []string{"sweep", "run"}
 	default:
 		return nil, nil, input, errors.New("unsupported operation")
+	}
+	cmd, _, err := person.Find(path)
+	if err != nil {
+		return nil, nil, input, err
 	}
 	if input.PersonID != nil {
 		if err := cmd.Flags().Set("person", strconv.FormatInt(*input.PersonID, 10)); err != nil {
@@ -150,16 +140,8 @@ func (b *daemonMCPOperations) executePeopleSweep(ctx context.Context, name strin
 	err = daemonclient.DecodeCLIStream(io.LimitReader(response.Body, (1<<20)+1), "people sweep", func(event api.CLIRunEvent) (bool, error) {
 		switch event.Type {
 		case "stdout":
-			if stdout.Len()+len(event.Data) > 1<<20 {
-				failure = operationFailure("operation_response_limit_exceeded", writes)
-				return false, errors.New("response limit")
-			}
 			stdout.WriteString(event.Data)
 		case "stderr":
-			if stderr.Len()+len(event.Data) > 65536 {
-				failure = operationFailure("operation_response_limit_exceeded", writes)
-				return false, errors.New("response limit")
-			}
 			stderr.WriteString(event.Data)
 		case "error":
 			code, uncertain := "operation_refused", writes
