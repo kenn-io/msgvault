@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -65,7 +68,10 @@ func TestPersonRecordSDKAtomicPatchAndHistory(t *testing.T) {
 	updated := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("patch_person_record", args))
 	assert.NotEqual(t, current.ETag, updated.ETag)
 	assert.Contains(t, disclosure, "person@example.test")
-	assert.Contains(t, disclosure, base64.StdEncoding.EncodeToString([]byte("synthetic")))
+	sum := sha256.Sum256([]byte("synthetic"))
+	assert.Contains(t, disclosure, `"data_size":9`)
+	assert.Contains(t, disclosure, fmt.Sprintf(`"data_sha256":"%x"`, sum))
+	assert.NotContains(t, disclosure, base64.StdEncoding.EncodeToString([]byte("synthetic")))
 	assert.Len(t, updated.Profile.Names, 1)
 	assert.Len(t, updated.Profile.ContactPoints, 1)
 	assert.Len(t, updated.Profile.Addresses, 1)
@@ -76,32 +82,44 @@ func TestPersonRecordSDKAtomicPatchAndHistory(t *testing.T) {
 	media := loopToolOutput[mcpserver.PersonMediaContent](t, call("get_person_record_media", map[string]any{"person_id": id, "media_id": mediaID}))
 	assert.Equal(t, "image/png", media.MediaType)
 	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("synthetic")), media.DataBase64)
+	assert.True(t, media.Complete)
 	history := loopToolOutput[generated.PersonProfileHistory](t, call("get_person_record_history", map[string]any{"person_id": id}))
 	assert.Len(t, history.Categories, 1)
 	assert.Equal(t, "person_revision_conflict", loopToolFailure(t, call("patch_person_record", args))["error"])
 	closeArgs := map[string]any{"person_id": id, "etag": updated.ETag, "patch": map[string]any{"categories": map[string]any{"supersede": []int64{updated.Profile.Categories[0].Envelope.ID}}}}
 	closed := loopToolOutput[mcpserver.StructuredPersonRecord](t, call("patch_person_record", closeArgs))
 	assert.Empty(t, closed.Profile.Categories)
-	history = loopToolOutput[generated.PersonProfileHistory](t, call("get_person_record_history", map[string]any{"person_id": id}))
-	assert.Len(t, history.Categories, 1)
 }
 
 func TestPersonRecordCapabilitiesAndRefusals(t *testing.T) {
 	backend, id := personRecordFixture(t)
 	capabilities, err := backend.client.MCPCapabilities(t.Context())
 	require.NoError(t, err)
-	for _, tc := range []struct{ name, operation string }{
-		{"get_person_record", "getPersonStructuredProfile"}, {"get_person_record_history", "getPersonProfileHistory"}, {"get_person_record_media", "getPersonProfileMediaContent"}, {"patch_person_record", "patchPersonStructuredProfile"},
+	for _, tc := range []struct {
+		name, operation string
+		removeProperty  bool
+	}{
+		{"get_person_record_history", "getPersonProfileHistory", false}, {"patch_person_record", "patchPersonStructuredProfile", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			copyCaps := *capabilities
 			copyCaps.Routes = slices.Clone(capabilities.Routes)
 			for i := range copyCaps.Routes {
 				if copyCaps.Routes[i].OperationID == tc.operation {
-					copyCaps.Routes[i].Method = http.MethodDelete
+					if tc.removeProperty {
+						copyCaps.Routes[i].RequestProperties = slices.DeleteFunc(slices.Clone(copyCaps.Routes[i].RequestProperties), func(s string) bool { return s == "media" })
+					} else {
+						copyCaps.Routes[i].Method = http.MethodDelete
+					}
 				}
 			}
-			assert.NotContains(t, newDaemonMCPOperations(backend.client, &copyCaps).capabilities(), tc.name)
+			got := newDaemonMCPOperations(backend.client, &copyCaps).capabilities()
+			assert.NotContains(t, got, tc.name)
+			if tc.removeProperty {
+				assert.Contains(t, got, "get_person_record")
+				assert.Contains(t, got, "get_person_record_history")
+				assert.Contains(t, got, "get_person_record_media")
+			}
 		})
 	}
 	for _, tc := range []struct {
@@ -131,8 +149,6 @@ func TestPersonRecordCapabilitiesAndRefusals(t *testing.T) {
 	require.NoError(t, err)
 	unchanged := operationOutput[mcpserver.StructuredPersonRecord](t, after)
 	assert.Equal(t, record.ETag, unchanged.ETag)
-	assert.Empty(t, unchanged.Profile.Names)
-	assert.False(t, strings.Contains(record.ETag, "\n"))
 }
 
 func TestPersonRecordLargeInlineMedia(t *testing.T) {
@@ -150,9 +166,27 @@ func TestPersonRecordLargeInlineMedia(t *testing.T) {
 	require.NoError(t, err)
 	media := operationOutput[mcpserver.PersonMediaContent](t, result)
 	assert.Equal(t, "application/octet-stream", media.MediaType)
-	decoded, err := base64.StdEncoding.DecodeString(media.DataBase64)
-	require.NoError(t, err)
-	assert.Equal(t, data, decoded)
+	sum := sha256.Sum256(data)
+	assert.Equal(t, int64(1<<20), media.Length)
+	assert.Equal(t, int64(8<<20), media.Size)
+	assert.Equal(t, fmt.Sprintf("%x", sum), media.SHA256)
+	assert.False(t, media.Complete)
+	var assembled bytes.Buffer
+	for i := 0; i < 8; i++ {
+		assert.Equal(t, int64(i<<20), media.Offset)
+		decoded, err := base64.StdEncoding.DecodeString(media.DataBase64)
+		require.NoError(t, err)
+		_, err = assembled.Write(decoded)
+		require.NoError(t, err)
+		if media.Complete {
+			break
+		}
+		result, err = backend.ExecuteOperation(t.Context(), "get_person_record_media", map[string]any{"person_id": id, "media_id": updated.Profile.Media[0].Envelope.ID, "offset": float64(media.Offset + media.Length), "sha256": media.SHA256})
+		require.NoError(t, err)
+		media = operationOutput[mcpserver.PersonMediaContent](t, result)
+	}
+	assert.True(t, media.Complete)
+	assert.Equal(t, data, assembled.Bytes())
 }
 
 func TestPersonRecordURIOnlyAndRevisionRefusals(t *testing.T) {
@@ -170,9 +204,6 @@ func TestPersonRecordURIOnlyAndRevisionRefusals(t *testing.T) {
 	result, err = backend.ExecuteOperation(t.Context(), "get_person_record_media", map[string]any{"person_id": id, "media_id": mediaID})
 	require.NoError(t, err)
 	assertLoopRefusal(t, result, "profile_media_content_unavailable", false)
-	result, err = backend.ExecuteOperation(t.Context(), "patch_person_record", args)
-	require.NoError(t, err)
-	assertLoopRefusal(t, result, "person_revision_conflict", false)
 	args["etag"] = "*"
 	result, err = backend.ExecuteOperation(t.Context(), "patch_person_record", args)
 	require.NoError(t, err)

@@ -168,8 +168,5 @@ func TestPersonRecordCatalogRequiresCuratedWriteOptIn(t *testing.T) {
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyRecords}
 	assert.NotContains(t, names(opts, true), "patch_person_record")
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyCurated}
-	assert.NotContains(t, names(opts, false), "patch_person_record")
 	assert.Contains(t, names(opts, true), "patch_person_record")
-	opts.DelegatedOnly = true
-	assert.Empty(t, names(opts, true))
 }

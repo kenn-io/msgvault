@@ -895,10 +895,12 @@ retries a write by itself. If a write reports
 On unreleased `main`, owner sessions can read a structured person record with
 `get_person_record`, including its exact ETag, and inspect its history with
 `get_person_record_history`. `get_person_record_media` returns stored inline
-media as base64 and its content type, up to 8 MiB; URI-only values have no
-stored content. These tools require native daemon support. With curated writes
-enabled, `patch_person_record` applies the requested adds and supersedes as one
-atomic patch using that exact ETag. Each patch needs approval. If its result
+media in base64 chunks with its content type and whole-object SHA-256. Start
+at offset zero and pass the hash with each subsequent offset; URI-only values
+have no stored content. These tools require native daemon support. With curated
+writes enabled, `patch_person_record` applies the requested adds and supersedes as one
+atomic patch using that exact ETag. Approval shows media byte size and SHA-256
+instead of its base64 data. Each patch needs approval. If its result
 says the operation may have completed, read the record again before retrying.
 
 Enable only the writes intended for the assistant's session:
