@@ -47,55 +47,22 @@ func TestICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 				stored, err := st.GetMessageRaw(ids[0])
 				requirements.NoError(err)
 				assertions.Equal(updated, stored)
-			})
-		}
-	}
-}
-
-func TestICalendarCancelledDetailsRebuildAndRestore(t *testing.T) {
-	for _, mode := range []string{"file", "email"} {
-		t.Run(mode, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			source := icsSource(t, st)
-			if mode == "email" {
-				account, err := st.GetOrCreateSource("mbox", "owner@example.com")
+				_, err = st.db.ExecContext(t.Context(), `DELETE FROM calendar_events WHERE message_id=?`, ids[0])
 				requirements.NoError(err)
-				source = account.ID
-			}
-			items := [][]byte{
-				calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Initial\r\nORGANIZER:mailto:organizer@example.com"),
-				calendarDocument("CANCEL", "SEQUENCE:3\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:organizer@example.com"),
-				calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:organizer@example.com"),
-			}
-			for i, item := range items {
+				requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], stored, "ics"))
+				assertions.Equal(row.Event, calendarRows(t, st, ids[0])[0].Event)
+				restored := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored\r\nORGANIZER:mailto:organizer@example.com")
 				if mode == "email" {
-					persistInviteEmailForSource(t, st, source, fmt.Sprintf("rebuild-%d", i), inviteEmail(item))
+					persistInviteEmailForSource(t, st, source, "restored", inviteEmail(restored))
 				} else {
-					_, err := st.PersistICalendarContext(t.Context(), source, item)
+					_, err = st.PersistICalendarContext(t.Context(), source, restored)
 					requirements.NoError(err)
 				}
-			}
-			ids := emailEvents(t, st, source)
-			requirements.Len(ids, 1)
-			row := calendarRows(t, st, ids[0])[0]
-			stored, err := st.GetMessageRaw(ids[0])
-			requirements.NoError(err)
-			_, err = st.db.Exec(`DELETE FROM calendar_events WHERE message_id=?`, ids[0])
-			requirements.NoError(err)
-			requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], stored, "ics"))
-			assertions.Equal(row.Event, calendarRows(t, st, ids[0])[0].Event)
-			restored := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored\r\nORGANIZER:mailto:organizer@example.com")
-			if mode == "email" {
-				persistInviteEmailForSource(t, st, source, "restored", inviteEmail(restored))
-			} else {
-				_, err = st.PersistICalendarContext(t.Context(), source, restored)
-				requirements.NoError(err)
-			}
-			row = calendarRows(t, st, ids[0])[0]
-			assertions.Equal("confirmed", row.Event.Status)
-			assertions.Equal("Restored", row.Subject)
-		})
+				row = calendarRows(t, st, ids[0])[0]
+				assertions.Equal("confirmed", row.Event.Status)
+				assertions.Equal("Restored", row.Subject)
+			})
+		}
 	}
 }
 

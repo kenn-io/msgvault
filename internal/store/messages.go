@@ -2208,7 +2208,7 @@ func (s *Store) PersistMessageWithParticipantsContext(
 	if build == nil {
 		return 0, errors.New("persist message requires a participant builder")
 	}
-	// The source is known only after build runs, so this entry locks none.
+	// The source is known only after build runs, so this entry requests no source lock.
 	// Meeting archives are the only caller and meeting rows are not derived.
 	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{}, nil, participants, build, nil, nil)
 }
@@ -2371,7 +2371,9 @@ func (s *Store) persistMessageWithParticipantsTx(
 	if len(participants) > 0 {
 		// Participant merges take the directory lock before rewriting
 		// message rows. Keep the same order when a repair's preflight
-		// callback locks its target message for identity revalidation.
+		// callback locks its target message for identity revalidation. Calendar
+		// persistence also takes this lock after build, so take it before
+		// participant writes to preserve that order.
 		if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
 			return 0, err
 		}
