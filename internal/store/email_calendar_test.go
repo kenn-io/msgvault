@@ -46,24 +46,25 @@ func TestEmailCalendarEncodedFilename(t *testing.T) {
 }
 
 func TestEmailCalendarEmptyRawFormatDoesNotLockDirectory(t *testing.T) {
+	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("requires PostgreSQL participant directory locks")
 	}
 	source, err := st.GetOrCreateSource("mbox", "owner@example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	id, err := st.PersistMessageContext(t.Context(), &MessagePersistData{
 		Message:      &Message{SourceID: source.ID, SourceMessageID: "raw", MessageType: "email"},
 		Conversation: &ConversationPersistData{SourceConversationID: "raw"},
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	blocker, err := st.db.BeginTx(t.Context(), nil)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	defer func() { _ = blocker.Rollback() }()
-	require.NoError(t, st.lockParticipantDirectoryMutationTxContext(t.Context(), blocker))
+	requirements.NoError(st.lockParticipantDirectoryMutationTxContext(t.Context(), blocker))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	require.NoError(t, st.UpsertMessageRawWithFormatContext(ctx, id, []byte("Content-Type: text/calendar\r\n\r\n"), ""))
+	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, []byte("Content-Type: text/calendar\r\n\r\n"), ""))
 }
 
 func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {

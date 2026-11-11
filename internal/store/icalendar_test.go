@@ -26,22 +26,23 @@ func icsSource(t *testing.T, st *Store) int64 {
 }
 
 func TestICSFamilyLookupUsesIndexes(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	t.Setenv("MSGVAULT_TEST_DB", "")
 	st := newRFC822IDBackfillBackendStore(t)
 	rows, err := st.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+icsFamilyQuery, 0, 1, 1, "family", "family", 1, "family", 1, "family")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	defer rows.Close()
 	var details []string
 	for rows.Next() {
 		var id, parent, unused int
 		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		requirements.NoError(rows.Scan(&id, &parent, &unused, &detail))
 		details = append(details, detail)
 	}
-	require.NoError(t, rows.Err())
+	requirements.NoError(rows.Err())
 	plan := strings.Join(details, "\n")
-	assert.Contains(t, plan, "idx_source_merge_archive_only_original")
-	assert.Contains(t, plan, "idx_calendar_events_series_id")
+	assertions.Contains(plan, "idx_source_merge_archive_only_original")
+	assertions.Contains(plan, "idx_calendar_events_series_id")
 }
 
 func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
