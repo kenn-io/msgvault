@@ -24,7 +24,7 @@ func TestDeletionReviewCatalogReadOnly(t *testing.T) {
 	schema, err := definitions[0].definition.inputSchema.Resolve(nil)
 	require.NoError(err)
 	assert.NoError(schema.Validate(map[string]any{"status": "future_status"}))
-	assert.Error(schema.Validate(map[string]any{"status": "pending", "extra": true}))
+	require.Error(schema.Validate(map[string]any{"status": "pending", "extra": true}))
 	assert.Equal([]string{"batch_id"}, definitions[1].definition.inputSchema.Required)
 	opts.OperationCapabilities = []string{"get_deletion"}
 	assert.Len(operationalCatalog(opts, false), 1)
