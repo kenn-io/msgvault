@@ -202,7 +202,8 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 
 // dropDeletedFrames removes saved traversal of comments deleted through
 // msgvault since the checkpoint was saved: frames reading their replies and
-// saved copies still waiting to be archived. Meta has no replies left to read
+// saved copies still waiting to be archived, including those that declare a
+// deleted parent. Meta has no replies left to read
 // there, so asking would fail on every run. The run holds the source lock, so
 // no comment is deleted while it traverses. It reports whether it dropped
 // anything.
@@ -228,6 +229,9 @@ func (r *importRun) dropDeletedFrames(deleted func(id string) (bool, error)) (bo
 			pending := make([]Object, 0, len(f.Pending))
 			for _, child := range f.Pending {
 				gone, err := deleted(child.ID)
+				if err == nil && !gone && child.Parent != nil {
+					gone, err = deleted(child.Parent.ID)
+				}
 				if err != nil {
 					return changed, err
 				}

@@ -2550,6 +2550,7 @@ func TestMarkMessageThreadDeletedStaysInSource(t *testing.T) {
 	}
 	root := insert(f.Source.ID, f.ConvID, "root", 0)
 	reply := insert(f.Source.ID, f.ConvID, "reply", root)
+	insert(f.Source.ID, f.ConvID, "new-reply", reply)
 	foreign := insert(other.ID, otherConv, "foreign-reply", root)
 	// A reply cycle must not make the walk loop.
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE messages SET reply_to_message_id = ? WHERE id = ?`), reply, root)
@@ -2564,7 +2565,9 @@ func TestMarkMessageThreadDeletedStaysInSource(t *testing.T) {
 	}
 	earlier := deletedAt(reply)
 
-	require.NoError(f.Store.MarkMessageThreadDeletedContext(ctx, f.Source.ID, "root"))
+	marked, err := f.Store.MarkMessageThreadDeletedContext(ctx, f.Source.ID, "root")
+	require.NoError(err)
+	assert.ElementsMatch([]string{"root", "new-reply"}, marked)
 	assert.True(deletedAt(root).Valid)
 	assert.Equal(earlier, deletedAt(reply), "an earlier deletion keeps its time")
 	assert.False(deletedAt(foreign).Valid, "replies in another source are not touched")
