@@ -340,16 +340,9 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 	if prepared.observedOnly {
 		return s.saveCommitmentFrontierTx(ctx, tx, request, prepared, false)
 	}
-	// Move existing locators before inserting promises into their old ranges.
-	slices.SortStableFunc(prepared.promises, func(a, b preparedCommitmentPromise) int {
-		if (a.existingID != 0) == (b.existingID != 0) {
-			return 0
-		}
-		if a.existingID != 0 {
-			return -1
-		}
-		return 1
-	})
+	if err := s.vacateCommitmentLocatorsTx(ctx, tx, personID, prepared.promises); err != nil {
+		return err
+	}
 	newAnchorNeedsReplay := false
 	if len(prepared.promises) > 0 {
 		generation, err := s.applyPreparedPersonFactGenerationTx(ctx, tx, prepared.generation)
@@ -426,6 +419,33 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 		}
 	}
 	return s.saveCommitmentFrontierTx(ctx, tx, request, prepared, newAnchorNeedsReplay)
+}
+
+// Vacate every refreshed locator before writing final coordinates. Exact
+// authored promises can swap positions; ordering their final writes cannot
+// break that unique-key cycle. Temporary ranges exist only in this transaction.
+func (s *Store) vacateCommitmentLocatorsTx(ctx context.Context, tx *loggedTx, personID int64, promises []preparedCommitmentPromise) error {
+	if !slices.ContainsFunc(promises, func(p preparedCommitmentPromise) bool { return p.existingID != 0 }) {
+		return nil
+	}
+	var end int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(quote_end), 0) FROM person_commitments WHERE person_id = ?`, personID).Scan(&end); err != nil {
+		return err
+	}
+	for _, p := range promises {
+		end = max(end, p.promise.End)
+	}
+	for _, p := range promises {
+		if p.existingID == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_commitments SET quote_start = ?, quote_end = ?
+			WHERE id = ? AND person_id = ?`, end+1, end+2, p.existingID, personID); err != nil {
+			return fmt.Errorf("vacate refreshed commitment locator: %w", err)
+		}
+		end += 2
+	}
+	return nil
 }
 
 // One frontier carries both recent-history discovery and fair anchor pages.
