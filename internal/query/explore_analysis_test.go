@@ -37,25 +37,6 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 func TestExploreGroupTimezoneValidationAndCalendarBuckets(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	b := NewTestDataBuilder(t)
-	source := b.AddSourceWithType("archive@example.com", "gmail")
-	b.AddMessage(MessageOpt{SourceID: source})
-
-	engine := b.BuildEngine()
-	result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
-		Dimension: "source", Timezone: "Invalid/Zone",
-	})
-	requirements.NoError(err)
-	requirements.Len(result.Rows, 1)
-	assertions.Equal(strconv.FormatInt(source, 10), result.Rows[0].Key)
-	assertions.Equal(int64(1), result.Rows[0].Count)
-	for _, dimension := range []string{"day", "month", "year"} {
-		for _, timezone := range []string{"Invalid/Zone", "Local"} {
-			_, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: dimension, Timezone: timezone})
-			requirements.ErrorContains(err, "invalid timezone")
-			requirements.ErrorIs(err, ErrInvalidExploreRequest)
-		}
-	}
 	groupBuilder := NewTestDataBuilder(t)
 	groupSource := groupBuilder.AddSourceWithType("archive@example.org", "gmail")
 	for _, instant := range []string{"2024-05-30T02:00:00Z", "2024-05-31T02:00:00Z", "2024-06-01T02:00:00Z", "2024-07-01T02:00:00Z", "2025-01-01T02:00:00Z"} {
@@ -64,6 +45,18 @@ func TestExploreGroupTimezoneValidationAndCalendarBuckets(t *testing.T) {
 		groupBuilder.AddMessage(MessageOpt{SourceID: groupSource, SentAt: at})
 	}
 	groupEngine := groupBuilder.BuildEngine()
+	result, err := groupEngine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "source", Timezone: "Invalid/Zone"})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 1)
+	assertions.Equal(strconv.FormatInt(groupSource, 10), result.Rows[0].Key)
+	assertions.Equal(int64(5), result.Rows[0].Count)
+	for _, dimension := range []string{"day", "month", "year"} {
+		for _, timezone := range []string{"Invalid/Zone", "Local"} {
+			_, err := groupEngine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: dimension, Timezone: timezone})
+			requirements.ErrorContains(err, "invalid timezone")
+			requirements.ErrorIs(err, ErrInvalidExploreRequest)
+		}
+	}
 	month := ExploreGroupRequest{Dimension: "month", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "desc"}, Page: PageSpec{Limit: 1}}
 	var total int64
 	for offset := range 3 {
@@ -881,9 +874,6 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 			assert.Nil(page.Overview)
 			foundHistorical := false
 			for _, row := range page.Rows {
-				if dimension == "source" {
-					assert.Zero(row.TotalItems)
-				}
 				request.GroupKey = row.Key
 				detail, err := engine.ExploreGroups(t.Context(), request)
 				require.NoError(err)

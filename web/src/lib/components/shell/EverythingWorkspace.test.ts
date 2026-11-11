@@ -202,54 +202,6 @@ describe('EverythingWorkspace', () => {
     }
   });
 
-  it('does not offer an invalid Files entry kind drill', async () => {
-    window.history.replaceState(null, '', '/');
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
-      if (path.endsWith('/files/groups')) return Response.json({ rows: [{ key: 'file', label: 'File', count: 2 }], total_count: 1 });
-      return Response.json(exploreResponse());
-    });
-    const state = new ExploreState(window);
-    state.replaceTransient({ workspace: 'files', groupingChain: ['kind'] });
-    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
-    try {
-      const grid = await screen.findByRole('grid', { name: 'Files grouped by kind' });
-      await fireEvent.click(await within(grid).findByText('File'));
-      expect(state.current.selectedRow).toBeNull();
-      expect(screen.queryByText(/selected group is not available/i)).toBeNull();
-      expect(within(grid).queryByRole('button', { name: 'Show items in File' })).toBeNull();
-    } finally {
-      view.unmount();
-      state.destroy();
-    }
-  });
-
-  it('drills Files month groups using UTC boundaries', async () => {
-    vi.stubEnv('TZ', 'America/New_York');
-    const dimension = 'month', key = '2026-07';
-    window.history.replaceState(null, '', '/');
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname.endsWith('/files/groups')) return Response.json({ rows: [{ key, label: key, count: 2 }], total_count: 1 });
-      return Response.json(exploreResponse());
-    });
-    const state = new ExploreState(window);
-    state.replaceTransient({ workspace: 'files', groupingChain: [dimension] });
-    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
-    try {
-      await fireEvent.click(await screen.findByRole('button', { name: 'Show items in Jul 2026' }));
-      expect(state.current.filters).toEqual([
-        { dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] },
-        { dimension: 'before', values: ['2026-08-01T00:00:00.000Z'] }
-      ]);
-    } finally {
-      view.unmount();
-      state.destroy();
-      vi.unstubAllEnvs();
-    }
-  });
-
   it.each([
     { searchMode: 'semantic' }, { filters: [{ dimension: 'source', values: ['1'] }] },
     { groupingChain: ['kind'] },

@@ -299,17 +299,11 @@ describe('GroupTable', () => {
     expect(screen.getByRole('row', { name: /Second source/ }).getAttribute('aria-current')).toBe('true');
   });
   it('keeps a later month page share relative to every grouped item', () => {
-    const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
     const onDrill = vi.fn();
     const row = { key: '2022-05', label: '2022-05', count: 20, total_items: 1000, estimated_bytes: 200, latest_at: '2022-05-31T12:00:00Z' };
-    const view = render(GroupTable, { rows: [row], dimension: 'month', onDrill });
-    try {
-      expect(screen.getByRole('columnheader', { name: 'Share' })).toBeDefined();
-      expect(screen.getByTitle('2% of 1,000 items').firstElementChild?.getAttribute('style')).toContain('width: 2%');
-    } finally {
-      clientWidth.mockRestore();
-      view.unmount();
-    }
+    render(GroupTable, { rows: [row], dimension: 'month', onDrill });
+    expect(screen.getByRole('columnheader', { name: 'Share' })).toBeDefined();
+    expect(screen.getByTitle('2% of 1,000 items').firstElementChild?.getAttribute('style')).toContain('width: 2%');
   });
 
   it('updates a source name when its type arrives after the rows', async () => {

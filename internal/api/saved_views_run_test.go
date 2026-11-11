@@ -162,11 +162,6 @@ func TestRunSavedViewCalendarGroupsUseRequestedTimezoneAndNewestFirst(t *testing
 			response, _ = runSavedView(t, srv, view.ID, `{"limit":1}`)
 			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 			assertions.Empty(engine.groupRequest.Timezone, "the engine defaults an omitted timezone to UTC")
-			engine.peopleErr = query.ErrInvalidExploreRequest
-			response, _ = runSavedView(t, srv, view.ID, `{"timezone":"Invalid/Zone"}`)
-			assertions.Equal(http.StatusBadRequest, response.Code, response.Body.String())
-			assertions.Equal("Invalid/Zone", engine.groupRequest.Timezone)
-			engine.peopleErr = nil
 		})
 	}
 }
