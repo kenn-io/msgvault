@@ -59,7 +59,7 @@ func newLoopsListCommand() *cobra.Command {
 		if opts.Limit < 1 || opts.Limit > loops.MaxLimit {
 			return usageErr(cmd, fmt.Errorf("--limit must be from 1 through %d", loops.MaxLimit))
 		}
-		return withLoopsClient(cmd, func(client *daemonclient.Client) error {
+		return withLoopsClientVersion(cmd, loopsListSchemaVersion(opts), func(client *daemonclient.Client) error {
 			result, err := client.ListLoops(cmd.Context(), opts)
 			if err != nil {
 				return err
@@ -71,6 +71,15 @@ func newLoopsListCommand() *cobra.Command {
 		})
 	}
 	return command
+}
+
+// loopsListSchemaVersion asks for the closed-commitment schema only when the
+// request sends include_closed, which an older daemon would ignore.
+func loopsListSchemaVersion(opts daemonclient.LoopListOptions) string {
+	if opts.IncludeClosed {
+		return "5.2.0"
+	}
+	return loopsMinAPISchemaVersion
 }
 
 func newLoopsDoneCommand() *cobra.Command {
