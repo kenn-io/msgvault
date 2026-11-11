@@ -522,7 +522,9 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	var backfillCap *int64
 	if anchorAfter > 0 || anchorThrough > 0 || anchorBackfill > 0 {
 		through = min(through, anchorThrough)
-		backfillCap = &anchorBackfill
+		if anchorAfter > 0 {
+			backfillCap = &anchorBackfill
+		}
 		window.SnapshotSequence = through
 	}
 	window.ThroughSequence = through
