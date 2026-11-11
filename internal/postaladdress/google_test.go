@@ -62,22 +62,24 @@ func TestGoogleMapsOnlyExplicitPostalFields(t *testing.T) {
 }
 
 func TestGoogleCarriesResponseIDToFollowUpChecks(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	var payload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload = nil
-		assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		assert.NoError(json.NewDecoder(r.Body).Decode(&payload))
 		_, _ = io.WriteString(w, strings.Replace(googleClean, `{"result"`, `{"responseId":"google-response-1","result"`, 1))
 	}))
 	defer server.Close()
 	v := GoogleValidator{APIKey: "synthetic-secret", Client: server.Client(), endpoint: server.URL}
 	input := Input{StreetAddress: "12 Example Street", CountryCode: "CA"}
 	first, err := v.Check(t.Context(), input, "")
-	require.NoError(t, err)
-	assert.Equal(t, "google-response-1", first.ResponseID)
-	assert.NotContains(t, payload, "previousResponseId")
+	require.NoError(err)
+	assert.Equal("google-response-1", first.ResponseID)
+	assert.NotContains(payload, "previousResponseId")
 	_, err = v.Check(t.Context(), input, first.ResponseID)
-	require.NoError(t, err)
-	assert.Equal(t, "google-response-1", payload["previousResponseId"])
+	require.NoError(err)
+	assert.Equal("google-response-1", payload["previousResponseId"])
 }
 
 func TestGoogleRequiresCompleteConfirmedFineGrainedResult(t *testing.T) {
@@ -240,17 +242,18 @@ func TestGoogleRetainedComponentsNeedReview(t *testing.T) {
 		{"country name", Input{StreetAddress: "12 Example Street", CountryCode: "CA", CountryName: "United States"}, googleClean, func(in Input) string { return in.CountryName }, "United States", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
 			v, calls := googleTestValidator(t, 200, tc.body)
 			got, err := v.Check(t.Context(), tc.input, "")
 			require.NoError(t, err)
-			assert.Equal(t, StatusNeedsReview, got.Status)
-			assert.Equal(t, int32(1), calls.Load())
-			assert.Equal(t, tc.want, tc.field(got.Proposed))
+			assert.Equal(StatusNeedsReview, got.Status)
+			assert.Equal(int32(1), calls.Load())
+			assert.Equal(tc.want, tc.field(got.Proposed))
 			if tc.street != "" {
-				assert.Equal(t, tc.street, got.Proposed.StreetAddress)
+				assert.Equal(tc.street, got.Proposed.StreetAddress)
 			}
 			if tc.reason != "" {
-				assert.Contains(t, got.ReasonCodes, tc.reason)
+				assert.Contains(got.ReasonCodes, tc.reason)
 			}
 		})
 	}

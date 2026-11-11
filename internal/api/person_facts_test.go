@@ -454,43 +454,45 @@ func mapKeysAny(values map[string]any) []string {
 }
 
 func TestPostalClaimResponseIncludesReview(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	srv, st, id, targets := newPersonFactAPIFixtureWithoutClaims(t)
 	target := targets["postal_address"]
-	require.NotEmpty(t, target.Key)
+	require.NotEmpty(target.Key)
 	applyPersonFactAPIGeneration(t, st, id, target, "postal", `{"street_address":"12 Example Street","country_code":"CA","extended_components":";;;;;;;Room\\;3;Floor 2","source_text":"12 Example Street"}`)
 	response := doRequest(t, srv.Router(), http.MethodGet, fmt.Sprintf("/api/v1/people/%d/fact-claims", id), nil, nil)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var body struct {
 		Claims []personfacts.Claim `json:"claims"`
 	}
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body)) //nolint:musttag // The response embeds the existing claim type.
-	require.Len(t, body.Claims, 1)
-	require.NotNil(t, body.Claims[0].PostalReview)
-	require.NotNil(t, body.Claims[0].PostalReview.Assessment)
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body)) //nolint:musttag // The response embeds the existing claim type.
+	require.Len(body.Claims, 1)
+	require.NotNil(body.Claims[0].PostalReview)
+	require.NotNil(body.Claims[0].PostalReview.Assessment)
 	claims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 1})
-	require.NoError(t, err)
-	require.Len(t, claims, 1)
+	require.NoError(err)
+	require.Len(claims, 1)
 	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	require.Equal(http.StatusOK, read.Code, read.Body.String())
 	mismatch, err := json.Marshal(map[string]any{"addresses": map[string]any{"add": []any{map[string]any{
 		"address_kind": "postal", "street_address": "Other street", "original_input": map[string]any{"address_kind": "postal", "street_address": "Other street"},
 		"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + claims[0].ClaimKey},
 	}}}})
-	require.NoError(t, err)
+	require.NoError(err)
 	rejected := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), mismatch, map[string]string{"If-Match": read.Header().Get("ETag")})
-	require.Equal(t, http.StatusBadRequest, rejected.Code, rejected.Body.String())
-	assert.Contains(t, rejected.Body.String(), "postal address snapshot does not match the cited suggestion")
+	require.Equal(http.StatusBadRequest, rejected.Code, rejected.Body.String())
+	assert.Contains(rejected.Body.String(), "postal address snapshot does not match the cited suggestion")
 	patch, err := json.Marshal(map[string]any{"addresses": map[string]any{"add": []any{map[string]any{
 		"address_kind": "postal", "street_address": "Corrected street", "original_input": body.Claims[0].PostalReview.Assessment.Original,
 		"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + claims[0].ClaimKey},
 	}}}})
-	require.NoError(t, err)
+	require.NoError(err)
 	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), patch, map[string]string{"If-Match": read.Header().Get("ETag")})
-	require.Equal(t, http.StatusOK, saved.Code, saved.Body.String())
+	require.Equal(http.StatusOK, saved.Code, saved.Body.String())
 	var profile store.PersonProfile
-	require.NoError(t, json.Unmarshal(saved.Body.Bytes(), &profile))
-	require.Len(t, profile.Addresses, 1)
-	require.NotNil(t, profile.Addresses[0].StreetAddress)
-	assert.Equal(t, "Corrected street", *profile.Addresses[0].StreetAddress)
-	assert.Equal(t, body.Claims[0].PostalReview.Assessment.Original, profile.Addresses[0].Assessment.Original)
+	require.NoError(json.Unmarshal(saved.Body.Bytes(), &profile))
+	require.Len(profile.Addresses, 1)
+	require.NotNil(profile.Addresses[0].StreetAddress)
+	assert.Equal("Corrected street", *profile.Addresses[0].StreetAddress)
+	assert.Equal(body.Claims[0].PostalReview.Assessment.Original, profile.Addresses[0].Assessment.Original)
 }

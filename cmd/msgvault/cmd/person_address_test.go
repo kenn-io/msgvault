@@ -115,26 +115,28 @@ func TestPostalAddressCLIListCarriesAssessment(t *testing.T) {
 }
 
 func TestPostalAddressCLIValidatesInputFile(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	daemon := newPersonBriefTestDaemon(t, `{}`)
 	path := filepath.Join(t.TempDir(), "postal.json")
 	value := `{"address_kind":"postal","street_address":"12 Example St"}`
 	input := value + strings.Repeat(" ", (1<<20)+1-len(value))
-	require.NoError(t, os.WriteFile(path, []byte(input), 0o600))
+	require.NoError(os.WriteFile(path, []byte(input), 0o600))
 	for _, args := range [][]string{{"assess", "7", "--input", path}, {"apply", "7", "--input", path, "--revision", "4", "--add"}} {
 		_, err := runPostalCLI(daemon.ctx, t, args...)
-		require.Error(t, err)
+		require.Error(err)
 	}
-	assert.Zero(t, daemon.requests.Load())
-	require.NoError(t, os.WriteFile(path, []byte(value+strings.Repeat(" ", (1<<20)-len(value))), 0o600))
+	assert.Zero(daemon.requests.Load())
+	require.NoError(os.WriteFile(path, []byte(value+strings.Repeat(" ", (1<<20)-len(value))), 0o600))
 	for _, args := range [][]string{{"assess", "7", "--input", path}, {"apply", "7", "--input", path, "--revision", "4", "--add"}} {
 		_, err := runPostalCLI(daemon.ctx, t, args...)
-		require.NoError(t, err)
+		require.NoError(err)
 	}
-	assert.EqualValues(t, 2, daemon.requests.Load())
-	require.NoError(t, os.WriteFile(path, []byte(" \nnull \n"), 0o600))
+	assert.EqualValues(2, daemon.requests.Load())
+	require.NoError(os.WriteFile(path, []byte(" \nnull \n"), 0o600))
 	for _, args := range [][]string{{"assess", "7", "--input", path}, {"apply", "7", "--input", path, "--revision", "4", "--add"}} {
 		_, err := runPostalCLI(daemon.ctx, t, args...)
-		require.ErrorContains(t, err, "address input must be a JSON object")
+		require.ErrorContains(err, "address input must be a JSON object")
 	}
-	assert.EqualValues(t, 2, daemon.requests.Load())
+	assert.EqualValues(2, daemon.requests.Load())
 }

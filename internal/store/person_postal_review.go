@@ -175,7 +175,7 @@ func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personI
 			review.ReasonCodes = append(review.ReasonCodes, "already_adopted")
 		}
 		var raw personfacts.PostalAddressValue
-		if err := json.Unmarshal(claim.SubmittedValue, &raw); err == nil {
+		if err := json.Unmarshal(claim.SubmittedValue, &raw, json.RejectUnknownMembers(true)); err == nil {
 			assessment := postaladdress.Assess(raw.Input())
 			if claim.Normalized != nil {
 				var proposed personfacts.PostalAddressValue

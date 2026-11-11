@@ -12,47 +12,49 @@ import (
 )
 
 func TestPostalUnsupportedSnapshotReadAndReplacement(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	stored := "msgvault:postal-input:v2\n{}"
 	srv, wrapped := newIdentityLinkTestServer(t)
 	id := seedAPIPerson(t, wrapped.Store)
 	bad, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, StreetAddress: new("12 Example Street"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, StreetAddress: new("34 Example Street"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = wrapped.DB().ExecContext(t.Context(), wrapped.Rebind(`UPDATE person_addresses SET original_value = ? WHERE id = ?`), stored, bad.Envelope.ID)
-	require.NoError(t, err)
+	require.NoError(err)
 	for _, path := range []string{personProfilePath(id), personProfilePath(id) + "/history"} {
 		response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
-		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		require.Equal(http.StatusOK, response.Code, response.Body.String())
 		var result struct {
 			Addresses []store.PersonAddress `json:"addresses"`
 		}
-		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
-		require.Len(t, result.Addresses, 2)
+		require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+		require.Len(result.Addresses, 2)
 		for _, address := range result.Addresses {
-			require.NotNil(t, address.StreetAddress)
+			require.NotNil(address.StreetAddress)
 			if address.Envelope.ID == bad.Envelope.ID {
-				assert.Empty(t, address.OriginalValue)
-				assert.Equal(t, "12 Example Street", *address.StreetAddress)
+				assert.Empty(address.OriginalValue)
+				assert.Equal("12 Example Street", *address.StreetAddress)
 			} else {
-				assert.Equal(t, "34 Example Street", *address.StreetAddress)
+				assert.Equal("34 Example Street", *address.StreetAddress)
 			}
 		}
 	}
 	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
 	body := fmt.Appendf(nil, `{"addresses":{"supersede":[%d],"add":[{"address_kind":"postal","street_address":"Updated","original_input":{"address_kind":"postal"},"envelope":{"source":"user"}}]}}`, bad.Envelope.ID)
 	response := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
-	assert.Equal(t, http.StatusConflict, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "unsupported_postal_snapshot")
+	assert.Equal(http.StatusConflict, response.Code, response.Body.String())
+	assert.Contains(response.Body.String(), "unsupported_postal_snapshot")
 	rows, err := wrapped.ListPersonAddressesContext(t.Context(), id, true)
-	require.NoError(t, err)
-	require.Len(t, rows, 2)
+	require.NoError(err)
+	require.Len(rows, 2)
 	var found bool
 	for _, address := range rows {
 		if address.Envelope.ID == bad.Envelope.ID {
 			found = true
-			assert.Equal(t, stored, address.OriginalValue)
+			assert.Equal(stored, address.OriginalValue)
 		}
 	}
-	assert.True(t, found)
+	assert.True(found)
 }
