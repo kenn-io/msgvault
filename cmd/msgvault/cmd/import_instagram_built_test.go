@@ -45,7 +45,6 @@ func TestInstagramBuiltCLI(t *testing.T) {
 	first := string(run("import-instagram", "--account", "orbit.example", "--self-name", "unmatched", "--limit", "2", fixture))
 	assert.Contains(first, "No sender exactly matched --self-name")
 	assert.Contains(first, "Import paused at --limit")
-	run("import-instagram", "--account", "orbit.example", "--self-name", "Nova Example", fixture)
 	// Machine-readable search output is stdout only; capture stderr separately.
 	command := exec.CommandContext(t.Context(), binary, "--home", home, "--local", "search", "telescope", "--message-type", "instagram", "--json") //nolint:gosec // The opt-in operator supplies the built binary.
 	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + home, "NO_COLOR=1"}

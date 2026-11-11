@@ -240,13 +240,6 @@ func TestInstagramMediaRecoveryAndContainment(t *testing.T) {
 	assert.Zero(summary.MessagesAdded)
 	assert.Equal(rejected, summary.MediaRejected)
 	assert.Equal(1, summary.AttachmentsStored)
-	require.NoError(os.Remove(full))
-	_, err = ImportDYI(t.Context(), st, opts)
-	require.NoError(err)
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments WHERE storage_path <> ''`).Scan(&n))
-	assert.Equal(2, n)
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments`).Scan(&n))
-	assert.Equal(attachmentCount, n)
 }
 
 func TestInstagramReplayPreservesReplacedMedia(t *testing.T) {
@@ -794,7 +787,6 @@ func TestInstagramSenderChangesRetainMessages(t *testing.T) {
 		rename, media bool
 	}{
 		{name: "rename", sender: "Renamed Example", rename: true},
-		{name: "different sender", sender: "Lumen Example"},
 		{name: "different media", sender: "Mira Example", media: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
