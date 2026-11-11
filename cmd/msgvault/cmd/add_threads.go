@@ -114,7 +114,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 	}
 	var payload threadsOAuthPayload
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil || payload.AppID != appID || payload.RedirectURI != redirectURI || payload.Code == "" || payload.AppSecret == "" {
-		return errors.New("invalid Threads OAuth handoff; run add-threads from the CLI")
+		return errors.New("run msgvault add-threads from your terminal to connect Threads")
 	}
 	st, cleanup, err := deps.openStore()
 	if err != nil {
@@ -158,11 +158,11 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 				}
 			}
 			if oldID, existed := initial[identifier]; existed && (current == nil || current.ID != oldID) {
-				return errors.New("threads source changed during authorization; reconnect explicitly")
+				return errors.New("Threads account changed while connecting; rerun add-threads")
 			}
 			if current != nil {
 				if current.HistoryOnly || current.MergedIntoSourceID != 0 {
-					return errors.New("threads source is no longer writable")
+					return errors.New("this Threads account was removed or merged and can't be reconnected")
 				}
 				execution, err = st.AcquireSyncExecutionContext(ctx, current.ID)
 				if err != nil {
@@ -189,7 +189,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			}
 			source, err := deps.registerSource(ctx, st, saved)
 			if err != nil {
-				return fmt.Errorf("threads credential was saved for %s, but account registration failed; rerun add-threads to reconnect, or remove the token from the configured tokens directory: %w", identifier, err)
+				return fmt.Errorf("Threads token was saved for %s, but adding the account failed; rerun add-threads, or delete that account's token file from the tokens directory (see docs: add-threads): %w", identifier, err)
 			}
 			if execution == nil {
 				execution, err = st.AcquireSyncExecutionContext(ctx, source.ID)
@@ -204,7 +204,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			confirmDefaultIdentity(ctx, cmd.OutOrStdout(), st, source.ID, identifier, identifier, "threads_user_id", logger)
 			if deps.postSourceMigrations != nil {
 				if err := deps.postSourceMigrations(st); err != nil {
-					return fmt.Errorf("threads credential was saved, but registration migrations failed: %w", err)
+					return fmt.Errorf("Threads token was saved, but finishing account setup failed; rerun add-threads: %w", err)
 				}
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Connected Threads account: %s\n", identifier)
@@ -226,7 +226,7 @@ func registerThreadsSource(ctx context.Context, st *store.Store, record threads.
 		return nil, err
 	}
 	if source.HistoryOnly || source.MergedIntoSourceID != 0 {
-		return nil, errors.New("threads source is retired")
+		return nil, errors.New("this Threads account was removed or merged and can't be reconnected")
 	}
 	label := record.Name
 	if label == "" {

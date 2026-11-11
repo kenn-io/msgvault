@@ -35,6 +35,11 @@ func TestThreadsSourceIdentifierAndAuthorization(t *testing.T) {
 		assert.Contains(u.Query().Get("scope"), "threads_read_replies")
 		assert.NotContains(u.Query().Get("scope"), "threads_content_publish")
 	}
+	raw, err := AuthorizationURL("123", "https://example.com", "state")
+	require.NoError(err)
+	authorization, err := url.Parse(raw)
+	require.NoError(err)
+	assert.Equal("https://example.com", authorization.Query().Get("redirect_uri"))
 	_, err = AuthorizationURL("123", "http://example.com/callback", "state")
 	require.Error(err)
 	_, err = AuthorizationURL("123", "https://example.com/callback", "")

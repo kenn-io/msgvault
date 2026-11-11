@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,7 +84,7 @@ func TestThreadsTokenLifecycleFilesystem(t *testing.T) {
 		require.Error(m.Save(t.Context(), testTokenRecord()))
 		_, err := m.Load("123", oauthTestOwner)
 		require.Error(err)
-		assert.Error(m.WithSourceLock(context.Background(), oauthTestSource, func() error { return nil }))
+		assert.Error(m.WithSourceLock(t.Context(), oauthTestSource, func() error { return nil }))
 	})
 	for _, name := range []string{"threads_123_" + oauthTestOwner + ".json", ".threads-token.lock", ".threads_123_" + oauthTestOwner + ".lock"} {
 		t.Run("symlink "+name, func(t *testing.T) {
@@ -102,7 +103,7 @@ func TestThreadsTokenLifecycleFilesystem(t *testing.T) {
 			} else if name == ".threads-token.lock" {
 				require.Error(m.Save(t.Context(), testTokenRecord()))
 			} else {
-				require.Error(m.WithSourceLock(context.Background(), oauthTestSource, func() error {
+				require.Error(m.WithSourceLock(t.Context(), oauthTestSource, func() error {
 					return nil
 				}))
 			}
@@ -124,7 +125,7 @@ func TestThreadsTokenLifecycleCrossProcessLock(t *testing.T) {
 	// The subprocess proves OS-level coordination rather than just a shared mutex.
 	if dir := os.Getenv("MSGVAULT_THREADS_LOCK_TEST_DIR"); dir != "" {
 		// The lock must stay held until the child context expires.
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		m := NewTokenManager(dir)
 		err := m.WithSourceLock(ctx, oauthTestSource, func() error { return errors.New("child entered held lifecycle lock") })
@@ -133,7 +134,7 @@ func TestThreadsTokenLifecycleCrossProcessLock(t *testing.T) {
 	}
 	dir := t.TempDir()
 	m := NewTokenManager(dir)
-	require.NoError(t, m.WithSourceLock(context.Background(), oauthTestSource, func() error {
+	require.NoError(t, m.WithSourceLock(t.Context(), oauthTestSource, func() error {
 		binaryPath, err := os.Executable()
 		require.NoError(t, err)
 		child := exec.CommandContext(t.Context(), binaryPath, "-test.run=^TestThreadsTokenLifecycleCrossProcessLock$")
@@ -152,7 +153,7 @@ func TestThreadsTokenLifecycleCrossProcessLock(t *testing.T) {
 		return m.Save(t.Context(), testTokenRecord())
 	}))
 	for _, source := range []string{"threads:../:1", "threads:123:1:2", "123", "x:123:1"} {
-		assert.Error(t, m.WithSourceLock(context.Background(), source, func() error { return nil }))
+		assert.Error(t, m.WithSourceLock(t.Context(), source, func() error { return nil }))
 	}
 }
 
@@ -177,43 +178,67 @@ func TestThreadsLongCredentialNamespaceRoundTrip(t *testing.T) {
 }
 
 func TestThreadsTokenRejectsNewerFormat(t *testing.T) {
+	require := require.New(t)
 	dir := t.TempDir()
 	manager := NewTokenManager(dir)
-	require.NoError(t, manager.Save(t.Context(), testTokenRecord()))
+	require.NoError(manager.Save(t.Context(), testTokenRecord()))
 	path := tokenFilePath(dir)
 	original, err := os.ReadFile(path)
-	require.NoError(t, err)
+	require.NoError(err)
 	legacy := strings.Replace(string(original), `"version":1`, `"version":0`, 1)
-	require.NotEqual(t, string(original), legacy)
-	require.NoError(t, os.WriteFile(path, []byte(legacy), 0600))
+	require.NotEqual(string(original), legacy)
+	require.NoError(os.WriteFile(path, []byte(legacy), 0600))
 	_, err = manager.Load("123", oauthTestOwner)
-	require.NoError(t, err)
+	require.NoError(err)
 	newer := strings.Replace(string(original), `"version":1`, `"version":2`, 1)
-	require.NotEqual(t, string(original), newer)
-	require.NoError(t, os.WriteFile(path, []byte(newer), 0600))
+	require.NotEqual(string(original), newer)
+	require.NoError(os.WriteFile(path, []byte(newer), 0600))
 	_, err = manager.Load("123", oauthTestOwner)
-	require.ErrorContains(t, err, "unsupported Threads credential format")
-	require.ErrorContains(t, manager.Save(t.Context(), testTokenRecord()), "unsupported Threads credential format")
+	require.ErrorContains(err, "unsupported Threads credential format")
+	require.ErrorContains(manager.Save(t.Context(), testTokenRecord()), "unsupported Threads credential format")
 	after, err := os.ReadFile(path)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Equal(t, newer, string(after))
 }
 
+// lockWaitContext signals after flock has failed to acquire the held lock.
+type lockWaitContext struct {
+	context.Context
+	waiting chan struct{}
+	once    sync.Once
+}
+
+func (c *lockWaitContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
+}
+
 func TestThreadsTokenLockWaitHonorsCancellation(t *testing.T) {
-	dir := t.TempDir()
-	manager := NewTokenManager(dir)
-	require.NoError(t, manager.Save(t.Context(), testTokenRecord()))
-	lock := flock.New(filepath.Join(dir, ".threads-token.lock"))
+	require := require.New(t)
+	manager := NewTokenManager(t.TempDir())
+	require.NoError(manager.Save(t.Context(), testTokenRecord()))
+	lock := flock.New(filepath.Join(manager.tokensDir, ".threads-token.lock"))
 	held, err := lock.TryLock()
-	require.NoError(t, err)
-	require.True(t, held)
+	require.NoError(err)
+	require.True(held)
 	t.Cleanup(func() { assert.NoError(t, lock.Unlock()) })
-	saveCtx, cancelSave := context.WithTimeout(t.Context(), 50*time.Millisecond)
-	defer cancelSave()
-	assert.ErrorIs(t, manager.Save(saveCtx, testTokenRecord()), context.DeadlineExceeded)
-	deleteCtx, cancelDelete := context.WithTimeout(t.Context(), 50*time.Millisecond)
-	defer cancelDelete()
-	assert.ErrorIs(t, manager.Delete(deleteCtx, "123", oauthTestOwner), context.DeadlineExceeded)
+	for _, operation := range []func(context.Context) error{
+		func(ctx context.Context) error { return manager.Save(ctx, testTokenRecord()) },
+		func(ctx context.Context) error { return manager.Delete(ctx, "123", oauthTestOwner) },
+	} {
+		ctx, cancel := context.WithCancel(t.Context())
+		waitCtx := &lockWaitContext{Context: ctx, waiting: make(chan struct{})}
+		done := make(chan error, 1)
+		go func() { done <- operation(waitCtx) }()
+		select {
+		case <-waitCtx.waiting:
+		case err := <-done:
+			cancel()
+			require.FailNow("operation returned before lock wait", "%v", err)
+		}
+		cancel()
+		require.ErrorIs(<-done, context.Canceled)
+	}
 	_, err = manager.Load("123", oauthTestOwner)
-	require.NoError(t, err)
+	require.NoError(err)
 }

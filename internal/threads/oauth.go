@@ -65,7 +65,7 @@ func ParseOAuthCallback(registeredURI, returnedURL, expectedState string) (strin
 		return "", bad
 	}
 	returned, err := url.Parse(returnedURL)
-	if err != nil || returned.User != nil || returned.Opaque != "" || !strings.EqualFold(returned.Scheme, registered.Scheme) || !strings.EqualFold(returned.Hostname(), registered.Hostname()) || callbackPort(returned) != callbackPort(registered) || returned.EscapedPath() != registered.EscapedPath() {
+	if err != nil || returned.User != nil || returned.Opaque != "" || !strings.EqualFold(returned.Scheme, registered.Scheme) || !strings.EqualFold(returned.Hostname(), registered.Hostname()) || callbackPort(returned) != callbackPort(registered) || callbackPath(returned) != callbackPath(registered) {
 		return "", bad
 	}
 	// Meta may append #_; the code is parsed solely from the query string.
@@ -126,6 +126,13 @@ func oauthCallbackURI(raw string) (*url.URL, error) {
 		}
 	}
 	return u, nil
+}
+
+func callbackPath(u *url.URL) string {
+	if path := u.EscapedPath(); path != "" {
+		return path
+	}
+	return "/"
 }
 
 func callbackPort(u *url.URL) string {

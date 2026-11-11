@@ -40,7 +40,7 @@ func TestThreadsOAuthDelegatedHTTPDeniedBeforeRunner(t *testing.T) {
 	_, token, _, err := srv.agentGrants.Issue("draft creator", []agentgrant.Permission{agentgrant.PermissionDraftCreate},
 		[]agentgrant.SourceRef{{ID: 1, Type: "threads", Identifier: "threads:123:20"}}, time.Time{})
 	require.NoError(t, err)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["add-threads"],"env":{"MSGVAULT_THREADS_OAUTH":"synthetic-payload"}}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["add-threads"],"env":{"MSGVAULT_THREADS_OAUTH":"synthetic-payload"}}`))
 	request.Header.Set(apiprotocol.AgentTokenHeader, token)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()

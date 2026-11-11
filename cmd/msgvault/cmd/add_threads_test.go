@@ -222,7 +222,7 @@ func TestAddThreadsRejectsUngrantAndPreservesPartialRegistration(t *testing.T) {
 			return nil, errors.New("synthetic registration failure")
 		}
 		_, err := executeAddThreadsFixture(t, deps, "123")
-		require.ErrorContains(err, "credential was saved")
+		require.ErrorContains(err, "token was saved")
 		_, err = deps.tokenManager().Load("123", "20")
 		require.NoError(err)
 		deps.registerSource = registerThreadsSource
@@ -235,6 +235,7 @@ func TestAddThreadsRejectsUngrantAndPreservesPartialRegistration(t *testing.T) {
 }
 
 func TestAddThreadsRegistrationFailureBeforeSourceCanReconnect(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	provider := newThreadsConnectFixture(t, "20")
 	deps := provider.deps(st, t.TempDir())
@@ -242,28 +243,38 @@ func TestAddThreadsRegistrationFailureBeforeSourceCanReconnect(t *testing.T) {
 		return nil, errors.New("synthetic source creation failure")
 	}
 	_, err := executeAddThreadsFixture(t, deps, "123")
-	require.ErrorContains(t, err, "rerun add-threads")
+	require.ErrorContains(err, "rerun add-threads")
 	_, err = deps.tokenManager().Load("123", "20")
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
-	require.ErrorIs(t, err, store.ErrSourceNotFound)
+	require.ErrorIs(err, store.ErrSourceNotFound)
 	deps.registerSource = registerThreadsSource
 	_, err = executeAddThreadsFixture(t, deps, "123")
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, "threads:123:20")
-	require.NoError(t, err)
+	require.NoError(err)
 }
 
 func TestAddThreadsRespectsDefaultIdentityOptOut(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource(sourceTypeThreads, "threads:123:20")
-	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"no_default_identity":true}`))
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"no_default_identity":true}`))
 	provider := newThreadsConnectFixture(t, "20")
 	deps := provider.deps(st, t.TempDir())
 	_, err = executeAddThreadsFixture(t, deps, "123")
-	require.NoError(t, err)
+	require.NoError(err)
 	identities, err := st.ListAccountIdentitiesContext(t.Context(), source.ID)
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Empty(t, identities)
+}
+
+func TestAddThreadsAccountSetupFailureGuidesReconnect(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	provider := newThreadsConnectFixture(t, "20")
+	deps := provider.deps(st, t.TempDir())
+	deps.postSourceMigrations = func(*store.Store) error { return errors.New("synthetic setup failure") }
+	_, err := executeAddThreadsFixture(t, deps, "123")
+	require.ErrorContains(t, err, "Threads token was saved, but finishing account setup failed; rerun add-threads")
 }

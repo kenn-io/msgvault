@@ -12,6 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func threadsBudgetRequest(t *testing.T) *http.Request {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.com", nil)
+	require.NoError(t, err)
+	return req
+}
+
+func TestThreadsPauseErrorMessage(t *testing.T) {
+	for _, tc := range []struct{ reason, message string }{
+		{"attempt_limit", "Threads connection stopped after too many requests; wait and rerun add-threads"},
+		{"time_limit", "Threads connection timed out; rerun add-threads"},
+		{"other", "Threads connection timed out; rerun add-threads"},
+	} {
+		t.Run(tc.reason, func(t *testing.T) {
+			err := &PauseError{Reason: tc.reason}
+			assert.Equal(t, tc.message, err.Error())
+			assert.Equal(t, tc.reason, err.Reason)
+		})
+	}
+}
+
 func TestThreadsBudgetRateAndTime(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -26,11 +47,11 @@ func TestThreadsBudgetRateAndTime(t *testing.T) {
 	for range 3 {
 		budget := NewRequestBudget(BudgetOptions{MaxAttempts: 1, Now: clock.Now, Wait: clock.Wait, Limiter: limiter})
 		client := NewBudgetedHTTPClient(&http.Client{Transport: transport}, budget)
-		resp, err := client.Get("https://example.com")
+		resp, err := client.Do(threadsBudgetRequest(t))
 		require.NoError(err)
 		require.NoError(resp.Body.Close())
 		assert.Equal(1, budget.Attempts())
-		resp, err = client.Get("https://example.com")
+		resp, err = client.Do(threadsBudgetRequest(t))
 		if resp != nil {
 			require.NoError(resp.Body.Close())
 		}
@@ -41,7 +62,7 @@ func TestThreadsBudgetRateAndTime(t *testing.T) {
 	clock.advance(time.Hour)
 	b := clock.budget(10)
 	clock.advance(RunTimeLimit)
-	resp, err := NewBudgetedHTTPClient(&http.Client{Transport: transport}, b).Get("https://example.com")
+	resp, err := NewBudgetedHTTPClient(&http.Client{Transport: transport}, b).Do(threadsBudgetRequest(t))
 	if resp != nil {
 		require.NoError(resp.Body.Close())
 	}
@@ -58,7 +79,7 @@ func TestThreadsBudgetRealTimerCancellation(t *testing.T) {
 			assert.Fail(t, "cancelled timer reached transport")
 			return nil, context.Canceled
 		})}, budget)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 		go func() {
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://example.com", nil)
@@ -92,7 +113,7 @@ func TestThreadsBudgetBindVerifiedSource(t *testing.T) {
 	sourceBudget := NewRequestBudget(BudgetOptions{MaxAttempts: 10, Now: clock.Now, Wait: clock.Wait, Limiter: sourceLimiter})
 	// Finish one source operation, leaving its next permitted attempt in force.
 	send := func(b *RequestBudget) {
-		resp, err := NewBudgetedHTTPClient(&http.Client{Transport: transport}, b).Get("https://example.com")
+		resp, err := NewBudgetedHTTPClient(&http.Client{Transport: transport}, b).Do(threadsBudgetRequest(t))
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
 	}
@@ -121,8 +142,9 @@ func TestThreadsBudgetConcurrentSourceOperations(t *testing.T) {
 				starts <- time.Now()
 				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
 			})}, b)
+			req := threadsBudgetRequest(t)
 			go func() {
-				res, err := c.Get("https://example.com")
+				res, err := c.Do(req)
 				if err == nil {
 					err = res.Body.Close()
 				}
@@ -152,7 +174,7 @@ func TestThreadsBudgetDeadlineIncludesLimiterWait(t *testing.T) {
 			assert.Fail("expired wait dispatched a request")
 			return nil, context.DeadlineExceeded
 		})}, budget)
-		resp, err := client.Get("https://example.com")
+		resp, err := client.Do(threadsBudgetRequest(t))
 		if resp != nil {
 			require.NoError(resp.Body.Close())
 		}

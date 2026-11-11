@@ -72,8 +72,11 @@ func TestThreadsOAuthRedirectsNeverReplayPayload(t *testing.T) {
 func TestThreadsOAuthAcceptsLoopbackAndAuthenticatedTLS(t *testing.T) {
 	for _, tls := range []bool{false, true} {
 		t.Run(strconv.FormatBool(tls), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			var received atomic.Int32
-			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal("synthetic-owner-key", r.Header.Get("X-Api-Key"))
 				received.Add(1)
 				_, _ = fmt.Fprintln(w, `{"type":"complete"}`)
 			})
@@ -84,10 +87,35 @@ func TestThreadsOAuthAcceptsLoopbackAndAuthenticatedTLS(t *testing.T) {
 				server.Start()
 			}
 			defer server.Close()
-			c, err := New(Config{URL: server.URL, APIKey: "synthetic-owner-key", AllowInsecure: true, HTTPClient: server.Client()})
-			require.NoError(t, err)
-			require.NoError(t, c.RunCLICommand(t.Context(), threadsOAuthRunRequest(), nil))
-			assert.Equal(t, int32(1), received.Load())
+			config := Config{URL: server.URL, APIKey: "synthetic-owner-key", AllowInsecure: true, HTTPClient: server.Client()}
+			if tls {
+				u, err := url.Parse(server.URL)
+				require.NoError(err)
+				address := u.Host
+				u.Host = net.JoinHostPort("example.com", u.Port())
+				transport, ok := server.Client().Transport.(*http.Transport)
+				require.True(ok)
+				trusted := transport.Clone()
+				trusted.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+					return (&net.Dialer{}).DialContext(ctx, network, address)
+				}
+				defer trusted.CloseIdleConnections()
+				client := *server.Client()
+				client.Transport = trusted
+				config.URL = u.String()
+				config.HTTPClient = &client
+			}
+			c, err := New(config)
+			require.NoError(err)
+			require.NoError(c.RunCLICommand(t.Context(), threadsOAuthRunRequest(), nil))
+			assert.Equal(int32(1), received.Load())
+			if tls {
+				config.APIKey = ""
+				withoutKey, err := New(config)
+				require.NoError(err)
+				require.Error(withoutKey.RunCLICommand(t.Context(), threadsOAuthRunRequest(), nil))
+				assert.Equal(int32(1), received.Load())
+			}
 		})
 	}
 }
