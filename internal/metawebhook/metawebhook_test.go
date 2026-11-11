@@ -94,48 +94,75 @@ func TestHandlerStoresOnlySignedDeliveries(t *testing.T) {
 	assert.Equal(body, string(stored))
 }
 
-func TestWorkerAppliesInOrderRetriesAndDrops(t *testing.T) {
+func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		h, dir := newTestHandler(t)
 		var applied []string
-		attempts := 0
+		flaky, invalid, down, alsoDown := 0, 0, 0, 0
 		feed := func(ctx context.Context, change Change) error {
 			value := string(change.Values[0])
 			switch value {
-			case `"busy"`:
-				attempts++
-				if attempts < 3 {
+			case `"flaky"`:
+				flaky++
+				if flaky < 3 {
 					return errors.New("source busy")
 				}
 			case `"invalid"`:
+				invalid++
 				return fmt.Errorf("%w: not archivable", ErrUnrecoverable)
 			case `"down"`:
+				down++
+				return errors.New("graph unavailable")
+			case `"also down"`:
+				alsoDown++
 				return errors.New("graph unavailable")
 			}
 			applied = append(applied, change.App+":"+change.EntryID+":"+value)
 			return nil
 		}
 		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
-		require.NoError(h.store("9", []byte(`{"object":`)))
-		time.Sleep(time.Millisecond)
-		for _, values := range []string{`"busy"`, `"invalid"},{"field":"feed","value":"same entry"`, `"down"`, `"after"`} {
-			body := `{"object":"page","entry":[{"id":"100","changes":[{"field":"feed","value":` + values + `},{"field":"ratings","value":{}}]}]}`
+		store := func(values ...string) {
+			changes := []string{}
+			for _, value := range values {
+				changes = append(changes, `{"field":"feed","value":`+value+`}`)
+			}
+			changes = append(changes, `{"field":"ratings","value":{}}`)
+			body := `{"object":"page","entry":[{"id":"100","changes":[` + strings.Join(changes, ",") + `]}]}`
 			require.NoError(h.store("9", []byte(body)))
 		}
+		require.NoError(h.store("9", []byte(`{"object":`)))
+		store(`"first"`, `"invalid"`, `"flaky"`)
+		store(`"down"`, `"also down"`, `"later"`)
+		store(`"after"`)
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error)
 		go func() { done <- w.Run(ctx) }()
+
 		time.Sleep(30 * time.Minute) // lets the fake clock run through the retry waits
 		synctest.Wait()
-		assert.Equal([]string{`9:100:"busy"`, `9:100:"same entry"`}, applied,
-			"a failing delivery blocks later ones; an unrecoverable change skips only itself")
+		assert.Equal([]string{`9:100:"first"`, `9:100:"flaky"`}, applied,
+			"a retried change does not apply the changes before it again; a failing change blocks the rest")
+		assert.Equal(1, invalid, "an unrecoverable change is skipped at once, without retries")
+		assert.Equal(3, flaky)
+		assert.Len(pendingFiles(t, dir), 2, "the failing delivery and the one after it wait")
+
 		time.Sleep(time.Hour)
 		synctest.Wait()
-		assert.Equal([]string{`9:100:"busy"`, `9:100:"same entry"`, `9:100:"after"`}, applied, "a delivery that keeps failing is dropped after an hour")
-		assert.Equal(3, attempts)
+		assert.Equal([]string{`9:100:"first"`, `9:100:"flaky"`, `9:100:"later"`, `9:100:"after"`}, applied,
+			"after an hour the failing change is skipped and the rest of its delivery and later deliveries apply")
+		assert.Equal(1, alsoDown, "with the retry budget spent, a later failing change gets a single attempt")
+		assert.Equal(1, invalid)
 		assert.Empty(pendingFiles(t, dir), "applied and dropped deliveries are deleted")
+		attempts := down
+
+		store(`"down"`)
+		w.Wake()
+		time.Sleep(10 * time.Minute)
+		synctest.Wait()
+		assert.Greater(down, attempts+1, "the new delivery is being retried")
 		cancel()
 		require.ErrorIs(<-done, context.Canceled)
+		assert.Len(pendingFiles(t, dir), 1, "a delivery interrupted by shutdown stays for the next start")
 	})
 }

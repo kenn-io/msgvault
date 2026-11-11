@@ -28,21 +28,27 @@ type Field struct{ Object, Name string }
 
 // FieldHandler applies one change for its field. An error that wraps
 // ErrUnrecoverable is logged and the change skipped, and later changes still
-// apply. Any other error retries the whole delivery with backoff; changes it
-// already applied are applied again, which the archive's upserts allow.
+// apply. Any other error retries the change with backoff. Changes that already
+// succeeded are not applied again, except when the daemon restarts during a
+// delivery: then the whole delivery is applied again, which the archive's
+// upserts allow.
 type FieldHandler func(ctx context.Context, change Change) error
 
 // ErrUnrecoverable marks a change that retrying cannot apply.
 var ErrUnrecoverable = errors.New("change cannot be applied")
 
-// maxRetryTime bounds how long one failing delivery blocks the deliveries
-// after it. Polling sync still archives the comments it carried.
+// maxRetryTime bounds how long one delivery spends retrying failed changes,
+// and so how long it blocks the deliveries after it. Polling sync still
+// archives the comments of changes that are skipped.
 const maxRetryTime = time.Hour
 
-// Worker applies stored deliveries oldest first and deletes each one after it
-// is applied. A failing delivery blocks later ones while it is retried, so a
-// retried delivery never overwrites newer changes. A delivery that still
-// fails after maxRetryTime, or fails permanently, is logged and dropped.
+// Worker applies stored deliveries oldest first, one change at a time, and
+// deletes each delivery after it is applied. A failing change blocks the
+// changes and deliveries after it while it is retried, so a retried change
+// never overwrites newer ones. Once a delivery has spent maxRetryTime
+// retrying, the failing change is logged and skipped, and each remaining
+// change of that delivery gets a single attempt. A change that fails
+// permanently is logged and skipped at once.
 type Worker struct {
 	pending  string
 	handlers map[Field]FieldHandler
@@ -103,20 +109,60 @@ func (w *Worker) process(ctx context.Context, name string) error {
 		slog.Warn("Meta webhook delivery dropped", "delivery", name, "error", err)
 		return remove(path)
 	}
-	retry := backoff.NewExponentialBackOff()
-	retry.InitialInterval, retry.MaxInterval = time.Second, 5*time.Minute
-	_, err = backoff.Retry(ctx, func() (struct{}, error) {
-		return struct{}{}, w.apply(ctx, app, envelope)
-	}, backoff.WithBackOff(retry), backoff.WithMaxElapsedTime(maxRetryTime), backoff.WithNotify(func(err error, wait time.Duration) {
-		slog.Warn("Meta webhook delivery failed; retrying", "delivery", name, "retry_in", wait, "error", err)
-	}))
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if err != nil {
-		slog.Warn("Meta webhook delivery dropped", "delivery", name, "error", err)
+	// The retry budget covers the whole delivery, so one delivery blocks the
+	// queue for about maxRetryTime at most.
+	deadline := time.Now().Add(maxRetryTime)
+	for _, entry := range envelope.Entry {
+		for _, change := range entry.Changes {
+			log := slog.With("delivery", name, "object", envelope.Object, "field", change.Field, "entry", entry.ID)
+			handler, ok := w.handlers[Field{envelope.Object, change.Field}]
+			if !ok {
+				log.Info("Meta webhook field not handled")
+				continue
+			}
+			apply := func() error {
+				return handler(ctx, Change{App: app, EntryID: entry.ID, Values: []jsontext.Value{change.Value}})
+			}
+			err := applyWithRetry(ctx, log, &deadline, apply)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err != nil {
+				log.Warn("Meta webhook change skipped", "error", err)
+			}
+		}
 	}
 	return remove(path)
+}
+
+// applyWithRetry applies one change, retrying failures with backoff until
+// deadline. Without budget left it makes a single attempt. When the budget
+// runs out during the retries it moves deadline to now, so the remaining
+// changes of the delivery get one attempt each.
+func applyWithRetry(ctx context.Context, log *slog.Logger, deadline *time.Time, apply func() error) error {
+	left := time.Until(*deadline)
+	if left <= 0 {
+		return apply()
+	}
+	retry := backoff.NewExponentialBackOff()
+	retry.InitialInterval, retry.MaxInterval = time.Second, 5*time.Minute
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
+		err := apply()
+		if errors.Is(err, ErrUnrecoverable) {
+			return struct{}{}, backoff.Permanent(err)
+		}
+		return struct{}{}, err
+	}, backoff.WithBackOff(retry), backoff.WithMaxElapsedTime(left), backoff.WithNotify(func(err error, wait time.Duration) {
+		log.Warn("Meta webhook change failed; retrying", "retry_in", wait, "error", err)
+	}))
+	if errors.Is(err, backoff.ErrMaxElapsedTime) {
+		// Backoff stops before a wait that would overrun the budget.
+		*deadline = time.Now()
+	}
+	if err != nil {
+		return fmt.Errorf("apply change: %w", err)
+	}
+	return nil
 }
 
 func remove(path string) error {
@@ -135,25 +181,4 @@ type envelope struct {
 			Value jsontext.Value `json:"value"`
 		} `json:"changes"`
 	} `json:"entry"`
-}
-
-// apply applies every change with a handler, in delivery order. Fields
-// without a handler are logged and skipped.
-func (w *Worker) apply(ctx context.Context, app string, envelope envelope) error {
-	for _, entry := range envelope.Entry {
-		for _, change := range entry.Changes {
-			handler, ok := w.handlers[Field{envelope.Object, change.Field}]
-			if !ok {
-				slog.Info("Meta webhook field not handled", "object", envelope.Object, "field", change.Field, "entry", entry.ID)
-				continue
-			}
-			err := handler(ctx, Change{App: app, EntryID: entry.ID, Values: []jsontext.Value{change.Value}})
-			if errors.Is(err, ErrUnrecoverable) {
-				slog.Warn("Meta webhook change skipped", "object", envelope.Object, "field", change.Field, "entry", entry.ID, "error", err)
-			} else if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
