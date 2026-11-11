@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mbox"
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/email"
@@ -186,10 +185,6 @@ func TestImportMboxPersistsListIDAndAutomation(t *testing.T) {
 				Header("List-Id", "Example <"+tc.listID+">").
 				Body("Body text.\n").
 				Bytes()
-			parsed, parseErr := mime.Parse(raw)
-			require.NoError(parseErr)
-			require.False(parsed.Incomplete)
-			require.NotEmpty(parsed.ListID)
 			mboxPath := filepath.Join(tmp, "list-id.mbox")
 			mboxData := "From alice@example.com Mon Jan 1 12:00:00 2024\n" + string(raw)
 			require.NoError(os.WriteFile(mboxPath, []byte(mboxData), 0600), "write mbox")

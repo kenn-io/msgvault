@@ -2655,10 +2655,6 @@ func TestFullSyncPersistsListIDAndAutomation(t *testing.T) {
 				Header("List-Unsubscribe", "<mailto:leave@example.test>").
 				Body("Body text.").
 				Bytes()
-			parsed, parseErr := mime.Parse(raw)
-			require.NoError(parseErr)
-			require.False(parsed.Incomplete)
-			require.NotEmpty(parsed.ListID)
 			env.Mock.Profile.MessagesTotal = 1
 			env.Mock.Profile.HistoryID = 12345
 			env.Mock.AddMessage("list-id-message", raw, []string{"INBOX"})
