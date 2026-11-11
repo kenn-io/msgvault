@@ -79,7 +79,7 @@ func (imp *Importer) matchRosterMembers(ctx context.Context, sourceID int64, pro
 		p := &items[i]
 		key := imp.res.identifierForUser(p.ID)
 		receipt, ok := receipts[key]
-		if !ok || (work.Phase == "matching_retry" && receipt.Status != rosterMatchFailed) {
+		if !ok || (receipt.Status == "resolved" && !opts.Full) || (work.Phase == "matching_retry" && receipt.Status != rosterMatchFailed) {
 			work.Next = i + 1
 			continue
 		}

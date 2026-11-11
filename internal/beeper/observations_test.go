@@ -544,8 +544,11 @@ func TestImportResetsRunLocalObservationDedupe(t *testing.T) {
 	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM participant_contact_observations`)
 	require.NoError(err, "remove observations between import runs")
 
-	// Saved roster progress skips unchanged members. A full sync clears it,
-	// so the same addresses reach the recorder again.
+	// An unchanged scheduled visit keeps completed matching work.
+	skipped, err := imp.Import(ctx, ImportOptions{AccountID: "telegram", NoMedia: true, Scheduled: true})
+	require.NoError(err)
+	assert.Zero(skipped.ObservationsRecorded)
+	// A full sync clears saved progress and matches the members again.
 	second, err := imp.Import(ctx, ImportOptions{AccountID: "telegram", NoMedia: true, Full: true})
 	require.NoError(err, "second Import")
 	assert.Equal(int64(3), second.ObservationsRecorded,

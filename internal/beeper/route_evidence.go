@@ -1,9 +1,6 @@
 package beeper
 
 import (
-	"context"
-	"encoding/json/v2"
-	"fmt"
 	"strings"
 	"time"
 
@@ -81,25 +78,4 @@ func accountRouteProofFailure(account *Account, expectedAccountID string) string
 	default:
 		return "account_not_connected"
 	}
-}
-
-// refreshTruncatedRoute retains the verified full roster while updating route fields.
-func (imp *Importer) refreshTruncatedRoute(ctx context.Context, convID int64, evidence store.MessagingRouteEvidence) error {
-	metadata, err := imp.store.GetConversationMetadataContext(ctx, convID)
-	if err != nil {
-		return err
-	}
-	if metadata.Valid && metadata.String != "" {
-		var saved struct {
-			Route store.MessagingRouteEvidence `json:"messaging_route"`
-		}
-		if err := json.Unmarshal([]byte(metadata.String), &saved); err != nil {
-			return fmt.Errorf("decode conversation route metadata: %w", err)
-		}
-		evidence.MembershipComplete = saved.Route.MembershipComplete
-		evidence.ParticipantIDs = saved.Route.ParticipantIDs
-		evidence.SelfParticipantIDs = saved.Route.SelfParticipantIDs
-		evidence.Truncated = saved.Route.Truncated
-	}
-	return imp.store.SetConversationMessagingRouteEvidence(ctx, convID, evidence)
 }

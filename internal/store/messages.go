@@ -6042,7 +6042,7 @@ func (s *Store) writeBeeperRosterReceipt(q querier, sourceID int64, provider, id
 	if checksum == "" {
 		return nil
 	}
-	_, err := q.Exec(fmt.Sprintf(`INSERT INTO source_import_items (source_id, provider, provider_id, name, checksum, status, created_at, updated_at) VALUES (?, ?, ?, '', ?, 'resolved', %s, %s) ON CONFLICT(source_id, provider, provider_id) DO UPDATE SET checksum = excluded.checksum, status = excluded.status, updated_at = %s`, s.dialect.Now(), s.dialect.Now(), s.dialect.Now()), sourceID, provider, identifier, BeeperRosterReceiptChecksum(checksum, owner))
+	_, err := q.Exec(fmt.Sprintf(`INSERT INTO source_import_items (source_id, provider, provider_id, name, checksum, status, created_at, updated_at) VALUES (?, ?, ?, '', ?, 'pending', %s, %s) ON CONFLICT(source_id, provider, provider_id) DO UPDATE SET checksum = excluded.checksum, status = excluded.status, updated_at = %s`, s.dialect.Now(), s.dialect.Now(), s.dialect.Now()), sourceID, provider, identifier, BeeperRosterReceiptChecksum(checksum, owner))
 	return err
 }
 

@@ -69,6 +69,11 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	assert.True(complete)
 	assert.Positive(sum.Errors)
+	receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+	require.NoError(err)
+	assert.Equal("failed", receipts[imp.res.identifierForUser("@telegram_first:example.test")].Status)
+	assert.Equal("resolved", receipts[imp.res.identifierForUser("@telegram_second:example.test")].Status)
+	assert.Equal("pending", receipts[imp.res.identifierForUser("@telegram_third:example.test")].Status)
 	second := participantForBeeperUser(t, st, "@telegram_second:example.test")
 	observations, err := st.ListParticipantObservationsContext(t.Context(), second, true)
 	require.NoError(err)
@@ -107,6 +112,11 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	require.NoError(err)
 	assert.NotEmpty(observations, "the failed member must be retried")
 	assert.Equal("done", work.Phase)
+	receipts, err = st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+	require.NoError(err)
+	for _, receipt := range receipts {
+		assert.Equal("resolved", receipt.Status)
+	}
 }
 
 func TestRosterResumeRevisitsChangedMember(t *testing.T) {

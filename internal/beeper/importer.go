@@ -1008,7 +1008,7 @@ func (imp *Importer) ensureConversation(
 	listingSignature := rosterSignature(ch, opts.AccountID)
 	detail := ch
 	membershipComplete := !ch.Participants.HasMore
-	if !opts.skipRoster && !opts.rosterDetailFetched && (ch.Participants.HasMore || (opts.rosterState != nil && opts.rosterState.DetailBacked)) {
+	if !opts.rosterDetailFetched && (ch.Participants.HasMore || (!opts.skipRoster && opts.rosterState != nil && opts.rosterState.DetailBacked)) {
 		if err := imp.store.InvalidateSourceConversationMessagingRouteEvidenceContext(ctx, sourceID, ch.ID); err != nil {
 			return 0, false, chatMembership{}, fmt.Errorf("invalidate route evidence before Beeper roster refresh for chat %q: %w", ch.ID, err)
 		}
@@ -1016,6 +1016,9 @@ func (imp *Importer) ensureConversation(
 		d, gerr := imp.client.GetChat(requestCtx, ch.ID)
 		cancel()
 		gerr = opts.budgetError(ctx, gerr)
+		if gerr == nil && opts.skipRoster && (d == nil || d.Participants.HasMore) {
+			gerr = errors.New("beeper chat detail has an incomplete roster")
+		}
 		if errors.Is(gerr, errBeeperBudgetExpired) {
 			return 0, false, chatMembership{}, gerr
 		}
@@ -1028,6 +1031,9 @@ func (imp *Importer) ensureConversation(
 				sum.failChat(ch.ID, false, gerr)
 				sum.FetchErrors++
 				sum.Errors++
+				if opts.skipRoster {
+					return 0, false, chatMembership{}, gerr
+				}
 			} else {
 				imp.recordItem(syncID, ch.ID, "membership", store.SyncRunItemStatusSkipped, "beeper_roster_verification_deferred", gerr)
 			}
@@ -1061,10 +1067,7 @@ func (imp *Importer) ensureConversation(
 		routeEvidence.Failure = "chat_binding_mismatch"
 	}
 	if opts.skipRoster {
-		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature {
-			if ch.Participants.HasMore {
-				return convID, true, membership, imp.refreshTruncatedRoute(ctx, convID, routeEvidence)
-			}
+		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature && opts.rosterState.Signature == rosterSignature(detail, opts.AccountID) {
 			keys := imp.rosterKeys(detail.Participants.Items)
 			settled, err := imp.refreshRosterProof(ctx, sourceID, convID, rosterProvider(ch.ID), detail, detail.Participants.Items, keys, opts.AccountID, routeEvidence, membership)
 			if err != nil {

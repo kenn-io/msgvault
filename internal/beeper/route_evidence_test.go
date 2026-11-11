@@ -1516,6 +1516,10 @@ func TestAppliedRosterRefreshesRouteAccountAndMerge(t *testing.T) {
 			state.Chats[chat.ID].RosterWork.MemberFirst = false
 			detail.MergedIntoChatID = "!destination:example.test"
 			detail.Merge = &ChatMerge{ChatIDs: []string{"!underlying:example.test"}}
+			f.mu.Lock()
+			chat.MergedIntoChatID = detail.MergedIntoChatID
+			chat.Merge = detail.Merge
+			f.mu.Unlock()
 			opts.routeAccount.Status = "connected"
 			imp = NewImporter(st, imp.client)
 			_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})

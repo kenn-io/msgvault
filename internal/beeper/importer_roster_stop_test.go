@@ -435,59 +435,68 @@ func (h *rosterOperationQuota) Handle(_ context.Context, record slog.Record) err
 
 // serial: SQL logging and the default logger are process-wide.
 func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	room := budgetTestChat("!quota-room:example.test", 2, time.Now().Add(-48*time.Hour))
-	aliases := budgetTestChat("!quota-aliases:example.test", 2, time.Now().Add(-72*time.Hour))
-	room.Type, aliases.Type = "group", "group"
-	for i := range 62 {
-		native := fmt.Sprintf("quota-native-%d", i)
-		room.Participants = append(room.Participants, map[string]any{"id": fmt.Sprintf("@signal_quota%d:example.test", i), "providerID": native})
-		aliases.Participants = append(aliases.Participants, map[string]any{"id": fmt.Sprintf("@signal_aliasquota%d:example.test", i), "providerID": native})
-	}
-	aliases.Participants = append(aliases.Participants, map[string]any{"id": "@signal_quota_alias_late:example.test", "providerID": "quota-native-late"})
-	f.addChat(room)
-	f.addChat(aliases)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	require.True(linked(t, st, participantForBeeperUser(t, st, "@signal_quota61:example.test"), participantForBeeperUser(t, st, "@signal_aliasquota61:example.test")))
-	f.mu.Lock()
-	room.Participants = append(room.Participants, map[string]any{"id": "@signal_quota_late:example.test", "providerID": "quota-native-late"})
-	room.LastActivity = time.Now().Add(time.Hour)
-	f.mu.Unlock()
-	previous := slog.Default()
-	handler := &rosterOperationQuota{Handler: slog.DiscardHandler}
-	slog.SetDefault(slog.New(handler))
-	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
-	t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-	for range 30 {
-		handler.operations = 0
-		imp = NewImporter(st, imp.client)
-		sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 160 }})
-		require.NoError(err)
-		require.Zero(sum.Errors)
-		first, _, err := st.ParticipantByIdentifierContext(t.Context(), "beeper", imp.res.identifierForUser("@signal_quota_late:example.test"))
-		require.NoError(err)
-		if first != 0 {
-			obs, err := st.ListParticipantObservationsContext(t.Context(), first, true)
+	for _, changing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("changing=%t", changing), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := newFakeBeeper(t)
+			room := budgetTestChat("!quota-room:example.test", 2, time.Now().Add(-48*time.Hour))
+			aliases := budgetTestChat("!quota-aliases:example.test", 2, time.Now().Add(-72*time.Hour))
+			room.Type, aliases.Type = "group", "group"
+			for i := range 62 {
+				native := fmt.Sprintf("quota-native-%d", i)
+				room.Participants = append(room.Participants, map[string]any{"id": fmt.Sprintf("@signal_quota%d:example.test", i), "providerID": native})
+				aliases.Participants = append(aliases.Participants, map[string]any{"id": fmt.Sprintf("@signal_aliasquota%d:example.test", i), "providerID": native})
+			}
+			aliases.Participants = append(aliases.Participants, map[string]any{"id": "@signal_quota_alias_late:example.test", "providerID": "quota-native-late"})
+			f.addChat(room)
+			f.addChat(aliases)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 			require.NoError(err)
-			if len(obs) > 0 && linked(t, st, first, participantForBeeperUser(t, st, "@signal_quota_alias_late:example.test")) {
-				state := latestBeeperState(t, imp).Chats[room.ID]
-				if state != nil && state.RosterWork != nil && state.RosterWork.Phase == "done" {
-					break
+			require.True(linked(t, st, participantForBeeperUser(t, st, "@signal_quota61:example.test"), participantForBeeperUser(t, st, "@signal_aliasquota61:example.test")))
+			f.mu.Lock()
+			room.Participants = append(room.Participants, map[string]any{"id": "@signal_quota_late:example.test", "providerID": "quota-native-late"})
+			room.LastActivity = time.Now().Add(time.Hour)
+			f.mu.Unlock()
+			previous := slog.Default()
+			handler := &rosterOperationQuota{Handler: slog.DiscardHandler}
+			slog.SetDefault(slog.New(handler))
+			store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
+			t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+			for attempt := range 30 {
+				if changing && attempt > 0 {
+					f.mu.Lock()
+					room.Participants = append(room.Participants, map[string]any{"id": fmt.Sprintf("@signal_new%02d:example.test", attempt)})
+					f.mu.Unlock()
+				}
+				handler.operations = 0
+				imp = NewImporter(st, imp.client)
+				sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 160 }})
+				require.NoError(err)
+				require.Zero(sum.Errors)
+				first, _, err := st.ParticipantByIdentifierContext(t.Context(), "beeper", imp.res.identifierForUser("@signal_quota_late:example.test"))
+				require.NoError(err)
+				if first != 0 {
+					obs, err := st.ListParticipantObservationsContext(t.Context(), first, true)
+					require.NoError(err)
+					if len(obs) > 0 && linked(t, st, first, participantForBeeperUser(t, st, "@signal_quota_alias_late:example.test")) {
+						state := latestBeeperState(t, imp).Chats[room.ID]
+						if state != nil && state.RosterWork != nil && state.RosterWork.Phase == "done" {
+							break
+						}
+					}
 				}
 			}
-		}
+			first := participantForBeeperUser(t, st, "@signal_quota_late:example.test")
+			alias := participantForBeeperUser(t, st, "@signal_quota_alias_late:example.test")
+			assert.True(linked(t, st, first, alias))
+			observations, err := st.ListParticipantObservationsContext(t.Context(), first, true)
+			require.NoError(err)
+			assert.NotEmpty(observations)
+			assert.Equal("done", latestBeeperState(t, imp).Chats[room.ID].RosterWork.Phase)
+		})
 	}
-	first := participantForBeeperUser(t, st, "@signal_quota_late:example.test")
-	alias := participantForBeeperUser(t, st, "@signal_quota_alias_late:example.test")
-	assert.True(linked(t, st, first, alias))
-	observations, err := st.ListParticipantObservationsContext(t.Context(), first, true)
-	require.NoError(err)
-	assert.NotEmpty(observations)
-	assert.Equal("done", latestBeeperState(t, imp).Chats[room.ID].RosterWork.Phase)
 }
 
 func TestRosterMembershipResumesAfterStop(t *testing.T) {
