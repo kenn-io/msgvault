@@ -585,6 +585,14 @@ test('aligns group actions and activity in wide and inspected views', async ({ p
   const sourceCell = (await sourceAction.locator('..').boundingBox())!;
   expect.soft(sourceGrid.x + sourceGrid.width - sourceCell.x - sourceCell.width, 'wide Source action inset').toBeLessThanOrEqual(2);
 
+  const width = await sources.evaluate(element => element.clientWidth);
+  await page.setViewportSize({ width: page.viewportSize()!.width + 640 - width, height: 900 });
+  await expect.poll(async () => (await sources.boundingBox())!.width).toBeCloseTo(640, 0);
+  const narrowGrid = (await sources.boundingBox())!;
+  const narrowAction = (await sourceAction.boundingBox())!;
+  expect(narrowAction.x + narrowAction.width).toBeLessThanOrEqual(narrowGrid.x + narrowGrid.width);
+  await page.setViewportSize({ width: 1920, height: 900 });
+
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['participant'] })))}`);
   const people = page.getByRole('grid', { name: 'Messages grouped by participant' });
   await people.getByText('Person Example', { exact: true }).click();

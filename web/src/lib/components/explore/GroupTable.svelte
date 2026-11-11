@@ -72,7 +72,7 @@
   const OVERSCAN = 6;
   let width = $state(1000);
   // The compact two-line row already fits size and latest beneath the name.
-  const narrow = $derived(!compact.current && (Boolean(inspectedKey) || width < 640));
+  const narrow = $derived(!compact.current && (Boolean(inspectedKey) || width < 648));
   const timeGroup = $derived((dimension === 'month' || dimension === 'year') && rows.some((row) => row.total_items !== undefined));
   const columnCount = $derived((narrow ? 3 : 5) + (timeGroup ? 1 : 0));
   const template = $derived(narrow
