@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"strings"
-	"time"
 
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -25,18 +24,35 @@ func operationRunMCPCapabilities(hasRoute mcpRouteCheck) []string {
 }
 
 type operationRunsArguments struct {
-	Kind          *generated.ListOperationRunsQueryKind  `json:"kind,omitempty"`
-	Lane          *generated.ListOperationRunsQueryLane  `json:"lane,omitempty"`
-	State         *generated.ListOperationRunsQueryState `json:"state,omitempty"`
-	StartedFrom   *time.Time                             `json:"started_from,omitempty"`
-	StartedBefore *time.Time                             `json:"started_before,omitempty"`
-	Limit         *int64                                 `json:"limit,omitempty"`
-	Cursor        *string                                `json:"cursor,omitempty"`
+	generated.ListOperationRunsQuery
+	StartedFrom   *string `json:"started_from,omitempty"`
+	StartedBefore *string `json:"started_before,omitempty"`
+}
+
+// The generated query uses time.Time, which normalizes noncanonical input.
+// Preserve the caller's text so the daemon applies its own timestamp rules.
+type operationRunsRequestOptions struct {
+	*generated.ListOperationRunsRequestOptions
+	startedFrom, startedBefore *string
+}
+
+func (o operationRunsRequestOptions) GetQuery() (map[string]any, error) {
+	query, err := o.ListOperationRunsRequestOptions.GetQuery()
+	if err != nil {
+		return nil, err
+	}
+	if o.startedFrom != nil {
+		query["started_from"] = *o.startedFrom
+	}
+	if o.startedBefore != nil {
+		query["started_before"] = *o.startedBefore
+	}
+	return query, nil
 }
 
 func operationRunRefusal(code string) bool {
 	switch code {
-	case "invalid_cursor", "invalid_operation_run_id", "operation_run_not_found", "operation_history_unavailable", "operation_history_conflict", "operation_history_failed":
+	case "invalid_cursor", "invalid_kind", "invalid_lane", "invalid_state", "invalid_limit", "invalid_started_from", "invalid_started_before", "invalid_operation_run_id", "operation_run_not_found", "operation_history_unavailable", "operation_history_conflict", "operation_history_failed":
 		return true
 	}
 	return false
@@ -59,8 +75,8 @@ func (b *daemonMCPOperations) executeOperationRunRead(ctx context.Context, name 
 		if e != nil {
 			return invalid()
 		}
-		query := &generated.ListOperationRunsQuery{Kind: input.Kind, Lane: input.Lane, State: input.State, StartedFrom: input.StartedFrom, StartedBefore: input.StartedBefore, Limit: input.Limit, Cursor: input.Cursor}
-		result, err = readMCPOperationJSONWithClassifier[generated.OperationRunsResponse](ctx, b.client, http.MethodGet, "/api/v1/operations/runs", &generated.ListOperationRunsRequestOptions{Query: query}, operationRunRefusal, http.StatusOK)
+		options := operationRunsRequestOptions{ListOperationRunsRequestOptions: &generated.ListOperationRunsRequestOptions{Query: &input.ListOperationRunsQuery}, startedFrom: input.StartedFrom, startedBefore: input.StartedBefore}
+		result, err = readMCPOperationJSONWithClassifier[generated.OperationRunsResponse](ctx, b.client, http.MethodGet, "/api/v1/operations/runs", options, operationRunRefusal, http.StatusOK)
 	case "get_operation_run":
 		input, e := decodeMCPOperationArguments[struct {
 			ID string `json:"id"`
