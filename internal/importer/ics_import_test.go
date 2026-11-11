@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,13 +23,17 @@ func TestImportICSMalformedFileLeavesNoSource(t *testing.T) {
 	assert.ErrorIs(t, err, store.ErrSourceNotFound)
 }
 
-func TestImportICSOversizedEventLeavesNoSource(t *testing.T) {
+func TestImportICSMultipleEventsOverFileLimit(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	path := filepath.Join(t.TempDir(), "oversized.ics")
-	raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:large@example.com\r\nDTSTART:20270302T120000Z\r\nDESCRIPTION:" + strings.Repeat("a", 64<<20) + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	path := filepath.Join(t.TempDir(), "large-calendar.ics")
+	padding := strings.Repeat("a", 32<<20)
+	raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:first@example.com\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nX-PADDING:" + padding + "\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:second@example.com\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T130000Z\r\nX-PADDING:" + padding + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	require.NoError(t, os.WriteFile(path, []byte(raw), 0600))
-	_, err := ImportICS(t.Context(), st, path, "large-export")
-	require.ErrorContains(t, err, "retained calendar exceeds")
-	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "ics", "large-export")
-	assert.ErrorIs(t, err, store.ErrSourceNotFound)
+	summary, err := ImportICS(t.Context(), st, path, "large-export")
+	require.NoError(t, err)
+	assert.Equal(t, 2, summary.Changed)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	require.NoError(t, err)
+	assert.Len(t, page.Occurrences, 2)
 }

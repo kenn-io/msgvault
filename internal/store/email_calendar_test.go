@@ -177,6 +177,13 @@ func TestEmailCalendarActivityCandidates(t *testing.T) {
 	gcalData.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), Valid: true}
 	_, err = st.PersistMessageContext(t.Context(), gcalData)
 	requirements.NoError(err)
+	imported, err := st.GetOrCreateSource("message_import", "activity-import")
+	requirements.NoError(err)
+	importedID, err := st.PersistMessageContext(t.Context(), &MessagePersistData{
+		Message:      &Message{SourceID: imported.ID, SourceMessageID: "imported-event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), Valid: true}},
+		Conversation: &ConversationPersistData{SourceConversationID: "imported-event"},
+	})
+	requirements.NoError(err)
 	for _, source := range []struct {
 		id  int64
 		typ string
@@ -204,6 +211,7 @@ func TestEmailCalendarActivityCandidates(t *testing.T) {
 	assertions.False(eligible[gmailEvents[0]])
 	assertions.True(eligible[icsEvents[0]])
 	assertions.True(eligible[gcalID])
+	assertions.True(eligible[importedID])
 }
 
 func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
