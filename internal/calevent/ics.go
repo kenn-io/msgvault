@@ -22,6 +22,9 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
+// MaxRawBytes bounds the uncompressed raw event used by calendar readers.
+const MaxRawBytes = 64 << 20
+
 // EmailInviteSQL identifies email-derived events; source merges preserve source types.
 func EmailInviteSQL(messageType, sourceType, archiveOnly string) string {
 	return fmt.Sprintf("(COALESCE(%s, '') = 'calendar_event' AND COALESCE(%s, '') NOT IN ('gcal', 'ics') AND %s)", messageType, sourceType, archiveOnly)
@@ -150,6 +153,9 @@ func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSCo
 			if err != nil {
 				return nil, fmt.Errorf("retain VEVENT %d: %w", index+1, err)
 			}
+		}
+		if len(retained) > MaxRawBytes {
+			return nil, fmt.Errorf("VEVENT %d: retained calendar exceeds %d bytes", index+1, MaxRawBytes)
 		}
 		normalizeICSParams(comp.Props, zones)
 		result, err := parseICSEvent(comp, method, loc)
