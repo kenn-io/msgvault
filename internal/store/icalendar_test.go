@@ -292,6 +292,17 @@ func TestICalendarCancellationKeepsImplicitAllDayEnd(t *testing.T) {
 	assertions.Equal("2027-03-11", page.Occurrences[0].EndDate)
 }
 
+func TestICalendarImportsLargeFileWithSmallEvents(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	padding := strings.Repeat("a", maxMeetingRawBytes/2)
+	raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:first@example.com\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nX-PADDING:" + padding + "\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:second@example.com\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T130000Z\r\nX-PADDING:" + padding + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	summary, err := st.PersistICalendarContext(t.Context(), source, []byte(raw))
+	requirements.NoError(err)
+	requirements.Equal(2, summary.Changed)
+}
+
 func TestICalendarOversizedRevisionPreservesEvent(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
