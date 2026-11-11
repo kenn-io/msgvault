@@ -71,8 +71,7 @@ func parseICalendar(raw []byte, method, zone string, fromEmail bool) ([]calevent
 		parse = calevent.ParseEmailICS
 	}
 	components, err := parse(raw, method, zone)
-	var skipped *calevent.SkippedEvents
-	if errors.As(err, &skipped) {
+	if skipped, ok := errors.AsType[*calevent.SkippedEventsError](err); ok {
 		slog.Warn("calendar events ignored", "error", skipped)
 		return components, nil
 	}

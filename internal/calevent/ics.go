@@ -53,16 +53,16 @@ type ICSRevision struct {
 	Stamp    time.Time `json:"stamp"`
 }
 
-// SkippedEvents reports events left out of a calendar whose other events were read.
-type SkippedEvents struct{ Errs []error }
+// SkippedEventsError reports events left out of a calendar whose other events were read.
+type SkippedEventsError struct{ Errs []error }
 
-func (e *SkippedEvents) Error() string   { return errors.Join(e.Errs...).Error() }
-func (e *SkippedEvents) Unwrap() []error { return e.Errs }
+func (e *SkippedEventsError) Error() string   { return errors.Join(e.Errs...).Error() }
+func (e *SkippedEventsError) Unwrap() []error { return e.Errs }
 
 func finishICS(out []ICSComponent, skipped []error) ([]ICSComponent, error) {
 	switch {
 	case len(out) > 0 && len(skipped) > 0:
-		return out, &SkippedEvents{skipped}
+		return out, &SkippedEventsError{skipped}
 	case len(skipped) > 0:
 		return nil, errors.Join(skipped...)
 	case len(out) == 0:
@@ -146,7 +146,7 @@ func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Com
 // ParseICS accepts one complete VCALENDAR. A single-event file is retained
 // byte for byte; each event of a larger file keeps its own VEVENT and the
 // shared calendar lines. An event whose zone is unsupported is skipped and
-// reported in SkippedEvents when other events are read.
+// reported in SkippedEventsError when other events are read.
 func ParseICS(raw []byte, method, calendarZone string) ([]ICSComponent, error) {
 	return parseICS(raw, method, calendarZone, false)
 }
