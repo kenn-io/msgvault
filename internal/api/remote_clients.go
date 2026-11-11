@@ -9,17 +9,10 @@ const (
 	remoteSearchLimit           = 500
 )
 
-// remoteClientOperationAllowed is an exact-match allowlist of operation IDs for read-only remote clients.
+// remoteClientOperationAllowed retains the exact remote CLI contract.
 func remoteClientOperationAllowed(operationID string, collectionsWrite bool) bool {
-	switch operationID {
-	case "getHealth", "getCLIStats", "searchCLI", "listCLIAccounts", "getCLICacheStats",
-		"getCLIMessage", "getCLIMessageOriginal", "getCLIMessageThread", "getCLIMessageRaw",
-		"getCLIAttachment", "listCLICollections", "getCLICollection", "listCLIIdentities":
-		return true
-	case "createCLICollection", "addCLICollectionSources", "removeCLICollectionSources", "deleteCLICollection":
-		return collectionsWrite
-	}
-	return false
+	policy := operationPolicy(operationID)
+	return policy.RemoteRead || (collectionsWrite && policy.RemoteCollectionsWrite)
 }
 
 func (s *Server) remoteClientRequest(r *http.Request) bool {
