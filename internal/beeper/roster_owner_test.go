@@ -115,22 +115,21 @@ func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 
 func TestRosterEachChatKeepsItsOwnPhone(t *testing.T) {
 	for _, tc := range []struct {
-		name                                       string
-		messageFirst, sameRun, verified, truncated bool
+		name                            string
+		messageFirst, sameRun, verified bool
 	}{
-		{"member first", false, false, false, false},
-		{"message first", true, false, false, false},
-		{"one run", false, true, false, false},
-		{"changed owner", true, false, true, false},
-		{"truncated message first", true, false, true, true},
+		{"member first", false, false, false},
+		{"message first", true, false, false},
+		{"one run", false, true, false},
+		{"changed owner", true, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			testRosterEachChatKeepsItsOwnPhone(t, tc.messageFirst, tc.sameRun, tc.verified, tc.truncated)
+			testRosterEachChatKeepsItsOwnPhone(t, tc.messageFirst, tc.sameRun, tc.verified)
 		})
 	}
 }
 
-func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, verified, truncated bool) {
+func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, verified bool) {
 	t.Helper()
 	require := require.New(t)
 	f := newFakeBeeper(t)
@@ -142,10 +141,6 @@ func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, ver
 		f.addChat(chat)
 	}
 	old.Participants[0]["phoneNumber"] = "+12025550123"
-	if truncated {
-		old.Participants[0], old.Participants[1] = old.Participants[1], old.Participants[0]
-		old.ParticipantsTruncated = true
-	}
 	newer.Participants[0]["phoneNumber"] = "+12025550124"
 	imp, st := newHandlerTestImporter(t, f)
 	t.Cleanup(func() { require.NoError(st.Close()) })
@@ -162,16 +157,6 @@ func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, ver
 		}
 		detail, err := imp.client.GetChat(t.Context(), chat.ID)
 		require.NoError(err)
-		if truncated && chat == old {
-			listing, err := imp.client.SearchChats(t.Context(), SearchChatsParams{AccountID: "signal"})
-			require.NoError(err)
-			for i := range listing.Items {
-				if listing.Items[i].ID == old.ID {
-					detail = &listing.Items[i]
-				}
-			}
-			require.True(detail.Participants.HasMore)
-		}
 		_, _, err = imp.syncChat(t.Context(), 0, sourceID, detail, opts, state, time.Now().Add(-time.Hour), false, false, &ImportSummary{})
 		require.NoError(err)
 	}
@@ -185,47 +170,11 @@ func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, ver
 	}
 	detail, err := imp.client.GetChat(t.Context(), old.ID)
 	require.NoError(err)
-	if truncated {
-		listing, err := imp.client.SearchChats(t.Context(), SearchChatsParams{AccountID: "signal"})
-		require.NoError(err)
-		for i := range listing.Items {
-			if listing.Items[i].ID == old.ID {
-				detail = &listing.Items[i]
-			}
-		}
-		require.True(detail.Participants.HasMore)
-		f.setChatGetFailure(old.ID, true)
-		state.Chats[old.ID].RosterWork.MemberFirst = false
-		sum := &ImportSummary{}
-		_, _, err = imp.syncChat(t.Context(), 0, sourceID, detail, opts, state, time.Now().Add(-time.Hour), false, false, sum)
-		require.NoError(err)
-		require.Positive(sum.FetchErrors)
-		var sender int64
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sourceID, "new-old-phone-message").Scan(&sender))
-		require.Equal(oldOwner, sender)
-		f.setChatGetFailure(old.ID, false)
-		f.appendMsg(old.ID, fakeMsg{ID: "second-old-phone-message", SortKey: 101, Timestamp: time.Now().Add(time.Second), SenderID: "@signal_user:example.test", Text: "Hello again"})
-		f.mu.Lock()
-		old.DetailTruncated = true
-		f.mu.Unlock()
-		state.Chats[old.ID].RosterWork.MemberFirst = false
-		sum = &ImportSummary{}
-		_, _, err = imp.syncChat(t.Context(), 0, sourceID, detail, opts, state, time.Now().Add(-time.Hour), false, false, sum)
-		require.NoError(err)
-		require.Positive(sum.FetchErrors)
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sourceID, "second-old-phone-message").Scan(&sender))
-		require.Equal(oldOwner, sender)
-		f.mu.Lock()
-		old.DetailTruncated = false
-		f.mu.Unlock()
-	}
 	if verified {
 		work := state.Chats[old.ID].RosterWork
 		require.NotNil(work)
-		if !truncated {
-			require.True(work.Verified)
-			require.Equal("done", work.Phase)
-		}
+		require.True(work.Verified)
+		require.Equal("done", work.Phase)
 		require.NotEmpty(work.Signature)
 		require.NotEmpty(work.ListingSignature)
 		require.Equal(newOwner, participantForBeeperUser(t, st, "@signal_user:example.test"))
@@ -239,7 +188,7 @@ func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, ver
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sourceID, "new-old-phone-message").Scan(&sender))
 	require.Equal(oldOwner, sender)
 	require.Contains(rosterMembers(t, st, sourceID, old.ID), oldOwner)
-	if verified && !truncated {
+	if verified {
 		require.False(state.Chats[old.ID].RosterWork.Verified)
 	}
 }

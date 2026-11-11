@@ -894,61 +894,13 @@ func assetRequests(f *fakeBeeper) []string {
 // the few participant rows that were persisted and downloads exactly what the
 // participant limit excluded.
 func TestMediaPolicyArchivesAuthoritativeParticipantTotal(t *testing.T) {
-	t.Parallel()
-	require := require.New(t)
-	assert := assert.New(t)
-	f := newFakeBeeper(t)
-	chat := mediaGroupChat(8)
-	f.addChat(chat)
-	f.setChatGetFailure(chat.ID, true)
-	f.setAsset("mxc://beeper.local/photo1", []byte("group photo"))
-	imp, st, done := newTestImporter(t, f)
-	defer done()
-	opts := mediaImportOptions(t)
-	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
-
-	_, err := imp.Import(t.Context(), opts)
-	require.Error(err, "the failed detail fetch leaves the run partial")
-	assert.Empty(assetRequests(f), "the reported total excludes the chat's media")
-	var state, reason string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `
-		SELECT attachment_state, attachment_skip_reason
-		FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
-	`).Scan(&state, &reason))
-	assert.Equal(string(attachmentpolicy.StateSkipped), state)
-	assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
-	var messageID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_id FROM attachments`).Scan(&messageID))
-	membership, err := st.AttachmentConversationMembership(messageID)
-	require.NoError(err)
-	assert.Equal(8, membership.Conversation.ParticipantCount,
-		"the archive carries the total sync weighed, not the truncated participant rows")
-	assert.False(membership.RosterArchived, "an incomplete membership refresh remains pending")
-
-	f.resetRequests()
-	summary, err := imp.BackfillMedia(t.Context(), opts)
-	require.NoError(err)
-	assert.Zero(summary.AttachmentsDownloaded)
-	assert.Empty(assetRequests(f), "the backfill must not re-admit on the smaller stored roster")
-	require.NoError(st.DB().QueryRowContext(t.Context(), `
-		SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
-	`).Scan(&state))
-	assert.Equal(string(attachmentpolicy.StateSkipped), state)
-}
-
-// TestMediaPolicyFailsClosedWithoutParticipantTotal covers the same truncated
-// listing when Beeper reports no total either: the roster is unresolved, so
-// sync and backfill fail closed until a detail fetch reads it, and then the
-// real size decides.
-func TestMediaPolicyFailsClosedWithoutParticipantTotal(t *testing.T) {
-	for _, known := range []bool{false, true} {
-		t.Run(fmt.Sprintf("known=%t", known), func(t *testing.T) {
+	for _, total := range []int{4, 8} {
+		t.Run(fmt.Sprintf("total=%d", total), func(t *testing.T) {
 			t.Parallel()
 			require := require.New(t)
 			assert := assert.New(t)
 			f := newFakeBeeper(t)
-			chat := mediaGroupChat(4)
-			chat.ParticipantsTotalUnknown = !known
+			chat := mediaGroupChat(total)
 			f.addChat(chat)
 			f.setChatGetFailure(chat.ID, true)
 			f.setAsset("mxc://beeper.local/photo1", []byte("group photo"))
@@ -956,58 +908,101 @@ func TestMediaPolicyFailsClosedWithoutParticipantTotal(t *testing.T) {
 			defer done()
 			opts := mediaImportOptions(t)
 			opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
-			attachmentState := func() string {
-				var state string
-				require.NoError(st.DB().QueryRowContext(t.Context(), `
-			SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
-		`).Scan(&state))
-				return state
-			}
 
 			_, err := imp.Import(t.Context(), opts)
-			var partial *PartialSyncError
-			require.ErrorAs(err, &partial)
-			require.Positive(partial.FetchErrors)
-			if known {
-				assert.Len(assetRequests(f), 1)
-				assert.Equal(string(attachmentpolicy.StateStored), attachmentState())
-				var messageID int64
-				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_id FROM attachments`).Scan(&messageID))
-				membership, err := st.AttachmentConversationMembership(messageID)
-				require.NoError(err)
-				assert.False(membership.RosterArchived)
-				return
-			}
-			assert.Empty(assetRequests(f), "an unresolved roster must not read as a chat under the limit")
-			assert.Equal(string(attachmentpolicy.StateSkipped), attachmentState())
+			require.Error(err, "the failed detail fetch leaves the run partial")
+			var state, reason string
+			require.NoError(st.DB().QueryRowContext(t.Context(), `
+		SELECT attachment_state, COALESCE(attachment_skip_reason, '')
+		FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
+	`).Scan(&state, &reason))
 			var messageID int64
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_id FROM attachments`).Scan(&messageID))
 			membership, err := st.AttachmentConversationMembership(messageID)
 			require.NoError(err)
-			assert.False(membership.RosterArchived, "no total and no complete list leaves the roster unresolved")
+			assert.Equal(total, membership.Conversation.ParticipantCount,
+				"the archive carries the total sync weighed, not the truncated participant rows")
+			assert.False(membership.RosterArchived, "an incomplete membership refresh remains pending")
+			if total == 4 {
+				assert.Len(assetRequests(f), 1)
+				assert.Equal(string(attachmentpolicy.StateStored), state)
+				return
+			}
+			assert.Empty(assetRequests(f), "the reported total excludes the chat's media")
+			assert.Equal(string(attachmentpolicy.StateSkipped), state)
+			assert.Equal(string(attachmentpolicy.SkipParticipantThreshold), reason)
 
 			f.resetRequests()
 			summary, err := imp.BackfillMedia(t.Context(), opts)
 			require.NoError(err)
 			assert.Zero(summary.AttachmentsDownloaded)
-			assert.Empty(assetRequests(f), "the backfill stays closed while the roster is unresolved")
-
-			// A detail fetch that succeeds reads the whole roster; the chat is under
-			// the limit, so the run that resolves it releases the deferred download.
-			f.setChatGetFailure(chat.ID, false)
-			f.resetRequests()
-			_, err = imp.Import(t.Context(), ImportOptions{
-				AccountID: opts.AccountID, AttachmentsDir: opts.AttachmentsDir, MediaPolicy: opts.MediaPolicy, Full: true,
-			})
-			require.NoError(err)
-			membership, err = st.AttachmentConversationMembership(messageID)
-			require.NoError(err)
-			assert.True(membership.RosterArchived)
-			assert.Equal(4, membership.Conversation.ParticipantCount)
-			assert.Len(assetRequests(f), 1)
-			assert.Equal(string(attachmentpolicy.StateStored), attachmentState())
+			assert.Empty(assetRequests(f), "the backfill must not re-admit on the smaller stored roster")
+			require.NoError(st.DB().QueryRowContext(t.Context(), `
+		SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
+	`).Scan(&state))
+			assert.Equal(string(attachmentpolicy.StateSkipped), state)
 		})
 	}
+}
+
+// TestMediaPolicyFailsClosedWithoutParticipantTotal covers the same truncated
+// listing when Beeper reports no total either: the roster is unresolved, so
+// sync and backfill fail closed until a detail fetch reads it, and then the
+// real size decides.
+func TestMediaPolicyFailsClosedWithoutParticipantTotal(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newFakeBeeper(t)
+	chat := mediaGroupChat(4)
+	chat.ParticipantsTotalUnknown = true
+	f.addChat(chat)
+	f.setChatGetFailure(chat.ID, true)
+	f.setAsset("mxc://beeper.local/photo1", []byte("group photo"))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	opts := mediaImportOptions(t)
+	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
+	attachmentState := func() string {
+		var state string
+		require.NoError(st.DB().QueryRowContext(t.Context(), `
+			SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo1'
+		`).Scan(&state))
+		return state
+	}
+
+	_, err := imp.Import(t.Context(), opts)
+	var partial *PartialSyncError
+	require.ErrorAs(err, &partial)
+	require.Positive(partial.FetchErrors)
+	assert.Empty(assetRequests(f), "an unresolved roster must not read as a chat under the limit")
+	assert.Equal(string(attachmentpolicy.StateSkipped), attachmentState())
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_id FROM attachments`).Scan(&messageID))
+	membership, err := st.AttachmentConversationMembership(messageID)
+	require.NoError(err)
+	assert.False(membership.RosterArchived, "no total and no complete list leaves the roster unresolved")
+
+	f.resetRequests()
+	summary, err := imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	assert.Zero(summary.AttachmentsDownloaded)
+	assert.Empty(assetRequests(f), "the backfill stays closed while the roster is unresolved")
+
+	// A detail fetch that succeeds reads the whole roster; the chat is under
+	// the limit, so the run that resolves it releases the deferred download.
+	f.setChatGetFailure(chat.ID, false)
+	f.resetRequests()
+	_, err = imp.Import(t.Context(), ImportOptions{
+		AccountID: opts.AccountID, AttachmentsDir: opts.AttachmentsDir, MediaPolicy: opts.MediaPolicy, Full: true,
+	})
+	require.NoError(err)
+	membership, err = st.AttachmentConversationMembership(messageID)
+	require.NoError(err)
+	assert.True(membership.RosterArchived)
+	assert.Equal(4, membership.Conversation.ParticipantCount)
+	assert.Len(assetRequests(f), 1)
+	assert.Equal(string(attachmentpolicy.StateStored), attachmentState())
 }
 
 // TestBackfillMediaFailsClosedOnConversationWithoutArchivedRoster covers a

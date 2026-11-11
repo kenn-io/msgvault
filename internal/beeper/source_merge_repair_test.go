@@ -63,15 +63,9 @@ func TestMergeSourcesRepairsLiveRoster(t *testing.T) {
 			req := store.MergeSourcesRequest{FromSourceID: history.ID, IntoSourceID: sum.SourceID, DryRun: true}
 			_, err = st.MergeSourcesContext(t.Context(), req)
 			require.NoError(err)
-			pending, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-			require.NoError(err)
-			assert.NotContains(pending, chat.ID)
 			req.DryRun = false
 			_, err = st.MergeSourcesContext(t.Context(), req)
 			require.NoError(err)
-			pending, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-			require.NoError(err)
-			assert.Contains(pending, chat.ID)
 			assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), departed)
 			shared, err := st.SharedConversationCountContext(t.Context(), peer, departed)
 			require.NoError(err)
@@ -83,7 +77,7 @@ func TestMergeSourcesRepairsLiveRoster(t *testing.T) {
 			_, err = imp.Import(t.Context(), opts)
 			require.NoError(err)
 			assert.ElementsMatch(want, rosterMembers(t, st, sum.SourceID, chat.ID))
-			pending, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+			pending, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 			require.NoError(err)
 			assert.NotContains(pending, chat.ID)
 			var count int

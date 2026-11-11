@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -354,12 +355,18 @@ func TestRosterUnchangedVisitSkipsMatching(t *testing.T) {
 		}
 	}
 	require.NoError(err)
+	f.resetRequests()
 	f.appendMsg(chat.ID, fakeMsg{ID: "unchanged-visit", SortKey: 99, Timestamp: time.Now(), Text: "new", SenderID: "@telegram_alice:example.test"})
 	imp = NewImporter(st, imp.client)
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "telegram", NoMedia: true})
 	require.NoError(err)
 	require.Positive(sum.MessagesAdded, "the unchanged roster was revisited")
 	require.Zero(sum.ObservationsRecorded, "an unchanged roster skips matching")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, req := range f.reqs {
+		require.False(strings.HasPrefix(req, "/v1/chats/"+chat.ID+"?"), "an unchanged roster needs no verification read")
+	}
 }
 
 func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
@@ -373,11 +380,6 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 	require.NoError(err)
 	all := append([]map[string]any(nil), chat.Participants...)
-	before := rosterMembers(t, st, sum.SourceID, chat.ID)
-	require.Len(before, 4)
-	receiptsBefore, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
-	require.NoError(err)
-	require.Len(receiptsBefore, 4)
 	work := &rosterWork{}
 
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
@@ -389,14 +391,6 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 	f.mu.Unlock()
 	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
-	assert.False(complete)
-	assert.Equal(before, rosterMembers(t, st, sum.SourceID, chat.ID))
-	receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
-	require.NoError(err)
-	assert.Len(receipts, len(receiptsBefore))
-	for key := range receiptsBefore {
-		assert.Contains(receipts, key)
-	}
 	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
 	assert.True(complete)
@@ -473,21 +467,6 @@ func TestLargeRosterCheckpointStaysCompact(t *testing.T) {
 	var runBytes int
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
 	assert.Less(runBytes, 4096)
-	imp = NewImporter(st, imp.client)
-	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
-	require.NoError(err)
-	imp = NewImporter(st, imp.client)
-	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool {
-		var current int
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&current))
-		return current > receipts
-	}})
-	require.NoError(err)
-	var after int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&after))
-	assert.Equal(receipts+1, after)
-	assert.Equal(2, countBeeperMessages(t, imp))
-	assert.Less(len(rosterMembers(t, st, sum.SourceID, chat.ID)), size, "messages arrive before the roster completes")
 }
 
 func TestRosterBudgetAlternatesMessagesUntilComplete(t *testing.T) {

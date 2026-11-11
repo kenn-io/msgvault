@@ -142,13 +142,6 @@ func TestImportVerifiesSmallRosterBeforeReplacement(t *testing.T) {
 	assert.Equal(1, detailRequests(), "the first import verifies the roster")
 	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 2)
 	f.mu.Lock()
-	chat.LastActivity = time.Now()
-	chat.Msgs = append(chat.Msgs, fakeMsg{ID: "unchanged", SortKey: 98, Timestamp: chat.LastActivity, Text: "new", SenderID: "@signal_ann:beeper.local"})
-	f.mu.Unlock()
-	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	assert.Zero(detailRequests(), "an unchanged roster needs no verification read")
-	f.mu.Lock()
 	chat.Participants[1]["fullName"] = "Ann Renamed"
 	chat.LastActivity = time.Now()
 	chat.Msgs = append(chat.Msgs, fakeMsg{ID: "renamed", SortKey: 99, Timestamp: chat.LastActivity, Text: "new", SenderID: "@signal_ann:beeper.local"})

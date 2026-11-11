@@ -555,10 +555,11 @@ func TestSharedEmailMergeKeepsSenderCacheCurrent(t *testing.T) {
 			f.addChat(chat)
 			imp, st := newHandlerTestImporter(t, f)
 			t.Cleanup(func() { require.NoError(st.Close()) })
-			_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+			sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 			require.NoError(err)
 			require.Equal(participantForBeeperUser(t, st, tc.upgraded), participantForBeeperUser(t, st, tc.other),
 				"both IDs share the email participant")
+			old := participantForBeeperUser(t, st, tc.upgraded)
 
 			f.mu.Lock()
 			for _, member := range chat.Participants {
@@ -587,6 +588,9 @@ func TestSharedEmailMergeKeepsSenderCacheCurrent(t *testing.T) {
 			require.NoError(err, "the other ID's message must not use the merged-away participant")
 
 			phone := participantForBeeperUser(t, st, tc.upgraded)
+			assert.NotEqual(old, phone)
+			assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), phone)
+			assert.NotContains(rosterMembers(t, st, sum.SourceID, chat.ID), old)
 			var phoneNumber string
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT COALESCE(phone_number, '') FROM participants WHERE id = ?`), phone).Scan(&phoneNumber))

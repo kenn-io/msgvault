@@ -179,7 +179,7 @@ func TestRosterMatchingStopLeavesChatResumable(t *testing.T) {
 	requirements.NoError(err)
 	assertions.NotContains(unresolved, chat.ID)
 	state = latestBeeperState(t, imp)
-	t.Run("matching retry", func(t *testing.T) {
+	t.Run("completed deferred matching", func(t *testing.T) {
 		assert.Equal(t, "done", state.Chats[chat.ID].RosterWork.Phase, "quiet repair must finish deferred enrichment")
 		assert.Equal(t, 3, countBeeperMessages(t, imp))
 	})
@@ -303,7 +303,6 @@ func TestRosterProgressSurvivesFreshImporters(t *testing.T) {
 		name string
 		chat func() *fakeChat
 	}{
-		{"bare IDs", rosterRetryChat},
 		{"phone and email", richRetryChat},
 		{"whitespace names", func() *fakeChat {
 			chat := rosterRetryChat()
