@@ -667,6 +667,8 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 		{name: "old daemon with reveal", reveal: true, wantServe: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			var marked, unmarked atomic.Int32
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/api/v1/health" {
@@ -686,13 +688,13 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 			mcpHTTPAddr = ""
 			oldReveal, oldServe := mcpRevealVerification, serveMCPStdioWithOptions
 			revealFlag := mcpCmd.Flags().Lookup("reveal-verification")
-			require.NotNil(t, revealFlag)
+			require.NotNil(revealFlag)
 			oldChanged := revealFlag.Changed
 			t.Cleanup(func() {
 				mcpRevealVerification, serveMCPStdioWithOptions = oldReveal, oldServe
 				revealFlag.Changed = oldChanged
 			})
-			require.NoError(t, revealFlag.Value.Set(strconv.FormatBool(tc.reveal)))
+			require.NoError(revealFlag.Value.Set(strconv.FormatBool(tc.reveal)))
 			served := false
 			stopped := errors.New("serve reached")
 			serveMCPStdioWithOptions = func(context.Context, mcpserver.ServeOptions) error {
@@ -703,16 +705,16 @@ func TestMCPStandaloneVerificationHandshake(t *testing.T) {
 			mcpCmd.SetContext(withStoreResolverConfig(t, cfg))
 			err := mcpCmd.RunE(mcpCmd, nil)
 			if tc.wantServe {
-				require.ErrorIs(t, err, stopped)
+				require.ErrorIs(err, stopped)
 			} else {
-				require.ErrorContains(t, err, "daemon did not acknowledge verification withholding")
+				require.ErrorContains(err, "daemon did not acknowledge verification withholding")
 			}
-			assert.Equal(t, tc.wantServe, served)
+			assert.Equal(tc.wantServe, served)
 			if tc.reveal {
-				assert.Zero(t, marked.Load())
-				assert.Positive(t, unmarked.Load())
+				assert.Zero(marked.Load())
+				assert.Positive(unmarked.Load())
 			} else {
-				assert.Positive(t, marked.Load())
+				assert.Positive(marked.Load())
 			}
 		})
 	}

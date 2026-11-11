@@ -558,6 +558,8 @@ func TestOwnerVerificationVectorResults(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	for _, path := range []string{"/api/v1/search?q=verification&mode=vector", "/api/v1/search?q=verification&mode=hybrid", fmt.Sprintf("/api/v1/search/similar?message_id=%d", seed)} {
 		t.Run(path, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			for _, withhold := range []bool{false, true} {
 				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 				req.Header.Set("X-Api-Key", "owner")
@@ -566,12 +568,12 @@ func TestOwnerVerificationVectorResults(t *testing.T) {
 				}
 				w := httptest.NewRecorder()
 				srv.Router().ServeHTTP(w, req)
-				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				require.Equal(http.StatusOK, w.Code, w.Body.String())
 				if withhold {
-					assert.NotContains(t, w.Body.String(), "482913")
-					assert.Contains(t, w.Body.String(), verification.Masked)
+					assert.NotContains(w.Body.String(), "482913")
+					assert.Contains(w.Body.String(), verification.Masked)
 				} else {
-					assert.Contains(t, w.Body.String(), "482913")
+					assert.Contains(w.Body.String(), "482913")
 				}
 			}
 		})

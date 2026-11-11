@@ -210,6 +210,8 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 		{name: "protected source scoped messages", path: "/api/v1/messages", marked: true, allow: true, scoped: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			handler := srv.Handler(func(w http.ResponseWriter, _ *http.Request, _ Operation) bool {
 				if !tc.allow {
 					w.WriteHeader(http.StatusForbidden)
@@ -233,23 +235,23 @@ func TestLibraryHandlerVerificationPolicy(t *testing.T) {
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
 			if !tc.allow {
-				assert.Equal(t, http.StatusForbidden, w.Code)
-				assert.Empty(t, w.Header().Get(apiprotocol.VerificationHeader))
+				assert.Equal(http.StatusForbidden, w.Code)
+				assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
 				return
 			}
-			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			require.Equal(http.StatusOK, w.Code, w.Body.String())
 			if tc.marked {
-				assert.Equal(t, apiprotocol.VerificationWithhold, w.Header().Get(apiprotocol.VerificationHeader))
+				assert.Equal(apiprotocol.VerificationWithhold, w.Header().Get(apiprotocol.VerificationHeader))
 			} else {
-				assert.Empty(t, w.Header().Get(apiprotocol.VerificationHeader))
+				assert.Empty(w.Header().Get(apiprotocol.VerificationHeader))
 			}
 			if tc.path == "/api/v1/messages" {
-				assert.Contains(t, w.Body.String(), verification.Masked)
-				assert.NotContains(t, w.Body.String(), "482913")
+				assert.Contains(w.Body.String(), verification.Masked)
+				assert.NotContains(w.Body.String(), "482913")
 				if tc.scoped {
-					assert.Len(t, srv.readSnapshotSlots, 1)
+					assert.Len(srv.readSnapshotSlots, 1)
 				} else {
-					assert.Empty(t, srv.readSnapshotSlots)
+					assert.Empty(srv.readSnapshotSlots)
 				}
 			}
 		})
