@@ -103,6 +103,7 @@ func TestOpenIssues(t *testing.T) {
 	handler := native.Service.Handler()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == http.MethodGet {
+			assert.Equal("open", r.URL.Query().Get("status"))
 			assert.False(r.URL.Query().Has("sort"))
 		}
 		if strings.HasSuffix(r.URL.Path, "/search") {
