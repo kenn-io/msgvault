@@ -369,7 +369,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertionsForTest := assert.New(t)
+			assert := assert.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/v1/health":
@@ -385,26 +385,26 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 
 			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
 			if tt.wantPeople {
-				assertionsForTest.NotNil(opts.PeopleBackend)
+				assert.NotNil(opts.PeopleBackend)
 			} else {
-				assertionsForTest.Nil(opts.PeopleBackend)
+				assert.Nil(opts.PeopleBackend)
 			}
 			if tt.wantSavedViews {
-				assertionsForTest.NotNil(opts.SavedViews, "Saved View tools need the daemon run endpoint")
+				assert.NotNil(opts.SavedViews, "Saved View tools need the daemon run endpoint")
 			} else {
-				assertionsForTest.Nil(opts.SavedViews, "an older daemon cannot run Saved Views")
+				assert.Nil(opts.SavedViews, "an older daemon cannot run Saved Views")
 			}
-			assertionsForTest.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
-			assertionsForTest.Equal(tt.wantChatDiscovery, opts.ChatDiscoveryBackend != nil)
-			assertionsForTest.Equal(tt.wantMeetings, opts.Meetings != nil)
-			assertionsForTest.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
-			assertionsForTest.Equal(tt.wantContacts, opts.ContactRoutesBackend != nil)
-			assertionsForTest.Equal(tt.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)
-			assertionsForTest.Equal(tt.wantReview, opts.IdentityReview != nil)
-			assertionsForTest.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
-			assertionsForTest.Equal(tt.wantScoring, opts.IdentityScoring != nil)
-			assertionsForTest.Equal(tt.wantMessageTags, opts.MessageTags != nil)
-			assertionsForTest.Equal(tt.wantMessageArchive, opts.MessageArchive != nil)
+			assert.Equal(tt.wantDirectory, opts.DirectoryBackend != nil)
+			assert.Equal(tt.wantChatDiscovery, opts.ChatDiscoveryBackend != nil)
+			assert.Equal(tt.wantMeetings, opts.Meetings != nil)
+			assert.Equal(tt.wantAgenda, opts.PersonAgendaBackend != nil)
+			assert.Equal(tt.wantContacts, opts.ContactRoutesBackend != nil)
+			assert.Equal(tt.wantArchiveSQL, opts.ArchiveSQLQuerier != nil)
+			assert.Equal(tt.wantReview, opts.IdentityReview != nil)
+			assert.Equal(tt.wantCardDAV, opts.PersonCardDAV != nil)
+			assert.Equal(tt.wantScoring, opts.IdentityScoring != nil)
+			assert.Equal(tt.wantMessageTags, opts.MessageTags != nil)
+			assert.Equal(tt.wantMessageArchive, opts.MessageArchive != nil)
 		})
 	}
 }

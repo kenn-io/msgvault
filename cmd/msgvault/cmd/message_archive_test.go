@@ -74,9 +74,7 @@ func TestArchiveMessageCommands(t *testing.T) {
 		requirementsForTest.Error(command.ExecuteContext(t.Context()))
 		assertionsForTest.Zero(backend.id)
 	}
-}
 
-func TestArchiveMessageCommandPartialErrorJSON(t *testing.T) {
 	failure := emailtags.Failure("remote_unknown", "Read current tags", &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"UNREAD"}}, nil)
 	backend := &cliArchiveBackend{failure: failure}
 	command := newMessageArchiveCommand(true, backend)
@@ -84,7 +82,7 @@ func TestArchiveMessageCommandPartialErrorJSON(t *testing.T) {
 	command.SetOut(&output)
 	command.SetErr(&bytes.Buffer{})
 	command.SetArgs([]string{"--message", "7", "--json"})
-	require.ErrorIs(t, command.ExecuteContext(t.Context()), failure)
-	assert.Contains(t, output.String(), `"error":"remote_unknown"`)
-	assert.Contains(t, output.String(), `"tags":["UNREAD"]`)
+	requirementsForTest.ErrorIs(command.ExecuteContext(t.Context()), failure)
+	assertionsForTest.Contains(output.String(), `"error":"remote_unknown"`)
+	assertionsForTest.Contains(output.String(), `"tags":["UNREAD"]`)
 }

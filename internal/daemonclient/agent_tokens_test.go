@@ -16,8 +16,8 @@ import (
 // returns a result whose ID field is populated (requiring the server schema to
 // include it) and that RevokeAgentToken accepts that ID.
 func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
-	requirementsForTest := require.New(t)
-	assertionsForTest := assert.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 
 	const (
 		wantID     = "tok_roundtrip01"
@@ -69,20 +69,20 @@ func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c, err := New(Config{URL: srv.URL, APIKey: "owner-key", AllowInsecure: true})
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 
 	result, err := c.IssueAgentToken(t.Context(), "round-trip-test", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}}, nil, time.Time{})
-	requirementsForTest.NoError(err)
-	requirementsForTest.NotNil(result)
-	assertionsForTest.Equal("application/json", issueContentType, "issue requests must identify their JSON body")
-	assertionsForTest.Contains(issueBody, "sender_selections")
-	assertionsForTest.Contains(issueBody, "alice@example.com")
-	assertionsForTest.Equal(wantID, result.ID, "id must be decoded from the 201 body")
-	assertionsForTest.Equal(wantSecret, result.Secret)
+	require.NoError(err)
+	require.NotNil(result)
+	assert.Equal("application/json", issueContentType, "issue requests must identify their JSON body")
+	assert.Contains(issueBody, "sender_selections")
+	assert.Contains(issueBody, "alice@example.com")
+	assert.Equal(wantID, result.ID, "id must be decoded from the 201 body")
+	assert.Equal(wantSecret, result.Secret)
 
 	err = c.RevokeAgentToken(t.Context(), result.ID)
-	requirementsForTest.NoError(err)
-	assertionsForTest.Equal(wantID, revokedID, "revoke must use the id from the issue response")
+	require.NoError(err)
+	assert.Equal(wantID, revokedID, "revoke must use the id from the issue response")
 }
 
 // TestAgentTokenBusyResponseRetriesAndNotifies proves the P2 fix: a 503
@@ -158,8 +158,8 @@ func TestIssueAgentTokenSenderSelectionRefusesOldDaemon(t *testing.T) {
 }
 
 func TestIssueAgentTokenExpiryRefusesOldDaemon(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	requirementsForTest := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	posts := 0
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -173,12 +173,12 @@ func TestIssueAgentTokenExpiryRefusesOldDaemon(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	client, err := New(Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	_, err = client.IssueAgentToken(t.Context(), "reader", []string{"stats.read"}, []int64{1}, nil, nil, time.Now().Add(time.Hour))
-	requirementsForTest.Error(err)
-	assertionsForTest.Contains(err.Error(), "requires daemon API schema 3.9.0")
-	assertionsForTest.Zero(posts)
+	require.Error(err)
+	assert.Contains(err.Error(), "requires daemon API schema 3.9.0")
+	assert.Zero(posts)
 }
 
 func TestIssueIncomingSenderRestrictionsRefusesOldDaemon(t *testing.T) {

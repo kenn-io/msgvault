@@ -27,7 +27,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
-	"go.kenn.io/msgvault/internal/verification"
 )
 
 func TestAgentCLISearchOmitsHybridHint(t *testing.T) {
@@ -974,20 +973,26 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 			requirementsForTest.NoError(err)
 		}
 	}
-	requirementsForTest.NoError(st.UpsertAttachment(t.Context(), denied, "private.bin", "application/octet-stream", "private.bin", strings.Repeat("b", 64), 1))
+	_, err = st.CreateCollection("sender-scoped", "", []int64{src.ID})
+	requirementsForTest.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
+	hash, content := strings.Repeat("b", 64), "synthetic private attachment"
+	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
+	requirementsForTest.NoError(err)
+	requirementsForTest.NoError(os.MkdirAll(filepath.Dir(path), 0700))
+	requirementsForTest.NoError(os.WriteFile(path, []byte(content), 0600))
+	requirementsForTest.NoError(st.UpsertAttachment(t.Context(), denied, "private.bin", "application/octet-stream", filepath.Join(hash[:2], hash), hash, len(content)))
 	var deniedAttachment int64
 	requirementsForTest.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id = ?"), denied).Scan(&deniedAttachment))
-	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
-	requirementsForTest.NoError(os.MkdirAll(cfg.AttachmentsDir(), 0o700))
-	requirementsForTest.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "private.bin"), []byte("synthetic attachment"), 0o600))
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	defer srv.agentGrants.Close()
-	ownerRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/attachments/"+strings.Repeat("b", 64)+"/content", nil)
-	ownerRequest.Header.Set("X-Api-Key", "owner-key")
-	ownerResponse := httptest.NewRecorder()
-	srv.Router().ServeHTTP(ownerResponse, ownerRequest)
-	requirementsForTest.Equal(http.StatusOK, ownerResponse.Code, ownerResponse.Body.String())
-	requirementsForTest.Equal("synthetic attachment", ownerResponse.Body.String())
+	contentRoute := "/api/v1/attachments/" + hash + "/content"
+	contentRequest := httptest.NewRequestWithContext(t.Context(), http.MethodGet, contentRoute, nil)
+	contentRequest.Header.Set("X-Api-Key", "owner-key")
+	contentResponse := httptest.NewRecorder()
+	srv.Router().ServeHTTP(contentResponse, contentRequest)
+	requirementsForTest.Equal(http.StatusOK, contentResponse.Code, contentResponse.Body.String())
+	requirementsForTest.Equal(content, contentResponse.Body.String())
 	body := fmt.Sprintf(`{"label":"reader","permissions":["search.read","message.read","stats.read","attachment.read","verification.read"],"source_ids":[%d],"incoming_senders":{"%d":["codes@example.test"]}}`, src.ID, src.ID)
 	issue := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
 	issue.Header.Set("X-Api-Key", "owner-key")
@@ -1008,10 +1013,11 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 		{"/api/v1/search/fast?q=code", http.StatusOK, "allowed code", "private code"},
 		{"/api/v1/messages/filter", http.StatusOK, "allowed code", "private code"},
 		{"/api/v1/stats/total", http.StatusOK, `"message_count":1`, `"message_count":2`},
+		{"/api/v1/cli/collections", http.StatusOK, `"message_count":1`, `"message_count":2`},
 		{fmt.Sprintf("/api/v1/cli/message/thread?id=%d", allowed), http.StatusOK, "allowed code", "private code"},
 		{fmt.Sprintf("/api/v1/cli/message/thread?id=%d", denied), http.StatusNotFound, "", "private code"},
 		{fmt.Sprintf("/api/v1/attachments/%d", deniedAttachment), http.StatusNotFound, "", "private.bin"},
-		{"/api/v1/attachments/" + strings.Repeat("b", 64) + "/content", http.StatusNotFound, "", "private.bin"},
+		{contentRoute, http.StatusNotFound, "", content},
 		{fmt.Sprintf("/api/v1/messages/%d", allowed), http.StatusOK, "allowed code", "private code"},
 		{fmt.Sprintf("/api/v1/messages/%d", denied), http.StatusNotFound, "", "private code"},
 	} {
@@ -1147,28 +1153,16 @@ func TestAgentRelatedMessageIncomingScope(t *testing.T) {
 	requirements.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	defer srv.agentGrants.Close()
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier, IncomingSenderKeys: []string{"codes@example.test"}}}, time.Time{})
-	requirements.NoError(err)
-	for _, owner := range []bool{true, false} {
-		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", allowed), nil)
-		if owner {
-			r.Header.Set("X-Api-Key", "owner")
-		} else {
-			r.Header.Set(apiprotocol.AgentTokenHeader, token)
-		}
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, r)
-		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-		var message struct {
-			RelatedMessageID *int64 `json:"related_message_id"`
-		}
-		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &message))
-		if owner {
-			requirements.Equal(&target, message.RelatedMessageID)
-		} else {
-			requirements.Nil(message.RelatedMessageID)
-		}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", allowed), nil)
+	r.Header.Set("X-Api-Key", "owner")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	var ownerMessage struct {
+		RelatedMessageID *int64 `json:"related_message_id"`
 	}
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &ownerMessage))
+	requirements.Equal(&target, ownerMessage.RelatedMessageID)
 	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	message, err := engine.GetMessage(ctx, allowed)

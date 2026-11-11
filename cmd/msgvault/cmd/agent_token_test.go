@@ -370,8 +370,8 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 }
 
 func TestDelegatedGmailDraftGetThroughAgentCLI(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	requirementsForTest := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	fixture := newGmailDraftTestFixture(t)
 	draft := fixture.seedDraft(t)
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
@@ -384,12 +384,12 @@ func TestDelegatedGmailDraftGetThroughAgentCLI(t *testing.T) {
 	}).Router())
 	t.Cleanup(server.Close)
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
 	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{fixture.source.ID}, nil, nil, time.Time{})
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
-	requirementsForTest.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))
+	require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))
 	ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
 		agentURL: server.URL, agentTokenFile: tokenFile, agentAllowInsecure: true,
 		agentURLChanged: true, agentTokenChanged: true,
@@ -402,9 +402,9 @@ func TestDelegatedGmailDraftGetThroughAgentCLI(t *testing.T) {
 	root.SetOut(&stdout)
 	root.SetErr(&stderr)
 	err = root.ExecuteContext(ctx)
-	requirementsForTest.NoError(err)
-	assertionsForTest.Contains(stdout.String(), "content:\noriginal")
-	assertionsForTest.Empty(stderr.String())
+	require.NoError(err)
+	assert.Contains(stdout.String(), "content:\noriginal")
+	assert.Empty(stderr.String())
 }
 
 // TestAgentTokenIssueOutputsSecret verifies that the issue subcommand (row 6):
@@ -518,12 +518,12 @@ func TestAgentTokenRevokeCallsDelete(t *testing.T) {
 // TestOpenAgentDelegatedStore verifies that the --agent-url / --agent-token-file
 // flags authenticate with a grant issued by the real daemon.
 func TestOpenAgentDelegatedStore(t *testing.T) {
-	assertionsForTest := assert.New(t)
-	requirementsForTest := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "user@example.com")
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
 		Config: &config.Config{
 			HomeDir: t.TempDir(),
@@ -536,14 +536,14 @@ func TestOpenAgentDelegatedStore(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{
 		URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true,
 	})
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
 	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{source.ID}, nil, nil, time.Time{})
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 
 	// Write the token to a temp file.
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
-	requirementsForTest.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))
+	require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))
 
 	ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{
 		agentURL:           server.URL,
@@ -554,15 +554,15 @@ func TestOpenAgentDelegatedStore(t *testing.T) {
 	})
 
 	client, info, err := OpenHTTPStore(ctx)
-	requirementsForTest.NoError(err)
-	requirementsForTest.NotNil(client)
+	require.NoError(err)
+	require.NotNil(client)
 	t.Cleanup(func() { _ = client.Close() })
-	assertionsForTest.Equal(HTTPStoreAgentDelegated, info.Kind)
-	assertionsForTest.Equal(server.URL, info.URL)
+	assert.Equal(HTTPStoreAgentDelegated, info.Kind)
+	assert.Equal(server.URL, info.URL)
 
 	// The daemon requires authentication for this route.
 	_, err = client.GetHealth(t.Context())
-	requirementsForTest.NoError(err)
+	require.NoError(err)
 }
 
 // TestOpenAgentDelegatedStoreRejectsLocalFlag verifies that combining --local

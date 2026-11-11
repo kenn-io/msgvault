@@ -154,9 +154,9 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	accountGranted := false
 	for _, src := range sources {
 		ref := agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}
-		if source, ok := grant.Source(ref); ok {
+		if selected, ok := grant.MatchingSource(ref); ok {
 			allowed = append(allowed, src.ID)
-			incoming[src.ID] = source.IncomingSenderKeys
+			incoming[src.ID] = selected.IncomingSenderKeys
 			accountGranted = accountGranted || src.Identifier == account
 		}
 	}
