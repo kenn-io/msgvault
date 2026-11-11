@@ -47,9 +47,9 @@ func acquisitionOperationOf(item store.SyncRunItem) acquisitionOperation {
 
 // DiagnoseAcquisitionContext classifies a source's recorded fetch and ingest
 // failures in one read snapshot. Active failures are the ones sync retries.
-// Resolved failures have a later explicit resolution. Historical failures were
-// skipped, or are downloads followed by a later skip; file-saving work needs
-// explicit settlement. The remaining failures are indeterminate.
+// Resolved failures have an explicit resolution. Historical failures were
+// skipped, or are downloads whose next settlement is a skip; file-saving work
+// needs explicit settlement. The remaining failures are indeterminate.
 func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID int64) ([]AcquisitionDiagnosticItem, error) {
 	ctx, release, err := st.BeginReadSnapshotContext(ctx)
 	if err != nil {
@@ -82,12 +82,12 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 		case outcome.Status == store.SyncRunItemStatusSkipped && op != acquisitionUnknown:
 			state = AcquisitionHistorical
 		case outcome.Status != store.SyncRunItemStatusError:
+		case op == acquisitionDownload && next.skipped:
+			state = AcquisitionHistorical
 		case op != acquisitionUnknown && next.resolved:
 			if outcome.ErrorMessage != store.SyncRunItemFilesPendingMessage {
 				state = AcquisitionResolved
 			}
-		case op == acquisitionDownload && next.skipped:
-			state = AcquisitionHistorical
 		case op != acquisitionUnknown && covers(retries[outcome.SourceMessageID], outcome, op):
 			state = AcquisitionActive
 		default:
@@ -95,7 +95,7 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 		}
 		switch outcome.Status {
 		case store.SyncRunItemStatusResolved:
-			next.resolved = true
+			next.resolved, next.skipped = true, false
 		case store.SyncRunItemStatusSkipped:
 			next.skipped = true
 		}

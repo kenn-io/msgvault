@@ -111,7 +111,6 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		pending.ErrorMessage = store.SyncRunItemFilesPendingMessage
 		a.record(a.source, false,
 			acquisitionOutcome("download", "fetch", "error", "fetch_error"),
-			acquisitionOutcome("(unknown)", "fetch", "error", "batch_fetch_error"),
 		)
 		a.record(a.source, false,
 			acquisitionOutcome("download", "fetch", "error", "batch_fetch_error"),
@@ -148,20 +147,26 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		a.record(a.source, false, pending, acquisitionOutcome("older", "fetch", "error", "fetch_error"))
 		pending.SourceMessageID = "older"
 		a.record(a.source, false, pending)
-		a.record(a.source, false, acquisitionOutcome("saved", "ingest", "resolved", "acquired"), acquisitionOutcome("older", "ingest", "resolved", "acquired"))
+		a.record(a.source, false, acquisitionOutcome("saved", "fetch", "resolved", "acquired"), acquisitionOutcome("older", "fetch", "resolved", "acquired"))
 		a.record(a.source, false, acquisitionOutcome("reopened", "fetch", "error", "fetch_error"))
 		a.record(a.source, false, acquisitionOutcome("reopened", "fetch", "resolved", "acquired"))
 		a.record(a.source, false, acquisitionOutcome("reopened", "ingest", "error", "ingest_error"))
+		a.record(a.source, false, acquisitionOutcome("retired-first", "fetch", "error", "fetch_error"))
+		a.record(a.source, false, acquisitionOutcome("retired-first", "fetch", "skipped", "gmail_not_found"))
+		a.record(a.source, false, acquisitionOutcome("retired-first", "fetch", "error", "fetch_error"))
+		a.record(a.source, false, acquisitionOutcome("retired-first", "fetch", "resolved", "acquired"))
 		output, err := a.diagnose("")
 		require.NoError(err)
 		assert.Equal("reopened\tstill failing\tmessage processing failed\n", output)
 		output, err = a.diagnose("", "--all")
 		require.NoError(err)
-		assert.Equal("older\tfixed\tmessage download failed\nreopened\tfixed\tmessage download failed\nreopened\tstill failing\tmessage processing failed\n", output)
+		assert.Equal("older\tfixed\tmessage download failed\nreopened\tfixed\tmessage download failed\nreopened\tstill failing\tmessage processing failed\nretired-first\tretired\tmessage download failed\nretired-first\tfixed\tmessage download failed\n", output)
 		assert.Equal([]map[string]string{
 			acquisitionJSON("older", "fetch", "fetch_error", "resolved"),
 			acquisitionJSON("reopened", "fetch", "fetch_error", "resolved"),
 			acquisitionJSON("reopened", "ingest", "ingest_error", "active"),
+			acquisitionJSON("retired-first", "fetch", "fetch_error", "historical"),
+			acquisitionJSON("retired-first", "fetch", "fetch_error", "resolved"),
 		}, a.diagnoseJSON("--all"))
 	})
 
