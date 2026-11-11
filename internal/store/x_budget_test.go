@@ -100,6 +100,49 @@ func TestBudgetSurvivesRestartAndUTCMonth(t *testing.T) {
 	_testAssert.Equal(int64(75_000), state.SpendBuckets[1].ReservedMicros)
 }
 
+func TestXBudgetEmptyPollsPreserveCostAcrossRollover(t *testing.T) {
+	st, id, cost := xBudgetFixture(t)
+	state, err := st.LoadXControlContext(t.Context(), id)
+	require.NoError(t, err)
+	job := store.XArchiveJob{ID: "archive-empty", Fingerprint: "frozen", Username: "example_user", After: cost.At.Add(-24 * time.Hour), Before: cost.At, CapMicros: 30_000_000,
+		Own:      &store.XWalk{Fingerprint: "own", Endpoint: "search_all", Query: "from:example_user -is:retweet", After: cost.At.Add(-24 * time.Hour), Before: cost.At},
+		Mentions: &store.XWalk{Fingerprint: "mentions", Endpoint: "search_all", Query: "to:example_user -is:retweet", After: cost.At.Add(-24 * time.Hour), Before: cost.At}}
+	_, err = st.UpdateXControlContext(t.Context(), id, state.Revision, store.XControlPatch{OwnerID: "100", Jobs: &[]store.XArchiveJob{job}})
+	require.NoError(t, err)
+
+	cost.MonthlyBudgetMicros = 30_000_000
+	send := cost
+	send.Kind, send.RequestedResults, send.CreateReservationMicros, send.AllowSend = store.XRequestCreate, 0, 200_000, true
+	send.GrantedScopes = append(send.GrantedScopes, "tweet.write")
+	uncertain, err := st.ReserveXRequestContext(t.Context(), id, send)
+	require.NoError(t, err)
+	require.NoError(t, st.SettleXRequestContext(t.Context(), id, uncertain.ID, store.XResourceUsage{Persisted: true, Complete: true}))
+	cost.RequestedResults = 5
+	cost.JobID, cost.JobFingerprint = job.ID, job.Fingerprint
+	const perMonth = 130
+	for month := 0; month < 2; month++ {
+		for range perMonth {
+			reservation, err := st.ReserveXRequestContext(t.Context(), id, cost)
+			require.NoError(t, err)
+			require.NoError(t, st.SettleXRequestContext(t.Context(), id, reservation.ID, store.XResourceUsage{Persisted: true, Complete: true}))
+		}
+		cost.At = cost.At.Add(2 * time.Minute)
+	}
+	state, err = st.LoadXControlContext(t.Context(), id)
+	require.NoError(t, err)
+	require.Len(t, state.SpendBuckets, 2)
+	assert.Equal(t, int64(perMonth*75_000), state.SpendBuckets[0].SpentMicros)
+	assert.Equal(t, int64(200_000), state.SpendBuckets[0].ReservedMicros)
+	assert.Equal(t, int64(perMonth*75_000), state.SpendBuckets[1].SpentMicros)
+	assert.Zero(t, state.SpendBuckets[1].ReservedMicros)
+	require.Len(t, state.Jobs, 1)
+	assert.Equal(t, int64(2*perMonth*75_000), state.Jobs[0].SpentMicros)
+	assert.Zero(t, state.Jobs[0].ReservedMicros)
+	require.Len(t, state.Reservations, 2)
+	assert.Equal(t, uncertain.ID, state.Reservations[0].ID)
+	assert.Equal(t, "pending", state.Reservations[0].State)
+}
+
 func TestXBudgetConcurrentAdmissionHasOneWinner(t *testing.T) {
 	_testAssert := assert.New(t)
 	_testRequire := require.New(t)

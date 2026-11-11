@@ -47,8 +47,9 @@ type XRequestCost struct {
 }
 
 // XResourceUsage is supplied only after durable response effects. Complete
-// means all billable resources are known; partial/empty/error billing is not
-// known. Counts include duplicates and deliberately excluded/suppressed objects.
+// means all billable resources are known; partial/error billing is not
+// known. An empty complete read keeps its full reserved cost. Counts include
+// duplicates and deliberately excluded/suppressed objects.
 // A durably adopted create uses Created and retains the full create estimate.
 type XResourceUsage struct {
 	Posts, Users                 int
@@ -301,10 +302,7 @@ func (s *Store) settleXRequestTx(ctx context.Context, tx *loggedTx, sourceID int
 		if !usage.Created {
 			return nil
 		}
-	} else {
-		if usage.Posts == 0 && usage.Users == 0 {
-			return nil
-		}
+	} else if usage.Posts != 0 || usage.Users != 0 {
 		posts, err := xBudgetMultiply(reservation.PostPriceMicros, usage.Posts)
 		if err != nil {
 			return ErrXReservationUsage

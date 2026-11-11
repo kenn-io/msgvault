@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -115,9 +114,8 @@ func xReplyConversationMatches(ctx context.Context, q contextRowQuerier, sourceI
 // the draft row itself before checking receipts; a NOT EXISTS predicate does
 // not serialize these operations under READ COMMITTED.
 func (s *Store) lockChatDraftTx(ctx context.Context, tx *loggedTx, id string) error {
-	if query := s.dialect.RowWriterLockSQL("chat_drafts", "updated_at"); query != "" {
-		query = strings.Replace(query, "WHERE id = ?", "WHERE draft_id = ?", 1)
-		if _, err := tx.ExecContext(ctx, query, id); err != nil {
+	if !s.IsPostgreSQL() {
+		if _, err := tx.ExecContext(ctx, `UPDATE chat_drafts SET updated_at = updated_at WHERE draft_id = ?`, id); err != nil {
 			return err
 		}
 	}
