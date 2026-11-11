@@ -105,9 +105,6 @@ func (c *zoomMetadataClient) ListCallObservations(_ context.Context, q store.Cal
 	for i := int64(1); i <= 100; i++ {
 		id := q.AfterID + i
 		record := fmt.Sprintf("unrelated-%d", id)
-		if id == 9900 {
-			record = "first"
-		}
 		page.Items = append(page.Items, generated.CallObservationView{MessageID: id, RecordID: record})
 		item := &page.Items[len(page.Items)-1]
 		item.Version = 1
