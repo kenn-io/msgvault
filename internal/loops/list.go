@@ -16,8 +16,9 @@ import (
 
 // Options selects which loops List returns. A zero Limit means the default.
 type Options struct {
-	PersonID int64
-	Limit    int
+	PersonID      int64
+	Limit         int
+	IncludeClosed bool
 }
 
 // Result is the oldest-first slice of open loops. Truncated is set when more
@@ -74,7 +75,7 @@ type Store interface {
 
 // CommitmentReader is the optional cited-promise lane on an archive.
 type CommitmentReader interface {
-	ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int) ([]store.PersonCommitment, error)
+	ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]store.PersonCommitment, error)
 }
 
 type CommitmentDecider interface {
@@ -199,7 +200,7 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 		result.Loops, result.Truncated = kept[:opts.Limit], true
 	}
 	if reader, ok := st.(CommitmentReader); ok && ctx.Err() == nil {
-		commitments, err := reader.ListPersonCommitmentsContext(ctx, opts.PersonID, now, min(opts.Limit, MaxLimit)+1)
+		commitments, err := reader.ListPersonCommitmentsContext(ctx, opts.PersonID, now, min(opts.Limit, MaxLimit)+1, opts.IncludeClosed)
 		if err != nil {
 			return Result{}, err
 		}

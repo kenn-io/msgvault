@@ -168,6 +168,8 @@ The API publishes its generated OpenAPI contract at `/openapi.json`.
 opening an archive. OpenAPI `info.version` is the **API schema version**;
 it is separate from the binary release version. The current schema is **5.4.0**.
 
+Schema 5.5.0 adds cited commitments and their decisions to the open loops API.
+
 Schema 5.4.0 adds claim kind, freshness status, and the optional latest support time to person fact history.
 
 Schema 5.3.0 adds the IMAP authentication method to CLI accounts.

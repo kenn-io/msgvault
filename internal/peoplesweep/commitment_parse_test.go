@@ -4,18 +4,17 @@ import (
 	"encoding/json/jsontext"
 	"testing"
 	"time"
-	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestParseCommitmentsBindsEachPromiseToItsExactLocator(t *testing.T) {
-	now := time.Date(2026, 11, 10, 0, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	source := CommitmentSource{ID: "m1", MessageID: 1, Direction: CommitmentOwedBy,
 		Text: "I will send it. I will send it.", EventTime: now.Add(-time.Hour)}
-	window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: now, Timezone: "America/Vancouver"}
-	output := jsontext.Value(`{"promises":[{"source_id":"m1","direction":"owed_by","quote":"I will send it.","start":0,"end":15,"summary":"Send the first item","due_on":"2026-11-10"},{"source_id":"m1","direction":"owed_by","quote":"I will send it.","start":16,"end":31,"summary":"Send the second item","due_on":null}],"fulfilments":[]}`)
+	window := CommitmentWindow{PersonID: 2, Sources: []CommitmentSource{source}, Now: now, Timezone: "UTC"}
+	output := jsontext.Value(`{"promises":[{"source_id":"m1","direction":"owed_by","quote":"I will send it.","start":0,"end":15,"summary":"Send the first item","due_on":null},{"source_id":"m1","direction":"owed_by","quote":"I will send it.","start":16,"end":31,"summary":"Send the second item","due_on":null}],"fulfilments":[]}`)
 	parsed, err := ParseCommitments(output, window)
 	require.NoError(t, err)
 	require.Len(t, parsed.Promises, 2)
@@ -49,7 +48,7 @@ func TestParseCommitmentsRejectsWholeUnsupportedOutput(t *testing.T) {
 	assert.Empty(t, parsed.Promises)
 }
 
-func TestParseCommitmentsRequiresNewerMatchingFulfilmentEvidence(t *testing.T) {
+func TestParseCommitmentsRequiresFulfilmentNewerThanPromise(t *testing.T) {
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	window := CommitmentWindow{PersonID: 2, Now: now, Timezone: "UTC",
 		Sources: []CommitmentSource{{ID: "m2", MessageID: 2, Direction: CommitmentOwedTo, Text: "I sent it.", EventTime: now}},

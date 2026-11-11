@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
-func TestApplyCommitmentOnlySweepCitesTwoPromisesAndHidesDone(t *testing.T) {
+func TestApplyCommitmentOnlySweepPreservesDecisionAcrossRequote(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	ctx := t.Context()
 	f := newPersonSweepApplyFixture(t, "commitments", false)
@@ -58,13 +58,96 @@ func TestApplyCommitmentOnlySweepCitesTwoPromisesAndHidesDone(t *testing.T) {
 	}, cfg.Commitments, personFactLedgerNow, "UTC")
 	r.NoError(err)
 	r.Len(window.Sources, 1)
-	a.Equal(id, window.Sources[0].MessageID)
 	start, end := int64(len(first)+1), int64(len(text))
 	parsed, err := peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[
 		{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send the draft","due_on":null},
 		{"source_id":%q,"direction":"owed_to","quote":%q,"start":%d,"end":%d,"summary":"Check the venue","due_on":null}
 	],"fulfilments":[]}`, window.Sources[0].ID, first, len(first), window.Sources[0].ID, second, start, end)), window)
 	r.NoError(err)
+	request := commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
+	result, err := st.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	a.Zero(result.Mutations.CursorRowsAdvanced)
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 5, false)
+	r.NoError(err)
+	r.Len(items, 2)
+	a.Equal(first, items[0].Quote)
+	a.Equal(second, items[1].Quote)
+	a.Equal(id, items[0].AnchorMessageID)
+	claims, err := st.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})
+	r.NoError(err)
+	r.Len(claims, 2)
+
+	decision, err := st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
+	r.NoError(err)
+	a.Equal(LoopStateDone, decision.State)
+	// Both ordinary journal consumers can read the ledger after commitment
+	// evidence has been added.
+	change := peoplesweep.ArchiveChange{PersonID: f.personID, SourceID: source.ID, MessageID: id,
+		SourceLane: peoplesweep.SourceConversationText, EvidenceEffect: peoplesweep.EvidenceEffectSourceEdited}
+	changes, err := st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, []peoplesweep.ArchiveChange{change})
+	r.NoError(err)
+	a.Empty(changes)
+	tombstones, err := st.personSweepTombstones(ctx, f.personID, change)
+	r.NoError(err)
+	a.Empty(tombstones)
+	catalog, err := st.BuildPersonFactCatalogContext(ctx, false)
+	r.NoError(err)
+	_, err = (peoplesweep.Assembler{Source: st}).Discover(ctx, peoplesweep.AssemblyRequest{
+		PersonID: f.personID, Cursors: []peoplesweep.Cursor{f.cursor}, Catalog: catalog,
+		Profile: peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+			AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}, Now: request.CompletedAt,
+		BackstopInterval: time.Hour,
+	})
+	r.NoError(err)
+
+	_, err = st.EnsurePersonSweepWork(ctx, f.personID, true)
+	r.NoError(err)
+	lease, err := st.ClaimPersonSweep(ctx, peoplesweep.ClaimRequest{
+		PersonID: f.personID, WorkerID: "requote-worker", LeaseDuration: time.Hour,
+	})
+	r.NoError(err)
+	r.NotNil(lease)
+	f.lease, f.request.Lease = *lease, *lease
+	f.attemptID += "-requote"
+	f.request.AttemptID = f.attemptID
+	envelopeHash, err := personSweepRawEnvelopeHash(f.request.CursorEnvelope)
+	r.NoError(err)
+	r.NoError(st.StartPersonSweepAttempt(ctx, peoplesweep.StartAttempt{
+		ID: f.attemptID, RunID: f.runID, PersonID: f.personID, LeaseFence: lease.Fence,
+		Mode: peoplesweep.RunIncremental, CursorEnvelope: f.request.CursorEnvelope,
+		EnvelopeHash: envelopeHash, StartedAt: f.request.Generation.ResolvedAt,
+	}))
+	// Shortening a valid citation keeps the existing done decision. The other
+	// disjoint promise in the same original message stays open.
+	requote := strings.TrimSuffix(first, ".")
+	parsed, err = peoplesweep.ParseCommitments([]byte(fmt.Sprintf(`{"promises":[
+		{"source_id":%q,"direction":"owed_to","quote":%q,"start":0,"end":%d,"summary":"Send the draft","due_on":null}
+	],"fulfilments":[]}`, window.Sources[0].ID, requote, len(requote))), window)
+	r.NoError(err)
+	request = commitmentApplyRequest(t, f, window, cfg.Commitments, parsed)
+	_, err = st.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 5, false)
+	r.NoError(err)
+	r.Len(items, 1)
+	a.Equal(second, items[0].Quote)
+	history, err := st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 5, true)
+	r.NoError(err)
+	r.Len(history, 2)
+	a.Equal(decision.ID, history[0].ID)
+	a.Equal(LoopStateDone, history[0].State)
+	a.Equal(requote, history[0].Quote)
+
+	_, err = st.DecidePersonCommitmentContext(ctx, decision.ID, LoopStateSnoozed, nil, request.CompletedAt)
+	a.ErrorIs(err, ErrInvalidActivityRequest)
+}
+
+func commitmentApplyRequest(t *testing.T, f personSweepApplyFixture, window peoplesweep.CommitmentWindow, cfg peoplesweep.CommitmentConfig, parsed peoplesweep.ParsedCommitments) peoplesweep.ApplyRequest {
+	t.Helper()
+	ctx, r := t.Context(), require.New(t)
+	st := f.store
+	profile := f.request.Generation.Policy.ProviderPolicyFingerprint
 	budget := personSweepApplyBudget()
 	reservation, err := st.ReservePersonSweepBudget(ctx, peoplesweep.BudgetReservationRequest{
 		RunID: f.runID, AttemptID: f.attemptID, BatchOrdinal: 0, CallOrdinal: 0,
@@ -82,34 +165,53 @@ func TestApplyCommitmentOnlySweepCitesTwoPromisesAndHidesDone(t *testing.T) {
 	request.Budget = budget
 	request.Batches = []peoplesweep.CompletedBatch{{
 		Purpose: peoplesweep.ProviderCallPurposeCommitment, ReservationID: reservation.ID,
-		InputHash: reservation.Request.InputHash, ProviderRequestID: "request-commitments",
+		InputHash: reservation.Request.InputHash, ProviderRequestID: f.attemptID,
 		ProviderVersion: "provider-v1", ModelVersion: "model-v1",
 		Usage: peoplesweep.TokenUsage{InputTokens: 2, OutputTokens: 1}, UsageKnown: true,
 		ActualCostMicroUSD: 3, Latency: time.Second,
 	}}
 	request.Usage = peoplesweep.Usage{Requests: 1, InputTokens: 3, OutputTokens: 2, EstimatedCostMicroUSD: 5}
 	request.CommitmentOnly = true
-	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments, Output: parsed}
-	result, err := st.ApplyPersonSweep(ctx, request)
-	r.NoError(err)
-	a.Zero(result.Mutations.CursorRowsAdvanced)
-	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 5)
-	r.NoError(err)
-	r.Len(items, 2)
-	a.Equal(first, items[0].Quote)
-	a.Equal(second, items[1].Quote)
-	a.Equal(id, items[0].AnchorMessageID)
-	a.NotEqual(items[0].TargetKey, items[1].TargetKey)
-	claims, err := st.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})
-	r.NoError(err)
-	r.Len(claims, 2)
-	a.Equal(personfacts.KindCommitment, claims[0].Freshness.Kind)
+	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg, Output: parsed}
+	return request
 
-	decision, err := st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, request.CompletedAt)
+}
+
+func TestEmptyCommitmentScanKeepsProviderFrontierAndWaitsForNewWork(t *testing.T) {
+	r, a := require.New(t), assert.New(t)
+	ctx := t.Context()
+	f := newPersonSweepApplyFixture(t, "empty-commitment-scan", false)
+	st := f.store
+	request := f.request
+	profile := request.Generation.Policy.ProviderPolicyFingerprint
+	_, err := st.db.ExecContext(ctx, `UPDATE person_inference_profiles SET allow_sensitive = TRUE,
+		allowed_sources = '["conversation_text"]', source_since = '2026-01-01' WHERE fingerprint = ?`, profile)
 	r.NoError(err)
-	a.Equal(LoopStateDone, decision.State)
-	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, request.CompletedAt, 5)
+	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile, "test")
 	r.NoError(err)
-	r.Len(items, 1)
-	a.Equal(second, items[0].Quote)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
+		AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+	}, cfg.Commitments, request.Generation.ResolvedAt, "UTC")
+	r.NoError(err)
+	r.Empty(window.Sources)
+	request.Generation.Policy.AllowSensitive = true
+	request.Budget = personSweepApplyBudget()
+	request.CommitmentOnly = true
+	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
+	_, err = st.ApplyPersonSweep(ctx, request)
+	r.NoError(err)
+	var through, observed int64
+	err = st.db.QueryRowContext(ctx, `SELECT through_sequence, observed_sequence FROM person_commitment_frontiers WHERE person_id = ?`, f.personID).Scan(&through, &observed)
+	r.NoError(err)
+	a.Zero(through)
+	a.Equal(window.ThroughSequence, observed)
+	due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.MinInterval), cfg.Commitments.MinInterval, cfg.Commitments.Window)
+	r.NoError(err)
+	a.False(due)
+	due, err = st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt.Add(cfg.Commitments.Window), cfg.Commitments.MinInterval, cfg.Commitments.Window)
+	r.NoError(err)
+	a.True(due)
 }

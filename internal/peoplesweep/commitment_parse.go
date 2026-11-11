@@ -17,6 +17,9 @@ import (
 const (
 	CommitmentOwedBy = "owed_by"
 	CommitmentOwedTo = "owed_to"
+
+	// CommitmentQuoteMask marks original rune positions omitted from the source.
+	CommitmentQuoteMask = '\x00'
 )
 
 // CommitmentSource is a scoped, participant-verified source. Start is an
@@ -47,13 +50,14 @@ type CommitmentAnchor struct {
 }
 
 type CommitmentWindow struct {
-	PersonID         int64              `json:"person_id"`
-	Sources          []CommitmentSource `json:"sources"`
-	Anchors          []CommitmentAnchor `json:"open_anchors"`
-	Now              time.Time          `json:"now"`
-	Timezone         string             `json:"timezone"`
-	SnapshotSequence int64              `json:"-"`
-	ThroughSequence  int64              `json:"through_sequence"`
+	PersonID          int64              `json:"person_id"`
+	Sources           []CommitmentSource `json:"sources"`
+	Anchors           []CommitmentAnchor `json:"open_anchors"`
+	Now               time.Time          `json:"now"`
+	Timezone          string             `json:"timezone"`
+	BackfillMessageID int64              `json:"-"`
+	SnapshotSequence  int64              `json:"-"`
+	ThroughSequence   int64              `json:"through_sequence"`
 }
 
 type CommitmentPromise struct {
@@ -127,7 +131,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	for index := range parsed.Promises {
 		promise := &parsed.Promises[index]
 		source, ok := sources[promise.SourceID]
-		if !ok || promise.Direction != source.Direction || !commitmentQuote(source, promise.Quote, promise.Start, promise.End) || strings.TrimSpace(promise.Summary) == "" || utf8.RuneCountInString(promise.Summary) > 240 {
+		if !ok || promise.Direction != source.Direction || !source.MatchesQuote(promise.Quote, promise.Start, promise.End) || strings.TrimSpace(promise.Summary) == "" || utf8.RuneCountInString(promise.Summary) > 240 {
 			return invalid()
 		}
 		if promise.DueOn != nil {
@@ -151,7 +155,7 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	for _, fulfilment := range parsed.Fulfilments {
 		source, ok := sources[fulfilment.SourceID]
 		anchor, known := anchors[fulfilment.CommitmentID]
-		if !ok || !known || fulfilments[anchor.ID] || source.Direction != anchor.Direction || !source.EventTime.After(anchor.PromisedAt) || !commitmentQuote(source, fulfilment.Quote, fulfilment.Start, fulfilment.End) {
+		if !ok || !known || fulfilments[anchor.ID] || source.Direction != anchor.Direction || !source.EventTime.After(anchor.PromisedAt) || !source.MatchesQuote(fulfilment.Quote, fulfilment.Start, fulfilment.End) {
 			return invalid()
 		}
 		if anchor.ReopenedAt != nil && !source.EventTime.After(*anchor.ReopenedAt) {
@@ -162,8 +166,9 @@ func ParseCommitments(output jsontext.Value, window CommitmentWindow) (ParsedCom
 	return parsed, nil
 }
 
-func commitmentQuote(source CommitmentSource, quote string, start, end int64) bool {
+// MatchesQuote verifies an exact authored quote at its original-body rune offsets.
+func (source CommitmentSource) MatchesQuote(quote string, start, end int64) bool {
 	runes := []rune(source.Text)
 	a, b := start-source.Start, end-source.Start
-	return strings.TrimSpace(quote) != "" && utf8.RuneCountInString(quote) <= 2000 && a >= 0 && b > a && b <= int64(len(runes)) && string(runes[a:b]) == quote
+	return strings.TrimSpace(quote) != "" && !strings.ContainsRune(quote, CommitmentQuoteMask) && utf8.RuneCountInString(quote) <= 2000 && a >= 0 && b > a && b <= int64(len(runes)) && string(runes[a:b]) == quote
 }
