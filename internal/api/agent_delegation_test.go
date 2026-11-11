@@ -116,7 +116,7 @@ func TestDelegatedFailsPrivilegedPredicate(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
-		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
 	t.Run("issueAgentToken returns 401", func(t *testing.T) {
