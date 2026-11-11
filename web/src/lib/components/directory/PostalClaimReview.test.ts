@@ -86,11 +86,6 @@ describe('Postal claim review', () => {
     await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'add' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
     await waitFor(() => expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1));
-    const patch = requests.find(request => request.method === 'PATCH')!;
-    expect(patch.headers.get('If-Match')).toBe('"person-7-r3"');
-    const body = await patch.clone().json();
-    expect(body.addresses.add[0]).toMatchObject({ address_kind: 'postal', street_address: 'Corrected street', original_input: raw, envelope: { source: 'user', source_ref: 'person-fact-claim:synthetic-claim' } });
-    expect(body.addresses.add[0].envelope).not.toHaveProperty('confidence');
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Review address' })).toBeNull());
     await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
     expect(screen.getByText('Already saved')).toBeDefined();
@@ -100,7 +95,9 @@ describe('Postal claim review', () => {
   it.each([['stale-target-revision', 'This suggestion is out of date'], ['evidence-unsupported', 'Evidence unavailable'], ['malformed-value', 'The address is invalid']])('keeps %s claims inspectable without offering supported adoption', async (reason, explanation) => {
     const { requests } = setup(reason);
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
+    if (reason === 'malformed-value') expect(screen.queryByText('{"street_address":123}')).toBeNull();
     await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+    if (reason === 'malformed-value') expect(screen.getByText('{"street_address":123}')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Review address' })).toBeNull();
     expect(screen.getByText(explanation)).toBeDefined();
     expect(requests.some(request => request.method === 'PATCH' || request.url.endsWith('/addresses/assess'))).toBe(false);

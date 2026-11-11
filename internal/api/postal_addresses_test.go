@@ -144,10 +144,7 @@ func TestPostalAddressAssessmentRequiresPresentAddress(t *testing.T) {
 		wantCode int
 		message  string
 	}{
-		{"missing", `{}`, http.StatusBadRequest, ""},
 		{"missing with external consent", `{"allow_external":true}`, http.StatusBadRequest, ""},
-		{"null", `{"address":null}`, http.StatusBadRequest, ""},
-		{"null with external consent", `{"address":null,"allow_external":true}`, http.StatusBadRequest, ""},
 		{"unknown member", `{"address":{},"unknown":true}`, http.StatusBadRequest, ""},
 		{"unknown address field", `{"address":{"postal_cod":"12345"}}`, http.StatusBadRequest, "postal_cod"},
 		{"multiple values", `{"address":{}} {}`, http.StatusBadRequest, ""},

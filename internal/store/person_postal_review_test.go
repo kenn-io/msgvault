@@ -154,6 +154,7 @@ func TestPostalAddressSweepExtractionAndAdoption(t *testing.T) {
 		require.NoError(err)
 		assert.False(rows[0].PostalReview.Eligible)
 		assert.Contains(rows[0].PostalReview.ReasonCodes, "already_adopted")
+		// A merge or subset copy may keep the address without its source claim.
 		_, err = f.store.db.ExecContext(t.Context(), f.store.Rebind(`DELETE FROM person_fact_claims WHERE person_id = ?`), f.personID)
 		require.NoError(err)
 		patch.Addresses.Supersede = []int64{current.Addresses[0].Envelope.ID}
@@ -201,18 +202,21 @@ func TestPostalSuggestionsMatchOnlyCurrentAddressComponents(t *testing.T) {
 	claims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 10})
 	require.NoError(err)
 	require.Len(claims, 6)
+	wantEligible := map[string]bool{"first evidence": false, "second evidence": false, "other unit": true, "former home": true, "other floor": true, "earlier draft": true}
 	for _, claim := range claims {
 		require.NotNil(claim.PostalReview)
-		if claim.PostalReview.Assessment.Original.StreetAddress == "12 Example Street" && claim.PostalReview.Assessment.Original.ExtendedAddress == "Unit 7" && claim.PostalReview.Assessment.Original.ExtendedComponents == "" {
-			assert.False(claim.PostalReview.Eligible)
+		require.NotNil(claim.PostalReview.Assessment)
+		source := claim.PostalReview.Assessment.Original.OriginalValue
+		eligible, ok := wantEligible[source]
+		require.True(ok, "unexpected source %q", source)
+		assert.Equal(eligible, claim.PostalReview.Eligible, source)
+		if !eligible {
 			assert.Contains(claim.PostalReview.ReasonCodes, "already_adopted")
 			snapshot, err := postaladdress.EncodeOriginalInput(claim.PostalReview.Assessment.Original)
 			require.NoError(err)
 			ref := "person-fact-claim:" + claim.ClaimKey
 			_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("12 Example Street"), OriginalValue: snapshot, Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
 			assert.ErrorIs(err, ErrPostalSuggestionInvalid)
-		} else {
-			assert.True(claim.PostalReview.Eligible)
 		}
 	}
 }

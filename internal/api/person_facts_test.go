@@ -463,20 +463,20 @@ func TestPostalClaimResponseIncludesReview(t *testing.T) {
 	response := doRequest(t, srv.Router(), http.MethodGet, fmt.Sprintf("/api/v1/people/%d/fact-claims", id), nil, nil)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var body struct {
-		Claims []personfacts.Claim `json:"claims"`
+		Claims []struct {
+			ClaimKey     string                           `json:"claim_key"`
+			PostalReview *personfacts.PostalAddressReview `json:"postal_review"`
+		} `json:"claims"`
 	}
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &body)) //nolint:musttag // The response embeds the existing claim type.
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 	require.Len(body.Claims, 1)
 	require.NotNil(body.Claims[0].PostalReview)
 	require.NotNil(body.Claims[0].PostalReview.Assessment)
-	claims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 1})
-	require.NoError(err)
-	require.Len(claims, 1)
 	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
 	require.Equal(http.StatusOK, read.Code, read.Body.String())
 	mismatch, err := json.Marshal(map[string]any{"addresses": map[string]any{"add": []any{map[string]any{
 		"address_kind": "postal", "street_address": "Other street", "original_input": map[string]any{"address_kind": "postal", "street_address": "Other street"},
-		"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + claims[0].ClaimKey},
+		"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + body.Claims[0].ClaimKey},
 	}}}})
 	require.NoError(err)
 	rejected := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), mismatch, map[string]string{"If-Match": read.Header().Get("ETag")})
@@ -484,7 +484,7 @@ func TestPostalClaimResponseIncludesReview(t *testing.T) {
 	assert.Contains(rejected.Body.String(), "postal address snapshot does not match the cited suggestion")
 	patch, err := json.Marshal(map[string]any{"addresses": map[string]any{"add": []any{map[string]any{
 		"address_kind": "postal", "street_address": "Corrected street", "original_input": body.Claims[0].PostalReview.Assessment.Original,
-		"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + claims[0].ClaimKey},
+		"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + body.Claims[0].ClaimKey},
 	}}}})
 	require.NoError(err)
 	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), patch, map[string]string{"If-Match": read.Header().Get("ETag")})
@@ -495,5 +495,4 @@ func TestPostalClaimResponseIncludesReview(t *testing.T) {
 	require.NotNil(profile.Addresses[0].StreetAddress)
 	assert.Equal("Corrected street", *profile.Addresses[0].StreetAddress)
 	assert.Equal(body.Claims[0].PostalReview.Assessment.Original, profile.Addresses[0].Assessment.Original)
-
 }

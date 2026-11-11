@@ -48,16 +48,6 @@ function controller(): FactLedgerController {
 }
 
 describe('FactLedger', () => {
-  it('reveals a submitted postal value when the assessment cannot be parsed', async () => {
-    const value = controller();
-    value.selectedSection = 'claims';
-    value.claims.rows = [{ ...value.claims.rows[0]!, submittedValue: '{"street_address":123}', postalReview: { eligible: false, person_revision: 1, reason_codes: ['malformed-value'], supporting_evidence_ids: [] } }];
-    const rendered = render(FactLedger, { controller: value });
-    expect(rendered.container.textContent).not.toContain('{"street_address":123}');
-    await fireEvent.click(screen.getByRole('button', { name: 'Reveal sensitive fact value' }));
-    expect(screen.getByText('{"street_address":123}')).toBeDefined();
-  });
-
   it('renders allow-listed fields and keeps excerpts and sensitive values row-locally absent until reveal', async () => {
     const value = controller();
     vi.spyOn(value, 'selectSection').mockImplementation(async (section) => { value.selectedSection = section; });
