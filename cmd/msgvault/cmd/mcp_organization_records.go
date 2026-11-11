@@ -231,6 +231,18 @@ func (b *daemonMCPOperations) organizationMedia(ctx context.Context, args map[st
 	return &mcpserver.OperationResult{Output: chunk}, nil
 }
 
+func organizationContextRefusal(result *mcpserver.OperationResult) *mcpserver.OperationRefusalError {
+	if result != nil && result.IsError {
+		if failure, ok := result.Output.(struct {
+			Error                     string `json:"error"`
+			OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
+		}); ok && failure.Error != "" && !failure.OperationMayHaveCompleted {
+			return &mcpserver.OperationRefusalError{Code: failure.Error}
+		}
+	}
+	return &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+}
+
 func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
 	r, handled, valid := organizationWriteRequest(name, args)
 	if !handled {
@@ -244,7 +256,7 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 	if r.id != 0 {
 		result, _, err := b.executeOrganizationOperation(ctx, "get_organization", map[string]any{"organization_id": r.id})
 		if err != nil || result == nil || result.IsError {
-			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+			return "", true, organizationContextRefusal(result)
 		}
 		if r.etag != "" && result.ETag != r.etag {
 			return "", true, &mcpserver.OperationRefusalError{Code: "organization_revision_conflict"}
@@ -255,7 +267,7 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 		input, _ := decodeMCPOperationArguments[mcpserver.OrganizationMergeArgs](args)
 		result, _, err := b.executeOrganizationOperation(ctx, "get_organization", map[string]any{"organization_id": input.Body.LosingOrganizationID})
 		if err != nil || result == nil || result.IsError {
-			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+			return "", true, organizationContextRefusal(result)
 		}
 		record, ok := result.Output.(mcpserver.OrganizationRecord)
 		if !ok || record.Profile.Organization.Revision != input.Body.LosingRevision {
