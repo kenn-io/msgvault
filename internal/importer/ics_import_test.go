@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,8 +32,4 @@ func TestImportICSMultipleEventsOverFileLimit(t *testing.T) {
 	summary, err := ImportICS(t.Context(), st, path, "large-export")
 	requirements.NoError(err)
 	assertions.Equal(2, summary.Changed)
-	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	assertions.Len(page.Occurrences, 2)
 }

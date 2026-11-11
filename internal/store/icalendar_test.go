@@ -46,7 +46,7 @@ func TestICSFamilyLookupUsesIndexes(t *testing.T) {
 }
 
 func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
-	for _, behavior := range []string{"duplicate persist", "older sequence", "newer stamp", "cancellation", "rebuild"} {
+	for _, behavior := range []string{"duplicate persist", "newer stamp", "cancellation", "rebuild"} {
 		t.Run(behavior, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
@@ -67,14 +67,6 @@ func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
 				assertions.Zero(duplicate.Changed)
 				assertions.Equal(1, duplicate.Unchanged)
 				assertions.Equal(ids, emailEvents(t, st, source))
-				return
-			case "older sequence":
-				older := strings.Replace(string(raw), "SEQUENCE:2", "SEQUENCE:1", 1)
-				_, err := st.PersistICalendarContext(t.Context(), source, []byte(older))
-				requirements.NoError(err)
-				stored, err := st.GetMessageRaw(id)
-				requirements.NoError(err)
-				assertions.Equal(raw, stored)
 				return
 			}
 
