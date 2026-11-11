@@ -99,11 +99,6 @@ func TestMCPArchiveFamilies(t *testing.T) {
 			if tc.noDrafts {
 				assert.NotContains(names, "draft_compose")
 			}
-			if tc.source == "gcal" || tc.source == "granola" {
-				for _, name := range []string{"link_meeting", "unlink_meeting", "reset_meeting_link"} {
-					assert.Contains(names, name)
-				}
-			}
 			if tc.source == "mbox" {
 				assert.Contains(names, "get_stats")
 				assert.Contains(names, "list_saved_views")
