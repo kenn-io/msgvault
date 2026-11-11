@@ -466,6 +466,10 @@ func TestMCPCommitmentDecisionRequiresApprovalAndDisclosesExactTarget(t *testing
 	}
 	declined := call()
 	a.True(declined.IsError)
+	r.Len(declined.Content, 1)
+	cancellation, ok := declined.Content[0].(*sdkmcp.TextContent)
+	r.True(ok)
+	a.Equal("action cancelled; explicit client confirmation is required", cancellation.Text)
 	a.Equal(1, prompts)
 	approved = true
 	// Approval reaches the actual daemon route; this synthetic ID does not exist.
