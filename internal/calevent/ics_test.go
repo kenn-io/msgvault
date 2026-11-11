@@ -149,7 +149,7 @@ func TestICSStatus(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
 		raw := strings.Replace(icsExample, "METHOD:REQUEST\r\n", "", 1)
-		components, err := ParseICS([]byte(raw), "REPLY", "")
+		components, err := ParseEmailICS([]byte(raw), "REPLY", "")
 		requirements.NoError(err)
 		assertions.Empty(components)
 		components, err = ParseICS([]byte(raw), "CANCEL", "")

@@ -145,6 +145,9 @@ func parseICS(raw []byte, method, calendarZone string, strict bool) (out []ICSCo
 	}
 	switch method {
 	case "REPLY", "ADD", "REFRESH", "COUNTER", "DECLINECOUNTER":
+		if !strict {
+			return nil, fmt.Errorf("unsupported calendar method %q", method)
+		}
 		return nil, nil
 	}
 	calendarZone = cmp.Or(calendarZone, "UTC")

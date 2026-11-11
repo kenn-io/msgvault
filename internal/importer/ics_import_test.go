@@ -23,6 +23,21 @@ func TestImportICSMalformedFileLeavesNoSource(t *testing.T) {
 	assert.ErrorIs(t, err, store.ErrSourceNotFound)
 }
 
+func TestImportICSUnsupportedMethodLeavesNoSource(t *testing.T) {
+	for _, method := range []string{"ADD", "REPLY", "REFRESH", "COUNTER", "DECLINECOUNTER"} {
+		t.Run(method, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			path := filepath.Join(t.TempDir(), "calendar.ics")
+			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:" + method + "\r\nBEGIN:VEVENT\r\nUID:event@example.com\r\nDTSTART:20270302T120000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+			require.NoError(t, os.WriteFile(path, []byte(raw), 0600))
+			_, err := ImportICS(t.Context(), st, path, "unsupported-export")
+			require.ErrorContains(t, err, `unsupported calendar method "`+method+`"`)
+			_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "ics", "unsupported-export")
+			assert.ErrorIs(t, err, store.ErrSourceNotFound)
+		})
+	}
+}
+
 func TestImportICSRangeKeepsOtherEvents(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	path := filepath.Join(t.TempDir(), "calendar.ics")
