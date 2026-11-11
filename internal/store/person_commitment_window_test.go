@@ -22,8 +22,11 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 	})
 	ownerEmail := f.PersistEmail(storetest.EmailSpec{From: loopOwner, To: []string{loopAlex},
 		Body: "I will send the budget.", SentAt: loopAgo(loopDay)})
+	const quoted = "Je transmettrai le résumé."
+	const authored = "I will confirm the booking."
+	prefix := "On Tuesday, Owner wrote:\n> " + quoted + "\n\n"
 	otherEmail := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner},
-		Body: "I will confirm the booking.", SentAt: loopAgo(loopDay)})
+		Body: prefix + authored, SentAt: loopAgo(loopDay)})
 	f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner, "sam@example.test"},
 		Body: "I will write to all of you.", SentAt: loopAgo(loopDay)})
 	f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, ListID: "news.example.test",
@@ -36,6 +39,12 @@ func TestCommitmentWindowScopesBothSidesOfDirectConversations(t *testing.T) {
 	got := make(map[int64]string)
 	for _, source := range window.Sources {
 		got[source.MessageID] = source.Direction
+		if source.MessageID == otherEmail {
+			start := int64(len([]rune(prefix)))
+			a.True(source.MatchesQuote(authored, start, start+int64(len([]rune(authored)))))
+			quotedStart := int64(len([]rune("On Tuesday, Owner wrote:\n> ")))
+			a.False(source.MatchesQuote(quoted, quotedStart, quotedStart+int64(len([]rune(quoted)))))
+		}
 	}
 	a.Equal(map[int64]string{
 		chat[0]: peoplesweep.CommitmentOwedBy, chat[1]: peoplesweep.CommitmentOwedTo,

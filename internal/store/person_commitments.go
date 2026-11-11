@@ -13,9 +13,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
+	"go.kenn.io/msgvault/internal/vector/preprocess"
 )
 
 // PersonCommitment keeps mutable owner decisions separate from immutable facts.
@@ -86,13 +89,17 @@ type commitmentCandidate struct {
 	fulfilment *personfacts.Evidence
 }
 
-func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int) ([]PersonCommitment, error) {
-	return s.listPersonCommitments(ctx, commitmentListFilter{personID: personID}, now, limit)
+// CommitmentStateFulfilled is derived from live, newer evidence on an open promise.
+const CommitmentStateFulfilled = "fulfilled"
+
+func (s *Store) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]PersonCommitment, error) {
+	return s.listPersonCommitments(ctx, commitmentListFilter{personID: personID, includeClosed: includeClosed}, now, limit)
 }
 
 type commitmentListFilter struct {
-	personID, id                   int64
-	includeSnoozed, awaitingAgenda bool
+	personID, id                  int64
+	includeSnoozed, includeClosed bool
+	agendaDestination             string
 }
 
 // GetOpenPersonCommitmentContext verifies a single promise even while it is snoozed.
@@ -110,23 +117,78 @@ func (s *Store) GetOpenPersonCommitmentContext(ctx context.Context, id int64, no
 	return items[0], nil
 }
 
-func (s *Store) ListCommitmentAgendaCandidatesContext(ctx context.Context, now time.Time, limit int) ([]PersonCommitment, error) {
-	return s.listPersonCommitments(ctx, commitmentListFilter{awaitingAgenda: true}, now, limit)
+func (s *Store) ListCommitmentAgendaCandidatesContext(ctx context.Context, destination string, now time.Time, limit int) ([]PersonCommitment, error) {
+	return s.listPersonCommitments(ctx, commitmentListFilter{agendaDestination: destination}, now, limit)
 }
 
 func (s *Store) listPersonCommitments(ctx context.Context, filter commitmentListFilter, now time.Time, limit int) ([]PersonCommitment, error) {
 	if filter.personID < 0 || limit < 1 || limit > 201 {
 		return nil, ErrInvalidActivityRequest
 	}
+	result := make([]PersonCommitment, 0, limit)
+	var after PersonCommitment
+	pageSize := min(32, max(8, limit))
+	for {
+		candidates, err := s.loadCommitmentCandidates(ctx, filter, now, after, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		for _, candidate := range candidates {
+			c := candidate.commitment
+			if candidate.promise.ID == 0 {
+				continue
+			}
+			promise, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, candidate.promise.Input)
+			if err != nil {
+				return nil, err
+			}
+			if promise == nil || promise.MessageID != c.AnchorMessageID || promise.Quote != c.Quote || promise.Start != c.Start || promise.End != c.End {
+				continue
+			}
+			if evidence := candidate.fulfilment; evidence != nil && evidence.Supported &&
+				(c.ReopenedAt == nil || evidence.Input.EventTime.After(*c.ReopenedAt)) {
+				c.Fulfilment, err = s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, evidence.Input)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if c.State == LoopStateSnoozed && c.SnoozedUntil != nil && !c.SnoozedUntil.After(now) {
+				c.State, c.SnoozedUntil = LoopStateOpen, nil
+			}
+			if c.Fulfilment != nil && c.FulfilmentConfirmed && c.State != LoopStateDone {
+				if !filter.includeClosed {
+					continue
+				}
+				c.State = CommitmentStateFulfilled
+			}
+			if c.Fulfilment == nil {
+				c.FulfilmentEvidenceID = nil
+				c.FulfilmentConfirmed = false
+			}
+			result = append(result, c)
+			if len(result) == limit {
+				return result, nil
+			}
+		}
+		if len(candidates) < pageSize {
+			return result, nil
+		}
+		after = candidates[len(candidates)-1].commitment
+	}
+}
+
+func (s *Store) loadCommitmentCandidates(ctx context.Context, filter commitmentListFilter, now time.Time, after PersonCommitment, pageSize int) ([]commitmentCandidate, error) {
 	var candidates []commitmentCandidate
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		query := `SELECT ` + commitmentColumns + ` FROM person_commitments
-			WHERE current_claim_id IS NOT NULL AND owner_state <> 'done'
-			AND ` + s.loopTimeKey("expires_at") + ` > ` + s.loopTimeKey("?")
+			WHERE current_claim_id IS NOT NULL AND ` + s.loopTimeKey("expires_at") + ` > ` + s.loopTimeKey("?")
 		args := []any{s.dialect.TimestampParam(now)}
-		if !filter.includeSnoozed {
-			query += ` AND (owner_state <> 'snoozed' OR ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
-			args = append(args, s.dialect.TimestampParam(now))
+		if !filter.includeClosed {
+			query += ` AND owner_state <> 'done'`
+			if !filter.includeSnoozed {
+				query += ` AND (owner_state <> 'snoozed' OR ` + s.loopTimeKey("snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
+				args = append(args, s.dialect.TimestampParam(now))
+			}
 		}
 		if filter.personID > 0 {
 			query += ` AND person_id = ?`
@@ -136,10 +198,22 @@ func (s *Store) listPersonCommitments(ctx context.Context, filter commitmentList
 			query += ` AND id = ?`
 			args = append(args, filter.id)
 		}
-		if filter.awaitingAgenda {
-			query += ` AND NOT EXISTS (SELECT 1 FROM person_commitment_agenda a WHERE a.commitment_id = person_commitments.id)`
+		if filter.agendaDestination != "" {
+			query += ` AND NOT EXISTS (SELECT 1 FROM person_commitment_agenda a
+				WHERE a.commitment_id = person_commitments.id AND (a.state <> 'retired'
+					OR (a.attempted_at IS NOT NULL AND (a.destination_key <> ? OR a.target_key <> person_commitments.target_key OR a.quote <> person_commitments.quote))))
+				AND NOT EXISTS (SELECT 1 FROM person_commitment_agenda a
+					WHERE a.commitment_id = person_commitments.id AND a.deferred_at IS NOT NULL AND ` +
+				s.loopTimeKey("a.deferred_at") + ` > ` + s.loopTimeKey("?") + `)`
+			args = append(args, filter.agendaDestination, s.dialect.TimestampParam(now.Add(-time.Hour)))
 		}
-		query += ` ORDER BY ` + s.loopTimeKey("promised_at") + `, id LIMIT 1000`
+		promisedAt := s.loopTimeKey("promised_at")
+		if after.ID != 0 {
+			query += ` AND (` + promisedAt + `, id) > (` + s.loopTimeKey("?") + `, ?)`
+			args = append(args, s.dialect.TimestampParam(after.PromisedAt), after.ID)
+		}
+		query += ` ORDER BY ` + promisedAt + `, id LIMIT ?`
+		args = append(args, pageSize)
 		rows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
 			return err
@@ -192,42 +266,7 @@ func (s *Store) listPersonCommitments(ctx context.Context, filter commitmentList
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	result := make([]PersonCommitment, 0, min(limit, len(candidates)))
-	for _, candidate := range candidates {
-		c := candidate.commitment
-		if candidate.promise.ID == 0 {
-			continue
-		}
-		promise, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, candidate.promise.Input)
-		if err != nil {
-			return nil, err
-		}
-		if promise == nil || promise.MessageID != c.AnchorMessageID || promise.Quote != c.Quote || promise.Start != c.Start || promise.End != c.End {
-			continue
-		}
-		if evidence := candidate.fulfilment; evidence != nil && evidence.Supported &&
-			(c.ReopenedAt == nil || evidence.Input.EventTime.After(*c.ReopenedAt)) {
-			c.Fulfilment, err = s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, evidence.Input)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if c.Fulfilment != nil && c.FulfilmentConfirmed {
-			continue
-		}
-		if c.Fulfilment == nil {
-			c.FulfilmentEvidenceID = nil
-			c.FulfilmentConfirmed = false
-		}
-		result = append(result, c)
-		if len(result) == limit {
-			break
-		}
-	}
-	return result, nil
+	return candidates, err
 }
 
 func (s *Store) loadCommitmentFulfilmentTx(ctx context.Context, tx *loggedTx, id int64) (personfacts.Evidence, error) {
@@ -241,7 +280,7 @@ func (s *Store) loadCommitmentFulfilmentTx(ctx context.Context, tx *loggedTx, id
 }
 
 func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput) (*CommitmentCitation, error) {
-	message, found := strings.CutPrefix(input.SourceRef, "commitment-message:")
+	message, found := strings.CutPrefix(input.SourceRef, personfacts.CommitmentMessageRefPrefix)
 	id, err := strconv.ParseInt(message, 10, 64)
 	if !found || err != nil || id <= 0 || input.SpanStart == nil || input.SpanEnd == nil {
 		return nil, nil
@@ -251,9 +290,7 @@ func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, d
 		source.ContentSHA256 != input.ContentSHA256 {
 		return nil, err
 	}
-	runes := []rune(source.Text)
-	start, end := *input.SpanStart-source.Start, *input.SpanEnd-source.Start
-	if start < 0 || end <= start || end > int64(len(runes)) || string(runes[start:end]) != input.Excerpt {
+	if !source.MatchesQuote(input.Excerpt, *input.SpanStart, *input.SpanEnd) {
 		return nil, nil
 	}
 	return &CommitmentCitation{MessageID: id, Quote: input.Excerpt, Start: *input.SpanStart, End: *input.SpanEnd}, nil
@@ -287,10 +324,12 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 	return result, err
 }
 
-func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval time.Duration) (bool, error) {
+func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now time.Time, interval, window time.Duration) (bool, error) {
 	var processed requiredTimestamp
-	var through int64
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT processed_at, through_sequence FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&processed, &through)
+	var through, backfill int64
+	var observed sql.NullInt64
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT processed_at, through_sequence, observed_sequence, backfill_message_id
+		FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&processed, &through, &observed, &backfill)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
@@ -299,6 +338,15 @@ func (s *Store) PersonCommitmentsDue(ctx context.Context, personID int64, now ti
 	}
 	if now.Before(processed.Time.Add(interval)) {
 		return false, nil
+	}
+	if backfill >= 0 {
+		return true, nil
+	}
+	if observed.Valid {
+		if !now.Before(processed.Time.Add(window)) {
+			return true, nil
+		}
+		through = max(through, observed.Int64)
 	}
 	return s.HasPersonSweepChangesAfter(ctx, personID, through)
 }
@@ -359,12 +407,37 @@ func (s *Store) commitmentMessage(ctx context.Context, personID int64, conv Loop
 		return peoplesweep.CommitmentSource{}, false, err
 	}
 	runes := []rune(body)
-	if len(runes) > 2000 {
-		runes = runes[:2000]
+	if conv.ConversationType == "email_thread" {
+		runes = commitmentEmailRunes(body)
 	}
+	// Begin the bounded excerpt at its first authored character. The offset
+	// remains a rune coordinate in the original message body.
+	first := 0
+	for first < len(runes) && (runes[first] == peoplesweep.CommitmentQuoteMask || unicode.IsSpace(runes[first])) {
+		first++
+	}
+	if first == len(runes) {
+		return peoplesweep.CommitmentSource{}, false, nil
+	}
+	runes = runes[first:min(first+personfacts.MaxEvidenceExcerptRunes, len(runes))]
 	return peoplesweep.CommitmentSource{ID: fmt.Sprintf("m%d", m.ID), MessageID: m.ID, SourceID: conv.SourceID,
-		Direction: direction, Text: string(runes), EventTime: m.OccurredAt.UTC(), RecordedTime: recorded.Time.UTC(),
-		SourceRef: "commitment-message:" + strconv.FormatInt(m.ID, 10), SourceVersion: "commitment-body/v1:" + hash, ContentSHA256: hash}, true, nil
+		Direction: direction, Text: string(runes), Start: int64(first), EventTime: m.OccurredAt.UTC(), RecordedTime: recorded.Time.UTC(),
+		SourceRef: personfacts.CommitmentMessageRefPrefix + strconv.FormatInt(m.ID, 10), SourceVersion: "commitment-body/v1:" + hash, ContentSHA256: hash}, true, nil
+}
+
+// Reuse the reply detector's byte mask while retaining a single original
+// coordinate for every rune, including non-ASCII text in quoted history.
+func commitmentEmailRunes(body string) []rune {
+	masked := preprocess.MaskReplyQuotes(body)
+	runes := make([]rune, 0, utf8.RuneCountInString(body))
+	for offset, r := range body {
+		_, width := utf8.DecodeRuneInString(body[offset:])
+		if body[offset:offset+width] != masked[offset:offset+width] {
+			r = peoplesweep.CommitmentQuoteMask
+		}
+		runes = append(runes, r)
+	}
+	return runes
 }
 
 // A chat importer may record recipients only at the conversation level.
@@ -412,12 +485,12 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 	window.ThroughSequence = through
 	var open []PersonCommitment
 	if anchorLimit := min(cfg.MaxOpenAnchors, cfg.MaxItems-1); anchorLimit > 0 {
-		open, err = s.ListPersonCommitmentsContext(ctx, personID, now, anchorLimit)
+		open, err = s.ListPersonCommitmentsContext(ctx, personID, now, anchorLimit, false)
 		if err != nil {
 			return window, err
 		}
 	}
-	seen, scanned, used := map[int64]bool{}, 0, 0
+	seen, used := map[int64]bool{}, 0
 	inProfile := func(at time.Time) bool {
 		day := at.UTC().Format(time.DateOnly)
 		return day >= profile.SourceSince && (profile.SourceUntil == "" || day <= profile.SourceUntil)
@@ -455,7 +528,8 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 		}
 	}
 	var previous int64
-	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT through_sequence FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&previous)
+	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT CASE WHEN observed_sequence > through_sequence THEN observed_sequence ELSE through_sequence END,
+		backfill_message_id FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&previous, &window.BackfillMessageID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return window, err
 	}
@@ -521,38 +595,31 @@ func (s *Store) LoadPersonCommitmentWindow(ctx context.Context, personID int64, 
 			}
 		}
 	}
-	for conv, err := range s.LoopConversationsContext(ctx, LoopQuery{PersonID: personID}) {
-		if err != nil {
-			return window, err
-		}
-		for m, err := range conv.Walk() {
+	if window.BackfillMessageID < 0 {
+		return window, nil
+	}
+	const backfillPage = 256
+	ids, err := s.commitmentBackfillMessages(ctx, personID, window.BackfillMessageID, previous, cutoff, backfillPage)
+	if err != nil {
+		return window, err
+	}
+	for _, id := range ids {
+		if !seen[id] {
+			source, ok, err := s.currentCommitmentSource(ctx, personID, id)
 			if err != nil {
 				return window, err
 			}
-			scanned++
-			if scanned > 2000 {
-				return window, nil
-			}
-			if seen[m.ID] {
-				continue
-			}
-			if !inProfile(m.OccurredAt) {
-				continue
-			}
-			source, ok, err := s.commitmentMessage(ctx, personID, conv, m)
-			if err != nil {
-				return window, err
-			}
-			if !ok || (source.EventTime.Before(cutoff) && source.RecordedTime.Before(cutoff)) {
-				continue
-			}
-			if _, err := add(source); err != nil {
-				return window, err
-			}
-			if len(window.Sources) >= cfg.MaxItems {
-				return window, nil
+			if ok && inProfile(source.EventTime) && len(source.Text) <= cfg.MaxBytes {
+				added, err := add(source)
+				if err != nil || !added {
+					return window, err
+				}
 			}
 		}
+		window.BackfillMessageID = id
+	}
+	if len(ids) < backfillPage {
+		window.BackfillMessageID = -1
 	}
 	return window, nil
 }
@@ -609,4 +676,36 @@ func (s *Store) resolvePersonCommitmentTargetTx(ctx context.Context, tx *loggedT
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE person_commitments SET current_claim_id = ? WHERE person_id = ? AND target_key = ?`, claimID, generation.PersonID, descriptor.Key)
 	return false, err
+}
+
+// The journal handles changes to every imported source. This keyset covers
+// older live messages that predate a person's journal, one bounded page at a time.
+func (s *Store) commitmentBackfillMessages(ctx context.Context, personID, after, through int64, cutoff time.Time, limit int) ([]int64, error) {
+	scoped, args := s.loopConversationQuery(LoopQuery{PersonID: personID})
+	at := s.dialect.TimestampParam(cutoff)
+	args = append(args, after, at, at, personID, through, limit)
+	query := `WITH scoped AS (` + scoped + `)
+		SELECT m.id FROM messages m JOIN scoped c ON c.conversation_id = m.conversation_id
+		JOIN sources src ON src.id = m.source_id
+		WHERE m.id > ? AND (` + s.loopTimeKey("m.sent_at") + ` >= ` + s.loopTimeKey("?") + `
+			OR ` + s.loopTimeKey("m.archived_at") + ` >= ` + s.loopTimeKey("?") + `)
+		AND ` + s.loopLiveMessageSQL("m", "src") + `
+		AND NOT EXISTS (SELECT 1 FROM person_sweep_changes changes
+			WHERE changes.person_id = ? AND changes.message_id = m.id AND changes.sequence <= ?
+			AND changes.source_lane = 'conversation_text')
+		ORDER BY m.id LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

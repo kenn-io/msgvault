@@ -107,6 +107,7 @@ func loopListParameters() []*huma.Param {
 	}
 	return []*huma.Param{
 		queryIntegerParam("person_id", "Only loops with this person"),
+		{Name: "include_closed", In: "query", Description: "Include done, snoozed and fulfilled commitments", Schema: &huma.Schema{Type: huma.TypeBoolean}},
 		bounded("limit", "Maximum loops to return", loops.DefaultLimit, loops.MaxLimit),
 	}
 }
@@ -138,8 +139,16 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if err == nil {
+		if values, supplied := r.URL.Query()["include_closed"]; supplied {
+			opts.IncludeClosed, err = strconv.ParseBool(values[0])
+			if len(values) != 1 {
+				err = store.ErrInvalidActivityRequest
+			}
+		}
+	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "person_id and limit must be valid")
+		writeError(w, http.StatusBadRequest, "invalid_request", "person_id, limit and include_closed must be valid")
 		return
 	}
 	evidence := &gatedLoopEvidence{Store: loopStore, gate: s.operationGate}
@@ -321,10 +330,10 @@ func (g *gatedLoopEvidence) SaveLoopMessageEvidenceContext(ctx context.Context, 
 	return g.Store.SaveLoopMessageEvidenceContext(ctx, id, version, token, e)
 }
 
-func (g *gatedLoopEvidence) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int) ([]store.PersonCommitment, error) {
+func (g *gatedLoopEvidence) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int, includeClosed bool) ([]store.PersonCommitment, error) {
 	reader, ok := g.Store.(loops.CommitmentReader)
 	if !ok {
 		return nil, nil
 	}
-	return reader.ListPersonCommitmentsContext(ctx, personID, now, limit)
+	return reader.ListPersonCommitmentsContext(ctx, personID, now, limit, includeClosed)
 }

@@ -256,6 +256,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	agendaOrigin := "http://" + net.JoinHostPort(probeHostForDial(bindAddr), strconv.Itoa(boundPort))
 	ownership, err := claimServeOwnership(cmd.Context(), cfg, bindAddr, boundPort, Version)
 	if err != nil {
 		return fmt.Errorf("claim daemon ownership: %w", err)
@@ -599,8 +600,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("validate people sweep: %w", err)
 		}
 	}
+	commitmentAgenda := api.NewCommitmentAgenda(cfg.Integrations.Kata, s, agendaOrigin)
 	if err := addPeopleSweepJob(
-		sched, cfg.People.Sweep, newPeopleSweepScheduledRun(cfg, s),
+		sched, cfg.People.Sweep, newPeopleSweepScheduledRun(cfg, s, commitmentAgenda),
 	); err != nil {
 		return fmt.Errorf("schedule people sweep: %w", err)
 	}
@@ -1012,7 +1014,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	apiOpts := api.ServerOptions{
 		Config:           cfg,
 		Store:            storeAdapter,
-		CommitmentAgenda: api.NewCommitmentAgenda(cfg.Integrations.Kata, s),
+		CommitmentAgenda: commitmentAgenda,
 		SavedViewStore:   s,
 		Engine:           engine,
 		SQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {

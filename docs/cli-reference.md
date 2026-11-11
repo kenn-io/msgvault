@@ -41,6 +41,7 @@ for what counts as a loop.
 msgvault loops list
 msgvault loops list --limit 10 --json
 msgvault loops list --person 42
+msgvault loops list --include-closed
 msgvault loops done 4521
 msgvault loops done 4521 --questions 4521,4530
 msgvault loops snooze 4521 --until 48h
@@ -64,7 +65,8 @@ fails with `<id> isn't an open loop.`
 
 For cited commitments, use the displayed `c<ID>` with `done`, `snooze`, or
 `reopen`. `list --json` includes exact citations in `commitments` when
-promises are open. `--questions` selects reply-loop question IDs.
+promises are open. Add `--include-closed` to find done, snoozed, or fulfilled
+promises you can reopen. `--questions` selects reply-loop question IDs.
 Commitment extraction and decisions require API schema 5.2.0 or newer.
 See [cited commitments](usage/open-loops.md#see-cited-commitments).
 

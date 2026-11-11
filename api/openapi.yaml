@@ -7268,6 +7268,9 @@ components:
         due_on:
           format: date
           type: string
+        expires_at:
+          format: date-time
+          type: string
         id:
           type: string
         person_id:
@@ -7280,6 +7283,16 @@ components:
           type: string
         proposed_fulfilment:
           $ref: "#/components/schemas/CommitmentQuote"
+        snoozed_until:
+          format: date-time
+          type: string
+        state:
+          enum:
+            - open
+            - done
+            - snoozed
+            - fulfilled
+          type: string
         summary:
           type: string
       required:
@@ -7290,6 +7303,8 @@ components:
         - summary
         - promise
         - promised_at
+        - expires_at
+        - state
       type: object
     LoopCounterparty:
       additionalProperties: true
@@ -24349,6 +24364,11 @@ paths:
           schema:
             format: int64
             type: integer
+        - description: Include done, snoozed and fulfilled commitments
+          in: query
+          name: include_closed
+          schema:
+            type: boolean
         - description: Maximum loops to return
           in: query
           name: limit

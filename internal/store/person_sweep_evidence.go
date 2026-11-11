@@ -160,7 +160,7 @@ func (s *Store) personSweepTombstones(ctx context.Context, personID int64, chang
 	}
 	items := make([]peoplesweep.EvidenceItem, 0)
 	for _, stored := range evidence {
-		if stored.Input.SourceClass != personfacts.EvidenceArchive {
+		if stored.Input.SourceClass != personfacts.EvidenceArchive || strings.HasPrefix(stored.Input.SourceRef, personfacts.CommitmentMessageRefPrefix) {
 			continue
 		}
 		ref, decodeErr := peoplesweep.DecodePersonSweepEvidenceRef(stored.Input.SourceRef)
@@ -817,7 +817,7 @@ func (s *Store) BuildPersonSweepEvidenceStatusChanges(ctx context.Context, perso
 	}
 	terminal := map[evidenceVersion]personfacts.EvidenceStatusChange{}
 	for _, stored := range evidence {
-		if stored.Input.SourceClass != personfacts.EvidenceArchive {
+		if stored.Input.SourceClass != personfacts.EvidenceArchive || strings.HasPrefix(stored.Input.SourceRef, personfacts.CommitmentMessageRefPrefix) {
 			continue
 		}
 		ref, err := peoplesweep.DecodePersonSweepEvidenceRef(stored.Input.SourceRef)

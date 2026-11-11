@@ -34,7 +34,7 @@ func (f *agendaArchiveFixture) GetOpenPersonCommitmentContext(context.Context, i
 	return f.commitment, nil
 }
 
-func (f *agendaArchiveFixture) ListCommitmentAgendaCandidatesContext(context.Context, time.Time, int) ([]store.PersonCommitment, error) {
+func (f *agendaArchiveFixture) ListCommitmentAgendaCandidatesContext(context.Context, string, time.Time, int) ([]store.PersonCommitment, error) {
 	return nil, nil
 }
 
@@ -45,7 +45,7 @@ func (f *agendaArchiveFixture) GetCommitmentAgendaContext(context.Context, int64
 	return f.item, nil
 }
 
-func (f *agendaArchiveFixture) ListPendingCommitmentAgendaContext(context.Context, int) ([]store.CommitmentAgendaSuggestion, error) {
+func (f *agendaArchiveFixture) ListPendingCommitmentAgendaContext(context.Context, string, time.Time, int) ([]store.CommitmentAgendaSuggestion, error) {
 	if f.item.State == store.CommitmentAgendaPending {
 		return []store.CommitmentAgendaSuggestion{f.item}, nil
 	}
@@ -58,9 +58,12 @@ func (f *agendaArchiveFixture) EnqueueCommitmentAgendaContext(_ context.Context,
 	return item, nil
 }
 
-func (f *agendaArchiveFixture) MarkCommitmentAgendaAttemptContext(context.Context, int64, time.Time) (bool, error) {
+func (f *agendaArchiveFixture) MarkCommitmentAgendaAttemptContext(context.Context, store.CommitmentAgendaSuggestion, time.Time, bool) (bool, error) {
+	if f.closed {
+		return false, nil
+	}
 	f.item.Attempted = true
-	return !f.closed, nil
+	return true, nil
 }
 
 func (f *agendaArchiveFixture) RetireCommitmentAgendaContext(context.Context, int64) error {
@@ -84,13 +87,17 @@ func (f *agendaArchiveFixture) LoadKataEvidenceSource(context.Context, kataevide
 type agendaIssuesFixture struct {
 	create func(string, kataissues.CreateInput) (kataissues.Result, error)
 	found  kataissues.Result
+	lookup func(string, kataissues.CreateInput)
 }
 
 func (f *agendaIssuesFixture) Create(_ context.Context, key string, input kataissues.CreateInput) (kataissues.Result, error) {
 	return f.create(key, input)
 }
 
-func (f *agendaIssuesFixture) FindCreated(context.Context, string, kataissues.CreateInput) (kataissues.Result, bool, error) {
+func (f *agendaIssuesFixture) FindCreated(_ context.Context, key string, input kataissues.CreateInput) (kataissues.Result, bool, error) {
+	if f.lookup != nil {
+		f.lookup(key, input)
+	}
 	return f.found, f.found.Issue.UID != "", nil
 }
 
@@ -114,41 +121,40 @@ func newCommitmentAgendaFixture() (*CommitmentAgenda, *agendaArchiveFixture, *ag
 	}
 	issues := &agendaIssuesFixture{}
 	agenda := &CommitmentAgenda{
-		archive: archive, evidence: kataevidence.New(archive), enabled: true, destination: "fixture-destination",
+		archive: archive, evidence: kataevidence.New(archive), enabled: true, destination: "fixture-destination", origin: "https://archive.example.test",
 		issues: func(context.Context) (commitmentAgendaIssues, error) { return issues, nil },
 	}
 	return agenda, archive, issues
 }
 
-func TestCommitmentAgendaFreezesExactCitationAndLinksThroughClosure(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	agenda, archive, issues := newCommitmentAgendaFixture()
-	task := taskclient.KataTask{UID: "issue-1", QualifiedRef: "agenda#12", Metadata: map[string]any{
-		personagenda.PersonMetadataKey: "person-vcard-uid", personagenda.ListMetadataKey: "commitments",
-	}}
-	calls := 0
-	issues.create = func(key string, input kataissues.CreateInput) (kataissues.Result, error) {
-		calls++
-		a.Equal("commitment-agenda:c12", key)
-		a.Equal("person-vcard-uid", input.PersonUID)
-		r.Len(input.Evidence, 1)
-		a.Equal(11, input.Evidence[0].Message.StartRune)
-		a.Equal(33, input.Evidence[0].Message.EndRune)
-		a.Equal("I will send the draft.", archive.item.Quote)
-		archive.closed = true
-		return kataissues.Result{Issue: task}, nil
-	}
-	now := time.Now()
-	item, err := agenda.Manual(t.Context(), 12, now)
-	r.NoError(err)
-	a.Equal(task.UID, item.IssueUID)
-	item, err = agenda.Manual(t.Context(), 12, now)
-	r.NoError(err)
-	a.Equal(task.QualifiedRef, item.IssueRef)
-	a.Equal(1, calls)
-}
-
-func TestCommitmentAgendaDrainRetiresClosedAndRecoversCompletedCreate(t *testing.T) {
+func TestCommitmentAgendaSettlesSavedIntent(t *testing.T) {
+	t.Run("passes exact citation and links after create", func(t *testing.T) {
+		r, a := require.New(t), assert.New(t)
+		agenda, archive, issues := newCommitmentAgendaFixture()
+		task := taskclient.KataTask{UID: "issue-1", QualifiedRef: "agenda#12", Metadata: map[string]any{
+			personagenda.PersonMetadataKey: "person-vcard-uid", personagenda.ListMetadataKey: "commitments",
+		}}
+		calls := 0
+		issues.create = func(key string, input kataissues.CreateInput) (kataissues.Result, error) {
+			calls++
+			a.Equal("commitment-agenda:c12", key)
+			a.Equal("person-vcard-uid", input.PersonUID)
+			r.Len(input.Evidence, 1)
+			a.Equal(11, input.Evidence[0].Message.StartRune)
+			a.Equal(33, input.Evidence[0].Message.EndRune)
+			a.Equal("[Open the original message](https://archive.example.test/messages/19)", input.Brief)
+			archive.closed = true
+			return kataissues.Result{Issue: task}, nil
+		}
+		now := time.Now()
+		item, err := agenda.Manual(t.Context(), 12, now)
+		r.NoError(err)
+		a.Equal(task.UID, item.IssueUID)
+		item, err = agenda.Manual(t.Context(), 12, now)
+		r.NoError(err)
+		a.Equal(task.QualifiedRef, item.IssueRef)
+		a.Equal(1, calls)
+	})
 	for _, attempted := range []bool{false, true} {
 		name := "closed before submission"
 		if attempted {
@@ -158,6 +164,10 @@ func TestCommitmentAgendaDrainRetiresClosedAndRecoversCompletedCreate(t *testing
 			r, a := require.New(t), assert.New(t)
 			agenda, archive, issues := newCommitmentAgendaFixture()
 			if attempted {
+				issues.lookup = func(key string, input kataissues.CreateInput) {
+					a.Equal(archive.item.IdempotencyKey, key)
+					a.Equal(archive.item.Request, input)
+				}
 				issues.create = func(string, kataissues.CreateInput) (kataissues.Result, error) {
 					issues.found.Issue = taskclient.KataTask{
 						UID: "issue-1", QualifiedRef: "agenda#12",
@@ -179,6 +189,8 @@ func TestCommitmentAgendaDrainRetiresClosedAndRecoversCompletedCreate(t *testing
 			r.NoError(agenda.AutoRun(t.Context(), time.Now()))
 			if attempted {
 				a.Equal(store.CommitmentAgendaLinked, archive.item.State)
+				a.Equal(issues.found.Issue.UID, archive.item.IssueUID)
+				a.Equal(issues.found.Issue.QualifiedRef, archive.item.IssueRef)
 			} else {
 				a.Equal(store.CommitmentAgendaRetired, archive.item.State)
 			}

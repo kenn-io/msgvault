@@ -158,7 +158,9 @@ Enable `[people.sweep.commitments]` in [configuration](../configuration.md#commi
 Use `msgvault person provider consent --commitments` to see the provider,
 source dates, and what the request discloses. Repeat with `--yes` to consent
 to sending conversation text from both sides of verified direct chats and
-email. The profile must allow sensitive `conversation_text` sources.
+email. The profile must allow sensitive `conversation_text` sources. Check the grant
+with `msgvault person provider status`. Use `msgvault person provider revoke`
+to revoke both the ordinary inference and commitment grants for the profile.
 
 Cited promises appear under **Promises you made** and **Promises to you**.
 Each row links to the quoted message. The JSON response also gives the claim
@@ -168,7 +170,10 @@ configured grace period, or after the maximum duration if it has no due
 date. Expired and unsupported claims leave the list.
 
 Use the commitment ID for actions on a promise. This ID starts with `c`.
-The same message can anchor multiple promises and a reply loop.
+The same message can anchor multiple promises and a reply loop. Choose
+**Show closed promises** in People Details or run
+`msgvault loops list --include-closed` to find done, snoozed, or fulfilled promises
+that you can reopen.
 
 ```bash
 msgvault loops done c12
@@ -187,10 +192,11 @@ promise can appear again.
 
 With [Kata integration](../configuration.md#integrationskata) configured, run
 `msgvault loops agenda c12` to create an issue on the person's agenda. The
-issue quotes the original message and links to the exact citation. Retrying
-the command returns the original issue, including after it is closed in Kata.
+issue quotes and links to the original message. Retrying a successful filing
+returns the same issue, including after it is closed in Kata. A promise must
+still have a current citation when it is first filed.
 
 Set `auto_agenda = true` in `[people.sweep.commitments]` to let the scheduled
-sweep create agenda issues for open commitments. Automatic creation is off
-by default. The manual command works without that setting. Both require
+sweep file open commitments in batches of up to eight. This includes promises
+already open when you enable the setting. Automatic creation is off by default. The manual command works without that setting. Both require
 daemon API schema 5.3.0 or newer.

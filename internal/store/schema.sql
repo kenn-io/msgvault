@@ -4417,7 +4417,9 @@ CREATE TABLE IF NOT EXISTS person_commitments (
 CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
  person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
  through_sequence INTEGER NOT NULL,
- processed_at DATETIME NOT NULL
+ processed_at DATETIME NOT NULL,
+ observed_sequence INTEGER,
+ backfill_message_id INTEGER NOT NULL DEFAULT 0
 );
 
 -- Frozen intent survives source removal, so an issue created concurrently
@@ -4431,6 +4433,7 @@ CREATE TABLE IF NOT EXISTS person_commitment_agenda (
  quote TEXT NOT NULL,
  state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','linked','retired')),
  attempted_at DATETIME,
+ deferred_at DATETIME,
  issue_uid TEXT,
  issue_ref TEXT,
  CHECK ((state = 'linked') = (issue_uid IS NOT NULL AND issue_ref IS NOT NULL))

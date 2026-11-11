@@ -30,7 +30,7 @@ func addPeopleSweepJob(
 }
 
 func newPeopleSweepScheduledRun(
-	cfg *config.Config, st *store.Store,
+	cfg *config.Config, st *store.Store, agenda *api.CommitmentAgenda,
 ) func(context.Context) error {
 	return func(ctx context.Context) error {
 		worker, err := newProductionPersonSweepWorker(cfg, st)
@@ -44,11 +44,11 @@ func newPeopleSweepScheduledRun(
 		if !cfg.People.Sweep.Commitments.Enabled || !cfg.People.Sweep.Commitments.AutoAgenda || !cfg.Integrations.Kata.Enabled {
 			return err
 		}
-		return errors.Join(err, runAutomaticCommitmentAgenda(ctx, cfg, st))
+		return errors.Join(err, runAutomaticCommitmentAgenda(ctx, cfg, st, agenda))
 	}
 }
 
-func runAutomaticCommitmentAgenda(ctx context.Context, cfg *config.Config, st *store.Store) error {
+func runAutomaticCommitmentAgenda(ctx context.Context, cfg *config.Config, st *store.Store, agenda *api.CommitmentAgenda) error {
 	profile, err := cfg.People.Sweep.Profile()
 	if err != nil {
 		return err
@@ -57,7 +57,7 @@ func runAutomaticCommitmentAgenda(ctx context.Context, cfg *config.Config, st *s
 	if err != nil || !active {
 		return err
 	}
-	return api.NewCommitmentAgenda(cfg.Integrations.Kata, st).AutoRun(ctx, time.Now().UTC())
+	return agenda.AutoRun(ctx, time.Now().UTC())
 }
 
 // newPersonBriefManualRun is the daemon's manual brief runner: one forced,

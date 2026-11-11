@@ -238,7 +238,7 @@ func (r Resolver) prepareCandidate(
 			continue
 		}
 		if evidence.PersonID != input.PersonID || evidence.Input.PersonID != input.PersonID ||
-			evidence.Input.SubjectPersonID == nil || *evidence.Input.SubjectPersonID != input.PersonID ||
+			!evidenceSubjectMatches(evidence.Input, claim.Claim.Origin == OriginCommitment && input.Target.Kind == TargetCommitment) ||
 			evidence.Input.IdentityScore < r.Policy.MinimumIdentityScore {
 			candidate.decision = Decision{
 				PersonID: input.PersonID, ClaimKey: claim.ClaimKey,

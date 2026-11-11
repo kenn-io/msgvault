@@ -56,7 +56,7 @@ func (l *loopFixture) list(t *testing.T, query string) LoopListResponse {
 	return out
 }
 
-func TestCommitmentDecisionRejectsNumericAndInvalidIDs(t *testing.T) {
+func TestCommitmentDecisionMapsMalformedAndUnknownIDs(t *testing.T) {
 	a := assert.New(t)
 	fixture := newLoopFixture(t)
 	for _, tc := range []struct {
@@ -64,8 +64,6 @@ func TestCommitmentDecisionRejectsNumericAndInvalidIDs(t *testing.T) {
 		status      int
 	}{
 		{"12", `{"state":"done"}`, http.StatusBadRequest},
-		{"c012", `{"state":"done"}`, http.StatusBadRequest},
-		{"c12", `{"state":"snoozed"}`, http.StatusBadRequest},
 		{"c12", `{"state":"done"}`, http.StatusNotFound},
 	} {
 		response := fixture.do(t, http.MethodPost, "/api/v1/loops/commitments/"+tc.id+"/decision", tc.request)

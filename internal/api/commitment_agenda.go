@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/kataissues"
@@ -28,12 +30,13 @@ type commitmentAgendaArchive interface {
 	kataissues.Archive
 	personagenda.IdentityStore
 	GetOpenPersonCommitmentContext(context.Context, int64, time.Time) (store.PersonCommitment, error)
-	ListCommitmentAgendaCandidatesContext(context.Context, time.Time, int) ([]store.PersonCommitment, error)
+	ListCommitmentAgendaCandidatesContext(context.Context, string, time.Time, int) ([]store.PersonCommitment, error)
 	GetCommitmentAgendaContext(context.Context, int64) (store.CommitmentAgendaSuggestion, error)
 	EnqueueCommitmentAgendaContext(context.Context, store.CommitmentAgendaSuggestion) (store.CommitmentAgendaSuggestion, error)
-	ListPendingCommitmentAgendaContext(context.Context, int) ([]store.CommitmentAgendaSuggestion, error)
-	MarkCommitmentAgendaAttemptContext(context.Context, int64, time.Time) (bool, error)
+	ListPendingCommitmentAgendaContext(context.Context, string, time.Time, int) ([]store.CommitmentAgendaSuggestion, error)
+	MarkCommitmentAgendaAttemptContext(context.Context, store.CommitmentAgendaSuggestion, time.Time, bool) (bool, error)
 	RetireCommitmentAgendaContext(context.Context, int64) error
+	DeferCommitmentAgendaContext(context.Context, store.PersonCommitment, string, time.Time) error
 	LinkCommitmentAgendaContext(context.Context, int64, string, string) (store.CommitmentAgendaSuggestion, error)
 	ReopenCommitmentAgendaContext(context.Context, int64) error
 }
@@ -49,22 +52,20 @@ type CommitmentAgenda struct {
 	evidence    *kataevidence.Service
 	enabled     bool
 	destination string
+	origin      string
 	issues      func(context.Context) (commitmentAgendaIssues, error)
 }
 
-func NewCommitmentAgenda(cfg config.TaskIntegrationConfig, archive *store.Store) *CommitmentAgenda {
+func NewCommitmentAgenda(cfg config.TaskIntegrationConfig, archive *store.Store, origin string) *CommitmentAgenda {
 	cfg.ApplyDefaults()
 	evidence := kataevidence.New(archive)
 	project := strings.TrimSpace(cfg.DefaultProject)
+	backend := &kataIssueBackend{config: cfg, store: archive, evidence: evidence}
 	return &CommitmentAgenda{
-		archive: archive, evidence: evidence, enabled: cfg.Enabled,
+		archive: archive, evidence: evidence, enabled: cfg.Enabled, origin: origin,
 		destination: kataevidence.Digest("msgvault.commitment.agenda.destination.v1", strings.TrimSpace(cfg.Endpoint), project),
 		issues: func(ctx context.Context) (commitmentAgendaIssues, error) {
-			kata, err := connectKata(ctx, cfg)
-			if err != nil {
-				return nil, err
-			}
-			return &kataissues.Service{Archive: archive, Kata: kata, Evidence: evidence, Project: project}, nil
+			return backend.service(ctx)
 		},
 	}
 }
@@ -73,18 +74,33 @@ func (a *CommitmentAgenda) enqueue(ctx context.Context, commitment store.PersonC
 	// The ranges were measured in the original body. Comparing the prepared
 	// text also protects against a differently rendered source.
 	start, end := int(commitment.Start), int(commitment.End)
-	evidence, err := a.evidence.Prepare(ctx, []kataevidence.Selector{{
-		Kind: "message", MessageID: commitment.AnchorMessageID, StartRune: &start, EndRune: &end,
-	}})
+	var selectors []kataevidence.Selector
+	for offset := start; offset < end; offset += kataevidence.MaxChars {
+		from, to := offset, min(offset+kataevidence.MaxChars, end)
+		selectors = append(selectors, kataevidence.Selector{
+			Kind: "message", MessageID: commitment.AnchorMessageID, StartRune: &from, EndRune: &to,
+		})
+	}
+	evidence, err := a.evidence.Prepare(ctx, selectors)
 	if err != nil {
 		return store.CommitmentAgendaSuggestion{}, err
 	}
-	if len(evidence) != 1 || evidence[0].Excerpt != commitment.Quote {
+	var quote strings.Builder
+	refs := make([]kataevidence.Reference, 0, len(evidence))
+	for _, citation := range evidence {
+		refs = append(refs, citation.Reference)
+		quote.WriteString(citation.Excerpt)
+	}
+	if quote.String() != commitment.Quote {
 		return store.CommitmentAgendaSuggestion{}, kataevidence.ErrChanged
 	}
 	uids, err := personagenda.PersonUIDs(ctx, a.archive, commitment.PersonID)
 	if err != nil {
 		return store.CommitmentAgendaSuggestion{}, err
+	}
+	var brief string
+	if origin := apiprotocol.BrowserOrigin(ctx, a.origin); origin != "" {
+		brief = fmt.Sprintf("[Open the original message](%s/messages/%d)", strings.TrimRight(origin, "/"), commitment.AnchorMessageID)
 	}
 	id := commitment.ID
 	return a.archive.EnqueueCommitmentAgendaContext(ctx, store.CommitmentAgendaSuggestion{
@@ -93,9 +109,9 @@ func (a *CommitmentAgenda) enqueue(ctx context.Context, commitment store.PersonC
 		DestinationKey: a.destination,
 		Request: kataissues.CreateInput{
 			Title: textutil.TruncateRunes(commitment.Summary, 120), List: "commitments", PersonUID: uids[0],
-			Evidence: []kataevidence.Reference{evidence[0].Reference},
+			Brief: brief, Evidence: refs,
 		},
-		Quote: evidence[0].Excerpt,
+		Quote: quote.String(),
 	})
 }
 
@@ -116,19 +132,7 @@ func (a *CommitmentAgenda) Manual(ctx context.Context, id int64, now time.Time) 
 	} else if err != nil {
 		return item, err
 	}
-	if item.State == store.CommitmentAgendaRetired {
-		commitment, err := a.archive.GetOpenPersonCommitmentContext(ctx, id, now)
-		if err != nil {
-			return item, err
-		}
-		if commitment.TargetKey != item.TargetKey || commitment.Quote != item.Quote {
-			return item, kataevidence.ErrChanged
-		}
-		if err := a.archive.ReopenCommitmentAgendaContext(ctx, id); err != nil {
-			return item, err
-		}
-		item.State = store.CommitmentAgendaPending
-	}
+
 	return a.submit(ctx, item, now, false)
 }
 
@@ -138,17 +142,21 @@ func (a *CommitmentAgenda) AutoRun(ctx context.Context, now time.Time) error {
 	if a == nil || !a.enabled {
 		return nil
 	}
-	commitments, err := a.archive.ListCommitmentAgendaCandidatesContext(ctx, now, commitmentAgendaBatchSize)
+	commitments, err := a.archive.ListCommitmentAgendaCandidatesContext(ctx, a.destination, now, commitmentAgendaBatchSize)
 	if err != nil {
 		return err
 	}
 	var failures []error
 	for _, commitment := range commitments {
-		if _, err := a.enqueue(ctx, commitment); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			failures = append(failures, err)
+		item, err := a.archive.GetCommitmentAgendaContext(ctx, commitment.ID)
+		if err == nil || errors.Is(err, sql.ErrNoRows) {
+			_, err = a.refresh(ctx, commitment, item)
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			failures = append(failures, err, a.archive.DeferCommitmentAgendaContext(ctx, commitment, a.destination, now))
 		}
 	}
-	pending, err := a.archive.ListPendingCommitmentAgendaContext(ctx, commitmentAgendaBatchSize)
+	pending, err := a.archive.ListPendingCommitmentAgendaContext(ctx, a.destination, now, commitmentAgendaBatchSize)
 	if err != nil {
 		return errors.Join(append(failures, err)...)
 	}
@@ -160,12 +168,31 @@ func (a *CommitmentAgenda) AutoRun(ctx context.Context, now time.Time) error {
 	return errors.Join(failures...)
 }
 
+func (a *CommitmentAgenda) refresh(ctx context.Context, commitment store.PersonCommitment, item store.CommitmentAgendaSuggestion) (store.CommitmentAgendaSuggestion, error) {
+	if !item.Attempted {
+		return a.enqueue(ctx, commitment)
+	}
+	if item.DestinationKey != a.destination {
+		return item, errCommitmentAgendaDestination
+	}
+	if commitment.TargetKey != item.TargetKey || commitment.Quote != item.Quote {
+		return a.retire(ctx, item)
+	}
+	if item.State == store.CommitmentAgendaRetired {
+		if err := a.archive.ReopenCommitmentAgendaContext(ctx, item.CommitmentID); err != nil {
+			return item, err
+		}
+		return a.archive.GetCommitmentAgendaContext(ctx, item.CommitmentID)
+	}
+	return item, nil
+}
+
 func (a *CommitmentAgenda) submit(ctx context.Context, item store.CommitmentAgendaSuggestion, now time.Time, automatic bool) (store.CommitmentAgendaSuggestion, error) {
 	if item.State == store.CommitmentAgendaLinked {
 		return item, nil
 	}
 	commitment, err := a.archive.GetOpenPersonCommitmentContext(ctx, item.CommitmentID, now)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && (commitment.TargetKey != item.TargetKey || commitment.Quote != item.Quote) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return a.retire(ctx, item)
 	}
 	if err != nil {
@@ -174,14 +201,21 @@ func (a *CommitmentAgenda) submit(ctx context.Context, item store.CommitmentAgen
 	if automatic && commitment.SnoozedUntil != nil && now.Before(*commitment.SnoozedUntil) {
 		return item, nil
 	}
-	if item.DestinationKey != a.destination {
-		return item, errCommitmentAgendaDestination
+	if item.State == store.CommitmentAgendaRetired || item.DestinationKey != a.destination ||
+		commitment.TargetKey != item.TargetKey || commitment.Quote != item.Quote {
+		item, err = a.refresh(ctx, commitment, item)
+		if err != nil || item.State == store.CommitmentAgendaLinked {
+			return item, err
+		}
+	}
+	if item.DestinationKey != a.destination || commitment.TargetKey != item.TargetKey || commitment.Quote != item.Quote {
+		return item, kataevidence.ErrChanged
 	}
 	issues, err := a.issues(ctx)
 	if err != nil {
 		return item, err
 	}
-	started, err := a.archive.MarkCommitmentAgendaAttemptContext(ctx, item.CommitmentID, now)
+	started, err := a.archive.MarkCommitmentAgendaAttemptContext(ctx, item, now, automatic)
 	if err != nil {
 		return item, err
 	}
@@ -190,7 +224,12 @@ func (a *CommitmentAgenda) submit(ctx context.Context, item store.CommitmentAgen
 		if err != nil || current.State == store.CommitmentAgendaLinked {
 			return current, err
 		}
-		return a.retire(ctx, current)
+		if _, err := a.archive.GetOpenPersonCommitmentContext(ctx, current.CommitmentID, now); errors.Is(err, sql.ErrNoRows) {
+			return a.retire(ctx, current)
+		} else if err != nil {
+			return current, err
+		}
+		return current, kataevidence.ErrChanged
 	}
 	result, err := issues.Create(ctx, item.IdempotencyKey, item.Request)
 	if err != nil {
