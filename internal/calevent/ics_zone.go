@@ -105,6 +105,9 @@ func eventICSZones(cal *ical.Calendar, event *ical.Component) (map[string]string
 
 // LoadZone reloads named zones and the embedded rules retained from an ICS invite.
 func LoadZone(name string) (*time.Location, error) {
+	if name == "Local" {
+		return nil, fmt.Errorf("load time zone %q: host-dependent", name)
+	}
 	loc, err := time.LoadLocation(name)
 	if err != nil && customZonePattern.MatchString(name) {
 		// Two TZif v2 blocks with no transitions apply the POSIX footer to all times.
