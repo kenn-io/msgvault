@@ -2245,12 +2245,13 @@ func TestCooperativeJobDeferralAfterYieldEndsTheChain(t *testing.T) {
 				tracker := &yieldingWorkTracker{}
 				boundary := make(chan struct{})
 				runs := 0
+				askedToYield := false
 				s := New(nil).WithWorkTracker(tracker).WithLogger(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
 				defer func() { <-s.Stop().Done() }()
 				require.NoError(s.AddJob(Job{Name: "pass", Preemptible: true, CooperativePreemption: true, Schedule: "0 0 1 1 *", Run: func(ctx context.Context) error {
 					runs++
 					<-boundary
-					require.True(jobctx.PreemptionRequested(ctx))
+					askedToYield = jobctx.PreemptionRequested(ctx)
 					tracker.yield.Store(false)
 					if joined {
 						return errors.Join(ErrDeferUntilNextTrigger, errors.New("synthetic account failure"))
@@ -2264,6 +2265,7 @@ func TestCooperativeJobDeferralAfterYieldEndsTheChain(t *testing.T) {
 				time.Sleep(2 * yieldPollInterval)
 				close(boundary)
 				synctest.Wait()
+				require.True(askedToYield)
 				assert.Equal(1, runs, "a deferral after a yield request queues no follow-up")
 				status := s.JobStatus()[0]
 				assert.False(status.Pending)

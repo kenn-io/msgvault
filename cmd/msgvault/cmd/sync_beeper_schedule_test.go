@@ -16,11 +16,12 @@ import (
 )
 
 // Other schedules keep queuing work, so the scheduler asks the Beeper job to
-// yield after every minute it holds the gate. A full pass needs several
-// minutes, and one account alone needs more than a minute. The pass must still
-// finish once, without cancelling an account mid-import, and the yield
-// follow-ups must stop until the next trigger.
-func TestScheduledBeeperPassFinishesWhileQueuedWorkKeepsAskingItToYield(t *testing.T) {
+// yield after every minute it holds the gate. One account needs about five
+// minutes of pages, more than one turn allows. Every scheduled time must still
+// give each account one turn without cancelling an import mid-account, end its
+// yield follow-ups once every account has had that turn, and let the large
+// account finish across scheduled times.
+func TestScheduledBeeperPassesShareTurnsWhileQueuedWorkKeepsAskingToYield(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
@@ -31,6 +32,7 @@ func TestScheduledBeeperPassFinishesWhileQueuedWorkKeepsAskingItToYield(t *testi
 		defer func() { <-sched.Stop().Done() }()
 
 		const unit = 10 * time.Second
+		const triggers = 8
 		accounts := []string{"large"}
 		backlog := map[string]int{"large": 30} // five minutes of pages
 		for i := range 8 {
@@ -72,8 +74,6 @@ func TestScheduledBeeperPassFinishesWhileQueuedWorkKeepsAskingItToYield(t *testi
 				return nil
 			}}))
 
-		_, err := sched.StartJob(api.BeeperJobName, false)
-		require.NoError(err)
 		queuing := make(chan struct{})
 		go func() {
 			for {
@@ -85,16 +85,21 @@ func TestScheduledBeeperPassFinishesWhileQueuedWorkKeepsAskingItToYield(t *testi
 				}
 			}
 		}()
-		time.Sleep(time.Hour)
+		for range triggers {
+			_, err := sched.StartJob(api.BeeperJobName, false)
+			require.NoError(err)
+			time.Sleep(30 * time.Minute)
+		}
 		close(queuing)
 		synctest.Wait()
 
-		for _, id := range accounts {
-			assert.Equal(1, completed[id], "account %s finishes exactly one pass", id)
+		for _, id := range accounts[1:] {
+			assert.Equal(triggers, completed[id], "account %s gets one turn per scheduled time", id)
 		}
-		assert.Equal(backlog["large"], committed["large"])
+		assert.Equal(backlog["large"], committed["large"], "the large account finishes across scheduled times")
+		assert.Positive(completed["large"])
 		assert.Zero(cancelled, "a yield stops at a boundary instead of cancelling the import")
-		assert.Less(runs, 15, "follow-ups end with the pass")
+		assert.LessOrEqual(runs, 3*triggers, "follow-ups end once every account has had its turn")
 		var status scheduler.JobStatus
 		for _, job := range sched.JobStatus() {
 			if job.Name == api.BeeperJobName {
@@ -122,4 +127,33 @@ func TestScheduledBeeperFinishedPassKeepsFailuresAfterYield(t *testing.T) {
 		}, func() error { return nil })
 	require.ErrorIs(err, scheduler.ErrDeferUntilNextTrigger)
 	require.ErrorIs(err, outage)
+}
+
+func TestScheduledBeeperYieldFollowUpSkipsStoppedAccountUntilNextPass(t *testing.T) {
+	assert := assert.New(t)
+	rotation := &beeperAccountRotation{}
+	accounts := []string{"large", "small"}
+	visit := func(visited *[]string) func(string) (bool, error) {
+		return func(id string) (bool, error) {
+			*visited = append(*visited, id)
+			return id == "large", nil // large stops at a boundary on every turn
+		}
+	}
+
+	ctx, requestPreemption := jobctx.WithPreemption(t.Context())
+	requestPreemption()
+	var first []string
+	require.NoError(t, runScheduledBeeperAttempts(ctx, accounts, rotation, nil, visit(&first), func() error { return nil }))
+	assert.Equal([]string{"large"}, first)
+
+	followUp, requestFollowUpPreemption := jobctx.WithPreemption(t.Context())
+	requestFollowUpPreemption()
+	var second []string
+	err := runScheduledBeeperAttempts(followUp, accounts, rotation, nil, visit(&second), func() error { return nil })
+	assert.Equal([]string{"small"}, second, "the stopped account already had its turn this pass")
+	require.ErrorIs(t, err, scheduler.ErrDeferUntilNextTrigger)
+
+	var next []string
+	require.NoError(t, runScheduledBeeperAttempts(t.Context(), accounts, rotation, nil, visit(&next), func() error { return nil }))
+	assert.Equal([]string{"large"}, next, "the next pass resumes the stopped account")
 }
