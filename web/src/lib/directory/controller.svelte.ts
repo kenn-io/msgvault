@@ -15,7 +15,7 @@ import type {
   DirectoryReadSection,
   DirectoryURLState,
 } from './models';
-import { DirectoryProfileController } from './profile-controller.svelte';
+import { DirectoryProfileController, PERSON_NOT_FOUND_MESSAGE } from './profile-controller.svelte';
 import { DirectoryEntityController } from './entity-controller.svelte';
 import type { PersonSplitCommittedContext } from './person-merge-history-controller.svelte';
 const PAGE_LIMIT = 50;
@@ -364,7 +364,7 @@ export class DirectoryController {
         this.entity?.destroy();
         this.entity = null;
         this.selectedPersonID = shouldCommit ? null : personID;
-        this.detail = shouldCommit ? null : { etags: {}, errors: { person: 'Person not found.' } };
+        this.detail = shouldCommit ? null : { personNotFound: true, etags: {}, errors: { person: PERSON_NOT_FOUND_MESSAGE } };
         if (shouldCommit) this.commit({ directoryPersonID: null }, 'push');
         return;
       }
