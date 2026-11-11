@@ -95,7 +95,7 @@ due can trigger a new version without another message. New activity can refresh
 retained unresolved events before the usual seven-day interval, so an outcome that reaches the evidence window can retire its question.
 A failed refresh uses the normal retry delay.
 
-Event memory holds at most eight events, with one event per announcement.
+Event memory holds at most eight events, with one event per source message.
 The sweep re-reads their sources even after they leave the ordinary overlap
 window. Supported prior events survive a provider omission, and a supported
 resolution cannot be reopened by omitting its outcome. Unresolved events remain
@@ -112,10 +112,11 @@ questions from reappearing when their memory leaves the eight-event set. Late
 imports and rediscoveries with an event timestamp equal to the admission date
 are also excluded.
 Date normalization and classification are model interpretations, even though
-source identity and exact quotes are checked separately. A reschedule needs a
-new announcement and an explicit resolution of the previous event. Retiring a
-typed event does not semantically suppress free-form model follow-ups on
-ordinary highlights.
+source identity and exact quotes are checked separately. A saved event’s date
+remains fixed, including when it was initially unknown, even if later evidence
+supplies a date. A reschedule needs a new announcement and an explicit resolution
+of the previous event. Retiring a typed event does not semantically suppress
+free-form model follow-ups on ordinary highlights.
 
 If sources change or fall outside the provider's allowed dates, the next sweep
 revalidates the event before reusing it. When no admissible evidence remains,
