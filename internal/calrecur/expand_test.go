@@ -79,16 +79,17 @@ func TestExpandTimedCalendarDurationAcrossDST(t *testing.T) {
 		{"fall elapsed", "2027-11-06T13:00:00Z", "2027-11-07T13:00:00Z", 24 * time.Hour, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
 			start := instant(t, tc.start)
 			s, err := ParseSet(start, false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=1"})
-			require.NoError(t, err)
+			requirements.NoError(err)
 			got, _, err := Expand(t.Context(), s, tc.duration, tc.days, start.Add(-time.Hour), start.Add(48*time.Hour), 100)
-			require.NoError(t, err)
-			require.Len(t, got, 1)
-			assert.Equal(t, instant(t, tc.end), got[0].End.UTC())
+			requirements.NoError(err)
+			requirements.Len(got, 1)
+			assertions.Equal(instant(t, tc.end), got[0].End.UTC())
 			end, bounded := ConservativeEnd(t.Context(), s, tc.duration, tc.days, 100)
-			require.True(t, bounded)
-			assert.Equal(t, instant(t, tc.end), end.UTC())
+			requirements.True(bounded)
+			assertions.Equal(instant(t, tc.end), end.UTC())
 		})
 	}
 }

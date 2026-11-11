@@ -55,11 +55,12 @@ func TestICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 func TestICalendarCancelledDetailsRebuildAndRestore(t *testing.T) {
 	for _, mode := range []string{"file", "email"} {
 		t.Run(mode, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			source := icsSource(t, st)
 			if mode == "email" {
 				account, err := st.GetOrCreateSource("mbox", "owner@example.com")
-				require.NoError(t, err)
+				requirements.NoError(err)
 				source = account.ID
 			}
 			items := [][]byte{
@@ -72,28 +73,28 @@ func TestICalendarCancelledDetailsRebuildAndRestore(t *testing.T) {
 					persistInviteEmailForSource(t, st, source, fmt.Sprintf("rebuild-%d", i), inviteEmail(item))
 				} else {
 					_, err := st.PersistICalendarContext(t.Context(), source, item)
-					require.NoError(t, err)
+					requirements.NoError(err)
 				}
 			}
 			ids := emailEvents(t, st, source)
-			require.Len(t, ids, 1)
+			requirements.Len(ids, 1)
 			row := calendarRows(t, st, ids[0])[0]
 			stored, err := st.GetMessageRaw(ids[0])
-			require.NoError(t, err)
+			requirements.NoError(err)
 			_, err = st.db.Exec(`DELETE FROM calendar_events WHERE message_id=?`, ids[0])
-			require.NoError(t, err)
-			require.NoError(t, st.UpsertMessageRawWithFormat(ids[0], stored, "ics"))
-			assert.Equal(t, row.Event, calendarRows(t, st, ids[0])[0].Event)
+			requirements.NoError(err)
+			requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], stored, "ics"))
+			assertions.Equal(row.Event, calendarRows(t, st, ids[0])[0].Event)
 			restored := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored\r\nORGANIZER:mailto:organizer@example.com")
 			if mode == "email" {
 				persistInviteEmailForSource(t, st, source, "restored", inviteEmail(restored))
 			} else {
 				_, err = st.PersistICalendarContext(t.Context(), source, restored)
-				require.NoError(t, err)
+				requirements.NoError(err)
 			}
 			row = calendarRows(t, st, ids[0])[0]
-			assert.Equal(t, "confirmed", row.Event.Status)
-			assert.Equal(t, "Restored", row.Subject)
+			assertions.Equal("confirmed", row.Event.Status)
+			assertions.Equal("Restored", row.Subject)
 		})
 	}
 }
