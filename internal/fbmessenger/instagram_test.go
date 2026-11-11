@@ -673,6 +673,7 @@ func TestInstagramReactionRemoval(t *testing.T) {
 
 func TestInstagramExcludedCandidates(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("hello"))
@@ -681,11 +682,13 @@ func TestInstagramExcludedCandidates(t *testing.T) {
 	require.NoError(os.WriteFile(filepath.Join(invalid, "message_final.json"), []byte(`{}`), 0600))
 	requests := filepath.Join(root, "your_instagram_activity", "messages", "message_requests", "request")
 	require.NoError(os.MkdirAll(requests, 0700))
-	require.NoError(os.WriteFile(filepath.Join(requests, "message_1.json"), []byte(`{}`), 0600))
+	require.NoError(os.WriteFile(filepath.Join(requests, "message_1.json"), []byte(`{"thread_path":"message_requests/request","participants":[{"name":"Mira Example"}],"messages":[{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"excluded request"}]}`), 0600))
 	summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
 	require.NoError(err)
-	assert.True(t, summary.Incomplete)
-	assert.Equal(t, int64(2), summary.FilesSkipped)
+	assert.True(summary.Incomplete)
+	assert.Equal(int64(2), summary.FilesSkipped)
+	assert.Equal(1, countMessages(t, st, ""))
+	assert.Zero(countMessages(t, st, "snippet='excluded request'"))
 }
 
 func TestInstagramUnreadableThreadReportsIncomplete(t *testing.T) {
