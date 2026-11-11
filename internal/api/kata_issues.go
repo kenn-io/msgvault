@@ -108,7 +108,7 @@ func (s *Server) registerKataIssueRoutes(api huma.API) {
 	registerRawHumaRoute(api, create, s.handleCreateKataIssue)
 
 	search := rawAPIV1Operation("listOpenKataIssues", http.MethodGet, "/integrations/kata/open-issues", "List or search Kata issues in the configured project")
-	search.Parameters = append(search.Parameters, queryStringParam("q", "Search open issues by whole word, up to 256 bytes", false))
+	search.Parameters = append(search.Parameters, queryStringParam("q", "Search open issue text by whole word or enter an exact qualified ref, up to 256 bytes", false))
 	search.Responses = jsonResponsesFor[KataIssueListResponse](api)
 	addErrorResponses(api, search.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, search, s.handleListOpenKataIssues)

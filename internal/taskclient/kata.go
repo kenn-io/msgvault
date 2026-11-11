@@ -171,21 +171,15 @@ func (c *KataClient) OpenIssues(ctx context.Context, project string, limit int) 
 
 // SearchOpenIssues searches all open issues in a project.
 func (c *KataClient) SearchOpenIssues(ctx context.Context, project, query string, limit int) ([]KataTask, bool, error) {
-	if name, ref, ok := strings.Cut(query, "#"); ok && name != "" && ref != "" && !strings.ContainsAny(name+ref, " \t\r\n#") {
-		if name != project {
-			return nil, false, nil
-		}
+	var exact *KataTask
+	if name, ref, ok := strings.Cut(query, "#"); ok && name == project && ref != "" && !strings.ContainsAny(name+ref, " \t\r\n#") {
 		issue, err := c.GetTask(ctx, project, ref)
-		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidRef) {
-			return nil, false, nil
-		}
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrInvalidRef) {
 			return nil, false, err
 		}
-		if issue.Status != "open" {
-			return nil, false, nil
+		if err == nil && issue.Status == "open" {
+			exact = &issue
 		}
-		return []KataTask{issue}, false, nil
 	}
 	id, err := c.resolveProject(ctx, project)
 	if err != nil {
@@ -199,14 +193,20 @@ func (c *KataClient) SearchOpenIssues(ctx context.Context, project, query string
 	if err := transport.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
 		return nil, false, err
 	}
-	truncated := len(response.Results) > limit
-	if truncated {
-		response.Results = response.Results[:limit]
-	}
 	tasks := make([]KataTask, 0, len(response.Results))
+	if exact != nil {
+		tasks = append(tasks, *exact)
+	}
 	for _, hit := range response.Results {
 		issue := hit.Issue
+		if exact != nil && issue.UID == exact.UID {
+			continue
+		}
 		tasks = append(tasks, taskFromKataIssue(project, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, nil, hit.WebURL))
+	}
+	truncated := len(tasks) > limit
+	if truncated {
+		tasks = tasks[:limit]
 	}
 	return tasks, truncated, nil
 }

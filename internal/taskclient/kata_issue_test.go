@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -35,6 +36,103 @@ func TestKataStaticTokenWritesAsMsgvault(t *testing.T) {
 	patched, err := client.MutateMetadata(t.Context(), "example", created.UID, created.Revision, map[string]any{"msgvault.list": "agenda"})
 	require.NoError(err)
 	assert.Equal("agenda", patched.Metadata["msgvault.list"])
+}
+
+func TestSearchOpenIssuesHashInTitle(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	native := katatest.New(t)
+	server := httptest.NewTLSServer(native.Service.Handler())
+	t.Cleanup(server.Close)
+	client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project})
+	require.NoError(err)
+	created, err := client.CreateTask(t.Context(), katatest.Project, "hash-title", KataCreate{Title: "C#guide"})
+	require.NoError(err)
+	query := "C#guide"
+	endpoint := fmt.Sprintf("%s/api/v1/projects/%d/search?q=%s&status=open&mode=lexical&limit=26", server.URL, native.ProjectID, url.QueryEscape(query))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, endpoint, nil)
+	require.NoError(err)
+	request.Header.Set("Authorization", "Bearer "+katatest.Token)
+	response, err := server.Client().Do(request)
+	require.NoError(err)
+	defer func() { _ = response.Body.Close() }()
+	require.Equal(http.StatusOK, response.StatusCode)
+	var result struct {
+		Results []struct {
+			Issue struct {
+				UID string `json:"uid"`
+			} `json:"issue"`
+		} `json:"results"`
+	}
+	require.NoError(json.NewDecoder(response.Body).Decode(&result))
+	require.Len(result.Results, 1, "native Kata lexical search")
+	assert.Equal(created.UID, result.Results[0].Issue.UID)
+	issues, _, err := client.SearchOpenIssues(t.Context(), katatest.Project, query, 25)
+	require.NoError(err)
+	require.Len(issues, 1, "msgvault search")
+	assert.Equal(created.UID, issues[0].UID)
+	partial, _, err := client.SearchOpenIssues(t.Context(), katatest.Project, "guid", 25)
+	require.NoError(err)
+	assert.Empty(partial)
+}
+
+func TestSearchOpenIssuesRefAndText(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	native := katatest.New(t)
+	server := httptest.NewTLSServer(native.Service.Handler())
+	t.Cleanup(server.Close)
+	client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project})
+	require.NoError(err)
+	exact, err := client.CreateTask(t.Context(), katatest.Project, "exact-ref", KataCreate{Title: "Original title"})
+	require.NoError(err)
+	match, err := client.CreateTask(t.Context(), katatest.Project, "text-match", KataCreate{Title: exact.QualifiedRef})
+	require.NoError(err)
+	issues, truncated, err := client.SearchOpenIssues(t.Context(), katatest.Project, exact.QualifiedRef, 25)
+	require.NoError(err)
+	assert.False(truncated)
+	require.Len(issues, 2)
+	assert.Equal(exact.UID, issues[0].UID)
+	assert.Equal(match.UID, issues[1].UID)
+	for i, title := range []string{"other#" + exact.Ref, "example#missing"} {
+		textMatch, err := client.CreateTask(t.Context(), katatest.Project, fmt.Sprintf("ref-like-title-%d", i), KataCreate{Title: title})
+		require.NoError(err)
+		results, _, err := client.SearchOpenIssues(t.Context(), katatest.Project, title, 25)
+		require.NoError(err)
+		require.Len(results, 1)
+		assert.Equal(textMatch.UID, results[0].UID)
+	}
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPatch, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s", server.URL, native.ProjectID, exact.UID), strings.NewReader(fmt.Sprintf(`{"actor":"msgvault","title":%q}`, exact.QualifiedRef)))
+	require.NoError(err)
+	request.Header.Set("Authorization", "Bearer "+katatest.Token)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("If-Match", `"rev-`+exact.Revision+`"`)
+	response, err := server.Client().Do(request)
+	require.NoError(err)
+	require.Equal(http.StatusOK, response.StatusCode)
+	require.NoError(response.Body.Close())
+	for i := range 25 {
+		_, err = client.CreateTask(t.Context(), katatest.Project, fmt.Sprintf("text-match-%d", i), KataCreate{Title: exact.QualifiedRef})
+		require.NoError(err)
+	}
+	issues, truncated, err = client.SearchOpenIssues(t.Context(), katatest.Project, exact.QualifiedRef, 25)
+	require.NoError(err)
+	assert.True(truncated)
+	require.Len(issues, 25)
+	assert.Equal(exact.UID, issues[0].UID)
+	for _, issue := range issues[1:] {
+		assert.NotEqual(exact.UID, issue.UID)
+	}
+	native.Endpoint(server).CloseIssue(t, exact.UID)
+	issues, truncated, err = client.SearchOpenIssues(t.Context(), katatest.Project, exact.QualifiedRef, 25)
+	require.NoError(err)
+	assert.True(truncated)
+	require.Len(issues, 25)
+	for _, issue := range issues {
+		assert.NotEqual(exact.UID, issue.UID)
+	}
 }
 
 // FindActionTask finds an issue by its marker, closed or not, and reports an

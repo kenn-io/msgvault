@@ -23913,7 +23913,7 @@ paths:
     get:
       operationId: listOpenKataIssues
       parameters:
-        - description: Search open issues by whole word, up to 256 bytes
+        - description: Search open issue text by whole word or enter an exact qualified ref, up to 256 bytes
           in: query
           name: q
           schema:
