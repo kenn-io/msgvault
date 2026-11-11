@@ -2,6 +2,7 @@ package peoplesweep
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 type commitmentWorkerFixture struct {
 	workerFailureStore
 
+	window   *CommitmentWindow
 	due      bool
 	claims   []ClaimRequest
 	deferred int
@@ -31,10 +33,13 @@ func (s *commitmentWorkerFixture) ClaimPersonSweep(_ context.Context, input Clai
 func (*commitmentWorkerFixture) HasActivePersonCommitmentConsent(context.Context, string) (bool, error) {
 	return true, nil
 }
-func (s *commitmentWorkerFixture) PersonCommitmentsDue(context.Context, int64, time.Time, time.Duration, time.Duration, ...string) (bool, error) {
+func (s *commitmentWorkerFixture) PersonCommitmentsDue(context.Context, int64, time.Time, time.Duration, time.Duration, string) (bool, error) {
 	return s.due, nil
 }
-func (*commitmentWorkerFixture) LoadPersonCommitmentWindow(_ context.Context, id int64, _ ProviderProfile, _ CommitmentConfig, now time.Time, zone string) (CommitmentWindow, error) {
+func (s *commitmentWorkerFixture) LoadPersonCommitmentWindow(_ context.Context, id int64, _ ProviderProfile, _ CommitmentConfig, now time.Time, zone string) (CommitmentWindow, error) {
+	if s.window != nil {
+		return *s.window, nil
+	}
 	return CommitmentWindow{PersonID: id, Now: now, Timezone: zone}, nil
 }
 func (*commitmentWorkerFixture) EnsurePersonSweepWork(context.Context, int64, bool) (bool, error) {
@@ -77,7 +82,7 @@ func TestTargetedCommitmentOnlySweepSucceedsAndDefersImmediateRerun(t *testing.T
 	r.Len(sink.requests, 1)
 	a.True(sink.requests[0].CommitmentOnly)
 	a.Empty(sink.requests[0].Batches)
-	a.Zero(st.cursor.OptimisticSequence)
+	a.Empty(sink.requests[0].CursorAdvances)
 	st.due, st.claims = false, nil
 	result, err = worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
 	r.NoError(err)
@@ -86,5 +91,80 @@ func TestTargetedCommitmentOnlySweepSucceedsAndDefersImmediateRerun(t *testing.T
 	a.Empty(st.finalized)
 	a.Empty(st.failed)
 	a.Len(sink.requests, 1)
-	a.Zero(st.cursor.OptimisticSequence)
+	a.Empty(sink.requests[0].CursorAdvances)
+}
+
+type commitmentCallAuthority struct {
+	workerRepairAuthority
+	checks   int
+	revokeAt int
+}
+
+func (a *commitmentCallAuthority) HasActivePersonCommitmentConsent(context.Context, string) (bool, error) {
+	a.checks++
+	return a.revokeAt == 0 || a.checks < a.revokeAt, nil
+}
+
+func TestCommitmentOptionalCallRepairBudgetAndRevocation(t *testing.T) {
+	for _, mode := range []string{"repair", "bad repair", "budget", "revoked before mark"} {
+		t.Run(mode, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			cfg, catalog := workerTestConfig(t)
+			mutateTestProvider(&cfg, func(p *ProviderConfig) { p.AllowSensitive = true })
+			cfg.Commitments.Enabled = true
+			now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+			window := CommitmentWindow{PersonID: 7, Now: now, Timezone: "UTC", Sources: []CommitmentSource{{ID: "m71", MessageID: 71, Direction: CommitmentOwedTo, Text: "I will send it.", EventTime: now.Add(-time.Hour)}}}
+			st := &commitmentWorkerFixture{window: &window}
+			if mode == "budget" {
+				st.reserveErrAt = 2
+			}
+			authority := &commitmentCallAuthority{}
+			if mode == "revoked before mark" {
+				authority.revokeAt = 2
+			}
+			second := json.RawMessage(`{"promises":[],"fulfilments":[]}`)
+			if mode == "bad repair" {
+				second = json.RawMessage(`{"promises":"bad","fulfilments":[]}`)
+			}
+			driver := &workerRepairDriver{responses: []DriverResponse{briefDriverResponse(json.RawMessage(`{"promises":"bad","fulfilments":[]}`), "primary"), briefDriverResponse(second, "repair")}}
+			runner := newWorkerRepairRunnerWithDependencies(t, cfg, driver, authority, NewCredentialResolver(nil, func(string) (string, bool) { return "test-key", true }))
+			profile, err := cfg.Profile()
+			r.NoError(err)
+			lease := Lease{PersonID: 7, WorkerID: "worker-fixture", Fence: 1, ExpiresAt: now.Add(time.Hour)}
+			worker := Worker{Config: cfg, Store: st, Runner: runner, Clock: func() time.Time { return now }}
+			accounting := &sweepCallAccounting{budget: cfg.Budgets}
+			var reservations []BudgetReservation
+			result, class, _, err := worker.runCommitmentCall(t.Context(), briefCall{runID: "run", attemptID: "attempt", lease: lease, catalog: catalog, profile: profile, resolvedAt: now}, accounting, &reservations)
+			r.NoError(err)
+			if mode == "revoked before mark" {
+				a.Equal(FailurePolicy, class)
+				a.Zero(driver.calls)
+				a.Empty(st.marked)
+				a.Empty(st.released)
+				a.Len(reservations, 1)
+				return
+			}
+			r.Len(st.reserved, 2)
+			a.Equal(ProviderCallPurposeCommitment, st.reserved[0].Purpose)
+			a.Equal(ProviderCallPurposeCommitmentRepair, st.reserved[1].Purpose)
+			a.Equal(1, st.reserved[1].CallOrdinal)
+			if mode == "budget" {
+				a.Equal(FailureBudget, class)
+				a.Equal(1, driver.calls)
+				a.Len(accounting.completedBatches, 1)
+			} else {
+				a.Equal(2, driver.calls)
+				a.Len(accounting.completedBatches, 2)
+			}
+			if mode == "repair" {
+				r.NotNil(result)
+				a.Empty(class)
+			} else {
+				a.Nil(result)
+				if mode == "bad repair" {
+					a.Equal(FailureInvalidOutput, class)
+				}
+			}
+		})
+	}
 }

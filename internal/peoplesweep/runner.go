@@ -239,7 +239,7 @@ func (r *Runner) BeginStructuredExecution(
 	if err := r.validatePrepared(primary, profile, false); err != nil {
 		return nil, err
 	}
-	if err := r.requireProgramConsent(ctx, profile.Fingerprint, primary.Request().ProgramID); err != nil {
+	if err := r.requireVerifiedAndConsented(ctx, profile.Fingerprint, primary.Request().ProgramID); err != nil {
 		return nil, err
 	}
 	profileName, provider, err := r.config.ActiveProviderConfig()
@@ -429,7 +429,7 @@ func (s *runnerExecutionSession) claim(ctx context.Context, call *runnerPrepared
 		s.state = runnerSessionTerminal
 		return errors.New("structured execution session provider profile changed")
 	}
-	if err := s.runner.requireProgramConsent(ctx, s.profile.Fingerprint, s.primary.Request().ProgramID); err != nil {
+	if err := s.runner.requireVerifiedAndConsented(ctx, s.profile.Fingerprint, s.primary.Request().ProgramID); err != nil {
 		s.state = runnerSessionTerminal
 		return err
 	}
@@ -532,7 +532,7 @@ func (r *Runner) runPrepared(
 		return StructuredResponse{}, err
 	}
 	if !synthetic {
-		if err := r.requireProgramConsent(ctx, profile.Fingerprint, prepared.Request().ProgramID); err != nil {
+		if err := r.requireVerifiedAndConsented(ctx, profile.Fingerprint, prepared.Request().ProgramID); err != nil {
 			return StructuredResponse{}, err
 		}
 	}
@@ -568,34 +568,7 @@ func (r *Runner) validatePrepared(
 	return nil
 }
 
-func (r *Runner) requireProgramConsent(ctx context.Context, fingerprint, program string) error {
-	if program != CommitmentProgramID {
-		return r.requireVerifiedAndConsented(ctx, fingerprint)
-	}
-	authority, ok := r.authority.(interface {
-		HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
-	})
-	if !ok {
-		return ErrPersonSweepConsentRevoked
-	}
-	verified, err := r.authority.HasSuccessfulPersonInferenceCheck(ctx, fingerprint)
-	if err != nil {
-		return err
-	}
-	if !verified {
-		return errors.New("commitments require a successful exact provider check")
-	}
-	active, err := authority.HasActivePersonCommitmentConsent(ctx, fingerprint)
-	if err != nil {
-		return err
-	}
-	if !active {
-		return ErrPersonSweepConsentRevoked
-	}
-	return nil
-}
-
-func (r *Runner) requireVerifiedAndConsented(ctx context.Context, fingerprint string) error {
+func (r *Runner) requireVerifiedAndConsented(ctx context.Context, fingerprint, program string) error {
 	verified, err := r.authority.HasSuccessfulPersonInferenceCheck(ctx, fingerprint)
 	if err != nil {
 		return fmt.Errorf("check exact people inference provider verification: %w", err)
@@ -603,7 +576,18 @@ func (r *Runner) requireVerifiedAndConsented(ctx context.Context, fingerprint st
 	if !verified {
 		return errors.New("people inference requires a successful check for the exact provider profile; run msgvault person provider status")
 	}
-	active, err := r.authority.HasActivePersonInferenceConsent(ctx, fingerprint)
+	var active bool
+	if program == CommitmentProgramID {
+		authority, ok := r.authority.(interface {
+			HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error)
+		})
+		if !ok {
+			return ErrPersonSweepConsentRevoked
+		}
+		active, err = authority.HasActivePersonCommitmentConsent(ctx, fingerprint)
+	} else {
+		active, err = r.authority.HasActivePersonInferenceConsent(ctx, fingerprint)
+	}
 	if err != nil {
 		return fmt.Errorf("check exact people inference consent: %w", err)
 	}
