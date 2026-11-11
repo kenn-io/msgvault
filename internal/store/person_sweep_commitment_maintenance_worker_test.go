@@ -149,6 +149,7 @@ func TestPersonSweepCommitmentMaintenanceReachesOrdinaryEvidenceBehindLiveSeed(t
 				r.NoError(st.MarkMessageDeletedBySourceMessageID(ctx, f.sourceID, false, "M1"))
 			}
 			runner := emptyFreshnessRunner()
+			runner.response.Output = []byte(`{"promises":[],"fulfilments":[]}`)
 			worker.Runner = consentAwareProjectionRunner{runner, st, profile.Fingerprint}
 			request := peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
 				PersonID: personID, Limit: 1, Brief: peoplesweep.BriefModeSkip}
@@ -172,8 +173,14 @@ func TestPersonSweepCommitmentMaintenanceReachesOrdinaryEvidenceBehindLiveSeed(t
 			r.NoError(err)
 			a.Contains(projectedValues(t, state.Current), "Lisbon", "not-due commitment maintenance waits for its existing interval")
 			now = now.Add(worker.Config.Commitments.MinInterval + time.Second)
-			_, err = worker.Run(ctx, request)
+			result, err := worker.Run(ctx, request)
 			r.NoError(err)
+			r.Len(result.People, 1, "the due commitment sweep must apply its maintenance")
+			r.Empty(result.People[0].CommitmentFailureClass)
+			var consumed int64
+			r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT CASE WHEN observed_sequence > through_sequence
+				THEN observed_sequence ELSE through_sequence END FROM person_commitment_frontiers WHERE person_id = ?`), personID).Scan(&consumed))
+			r.Equal(latestPersonSweepSequence(t, st), consumed, "the profile assertion must follow consumed local maintenance")
 			checkPending()
 			state, err = st.LoadPersonFactState(ctx, personID, catalog)
 			r.NoError(err)
