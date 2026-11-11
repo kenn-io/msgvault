@@ -54,8 +54,8 @@ func TestWakeupStateCompareAndSwapAndPrune(t *testing.T) {
 }
 
 func TestEventsPositionSurvivesWakeupPruneAndNameCollision(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assert := Assert.New(t)
+	require := Require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
 	position := store.WakeupState{At: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
