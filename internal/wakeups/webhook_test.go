@@ -15,27 +15,29 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep constructors available in nested test scopes.
+	Require "github.com/stretchr/testify/require" //nolint:importas // Keep constructors available in nested test scopes.
 )
 
 func TestWebhookSignsAndDoesNotFollowRedirect(t *testing.T) {
 	secret := []byte("12345678901234567890123456789012")
 	body := []byte(`{"hello":"world"}`)
 	t.Run("signature", func(t *testing.T) {
+		assert := Assert.New(t)
+
 		var signature, id, stamp string
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id, stamp, signature = r.Header.Get("webhook-id"), r.Header.Get("webhook-timestamp"), r.Header.Get("webhook-signature")
 			w.WriteHeader(http.StatusNoContent)
 		}))
 		defer server.Close()
-		assert.Empty(t, testWebhookClient(server).send(t.Context(), "https://example.com/hook", "wk_test", secret, body))
-		assert.Equal(t, "wk_test", id)
-		assert.NotEmpty(t, stamp)
+		assert.Empty(testWebhookClient(server).send(t.Context(), "https://example.com/hook", "wk_test", secret, body))
+		assert.Equal("wk_test", id)
+		assert.NotEmpty(stamp)
 		mac := hmac.New(sha256.New, secret)
 		_, err := fmt.Fprintf(mac, "%s.%s.%s", id, stamp, body)
-		require.NoError(t, err)
-		assert.Equal(t, "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)), signature)
+		Require.NoError(t, err)
+		assert.Equal("v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)), signature)
 	})
 	t.Run("redirect", func(t *testing.T) {
 		hits := 0
@@ -45,19 +47,19 @@ func TestWebhookSignsAndDoesNotFollowRedirect(t *testing.T) {
 			w.WriteHeader(http.StatusFound)
 		}))
 		defer server.Close()
-		assert.Equal(t, "http_3xx", testWebhookClient(server).send(t.Context(), "https://example.com/hook", "wk_test", secret, body))
-		assert.Equal(t, 1, hits)
+		Assert.Equal(t, "http_3xx", testWebhookClient(server).send(t.Context(), "https://example.com/hook", "wk_test", secret, body))
+		Assert.Equal(t, 1, hits)
 	})
 }
 func TestDecodeSecretCanonical(t *testing.T) {
 	key := []byte(strings.Repeat("a", 32))
 	encoded := "whsec_" + base64.StdEncoding.EncodeToString(key)
 	got, err := DecodeSecret(encoded)
-	require.NoError(t, err)
-	assert.Equal(t, key, got)
+	Require.NoError(t, err)
+	Assert.Equal(t, key, got)
 	for _, bad := range []string{"inline", "whsec_YQ==", encoded[:12] + "\n" + encoded[12:]} {
 		_, err := DecodeSecret(bad)
-		assert.Error(t, err)
+		Assert.Error(t, err)
 	}
 }
 
@@ -75,14 +77,16 @@ func testWebhookClient(server *httptest.Server) webhookClient {
 }
 func TestWebhookRefusesMixedDNSWithoutDialing(t *testing.T) {
 	client := webhookClient{timeout: time.Second, resolver: staticResolver{netip.MustParseAddr("203.0.113.1"), netip.MustParseAddr("127.0.0.1")}}
-	assert.Equal(t, "invalid_callback", client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
+	Assert.Equal(t, "invalid_callback", client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 }
 
 func TestWebhookUsesOnlyTrustedPinAndTimesOut(t *testing.T) {
+	assert := Assert.New(t)
+
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	defer server.Close()
 	origin, err := url.Parse("https://example.com")
-	require.NoError(t, err)
+	Require.NoError(t, err)
 	var dialed []string
 	client := webhookClient{timeout: time.Second, resolver: staticResolver{netip.MustParseAddr("127.0.0.1")}, trustedOrigin: origin, trusted: []netip.Addr{netip.MustParseAddr("10.0.0.5")}, roots: server.Client().Transport.(*http.Transport).TLSClientConfig, dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 		dialed = append(dialed, address)
@@ -91,8 +95,8 @@ func TestWebhookUsesOnlyTrustedPinAndTimesOut(t *testing.T) {
 	// The standard httptest certificate includes example.com.
 	client.roots = client.roots.Clone()
 	client.roots.ServerName = "example.com"
-	assert.Empty(t, client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
-	assert.Equal(t, []string{"10.0.0.5:443"}, dialed)
+	assert.Empty(client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
+	assert.Equal([]string{"10.0.0.5:443"}, dialed)
 	timeout := webhookClient{timeout: 50 * time.Millisecond, resolver: staticResolver{netip.MustParseAddr("203.0.113.1")}, dial: func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }}
-	assert.Equal(t, "timeout", timeout.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
+	assert.Equal("timeout", timeout.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 }

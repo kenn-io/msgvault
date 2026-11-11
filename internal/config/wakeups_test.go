@@ -4,18 +4,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep constructors available in nested test scopes.
+	Require "github.com/stretchr/testify/require" //nolint:importas // Keep constructors available in nested test scopes.
 )
 
 func TestWakeupValidationAndDefaults(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+
 	base := WakeupConfig{Name: "inbox", URL: "https://example.com/hook", SecretEnv: "HOOK_SECRET"}
 	configs := []WakeupConfig{base}
-	require.NoError(t, prepareWakeups(configs))
-	assert.Equal(t, 10*time.Second, configs[0].Timeout)
-	assert.Equal(t, 72*time.Hour, configs[0].MaxMessageAge)
-	require.NotNil(t, configs[0].IncomingOnly)
-	assert.True(t, *configs[0].IncomingOnly)
+	require.NoError(prepareWakeups(configs))
+	assert.Equal(10*time.Second, configs[0].Timeout)
+	assert.Equal(72*time.Hour, configs[0].MaxMessageAge)
+	require.NotNil(configs[0].IncomingOnly)
+	assert.True(*configs[0].IncomingOnly)
 	for _, tc := range []struct {
 		name   string
 		mutate func(*WakeupConfig)
@@ -34,16 +37,16 @@ func TestWakeupValidationAndDefaults(t *testing.T) {
 		{"source", func(c *WakeupConfig) { c.SourceIDs = []int64{0} }},
 		{"conversation", func(c *WakeupConfig) { c.ConversationIDs = []int64{-1} }},
 	} {
-		t.Run(tc.name, func(t *testing.T) { c := base; tc.mutate(&c); assert.Error(t, prepareWakeups([]WakeupConfig{c})) })
+		t.Run(tc.name, func(t *testing.T) { c := base; tc.mutate(&c); Assert.Error(t, prepareWakeups([]WakeupConfig{c})) })
 	}
-	assert.Error(t, prepareWakeups([]WakeupConfig{base, base}))
-	assert.Error(t, prepareWakeups(make([]WakeupConfig, 33)))
+	assert.Error(prepareWakeups([]WakeupConfig{base, base}))
+	assert.Error(prepareWakeups(make([]WakeupConfig, 33)))
 }
 
 func TestInlineWakeupSecretRejectedByConfigLoader(t *testing.T) {
 	path := writeDaemonSectionConfig(t, "[[wakeups]]\nname='inbox'\nurl='https://example.com/hook'\nsecret_env='WAKEUP_KEY'\nsecret='not-allowed'\n")
 	_, err := Load(path, "")
-	require.ErrorContains(t, err, "unknown wakeups config key")
+	Require.ErrorContains(t, err, "unknown wakeups config key")
 }
 
 func TestWakeupPersonSelectorPresence(t *testing.T) {
@@ -54,9 +57,9 @@ func TestWakeupPersonSelectorPresence(t *testing.T) {
 		path := writeDaemonSectionConfig(t, "[[wakeups]]\nname='inbox'\nurl='https://example.com/hook'\nsecret_env='WAKEUP_KEY'\n"+tc.selector)
 		_, err := Load(path, "")
 		if tc.valid {
-			assert.NoError(t, err)
+			Assert.NoError(t, err)
 		} else {
-			assert.Error(t, err)
+			Assert.Error(t, err)
 		}
 	}
 }
