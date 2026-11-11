@@ -347,6 +347,15 @@ func BuildBriefWindow(
 		}
 	}
 	peers = slices.DeleteFunc(peers, func(peer BriefAppreciationPeer) bool { return peer.AnchorID == "" })
+	keys := make([]string, 0, len(peers))
+	for _, peer := range peers {
+		keys = append(keys, peer.ContributionKey)
+	}
+	dismissed, err := archive.PersonSweepAppreciationDismissed(ctx, keys)
+	if err != nil {
+		return BriefWindow{}, fmt.Errorf("load appreciation dismissals: %w", err)
+	}
+	peers = slices.DeleteFunc(peers, func(peer BriefAppreciationPeer) bool { return dismissed[peer.ContributionKey] })
 	owners, err := archive.PersonSweepAppreciationOwners(ctx, request.PersonID, peers, request.Profile, request.ThroughSequence, request.MaxItems)
 	if err != nil {
 		return BriefWindow{}, fmt.Errorf("load appreciation owner context: %w", err)

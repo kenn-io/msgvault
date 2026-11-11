@@ -181,7 +181,7 @@ func ParseBrief(
 		}
 		if index, exists := seenKeys[peer.ContributionKey]; exists {
 			old := parsed.Output.ThanksSuggestions[index]
-			if old.Quote == suggestion.Quote && suggestion.Thanked != nil {
+			if suggestion.Thanked != nil {
 				old.Thanked, old.State, old.PriorThanks = suggestion.Thanked, suggestion.State, suggestion.PriorThanks
 				parsed.Output.ThanksSuggestions[index] = old
 			}

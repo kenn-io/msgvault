@@ -42,7 +42,7 @@ func (s *Server) registerPersonAppreciationRoutes(api huma.API) {
 	dismiss := rawAPIV1Operation("dismissPersonAppreciation", http.MethodPost, "/people/{id}/appreciations/{key}/dismiss", "Dismiss an appreciation suggestion")
 	addPersonIDParameter(&dismiss)
 	dismiss.Parameters = append(dismiss.Parameters, &huma.Param{Name: "key", In: pathKey, Required: true,
-		Description: "Stable contribution key", Schema: &huma.Schema{Type: huma.TypeString}})
+		Description: "Contribution key: exactly 64 lowercase hexadecimal characters", Schema: &huma.Schema{Type: huma.TypeString}})
 	dismiss.Responses = jsonResponsesFor[store.PersonAppreciationState](api)
 	addErrorResponses(api, dismiss.Responses, http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, dismiss, s.handleDismissPersonAppreciation)
@@ -116,7 +116,7 @@ func (s *Server) handleDismissPersonAppreciation(w http.ResponseWriter, r *http.
 	}
 	state, err := archive.DismissPersonAppreciationContext(r.Context(), personID, r.PathValue("key"), personBriefActor, s.clockNow().UTC(), profile)
 	if errors.Is(err, store.ErrInvalidPersonAppreciationKey) {
-		writeError(w, http.StatusBadRequest, "invalid_appreciation_key", "Invalid appreciation key")
+		writeError(w, http.StatusBadRequest, "invalid_appreciation_key", "Appreciation key must be exactly 64 lowercase hexadecimal characters")
 		return
 	}
 	if errors.Is(err, store.ErrPersonAppreciationNotFound) || errors.Is(err, store.ErrPersonBriefNotFound) {

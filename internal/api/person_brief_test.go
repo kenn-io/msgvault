@@ -150,7 +150,7 @@ func (f *personBriefAPIFixture) seedBrief(t *testing.T, seed personBriefAPISeed)
 		RETURNING id`),
 		f.personID, version, f.generationID(t), store.PersonBriefStatusCurrent,
 		peoplesweep.BriefProgramID, "v2",
-		peoplesweep.BriefProgramFingerprint(), "openai_chat", "provider-v1",
+		"68a9b10d59ac78803f5e43736b082f31d4062eb09ffca80dc57aafda21714c6c", "openai_chat", "provider-v1",
 		"gpt-test", "model-v1", "policy-fingerprint", seed.boundary, seed.structured,
 		seed.rendered, peoplesweep.BriefRendererPolicyV1, seed.dropped,
 		seed.generatedAt.UTC()).Scan(&briefID))

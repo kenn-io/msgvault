@@ -779,3 +779,23 @@ func briefMessageIDs(items []EvidenceItem) []int64 {
 	}
 	return ids
 }
+
+func TestBriefWindowExcludesDismissedContributionsBeforeModelCap(t *testing.T) {
+	archive := &briefFakeArchive{dismissedAppreciations: map[string]bool{}}
+	for index := 0; index < 4; index++ {
+		item := briefWindowItem(int64(40+index), SourceConversationText, 10+index, "I carried your boxes upstairs.")
+		key := fmt.Sprintf("%064x", index+1)
+		archive.items = append(archive.items, item)
+		archive.appreciationPeers = append(archive.appreciationPeers, BriefAppreciationPeer{Ref: item.Ref,
+			ConversationID: 42, ContributionKey: key, RawSHA256: strings.Repeat("b", 64), ExactExcerpt: item.Excerpt, EventTime: item.EventTime})
+		if index < 3 {
+			archive.dismissedAppreciations[key] = true
+		}
+	}
+	request := briefWindowRequest(t)
+	request.MaxItems = 6
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	require.Len(t, window.Batch.Packet.BriefPeers, 1)
+	assert.Equal(t, fmt.Sprintf("%064x", 4), window.Batch.Packet.BriefPeers[0].ContributionKey)
+}

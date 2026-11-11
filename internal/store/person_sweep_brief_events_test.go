@@ -100,7 +100,7 @@ func TestPersonSweepEventLifecyclePersistsDateOnlyRefreshAndResolution(t *testin
 	require.Equal(1, first.PeopleSucceeded)
 	upcoming, err := st.GetPersonBriefContext(t.Context(), person, 0)
 	require.NoError(err)
-	assert.Equal("v2", upcoming.ProgramVersion)
+	assert.Equal("v3", upcoming.ProgramVersion)
 	assert.Contains(upcoming.RenderedText, "Upcoming:")
 	assert.NotContains(upcoming.RenderedText, "How did the interview go?")
 	var initialBoundary peoplesweep.BriefBoundary
@@ -309,7 +309,7 @@ func TestPersonSweepEventBootstrapsLegacyBriefWithoutActivityBeyondOverlap(t *te
 	current, err = st.GetPersonBriefContext(t.Context(), person, 0)
 	require.NoError(err)
 	assert.Equal(2, current.Version)
-	assert.Equal("v2", current.ProgramVersion)
+	assert.Equal("v3", current.ProgramVersion)
 	require.NoError(json.Unmarshal(current.Boundary, &boundary))
 	require.Len(boundary.EventMemory, 1)
 	assert.Contains(current.RenderedText, "Upcoming:")

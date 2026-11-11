@@ -367,7 +367,7 @@ func (s *Store) applyPersonSweepWithAligner(
 				return err
 			}
 			if request.Brief.Rendered.Text == "" {
-				return peoplesweep.ErrEmptyBrief
+				return fmt.Errorf("%w: %w", peoplesweep.ErrInvalidStructuredOutput, peoplesweep.ErrEmptyBrief)
 			}
 			// Keep the aligned evidence in the filtered structure's citation order.
 			byRef := make(map[string]preparedBriefEvidence, len(briefEvidence))
