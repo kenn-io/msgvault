@@ -442,12 +442,12 @@ func marshalXControlWithHistoryCompaction(state *XControlState) ([]byte, error) 
 		if walk == nil || len(walk.SeenTokens) == 0 {
 			return walk
 		}
-		copy := *walk
-		copy.SeenTokens = nil
+		compacted := *walk
+		compacted.SeenTokens = nil
 		if walk.Token == "" {
-			copy.SeenTokens = []string{""}
+			compacted.SeenTokens = []string{""}
 		}
-		return &copy
+		return &compacted
 	}
 	state.Own = compact(state.Own)
 	state.Mentions = compact(state.Mentions)

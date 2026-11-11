@@ -34,6 +34,7 @@ func TestXFullObligationCheckpointRecoversUnidentifiedPage(t *testing.T) {
 	t.Cleanup(func() { _ = tx.Rollback() })
 	stmt, err := tx.PrepareContext(t.Context(), st.Rebind(`INSERT INTO x_post_versions(source_id,post_id,canonical_id,version_position,availability,suppressed_at,cleanup_pending) VALUES(?,?,?,0,'deleted',?,0)`))
 	require.NoError(err)
+	defer func() { _ = stmt.Close() }()
 	for i := range 901 {
 		id := strconv.Itoa(10000 + i)
 		walk.UnresolvedIDs = append(walk.UnresolvedIDs, id)

@@ -36,7 +36,7 @@ func TestXRemovalEnumeratesAndDeletesEveryGeneration(t *testing.T) {
 	for _, gen := range all {
 		require.NoError(t, b.Delete(ctx, gen, []int64{1}))
 		var n int
-		require.NoError(t, db.QueryRow(`SELECT count(*) FROM embeddings WHERE generation_id=$1 AND message_id=1`, int64(gen)).Scan(&n))
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM embeddings WHERE generation_id=$1 AND message_id=1`, int64(gen)).Scan(&n))
 		assert.Zero(t, n)
 	}
 }

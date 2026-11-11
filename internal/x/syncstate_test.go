@@ -23,7 +23,7 @@ func TestXWalkContinuesPastTokenHistoryLimit(t *testing.T) {
 	assertions.Len(walk.SeenTokens, 1000)
 	assertions.Equal("1001", walk.Token)
 	_, err = advanceWalk(walk, Page{NextToken: "1000"})
-	assertions.ErrorIs(err, ErrRepeatedPageToken)
+	requirements.ErrorIs(err, ErrRepeatedPageToken)
 	walk, err = advanceWalk(walk, Page{})
 	requirements.NoError(err)
 	assertions.True(walk.Complete)
