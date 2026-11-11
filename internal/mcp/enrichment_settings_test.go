@@ -16,8 +16,8 @@ func TestEnrichmentSettingsInputSchemaRejectsProviderSetup(t *testing.T) {
 	require.NoError(err)
 	assert.NoError(schema.Validate(map[string]any{"name": "example", "etag": `"revision"`, "enabled": false, "max_requests_per_day": float64(0)}))
 	for _, field := range []string{"endpoint", "poll_endpoint", "credential", "target_keys", "allowed_identifiers", "kind"} {
-		assert.Error(schema.Validate(map[string]any{"name": "example", "etag": `"revision"`, field: "example"}), field)
+		require.Error(schema.Validate(map[string]any{"name": "example", "etag": `"revision"`, field: "example"}), field)
 	}
-	assert.Error(schema.Validate(map[string]any{"name": "example", "etag": `"revision"`, "max_retries": float64(-1)}))
-	assert.Error(schema.Validate(map[string]any{"name": "example", "etag": `"revision"`, "max_retries": float64(9007199254740992)}))
+	require.Error(schema.Validate(map[string]any{"name": "example", "etag": `"revision"`, "max_retries": float64(-1)}))
+	require.Error(schema.Validate(map[string]any{"name": "example", "etag": `"revision"`, "max_retries": float64(9007199254740992)}))
 }

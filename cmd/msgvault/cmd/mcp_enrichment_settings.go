@@ -133,7 +133,10 @@ func (b *daemonMCPOperations) enrichmentContext(ctx context.Context, a enrichmen
 	if result.ETag != a.ETag {
 		return result, nil, "settings_conflict", nil
 	}
-	settings := result.Output.(enrichmentSettings)
+	settings, ok := result.Output.(enrichmentSettings)
+	if !ok {
+		return result, nil, "invalid_operation_response", nil
+	}
 	for _, p := range settings.Providers {
 		if p.Name != a.Name {
 			continue
@@ -163,14 +166,14 @@ func (b *daemonMCPOperations) executeEnrichmentOperation(ctx context.Context, na
 	switch name {
 	case "get_enrichment_policy":
 		if _, err := decodeMCPOperationArguments[struct{}](args); err != nil {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure("invalid_arguments", false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 		}
 		result, err := readMCPOperationJSON[enrichmentSettings](ctx, b.client, http.MethodGet, "/api/v1/settings", nil, http.StatusOK)
 		return enrichmentProjection(result, false), true, err
 	case "update_enrichment_policy":
 		a, err := decodeMCPOperationArguments[enrichmentArguments](args)
 		if err != nil || !validEnrichmentArguments(a) {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure("invalid_arguments", false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 		}
 		_, replacement, refusal, err := b.enrichmentContext(ctx, a)
 		if err != nil {
