@@ -40,6 +40,13 @@ func (p *PackVerificationPass) SkipLooseEnumeration() {
 	p.skipLooseEnumeration = true
 }
 
+// PackVerificationSkipsLooseEnumeration reports whether this pass skipped
+// discovery of loose blobs that need packing.
+func PackVerificationSkipsLooseEnumeration(ctx context.Context) bool {
+	pass, ok := ctx.Value(packVerificationKey{}).(*PackVerificationPass)
+	return ok && pass.skipLooseEnumeration
+}
+
 // BeginPackVerification starts a bounded verification window after the
 // durable cursor. It is only for Pack, never Unpack, which must enumerate
 // every indexed blob.

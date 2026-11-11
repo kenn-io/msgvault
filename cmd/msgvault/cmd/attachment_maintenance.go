@@ -173,7 +173,8 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 
 	m.logAutomaticPackSummary("automatic attachment maintenance complete", stats, duration)
 	// Pruning may expose loose copies a verification-only pass skipped.
-	if stats.BudgetExhausted || stats.MappingsPruned > 0 || stats.RecordsDropped > 0 {
+	if stats.BudgetExhausted || (store.PackVerificationSkipsLooseEnumeration(ctx) &&
+		(stats.MappingsPruned > 0 || stats.RecordsDropped > 0)) {
 		m.markPackPending()
 	}
 	return nil
