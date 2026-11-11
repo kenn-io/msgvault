@@ -6,7 +6,9 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"slices"
+	"strings"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -15,6 +17,8 @@ type changesFilter struct {
 	SourceIDs, ConversationIDs []int64
 	IncomingOnly               bool
 	participants               []int64
+	grantSourceIDs             []int64
+	grantRefs                  []changeGrantRef
 }
 
 func parseChangesFilter(r *http.Request) (changesFilter, error) {
@@ -56,9 +60,39 @@ func parseChangesFilter(r *http.Request) (changesFilter, error) {
 	return f, nil
 }
 
+type changeGrantRef struct{ Type, Identifier string }
+
+func (f *changesFilter) bindGrant(grant *agentgrant.Grant, ids []int64) {
+	f.grantSourceIDs = ids
+	// A non-nil slice distinguishes even an empty grant from an owner.
+	f.grantRefs = make([]changeGrantRef, 0, len(grant.Sources))
+	for _, ref := range grant.Sources {
+		f.grantRefs = append(f.grantRefs, changeGrantRef{ref.Type, ref.Identifier})
+	}
+	slices.SortFunc(f.grantRefs, func(a, b changeGrantRef) int {
+		if n := strings.Compare(a.Type, b.Type); n != 0 {
+			return n
+		}
+		return strings.Compare(a.Identifier, b.Identifier)
+	})
+	f.grantRefs = slices.Compact(f.grantRefs)
+}
+
 func (f changesFilter) digest() string {
-	if f.PersonID == 0 && len(f.SourceIDs) == 0 && len(f.ConversationIDs) == 0 && !f.IncomingOnly {
+	if f.PersonID == 0 && len(f.SourceIDs) == 0 && len(f.ConversationIDs) == 0 && !f.IncomingOnly && f.grantRefs == nil {
 		return ""
+	}
+	// Keep the owner encoding unchanged; delegated digests use a domain marker.
+	if f.grantRefs != nil {
+		data, err := json.Marshal(struct {
+			OwnerDigest string
+			GrantRefs   []changeGrantRef
+		}{changesFilter{PersonID: f.PersonID, SourceIDs: f.SourceIDs, ConversationIDs: f.ConversationIDs, IncomingOnly: f.IncomingOnly}.digest(), f.grantRefs}, json.Deterministic(true))
+		if err != nil {
+			panic(err)
+		}
+		sum := sha256.Sum256(data)
+		return hex.EncodeToString(sum[:8])
 	}
 	data, err := json.Marshal(struct {
 		PersonID                   int64
@@ -73,7 +107,8 @@ func (f changesFilter) digest() string {
 }
 
 func (f changesFilter) matches(m store.ChangedMessage) bool {
-	return (f.PersonID == 0 || slices.Contains(f.participants, m.SenderID)) &&
+	return (f.grantSourceIDs == nil || slices.Contains(f.grantSourceIDs, m.SourceID)) &&
+		(f.PersonID == 0 || slices.Contains(f.participants, m.SenderID)) &&
 		(len(f.SourceIDs) == 0 || slices.Contains(f.SourceIDs, m.SourceID)) &&
 		(len(f.ConversationIDs) == 0 || slices.Contains(f.ConversationIDs, m.ConversationID)) &&
 		(!f.IncomingOnly || !m.IsFromMe)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -906,4 +907,86 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		requirements.Len(response.Messages, 1)
 		assertions.Equal(scope.id, response.Messages[0].ID)
 	}
+}
+
+func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	a, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "feed-a@example.test", "a", "allowed feed", "")
+	require.NoError(t, err)
+	b, bID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "feed-b@example.test", "b", "private feed", "")
+	require.NoError(t, err)
+	participant, err := st.EnsureParticipant("outside-person@example.test", "Outside", "example.test")
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceMessageRecipients(bID, "to", []int64{participant}, nil))
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	require.NoError(t, err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}, Store: st, Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	relaxChangeFeedRateLimit(t, srv)
+	ref := func(s *store.Source) agentgrant.SourceRef {
+		return agentgrant.SourceRef{ID: s.ID, Type: s.SourceType, Identifier: s.Identifier}
+	}
+	issue := func(perms []agentgrant.Permission, refs []agentgrant.SourceRef) string {
+		_, token, _, err := srv.agentGrants.Issue("feed", perms, refs, time.Time{})
+		require.NoError(t, err)
+		return token
+	}
+	one := issue([]agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{ref(a)})
+	same := issue([]agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{ref(a)})
+	wider := issue([]agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{ref(a), ref(b)})
+	denied := issue([]agentgrant.Permission{agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{ref(a)})
+	empty := issue([]agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 999999, Type: "gmail", Identifier: "removed@example.test"}})
+	get := func(token, query string) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/changes"+query, nil)
+		if token == "owner" {
+			req.Header.Set("Authorization", "Bearer owner-key")
+		} else {
+			req.Header.Set(apiprotocol.AgentTokenHeader, token)
+		}
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		return w
+	}
+	response := get(one, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "allowed feed")
+	assert.NotContains(t, response.Body.String(), "private feed")
+	var page ChangesResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+	cursor := "?cursor=" + url.QueryEscape(page.NextCursor)
+	assert.Equal(t, http.StatusOK, get(same, cursor).Code)
+	assert.Equal(t, http.StatusBadRequest, get(wider, cursor).Code)
+	assert.Equal(t, http.StatusBadRequest, get("owner", cursor).Code)
+	assert.Equal(t, http.StatusForbidden, get(denied, "").Code)
+	emptyResponse := get(empty, "")
+	assert.Equal(t, http.StatusOK, emptyResponse.Code)
+	assert.NotContains(t, emptyResponse.Body.String(), "allowed feed")
+	assert.NotContains(t, emptyResponse.Body.String(), "private feed")
+	assert.Equal(t, http.StatusForbidden, get(one, fmt.Sprintf("?source_id=%d", b.ID)).Code)
+	assert.Equal(t, http.StatusForbidden, get(one, fmt.Sprintf("?source_id=%d&source_id=%d", a.ID, b.ID)).Code)
+	assert.Equal(t, http.StatusOK, get(one, fmt.Sprintf("?source_id=%d&source_id=%d", a.ID, a.ID)).Code)
+	assert.Equal(t, http.StatusBadRequest, get(one, "?source_id=invalid").Code)
+	outside := get(one, fmt.Sprintf("?person_id=%d", person.ID))
+	missing := get(one, "?person_id=999999999")
+	assert.Equal(t, http.StatusForbidden, outside.Code)
+	assert.Equal(t, outside.Body.String(), missing.Body.String())
+	assert.Equal(t, http.StatusBadRequest, get(one, cursor+"&incoming_only=true").Code)
+}
+
+func TestChangeFeedGrantDigestUsesStableSourceReferences(t *testing.T) {
+	a := agentgrant.SourceRef{ID: 1, Type: "gmail", Identifier: "a@example.com", SenderKeys: []string{"old"}}
+	b := agentgrant.SourceRef{ID: 2, Type: "gmail", Identifier: "b@example.com"}
+	filter := func(refs ...agentgrant.SourceRef) changesFilter {
+		var f changesFilter
+		f.bindGrant(&agentgrant.Grant{Sources: refs}, []int64{-1})
+		return f
+	}
+	original := filter(a, b)
+	a.ID = 99
+	a.SenderKeys = []string{"new"}
+	same := filter(b, a, a)
+	assert.NotEmpty(t, original.digest())
+	assert.Equal(t, original.digest(), same.digest())
+	assert.NotEqual(t, original.digest(), filter(a).digest())
+	assert.NotEqual(t, original.digest(), (changesFilter{}).digest())
 }

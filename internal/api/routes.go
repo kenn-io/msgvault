@@ -260,7 +260,7 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 				writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
 				return
 			}
-			if permission != "" {
+			if permission != "" && op.OperationID != "listChangedMessages" {
 				release, err := s.beginAgentRead(req, op.OperationID, auth.Grant, permission)
 				if err != nil {
 					writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
@@ -617,6 +617,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 		"List messages whose content changed since a cursor", s.changeFeedGuard(s.handleMessageChanges),
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
+		http.StatusForbidden,
 		http.StatusNotFound,
 		http.StatusConflict,
 		http.StatusUnprocessableEntity,

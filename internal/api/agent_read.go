@@ -22,6 +22,7 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"getAggregates": agentgrant.PermissionSearchRead, "getSubAggregates": agentgrant.PermissionSearchRead,
 	"filterMessages": agentgrant.PermissionSearchRead, "listMessages": agentgrant.PermissionSearchRead,
 	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
+	"listChangedMessages":     agentgrant.PermissionSearchRead,
 	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
 	"getCLIMessageThread": agentgrant.PermissionMessageRead,
 	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
@@ -84,7 +85,18 @@ func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agen
 	}
 	indexGeneration := s.ftsRebuildGen.Load()
 	indexComplete := s.ftsIndexComplete.Load()
-	readContext, releaseSnapshot, err := snapshotStore.BeginReadSnapshotContext(req.Context())
+	begin := snapshotStore.BeginReadSnapshotContext
+	if operation == "listChangedMessages" {
+		feedStore, ok := s.store.(interface {
+			BeginChangedMessagesReadSnapshotContext(context.Context) (context.Context, func(), error)
+		})
+		if !ok {
+			<-s.readSnapshotSlots
+			return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
+		}
+		begin = feedStore.BeginChangedMessagesReadSnapshotContext
+	}
+	readContext, releaseSnapshot, err := begin(req.Context())
 	if err != nil {
 		<-s.readSnapshotSlots
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
@@ -148,6 +160,21 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
 	switch operation {
+	case "listChangedMessages":
+		ids, _, err := queryInt64s(r, "source_id")
+		if err != nil {
+			return newAPIHTTPError(400, "invalid_source", err.Error())
+		}
+		for _, id := range ids {
+			if !slices.Contains(allowed, id) {
+				return agentReadDenied(permission)
+			}
+		}
+		if len(allowed) == 0 {
+			allowed = []int64{-1}
+		}
+		*r = *r.WithContext(context.WithValue(r.Context(), agentReadScopeKey{}, agentReadScope{ids: allowed}))
+		return nil
 	case "getCLIMessageThread":
 		if account != "" && !accountGranted {
 			return agentReadDenied(permission)

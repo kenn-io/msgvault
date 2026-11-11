@@ -487,3 +487,31 @@ func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
 	requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
 	assertions.Equal((total+maxPageSize-1)/maxPageSize, counter.calls, "bodies load one page of parents at a time")
 }
+
+func TestAgentChangeFeedVerification(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "verification@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
+	require.NoError(t, err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	relaxChangeFeedRateLimit(t, srv)
+	for _, reveal := range []bool{false, true} {
+		permissions := []agentgrant.Permission{agentgrant.PermissionSearchRead}
+		if reveal {
+			permissions = append(permissions, agentgrant.PermissionVerificationRead)
+		}
+		_, token, _, err := srv.agentGrants.Issue("reader", permissions, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+		require.NoError(t, err)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/changes", nil)
+		req.Header.Set(apiprotocol.AgentTokenHeader, token)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		if reveal {
+			assert.Contains(t, w.Body.String(), "482913")
+		} else {
+			assert.NotContains(t, w.Body.String(), "482913")
+			assert.Contains(t, w.Body.String(), "[verification content masked]")
+		}
+	}
+}

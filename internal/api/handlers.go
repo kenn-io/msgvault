@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -3237,6 +3238,15 @@ type ChangesResponse struct {
 // the position the cursor encodes, in (content_changed_at, id) order.
 // GET /api/v1/messages/changes?cursor=<next_cursor of the previous page>&limit=100.
 func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
+	grant := s.requestAuthentication(r).Grant
+	if grant != nil {
+		release, apiErr := s.beginAgentRead(r, "listChangedMessages", grant, agentgrant.PermissionSearchRead)
+		if apiErr != nil {
+			writeAPIHTTPError(w, apiErr)
+			return
+		}
+		defer release()
+	}
 	// Shape-validated before any capability check: a typo is a 400 on every
 	// backend. Which archive the cursor belongs to needs the store and is
 	// checked below, once the archive can be identified.
@@ -3289,6 +3299,9 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
+	if grant != nil {
+		filter.bindGrant(grant, agentReadSourceIDs(r))
+	}
 	digest := filter.digest()
 	if position.filter != "" && position.filter != digest {
 		s.rejectBadParam(w, changesCursorError("was issued for a different filter; restart from an unfiltered cursor or the original filter"))
@@ -3321,10 +3334,36 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: filter.PersonID}
 		resolution, resolveErr := resolver.Resolve(r.Context(), s.store, reference, nil)
 		if resolveErr != nil {
+			if grant != nil && (errors.Is(resolveErr, store.ErrPersonNotFound) || errors.Is(resolveErr, resolver.ErrEmptyPopulation)) {
+				writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionSearchRead))
+				return
+			}
 			s.writePersonScopeError(w, reference, resolveErr, "change feed")
 			return
 		}
 		filter.participants = resolution.Scope.ParticipantIDs
+		if grant != nil {
+			checker, ok := s.store.(interface {
+				PersonInSources(context.Context, []int64, []int64) (bool, error)
+			})
+			if !ok {
+				writeError(w, 503, "source_scope_unavailable", "Source authorization is unavailable")
+				return
+			}
+			found, err := checker.PersonInSources(r.Context(), filter.participants, filter.grantSourceIDs)
+			if err != nil {
+				if s.writeIfContextError(w, err) {
+					return
+				}
+				s.logger.Error("check person source scope", "error", err)
+				writeError(w, 500, "internal_error", "Person source scope unavailable")
+				return
+			}
+			if !found {
+				writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionSearchRead))
+				return
+			}
+		}
 	}
 
 	rows := page.Messages
@@ -3336,6 +3375,12 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		rows = rows[:limit]
 	}
 
+	if grant != nil {
+		_, ok := withholdRows(s, w, r, rows, func(row *store.ChangedMessage) int64 { return row.ID }, func(row *store.ChangedMessage) { row.Subject, row.Snippet = verification.Masked, verification.Masked })
+		if !ok {
+			return
+		}
+	}
 	messages := make([]ChangedMessageJSON, len(rows))
 	for i, m := range rows {
 		messages[i] = toChangedMessageJSON(m)

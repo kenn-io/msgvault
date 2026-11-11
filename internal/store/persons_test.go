@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -525,4 +526,69 @@ func TestGetPersonUsesReadSnapshot(t *testing.T) {
 	after, err := f.Store.GetPerson(person.ID)
 	require.NoError(err)
 	assert.Equal([]int64{newID}, after.ParticipantIDs)
+}
+
+func TestPersonInSourcesEvidence(t *testing.T) {
+	f := storetest.New(t)
+	sender := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
+	recipient := f.EnsureParticipant("recipient@example.com", "Recipient", "example.com")
+	roster := f.EnsureParticipant("roster@example.com", "Roster", "example.com")
+	absent := f.EnsureParticipant("absent@example.com", "Absent", "example.com")
+	id, err := f.Store.UpsertMessage(&store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "person-evidence", MessageType: "email", SenderID: sql.NullInt64{Int64: sender, Valid: true}})
+	require.NoError(t, err)
+	require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", []int64{recipient}, nil))
+	require.NoError(t, f.Store.EnsureConversationParticipant(f.ConvID, roster, "member"))
+	for _, tc := range []struct {
+		name        string
+		participant int64
+		source      int64
+		want        bool
+	}{
+		{"sender", sender, f.Source.ID, true}, {"recipient", recipient, f.Source.ID, true}, {"roster", roster, f.Source.ID, true}, {"absent", absent, f.Source.ID, false}, {"other source", sender, -1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := f.Store.PersonInSources(t.Context(), []int64{tc.participant}, []int64{tc.source})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestChangedMessagesRejectsUnboundedSnapshot(t *testing.T) {
+	f := storetest.New(t)
+	ctx, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+	require.NoError(t, err)
+	defer release()
+	_, err = f.Store.ListChangedMessages(ctx, store.ChangedMessagesFrom(time.Time{}), 10)
+	require.ErrorContains(t, err, "no captured bounds")
+}
+
+func TestChangedMessagesSnapshotDoesNotSkipLaterCommit(t *testing.T) {
+	f := storetest.New(t)
+	ctx, release, err := f.Store.BeginChangedMessagesReadSnapshotContext(t.Context())
+	require.NoError(t, err)
+	defer release()
+	_, err = f.Store.ListSourcesContext(ctx, "")
+	require.NoError(t, err)
+	id := f.CreateMessage("after-feed-snapshot")
+	page, err := f.Store.ListChangedMessages(ctx, store.ChangedMessagesFrom(time.Time{}), 10)
+	require.NoError(t, err)
+	release()
+	for _, message := range page.Messages {
+		assert.NotEqual(t, id, message.ID)
+	}
+	require.False(t, page.CompleteThrough.IsZero())
+	cursor := store.ChangedMessagesFrom(page.CompleteThrough)
+	require.Eventually(t, func() bool {
+		later, err := f.Store.ListChangedMessages(t.Context(), cursor, 10)
+		if err != nil {
+			return false
+		}
+		for _, message := range later.Messages {
+			if message.ID == id {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 20*time.Millisecond)
 }

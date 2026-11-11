@@ -53,7 +53,7 @@ mean the grant is too narrow or a write class is disabled; ask the owner to
 review access instead of attempting to bypass it. A grant without `stats.read`
 cannot use `get_stats` as a universal connection check.
 
-Use owner tool `list_changes` to follow filtered message changes with a cursor.
+Use `list_changes` to follow filtered message changes with a cursor. Delegated use requires `search.read` and daemon API schema 5.2.0 or newer.
 
 ## Find people and read conversations
 
@@ -272,6 +272,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_identity_judgments` | read | — | owner-only |
 | `list_identity_matches` | read | — | owner-only |
 | `list_meeting_action_items` | read | — | owner-only |
+| `list_changes` | read | — | search.read |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |

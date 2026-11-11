@@ -1721,9 +1721,18 @@ func (s *Store) ListChangedMessages(
 	// PostgreSQL's bound read also verifies that `messages` resolves through the
 	// connection's search_path. Keep it ahead of the NULL preflight so a missing
 	// table produces that actionable diagnostic instead of a bare query error.
-	bounds, err := s.dialect.ReadWatermarkBounds(ctx, s.db.DB)
-	if err != nil {
-		return ChangedMessagePage{}, err
+	var bounds WatermarkBounds
+	var err error
+	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); ok && snapshot.db == s.db.DB {
+		if snapshot.bounds == nil {
+			return ChangedMessagePage{}, fmt.Errorf("change feed snapshot has no captured bounds")
+		}
+		bounds = *snapshot.bounds
+	} else {
+		bounds, err = s.dialect.ReadWatermarkBounds(ctx, s.db.DB)
+		if err != nil {
+			return ChangedMessagePage{}, err
+		}
 	}
 
 	// NULL watermarks are excluded by the range predicate and would otherwise

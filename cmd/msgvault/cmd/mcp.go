@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
@@ -200,6 +202,10 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
 		Engine: daemonclient.NewEngineAdapter(st), AttachmentReader: st,
 		Calendar: st, GrantPermissions: grant.Permissions, Families: families,
+	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentChangeFeedMinAPISchemaVersion) && slices.Contains(grant.Permissions, "search.read") {
+		opts.OperationCapabilities = []string{"list_changes"}
+		opts.Operations = &daemonMCPOperations{client: st, now: time.Now, supported: opts.OperationCapabilities}
 	}
 	return opts, nil
 }

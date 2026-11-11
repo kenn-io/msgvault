@@ -22,6 +22,7 @@ type readSnapshot struct {
 	db       *sql.DB
 	tx       *loggedTx
 	writable bool
+	bounds   *WatermarkBounds
 }
 
 // withWritableSnapshot binds setup work to its owning transaction.
@@ -67,6 +68,23 @@ func (s *Store) BeginReadSnapshotContext(ctx context.Context) (context.Context, 
 		})
 	}
 	return context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx}), release, nil
+}
+
+// BeginChangedMessagesReadSnapshotContext captures the commit bound before any snapshot read.
+func (s *Store) BeginChangedMessagesReadSnapshotContext(ctx context.Context) (context.Context, func(), error) {
+	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); ok && snapshot.db == s.db.DB {
+		return ctx, nil, fmt.Errorf("change feed snapshot already open")
+	}
+	bounds, err := s.dialect.ReadWatermarkBounds(ctx, s.db.DB)
+	if err != nil {
+		return ctx, nil, err
+	}
+	readCtx, release, err := s.BeginReadSnapshotContext(ctx)
+	if err != nil {
+		return ctx, nil, err
+	}
+	readCtx.Value(readSnapshotKey{}).(*readSnapshot).bounds = &bounds
+	return readCtx, release, nil
 }
 
 // WithReadSnapshotContext binds a caller-owned read transaction to archive reads.

@@ -1241,9 +1241,20 @@ sources or conversations, and `incoming_only=true` to exclude owner-sent
 messages on a best-effort basis. Direction corrections do not move the change
 watermark, so they can leave a missed or stale result. Different filters combine
 with AND; values within a list combine with OR. Each list accepts up to 50
-positive IDs. The owner can also call the MCP `list_changes` tool. Linking a
-new identity keeps the cursor valid and applies to later changes; use a fresh
-walk to reconcile its older history.
+positive IDs. Owners and agents with `search.read` can call the MCP
+`list_changes` tool. Linking a new identity keeps the cursor valid and applies
+to later changes; use a fresh walk to reconcile its older history.
+
+Agents see only granted sources; an ungranted `source_id` or a person with no
+sender, recipient, or conversation roster appearance in a granted source returns
+`403 permission_denied`. Verification message subjects and snippets are masked
+unless the grant includes `verification.read`.
+
+An agent cursor is bound to the grant's source references. A token with a
+different source set, or the owner, receives `400 invalid_cursor` and must
+restart the walk. A replacement token with the same references can resume,
+including after a source is removed and re-added.
+
 
 A filtered request examines at most 2,000 changes and can return an empty page
 with `has_more=true`; keep following `next_cursor`. A first walk over 400,000
@@ -3360,7 +3371,7 @@ Agent requests use `X-Msgvault-Agent-Token` instead of the owner key. The
 daemon checks `search.read`, `message.read`, `attachment.read`, or `stats.read`
 and the live source identity before serving supported archive reads. Unscoped
 reads select only granted sources. Explicit accounts, collections, and source ID
-sets must fit entirely inside the grant. A missing permission or an account
+sets must fit entirely inside the grant. The message change feed requires `search.read` and applies the same source scope. A missing permission or an account
 selector outside the grant returns `403 permission_denied` and names the
 permission. A message, thread, or attachment outside the grant returns the same
 `404` as a missing one. At most two agent reads run at once; others wait, and a

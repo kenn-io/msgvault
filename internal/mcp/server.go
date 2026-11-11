@@ -633,7 +633,7 @@ func bearerAuthHandler(apiKey string, next http.Handler) http.Handler {
 // agentReadToolPermission names the grant permission the daemon requires for a read tool.
 func agentReadToolPermission(name string) (agentgrant.Permission, bool) {
 	switch name {
-	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains:
+	case ToolSearchMessages, ToolSearchMetadata, ToolSearchMessageBodies, ToolListMessages, ToolAggregate, ToolSearchByDomains, "list_changes":
 		return agentgrant.PermissionSearchRead, true
 	case ToolGetMessage, ToolListThread, ToolSearchInMessage:
 		return agentgrant.PermissionMessageRead, true
