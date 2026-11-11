@@ -67,6 +67,7 @@ func (s *Store) callRowsSQL() string {
 		m.metadata ->> 'outcome' AS outcome, m.metadata ->> 'owner_participation' AS owner_participation,
 		m.sent_at AS occurred_at, NULL AS duration_seconds
 		FROM messages m WHERE m.message_type = '` + callhistory.MessageType + `'
+		AND EXISTS (SELECT 1 FROM sources src WHERE src.id = m.source_id AND src.source_type = '` + callhistory.SourceType + `')
 		UNION ALL
 		SELECT m.id,
 			CASE WHEN m.is_from_me THEN 'outgoing' ELSE 'incoming' END,
