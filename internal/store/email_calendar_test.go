@@ -14,7 +14,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/search"
 )
@@ -381,37 +380,6 @@ func TestEmailCalendarMaterializesOnRawMIMEUpsert(t *testing.T) {
 	raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z"))
 	requirements.NoError(st.UpsertMessageRawWithFormat(parent, raw, "mime"))
 	assertions.Len(emailEvents(t, st, source), 1)
-}
-
-func TestEmailCalendarReplyUpdatesAttendee(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	invite := inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTAMP:20270301T100000Z\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Team meeting\r\nORGANIZER:mailto:organizer@example.com\r\nATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:guest@example.org"))
-	first, source := persistInviteEmail(t, st, "request", invite)
-	reply := inviteEmail(calendarDocument("REPLY", "SEQUENCE:1\r\nDTSTAMP:20270301T110000Z\r\nORGANIZER:mailto:organizer@example.com\r\nATTENDEE;PARTSTAT=ACCEPTED:mailto:guest@example.org"))
-	second := persistInviteEmailForSource(t, st, source, "reply", reply)
-	for id, raw := range map[int64][]byte{first: invite, second: reply} {
-		stored, err := st.GetMessageRaw(id)
-		requirements.NoError(err)
-		assertions.Equal(raw, stored)
-	}
-	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1)
-	event := page.Occurrences[0]
-	assertions.Equal("Team meeting", event.Subject)
-	assertions.Equal("confirmed", event.Status)
-	assertions.Equal(time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), event.Start.UTC())
-	assertions.Equal(time.Hour, event.End.Sub(event.Start))
-	requirements.Len(event.Attendees, 2)
-	got := map[string]calevent.Attendee{}
-	for _, attendee := range event.Attendees {
-		got[attendee.Email] = attendee
-	}
-	assertions.Equal("accepted", got["guest@example.org"].RSVP)
-	assertions.Equal("required", got["guest@example.org"].Role)
-	assertions.Equal("organizer", got["organizer@example.com"].Role)
 }
 
 func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {

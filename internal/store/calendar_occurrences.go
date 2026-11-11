@@ -97,28 +97,6 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		if row.Event.Status == "cancelled" {
 			o.Cancelled = true
 		}
-		for _, reply := range row.replies {
-			if reply.Original != "" && reply.Original == o.Original.Key() {
-				baseline, err := calendarReplyBaseline(ctx, s.db, effective.MessageID)
-				if err != nil {
-					return err
-				}
-				if effective.Event.Status == "cancelled" && effective.MessageID != row.MessageID {
-					masterBaseline, err := calendarReplyBaseline(ctx, s.db, row.MessageID)
-					if err != nil {
-						return err
-					}
-					baseline = append(baseline, masterBaseline...)
-				}
-				effective.Event.Attendees = slices.Clone(effective.Event.Attendees)
-				meta := effective.icsMetadata
-				if meta.Organizer == "" {
-					meta = row.icsMetadata
-				}
-				applyICSReplies(effective.Event.Attendees, baseline, row.replies, meta, o.Original.Key())
-				break
-			}
-		}
 		add(effective, row.MessageID, o)
 		return nil
 	}
