@@ -10,10 +10,11 @@ import (
 
 func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 	var fields map[string]jsontext.Value
-	if len(raw) > maxRawBytes || json.Unmarshal(raw, &fields) != nil || fields == nil {
+	if json.Unmarshal(raw, &fields) != nil || fields == nil {
 		return nil, errors.New("invalid raw transcript")
 	}
 	var transcript Transcript
+	var recording map[string]jsontext.Value
 	switch format {
 	case "omi_json":
 		transcript, _ = decodeOmiTranscript(fields)
@@ -21,7 +22,6 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 		transcript = decodePocket(fields).Transcript
 	case "twenty_json":
 		version, ok := rawInteger(fields["schema_version"])
-		var recording map[string]jsontext.Value
 		if !ok || version != 1 || json.Unmarshal(fields["recording"], &recording) != nil || recording == nil {
 			return nil, errors.New("invalid recording")
 		}
@@ -106,10 +106,6 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 			cues = append(cues, subtitleSegment{seg.Speaker, seg.Text, *item.Start, *item.End})
 		}
 	case "twenty_json":
-		var recording map[string]jsontext.Value
-		if json.Unmarshal(fields["recording"], &recording) != nil {
-			return nil, errors.New("invalid recording")
-		}
 		entries, ok := twentyEntries(recording["transcript"])
 		if !ok {
 			return nil, errors.New("invalid transcript")
