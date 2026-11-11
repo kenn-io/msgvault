@@ -24,22 +24,13 @@ func importJobMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.
 	return names
 }
 
-type importJobArguments struct {
-	Account  string  `json:"account"`
-	Limit    *int64  `json:"limit"`
-	After    *string `json:"after,omitempty"`
-	Before   *string `json:"before,omitempty"`
-	Query    *string `json:"query,omitempty"`
-	Noresume *bool   `json:"noresume,omitempty"`
-}
-
-func decodeImportJobArguments(args map[string]any) (importJobArguments, bool) {
-	input, err := decodeMCPOperationArguments[importJobArguments](args)
+func decodeImportJobArguments(args map[string]any) (generated.ImportJobRequest, bool) {
+	input, err := decodeMCPOperationArguments[generated.ImportJobRequest](args)
 	return input, err == nil && strings.TrimSpace(input.Account) != "" && input.Limit != nil && *input.Limit > 0
 }
 func importJobRefusal(code string) bool {
 	switch code {
-	case "validation_failed", "ambiguous_account", "account_not_syncable", "sync_already_active", "operation_in_progress", "server_busy", "service_unavailable", "request_too_large", "unsupported_media_type":
+	case "validation_failed", "ambiguous_account", "account_not_syncable", "sync_already_active", "server_busy", "service_unavailable", "request_too_large", "unsupported_media_type":
 		return true
 	}
 	return false
@@ -51,8 +42,7 @@ func (b *daemonMCPOperations) executeImportJob(ctx context.Context, name string,
 		if !ok {
 			return operationFailure("invalid_arguments", false), true, nil
 		}
-		body := &generated.CreateImportJobBody{Account: input.Account, Limit: input.Limit, After: input.After, Before: input.Before, Query: input.Query, Noresume: input.Noresume}
-		result, err := readMCPOperationJSONWithClassifier[generated.ImportJobResponse](ctx, b.client, http.MethodPost, "/api/v1/imports", &generated.CreateImportJobRequestOptions{Body: body}, importJobRefusal, http.StatusAccepted)
+		result, err := readMCPOperationJSONWithClassifier[generated.ImportJobResponse](ctx, b.client, http.MethodPost, "/api/v1/imports", &generated.CreateImportJobRequestOptions{Body: &input}, importJobRefusal, http.StatusAccepted)
 		return result, true, err
 	case "get_import_job":
 		input, err := decodeMCPOperationArguments[struct {
@@ -75,9 +65,9 @@ func importJobDisclosure(name string, args map[string]any) (string, bool, error)
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
 	data, err := json.Marshal(struct {
-		Operation string             `json:"operation"`
-		Request   importJobArguments `json:"request"`
-		Effect    string             `json:"effect"`
+		Operation string                     `json:"operation"`
+		Request   generated.ImportJobRequest `json:"request"`
+		Effect    string                     `json:"effect"`
 	}{name, input, "Start a bounded historical import using the configured provider; acceptance is not completion. Do not retry an uncertain outcome automatically."}, json.Deterministic(true))
 	return string(data), true, err
 }
