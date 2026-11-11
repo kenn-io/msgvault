@@ -2,9 +2,11 @@
   import { debounce, RadioGroup, SearchInput } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
 
-  let { load, noun, empty, disabled = false, moreNote = '', selected = $bindable('') }: {
+  let { load, noun, empty, disabled = false, moreNote = '', hint = '', searchLabel = `Filter ${noun}`, selected = $bindable('') }: {
     load: (query: string, signal: AbortSignal) => Promise<{ items: { id: string; label: string; detail?: string }[]; truncated: boolean; error?: string }>;
     moreNote?: string;
+    hint?: string;
+    searchLabel?: string;
     noun: string;
     empty: string;
     disabled?: boolean;
@@ -38,7 +40,7 @@
 </script>
 
 <div class="picker">
-  <SearchInput block value={query} ariaLabel={`Filter ${noun}`} placeholder={`Filter ${noun}`} {disabled} oninput={(value) => { selected = ''; query = value; schedule(); }} />
+  <SearchInput block value={query} ariaLabel={searchLabel} placeholder={searchLabel} {disabled} oninput={(value) => { selected = ''; query = value; schedule(); }} />
   <div class="results">
     {#if loading || query.trim() !== listedQuery}<p role="status">Loading…</p>
     {:else}
@@ -47,6 +49,7 @@
       {:else if !error}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>{/if}
     {/if}
   </div>
+  {#if hint}<p>{hint}</p>{/if}
   {#if moreNote}<p class="more-note" style:visibility={!error && truncated && !loading && query.trim() === listedQuery ? 'visible' : 'hidden'}>{moreNote}</p>{/if}
 </div>
 

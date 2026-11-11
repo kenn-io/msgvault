@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -436,17 +437,16 @@ func (b *kataIssueBackend) Open(ctx context.Context, query string) ([]taskclient
 		return nil, false, err
 	}
 	issues, truncated, err := client.SearchOpenIssues(ctx, project, query, 25)
+	return exactIssueFirst(issue, found, issues, truncated, err)
+}
+
+// exactIssueFirst puts the exact issue ahead of the lexical matches, drops its
+// duplicate by UID, and caps the list at 25.
+func exactIssueFirst(issue taskclient.KataTask, found bool, matches []taskclient.KataTask, truncated bool, err error) ([]taskclient.KataTask, bool, error) {
 	if err != nil || !found {
-		return issues, truncated, err
+		return matches, truncated, err
 	}
-	result := []taskclient.KataTask{issue}
-	for _, match := range issues {
-		if match.UID != issue.UID {
-			result = append(result, match)
-		}
-	}
-	if len(result) > 25 {
-		result, truncated = result[:25], true
-	}
-	return result, truncated, nil
+	matches = slices.DeleteFunc(matches, func(match taskclient.KataTask) bool { return match.UID == issue.UID })
+	matches = append([]taskclient.KataTask{issue}, matches...)
+	return matches[:min(len(matches), 25)], truncated || len(matches) > 25, nil
 }

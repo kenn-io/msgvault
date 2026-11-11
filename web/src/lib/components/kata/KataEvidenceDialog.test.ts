@@ -164,7 +164,7 @@ describe('KataEvidenceDialog', () => {
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await screen.findByRole('radio', { name: 'Follow up · example#abcd' });
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search open issues' }), { target: { value: 'budget' } });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Older budget · example#k3f9' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('example#abcd');
@@ -185,7 +185,8 @@ describe('KataEvidenceDialog', () => {
     render(KataEvidenceDialog, { client, selector });
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    const filter = screen.getByRole('searchbox', { name: 'Filter open issues' });
+    const filter = screen.getByRole('searchbox', { name: 'Search open issues' });
+    expect(filter).toHaveProperty('placeholder', 'Search open issues');
     await fireEvent.input(filter, { target: { value: 'abcd' } });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Follow up · example#abcd' }));
     expect(screen.getByRole('button', { name: 'Add quote' })).toHaveProperty('disabled', false);
@@ -218,7 +219,7 @@ describe('KataEvidenceDialog', () => {
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await screen.findByRole('alert');
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search open issues' }), { target: { value: 'example#abcd' } });
     expect((await screen.findByRole('alert')).textContent).toBe('List unavailable');
     expect(screen.queryByRole('radio', { name: 'example#abcd' })).toBeNull();
   });
