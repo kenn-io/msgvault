@@ -13,60 +13,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// Cursor versions are carried as a `<n>.` prefix outside the encoded part.
-//
-// Outside is what makes it useful. A version buried in the payload is
-// unreadable until the reader has already agreed that the payload is
-// base64url-wrapped JSON, so it can only version the payload's fields; any
-// later format that changed the envelope — signed, binary — would reach its
-// holder as indistinguishable from corruption. Out here it versions the
-// envelope too, so a cursor from any future format is still recognised as one,
-// and its holder is told to restart rather than left guessing.
-const (
-	unfilteredChangesCursorVersion = 1
-	filteredChangesCursorVersion   = 2
-)
-
-// changesCursorPayload is the encoded part of a change-feed cursor.
-//
-// The token is neither signed nor encrypted, deliberately. The API server has
-// no secret to sign with, and a forged cursor only moves the caller's own
-// position in the caller's own feed — it reaches no message the caller could
-// not already request. Tamper-evidence would buy nothing.
-//
-// Archive is the durable UID of the archive the cursor was issued against, and
-// it is a correctness field rather than a security one. The position it carries
-// is a watermark plus an ARCHIVE-LOCAL message id: it means nothing anywhere
-// else, and honouring one aimed at a different --db, a subset copy, or an
-// archive rebuilt from scratch would start the walk at an unrelated position and
-// silently omit everything before it. A file-level restore of the SAME archive
-// keeps its UID, so a cursor survives one — which is the point of binding to the
-// durable identity rather than to the file.
-//
-// Unsigned, it stops an accident, not an attacker — and the accident is the
-// failure mode this feed exists to rule out.
-//
-// ID is a POINTER because the position's id half is optional, not because it
-// can be null on the wire: a position at the start of an instant has no id
-// tiebreak at all, and it must not be encoded as one. Omitted rather than sent
-// as a number, because no number means it — every int64 is a legal message id
-// (see store.ChangedMessagesCursor), so any sentinel value would come back as
-// "after that row" and skip the rows at or below it.
-type changesCursorPayload struct {
-	Time    string `json:"t"`
-	ID      *int64 `json:"i,omitzero" nullable:"false"`
-	Archive string `json:"a"`
-	Filter  string `json:"f,omitzero"`
-}
-
-// encodeChangesCursor renders a feed position in archiveUID as the opaque token
-// clients send back. Both the digits and the `.` are unreserved in a query
-// string and RawURLEncoding keeps the rest so too, so the whole token needs no
-// escaping.
-func encodeChangesCursor(archiveUID string, position store.ChangedMessagesCursor, digest string) string {
-	return changefeed.EncodeCursor(archiveUID, position, digest)
-}
-
 // changesPosition is a decoded change-feed cursor: a keyset position, plus the
 // archive it is a position IN.
 //
@@ -99,19 +45,19 @@ func decodeChangesCursor(raw string) (changesPosition, error) {
 	if !hasPrefix || !numeric {
 		return changesPosition{}, changesCursorError("is not a cursor this API issued")
 	}
-	if version != unfilteredChangesCursorVersion && version != filteredChangesCursorVersion {
+	if version != changefeed.UnfilteredCursorVersion && version != changefeed.FilteredCursorVersion {
 		return changesPosition{}, changesCursorError(fmt.Sprintf(
 			"was issued by an incompatible version of this server (format %d, this "+
 				"server speaks through %d); the sync cannot resume from it and must start "+
 				"again from the beginning of the archive",
-			version, filteredChangesCursorVersion))
+			version, changefeed.FilteredCursorVersion))
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
 		return changesPosition{}, changesCursorError("is not a cursor this API issued")
 	}
-	var payload changesCursorPayload
-	if version == unfilteredChangesCursorVersion {
+	var payload changefeed.CursorPayload
+	if version == changefeed.UnfilteredCursorVersion {
 		// Decode the original shape so unknown fields retain their v1 meaning.
 		var legacy struct {
 			Time    string `json:"t"`

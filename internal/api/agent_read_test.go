@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go.kenn.io/msgvault/internal/changefeed"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1047,21 +1048,21 @@ func TestChangeFeedGrantDigestUsesStableSourceReferences(t *testing.T) {
 	assertions := assert.New(t)
 	a := agentgrant.SourceRef{ID: 1, Type: "gmail", Identifier: "a@example.com", SenderKeys: []string{"old"}}
 	b := agentgrant.SourceRef{ID: 2, Type: "gmail", Identifier: "b@example.com"}
-	filter := func(refs ...agentgrant.SourceRef) changesFilter {
-		var f changesFilter
-		f = f.bindGrant(&agentgrant.Grant{Sources: refs})
+	filter := func(refs ...agentgrant.SourceRef) changefeed.Filter {
+		var f changefeed.Filter
+		f = bindChangesGrant(f, &agentgrant.Grant{Sources: refs})
 		return f
 	}
 	original := filter(a, b)
 	a.ID = 99
 	a.SenderKeys = []string{"new"}
 	same := filter(b, a)
-	assertions.NotEmpty(original.digest())
-	assertions.Equal(original.digest(), same.digest())
-	assertions.NotEqual(original.digest(), filter(a).digest())
-	assertions.NotEqual(original.digest(), (changesFilter{}).digest())
+	assertions.NotEmpty(original.Digest())
+	assertions.Equal(original.Digest(), same.Digest())
+	assertions.NotEqual(original.Digest(), filter(a).Digest())
+	assertions.NotEqual(original.Digest(), (changefeed.Filter{}).Digest())
 	emptyGrant := filter()
-	assertions.NotEmpty(emptyGrant.digest())
-	assertions.NotEqual(emptyGrant.digest(), (changesFilter{}).digest())
-	assertions.NotEqual(emptyGrant.digest(), original.digest())
+	assertions.NotEmpty(emptyGrant.Digest())
+	assertions.NotEqual(emptyGrant.Digest(), (changefeed.Filter{}).Digest())
+	assertions.NotEqual(emptyGrant.Digest(), original.Digest())
 }

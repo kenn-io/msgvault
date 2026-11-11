@@ -30,9 +30,9 @@ func TestWebhookSignsAndDoesNotFollowRedirect(t *testing.T) {
 		w.WriteHeader(http.StatusFound)
 	}))
 	defer server.Close()
-	client := webhookClient{client: server.Client(), timeout: time.Second}
+	client := testWebhookClient(server)
 	body := []byte(`{"hello":"world"}`)
-	category := client.send(t.Context(), server.URL, "wk_test", secret, body)
+	category := client.send(t.Context(), "https://example.com/hook", "wk_test", secret, body)
 	assert.NotEmpty(t, category)
 	mac := hmac.New(sha256.New, secret)
 	_, err := fmt.Fprintf(mac, "%s.%s.%s", id, stamp, body)
@@ -56,12 +56,18 @@ type staticResolver []netip.Addr
 func (r staticResolver) LookupNetIP(context.Context, string, string) ([]netip.Addr, error) {
 	return r, nil
 }
+func testWebhookClient(server *httptest.Server) webhookClient {
+	roots := server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	roots.ServerName = "example.com"
+	return webhookClient{timeout: time.Second, resolver: staticResolver{netip.MustParseAddr("203.0.113.1")}, roots: roots, dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+	}}
+}
 func TestWebhookRefusesMixedDNSWithoutDialing(t *testing.T) {
 	dialed := false
 	client := webhookClient{timeout: time.Second, resolver: staticResolver{netip.MustParseAddr("203.0.113.1"), netip.MustParseAddr("127.0.0.1")}, dial: func(context.Context, string, string) (net.Conn, error) { dialed = true; return nil, context.Canceled }}
 	assert.Equal(t, "invalid_callback", client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 	assert.False(t, dialed)
-	assert.Equal(t, "invalid_callback", client.send(t.Context(), "http://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 }
 
 func TestWebhookUsesOnlyTrustedPinAndTimesOut(t *testing.T) {

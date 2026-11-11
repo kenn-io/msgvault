@@ -65,10 +65,10 @@ func (s *Store) AdvanceWakeupState(ctx context.Context, name string, before []by
 	return swapped, nil
 }
 
-func (s *Store) PruneWakeupStates(ctx context.Context, keep []string) error {
+func (s *Store) PruneWakeupStates(ctx context.Context, keep []string) (int, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT key FROM archive_metadata WHERE key LIKE ?`, wakeupStatePrefix+"%")
 	if err != nil {
-		return fmt.Errorf("list wakeup states: %w", err)
+		return 0, fmt.Errorf("list wakeup states: %w", err)
 	}
 	var remove []string
 	for rows.Next() {
@@ -85,12 +85,19 @@ func (s *Store) PruneWakeupStates(ctx context.Context, keep []string) error {
 	}
 	_ = rows.Close()
 	if err != nil {
-		return err
+		return 0, err
 	}
+	count := 0
 	for _, key := range remove {
-		if _, err = s.db.ExecContext(ctx, `DELETE FROM archive_metadata WHERE key=?`, key); err != nil {
-			return fmt.Errorf("prune wakeup state: %w", err)
+		result, err := s.db.ExecContext(ctx, `DELETE FROM archive_metadata WHERE key=?`, key)
+		if err != nil {
+			return count, fmt.Errorf("prune wakeup state: %w", err)
 		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return count, err
+		}
+		count += int(n)
 	}
-	return nil
+	return count, nil
 }

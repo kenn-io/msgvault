@@ -34,7 +34,6 @@ func DecodeSecret(secret string) ([]byte, error) {
 }
 
 type webhookClient struct {
-	client        *http.Client
 	timeout       time.Duration
 	resolver      netguard.Resolver
 	dial          netguard.DialContext
@@ -50,49 +49,43 @@ func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, bo
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	target, err := url.Parse(endpoint)
-	if err != nil || target.Scheme != "https" || target.Hostname() == "" || target.User != nil || target.Fragment != "" || target.Opaque != "" || strings.Contains(endpoint, "#") || (target.Port() != "" && target.Port() != "443" && target.Port() != "8443") {
-		if c.client == nil {
+	if err != nil {
+		return "invalid_callback"
+	}
+	resolver := c.resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+	dial := c.dial
+	if dial == nil {
+		dial = (&net.Dialer{}).DialContext
+	}
+	pinned, err := netguard.PinnedAddresses(ctx, resolver, target, c.trustedOrigin, c.trusted, false)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "timeout"
+		}
+		if errors.Is(err, netguard.ErrUnsafeTarget) {
 			return "invalid_callback"
 		}
+		return "connection_refused"
 	}
-	client := c.client
-	if client == nil {
-		resolver := c.resolver
-		if resolver == nil {
-			resolver = net.DefaultResolver
+	tlsConfig := c.roots
+	if tlsConfig == nil {
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	} else {
+		tlsConfig = tlsConfig.Clone()
+		if tlsConfig.MinVersion < tls.VersionTLS12 {
+			tlsConfig.MinVersion = tls.VersionTLS12
 		}
-		dial := c.dial
-		if dial == nil {
-			dial = (&net.Dialer{}).DialContext
-		}
-		pinned, err := netguard.PinnedAddresses(ctx, resolver, target, c.trustedOrigin, c.trusted, false)
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				return "timeout"
-			}
-			if errors.Is(err, netguard.ErrUnsafeTarget) {
-				return "invalid_callback"
-			}
-			return "connection_refused"
-		}
-		tlsConfig := c.roots
-		if tlsConfig == nil {
-			tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
-		} else {
-			tlsConfig = tlsConfig.Clone()
-			if tlsConfig.MinVersion < tls.VersionTLS12 {
-				tlsConfig.MinVersion = tls.VersionTLS12
-			}
-		}
-		pinnedDial := netguard.PinnedDialer(pinned, dial)
-		transport := &http.Transport{DialContext: func(_ context.Context, network, address string) (net.Conn, error) {
-			return pinnedDial(ctx, network, address)
-		}, TLSClientConfig: tlsConfig, DisableKeepAlives: true}
-		defer transport.CloseIdleConnections()
-		client = &http.Client{Transport: transport}
 	}
-	clone := *client
-	clone.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	pinnedDial := netguard.PinnedDialer(pinned, dial)
+	transport := &http.Transport{DialContext: func(_ context.Context, network, address string) (net.Conn, error) {
+		return pinnedDial(ctx, network, address)
+	}, TLSClientConfig: tlsConfig, DisableKeepAlives: true}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport}
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return "invalid_callback"
@@ -105,7 +98,7 @@ func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, bo
 	req.Header.Set("webhook-timestamp", stamp)
 	req.Header.Set("webhook-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 	req.Header.Set("User-Agent", "msgvault")
-	resp, err := clone.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return "timeout"

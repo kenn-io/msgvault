@@ -3310,9 +3310,9 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if grant != nil {
-		filter = filter.bindGrant(grant)
+		filter = bindChangesGrant(filter, grant)
 	}
-	digest := filter.digest()
+	digest := filter.Digest()
 	if position.filter != "" && position.filter != digest {
 		s.rejectBadParam(w, changesCursorError("was issued for a different filter; restart from an unfiltered cursor or the original filter"))
 		return
@@ -3328,8 +3328,8 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 
 	// One extra row decides has_more without a count == limit false positive.
 	readLimit := limit + 1
-	if filter.hasSelectors() {
-		readLimit = changesScanBudget + 1
+	if filter.HasSelectors() {
+		readLimit = changefeed.ScanBudget + 1
 	}
 	page, err := lister.ListChangedMessages(r.Context(), since, readLimit)
 	if err != nil {
@@ -3342,7 +3342,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 	}
 	if filter.PersonID != 0 {
 		reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: filter.PersonID}
-		resolvedFilter, resolveErr := changefeed.ResolveFilter(r.Context(), s.store, filter.shared())
+		resolvedFilter, resolveErr := changefeed.ResolveFilter(r.Context(), s.store, filter)
 		if resolveErr != nil {
 			if grant != nil && (errors.Is(resolveErr, store.ErrPersonNotFound) || errors.Is(resolveErr, resolver.ErrEmptyPopulation)) {
 				writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionSearchRead))
@@ -3351,7 +3351,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 			s.writePersonScopeError(w, reference, resolveErr, "change feed")
 			return
 		}
-		filter.participants = resolvedFilter.Participants
+		filter.Participants = resolvedFilter.Participants
 		if grant != nil {
 			checker, ok := s.store.(interface {
 				PersonInSources(ctx context.Context, participantIDs, sourceIDs []int64) (bool, error)
@@ -3360,7 +3360,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 				writeError(w, 503, "source_scope_unavailable", "Source authorization is unavailable")
 				return
 			}
-			found, err := checker.PersonInSources(r.Context(), filter.participants, agentReadSourceIDs(r))
+			found, err := checker.PersonInSources(r.Context(), filter.Participants, agentReadSourceIDs(r))
 			if err != nil {
 				if s.writeIfContextError(w, err) {
 					return
@@ -3379,8 +3379,8 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 	rows := page.Messages
 	hasMore := len(rows) > limit
 	var filteredNext store.ChangedMessagesCursor
-	if filter.hasSelectors() {
-		rows, filteredNext, hasMore = scanChanges(page, since, filter, limit)
+	if filter.HasSelectors() {
+		rows, filteredNext, hasMore = changefeed.Scan(page, since, filter, limit)
 	} else if hasMore {
 		rows = rows[:limit]
 	}
@@ -3398,7 +3398,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 
 	next := since
 	switch {
-	case filter.hasSelectors():
+	case filter.HasSelectors():
 		next = filteredNext
 	case len(rows) > 0:
 		last := rows[len(rows)-1]
@@ -3443,7 +3443,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		Messages:        messages,
 		Count:           len(messages),
 		HasMore:         hasMore,
-		NextCursor:      encodeChangesCursor(archiveUID, next, digest),
+		NextCursor:      changefeed.EncodeCursor(archiveUID, next, digest),
 		ServerTime:      page.ServerTime.UTC().Format(changesTimeLayout),
 		CompleteThrough: completeThrough,
 	})

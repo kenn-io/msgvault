@@ -27,8 +27,10 @@ import (
 
 type observedStore struct {
 	*store.Store
-	reads     []int
-	zeroBound bool
+	reads      []int
+	zeroBound  bool
+	fixedBound time.Time
+	personErr  error
 }
 
 func (s *observedStore) ListChangedMessages(ctx context.Context, cursor store.ChangedMessagesCursor, limit int) (store.ChangedMessagePage, error) {
@@ -38,7 +40,16 @@ func (s *observedStore) ListChangedMessages(ctx context.Context, cursor store.Ch
 		page.CompleteThrough = time.Time{}
 		page.Messages = nil
 	}
+	if !s.fixedBound.IsZero() {
+		page.CompleteThrough = s.fixedBound
+	}
 	return page, err
+}
+func (s *observedStore) GetPersonContext(ctx context.Context, id int64) (*store.Person, error) {
+	if s.personErr != nil {
+		return nil, s.personErr
+	}
+	return s.Store.GetPersonContext(ctx, id)
 }
 func seedWakeup(t *testing.T, st *store.Store, source string, sender int64, n int, now time.Time) int64 {
 	t.Helper()
@@ -63,7 +74,7 @@ func initializedWakeup(t *testing.T, st *store.Store, name string, start time.Ti
 	require.True(t, ok)
 }
 func testSubscription(name string, server *httptest.Server, filter changefeed.Filter) Subscription {
-	return Subscription{Name: name, URL: server.URL, Secret: []byte(strings.Repeat("k", 32)), Filter: filter, MaxMessageAge: 72 * time.Hour, Client: webhookClient{client: server.Client(), timeout: time.Second}}
+	return Subscription{Name: name, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("k", 32)), Filter: filter, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(server)}
 }
 
 func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
@@ -72,7 +83,7 @@ func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
 	now := time.Now().UTC()
 	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "a"}, {Name: "b"}}, Now: func() time.Time { return now }}
 	require.NoError(t, engine.RunPass(t.Context()))
-	assert.Equal(t, []int{2001}, st.reads)
+	assert.Equal(t, []int{1}, st.reads)
 	for _, name := range []string{"a", "b"} {
 		_, raw, err := base.LoadWakeupState(t.Context(), name)
 		require.NoError(t, err)
@@ -85,6 +96,28 @@ func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
 	initializedWakeup(t, base, "b", start)
 	require.NoError(t, engine.RunPass(t.Context()))
 	assert.Equal(t, []int{2001}, st.reads)
+}
+func TestHeadReadIsNotReusedForWalkFromZero(t *testing.T) {
+	base := testutil.NewTestStore(t)
+	st := &observedStore{Store: base}
+	initializedWakeup(t, base, "walk", time.Time{})
+	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "new"}, {Name: "walk"}}}
+	require.NoError(t, engine.RunPass(t.Context()))
+	assert.Equal(t, []int{1, 2001}, st.reads)
+}
+func TestPersonResolutionInfrastructureFailureIsStoreError(t *testing.T) {
+	base := testutil.NewTestStore(t)
+	st := &observedStore{Store: base, personErr: fmt.Errorf("database unavailable")}
+	initializedWakeup(t, base, "person", time.Now().Add(-time.Hour))
+	var logs bytes.Buffer
+	engine := Engine{Store: st, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Subscriptions: []Subscription{{Name: "person", Filter: changefeed.Filter{PersonID: 1}}}}
+	require.NoError(t, engine.RunPass(t.Context()))
+	assert.Contains(t, logs.String(), "store_error")
+	assert.NotContains(t, logs.String(), "person_unavailable")
+	state, _, err := base.LoadWakeupState(t.Context(), "person")
+	require.NoError(t, err)
+	assert.Zero(t, state.Failures)
+	assert.True(t, state.NextAttemptAt.IsZero())
 }
 func TestConfigPersonAcrossSourcesAndLinkAfterStartup(t *testing.T) {
 	st := testutil.NewTestStore(t)
@@ -113,7 +146,8 @@ func TestConfigPersonAcrossSourcesAndLinkAfterStartup(t *testing.T) {
 		w.WriteHeader(status)
 	}))
 	defer server.Close()
-	engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription("person", server, filter)}, Now: func() time.Time { return now }}
+	observed := &observedStore{Store: st, fixedBound: now.Add(-30 * time.Second)}
+	engine := Engine{Store: observed, Subscriptions: []Subscription{testSubscription("person", server, filter)}, Now: func() time.Time { return now }}
 	require.NoError(t, engine.RunPass(t.Context()))
 	require.NoError(t, decodeErr)
 	require.Len(t, deliveries, 1)
@@ -122,11 +156,14 @@ func TestConfigPersonAcrossSourcesAndLinkAfterStartup(t *testing.T) {
 	require.NoError(t, err)
 	secondID := seedWakeup(t, st, "second-source@example.com", second, 2, now)
 	status = http.StatusNoContent
+	observed.fixedBound = now.Add(-time.Second)
 	now = now.Add(31 * time.Second)
 	require.NoError(t, engine.RunPass(t.Context()))
 	require.NoError(t, decodeErr)
 	require.Len(t, deliveries, 2)
 	assert.ElementsMatch(t, []int64{firstID, secondID}, deliveries[1].Matched.MessageIDs)
+	assert.NotEqual(t, deliveries[0].CursorTo, deliveries[1].CursorTo)
+	assert.NotEqual(t, deliveries[0].DeliveryID, deliveries[1].DeliveryID)
 }
 func TestLostCASRedeliversAndEndpointFailuresAreIndependent(t *testing.T) {
 	st := testutil.NewTestStore(t)
@@ -216,4 +253,42 @@ func TestOwnerCursorReplaysDeliveredIDsAndLogsRedact(t *testing.T) {
 	assert.Contains(t, logs.String(), "http_5xx")
 	assert.NotContains(t, logs.String(), "private-query")
 	assert.NotContains(t, logs.String(), "sensitive-response-body")
+}
+
+func TestFailedDeliveryPostsEmptyRescanBeforeAdvancing(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	start := now.Add(-time.Hour)
+	seedWakeup(t, st, "empty-retry@example.com", 0, 1, now)
+	initializedWakeup(t, st, "empty-retry", start)
+	var bodies []payload
+	status := http.StatusInternalServerError
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var p payload
+		if err := json.NewDecoder(r.Body).Decode(&p); err == nil {
+			bodies = append(bodies, p)
+		}
+		w.WriteHeader(status)
+	}))
+	defer server.Close()
+	engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription("empty-retry", server, changefeed.Filter{IncomingOnly: true})}, Now: func() time.Time { return now }}
+	require.NoError(t, engine.RunPass(t.Context()))
+	require.Len(t, bodies, 1)
+	now = now.Add(73 * time.Hour)
+	require.NoError(t, engine.RunPass(t.Context()))
+	require.Len(t, bodies, 2)
+	assert.Equal(t, bodies[0].CursorFrom, bodies[1].CursorFrom)
+	assert.Zero(t, bodies[1].Matched.Count)
+	assert.Empty(t, bodies[1].Matched.MessageIDs)
+	state, _, err := st.LoadWakeupState(t.Context(), "empty-retry")
+	require.NoError(t, err)
+	assert.Equal(t, start, state.At)
+	status = http.StatusNoContent
+	now = now.Add(time.Minute)
+	require.NoError(t, engine.RunPass(t.Context()))
+	require.Len(t, bodies, 3)
+	state, _, err = st.LoadWakeupState(t.Context(), "empty-retry")
+	require.NoError(t, err)
+	assert.True(t, state.At.After(start))
+	assert.Zero(t, state.Failures)
 }

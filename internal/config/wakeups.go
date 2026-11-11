@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -49,23 +50,8 @@ func prepareWakeups(entries []WakeupConfig) error {
 		} else if netguard.ProhibitedHostname(target.Hostname()) {
 			return fmt.Errorf("wakeups %s: prohibited callback", c.Name)
 		}
-		if len(c.TrustedAddresses) > 0 {
-			addresses := make([]netip.Addr, 0, len(c.TrustedAddresses))
-			for _, raw := range c.TrustedAddresses {
-				ip, e := netip.ParseAddr(raw)
-				if e != nil {
-					return fmt.Errorf("wakeups %s: invalid trusted address", c.Name)
-				}
-				addresses = append(addresses, ip)
-			}
-			origin := *target
-			origin.Path = ""
-			origin.RawPath = ""
-			origin.RawQuery = ""
-			origin.ForceQuery = false
-			if _, _, err = netguard.ValidateTrustedDestination(&origin, addresses); err != nil {
-				return fmt.Errorf("wakeups %s: %w", c.Name, err)
-			}
+		if _, _, err := c.TrustedDestination(); err != nil {
+			return err
 		}
 		if (c.SecretFile == "") == (c.SecretEnv == "") {
 			return fmt.Errorf("wakeups %s: specify exactly one secret source", c.Name)
@@ -96,6 +82,42 @@ func prepareWakeups(entries []WakeupConfig) error {
 				}
 			}
 		}
+		slices.Sort(c.SourceIDs)
+		c.SourceIDs = slices.Compact(c.SourceIDs)
+		if len(c.SourceIDs) == 0 {
+			c.SourceIDs = nil
+		}
+		slices.Sort(c.ConversationIDs)
+		c.ConversationIDs = slices.Compact(c.ConversationIDs)
+		if len(c.ConversationIDs) == 0 {
+			c.ConversationIDs = nil
+		}
 	}
 	return nil
+}
+
+// TrustedDestination parses the configured destination pins at the config boundary.
+func (c WakeupConfig) TrustedDestination() (*url.URL, []netip.Addr, error) {
+	if len(c.TrustedAddresses) == 0 {
+		return nil, nil, nil
+	}
+	target, err := url.Parse(c.URL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("wakeups %s: invalid callback", c.Name)
+	}
+	target.Path, target.RawPath, target.RawQuery = "", "", ""
+	target.ForceQuery = false
+	addresses := make([]netip.Addr, 0, len(c.TrustedAddresses))
+	for _, raw := range c.TrustedAddresses {
+		ip, err := netip.ParseAddr(raw)
+		if err != nil {
+			return nil, nil, fmt.Errorf("wakeups %s: invalid trusted address", c.Name)
+		}
+		addresses = append(addresses, ip)
+	}
+	origin, addresses, err := netguard.ValidateTrustedDestination(target, addresses)
+	if err != nil {
+		return nil, nil, fmt.Errorf("wakeups %s: %w", c.Name, err)
+	}
+	return origin, addresses, nil
 }

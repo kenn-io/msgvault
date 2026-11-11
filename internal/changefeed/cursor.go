@@ -10,7 +10,15 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type cursorPayload struct {
+// Cursor versions prefix the envelope so incompatible formats can be recognized.
+const (
+	UnfilteredCursorVersion = 1
+	FilteredCursorVersion   = 2
+)
+
+// CursorPayload binds an unsigned position to its archive and optional filter.
+// ID is omitted at the start of an instant; every integer is a valid row ID.
+type CursorPayload struct {
 	Time    string `json:"t"`
 	ID      *int64 `json:"i,omitzero" nullable:"false"`
 	Archive string `json:"a"`
@@ -22,7 +30,7 @@ func EncodeCursor(archiveUID string, position store.ChangedMessagesCursor, diges
 	if after, ok := position.AfterID(); ok {
 		id = &after
 	}
-	payload, err := json.Marshal(cursorPayload{
+	payload, err := json.Marshal(CursorPayload{
 		Time:    position.At().UTC().Format(time.RFC3339Nano),
 		ID:      id,
 		Archive: archiveUID,
@@ -32,9 +40,9 @@ func EncodeCursor(archiveUID string, position store.ChangedMessagesCursor, diges
 		// Unreachable: every field of the payload marshals unconditionally.
 		panic(fmt.Sprintf("encode changes cursor: %v", err))
 	}
-	version := 1
+	version := UnfilteredCursorVersion
 	if digest != "" {
-		version = 2
+		version = FilteredCursorVersion
 	}
 	return strconv.Itoa(version) + "." +
 		base64.RawURLEncoding.EncodeToString(payload)

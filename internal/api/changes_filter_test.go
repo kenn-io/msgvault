@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"go.kenn.io/msgvault/internal/changefeed"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -44,7 +45,7 @@ func TestChangesFilteredCursorPagination(t *testing.T) {
 }
 
 func TestChangesFilterMatchesAllDimensions(t *testing.T) {
-	f := changesFilter{PersonID: 4, participants: []int64{10, 11}, SourceIDs: []int64{1, 2}, ConversationIDs: []int64{8}, IncomingOnly: true}
+	f := changefeed.Filter{PersonID: 4, Participants: []int64{10, 11}, SourceIDs: []int64{1, 2}, ConversationIDs: []int64{8}, IncomingOnly: true}
 	for _, tc := range []struct {
 		name string
 		row  store.ChangedMessage
@@ -57,7 +58,7 @@ func TestChangesFilterMatchesAllDimensions(t *testing.T) {
 		{"other conversation", store.ChangedMessage{SenderID: 10, SourceID: 1, ConversationID: 9}, false},
 		{"outgoing", store.ChangedMessage{SenderID: 10, SourceID: 1, ConversationID: 8, IsFromMe: true}, false},
 	} {
-		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, f.matches(tc.row)) })
+		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, f.Matches(tc.row)) })
 	}
 }
 
@@ -88,7 +89,7 @@ func TestChangesScanPages(t *testing.T) {
 		{"above clock", store.ChangedMessagePage{ServerTime: at.Add(-time.Second), CompleteThrough: at.Add(-2 * time.Second)}, after, 1, 1, 0, store.ChangedMessagesFrom(at.Add(-2 * time.Second)), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, next, more := scanChanges(tc.page, tc.since, changesFilter{SourceIDs: []int64{tc.source}}, tc.limit)
+			got, next, more := changefeed.Scan(tc.page, tc.since, changefeed.Filter{SourceIDs: []int64{tc.source}}, tc.limit)
 			assert.Len(t, got, tc.count)
 			assert.Equal(t, tc.next, next)
 			assert.Equal(t, tc.more, more)
@@ -100,7 +101,7 @@ func TestChangesFilterDigestStable(t *testing.T) {
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/?person_id=4&source_id=2&source_id=1&source_id=2&conversation_id=8&incoming_only=true", nil)
 	filter, err := parseChangesFilter(r)
 	require.NoError(t, err)
-	assert.Equal(t, "7725ea5be9477647", filter.digest())
+	assert.Equal(t, "7725ea5be9477647", filter.Digest())
 }
 
 func TestChangesPersonMatchesLinkedSenders(t *testing.T) {

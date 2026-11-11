@@ -2794,6 +2794,8 @@ Each rule requires one mailbox address, a header name, and an identifier type. A
 
 ### Wake-up webhooks
 
+Wake-up configuration changes take effect after restarting the daemon.
+
 Add a `[[wakeups]]` entry to notify an agent when matching incoming messages
 are archived. The daemon checks every 15 seconds while it is running. Each
 entry needs a unique lowercase name, an HTTPS URL and one secret source:

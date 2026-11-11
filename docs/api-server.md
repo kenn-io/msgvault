@@ -3523,7 +3523,7 @@ A delegated client uses its own authorized feed cursor: its cursor is bound to
 its grant as well as the selectors. A 2xx response acknowledges delivery;
 failures keep the cursor and retry after 30 seconds, doubling to one hour.
 Delivery is at least once. A retry of the same range has the same delivery ID;
-a retry that includes more changes has a new ID. Logs report the wake-up name,
+a retry whose range end moved has a new ID. Logs report the wake-up name,
 error category and failure count.
 
 To verify a signature, base64-decode the value after `whsec_` in the configured

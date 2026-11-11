@@ -7,21 +7,10 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/changefeed"
-	"go.kenn.io/msgvault/internal/store"
 )
 
-type changesFilter struct {
-	PersonID                   int64
-	SourceIDs, ConversationIDs []int64
-	IncomingOnly               bool
-	participants               []int64
-	grantRefs                  []changeGrantRef
-}
-
-func (f changesFilter) hasSelectors() bool { return f.shared().HasSelectors() }
-
-func parseChangesFilter(r *http.Request) (changesFilter, error) {
-	var f changesFilter
+func parseChangesFilter(r *http.Request) (changefeed.Filter, error) {
+	var f changefeed.Filter
 	var err error
 	f.PersonID, _, err = queryInt64(r, "person_id")
 	if err != nil {
@@ -59,15 +48,12 @@ func parseChangesFilter(r *http.Request) (changesFilter, error) {
 	return f, nil
 }
 
-type changeGrantRef struct{ Type, Identifier string }
-
-func (f changesFilter) bindGrant(grant *agentgrant.Grant) changesFilter {
-	// A non-nil slice distinguishes even an empty grant from an owner.
-	f.grantRefs = make([]changeGrantRef, 0, len(grant.Sources))
+func bindChangesGrant(f changefeed.Filter, grant *agentgrant.Grant) changefeed.Filter {
+	f.GrantRefs = make([]changefeed.GrantRef, 0, len(grant.Sources))
 	for _, ref := range grant.Sources {
-		f.grantRefs = append(f.grantRefs, changeGrantRef{ref.Type, ref.Identifier})
+		f.GrantRefs = append(f.GrantRefs, changefeed.GrantRef{Type: ref.Type, Identifier: ref.Identifier})
 	}
-	slices.SortFunc(f.grantRefs, func(a, b changeGrantRef) int {
+	slices.SortFunc(f.GrantRefs, func(a, b changefeed.GrantRef) int {
 		if n := strings.Compare(a.Type, b.Type); n != 0 {
 			return n
 		}
@@ -75,16 +61,3 @@ func (f changesFilter) bindGrant(grant *agentgrant.Grant) changesFilter {
 	})
 	return f
 }
-
-func (f changesFilter) shared() changefeed.Filter {
-	var refs []changefeed.GrantRef
-	if f.grantRefs != nil {
-		refs = make([]changefeed.GrantRef, 0, len(f.grantRefs))
-		for _, r := range f.grantRefs {
-			refs = append(refs, changefeed.GrantRef{Type: r.Type, Identifier: r.Identifier})
-		}
-	}
-	return changefeed.Filter{PersonID: f.PersonID, SourceIDs: f.SourceIDs, ConversationIDs: f.ConversationIDs, IncomingOnly: f.IncomingOnly, Participants: f.participants, GrantRefs: refs}
-}
-func (f changesFilter) digest() string                      { return f.shared().Digest() }
-func (f changesFilter) matches(m store.ChangedMessage) bool { return f.shared().Matches(m) }

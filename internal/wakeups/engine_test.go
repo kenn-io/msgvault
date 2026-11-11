@@ -76,8 +76,8 @@ func TestEngineRetriesFailedDeliveryAndAdvancesAfterSuccess(t *testing.T) {
 		w.WriteHeader(status)
 	}))
 	defer server.Close()
-	sub := Subscription{Name: "inbox", URL: server.URL, Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: webhookClient{client: server.Client(), timeout: time.Second}}
-	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
+	sub := Subscription{Name: "inbox", URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(server)}
+	engine := Engine{Store: &observedStore{Store: st, fixedBound: now.Add(-time.Second)}, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
 	require.NoError(t, engine.RunPass(ctx))
 	require.Len(t, bodies, 1)
 	require.NoError(t, decodeErr)
@@ -93,9 +93,8 @@ func TestEngineRetriesFailedDeliveryAndAdvancesAfterSuccess(t *testing.T) {
 	require.NoError(t, engine.RunPass(ctx))
 	require.Len(t, bodies, 2)
 	assert.Equal(t, bodies[0].CursorFrom, bodies[1].CursorFrom)
-	if bodies[0].CursorTo == bodies[1].CursorTo {
-		assert.Equal(t, bodies[0].DeliveryID, bodies[1].DeliveryID)
-	}
+	assert.Equal(t, bodies[0].CursorTo, bodies[1].CursorTo)
+	assert.Equal(t, bodies[0].DeliveryID, bodies[1].DeliveryID)
 	state, _, err = st.LoadWakeupState(ctx, "inbox")
 	require.NoError(t, err)
 	assert.True(t, state.At.After(start))
@@ -155,7 +154,7 @@ func TestEngineTruncatesIDsWithoutLosingCount(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "bulk", URL: server.URL, Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: webhookClient{client: server.Client(), timeout: time.Second}}}, Now: func() time.Time { return now }}
+	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "bulk", URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(server)}}, Now: func() time.Time { return now }}
 	require.NoError(t, engine.RunPass(ctx))
 	require.NoError(t, decodeErr)
 	assert.Equal(t, 60, got.Matched.Count)

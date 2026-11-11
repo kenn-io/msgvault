@@ -9,11 +9,11 @@ import (
 	"log/slog"
 	"net/netip"
 	"net/url"
-	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/changefeed"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -100,37 +100,33 @@ type payload struct {
 	ServerTime    time.Time   `json:"server_time"`
 }
 
-func (e *Engine) RunPass(ctx context.Context) error {
-	now := time.Now()
+func (e *Engine) now() time.Time {
 	if e.Now != nil {
-		now = e.Now()
+		return e.Now()
 	}
+	return time.Now()
+}
+func (e *Engine) RunPass(ctx context.Context) error {
+	now := e.now()
 	logger := e.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	subscriptions := slices.Clone(e.Subscriptions)
-	slices.SortFunc(subscriptions, func(a, b Subscription) int {
-		if a.Name < b.Name {
-			return -1
-		}
-		if a.Name > b.Name {
-			return 1
-		}
-		return 0
-	})
 	pages := make(map[store.ChangedMessagesCursor]store.ChangedMessagePage)
-	for _, sub := range subscriptions {
+	var headPage store.ChangedMessagePage
+	headRead := false
+	for _, sub := range e.Subscriptions {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		var state store.WakeupState
 		var raw []byte
-		var next store.ChangedMessagesCursor
+		var next, since store.ChangedMessagesCursor
 		var page store.ChangedMessagePage
 		var matches []store.ChangedMessage
 		var uid string
 		var category string
+		var ready bool
 		err := e.gated(ctx, func() error {
 			var err error
 			state, raw, err = e.Store.LoadWakeupState(ctx, sub.Name)
@@ -140,21 +136,19 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			if raw != nil && now.Before(state.NextAttemptAt) {
 				return nil
 			}
-			since := store.ChangedMessagesFrom(state.At)
+			since = store.ChangedMessagesFrom(state.At)
 			if state.AfterRow {
 				since = store.ChangedMessagesAfter(state.At, state.AfterID)
 			}
 			if raw == nil {
-				zero := store.ChangedMessagesCursor{}
-				var ok bool
-				page, ok = pages[zero]
-				if !ok {
-					page, err = e.Store.ListChangedMessages(ctx, zero, changefeed.ScanBudget+1)
+				if !headRead {
+					headPage, err = e.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
 					if err != nil {
 						return err
 					}
-					pages[zero] = page
+					headRead = true
 				}
+				page = headPage
 				if page.CompleteThrough.IsZero() {
 					return nil
 				}
@@ -164,6 +158,9 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			}
 			filter, err := changefeed.ResolveFilter(ctx, e.Store, sub.Filter)
 			if err != nil {
+				if !errors.Is(err, store.ErrPersonNotFound) && !errors.Is(err, resolver.ErrEmptyPopulation) {
+					return err
+				}
 				category = "person_unavailable"
 				state.Failures++
 				state.NextAttemptAt = now.Add(retryDelay(state.Failures))
@@ -183,6 +180,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				}
 				pages[since] = page
 			}
+			ready = true
 			rows, position, _ := changefeed.Scan(page, since, filter, changefeed.ScanBudget)
 			next = position
 			for _, row := range rows {
@@ -190,7 +188,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 					matches = append(matches, row)
 				}
 			}
-			if len(matches) == 0 {
+			if len(matches) == 0 && state.Failures == 0 {
 				state.At = next.At()
 				state.AfterID, state.AfterRow = next.AfterID()
 				state.Failures = 0
@@ -210,12 +208,8 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			logger.Warn("wakeup failed", "name", sub.Name, "category", category, "failures", state.Failures)
 			continue
 		}
-		if len(matches) == 0 {
+		if !ready || (len(matches) == 0 && state.Failures == 0) {
 			continue
-		}
-		since := store.ChangedMessagesFrom(state.At)
-		if state.AfterRow {
-			since = store.ChangedMessagesAfter(state.At, state.AfterID)
 		}
 		from := changefeed.EncodeCursor(uid, since, sub.Filter.Digest())
 		to := changefeed.EncodeCursor(uid, next, sub.Filter.Digest())
@@ -241,10 +235,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			state.NextAttemptAt = time.Time{}
 		} else {
 			state.Failures++
-			failureTime := time.Now()
-			if e.Now != nil {
-				failureTime = e.Now()
-			}
+			failureTime := e.now()
 			state.NextAttemptAt = failureTime.Add(retryDelay(state.Failures))
 			logger.Warn("wakeup failed", "name", sub.Name, "category", category, "failures", state.Failures)
 		}
@@ -261,23 +252,7 @@ func NewSubscription(name, endpoint string, secret []byte, filter changefeed.Fil
 	return Subscription{Name: name, URL: endpoint, Secret: secret, Filter: filter, MaxMessageAge: maxAge, Client: webhookClient{timeout: timeout, trustedOrigin: trustedOrigin, trusted: trusted}}
 }
 
-// FilterFromConfig normalizes the configured selectors exactly as the feed does.
+// FilterFromConfig uses selectors normalized by config validation.
 func FilterFromConfig(entry config.WakeupConfig) changefeed.Filter {
-	sources := slices.Clone(entry.SourceIDs)
-	slices.Sort(sources)
-	sources = slices.Compact(sources)
-	if len(sources) == 0 {
-		sources = nil
-	}
-	conversations := slices.Clone(entry.ConversationIDs)
-	slices.Sort(conversations)
-	conversations = slices.Compact(conversations)
-	if len(conversations) == 0 {
-		conversations = nil
-	}
-	incoming := true
-	if entry.IncomingOnly != nil {
-		incoming = *entry.IncomingOnly
-	}
-	return changefeed.Filter{PersonID: entry.PersonID, SourceIDs: sources, ConversationIDs: conversations, IncomingOnly: incoming}
+	return changefeed.Filter{PersonID: entry.PersonID, SourceIDs: entry.SourceIDs, ConversationIDs: entry.ConversationIDs, IncomingOnly: *entry.IncomingOnly}
 }

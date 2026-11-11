@@ -3,13 +3,12 @@ package cmd
 import (
 	"context"
 	"log/slog"
-	"net/netip"
-	"net/url"
+	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
@@ -35,46 +34,25 @@ func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate ap
 			logger.Warn("wakeup unavailable", "name", entry.Name, "category", "invalid_secret")
 			continue
 		}
-		var origin *url.URL
-		var addresses []netip.Addr
-		if len(entry.TrustedAddresses) > 0 {
-			target, err := url.Parse(entry.URL)
-			if err != nil {
-				logger.Warn("wakeup unavailable", "name", entry.Name, "category", "invalid_callback")
-				continue
-			}
-			target.Path = ""
-			target.RawPath = ""
-			target.RawQuery = ""
-			target.ForceQuery = false
-			for _, v := range entry.TrustedAddresses {
-				addr, err := netip.ParseAddr(v)
-				if err != nil {
-					addresses = nil
-					break
-				}
-				addresses = append(addresses, addr)
-			}
-			origin, addresses, err = netguard.ValidateTrustedDestination(target, addresses)
-			if err != nil {
-				logger.Warn("wakeup unavailable", "name", entry.Name, "category", "invalid_callback")
-				continue
-			}
-		}
-
-		timeout := entry.Timeout
-		if timeout == 0 {
-			timeout = 10 * time.Second
-		}
-		age := entry.MaxMessageAge
-		if age == 0 {
-			age = 72 * time.Hour
+		origin, addresses, err := entry.TrustedDestination()
+		if err != nil {
+			logger.Warn("wakeup unavailable", "name", entry.Name, "category", "invalid_callback")
+			continue
 		}
 		filter := wakeups.FilterFromConfig(entry)
-		subs = append(subs, wakeups.NewSubscription(entry.Name, entry.URL, key, filter, age, timeout, origin, addresses))
+		subs = append(subs, wakeups.NewSubscription(entry.Name, entry.URL, key, filter, entry.MaxMessageAge, entry.Timeout, origin, addresses))
 	}
-	if err := withBeeperMediaGate(ctx, gate, "Wakeup state", func() error { return st.PruneWakeupStates(ctx, names) }); err != nil {
+	var pruned int
+	if err := withBeeperMediaGate(ctx, gate, "Wakeup state", func() error {
+		var err error
+		pruned, err = st.PruneWakeupStates(ctx, names)
 		return err
+	}); err != nil {
+		return err
+	}
+	slices.SortFunc(subs, func(a, b wakeups.Subscription) int { return strings.Compare(a.Name, b.Name) })
+	if pruned > 0 {
+		logger.Info("wakeup states pruned", "count", pruned)
 	}
 	if len(subs) == 0 {
 		return nil
