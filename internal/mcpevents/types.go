@@ -181,7 +181,7 @@ func validate(name string, args *MCPEventsArguments, delivery MCPEventsDelivery,
 	if name != Name {
 		return failure(NotFound, "event")
 	}
-	if (args.PersonID > 0) == (args.SourceID > 0) || args.PersonID < 0 || args.SourceID < 0 {
+	if (args.PersonID > 0) == (args.SourceID > 0) {
 		return failure(InvalidParams, "invalid_arguments")
 	}
 	if args.IncomingOnly == nil {
