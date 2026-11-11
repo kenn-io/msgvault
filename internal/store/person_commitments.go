@@ -385,7 +385,7 @@ func (s *Store) commitmentMessage(ctx context.Context, personID int64, conv Loop
 		owner = owner || r.IsOwner
 		person = person || r.PersonID == personID
 	}
-	if conv.ConversationType == "direct_chat" && (!owner || !person) {
+	if conv.ConversationType == "direct_chat" {
 		var err error
 		owner, person, err = s.commitmentChatMembers(ctx, conv.ConversationID, personID, owner, person)
 		if err != nil {
