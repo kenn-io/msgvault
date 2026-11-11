@@ -94,14 +94,12 @@ func TestBuildFilter_PostgresRebindsLookups(t *testing.T) {
 	ctx := t.Context()
 	rebind := (&store.PostgreSQLDialect{}).Rebind
 
-	// passes-with: addresses and labels resolve via substring LIKE on pgx.
-	q := search.Parse(`from:example.com to:alice label:work`)
+	// Recipient addresses and labels resolve via substring LIKE on pgx.
+	q := search.Parse(`to:alice label:work`)
 	f, err := BuildFilter(ctx, db, rebind, q)
 	require.NoError(
 		err, "BuildFilter must succeed with the dialect rebind on pgx")
 
-	require.Len(f.SenderGroups, 1, "one from: token -> one group")
-	assert.Len(f.SenderGroups[0], 3, "from:example.com matches alice/bob/dave.work")
 	require.Len(f.ToGroups, 1, "one to: token -> one group")
 	assert.Len(f.ToGroups[0], 1, "to:alice matches exactly one participant")
 	require.Len(f.LabelGroups, 1, "one label: token -> one group")
@@ -113,7 +111,7 @@ func TestBuildFilter_PostgresRebindsLookups(t *testing.T) {
 	// depends on the surrounding clause; what matters is that it is a
 	// Postgres error (carries a SQLSTATE) the rebind eliminates.
 	identity := func(s string) string { return s }
-	_, err = BuildFilter(ctx, db, identity, search.Parse(`from:alice`))
+	_, err = BuildFilter(ctx, db, identity, search.Parse(`to:alice`))
 	require.Error(err, "un-rebound ? placeholders must fail on pgx")
 	assert.Contains(err.Error(), "SQLSTATE",
 		"expected a pgx server error for bare ? placeholders; got %v", err)

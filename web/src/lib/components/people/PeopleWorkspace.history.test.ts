@@ -36,7 +36,7 @@ it('Back opens the survivor after Details absorbs the open saved profile', async
         id: 41, survivor_person_id: 9, absorbed_person_id: 7, current_person_id: 9,
         survivor_vcard_uid: 'synthetic-9', absorbed_vcard_uid: 'synthetic-7',
         survivor_revision_before: 2, absorbed_revision_before: 4, survivor_revision_after: 3,
-        actor: 'web', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when,
+        actor: 'user', snapshot_version: 1, snapshot_sha256: 'synthetic-digest', created_at: when,
       } }, { headers: { ETag: '"person-9-r3"' } });
     }
     if (path === '/api/v1/identity/links') return Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [

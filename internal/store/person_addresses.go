@@ -133,6 +133,11 @@ func (s *Store) addPersonAddressTx(
 	if !input.AddressKind.Valid() {
 		return nil, ErrInvalidPersonAddressKind
 	}
+	if input.AddressKind == PersonAddressPostal {
+		if _, _, err := postaladdress.DecodeOriginalInput(input.OriginalValue); err != nil {
+			return nil, err
+		}
+	}
 	if !personAddressHasValue(input) {
 		return nil, ErrPersonAddressValueMissing
 	}
@@ -222,7 +227,7 @@ func (s *Store) supersedePersonAddressTx(
 
 func personAddressHasValue(input PersonAddressInput) bool {
 	if input.AddressKind == PersonAddressPostal {
-		if raw, ok := postaladdress.DecodeOriginalInput(input.OriginalValue); ok {
+		if raw, ok, _ := postaladdress.DecodeOriginalInput(input.OriginalValue); ok {
 			// Interpret exactly one known storage envelope, never its literal raw text.
 			for _, value := range []string{raw.PostOfficeBox, raw.ExtendedAddress, raw.StreetAddress, raw.Locality, raw.Region, raw.PostalCode, raw.CountryName, raw.ExtendedComponents, raw.FreeText, raw.PlaceURI, raw.GeoURI, raw.Label, raw.CountryCode, raw.OriginalValue} {
 				if strings.TrimSpace(value) != "" {
@@ -307,6 +312,10 @@ func scanPersonAddress(row scanner) (*PersonAddress, error) {
 	if err := env.apply(&address.Envelope); err != nil {
 		return nil, err
 	}
-	address.Assessment = address.LocalPostalAssessment()
+	var err error
+	address.Assessment, err = address.LocalPostalAssessment()
+	if err != nil {
+		return nil, err
+	}
 	return &address, nil
 }

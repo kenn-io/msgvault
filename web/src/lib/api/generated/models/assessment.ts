@@ -5,9 +5,10 @@ import type { Input } from "./input";
 
 export interface Assessment {
   checked_at?: string;
-  fingerprint: string;
   original: Input;
+  original_extended_parts: string[];
   proposed: Input;
+  proposed_extended_parts: string[];
   provider?: string;
   reason_codes: string[];
   status: string;

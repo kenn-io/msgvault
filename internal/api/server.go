@@ -39,7 +39,6 @@ import (
 	"go.kenn.io/msgvault/internal/taskclient"
 	"go.kenn.io/msgvault/internal/tasklinks"
 	"go.kenn.io/msgvault/internal/vector"
-	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	webapp "go.kenn.io/msgvault/internal/web"
@@ -312,7 +311,7 @@ type Server struct {
 	startOnce                 sync.Once
 	rateLimiter               *RateLimiter
 	changesRateLimiter        *RateLimiter
-	documentSearchRateLimiter *RateLimiter
+	mediaSearchRateLimiter    *RateLimiter
 	visualCoverageRateLimiter *RateLimiter
 	idleTracker               *IdleTracker
 	operationGate             OperationGate
@@ -411,8 +410,6 @@ type Server struct {
 	// the ordinary refresh would flip straight back to ready. Only a
 	// successful reinit (SetVectorFeatures) clears the latch.
 	vectorStaleLatch bool
-	documentSearchMu sync.RWMutex
-	documentSearch   *vectordocument.SearchService
 	// vectorScopeCheck re-resolves the durable embedding scope on the
 	// vector-search preflight path (throttled by vectorScopeNextCheck) so
 	// drift is detected even when no embed job ever runs. Wired by the
@@ -681,7 +678,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		importContext:          importContext,
 		cancelImports:          cancelImports,
 		statsSnapshots:         snapshotCache[*StoreStats]{logger: opts.Logger},
-		accountCountSnapshots:  snapshotCache[map[int64]store.SourceMessageCounts]{logger: opts.Logger},
+		accountCountSnapshots: snapshotCache[map[int64]store.SourceMessageCounts]{
+			logger: opts.Logger, staleWait: 500 * time.Millisecond,
+		},
 		virtualAccountSnapshots: snapshotCache[map[int64][]store.VirtualAccount]{
 			logger: opts.Logger, freshFor: virtualAccountCatalogFreshFor,
 		},
@@ -755,8 +754,8 @@ func (s *Server) setupRouter() http.Handler {
 	s.rateLimiter = NewRateLimiter(10, 20)
 	s.changesRateLimiter = NewRateLimiter(
 		changeFeedRequestsPerSecond, changeFeedRequestBurst)
-	s.documentSearchRateLimiter = NewRateLimiter(
-		documentSearchRequestsPerSecond, documentSearchRequestBurst)
+	s.mediaSearchRateLimiter = NewRateLimiter(
+		mediaSearchRequestsPerSecond, mediaSearchRequestBurst)
 	s.visualCoverageRateLimiter = NewRateLimiter(
 		visualCoverageScansPerSecond, visualCoverageScanBurst)
 
@@ -971,8 +970,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.changesRateLimiter != nil {
 		s.changesRateLimiter.Close()
 	}
-	if s.documentSearchRateLimiter != nil {
-		s.documentSearchRateLimiter.Close()
+	if s.mediaSearchRateLimiter != nil {
+		s.mediaSearchRateLimiter.Close()
 	}
 	if s.visualCoverageRateLimiter != nil {
 		s.visualCoverageRateLimiter.Close()
@@ -1198,7 +1197,7 @@ func serveWithProtectiveRequestDeadline(
 func (s *Server) timeoutMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost &&
-			(isNativeMCPPath(r.URL.Path) || r.URL.Path == meetingImportEndpointPath || r.URL.Path == muesliImportEndpointPath || r.URL.Path == muesliRecordingEndpointPath) &&
+			(isNativeMCPPath(r.URL.Path) || r.URL.Path == meetingImportEndpointPath || r.URL.Path == messageImportEndpointPath || r.URL.Path == muesliImportEndpointPath || r.URL.Path == muesliRecordingEndpointPath) &&
 			s.apiRequestAuthorized(r) {
 			serveMeetingImportWithReadDeadline(w, r, next)
 			return
@@ -1300,6 +1299,7 @@ func isLongDaemonRequest(path string) bool {
 		"/api/v1/carddav/sync",
 		"/api/v1/cli/deduplicate/plan",
 		meetingImportEndpointPath,
+		messageImportEndpointPath,
 		muesliImportEndpointPath,
 		muesliRecordingEndpointPath,
 		"/api/v1/cli/identities/discover",

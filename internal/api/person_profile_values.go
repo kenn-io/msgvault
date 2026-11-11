@@ -279,7 +279,11 @@ func (s *Server) handleGetPersonProfileHistory(w http.ResponseWriter, r *http.Re
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	copyHistory := *history
-	copyHistory.Addresses = publicPersonAddresses(history.Addresses)
+	copyHistory.Addresses, err = publicPersonAddresses(history.Addresses)
+	if err != nil {
+		s.writePersonProfileValueError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, &copyHistory)
 }
 
@@ -404,7 +408,12 @@ func writePersonStructuredProfile(
 	w.Header().Set(etagHeaderName, personETag(profile.Person))
 	w.Header().Set("Cache-Control", "no-store")
 	copyProfile := *profile
-	copyProfile.Addresses = publicPersonAddresses(profile.Addresses)
+	var err error
+	copyProfile.Addresses, err = publicPersonAddresses(profile.Addresses)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Invalid stored postal address")
+		return
+	}
 	writeJSON(w, status, &copyProfile)
 }
 
@@ -454,12 +463,16 @@ func decodeProfilePatchRequest(
 	return patch, true
 }
 
-func publicPersonAddresses(addresses []store.PersonAddress) []store.PersonAddress {
+func publicPersonAddresses(addresses []store.PersonAddress) ([]store.PersonAddress, error) {
 	result := slices.Clone(addresses)
 	for i := range result {
-		result[i] = result[i].PublicAddress()
+		var err error
+		result[i], err = result[i].PublicAddress()
+		if err != nil {
+			return nil, err
+		}
 	}
-	return result
+	return result, nil
 }
 
 func postalRequestInput(input PersonAddressInputRequest) postaladdress.Input {

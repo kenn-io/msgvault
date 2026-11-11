@@ -102,5 +102,7 @@ func (s *Server) handleAssessPersonPostalAddress(w http.ResponseWriter, r *http.
 			assessment.ReasonCodes = append(assessment.ReasonCodes, reason)
 		}
 	}
+	assessment.OriginalExtendedParts = postaladdress.ExtendedParts(assessment.Original.ExtendedComponents)
+	assessment.ProposedExtendedParts = postaladdress.ExtendedParts(assessment.Proposed.ExtendedComponents)
 	writeJSON(w, http.StatusOK, assessment)
 }

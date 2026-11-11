@@ -290,6 +290,8 @@ type CLIAccount struct {
 	OAuthApp           string     `json:"oauth_app,omitempty"`
 	MessageCount       int64      `json:"message_count"`
 	SourceDeletedCount int64      `json:"source_deleted_count"`
+	Stale              bool       `json:"stale,omitempty"`
+	AsOf               *time.Time `json:"as_of,omitempty"`
 	LastSync           *time.Time `json:"last_sync"`
 }
 

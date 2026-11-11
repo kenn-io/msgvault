@@ -20,20 +20,27 @@ const postalClaimJSON = `{"street_address":" 12 Example Street ","extended_addre
 func TestPublicPostalAddressDistinguishesLegacyTextFromSnapshot(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	legacy := PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: "12 Example Street", CountryCode: new("CA")}.PublicAddress()
+	legacy, err := (PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: "12 Example Street", CountryCode: new("CA")}).PublicAddress()
+	require.NoError(err)
 	require.NotNil(legacy.FreeText)
 	assert.Equal("12 Example Street", *legacy.FreeText)
 	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"})
 	require.NoError(err)
-	snapshot := PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: encoded, CountryCode: new("CA")}.PublicAddress()
+	snapshot, err := (PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: encoded, CountryCode: new("CA")}).PublicAddress()
+	require.NoError(err)
 	assert.Nil(snapshot.FreeText)
-	structured := PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: ";;12 Example Street;Example City;;;Canada;Room 3;Floor 2", CountryCode: new("CA")}.PublicAddress()
+	legacyStructured := PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: ";;12 Example Street;Example City;;;Canada;Room 3;Floor 2", CountryCode: new("CA")}
+	legacyStructured.Assessment, err = legacyStructured.LocalPostalAssessment()
+	require.NoError(err)
+	structured, err := legacyStructured.PublicAddress()
+	require.NoError(err)
 	require.NotNil(structured.StreetAddress)
 	require.NotNil(structured.Locality)
 	assert.Equal("12 Example Street", *structured.StreetAddress)
 	assert.Equal("Example City", *structured.Locality)
 	require.NotNil(structured.ExtendedComponents)
 	assert.Equal(";;12 Example Street;Example City;;;Canada;Room 3;Floor 2", *structured.ExtendedComponents)
+	assert.Equal([]string{"Room 3", "Floor 2"}, structured.Assessment.ProposedExtendedParts)
 }
 
 func postalGeneration(t *testing.T, st *Store, personID int64, suffix string, claims []personfacts.ProposedClaim, statuses []personfacts.EvidenceStatusChange) personfacts.GenerationInput {
@@ -198,6 +205,11 @@ func TestPostalAddressPacketBoundsBacklogAndExcludesAdoptedHistory(t *testing.T)
 		all = append(all, page...)
 	}
 	require.Len(all, 1005)
+	err = st.withReadSnapshotContext(t.Context(), func(tx *loggedTx) error {
+		_, err := st.loadPersonSweepUnresolvedClaimsTx(t.Context(), tx, id, target, 0)
+		return err
+	})
+	require.ErrorContains(err, "person sweep unresolved claims exceed the state limit")
 	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
 	require.NoError(err)
 	state, err := st.LoadPersonFactState(t.Context(), id, catalog)
@@ -218,6 +230,22 @@ func TestPostalAddressPacketBoundsBacklogAndExcludesAdoptedHistory(t *testing.T)
 		assert.True(selected[claim.ClaimKey])
 	}
 	ref := "person-fact-claim:" + all[0].ClaimKey
+	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressBirthPlace, Locality: new("Example City"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
+	require.NoError(err)
+	state, err = st.LoadPersonFactState(t.Context(), id, catalog)
+	require.NoError(err)
+	selected = map[string]bool{}
+	for _, claim := range state.Unresolved {
+		selected[claim.ClaimKey] = true
+	}
+	assert.True(selected[all[0].ClaimKey])
+	rows, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 100})
+	require.NoError(err)
+	for _, claim := range rows {
+		if claim.ClaimKey == all[0].ClaimKey {
+			assert.NotContains(claim.PostalReview.ReasonCodes, "already_adopted")
+		}
+	}
 	address, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("12 Example Street"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
 	require.NoError(err)
 	require.NoError(st.SupersedePersonAddressContext(t.Context(), id, address.Envelope.ID, nil))
@@ -269,4 +297,20 @@ func TestPostalAddressEmptyStoredSnapshotIsNotAValue(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, OriginalValue: empty, Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
 	require.ErrorIs(t, err, ErrPersonAddressValueMissing)
+}
+
+func TestPostalAddressRejectsUnsupportedSnapshots(t *testing.T) {
+	st, id, _ := newPersonFactProjectionStore(t)
+	for _, raw := range []string{"msgvault:postal-input:v2\n{}", "msgvault:postal-input:v1\n{}", "msgvault:postal-input:v1\n{\"schema\":1,\"input\":{},\"extra\":true}"} {
+		_, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, OriginalValue: raw, StreetAddress: new("12 Example Street"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
+		require.Error(t, err)
+	}
+	_, err := (PersonAddress{AddressKind: PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}"}).PublicAddress()
+	require.Error(t, err)
+	address, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, OriginalValue: "12 Example Street", Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
+	require.NoError(t, err)
+	_, err = st.db.ExecContext(t.Context(), st.Rebind(`UPDATE person_addresses SET original_value = ? WHERE id = ?`), "msgvault:postal-input:v2\n{}", address.Envelope.ID)
+	require.NoError(t, err)
+	_, err = st.ListPersonAddressesContext(t.Context(), id, false)
+	require.Error(t, err)
 }

@@ -15,23 +15,31 @@ func TestOriginalSnapshotRoundTrip(t *testing.T) {
 	require.NoError(err)
 	assert := assert.New(t)
 	assert.Equal(encoded, strings.TrimSpace(encoded))
-	got, ok := DecodeOriginalInput(encoded)
+	got, ok, err := DecodeOriginalInput(encoded)
+	require.NoError(err)
 	require.True(ok)
 	assert.Equal(input, got)
 	// Callers editing known stored data decode before capturing the next raw draft.
-	input, ok = DecodeOriginalInput(encoded)
+	input, ok, err = DecodeOriginalInput(encoded)
+	require.NoError(err)
 	require.True(ok)
 	encodedAgain, err := EncodeOriginalInput(input)
 	require.NoError(err)
-	got, ok = DecodeOriginalInput(encodedAgain)
+	got, ok, err = DecodeOriginalInput(encodedAgain)
+	require.NoError(err)
 	require.True(ok)
 	assert.Equal(" \tRaw\ntext\n ", got.OriginalValue)
 }
 
 func TestSnapshotRejectsMalformedAndUnknownVersions(t *testing.T) {
-	for _, raw := range []string{"legacy original", "msgvault:postal-input:v2\n{}", "msgvault:postal-input:v1\nnot json", "msgvault:postal-input:v1\n{}", "msgvault:postal-input:v1\nnull", "msgvault:postal-input:v1\n{\"street_address\":123}", "msgvault:postal-input:v1\n{\"schema\":1,\"input\":{},\"unexpected\":true}"} {
-		_, ok := DecodeOriginalInput(raw)
+	_, ok, err := DecodeOriginalInput("legacy original")
+	require.NoError(t, err)
+	assert.False(t, ok)
+	for _, raw := range []string{"msgvault:postal-input:v2\n{}", "msgvault:postal-input:v1\nnot json", "msgvault:postal-input:v1\n{}", "msgvault:postal-input:v1\nnull", `msgvault:postal-input:v1
+{"schema":1,"input":{},"unexpected":true}`} {
+		_, ok, err := DecodeOriginalInput(raw)
 		assert.False(t, ok, raw)
+		assert.Error(t, err, raw)
 	}
 }
 
@@ -39,7 +47,8 @@ func TestLiteralSnapshotTextIsRawInput(t *testing.T) {
 	input := Input{AddressKind: "postal", StreetAddress: "12 Example Street", OriginalValue: "msgvault:postal-input:v1\n" + `{"schema":1,"input":{"address_kind":"postal","original_value":"literal payload"}}`}
 	encoded, err := EncodeOriginalInput(input)
 	require.NoError(t, err)
-	decoded, ok := DecodeOriginalInput(encoded)
+	decoded, ok, err := DecodeOriginalInput(encoded)
+	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, input, decoded)
 }

@@ -1,7 +1,5 @@
 import type { Assessment, Input } from '../api/generated/models';
 
-// Keep this order aligned with postaladdress.Input.fields. The fingerprint
-// includes every raw field, with UTF-8 byte lengths framed as uint64 big endian.
 export const postalInputFields = [
   'address_kind', 'post_office_box', 'extended_address', 'street_address', 'locality',
   'region', 'postal_code', 'country_name', 'extended_components', 'free_text',
@@ -19,21 +17,6 @@ export function copyPostalInput(input: Partial<Input>): Input {
 
 export function postalInputKey(input: Input): string {
   return JSON.stringify(postalInputFields.map(field => input[field] ?? ''));
-}
-
-export async function postalFingerprint(input: Input): Promise<string> {
-  const encoder = new TextEncoder();
-  const fields = postalInputFields.map(field => encoder.encode(input[field] ?? ''));
-  const bytes = new Uint8Array(fields.reduce((size, field) => size + 8 + field.length, 0));
-  const view = new DataView(bytes.buffer);
-  let offset = 0;
-  for (const field of fields) {
-    view.setBigUint64(offset, BigInt(field.length));
-    bytes.set(field, offset + 8);
-    offset += field.length + 8;
-  }
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 export type PostalAssessmentCheck = (personID: number, input: Input, external: boolean, signal: AbortSignal) => Promise<Assessment>;
@@ -80,13 +63,9 @@ export class PostalReviewSession {
     this.result = null;
     this.error = null;
     try {
-      // Remote plain-HTTP origins lack SubtleCrypto. The echoed input and the
-      // request/draft generations still bind their result to this exact draft.
-      const fingerprint = globalThis.crypto?.subtle ? await postalFingerprint(input) : undefined;
-      if (!current()) return;
       const result = await this.assess(this.personID, { ...input }, external, abort.signal);
       if (!current()) return;
-      if (postalInputKey(result.original) !== key || (fingerprint !== undefined && result.fingerprint !== fingerprint)) {
+      if (postalInputKey(result.original) !== key) {
         throw new Error('mismatched postal assessment');
       }
       this.result = result;
@@ -101,25 +80,7 @@ export class PostalReviewSession {
 }
 
 /** Display components without exposing a private storage envelope. */
-function postalExtendedText(value: string | undefined): string[] {
-  if (!value) return [];
-  const parts: string[] = [];
-  let current = '';
-  for (let i = 0; i < value.length; i++) {
-    const char = value[i]!;
-    if (char === '\\' && i + 1 < value.length) {
-      const next = value[i + 1]!;
-      if (next === 'n' || next === 'N') { current += '\n'; i++; }
-      else if (next === '\\' || next === ',' || next === ';') { current += next; i++; }
-      else current += char;
-    } else if (char === ';') { parts.push(current); current = ''; }
-    else current += char;
-  }
-  parts.push(current);
-  return parts.slice(7).filter(Boolean);
-}
-
-export function postalAddressText(input: Partial<Input>): string {
+export function postalAddressText(input: Partial<Input>, extendedParts: string[] = []): string {
   let countryCode = input.country_code;
   if (input.country_name && countryCode) {
     try {
@@ -128,7 +89,7 @@ export function postalAddressText(input: Partial<Input>): string {
     } catch { /* Keep unknown codes visible. */ }
   }
   const parts = [input.post_office_box, input.extended_address, input.street_address, input.locality,
-    input.region, input.postal_code, input.country_name, countryCode, ...postalExtendedText(input.extended_components)].filter((part): part is string => !!part);
+    input.region, input.postal_code, input.country_name, countryCode, ...extendedParts].filter((part): part is string => !!part);
   const components = parts.join(', ');
   const segments = (value: string) => value.split(/[,\n]+/).map(part => part.trim()).filter(Boolean);
   const structuredSegments = new Set(segments(components));

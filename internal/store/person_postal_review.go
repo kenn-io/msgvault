@@ -44,7 +44,11 @@ func (p *personFactPostalProjector) loadCurrent(ctx context.Context, personID in
 			continue
 		}
 		input := row.PostalInput()
-		if raw, ok := postaladdress.DecodeOriginalInput(row.OriginalValue); ok {
+		raw, ok, err := postaladdress.DecodeOriginalInput(row.OriginalValue)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			input.OriginalValue = raw.OriginalValue
 		}
 		v := personfacts.PostalAddressValue{PostOfficeBox: input.PostOfficeBox, ExtendedAddress: input.ExtendedAddress, StreetAddress: input.StreetAddress, Locality: input.Locality, Region: input.Region, PostalCode: input.PostalCode, CountryName: input.CountryName, CountryCode: input.CountryCode, ExtendedComponents: input.ExtendedComponents, FreeText: input.FreeText, SourceText: input.OriginalValue}
@@ -108,7 +112,7 @@ func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personI
 	}
 	adopted := map[string]bool{}
 	for _, row := range addresses {
-		if row.Envelope.SourceRef != nil {
+		if row.AddressKind == PersonAddressPostal && row.Envelope.SourceRef != nil {
 			adopted[*row.Envelope.SourceRef] = true
 		}
 	}
@@ -133,6 +137,7 @@ func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personI
 				var proposed personfacts.PostalAddressValue
 				if err := json.Unmarshal(claim.Normalized.JSON, &proposed); err == nil {
 					assessment.Proposed = proposed.Input()
+					assessment.ProposedExtendedParts = postaladdress.ExtendedParts(assessment.Proposed.ExtendedComponents)
 				}
 			}
 			review.Assessment = &assessment
@@ -143,28 +148,37 @@ func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personI
 }
 
 // LocalPostalAssessment is derived on read; no external verdict is stored.
-func (a PersonAddress) LocalPostalAssessment() *postaladdress.Assessment {
+func (a PersonAddress) LocalPostalAssessment() (*postaladdress.Assessment, error) {
 	if a.AddressKind != PersonAddressPostal {
-		return nil
+		return nil, nil
 	}
 	current := a.PostalInput()
 	original := current
-	if raw, ok := postaladdress.DecodeOriginalInput(a.OriginalValue); ok {
+	raw, ok, err := postaladdress.DecodeOriginalInput(a.OriginalValue)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		original = raw
 		current.OriginalValue = raw.OriginalValue
 	}
 	assessment := postaladdress.Assess(current)
 	assessment.Original = original
-	return &assessment
+	assessment.OriginalExtendedParts = postaladdress.ExtendedParts(original.ExtendedComponents)
+	return &assessment, nil
 }
 
 // PublicAddress retains the derived raw input while exposing plain original
 // text instead of the private storage envelope in profile and history reads.
-func (a PersonAddress) PublicAddress() PersonAddress {
+func (a PersonAddress) PublicAddress() (PersonAddress, error) {
 	if a.AddressKind != PersonAddressPostal {
-		return a
+		return a, nil
 	}
-	if raw, ok := postaladdress.DecodeOriginalInput(a.OriginalValue); ok {
+	raw, ok, err := postaladdress.DecodeOriginalInput(a.OriginalValue)
+	if err != nil {
+		return a, err
+	}
+	if ok {
 		a.OriginalValue = raw.OriginalValue
 		if a.OriginalValue == "" {
 			// Preserve the legacy display fallback without changing raw provenance.
@@ -193,5 +207,8 @@ func (a PersonAddress) PublicAddress() PersonAddress {
 			a.FreeText = new(a.OriginalValue)
 		}
 	}
-	return a
+	if a.Assessment != nil {
+		a.Assessment.ProposedExtendedParts = postaladdress.ExtendedParts(a.PostalInput().ExtendedComponents)
+	}
+	return a, nil
 }

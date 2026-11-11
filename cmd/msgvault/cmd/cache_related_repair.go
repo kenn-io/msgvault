@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -35,7 +36,7 @@ func inspectRelatedChangeKinds(ctx context.Context, snapshot *cacheSourceSnapsho
 
 func refreshRelatedCacheStats(ctx context.Context, db sqlRunner, state *query.CacheSyncState, kinds relatedChangeKinds) error {
 	if kinds.recipients {
-		statement := `SELECT count(DISTINCT p.email_address), count(DISTINCT p.domain)
+		statement := `SELECT count(DISTINCT ` + identityindex.SenderAddressExpr("mr", "p") + `), count(DISTINCT ` + identityindex.SenderDomainExpr("mr", "p") + `)
 			FROM sqlite_db.message_recipients mr
 			JOIN sqlite_db.messages m ON m.id = mr.message_id
 			JOIN sqlite_db.participants p ON p.id = mr.participant_id
@@ -174,7 +175,7 @@ func exportRelatedDatasets(
 			%[3]s AS recipient_type,
 			COALESCE(%[4]s, '') AS display_name,
 			CASE WHEN %[5]s THEN %[1]s ELSE %[6]s END AS email_address,
-			%[1]s AS envelope_address
+			%[1]s AS envelope_address, mr.is_relayed AS is_relayed
 			FROM %[7]s mr
 			LEFT JOIN sqlite_db.participants p ON p.id = mr.participant_id
 			WHERE mr.message_id > %[8]d AND TRY_CAST(mr.message_id AS BIGINT) IN (%[2]s)`, envelope, parents["message_recipients"], snapshot.identityExportSQL("mr.recipient_type"), snapshot.textSQL("mr.display_name"), presence, participant, children["message_recipients"], afterMessageIDs["message_recipients"])},

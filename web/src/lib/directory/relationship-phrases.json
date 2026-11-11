@@ -1,0 +1,33 @@
+{
+  "groups": {
+    "Family": ["spouse", "parent", "sibling", "kin"],
+    "Work": ["colleague", "co-worker", "agent"],
+    "Social": ["friend", "date", "sweetheart", "acquaintance", "neighbor", "met", "co-resident", "crush", "muse"],
+    "Other": ["contact", "emergency"]
+  },
+  "phrases": {
+    "parent:outgoing": ["parent", "is a parent of"],
+    "parent:incoming": ["child", "is a child of"],
+    "sibling:outgoing": ["sibling", "is a sibling of"],
+    "spouse:outgoing": ["spouse", "is a spouse of"],
+    "kin:outgoing": ["relative", "is a relative of"],
+    "agent:outgoing": ["agent", "is an agent for"],
+    "agent:incoming": ["principal", "is represented by"],
+    "colleague:outgoing": ["colleague", "is a colleague of"],
+    "co-worker:outgoing": ["co-worker", "is a co-worker of"],
+    "acquaintance:outgoing": ["acquaintance", "is an acquaintance of"],
+    "friend:outgoing": ["friend", "is a friend of"],
+    "met:outgoing": ["met", "has met"],
+    "neighbor:outgoing": ["neighbor", "is a neighbor of"],
+    "co-resident:outgoing": ["co-resident", "is a co-resident of"],
+    "date:outgoing": ["date", "is dating"],
+    "sweetheart:outgoing": ["sweetheart", "is a sweetheart of"],
+    "crush:outgoing": ["crush", "is a crush of"],
+    "crush:incoming": ["admirer", "has a crush on"],
+    "muse:outgoing": ["muse", "is a muse to"],
+    "muse:incoming": ["inspired by", "is inspired by"],
+    "contact:outgoing": ["contact", "is a contact of"],
+    "emergency:outgoing": ["emergency contact", "is an emergency contact for"],
+    "emergency:incoming": ["emergency contact for", "has emergency contact"]
+  }
+}

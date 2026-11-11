@@ -131,6 +131,8 @@
   <Dialog
     title="Review deletion"
     onclose={() => { if (!staging) onclose(); }}
+    cancellable={!result}
+    cancelDisabled={staging}
     primaryLabel={result ? 'Done' : `Stage ${deletable.toLocaleString()} ${noun(deletable)}`}
     primaryDisabled={!result && (pending || !review || deletable === 0 || Boolean(blocked))}
     onprimary={() => result ? onclose() : void stage()}

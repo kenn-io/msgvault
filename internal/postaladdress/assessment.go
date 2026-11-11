@@ -2,11 +2,10 @@
 package postaladdress
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/vcard"
 )
 
 // Input contains postal components and original text, never provider metadata.
@@ -42,13 +41,14 @@ const (
 // Assessment is derived for local reads or a transient explicit external check.
 // It is not a durable verification flag and never promises deliverability.
 type Assessment struct {
-	Original    Input      `json:"original"`
-	Proposed    Input      `json:"proposed"`
-	Status      Status     `json:"status"`
-	ReasonCodes []string   `json:"reason_codes"`
-	Fingerprint string     `json:"fingerprint"`
-	Provider    string     `json:"provider,omitempty"`
-	CheckedAt   *time.Time `json:"checked_at,omitzero" nullable:"false"`
+	Original              Input      `json:"original"`
+	Proposed              Input      `json:"proposed"`
+	Status                Status     `json:"status"`
+	ReasonCodes           []string   `json:"reason_codes"`
+	OriginalExtendedParts []string   `json:"original_extended_parts"`
+	ProposedExtendedParts []string   `json:"proposed_extended_parts"`
+	Provider              string     `json:"provider,omitempty"`
+	CheckedAt             *time.Time `json:"checked_at,omitzero" nullable:"false"`
 }
 
 func (in *Input) fields() []*string {
@@ -66,7 +66,7 @@ func Assess(input Input) Assessment {
 	if asciiCountryCode(proposed.CountryCode) {
 		proposed.CountryCode = strings.ToUpper(proposed.CountryCode)
 	}
-	result := Assessment{Original: input, Proposed: proposed, Status: StatusNormalizedUnverified, ReasonCodes: []string{"not_verified"}, Fingerprint: Fingerprint(input)}
+	result := Assessment{Original: input, Proposed: proposed, Status: StatusNormalizedUnverified, ReasonCodes: []string{"not_verified"}, OriginalExtendedParts: ExtendedParts(input.ExtendedComponents), ProposedExtendedParts: ExtendedParts(proposed.ExtendedComponents)}
 	if proposed.CountryCode == "" {
 		result.Status = StatusNeedsReview
 		result.ReasonCodes = append(result.ReasonCodes, "country_missing")
@@ -81,17 +81,19 @@ func Assess(input Input) Assessment {
 	return result
 }
 
-// Fingerprint binds every draft component, including whitespace and original
-// text. Length framing prevents ambiguous component boundaries.
-func Fingerprint(input Input) string {
-	hash := sha256.New()
-	for _, field := range input.fields() {
-		var size [8]byte
-		binary.BigEndian.PutUint64(size[:], uint64(len(*field)))
-		_, _ = hash.Write(size[:])
-		_, _ = hash.Write([]byte(*field))
+// ExtendedParts decodes the components after the seven standard ADR fields.
+func ExtendedParts(raw string) []string {
+	parts, err := vcard.SplitStructuredText(raw)
+	result := []string{}
+	if err != nil || len(parts) <= 7 {
+		return result
 	}
-	return hex.EncodeToString(hash.Sum(nil))
+	for _, part := range parts[7:] {
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
 }
 
 func asciiCountryCode(code string) bool {

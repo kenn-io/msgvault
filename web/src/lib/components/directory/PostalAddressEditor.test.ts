@@ -6,7 +6,6 @@ import { createAPIClient } from '../../api/client';
 import type { Assessment, Input, PersonAddress } from '../../api/generated/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
-import { postalFingerprint } from '../../directory/postal-review.svelte';
 import StructuredProfileEditor from './StructuredProfileEditor.svelte';
 
 vi.stubGlobal('crypto', webcrypto);
@@ -21,7 +20,7 @@ function setup(options: { unavailable?: boolean; localRejection?: boolean; revie
     original: input, proposed: options.localRejection ? input : { ...input, street_address: '12 Example Street', country_code: 'CA' },
     status: options.localRejection || options.review ? 'needs_review' : options.unavailable ? 'unavailable' : 'validated', provider: 'google',
     checked_at: options.localRejection ? undefined : when,
-    reason_codes: options.localRejection ? ['external_country_unsuitable'] : options.unavailable ? ['provider_unavailable'] : [], fingerprint: await postalFingerprint(input),
+    reason_codes: options.localRejection ? ['external_country_unsuitable'] : options.unavailable ? ['provider_unavailable'] : [], original_extended_parts: [], proposed_extended_parts: [],
   }));
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); requests.push(request);
@@ -121,7 +120,7 @@ describe('Postal address editor', () => {
   });
 
   it('preserves imported raw and untouched fields while declaring the edited row as user input', async () => {
-    const current: PersonAddress = { person_id: 7, address_kind: 'postal', street_address: 'Old Street', extended_address: 'Unit 7', post_office_box: 'Box 9', country_code: 'CA', extended_components: '["District"]', geo_uri: 'geo:0,0', timezone: 'Europe/Paris', place_uri: 'urn:example', label: 'Postal label', free_text: 'Free text', original_value: raw.original_value!, assessment: { original: raw, proposed: raw, status: 'needs_review', reason_codes: ['not_verified'], fingerprint: 'original' }, envelope: { id: 11, ordinal: 3, pref: 1, type_label: 'home', type_tokens: ['home'], source: 'vcard_import', source_resource_uid: 'synthetic-resource', source_ref: 'person-fact-claim:synthetic-claim', vcard: { property: 'ADR', pid: ['1.1'] }, created_at: when, updated_at: when } };
+    const current: PersonAddress = { person_id: 7, address_kind: 'postal', street_address: 'Old Street', extended_address: 'Unit 7', post_office_box: 'Box 9', country_code: 'CA', extended_components: '["District"]', geo_uri: 'geo:0,0', timezone: 'Europe/Paris', place_uri: 'urn:example', label: 'Postal label', free_text: 'Free text', original_value: raw.original_value!, assessment: { original: raw, proposed: raw, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 3, pref: 1, type_label: 'home', type_tokens: ['home'], source: 'vcard_import', source_resource_uid: 'synthetic-resource', source_ref: 'person-fact-claim:synthetic-claim', vcard: { property: 'ADR', pid: ['1.1'] }, created_at: when, updated_at: when } };
     const { controller, requests } = setup({ current });
     render(StructuredProfileEditor, { controller, section: 'addresses', current });
     await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Changed Street' } });
@@ -160,7 +159,7 @@ describe('Postal address editor', () => {
 
   it('does not restore original text into a cleared current address', async () => {
     const original: Input = { address_kind: 'postal', original_value: 'Old street', country_code: 'CA' };
-    const current: PersonAddress = { person_id: 7, address_kind: 'postal', original_value: 'Old street', country_code: 'CA', assessment: { original, proposed: { address_kind: 'postal', country_code: 'CA' }, status: 'needs_review', reason_codes: [], fingerprint: 'local' }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
+    const current: PersonAddress = { person_id: 7, address_kind: 'postal', original_value: 'Old street', country_code: 'CA', assessment: { original, proposed: { address_kind: 'postal', country_code: 'CA' }, status: 'needs_review', reason_codes: [], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
     const { controller, requests } = setup({ current });
     render(StructuredProfileEditor, { controller, section: 'addresses', current });
     expect(screen.getByLabelText('Current address text')).toHaveProperty('value', '');
@@ -171,7 +170,7 @@ describe('Postal address editor', () => {
 
   it('does not use a synthesized display value as original input', async () => {
     const original: Input = { address_kind: 'postal', street_address: 'Old street', country_code: 'CA' };
-    const current: PersonAddress = { person_id: 7, address_kind: 'postal', street_address: 'Old street', country_code: 'CA', original_value: ';;Old street;;;;', assessment: { original, proposed: original, status: 'normalized_unverified', reason_codes: ['not_verified'], fingerprint: 'local' }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
+    const current: PersonAddress = { person_id: 7, address_kind: 'postal', street_address: 'Old street', country_code: 'CA', original_value: ';;Old street;;;;', assessment: { original, proposed: original, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
     const { controller, requests } = setup({ current });
     render(StructuredProfileEditor, { controller, section: 'addresses', current });
     expect(screen.getByLabelText('Original text')).toHaveProperty('value', '');
@@ -264,7 +263,7 @@ it('binds DOM edits to request invalidation and suppresses duplicate external cl
  expect(check).toHaveBeenCalledOnce();
  await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Changed street' } });
  await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: raw.street_address } });
- await act(async () => { release({ original: raw, proposed: { ...raw, street_address: 'Stale correction' }, provider: 'google', status: 'validated', checked_at: when, reason_codes: [], fingerprint: await postalFingerprint(raw) }); await pending; });
+ await act(async () => { release({ original: raw, proposed: { ...raw, street_address: 'Stale correction' }, provider: 'google', status: 'validated', checked_at: when, reason_codes: [], original_extended_parts: [], proposed_extended_parts: [] }); await pending; });
  expect(screen.queryByText('Original address')).toBeNull();
  expect(screen.queryByText('Google Maps')).toBeNull();
  expect(screen.queryByText(/Stale correction/)).toBeNull();
@@ -282,7 +281,7 @@ it('drops a pending result if the component receives a different person controll
  const nextPerson = { ...person, id: 8 };
  const next = new DirectoryProfileController(createAPIClient(async () => Response.json(emptyProfile(nextPerson))), 8, { person: nextPerson, structuredProfile: emptyProfile(nextPerson), etags: { person: '"person-8-r3"', structuredProfile: '"person-8-r3"' }, errors: {} });
  await view.rerender({ controller: next, section: 'addresses' });
- await act(async () => { release({ original: raw, proposed: { ...raw, street_address: 'Stale suggestion' }, provider: 'google', status: 'validated', checked_at: when, reason_codes: [], fingerprint: await postalFingerprint(raw) }); await pending; });
+ await act(async () => { release({ original: raw, proposed: { ...raw, street_address: 'Stale suggestion' }, provider: 'google', status: 'validated', checked_at: when, reason_codes: [], original_extended_parts: [], proposed_extended_parts: [] }); await pending; });
  expect(screen.queryByText('Original address')).toBeNull();
  expect(screen.queryByText('Stale suggestion')).toBeNull();
  expect(screen.queryByText('Google Maps')).toBeNull();
@@ -299,7 +298,7 @@ it('makes an explicit local check without granting external consent', async () =
 
 it('keeps captured provenance read-only and saves current raw-only text edits separately', async () => {
   const original: Input = { address_kind: 'postal', original_value: '  First raw text\nUnit 7  ' };
-  const current: PersonAddress = { person_id: 7, address_kind: 'postal', original_value: original.original_value!, assessment: { original, proposed: original, status: 'needs_review', reason_codes: ['not_verified'], fingerprint: 'raw' }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
+  const current: PersonAddress = { person_id: 7, address_kind: 'postal', original_value: original.original_value!, assessment: { original, proposed: original, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
   const { controller, requests } = setup({ current });
   render(StructuredProfileEditor, { controller, section: 'addresses', current });
   expect(screen.getByLabelText('Original text')).toHaveProperty('readOnly', true);

@@ -39,7 +39,7 @@ func (d *lineageProfileMutatingDriver) GeneratePrepared(
 	snapshot.PolicyJSON = slices.Clone(profile.PolicyJSON)
 	d.seen = append(d.seen, snapshot)
 	if d.calls == 0 {
-		profile.AllowedSources[0] = SourceDocumentText
+		profile.AllowedSources[0] = SourceMeetingText
 		profile.DisclosedPacketFields[0] = "mutated"
 		profile.PolicyJSON[0] ^= 0xff
 	}

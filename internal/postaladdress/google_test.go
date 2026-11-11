@@ -56,7 +56,6 @@ func TestGoogleMapsOnlyExplicitPostalFields(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal(map[string]any{"address": map[string]any{"regionCode": "CA", "postalCode": "V0A 0A0", "locality": "Example City", "administrativeArea": "BC", "addressLines": []any{"12 Example Street", "Unit 7", "PO Box 9"}}}, payload)
 	assert.Equal(input, got.Original)
-	assert.Equal(Fingerprint(input), got.Fingerprint)
 	assert.Equal("Unit 7", got.Proposed.ExtendedAddress)
 	assert.Equal("PO Box 9", got.Proposed.PostOfficeBox)
 	assert.Equal("private JSON", got.Proposed.ExtendedComponents)

@@ -25,7 +25,7 @@ function setup(reason?: string, evidenceResponse?: Promise<Response>) {
       if (server.readClaims) return server.readClaims();
       if (server.fail) return Response.json({ message: 'Synthetic failure' }, { status: 503 });
       if (server.absent) return Response.json({ claims: [] });
-      return Response.json({ claims: [{ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify(raw), relation: 'equals', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], fingerprint: 'local' } } }] });
+      return Response.json({ claims: [{ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify(raw), relation: 'equals', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] } } }] });
     }
     if (path.endsWith('/fact-evidence')) return evidenceResponse ?? Response.json({ evidence: [] });
     if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
@@ -66,15 +66,14 @@ describe('Postal claim review', () => {
     const target = screen.getByLabelText('Save address as');
     expect(document.activeElement).toBe(target);
     expect(target.getAttribute('aria-invalid')).toBe('true');
-    expect(screen.getByText('Choose how to save this address.')).toBeDefined();
+    expect(screen.getByLabelText('Address kind')).toHaveProperty('disabled', true);
     await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'add' } });
-    expect(screen.queryByText('Choose how to save this address.')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
     await waitFor(() => expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1));
     const patch = requests.find(request => request.method === 'PATCH')!;
     expect(patch.headers.get('If-Match')).toBe('"person-7-r3"');
     const body = await patch.clone().json();
-    expect(body.addresses.add[0]).toMatchObject({ original_input: raw, envelope: { source: 'user', source_ref: 'person-fact-claim:synthetic-claim' } });
+    expect(body.addresses.add[0]).toMatchObject({ address_kind: 'postal', original_input: raw, envelope: { source: 'user', source_ref: 'person-fact-claim:synthetic-claim' } });
     expect(body.addresses.add[0].envelope).not.toHaveProperty('confidence');
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Review address' })).toBeNull());
     await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
@@ -137,6 +136,23 @@ it('labels a cleared replacement target without presenting its original text as 
   await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
   expect(await screen.findByRole('option', { name: 'Replace: No current address' })).toBeDefined();
   expect(screen.queryByRole('option', { name: 'Replace: Old source address' })).toBeNull();
+});
+
+it('keeps a replacement tied to the reviewed postal suggestion', async () => {
+  const { profileController, requests } = setup();
+  profileController.structuredProfile!.addresses.push({
+    person_id: 7, address_kind: 'postal', original_value: 'Old address', street_address: 'Old address',
+    envelope: { id: 26, ordinal: 1, source: 'user', created_at: when, updated_at: when, vcard: {} },
+  });
+  await revealPostalClaim();
+  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
+  await fireEvent.change(await screen.findByLabelText('Save address as'), { target: { value: 'supersede:26' } });
+  expect(screen.getByLabelText('Address kind')).toHaveProperty('disabled', true);
+  await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+  await waitFor(() => expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1));
+  const patch = requests.find(request => request.method === 'PATCH')!;
+  expect(patch.headers.get('If-Match')).toBe('"person-7-r3"');
+  expect(await patch.clone().json()).toMatchObject({ addresses: { supersede: [26], add: [{ address_kind: 'postal', original_input: raw, envelope: { source_ref: 'person-fact-claim:synthetic-claim' } }] } });
 });
 
 it('opens the exact freshly returned assessment and refuses a mismatched profile revision', async () => {

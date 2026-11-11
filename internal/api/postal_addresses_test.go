@@ -33,7 +33,8 @@ func TestPostalTextOnlyCreationKeepsCurrentTextSeparateFromSnapshot(t *testing.T
 	require.NoError(capturePostalPatchOriginals(request, &patch))
 	require.NotNil(patch.Addresses.Add[0].FreeText)
 	assert.Equal(input.OriginalValue, *patch.Addresses.Add[0].FreeText)
-	raw, ok := postaladdress.DecodeOriginalInput(patch.Addresses.Add[0].OriginalValue)
+	raw, ok, err := postaladdress.DecodeOriginalInput(patch.Addresses.Add[0].OriginalValue)
+	require.NoError(err)
 	assert.True(ok)
 	assert.Equal(input.OriginalValue, raw.OriginalValue)
 }
@@ -92,7 +93,7 @@ func TestPostalAddressAssessmentRequiresExplicitConsent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	for _, external := range []bool{false, true} {
-		body, err := json.Marshal(map[string]any{"address": postaladdress.Input{AddressKind: "postal", StreetAddress: " 12 Example St ", ExtendedAddress: "Unit 7", CountryCode: "ca", OriginalValue: "raw"}, "allow_external": external})
+		body, err := json.Marshal(map[string]any{"address": postaladdress.Input{AddressKind: "postal", StreetAddress: " 12 Example St ", ExtendedAddress: "Unit 7", CountryCode: "ca", OriginalValue: "raw", ExtendedComponents: `;;12 Example St;;;;;Room\;3;Floor 2`}, "allow_external": external})
 		require.NoError(err)
 		response := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(id), body, nil)
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
@@ -101,6 +102,8 @@ func TestPostalAddressAssessmentRequiresExplicitConsent(t *testing.T) {
 		require.NoError(json.Unmarshal(response.Body.Bytes(), &assessment))
 		assert.Equal("raw", assessment.Original.OriginalValue)
 		assert.Equal("Unit 7", assessment.Proposed.ExtendedAddress)
+		assert.Equal([]string{"Room;3", "Floor 2"}, assessment.OriginalExtendedParts)
+		assert.Equal([]string{"Room;3", "Floor 2"}, assessment.ProposedExtendedParts)
 		if external {
 			assert.Equal(postaladdress.StatusValidated, assessment.Status)
 			assert.Equal(1, validator.calls)
@@ -133,6 +136,8 @@ func TestPostalAddressUnavailableStillAllowsLocalSave(t *testing.T) {
 			assert := assert.New(t)
 			assert.Equal(postaladdress.StatusUnavailable, assessment.Status)
 			assert.Equal("Unit 7", assessment.Proposed.ExtendedAddress)
+			assert.Equal([]string{"Room;3", "Floor 2"}, assessment.OriginalExtendedParts)
+			assert.Equal([]string{"Room;3", "Floor 2"}, assessment.ProposedExtendedParts)
 			if state == "failure" {
 				assert.Equal(1, validator.calls)
 			} else {
@@ -168,7 +173,8 @@ func TestPostalAddressCorrectionPreservesRawDraftAndConflict(t *testing.T) {
 	assert.Equal("12 Example Street", *address.StreetAddress)
 	stored, err := wrapped.ListPersonAddressesContext(t.Context(), id, false)
 	require.NoError(err)
-	decoded, ok := postaladdress.DecodeOriginalInput(stored[0].OriginalValue)
+	decoded, ok, err := postaladdress.DecodeOriginalInput(stored[0].OriginalValue)
+	require.NoError(err)
 	require.True(ok)
 	assert.Equal(raw, decoded)
 	conflict := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": etag})
@@ -206,7 +212,7 @@ func TestPostalAddressExternalDeniesDelegatedAndReadOnlyKeys(t *testing.T) {
 	assert.Zero(t, validator.calls)
 }
 
-func TestPostalAddressEditPreservesOriginalHistoryAndChangesFingerprint(t *testing.T) {
+func TestPostalAddressEditPreservesOriginalHistory(t *testing.T) {
 	srv, wrapped := newIdentityLinkTestServer(t)
 	id := seedAPIPerson(t, wrapped.Store)
 	raw := postaladdress.Input{AddressKind: "postal", StreetAddress: " imported street ", ExtendedAddress: " Unit 7 ", CountryCode: "ca", OriginalValue: " original line\n raw "}
@@ -230,7 +236,7 @@ func TestPostalAddressEditPreservesOriginalHistoryAndChangesFingerprint(t *testi
 	current := after.Addresses[0]
 	assert := assert.New(t)
 	assert.Equal(raw, current.Assessment.Original)
-	assert.NotEqual(before.Addresses[0].Assessment.Fingerprint, current.Assessment.Fingerprint)
+	assert.NotEqual(before.Addresses[0].Assessment.Proposed.StreetAddress, current.Assessment.Proposed.StreetAddress)
 	assert.Equal(store.ProvenanceUser, current.Envelope.Source)
 	assert.Nil(current.Envelope.Confidence)
 	assert.Nil(current.Envelope.SourceResourceUID)
@@ -290,7 +296,8 @@ func TestPostalAddressCurrentTextRoundTripsWithoutChangingProvenance(t *testing.
 	stored, err := wrapped.ListPersonAddressesContext(t.Context(), id, true)
 	require.NoError(err)
 	require.Len(stored, 1)
-	decoded, ok := postaladdress.DecodeOriginalInput(stored[0].OriginalValue)
+	decoded, ok, err := postaladdress.DecodeOriginalInput(stored[0].OriginalValue)
+	require.NoError(err)
 	require.True(ok)
 	assert.Equal(raw, decoded)
 	assert.Equal(text, *stored[0].FreeText)
@@ -379,7 +386,8 @@ func TestPostalAddressFallbackOriginalValuePreservesRawSnapshot(t *testing.T) {
 			require.NoError(err)
 			require.Len(stored, 1)
 			snapshot := stored[0].OriginalValue
-			decoded, ok := postaladdress.DecodeOriginalInput(snapshot)
+			decoded, ok, err := postaladdress.DecodeOriginalInput(snapshot)
+			require.NoError(err)
 			require.True(ok)
 			assert.Equal(tc.raw, decoded)
 

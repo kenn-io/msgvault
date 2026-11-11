@@ -63,6 +63,8 @@ type GetAttachmentContentErrorResponse = ErrorResponse
 
 type GetAttachmentContentErrorResponseJSON = ErrorResponse
 
+type GetAttachmentContentErrorResponseJSON403 = ErrorResponse
+
 type GetAttachmentContentErrorResponseJSON404 = ErrorResponse
 
 type GetAttachmentContentErrorResponseJSON500 = ErrorResponse
@@ -447,6 +449,8 @@ type GetCLIAttachmentErrorResponse = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON = ErrorResponse
 
+type GetCLIAttachmentErrorResponseJSON403 = ErrorResponse
+
 type GetCLIAttachmentErrorResponseJSON404 = ErrorResponse
 
 type GetCLIAttachmentErrorResponseJSON413 = ErrorResponse
@@ -818,58 +822,6 @@ type CancelDeletionErrorResponse = ErrorResponse
 type GetDeletionResponse = DeletionManifestDetail
 
 type GetDeletionErrorResponse = ErrorResponse
-
-type SearchDocumentsResponse = DocumentSearchResponse
-
-type SearchDocumentsErrorResponse = ErrorResponse
-
-type SearchDocumentsErrorResponseJSON = ErrorResponse
-
-type SearchDocumentsErrorResponseJSON404 = ErrorResponse
-
-type SearchDocumentsErrorResponseJSON409 = ErrorResponse
-
-type SearchDocumentsErrorResponseJSON429 = ErrorResponse
-
-type SearchDocumentsErrorResponseJSON503 = ErrorResponse
-
-type SearchDocumentsErrorResponseJSONDefault = ErrorResponse
-
-type GetDocumentIndexStatusResponse = DocumentIndexStatusResponse
-
-type GetDocumentIndexStatusErrorResponse = ErrorResponse
-
-type GetDocumentIndexStatusErrorResponseJSON = ErrorResponse
-
-type GetDocumentIndexStatusErrorResponseJSON429 = ErrorResponse
-
-type GetDocumentIndexStatusErrorResponseJSON503 = ErrorResponse
-
-type GetDocumentIndexStatusErrorResponseJSONDefault = ErrorResponse
-
-type GetCurrentDocumentIndexStatusResponse = DocumentIndexStatusResponse
-
-type GetCurrentDocumentIndexStatusErrorResponse = ErrorResponse
-
-type GetCurrentDocumentIndexStatusErrorResponseJSON = ErrorResponse
-
-type GetCurrentDocumentIndexStatusErrorResponseJSON429 = ErrorResponse
-
-type GetCurrentDocumentIndexStatusErrorResponseJSON503 = ErrorResponse
-
-type GetCurrentDocumentIndexStatusErrorResponseJSONDefault = ErrorResponse
-
-type GetDocumentVectorStatusResponse = DocumentVectorOperationsResponse
-
-type GetDocumentVectorStatusErrorResponse = ErrorResponse
-
-type GetDocumentVectorStatusErrorResponseJSON = ErrorResponse
-
-type GetDocumentVectorStatusErrorResponseJSON429 = ErrorResponse
-
-type GetDocumentVectorStatusErrorResponseJSON503 = ErrorResponse
-
-type GetDocumentVectorStatusErrorResponseJSONDefault = ErrorResponse
 
 type SearchDomainsResponse = DomainSearchHTTPResponse
 
@@ -1726,6 +1678,12 @@ type ImportMeetingResponse = MeetingImportResponse
 type ImportMeetingResponseJSON = MeetingImportResponse
 
 type ImportMeetingErrorResponse = ErrorResponse
+
+type ImportMessageResponse = MessageImportResponse
+
+type ImportMessageResponseJSON = MessageImportResponse
+
+type ImportMessageErrorResponse = ErrorResponse
 
 type ImportMuesliResponse = MuesliRemoteResult
 
@@ -4258,6 +4216,7 @@ type GetAttachmentContentResp struct {
 	StatusCode   int
 	JSON400      *GetAttachmentContentErrorResponse
 	JSON401      *GetAttachmentContentErrorResponseJSON
+	JSON403      *GetAttachmentContentErrorResponseJSON403
 	JSON404      *GetAttachmentContentErrorResponseJSON404
 	JSON500      *GetAttachmentContentErrorResponseJSON500
 	JSON503      *GetAttachmentContentErrorResponseJSON503
@@ -4759,6 +4718,7 @@ type GetCLIAttachmentResp struct {
 	StatusCode   int
 	JSON400      *GetCLIAttachmentErrorResponse
 	JSON401      *GetCLIAttachmentErrorResponseJSON
+	JSON403      *GetCLIAttachmentErrorResponseJSON403
 	JSON404      *GetCLIAttachmentErrorResponseJSON404
 	JSON413      *GetCLIAttachmentErrorResponseJSON413
 	JSON500      *GetCLIAttachmentErrorResponseJSON500
@@ -5212,56 +5172,6 @@ type GetDeletionResp struct {
 	JSONDefault  *GetDeletionErrorResponse
 }
 
-type SearchDocumentsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *SearchDocumentsResponse
-	JSON400      *SearchDocumentsErrorResponse
-	JSON403      *SearchDocumentsErrorResponseJSON
-	JSON404      *SearchDocumentsErrorResponseJSON404
-	JSON409      *SearchDocumentsErrorResponseJSON409
-	JSON429      *SearchDocumentsErrorResponseJSON429
-	JSON503      *SearchDocumentsErrorResponseJSON503
-	JSONDefault  *SearchDocumentsErrorResponseJSONDefault
-}
-
-type GetDocumentIndexStatusResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetDocumentIndexStatusResponse
-	JSON400      *GetDocumentIndexStatusErrorResponse
-	JSON403      *GetDocumentIndexStatusErrorResponseJSON
-	JSON429      *GetDocumentIndexStatusErrorResponseJSON429
-	JSON503      *GetDocumentIndexStatusErrorResponseJSON503
-	JSONDefault  *GetDocumentIndexStatusErrorResponseJSONDefault
-}
-
-type GetCurrentDocumentIndexStatusResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetCurrentDocumentIndexStatusResponse
-	JSON400      *GetCurrentDocumentIndexStatusErrorResponse
-	JSON403      *GetCurrentDocumentIndexStatusErrorResponseJSON
-	JSON429      *GetCurrentDocumentIndexStatusErrorResponseJSON429
-	JSON503      *GetCurrentDocumentIndexStatusErrorResponseJSON503
-	JSONDefault  *GetCurrentDocumentIndexStatusErrorResponseJSONDefault
-}
-
-type GetDocumentVectorStatusResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *GetDocumentVectorStatusResponse
-	JSON400      *GetDocumentVectorStatusErrorResponse
-	JSON403      *GetDocumentVectorStatusErrorResponseJSON
-	JSON429      *GetDocumentVectorStatusErrorResponseJSON429
-	JSON503      *GetDocumentVectorStatusErrorResponseJSON503
-	JSONDefault  *GetDocumentVectorStatusErrorResponseJSONDefault
-}
-
 type SearchDomainsResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5679,6 +5589,15 @@ type ImportMeetingResp struct {
 	JSON200      *ImportMeetingResponse
 	JSON201      *ImportMeetingResponseJSON
 	JSONDefault  *ImportMeetingErrorResponse
+}
+
+type ImportMessageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportMessageResponse
+	JSON201      *ImportMessageResponseJSON
+	JSONDefault  *ImportMessageErrorResponse
 }
 
 type ImportMuesliResp struct {

@@ -29,15 +29,20 @@ func EncodeOriginalInput(input Input) (string, error) {
 	return originalPrefix + string(data), nil
 }
 
-// DecodeOriginalInput recognizes only the exact tagged schema. False means
-// callers must treat value as legacy/plain original text, without data loss.
-func DecodeOriginalInput(value string) (Input, bool) {
+// DecodeOriginalInput distinguishes legacy text from stored postal envelopes.
+func DecodeOriginalInput(value string) (Input, bool, error) {
+	if !strings.HasPrefix(value, "msgvault:postal-input:") {
+		return Input{}, false, nil
+	}
 	if !strings.HasPrefix(value, originalPrefix) {
-		return Input{}, false
+		return Input{}, false, errors.New("unsupported postal input envelope")
 	}
 	var snapshot originalSnapshot
-	if err := json.Unmarshal([]byte(strings.TrimPrefix(value, originalPrefix)), &snapshot, json.RejectUnknownMembers(true)); err != nil || snapshot.Schema != 1 || snapshot.Input == nil {
-		return Input{}, false
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(value, originalPrefix)), &snapshot, json.RejectUnknownMembers(true)); err != nil {
+		return Input{}, false, err
 	}
-	return *snapshot.Input, true
+	if snapshot.Schema != 1 || snapshot.Input == nil {
+		return Input{}, false, errors.New("invalid postal input envelope")
+	}
+	return *snapshot.Input, true, nil
 }

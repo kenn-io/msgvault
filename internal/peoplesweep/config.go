@@ -10,12 +10,14 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"reflect"
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,9 +47,9 @@ const (
 
 	SourceConversationText  SourceClass = "conversation_text"
 	SourceMeetingText       SourceClass = "meeting_text"
+	SourceDocumentText      SourceClass = "document_text"
 	SourceAttachmentCaption SourceClass = "attachment_caption"
 	SourceAttachmentOCR     SourceClass = "attachment_ocr"
-	SourceDocumentText      SourceClass = "document_text"
 )
 
 var disclosedPacketFieldsV1 = []string{
@@ -61,6 +63,8 @@ var disclosedPacketFieldsV1 = []string{
 }
 
 var environmentNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+var warnedDocumentText atomic.Bool
 
 type Protocol string
 type OutputMode string
@@ -273,7 +277,20 @@ func (c *Config) ApplyDefaults() {
 	}
 	for name, provider := range c.Providers {
 		applyProviderDefaults(&provider)
-		provider.AllowedSources = slices.Clone(provider.AllowedSources)
+		hadSources := len(provider.AllowedSources) > 0
+		provider.AllowedSources = slices.DeleteFunc(slices.Clone(provider.AllowedSources), func(source SourceClass) bool {
+			if source == SourceDocumentText {
+				if !warnedDocumentText.Swap(true) {
+					slog.Warn("document_text was removed; drop it from allowed_sources", "provider", name)
+				}
+				return true
+			}
+			return false
+		})
+		if hadSources && len(provider.AllowedSources) == 0 && c.Provider.Name == name && c.Enabled {
+			slog.Warn("people sweep disabled because allowed_sources contains only retired sources", "provider", name)
+			c.Enabled = false
+		}
 		c.Providers[name] = provider
 	}
 }
@@ -921,6 +938,7 @@ func validateSources(sources []SourceClass) error {
 	for _, source := range sources {
 		switch source {
 		case SourceConversationText, SourceMeetingText, SourceDocumentText:
+			// Stored policies retain document_text; ApplyDefaults removes it from active config.
 		case SourceAttachmentCaption, SourceAttachmentOCR:
 			return fmt.Errorf("[people.sweep.provider] allowed_sources %q is not yet supported", source)
 		default:

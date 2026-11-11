@@ -28,6 +28,7 @@ import type {
   PersonProfilePatchRequest,
   SetPersonAttributeRequest,
 } from './models';
+export const PERSON_NOT_FOUND_MESSAGE = 'Person not found.';
 interface DirectoryProfileControllerOptions {
   invalidateRow?: (
     personID: number,
@@ -187,7 +188,7 @@ export class DirectoryProfileController {
       if (personReady && person.data && (resolveDraft || !personRequiresFreshETag)) {
         this.person = person.data; delete errors.person;
         this.personETag = person.response?.headers.get('ETag') ?? null;
-      } else if (!person.data) errors.person = failureMessage(person.error, person.response?.status ?? 0);
+      } else if (!person.data) errors.person = person.response?.status === 404 ? PERSON_NOT_FOUND_MESSAGE : failureMessage(person.error, person.response?.status ?? 0);
       if (structuredProfileReady && structuredProfile.data && (resolveDraft || !profileRequiresFreshETag)) {
         this.structuredProfile = structuredProfile.data; delete errors.structuredProfile;
         this.structuredProfileETag = structuredProfile.response?.headers.get('ETag') ?? null;
@@ -206,7 +207,7 @@ export class DirectoryProfileController {
         this.bundle = { ...this.bundle, contactState: contactState.data };
         delete errors.contactState;
       } else errors.contactState = failureMessage(contactState.error, contactState.response?.status ?? 0);
-      this.bundle = { ...this.bundle, errors };
+      this.bundle = { ...this.bundle, personNotFound: !person.data && person.response?.status === 404, errors };
       if (resolveDraft && (this.draft?.kind !== 'createDefinition' || definitionsGeneration === this.definitionsGeneration)) this.resolveReloadDraft(
         { person, structuredProfile, attributes, definitions },
         { personReady, structuredProfileReady, attributesReady, definitionsReady },

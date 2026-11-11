@@ -1374,7 +1374,8 @@ func TestPostalAddressPartialComponentsKeepFreeText(t *testing.T) {
 func TestLegacyExtendedAddressSurvivesPublicReadAndExport(t *testing.T) {
 	require := require.New(t)
 	value := ";;12 Example Street;Example City;;;Canada;Room 3;Floor 2"
-	address := store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: value, CountryCode: new("CA")}.PublicAddress()
+	address, err := (store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: value, CountryCode: new("CA")}).PublicAddress()
+	require.NoError(err)
 	got, _, err := postalAddressValue(address)
 	require.NoError(err)
 	assert.Equal(t, value, got)
@@ -1399,4 +1400,9 @@ func TestPostalAddressSnapshotExportsGeoWithoutRestoringText(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(t, ";;;;;;", value)
 	assert.Nil(t, label)
+}
+
+func TestPostalAddressExportRejectsUnsupportedSnapshot(t *testing.T) {
+	_, _, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}", StreetAddress: new("12 Example Street")})
+	require.Error(t, err)
 }

@@ -26,7 +26,6 @@ func TestAssessPreservesInternationalInput(t *testing.T) {
 			assert.Equal(before, tc.input)
 			assert.Equal(before, got.Original)
 			assert.Equal(tc.want, got.Proposed)
-			assert.Equal(Fingerprint(before), got.Fingerprint)
 			assert.Equal(StatusNormalizedUnverified, got.Status)
 		})
 	}
@@ -41,22 +40,6 @@ func TestAssessDoesNotAssertValidity(t *testing.T) {
 	for _, input := range []Input{{}, {CountryCode: "US"}, {StreetAddress: "somewhere"}, {StreetAddress: "somewhere", CountryCode: "ZZ"}} {
 		assert.Equal(t, StatusNeedsReview, Assess(input).Status)
 	}
-}
-
-// The browser pins this same wire vector in postal-review.svelte.test.ts.
-func TestFingerprintMatchesBrowserVector(t *testing.T) {
-	input := Input{AddressKind: "postal", StreetAddress: " 12 Example St ", ExtendedAddress: "Unit 7", CountryCode: "ca", OriginalValue: " raw\ntext "}
-	assert.Equal(t, "f7897d1e0b2a3120740b2882ec8937539e022e5ce8ccf969cfef6b253a0871a3", Fingerprint(input))
-}
-
-func TestFingerprintIncludesEveryField(t *testing.T) {
-	base := Input{}
-	for i := range reflect.TypeFor[Input]().NumField() {
-		changed := base
-		reflect.ValueOf(&changed).Elem().Field(i).SetString("changed")
-		assert.NotEqual(t, Fingerprint(base), Fingerprint(changed), reflect.TypeFor[Input]().Field(i).Name)
-	}
-	assert.NotEqual(t, Fingerprint(Input{StreetAddress: "a", Locality: "bc"}), Fingerprint(Input{StreetAddress: "ab", Locality: "c"}))
 }
 
 func drawPostalInput(ht *hegel.T) Input {
@@ -93,7 +76,8 @@ func TestOriginalSnapshotProperty(t *testing.T) {
 		input := drawPostalInput(ht)
 		encoded, err := EncodeOriginalInput(input)
 		require.NoError(ht, err)
-		decoded, ok := DecodeOriginalInput(encoded)
+		decoded, ok, err := DecodeOriginalInput(encoded)
+		require.NoError(ht, err)
 		require.True(ht, ok)
 		assert.Equal(ht, input, decoded)
 	}, hegel.WithTestCases(300), hegel.WithDatabase(""))
@@ -114,8 +98,15 @@ func FuzzAssessment(f *testing.F) {
 			return
 		}
 		require.NoError(t, err)
-		decoded, ok := DecodeOriginalInput(encoded)
+		decoded, ok, err := DecodeOriginalInput(encoded)
+		require.NoError(t, err)
 		require.True(t, ok)
 		assert.Equal(t, input, decoded)
 	})
+}
+
+func TestAssessmentExtendedParts(t *testing.T) {
+	got := Assess(Input{ExtendedComponents: `;;12 Example St;City;;;;Room\;3;Floor 2`})
+	assert.Equal(t, []string{"Room;3", "Floor 2"}, got.OriginalExtendedParts)
+	assert.Equal(t, []string{"Room;3", "Floor 2"}, got.ProposedExtendedParts)
 }

@@ -1275,3 +1275,22 @@ func TestStore_DedupMetadataQualityMissingFacts(t *testing.T) {
 		})
 	}
 }
+
+func TestDedupCandidatesUseRelayedFrom(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	id := newRFC822Message(t, f, "relay", "relay@example.test")
+	participant := f.EnsureParticipant("author@example.test", "Author", "example.test")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients(message_id, participant_id, recipient_type, email_address, is_relayed) VALUES (?, ?, 'from', 'relay@relay.test', TRUE)`), id, participant)
+	requirements.NoError(err)
+	requirements.NoError(f.Store.UpsertMessageRaw(id, []byte("From: relay@relay.test\r\n\r\nbody")))
+	group, err := f.Store.GetDuplicateGroupMessages("relay@example.test")
+	requirements.NoError(err)
+	requirements.Len(group, 1)
+	assertions.Equal("relay@relay.test", group[0].FromEmail)
+	candidates, err := f.Store.GetAllRawMIMECandidates(t.Context())
+	requirements.NoError(err)
+	requirements.Len(candidates, 1)
+	assertions.Equal("relay@relay.test", candidates[0].FromEmail)
+}

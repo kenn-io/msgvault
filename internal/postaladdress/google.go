@@ -266,6 +266,7 @@ func googleAssessment(assessment Assessment, result googleResult) Assessment {
 		review("unmapped_components_preserved")
 	}
 	assessment.Proposed = proposal
+	assessment.ProposedExtendedParts = ExtendedParts(proposal.ExtendedComponents)
 	assessment.Status = StatusValidated
 	assessment.ReasonCodes = []string{"provider_confirmed"}
 	if len(reasons) > 0 {

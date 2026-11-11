@@ -1,4 +1,6 @@
 <script lang="ts">
+  import DetailSection from '../people/DetailSection.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
   import { Button } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import { formatContactDate } from '../../directory/labels';
@@ -78,13 +80,11 @@
   }
 </script>
 
-<section class="open-loops" aria-label="Open loops">
-  <header>
-    <h3>Open loops</h3>
-    {#if !loading && !failed && items.length > 0}<span class="muted">{items.length}{truncated ? '+' : ''} open</span>{/if}
-  </header>
+<DetailSection title="Open loops">
+  {#snippet control()}{#if !loading && !failed && items.length > 0}<span class="muted">{items.length}{truncated ? '+' : ''} open</span>{/if}{/snippet}
+  <div class="open-loops">
   {#if loading}<p class="muted" role="status">Loading…</p>
-  {:else if failed}<p role="alert">Couldn't load open loops.</p>
+  {:else if failed}<InlineNotice message="Couldn't load open loops." />
   {:else if items.length === 0 && coverageIncomplete}<p class="muted">No loops found in the messages checked.</p>
   {:else if items.length === 0}<p class="muted">Nothing open with this person.</p>
   {:else}
@@ -113,13 +113,12 @@
     {#if checkMoreFailed}<p role="alert">Couldn't check more archive history.</p>{/if}
     <div><Button size="sm" label={checkingMore ? 'Checking…' : 'Check more'} disabled={checkingMore} onclick={checkMore} /></div>
   {/if}
-</section>
+</div>
+</DetailSection>
 
 <style>
   .open-loops { display: grid; gap: var(--space-2); min-width: 0; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: var(--control-gap); min-height: var(--control-h); }
-  h3, h4, p, ul { margin: 0; }
-  h3 { font-size: var(--font-size-md); }
+  h4, p, ul { margin: 0; }
   h4 { color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }
   .group { display: grid; gap: var(--space-1); }
   ul { display: grid; gap: var(--space-1); padding: 0; list-style: none; }
@@ -127,6 +126,6 @@
   a { min-width: 0; overflow: hidden; color: var(--link-ink); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
   a:hover { text-decoration: underline; }
   li > span { flex: none; }
-  .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .muted { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   [role="alert"] { color: var(--text-danger); }
 </style>

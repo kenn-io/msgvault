@@ -624,6 +624,10 @@ func projectPostalAddress(address store.PersonAddress) (projectedProperty, bool,
 // means the row has nothing to render and its existing occurrence, if any, is
 // left as residue.
 func postalAddressValue(address store.PersonAddress) (string, *string, error) {
+	_, snapshot, err := postaladdress.DecodeOriginalInput(address.OriginalValue)
+	if err != nil {
+		return "", nil, err
+	}
 	components, err := postalComponents(address)
 	if err != nil {
 		return "", nil, err
@@ -642,7 +646,7 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 	// A known postal snapshot is raw owner input, not an imported ADR wire
 	// value. Decode once and never parse its original text as another envelope
 	// or as semicolon-delimited vCard components.
-	if _, ok := postaladdress.DecodeOriginalInput(address.OriginalValue); ok {
+	if snapshot {
 		// Current free text is an explicit edit; the snapshot remains provenance.
 		if !isBlank(address.FreeText) {
 			if !isBlank(address.Label) && *address.Label != *address.FreeText {

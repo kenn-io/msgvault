@@ -2,14 +2,14 @@ import { webcrypto } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Assessment, Input } from '../api/generated/models';
-import { postalAddressText, postalFingerprint, PostalReviewSession } from './postal-review.svelte';
+import { postalAddressText, PostalReviewSession } from './postal-review.svelte';
 
 beforeEach(() => vi.stubGlobal('crypto', webcrypto));
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 const input: Input = { address_kind: 'postal', street_address: ' 12 Example St ', extended_address: 'Unit 7', country_code: 'ca', original_value: ' raw\ntext ' };
 async function assessment(value = input): Promise<Assessment> {
-  return { original: { ...value }, proposed: { ...value, street_address: '12 Example Street' }, status: 'validated', provider: 'google', reason_codes: [], fingerprint: await postalFingerprint(value) };
+  return { original: { ...value }, proposed: { ...value, street_address: '12 Example Street' }, status: 'validated', provider: 'google', reason_codes: [], original_extended_parts: [], proposed_extended_parts: [] };
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -21,7 +21,7 @@ function deferred<T>() {
 describe('PostalReviewSession', () => {
   it('shows decoded extended components without repeating the first seven ADR fields', () => {
     const address = { address_kind: 'postal', street_address: '12 Example Street', locality: 'Example City', extended_components: ';;12 Example Street;Example City;;;;Room\\;3;Floor 2' };
-    expect(postalAddressText(address)).toBe('12 Example Street, Example City, Room;3, Floor 2');
+    expect(postalAddressText(address, ['Room;3', 'Floor 2'])).toBe('12 Example Street, Example City, Room;3, Floor 2');
   });
   it('shows a current label when no current components or free text exist', () => {
     expect(postalAddressText({ address_kind: 'postal', label: 'Mailing label', original_value: '' })).toBe('Mailing label');
@@ -39,15 +39,6 @@ describe('PostalReviewSession', () => {
     expect(postalAddressText({ address_kind: 'postal', free_text: '12 Example Street, Example City', street_address: '12 Example Street', locality: 'Example City', country_code: 'CA' })).toBe('12 Example Street, Example City, CA');
     expect(postalAddressText({ address_kind: 'postal', free_text: '12 Example Street\nUse side door', street_address: '12 Example Street', locality: 'Example City' })).toBe('Use side door, 12 Example Street, Example City');
   });
-  it('fingerprints every field, Unicode and whitespace, with the Go length-framed contract', async () => {
-    const fingerprint = await postalFingerprint(input);
-    expect(fingerprint).toBe('f7897d1e0b2a3120740b2882ec8937539e022e5ce8ccf969cfef6b253a0871a3');
-    for (const [field, value] of Object.entries(input)) {
-      expect(await postalFingerprint({ ...input, [field]: `${value}あ` })).not.toBe(fingerprint);
-    }
-    expect(await postalFingerprint({ ...input, timezone: 'Europe/Paris' })).not.toBe(fingerprint);
-  });
-
   it('suppresses duplicate pending and displayed checks without saving anything', async () => {
     const reply = deferred<Assessment>();
     const check = vi.fn(async (_personID: number, _input: Input, _external: boolean, _signal: AbortSignal) => reply.promise);
@@ -102,13 +93,6 @@ describe('PostalReviewSession', () => {
     expect(reopened.editorGeneration).not.toBe(old.editorGeneration);
     reply.resolve(await assessment()); await pending;
     expect(old.result).toBeNull(); expect(reopened.result).toBeNull(); expect(reopened.pending).toBe(false);
-  });
-
-  it('rejects a response with a mismatched full-input fingerprint', async () => {
-    const check = vi.fn(async () => ({ ...await assessment(), fingerprint: 'wrong' }));
-    const state = new PostalReviewSession(7, check);
-    await state.check(input, true);
-    expect(state.result).toBeNull(); expect(state.error).toBeTruthy();
   });
 
   it.each([['SubtleCrypto', {}], ['crypto', undefined]])('checks locally and externally without %s', async (_capability, crypto) => {

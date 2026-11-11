@@ -115,9 +115,9 @@ func (s *Store) loadPersonSweepUnresolvedClaimsTx(
 	queryLimit := limit + 1
 	if target.Kind == personfacts.TargetPostalAddress {
 		query += ` AND NOT EXISTS (SELECT 1 FROM person_addresses a
-    WHERE a.person_id = c.person_id AND a.source_ref = 'person-fact-claim:' || c.claim_key)
+    WHERE a.person_id = c.person_id AND a.address_kind = 'postal' AND a.source_ref = 'person-fact-claim:' || c.claim_key)
     ORDER BY c.created_at DESC,c.claim_key DESC,c.id DESC`
-		queryLimit = min(limit, 100)
+		queryLimit = min(limit+1, 101)
 	} else {
 		query += ` ORDER BY c.claim_key,c.id`
 	}
@@ -144,6 +144,9 @@ func (s *Store) loadPersonSweepUnresolvedClaimsTx(
 	}
 	if len(claims) > limit {
 		return nil, errors.New("person sweep unresolved claims exceed the state limit")
+	}
+	if target.Kind == personfacts.TargetPostalAddress && len(claims) > 100 {
+		claims = claims[:100]
 	}
 	for index := range claims {
 		claim := &claims[index]

@@ -116,7 +116,8 @@
       (authority: RelatedOperationStatus) => void,
       () => void,
       OperationsController,
-      () => Promise<void>
+      () => Promise<void>,
+      (personID: number) => void
     ]>;
     appearanceDefaults?: AppearanceDefaults;
     searchModeDefault?: ExploreSearchMode;
@@ -325,8 +326,6 @@
       Exclude<RelatedOperationStatus, 'listSourceStatus' | 'getCardDAVStatus'>,
       string
     > = {
-      getDocumentIndexStatus: 'Opening live document index status.',
-      getDocumentVectorStatus: 'Opening live document vector status.',
       getVisualAttachmentStatus: 'Opening live visual attachment status.'
     };
     announceOperation(statusTargets[target]);
@@ -1324,7 +1323,8 @@
           openOperationAuthority,
           () => void shellData.jobs.refresh(true),
           operationsController,
-          () => directoryController.reloadFirstPage()
+          () => directoryController.reloadFirstPage(),
+          openDirectoryPerson
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
         <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory, connection) => { cardDAVSettingsRequest = connection ? { connection, key: ++cardDAVSettingsRequestKey } : undefined; commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' }); }} onOpenOperations={() => openOperations('source_sync')} />
@@ -1515,8 +1515,8 @@
                   scrollAnchor: null,
                 })}
               onActiveKey={(activeRow) => replaceTransient({ activeRow })}
-              onSelectedKey={(selectedRow) =>
-                selectedRow ? commitNavigation({ selectedRow }) : replaceCommittedNavigation({ selectedRow: null })}
+              onSelectedKey={(selectedRow, options) =>
+                selectedRow ? (options?.replace ? replaceCommittedNavigation({ selectedRow }) : commitNavigation({ selectedRow })) : replaceCommittedNavigation({ selectedRow: null })}
               onOpenItem={openFileItem}
               onOpenConversation={openFileConversation}
             />

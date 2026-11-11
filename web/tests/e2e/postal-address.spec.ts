@@ -1,18 +1,6 @@
-import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import type { Input, PersonAddress, PersonProfilePatchRequest } from '../../src/lib/api/generated/models';
 import { installMixedArchive } from './fixtures/mixed-archive';
-
-// Independent wire fixture for the Go uint64-length-framed input fingerprint.
-function fingerprint(input: Input): string {
-  const hash = createHash('sha256');
-  for (const key of ['address_kind', 'post_office_box', 'extended_address', 'street_address', 'locality', 'region', 'postal_code', 'country_name', 'extended_components', 'free_text', 'label', 'geo_uri', 'timezone', 'country_code', 'place_uri', 'original_value'] as const) {
-    const value = Buffer.from(input[key] ?? '');
-    const length = Buffer.alloc(8); length.writeBigUInt64BE(BigInt(value.byteLength));
-    hash.update(length); hash.update(value);
-  }
-  return hash.digest('hex');
-}
 
 for (const [width, withoutSubtleCrypto] of [[1280, false], [420, false], [1280, true], [420, true]] as const) {
   test(`postal review preserves raw input and confirms once at ${width}px${withoutSubtleCrypto ? ' without SubtleCrypto' : ''}`, async ({ page }) => {
@@ -34,7 +22,7 @@ for (const [width, withoutSubtleCrypto] of [[1280, false], [420, false], [1280, 
         const body = route.request().postDataJSON() as PersonProfilePatchRequest;
         writes.push(body); revision++;
         const saved = body.addresses!.add![0]!;
-        addresses = [{ ...saved, person_id: 42, original_value: saved.original_input?.original_value ?? '', envelope: { ...saved.envelope, id: 81, ordinal: 0, created_at: when, updated_at: when, vcard: {} }, assessment: { original: saved.original_input!, proposed: saved, status: 'normalized_unverified', reason_codes: ['not_verified'], fingerprint: fingerprint(saved) } }];
+        addresses = [{ ...saved, person_id: 42, original_value: saved.original_input?.original_value ?? '', envelope: { ...saved.envelope, id: 81, ordinal: 0, created_at: when, updated_at: when, vcard: {} }, assessment: { original: saved.original_input!, proposed: saved, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] } }];
       }
       await route.fulfill({ json: profile(), headers: { ETag: `"person-42-r${revision}"` } });
     });
@@ -42,7 +30,7 @@ for (const [width, withoutSubtleCrypto] of [[1280, false], [420, false], [1280, 
       checks++;
       const body = route.request().postDataJSON() as { address: Input; allow_external: boolean };
       expect(body.allow_external).toBe(true);
-      await route.fulfill({ json: { original: body.address, proposed: { ...body.address, street_address: '12 Example Street', country_code: 'CA' }, status: 'validated', reason_codes: [], provider: 'google', checked_at: when, fingerprint: fingerprint(body.address) }, headers: { 'Cache-Control': 'no-store' } });
+      await route.fulfill({ json: { original: body.address, proposed: { ...body.address, street_address: '12 Example Street', country_code: 'CA' }, status: 'validated', reason_codes: [], provider: 'google', checked_at: when, original_extended_parts: [], proposed_extended_parts: [] }, headers: { 'Cache-Control': 'no-store' } });
     });
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42 }))}`);

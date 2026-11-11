@@ -1,7 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   getAttachmentContent,
-  getDocumentIndexStatus,
   getFileContent,
   runCLI,
   syncCLI
@@ -10,25 +9,6 @@ import { deleteCLICollection } from './generated/cli/cli';
 import { searchVisualAttachments } from './generated/exploration/exploration';
 
 describe('generated request serialization', () => {
-  it('sends each document media type as a separate query value', async () => {
-    let query!: URLSearchParams;
-    await getDocumentIndexStatus(
-      {
-        profile_id: 'test-profile',
-        input_key: 'test-input',
-        media_type: ['text/plain', 'application/pdf']
-      },
-      {
-        fetch: async (url) => {
-          query = new URL(String(url), 'https://example.invalid').searchParams;
-          return Response.json({});
-        }
-      }
-    );
-    expect(query.getAll('media_type')).toEqual(['text/plain', 'application/pdf']);
-    expect(query.get('profile_id')).toBe('test-profile');
-  });
-
   it('preserves CLI folder selections, including literal commas', async () => {
     let query!: URLSearchParams;
     await syncCLI(

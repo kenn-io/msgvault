@@ -56,7 +56,6 @@ const (
 	ToolFindSimilarMessages       = "find_similar_messages"
 	ToolSearchVisualAttachments   = "search_visual_attachments"
 	ToolSearchInMessage           = "search_in_message"
-	ToolSearchDocuments           = "search_document_attachments"
 	ToolSearchPersonFiles         = "search_person_files"
 	ToolSearchPeople              = "search_people"
 	ToolListDirectoryPeople       = "list_directory_people"
@@ -129,7 +128,6 @@ type ServeOptions struct {
 	HybridSearcher         HybridSearcher
 	SimilarSearcher        SimilarSearcher
 	DataDir                string
-	DocumentSearcher       DocumentSearcher
 	MediaSearcher          MediaSearcher
 	PersonFileSearcher     PersonFileSearcher
 	PeopleBackend          peoplebrowser.Backend
@@ -184,6 +182,8 @@ type ServeOptions struct {
 	Calendar CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
+	// ConfirmSensitiveDrafts requires client approval before writing flagged draft content.
+	ConfirmSensitiveDrafts bool
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
 	// mode, a read tool is listed only when the grant holds its permission.
 	GrantPermissions []string
@@ -363,6 +363,7 @@ func newMCPServerWithPolicy(
 	}
 	capabilities := &sdkmcp.ServerCapabilities{Tools: &sdkmcp.ToolCapabilities{}}
 	instructions := archiveSafetyInstructions + " " + decisionMemoryInstructions + " Use returned web_url values when linking to archived messages."
+	instructions += " Agent guide: https://msgvault.io/docs/guides/agent-quickstart.md (msgvault quickstart --mcp)."
 	if !opts.DelegatedOnly {
 		capabilities.Resources = &sdkmcp.ResourceCapabilities{}
 	} else {
@@ -389,6 +390,7 @@ func newMCPServerWithPolicy(
 	h := &handlers{
 		embeddingStatus:      opts.EmbeddingStatus,
 		delegatedOnly:        opts.DelegatedOnly,
+		sensitiveConfirm:     opts.ConfirmSensitiveDrafts,
 		downloads:            opts.downloads,
 		engine:               opts.Engine,
 		archiveSQLQuerier:    opts.ArchiveSQLQuerier,
@@ -398,7 +400,6 @@ func newMCPServerWithPolicy(
 		hybridSearcher:       opts.HybridSearcher,
 		similarSearcher:      opts.SimilarSearcher,
 		dataDir:              opts.DataDir,
-		documentSearcher:     opts.DocumentSearcher,
 		mediaSearcher:        opts.MediaSearcher,
 		personFileSearcher:   opts.PersonFileSearcher,
 		peopleBackend:        opts.PeopleBackend,

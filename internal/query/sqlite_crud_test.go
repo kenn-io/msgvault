@@ -380,6 +380,7 @@ func TestGetAttachmentClearsURLBackedContentHash(t *testing.T) {
 	att, err := env.Engine.GetAttachment(env.Ctx, attID)
 	require.NoError(err, "GetAttachment")
 	require.NotNil(att)
+	assert.Equal(int64(1), att.MessageID)
 	assert.Empty(att.ContentHash)
 	assert.Equal("https://sp/recording.mp4", att.URL)
 }

@@ -15,8 +15,6 @@ import (
 
 var allOperationHistoryKinds = []operations.Kind{
 	operations.KindCardDAVSync,
-	operations.KindDocumentEmbedding,
-	operations.KindDocumentExtraction,
 	operations.KindMessageEmbedding,
 	operations.KindPersonEmbedding,
 	operations.KindPersonEnrichment,
@@ -60,7 +58,6 @@ func TestOperationHistorySnapshotReadsAllKindsInExactOrderAndDateBounds(t *testi
 
 func TestOperationMillisecondHistoryDateBounds(t *testing.T) {
 	for _, kind := range []operations.Kind{
-		operations.KindDocumentEmbedding, operations.KindDocumentExtraction,
 		operations.KindMessageEmbedding, operations.KindPersonEmbedding,
 		operations.KindVisualEmbedding, operations.KindPersonSweep,
 	} {
@@ -315,8 +312,6 @@ func seedAllOperationHistoryKindsAt(
 	keys = append(keys, "carddav_sync:"+fmtInt64(cardDAVID))
 
 	for _, kind := range []operations.Kind{
-		operations.KindDocumentEmbedding,
-		operations.KindDocumentExtraction,
 		operations.KindMessageEmbedding,
 		operations.KindPersonEmbedding,
 	} {
@@ -370,11 +365,9 @@ func finishOperationHistoryInvocation(
 ) {
 	t.Helper()
 	ledger := map[operations.Kind]string{
-		operations.KindMessageEmbedding:   "message_embedding_runs",
-		operations.KindPersonEmbedding:    "person_embedding_runs",
-		operations.KindDocumentExtraction: "document_extraction_runs",
-		operations.KindDocumentEmbedding:  "document_embedding_runs",
-		operations.KindVisualEmbedding:    "visual_embedding_runs",
+		operations.KindMessageEmbedding: "message_embedding_runs",
+		operations.KindPersonEmbedding:  "person_embedding_runs",
+		operations.KindVisualEmbedding:  "visual_embedding_runs",
 	}[id.Kind()]
 	require.NotEmpty(t, ledger)
 	var storedError any

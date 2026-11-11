@@ -309,9 +309,7 @@ You set `bind_addr` to a non-loopback address (e.g., `0.0.0.0`) without configur
 
 ### The UI reports a missing, stale, or unavailable analytical cache
 
-Run `msgvault build-cache`, then restart a daemon that was already running. The
-Web UI preserves the reported cache state instead of silently switching some
-modalities to a different query engine. See [Web UI: Cache states](/docs/web-ui/#cache-states)
+Run `msgvault build-cache --full-rebuild`, then restart a daemon that was already running. In auto mode, Messages serves live archive rows during a full rebuild. If no usable cache is produced, those rows stay available with recovery steps. Its notice names operations that still need the cache. Other cache-dependent views show their cache state and recovery steps. See [Web UI: Cache states](/docs/web-ui/#cache-states)
 and [Configuration: analytics](/docs/configuration/#analytics).
 
 ### The UI warns that the session cookie is not secure

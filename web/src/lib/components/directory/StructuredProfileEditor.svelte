@@ -85,7 +85,7 @@
   let serviceSlug = $state(currentContact?.service_slug ?? '');
   let scopeKind = $state(currentContact?.scope_kind ?? '');
   let scopeValue = $state(currentContact?.scope_value ?? '');
-  let addressKind = $state(currentAddress?.address_kind ?? 'postal');
+  let addressKind = $state(initialCandidate ? 'postal' : currentAddress?.address_kind ?? 'postal');
   const seedAddress = initialCandidate?.input ?? currentAddress;
   let originalInput = $state<Input | undefined>(initialCandidate?.input ?? (currentAddress?.address_kind === 'postal' ? currentAddress.assessment?.original ?? copyPostalInput(currentAddress) : undefined));
   let addressTarget = $state('');
@@ -97,7 +97,7 @@
   let extendedAddress = $state(seedAddress?.extended_address ?? '');
   let countryCode = $state(seedAddress?.country_code ?? '');
   let originalText = $state(untrack(() => originalInput ? originalInput.original_value ?? '' : seedAddress?.original_value ?? ''));
-  let currentText = $state(seedAddress?.free_text ?? (initialCandidate && !postalAddressText({ ...initialCandidate.input, original_value: '', free_text: '', country_code: '' }) ? initialCandidate.input.original_value ?? '' : ''));
+  let currentText = $state(seedAddress?.free_text ?? (initialCandidate && !initialCandidate.input.extended_components && !postalAddressText({ ...initialCandidate.input, original_value: '', free_text: '', country_code: '' }) ? initialCandidate.input.original_value ?? '' : ''));
   let currentTextTouched = $state(false);
   let streetAddress = $state(seedAddress?.street_address ?? '');
   let locality = $state(seedAddress?.locality ?? '');
@@ -333,7 +333,7 @@
   function captureOriginal(): void {
     if (!originalInput) {
       originalInput = copyPostalInput(addressDraft());
-      if (!currentTextTouched && !currentText && originalText && !postalAddressText({ ...addressDraft(), original_value: '', free_text: '', country_code: '' })) currentText = originalText;
+      if (!currentTextTouched && !currentText && originalText && !addressDraft().extended_components && !postalAddressText({ ...addressDraft(), original_value: '', free_text: '', country_code: '' })) currentText = originalText;
     }
   }
   function edited(): void {
@@ -470,17 +470,16 @@
     {:else if section === 'addresses'}
       {#if initialCandidate}
         <p class="postal-note">Edits keep the original source.</p>
-        <label>Save address as<select bind:this={addressTargetSelect} bind:value={addressTarget} aria-required="true" aria-invalid={addressTargetInvalid && !addressTarget} aria-describedby={addressTargetInvalid && !addressTarget ? `${uid}-address-target-error` : undefined} disabled={submitting}>
+        <label>Save address as<select bind:this={addressTargetSelect} bind:value={addressTarget} aria-required="true" aria-invalid={addressTargetInvalid && !addressTarget} disabled={submitting}>
           <option value="">Choose…</option><option value="add">Add a new address</option>
           {#each controller.structuredProfile?.addresses.filter(address => address.address_kind === 'postal') ?? [] as address (address.envelope.id)}
-            <option value={`supersede:${address.envelope.id}`}>Replace: {postalAddressText({ ...address, original_value: '' }) || 'No current address'}</option>
+            <option value={`supersede:${address.envelope.id}`}>Replace: {postalAddressText({ ...address, original_value: '' }, address.assessment?.proposed_extended_parts) || 'No current address'}</option>
           {/each}
         </select></label>
-        {#if addressTargetInvalid && !addressTarget}<p id="{uid}-address-target-error" class="field-error">Choose how to save this address.</p>{/if}
       {/if}
       <label
         >Address kind
-        <select bind:value={addressKind} disabled={submitting}>
+        <select bind:value={addressKind} disabled={submitting || !!initialCandidate}>
           <option value="postal">Postal</option><option value="birth_place">Birth place</option><option
             value="death_place">Death place</option
           >
@@ -519,8 +518,8 @@
           {#if review.result}
             {@const result = review.result}
             <dl class="postal-comparison">
-              <div><dt>Original address</dt><dd>{postalAddressText(result.original)}</dd></div>
-              {#if postalAddressText(result.original) !== postalAddressText(result.proposed)}<div><dt>Suggested address</dt><dd>{postalAddressText(result.proposed)}</dd></div>{/if}
+              <div><dt>Original address</dt><dd>{postalAddressText(result.original, result.original_extended_parts)}</dd></div>
+              {#if postalAddressText(result.original, result.original_extended_parts) !== postalAddressText(result.proposed, result.proposed_extended_parts)}<div><dt>Suggested address</dt><dd>{postalAddressText(result.proposed, result.proposed_extended_parts)}</dd></div>{/if}
             </dl>
             {#if result.status !== 'unavailable' || !postalReasons(result.reason_codes).length}<p role="status">{result.status === 'validated' ? 'Validated — review before saving' : result.status === 'unavailable' ? 'Provider unavailable' : result.status === 'needs_review' ? 'Needs review' : 'Normalized, unverified'}</p>{/if}
             {#if postalReasons(result.reason_codes).length}<p>{postalReasons(result.reason_codes).join(' · ')}</p>{/if}

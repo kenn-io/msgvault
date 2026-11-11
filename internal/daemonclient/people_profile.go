@@ -374,7 +374,7 @@ func postalAssessmentFromGenerated(value *generated.Assessment) *postaladdress.A
 	if value == nil {
 		return nil
 	}
-	return &postaladdress.Assessment{Original: postalInputFromGenerated(value.Original), Proposed: postalInputFromGenerated(value.Proposed), Status: postaladdress.Status(value.Status), ReasonCodes: append([]string(nil), value.ReasonCodes...), Fingerprint: value.Fingerprint, Provider: stringValue(value.Provider), CheckedAt: value.CheckedAt}
+	return &postaladdress.Assessment{Original: postalInputFromGenerated(value.Original), Proposed: postalInputFromGenerated(value.Proposed), Status: postaladdress.Status(value.Status), ReasonCodes: append([]string(nil), value.ReasonCodes...), OriginalExtendedParts: append([]string(nil), value.OriginalExtendedParts...), ProposedExtendedParts: append([]string(nil), value.ProposedExtendedParts...), Provider: stringValue(value.Provider), CheckedAt: value.CheckedAt}
 }
 func postalInputFromGenerated(value generated.Input) postaladdress.Input {
 	return postaladdress.Input{AddressKind: value.AddressKind, PostOfficeBox: stringValue(value.PostOfficeBox), ExtendedAddress: stringValue(value.ExtendedAddress), StreetAddress: stringValue(value.StreetAddress), Locality: stringValue(value.Locality), Region: stringValue(value.Region), PostalCode: stringValue(value.PostalCode), CountryName: stringValue(value.CountryName), ExtendedComponents: stringValue(value.ExtendedComponents), FreeText: stringValue(value.FreeText), Label: stringValue(value.Label), GeoURI: stringValue(value.GeoURI), Timezone: stringValue(value.Timezone), CountryCode: stringValue(value.CountryCode), PlaceURI: stringValue(value.PlaceURI), OriginalValue: stringValue(value.OriginalValue)}
