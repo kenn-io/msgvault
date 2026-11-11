@@ -150,3 +150,32 @@ func TestConversationPolicySubset(t *testing.T) {
 	assertions.Equal(conversationpolicy.Cold, rows[0].Override)
 	assertions.Equal(conversationpolicy.Cold, rows[0].EffectiveTier)
 }
+
+func TestConversationPolicySubsetBootstrapsLegacySource(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "source.db")
+	st, err := store.OpenForTest(t.Context(), path)
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(st.Close()) })
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	source, err := st.GetOrCreateSource("beeper", "legacy-subset-policy")
+	requirements.NoError(err)
+	room, err := st.EnsureConversation(t.Context(), source.ID, "room", "Legacy room")
+	requirements.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: room, SourceMessageID: "message", MessageType: "beeper"})
+	requirements.NoError(err)
+	// An archive from before room policy has chats but no policy rows.
+	_, err = st.DB().ExecContext(t.Context(), `DROP TABLE conversation_policy`)
+	requirements.NoError(err)
+	dest := filepath.Join(dir, "subset")
+	_, err = store.CopySubset(t.Context(), path, dest, 1, false)
+	requirements.NoError(err)
+	copied, err := store.OpenForTest(t.Context(), filepath.Join(dest, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(copied.Close()) })
+	rows, err := copied.ListConversationPolicies(t.Context())
+	requirements.NoError(err)
+	requirements.Len(rows, 1, "the copied chat must be classified after the copy")
+	assertions.Equal(conversationpolicy.Full, rows[0].EffectiveTier)
+}

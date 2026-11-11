@@ -238,6 +238,14 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
 	}
 
+	// A source from before room policy copies chats without policy rows. Bootstrap
+	// them after the copy, so copied overrides keep their tiers.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, migrationConversationPolicyBootstrap); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied conversation policy bootstrap: %w", err)
+	}
+
 	// A source that predates matrix_encrypted_events copies placeholders the
 	// empty destination never registered.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name = ?`, migrationMatrixEncryptedEventsV1); err != nil {
