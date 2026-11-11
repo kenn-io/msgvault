@@ -17,13 +17,14 @@ import (
 const rosterMatchFailed = "failed"
 
 type rosterWork struct {
-	Phase        string `json:"phase,omitempty"`
-	Next         int    `json:"next,omitzero"`
-	MemberFirst  bool   `json:"member_first,omitzero"`
-	Verified     bool   `json:"verified,omitzero"`
-	Version      int    `json:"version"`
-	Signature    string `json:"signature"`
-	DetailBacked bool   `json:"detail_backed,omitzero"`
+	Phase            string `json:"phase,omitempty"`
+	Next             int    `json:"next,omitzero"`
+	MemberFirst      bool   `json:"member_first,omitzero"`
+	Verified         bool   `json:"verified,omitzero"`
+	Version          int    `json:"version"`
+	Signature        string `json:"signature"`
+	ListingSignature string `json:"listing_signature,omitempty"`
+	DetailBacked     bool   `json:"detail_backed,omitzero"`
 }
 
 // shortDigest keeps 128 bits of SHA-256, enough to detect a changed input

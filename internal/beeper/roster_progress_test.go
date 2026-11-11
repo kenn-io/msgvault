@@ -405,7 +405,7 @@ func TestRosterBudgetAlternatesMessagesAndKeepsCheckpointSmall(t *testing.T) {
 				if countBeeperMessages(t, imp) == 2 && members < size {
 					messagesBeforeRosterComplete = true
 				}
-				if countBeeperMessages(t, imp) == 2 && members == size && state != nil && state.RosterWork == nil {
+				if countBeeperMessages(t, imp) == 2 && members == size && state != nil && state.RosterWork != nil && state.RosterWork.Phase == "done" {
 					break
 				}
 			}
@@ -414,9 +414,36 @@ func TestRosterBudgetAlternatesMessagesAndKeepsCheckpointSmall(t *testing.T) {
 			assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), size)
 			state := latestBeeperState(t, imp).Chats[chat.ID]
 			assert.True(state.Done)
-			assert.Nil(state.RosterWork, "matching and receipt cleanup must finish")
+			assert.Equal("done", state.RosterWork.Phase, "matching and receipt cleanup must finish")
+			var sourceBytes int
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(sync_cursor) FROM sources WHERE id = ?`), sum.SourceID).Scan(&sourceBytes))
+			assert.Less(sourceBytes, 4096, "completed roster proof remains compact")
 		})
 	}
+}
+
+func TestCompletedRosterProofStaysCompact(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	for room := range 3 {
+		chat := budgetTestChat(fmt.Sprintf("!compact-%d:example.test", room), 2, time.Now())
+		for member := 2; member < 64; member++ {
+			chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@member-%d:example.test", member)})
+		}
+		f.addChat(chat)
+	}
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	state := latestBeeperState(t, imp)
+	for _, chat := range state.Chats {
+		require.NotNil(chat.RosterWork)
+		assert.Equal("done", chat.RosterWork.Phase)
+	}
+	var sourceBytes int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(sync_cursor) FROM sources WHERE id = ?`), sum.SourceID).Scan(&sourceBytes))
+	assert.Less(sourceBytes, 4096)
 }
 
 // A quiet-room repair that stops during matching keeps the verified roster

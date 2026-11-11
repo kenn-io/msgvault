@@ -56,6 +56,63 @@ func TestRosterVerificationRejectsChangedSnapshot(t *testing.T) {
 	}
 }
 
+func TestRosterVerificationRejectsChangedAddition(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!verify-addition:example.test", 2, time.Now())
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	sourceID := newBeeperTestSource(t, st, "signal")
+	work := &rosterWork{Version: 1}
+	detail, err := imp.client.GetChat(t.Context(), chat.ID)
+	require.NoError(err)
+	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+	require.NoError(err)
+	require.True(complete)
+	f.mu.Lock()
+	chat.Participants = append(chat.Participants, map[string]any{"id": "@joined:example.test"})
+	f.mu.Unlock()
+	detail, err = imp.client.GetChat(t.Context(), chat.ID)
+	require.NoError(err)
+	f.mu.Lock()
+	chat.Participants[2]["fullName"] = "Changed during verification"
+	f.mu.Unlock()
+	_, complete, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+	require.NoError(err)
+	assert.False(complete)
+	assert.False(work.Verified)
+	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sourceID)
+	require.NoError(err)
+	assert.Contains(unresolved, chat.ID)
+}
+
+func TestTruncatedChangedListingDefersRoster(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!changed-listing:example.test", 2, time.Now())
+	chat.ParticipantsTruncated = true
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	state := latestBeeperState(t, imp).Chats[chat.ID]
+	require.True(state.RosterWork.Verified)
+	f.mu.Lock()
+	chat.Participants[0]["fullName"] = "Changed"
+	f.mu.Unlock()
+	listing, err := imp.client.SearchChats(t.Context(), SearchChatsParams{AccountID: "signal"})
+	require.NoError(err)
+	require.Len(listing.Items, 1)
+	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sum.SourceID, &listing.Items[0], ImportOptions{AccountID: "signal", skipRoster: true, rosterState: state.RosterWork, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"}}, &ImportSummary{})
+	require.NoError(err)
+	assert.False(complete)
+	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
+	assert.Contains(unresolved, chat.ID)
+}
+
 func TestImportVerifiesSmallRosterBeforeReplacement(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
@@ -79,6 +136,13 @@ func TestImportVerifiesSmallRosterBeforeReplacement(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(1, detailRequests(), "the first import verifies the roster")
 	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 2)
+	f.mu.Lock()
+	chat.LastActivity = time.Now()
+	chat.Msgs = append(chat.Msgs, fakeMsg{ID: "unchanged", SortKey: 98, Timestamp: chat.LastActivity, Text: "new", SenderID: "@signal_ann:beeper.local"})
+	f.mu.Unlock()
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	assert.Zero(detailRequests(), "an unchanged roster needs no verification read")
 	f.mu.Lock()
 	chat.Participants[1]["fullName"] = "Ann Renamed"
 	chat.LastActivity = time.Now()

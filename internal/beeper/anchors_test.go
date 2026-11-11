@@ -332,6 +332,8 @@ func TestFullImportRecoversUnreadableProgressAndVerifiesArchive(t *testing.T) {
 				require.NoError(st.UpdateSourceSyncState(t.Context(), sum.SourceID, blob))
 			}
 			save()
+			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+			require.ErrorContains(err, "msgvault sync-beeper --full")
 			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Full: true})
 			require.NoError(err, "full sync can recover without trusting unreadable progress")
 			save()

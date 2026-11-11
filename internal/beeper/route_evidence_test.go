@@ -1476,7 +1476,7 @@ func TestAppliedRosterRefreshesRouteAccountAndMerge(t *testing.T) {
 	state := NewSyncState()
 	_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
 	requirements.NoError(err)
-	requirements.Nil(state.Chats[chat.ID].RosterWork)
+	requirements.Equal("done", state.Chats[chat.ID].RosterWork.Phase)
 	peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
 	person, _, err := st.CreatePersonFromParticipant(peer)
 	requirements.NoError(err)

@@ -234,19 +234,19 @@ func (imp *Importer) loadSourceState(ctx context.Context, src *store.Source, ful
 // undecodable progress because it rebuilds it, but progress from a newer
 // msgvault still stops the run.
 func loadSavedSyncState(blob string, full bool) (*SyncState, error) {
-	if !full {
-		return LoadSyncState(blob)
-	}
 	state, err := decodeSyncState(blob)
 	if err != nil {
-		return NewSyncState(), nil //nolint:nilerr // Full sync verifies the archive when no cursor can be decoded.
+		if full {
+			return NewSyncState(), nil //nolint:nilerr // Full sync verifies the archive when no cursor can be decoded.
+		}
+		return nil, fmt.Errorf("unreadable progress; run msgvault sync-beeper --full: %w", err)
 	}
 	return validateRosterProgress(state)
 }
 
 func resumeState(prev, cp *store.SyncRun, full bool) (*SyncState, error) {
 	load := func(blob string) (*SyncState, error) {
-		state, err := LoadSyncState(blob)
+		state, err := loadSavedSyncState(blob, false)
 		if err != nil {
 			return nil, fmt.Errorf("read saved Beeper sync progress: %w", err)
 		}
@@ -996,7 +996,7 @@ func finishRosterTurn(cs *ChatState, messagesMoved bool) {
 		return
 	}
 	if messagesMoved {
-		cs.RosterWork = nil
+		cs.RosterWork.MemberFirst = true
 		return
 	}
 	cs.RosterWork.MemberFirst = false
@@ -1044,6 +1044,7 @@ func (m chatMembership) policyCount(policy attachmentpolicy.Policy) int {
 func (imp *Importer) ensureRosterWork(
 	ctx context.Context, syncID, sourceID int64, ch *Chat, opts ImportOptions, sum *ImportSummary,
 ) (int64, bool, chatMembership, error) {
+	listingSignature := rosterSignature(ch, opts.AccountID)
 	detail := ch
 	membershipComplete := !ch.Participants.HasMore
 	if !opts.skipRoster && !opts.rosterDetailFetched && (ch.Participants.HasMore || (opts.rosterState != nil && opts.rosterState.DetailBacked)) {
@@ -1096,7 +1097,10 @@ func (imp *Importer) ensureRosterWork(
 		routeEvidence.Failure = "chat_binding_mismatch"
 	}
 	if opts.skipRoster {
-		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.Signature == rosterSignature(detail, opts.AccountID) {
+		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature && routeEvidence.Failure == "" {
+			if ch.Participants.HasMore {
+				return convID, true, membership, nil
+			}
 			keys := imp.rosterKeys(detail.Participants.Items)
 			settled, err := imp.refreshRosterProof(ctx, sourceID, convID, rosterProvider(ch.ID), detail, detail.Participants.Items, keys, opts.AccountID, routeEvidence, membership)
 			if err != nil {
@@ -1128,17 +1132,17 @@ func (imp *Importer) ensureRosterWork(
 		work.Next = 0
 		work.Verified = false
 	}
+	if !opts.rosterDetailFetched {
+		work.ListingSignature = listingSignature
+	}
 	if work.Phase == "" {
 		work.Phase = "members"
 	}
-	// Invalidate earlier proof before any roster writes. An interrupted refresh
-	// cannot retain a complete route snapshot beside partially updated members.
-	if work.Phase == "members" {
-		if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
-			return 0, false, chatMembership{}, err
-		}
+	if work.Phase == "done" && !membershipComplete {
+		work.Phase = "members"
+		work.Next = 0
+		work.Verified = false
 	}
-
 	if membership.known {
 		err = imp.store.SetConversationMemberCountContext(ctx, convID, membership.count)
 	} else {
@@ -1151,6 +1155,28 @@ func (imp *Importer) ensureRosterWork(
 	items := slices.Clone(detail.Participants.Items)
 	slices.SortStableFunc(items, func(a, b Participant) int { return strings.Compare(a.ID, b.ID) })
 	keys := imp.rosterKeys(items)
+	if work.Phase == "done" && work.Verified && membershipComplete {
+		settled, err := imp.refreshRosterProof(ctx, sourceID, convID, provider, detail, items, keys, opts.AccountID, routeEvidence, membership)
+		if err != nil {
+			return convID, false, membership, err
+		}
+		if settled {
+			work.Phase = "matching"
+			work.Next = 0
+			imp.obs = newObservationRecorder(imp.store)
+			imp.matcher = newIdentityMatcher(imp.store)
+		} else {
+			work.Phase = "members"
+			work.Next = 0
+			work.Verified = false
+		}
+	}
+	// Invalidate earlier proof before any roster writes.
+	if work.Phase == "members" {
+		if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
+			return 0, false, chatMembership{}, err
+		}
+	}
 	var bridgePrefix string
 	if membershipComplete {
 		bridgePrefix = participantBridgePrefix(detail.Participants.Items)
@@ -1201,6 +1227,7 @@ func (imp *Importer) ensureRosterWork(
 				return convID, false, membership, err
 			}
 			work.Verified = true
+			work.DetailBacked = ch.Participants.HasMore
 			imp.obs = newObservationRecorder(imp.store)
 			imp.matcher = newIdentityMatcher(imp.store)
 		}

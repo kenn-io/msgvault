@@ -579,7 +579,7 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 	assert.False(sum.Stopped)
 	assert.Equal(3, countBeeperMessages(t, imp), "the next run resumes the interrupted page")
 	assert.Zero(sum.ObservationsRecorded, "the message turn does not match members again")
-	assert.Nil(latestBeeperState(t, imp).Chats[chat.ID].RosterWork, "roster work finishes once messages advance")
+	assert.Equal("done", latestBeeperState(t, imp).Chats[chat.ID].RosterWork.Phase, "roster proof stays after messages advance")
 }
 
 func TestImportStopsAfterReconcilePage(t *testing.T) {

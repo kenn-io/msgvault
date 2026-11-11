@@ -29,7 +29,7 @@ func (imp *Importer) repairQuietRosters(ctx context.Context, syncID, sourceID in
 		queued[id] = true
 	}
 	for id, room := range state.Chats {
-		if room != nil && room.RosterWork != nil && !queued[id] {
+		if room != nil && room.RosterWork != nil && room.RosterWork.Phase != "done" && !queued[id] {
 			ids = append(ids, id)
 		}
 	}
@@ -137,9 +137,6 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	}
 	if err != nil {
 		return failed(fmt.Errorf("repair archived roster: %w", err))
-	}
-	if cs.RosterWork.Phase == "done" {
-		cs.RosterWork = nil
 	}
 	if !complete {
 		stop, err := deferRoom("beeper_roster_repair_deferred", store.SyncRunItemStatusSkipped, nil)

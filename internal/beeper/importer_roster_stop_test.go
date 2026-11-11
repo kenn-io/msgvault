@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -78,6 +79,7 @@ func TestRosterWorkStopLeavesChatResumable(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			f := newFakeBeeper(t)
 			chat := budgetTestChat(tc.chatID, 2, time.Now().Add(-48*time.Hour))
+			chat.ParticipantsTruncated = tc.observationStop
 			f.addChat(chat)
 			imp, st := newHandlerTestImporter(t, f)
 			t.Cleanup(func() { require.NoError(st.Close()) })
@@ -141,6 +143,24 @@ func TestRosterWorkStopLeavesChatResumable(t *testing.T) {
 				assert.Len(pending, 1, "matching stops preserve media eligibility")
 				require.NotNil(state.Chats[chat.ID].RosterWork)
 				assert.Contains([]string{"matching", "matching_retry"}, state.Chats[chat.ID].RosterWork.Phase)
+				f.mu.Lock()
+				f.reqs = nil
+				chat.Msgs = append(chat.Msgs, fakeMsg{ID: "resume", SortKey: 99, Timestamp: time.Now(), Text: "new", SenderID: "@signal_ann:beeper.local"})
+				chat.LastActivity = time.Now()
+				f.mu.Unlock()
+				imp = NewImporter(st, imp.client)
+				_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
+				require.NoError(err)
+				assert.Equal(3, countBeeperMessages(t, imp))
+				routes, err = st.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID})
+				require.NoError(err)
+				require.Len(routes.Routes.Items, 1)
+				assert.Equal("archive_verified", routes.Routes.Items[0].Status)
+				f.mu.Lock()
+				for _, req := range f.reqs {
+					assert.False(strings.HasPrefix(req, "/v1/chats/"+chat.ID+"?"), "message turn must not fetch detail")
+				}
+				f.mu.Unlock()
 			} else {
 				require.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 2)
 				assert.Zero(countBeeperMessages(t, imp), "stop before message work must leave it resumable")
@@ -171,9 +191,13 @@ func TestRosterWorkStopLeavesChatResumable(t *testing.T) {
 				require.NoError(err)
 				assert.NotContains(unresolved, chat.ID)
 				state := latestBeeperState(t, imp)
-				assert.Nil(state.Chats[chat.ID].RosterWork, "quiet repair must finish deferred enrichment")
+				assert.Equal("done", state.Chats[chat.ID].RosterWork.Phase, "quiet repair must finish deferred enrichment")
 			}
-			assert.Equal(2, countBeeperMessages(t, imp))
+			if tc.observationStop {
+				assert.Equal(3, countBeeperMessages(t, imp))
+			} else {
+				assert.Equal(2, countBeeperMessages(t, imp))
+			}
 		})
 	}
 }
