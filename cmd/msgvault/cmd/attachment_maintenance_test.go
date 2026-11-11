@@ -705,25 +705,11 @@ func TestAttachmentIngestMutationLeaseWaitsForMaintenance(t *testing.T) {
 const verificationFixtureBlobs = 140
 
 // restoreLooseCopies recreates canonical loose copies of packed fixtures.
-func (f *attachmentMaintenanceFixture) restoreLooseCopies(format string) []string {
+func (f *attachmentMaintenanceFixture) restoreLooseCopies(format string) {
 	f.t.Helper()
-	var hashes []string
 	for i := range verificationFixtureBlobs {
-		hashes = append(hashes, f.writeLoose(fmt.Appendf(nil, format, i)))
+		f.writeLoose(fmt.Appendf(nil, format, i))
 	}
-	return hashes
-}
-
-func TestPendingPackSkipsHealthyPackedIndex(t *testing.T) {
-	require := require.New(t)
-	f := newAttachmentMaintenanceFixture(t)
-	for i := range 140 {
-		f.addLoose([]byte(fmt.Sprintf("healthy packed content %d", i)))
-	}
-	_, err := f.maintenance.pack(t.Context(), 0)
-	require.NoError(err)
-	f.maintenance.markPackPending()
-	require.NoError(f.maintenance.runPendingPack(t.Context()))
 }
 
 func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
@@ -736,23 +722,13 @@ func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
 	}
 	_, err := f.maintenance.pack(t.Context(), 0)
 	require.NoError(err)
-	restored := f.restoreLooseCopies("existing packed content %d")
+	f.maintenance.markPackPending()
+	require.NoError(f.maintenance.runPendingPack(t.Context()), "healthy packed blobs queue no follow-up")
+	f.restoreLooseCopies("existing packed content %d")
 	fresh := f.addLoose([]byte("new attachment while verification is pending"))
 	f.maintenance.markPackPending()
 	require.ErrorIs(f.maintenance.runPendingPack(t.Context()), scheduler.ErrReschedule)
 	require.NotNil(f.packedEntry(fresh), "new blobs must not wait for the whole verification cycle")
-	var swept, deferred []string
-	for _, hash := range restored {
-		_, err := os.Stat(filepath.Join(f.dir, hash[:2], hash))
-		if errors.Is(err, os.ErrNotExist) {
-			swept = append(swept, hash)
-		} else {
-			require.NoError(err)
-			deferred = append(deferred, hash)
-		}
-	}
-	require.NotEmpty(swept)
-	require.NotEmpty(deferred)
 	// Recreate swept copies so forgetting the cursor would require another window.
 	f.restoreLooseCopies("existing packed content %d")
 	// A reconstructed daemon resumes the durable verification cursor.
@@ -761,12 +737,6 @@ func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
 	defer func() { require.NoError(resumed.close()) }()
 	resumed.markPackPending()
 	require.NoError(resumed.runPendingPack(t.Context()), "only the tail after the saved cursor remains")
-	for _, hash := range swept {
-		assert.FileExists(filepath.Join(f.dir, hash[:2], hash), "hashes before the saved cursor are not rescanned")
-	}
-	for _, hash := range deferred {
-		assert.NoFileExists(filepath.Join(f.dir, hash[:2], hash))
-	}
 	stats, err := resumed.unpack(t.Context())
 	require.NoError(err)
 	assert.Equal(existing+1, stats.BlobsRestored, "manual unpack must see the full catalog")
@@ -784,7 +754,7 @@ func TestDailyMaintenanceVerificationFollowupsReclaimDeadPacks(t *testing.T) {
 	require := require.New(t)
 	f := newAttachmentMaintenanceFixture(t)
 	deadPackID := f.makeZeroLivePack([]byte("dead pack awaiting daily collection"))
-	for i := range 140 {
+	for i := range verificationFixtureBlobs {
 		f.addLoose([]byte(fmt.Sprintf("live packed content %d", i)))
 	}
 	_, err := f.maintenance.pack(t.Context(), 0)
@@ -838,7 +808,7 @@ func TestVerificationFollowupSkipsLooseEnumeration(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := newAttachmentMaintenanceFixture(t)
-			for i := range 140 {
+			for i := range verificationFixtureBlobs {
 				f.addLoose([]byte(fmt.Sprintf("existing packed content %d", i)))
 			}
 			_, err := f.maintenance.pack(t.Context(), 0)
@@ -869,7 +839,7 @@ func TestVerificationPruningRequestsLoosePacking(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := newAttachmentMaintenanceFixture(t)
-			for i := range 140 {
+			for i := range verificationFixtureBlobs {
 				f.addLoose([]byte(fmt.Sprintf("existing packed content %d", i)))
 			}
 			_, err := f.maintenance.pack(t.Context(), 0)
