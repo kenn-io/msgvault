@@ -79,19 +79,6 @@ func newObservationRecorder(s *store.Store) *observationRecorder {
 	}
 }
 
-// memberServiceLocked resolves the service capture uses for u, and the
-// normalized bridge prefix that selected it. The caller holds r.mu.
-func (r *observationRecorder) memberServiceLocked(
-	ctx context.Context, u *User, cc captureContext,
-) (*store.CommunicationService, string, error) {
-	bridgePrefix := bridgeServicePrefixFromUserID(u.ID)
-	if bridgePrefix == "" {
-		bridgePrefix = cc.BridgePrefix
-	}
-	service, _, err := r.services.resolveBridge(ctx, cc.AccountID, cc.Network, bridgePrefix)
-	return service, validBridgeServicePrefix(bridgePrefix), err
-}
-
 // capture records every address observed on u for participantID and returns
 // one result per write attempted, so the caller can count and match them.
 // A partial slice is returned alongside an error: what was written stays
@@ -105,7 +92,11 @@ func (r *observationRecorder) capture(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	service, _, err := r.memberServiceLocked(ctx, u, cc)
+	bridgePrefix := bridgeServicePrefixFromUserID(u.ID)
+	if bridgePrefix == "" {
+		bridgePrefix = cc.BridgePrefix
+	}
+	service, _, err := r.services.resolveBridge(ctx, cc.AccountID, cc.Network, bridgePrefix)
 	if err != nil {
 		return nil, err
 	}

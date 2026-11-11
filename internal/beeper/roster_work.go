@@ -295,6 +295,18 @@ func (imp *Importer) rosterOwnersSettled(ctx context.Context, sourceID int64, pr
 	return true, nil
 }
 
+func (imp *Importer) refreshRosterProof(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, keys []string, accountID string, evidence store.MessagingRouteEvidence, membership chatMembership) (bool, error) {
+	owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
+	if err != nil {
+		return false, err
+	}
+	settled, err := imp.rosterOwnersSettled(ctx, sourceID, provider, detail, items, keys, owners, accountID)
+	if err != nil || !settled {
+		return false, err
+	}
+	return true, imp.publishRosterEvidence(ctx, convID, evidence, items, keys, owners, membership)
+}
+
 func rosterMemberInputs(p *Participant, detail *Chat, accountID, bridgePrefix string) string {
 	role := "member"
 	if p.IsAdmin {

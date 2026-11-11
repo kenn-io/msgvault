@@ -77,24 +77,6 @@ func (r *participantResolver) identifierForUser(userID string) string {
 	return beeperidentity.Fallback(r.accountID, userID)
 }
 
-type userIdentityKind int
-
-const (
-	identityFallback userIdentityKind = iota
-	identityPhone
-	identityEmail
-)
-
-func identityKind(u *User) userIdentityKind {
-	if strings.HasPrefix(u.PhoneNumber, "+") {
-		return identityPhone
-	}
-	if strings.Contains(u.Email, "@") {
-		return identityEmail
-	}
-	return identityFallback
-}
-
 func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, error) {
 	if u == nil || u.ID == "" {
 		return 0, nil
@@ -103,14 +85,13 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 	if _, err := r.adoptLegacyIdentifier(ctx, u.ID, identifier); err != nil {
 		return 0, err
 	}
-	kind := identityKind(u)
-	hasPhone := kind == identityPhone
+	hasPhone := strings.HasPrefix(u.PhoneNumber, "+")
 	// An explicit phone always takes the phone rung; a cached phone may be stale.
 	if e, ok := r.rich[identifier]; ok && !hasPhone {
 		return e.pid, nil
 	}
-	switch kind {
-	case identityPhone:
+	switch {
+	case hasPhone:
 		pid, err := r.store.EnsureParticipantByPhone(ctx, u.PhoneNumber, u.FullName, participantIdentifierType)
 		if err != nil {
 			return 0, err
@@ -129,7 +110,7 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 			}
 		}
 		return pid, r.recordRich(ctx, identifier, pid, true)
-	case identityEmail:
+	case strings.Contains(u.Email, "@"):
 		// Never downgrade: if a prior run already resolved this Beeper user
 		// by phone, an email-only sighting must keep pointing at that
 		// participant instead of re-pointing the identifier to a weaker row.

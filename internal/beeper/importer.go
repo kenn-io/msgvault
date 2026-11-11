@@ -1057,18 +1057,11 @@ func (imp *Importer) ensureRosterWork(
 	if opts.skipRoster {
 		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.Signature == rosterSignature(detail, opts.AccountID) {
 			keys := imp.rosterKeys(detail.Participants.Items)
-			owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
-			if err != nil {
-				return convID, false, membership, err
-			}
-			settled, err := imp.rosterOwnersSettled(ctx, sourceID, rosterProvider(ch.ID), detail, detail.Participants.Items, keys, owners, opts.AccountID)
+			settled, err := imp.refreshRosterProof(ctx, sourceID, convID, rosterProvider(ch.ID), detail, detail.Participants.Items, keys, opts.AccountID, routeEvidence, membership)
 			if err != nil {
 				return convID, false, membership, err
 			}
 			if settled {
-				if err := imp.publishRosterEvidence(ctx, convID, routeEvidence, detail.Participants.Items, keys, owners, membership); err != nil {
-					return convID, false, membership, err
-				}
 				return convID, true, membership, nil
 			}
 			opts.rosterState.Verified = false
@@ -1122,17 +1115,11 @@ func (imp *Importer) ensureRosterWork(
 		bridgePrefix = participantBridgePrefix(detail.Participants.Items)
 	}
 	if work.Verified && (work.Phase == "matching" || work.Phase == "matching_retry" || work.Phase == "cleanup") {
-		owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
+		settled, err := imp.refreshRosterProof(ctx, sourceID, convID, provider, detail, items, keys, opts.AccountID, routeEvidence, membership)
 		if err != nil {
 			return convID, false, membership, err
 		}
-		settled, err := imp.rosterOwnersSettled(ctx, sourceID, provider, detail, items, keys, owners, opts.AccountID)
-		if err != nil {
-			return convID, false, membership, err
-		}
-		if settled {
-			err = imp.publishRosterEvidence(ctx, convID, routeEvidence, items, keys, owners, membership)
-		} else {
+		if !settled {
 			work.Verified = false
 			work.Phase = "members"
 			work.Next = 0
@@ -1350,7 +1337,7 @@ func (imp *Importer) captureObservations(
 	accountID string,
 	bridgePrefix string,
 	sum *ImportSummary,
-) bool {
+) {
 	success := true
 	results, err := imp.obs.capture(ctx, participantID, u, captureContext{
 		SourceID: sourceID, AccountID: accountID, Network: ch.Network,
@@ -1367,7 +1354,7 @@ func (imp *Importer) captureObservations(
 	recorded := false
 	for _, result := range results {
 		if ctx.Err() != nil {
-			return false
+			return
 		}
 		if result.Created {
 			recorded = true
@@ -1389,7 +1376,6 @@ func (imp *Importer) captureObservations(
 	}
 	if success && ctx.Err() == nil {
 		if rerr := imp.matcher.refreshSuggestionEvidence(ctx, participantID, recorded); rerr != nil {
-			success = false
 			if ctx.Err() == nil {
 				slog.Warn("beeper identity evidence refresh failed",
 					"participant_id", participantID, "beeper_user_id", u.ID, "error", rerr)
@@ -1397,7 +1383,6 @@ func (imp *Importer) captureObservations(
 			}
 		}
 	}
-	return success && ctx.Err() == nil
 }
 
 // recentIDWindow remembers the message IDs of the last few pages of a

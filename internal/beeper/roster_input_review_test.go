@@ -120,7 +120,7 @@ func TestRosterInputReviewChangedOwnerInSettledPrefix(t *testing.T) {
 	require.NoError(err)
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
-	work := &rosterWork{}
+	work := &rosterWork{Version: 1}
 	_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool { return work.Next >= 1 }}, &ImportSummary{}) //nolint:dogsled // Only the interruption matters.
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	_, err = newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_a:example.test", PhoneNumber: "+12025550124"})

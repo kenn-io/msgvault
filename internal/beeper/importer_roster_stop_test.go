@@ -601,7 +601,7 @@ func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
 	assert.True(linked(t, st, first, alias))
 }
 
-func TestRosterMembershipBatchesResumeAfterStop(t *testing.T) {
+func TestRosterMembershipResumesAfterStop(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite trigger requests stop at first membership write")
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
@@ -624,7 +624,7 @@ func TestRosterMembershipBatchesResumeAfterStop(t *testing.T) {
 	require.NotNil(state.Chats[chat.ID].RosterWork)
 	members := rosterMembers(t, st, sum.SourceID, chat.ID)
 	assert.NotEmpty(members)
-	assert.LessOrEqual(len(members), 16, "one in-flight batch may finish")
+	assert.LessOrEqual(len(members), 1, "only the in-flight member may finish")
 	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER stop_membership_batch`)
 	require.NoError(err)
 	imp = NewImporter(st, imp.client)

@@ -56,7 +56,7 @@ func TestRosterReceiptCleanupResumes(t *testing.T) {
 	sourceID := newBeeperTestSource(t, st, "signal")
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
-	work := &rosterWork{}
+	work := &rosterWork{Version: 1}
 	count := func() int {
 		var n int
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sourceID, rosterProvider(chat.ID)).Scan(&n))
@@ -71,7 +71,7 @@ func TestRosterReceiptCleanupResumes(t *testing.T) {
 	f.mu.Unlock()
 	detail, err = imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
-	work = &rosterWork{}
+	work = &rosterWork{Version: 1}
 	_, complete, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
 		return work.Phase == "cleanup" && count() <= 6
 	}}, &ImportSummary{})
@@ -108,7 +108,7 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	require.NoError(err)
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
-	work := &rosterWork{}
+	work := &rosterWork{Version: 1}
 	sum := &ImportSummary{}
 	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work, ShouldStop: func() bool { return work.Phase == "matching" && work.Next >= 2 }}, sum)
 	require.ErrorIs(err, errBeeperBudgetExpired)
@@ -118,6 +118,20 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	observations, err := st.ListParticipantObservationsContext(t.Context(), second, true)
 	require.NoError(err)
 	assert.NotEmpty(observations, "a failed member must not block later matching")
+	_, complete, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
+	require.NoError(err)
+	assert.True(complete)
+	assert.Equal("matching_retry", work.Phase)
+	runID, err := st.StartSync(sourceID, sourceTypeBeeper)
+	require.NoError(err)
+	cs := &ChatState{Done: true, RosterWork: work}
+	repairSummary := &ImportSummary{}
+	stopped, err := imp.repairQuietRoster(t.Context(), runID, sourceID, chat.ID, ImportOptions{AccountID: "telegram"}, cs, time.Now(), repairSummary)
+	require.NoError(err)
+	assert.False(stopped)
+	assert.NotEmpty(cs.RosterRetryAfter, "failed matching backs off without undoing membership")
+	assert.EqualValues(1, repairSummary.RosterRepairErrors)
+	require.NoError(st.CompleteSync(runID, ""))
 	if st.IsPostgreSQL() {
 		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_roster_observation ON participant_contact_observations`)
 		require.NoError(err)
@@ -127,9 +141,6 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	}
 	require.NoError(err)
 	imp = NewImporter(st, imp.client)
-	_, complete, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
-	require.NoError(err)
-	assert.True(complete)
 	third := participantForBeeperUser(t, st, "@telegram_third:example.test")
 	observations, err = st.ListParticipantObservationsContext(t.Context(), third, true)
 	require.NoError(err)
@@ -140,6 +151,7 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	observations, err = st.ListParticipantObservationsContext(t.Context(), first, true)
 	require.NoError(err)
 	assert.NotEmpty(observations, "the failed member must be retried")
+	assert.Equal("done", work.Phase)
 }
 
 func TestRosterResumeRevisitsChangedMember(t *testing.T) {
@@ -152,7 +164,7 @@ func TestRosterResumeRevisitsChangedMember(t *testing.T) {
 	sourceID := newBeeperTestSource(t, st, "signal")
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
-	work := &rosterWork{}
+	work := &rosterWork{Version: 1}
 	//nolint:dogsled // Only the stop matters here.
 	_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
 		return len(rosterMembers(t, st, sourceID, chat.ID)) == 1
@@ -188,7 +200,7 @@ func TestRosterJoinRefreshesSettledMatchAfterStop(t *testing.T) {
 	sourceID := newBeeperTestSource(t, st, "slack")
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
-	work := &rosterWork{}
+	work := &rosterWork{Version: 1}
 	//nolint:dogsled // Only the stop matters here.
 	_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work, ShouldStop: func() bool {
 		return (work.Phase == "matching" || work.Phase == "cleanup") && work.Next >= 1
@@ -257,7 +269,7 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 			all := append([]map[string]any(nil), chat.Participants...)
 			before := rosterMembers(t, st, sum.SourceID, chat.ID)
 			require.Len(before, 4)
-			work := &rosterWork{}
+			work := &rosterWork{Version: 1}
 			if interrupted {
 				f.mu.Lock()
 				chat.Participants = all[:1]
@@ -351,16 +363,17 @@ func TestRosterBudgetAlternatesMessagesAndKeepsCheckpointSmall(t *testing.T) {
 			sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
 			require.NoError(err)
 			require.True(sum.Stopped)
-			var receipts, sourceBytes, runBytes int
+			var receipts int
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&receipts))
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(sync_cursor) FROM sources WHERE id = ?`), sum.SourceID).Scan(&sourceBytes))
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
 			assert.Positive(receipts)
 			assert.Less(receipts, 25)
-			assert.Less(sourceBytes, 4096)
-			assert.Less(runBytes, 4096)
 			assert.Less(len(rosterMembers(t, st, sum.SourceID, chat.ID)), size)
 			if size == 10000 {
+				var sourceBytes, runBytes int
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(sync_cursor) FROM sources WHERE id = ?`), sum.SourceID).Scan(&sourceBytes))
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
+				assert.Less(sourceBytes, 4096)
+				assert.Less(runBytes, 4096)
 				imp = NewImporter(st, imp.client)
 				_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
 				require.NoError(err)

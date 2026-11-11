@@ -138,7 +138,7 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			_, _, err = imp.obs.services.resolveBridge(ctx, "telegram", "Telegram", "telegram")
 			require.NoError(err)
 
-			work := &rosterWork{}
+			work := &rosterWork{Version: 1}
 			when, at := logMessage("sql tx begin"), 1
 			wantObserved := 0
 			if tc.afterCapture {

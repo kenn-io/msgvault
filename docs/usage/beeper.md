@@ -391,8 +391,8 @@ A scheduled run keeps other sources on their cadence:
 
 - **Bounded runs.** One scheduled Beeper job works for at most 3 minutes
   across all accounts. It also stops early when another scheduled source has
-  waited for it for a minute. It stops between chats, history pages, members,
-  or membership batches. The next run continues message and roster work,
+  waited for it for a minute. It stops between chats, history pages, or member
+  updates. The next run continues message and roster work,
   including optional contact matching, from saved progress.
 - **Account rotation.** After stopping within an account, the next run starts
   with the following account. Each account retains its own progress.

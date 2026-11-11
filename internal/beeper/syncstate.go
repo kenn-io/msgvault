@@ -3,7 +3,6 @@ package beeper
 import (
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"time"
 )
 
@@ -119,15 +118,15 @@ func validateRosterProgress(s *SyncState) (*SyncState, error) {
 		}
 		work := chat.RosterWork
 		if work.Version != 1 {
-			return nil, fmt.Errorf("saved Beeper roster progress uses unsupported version %d; update msgvault to resume it", work.Version)
+			return nil, errors.New("saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume")
 		}
 		if work.Next < 0 {
-			return nil, errors.New("saved Beeper roster progress has an invalid position")
+			return nil, errors.New("saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume")
 		}
 		switch work.Phase {
 		case "", "members", "matching", "matching_retry", "cleanup", "done":
 		default:
-			return nil, fmt.Errorf("saved Beeper roster progress uses unsupported phase %q", work.Phase)
+			return nil, errors.New("saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume")
 		}
 	}
 	return s, nil

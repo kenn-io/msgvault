@@ -240,29 +240,6 @@ func (s *Store) SharedConversationCountContext(ctx context.Context, a, b int64) 
 	return len(shared), nil
 }
 
-// ConversationCandidateParticipantsContext finds roster members whose existing
-// identity candidates can gain evidence from this conversation.
-func (s *Store) ConversationCandidateParticipantsContext(ctx context.Context, conversationID int64) (map[int64]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.left_id, c.right_id FROM conversation_participants a
-		JOIN identity_match_candidates c ON c.left_kind = ? AND c.left_id = a.participant_id AND c.right_kind = ?
-		JOIN conversation_participants b ON b.conversation_id = a.conversation_id AND b.participant_id = c.right_id
-		WHERE a.conversation_id = ? AND c.state <> ?`, IdentityMatchParticipant, IdentityMatchParticipant, conversationID, IdentityMatchStateRejected)
-	if err != nil {
-		return nil, fmt.Errorf("find conversation identity candidates: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	ids := make(map[int64]bool)
-	for rows.Next() {
-		var left, right int64
-		if err := rows.Scan(&left, &right); err != nil {
-			return nil, fmt.Errorf("scan conversation identity candidates: %w", err)
-		}
-		ids[left], ids[right] = true, true
-	}
-	return ids, rows.Err()
-}
-
 // ParticipantUsernameSuggestionsContext lists the live cross-scope username
 // suggestions that have participantID at either endpoint, without evidence.
 func (s *Store) ParticipantUsernameSuggestionsContext(ctx context.Context, participantID int64) ([]IdentityMatchCandidate, error) {

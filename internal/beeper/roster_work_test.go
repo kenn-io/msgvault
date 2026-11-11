@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestRosterVerificationRejectsChangedSnapshot(t *testing.T) {
@@ -177,45 +176,6 @@ func TestRosterVerificationFailureKeepsExistingMembership(t *testing.T) {
 	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sourceID)
 	require.NoError(err)
 	assert.Contains(unresolved, chat.ID)
-}
-
-func TestRosterEnrichmentRetriesFailedMemberAfterLaterSuccess(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	testutil.SkipIfPostgres(t, "SQLite trigger injects one participant observation failure")
-	f := newFakeBeeper(t)
-	chat := observationChat("telegram", "Telegram", "@telegram_first:example.test",
-		map[string]any{"id": "@telegram_first:example.test", "username": "first"},
-		map[string]any{"id": "@telegram_second:example.test", "username": "second"})
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	sourceID := newBeeperTestSource(t, st, "telegram")
-	detail, err := imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	work := &rosterWork{}
-	opts := ImportOptions{AccountID: "telegram", rosterState: work}
-	sum := &ImportSummary{}
-	imp.res.accountID = "telegram"
-	first, err := imp.res.resolveUser(t.Context(), &detail.Participants.Items[0].User)
-	require.NoError(err)
-	second, err := imp.res.resolveUser(t.Context(), &detail.Participants.Items[1].User)
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_first_observation BEFORE INSERT ON participant_contact_observations WHEN NEW.participant_id = %d BEGIN SELECT RAISE(FAIL, 'injected failure'); END`, first))
-	require.NoError(err)
-	_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, opts, sum) //nolint:dogsled // Only the error is needed.
-	require.NoError(err)
-	assert.Positive(sum.Errors)
-	observations, err := st.ListParticipantObservationsContext(t.Context(), second, true)
-	require.NoError(err)
-	assert.NotEmpty(observations)
-	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_first_observation`)
-	require.NoError(err)
-	_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, opts, sum) //nolint:dogsled // Only the error is needed.
-	require.NoError(err)
-	observations, err = st.ListParticipantObservationsContext(t.Context(), first, true)
-	require.NoError(err)
-	assert.NotEmpty(observations)
-	assert.Equal("done", work.Phase)
 }
 
 func TestRosterResumeUsesMergedParticipant(t *testing.T) {
@@ -437,7 +397,7 @@ func TestSettledRosterKeepsNoMemberProgressAndRematchesAfterJoin(t *testing.T) {
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
 	imp = NewImporter(st, imp.client)
-	work := &rosterWork{}
+	work := &rosterWork{Version: 1}
 	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
 	require.True(complete)
@@ -508,7 +468,7 @@ func TestUnsupportedRosterVersionStopsImport(t *testing.T) {
 				require.NoError(st.CompleteSync(runID, blob))
 			}
 			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-			const want = "saved Beeper roster progress uses unsupported version 2; update msgvault to resume it"
+			const want = "saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume"
 			require.ErrorContains(err, want)
 			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Full: true})
 			require.ErrorContains(err, want)
@@ -529,7 +489,7 @@ func TestUnsupportedRosterSourceVersionStopsImport(t *testing.T) {
 	require.NoError(t, st.UpdateSourceSyncState(t.Context(), sourceID, `{"chats":{"room":{"roster_work":{"version":2}}}}`))
 	for _, full := range []bool{false, true} {
 		_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Full: full})
-		require.ErrorContains(t, err, "saved Beeper roster progress uses unsupported version 2")
+		require.ErrorContains(t, err, "saved Beeper progress is incompatible with this version of msgvault. Update msgvault to resume")
 	}
 }
 
@@ -597,7 +557,9 @@ func TestQuietMatchingRepairInvalidatesGoneRoute(t *testing.T) {
 	require.NoError(err)
 	cs := state.Chats[chat.ID]
 	require.True(cs.Done)
-	cs.RosterWork = &rosterWork{Version: 1, Phase: "matching", Verified: true}
+	detail, err := imp.client.GetChat(t.Context(), chat.ID)
+	require.NoError(err)
+	cs.RosterWork = &rosterWork{Version: 1, Signature: rosterSignature(detail, "signal"), Phase: "matching", Verified: true}
 	peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
 	person, _, err := st.CreatePersonFromParticipant(peer)
 	require.NoError(err)
@@ -741,4 +703,41 @@ func (imp *Importer) ensureConversation(ctx context.Context, _ int64, sourceID i
 	opts.rosterState = cs.RosterWork
 	id, complete, _, err := imp.ensureRosterWork(ctx, 0, sourceID, ch, opts, sum)
 	return id, complete, err
+}
+
+func TestReboundMemberRematchesSettledRoster(t *testing.T) {
+	t.Parallel()
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-48 * time.Hour)
+	// The phone chat is listed first, so each import rebinds ann before the
+	// username chat is visited.
+	phoneChat := budgetTestChat("!rebind-phone:example.test", 1, base)
+	phoneChat.Participants[1]["phoneNumber"] = "+12025550123"
+	usernameChat := budgetTestChat("!rebind-username:example.test", 1, base)
+	usernameChat.Participants[1]["username"] = "annhandle"
+	f.addChat(phoneChat)
+	f.addChat(usernameChat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	previous := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+	require.Equal("annhandle", observationValues(t, st, previous)[store.ContactAddressUsername])
+
+	f.mu.Lock()
+	phoneChat.Participants[1]["phoneNumber"] = "+12025550199"
+	f.mu.Unlock()
+	for _, chat := range []*fakeChat{phoneChat, usernameChat} {
+		f.appendMsg(chat.ID, fakeMsg{
+			ID: chat.ID + "-new", SortKey: 1, Timestamp: time.Now(), Text: "new", SenderID: "@signal_ann:beeper.local",
+		})
+	}
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+
+	current := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+	require.NotEqual(previous, current, "the changed phone rebinds ann")
+	assert.Equal("annhandle", observationValues(t, st, current)[store.ContactAddressUsername],
+		"the username chat must record ann's username for the new participant")
 }
