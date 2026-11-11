@@ -167,10 +167,10 @@ func TestPersonSweepStatusReportsRedactedOperationalState(t *testing.T) {
 	must.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO person_sweep_attempts
-			(id, run_id, person_id, lease_fence, mode, status, failure_class, commitment_failure_class,
+			(id, run_id, person_id, lease_fence, mode, status, failure_class,
 			 cursor_envelope_json, envelope_hash, program_fingerprint,
 			 catalog_fingerprint, provider_fingerprint, started_at, completed_at)
-		VALUES (?, ?, ?, 1, 'incremental', 'failed', 'invalid_output', 'provider_http',
+		VALUES (?, ?, ?, 1, 'incremental', 'failed', 'invalid_output',
 			 '[]', 'envelope-safe', 'program-safe', 'catalog-safe', 'provider-safe', ?, ?)`),
 		"status-attempt", "status-run", personID, now, now.Add(time.Second))
 	must.NoError(err)
@@ -212,11 +212,11 @@ func TestPersonSweepHistoryNeverPrintsEvidence(t *testing.T) {
 	must.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO person_sweep_attempts
-			(id, run_id, person_id, lease_fence, mode, status, failure_class,
+			(id, run_id, person_id, lease_fence, mode, status, failure_class, commitment_failure_class,
 			 cursor_envelope_json, envelope_hash, program_fingerprint,
 			 catalog_fingerprint, provider_fingerprint, generation_key,
 			 provider_request_id, started_at, completed_at)
-		VALUES (?, ?, ?, 1, 'incremental', 'failed', 'invalid_output',
+		VALUES (?, ?, ?, 1, 'incremental', 'failed', 'invalid_output', 'provider_http',
 			 '[]', 'envelope-safe', 'program-safe', 'catalog-safe', 'provider-safe',
 			 'literal-secret-evidence', 'literal-secret-response-text', ?, ?)`),
 		"history-attempt", "history-run", personID, now, now.Add(time.Second))
