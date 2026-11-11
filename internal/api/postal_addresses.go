@@ -13,12 +13,20 @@ import (
 // PostalAddressValidator is an explicit, transient external assessment. Store
 // has no provider capability, so no provider call can run under its locks.
 type PostalAddressValidator interface {
-	Check(ctx context.Context, input postaladdress.Input) (postaladdress.Assessment, error)
+	Check(ctx context.Context, input postaladdress.Input, previousResponseID string) (postaladdress.Assessment, error)
 }
 
 type PostalAddressAssessmentRequest struct {
-	Address       postaladdress.Input `json:"address"`
-	AllowExternal bool                `json:"allow_external,omitempty"`
+	Address            postaladdress.Input `json:"address"`
+	AllowExternal      bool                `json:"allow_external,omitempty"`
+	PreviousResponseID string              `json:"previous_response_id,omitempty"`
+}
+
+// postalAssessmentWire keeps wire presence separate from the published non-nullable value schema.
+type postalAssessmentWire struct {
+	Address            *postaladdress.Input `json:"address"`
+	AllowExternal      bool                 `json:"allow_external,omitempty"`
+	PreviousResponseID string               `json:"previous_response_id,omitempty"`
 }
 
 // SetPostalAddressValidator wires the operator's configured provider. It does
@@ -55,11 +63,7 @@ func (s *Server) handleAssessPersonPostalAddress(w http.ResponseWriter, r *http.
 		s.writePersonProfileValueError(w, err)
 		return
 	}
-	// Keep wire presence separate from the published non-nullable value schema.
-	var input struct {
-		Address       *postaladdress.Input `json:"address"`
-		AllowExternal bool                 `json:"allow_external,omitempty"`
-	}
+	var input postalAssessmentWire
 	decoder := jsontext.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20), json.RejectUnknownMembers(true))
 	if err := json.UnmarshalDecode(decoder, &input); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid postal address assessment request")
@@ -90,7 +94,7 @@ func (s *Server) handleAssessPersonPostalAddress(w http.ResponseWriter, r *http.
 			reason = "provider_not_configured"
 		default:
 			// Deliberate single call; never retry billed work or persist its result.
-			checked, err := s.postalAddressValidator.Check(r.Context(), *input.Address)
+			checked, err := s.postalAddressValidator.Check(r.Context(), *input.Address, input.PreviousResponseID)
 			assessment = checked
 			if err != nil && assessment.Status != postaladdress.StatusUnavailable {
 				assessment = postaladdress.Assess(*input.Address)

@@ -38,6 +38,16 @@ type googlePostalAddress struct {
 	AddressLines       []string `json:"addressLines"`
 }
 
+type googleValidateRequest struct {
+	Address            googlePostalAddress `json:"address"`
+	PreviousResponseID string              `json:"previousResponseId,omitempty"`
+}
+
+type googleResponse struct {
+	Result     *googleResult `json:"result"`
+	ResponseID string        `json:"responseId"`
+}
+
 type googleResult struct {
 	Verdict struct {
 		AddressComplete             bool   `json:"addressComplete"`
@@ -67,8 +77,9 @@ type googleResult struct {
 // Check maps only explicit postal components, enforces Google's 280-character
 // bound without truncation, and returns a transient assessment. API errors are
 // deliberately redacted: transport errors and provider bodies may echo input.
+// A follow-up check of the same address passes the first response's ID as previousResponseID.
 // Protocol: https://developers.google.com/maps/documentation/address-validation/reference/rest/v1/TopLevel/validateAddress
-func (v *GoogleValidator) Check(ctx context.Context, input Input) (Assessment, error) {
+func (v *GoogleValidator) Check(ctx context.Context, input Input, previousResponseID string) (Assessment, error) {
 	assessment := Assess(input)
 	assessment.Provider = "google"
 	payload, reason := googleRequest(assessment.Proposed)
@@ -94,9 +105,7 @@ func (v *GoogleValidator) Check(ctx context.Context, input Input) (Assessment, e
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	data, err := json.Marshal(struct {
-		Address googlePostalAddress `json:"address"`
-	}{payload})
+	data, err := json.Marshal(googleValidateRequest{payload, previousResponseID})
 	if err != nil {
 		return fail("provider_request_failed", nil)
 	}
@@ -129,12 +138,11 @@ func (v *GoogleValidator) Check(ctx context.Context, input Input) (Assessment, e
 	if err != nil || len(body) > maxGoogleResponse {
 		return fail("provider_response_invalid", ctx.Err())
 	}
-	var decoded struct {
-		Result *googleResult `json:"result"`
-	}
+	var decoded googleResponse
 	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Result == nil || decoded.Result.Address == nil {
 		return fail("provider_response_invalid", nil)
 	}
+	assessment.ResponseID = decoded.ResponseID
 	return googleAssessment(assessment, *decoded.Result), nil
 }
 

@@ -624,7 +624,7 @@ func projectPostalAddress(address store.PersonAddress) (projectedProperty, bool,
 // means the row has nothing to render and its existing occurrence, if any, is
 // left as residue.
 func postalAddressValue(address store.PersonAddress) (string, *string, error) {
-	_, snapshot, err := postaladdress.DecodeOriginalInput(address.OriginalValue)
+	_, snapshot, err := postaladdress.DecodeStoredOriginalInput(address.OriginalValue)
 	if err != nil {
 		return "", nil, err
 	}

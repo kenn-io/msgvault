@@ -19,7 +19,7 @@ export function postalInputKey(input: Input): string {
   return JSON.stringify(postalInputFields.map(field => input[field] ?? ''));
 }
 
-export type PostalAssessmentCheck = (personID: number, input: Input, external: boolean, signal: AbortSignal) => Promise<Assessment>;
+export type PostalAssessmentCheck = (personID: number, input: Input, external: boolean, signal: AbortSignal, previousResponseID?: string) => Promise<Assessment>;
 export interface PostalCandidate { input: Input; sourceRef: string; personRevision: number }
 
 let editorGeneration = 0;
@@ -36,6 +36,7 @@ export class PostalReviewSession {
   private abort?: AbortController;
   private resultKey: string | undefined;
   private resultExternal: boolean | undefined;
+  private firstResponseID: string | undefined;
 
   constructor(readonly personID: number, private readonly assess: PostalAssessmentCheck) {}
 
@@ -51,6 +52,13 @@ export class PostalReviewSession {
 
   destroy(): void { this.live = false; this.invalidate(); }
 
+  /** Google requires every follow-up check of an address to carry the first response's ID. */
+  private async assessWithFirstResponseID(input: Input, external: boolean, signal: AbortSignal, current: () => boolean): Promise<Assessment> {
+    const result = await this.assess(this.personID, input, external, signal, this.firstResponseID);
+    if (current()) this.firstResponseID ??= result.response_id;
+    return result;
+  }
+
   async check(input: Input, external: boolean): Promise<void> {
     const key = postalInputKey(input);
     if (!this.live || this.pending || (this.result && key === this.resultKey && external === this.resultExternal)) return;
@@ -63,7 +71,7 @@ export class PostalReviewSession {
     this.result = null;
     this.error = null;
     try {
-      const result = await this.assess(this.personID, { ...input }, external, abort.signal);
+      const result = await this.assessWithFirstResponseID({ ...input }, external, abort.signal, current);
       if (!current()) return;
       if (postalInputKey(result.original) !== key) {
         throw new Error('mismatched postal assessment');

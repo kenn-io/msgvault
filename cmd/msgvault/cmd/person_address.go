@@ -41,7 +41,7 @@ func newPersonAddressCommand() *cobra.Command {
 		}
 		return writePostalJSON(cmd.OutOrStdout(), addresses)
 	}}
-	var assessInput string
+	var assessInput, previousResponseID string
 	var external bool
 	assess := &cobra.Command{Use: "assess <person-id>", Short: "Assess a JSON address without saving", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := positivePersonCLIArg(cmd, args[0], personValue)
@@ -49,7 +49,7 @@ func newPersonAddressCommand() *cobra.Command {
 			return err
 		}
 		var input generated.Input
-		if err := readPostalCLIInput(assessInput, &input); err != nil {
+		if err := readPostalAssessInput(assessInput, previousResponseID, external, &input); err != nil {
 			return err
 		}
 		if input.AddressKind == "" {
@@ -63,7 +63,7 @@ func newPersonAddressCommand() *cobra.Command {
 			return err
 		}
 		defer func() { _ = client.Close() }()
-		body := generated.AssessPersonPostalAddressBody{Address: input, AllowExternal: &external}
+		body := postalAssessBody(input, external, previousResponseID)
 		response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.AssessPersonPostalAddressResp, error) {
 			return api.AssessPersonPostalAddressWithResponse(cmd.Context(), &generated.AssessPersonPostalAddressRequestOptions{PathParams: &generated.AssessPersonPostalAddressPath{ID: id}, Body: &body})
 		})
@@ -72,8 +72,7 @@ func newPersonAddressCommand() *cobra.Command {
 		}
 		return writePostalJSON(cmd.OutOrStdout(), response.JSON200)
 	}}
-	assess.Flags().StringVar(&assessInput, "input", "", "Path to raw postal input JSON")
-	assess.Flags().BoolVar(&external, "external", false, "Explicitly send postal components to the configured provider")
+	addPostalAssessFlags(assess, &assessInput, &external, &previousResponseID)
 	var applyInput string
 	var revision, supersede int64
 	var add bool
@@ -129,6 +128,28 @@ func newPersonAddressCommand() *cobra.Command {
 	apply.Flags().Int64Var(&supersede, "supersede", 0, "Address ID to replace")
 	command.AddCommand(list, assess, apply)
 	return command
+}
+
+func addPostalAssessFlags(command *cobra.Command, input *string, external *bool, previousResponseID *string) {
+	command.Flags().StringVar(input, "input", "", "Path to raw postal input JSON")
+	command.Flags().BoolVar(external, "external", false, "Explicitly send postal components to the configured provider")
+	command.Flags().StringVar(previousResponseID, "previous-response-id", "", "response_id from the first --external assessment of this address; use on a follow-up check")
+}
+
+// readPostalAssessInput reads the draft; a follow-up ID is meaningful only to a provider call.
+func readPostalAssessInput(path, previousResponseID string, external bool, input *generated.Input) error {
+	if previousResponseID != "" && !external {
+		return errors.New("--previous-response-id requires --external")
+	}
+	return readPostalCLIInput(path, input)
+}
+
+func postalAssessBody(input generated.Input, external bool, previousResponseID string) generated.AssessPersonPostalAddressBody {
+	body := generated.AssessPersonPostalAddressBody{Address: input, AllowExternal: &external}
+	if previousResponseID != "" {
+		body.PreviousResponseID = &previousResponseID
+	}
+	return body
 }
 
 func writePostalJSON(out io.Writer, value any) error {

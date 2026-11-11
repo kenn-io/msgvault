@@ -551,6 +551,8 @@ components:
           items:
             type: string
           type: array
+        response_id:
+          type: string
         status:
           type: string
       required:
@@ -14023,6 +14025,8 @@ components:
           $ref: "#/components/schemas/Input"
         allow_external:
           type: boolean
+        previous_response_id:
+          type: string
       required:
         - address
       type: object

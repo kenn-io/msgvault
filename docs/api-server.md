@@ -761,6 +761,9 @@ The response is an assessment with `original`, `proposed`, `status`,
 `normalized_unverified` and `needs_review`. Explicit external consent can
 produce `validated` or `unavailable`, and transient `provider` and `checked_at`
 fields. A configured provider is never called unless `allow_external` is true.
+A follow-up check of an edited address sets `previous_response_id` to the
+`response_id` of the first external assessment, not the latest; it is ignored
+unless `allow_external` is true. The CLI exposes this as `--previous-response-id`.
 Provider failure still returns a usable local proposal. The response is
 `200 OK` with `Cache-Control: no-store`; assessment never saves an address.
 See [configuration](configuration.md#postal-address-validation) for activation,

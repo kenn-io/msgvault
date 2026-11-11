@@ -51,7 +51,7 @@ func TestGoogleMapsOnlyExplicitPostalFields(t *testing.T) {
 	}))
 	defer server.Close()
 	v := GoogleValidator{APIKey: "synthetic-secret", Client: server.Client(), endpoint: server.URL}
-	got, err := v.Check(t.Context(), input)
+	got, err := v.Check(t.Context(), input, "")
 	require.NoError(t, err)
 	assert := assert.New(t)
 	assert.Equal(map[string]any{"address": map[string]any{"regionCode": "CA", "postalCode": "V0A 0A0", "locality": "Example City", "administrativeArea": "BC", "addressLines": []any{"12 Example Street", "Unit 7", "PO Box 9"}}}, payload)
@@ -62,6 +62,25 @@ func TestGoogleMapsOnlyExplicitPostalFields(t *testing.T) {
 	assert.Equal(StatusNeedsReview, got.Status)
 	assert.Equal("google", got.Provider)
 	assert.NotNil(got.CheckedAt)
+}
+
+func TestGoogleCarriesResponseIDToFollowUpChecks(t *testing.T) {
+	var payload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload = nil
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		_, _ = io.WriteString(w, strings.Replace(googleClean, `{"result"`, `{"responseId":"google-response-1","result"`, 1))
+	}))
+	defer server.Close()
+	v := GoogleValidator{APIKey: "synthetic-secret", Client: server.Client(), endpoint: server.URL}
+	input := Input{StreetAddress: "12 Example Street", CountryCode: "CA"}
+	first, err := v.Check(t.Context(), input, "")
+	require.NoError(t, err)
+	assert.Equal(t, "google-response-1", first.ResponseID)
+	assert.NotContains(t, payload, "previousResponseId")
+	_, err = v.Check(t.Context(), input, first.ResponseID)
+	require.NoError(t, err)
+	assert.Equal(t, "google-response-1", payload["previousResponseId"])
 }
 
 func TestGoogleRequiresCompleteConfirmedFineGrainedResult(t *testing.T) {
@@ -88,7 +107,7 @@ func TestGoogleRequiresCompleteConfirmedFineGrainedResult(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			v, calls := googleTestValidator(t, 200, tc.body)
 			input := Input{StreetAddress: "12 Example St", CountryCode: "CA"}
-			got, err := v.Check(t.Context(), input)
+			got, err := v.Check(t.Context(), input, "")
 			require.NoError(t, err)
 			assert := assert.New(t)
 			assert.Equal(tc.status, got.Status)
@@ -109,7 +128,7 @@ func TestGoogleBoundsInputWithoutTruncation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v, calls := googleTestValidator(t, 200, googleClean)
-			got, err := v.Check(t.Context(), tc.input)
+			got, err := v.Check(t.Context(), tc.input, "")
 			require.NoError(t, err)
 			assert := assert.New(t)
 			assert.Equal(StatusNeedsReview, got.Status)
@@ -118,7 +137,7 @@ func TestGoogleBoundsInputWithoutTruncation(t *testing.T) {
 		})
 	}
 	v, calls := googleTestValidator(t, 200, googleClean)
-	_, err := v.Check(t.Context(), Input{StreetAddress: strings.Repeat("é", 278), CountryCode: "CA"})
+	_, err := v.Check(t.Context(), Input{StreetAddress: strings.Repeat("é", 278), CountryCode: "CA"}, "")
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), calls.Load(), "280 Unicode characters, not bytes")
 }
@@ -137,7 +156,7 @@ func TestGoogleFailuresAreBoundedRedactedAndNeverRetried(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v, calls := googleTestValidator(t, tc.status, tc.body)
-			got, err := v.Check(t.Context(), Input{StreetAddress: "12 Private Lane", CountryCode: "CA"})
+			got, err := v.Check(t.Context(), Input{StreetAddress: "12 Private Lane", CountryCode: "CA"}, "")
 			require.Error(t, err)
 			assert := assert.New(t)
 			assert.NotContains(err.Error(), "synthetic-secret")
@@ -152,7 +171,7 @@ func TestGoogleFailuresAreBoundedRedactedAndNeverRetried(t *testing.T) {
 func TestGoogleDoesNotSendWithoutKeyOrAfterCancellation(t *testing.T) {
 	v, calls := googleTestValidator(t, 200, googleClean)
 	v.APIKey = ""
-	got, err := v.Check(t.Context(), Input{StreetAddress: "12 Example Street", CountryCode: "CA"})
+	got, err := v.Check(t.Context(), Input{StreetAddress: "12 Example Street", CountryCode: "CA"}, "")
 	require := require.New(t)
 	require.Error(err)
 	assert := assert.New(t)
@@ -161,7 +180,7 @@ func TestGoogleDoesNotSendWithoutKeyOrAfterCancellation(t *testing.T) {
 	v.APIKey = "synthetic-secret"
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	got, err = v.Check(ctx, Input{StreetAddress: "12 Example Street", CountryCode: "CA"})
+	got, err = v.Check(ctx, Input{StreetAddress: "12 Example Street", CountryCode: "CA"}, "")
 	require.ErrorIs(err, context.Canceled)
 	assert.Equal(StatusUnavailable, got.Status)
 	assert.Zero(calls.Load())
@@ -181,7 +200,7 @@ func TestGoogleTimeoutAndRedirectDoNotLeakKey(t *testing.T) {
 				}),
 			}}
 			started := time.Now()
-			got, err := v.Check(t.Context(), Input{StreetAddress: "12 Example Street", CountryCode: "CA"})
+			got, err := v.Check(t.Context(), Input{StreetAddress: "12 Example Street", CountryCode: "CA"}, "")
 			require.ErrorIs(err, context.DeadlineExceeded)
 			assert.Equal(StatusUnavailable, got.Status)
 			assert.Equal(20*time.Millisecond, time.Since(started), "the request ends at its deadline in synthetic time")
@@ -201,7 +220,7 @@ func TestGoogleTimeoutAndRedirectDoNotLeakKey(t *testing.T) {
 		}))
 		defer source.Close()
 		v := GoogleValidator{APIKey: "synthetic-secret", Client: source.Client(), endpoint: source.URL}
-		got, err := v.Check(t.Context(), Input{StreetAddress: "12 Example Street", CountryCode: "CA"})
+		got, err := v.Check(t.Context(), Input{StreetAddress: "12 Example Street", CountryCode: "CA"}, "")
 		require.Error(t, err)
 		assert.Equal(t, StatusUnavailable, got.Status)
 		assert.Zero(t, destinationCalls.Load())
@@ -224,7 +243,7 @@ func TestGoogleRetainedComponentsNeedReview(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v, calls := googleTestValidator(t, 200, tc.body)
-			got, err := v.Check(t.Context(), tc.input)
+			got, err := v.Check(t.Context(), tc.input, "")
 			require.NoError(t, err)
 			assert.Equal(t, StatusNeedsReview, got.Status)
 			assert.Equal(t, int32(1), calls.Load())

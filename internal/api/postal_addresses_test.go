@@ -20,10 +20,12 @@ import (
 type countingPostalValidator struct {
 	calls       int
 	unavailable bool
+	previousID  string
 }
 
-func (v *countingPostalValidator) Check(_ context.Context, input postaladdress.Input) (postaladdress.Assessment, error) {
+func (v *countingPostalValidator) Check(_ context.Context, input postaladdress.Input, previousResponseID string) (postaladdress.Assessment, error) {
 	v.calls++
+	v.previousID = previousResponseID
 	assessment := postaladdress.Assess(input)
 	assessment.Provider = "google"
 	assessment.Status = postaladdress.StatusValidated
@@ -67,6 +69,18 @@ func TestPostalAddressAssessmentRequiresExplicitConsent(t *testing.T) {
 	profile, err := wrapped.GetPersonProfileContext(t.Context(), id)
 	require.NoError(err)
 	assert.Empty(profile.Addresses, "an assessment must never persist provider output")
+}
+
+func TestPostalAddressAssessmentForwardsPreviousResponseID(t *testing.T) {
+	srv, wrapped := newIdentityLinkTestServer(t)
+	id := seedAPIPerson(t, wrapped.Store)
+	srv.cfg.People.AddressValidation = config.PostalAddressConfig{Enabled: true, Provider: "google"}
+	validator := &countingPostalValidator{}
+	srv.SetPostalAddressValidator(validator)
+	body := []byte(`{"address":{"address_kind":"postal","street_address":"12 Example St","country_code":"CA"},"allow_external":true,"previous_response_id":"first-google-id"}`)
+	response := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(id), body, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "first-google-id", validator.previousID)
 }
 
 func TestPostalAddressUnavailableStates(t *testing.T) {
@@ -309,23 +323,6 @@ func TestPostalAddressAssessmentRequiresPresentAddress(t *testing.T) {
 			profile, err := wrapped.GetPersonProfileContext(t.Context(), id)
 			require.NoError(err)
 			assert.Empty(profile.Addresses, "assessment requests must not store addresses")
-		})
-	}
-}
-
-func TestPostalAddressReadsRejectUnsupportedStoredSnapshots(t *testing.T) {
-	for _, raw := range []string{"msgvault:postal-input:v2\n{}"} {
-		t.Run(raw, func(t *testing.T) {
-			srv, wrapped := newIdentityLinkTestServer(t)
-			id := seedAPIPerson(t, wrapped.Store)
-			address, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, StreetAddress: new("12 Example Street"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
-			require.NoError(t, err)
-			_, err = wrapped.DB().ExecContext(t.Context(), wrapped.Rebind(`UPDATE person_addresses SET original_value = ? WHERE id = ?`), raw, address.Envelope.ID)
-			require.NoError(t, err)
-			for _, path := range []string{personProfilePath(id), personProfilePath(id) + "/history"} {
-				response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
-				assert.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
-			}
 		})
 	}
 }

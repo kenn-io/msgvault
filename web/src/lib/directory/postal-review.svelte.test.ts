@@ -40,6 +40,34 @@ describe('postalAddressText', () => {
 });
 
 describe('PostalReviewSession', () => {
+  it('ignores the response ID from an invalidated check', async () => {
+    const first = deferred<Assessment>(), second = deferred<Assessment>();
+    const check = vi.fn().mockImplementationOnce(() => first.promise).mockImplementationOnce(() => second.promise).mockImplementation(async (_id: number, draft: Input) => ({ ...await assessment(draft), response_id: 'third' }));
+    const state = new PostalReviewSession(7, check);
+    const stale = state.check(input, true);
+    state.invalidate();
+    const changed = { ...input, street_address: '12 Example Street' };
+    const current = state.check(changed, true);
+    first.resolve({ ...await assessment(input), response_id: 'stale-id' });
+    await stale;
+    second.resolve({ ...await assessment(changed), response_id: 'current-id' });
+    await current;
+    state.invalidate();
+    const editedAgain = { ...changed, locality: 'Example City' };
+    await state.check(editedAgain, true);
+    expect(check).toHaveBeenLastCalledWith(7, editedAgain, true, expect.any(AbortSignal), 'current-id');
+  });
+
+  it('carries the first Google response ID when checking an edited address', async () => {
+    const check = vi.fn(async (_personID: number, draft: Input, _external: boolean, _signal: AbortSignal) => ({ ...await assessment(draft), response_id: 'first-google-id' }));
+    const state = new PostalReviewSession(7, check);
+    await state.check(input, true);
+    state.invalidate();
+    const changed = { ...input, street_address: '12 Example Street' };
+    await state.check(changed, true);
+    expect(check).toHaveBeenLastCalledWith(7, changed, true, expect.any(AbortSignal), 'first-google-id');
+  });
+
   it('suppresses duplicate pending and displayed checks without saving anything', async () => {
     const reply = deferred<Assessment>();
     const check = vi.fn(async (_personID: number, _input: Input, _external: boolean, _signal: AbortSignal) => reply.promise);

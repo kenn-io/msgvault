@@ -6,4 +6,5 @@ import type { Input } from "./input";
 export interface PostalAddressAssessmentRequest {
   address: Input;
   allow_external?: boolean;
+  previous_response_id?: string;
 }

@@ -60,6 +60,17 @@ func TestPostalAddressCLIAssessmentExplicitConsent(t *testing.T) {
 	}
 }
 
+func TestPostalAddressCLIAssessmentFollowsUpWithFirstResponseID(t *testing.T) {
+	daemon := newPersonBriefTestDaemon(t, `{"original":{"address_kind":"postal"},"proposed":{"address_kind":"postal"},"status":"normalized_unverified","reason_codes":[],"original_extended_parts":[],"proposed_extended_parts":[]}`)
+	output, err := runPostalCLI(daemon.ctx, t, "assess", "7", "--input", postalCLIInput(t), "--external", "--previous-response-id", "first-google-id")
+	require.NoError(t, err, output)
+	var body struct {
+		PreviousResponseID string `json:"previous_response_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(daemon.body), &body))
+	assert.Equal(t, "first-google-id", body.PreviousResponseID)
+}
+
 func TestPostalAddressCLIApplyRequiresExplicitRevisionAndTarget(t *testing.T) {
 	daemon := newPersonBriefTestDaemon(t, `{"person":{"id":7,"vcard_uid":"person-7","participant_ids":[],"revision":5},"addresses":[],"contact_points":[],"names":[],"dates":[],"categories":[],"media":[]}`)
 	input := postalCLIInput(t)

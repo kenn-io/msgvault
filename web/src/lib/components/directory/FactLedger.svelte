@@ -126,7 +126,7 @@
               {:else if sensitivity === 'sensitive' && !controller.revealedClaims.has(row.rowToken)}
                 <p>Sensitive fact value hidden.</p><Button label="Reveal sensitive fact value" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />
               {:else}
-                {#if !row.postalReview}<dl><div><dt>Submitted value</dt><dd>{row.submittedValue}</dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized value</dt><dd>{row.normalizedValue}</dd></div>{/if}</dl>{/if}
+                {#if !row.postalReview?.assessment}<dl><div><dt>Submitted value</dt><dd>{row.submittedValue}</dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized value</dt><dd>{row.normalizedValue}</dd></div>{/if}</dl>{/if}
                 {#if row.postalReview}
                   {@const review = row.postalReview}
                   <div class="postal-claim-review">

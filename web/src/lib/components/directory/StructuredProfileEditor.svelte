@@ -66,7 +66,7 @@
   const initialController = untrack(() => controller);
   const initialPersonID = untrack(() => controller.person?.id ?? controller.structuredProfile?.person.id ?? 0);
   const reviewedETag = initialCandidate ? `"person-${initialPersonID}-r${initialCandidate.personRevision}"` : untrack(() => controller.structuredProfileETag ?? undefined);
-  const review = new PostalReviewSession(initialPersonID, (id, input, external, signal) => initialController.assessPostalAddress(id, input, external, signal));
+  const review = new PostalReviewSession(initialPersonID, (id, input, external, signal, previousResponseID) => initialController.assessPostalAddress(id, input, external, signal, previousResponseID));
   onDestroy(() => review.destroy());
   $effect(() => { if (controller !== initialController || (controller.person?.id ?? controller.structuredProfile?.person.id ?? 0) !== initialPersonID) review.destroy(); });
   const currentName = initialCurrent as GeneratedPersonName | undefined;

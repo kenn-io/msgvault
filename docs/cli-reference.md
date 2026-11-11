@@ -3268,7 +3268,7 @@ commands return JSON. `<person-id>` is a saved profile ID.
 | Command | Purpose |
 |---|---|
 | `person address list <person-id>` | List current postal rows with local assessments |
-| `person address assess <person-id> --input <path> [--external]` | Check one JSON draft without saving; external consent defaults to false |
+| `person address assess <person-id> --input <path> [--external [--previous-response-id <id>]]` | Check one JSON draft without saving; external consent defaults to false |
 | `person address apply <person-id> --input <path> --revision <n> --add` | Add one address at the reviewed person revision |
 | `person address apply <person-id> --input <path> --revision <n> --supersede <address-id>` | Replace the explicitly selected address row while preserving history |
 
@@ -3292,13 +3292,22 @@ msgvault person address assess 7 --input address.json
 msgvault person address assess 7 --input address.json --external
 ```
 
+After correcting a draft, re-check it with the `response_id` from the *first*
+external assessment of that address. Keep passing the first ID on every
+follow-up, not the latest one. The flag requires `--external`; the server sends
+it to the provider as the previous response.
+
+```bash
+msgvault person address assess 7 --input corrected.json --external \
+  --previous-response-id <first-response_id>
+```
+
 For apply, provide the address request object, not the assessment response. It
 accepts the same components plus optional `original_input` containing the full
 raw draft before any correction. Preserve this object from the first entry or
-from the existing row's `assessment.original` when replacing an address. Without
-it, the server snapshots the submitted components. `envelope` can carry
-`ordinal`, `pref`, `type_label`, and `type_tokens`. Apply creates a user-declared
-value, clears imported identity and confidence, and preserves only a
+from the existing row's `assessment.original` when replacing an address.
+`envelope` can carry `ordinal`, `pref`, `type_label`, and `type_tokens`. Apply
+creates a user-declared value, clears imported identity and confidence, and preserves only a
 `person-fact-claim:` source reference as claim origin.
 
 After reviewing the proposed components, save them in `reviewed-address.json`

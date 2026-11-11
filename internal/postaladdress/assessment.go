@@ -49,6 +49,8 @@ type Assessment struct {
 	ProposedExtendedParts []string   `json:"proposed_extended_parts"`
 	Provider              string     `json:"provider,omitempty"`
 	CheckedAt             *time.Time `json:"checked_at,omitzero" nullable:"false"`
+	// ResponseID is the provider's ID for this check; follow-up checks of an edited address carry the first one.
+	ResponseID string `json:"response_id,omitempty"`
 }
 
 func (in *Input) fields() []*string {

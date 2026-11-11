@@ -66,7 +66,7 @@ func SetPostalFields(current postaladdress.Input, fields [9]**string) {
 // ResolvedPostalInput separates current data from the captured source.
 func (a PersonAddress) ResolvedPostalInput() (postaladdress.Input, postaladdress.Input, error) {
 	current := a.PostalInput()
-	original, snapshot, err := postaladdress.DecodeOriginalInput(a.OriginalValue)
+	original, snapshot, err := postaladdress.DecodeStoredOriginalInput(a.OriginalValue)
 	if err != nil {
 		return current, original, err
 	}

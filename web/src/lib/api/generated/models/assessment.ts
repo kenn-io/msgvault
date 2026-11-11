@@ -11,6 +11,7 @@ export interface Assessment {
   proposed_extended_parts: string[];
   provider?: string;
   reason_codes: string[];
+  response_id?: string;
   status: string;
   [key: string]: unknown;
 }

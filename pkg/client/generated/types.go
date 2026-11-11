@@ -491,6 +491,7 @@ type Assessment struct {
 	ProposedExtendedParts []string   `json:"proposed_extended_parts" validate:"required"`
 	Provider              *string    `json:"provider,omitzero"`
 	ReasonCodes           []string   `json:"reason_codes" validate:"required"`
+	ResponseID            *string    `json:"response_id,omitzero"`
 	Status                string     `json:"status" validate:"required"`
 }
 
@@ -13996,8 +13997,9 @@ type PingInfo struct {
 }
 
 type PostalAddressAssessmentRequest struct {
-	Address       Input `json:"address"`
-	AllowExternal *bool `json:"allow_external,omitempty"`
+	Address            Input   `json:"address"`
+	AllowExternal      *bool   `json:"allow_external,omitempty"`
+	PreviousResponseID *string `json:"previous_response_id,omitzero"`
 }
 
 func (p PostalAddressAssessmentRequest) Validate() error {

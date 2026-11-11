@@ -252,9 +252,9 @@ export class DirectoryProfileController {
     }
     if (deleted) await this.options.onDeleted?.(this.personID);
   }
-  async assessPostalAddress(personID: number, address: Input, external: boolean, signal: AbortSignal): Promise<Assessment> {
+  async assessPostalAddress(personID: number, address: Input, external: boolean, signal: AbortSignal, previousResponseID?: string): Promise<Assessment> {
     if (this.disposed || personID !== this.personID) throw new Error('Address editor is no longer active');
-    const result = await generatedAssessPersonPostalAddress({ id: this.personID }, { address, allow_external: external }, { ...this.client, signal });
+    const result = await generatedAssessPersonPostalAddress({ id: this.personID }, { address, allow_external: external, previous_response_id: previousResponseID }, { ...this.client, signal });
     if (!result.data) throw new Error('Address check unavailable');
     return result.data;
   }
