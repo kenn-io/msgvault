@@ -184,16 +184,24 @@ func TestEmailCalendarActivityCandidates(t *testing.T) {
 		Conversation: &ConversationPersistData{SourceConversationID: "imported-event"},
 	})
 	requirements.NoError(err)
+	count, err := st.CountNativeMessagesForSource(imported.ID)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), count)
 	for _, source := range []struct {
 		id  int64
 		typ string
-	}{{icsSource, "ics"}, {gcalData.Message.SourceID, "gcal"}} {
+	}{{icsSource, "ics"}, {gcalData.Message.SourceID, "gcal"}, {imported.ID, "message_import"}} {
 		destination, err := st.GetOrCreateSource(source.typ, "merged-"+source.typ)
 		requirements.NoError(err)
 		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: source.id, IntoSourceID: destination.ID})
 		requirements.NoError(err)
+		if source.typ == "message_import" {
+			count, err := st.CountNativeMessagesForSource(destination.ID)
+			requirements.NoError(err)
+			assertions.Equal(int64(1), count)
+		}
 	}
-	for _, id := range []int64{icsEvents[0], gcalID} {
+	for _, id := range []int64{icsEvents[0], gcalID, importedID} {
 		var marked bool
 		requirements.NoError(st.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM source_merge_archive_only_messages WHERE message_id=?)`, id).Scan(&marked))
 		requirements.True(marked)

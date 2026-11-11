@@ -27,7 +27,7 @@ const MaxRawBytes = 64 << 20
 
 // EmailInviteSQL identifies email-derived events; source merges preserve source types.
 func EmailInviteSQL(messageType, sourceType, archiveOnly string) string {
-	return fmt.Sprintf("(COALESCE(%s, '') = 'calendar_event' AND COALESCE(%s, '') NOT IN ('gcal', 'ics') AND %s)", messageType, sourceType, archiveOnly)
+	return fmt.Sprintf("(COALESCE(%s, '') = 'calendar_event' AND COALESCE(%s, '') NOT IN ('gcal', 'ics', 'message_import') AND %s)", messageType, sourceType, archiveOnly)
 }
 
 // ICSMetadata records the accepted revision independently of the retained raw.
