@@ -1309,12 +1309,9 @@ func (imp *Importer) captureRosterObservations(ctx context.Context, sourceID int
 		roster.work.Routes = routes
 		roster.work.Settled = false
 		roster.work.MatchingPending = true
-		roster.work.Members = make(map[string]rosterMemberWork, len(roster.members))
-		for _, member := range roster.members {
-			roster.work.Members[member.key] = rosterMemberWork{
-				Inputs: rosterMemberSignature(member.user, roster.detail, opts.AccountID, roster.bridgePrefix),
-			}
-		}
+		// Matched members are filled in below; the next visit's roster
+		// pass fills the inputs of any member still unmatched.
+		roster.work.Members = make(map[string]rosterMemberWork)
 	}
 	if roster.work.Settled {
 		return nil
@@ -1329,6 +1326,9 @@ func (imp *Importer) captureRosterObservations(ctx context.Context, sourceID int
 		}
 		if imp.captureObservations(ctx, member.participantID, member.user, roster.detail,
 			sourceID, opts.AccountID, roster.bridgePrefix, sum) {
+			if progress.Inputs == "" {
+				progress.Inputs = rosterMemberSignature(member.user, roster.detail, opts.AccountID, roster.bridgePrefix)
+			}
 			progress.Enriched = true
 			roster.work.Members[member.key] = progress
 		}
