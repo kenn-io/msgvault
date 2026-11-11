@@ -124,6 +124,69 @@ func TestListReturnsCheckedConversationsWhenTheRequestDeadlinePasses(t *testing.
 	}
 }
 
+// commitmentPhaseEndingStore places context termination at the phase boundary
+// after real question discovery, without racing a timer or replacing that read.
+type commitmentPhaseEndingStore struct {
+	*store.Store
+
+	ctx       *endingContext
+	between   bool
+	readerErr error
+}
+
+func (s *commitmentPhaseEndingStore) LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error] {
+	return func(yield func(store.LoopConversation, error) bool) {
+		for conv, err := range s.Store.LoopConversationsContext(ctx, q) {
+			if !yield(conv, err) || err != nil {
+				return
+			}
+		}
+		if s.between {
+			close(s.ctx.done)
+		}
+	}
+}
+
+func (s *commitmentPhaseEndingStore) ListPersonCommitmentsContext(context.Context, int64, time.Time, int, bool) ([]store.PersonCommitment, error) {
+	if s.readerErr != nil {
+		return nil, s.readerErr
+	}
+	close(s.ctx.done)
+	return nil, s.ctx.Err()
+}
+
+func TestListPreservesContextSemanticsAcrossCommitmentPhase(t *testing.T) {
+	readErr := errors.New("synthetic commitment database read failure")
+	for _, tc := range []struct {
+		name                       string
+		between                    bool
+		ending, readerErr, wantErr error
+	}{
+		{"deadline_inside_commitments", false, context.DeadlineExceeded, nil, nil},
+		{"deadline_between_phases", true, context.DeadlineExceeded, nil, nil},
+		{"cancellation_between_phases", true, context.Canceled, nil, context.Canceled},
+		{"live_database_error", false, nil, readErr, readErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			f := storetest.New(t)
+			waiting := f.PersistEmail(storetest.EmailSpec{Thread: "waiting", From: me, To: []string{alex},
+				Subject: "Contract review", Body: "Can you review the contract?", SentAt: ago(5 * day)})
+			ctx := &endingContext{Context: t.Context(), done: make(chan struct{}), err: tc.ending}
+			st := &commitmentPhaseEndingStore{Store: f.Store, ctx: ctx, between: tc.between, readerErr: tc.readerErr}
+			result, err := loops.List(ctx, st, loops.Options{}, now)
+			if tc.wantErr != nil {
+				r.ErrorIs(err, tc.wantErr)
+				return
+			}
+			r.NoError(err)
+			a.True(result.CoverageIncomplete, "deadline coverage includes the commitment read phase")
+			r.Len(result.Loops, 1, "checked questions survive a commitment deadline")
+			a.Equal(waiting, result.Loops[0].Anchor.ID)
+		})
+	}
+}
+
 func TestListRecomputesEvidenceFromBeforeLoopTextRulesWereVersioned(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
