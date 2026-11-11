@@ -896,6 +896,15 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 			if err != nil || sum.Stopped {
 				return
 			}
+			// A stop or cancellation before capture starts leaves its retry
+			// state pending without undoing finished message work.
+			if opts.stopRequested() {
+				sum.Stopped = true
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
 			err = imp.captureRosterObservations(ctx, sourceID, opts, observations, sum)
 			if errors.Is(err, errBeeperBudgetExpired) {
 				sum.Stopped = true
@@ -1212,7 +1221,9 @@ func (imp *Importer) ensureConversation(
 		if ctx.Err() != nil {
 			return convID, false, chatMembership{}, nil, ctx.Err()
 		}
-		if verifyErr == nil && (verified == nil || verified.ID != ch.ID || verified.AccountID != opts.AccountID || verified.Participants.HasMore || rosterSignature(verified, opts.AccountID) != signature) {
+		// The signature covers the payload's account. A mismatch with the
+		// requested account is a route-evidence failure, not a changed roster.
+		if verifyErr == nil && (verified == nil || verified.ID != ch.ID || verified.Participants.HasMore || rosterSignature(verified, opts.AccountID) != signature) {
 			verifyErr = errors.New("beeper roster changed or became incomplete during verification")
 			work.DetailBacked = true
 		}

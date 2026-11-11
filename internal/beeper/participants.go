@@ -129,7 +129,10 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 	}
 	kind := identityKind(u)
 	hasPhone := kind == identityPhone
-	if e, ok := r.rich[identifier]; ok && (e.byPhone || !hasPhone) {
+	// The roster calls this only after the saved binding failed to match, so
+	// an explicit phone always takes the phone rung; a cached phone may be
+	// stale.
+	if e, ok := r.rich[identifier]; ok && !hasPhone {
 		return e.pid, nil
 	}
 	switch kind {
@@ -140,8 +143,9 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 		}
 		// Upgrading an earlier email-based resolution: both rows are the
 		// same Beeper user, so fold the email participant's history into the
-		// phone one (which dedupes with SMS/WhatsApp archives).
-		if e, ok := r.rich[identifier]; ok && e.pid != pid {
+		// phone one (which dedupes with SMS/WhatsApp archives). A previous
+		// phone participant stays separate, because numbers can be recycled.
+		if e, ok := r.rich[identifier]; ok && !e.byPhone && e.pid != pid {
 			if err := r.store.MergeParticipantsContext(ctx, e.pid, pid); err != nil {
 				if !errors.Is(err, store.ErrPersonBindingConflict) {
 					return 0, err

@@ -1390,11 +1390,19 @@ func TestThrottledMissingChatProbesDoNotBlockListedChats(t *testing.T) {
 	provider := f.handler()
 	var mu sync.Mutex
 	probes := 0
+	throttled := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/chats/!throttled-a:example.test" || r.URL.Path == "/v1/chats/!throttled-b:example.test" {
 			mu.Lock()
-			probes++
+			active := throttled
+			if active {
+				probes++
+			}
 			mu.Unlock()
+			if !active {
+				provider(w, r)
+				return
+			}
 			w.Header().Set("Retry-After", "60")
 			http.Error(w, `{"error":"unavailable"}`, http.StatusServiceUnavailable)
 			return
@@ -1408,7 +1416,12 @@ func TestThrottledMissingChatProbesDoNotBlockListedChats(t *testing.T) {
 	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "account-a", NoMedia: true})
 	requirements.NoError(err)
 
-	// The throttled chats leave the listing; every run is now an unfiltered tail scan.
+	// The seeding import verifies each listed roster, so the throttling
+	// starts only once the chats leave the listing; every run is now an
+	// unfiltered tail scan.
+	mu.Lock()
+	throttled = true
+	mu.Unlock()
 	f.mu.Lock()
 	f.chats = []*fakeChat{healthy}
 	f.mu.Unlock()

@@ -526,3 +526,63 @@ func TestRichUpgradeDoesNotAbsorbContactOwner(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(pid, again, "the identifier now points at the new resolution")
 }
+
+// A roster that reports a changed phone must not be answered by a phone
+// binding cached earlier in the same run, whichever roster came first.
+func TestEarlierRosterDoesNotHideChangedPhone(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		earlierPhone string
+	}{
+		{name: "ID-only first"},
+		{name: "old phone first", earlierPhone: "+12025550123"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert, require := assert.New(t), require.New(t)
+			f := newFakeBeeper(t)
+			base := time.Now().Add(-48 * time.Hour)
+			earlier := budgetTestChat("!earlier-roster:example.test", 1, base)
+			if tc.earlierPhone != "" {
+				earlier.Participants[1]["phoneNumber"] = tc.earlierPhone
+			}
+			changed := budgetTestChat("!changed-phone:example.test", 1, base)
+			changed.Participants[1]["phoneNumber"] = "+12025550123"
+			f.addChat(earlier)
+			f.addChat(changed)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+			require.NoError(err)
+			previous := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+
+			f.mu.Lock()
+			changed.Participants[1]["phoneNumber"] = "+12025550199"
+			f.mu.Unlock()
+			for _, ch := range []*fakeChat{earlier, changed} {
+				f.appendMsg(ch.ID, fakeMsg{
+					ID: ch.ID + "-new", SortKey: 1, Timestamp: time.Now(), Text: "new",
+					SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+				})
+			}
+			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+			require.NoError(err)
+
+			current := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+			assert.NotEqual(previous, current, "the changed phone must resolve on the phone rung")
+			phoneOf := func(id int64) string {
+				var phone string
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+					`SELECT COALESCE(phone_number, '') FROM participants WHERE id = ?`), id).Scan(&phone))
+				return phone
+			}
+			assert.Equal("+12025550199", phoneOf(current))
+			assert.Equal("+12025550123", phoneOf(previous), "the earlier phone participant stays unmerged")
+			var sender int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+				`SELECT sender_id FROM messages WHERE source_message_id = ?`), changed.ID+"-new").Scan(&sender))
+			assert.Equal(current, sender, "the new message belongs to the changed phone")
+		})
+	}
+}

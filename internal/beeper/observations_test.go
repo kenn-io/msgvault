@@ -544,7 +544,9 @@ func TestImportResetsRunLocalObservationDedupe(t *testing.T) {
 	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM participant_contact_observations`)
 	require.NoError(err, "remove observations between import runs")
 
-	second, err := imp.Import(ctx, ImportOptions{AccountID: "telegram", NoMedia: true})
+	// Saved roster progress skips unchanged members. A full sync clears it,
+	// so the same addresses reach the recorder again.
+	second, err := imp.Import(ctx, ImportOptions{AccountID: "telegram", NoMedia: true, Full: true})
 	require.NoError(err, "second Import")
 	assert.Equal(int64(3), second.ObservationsRecorded,
 		"a reusable Importer must start each import with empty run-local dedupe state")
