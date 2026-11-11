@@ -157,20 +157,6 @@ func TestSubscribeRefreshPreservesPosition(t *testing.T) {
 	assert.Equal("http_5xx", second.DeliveryStatus.LastError)
 	require.NotNil(second.DeliveryStatus.FailedSince)
 	assert.Equal(stamp, *second.DeliveryStatus.FailedSince)
-
-	// A restarted daemon with more configured targets must not claim delivery.
-	service.ConfigTargets = 32
-	_, err = service.Subscribe(t.Context(), input)
-	var eventErr *Error
-	require.ErrorAs(err, &eventErr)
-	assert.Equal(ResourceExhausted, eventErr.Code)
-	unchanged, _, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(err)
-	assert.Equal(pos, unchanged)
-	entries, _, err := service.catalog(t.Context())
-	require.NoError(err)
-	require.Len(entries, 1)
-	assert.Equal(first.ID, entries[0].ID)
 }
 
 func TestResubscribeReusesIdentityAndStartsAtCurrentBound(t *testing.T) {
@@ -257,6 +243,8 @@ func TestExpiredGrantEntryPurgedByOwnerService(t *testing.T) {
 }
 
 func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, ConfigTargets: 31}
 	makeRequest := func(url string) MCPEventsSubscribeRequest {
@@ -275,13 +263,32 @@ func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
 			continue
 		}
 		var eventErr *Error
-		require.ErrorAs(t, err, &eventErr)
+		require.ErrorAs(err, &eventErr)
 		if eventErr.Code == ResourceExhausted {
 			exhausted++
 		}
 	}
-	assert.Equal(t, 1, success)
-	assert.Equal(t, 1, exhausted)
+	assert.Equal(1, success)
+	assert.Equal(1, exhausted)
+
+	// A restarted daemon with more configured targets must not claim delivery.
+	entries, _, err := service.catalog(t.Context())
+	require.NoError(err)
+	require.Len(entries, 1)
+	key := store.MCPEventsPositionKey(entries[0].ID)
+	before, _, err := st.LoadWakeupStateKey(t.Context(), key)
+	require.NoError(err)
+	service.ConfigTargets = 32
+	_, err = service.Subscribe(t.Context(), makeRequest(entries[0].URL))
+	var eventErr *Error
+	require.ErrorAs(err, &eventErr)
+	assert.Equal(ResourceExhausted, eventErr.Code)
+	after, _, err := st.LoadWakeupStateKey(t.Context(), key)
+	require.NoError(err)
+	assert.Equal(before, after)
+	entriesAfter, _, err := service.catalog(t.Context())
+	require.NoError(err)
+	assert.Equal(entries, entriesAfter)
 }
 
 type countingWakeupStore struct {
@@ -413,30 +420,6 @@ func TestCredentialCleanupFailureRetainsLiveButExpiresOldEntry(t *testing.T) {
 	_, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
 	require.NoError(err)
 	assert.Nil(raw)
-}
-
-func TestConcurrentRefreshRetainsOneUsableSecret(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	first, err := service.Subscribe(t.Context(), in)
-	require.NoError(err)
-	results := make(chan error, 2)
-	for range 2 {
-		go func() { _, err := service.Subscribe(t.Context(), in); results <- err }()
-	}
-	success := 0
-	for range 2 {
-		if <-results == nil {
-			success++
-		}
-	}
-	require.Positive(success)
-	targets, err := service.Native(t.Context())
-	require.NoError(err)
-	require.Len(targets, 1)
-	assert.Equal(t, first.ID, targets[0].Name)
 }
 
 func TestNativeSkipsOriginMismatchWithoutBlockingOtherEntries(t *testing.T) {

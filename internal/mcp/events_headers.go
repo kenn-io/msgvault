@@ -42,7 +42,7 @@ func isEventsNameMethod(method string) bool {
 // plain-text "request body exceeds N bytes".
 func eventsNameHeaderHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || !isEventsNameMethod(r.Header.Get("Mcp-Method")) {
+		if r.Header.Get("Mcp-Protocol-Version") < "2026-07-28" || r.Method != http.MethodPost || !isEventsNameMethod(r.Header.Get("Mcp-Method")) {
 			next.ServeHTTP(w, r)
 			return
 		}

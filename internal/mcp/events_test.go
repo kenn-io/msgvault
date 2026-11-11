@@ -22,16 +22,12 @@ type eventTestBackend struct {
 	subscribe   mcpevents.MCPEventsSubscribeRequest
 	unsubscribe mcpevents.MCPEventsUnsubscribeRequest
 	listErr     error
-	disabled    bool
 }
 
 func (b *eventTestBackend) MCPEventsList(context.Context) (mcpevents.MCPEventsListResult, error) {
 	b.calls++
 	if b.listErr != nil {
 		return mcpevents.MCPEventsListResult{}, b.listErr
-	}
-	if b.disabled {
-		return mcpevents.MCPEventsListResult{Events: []mcpevents.MCPEventsDefinition{}}, nil
 	}
 	return mcpevents.MCPEventsListResult{Enabled: true, Events: mcpevents.Definitions()}, nil
 }

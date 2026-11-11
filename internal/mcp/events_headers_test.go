@@ -24,6 +24,7 @@ func TestEventsNameGuardRejectsBeforeHandler(t *testing.T) {
 			called := false
 			h := eventsNameHeaderHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { called = true; w.WriteHeader(http.StatusNoContent) }))
 			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(tc.body))
+			r.Header.Set("Mcp-Protocol-Version", modernProtocolVersion)
 			r.Header.Set("Mcp-Method", "events/subscribe")
 			r.Header.Set("Mcp-Name", tc.header)
 			w := httptest.NewRecorder()

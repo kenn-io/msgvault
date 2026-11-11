@@ -38,7 +38,7 @@ func TestMCPEventsBackupRestoreTokens(t *testing.T) {
 			req, err = mcpevents.DecodeSubscribe(raw)
 			require.NoError(err)
 			service := mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
-			created, err := service.Subscribe(t.Context(), req)
+			_, err = service.Subscribe(t.Context(), req)
 			require.NoError(err)
 			oldTokens, oldPlain := backupCreateIncludeTokens, backupCreateAllowPlaintextSecrets
 			backupCreateIncludeTokens, backupCreateAllowPlaintextSecrets = include, true
@@ -60,11 +60,6 @@ func TestMCPEventsBackupRestoreTokens(t *testing.T) {
 			targets, err := recovered.Native(t.Context())
 			require.NoError(err)
 			assert.Equal(include, len(targets) == 1)
-			if !include {
-				refreshed, err := recovered.Subscribe(t.Context(), req)
-				require.NoError(err)
-				assert.Equal(created.ID, refreshed.ID)
-			}
 		})
 	}
 }

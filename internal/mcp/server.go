@@ -585,14 +585,7 @@ func newHTTPHandlerWithPolicy(opts ServeOptions, httpOpts HTTPOptions, policy *i
 	)
 	var transport http.Handler = httpServer
 	if opts.Events != nil && !opts.DelegatedOnly {
-		guarded := eventsNameHeaderHandler(transport)
-		transport = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Header.Get("Mcp-Protocol-Version") >= "2026-07-28" {
-				guarded.ServeHTTP(w, r)
-			} else {
-				httpServer.ServeHTTP(w, r)
-			}
-		})
+		transport = eventsNameHeaderHandler(transport)
 	}
 	protected := http.NewCrossOriginProtection().Handler(bearerAuthHandler(httpOpts.APIKey, transport))
 	return noStoreHandler(protected), closeHandler

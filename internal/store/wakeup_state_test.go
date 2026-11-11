@@ -59,7 +59,7 @@ func TestEventsPositionSurvivesWakeupPruneAndNameCollision(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
 	position := store.WakeupState{At: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	key := "mcpevents:v1:pos:sub-x"
+	key := store.MCPEventsPositionKey("sub-x")
 	ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, position)
 	require.NoError(err)
 	require.True(ok)

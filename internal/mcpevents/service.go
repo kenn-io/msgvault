@@ -222,7 +222,7 @@ func (s *Service) removeEntry(ctx context.Context, entries []entry, raw []byte, 
 	return s.Store.SwapMCPEventsCatalog(ctx, raw, next, "", nil, id)
 }
 
-// purgeExpired removes expired entries and positions without needing the key.
+// purgeExpired removes expired entries and positions.
 func (s *Service) purgeExpired(ctx context.Context) error {
 	for {
 		entries, raw, err := s.catalog(ctx)

@@ -81,7 +81,6 @@ func TestMCPEventsRejectsRemoteClient(t *testing.T) {
 }
 
 func TestEventsRouterSerialGate(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	cfg := &config.Config{HomeDir: t.TempDir()}

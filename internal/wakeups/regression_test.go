@@ -560,21 +560,17 @@ func TestNativePersonRecoveryClearsOnlyQuietStatus(t *testing.T) {
 	now := time.Now().UTC()
 	for _, tc := range []struct {
 		name, category string
-		failures       int
 		clear          bool
 	}{
-		{"recovered", "person_unavailable", 0, true},
-		{"delivery failure", "http_5xx", 0, false},
+		{"recovered", "person_unavailable", true},
+		{"delivery failure", "http_5xx", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
 			key := store.MCPEventsPositionKey(tc.name)
 			failed := now.Add(-time.Hour)
-			initial := store.WakeupState{At: now, Failures: tc.failures, LastError: tc.category, FailedSince: &failed}
-			if tc.failures > 0 {
-				initial.NextAttemptAt = now.Add(time.Hour)
-			}
+			initial := store.WakeupState{At: now, LastError: tc.category, FailedSince: &failed}
 			ok, err := f.Store.AdvanceWakeupStateKey(t.Context(), key, nil, initial)
 			require.NoError(err)
 			require.True(ok)
