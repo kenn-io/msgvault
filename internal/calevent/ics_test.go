@@ -202,8 +202,7 @@ func TestICSRecurrenceAndBounds(t *testing.T) {
 		{"all day default", "DTSTART;VALUE=DATE:20270314", "single", "2027-03-15T04:00:00Z", ""},
 		{"all day duration", "DTSTART;VALUE=DATE:20270314\r\nDURATION:P2D", "single", "2027-03-16T04:00:00Z", ""},
 		{"civil duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:P1D", "single", "2027-03-14T13:00:00Z", ""},
-		{"lowercase civil duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:p1d", "single", "2027-03-14T13:00:00Z", ""},
-		{"lowercase elapsed duration", "DTSTART:20270313T090000Z\r\nDURATION:pt1h", "single", "2027-03-13T10:00:00Z", ""},
+		{"lowercase duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:p1dt1h", "single", "2027-03-14T14:00:00Z", ""},
 		{"elapsed duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:PT24H\r\nRRULE:FREQ=DAILY;COUNT=2", "series", "2027-03-14T14:00:00Z", ""},
 		{"sparse exception cancel", "RECURRENCE-ID;VALUE=DATE:20270314\r\nSTATUS:CANCELLED", "exception", "", "20270314"},
 	} {

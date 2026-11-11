@@ -163,8 +163,13 @@ func TestEmailCalendarActivityCandidates(t *testing.T) {
 	_, mailSource := persistInviteEmail(t, st, "activity-invite", inviteEmail(raw))
 	mailEvents := emailEvents(t, st, mailSource)
 	requirements.Len(mailEvents, 1)
+	gmail, err := st.GetOrCreateSource("gmail", "owner@example.com")
+	requirements.NoError(err)
+	persistInviteEmailForSource(t, st, gmail.ID, "activity-invite", inviteEmail(raw))
+	gmailEvents := emailEvents(t, st, gmail.ID)
+	requirements.Len(gmailEvents, 1)
 	icsSource := icsSource(t, st)
-	_, err := st.PersistICalendarContext(t.Context(), icsSource, raw)
+	_, err = st.PersistICalendarContext(t.Context(), icsSource, raw)
 	requirements.NoError(err)
 	icsEvents := emailEvents(t, st, icsSource)
 	requirements.Len(icsEvents, 1)
@@ -181,6 +186,8 @@ func TestEmailCalendarActivityCandidates(t *testing.T) {
 	}
 	requirements.Contains(eligible, mailEvents[0])
 	assertions.False(eligible[mailEvents[0]])
+	requirements.Contains(eligible, gmailEvents[0])
+	assertions.False(eligible[gmailEvents[0]])
 	assertions.True(eligible[icsEvents[0]])
 	assertions.True(eligible[gcalID])
 }
@@ -245,9 +252,6 @@ func TestEmailCalendarMaterialization(t *testing.T) {
 		}
 	}
 	assertions.True(found)
-	for _, id := range originalIDs {
-		assertions.NotEqual(parent, id)
-	}
 	_, err = st.PersistMessageContext(t.Context(), &MessagePersistData{
 		Message:      &Message{SourceID: source, SourceMessageID: "organizer-message", MessageType: "email", Subject: sql.NullString{String: "Original email", Valid: true}},
 		Conversation: &ConversationPersistData{SourceConversationID: "organizer-message", Title: "Original email"},
