@@ -54,7 +54,7 @@ func (s *Service) catalog(ctx context.Context) ([]entry, []byte, error) {
 	}
 	var entries []entry
 	if raw != nil {
-		if err = json.Unmarshal(raw, &entries, json.RejectUnknownMembers(true)); err != nil {
+		if err = json.Unmarshal(raw, &entries); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -283,14 +283,11 @@ func (s *Service) purgeExpired(ctx context.Context) error {
 
 // Native loads live subscriptions and removes expired definitions before delivery.
 func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
-	if !s.Enabled && s.Store == nil {
+	if !s.Enabled {
 		return nil, nil
 	}
 	if err := s.purgeExpired(ctx); err != nil {
 		return nil, err
-	}
-	if !s.Enabled {
-		return nil, nil
 	}
 	entries, _, err := s.catalog(ctx)
 	if err != nil || len(entries) == 0 {

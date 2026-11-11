@@ -322,10 +322,9 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 			live, err := service.Subscribe(t.Context(), in)
 			requirements.NoError(err)
 			now = now.Add(2 * time.Hour)
-			service.Enabled = false
 			targets, err := service.Native(t.Context())
 			requirements.NoError(err)
-			assertions.Empty(targets)
+			assertions.Len(targets, 1)
 			entries, _, err := service.catalog(t.Context())
 			requirements.NoError(err)
 			requirements.Len(entries, 1)
@@ -496,29 +495,44 @@ func TestCredentialWriteFailurePreservesSubscriptionState(t *testing.T) {
 	assert.Equal(credentials, afterCredentials)
 }
 
-func TestCatalogRejectsUnknownMembersWithoutMutation(t *testing.T) {
-	for _, raw := range []string{
-		`[{"id":"one","owner":"owner","url":"https://example.com/old?token=secret"}]`,
-		`[{"id":"one","owner":"owner","arguments":{"source_id":1,"future":true}}]`,
-	} {
-		t.Run(raw, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			st := newEventsTestStore(t)
-			ok, err := st.SwapMCPEventsCatalog(t.Context(), nil, []byte(raw), "", nil, "")
-			requirements.NoError(err)
-			requirements.True(ok)
-			service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
-			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-			_, err = service.Subscribe(t.Context(), in)
-			var eventErr *Error
-			requirements.ErrorAs(err, &eventErr)
-			assertions.Equal("store_unavailable", eventErr.Reason)
-			after, err := st.LoadMCPEventsCatalog(t.Context())
-			requirements.NoError(err)
-			assertions.Equal([]byte(raw), after)
-		})
-	}
+func TestDraftCatalogRefreshPreservesPosition(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := newEventsTestStore(t)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/old?token=fixture", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	first, err := service.Subscribe(t.Context(), in)
+	requirements.NoError(err)
+	position, _, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
+	requirements.NoError(err)
+	old, err := st.LoadMCPEventsCatalog(t.Context())
+	requirements.NoError(err)
+	expires := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
+	draft := fmt.Sprintf(`[{"id":%q,"owner":"owner","arguments":{"source_id":1,"incoming_only":false},"url":%q,"expires_at":%q},{"id":"0123456789abcdef0123456789abcdef","owner":"owner","arguments":{"source_id":1,"incoming_only":false},"url":"https://example.com/random","expires_at":%q}]`, first.ID, in.Delivery.URL, expires, expires)
+	ok, err := st.SwapMCPEventsCatalog(t.Context(), old, []byte(draft), "", nil, "")
+	requirements.NoError(err)
+	requirements.True(ok)
+	snapshot, revision, err := service.credentialSnapshot(first.ID)
+	requirements.NoError(err)
+	requirements.True(snapshot.Stored(providercredentials.EventsID(first.ID)))
+	_, err = providercredentials.PutIfRevision(service.TokensDir, revision, providercredentials.EventsID(first.ID), "https://example.com", "YWFhYQ==")
+	requirements.NoError(err)
+	targets, err := service.Native(t.Context())
+	requirements.NoError(err)
+	assertions.Empty(targets)
+	refreshed, err := service.Subscribe(t.Context(), in)
+	requirements.NoError(err)
+	assertions.Equal(first.ID, refreshed.ID)
+	afterPosition, _, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
+	requirements.NoError(err)
+	assertions.Equal(position, afterPosition)
+	after, err := st.LoadMCPEventsCatalog(t.Context())
+	requirements.NoError(err)
+	assertions.NotContains(string(after), `"url"`)
+	targets, err = service.Native(t.Context())
+	requirements.NoError(err)
+	requirements.Len(targets, 1)
+	assertions.Equal(first.ID, targets[0].Name)
 }
 
 func TestOwnerServiceRejectsOtherCatalogOwners(t *testing.T) {

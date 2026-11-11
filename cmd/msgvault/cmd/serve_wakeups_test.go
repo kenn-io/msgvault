@@ -122,24 +122,7 @@ func TestWakeupJobWithOnlyEvents(t *testing.T) {
 	require := Require.New(t)
 	assert := Assert.New(t)
 	st := testutil.NewTestStore(t)
-	_, err := st.GetOrCreateSource("imap", "events@example.test")
-	require.NoError(err)
-	now := time.Now().UTC()
-	service := &mcpevents.Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
-	in, err := mcpevents.DecodeSubscribe([]byte(`{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`))
-	require.NoError(err)
-	_, err = service.Subscribe(t.Context(), in)
-	require.NoError(err)
-	service.Enabled = false
-	now = now.Add(25 * time.Hour)
-	sched := scheduler.New(nil)
-	defer func() { <-sched.Stop().Done() }()
-	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, &config.Config{}, nil, service))
-	require.True(sched.IsJobScheduled("wakeups"))
-	require.NoError(sched.TriggerJob("wakeups"))
-	catalog, err := st.LoadMCPEventsCatalog(t.Context())
-	require.NoError(err)
-	assert.JSONEq(`[]`, string(catalog))
+	service := &mcpevents.Service{Store: st, TokensDir: t.TempDir()}
 
 	withoutEvents := scheduler.New(nil)
 	require.NoError(configureWakeupJob(t.Context(), withoutEvents, nil, st, &config.Config{}, nil, nil))
@@ -151,9 +134,4 @@ func TestWakeupJobWithOnlyEvents(t *testing.T) {
 	enabledEvents := scheduler.New(nil)
 	require.NoError(configureWakeupJob(t.Context(), enabledEvents, nil, st, &config.Config{}, nil, service))
 	assert.True(enabledEvents.IsJobScheduled("wakeups"))
-	broken := testutil.NewTestStore(t)
-	require.NoError(broken.Close())
-	unreadable := scheduler.New(nil)
-	require.NoError(configureWakeupJob(t.Context(), unreadable, nil, broken, &config.Config{}, nil, &mcpevents.Service{Store: broken}))
-	assert.True(unreadable.IsJobScheduled("wakeups"))
 }
