@@ -52,7 +52,7 @@ type factArgs struct {
 
 func factClassify(code string) bool {
 	switch code {
-	case "invalid_target", "invalid_limit", "invalid_offset", "invalid_target_kind", "invalid_target_key", "invalid_fact_target", "person_fact_conflict", "person_facts_unavailable", "tracking_unavailable":
+	case "invalid_target", "invalid_limit", "invalid_offset", "invalid_target_kind", "invalid_target_key", "invalid_fact_target", "person_fact_conflict", "person_facts_unavailable", "tracking_unavailable", "server_busy":
 		return true
 	}
 	return false

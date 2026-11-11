@@ -142,6 +142,13 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 	requirements.NoError(err)
 	assertions.False(operationOutput[generated.PersonTracking](t, result).Tracked)
 
+	for _, key := range []string{"", " k"} {
+		_, err := backend.OperationDisclosure(t.Context(), "set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": key, "pinned": true})
+		var refusal *mcpserver.OperationRefusalError
+		requirements.ErrorAs(err, &refusal)
+		assertions.Equal("invalid_arguments", refusal.Code)
+	}
+
 	for _, tc := range []struct {
 		args map[string]any
 		code string
@@ -178,17 +185,20 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 	assertions.JSONEq(`{"error":"person_profile_not_found","operation_may_have_completed":false}`, string(data))
 
 	for _, tc := range []struct {
-		name string
-		args map[string]any
-		body string
+		name   string
+		args   map[string]any
+		body   string
+		status int
+		want   string
 	}{
-		{"set_person_tracking", map[string]any{"person_id": id, "tracked": false}, `{"error":"person_profile_failed"}`},
-		{"set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": "k", "pinned": true}, `{"error":"person_fact_failed"}`},
+		{"set_person_tracking", map[string]any{"person_id": id, "tracked": false}, `{"error":"person_profile_failed"}`, http.StatusInternalServerError, `{"error":"operation_refused","operation_may_have_completed":true}`},
+		{"set_person_fact_pin", map[string]any{"person_id": id, "kind": "attribute", "key": "k", "pinned": true}, `{"error":"person_fact_failed"}`, http.StatusInternalServerError, `{"error":"operation_refused","operation_may_have_completed":true}`},
+		{"set_person_tracking", map[string]any{"person_id": id, "tracked": false}, `{"error":"server_busy"}`, http.StatusServiceUnavailable, `{"error":"server_busy","operation_may_have_completed":false}`},
 	} {
 		stub := &daemonMCPOperations{client: newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 			assertions.Equal(http.MethodPut, r.Method)
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(tc.status)
 			_, _ = w.Write([]byte(tc.body))
 		}), supported: []string{"set_person_tracking", "set_person_fact_pin"}}
 		result, err = stub.ExecuteOperation(t.Context(), tc.name, tc.args)
@@ -196,7 +206,7 @@ func TestPersonFactTrackingAndRefusals(t *testing.T) {
 		requirements.True(result.IsError)
 		data, err = json.Marshal(result.Output)
 		requirements.NoError(err)
-		assertions.JSONEq(`{"error":"operation_refused","operation_may_have_completed":true}`, string(data))
+		assertions.JSONEq(tc.want, string(data))
 	}
 }
 
