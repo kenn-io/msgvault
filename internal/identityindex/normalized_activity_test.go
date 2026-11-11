@@ -304,13 +304,13 @@ func TestSparseNormalizedActivityExcludesEmailInviteEvents(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	root, db := writeRelationshipBaseFixture(t, true)
 	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
-		firstMessageID: 1, messageCount: 3, memberCount: 2,
+		firstMessageID: 1, messageCount: 4, memberCount: 2,
 		startDate: "2026-01-01", messageType: "calendar_event", conversationType: "calendar",
 	})
 	replaceRelationshipParquet(t, db, root, "sources", `SELECT i::BIGINT AS id, 'owner@example.test' AS account_email,
-  CASE i WHEN 1 THEN 'gmail' WHEN 2 THEN 'gcal' ELSE 'ics' END AS source_type FROM range(1, 4) t(i)`)
+  CASE i WHEN 1 THEN 'gmail' WHEN 2 THEN 'gcal' WHEN 3 THEN 'ics' ELSE 'message_import' END AS source_type FROM range(1, 5) t(i)`)
 	path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }
-	messages := "(SELECT * REPLACE (id::BIGINT AS source_id) FROM " + readParquetRelation([]string{path("messages")}, true) + ")"
+	messages := "(SELECT * REPLACE (id::BIGINT AS source_id, id = 1 AS archive_only) FROM " + readParquetRelation([]string{path("messages")}, true) + ")"
 	sql := buildSparseRelationshipActivitySQL(path, messages, readParquetRelation([]string{path("message_recipients")}, false), 2026, "")
 	rows, err := db.QueryContext(t.Context(), "SELECT DISTINCT message_id FROM ("+sql+") ORDER BY message_id")
 	requirements.NoError(err)
@@ -322,5 +322,5 @@ func TestSparseNormalizedActivityExcludesEmailInviteEvents(t *testing.T) {
 		got = append(got, id)
 	}
 	requirements.NoError(rows.Err())
-	assertions.Equal([]int64{2, 3}, got)
+	assertions.Equal([]int64{2, 3, 4}, got)
 }
