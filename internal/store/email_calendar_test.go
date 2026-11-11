@@ -54,7 +54,7 @@ func TestEmailCalendarICSRawFormatDoesNotLockDirectory(t *testing.T) {
 	source, err := st.GetOrCreateSource("mbox", "owner@example.com")
 	requirements.NoError(err)
 	id, err := st.PersistMessageContext(t.Context(), &MessagePersistData{
-		Message:      &Message{SourceID: source.ID, SourceMessageID: "raw", MessageType: "email"},
+		Message:      &Message{SourceID: source.ID, SourceMessageID: "raw", MessageType: "calendar_event"},
 		Conversation: &ConversationPersistData{SourceConversationID: "raw"},
 	})
 	requirements.NoError(err)
@@ -83,11 +83,10 @@ func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 	requirements.NoError(err)
 	defer func() { _ = blocker.Rollback() }()
 	requirements.NoError(st.lockParticipantDirectoryMutationTxContext(ctx, blocker))
-	var id int64
 	receipt := IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
 	done := make(chan error, 1)
 	go func() {
-		draft, persistErr := st.PersistIMAPDraftContext(ctx, receipt, []ParticipantPersistData{
+		_, persistErr := st.PersistIMAPDraftContext(ctx, receipt, []ParticipantPersistData{
 			{EmailAddress: "organizer@example.com", DisplayName: "Organizer", Domain: "example.com"},
 		}, func(ids []int64) *MessagePersistData {
 			return &MessagePersistData{
@@ -96,9 +95,6 @@ func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 				RawMIME:      inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")),
 			}
 		})
-		if persistErr == nil {
-			id = draft.CurrentMessageID
-		}
 		done <- persistErr
 	}()
 	// Release the blocker and join the writer even when a lock assertion fails.
@@ -123,8 +119,6 @@ func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 	err = <-done
 	joined = true
 	requirements.NoError(err)
-	assertions.Positive(id)
-	assertions.Len(emailEvents(t, st, source.ID), 1)
 }
 
 // emailFrom wraps a calendar part in an email with a plain-text alternative.

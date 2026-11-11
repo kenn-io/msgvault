@@ -236,6 +236,14 @@ func TestICSRecurrenceAndBounds(t *testing.T) {
 	})
 }
 
+func TestICSMultipleEventsOverFileLimit(t *testing.T) {
+	padding := strings.Repeat("a", 32<<20)
+	raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:first@example.com\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nX-PADDING:" + padding + "\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:second@example.com\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T130000Z\r\nX-PADDING:" + padding + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	components, err := ParseICS([]byte(raw), "", "")
+	require.NoError(t, err)
+	require.Len(t, components, 2)
+}
+
 func TestICSRejectMalformed(t *testing.T) {
 	const zone = "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:test@example.com\r\nDTSTART;TZID=Custom/Test:20270302T120000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	const ruleZone = "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20271107T020000\r\nTZOFFSETFROM:-0400\r\nTZOFFSETTO:-0500\r\nRRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU\r\nEND:STANDARD\r\nBEGIN:DAYLIGHT\r\nDTSTART:20270314T020000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0400\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:test@example.com\r\nDTSTART;TZID=Custom/Test:20270305T090000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
@@ -244,9 +252,9 @@ func TestICSRejectMalformed(t *testing.T) {
 		{"zone RDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "RDATE:20270301T020000\r\nEND:DAYLIGHT", 1), "unsupported VTIMEZONE"},
 		{"zone EXDATE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXDATE:20270314T020000\r\nEND:DAYLIGHT", 1), "unsupported VTIMEZONE"},
 		{"zone EXRULE", strings.Replace(ruleZone, "END:DAYLIGHT", "EXRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nEND:DAYLIGHT", 1), "unsupported VTIMEZONE"},
-		{"duplicate zone observance", strings.Replace(zone, "END:VTIMEZONE", "BEGIN:STANDARD\r\nDTSTART:20280101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE", 1), "VTIMEZONE"},
-		{"zone rule until", strings.Replace(zone, "END:STANDARD", "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU;UNTIL=20300101T000000Z\r\nEND:STANDARD", 1), "VTIMEZONE"},
-		{"zone changing offset without rule", strings.Replace(zone, "TZOFFSETFROM:-0500", "TZOFFSETFROM:-0400", 1), "VTIMEZONE"},
+		{"duplicate zone observance", strings.Replace(zone, "END:VTIMEZONE", "BEGIN:STANDARD\r\nDTSTART:20280101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE", 1), `VTIMEZONE "Custom/Test" requires distinct STANDARD or DAYLIGHT observances`},
+		{"zone rule until", strings.Replace(zone, "END:STANDARD", "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU;UNTIL=20300101T000000Z\r\nEND:STANDARD", 1), `unsupported VTIMEZONE "Custom/Test" rule`},
+		{"zone changing offset without rule", strings.Replace(zone, "TZOFFSETFROM:-0500", "TZOFFSETFROM:-0400", 1), `unsupported VTIMEZONE "Custom/Test" offset or start`},
 		{"unknown method", strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:X-UNKNOWN", 1), `unsupported calendar method "X-UNKNOWN"`},
 		{"unknown zone", strings.ReplaceAll(icsExample, "America/New_York", "Unknown/Zone"), "unknown time zone Unknown/Zone"},
 		{"negative sequence", strings.Replace(icsExample, "SEQUENCE:2", "SEQUENCE:-1", 1), "invalid SEQUENCE"},
