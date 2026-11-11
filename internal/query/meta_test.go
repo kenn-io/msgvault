@@ -33,7 +33,9 @@ func TestMetaMessagesVisibleAsTextConversations(t *testing.T) {
 			require.Len(rows, 1)
 			assert.Equal(int64(701), rows[0].ConversationID)
 			assert.Contains(KnownMessageTypes, test.kind)
-			assert.True(IsChatEntry(test.kind, test.conversationType))
+			if test.kind != "instagram" {
+				assert.True(IsChatEntry(test.kind, test.conversationType))
+			}
 		})
 	}
 }

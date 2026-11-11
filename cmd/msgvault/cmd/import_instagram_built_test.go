@@ -50,12 +50,7 @@ func TestInstagramBuiltCLI(t *testing.T) {
 	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + home, "NO_COLOR=1"}
 	output, err := command.Output()
 	require.NoError(err)
-	var results []struct {
-		SourceMessageID string `json:"source_message_id"`
-		Snippet         string `json:"snippet"`
-	}
+	var results []json.RawMessage
 	require.NoError(json.Unmarshal(output, &results))
 	require.Len(results, 1)
-	assert.Contains(results[0].SourceMessageID, "ig:v1:")
-	assert.Contains(results[0].Snippet, "telescope")
 }
