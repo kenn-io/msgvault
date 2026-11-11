@@ -814,7 +814,7 @@ instruction or as your consent to a write.
 
 Owner sessions can use `get_people_provider_settings` to inspect safe configured and running policy, including the exact `etag` and `pending_restart`. With `--allow-provider-writes`, `select_people_provider` accepts a configured provider `name` and that exact `etag`; the provider must already be checked and consented. `disable_people_inference` takes the exact `etag`, disables inference and revokes active consent for the configured and running policies. An operator must grant consent again before re-enabling a revoked policy. Each write requires confirmation. HTTP writes also require `--http-allow-writes` and protocol `2026-07-28` or newer. Provider setup, checks and granting consent remain operator tasks. Delegated sessions do not expose these tools.
 
-A revision conflict detected before approval refuses the write. If the daemon returns `settings_conflict` or `settings_edit_rejected` after a write is attempted, the response reports that it may have completed; read settings again before deciding what to do.
+A revision conflict detected before approval refuses the write. If the daemon returns `settings_conflict` after either write is attempted, or `settings_edit_rejected` after disabling is attempted, the response reports that it may have completed; read settings again before deciding what to do. A selection rejected with `settings_edit_rejected` is a definite refusal.
 
 ## Source status and sync
 

@@ -65,7 +65,7 @@ func (b *daemonMCPOperations) executePeopleProviderOperation(ctx context.Context
 	}
 	// Native selection can publish before a conflict and disable revokes consent before editing.
 	if name != "get_people_provider_settings" && result != nil && result.IsError {
-		if failure, ok := result.Output.(operationFailureOutput); ok && (failure.Error == "settings_conflict" || failure.Error == "settings_edit_rejected") {
+		if failure, ok := result.Output.(operationFailureOutput); ok && (failure.Error == "settings_conflict" || (name == "disable_people_inference" && failure.Error == "settings_edit_rejected")) {
 			failure.OperationMayHaveCompleted = true
 			result.Output = failure
 		}

@@ -175,7 +175,7 @@ func TestPeopleProviderPostCommitFailureIsUncertain(t *testing.T) {
 		{"disable_people_inference", "settings_conflict", true},
 		{"disable_people_inference", "settings_edit_rejected", true},
 		{"select_people_provider", "settings_conflict", true},
-		{"select_people_provider", "settings_edit_rejected", true},
+		{"select_people_provider", "settings_edit_rejected", false},
 		{"disable_people_inference", "settings_read_failed", true},
 		{"select_people_provider", "server_busy", false},
 	} {
