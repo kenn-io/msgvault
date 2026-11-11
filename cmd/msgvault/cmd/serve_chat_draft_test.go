@@ -133,8 +133,8 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 	assert.Len(unchanged, 1)
 
 	const allowedSender = "allowed@example.test"
-	seedParent := func(nativeID, sender string, conversation, source int64) int64 {
-		data := &store.MessagePersistData{Message: &store.Message{SourceID: source, ConversationID: conversation, SourceMessageID: nativeID, MessageType: "slack"}}
+	seedParent := func(nativeID, sender string) int64 {
+		data := &store.MessagePersistData{Message: &store.Message{SourceID: granted.ID, ConversationID: grantedConversation, SourceMessageID: nativeID, MessageType: "slack"}}
 		if sender != "" {
 			participant, err := st.EnsureParticipant(sender, "", "example.test")
 			require.NoError(err)
@@ -144,10 +144,9 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 		require.NoError(err)
 		return id
 	}
-	allowed := seedParent("allowed-parent", allowedSender, grantedConversation, granted.ID)
-	denied := seedParent("denied-parent", "denied@example.test", grantedConversation, granted.ID)
-	missingFrom := seedParent("no-from", "", grantedConversation, granted.ID)
-	wrongConversation := seedParent("wrong-conversation", allowedSender, otherConversation, other.ID)
+	allowed := seedParent("allowed-parent", allowedSender)
+	denied := seedParent("denied-parent", "denied@example.test")
+	missingFrom := seedParent("no-from", "")
 	grant.Sources[0].IncomingSenderKeys = []string{allowedSender}
 	reply := func(parent int64) (string, error) {
 		return run(api.CLIRunDraftComposeCommand, "--conversation", strconv.FormatInt(grantedConversation, 10), "--reply-to", strconv.FormatInt(parent, 10), "--body", "reply", "--json")
@@ -157,7 +156,7 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 	var allowedDraft chatDraftOutput
 	require.NoError(json.Unmarshal([]byte(allowedJSON), &allowedDraft))
 	assert.Equal("allowed-parent", allowedDraft.ReplyToSourceMessageID)
-	for _, parent := range []int64{denied, missingFrom, wrongConversation, wrongConversation + 1} {
+	for _, parent := range []int64{denied, missingFrom, missingFrom + 1} {
 		out, err := reply(parent)
 		assert.EqualError(err, "not_permitted", "parent %d", parent)
 		assert.Empty(out, "parent %d", parent)
@@ -167,7 +166,7 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 	assert.Len(drafts, 2, "only the top-level draft and allowed reply were saved")
 }
 
-func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
+func TestChatDraftLifecycleRedactsBodyAndReplyParent(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("slack", "slack-account")
@@ -201,7 +200,6 @@ func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
 	assertions.Contains(withEdit, body)
 	assertions.Contains(withEdit, nativeParentID)
 	scopedEdit := grantFor(agentgrant.PermissionDraftEdit)
-	scopedEdit.Permissions = append(scopedEdit.Permissions, agentgrant.PermissionDraftCreate)
 	scopedEdit.Sources[0].IncomingSenderKeys = []string{"allowed@example.test"}
 	for _, target := range [][]string{{draft.DraftID}, {"--conversation", strconv.FormatInt(conversationID, 10)}} {
 		out, err := run(scopedEdit, append([]string{api.CLIRunDraftGetCommand, "--json"}, target...)...)

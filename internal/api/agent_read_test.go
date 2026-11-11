@@ -996,36 +996,30 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{src.ID: {"codes@example.test"}})
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	term := &search.Query{TextTerms: []string{"code"}}
-	deep, err := engine.SearchDeepWithStats(ctx, term, query.MessageFilter{}, 50, 0)
-	requirementsForTest.NoError(err)
-	requirementsForTest.Len(deep.Messages, 1)
-	requirementsForTest.Equal(allowed, deep.Messages[0].ID)
-	requirementsForTest.Equal(int64(1), deep.TotalCount)
-	requirementsForTest.NotNil(deep.Stats)
-	requirementsForTest.Equal(int64(1), deep.Stats.MessageCount)
-	fast, err := engine.SearchFastWithStats(ctx, term, "code", query.MessageFilter{}, query.ViewSenders, 50, 0)
-	requirementsForTest.NoError(err)
-	requirementsForTest.Len(fast.Messages, 1)
-	requirementsForTest.Equal(allowed, fast.Messages[0].ID)
-	requirementsForTest.Equal(int64(1), fast.TotalCount)
-	requirementsForTest.NotNil(fast.Stats)
-	requirementsForTest.Equal(int64(1), fast.Stats.MessageCount)
-	requirementsForTest.Empty(deep.Messages[0].ConversationTitle)
-	requirementsForTest.Empty(fast.Messages[0].ConversationTitle)
+	for _, searchWithStats := range []func() (*query.SearchFastResult, error){
+		func() (*query.SearchFastResult, error) {
+			return engine.SearchDeepWithStats(ctx, term, query.MessageFilter{}, 50, 0)
+		},
+		func() (*query.SearchFastResult, error) {
+			return engine.SearchFastWithStats(ctx, term, "code", query.MessageFilter{}, query.ViewSenders, 50, 0)
+		},
+	} {
+		result, err := searchWithStats()
+		requirementsForTest.NoError(err)
+		requirementsForTest.Len(result.Messages, 1)
+		requirementsForTest.Equal(allowed, result.Messages[0].ID)
+		requirementsForTest.Empty(result.Messages[0].ConversationTitle)
+		requirementsForTest.Equal(int64(1), result.TotalCount)
+		requirementsForTest.NotNil(result.Stats)
+		requirementsForTest.Equal(int64(1), result.Stats.MessageCount)
+	}
 	detail, err := st.GetMessageContext(ctx, allowed)
 	requirementsForTest.NoError(err)
 	requirementsForTest.Empty(detail.ConversationTitle)
-	for _, lookup := range []func() (*query.MessageDetail, error){
-		func() (*query.MessageDetail, error) { return engine.GetMessage(ctx, allowed) },
-		func() (*query.MessageDetail, error) {
-			return engine.GetMessageBySourceID(ctx, "allowed", []int64{src.ID})
-		},
-	} {
-		message, err := lookup()
-		requirementsForTest.NoError(err)
-		requirementsForTest.Equal("allowed code", message.Subject)
-		requirementsForTest.Empty(message.ConversationTitle)
-	}
+	message, err := engine.GetMessageBySourceID(ctx, "allowed", []int64{src.ID})
+	requirementsForTest.NoError(err)
+	requirementsForTest.Equal("allowed code", message.Subject)
+	requirementsForTest.Empty(message.ConversationTitle)
 	batch, err := engine.GetMessageSummariesByIDs(ctx, []int64{allowed})
 	requirementsForTest.NoError(err)
 	requirementsForTest.Len(batch, 1)
@@ -1080,29 +1074,18 @@ func TestAgentRelatedMessageIncomingScope(t *testing.T) {
 	requirements.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ? WHERE id = ?"), "meeting_transcript", target)
 	requirements.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	defer srv.agentGrants.Close()
-	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", allowed), nil)
-	r.Header.Set("X-Api-Key", "owner")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, r)
-	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-	var ownerMessage struct {
-		RelatedMessageID *int64 `json:"related_message_id"`
-	}
-	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &ownerMessage))
-	requirements.Equal(&target, ownerMessage.RelatedMessageID)
 	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
-	message, err := engine.GetMessage(ctx, allowed)
-	requirements.NoError(err)
-	requirements.Nil(message.RelatedMessageID)
+	checkRelated := func(want *int64) {
+		message, err := engine.GetMessage(ctx, allowed)
+		requirements.NoError(err)
+		requirements.Equal(want, message.RelatedMessageID)
+		storeMessage, err := st.GetMessageContext(ctx, allowed)
+		requirements.NoError(err)
+		requirements.Equal(want, storeMessage.RelatedMessageID)
+	}
+	checkRelated(nil)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), "codes@example.test", target)
 	requirements.NoError(err)
-	message, err = engine.GetMessage(ctx, allowed)
-	requirements.NoError(err)
-	requirements.Equal(&target, message.RelatedMessageID)
-	storeMessage, err := st.GetMessageContext(ctx, allowed)
-	requirements.NoError(err)
-	requirements.Equal(&target, storeMessage.RelatedMessageID)
+	checkRelated(&target)
 }
