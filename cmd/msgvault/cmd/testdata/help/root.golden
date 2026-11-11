@@ -11,9 +11,9 @@ Start here:
   msgvault setup status --json
 
 Output:
-  --json writes JSON to stdout (JSONL for export-messages).
-  Logs and progress go to stderr. Exit: 0 OK, 1 error, 130 interrupted.
-  See msgvault quickstart.
+  --json: stdout (export-messages: JSONL).
+  Logs/progress: stderr. Exit: 0 OK, 1 error, 130 interrupted.
+  See msgvault quickstart
 
 Usage:
   msgvault [command]
@@ -116,7 +116,7 @@ Import local exports:
   import-eml             Import a tree of RFC 5322 .eml files
   import-emlx            Import Apple Mail .emlx files into msgvault
   import-gvoice          Import Google Voice history from Takeout export
-  import-ics            Import local ICS events
+  import-ics             Import local ICS events
   import-imazing-csv     Import Messages CSV exports created by iMazing
   import-imessage        Import iMessages from local database
   import-maildir         Import a Maildir or Maildir++ archive
