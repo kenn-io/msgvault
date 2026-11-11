@@ -23,25 +23,32 @@ var briefLaneOff = false
 
 // briefFakeStore is the durable brief state a worker run reads.
 type briefFakeStore struct {
-	enrolled       bool
-	eligibility    BriefEligibility
-	highWater      int64
-	changedAfter   int64
-	cadenceDueAt   *time.Time
-	ensuredWork    []int64
-	trackedWork    bool
-	eligibilityErr error
-	retireErr      error
-	retireCalls    []briefRetireCall
+	enrolled            bool
+	eligibility         BriefEligibility
+	highWater           int64
+	changedAfter        int64
+	cadenceDueAt        *time.Time
+	ensuredWork         []int64
+	trackedWork         bool
+	eligibilityErr      error
+	eligibilityFailures map[int64]error
+	unenrolledPeople    map[int64]bool
+	eligibilityReads    []int64
+	retireErr           error
+	retireCalls         []briefRetireCall
 }
 
 func (s *briefFakeStore) PersonSweepBriefEligibility(
 	_ context.Context, personID int64,
 ) (BriefEligibility, bool, error) {
+	s.eligibilityReads = append(s.eligibilityReads, personID)
+	if err := s.eligibilityFailures[personID]; err != nil {
+		return BriefEligibility{}, false, err
+	}
 	if s.eligibilityErr != nil {
 		return BriefEligibility{}, false, s.eligibilityErr
 	}
-	if !s.enrolled {
+	if !s.enrolled || s.unenrolledPeople[personID] {
 		return BriefEligibility{}, false, nil
 	}
 	eligibility := s.eligibility
@@ -250,15 +257,39 @@ func TestPersonSweepWorkerAppendsBriefAfterExtractionBatches(t *testing.T) {
 }
 
 func TestPersonSweepWorkerReportsBriefSchedulingEligibilityFailure(t *testing.T) {
-	cause := errors.New("archive read failed")
-	outcome := runBriefWorkerCase(t, briefWorkerCase{
-		brief:      &briefFakeStore{eligibilityErr: cause},
-		gapResults: []GapResult{{PeopleScanned: 1, PersonIDs: []int64{7}, NextPersonID: 7}},
-		runRequest: &RunRequest{Kind: RunScheduled, Mode: RunIncremental, Limit: 1},
+	t.Run("scheduled", func(t *testing.T) {
+		checks := assert.New(t)
+		required := require.New(t)
+		cause := errors.New("unsupported event memory version")
+		brief := &briefFakeStore{enrolled: true, eligibilityFailures: map[int64]error{7: cause},
+			unenrolledPeople: map[int64]bool{8: true}}
+		outcome := runBriefWorkerCase(t, briefWorkerCase{brief: brief,
+			gapResults: []GapResult{{PeopleScanned: 2, PersonIDs: []int64{7, 8}, NextPersonID: 8}},
+			responses:  []DriverResponse{briefDriverResponse(json.RawMessage(`{"claims":[]}`), "request-extraction")},
+			runRequest: &RunRequest{Kind: RunScheduled, Mode: RunIncremental, Limit: 1}})
+		required.NoError(outcome.err)
+		checks.Contains(brief.eligibilityReads, int64(8), "one unreadable brief must not stop reconciliation")
+		checks.Equal([]RunStatus{RunSucceeded}, outcome.store.finished)
+		required.Len(outcome.sink.requests, 1)
+		applied := outcome.sink.requests[0]
+		checks.Equal(FailureInternal, applied.BriefFailureClass)
+		checks.False(applied.BriefRetryAt.IsZero())
+		checks.Nil(applied.Brief)
+		checks.NotEmpty(applied.CursorAdvances)
+		checks.Equal(1, applied.Usage.Requests)
+		checks.Equal(1, outcome.driver.calls)
+		checks.Empty(brief.retireCalls)
+		checks.Empty(outcome.archive.candidateCalls)
+		checks.Empty(outcome.archive.hydrateCalls)
 	})
-	require.ErrorIs(t, outcome.err, cause)
-	assert.Equal(t, []RunStatus{RunFailed}, outcome.store.finished)
-	assert.Empty(t, outcome.sink.requests)
+	t.Run("forced person refuses", func(t *testing.T) {
+		cause := errors.New("unsupported event memory version")
+		outcome := runBriefWorkerCase(t, briefWorkerCase{brief: &briefFakeStore{enrolled: true, eligibilityErr: cause},
+			runRequest: &RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7, Limit: 1, Brief: BriefModeForce}})
+		require.ErrorIs(t, outcome.err, cause)
+		assert.Empty(t, outcome.store.finished)
+		assert.Empty(t, outcome.sink.requests)
+	})
 }
 
 func TestPersonSweepWorkerRunsBriefOnStatusOnlyExtraction(t *testing.T) {

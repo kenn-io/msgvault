@@ -172,7 +172,7 @@ func (w *Worker) planPersonBrief(
 	}
 	eligibility, enrolled, err := w.Brief.PersonSweepBriefEligibility(ctx, personID)
 	if err != nil {
-		return briefPlan{}, err
+		return briefPlan{run: true, preflightFailure: err}, nil
 	}
 	if !enrolled {
 		return briefPlan{}, nil

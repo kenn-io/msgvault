@@ -781,6 +781,7 @@ func TestPersonSweepWorkerSchedulesBriefBeyondFirstTrackedPage(t *testing.T) {
 }
 
 func TestPersonSweepWorkerBriefAdmissionFailureKeepsOtherExtractionWork(t *testing.T) {
+	t.Run("unsupported stored memory", testPersonSweepWorkerUnsupportedMemoryKeepsOtherExtractionWork)
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newBriefWorkerEndToEndFixture(t, "scheduled-admission")
@@ -809,6 +810,66 @@ func TestPersonSweepWorkerBriefAdmissionFailureKeepsOtherExtractionWork(t *testi
 			assert.Empty(person.BriefFailureClass)
 		}
 	}
+}
+
+func testPersonSweepWorkerUnsupportedMemoryKeepsOtherExtractionWork(t *testing.T) {
+	t.Helper()
+	checks := assert.New(t)
+	required := require.New(t)
+	f := newBriefWorkerEndToEndFixture(t, "unsupported-memory")
+	st := f.journal.store
+	ids := 0
+	f.worker.NewID = func() string { ids++; return fmt.Sprintf("unsupported-memory-%d", ids) }
+	_, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual,
+		Mode: peoplesweep.RunIncremental, PersonID: f.journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
+	required.NoError(err)
+	prior, err := st.GetPersonBriefContext(t.Context(), f.journal.alicePersonID, 0)
+	required.NoError(err)
+	var boundary map[string]any
+	required.NoError(json.Unmarshal(prior.Boundary, &boundary))
+	boundary["event_memory_version"] = 2
+	encoded, err := json.Marshal(boundary)
+	required.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET boundary_json = ? WHERE id = ?`), string(encoded), prior.ID)
+	required.NoError(err)
+	prior, err = st.GetPersonBriefContext(t.Context(), f.journal.alicePersonID, 0)
+	required.NoError(err)
+	_, err = st.SetPersonTrackingContext(t.Context(), f.journal.bobPersonID, true)
+	required.NoError(err)
+	for _, item := range []struct {
+		id          string
+		participant int64
+	}{
+		{"unsupported-memory-alice", f.journal.aliceID}, {"unsupported-memory-bob", f.journal.bobID},
+	} {
+		message := f.journal.insertMessage(t, item.id, "chat", item.participant, f.now.Add(time.Hour))
+		addSweepBody(t, f.journal, message, "A new update.")
+	}
+	beforeBrief := f.runner.briefRequests
+	result, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunScheduled,
+		Mode: peoplesweep.RunIncremental, Limit: 2})
+	required.NoError(err)
+	required.Len(result.People, 2)
+	for _, person := range result.People {
+		checks.NotEmpty(person.CursorAdvances)
+		if person.PersonID == f.journal.alicePersonID {
+			checks.Equal(peoplesweep.FailureInternal, person.BriefFailureClass)
+			checks.Zero(person.BriefVersion)
+		} else {
+			checks.Equal(f.journal.bobPersonID, person.PersonID)
+			checks.Empty(person.BriefFailureClass)
+		}
+	}
+	checks.Equal(beforeBrief, f.runner.briefRequests)
+	current, err := st.GetPersonBriefContext(t.Context(), f.journal.alicePersonID, 0)
+	required.NoError(err)
+	checks.Equal(prior.Version, current.Version)
+	checks.Equal(prior.Boundary, current.Boundary)
+	history, err := st.ListPersonBriefVersionsContext(t.Context(), f.journal.alicePersonID, 10)
+	required.NoError(err)
+	required.Len(history, 1)
+	checks.Equal(store.PersonBriefStatusCurrent, history[0].Status)
+	checks.Equal(prior.Boundary, history[0].Boundary)
 }
 
 func TestPersonSweepWorkerDiscardsObsoleteBriefRetry(t *testing.T) {

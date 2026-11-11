@@ -1274,8 +1274,8 @@ func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
 					// version. Check the bounded window before publishing work so
 					// such a person does not repeat backstop extraction every tick.
 					var window BriefWindow
-					var err error
-					if !plan.retireOnly {
+					err := plan.preflightFailure
+					if err == nil && !plan.retireOnly {
 						window, err = BuildBriefWindow(ctx, w.Archive,
 							w.briefWindowRequest(personID, catalog, profile, plan, 0))
 					}
