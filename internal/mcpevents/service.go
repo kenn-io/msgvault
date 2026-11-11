@@ -48,7 +48,7 @@ func (s *Service) catalog(ctx context.Context) ([]entry, []byte, error) {
 	}
 	var entries []entry
 	if raw != nil {
-		if err = json.Unmarshal(raw, &entries); err != nil {
+		if err = json.Unmarshal(raw, &entries, json.RejectUnknownMembers(true)); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -124,79 +124,82 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 			return out, failure(Unavailable, "store_unavailable")
 		}
 	}
-	for {
-		entries, raw, err := s.catalog(ctx)
-		if err != nil {
-			return out, failure(Unavailable, "store_unavailable")
-		}
-		index := find(entries, in.Arguments, in.Delivery.URL)
-		var id string
-		var initial *store.WakeupState
-		if index >= 0 {
-			if len(entries)+s.ConfigTargets > 32 {
-				return out, failure(ResourceExhausted, "subscriptions")
-			}
-			id = entries[index].ID
-		} else {
-			if len(entries)+s.ConfigTargets >= 32 {
-				return out, failure(ResourceExhausted, "subscriptions")
-			}
-			sum := sha256.Sum256([]byte(fmt.Sprintf("owner\x00%s\x00%d\x00%d\x00%t\x00%s", Name, in.Arguments.PersonID, in.Arguments.SourceID, *in.Arguments.IncomingOnly, in.Delivery.URL)))
-			id = hex.EncodeToString(sum[:16])
-			page, err := s.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
-			if err != nil || page.CompleteThrough.IsZero() {
-				return out, failure(Unavailable, "head_unavailable")
-			}
-			initial = &store.WakeupState{At: page.CompleteThrough}
-		}
-		origin, err := callbackOrigin(in.Delivery.URL)
-		if err != nil {
-			return out, failure(InvalidParams, "invalid_callback")
-		}
-		previous, revision, credentialErr := s.credentialSnapshot(id)
-		if credentialErr != nil {
-			return out, failure(Unavailable, "credential_unavailable")
-		}
-		expires := s.now().Add(in.TTL.Duration())
-		item := entry{ID: id, Owner: "owner", Arguments: in.Arguments, URL: in.Delivery.URL, Expires: expires}
-		if index >= 0 {
-			entries[index] = item
-		} else {
-			entries = append(entries, item)
-		}
-		next, err := json.Marshal(entries)
-		if err != nil {
-			return out, failure(Unavailable, "store_unavailable")
-		}
-		createID := ""
-		if initial != nil {
-			createID = id
-		}
-		ok, err := s.Store.SwapMCPEventsCatalog(ctx, raw, next, createID, initial, "")
-		if err != nil {
-			return out, failure(Unavailable, "store_unavailable")
-		}
-		if !ok {
-			continue
-		}
-		_, err = providercredentials.PutIfRevision(s.TokensDir, revision, providercredentials.EventsID(id), origin, base64.StdEncoding.EncodeToString(in.secret))
-		if err != nil {
-			return out, failure(Unavailable, "credential_unavailable")
-		}
-		status := MCPEventsDeliveryStatus{Active: true}
-		state, _, loadErr := s.Store.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey(id))
-		if loadErr != nil {
-			return out, failure(Unavailable, "store_unavailable")
-		}
-		status.LastDeliveryAt = state.LastDeliveryAt
-		status.LastError = state.LastError
-		status.FailedSince = state.FailedSince
-		if index >= 0 && !previous.Stored(providercredentials.EventsID(id)) {
-			status.LastError = "secret_unavailable"
-			status.FailedSince = nil
-		}
-		return MCPEventsSubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: status}, nil
+	entries, raw, err := s.catalog(ctx)
+	if err != nil {
+		return out, failure(Unavailable, "store_unavailable")
 	}
+	index := find(entries, in.Arguments, in.Delivery.URL)
+	var id string
+	var initial *store.WakeupState
+	if index >= 0 {
+		if len(entries)+s.ConfigTargets > 32 {
+			return out, failure(ResourceExhausted, "subscriptions")
+		}
+		id = entries[index].ID
+	} else {
+		if len(entries)+s.ConfigTargets >= 32 {
+			return out, failure(ResourceExhausted, "subscriptions")
+		}
+		sum := sha256.Sum256([]byte(fmt.Sprintf("owner\x00%s\x00%d\x00%d\x00%t\x00%s", Name, in.Arguments.PersonID, in.Arguments.SourceID, *in.Arguments.IncomingOnly, in.Delivery.URL)))
+		id = hex.EncodeToString(sum[:16])
+		page, err := s.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
+		if err != nil || page.CompleteThrough.IsZero() {
+			return out, failure(Unavailable, "head_unavailable")
+		}
+		initial = &store.WakeupState{At: page.CompleteThrough}
+	}
+	origin, err := callbackOrigin(in.Delivery.URL)
+	if err != nil {
+		return out, failure(InvalidParams, "invalid_callback")
+	}
+	previous, revision, credentialErr := s.credentialSnapshot(id)
+	if credentialErr != nil {
+		return out, failure(Unavailable, "credential_unavailable")
+	}
+	expires := s.now().Add(in.TTL.Duration())
+	item := entry{ID: id, Owner: "owner", Arguments: in.Arguments, URL: in.Delivery.URL, Expires: expires}
+	if index >= 0 {
+		entries[index] = item
+	} else {
+		entries = append(entries, item)
+	}
+	next, err := json.Marshal(entries)
+	if err != nil {
+		return out, failure(Unavailable, "store_unavailable")
+	}
+	createID := ""
+	if initial != nil {
+		createID = id
+	}
+	ok, err := s.Store.SwapMCPEventsCatalog(ctx, raw, next, createID, initial, "")
+	if err != nil {
+		return out, failure(Unavailable, "store_unavailable")
+	}
+	if !ok {
+		return out, failure(Unavailable, "store_unavailable")
+	}
+	_, err = providercredentials.PutIfRevision(s.TokensDir, revision, providercredentials.EventsID(id), origin, base64.StdEncoding.EncodeToString(in.secret))
+	if err != nil {
+		if initial != nil {
+			if removed, cleanupErr := s.removeEntry(ctx, entries, next, len(entries)-1); cleanupErr != nil || !removed {
+				return out, failure(Unavailable, "store_unavailable")
+			}
+		}
+		return out, failure(Unavailable, "credential_unavailable")
+	}
+	status := MCPEventsDeliveryStatus{Active: true}
+	state, _, loadErr := s.Store.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey(id))
+	if loadErr != nil {
+		return out, failure(Unavailable, "store_unavailable")
+	}
+	status.LastDeliveryAt = state.LastDeliveryAt
+	status.LastError = state.LastError
+	status.FailedSince = state.FailedSince
+	if index >= 0 && !previous.Stored(providercredentials.EventsID(id)) {
+		status.LastError = "secret_unavailable"
+		status.FailedSince = nil
+	}
+	return MCPEventsSubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: status}, nil
 }
 
 // Unsubscribe requires a request returned by DecodeUnsubscribe.
@@ -204,26 +207,22 @@ func (s *Service) Unsubscribe(ctx context.Context, in MCPEventsUnsubscribeReques
 	if s.Store == nil {
 		return failure(Unavailable, "store_unavailable")
 	}
-	for {
-		entries, raw, err := s.catalog(ctx)
-		if err != nil {
-			return failure(Unavailable, "store_unavailable")
-		}
-		idx := find(entries, in.Arguments, in.Delivery.URL)
-		if idx < 0 {
-			return failure(NotFound, "subscription")
-		}
-		if err := s.deleteCredential(entries[idx].ID); err != nil {
-			return failure(Unavailable, "credential_unavailable")
-		}
-		ok, err := s.removeEntry(ctx, entries, raw, idx)
-		if err != nil {
-			return failure(Unavailable, "store_unavailable")
-		}
-		if ok {
-			return nil
-		}
+	entries, raw, err := s.catalog(ctx)
+	if err != nil {
+		return failure(Unavailable, "store_unavailable")
 	}
+	idx := find(entries, in.Arguments, in.Delivery.URL)
+	if idx < 0 {
+		return failure(NotFound, "subscription")
+	}
+	if err := s.deleteCredential(entries[idx].ID); err != nil {
+		return failure(Unavailable, "credential_unavailable")
+	}
+	ok, err := s.removeEntry(ctx, entries, raw, idx)
+	if err != nil || !ok {
+		return failure(Unavailable, "store_unavailable")
+	}
+	return nil
 }
 
 func (s *Service) removeEntry(ctx context.Context, entries []entry, raw []byte, index int) (bool, error) {
@@ -258,7 +257,11 @@ func (s *Service) purgeExpired(ctx context.Context) error {
 			return err
 		}
 		if credentialErr != nil {
-			slog.Default().Warn("expired wakeup credential cleanup failed", "id", entries[index].ID, "category", "credential_unavailable")
+			logger := s.Logger
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.Warn("expired wakeup credential cleanup failed", "id", entries[index].ID, "category", "credential_unavailable")
 		}
 	}
 }

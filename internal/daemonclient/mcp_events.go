@@ -36,13 +36,13 @@ func (c *Client) mcpEventsRequest(ctx context.Context, method, path string, body
 			switch e.Code {
 			case mcpevents.InvalidParams, mcpevents.NotFound, mcpevents.ResourceExhausted, mcpevents.Unsupported:
 				reason := "request_rejected"
-				if e.Reason == "invalid_scope" || e.Reason == "subscriptions" {
+				if e.Reason == "invalid_scope" || e.Reason == "subscriptions" || e.Reason == "subscription" {
 					reason = e.Reason
 				}
 				return &mcpevents.Error{Code: e.Code, Reason: reason}
 			case mcpevents.Unavailable:
 				switch e.Reason {
-				case "disabled", "head_unavailable", "store_unavailable":
+				case "disabled", "head_unavailable", "store_unavailable", "credential_unavailable":
 					return &e
 				}
 			}

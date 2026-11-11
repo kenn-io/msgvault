@@ -319,7 +319,7 @@ func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
 		request := makeRequest(url)
 		go func() { _, err := service.Subscribe(t.Context(), request); results <- err }()
 	}
-	var success, exhausted int
+	var success, refused int
 	for range 2 {
 		err := <-results
 		if err == nil {
@@ -328,12 +328,12 @@ func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
 		}
 		var eventErr *Error
 		require.ErrorAs(err, &eventErr)
-		if eventErr.Code == ResourceExhausted {
-			exhausted++
+		if eventErr.Code == ResourceExhausted || (eventErr.Code == Unavailable && eventErr.Reason == "store_unavailable") {
+			refused++
 		}
 	}
 	assert.Equal(1, success)
-	assert.Equal(1, exhausted)
+	assert.Equal(1, refused)
 
 	// A restarted daemon with more configured targets must not claim delivery.
 	entries, _, err := service.catalog(t.Context())
@@ -381,24 +381,81 @@ func TestNativeRespectsConfiguredTargetLimitAfterRestart(t *testing.T) {
 	assert.Len(entries, 32)
 }
 
-func TestCredentialWriteFailureLeavesRecoverableCatalog(t *testing.T) {
+func TestCredentialWriteFailurePreservesSubscriptionState(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := newEventsTestStore(t)
-	dir := t.TempDir()
-	tokens := filepath.Join(dir, "tokens")
-	require.NoError(os.MkdirAll(filepath.Join(tokens, ".provider-credentials.lock"), 0700))
-	service := Service{Store: st, TokensDir: tokens, Enabled: true}
+	tokens := filepath.Join(t.TempDir(), "tokens")
+	lock := filepath.Join(tokens, ".provider-credentials.lock")
+	require.NoError(os.MkdirAll(lock, 0700))
+	now := time.Now().UTC()
+	service := Service{Store: st, TokensDir: tokens, Enabled: true, Now: func() time.Time { return now }}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	_, err := service.Subscribe(t.Context(), in)
-	require.Error(err)
+	var eventErr *Error
+	require.ErrorAs(err, &eventErr)
+	assert.Equal("credential_unavailable", eventErr.Reason)
 	entries, _, err := service.catalog(t.Context())
 	require.NoError(err)
-	require.Len(entries, 1)
-	require.NoError(os.Remove(filepath.Join(tokens, ".provider-credentials.lock")))
+	assert.Empty(entries)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&count))
+	assert.Zero(count)
+	require.NoError(os.Remove(lock))
 	result, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
-	assert.Equal(entries[0].ID, result.ID)
+	before, err := st.LoadMCPEventsCatalog(t.Context())
+	require.NoError(err)
+	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+	require.NoError(err)
+	require.NotNil(position)
+	credentials, err := os.ReadFile(filepath.Join(tokens, providercredentials.EventsFilename))
+	require.NoError(err)
+	require.NoError(os.Remove(lock))
+	require.NoError(os.Mkdir(lock, 0700))
+	now = now.Add(time.Hour)
+	_, err = service.Subscribe(t.Context(), in)
+	require.ErrorAs(err, &eventErr)
+	assert.Equal("credential_unavailable", eventErr.Reason)
+	after, err := st.LoadMCPEventsCatalog(t.Context())
+	require.NoError(err)
+	// A failed refresh leaves the already-committed lease update in place.
+	assert.NotEqual(before, after)
+	entries, _, err = service.catalog(t.Context())
+	require.NoError(err)
+	require.Len(entries, 1)
+	assert.Equal(result.ID, entries[0].ID)
+	_, afterPosition, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+	require.NoError(err)
+	assert.Equal(position, afterPosition)
+	afterCredentials, err := os.ReadFile(filepath.Join(tokens, providercredentials.EventsFilename))
+	require.NoError(err)
+	assert.Equal(credentials, afterCredentials)
+}
+
+func TestCatalogRejectsUnknownMembersWithoutMutation(t *testing.T) {
+	for _, raw := range []string{
+		`[{"id":"one","owner":"owner","future":true}]`,
+		`[{"id":"one","owner":"owner","arguments":{"source_id":1,"future":true}}]`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := newEventsTestStore(t)
+			ok, err := st.SwapMCPEventsCatalog(t.Context(), nil, []byte(raw), "", nil, "")
+			requirements.NoError(err)
+			requirements.True(ok)
+			service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			_, err = service.Subscribe(t.Context(), in)
+			var eventErr *Error
+			requirements.ErrorAs(err, &eventErr)
+			assertions.Equal("store_unavailable", eventErr.Reason)
+			after, err := st.LoadMCPEventsCatalog(t.Context())
+			requirements.NoError(err)
+			assertions.Equal([]byte(raw), after)
+		})
+	}
 }
 
 func TestOwnerServiceRejectsOtherCatalogOwners(t *testing.T) {
@@ -451,9 +508,6 @@ func TestNativeContinuesAfterExpiredCredentialCleanupFails(t *testing.T) {
 	now := time.Now().UTC()
 	var logs bytes.Buffer
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
-	previous := slog.Default()
-	slog.SetDefault(service.Logger)
-	t.Cleanup(func() { slog.SetDefault(previous) })
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/expired?sensitive-marker", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	expired, err := service.Subscribe(t.Context(), in)
 	requirements.NoError(err)
