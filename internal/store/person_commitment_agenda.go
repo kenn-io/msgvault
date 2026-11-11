@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"time"
 
 	"go.kenn.io/msgvault/internal/kataissues"
@@ -86,6 +87,24 @@ func (s *Store) EnqueueCommitmentAgendaContext(ctx context.Context, item Commitm
 		return err
 	})
 	return queued, err
+}
+
+// A receipt freezes the quote of every message its request cites, and its only
+// foreign key is to the survivor commitment, so permanently deleting a cited
+// original (for example after a merge transferred the receipt) would not remove
+// it. Callers run this before deleting the messages selected by messageIDs, in
+// the same transaction. Soft deletion and merging never call it.
+func (s *Store) deleteCommitmentAgendaCiting(ctx context.Context, q contextQuerier, messageIDs string, args ...any) error {
+	cites := `SELECT 1 FROM json_each(person_commitment_agenda.request_json, '$.evidence') AS cited
+		WHERE json_extract(cited.value, '$.message_id') IN (` + messageIDs + `)`
+	if s.IsPostgreSQL() {
+		cites = `SELECT 1 FROM jsonb_array_elements(person_commitment_agenda.request_json -> 'evidence') AS cited(value)
+			WHERE (cited.value ->> 'message_id')::bigint IN (` + messageIDs + `)`
+	}
+	if _, err := q.ExecContext(ctx, s.Rebind(`DELETE FROM person_commitment_agenda WHERE EXISTS (`+cites+`)`), args...); err != nil {
+		return fmt.Errorf("delete commitment agenda citing permanently deleted messages: %w", err)
+	}
+	return nil
 }
 
 // New rows receive an independent key before any Kata I/O. The receipt keeps

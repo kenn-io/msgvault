@@ -115,6 +115,25 @@ func (s *Store) purgeChannelExec(ctx context.Context, q purgeQuerier, purge chan
 	if err != nil {
 		return err
 	}
+	if err := s.clearPurgedMessageReferences(ctx, q, purge); err != nil {
+		return err
+	}
+	if _, err := q.ExecContext(ctx, s.dialect.Rebind(
+		"DELETE FROM conversations WHERE id IN ("+purge.targets()+")"), purge.args...); err != nil {
+		return fmt.Errorf("purge channel conversations: %w", err)
+	}
+	if err := s.deleteUnreferencedPackMappings(ctx, q, packedHashes); err != nil {
+		return err
+	}
+	// Analytics caches cannot unpublish exported rows incrementally; a new
+	// revision makes the next cache pass rebuild without the purged messages.
+	return s.bumpDerivedDataRevisionContext(ctx, q)
+}
+
+// clearPurgedMessageReferences removes what the conversation cascade cannot
+// reach: full-text rows, reply links from retained messages, and commitment
+// agenda receipts that freeze quotes of the purged messages.
+func (s *Store) clearPurgedMessageReferences(ctx context.Context, q purgeQuerier, purge channelPurge) error {
 	if !s.IsPostgreSQL() && s.fts5Available {
 		// FTS rows use the message ID as their rowid; message_id itself is
 		// unindexed, so filtering on it would scan the whole index.
@@ -130,16 +149,7 @@ func (s *Store) purgeChannelExec(ctx context.Context, q purgeQuerier, purge chan
 			purge.targetMessages()+")"), purge.args...); err != nil {
 		return fmt.Errorf("clear replies to purged channel: %w", err)
 	}
-	if _, err := q.ExecContext(ctx, s.dialect.Rebind(
-		"DELETE FROM conversations WHERE id IN ("+purge.targets()+")"), purge.args...); err != nil {
-		return fmt.Errorf("purge channel conversations: %w", err)
-	}
-	if err := s.deleteUnreferencedPackMappings(ctx, q, packedHashes); err != nil {
-		return err
-	}
-	// Analytics caches cannot unpublish exported rows incrementally; a new
-	// revision makes the next cache pass rebuild without the purged messages.
-	return s.bumpDerivedDataRevisionContext(ctx, q)
+	return s.deleteCommitmentAgendaCiting(ctx, q, purge.targetMessages(), purge.args...)
 }
 
 func (s *Store) purgedConversationIDs(ctx context.Context, q purgeQuerier, purge channelPurge) ([]string, error) {

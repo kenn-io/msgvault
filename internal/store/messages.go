@@ -1266,10 +1266,9 @@ func (s *Store) MigrateSourceMessageID(ctx context.Context, sourceID, conversati
 				}
 			}
 
-			_, err = tx.ExecContext(
-				ctx,
-				`DELETE FROM messages
-				 WHERE source_id = ? AND conversation_id = ? AND source_message_id = ?`,
+			_, err = s.deleteMessagesWhere(
+				ctx, tx,
+				`source_id = ? AND conversation_id = ? AND source_message_id = ?`,
 				sourceID, conversationID, legacySourceMessageID,
 			)
 			if err != nil {

@@ -343,9 +343,7 @@ func (s *Store) RemoveSourceSerialized(
 		return hadActiveSync, 0, err
 	}
 
-	res, err := conn.ExecContext(
-		ctx, s.dialect.Rebind(`DELETE FROM sources WHERE id = ?`), sourceID,
-	)
+	res, err := s.deleteSourceRow(ctx, conn, sourceID)
 	if err != nil {
 		return hadActiveSync, 0, fmt.Errorf("delete source: %w", err)
 	}
@@ -419,6 +417,16 @@ const packedBlobHashesUniqueToSourceSQL = `
 	  )
 	ORDER BY sb.blob_hash`
 
+// deleteSourceRow deletes a source and, through its cascade, its messages. The
+// commitment agenda receipts citing those messages go first, in the caller's
+// transaction, because the cascade cannot reach them.
+func (s *Store) deleteSourceRow(ctx context.Context, q contextQuerier, sourceID int64) (sql.Result, error) {
+	if err := s.deleteCommitmentAgendaCiting(ctx, q, "SELECT id FROM messages WHERE source_id = ?", sourceID); err != nil {
+		return nil, err
+	}
+	return q.ExecContext(ctx, s.Rebind(`DELETE FROM sources WHERE id = ?`), sourceID)
+}
+
 // removeSourceExec performs the identity cleanup, FTS cleanup, and source
 // deletion in one maintenance transaction.
 func (s *Store) removeSourceExec(
@@ -454,7 +462,7 @@ func (s *Store) removeSourceExec(
 	if err := s.deleteSourceRepairMigrationsContext(ctx, tx.ExecContext, sourceID); err != nil {
 		return err
 	}
-	res, err := tx.ExecContext(ctx, `DELETE FROM sources WHERE id = ?`, sourceID)
+	res, err := s.deleteSourceRow(ctx, tx, sourceID)
 	if err != nil {
 		return fmt.Errorf("delete source: %w", err)
 	}
