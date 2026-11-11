@@ -1,12 +1,16 @@
 package identityindex
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"hegel.dev/go/hegel"
 )
 
 func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *testing.T) {
@@ -196,4 +200,113 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 		assert.False(rows.Next())
 		require.NoError(rows.Err())
 	}()
+}
+
+func TestHegelAnnualTemperatureRollups(t *testing.T) {
+	_, db := writeRelationshipBaseFixture(t, true)
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE `+temperatureBuildRelation+` (
+		canonical_id BIGINT, event_date DATE, sent_count BIGINT, received_count BIGINT,
+		meeting_count BIGINT, email_count BIGINT, chat_count BIGINT, total_count BIGINT,
+		modality_mask UTINYINT, last_at TIMESTAMP)`)
+	require.NoError(t, err)
+	effective := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	query := `WITH anchor AS (SELECT 1)` + relationshipTemperatureCTEs(effective)
+	hegel.Test(t, func(ht *hegel.T) {
+		require := require.New(ht)
+		assert := assert.New(ht)
+		_, err := db.ExecContext(t.Context(), `DELETE FROM `+temperatureBuildRelation)
+		require.NoError(err)
+		// Fixed boundaries ensure every draw covers old-only contacts and tied peaks.
+		dates := []time.Time{time.Date(1969, 12, 31, 0, 0, 0, 0, time.UTC), time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2000, 2, 29, 0, 0, 0, 0, time.UTC)}
+		ids := []int64{2, 3, 3}
+		for n := hegel.Draw(ht, hegel.Integers(1, 6)); n > 0; n-- {
+			date := hegel.Draw(ht, hegel.Dates().Max(effective))
+			if date.Year() == 1970 || date.Year() == 2000 {
+				date = time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+			}
+			dates = append(dates, date)
+			ids = append(ids, hegel.Draw(ht, hegel.Integers(int64(4), int64(6))))
+		}
+		ht.Logf("ids=%v dates=%v", ids, dates)
+		expected := map[int64]map[int]bool{}
+		seen := map[string]bool{}
+		for i, date := range dates {
+			id := ids[i]
+			key := fmt.Sprintf("%d/%s", id, date.Format("2006-01-02"))
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if date.Year() >= 1970 {
+				if expected[id] == nil {
+					expected[id] = map[int]bool{}
+				}
+				expected[id][date.Year()] = true
+			}
+			_, err := db.ExecContext(t.Context(), `INSERT INTO `+temperatureBuildRelation+` VALUES (?, ?, 1, 0, 0, 1, 0, 1, 1, ?)`, id, date.Format("2006-01-02"), date.Format("2006-01-02"))
+			require.NoError(err)
+		}
+		actual := map[int64][]int{}
+		func() {
+			rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id, CAST(to_json(list_transform(annual_temperatures, lambda x: x.year)) AS VARCHAR) FROM annual_rollups`)
+			require.NoError(err)
+			defer rows.Close()
+			for rows.Next() {
+				var id int64
+				var raw string
+				require.NoError(rows.Scan(&id, &raw))
+				var years []int
+				require.NoError(json.Unmarshal([]byte(raw), &years))
+				actual[id] = years
+			}
+			require.NoError(rows.Err())
+			require.NoError(rows.Close())
+		}()
+		want := map[int64][]int{}
+		for id, years := range expected {
+			for year := range years {
+				want[id] = append(want[id], year)
+			}
+			sort.Ints(want[id])
+		}
+		assert.Equal(want, actual)
+		current := map[int64]bool{}
+		func() {
+			rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id FROM current_ranked`)
+			require.NoError(err)
+			defer rows.Close()
+			for rows.Next() {
+				var id int64
+				require.NoError(rows.Scan(&id))
+				assert.False(current[id])
+				current[id] = true
+			}
+			require.NoError(rows.Err())
+			require.NoError(rows.Close())
+		}()
+		wantCurrent := map[int64]bool{}
+		for _, id := range ids {
+			wantCurrent[id] = true
+		}
+		assert.Equal(wantCurrent, current)
+		peaks := map[int64]int{}
+		func() {
+			rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id, peak_year FROM peaks`)
+			require.NoError(err)
+			defer rows.Close()
+			for rows.Next() {
+				var id int64
+				var year int
+				require.NoError(rows.Scan(&id, &year))
+				peaks[id] = year
+			}
+			require.NoError(rows.Err())
+			require.NoError(rows.Close())
+		}()
+		assert.Len(peaks, len(expected))
+		for id := range expected {
+			assert.Contains(peaks, id)
+		}
+		assert.Equal(2000, peaks[3])
+	})
 }

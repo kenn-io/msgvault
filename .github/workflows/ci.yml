@@ -123,6 +123,10 @@ jobs:
           echo "$SMOKE_OUT"
           echo "$SMOKE_OUT" | grep -q "$VERSION" || { echo "FATAL: version output doesn't match CI build version"; exit 1; }
 
+      - name: Test Message-ID property on Linux arm64
+        if: matrix.goarch == 'arm64'
+        run: go test -tags "fts5 sqlite_vec" -count=1 -run '^TestHegelMessageIDContract$' ./internal/imap
+
       - name: Test built CLI on a synthetic archive
         run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
 

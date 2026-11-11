@@ -37,6 +37,10 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'kenn-io/kit@v0.48.4'
         - 'step-security/setup-bun@v2.1.3'
+    '.github/workflows/property-discovery.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'actions/setup-go@v7.0.0'
+        - 'actions/upload-artifact@v7.0.2'
     '.github/workflows/sibling-pins.yml':
         - 'kenn-io/actions@main'
     '.github/workflows/workflow-validation-pr.yml': []

@@ -125,6 +125,7 @@ Use these as reasoning checkpoints, not a requirement to create a design doc.
   which omits native-driver tags and disables CGO.
 - After Go changes, run `go fmt ./...` and `go vet ./...` before committing.
   Include resulting formatting changes. Use `make lint-ci` for lint checks.
+- For property tests, use synthetic inputs and production entry points; follow the [Hegel guidance](docs/development.md#property-tests-hegel) and use `-count=1` for seeded or budgeted runs.
 - All new or modified Go assertions must use testify: `require.X` for setup or
   fatal preconditions, `assert.X` for independent checks. Never add `t.Errorf`,
   `t.Fatalf`, `t.Fatal`, or `t.Error`. Equality is `(want, got)`.

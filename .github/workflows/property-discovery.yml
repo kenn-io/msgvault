@@ -1,0 +1,39 @@
+name: Property discovery
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 9 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Run properties with a fresh seed
+        shell: bash
+        run: |
+          set -o pipefail
+          export HEGEL_SEED="$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')"
+          export HEGEL_TEST_CASES=1000 HEGEL_DERANDOMIZE=false HEGEL_DATABASE=disabled HEGEL_PRINT_BLOB=1
+          mkdir -p property-discovery
+          {
+            echo "SHA: $(git rev-parse HEAD)"
+            echo "HEGEL_SEED=$HEGEL_SEED"
+            echo "HEGEL_TEST_CASES=$HEGEL_TEST_CASES"
+          } | tee property-discovery/run.txt >> "$GITHUB_STEP_SUMMARY"
+          go test -json -tags "fts5 sqlite_vec" -count=1 -run '^TestHegel(AnnualTemperatureRollups|MessageIDContract)$' ./internal/identityindex ./internal/imap 2>&1 | tee property-discovery/test.json
+      - name: Retain failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: property-discovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: property-discovery/
+          retention-days: 14
