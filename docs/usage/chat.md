@@ -900,7 +900,15 @@ Enable only the writes intended for the assistant's session:
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
+| Operational settings | `--allow-settings-writes` | `--http-allow-writes --allow-settings-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
+
+`get_operational_settings` returns editable settings for analytics cache builds,
+sync rate limiting, activity processing, backup compression, and vector search
+tuning, with the exact settings ETag and pending restart state. It excludes
+endpoints, credentials, host paths, and operator setup. Use that ETag with
+`update_operational_settings`; each update requires approval and native
+validation, and a stale ETag is refused. Omitted settings are preserved.
 
 `draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available. On unreleased `main`, `--confirm-sensitive-drafts` also requires confirmation for flagged draft creation and edits; it grants no write access.
 
@@ -988,6 +996,7 @@ msgvault mcp --http 8080
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-settings-writes` | `false` | Expose allowlisted operational settings updates. Each call requires approval. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |

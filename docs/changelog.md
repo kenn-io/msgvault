@@ -68,6 +68,7 @@ All notable changes to msgvault, grouped by release.
   also mark loops done, snooze them, or reopen them, with your approval for
   each call. Over HTTP, decisions also need `--http-allow-writes` and protocol
   `2026-07-28` or newer.
+- Let an MCP assistant read selected operational settings and their restart state. With `--allow-settings-writes`, it can update them with your approval and the current settings revision.
 
 - Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
 - Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`.
