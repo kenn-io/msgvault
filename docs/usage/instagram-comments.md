@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-11"
 title: Instagram Comments
 description: Archive a linked professional Instagram account's media comments and replies.
 ---
@@ -91,6 +91,11 @@ configured `instagram_account_id`. Media owned by another account, media with
 no owner, and media the Page token cannot read are skipped and logged by the
 daemon. Media that is also in the account's media list stays one conversation,
 and its comments are marked as ad comments in their metadata.
+
+If the ad token cannot read the ad account, or Meta rate limits the ad account,
+that sync fails and reports Meta's error code. Comments on media from the
+account's own media list are still archived in that run. The next sync
+continues reading creatives where it stopped.
 
 Creative pages and media lookups count toward the same request budget. Adding,
 changing, or removing `ad_account_id` restarts that profile's sync cycle from

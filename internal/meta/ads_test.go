@@ -18,6 +18,8 @@ import (
 type adFixture struct {
 	mediaStatus                        int
 	mediaBody                          string
+	creativeStatus                     int
+	creativeBody, creativeFailAfter    string
 	creativeReads, adReads, ownedReads atomic.Int32
 }
 
@@ -45,6 +47,11 @@ func newAdFixture(t *testing.T) (*adFixture, *Client, *Client) {
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"400","text":"Organic comment"}]}`)
 		case "/v26.0/act_700/adcreatives":
 			f.creativeReads.Add(1)
+			if f.creativeStatus != 0 && r.URL.Query().Get("after") == f.creativeFailAfter {
+				w.WriteHeader(f.creativeStatus)
+				_, _ = fmt.Fprint(w, f.creativeBody)
+				return
+			}
 			if r.URL.Query().Get("after") == "" {
 				_, _ = fmt.Fprint(w, `{"data":[{"id":"600","effective_instagram_media_id":"900"},{"id":"601","effective_instagram_media_id":"900"},{"id":"602","effective_instagram_media_id":"300"}],"paging":{"cursors":{"after":"next"},"next":"https://example.test/unused"}}`)
 				return
@@ -156,6 +163,70 @@ func TestInstagramAdMediaRetryableFailureFailsSync(t *testing.T) {
 			exists, err = st.MessageExistsBatch(src.ID, []string{"900", "1000"})
 			require.NoError(err)
 			assert.Len(exists, 2, "the next run retries the failed media")
+		})
+	}
+}
+
+func TestInstagramAdCreativeReadFailureFailsSyncAndResumes(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		failAfter string
+		body      string
+		wantCode  string
+		archived  []string // archived by the failed run
+		missing   []string // not archived by the failed run
+		reads     [2]int32 // creative reads after the failed and the next run
+	}{
+		{
+			name:     "ad token refused",
+			body:     `{"error":{"message":"token synthetic-ad-secret lacks ads_read","code":200}}`,
+			wantCode: "code 200",
+			archived: []string{"300", "400"},
+			missing:  []string{"900", "1000"},
+			reads:    [2]int32{1, 3},
+		},
+		{
+			name:      "rate limit on the second page",
+			failAfter: "next",
+			body:      `{"error":{"code":17}}`,
+			wantCode:  "code 17",
+			archived:  []string{"300", "400", "900", "1000"},
+			reads:     [2]int32{2, 3},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			f, page, ads := newAdFixture(t)
+			f.creativeStatus, f.creativeBody, f.creativeFailAfter = http.StatusBadRequest, tt.body, tt.failAfter
+			imp := NewImporter(st, page)
+			src, err := imp.RegisterInstagram(t.Context(), "9", "100", "200")
+			require.NoError(err)
+
+			sum, err := imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
+			require.Error(err, "a failed creative read fails the sync")
+			assert.Contains(err.Error(), tt.wantCode)
+			assert.NotContains(err.Error(), "synthetic-ad-secret")
+			assert.NotContains(err.Error(), "synthetic-page-secret")
+			assert.True(sum.Partial)
+			assert.Equal(tt.reads[0], f.creativeReads.Load())
+			exists, err := st.MessageExistsBatch(src.ID, tt.archived)
+			require.NoError(err)
+			assert.Len(exists, len(tt.archived), "media read before the failure is archived in the same run")
+			if len(tt.missing) > 0 {
+				exists, err = st.MessageExistsBatch(src.ID, tt.missing)
+				require.NoError(err)
+				assert.Empty(exists)
+			}
+
+			f.creativeStatus = 0
+			sum, err = imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
+			require.NoError(err)
+			assert.False(sum.Partial)
+			assert.Equal(tt.reads[1], f.creativeReads.Load(), "the next run resumes at the failed creative page")
+			exists, err = st.MessageExistsBatch(src.ID, []string{"900", "1000"})
+			require.NoError(err)
+			assert.Len(exists, 2)
 		})
 	}
 }
