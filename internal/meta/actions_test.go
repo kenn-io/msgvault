@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
@@ -253,4 +254,113 @@ func TestImportResumesPastDeletedPendingComment(t *testing.T) {
 	assert.False(sum.Partial)
 	assert.Contains(f.paths[before:], "/v26.0/100_201/comments", "sibling work continues")
 	assert.NotContains(f.paths[before:], "/v26.0/100_203/comments")
+}
+
+// purgeDeleted runs `msgvault gc` and checks it purged want rows.
+func purgeDeleted(t *testing.T, st *store.Store, want int64) {
+	t.Helper()
+	plan, err := st.PlanGCContext(t.Context())
+	require.NoError(t, err)
+	purged, err := st.ExecuteGCContext(t.Context(), plan)
+	require.NoError(t, err)
+	require.Equal(t, want, purged)
+}
+
+func TestImportResumesPastDeletedCommentAfterGC(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 3})
+	require.NoError(err)
+	require.True(sum.Partial)
+	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
+	require.NoError(err)
+	client, _ := writeFixture(t, http.StatusOK, `{"success":true}`)
+	require.NoError(ModerateComment(t.Context(), st, client, target, ActionDelete))
+	purgeDeleted(t, st, 1)
+
+	f.denied["100_201/comments"] = true
+	before := len(f.paths)
+	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err, "the saved reply frame of a deleted comment is gone after gc")
+	assert.False(sum.Partial)
+	assert.NotContains(f.paths[before:], "/v26.0/100_201/comments")
+}
+
+func TestImportResumesPastDeletedPendingCommentAfterGC(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "First comment"), *comment("100_203", "100_200", "Second comment")}
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{Full: true, MaxRequests: 3})
+	require.NoError(err)
+	require.True(sum.Partial)
+	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_203").ID)
+	require.NoError(err)
+	client, _ := writeFixture(t, http.StatusOK, `{"success":true}`)
+	require.NoError(ModerateComment(t.Context(), st, client, target, ActionDelete))
+	purgeDeleted(t, st, 1)
+
+	f.denied["100_203/comments"] = true
+	before := len(f.paths)
+	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err, "a saved copy of a deleted comment is gone after gc")
+	assert.False(sum.Partial)
+	assert.Contains(f.paths[before:], "/v26.0/100_201/comments", "sibling work continues")
+	assert.NotContains(f.paths[before:], "/v26.0/100_203/comments")
+	ids, err := st.MessageExistsBatch(src.ID, []string{"100_203"})
+	require.NoError(err)
+	assert.Zero(ids["100_203"], "the deleted comment is not archived again")
+}
+
+func TestModerateCommentDeleteWithoutPausedSyncAddsNoRun(t *testing.T) {
+	require := require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	runs := func() int {
+		var n int
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sync_runs WHERE source_id = ?`, src.ID).Scan(&n))
+		return n
+	}
+	before := runs()
+	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
+	require.NoError(err)
+	client, _ := writeFixture(t, http.StatusOK, `{"success":true}`)
+	require.NoError(ModerateComment(t.Context(), st, client, target, ActionDelete))
+	assert.Equal(t, before, runs())
+}
+
+func TestModerateCommentReportsUnrecordedChange(t *testing.T) {
+	for _, tt := range []struct {
+		action CommentAction
+		want   string
+	}{
+		{ActionHide, "Facebook hid comment 100_201, but msgvault could not record it"},
+		{ActionUnhide, "Facebook unhid comment 100_201, but msgvault could not record it"},
+		{ActionDelete, "Facebook deleted comment 100_201, but msgvault could not record it"},
+	} {
+		t.Run(string(tt.action), func(t *testing.T) {
+			require := require.New(t)
+			st, f, imp, src := setupImport(t)
+			f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
+			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err)
+			target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
+			require.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_archive_write BEFORE UPDATE ON messages
+				BEGIN SELECT RAISE(ABORT, 'injected archive failure'); END`)
+			require.NoError(err)
+
+			client, writes := writeFixture(t, http.StatusOK, `{"success":true}`)
+			err = ModerateComment(t.Context(), st, client, target, tt.action)
+			require.Len(*writes, 1, "Meta applied the change")
+			require.ErrorContains(err, tt.want)
+			var cause sqlite3.Error
+			require.ErrorAs(err, &cause, "the archive error stays wrapped")
+			require.ErrorContains(err, "injected archive failure")
+		})
+	}
 }

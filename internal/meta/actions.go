@@ -130,9 +130,42 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 	// so the archive does not disagree with Meta.
 	local := context.WithoutCancel(ctx)
 	if action == ActionDelete {
-		return st.MarkMessageThreadDeletedContext(local, target.SourceID, target.CommentID)
+		err = st.MarkMessageThreadDeletedContext(local, target.SourceID, target.CommentID)
+		if err == nil {
+			err = dropDeletedTraversal(local, st, execution, source)
+		}
+	} else {
+		err = setCommentHidden(local, st, target.MessageID, action == ActionHide)
 	}
-	return setCommentHidden(local, st, target.MessageID, action == ActionHide)
+	if err != nil {
+		done := map[CommentAction]string{ActionHide: "hid", ActionUnhide: "unhid", ActionDelete: "deleted"}[action]
+		return fmt.Errorf("%s %s comment %s, but msgvault could not record it: %w", platform.name, done, target.CommentID, err)
+	}
+	return nil
+}
+
+// dropDeletedTraversal republishes a paused sync's saved traversal without
+// the comments just deleted. Doing it now, while the deleted rows still exist,
+// keeps a later `msgvault gc` from hiding them from the resume.
+func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store.SyncExecution, source *store.Source) error {
+	state, err := loadState(ctx, st, source, false)
+	if err != nil {
+		return err
+	}
+	run := &importRun{imp: &Importer{store: st}, source: source, state: state, sum: &ImportSummary{}}
+	changed, err := run.dropDeletedFrames(ctx)
+	if err != nil || !changed {
+		return err
+	}
+	checkpoint, err := run.checkpoint()
+	if err != nil {
+		return err
+	}
+	syncID, err := execution.StartSyncContext(ctx, source.SourceType, "")
+	if err != nil {
+		return err
+	}
+	return st.PauseSyncWithCheckpoint(ctx, syncID, checkpoint)
 }
 
 func setCommentHidden(ctx context.Context, st *store.Store, messageID int64, hidden bool) error {
