@@ -13,7 +13,20 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
-var errCommitmentWindowChanged = errors.New("commitment sources changed before apply")
+// commitmentPrepareFailure is a preparation outcome that fails only the
+// optional commitment lane. The apply keeps ordinary work and retries the lane.
+type commitmentPrepareFailure peoplesweep.FailureClass
+
+func (f commitmentPrepareFailure) Error() string { return "commitment lane failed: " + string(f) }
+
+const (
+	// The archive changed between the provider window and the fenced apply.
+	errCommitmentWindowChanged = commitmentPrepareFailure(peoplesweep.FailureArchiveGap)
+	// The provider output cannot be stored or read back faithfully: an ambiguous
+	// edited locator, or an expiry beyond the four-digit years of stored and
+	// public timestamps.
+	errCommitmentInvalidOutput = commitmentPrepareFailure(peoplesweep.FailureInvalidOutput)
+)
 
 type preparedCommitmentPromise struct {
 	existingID int64
@@ -163,7 +176,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 			return nil, err
 		}
 		if ambiguous {
-			continue
+			return nil, errCommitmentInvalidOutput
 		}
 		if existing.ID != 0 {
 			if _, matched := preferred[existing.ID]; !matched || (existing.Start == promise.Start && existing.End == promise.End) {
@@ -189,20 +202,20 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		source := match.source
 		expires := source.EventTime.Add(result.Config.MaxDuration)
 		if promise.DueOn != nil {
-			day, err := time.ParseInLocation(time.DateOnly, *promise.DueOn, location)
-			if err != nil {
-				return nil, fmt.Errorf("parse commitment due date: %w", err)
-			}
+			// ParseCommitments above already parsed this date in this location.
+			day, _ := time.ParseInLocation(time.DateOnly, *promise.DueOn, location)
 			expires = day.AddDate(0, 0, 1).Add(result.Config.ExpireAfterDue).UTC()
+		}
+		if expires.Year() > 9999 {
+			return nil, errCommitmentInvalidOutput
 		}
 		descriptor := personfacts.TargetDescriptor{Kind: personfacts.TargetCommitment,
 			Key: promise.TargetKey, Slug: "commitment", ValueType: personfacts.ValueText,
 			Cardinality: personfacts.CardinalitySingle, Sensitive: true, MaxLength: 240}
-		revision, err := personfacts.DescriptorRevision(descriptor)
+		descriptor.Revision, err = personfacts.DescriptorRevision(descriptor)
 		if err != nil {
 			return nil, err
 		}
-		descriptor.Revision = revision
 		value, err := json.Marshal(promise.Summary)
 		if err != nil {
 			return nil, err
