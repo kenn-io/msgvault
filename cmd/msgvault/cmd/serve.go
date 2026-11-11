@@ -590,6 +590,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := configureRecordingReferenceJob(ctx, mediaSched, operationGate, s, cfg.Integrations.Docbank, logger); err != nil {
 		logger.Warn("Recording reference submission unavailable", "error", err)
 	}
+	if err := configureWakeupJob(ctx, mediaSched, operationGate, s, cfg.Wakeups, logger); err != nil {
+		logger.Warn("Wakeup scheduling unavailable", "category", "store_error")
+	}
 	if err := registerActivityProjectionJob(
 		sched, s, cfg.Activity, logger); err != nil {
 		return fmt.Errorf("schedule activity projection: %w", err)

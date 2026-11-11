@@ -3499,3 +3499,49 @@ These heuristics can miss unfamiliar wording and layouts, lowercase letter-only 
 Search rows are masked in place, with membership and counts unchanged.
 
 Search can confirm a withheld value through exact or prefix queries, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Add `verification.read` only when the delegated reader should receive verification content.
+
+## Wake-up webhooks
+
+Configured wake-ups POST a Standard Webhooks signed JSON notification when a
+matching recent message changes. Configure them in [the configuration
+reference](configuration.md#wake-up-webhooks). A new entry starts at the
+archive's current completion bound, so existing history does not trigger a
+notification. Editing a filter applies it from the entry's current position.
+Removing an entry discards its position.
+
+A notification contains `schema_version`, `type` (`msgvault.wakeup`),
+`delivery_id`, `name`, `filter`, `cursor_from`, `cursor_to`, `matched` and
+`server_time`. `matched.count` counts matches in the scanned range;
+`matched.message_ids` contains at most the newest 50 IDs in feed order and
+`matched.truncated` indicates additional matches. It contains no message
+content or addresses. The message date is the first available of `sent_at`,
+`received_at` and `internal_date`; undated, old and deleted messages do not
+trigger a ping, but the cursor advances past them.
+
+Read the feed with the same selectors from `cursor_from` to replay the range.
+A delegated client uses its own authorized feed cursor: its cursor is bound to
+its grant as well as the selectors. A 2xx response acknowledges delivery;
+failures keep the cursor and retry after 30 seconds, doubling to one hour.
+Delivery is at least once. A retry of the same range has the same delivery ID;
+a retry that includes more changes has a new ID. Logs report the wake-up name,
+error category and failure count.
+
+To verify a signature, base64-decode the value after `whsec_` in the configured
+secret. Compute HMAC-SHA256 over `webhook-id + "." + webhook-timestamp + "." +
+raw_body`, base64-encode the digest, and compare it in constant time with the
+`v1,` value in `webhook-signature`. Reject stale timestamps according to your
+receiver's policy.
+
+For example, after enforcing a timestamp tolerance and parsing the signature
+header, a Go receiver can verify a `v1` signature as follows:
+
+```go
+key, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(secret, "whsec_"))
+if err != nil { return err }
+mac := hmac.New(sha256.New, key)
+fmt.Fprintf(mac, "%s.%s.%s", webhookID, timestamp, rawBody)
+expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+if !hmac.Equal([]byte(expected), []byte(signatureV1)) {
+    return errors.New("invalid webhook signature")
+}
+```
