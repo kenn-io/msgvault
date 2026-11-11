@@ -363,7 +363,7 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 					fulfilment_confirmed = CASE WHEN ? THEN 0 ELSE fulfilment_confirmed END
 					WHERE id = ? AND person_id = ? AND anchor_message_id = ? AND direction = ?`,
 					claimID, p.promise.TargetKey, p.promise.Quote, p.promise.Start, p.promise.End, p.promise.Summary, p.promise.DueOn,
-					s.dialect.TimestampParam(p.source.EventTime), s.dialect.TimestampParam(p.expires), p.replace, p.replace, p.replace, p.replace, p.replace,
+					personFactPortableTime(p.source.EventTime), s.dialect.TimestampParam(p.expires), p.replace, p.replace, p.replace, p.replace, p.replace,
 					p.existingID, personID, p.source.MessageID, p.promise.Direction)
 				if err != nil {
 					return fmt.Errorf("refresh commitment lifecycle: %w", err)
@@ -383,7 +383,7 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 				 promised_at = excluded.promised_at, expires_at = excluded.expires_at`,
 				personID, claimID, p.promise.TargetKey, p.source.MessageID, p.promise.Direction,
 				p.promise.Quote, p.promise.Start, p.promise.End, p.promise.Summary, p.promise.DueOn,
-				s.dialect.TimestampParam(p.source.EventTime), s.dialect.TimestampParam(p.expires))
+				personFactPortableTime(p.source.EventTime), s.dialect.TimestampParam(p.expires))
 			if err != nil {
 				return fmt.Errorf("persist commitment lifecycle: %w", err)
 			}
@@ -405,11 +405,11 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 		_, err = tx.ExecContext(ctx, `UPDATE person_commitments SET
 			fulfilment_evidence_id = ?, fulfilment_confirmed = ?
 			WHERE id = ? AND person_id = ? AND target_key = ? AND current_claim_id IS NOT NULL
-			AND promised_at < ? AND (reopened_at IS NULL OR reopened_at < ?)
+			AND `+s.loopTimeKey("promised_at")+` < `+s.loopTimeKey("?")+` AND (reopened_at IS NULL OR reopened_at < ?)
 			AND (fulfilment_evidence_id IS NULL OR fulfilment_evidence_id = ? OR (fulfilment_confirmed = 0 AND EXISTS (
 			  SELECT 1 FROM person_fact_evidence e WHERE e.id = person_commitments.fulfilment_evidence_id
-			  AND e.event_time <= ?)))`, evidence.ID, confirmed, f.anchor.ID, personID, f.anchor.TargetKey,
-			s.dialect.TimestampParam(f.input.EventTime), s.dialect.TimestampParam(f.input.EventTime), f.replaceEvidenceID, s.dialect.TimestampParam(f.input.EventTime))
+			  AND `+s.loopTimeKey("e.event_time")+` <= `+s.loopTimeKey("?")+`)))`, evidence.ID, confirmed, f.anchor.ID, personID, f.anchor.TargetKey,
+			f.input.EventTime, s.dialect.TimestampParam(f.input.EventTime), f.replaceEvidenceID, f.input.EventTime)
 		if err != nil {
 			return fmt.Errorf("persist commitment fulfilment: %w", err)
 		}
@@ -621,6 +621,30 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 	return nil
 }
 
+// Window sources and person-level changes are watched in the conversation lane.
+// A maintained citation can live in any lane, so its message is watched in all.
+func (s *Store) commitmentCitedChangedTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) (bool, error) {
+	ids := append([]int64(nil), prepared.maintenanceIDs...)
+	for _, source := range request.Commitment.Window.Sources {
+		ids = append(ids, source.MessageID)
+	}
+	marks, binds := sortedIDPlaceholders(ids)
+	if marks == "" {
+		return false, nil
+	}
+	cited, citedBinds := sortedIDPlaceholders(prepared.maintenanceIDs)
+	if cited == "" {
+		cited = "NULL"
+	}
+	var changed bool
+	args := append([]any{request.Lease.PersonID, prepared.snapshot, peoplesweep.SourceConversationText}, binds...)
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_sweep_changes
+		WHERE person_id = ? AND sequence > ? AND ((source_lane = ?
+		AND (message_id IS NULL OR message_id IN (`+marks+`))) OR message_id IN (`+cited+`)))`,
+		append(args, citedBinds...)...).Scan(&changed)
+	return changed, err
+}
+
 // The change journal covers message content and person identity changes between
 // source alignment and the fenced apply. A stale window can be retried without
 // committing its frontier or discarding the ordinary result.
@@ -629,20 +653,8 @@ func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, req
 	if err := tx.QueryRowContext(ctx, `SELECT sequence FROM person_sweep_change_clock WHERE singleton = TRUE`).Scan(&latest); err != nil || prepared.snapshot > latest {
 		return false, err
 	}
-	ids := append([]int64(nil), prepared.maintenanceIDs...)
-	for _, source := range request.Commitment.Window.Sources {
-		ids = append(ids, source.MessageID)
-	}
-	marks, binds := sortedIDPlaceholders(ids)
-	if marks != "" {
-		var changed bool
-		args := append([]any{request.Lease.PersonID, prepared.snapshot, peoplesweep.SourceConversationText}, binds...)
-		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_sweep_changes
-			WHERE person_id = ? AND sequence > ? AND source_lane = ?
-			AND (message_id IS NULL OR message_id IN (`+marks+`)))`, args...).Scan(&changed)
-		if err != nil || changed {
-			return false, err
-		}
+	if changed, err := s.commitmentCitedChangedTx(ctx, tx, request, prepared); err != nil || changed {
+		return false, err
 	}
 	var allowSensitive bool
 	var sourceSince, sourceJSON string
@@ -676,7 +688,7 @@ func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, req
 // Identical extraction converges even when a promise cannot be its own older
 // anchor. Changed, detached or newly supported citations need matching replay.
 func (s *Store) commitmentClaimCurrent(ctx context.Context, c PersonCommitment, source peoplesweep.CommitmentSource, changes []personfacts.EvidenceStatusChange) (bool, error) {
-	if c.ClaimID == nil || !c.PromisedAt.Equal(source.EventTime) {
+	if c.ClaimID == nil || !personFactPortableTime(c.PromisedAt).Equal(personFactPortableTime(source.EventTime)) {
 		return false, nil
 	}
 	var key string

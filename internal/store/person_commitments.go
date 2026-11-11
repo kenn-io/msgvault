@@ -240,7 +240,7 @@ func (s *Store) loadCommitmentCandidates(ctx context.Context, filter commitmentL
 		} else {
 			if after.ID != 0 {
 				query += ` AND (` + promisedAt + `, id) > (` + s.loopTimeKey("?") + `, ?)`
-				args = append(args, s.dialect.TimestampParam(after.PromisedAt), after.ID)
+				args = append(args, personFactPortableTime(after.PromisedAt), after.ID)
 			}
 			query += ` ORDER BY ` + promisedAt + `, id LIMIT ?`
 		}
