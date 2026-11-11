@@ -27,7 +27,7 @@ func TestOrganizationReadsUseNativeStore(t *testing.T) {
 	org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
 	require.NoError(t, err)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
-	for _, name := range []string{"get_organization", "get_organization_history"} {
+	for _, name := range []string{"get_organization"} {
 		result, err := backend.ExecuteOperation(t.Context(), name, map[string]any{"organization_id": org.ID})
 		require.NoError(t, err)
 		profile := operationOutput[mcpserver.OrganizationRecord](t, result)
@@ -36,10 +36,13 @@ func TestOrganizationReadsUseNativeStore(t *testing.T) {
 	}
 	result, err := backend.ExecuteOperation(t.Context(), "list_organization_attributes", map[string]any{"organization_id": org.ID})
 	require.NoError(t, err)
-	require.False(t, result.IsError)
+	assert.Empty(t, operationOutput[generated.OrganizationAttributesResponse](t, result).Values)
 	result, err = backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": -1})
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
+	data, err := json.Marshal(result.Output)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "invalid_arguments")
 }
 
 func TestOrganizationWritesUseRevisionsAndEmploymentGuard(t *testing.T) {
@@ -57,6 +60,9 @@ func TestOrganizationWritesUseRevisionsAndEmploymentGuard(t *testing.T) {
 	stale, err := backend.ExecuteOperation(t.Context(), "delete_organization", map[string]any{"organization_id": id, "etag": first.ETag})
 	require.NoError(t, err)
 	assert.True(t, stale.IsError)
+	staleData, err := json.Marshal(stale.Output)
+	require.NoError(t, err)
+	assert.Contains(t, string(staleData), "organization_revision_conflict")
 	participant, err := st.EnsureParticipant("employee@example.com", "Example Employee", "example.com")
 	require.NoError(t, err)
 	person, _, err := st.CreatePersonFromParticipant(participant)
@@ -71,6 +77,14 @@ func TestOrganizationWritesUseRevisionsAndEmploymentGuard(t *testing.T) {
 	assert.Contains(t, string(encoded), "organization_has_employments")
 	_, err = st.GetOrganizationContext(t.Context(), id)
 	assert.NoError(t, err)
+	deletable, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Deletable", Kind: store.OrganizationKindCompany})
+	require.NoError(t, err)
+	readable, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": deletable.ID})
+	require.NoError(t, err)
+	deleteETag := operationOutput[mcpserver.OrganizationRecord](t, readable).ETag
+	deleted, err := backend.ExecuteOperation(t.Context(), "delete_organization", map[string]any{"organization_id": deletable.ID, "etag": deleteETag})
+	require.NoError(t, err)
+	assert.True(t, operationOutput[mcpserver.OrganizationDeleted](t, deleted).Deleted)
 }
 
 func TestOrganizationProfileMediaAndAttributesThroughNativeRoutes(t *testing.T) {
@@ -91,36 +105,47 @@ func TestOrganizationProfileMediaAndAttributesThroughNativeRoutes(t *testing.T) 
 	result, err := backend.ExecuteOperation(t.Context(), "replace_organization_profile", args)
 	require.NoError(t, err)
 	profile := operationOutput[mcpserver.OrganizationRecord](t, result)
-	require.Len(t, profile.Profile.Media, 2)
-	var mediaID, uriID int64
-	for _, media := range profile.Profile.Media {
-		if media.HasData {
-			mediaID = media.Envelope.ID
-		} else {
-			uriID = media.Envelope.ID
+	t.Run("media", func(t *testing.T) {
+		require.Len(t, profile.Profile.Media, 2)
+		var mediaID, uriID int64
+		for _, media := range profile.Profile.Media {
+			if media.HasData {
+				mediaID = media.Envelope.ID
+			} else {
+				uriID = media.Envelope.ID
+			}
 		}
-	}
-	require.NotZero(t, mediaID)
-	require.NotZero(t, uriID)
-	uriResult, err := backend.ExecuteOperation(t.Context(), "get_organization_media", map[string]any{"organization_id": org.ID, "media_id": uriID})
-	require.NoError(t, err)
-	assert.True(t, uriResult.IsError)
-	firstResult, err := backend.ExecuteOperation(t.Context(), "get_organization_media", map[string]any{"organization_id": org.ID, "media_id": mediaID, "length": 3})
-	require.NoError(t, err)
-	first := operationOutput[mcpserver.OrganizationMediaChunk](t, firstResult)
-	assert.Equal(t, "YWJj", first.DataBase64)
-	assert.False(t, first.Complete)
-	nextResult, err := backend.ExecuteOperation(t.Context(), "get_organization_media", map[string]any{"organization_id": org.ID, "media_id": mediaID, "offset": 3, "sha256": first.SHA256})
-	require.NoError(t, err)
-	next := operationOutput[mcpserver.OrganizationMediaChunk](t, nextResult)
-	assert.Equal(t, "ZGVm", next.DataBase64)
-	assert.True(t, next.Complete)
-	invalid, err := backend.ExecuteOperation(t.Context(), "get_organization_media", map[string]any{"organization_id": org.ID, "media_id": mediaID, "offset": 3})
-	require.NoError(t, err)
-	assert.True(t, invalid.IsError)
+		require.NotZero(t, mediaID)
+		require.NotZero(t, uriID)
+		uriResult, err := backend.ExecuteOperation(t.Context(), "get_organization_media", map[string]any{"organization_id": org.ID, "media_id": uriID})
+		require.NoError(t, err)
+		assert.True(t, uriResult.IsError)
+		uriData, err := json.Marshal(uriResult.Output)
+		require.NoError(t, err)
+		assert.Contains(t, string(uriData), "profile_media_content_unavailable")
+		firstResult, err := backend.ExecuteOperation(t.Context(), "get_organization_media", map[string]any{"organization_id": org.ID, "media_id": mediaID, "length": float64(3)})
+		require.NoError(t, err)
+		first := operationOutput[mcpserver.PersonMediaContent](t, firstResult)
+		assert.Equal(t, "YWJj", first.DataBase64)
+		assert.False(t, first.Complete)
+		nextResult, err := backend.ExecuteOperation(t.Context(), "get_organization_media", map[string]any{"organization_id": org.ID, "media_id": mediaID, "offset": float64(3), "sha256": first.SHA256})
+		require.NoError(t, err)
+		next := operationOutput[mcpserver.PersonMediaContent](t, nextResult)
+		assert.Equal(t, "ZGVm", next.DataBase64)
+		assert.True(t, next.Complete)
+		invalid, err := backend.ExecuteOperation(t.Context(), "get_organization_media", map[string]any{"organization_id": org.ID, "media_id": mediaID, "offset": float64(3)})
+		require.NoError(t, err)
+		assert.True(t, invalid.IsError)
+		invalidData, err := json.Marshal(invalid.Output)
+		require.NoError(t, err)
+		assert.Contains(t, string(invalidData), "invalid_arguments")
+	})
 	stale, err := backend.ExecuteOperation(t.Context(), "replace_organization_profile", args)
 	require.NoError(t, err)
 	assert.True(t, stale.IsError)
+	staleData, err := json.Marshal(stale.Output)
+	require.NoError(t, err)
+	assert.Contains(t, string(staleData), "organization_revision_conflict")
 	clearProfile, err := backend.ExecuteOperation(t.Context(), "replace_organization_profile", map[string]any{"organization_id": org.ID, "etag": profile.ETag, "body": map[string]any{}})
 	require.NoError(t, err)
 	clearedProfile := operationOutput[mcpserver.OrganizationRecord](t, clearProfile)
@@ -128,19 +153,21 @@ func TestOrganizationProfileMediaAndAttributesThroughNativeRoutes(t *testing.T) 
 	history, err := backend.ExecuteOperation(t.Context(), "get_organization_history", map[string]any{"organization_id": org.ID})
 	require.NoError(t, err)
 	assert.NotEmpty(t, operationOutput[mcpserver.OrganizationRecord](t, history).Profile.Names)
-	set, err := backend.ExecuteOperation(t.Context(), "set_organization_attribute", map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "value": map[string]any{"type": "text", "text": "software"}, "source": "user"}})
-	require.NoError(t, err)
-	write := operationOutput[generated.OrganizationAttributeWrite](t, set)
-	require.NotNil(t, write.Value)
-	preview, err := backend.ExecuteOperation(t.Context(), "clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry", "expected_value_id": write.Value.ID, "dry_run": true})
-	require.NoError(t, err)
-	assert.True(t, operationOutput[generated.OrganizationAttributeWrite](t, preview).DryRun)
-	clear, err := backend.ExecuteOperation(t.Context(), "clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry", "expected_value_id": write.Value.ID})
-	require.NoError(t, err)
-	require.NotNil(t, operationOutput[generated.OrganizationAttributeWrite](t, clear).Superseded)
+	t.Run("attributes", func(t *testing.T) {
+		set, err := backend.ExecuteOperation(t.Context(), "set_organization_attribute", map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "value": map[string]any{"type": "text", "text": "software"}, "source": "user"}})
+		require.NoError(t, err)
+		write := operationOutput[generated.OrganizationAttributeWrite](t, set)
+		require.NotNil(t, write.Value)
+		preview, err := backend.ExecuteOperation(t.Context(), "clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry", "expected_value_id": write.Value.ID, "dry_run": true})
+		require.NoError(t, err)
+		assert.True(t, operationOutput[generated.OrganizationAttributeWrite](t, preview).DryRun)
+		clear, err := backend.ExecuteOperation(t.Context(), "clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry", "expected_value_id": write.Value.ID})
+		require.NoError(t, err)
+		require.NotNil(t, operationOutput[generated.OrganizationAttributeWrite](t, clear).Superseded)
+	})
 }
 
-func TestOrganizationMergeAndDeleteThroughNativeRoutes(t *testing.T) {
+func TestOrganizationMergeThroughNativeRoutes(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	first, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Survivor", Kind: store.OrganizationKindCompany})
 	require.NoError(t, err)
@@ -158,14 +185,6 @@ func TestOrganizationMergeAndDeleteThroughNativeRoutes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, losing.MergedIntoID)
 	assert.Equal(t, first.ID, *losing.MergedIntoID)
-	deletable, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Deletable", Kind: store.OrganizationKindCompany})
-	require.NoError(t, err)
-	readable, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": deletable.ID})
-	require.NoError(t, err)
-	deleteETag := operationOutput[mcpserver.OrganizationRecord](t, readable).ETag
-	deleted, err := backend.ExecuteOperation(t.Context(), "delete_organization", map[string]any{"organization_id": deletable.ID, "etag": deleteETag})
-	require.NoError(t, err)
-	assert.True(t, operationOutput[mcpserver.OrganizationDeleted](t, deleted).Deleted)
 }
 
 func TestOrganizationSDKRequiresConfirmationAndRejectsUnknownFields(t *testing.T) {
@@ -174,6 +193,9 @@ func TestOrganizationSDKRequiresConfirmationAndRejectsUnknownFields(t *testing.T
 	approvals := 0
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyOrganizations}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
+		if approvals == 1 {
+			return &sdkmcp.ElicitResult{Action: "decline"}, nil
+		}
 		assert.Contains(t, request.Params.Message, "create an organization")
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
@@ -190,10 +212,16 @@ func TestOrganizationSDKRequiresConfirmationAndRejectsUnknownFields(t *testing.T
 	require.NoError(t, err)
 	assert.True(t, invalid.IsError)
 	assert.Zero(t, approvals)
+	declined, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_organization", Arguments: map[string]any{"body": map[string]any{"name": "Declined Example"}}})
+	require.NoError(t, err)
+	assert.True(t, declined.IsError)
+	organizations, err := st.ListOrganizationsContext(t.Context(), store.OrganizationFilter{})
+	require.NoError(t, err)
+	assert.Empty(t, organizations)
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_organization", Arguments: map[string]any{"body": map[string]any{"name": "Example SDK", "kind": "company"}}})
 	require.NoError(t, err)
 	require.False(t, result.IsError)
-	assert.Equal(t, 1, approvals)
+	assert.Equal(t, 2, approvals)
 	data, err := json.Marshal(result.StructuredContent)
 	require.NoError(t, err)
 	var created mcpserver.OrganizationMutation
@@ -222,30 +250,31 @@ func TestOrganizationErrorsHideDetailsAndPreserveUncertainty(t *testing.T) {
 	unsupported, err := backend.ExecuteOperation(t.Context(), "delete_organization", map[string]any{"organization_id": 1, "etag": "invalid"})
 	require.NoError(t, err)
 	assert.True(t, unsupported.IsError)
-}
-
-func TestOrganizationSDKDeclinedConfirmationDoesNotWrite(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
-	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyOrganizations}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		return &sdkmcp.ElicitResult{Action: "decline"}, nil
-	}})
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_organization", Arguments: map[string]any{"body": map[string]any{"name": "Declined Example"}}})
+	data, err = json.Marshal(unsupported.Output)
 	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	organizations, err := st.ListOrganizationsContext(t.Context(), store.OrganizationFilter{})
-	require.NoError(t, err)
-	assert.Empty(t, organizations)
+	assert.Contains(t, string(data), "operation_not_supported")
 }
 
 func TestOrganizationWriteFlagForEmbeddedServer(t *testing.T) {
-	cmd := &cobra.Command{}
-	addMCPWriteFlags(cmd, "mcp-")
-	var opts mcpserver.ServeOptions
-	applyMCPWriteFlags(cmd, "mcp-", &opts)
-	assert.NotContains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyOrganizations)
-	require.NoError(t, cmd.Flags().Set("mcp-allow-organization-writes", "true"))
-	opts = mcpserver.ServeOptions{}
-	applyMCPWriteFlags(cmd, "mcp-", &opts)
-	assert.Contains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyOrganizations)
+	savedOrganization, savedCurated, savedProfile := mcpAllowOrganizationWrites, mcpAllowCuratedWrites, mcpAllowProfileWrites
+	savedLoop, savedSource := mcpAllowLoopWrites, mcpAllowSourceWrites
+	savedSensitive, savedDecisions, savedScoring := mcpConfirmSensitiveDrafts, mcpAllowIdentityDecisions, mcpAllowIdentityScoring
+	savedMerges, savedKata, savedCardDAV, savedCalendar := mcpAllowPersonMerges, mcpAllowKataWrites, mcpAllowCardDAVWrites, mcpAllowCalendarWrites
+	t.Cleanup(func() {
+		mcpAllowOrganizationWrites, mcpAllowCuratedWrites, mcpAllowProfileWrites = savedOrganization, savedCurated, savedProfile
+		mcpAllowLoopWrites, mcpAllowSourceWrites = savedLoop, savedSource
+		mcpConfirmSensitiveDrafts, mcpAllowIdentityDecisions, mcpAllowIdentityScoring = savedSensitive, savedDecisions, savedScoring
+		mcpAllowPersonMerges, mcpAllowKataWrites, mcpAllowCardDAVWrites, mcpAllowCalendarWrites = savedMerges, savedKata, savedCardDAV, savedCalendar
+	})
+	for _, prefix := range []string{"", "mcp-"} {
+		cmd := &cobra.Command{}
+		addMCPWriteFlags(cmd, prefix)
+		var opts mcpserver.ServeOptions
+		applyMCPWriteFlags(cmd, prefix, &opts)
+		assert.NotContains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyOrganizations)
+		require.NoError(t, cmd.Flags().Set(prefix+"allow-organization-writes", "true"))
+		opts = mcpserver.ServeOptions{}
+		applyMCPWriteFlags(cmd, prefix, &opts)
+		assert.Contains(t, opts.OperationWriteFamilies, mcpserver.OperationFamilyOrganizations)
+	}
 }

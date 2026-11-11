@@ -25,9 +25,12 @@ func (operationalTestBackend) OperationDisclosure(context.Context, string, map[s
 
 func TestOperationalCatalogUsesFixedNamesAndWriteGates(t *testing.T) {
 	assertions := assert.New(t)
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_source_scheduler_status", "sync_source", "arbitrary_command"}}
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_source_scheduler_status", "sync_source", "arbitrary_command", "get_organization", "get_organization_history", "list_organization_attributes"}}
 	tools := toolsByName(t, rawListTools(t, opts, true))
 	assertions.Contains(tools, "get_source_scheduler_status")
+	for _, name := range []string{"get_organization", "get_organization_history", "list_organization_attributes"} {
+		assertions.Contains(tools, name)
+	}
 	assertions.NotContains(tools, "sync_source")
 	assertions.NotContains(tools, "arbitrary_command")
 	opts.OperationWriteFamilies = []OperationFamily{OperationFamilySources}

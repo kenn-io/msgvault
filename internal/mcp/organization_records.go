@@ -12,7 +12,9 @@ type OrganizationRecord struct {
 
 func organizationOperationalDefinitions() []operationalDefinition {
 	id := safeIDSchema("Durable organization ID")
+	offset, length := chunkInputSchemas("organization media")
 	return []operationalDefinition{
+		newOperationalDefinition("get_organization_media", "Read stored inline media as bounded base64 chunks. Start at offset zero; pass the returned SHA-256 for subsequent offsets. URI-only media is unavailable and is never fetched.", OperationFamilyRecords, closedObject(map[string]*jsonschema.Schema{"organization_id": safeIDSchema("Organization ID"), "media_id": safeIDSchema("Profile media ID"), "offset": offset, "length": length, "sha256": stringSchema("SHA-256 from the first chunk")}, "organization_id", "media_id"), outputSchemaFor[PersonMediaContent](), false),
 		newOperationalDefinition("get_organization", "Read an organization profile and its exact ETag.", OperationFamilyRecords, closedObject(map[string]*jsonschema.Schema{"organization_id": id}, "organization_id"), outputSchemaFor[OrganizationRecord](), false),
 		newOperationalDefinition("get_organization_history", "Read an organization's profile history and exact ETag.", OperationFamilyRecords, closedObject(map[string]*jsonschema.Schema{"organization_id": id}, "organization_id"), outputSchemaFor[OrganizationRecord](), false),
 		newOperationalDefinition("list_organization_attributes", "Read an organization's typed attributes, optionally including superseded values.", OperationFamilyRecords, closedObject(map[string]*jsonschema.Schema{"organization_id": id, "definition_slug": stringSchema("Optional exact definition slug"), "include_superseded": booleanSchema("Include historical values")}, "organization_id"), organizationAttributesSchema(), false),
@@ -25,14 +27,6 @@ type OrganizationMutation struct {
 }
 type OrganizationDeleted struct {
 	Deleted bool `json:"deleted"`
-}
-type OrganizationMediaChunk struct {
-	Offset     int64  `json:"offset"`
-	Length     int64  `json:"length"`
-	Size       int64  `json:"size"`
-	SHA256     string `json:"sha256"`
-	Complete   bool   `json:"complete"`
-	DataBase64 string `json:"data_base64"`
 }
 type OrganizationCreateArgs struct {
 	Body generated.OrganizationCreateBody `json:"body"`
@@ -72,18 +66,11 @@ func organizationInputSchema[T any](required ...string) *jsonschema.Schema {
 	s := outputSchemaFor[T]()
 	s.Required = required
 	s.AdditionalProperties = rejectAllSchema()
-	for _, def := range s.Defs {
-		if def.Type == "object" && def.Properties != nil {
-			def.AdditionalProperties = rejectAllSchema()
-		}
-	}
 	return s
 }
 
 func organizationWriteDefinitions() []operationalDefinition {
-	offset, length := chunkInputSchemas("organization media")
 	return []operationalDefinition{
-		newOperationalDefinition("get_organization_media", "Read stored inline media as bounded base64 chunks. Start at offset zero; pass the returned SHA-256 for subsequent offsets. URI-only media is unavailable and is never fetched.", OperationFamilyOrganizations, closedObject(map[string]*jsonschema.Schema{"organization_id": safeIDSchema("Organization ID"), "media_id": safeIDSchema("Profile media ID"), "offset": offset, "length": length, "sha256": stringSchema("SHA-256 from the first chunk")}, "organization_id", "media_id"), outputSchemaFor[OrganizationMediaChunk](), false),
 		newOperationalDefinition("create_organization", "Create an organization. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationCreateArgs]("body"), outputSchemaFor[OrganizationMutation](), true),
 		newOperationalDefinition("update_organization", "Replace mutable organization fields using the exact ETag. Omitted fields are cleared except retired. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationUpdateArgs]("organization_id", "etag", "body"), outputSchemaFor[OrganizationMutation](), true),
 		newOperationalDefinition("delete_organization", "Delete an organization using its exact ETag. Native deletion refuses organizations with employment records. Requires client confirmation.", OperationFamilyOrganizations, organizationInputSchema[OrganizationDeleteArgs]("organization_id", "etag"), outputSchemaFor[OrganizationDeleted](), true),

@@ -6,9 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
-	"io"
 	"net/http"
-	"strings"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
@@ -73,11 +71,11 @@ func (b *daemonMCPOperations) executeOrganizationOperation(ctx context.Context, 
 	var result *mcpserver.OperationResult
 	switch name {
 	case "get_organization":
-		result, err = readMCPOperationJSON[generated.OrganizationProfile](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}", &generated.GetOrganizationRequestOptions{PathParams: &generated.GetOrganizationPath{ID: input.OrganizationID}}, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.OrganizationProfile](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}", &generated.GetOrganizationRequestOptions{PathParams: &generated.GetOrganizationPath{ID: input.OrganizationID}}, organizationRefusal, http.StatusOK)
 	case "get_organization_history":
-		result, err = readMCPOperationJSON[generated.OrganizationProfile](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/history", &generated.GetOrganizationHistoryRequestOptions{PathParams: &generated.GetOrganizationHistoryPath{ID: input.OrganizationID}}, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.OrganizationProfile](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/history", &generated.GetOrganizationHistoryRequestOptions{PathParams: &generated.GetOrganizationHistoryPath{ID: input.OrganizationID}}, organizationRefusal, http.StatusOK)
 	case "list_organization_attributes":
-		result, err = readMCPOperationJSON[generated.OrganizationAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/attributes", &generated.ListOrganizationAttributesRequestOptions{PathParams: &generated.ListOrganizationAttributesPath{ID: input.OrganizationID}, Query: &generated.ListOrganizationAttributesQuery{DefinitionSlug: input.DefinitionSlug, IncludeSuperseded: input.IncludeSuperseded}}, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.OrganizationAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/attributes", &generated.ListOrganizationAttributesRequestOptions{PathParams: &generated.ListOrganizationAttributesPath{ID: input.OrganizationID}, Query: &generated.ListOrganizationAttributesQuery{DefinitionSlug: input.DefinitionSlug, IncludeSuperseded: input.IncludeSuperseded}}, organizationRefusal, http.StatusOK)
 	}
 	if result != nil && !result.IsError && name != "list_organization_attributes" {
 		profile, ok := result.Output.(generated.OrganizationProfile)
@@ -158,7 +156,7 @@ func organizationWriteRequest(name string, args map[string]any) (organizationReq
 
 func organizationRefusal(code string) bool {
 	switch code {
-	case "organization_not_found", "organization_revision_conflict", "organization_has_employments", "organization_merge_conflict", "organization_profile_too_large", "invalid_organization", "invalid_source", "invalid_attribute_definition", "attribute_definition_not_found", "attribute_definition_inactive", "attribute_definition_not_writable", "invalid_attribute_value", "attribute_value_not_found", "attribute_value_conflict", "invalid_person_id", "profile_media_not_found", "profile_media_content_unavailable", "unauthorized", "store_unavailable", "bad_request", "invalid_organization_id", "if_match_required":
+	case "organization_not_found", "organization_revision_conflict", "organization_has_employments", "organization_merge_conflict", "organization_profile_too_large", "invalid_organization", "invalid_source", "invalid_attribute_definition", "attribute_definition_not_found", "attribute_definition_inactive", "attribute_definition_not_writable", "invalid_attribute_value", "attribute_value_not_found", "attribute_value_conflict", "invalid_person_id", "profile_media_not_found", "profile_media_content_unavailable", "invalid_organization_id", "invalid_if_match", "invalid_profile_media_id", "invalid_attribute_slug", "organizations_unavailable":
 		return true
 	}
 	return false
@@ -177,26 +175,11 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 		return operationFailure("invalid_arguments", false), true, nil
 	}
 	if name == "delete_organization" {
-		resp, err := b.client.DoGeneratedRequestWithContext(ctx, r.method, r.path, r.options)
-		if err != nil {
-			return operationFailure("operation_failed", true), true, err
+		_, _, failure, err := readMCPOperationBytes(ctx, b.client, r.method, r.path, r.options, 1<<20, organizationRefusal, http.StatusNoContent)
+		if failure != nil {
+			return failure, true, err
 		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode == http.StatusNoContent {
-			return &mcpserver.OperationResult{Output: mcpserver.OrganizationDeleted{Deleted: true}}, true, nil
-		}
-		var failure struct {
-			Error string `json:"error"`
-		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, 65536))
-		if err != nil {
-			return operationFailure("operation_response_failed", true), true, err
-		}
-		_ = json.Unmarshal(data, &failure)
-		if organizationRefusal(failure.Error) || failure.Error == "if_match_required" {
-			return operationFailure(failure.Error, false), true, nil
-		}
-		return operationFailure("operation_refused", true), true, nil
+		return &mcpserver.OperationResult{Output: mcpserver.OrganizationDeleted{Deleted: true}}, true, nil
 	}
 	if name == "set_organization_attribute" || name == "clear_organization_attribute" {
 		result, err := readMCPOperationJSONWithClassifier[generated.OrganizationAttributeWrite](ctx, b.client, r.method, r.path, r.options, organizationRefusal, http.StatusOK, http.StatusCreated)
@@ -225,65 +208,27 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 }
 
 type organizationMediaArguments struct {
-	OrganizationID int64  `json:"organization_id"`
-	MediaID        int64  `json:"media_id"`
-	Offset         *int64 `json:"offset,omitempty"`
-	Length         *int64 `json:"length,omitempty"`
-	SHA256         string `json:"sha256,omitempty"`
+	OrganizationID int64   `json:"organization_id"`
+	MediaID        int64   `json:"media_id"`
+	Offset         *int64  `json:"offset,omitempty"`
+	Length         *int64  `json:"length,omitempty"`
+	SHA256         *string `json:"sha256,omitempty"`
 }
 
 func (b *daemonMCPOperations) organizationMedia(ctx context.Context, args map[string]any) (*mcpserver.OperationResult, error) {
 	a, err := decodeMCPOperationArguments[organizationMediaArguments](args)
-	var offset int64
-	length := int64(1 << 20)
-	if a.Offset != nil {
-		offset = *a.Offset
-	}
-	if a.Length != nil {
-		length = *a.Length
-	}
-	if err != nil || !validLoopID(a.OrganizationID) || !validLoopID(a.MediaID) || offset < 0 || offset > 1<<53-1 || length < 1 || length > 4<<20 || (offset > 0 && a.SHA256 == "") {
+	if err != nil || !validLoopID(a.OrganizationID) || !validLoopID(a.MediaID) {
 		return operationFailure("invalid_arguments", false), nil
 	}
-	if a.SHA256 != "" {
-		digest, e := hex.DecodeString(a.SHA256)
-		if e != nil || len(digest) != sha256.Size {
-			return operationFailure("invalid_arguments", false), nil
-		}
+	data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/profile/media/{media_id}/content", &generated.GetOrganizationProfileMediaContentRequestOptions{PathParams: &generated.GetOrganizationProfileMediaContentPath{ID: a.OrganizationID, MediaID: a.MediaID}}, store.MaxPersonMediaBytes, organizationRefusal, http.StatusOK)
+	if failure != nil {
+		return failure, err
 	}
-	resp, err := b.client.DoGeneratedRequestWithContext(ctx, http.MethodGet, "/api/v1/organizations/{id}/profile/media/{media_id}/content", &generated.GetOrganizationProfileMediaContentRequestOptions{PathParams: &generated.GetOrganizationProfileMediaContentPath{ID: a.OrganizationID, MediaID: a.MediaID}})
+	chunk, err := mcpserver.PersonMediaChunk(data, headers.Get("Content-Type"), args)
 	if err != nil {
-		return operationFailure("operation_failed", false), err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
-		var failure struct {
-			Error string `json:"error"`
-		}
-		_ = json.Unmarshal(data, &failure)
-		if organizationRefusal(failure.Error) {
-			return operationFailure(failure.Error, false), nil
-		}
-		return operationFailure("operation_refused", false), nil
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, store.MaxPersonMediaBytes+1))
-	if err != nil {
-		return operationFailure("operation_response_failed", false), err
-	}
-	if len(data) > store.MaxPersonMediaBytes {
-		return operationFailure("operation_response_limit_exceeded", false), nil
-	}
-	sum := sha256.Sum256(data)
-	digest := hex.EncodeToString(sum[:])
-	if a.SHA256 != "" && !strings.EqualFold(a.SHA256, digest) {
-		return operationFailure("content_changed", false), nil
-	}
-	if offset > int64(len(data)) {
 		return operationFailure("invalid_arguments", false), nil
 	}
-	end := min(offset+length, int64(len(data)))
-	return &mcpserver.OperationResult{Output: mcpserver.OrganizationMediaChunk{Offset: offset, Length: end - offset, Size: int64(len(data)), SHA256: digest, Complete: end == int64(len(data)), DataBase64: base64.StdEncoding.EncodeToString(data[offset:end])}}, nil
+	return &mcpserver.OperationResult{Output: chunk}, nil
 }
 
 func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
@@ -323,7 +268,6 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 	if err != nil {
 		return "", true, err
 	}
-	sum := sha256.Sum256(raw)
 	var changes map[string]any
 	if err := json.Unmarshal(raw, &changes); err != nil {
 		return "", true, err
@@ -343,12 +287,11 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 	}
 	effect := map[string]string{"create_organization": "create an organization", "update_organization": "replace mutable fields; omitted fields are cleared except retired", "delete_organization": "delete the organization only if it has no employment records", "merge_organization": "merge the losing organization, moving employment and superseding its active profile and attributes", "replace_organization_profile": "replace all profile collections; omitted collections are cleared", "set_organization_attribute": "set the named typed attribute", "clear_organization_attribute": "supersede the named typed attribute"}[name]
 	disclosure, err := json.Marshal(struct {
-		Operation       string         `json:"operation"`
-		Current         any            `json:"current,omitempty"`
-		Losing          any            `json:"losing,omitempty"`
-		Changes         map[string]any `json:"changes"`
-		ArgumentsSHA256 string         `json:"arguments_sha256"`
-		Effect          string         `json:"effect"`
-	}{name, current, losing, changes, hex.EncodeToString(sum[:]), effect}, json.Deterministic(true))
+		Operation string         `json:"operation"`
+		Current   any            `json:"current,omitempty"`
+		Losing    any            `json:"losing,omitempty"`
+		Changes   map[string]any `json:"changes"`
+		Effect    string         `json:"effect"`
+	}{name, current, losing, changes, effect}, json.Deterministic(true))
 	return string(disclosure), true, err
 }
