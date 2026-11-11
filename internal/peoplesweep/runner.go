@@ -239,7 +239,7 @@ func (r *Runner) BeginStructuredExecution(
 	if err := r.validatePrepared(primary, profile, false); err != nil {
 		return nil, err
 	}
-	if err := r.requireVerifiedAndConsented(ctx, profile.Fingerprint); err != nil {
+	if err := r.requireProgramConsent(ctx, profile.Fingerprint, primary.Request().ProgramID); err != nil {
 		return nil, err
 	}
 	profileName, provider, err := r.config.ActiveProviderConfig()
@@ -429,7 +429,7 @@ func (s *runnerExecutionSession) claim(ctx context.Context, call *runnerPrepared
 		s.state = runnerSessionTerminal
 		return errors.New("structured execution session provider profile changed")
 	}
-	if err := s.runner.requireVerifiedAndConsented(ctx, s.profile.Fingerprint); err != nil {
+	if err := s.runner.requireProgramConsent(ctx, s.profile.Fingerprint, s.primary.Request().ProgramID); err != nil {
 		s.state = runnerSessionTerminal
 		return err
 	}
@@ -532,7 +532,7 @@ func (r *Runner) runPrepared(
 		return StructuredResponse{}, err
 	}
 	if !synthetic {
-		if err := r.requireVerifiedAndConsented(ctx, profile.Fingerprint); err != nil {
+		if err := r.requireProgramConsent(ctx, profile.Fingerprint, prepared.Request().ProgramID); err != nil {
 			return StructuredResponse{}, err
 		}
 	}
@@ -564,6 +564,33 @@ func (r *Runner) validatePrepared(
 	}
 	if err := validateRequestPolicy(request, profile, synthetic); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (r *Runner) requireProgramConsent(ctx context.Context, fingerprint, program string) error {
+	if program != CommitmentProgramID {
+		return r.requireVerifiedAndConsented(ctx, fingerprint)
+	}
+	authority, ok := r.authority.(interface {
+		HasActivePersonCommitmentConsent(context.Context, string) (bool, error)
+	})
+	if !ok {
+		return ErrPersonSweepConsentRevoked
+	}
+	verified, err := r.authority.HasSuccessfulPersonInferenceCheck(ctx, fingerprint)
+	if err != nil {
+		return err
+	}
+	if !verified {
+		return errors.New("commitments require a successful exact provider check")
+	}
+	active, err := authority.HasActivePersonCommitmentConsent(ctx, fingerprint)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return ErrPersonSweepConsentRevoked
 	}
 	return nil
 }
@@ -827,3 +854,12 @@ func validateObservedOn(value string) error {
 }
 
 var _ StructuredRunner = (*Runner)(nil)
+
+// OrdinaryInferenceAllowed keeps the optional commitment grant independent.
+func (r *Runner) OrdinaryInferenceAllowed(ctx context.Context) (bool, error) {
+	profile, err := r.config.Profile()
+	if err != nil {
+		return false, err
+	}
+	return r.authority.HasActivePersonInferenceConsent(ctx, profile.Fingerprint)
+}

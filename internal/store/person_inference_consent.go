@@ -336,14 +336,36 @@ func (s *Store) GrantPersonInferenceConsent(ctx context.Context, fingerprint, ac
 	return s.grantConsent(ctx, ConsentPeopleInference, fingerprint, actor)
 }
 
-// RevokePersonInferenceConsent stamps the current exact grant.
+// RevokePersonInferenceConsent revokes both exact conversation grants.
 func (s *Store) RevokePersonInferenceConsent(ctx context.Context, fingerprint, actor string) (bool, error) {
-	return revokeConsent(ctx, s.db, ConsentPeopleInference, fingerprint, actor)
+	var revoked bool
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		for _, purpose := range []ConsentPurpose{ConsentPeopleInference, ConsentPeopleCommitments} {
+			changed, err := revokeConsent(ctx, tx, purpose, fingerprint, actor)
+			if err != nil {
+				return err
+			}
+			revoked = revoked || changed
+		}
+		return nil
+	})
+	return revoked, err
 }
 
-// RevokeAllPersonInferenceConsents stamps every active inference grant.
+// RevokeAllPersonInferenceConsents revokes every ordinary and commitment grant.
 func (s *Store) RevokeAllPersonInferenceConsents(ctx context.Context, actor string) (int64, error) {
-	return revokeAllConsents(ctx, s.db, ConsentPeopleInference, actor)
+	var revoked int64
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		for _, purpose := range []ConsentPurpose{ConsentPeopleInference, ConsentPeopleCommitments} {
+			count, err := revokeAllConsents(ctx, tx, purpose, actor)
+			if err != nil {
+				return err
+			}
+			revoked += count
+		}
+		return nil
+	})
+	return revoked, err
 }
 
 // HasActivePersonInferenceConsent implements the runner's narrow privacy gate.
@@ -358,4 +380,12 @@ func (s *Store) hasActivePersonInferenceConsentTx(ctx context.Context, tx *logge
 // GetPersonInferenceConsentStatus reports exact current and historical state.
 func (s *Store) GetPersonInferenceConsentStatus(ctx context.Context, fingerprint string) (*ProviderConsentStatus, error) {
 	return consentStatus(ctx, s.db, ConsentPeopleInference, fingerprint)
+}
+
+// GrantPersonCommitmentConsent authorizes the separately disclosed two-sided lane.
+func (s *Store) GrantPersonCommitmentConsent(ctx context.Context, fingerprint, actor string) (*ProviderConsent, bool, error) {
+	return s.grantConsent(ctx, ConsentPeopleCommitments, fingerprint, actor)
+}
+func (s *Store) HasActivePersonCommitmentConsent(ctx context.Context, fingerprint string) (bool, error) {
+	return s.hasActiveConsent(ctx, ConsentPeopleCommitments, fingerprint)
 }

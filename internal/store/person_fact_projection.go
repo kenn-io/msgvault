@@ -79,6 +79,11 @@ type personFactApplyMetadata struct {
 func (s *Store) ApplyPersonFactGenerationContext(
 	ctx context.Context, input personfacts.GenerationInput, aligner personfacts.EvidenceAligner,
 ) (*personfacts.GenerationResult, error) {
+	for _, claim := range input.Claims {
+		if claim.Origin == personfacts.OriginCommitment || claim.Target.Kind == personfacts.TargetCommitment {
+			return nil, errors.New("commitment claims require a validated sweep attempt")
+		}
+	}
 	prepared, err := personfacts.PreparePersonFactGeneration(ctx, input, aligner)
 	if err != nil {
 		return nil, err
@@ -99,6 +104,11 @@ func (s *Store) applyPersonFactGenerationContext(
 	ctx context.Context, input personfacts.GenerationInput, aligner personfacts.EvidenceAligner,
 	runTx personFactTxRunner,
 ) (*personfacts.GenerationResult, error) {
+	for _, claim := range input.Claims {
+		if claim.Origin == personfacts.OriginCommitment || claim.Target.Kind == personfacts.TargetCommitment {
+			return nil, errors.New("commitment claims require a validated sweep attempt")
+		}
+	}
 	prepared, err := personfacts.PreparePersonFactGeneration(ctx, input, aligner)
 	if err != nil {
 		return nil, err
@@ -615,6 +625,9 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 	organizationLocks *personFactOrganizationLockSet, transactionTime time.Time,
 	systemRetirements map[personfacts.ProjectionRef]struct{},
 ) (bool, error) {
+	if descriptor.Kind == personfacts.TargetCommitment {
+		return s.resolvePersonCommitmentTargetTx(ctx, tx, generation, descriptor, preparedFailures)
+	}
 	resolvedClaims, chronology, err := s.loadPersonFactResolvedClaimsTx(
 		ctx, tx, generation.PersonID, descriptor, preparedFailures)
 	if err != nil {
@@ -2530,6 +2543,10 @@ func (s *Store) loadPersonFactTargetDescriptor(
 			SensitivePolicyBlocked: eligibleWithSensitive && definition.IsSensitive &&
 				!allowSensitive,
 		}, nil
+	case personfacts.TargetCommitment:
+		if fallback != nil {
+			return *fallback, personFactTargetEligibility{Supported: allowSensitive}, nil
+		}
 	case personfacts.TargetEmployment:
 		catalog, err := personfacts.BuildCatalog(nil, personfacts.CatalogOptions{})
 		if err != nil {

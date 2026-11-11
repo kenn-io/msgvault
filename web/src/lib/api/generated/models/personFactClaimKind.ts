@@ -9,4 +9,5 @@ export const PersonFactClaimKind = {
   fact: "fact",
   event: "event",
   preference: "preference",
+  commitment: "commitment",
 } as const;

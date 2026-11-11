@@ -552,9 +552,9 @@ func addPersonSweepUsage(left, right peoplesweep.Usage) (peoplesweep.Usage, erro
 
 func validPersonSweepCallCoordinate(callOrdinal int, purpose string) bool {
 	switch purpose {
-	case peoplesweep.ProviderCallPurposePrimary, peoplesweep.ProviderCallPurposeBrief:
+	case peoplesweep.ProviderCallPurposePrimary, peoplesweep.ProviderCallPurposeBrief, peoplesweep.ProviderCallPurposeCommitment:
 		return callOrdinal == 0
-	case peoplesweep.ProviderCallPurposeRepair, peoplesweep.ProviderCallPurposeBriefRepair:
+	case peoplesweep.ProviderCallPurposeRepair, peoplesweep.ProviderCallPurposeBriefRepair, peoplesweep.ProviderCallPurposeCommitmentRepair:
 		return callOrdinal == 1
 	default:
 		return false
@@ -569,6 +569,8 @@ func personSweepRepairPurpose(leadPurpose string) (string, bool) {
 		return peoplesweep.ProviderCallPurposeRepair, true
 	case peoplesweep.ProviderCallPurposeBrief:
 		return peoplesweep.ProviderCallPurposeBriefRepair, true
+	case peoplesweep.ProviderCallPurposeCommitment:
+		return peoplesweep.ProviderCallPurposeCommitmentRepair, true
 	default:
 		return "", false
 	}
@@ -606,7 +608,7 @@ func validatePersonSweepCallPredecessorTx(
 	if err != nil {
 		return err
 	}
-	if !found || previous.purpose != peoplesweep.ProviderCallPurposePrimary {
+	if !found || (previous.purpose != peoplesweep.ProviderCallPurposePrimary && !(input.Purpose == peoplesweep.ProviderCallPurposeCommitment && previous.purpose == peoplesweep.ProviderCallPurposeBrief)) {
 		return errors.New("reserve person sweep budget: primary batch ordinal has a gap")
 	}
 	return nil
@@ -1227,19 +1229,19 @@ func completedUsageCoordinate(input peoplesweep.CompletedUsage) peoplesweep.Prov
 // ordinal is therefore greater than every extraction ordinal in the attempt.
 func validatePersonSweepCallCoordinateSet(coordinates []personSweepBatchCoordinate) error {
 	expectedBatch := 0
-	briefSeen := false
+	stage := 0
 	for index := 0; index < len(coordinates); {
 		lead := coordinates[index]
 		repairPurpose, known := personSweepRepairPurpose(lead.purpose)
 		if lead.ordinal != expectedBatch || lead.callOrdinal != 0 || !known ||
-			(briefSeen && lead.purpose != peoplesweep.ProviderCallPurposeBrief) {
+			stage == 2 || (stage == 1 && lead.purpose != peoplesweep.ProviderCallPurposeCommitment) {
 			return errors.New("provider calls contain a gap or missing primary")
 		}
 		if lead.purpose == peoplesweep.ProviderCallPurposeBrief {
-			if briefSeen {
-				return errors.New("provider calls contain more than one brief")
-			}
-			briefSeen = true
+			stage = 1
+		}
+		if lead.purpose == peoplesweep.ProviderCallPurposeCommitment {
+			stage = 2
 		}
 		index++
 		if index < len(coordinates) && coordinates[index].ordinal == expectedBatch {

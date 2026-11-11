@@ -10,6 +10,7 @@ type FreshnessStatus string
 const (
 	KindFact       FactKind        = "fact"
 	KindEvent      FactKind        = "event"
+	KindCommitment FactKind        = "commitment"
 	KindPreference FactKind        = "preference"
 	StatusFresh    FreshnessStatus = "fresh"
 	StatusStale    FreshnessStatus = "stale"

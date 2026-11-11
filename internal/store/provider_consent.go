@@ -14,12 +14,14 @@ import (
 type ConsentPurpose string
 
 const (
+	ConsentPeopleCommitments       ConsentPurpose = "people_commitments"
 	ConsentPeopleInference         ConsentPurpose = "people_inference"
 	ConsentPersonEnrichment        ConsentPurpose = "person_enrichment"
 	ConsentPersonSemanticEmbedding ConsentPurpose = "person_semantic_embedding"
 )
 
 var consentPurposes = map[ConsentPurpose]struct{ profileTable, label string }{
+	ConsentPeopleCommitments:       {"person_inference_profiles", "people commitments (both conversation sides)"},
 	ConsentPeopleInference:         {"person_inference_profiles", "people inference"},
 	ConsentPersonEnrichment:        {"person_enrichment_profiles", "person enrichment"},
 	ConsentPersonSemanticEmbedding: {"person_semantic_embedding_profiles", "semantic person embedding"},

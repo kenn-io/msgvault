@@ -12,7 +12,7 @@ import (
 // brief proposes attributes through the same resolver as extraction, so "brief"
 // is a first-class origin rather than a second write path. Written once so the
 // migration and the rebuilt table cannot drift.
-const personFactClaimOriginCheck = `CHECK (origin IN ('extraction', 'enrichment', 'brief', 'system', 'invalid'))`
+const personFactClaimOriginCheck = `CHECK (origin IN ('extraction', 'enrichment', 'brief', 'commitment', 'system', 'invalid'))`
 
 // personFactClaimOriginConstraint is the constraint name both backends use.
 // PostgreSQL auto-names an inline column check exactly this way, so an archive
@@ -59,7 +59,7 @@ func (s *Store) migratePersonFactClaimOriginBriefSQLite(ctx context.Context) (er
 		WHERE type = 'table' AND name = 'person_fact_claims'`).Scan(&definition); err != nil {
 		return fmt.Errorf("inspect person fact claim origins: %w", err)
 	}
-	if strings.Contains(definition, "'brief'") {
+	if strings.Contains(definition, "'commitment'") {
 		return nil
 	}
 	conn, err := s.db.Conn(ctx)
@@ -177,7 +177,7 @@ func personFactClaimOriginRebuildStatements() []string {
 func validatePersonFactClaimOriginRows(ctx context.Context, tx *loggedTx) error {
 	var invalid int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_fact_claims
-		WHERE origin NOT IN ('extraction', 'enrichment', 'brief', 'system', 'invalid')`,
+		WHERE origin NOT IN ('extraction', 'enrichment', 'brief', 'commitment', 'system', 'invalid')`,
 	).Scan(&invalid); err != nil {
 		return fmt.Errorf("validate person fact claim origins: %w", err)
 	}

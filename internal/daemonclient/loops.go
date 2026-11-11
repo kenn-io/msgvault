@@ -95,3 +95,20 @@ func (c *Client) ReopenLoop(ctx context.Context, messageID int64) (generated.Loo
 	}
 	return *resp.JSON200, nil
 }
+
+// SetCommitmentDecision updates a cited promise's owner state.
+func (c *Client) SetCommitmentDecision(ctx context.Context, id, state string, until *time.Time) (generated.CommitmentDecisionResponse, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SetCommitmentDecisionResp, error) {
+		return client.SetCommitmentDecisionWithResponse(ctx, &generated.SetCommitmentDecisionRequestOptions{
+			PathParams: &generated.SetCommitmentDecisionPath{CommitmentID: id},
+			Body:       &generated.SetCommitmentDecisionBody{State: generated.CommitmentDecisionRequestState(state), Until: until},
+		})
+	})
+	if err != nil {
+		return generated.CommitmentDecisionResponse{}, err
+	}
+	if resp.JSON200 == nil {
+		return generated.CommitmentDecisionResponse{}, errors.New("empty commitment decision response")
+	}
+	return *resp.JSON200, nil
+}

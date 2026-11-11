@@ -421,6 +421,29 @@ client_secrets = "C:/Users/you/Downloads/client_secret.json"
 client_secrets = 'C:\Users\you\Downloads\client_secret.json'
 ```
 
+### Commitment extraction
+
+Commitment extraction is available on unreleased main. Set these optional
+keys in `[people.sweep.commitments]`. It runs in the people sweep after
+extraction and the person brief. The commitment grant covers both sides of
+direct conversations within the active provider's source and date scope.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | Extract promises for tracked people with an exact commitment grant. |
+| `min_interval` | `24h` | Minimum time between successful passes for a person. |
+| `window` | `720h` | Recent message or archive-arrival window. |
+| `max_items` | `60` | Maximum messages in a call, up to 2000. |
+| `max_bytes` | `65536` | Maximum UTF-8 message-text bytes in a call. |
+| `max_output_tokens` | `2048` | Output cap within the shared per-person budget. |
+| `max_open_anchors` | `8` | Older open promises a call may revisit, up to 8. |
+| `expire_after_due` | `720h` | Time after the due date ends in the activity timezone. |
+| `max_duration` | `2160h` | Maximum age of a promise without a due date. |
+| `auto_fulfil` | `false` | Close promises on explicit, newer supported fulfilment. |
+
+See [Open loops](usage/open-loops.md#see-cited-commitments) for consent and
+owner controls.
+
 ## Cron schedules
 
 Every `schedule` and `cron` key in this file uses the same five-field cron

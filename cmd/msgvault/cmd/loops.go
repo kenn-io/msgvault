@@ -75,7 +75,7 @@ func newLoopsListCommand() *cobra.Command {
 func newLoopsDoneCommand() *cobra.Command {
 	var questions []int64
 	command := &cobra.Command{
-		Use:   "done <message-id>",
+		Use:   "done <message-id|commitment-id>",
 		Short: "Mark a loop done",
 		Long: `The message ID is the last column of 'msgvault loops list'.
 A distinct question can list again, whatever its message date.`,
@@ -83,6 +83,9 @@ A distinct question can list again, whatever its message date.`,
 	}
 	addLoopQuestionsFlag(command, &questions)
 	command.RunE = func(cmd *cobra.Command, args []string) error {
+		if strings.HasPrefix(args[0], "c") {
+			return runCommitmentDecision(cmd, args[0], "done", nil)
+		}
 		id, err := positivePersonCLIArg(cmd, args[0], "message")
 		if err != nil {
 			return err
@@ -119,7 +122,7 @@ func checkLoopQuestionsFlag(cmd *cobra.Command, questions []int64) error {
 func newLoopsSnoozeCommand() *cobra.Command {
 	var until string
 	command := &cobra.Command{
-		Use:   "snooze <message-id> --until <when>",
+		Use:   "snooze <message-id|commitment-id> --until <when>",
 		Short: "Hide a loop until a later time",
 		Long: `A distinct question can make the loop return before the snooze
 expires. Decisions apply to this person's
@@ -133,6 +136,13 @@ currently open questions. Use the current message ID from loops list.`,
 	var questions []int64
 	addLoopQuestionsFlag(command, &questions)
 	command.RunE = func(cmd *cobra.Command, args []string) error {
+		if strings.HasPrefix(args[0], "c") {
+			at, err := loops.ParseSnoozeUntil(until, time.Now())
+			if err != nil {
+				return usageErr(cmd, err)
+			}
+			return runCommitmentDecision(cmd, args[0], "snoozed", &at)
+		}
 		id, err := positivePersonCLIArg(cmd, args[0], "message")
 		if err != nil {
 			return err
@@ -150,7 +160,7 @@ currently open questions. Use the current message ID from loops list.`,
 				return loopActionError(id, err)
 			}
 			result := fmt.Sprintf("Snoozed %d until %s.\n", id, at.Local().Format("Mon Jan 2 3:04 PM MST"))
-			if decision.State == generated.Done {
+			if string(decision.State) == "done" {
 				result = fmt.Sprintf("%d is already done.\n", id)
 			}
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), result); err != nil {
@@ -164,11 +174,14 @@ currently open questions. Use the current message ID from loops list.`,
 
 func newLoopsReopenCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "reopen <message-id>",
+		Use:   "reopen <message-id|commitment-id>",
 		Short: "Clear a done or snooze decision",
 		Long:  "Clear the done or snooze decision for one exact question. The message ID is the last column of 'msgvault loops list'.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.HasPrefix(args[0], "c") {
+				return runCommitmentDecision(cmd, args[0], "open", nil)
+			}
 			id, err := positivePersonCLIArg(cmd, args[0], "message")
 			if err != nil {
 				return err
@@ -187,6 +200,23 @@ func newLoopsReopenCommand() *cobra.Command {
 			})
 		},
 	}
+}
+
+func runCommitmentDecision(cmd *cobra.Command, id, state string, until *time.Time) error {
+	if _, err := loops.ParseCommitmentID(id); err != nil {
+		return usageErr(cmd, err)
+	}
+	if cmd.Flags().Changed("questions") {
+		return usageErr(cmd, errors.New("--questions is available only for reply loops"))
+	}
+	return withLoopsClient(cmd, func(client *daemonclient.Client) error {
+		decision, err := client.SetCommitmentDecision(cmd.Context(), id, state, until)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s is %s.\n", id, decision.State)
+		return err
+	})
 }
 
 func loopActionError(id int64, err error) error {
@@ -221,7 +251,7 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 		title, kind string
 		rows        []loopRow
 	}{{title: "Waiting on you", kind: loops.ReplyOwed}, {title: "Waiting on them", kind: loops.AwaitingReply}}
-	if len(result.Items) == 0 {
+	if len(result.Items) == 0 && len(result.Commitments) == 0 {
 		var sb strings.Builder
 		sb.WriteString("No open loops.\n")
 		writeLoopWarnings(&sb, result.SkippedUnparseable, result.CoverageIncomplete)
@@ -259,6 +289,7 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 			fmt.Fprintf(&sb, "  %s   %s   %s   %s\n", pad(row.age, ageWidth), pad(row.with, withWidth), pad(row.subject, subjectWidth), row.id)
 		}
 	}
+	writeLoopCommitments(&sb, result.Commitments)
 	var notes strings.Builder
 	if result.Truncated {
 		if limit < loops.MaxLimit {
@@ -275,6 +306,31 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 		return fmt.Errorf("write loops: %w", err)
 	}
 	return nil
+}
+
+func writeLoopCommitments(sb *strings.Builder, commitments []generated.LoopCommitment) {
+	for _, group := range []struct{ title, direction string }{
+		{"Promises you made", "owed_by"}, {"Promises to you", "owed_to"},
+	} {
+		printedHeading := false
+		for _, item := range commitments {
+			if string(item.Direction) != group.direction {
+				continue
+			}
+			if !printedHeading {
+				sb.WriteString(group.title + "\n")
+				printedHeading = true
+			}
+			fmt.Fprintf(sb, "  %s   person %d   %s", item.ID, item.PersonID, textutil.SanitizeTerminal(item.Summary))
+			if item.DueOn != nil {
+				fmt.Fprintf(sb, "   due %s", item.DueOn.Format(time.DateOnly))
+			}
+			fmt.Fprintf(sb, "\n    message %d: %s\n", item.Promise.MessageID, textutil.SanitizeTerminal(item.Promise.Text))
+			if proposal := item.ProposedFulfilment; proposal != nil {
+				fmt.Fprintf(sb, "    proposed fulfilment, message %d: %s\n", proposal.MessageID, textutil.SanitizeTerminal(proposal.Text))
+			}
+		}
+	}
 }
 
 // writeLoopWarnings reports unreadable originals and incomplete archive scans.
