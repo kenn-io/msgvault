@@ -2,11 +2,12 @@ package mcpevents
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"time"
@@ -128,11 +129,8 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 			if len(entries)+s.ConfigTargets >= 32 {
 				return out, failure(ResourceExhausted, "subscriptions")
 			}
-			var b [16]byte
-			if _, err = rand.Read(b[:]); err != nil {
-				return out, failure(Unavailable, "random_unavailable")
-			}
-			id = hex.EncodeToString(b[:])
+			sum := sha256.Sum256([]byte(fmt.Sprintf("owner\x00%s\x00%d\x00%d\x00%t\x00%s", Name, in.Arguments.PersonID, in.Arguments.SourceID, *in.Arguments.IncomingOnly, in.Delivery.URL)))
+			id = hex.EncodeToString(sum[:16])
 			page, err := s.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
 			if err != nil || page.CompleteThrough.IsZero() {
 				return out, failure(Unavailable, "head_unavailable")
@@ -144,6 +142,9 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 			return out, failure(InvalidParams, "invalid_callback")
 		}
 		_, revision, credentialErr := s.credentialSnapshot(id)
+		if credentialErr != nil {
+			return out, failure(Unavailable, "credential_unavailable")
+		}
 		expires := s.now().Add(in.TTL.Duration())
 		item := entry{ID: id, Owner: "owner", Arguments: in.Arguments, URL: in.Delivery.URL, Expires: expires}
 		if index >= 0 {
@@ -165,9 +166,6 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 		}
 		if !ok {
 			continue
-		}
-		if credentialErr != nil {
-			return out, failure(Unavailable, "credential_unavailable")
 		}
 		_, err = providercredentials.PutIfRevision(s.TokensDir, revision, providercredentials.EventsID(id), origin, base64.StdEncoding.EncodeToString(in.secret))
 		if err != nil {
