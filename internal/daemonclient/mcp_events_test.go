@@ -31,7 +31,7 @@ func TestMCPEventsPreservesUnavailableReasons(t *testing.T) {
 	for _, tc := range []struct {
 		reason       string
 		status, code int
-	}{{"disabled", 503, -32010}, {"head_unavailable", 503, -32010}, {"store_unavailable", 503, -32010}, {"invalid_scope", 400, -32602}, {"subscriptions", http.StatusTooManyRequests, mcpevents.ResourceExhausted}, {"subscription", http.StatusNotFound, mcpevents.NotFound}, {"credential_unavailable", http.StatusServiceUnavailable, mcpevents.Unavailable}, {"unknown_private_detail", http.StatusBadRequest, mcpevents.InvalidParams}} {
+	}{{"disabled", 503, -32010}, {"head_unavailable", 503, -32010}, {"store_unavailable", 503, -32010}, {"invalid_scope", 400, -32602}, {"subscriptions", http.StatusTooManyRequests, mcpevents.ResourceExhausted}, {"subscription", http.StatusNotFound, mcpevents.NotFound}, {"credential_unavailable", http.StatusServiceUnavailable, mcpevents.Unavailable}, {"challenge_failed", http.StatusBadGateway, -32027}, {"unknown_private_detail", http.StatusBadRequest, mcpevents.InvalidParams}} {
 		reason := tc.reason
 		t.Run(reason, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -47,6 +47,7 @@ func TestMCPEventsPreservesUnavailableReasons(t *testing.T) {
 			_, err = c.MCPEventsSubscribe(t.Context(), mcpevents.MCPEventsSubscribeRequest{})
 			var eventErr *mcpevents.Error
 			requirements.ErrorAs(err, &eventErr)
+			assertions.Equal(tc.code, eventErr.Code)
 			want := reason
 			if reason == "unknown_private_detail" {
 				want = "request_rejected"

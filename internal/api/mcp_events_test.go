@@ -38,6 +38,16 @@ func TestEventsListDoesNotUseOperationGate(t *testing.T) {
 	assert.Zero(t, gate.calls)
 }
 
+func TestEventsErrorMapsCallbackFailure(t *testing.T) {
+	w := httptest.NewRecorder()
+	eventsError(w, &mcpevents.Error{Code: -32027, Reason: "challenge_failed"})
+	assert.Equal(t, http.StatusBadGateway, w.Code)
+	var response mcpevents.Error
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.Equal(t, -32027, response.Code)
+	assert.Equal(t, "challenge_failed", response.Reason)
+}
+
 func TestEventsRouterRejectsUnverifiedCallback(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

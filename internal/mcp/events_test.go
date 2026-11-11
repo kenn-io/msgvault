@@ -42,9 +42,11 @@ func TestEventsListPropagatesBackendFailure(t *testing.T) {
 		name   string
 		err    error
 		reason string
+		code   int
 	}{
-		{"generic", errors.New("daemon offline"), "daemon_unavailable"},
-		{"typed", &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "disabled"}, "disabled"},
+		{"generic", errors.New("daemon offline"), "daemon_unavailable", mcpevents.Unavailable},
+		{"typed", &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "disabled"}, "disabled", mcpevents.Unavailable},
+		{"callback", &mcpevents.Error{Code: -32027, Reason: "challenge_failed"}, "challenge_failed", -32027},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -62,7 +64,7 @@ func TestEventsListPropagatesBackendFailure(t *testing.T) {
 			requirements.Equal(http.StatusOK, recorder.Code)
 			var response rawRPCResponse
 			requirements.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
-			assertions.InDelta(float64(mcpevents.Unavailable), response.Error["code"], 0)
+			assertions.InDelta(float64(tc.code), response.Error["code"], 0)
 			assertions.Equal(map[string]any{"reason": tc.reason}, response.Error["data"])
 		})
 	}
