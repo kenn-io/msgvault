@@ -252,6 +252,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_meeting_metrics` | read | — | owner-only |
 | `get_message` | read | — | message.read |
 | `get_message_tags` | read | — | owner-only |
+| `get_operation_run` | read | — | owner-only |
+| `get_operation_status` | read | — | owner-only |
 | `get_participant_identity` | read | — | owner-only |
 | `get_person_agenda` | read | — | owner-only |
 | `get_person_edit_context` | read | — | owner-only |
@@ -271,6 +273,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
+| `list_operation_runs` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |

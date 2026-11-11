@@ -820,6 +820,9 @@ source, cache, or person-edit tools.
 
 | Tool | Use | Parameters |
 |---|---|---|
+| `get_operation_status` | Read operation lane readiness and latest runs. | — |
+| `list_operation_runs` | List durable operation history. Repeat filters when using a cursor. | Optional `kind`, `lane`, `state`, `started_from`, `started_before`, `limit`, `cursor` |
+| `get_operation_run` | Read one durable operation run. | Required opaque `id` from operation status or history |
 | `list_source_status` | Read source capabilities, recent runs, and queued or pending work. | Optional `source_type` |
 | `get_source_identities` | Read confirmed sender identities and confirmation signals. | Required `source_id` |
 | `get_source_scheduler_status` | Read scheduler status without starting a sync. | — |
