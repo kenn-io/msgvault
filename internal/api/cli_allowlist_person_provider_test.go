@@ -42,6 +42,7 @@ func TestCLIRunCommandAllowedPermitsExactPersonProviderCommands(t *testing.T) {
 		{name: "named status", args: []string{"person", "provider", "status", "alpha", "--json"}, want: true},
 		{name: "list", args: []string{"person", "provider", "list", "--json"}, want: true},
 		{name: "consent", args: []string{"person", "provider", "consent", "--yes"}, want: true},
+		{name: "commitment consent", args: []string{"person", "provider", "consent", "main", "--commitments", "--yes"}, want: true},
 		{name: "revoke", args: []string{"person", "provider", "revoke"}, want: true},
 		{name: "guarded revoke", args: []string{
 			"person", "provider", "revoke", "alpha", "--if-fingerprint", strings.Repeat("a", 64),

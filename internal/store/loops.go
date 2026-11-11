@@ -734,7 +734,10 @@ func (s *Store) copyLoopDecisionTx(ctx context.Context, tx *loggedTx, from, into
    state = CASE WHEN loop_decisions.state = 'done' OR excluded.state = 'done' THEN 'done' ELSE 'snoozed' END,
    snoozed_until = CASE WHEN loop_decisions.state = 'done' OR excluded.state = 'done' THEN NULL
     WHEN loop_decisions.snoozed_until > excluded.snoozed_until THEN loop_decisions.snoozed_until ELSE excluded.snoozed_until END`, into, from)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.transferCommitmentDecisionsTx(ctx, tx, from, into, false)
 }
 
 // LoopMessageEvidence retains classification facts, never message text.

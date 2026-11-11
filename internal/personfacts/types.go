@@ -12,6 +12,7 @@ type ValueType string
 type Cardinality string
 
 const (
+	TargetCommitment  TargetKind  = "commitment"
 	TargetAttribute   TargetKind  = "attribute"
 	TargetEmployment  TargetKind  = "employment"
 	ValueText         ValueType   = "text"
@@ -143,6 +144,7 @@ const (
 	RelationContradict               ClaimRelation        = "contradict"
 	RelationSupersede                ClaimRelation        = "supersede"
 	RelationInvalid                  ClaimRelation        = "invalid"
+	OriginCommitment                 ClaimOrigin          = "commitment"
 	OriginExtraction                 ClaimOrigin          = "extraction"
 	OriginEnrichment                 ClaimOrigin          = "enrichment"
 	OriginBrief                      ClaimOrigin          = "brief"

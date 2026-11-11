@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
 import { createAPIClient } from "../../api/client";
@@ -66,6 +66,41 @@ describe("PersonOpenLoops", () => {
     expect(url.pathname).toBe("/api/v1/loops");
     expect(url.searchParams.get("person_id")).toBe("7");
     expect(url.searchParams.get("limit")).toBe("5");
+  });
+
+  it("labels cited commitments by direction and reopens an owner decision", async () => {
+    const promise = (id: number, direction: 'owed_by' | 'owed_to', text: string) => ({
+      id: `c${id}`,
+      person_id: 7,
+      claim_id: id + 100,
+      direction,
+      summary: text.slice(0, -1),
+      promise: { message_id: id + 40, text, start: 0, end: text.length },
+      promised_at: "2026-10-12T12:00:00Z",
+      due_on: "2026-11-15",
+    });
+    const fetcher = vi.fn<typeof fetch>(async (request, init) => {
+      const path = new URL(request instanceof Request ? request.url : String(request), "http://localhost").pathname;
+      if (path.endsWith("/decision")) {
+        const body = request instanceof Request ? await request.json() : JSON.parse(String(init?.body));
+        return Response.json({ id: "c12", state: body.state });
+      }
+      return Response.json({
+        items: [],
+        commitments: [
+          promise(12, "owed_by", "I will send the draft."),
+          promise(13, "owed_to", "I will check the venue."),
+        ],
+      });
+    });
+    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+    const cite = await screen.findByRole("link", { name: "I will send the draft." });
+    expect(cite.getAttribute("href")).toBe("/messages/52");
+    expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Promises to you" })).toBeDefined();
+    await fireEvent.click(screen.getAllByRole("button", { name: "Done" })[0]);
+    await fireEvent.click(await screen.findByRole("button", { name: "Reopen" }));
+    expect(await screen.findByText("2 open")).toBeDefined();
   });
 
   it("shows a plus when more loops are open than the card lists", async () => {

@@ -968,8 +968,8 @@ CREATE TABLE IF NOT EXISTS person_sweep_batches (
     created_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at                TEXT,
     CONSTRAINT person_sweep_batches_call_coordinate_check CHECK (
-        (call_ordinal = 0 AND purpose IN ('primary', 'brief')) OR
-        (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair'))
+        (call_ordinal = 0 AND purpose IN ('primary', 'brief', 'commitment')) OR
+        (call_ordinal = 1 AND purpose IN ('repair', 'brief_repair', 'commitment_repair'))
     ),
     PRIMARY KEY (attempt_id, batch_ordinal, call_ordinal)
 );
@@ -1002,7 +1002,7 @@ CREATE TABLE IF NOT EXISTS person_fact_claims (
     valid_from            DATETIME,
     valid_until           DATETIME,
     origin                TEXT NOT NULL CONSTRAINT person_fact_claims_origin_check
-                              CHECK (origin IN ('extraction', 'enrichment', 'brief', 'system', 'invalid')),
+                              CHECK (origin IN ('extraction', 'enrichment', 'brief', 'commitment', 'system', 'invalid')),
     confidence_json       JSON NOT NULL,
     rejection_action      TEXT CHECK (rejection_action IN (
                               'applied', 'retained', 'superseded', 'invalid', 'identity-rejected',
@@ -4446,3 +4446,32 @@ CREATE TABLE IF NOT EXISTS meeting_copy_survivors (
     survivor_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_meeting_copy_survivors_survivor ON meeting_copy_survivors(survivor_message_id);
+
+-- Separately consented promise lifecycle. Owner state outlives an invalidated
+-- current claim (including absorbed person history during a person merge).
+CREATE TABLE IF NOT EXISTS person_commitments (
+ id INTEGER PRIMARY KEY,
+ person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+ current_claim_id INTEGER REFERENCES person_fact_claims(id) ON DELETE SET NULL,
+ target_key TEXT NOT NULL,
+ anchor_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ direction TEXT NOT NULL CHECK (direction IN ('owed_by','owed_to')),
+ quote TEXT NOT NULL,
+ quote_start INTEGER NOT NULL CHECK (quote_start >= 0),
+ quote_end INTEGER NOT NULL CHECK (quote_end > quote_start),
+ summary TEXT NOT NULL,
+ due_on TEXT,
+ promised_at DATETIME NOT NULL,
+ expires_at DATETIME NOT NULL,
+ owner_state TEXT NOT NULL DEFAULT 'open' CHECK (owner_state IN ('open','done','snoozed')),
+ snoozed_until DATETIME,
+ reopened_at DATETIME,
+ fulfilment_evidence_id INTEGER REFERENCES person_fact_evidence(id) ON DELETE SET NULL,
+ fulfilment_confirmed INTEGER NOT NULL DEFAULT 0 CHECK (fulfilment_confirmed IN (0,1)),
+ UNIQUE(person_id,anchor_message_id,direction,quote_start,quote_end)
+);
+CREATE TABLE IF NOT EXISTS person_commitment_frontiers (
+ person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+ through_sequence INTEGER NOT NULL,
+ processed_at DATETIME NOT NULL
+);

@@ -472,6 +472,9 @@ func (s *Store) mergePersonsOnce(
 		if err := s.forceInvalidatePersonEnrichmentTx(ctx, tx, absorbed.ID); err != nil {
 			return err
 		}
+		if err := s.transferCommitmentDecisionsTx(ctx, tx, absorbed.ID, survivor.ID, true); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM persons WHERE id = ?`, absorbed.ID); err != nil {
 			return fmt.Errorf("delete absorbed person: %w", err)
 		}

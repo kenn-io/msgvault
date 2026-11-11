@@ -57,3 +57,11 @@ func (a *storeAPIAdapter) SaveLoopMessageEvidenceContext(ctx context.Context, id
 func (a *storeAPIAdapter) CachedLoopMessageEvidenceContext(ctx context.Context, id int64, version int) (store.LoopMessageEvidence, bool, error) {
 	return a.store.CachedLoopMessageEvidenceContext(ctx, id, version)
 }
+
+func (a *storeAPIAdapter) ListPersonCommitmentsContext(ctx context.Context, personID int64, now time.Time, limit int) ([]store.PersonCommitment, error) {
+	return a.store.ListPersonCommitmentsContext(ctx, personID, now, limit)
+}
+
+func (a *storeAPIAdapter) DecidePersonCommitmentContext(ctx context.Context, id int64, state string, until *time.Time, now time.Time) (store.PersonCommitment, error) {
+	return a.store.DecidePersonCommitmentContext(ctx, id, state, until, now)
+}
