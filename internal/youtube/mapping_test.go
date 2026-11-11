@@ -253,6 +253,11 @@ func TestCommentWithoutChannelIDPreservesDistinctAuthorNames(t *testing.T) {
 	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCnew"}
 	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
 	require.NoError(err)
+	participantID, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, SourceIdentifier("UCnew"))
+	require.NoError(err)
+	var participantName string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`), participantID).Scan(&participantName))
+	require.Equal("Alice", participantName)
 	summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), ids[:1])
 	require.NoError(err)
 	assert.Equal(t, "Alice", summaries[0].FromName)

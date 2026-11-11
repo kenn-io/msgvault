@@ -263,6 +263,21 @@ func persistCommentSDK(ctx context.Context, st *store.Store, sourceID int64, cha
 	var pid int64
 	fromName := c.Snippet.AuthorDisplayName
 	self := authorID == channelID
+	if prior, ok := storedMessages[c.Id]; ok && prior.SenderID.Valid && fromName == "" {
+		emptyName, err := st.MessageRecipientsMatchContext(ctx, prior.ID, []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{prior.SenderID.Int64}, DisplayNames: []string{""}}})
+		if err != nil {
+			return 0, messageUnchanged, err
+		}
+		if !emptyName {
+			summaries, err := st.GetMessagesSummariesByIDsContext(ctx, []int64{prior.ID})
+			if err != nil {
+				return 0, messageUnchanged, err
+			}
+			if len(summaries) > 0 {
+				fromName = summaries[0].FromName
+			}
+		}
+	}
 	if authorID != "" {
 		key := SourceIdentifier(authorID)
 		if key == "" {
@@ -274,21 +289,6 @@ func persistCommentSDK(ctx context.Context, st *store.Store, sourceID int64, cha
 		}
 	}
 	if prior, ok := storedMessages[c.Id]; ok && prior.SenderID.Valid {
-		if fromName == "" {
-			emptyName, err := st.MessageRecipientsMatchContext(ctx, prior.ID, []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{prior.SenderID.Int64}, DisplayNames: []string{""}}})
-			if err != nil {
-				return 0, messageUnchanged, err
-			}
-			if !emptyName {
-				summaries, err := st.GetMessagesSummariesByIDsContext(ctx, []int64{prior.ID})
-				if err != nil {
-					return 0, messageUnchanged, err
-				}
-				if len(summaries) > 0 {
-					fromName = summaries[0].FromName
-				}
-			}
-		}
 		if pid == 0 {
 			pid = prior.SenderID.Int64
 			self = prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool
