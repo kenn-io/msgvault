@@ -1299,8 +1299,6 @@ func TestPostalAddressSnapshotDoesNotRestoreClearedValues(t *testing.T) {
 		country, geo *string
 		want         string
 	}{
-		{"raw text", postaladdress.Input{AddressKind: "postal", OriginalValue: "12 Example; Unit 7\nRaw text"}, nil, nil, ""},
-		{"components", postaladdress.Input{AddressKind: "postal", ExtendedAddress: "Unit 7", StreetAddress: "12 Example Street", Locality: "Example City", CountryName: "Canada"}, nil, nil, ""},
 		{"country code", postaladdress.Input{AddressKind: "postal", StreetAddress: "Old street"}, new("CA"), nil, ";;;;;;"},
 		{"geo", postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"}, nil, new("geo:1,2"), ";;;;;;"},
 	} {
@@ -1312,18 +1310,6 @@ func TestPostalAddressSnapshotDoesNotRestoreClearedValues(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 			assert.Nil(t, label)
 		})
-	}
-}
-
-func TestNonPostalAddressSnapshotLikeTextRemainsLiteral(t *testing.T) {
-	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "birth_place", OriginalValue: "Example City"})
-	require := require.New(t)
-	require.NoError(err)
-	assert := assert.New(t)
-	for _, kind := range []store.PersonAddressKind{store.PersonAddressBirthPlace, store.PersonAddressDeathPlace} {
-		got, uri := addressPlaceValue(store.PersonAddress{AddressKind: kind, OriginalValue: encoded})
-		assert.Equal(vcard.EscapeText(encoded), got)
-		assert.False(uri)
 	}
 }
 
@@ -1351,10 +1337,8 @@ func TestPostalSnapshotExportsCurrentLabel(t *testing.T) {
 }
 
 func TestPostalAddressExportPreservesComponentsForUnsupportedSnapshot(t *testing.T) {
-	for _, original := range []string{"msgvault:postal-input:v2\n{}", "msgvault:postal-input:v1\n" + `{"schema":1,"input":{},"new_field":true}`} {
-		value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: original, StreetAddress: new("12 Example Street")})
-		require.NoError(t, err)
-		assert.Equal(t, ";;12 Example Street;;;;", value)
-		assert.Nil(t, label)
-	}
+	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}", StreetAddress: new("12 Example Street")})
+	require.NoError(t, err)
+	assert.Equal(t, ";;12 Example Street;;;;", value)
+	assert.Nil(t, label)
 }

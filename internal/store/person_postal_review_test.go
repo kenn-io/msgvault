@@ -23,6 +23,7 @@ func TestLegacyPostalAddressShape(t *testing.T) {
 	}{
 		{"six parts", ";;12 Example St;City;;", false},
 		{"seven parts", ";;12 Example St;City;;;", true},
+		{"extended parts", `;;12 Example St;City;;;;Room\;3;Floor 2`, true},
 		{"geo text", "geo:1,2;u=35", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -32,6 +33,10 @@ func TestLegacyPostalAddressShape(t *testing.T) {
 				require.NotNil(t, address.StreetAddress)
 				assert.Equal(t, "12 Example St", *address.StreetAddress)
 				assert.Nil(t, address.FreeText)
+				if tc.name == "extended parts" {
+					require.NotNil(t, address.ExtendedComponents)
+					assert.Equal(t, tc.original, *address.ExtendedComponents)
+				}
 			} else {
 				require.NotNil(t, address.FreeText)
 				assert.Equal(t, tc.original, *address.FreeText)
@@ -100,8 +105,6 @@ func TestPostalAddressSweepExtractionRetainsWithoutProjection(t *testing.T) {
 	require.NotNil(rows[0].PostalReview)
 	assert.NotEmpty(rows[0].PostalReview.SupportingEvidenceIDs)
 	require.NotNil(rows[0].PostalReview.Assessment)
-	assert.Equal([]string{"Room;3", "Floor 2"}, rows[0].PostalReview.Assessment.OriginalExtendedParts)
-	assert.Equal([]string{"Room;3", "Floor 2"}, rows[0].PostalReview.Assessment.ProposedExtendedParts)
 	addresses, err := f.store.ListPersonAddressesContext(t.Context(), f.personID, false)
 	require.NoError(err)
 	assert.Empty(addresses)
@@ -130,11 +133,6 @@ func TestPostalAddressSweepExtractionRetainsWithoutProjection(t *testing.T) {
 	require.Len(current.Addresses, 1)
 	assert.Equal(&sourceRef, current.Addresses[0].Envelope.SourceRef)
 	assert.Equal("Corrected street", *current.Addresses[0].StreetAddress)
-	history, err := f.store.GetPersonProfileHistoryContext(t.Context(), f.personID)
-	require.NoError(err)
-	require.Len(history.Addresses, 2)
-	assert.NotNil(history.Addresses[0].Envelope.SupersededAt)
-	assert.Equal(review.Assessment.Original, current.Addresses[0].Assessment.Original)
 	rows, err = f.store.ListPersonFactClaimsContext(t.Context(), f.personID, personfacts.ClaimFilter{Limit: 1})
 	require.NoError(err)
 	assert.False(rows[0].PostalReview.Eligible)

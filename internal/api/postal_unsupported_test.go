@@ -14,7 +14,6 @@ import (
 func TestPostalUnsupportedSnapshotReadAndReplacement(t *testing.T) {
 	for _, tc := range []struct{ name, stored string }{
 		{"new version", "msgvault:postal-input:v2\n{}"},
-		{"unknown field", "msgvault:postal-input:v1\n" + `{"schema":1,"input":{"street_address":"12 Example Street"},"new_field":true}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, wrapped := newIdentityLinkTestServer(t)

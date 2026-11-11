@@ -59,10 +59,13 @@ describe('PostalReviewSession', () => {
     state.invalidate();
     const changed = { ...input, street_address: '12 Example Street' };
     const current = state.check(changed, true);
+    const latest = { ...await assessment(changed), response_id: 'current-id' };
+    second.resolve(latest);
+    await current;
     first.resolve({ ...await assessment(input), response_id: 'stale-id' });
     await stale;
-    second.resolve({ ...await assessment(changed), response_id: 'current-id' });
-    await current;
+    expect(state.result).toEqual(latest);
+    expect(state.pending).toBe(false);
     state.invalidate();
     const editedAgain = { ...changed, locality: 'Example City' };
     await state.check(editedAgain, true);
@@ -94,21 +97,6 @@ describe('PostalReviewSession', () => {
     if (outcome === 'success') reply.resolve(await assessment()); else reply.reject(new Error('stale error'));
     await pending;
     expect(state.result).toBeNull(); expect(state.error).toBeNull(); expect(state.pending).toBe(false);
-  });
-
-  it('keeps only the latest request when responses complete in reverse order', async () => {
-    const first = deferred<Assessment>(), second = deferred<Assessment>();
-    const check = vi.fn().mockImplementationOnce(() => first.promise).mockImplementationOnce(() => second.promise);
-    const state = new PostalReviewSession(7, check);
-    const a = state.check(input, true);
-    await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(1));
-    state.invalidate();
-    const changed = { ...input, street_address: '99 Example Lane' };
-    const b = state.check(changed, true);
-    await vi.waitFor(() => expect(check).toHaveBeenCalledTimes(2));
-    const latest = await assessment(changed); second.resolve(latest); await b;
-    first.resolve(await assessment()); await a;
-    expect(state.result).toEqual(latest); expect(state.pending).toBe(false);
   });
 
   it('checks locally and externally', async () => {

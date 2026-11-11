@@ -19,7 +19,7 @@ func TestPostalAddressConfigDisabledByDefaultAndExplicitProvider(t *testing.T) {
 		{"configured but disabled", "provider = \"google\"", false},
 		{"enabled", "enabled = true\nprovider = \"google\"", false},
 		{"missing provider", "enabled = true", true},
-		{"unsupported provider", "enabled = true\nprovider = \"other\"", true},
+		{"unsupported provider", "provider = \"other\"", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()

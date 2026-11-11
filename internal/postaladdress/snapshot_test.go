@@ -5,9 +5,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"hegel.dev/go/hegel"
 )
 
 func TestSnapshotRejectsMalformedAndUnknownVersions(t *testing.T) {
+	_, err := EncodeOriginalInput(Input{OriginalValue: string([]byte{0xff})})
+	require.Error(t, err)
 	_, ok, err := DecodeOriginalInput("legacy original")
 	require.NoError(t, err)
 	assert.False(t, ok)
@@ -19,7 +22,7 @@ func TestSnapshotRejectsMalformedAndUnknownVersions(t *testing.T) {
 	}
 }
 
-func TestLiteralSnapshotTextIsRawInput(t *testing.T) {
+func TestOriginalSnapshotProperty(t *testing.T) {
 	input := Input{AddressKind: "postal", StreetAddress: "12 Example Street", OriginalValue: "msgvault:postal-input:v1\n" + `{"schema":1,"input":{"address_kind":"postal","original_value":"literal payload"}}`}
 	encoded, err := EncodeOriginalInput(input)
 	require.NoError(t, err)
@@ -27,4 +30,13 @@ func TestLiteralSnapshotTextIsRawInput(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.Equal(t, input, decoded)
+	hegel.Test(t, func(ht *hegel.T) {
+		input := drawPostalInput(ht)
+		encoded, err := EncodeOriginalInput(input)
+		require.NoError(ht, err)
+		decoded, ok, err := DecodeOriginalInput(encoded)
+		require.NoError(ht, err)
+		require.True(ht, ok)
+		assert.Equal(ht, input, decoded)
+	}, hegel.WithTestCases(300), hegel.WithDatabase(""))
 }

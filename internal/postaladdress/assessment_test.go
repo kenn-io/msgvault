@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"hegel.dev/go/hegel"
 )
 
@@ -61,20 +60,6 @@ func TestAssessmentNormalizationIdempotent(t *testing.T) {
 		assert.Equal(ht, proposed, Assess(proposed).Proposed)
 	}, hegel.WithTestCases(300), hegel.WithDatabase(""))
 }
-func TestOriginalSnapshotProperty(t *testing.T) {
-	_, err := EncodeOriginalInput(Input{OriginalValue: string([]byte{0xff})})
-	require.Error(t, err)
-	hegel.Test(t, func(ht *hegel.T) {
-		input := drawPostalInput(ht)
-		encoded, err := EncodeOriginalInput(input)
-		require.NoError(ht, err)
-		decoded, ok, err := DecodeOriginalInput(encoded)
-		require.NoError(ht, err)
-		require.True(ht, ok)
-		assert.Equal(ht, input, decoded)
-	}, hegel.WithTestCases(300), hegel.WithDatabase(""))
-}
-
 func TestAssessmentExtendedParts(t *testing.T) {
 	got := Assess(Input{ExtendedComponents: `;;12 Example St;City;;;;Room\;3;Floor 2`})
 	assert.Equal(t, []string{"Room;3", "Floor 2"}, got.OriginalExtendedParts)

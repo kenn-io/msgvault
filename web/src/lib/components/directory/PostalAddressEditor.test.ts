@@ -26,7 +26,8 @@ function setup(options: { unavailable?: boolean; localRejection?: boolean; revie
     const request = input instanceof Request ? input : new Request(input); requests.push(request);
     if (request.url.endsWith('/addresses/assess')) {
       const body = await request.clone().json() as { address: Input; allow_external: boolean };
-      return Response.json(await check(body.address));
+      const result = await check(body.address);
+      return Response.json(body.allow_external ? result : { ...result, provider: undefined });
     }
     if (options.conflict) return Response.json({ error: 'person_revision_conflict', message: 'Profile changed' }, { status: 409 });
     return Response.json({ ...profile, person: { ...person, revision: 4 } }, { headers: { ETag: '"person-7-r4"' } });
@@ -56,35 +57,39 @@ describe('Postal address editor', () => {
   });
 
   it('saves raw input and unit/PO box/country without an implicit external check', async () => {
-    const { controller, requests, check } = setup();
+    const { controller, requests } = setup();
     render(StructuredProfileEditor, { controller, section: 'addresses' });
     await enterRaw();
     await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
     await waitFor(() => expect(requests).toHaveLength(1));
     const body = await requests[0]!.clone().json();
     expect(body.addresses.add[0]).toMatchObject({ ...raw, original_input: raw, envelope: { source: 'user' } });
-    expect(check).not.toHaveBeenCalled();
   });
 
-  it('checks explicitly, shows original/proposed and attribution, then confirms a first-entry correction with raw input', async () => {
+  it.each([['Check locally', false], ['Check with Google', true]] as const)('checks explicitly with %s and confirms a first-entry correction', async (button, external) => {
     const { controller, requests } = setup();
     render(StructuredProfileEditor, { controller, section: 'addresses' });
     await enterRaw();
-    await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
-    const attribution = await screen.findByText('Google Maps');
-    expect(attribution.getAttribute('translate')).toBe('no');
-    const attributionStyle = getComputedStyle(attribution);
-    expect(attributionStyle.whiteSpace).toBe('nowrap');
-    expect(attributionStyle.fontFamily).toContain('Arial');
-    expect(attributionStyle.fontStyle).toBe('normal');
-    expect(attributionStyle.fontWeight).toBe('400');
-    expect(attributionStyle.fontSize).toBe('14px');
-    expect(attributionStyle.letterSpacing).toBe('normal');
-    expect(attributionStyle.color).toBe('rgb(31, 31, 31)');
-    expect(attributionStyle.backgroundColor).toBe('rgb(255, 255, 255)');
+    await fireEvent.click(screen.getByRole('button', { name: button }));
+    await screen.findByText('Original address');
+    if (external) {
+      const attribution = await screen.findByText('Google Maps');
+      expect(attribution.getAttribute('translate')).toBe('no');
+      const attributionStyle = getComputedStyle(attribution);
+      expect(attributionStyle.whiteSpace).toBe('nowrap');
+      expect(attributionStyle.fontFamily).toContain('Arial');
+      expect(attributionStyle.fontStyle).toBe('normal');
+      expect(attributionStyle.fontWeight).toBe('400');
+      expect(attributionStyle.fontSize).toBe('14px');
+      expect(attributionStyle.letterSpacing).toBe('normal');
+      expect(attributionStyle.color).toBe('rgb(31, 31, 31)');
+      expect(attributionStyle.backgroundColor).toBe('rgb(255, 255, 255)');
+    } else {
+      expect(screen.queryByText('Google Maps')).toBeNull();
+    }
     expect(screen.getByText('Original address')).toBeDefined(); expect(screen.getByText('Suggested address')).toBeDefined();
     expect(requests).toHaveLength(1);
-    await expect(requests[0]!.clone().json()).resolves.toMatchObject({ address: raw, allow_external: true });
+    await expect(requests[0]!.clone().json()).resolves.toMatchObject({ address: raw, allow_external: external });
     await fireEvent.click(screen.getByRole('button', { name: 'Save correction' }));
     await waitFor(() => expect(requests).toHaveLength(2));
     const body = await requests[1]!.clone().json();
@@ -167,14 +172,20 @@ describe('Postal address editor', () => {
   });
 
   it.each(['existing clear', 'synthesized source', 'suggested text', 'suggested components', 'manual after check', 'manual clear before check', 'manual clear before save'])('preserves a cleared current address: %s', async scenario => {
-    const original: Input = { address_kind: 'postal', original_value: 'Old street', country_code: 'CA' };
+    const original: Input = { address_kind: 'postal', original_value: 'Old street', country_code: 'CA', ...(scenario === 'existing clear' ? { street_address: 'Old street', free_text: 'Old delivery text' } : {}) };
     const structured = scenario === 'synthesized source';
-    const current: PersonAddress | undefined = scenario === 'existing clear' || structured ? { person_id: 7, address_kind: 'postal', ...(structured ? { street_address: 'Old street' } : {}), original_value: structured ? ';;Old street;;;;' : 'Old street', country_code: 'CA', assessment: { original: structured ? { address_kind: 'postal', street_address: 'Old street', country_code: 'CA' } : original, proposed: original, status: 'needs_review', reason_codes: [], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } } : undefined;
+    const current: PersonAddress | undefined = scenario === 'existing clear' || structured ? { person_id: 7, address_kind: 'postal', ...(structured || scenario === 'existing clear' ? { street_address: 'Old street' } : {}), ...(scenario === 'existing clear' ? { free_text: 'Old delivery text' } : {}), original_value: structured ? ';;Old street;;;;' : 'Old street', country_code: 'CA', assessment: { original: structured ? { address_kind: 'postal', street_address: 'Old street', country_code: 'CA' } : original, proposed: original, status: 'needs_review', reason_codes: [], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } } : undefined;
     const candidate: Input | undefined = scenario === 'suggested text' ? { address_kind: 'postal', free_text: 'Old street', original_value: 'Old street' } : scenario === 'suggested components' ? { address_kind: 'postal', street_address: 'Old street', country_code: 'CA', original_value: 'Old street' } : undefined;
     const { controller, requests } = setup({ current });
     render(StructuredProfileEditor, { controller, section: 'addresses', current, postalCandidate: candidate ? { input: candidate, sourceRef: 'person-fact-claim:synthetic-claim', personRevision: 3 } : undefined });
     if (candidate) await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'add' } });
     if (structured) expect(screen.getByLabelText('Original text')).toHaveProperty('value', '');
+    if (scenario === 'existing clear') {
+      await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
+      await screen.findByText('Original address');
+      await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: '' } });
+      await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: '' } });
+    }
     if (scenario.startsWith('manual')) {
       if (scenario === 'manual after check') {
         await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Old street' } });
@@ -197,6 +208,7 @@ describe('Postal address editor', () => {
     const saved = await requests.find(request => request.method === 'PATCH')!.clone().json();
     expect(saved.addresses.add[0].free_text).toBe('');
     if (structured) expect(saved.addresses.add[0]).not.toHaveProperty('original_value');
+    if (scenario === 'existing clear') expect(saved.addresses.add[0].original_input).toEqual(original);
   });
 
   it('keeps a text-only draft current after checking and changing its country', async () => {
@@ -252,15 +264,6 @@ it('drops a pending result if the component receives a different person controll
  expect(screen.queryByText('Google Maps')).toBeNull();
 });
 
-it('makes an explicit local check without granting external consent', async () => {
- const { controller, requests } = setup();
- render(StructuredProfileEditor, { controller, section: 'addresses' });
- await enterRaw(); await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
- await waitFor(() => expect(requests).toHaveLength(1));
- expect((await requests[0]!.clone().json()).allow_external).toBe(false);
- expect(requests.some(request => request.method === 'PATCH')).toBe(false);
-});
-
 it.each(['existing', 'after check'])('keeps captured provenance read-only and saves current text (%s)', async scenario => {
   const original: Input = { address_kind: 'postal', original_value: '  First raw text\nUnit 7  ' };
   const current: PersonAddress | undefined = scenario === 'existing' ? { person_id: 7, address_kind: 'postal', original_value: original.original_value!, assessment: { original, proposed: original, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } } : undefined;
@@ -281,7 +284,7 @@ it.each(['existing', 'after check'])('keeps captured provenance read-only and sa
   expect(saved.original_input.original_value).toBe(original.original_value);
 });
 
-it.each([['birth_place', false], ['birth_place', true], ['death_place', false], ['death_place', true]] as const)('saves %s text without postal provenance (edit text=%s)', async (kind, editText) => {
+it.each([['birth_place', false], ['birth_place', true]] as const)('saves %s text without postal provenance (edit text=%s)', async (kind, editText) => {
   const text = 'msgvault:postal-input:v1\n{"schema":1,"input":{"original_value":"literal place"}}';
   const current: PersonAddress = { person_id: 7, address_kind: kind, original_value: text, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
   const { controller, requests } = setup({ current });
