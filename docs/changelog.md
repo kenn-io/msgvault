@@ -65,7 +65,8 @@ All notable changes to msgvault, grouped by release.
 - See a saved person's open loops on their **Details** tab in People. When
   more history remains, **Check more** continues the scan.
 - Let an MCP assistant read structured person records, history and stored media.
-  With `--allow-curated-writes` and approval, it can apply atomic profile patches.
+  With `--allow-curated-writes` and explicit client confirmation, it can apply
+  atomic profile patches. The client is responsible for obtaining user approval.
 - Let an MCP assistant list open loops. With `--allow-loop-writes`, it can
   also mark loops done, snooze them, or reopen them, with your approval for
   each call. Over HTTP, decisions also need `--http-allow-writes` and protocol
