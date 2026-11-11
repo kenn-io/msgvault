@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SegmentedControl } from '@kenn-io/kit-ui';
-  import { untrack } from 'svelte';
+  import { getContext, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { KataIssueReceipt } from '../../api/generated/models';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
@@ -8,16 +8,26 @@
   import Dialog from '../common/Dialog.svelte';
   import KataEvidenceDialog from '../kata/KataEvidenceDialog.svelte';
   import TaskLinks from './TaskLinks.svelte';
+  import { conversationTaskStatusKey, type ConversationTaskStatus } from './task-status';
 
   let { client, messageId, title, email, onclose, onsettings }: {
     client: APIClient; messageId: number; title: string; email: boolean; onclose: () => void; onsettings?: () => void;
   } = $props();
   const kata = kataReadiness();
+  const taskStatus = getContext<ConversationTaskStatus | undefined>(conversationTaskStatusKey);
   let provider = $state(untrack(() => email ? 'tasks' : 'kata'));
+  let destinationChosen = false;
   let kataInitialized = $state(untrack(() => !email));
   let kataBusy = $state(false);
   let kataReceipt = $state<KataIssueReceipt>();
   let busy = $state(false);
+  $effect(() => {
+    const status = taskStatus?.latest;
+    if (destinationChosen || !email || !status || status.state === 'loading') return;
+    if (status.state === 'ready') { destinationChosen = true; return; }
+    if (kata?.ready) { destinationChosen = true; provider = 'kata'; kataInitialized = true; }
+    else if (kata?.absent) destinationChosen = true;
+  });
   const options = $derived([
     ...(email ? [{ value: 'tasks', label: 'Tasks' }] : []),
     ...(kata?.ready ? [{ value: 'kata', label: 'Kata' }] : []),
@@ -27,7 +37,7 @@
 <Dialog title={provider === 'tasks' ? 'Add to task' : 'Kata issue'} onclose={() => { if (!busy && !kataBusy) onclose(); }}>
   <div class="task-dialog">
     {#if options.length > 1 && !kataReceipt}
-      <div class="provider"><span>Send to</span><SegmentedControl ariaLabel="Send to" disabled={busy || kataBusy} {options} value={provider} onchange={(value) => { provider = value; if (value === 'kata') kataInitialized = true; }} /></div>
+      <div class="provider"><span>Send to</span><SegmentedControl ariaLabel="Send to" disabled={busy || kataBusy} {options} value={provider} onchange={(value) => { destinationChosen = true; provider = value; if (value === 'kata') kataInitialized = true; }} /></div>
     {/if}
     {#if email}<div hidden={provider !== 'tasks'}>
       <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:busy oncancel={onclose} oncomplete={onclose} />
