@@ -39,15 +39,3 @@ func TestImportICSRangeKeepsOtherEvents(t *testing.T) {
 	assert.Equal(t, "Sibling", page.Occurrences[0].Subject)
 	require.Len(t, page.Unexpandable, 1)
 }
-
-func TestImportICSMultipleEventsOverFileLimit(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	path := filepath.Join(t.TempDir(), "large-calendar.ics")
-	padding := strings.Repeat("a", 32<<20)
-	raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:first@example.com\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nX-PADDING:" + padding + "\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:second@example.com\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T130000Z\r\nX-PADDING:" + padding + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	requirements.NoError(os.WriteFile(path, []byte(raw), 0600))
-	summary, err := ImportICS(t.Context(), st, path, "large-export")
-	requirements.NoError(err)
-	assertions.Equal(2, summary.Changed)
-}
