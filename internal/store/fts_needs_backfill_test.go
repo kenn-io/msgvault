@@ -156,6 +156,8 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 		"before foo-bar after":      {compound},
 		"bar foo":                   nil,
 		"lantern harbor":            {slack},
+		"lantern":                   {slack, fresh, retained, partial},
+		"the":                       {slack},
 		"https://example.test/path": {url},
 		"lantern sender":            {slack},
 		"+15550123457":              {phone},
@@ -193,76 +195,77 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 // recipient text does not join To and Cc into one phrase.
 func TestPG_BackfillFTSKeepsMergedRecipientAlias(t *testing.T) {
 	skipUnlessPostgres(t)
-	for _, snapshot := range []bool{true, false} {
-		t.Run(fmt.Sprintf("snapshot=%t", snapshot), func(t *testing.T) {
-			require := require.New(t)
-			f := storetest.New(t)
-			from := f.EnsureParticipant("sender@example.com", "", "example.com")
-			alias := f.EnsureParticipant("old.alias@example.com", "", "example.com")
-			kept := f.EnsureParticipant("kept@example.net", "", "example.net")
-			carol := f.EnsureParticipant("carol@example.org", "", "example.org")
-			var toAddresses []string
-			if snapshot {
-				toAddresses = []string{"old.alias@example.com"}
-			}
-			id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
-				Message: &store.Message{
-					SourceID: f.Source.ID, ConversationID: f.ConvID, MessageType: store.MessageTypeEmail,
-					SourceMessageID: "merged-alias", SenderID: sql.NullInt64{Int64: from, Valid: true},
-				},
-				Recipients: []store.RecipientSet{
-					{Type: "from", ParticipantIDs: []int64{from}, EmailAddresses: []string{"sender@example.com"}},
-					{Type: "to", ParticipantIDs: []int64{alias}, EmailAddresses: toAddresses},
-					{Type: "cc", ParticipantIDs: []int64{carol}, EmailAddresses: []string{"carol@example.org"}},
-				},
-			})
-			require.NoError(err)
-			if !snapshot {
-				var address sql.NullString
-				require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT email_address FROM message_recipients WHERE message_id = $1 AND recipient_type = 'to'`, id).Scan(&address))
-				require.False(address.Valid)
-			}
-			_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2,
-		search_fts = setweight(to_tsvector('simple', 'sender@example.com'), 'B') || setweight(to_tsvector('simple', 'old.alias@example.com carol@example.org'), 'C')
-		WHERE id = $1`, id)
-			require.NoError(err)
-			require.NoError(f.Store.MergeParticipantsContext(t.Context(), alias, kept))
-			assert.Equal(t, kept, f.GetSingleRecipientID(id, "to"))
-			ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"old"}}, 10)
-			require.NoError(err)
-			assert.Equal(t, []int64{id}, ids, "old alias must match before backfill")
+	require := require.New(t)
+	f := storetest.New(t)
+	from := f.EnsureParticipant("sender@example.com", "", "example.com")
+	alias := f.EnsureParticipant("old.alias@example.com", "", "example.com")
+	kept := f.EnsureParticipant("kept@example.net", "", "example.net")
+	carol := f.EnsureParticipant("carol@example.org", "", "example.org")
+	id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: f.Source.ID, ConversationID: f.ConvID, MessageType: store.MessageTypeEmail,
+			SourceMessageID: "merged-alias", SenderID: sql.NullInt64{Int64: from, Valid: true},
+		},
+		Recipients: []store.RecipientSet{
+			{Type: "from", ParticipantIDs: []int64{from}, EmailAddresses: []string{"sender@example.com"}},
+			{Type: "to", ParticipantIDs: []int64{alias}, EmailAddresses: nil},
+			{Type: "cc", ParticipantIDs: []int64{carol}, EmailAddresses: []string{"carol@example.org"}},
+		},
+	})
+	require.NoError(err)
+	var address sql.NullString
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT email_address FROM message_recipients WHERE message_id = $1 AND recipient_type = 'to'`, id).Scan(&address))
+	require.False(address.Valid)
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2,
+search_fts = setweight(to_tsvector('simple', 'sender@example.com'), 'B') || setweight(to_tsvector('simple', 'old.alias@example.com carol@example.org'), 'C')
+WHERE id = $1`, id)
+	require.NoError(err)
+	require.NoError(f.Store.MergeParticipantsContext(t.Context(), alias, kept))
+	assert.Equal(t, kept, f.GetSingleRecipientID(id, "to"))
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"old"}}, 10)
+	require.NoError(err)
+	assert.Equal(t, []int64{id}, ids, "old alias must match before backfill")
 
-			_, err = f.Store.BackfillFTS(nil)
-			require.NoError(err)
-			count, err := f.Store.BackfillFTS(nil)
-			require.NoError(err)
-			require.Zero(count)
-			for term, want := range map[string][]int64{
-				"old":                   {id},
-				"old.alias@example.com": {id},
-				"kept@example.net":      {id},
-				"carol@example.org":     {id},
-				"example.com carol":     nil,
-				"carol example.com":     nil,
-			} {
-				ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
-				require.NoError(err, term)
-				assert.ElementsMatch(t, want, ids, term)
-			}
-		})
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	count, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	require.Zero(count)
+	for term, want := range map[string][]int64{
+		"old":                   {id},
+		"old.alias@example.com": {id},
+		"kept@example.net":      {id},
+		"carol@example.org":     {id},
+		"example.com carol":     nil,
+		"carol example.com":     nil,
+	} {
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err, term)
+		assert.ElementsMatch(t, want, ids, term)
 	}
 }
 
 func TestPG_BackfillFTS_ContinuesAcrossLargeMessagePages(t *testing.T) {
 	skipUnlessPostgres(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	body := strings.Repeat("filler ", 83000) + "alice@example.com"
 	for _, id := range f.CreateMessages(8) {
-		require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+		require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
 	}
+	_, err := f.Store.DB().ExecContext(t.Context(), `CREATE TABLE fts_page_audit (n bigint);
+		CREATE FUNCTION record_fts_page() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN INSERT INTO fts_page_audit SELECT count(*) FROM indexed_rows; RETURN NULL; END $$;
+		CREATE TRIGGER record_fts_page AFTER UPDATE ON messages
+		REFERENCING NEW TABLE AS indexed_rows FOR EACH STATEMENT EXECUTE FUNCTION record_fts_page()`)
+	require.NoError(err)
 	count, err := f.Store.BackfillFTS(nil)
-	require.NoError(t, err)
-	assert.EqualValues(t, 8, count)
+	require.NoError(err)
+	assert.EqualValues(8, count)
+	var pages string
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT string_agg(n::text, ',' ORDER BY n DESC) FROM fts_page_audit`).Scan(&pages))
+	assert.Equal("7,1", pages)
 	assertFTSContains(t, f.Store, "alice@example.com", 8)
 }
 
@@ -277,10 +280,12 @@ func TestPG_FTSSearchUsesIndex(t *testing.T) {
 	require.NoError(err)
 	dialect := &store.PostgreSQLDialect{}
 	join, predicate, order, count := dialect.FTSSearchClause(false, []string{"lantern unique"})
-	require.Empty(join)
-	require.NotEmpty(order)
-	require.Equal(1, count)
-	rows, err := tx.QueryContext(t.Context(), f.Store.Rebind(`EXPLAIN SELECT m.id FROM messages m WHERE `+predicate), dialect.BuildFTSArg([]string{"lantern unique"}))
+	arg := dialect.BuildFTSArg([]string{"lantern unique"})
+	args := []any{arg}
+	for range count {
+		args = append(args, arg)
+	}
+	rows, err := tx.QueryContext(t.Context(), f.Store.Rebind(`EXPLAIN SELECT m.id FROM messages m `+join+` WHERE `+predicate+` ORDER BY `+order), args...)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(rows.Close()) })
 	var plan []string
@@ -294,69 +299,54 @@ func TestPG_FTSSearchUsesIndex(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(strings.Join(plan, "\n"), " on messages "), "search must scan messages once")
 }
 
-func TestPG_BackfillFTS_SeesConcurrentBodyUpdate(t *testing.T) {
-	require := require.New(t)
-	skipUnlessPostgres(t)
-	f := storetest.New(t)
-	id := f.CreateMessage("concurrent-backfill")
-	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "old body", Valid: true}, sql.NullString{}))
-	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
-	require.NoError(err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-	_, err = tx.ExecContext(t.Context(), `UPDATE messages SET subject = 'updated', search_fts = NULL WHERE id = $1`, id)
-	require.NoError(err)
-	_, err = tx.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = 'new@example.com' WHERE message_id = $1`, id)
-	require.NoError(err)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		_, err := f.Store.BackfillFTSContext(ctx, nil)
-		done <- err
-	}()
-	require.Eventually(func() bool {
-		var waiting bool
-		err := f.Store.DB().QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'SELECT m.id FROM messages m WHERE m.id IN (%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&waiting)
-		return err == nil && waiting
-	}, 30*time.Second, 20*time.Millisecond)
-	require.NoError(tx.Commit())
-	require.NoError(<-done)
-	assertFTSContains(t, f.Store, "new@example.com", 1)
-	assertFTSContains(t, f.Store, "old", 0)
-}
-
-func TestPG_BackfillFTS_SkipsEntryRefreshedWhileWaiting(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	ids := f.CreateMessages(65)
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'old'), indexing_version = 2`)
-	require.NoError(err)
-	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
-	require.NoError(err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-	dialect := &store.PostgreSQLDialect{}
-	for _, id := range ids[:64] {
-		require.NoError(dialect.FTSUpsert(tx, store.FTSDoc{MessageID: id, FromAddr: "slackdisplayname"}))
+func TestPG_BackfillFTS_ConcurrentUpdates(t *testing.T) {
+	for _, refreshed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("refreshed=%t", refreshed), func(t *testing.T) {
+			skipUnlessPostgres(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			ids := f.CreateMessages(65)
+			if refreshed {
+				_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'old'), indexing_version = 2`)
+				require.NoError(err)
+			}
+			require.NoError(f.Store.UpsertMessageBody(ids[0], sql.NullString{String: "old body", Valid: true}, sql.NullString{}))
+			tx, err := f.Store.DB().BeginTx(t.Context(), nil)
+			require.NoError(err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			if refreshed {
+				dialect := &store.PostgreSQLDialect{}
+				for _, id := range ids[:64] {
+					require.NoError(dialect.FTSUpsert(tx, store.FTSDoc{MessageID: id, FromAddr: "slackdisplayname"}))
+				}
+			} else {
+				_, err = tx.ExecContext(t.Context(), `UPDATE messages SET subject = 'updated', search_fts = NULL WHERE id = $1`, ids[0])
+				require.NoError(err)
+				_, err = tx.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = 'new@example.com' WHERE message_id = $1`, ids[0])
+				require.NoError(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { _, err := f.Store.BackfillFTSContext(ctx, nil); done <- err }()
+			require.Eventually(func() bool {
+				var waiting bool
+				err := f.Store.DB().QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'SELECT m.id FROM messages m WHERE m.id IN (%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&waiting)
+				return err == nil && waiting
+			}, 30*time.Second, 20*time.Millisecond)
+			require.NoError(tx.Commit())
+			require.NoError(<-done)
+			if refreshed {
+				assertFTSContains(t, f.Store, "slackdisplayname", 64)
+				var version int
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT indexing_version FROM messages WHERE id = $1`, ids[64]).Scan(&version))
+				assert.Equal(t, store.CurrentFTSIndexingVersion, version)
+			} else {
+				assertFTSContains(t, f.Store, "new@example.com", 1)
+				assertFTSContains(t, f.Store, "old", 0)
+			}
+		})
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		_, err := f.Store.BackfillFTSContext(ctx, nil)
-		done <- err
-	}()
-	require.Eventually(func() bool {
-		var waiting bool
-		err := f.Store.DB().QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'SELECT m.id FROM messages m WHERE m.id IN (%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&waiting)
-		return err == nil && waiting
-	}, 30*time.Second, 20*time.Millisecond)
-	require.NoError(tx.Commit())
-	require.NoError(<-done)
-	assertFTSContains(t, f.Store, "slackdisplayname", 64)
-	var version int
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT indexing_version FROM messages WHERE id = $1`, ids[64]).Scan(&version))
-	assert.Equal(t, store.CurrentFTSIndexingVersion, version)
 }
 
 // isPostgresTestDB reports whether the active test backend is PostgreSQL,

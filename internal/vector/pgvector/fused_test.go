@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -346,6 +347,8 @@ func TestFusedSearch_Saturated(t *testing.T) {
 
 func TestFusedSearchFiltersPhrasesBeforePoolLimit(t *testing.T) {
 	f := seedThree(t)
+	_, err := f.db.ExecContext(f.ctx, `ALTER TABLE messages ADD COLUMN indexing_version INTEGER`)
+	require.NoError(t, err)
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	// Rows 4-6 fill the pool unless the phrase check runs first; only row 7 matches.
 	for id, tail := range map[int64]string{4: "middle example alice", 5: "middle example alice", 6: "middle example alice", 7: "alice example"} {
@@ -355,8 +358,7 @@ func TestFusedSearchFiltersPhrasesBeforePoolLimit(t *testing.T) {
 			subject = strings.Repeat("alice middle example ", 8)
 		}
 		f.seedMsg(t, id, subject, body, 10, base, false)
-		_, err := f.db.ExecContext(f.ctx, `UPDATE messages SET search_fts_fields = ARRAY[$3, '', '', '', $2] WHERE id = $1`, id, body, subject)
-		require.NoError(t, err)
+		require.NoError(t, (&store.PostgreSQLDialect{}).FTSUpsert(f.db, store.FTSDoc{MessageID: id, Subject: subject, Body: body}))
 	}
 	var higherRank bool
 	require.NoError(t, f.db.QueryRowContext(f.ctx, `SELECT min(rank) FILTER (WHERE id BETWEEN 4 AND 6) > max(rank) FILTER (WHERE id = 7) FROM (SELECT id, ts_rank_cd(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], search_fts, to_tsquery('simple', 'alice & example:*'), 32) AS rank FROM messages WHERE id BETWEEN 4 AND 7) ranked`).Scan(&higherRank))

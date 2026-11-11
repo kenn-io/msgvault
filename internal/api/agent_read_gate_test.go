@@ -47,57 +47,23 @@ type agentReadGateStore struct {
 }
 
 func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
-	for _, cancelProbe := range []bool{false, true} {
-		name := "repair begins at startup"
-		if cancelProbe {
-			name = "shutdown cancels the startup probe"
-		}
-		t.Run(name, func(t *testing.T) {
-			require := require.New(t)
-			base := testutil.NewTestStore(t)
-			st := &postgresBackfillStore{Store: base, started: make(chan struct{}, 1)}
-			probeStarted, release := make(chan struct{}), make(chan struct{})
-			defer close(release)
-			if cancelProbe {
-				st.quick = func(ctx context.Context) bool {
-					close(probeStarted)
-					select {
-					case <-ctx.Done():
-					case <-release:
-					}
-					return false
-				}
-			}
-			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(base.DB(), base.IsPostgreSQL()), Logger: testLogger()})
-			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-			require.NoError(err)
-			done := make(chan error, 1)
-			go func() { done <- srv.StartOnListener(listener) }()
-			t.Cleanup(func() {
-				_ = srv.Shutdown(context.WithoutCancel(t.Context()))
-				require.ErrorIs(<-done, http.ErrServerClosed)
-			})
-			require.NoError(srv.WaitStarted(t.Context()))
-			started := (<-chan struct{})(st.started)
-			if cancelProbe {
-				started = probeStarted
-			}
-			select {
-			case <-started:
-			case <-time.After(5 * time.Second):
-				require.FailNow("startup did not begin search indexing")
-			}
-			if cancelProbe {
-				shutdown := make(chan error, 1)
-				go func() { shutdown <- srv.Shutdown(t.Context()) }()
-				select {
-				case err := <-shutdown:
-					require.NoError(err)
-				case <-time.After(5 * time.Second):
-					require.FailNow("shutdown did not cancel the search probe")
-				}
-			}
-		})
+	require := require.New(t)
+	base := testutil.NewTestStore(t)
+	st := &postgresBackfillStore{Store: base, started: make(chan struct{}, 1)}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(base.DB(), base.IsPostgreSQL()), Logger: testLogger()})
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(err)
+	done := make(chan error, 1)
+	go func() { done <- srv.StartOnListener(listener) }()
+	t.Cleanup(func() {
+		_ = srv.Shutdown(context.WithoutCancel(t.Context()))
+		require.ErrorIs(<-done, http.ErrServerClosed)
+	})
+	require.NoError(srv.WaitStarted(t.Context()))
+	select {
+	case <-st.started:
+	case <-time.After(5 * time.Second):
+		require.FailNow("startup did not begin search indexing")
 	}
 }
 

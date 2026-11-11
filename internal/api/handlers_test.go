@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -2608,6 +2609,43 @@ func (s *postgresBackfillStore) BackfillFTSContext(ctx context.Context, _ func(i
 }
 
 func TestHandleCLISearchPostgresBackfillAllowsOtherOperations(t *testing.T) {
+	t.Run("shutdown cancels the startup probe", func(t *testing.T) {
+		require := require.New(t)
+		base := testutil.NewTestStore(t)
+		started, release := make(chan struct{}), make(chan struct{})
+		defer close(release)
+		st := &postgresBackfillStore{Store: base, started: make(chan struct{}, 1), quick: func(ctx context.Context) bool {
+			close(started)
+			select {
+			case <-ctx.Done():
+			case <-release:
+			}
+			return false
+		}}
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+		require.NoError(err)
+		done := make(chan error, 1)
+		go func() { done <- srv.StartOnListener(listener) }()
+		t.Cleanup(func() {
+			_ = srv.Shutdown(context.WithoutCancel(t.Context()))
+			require.ErrorIs(<-done, http.ErrServerClosed)
+		})
+		require.NoError(srv.WaitStarted(t.Context()))
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			require.FailNow("search probe did not start")
+		}
+		shutdown := make(chan error, 1)
+		go func() { shutdown <- srv.Shutdown(t.Context()) }()
+		select {
+		case err := <-shutdown:
+			require.NoError(err)
+		case <-time.After(5 * time.Second):
+			require.FailNow("shutdown did not cancel the search probe")
+		}
+	})
 	base := testutil.NewTestStore(t)
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)

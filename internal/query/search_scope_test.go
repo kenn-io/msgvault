@@ -477,6 +477,7 @@ func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 	createSearchScopeMessage(t, f, "combining-body", "ordinary", "ordinary", "cafe\u0301teria marker foo.bar", 0, 0)
 	createSearchScopeMessage(t, f, "accent-body", "ordinary", "ordinary", strings.Repeat("résumé "+strings.Repeat("padding ", 60), query.MessageBodyContextMaxSnippets)+"resume marker", 0, 0)
 	createSearchScopeMessage(t, f, "saturated-subject", strings.Repeat("shared ", 300), "ordinary", "shared body marker", 0, 0)
+	createSearchScopeMessage(t, f, "omitted-context", "ordinary", "ordinary", "needle "+strings.Repeat("padding ", 45)+"needle tail-marker", 0, 0)
 	_, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
 	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
@@ -488,24 +489,11 @@ func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 		require.Len(result.Messages, 1, term)
 		assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), excerpt, term)
 	}
-}
-
-func TestSearchMessageBodies_PostgreSQLReportsOmittedMatches(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	if !f.Store.IsPostgreSQL() {
-		t.Skip("PostgreSQL body context")
-	}
-	body := "needle " + strings.Repeat("padding ", 45) + "needle tail-marker"
-	createSearchScopeMessage(t, f, "overlapping-context", "ordinary", "ordinary", body, 0, 0)
-	_, err := f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
-	require.True(ok)
 	result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"needle"}}, 10, 0)
 	require.NoError(err)
 	require.Len(result.Messages, 1)
-	assert.True(t, result.Messages[0].BodyContextSnippetsTruncated || strings.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "tail-marker"))
+	assert.True(result.Messages[0].BodyContextSnippetsTruncated)
+	assert.NotContains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "tail-marker")
 }
 
 func TestSearchMessageBodies_IgnoresUnsearchableContextGroups(t *testing.T) {

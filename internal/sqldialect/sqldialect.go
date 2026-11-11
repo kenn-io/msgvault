@@ -71,6 +71,10 @@ func PostgreSQLSearchPredicate(arg, fields string, terms []string, weight string
 			continue
 		}
 		pattern := PostgreSQLPhrasePattern(term)
+		if weight == "" && len(EscapeTSQueryTerm(term)) == 1 {
+			clauses = append(clauses, "(m.search_fts_fields[1] IS NULL OR EXISTS (SELECT 1 FROM unnest("+fields+") AS field WHERE field ~* '"+pattern+"'))")
+			continue
+		}
 		clauses = append(clauses, "((m.search_fts_fields[1] IS NULL AND m.search_fts @@ to_tsquery('simple', '"+phrase+"')) OR EXISTS (SELECT 1 FROM unnest("+fields+") AS field WHERE field ~* '"+pattern+"'))")
 	}
 	return strings.Join(clauses, " AND ")
