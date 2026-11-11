@@ -50,14 +50,11 @@ func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate ap
 		if err != nil {
 			return err
 		}
-		if err := engine.InitializeMissing(ctx); err != nil {
-			if category := wakeups.StoreErrorCategory(err); category != "" {
-				logger.Warn("wakeup initialization unavailable", "category", category)
-			}
-		}
-		return nil
+		return engine.InitializeMissing(ctx)
 	}); err != nil {
-		return err
+		if category := wakeups.StoreErrorCategory(err); category != "" {
+			logger.Warn("wakeup setup unavailable", "category", category)
+		}
 	}
 	if pruned > 0 {
 		logger.Info("wakeup states pruned", "count", pruned)

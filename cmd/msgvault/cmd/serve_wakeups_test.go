@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep constructors available in nested test scopes.
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep constructors available in nested test scopes.
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -64,4 +66,42 @@ func TestWakeupJobLoadsRelativeSecret(t *testing.T) {
 	sched := scheduler.New(nil)
 	require.NoError(configureWakeupJob(t.Context(), sched, nil, testutil.NewTestStore(t), cfg, nil))
 	Assert.True(t, sched.IsJobScheduled("wakeups"))
+}
+
+// wakeupSetupGate refuses setup once, then admits the scheduled retry.
+type wakeupSetupGate struct {
+	*api.SerialOperationGate
+	refuse bool
+}
+
+func (g *wakeupSetupGate) BeginLabeledWorkContext(ctx context.Context, label string) (func(), bool) {
+	if g.refuse {
+		return nil, false
+	}
+	return g.SerialOperationGate.BeginLabeledWorkContext(ctx, label)
+}
+
+func TestWakeupJobRecoversAfterSetupGateFailure(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	t.Setenv("MSGVAULT_TEST_WAKEUP_KEY", "whsec_"+base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 32))))
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[[wakeups]]\nname='good'\nurl='https://example.com/'\nsecret_env='MSGVAULT_TEST_WAKEUP_KEY'\n"), 0600))
+	cfg, err := config.Load(path, "")
+	require.NoError(err)
+	st := testutil.NewTestStore(t)
+	gate := &wakeupSetupGate{SerialOperationGate: api.NewSerialOperationGate(), refuse: true}
+	sched := scheduler.New(nil)
+	require.NoError(configureWakeupJob(t.Context(), sched, gate, st, cfg, nil))
+	assert.True(sched.IsJobScheduled("wakeups"))
+	_, raw, err := st.LoadWakeupState(t.Context(), "good")
+	require.NoError(err)
+	assert.Nil(raw)
+	gate.refuse = false
+	sched.Start()
+	defer func() { <-sched.Stop().Done() }()
+	require.NoError(sched.TriggerJob("wakeups"))
+	_, raw, err = st.LoadWakeupState(t.Context(), "good")
+	require.NoError(err)
+	assert.NotNil(raw)
 }

@@ -13,6 +13,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/changefeed"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/httpretry"
 	"go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -124,11 +125,7 @@ func (e *Engine) InitializeMissing(ctx context.Context) error {
 }
 
 func retryDelay(failures int) time.Duration {
-	d := 30 * time.Second
-	for i := 1; i < failures && d < time.Hour; i++ {
-		d *= 2
-	}
-	return min(d, time.Hour)
+	return httpretry.RetryAfterAtWithBase("", max(failures-1, 0), 30*time.Second, time.Hour, time.Time{})
 }
 func qualifies(m store.ChangedMessage, now time.Time, maxAge time.Duration) bool {
 	if m.DeletedAt != nil || m.DeletedFromSourceAt != nil {
