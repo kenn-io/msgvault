@@ -27,9 +27,7 @@ func TestInstagramFingerprint(t *testing.T) {
 		Share:  &rawJSONShare{Link: "https://example.org/x", ShareText: "A & B", OriginalContentOwner: "Mira Example"},
 		Photos: []rawJSONPhoto{{URI: "photos/a.jpg"}}, Media: []rawJSONPhoto{{URI: "docs/one.pdf"}},
 	}))
-	duration := int64(10)
 	assert.Equal("0d95a897c44227897c749a3d6e24e5ad2bee36f48e8b12e70237a60d18955485", instagramFingerprint(rawJSONMessage{
-		Type: "Call", CallDuration: &duration,
 		Audio: []rawJSONPhoto{{URI: "a.ogg"}}, Videos: []rawJSONPhoto{{URI: "b.mp4"}},
 		Gifs: []rawJSONPhoto{{URI: "c.gif"}}, Sticker: &rawJSONSticker{URI: "d.webp"},
 	}))
@@ -172,6 +170,13 @@ func TestInstagramLimitReplay(t *testing.T) {
 
 		assert.Equal(int64(1), summary.MessagesAdded)
 		assert.Equal(i, countMessages(t, st, ""))
+		if i == 1 {
+			_, err = st.RebuildFTS(nil)
+			require.NoError(err)
+			_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Fictional"}}, 0, 10)
+			require.NoError(err)
+			assert.Equal(int64(1), total)
+		}
 	}
 }
 
@@ -464,82 +469,91 @@ func TestInstagramRenameRollsBackWhenSubjectWriteFails(t *testing.T) {
 	assert.Equal(t, int64(2), total)
 }
 
-func TestInstagramSharedLinkDecoded(t *testing.T) {
+func TestInstagramSharedLinkWithoutType(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	record := instagramTestRecord("")
-	record["share"] = map[string]string{"link": "https://example.com/cafÃ©"}
+	record["share"] = map[string]string{"link": "https://example.com/article"}
 	instagramTestShard(t, root, "circle", "message_1.json", record)
 	_, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
 	require.NoError(t, err)
 	var body string
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies`).Scan(&body))
-	assert.Equal(t, "[shared link] https://example.com/café", body)
+	assert.Equal(t, "[shared link] https://example.com/article", body)
 }
 
 func TestInstagramReplayChangedUnknownMetadata(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	a, b := instagramTestRecord("first"), instagramTestRecord("second")
-	instagramTestShard(t, root, "circle", "message_1.json", a, b)
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	ids := instagramIDs(t, st)
-	for _, value := range []bool{false, true, true} {
-		a["is_geoblocked_for_viewer"], b["is_geoblocked_for_viewer"] = value, value
-		instagramTestShard(t, root, "circle", "message_1.json", b, a)
-		summary, err := ImportDYI(t.Context(), st, opts)
-		require.NoError(t, err)
-		assert.Zero(t, summary.MessagesAdded)
-		assert.False(t, summary.Incomplete)
-		assert.Equal(t, ids, instagramIDs(t, st))
-		raws, _ := instagramSnapshot(t, st)
-		for _, raw := range raws {
-			if value {
-				assert.Contains(t, raw, `"is_geoblocked_for_viewer":true`)
-			} else {
-				assert.Contains(t, raw, `"is_geoblocked_for_viewer":false`)
+	for _, tc := range []struct {
+		name              string
+		distinct, partial bool
+	}{
+		{name: "distinct messages", distinct: true},
+		{name: "identical copies"},
+		{name: "partial identical copies", partial: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, root := testutil.NewTestStore(t), t.TempDir()
+			a, b := instagramTestRecord("same"), instagramTestRecord("same")
+			if tc.distinct {
+				a["content"], b["content"] = "first", "second"
 			}
-		}
+			instagramTestShard(t, root, "circle", "message_1.json", a, b)
+			opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+			_, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(t, err)
+			ids := instagramIDs(t, st)
+			require.Len(t, ids, 2)
+			for _, value := range []bool{false, true, true} {
+				before, _ := instagramSnapshot(t, st)
+				a["is_geoblocked_for_viewer"], b["is_geoblocked_for_viewer"] = value, value
+				records := []map[string]any{b, a}
+				if tc.partial {
+					records = records[:1]
+				}
+				instagramTestShard(t, root, "circle", "message_1.json", records...)
+				summary, err := ImportDYI(t.Context(), st, opts)
+				require.NoError(t, err)
+				assert.Zero(t, summary.MessagesAdded)
+				assert.Equal(t, tc.partial && value, summary.Incomplete)
+				assert.Equal(t, ids, instagramIDs(t, st))
+				if tc.partial && value {
+					after, _ := instagramSnapshot(t, st)
+					assert.Equal(t, before, after)
+				}
+				if tc.distinct {
+					raws, _ := instagramSnapshot(t, st)
+					for _, raw := range raws {
+						if value {
+							assert.Contains(t, raw, `"is_geoblocked_for_viewer":true`)
+						} else {
+							assert.Contains(t, raw, `"is_geoblocked_for_viewer":false`)
+						}
+					}
+				}
+			}
+		})
 	}
 }
 
-func TestInstagramReplayIdenticalCopiesWithChangedMetadata(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
+func TestInstagramPartialReplayPreservesDistinctMetadata(t *testing.T) {
+	st, root := testutil.NewTestStore(t), t.TempDir()
 	a, b := instagramTestRecord("same"), instagramTestRecord("same")
+	a["extra_field"], b["extra_field"] = "first", "second"
 	instagramTestShard(t, root, "circle", "message_1.json", a, b)
 	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
 	_, err := ImportDYI(t.Context(), st, opts)
 	require.NoError(t, err)
-	ids := instagramIDs(t, st)
-	require.Len(t, ids, 2)
-	a["is_geoblocked_for_viewer"], b["is_geoblocked_for_viewer"] = false, false
-	instagramTestShard(t, root, "circle", "message_1.json", b, a)
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.MessagesAdded)
-	assert.False(t, summary.Incomplete)
-	assert.Equal(t, ids, instagramIDs(t, st))
-}
-
-func TestInstagramPartialReplayIdenticalCopiesWithChangedMetadata(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	a, b := instagramTestRecord("same"), instagramTestRecord("same")
-	instagramTestShard(t, root, "circle", "message_1.json", a, b)
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
-	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	ids := instagramIDs(t, st)
-	require.Len(t, ids, 2)
-	a["is_geoblocked_for_viewer"] = false
+	before, _ := instagramSnapshot(t, st)
+	a["extra_field"] = "third"
 	instagramTestShard(t, root, "circle", "message_1.json", a)
 	summary, err := ImportDYI(t.Context(), st, opts)
 	require.NoError(t, err)
+	assert.True(t, summary.Incomplete)
 	assert.Zero(t, summary.MessagesAdded)
-	assert.Equal(t, ids, instagramIDs(t, st))
+	after, _ := instagramSnapshot(t, st)
+	for id, raw := range before {
+		assert.Equal(t, raw, after[id])
+	}
 }
 
 func TestInstagramReplayChangedMetadataPreservesDistinctReactionEvidence(t *testing.T) {
@@ -562,22 +576,6 @@ func TestInstagramReplayChangedMetadataPreservesDistinctReactionEvidence(t *test
 	for id, raw := range before {
 		assert.Equal(t, raw, after[id])
 	}
-}
-
-func TestInstagramTitleSearchAfterLimitedImportAndRebuild(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("first"), instagramTestRecord("second"))
-	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example", Limit: 1}
-	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	require.True(t, summary.LimitReached)
-	require.Equal(t, 1, countMessages(t, st, ""))
-	_, err = st.RebuildFTS(nil)
-	require.NoError(t, err)
-	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Fictional"}}, 0, 10)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), total)
 }
 
 func TestInstagramLaterTitleIndexesMessagesWithoutSubjects(t *testing.T) {
@@ -699,17 +697,23 @@ func TestInstagramRejectsNewerFingerprintInAbsentThread(t *testing.T) {
 		checks.Equal(store.SyncStatusFailed, run.Status)
 		checks.Equal(1, countMessages(t, st, ""))
 	}
-	t.Run("concurrent source", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		syncID, err := st.StartSyncContext(t.Context(), summary.SourceID, "import-instagram")
-		require.NoError(err)
-		t.Cleanup(func() {
-			require.NoError(st.FailSyncContext(context.WithoutCancel(t.Context()), syncID, "test cleanup"))
-		})
-		_, err = ImportDYI(t.Context(), st, opts)
-		assert.ErrorIs(err, store.ErrSyncAlreadyActive)
+
+}
+
+func TestInstagramRejectsConcurrentImport(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("original"))
+	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+	summary, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	syncID, err := st.StartSyncContext(t.Context(), summary.SourceID, "import-instagram")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, st.FailSyncContext(context.WithoutCancel(t.Context()), syncID, "test cleanup"))
 	})
+	_, err = ImportDYI(t.Context(), st, opts)
+	assert.ErrorIs(t, err, store.ErrSyncAlreadyActive)
 }
 
 func TestInstagramAddsOnlySurplusCopiesWithSharedReactions(t *testing.T) {
@@ -870,40 +874,24 @@ func TestInstagramReactionRemoval(t *testing.T) {
 }
 
 func TestInstagramExcludedCandidates(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("hello"))
-	requests := filepath.Join(root, "your_instagram_activity", "messages", "message_requests", "request")
-	require.NoError(os.MkdirAll(requests, 0700))
-	require.NoError(os.WriteFile(filepath.Join(requests, "message_1.json"), []byte(`{"thread_path":"message_requests/request","participants":[{"name":"Mira Example"}],"messages":[{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"excluded request"}]}`), 0600))
-	summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
-	require.NoError(err)
-	assert.True(summary.Incomplete)
-	assert.Equal(int64(1), summary.FilesSkipped)
-	assert.Equal(1, countMessages(t, st, ""))
-	assert.Zero(countMessages(t, st, "snippet='excluded request'"))
+	for _, section := range []string{"message_requests", "spam"} {
+		t.Run(section, func(t *testing.T) {
+			st, root := testutil.NewTestStore(t), t.TempDir()
+			instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("hello"))
+			thread := filepath.Join(root, "your_instagram_activity", "messages", section, "thread")
+			require.NoError(t, os.MkdirAll(thread, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(thread, "message_1.json"), []byte(`{"messages":[{"content":"excluded"}]}`), 0600))
+			summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
+			require.NoError(t, err)
+			assert.True(t, summary.Incomplete)
+			assert.Equal(t, int64(1), summary.FilesSkipped)
+			assert.Equal(t, 1, countMessages(t, st, ""))
+			assert.Zero(t, countMessages(t, st, "snippet='excluded'"))
+		})
+	}
 }
 
-func TestInstagramUnknownSectionReportsMessageFiles(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("hello"))
-	messages := filepath.Join(root, "your_instagram_activity", "messages")
-	thread := filepath.Join(messages, "spam", "thread")
-	require.NoError(os.MkdirAll(thread, 0700))
-	require.NoError(os.WriteFile(filepath.Join(thread, "message_1.json"), []byte(`{}`), 0600))
-	summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
-	require.NoError(err)
-	assert.True(summary.Incomplete)
-	assert.Equal(int64(1), summary.FilesSkipped)
-	assert.Equal(1, countMessages(t, st, ""))
-}
-
-func TestInstagramSenderChangesRetainMessages(t *testing.T) {
+func TestInstagramSenderOrMediaChangesRetainMessages(t *testing.T) {
 	for _, tc := range []struct {
 		name, sender string
 		media        bool

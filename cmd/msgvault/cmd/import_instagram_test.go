@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"database/sql"
 	"io"
 	"os"
@@ -11,6 +12,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestImportInstagramReportsNameAndLimit(t *testing.T) {
+	cfg := lifecycleTestConfig(t.TempDir())
+	command := &cobra.Command{Use: "import-instagram"}
+	command.SetContext(withStoreResolverConfig(t, cfg))
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(io.Discard)
+	fixture := filepath.Join("..", "..", "..", "internal", "fbmessenger", "testdata", "instagram")
+	require.NoError(t, runImportInstagram(command, fixture, instagramCLIOptions{Account: "orbit.example", SelfName: "unmatched", Limit: 2}))
+	assert.Contains(t, output.String(), "No sender exactly matched --self-name")
+	assert.Contains(t, output.String(), "Import paused at --limit")
+}
 
 func TestImportInstagramRejectsClientFilesOnRemote(t *testing.T) {
 	assert := assert.New(t)

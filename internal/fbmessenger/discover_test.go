@@ -101,7 +101,7 @@ func TestDiscover_AlternateLayouts(t *testing.T) {
 	}
 }
 
-func TestDiscover_UnnumberedJSONSiblingCountsAndFormat(t *testing.T) {
+func TestDiscover_SkippedCountsAndFormat(t *testing.T) {
 	for _, test := range []struct {
 		name, format string
 		files        []string
