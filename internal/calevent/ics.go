@@ -353,44 +353,69 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 		if allDay && elapsed != 0 {
 			return ICSComponent{}, errors.New("all-day DURATION must be whole days")
 		}
-	} else if allDay {
+	} else if allDay && e.Status != "cancelled" {
 		days = 1
 	}
 	if !start.IsZero() {
+		if prop := p.Get("DTSTART"); !allDay && prop != nil && !strings.HasSuffix(prop.Value, "Z") {
+			e.StartLocal = prop.Value
+		}
+		if !allDay && days > 0 {
+			e.DurationDays, e.DurationElapsedNS = days, int64(elapsed)
+		}
+		hasEnd := !end.IsZero() || p.Get("DURATION") != nil || e.Status != "cancelled"
 		if allDay {
 			e.AllDay = true
 			e.StartDate = start.Format(time.DateOnly)
-			if end.IsZero() {
+			if end.IsZero() && hasEnd {
 				end = start.AddDate(0, 0, days)
 			}
-			e.EndDate = end.Format(time.DateOnly)
-			if e.EndDate <= e.StartDate {
+			if hasEnd {
+				e.EndDate = end.Format(time.DateOnly)
+			}
+			if hasEnd && e.EndDate <= e.StartDate {
 				return ICSComponent{}, errors.New("event ends before its start")
 			}
 			if start, _, err = calrecur.CivilDateBoundary(e.StartDate, loc); err != nil {
 				return ICSComponent{}, fmt.Errorf("DTSTART: %w", err)
 			}
-			if end, _, err = calrecur.CivilDateBoundary(e.EndDate, loc); err != nil {
-				return ICSComponent{}, fmt.Errorf("DTEND: %w", err)
+			if hasEnd {
+				if end, _, err = calrecur.CivilDateBoundary(e.EndDate, loc); err != nil {
+					return ICSComponent{}, fmt.Errorf("DTEND: %w", err)
+				}
 			}
-		} else if end.IsZero() {
+		} else if end.IsZero() && hasEnd {
 			// Nominal days keep the wall time across offset changes;
 			// hours, minutes and seconds are exact elapsed time.
 			end = start
 			if days > 0 {
-				wall := time.Date(start.Year(), start.Month(), start.Day()+days, start.Hour(), start.Minute(), start.Second(), 0, time.UTC)
-				if end, err = calrecur.ParseLocalDateTime("20060102T150405", wall.Format("20060102T150405"), start.Location()); err != nil {
+				if end, err = calrecur.AddNominalDuration(start, days, 0); err != nil {
 					return ICSComponent{}, fmt.Errorf("DURATION: %w", err)
 				}
 			}
 			end = end.Add(elapsed)
 		}
-		if end.Before(start) {
+		if hasEnd && end.Before(start) {
 			return ICSComponent{}, errors.New("event ends before its start")
 		}
 		e.EventTimeZone = start.Location().String()
-		first, last := start.UTC(), end.UTC()
-		e.Start, e.End = &first, &last
+		first := start.UTC()
+		e.Start = &first
+		if hasEnd {
+			last := end.UTC()
+			e.End = &last
+		}
+	} else if !end.IsZero() {
+		if endAllDay {
+			e.AllDay = true
+			e.EndDate = end.Format(time.DateOnly)
+			if end, _, err = calrecur.CivilDateBoundary(e.EndDate, loc); err != nil {
+				return ICSComponent{}, fmt.Errorf("DTEND: %w", err)
+			}
+		}
+		e.EventTimeZone = end.Location().String()
+		last := end.UTC()
+		e.End = &last
 	}
 	recurrenceID := ""
 	if rid := p.Get("RECURRENCE-ID"); rid != nil {
@@ -487,7 +512,10 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 	// Stored projections encode instants as JSON, which allows years 0 to 9999.
 	instants := []time.Time{stamp}
 	if e.Start != nil {
-		instants = append(instants, *e.Start, *e.End)
+		instants = append(instants, *e.Start)
+	}
+	if e.End != nil {
+		instants = append(instants, *e.End)
 	}
 	if e.Original != nil {
 		instants = append(instants, e.Original.Instant)
