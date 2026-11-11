@@ -60,13 +60,8 @@ func (r ImportRequest) Observation() (Observation, error) {
 	if len(r.Record) > MaxRawBytes {
 		return Observation{}, ErrImportTooLarge
 	}
-	if !validID(r.Account) || len(r.Record) == 0 || len(r.Bindings) > 100 {
-		return Observation{}, invalid("account, record or bindings")
-	}
-	for native, id := range r.Bindings {
-		if !validID(native) || id <= 0 {
-			return Observation{}, invalid("binding")
-		}
+	if len(r.Record) == 0 {
+		return Observation{}, invalid("record")
 	}
 	var o Observation
 	var err error
