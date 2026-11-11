@@ -233,6 +233,19 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	assert.Contains(disclosure, fmt.Sprintf("attribute definition %d", other.ReviewCandidates[0].DefinitionID))
 	assert.Contains(disclosure, fmt.Sprintf("absorbed value %d", other.ReviewCandidates[0].AbsorbedValueID))
 	assert.Contains(disclosure, "exact split becomes unavailable")
+	accepted := loopToolOutput[mcpserver.MergeCandidateReceipt](t, sdkResult)
+	require.NotEmpty(accepted.ETag)
+	reviewedSplit := map[string]any{"person_id": left.ID, "merge_id": other.Merge.ID, "participant_ids": []int64{d}, "etag": accepted.ETag, "idempotency_key": "reviewed-split"}
+	previousApprovals = approvals
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "split_person_merge", Arguments: reviewedSplit})
+	require.NoError(err)
+	assert.Greater(approvals, previousApprovals)
+	reviewedFailure := loopToolFailure(t, sdkResult)
+	assert.Equal("person_split_reviewed_candidates", reviewedFailure["error"])
+	assert.Equal(false, reviewedFailure["operation_may_have_completed"])
+	result, err = backend.ExecuteOperation(ctx, "get_person_merge", map[string]any{"merge_id": other.Merge.ID})
+	require.NoError(err)
+	assert.Empty(operationOutput[mcpserver.MergeDetail](t, result).Splits)
 }
 
 func TestMCPMergeRecoveryRejectsUnsupportedAndInvalid(t *testing.T) {
