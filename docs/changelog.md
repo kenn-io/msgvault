@@ -102,9 +102,9 @@ binaries did not start on most distributions.
   `unarchive`](cli-reference.md#archive-and-unarchive), or preview the change
   with `--dry-run`. The [HTTP API](api-server.md#message-archiving) supports
   the same operations.
-- Limit delegated access to incoming messages from selected From addresses
+- Limit delegated access to messages from selected From addresses
   with [`agent-token issue --incoming-sender`](cli-reference.md#restrict-incoming-senders).
-  The restriction applies to reads, Gmail archiving, and reply parents.
+  The restriction applies to message reads, Gmail archiving, and reply parents.
 - Connect Claude Code and Codex to your archive with
   [`msgvault agent setup`](cli-reference.md#agent-setup). The command installs
   skills and configures MCP access, the connection assistants use to work with
