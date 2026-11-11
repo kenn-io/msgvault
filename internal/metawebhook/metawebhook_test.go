@@ -1,6 +1,7 @@
 package metawebhook
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -122,6 +124,46 @@ func TestHandlerRefusesPostsAboveTheBodyLimit(t *testing.T) {
 		assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)), "released slots admit new deliveries")
 		assert.Len(pendingFiles(t, dir), 1)
 	})
+}
+
+func TestHandlerAnswersRejectedPostsWithoutWaitingForTheBody(t *testing.T) {
+	for _, tc := range []struct {
+		name, signature string
+		slotsTaken      bool
+		status          int
+	}{
+		{"no signature", "", false, http.StatusUnauthorized},
+		{"no free body slot", sign("withheld"), true, http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			h, _ := newTestHandler(t)
+			if tc.slotsTaken {
+				for range cap(h.bodies) {
+					h.bodies <- struct{}{}
+				}
+			}
+			srv := httptest.NewServer(h) // no read timeout: a server that waits for the body never answers
+			defer srv.Close()
+			var dialer net.Dialer
+			conn, err := dialer.DialContext(t.Context(), "tcp", srv.Listener.Addr().String())
+			require.NoError(err)
+			defer func() { _ = conn.Close() }()
+			// The deadline only bounds a failing run.
+			require.NoError(conn.SetDeadline(time.Now().Add(5 * time.Second)))
+
+			head := "POST /meta/webhook/9 HTTP/1.1\r\nHost: example.test\r\nContent-Length: 1024\r\n"
+			if tc.signature != "" {
+				head += "X-Hub-Signature-256: " + tc.signature + "\r\n"
+			}
+			_, err = io.WriteString(conn, head+"\r\n") // the body is withheld
+			require.NoError(err)
+			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			require.NoError(err, "the response arrives while the body is withheld")
+			defer func() { _ = resp.Body.Close() }()
+			assert.Equal(tc.status, resp.StatusCode)
+		})
+	}
 }
 
 func TestHandlerRefusesDeliveriesAtTheCountCap(t *testing.T) {

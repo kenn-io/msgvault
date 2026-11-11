@@ -145,8 +145,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = io.WriteString(w, challenge) // #nosec G705 -- challengePattern allows only letters, digits, '-' and '_'; the response is text/plain.
 	case http.MethodPost:
+		// The early rejections close the connection, so the server answers
+		// at once instead of first draining a body the client may withhold.
 		signature := r.Header.Get("X-Hub-Signature-256")
 		if !signaturePattern.MatchString(signature) {
+			w.Header().Set("Connection", "close")
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -154,6 +157,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case h.bodies <- struct{}{}:
 			defer func() { <-h.bodies }()
 		default:
+			w.Header().Set("Connection", "close")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
