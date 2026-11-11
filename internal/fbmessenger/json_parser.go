@@ -201,6 +201,7 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 				instagram.summary.MessagesProcessed++
 				var item struct {
 					rawJSONMessage
+
 					Timestamp *int64 `json:"timestamp_ms"`
 				}
 				if json.Unmarshal(raw, &item) != nil || item.Timestamp == nil {
