@@ -144,6 +144,9 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 		return nil, nil
 	}
 	calendarZone = cmp.Or(calendarZone, "UTC")
+	if calendarZone == "Local" {
+		return nil, fmt.Errorf("calendar time zone %q: host-dependent", calendarZone)
+	}
 	loc, err := time.LoadLocation(calendarZone)
 	if err != nil {
 		return nil, fmt.Errorf("calendar time zone: %w", err)

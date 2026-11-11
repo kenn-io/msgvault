@@ -29,6 +29,18 @@ func TestICSFloatingRecurrenceUsesSourceZone(t *testing.T) {
 	}
 }
 
+func TestICSRejectsHostLocalZone(t *testing.T) {
+	for _, tc := range []struct{ name, raw, sourceZone string }{
+		{"event zone", strings.ReplaceAll(icsExample, "America/New_York", "Local"), ""},
+		{"source zone", icsExample, "Local"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseICS([]byte(tc.raw), "", tc.sourceZone)
+			require.ErrorContains(t, err, "host-dependent")
+		})
+	}
+}
+
 func TestICSPeriodRecurrence(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	const period = "RDATE;VALUE=PERIOD:20270315T090000Z/20270315T100000Z"
