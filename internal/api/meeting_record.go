@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/verification"
@@ -36,7 +35,7 @@ func parseMeetingLinkRef(value string) (store.MeetingLinkRef, error) {
 	}
 	message, key, hasKey := strings.Cut(value, "@")
 	id, err := strconv.ParseInt(message, 10, 64)
-	if err != nil || id <= 0 || id > apiprotocol.MaxJSONSafeInteger || hasKey && (kind != "evt" || key == "") {
+	if err != nil || id <= 0 || id > maxPublicMeetingID || hasKey && (kind != "evt" || key == "") {
 		return store.MeetingLinkRef{}, errors.New("invalid meeting reference")
 	}
 	var identity calrecur.Identity

@@ -14,7 +14,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/meetingcontent"
@@ -192,7 +191,7 @@ func (flags *meetingScopeFlags) request(command *cobra.Command) (*generated.Meet
 	if err := validateMeetingIDs("--participant-id", flags.participantIDs, false); err != nil {
 		return nil, err
 	}
-	if flags.personID < 0 || flags.personID > int64(apiprotocol.MaxJSONSafeInteger) {
+	if flags.personID < 0 || flags.personID > int64(maxJSONSafeInteger) {
 		return nil, errors.New("--person-id must be a positive JavaScript-safe integer")
 	}
 	if command.Flags().Changed("person-id") && flags.personID == 0 {
@@ -236,6 +235,8 @@ func (flags *meetingScopeFlags) request(command *cobra.Command) (*generated.Meet
 	return scope, nil
 }
 
+const maxJSONSafeInteger = 9007199254740991
+
 func validateMeetingIDs(name string, ids []int64, required bool) error {
 	if required && len(ids) == 0 {
 		return fmt.Errorf("at least one %s is required", name)
@@ -244,7 +245,7 @@ func validateMeetingIDs(name string, ids []int64, required bool) error {
 		return fmt.Errorf("%s accepts at most 100 values", name)
 	}
 	for _, id := range ids {
-		if id < 1 || id > apiprotocol.MaxJSONSafeInteger {
+		if id < 1 || id > maxJSONSafeInteger {
 			return fmt.Errorf("%s values must be positive JavaScript-safe integers", name)
 		}
 	}
