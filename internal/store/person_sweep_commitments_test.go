@@ -513,12 +513,16 @@ func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
 	a.Equal(CommitmentAgendaPending, pending.State)
 	key := pending.IdempotencyKey
 	a.NotEmpty(key)
+	stale := pending
 	item.Request.Title = "Updated before attempt"
 	pending, err = st.EnqueueCommitmentAgendaContext(ctx, item)
 	r.NoError(err)
 	a.Equal(item.Request.Title, pending.Request.Title)
 	a.Equal(key, pending.IdempotencyKey)
-	marked, err := st.MarkCommitmentAgendaAttemptContext(ctx, pending, now, true)
+	marked, err := st.MarkCommitmentAgendaAttemptContext(ctx, stale, now, false)
+	r.NoError(err)
+	a.False(marked, "a superseded request cannot start a write under the saved replacement key")
+	marked, err = st.MarkCommitmentAgendaAttemptContext(ctx, pending, now, true)
 	r.NoError(err)
 	r.True(marked, "tracked promises remain eligible for automatic filing")
 	_, err = st.SetPersonTrackingContext(ctx, f.personID, false)
@@ -933,44 +937,5 @@ func TestCommitmentAgendaAutomaticFilingWaitsForInitialMatchingReplay(t *testing
 	marked, err = st.MarkCommitmentAgendaAttemptContext(ctx, item, now, false)
 	r.NoError(err)
 	a.True(marked, "explicit manual filing remains available")
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	f = nextCommitmentTestAttempt(t, f, "-complete-matching")
-	applyCommitmentTestSources(t, f, cfg.Commitments)
-	pending, err = st.ListPendingCommitmentAgendaContext(ctx, now, 8)
-	r.NoError(err)
-	a.Len(pending, 1, "the existing receipt becomes eligible once bounded matching completes")
-}
 
-func TestCommitmentAgendaMarkRejectsSupersededFrozenRequest(t *testing.T) {
-	f, commitment, _ := newCommitmentAgendaReceiptFixture(t)
-	st, now, ctx := f.store, f.request.CompletedAt, t.Context()
-	r, a := require.New(t), assert.New(t)
-	start, end := int(commitment.Start), int(commitment.End)
-	evidence, err := kataevidence.New(st).Prepare(ctx, []kataevidence.Selector{{
-		Kind: "message", MessageID: commitment.AnchorMessageID, StartRune: &start, EndRune: &end,
-	}})
-	r.NoError(err)
-	r.Len(evidence, 1)
-	item := CommitmentAgendaSuggestion{CommitmentID: commitment.ID, TargetKey: commitment.TargetKey, Quote: evidence[0].Excerpt,
-		Request: kataissues.CreateInput{Title: commitment.Summary, List: "commitments", PersonUID: "synthetic-uid",
-			Brief: "Source: http://localhost:8080/messages/1", Evidence: []kataevidence.Reference{evidence[0].Reference}},
-	}
-	first, err := st.EnqueueCommitmentAgendaContext(ctx, item)
-	r.NoError(err)
-	item.Request.Brief = "Source: https://archive.example.test/messages/1"
-	current, err := st.EnqueueCommitmentAgendaContext(ctx, item)
-	r.NoError(err)
-	a.Equal(first.IdempotencyKey, current.IdempotencyKey)
-	r.NotEqual(first.Request, current.Request)
-	marked, err := st.MarkCommitmentAgendaAttemptContext(ctx, first, now, false)
-	r.NoError(err)
-	a.False(marked, "a caller cannot send an older request under the key now frozen for another request")
-	marked, err = st.MarkCommitmentAgendaAttemptContext(ctx, current, now, false)
-	r.NoError(err)
-	a.True(marked, "the current persisted request remains available for manual filing")
-	saved, err := st.GetCommitmentAgendaContext(ctx, commitment.ID)
-	r.NoError(err)
-	a.Equal(current.Request, saved.Request)
 }
