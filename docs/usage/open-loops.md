@@ -158,7 +158,8 @@ Enable `[people.sweep.commitments]` in [configuration](../configuration.md#commi
 Use `msgvault person provider consent --commitments` to see the provider,
 source dates, and what the request discloses. Repeat with `--yes` to consent
 to sending conversation text from both sides of verified direct chats and
-email. Each message contributes at most 2,000 runes of authored text.
+email. Each message contributes its first 2,000 runes after leading quoted
+history and whitespace, with embedded quoted history masked.
 Changing the provider source dates or commitment window and batch limits restarts
 recent discovery while keeping saved promise decisions.
 The profile must allow sensitive `conversation_text` sources. Check the grant
@@ -175,9 +176,9 @@ date. Expired and unsupported claims leave the list.
 
 Use the commitment ID for actions on a promise. This ID starts with `c`.
 The same message can anchor multiple promises and a reply loop. Choose
-**Show closed promises** in People Details or run
-`msgvault loops list --include-closed` to find done, snoozed, or fulfilled promises
-that you can reopen.
+**Show closed promises** in People Details for a five-item summary. Run
+`msgvault loops list --include-closed --limit 200` to find more done, snoozed,
+or fulfilled promises that you can reopen.
 
 ```bash
 msgvault loops done c12
