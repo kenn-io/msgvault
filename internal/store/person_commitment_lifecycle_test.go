@@ -374,10 +374,11 @@ func TestCommitmentEditedSourceDoesNotTransferDoneToReplacement(t *testing.T) {
 			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
 			window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
 			r.NoError(err)
-			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
-				Promises:    []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo, Quote: replacement, Summary: "Book venue", End: int64(len(replacement))}},
-				Fulfilments: []peoplesweep.CommitmentFulfilment{},
-			}))
+			promises := []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo, Quote: replacement, Summary: "Book venue", End: int64(len(replacement))}}
+			if moved {
+				promises = append(promises, peoplesweep.CommitmentPromise{SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo, Quote: original, Summary: "Send draft", Start: int64(len(replacement) + 1), End: int64(len(body))})
+			}
+			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
 			r.NoError(err)
 			items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
 			r.NoError(err)
