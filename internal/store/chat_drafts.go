@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 // ChatDraftIDPrefix marks draft IDs owned by the local chat draft table.
@@ -29,9 +31,8 @@ type ChatDraft struct {
 	Revision               int64
 }
 
-// ChatDraftAuthorizer vets a conversation's source before its drafts are
-// written or listed.
-type ChatDraftAuthorizer func(sourceType, identifier string) error
+// ChatDraftAuthorizer vets a source and returns its incoming sender restriction.
+type ChatDraftAuthorizer func(sourceType, identifier string) ([]string, error)
 
 var (
 	ErrChatDraftNotFound           = errors.New("chat draft not found")
@@ -53,6 +54,7 @@ type chatDraftDestination struct {
 	identifier       string
 	nativeID         sql.NullString
 	conversationType sql.NullString
+	incomingSenders  []string
 }
 
 func loadChatDraftDestination(
@@ -70,7 +72,8 @@ func loadChatDraftDestination(
 	if err != nil {
 		return dest, fmt.Errorf("read chat draft conversation: %w", err)
 	}
-	if err := authorize(dest.sourceType, dest.identifier); err != nil {
+	dest.incomingSenders, err = authorize(dest.sourceType, dest.identifier)
+	if err != nil {
 		return dest, err
 	}
 	switch dest.sourceType {
@@ -92,7 +95,7 @@ func (s *Store) CreateChatDraftContext(
 	}
 	draftID := ChatDraftIDPrefix + hex.EncodeToString(raw[:])
 	var draft ChatDraft
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withTxOptionsContext(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead}, func(tx *loggedTx) error {
 		dest, err := loadChatDraftDestination(ctx, tx, conversationID, authorize)
 		if err != nil {
 			return err
@@ -102,9 +105,15 @@ func (s *Store) CreateChatDraftContext(
 		}
 		var reply sql.NullString
 		if replyToMessageID != 0 {
-			err := tx.QueryRowContext(ctx, `
-				SELECT source_message_id FROM messages WHERE id = ? AND conversation_id = ?
-			`, replyToMessageID, conversationID).Scan(&reply)
+			query := `SELECT m.source_message_id FROM messages m WHERE m.id = ? AND m.conversation_id = ?`
+			args := []any{replyToMessageID, conversationID}
+			if len(dest.incomingSenders) > 0 {
+				scope := sourcescope.WithIncomingSenders(ctx, map[int64][]string{dest.sourceID: dest.incomingSenders})
+				predicate, values := sourcescope.IncomingPredicate(scope, "m.id", "m.source_id", s.dialect.UnicodeLowerExpression)
+				query += " AND " + predicate
+				args = append(args, values...)
+			}
+			err := tx.QueryRowContext(ctx, query, args...).Scan(&reply)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("read chat draft reply target: %w", err)
 			}
