@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -73,6 +74,13 @@ func TestAppreciationStateValidation(t *testing.T) {
 	_, err = f.Store.GetPersonAppreciationStatesContext(ctx, []string{strings.Repeat("a", 64), "bad"})
 	require.ErrorIs(err, store.ErrInvalidPersonAppreciationKey)
 	require.ErrorContains(err, "index 1")
+	keys := make([]string, 500)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("%064x", i)
+	}
+	states, err := f.Store.GetPersonAppreciationStatesContext(ctx, keys)
+	require.NoError(err)
+	require.Empty(states)
 	_, err = f.Store.GetPersonAppreciationStatesContext(ctx, make([]string, 501))
 	require.ErrorIs(err, store.ErrTooManyPersonAppreciationKeys)
 	require.ErrorContains(err, "500")
@@ -93,6 +101,9 @@ func TestAppreciationStateMigration(t *testing.T) {
 	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value='40' WHERE key='schema_version'`)
 	require.NoError(err)
 	require.NoError(f.Store.InitSchemaContext(ctx))
+	version, err := f.Store.SchemaVersionContext(ctx)
+	require.NoError(err)
+	require.Equal(store.SchemaVersion, version)
 	_, err = f.Store.RecordPersonAppreciationDismissalContext(ctx, strings.Repeat("d", 64), "person", "owner", time.Now())
 	require.NoError(err)
 }
@@ -110,13 +121,19 @@ func TestAppreciationProofDeletionPreservesDismissal(t *testing.T) {
 	first, err := f.Store.RecordPersonAppreciationDismissalContext(ctx, key, "audit-uid", "owner", at)
 	require.NoError(err)
 	// This raw pointer exercises the FK only; it is not a validated thanks proof.
+	proofOnlyKey := strings.Repeat("3", 64)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO person_appreciation_state (contribution_key, thanks_brief_id) VALUES (?, ?)`), proofOnlyKey, briefID)
+	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_appreciation_state SET thanks_brief_id = ? WHERE contribution_key = ?`), briefID, key)
 	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM person_briefs WHERE id = ?`), briefID)
 	require.NoError(err)
-	states, err := f.Store.GetPersonAppreciationStatesContext(ctx, []string{key})
+	states, err := f.Store.GetPersonAppreciationStatesContext(ctx, []string{key, proofOnlyKey})
 	require.NoError(err)
 	assert.Equal(first, states[key])
+	proofOnly, ok := states[proofOnlyKey]
+	require.True(ok)
+	assert.Equal(store.PersonAppreciationState{ContributionKey: proofOnlyKey}, proofOnly)
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM persons WHERE id = ?`), personID)
 	require.NoError(err)
 	states, err = f.Store.GetPersonAppreciationStatesContext(ctx, []string{key})

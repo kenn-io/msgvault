@@ -70,6 +70,8 @@ const appreciationStateColumns = `contribution_key, dismissed_person_uid, dismis
 
 // GetPersonAppreciationStatesContext returns only existing rows for the supplied
 // source keys. It never scans the ledger without an explicit bounded key set.
+// Map presence does not imply dismissal: only a non-nil DismissedAt does. A
+// proof-only row may remain with all optional fields nil after brief deletion.
 func (s *Store) GetPersonAppreciationStatesContext(ctx context.Context, keys []string) (map[string]PersonAppreciationState, error) {
 	result := make(map[string]PersonAppreciationState)
 	if len(keys) > MaxPersonAppreciationStateKeys {
@@ -85,7 +87,7 @@ func (s *Store) GetPersonAppreciationStatesContext(ctx context.Context, keys []s
 		}
 		args[i] = key
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+appreciationStateColumns+` FROM person_appreciation_state WHERE contribution_key IN (`+strings.TrimSuffix(strings.Repeat("?,", len(keys)), ",")+`)`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+appreciationStateColumns+` FROM person_appreciation_state WHERE contribution_key IN (`+placeholders(len(keys))+`)`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read appreciation states: %w", err)
 	}
