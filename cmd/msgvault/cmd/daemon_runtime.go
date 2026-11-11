@@ -710,7 +710,7 @@ func formatCommand(executable string, args []string, goos string) (string, error
 
 	var parts, assignments []string
 	for i, value := range values {
-		if !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		if !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 || (goos == "windows" && strings.ContainsAny(value, "\u2018\u2019\u201c\u201d")) {
 			if goos == "windows" {
 				var chars []string
 				for _, char := range utf16.Encode([]rune(value)) {
