@@ -1136,6 +1136,18 @@ CREATE TABLE IF NOT EXISTS person_briefs (
     UNIQUE (person_id, version)
 );
 
+-- Sparse source-keyed dismissal audit and optional immutable brief reference.
+CREATE TABLE IF NOT EXISTS person_appreciation_state (
+    contribution_key     TEXT PRIMARY KEY,
+    dismissed_person_uid TEXT,
+    dismissed_by         TEXT,
+    dismissed_at         DATETIME,
+    thanks_brief_id      INTEGER REFERENCES person_briefs(id) ON DELETE SET NULL,
+    CHECK ((dismissed_person_uid IS NULL AND dismissed_by IS NULL AND dismissed_at IS NULL)
+        OR (dismissed_person_uid IS NOT NULL AND dismissed_person_uid <> ''
+            AND dismissed_by IS NOT NULL AND dismissed_by <> '' AND dismissed_at IS NOT NULL))
+);
+
 CREATE TABLE IF NOT EXISTS person_brief_evidence (
     brief_id    INTEGER NOT NULL REFERENCES person_briefs(id) ON DELETE CASCADE,
     evidence_id INTEGER NOT NULL REFERENCES person_fact_evidence(id) ON DELETE CASCADE,
