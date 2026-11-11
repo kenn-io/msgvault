@@ -3,7 +3,6 @@ package fbmessenger
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -270,8 +269,7 @@ func numberInstagramGroup(prefix string, group []*instagramPending, old []string
 }
 
 func instagramHash(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
 }
 
 // Fingerprints exclude reactions, shard position, title and media availability.
