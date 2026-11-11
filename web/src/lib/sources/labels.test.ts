@@ -71,7 +71,7 @@ describe('sourceDisplayName', () => {
   it.each([
     ['granola', 'fixture-granola', 'Granola'],
     ['gmail', 'person@example.com', 'person@example.com'],
-    ['imap', 'imap://person%40example.com@imap.example.com/INBOX', 'person@example.com'],
+    ['imap', 'imap://person%40example.com@imap.example.com:143', 'person@example.com'],
     [undefined, 'fixture-source', 'fixture-source']
   ])('formats a %s source', (type, identifier, name) => {
     expect(sourceDisplayName(type, identifier!)).toBe(name);

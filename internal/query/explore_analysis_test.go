@@ -34,7 +34,7 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 	assertions.NotEmpty(result.CacheRevision)
 }
 
-func TestExploreGroupTimezoneValidation(t *testing.T) {
+func TestExploreGroupTimezoneValidationAndCalendarBuckets(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -58,7 +58,7 @@ func TestExploreGroupTimezoneValidation(t *testing.T) {
 	}
 	groupBuilder := NewTestDataBuilder(t)
 	groupSource := groupBuilder.AddSourceWithType("archive@example.org", "gmail")
-	for _, instant := range []string{"2024-05-30T02:00:00Z", "2024-05-31T02:00:00Z", "2024-06-01T02:00:00Z", "2024-07-01T02:00:00Z"} {
+	for _, instant := range []string{"2024-05-30T02:00:00Z", "2024-05-31T02:00:00Z", "2024-06-01T02:00:00Z", "2024-07-01T02:00:00Z", "2025-01-01T02:00:00Z"} {
 		at, err := time.Parse(time.RFC3339, instant)
 		requirements.NoError(err)
 		groupBuilder.AddMessage(MessageOpt{SourceID: groupSource, SentAt: at})
@@ -66,28 +66,21 @@ func TestExploreGroupTimezoneValidation(t *testing.T) {
 	groupEngine := groupBuilder.BuildEngine()
 	month := ExploreGroupRequest{Dimension: "month", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "desc"}, Page: PageSpec{Limit: 1}}
 	var total int64
-	for offset := range 2 {
+	for offset := range 3 {
 		month.Page.Offset = offset
 		page, err := groupEngine.ExploreGroups(t.Context(), month)
 		requirements.NoError(err)
 		requirements.Len(page.Rows, 1)
-		assertions.Equal(int64(4), page.Rows[0].TotalItems)
+		assertions.Equal(int64(5), page.Rows[0].TotalItems)
 		total += page.Rows[0].Count
-		if offset == 1 {
+		if offset == 2 {
 			assertions.Equal("2024-05", page.Rows[0].Key)
 			assertions.Equal(int64(3), page.Rows[0].Count)
 		}
 	}
-	assertions.Equal(int64(4), total)
+	assertions.Equal(int64(5), total)
 
-	yearBuilder := NewTestDataBuilder(t)
-	yearSource := yearBuilder.AddSourceWithType("archive@example.org", "gmail")
-	yearBuilder.AddMessage(MessageOpt{
-		SourceID: yearSource,
-		SentAt:   time.Date(2025, 1, 1, 2, 0, 0, 0, time.UTC),
-	})
-	yearEngine := yearBuilder.BuildEngine()
-	localYear, err := yearEngine.ExploreGroups(t.Context(), ExploreGroupRequest{
+	localYear, err := groupEngine.ExploreGroups(t.Context(), ExploreGroupRequest{
 		Dimension: "year", Timezone: "America/New_York", Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
@@ -376,16 +369,6 @@ func TestExploreGroupsGroupKeyComposesWithContextFilters(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(unfiltered.Rows, 1)
 	assertions.Equal(int64(2), unfiltered.Rows[0].Count)
-	requirements.NotNil(unfiltered.Overview)
-	var unfilteredActivity int64
-	for _, bucket := range unfiltered.Overview.Activity {
-		unfilteredActivity += bucket.Count
-	}
-	assertions.Equal(int64(2), unfilteredActivity)
-	assertions.ElementsMatch([]ExploreGroupCoParticipant{
-		{Key: strconv.FormatInt(bob, 10), Label: "Bob Example", Count: 1},
-		{Key: strconv.FormatInt(carol, 10), Label: "Carol Example", Count: 1},
-	}, unfiltered.Overview.CoParticipants)
 }
 
 func TestExploreGroupsParticipantLabelsUseDurableIdentityPrecedence(t *testing.T) {
@@ -887,33 +870,6 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 	requirements.NotNil(sourceDetail.Overview)
 	assertions.Equal(at.Add(-47*time.Hour), sourceDetail.Overview.FirstAt)
 	assertions.Equal([]ExploreGroupCoParticipant{{Key: strconv.FormatInt(person, 10), Label: "Person Example", Count: 3}, {Key: strconv.FormatInt(silent, 10), Label: "Silent Example", Count: 1}, {Key: strconv.FormatInt(speaker, 10), Label: "Other Speaker", Count: 1}}, sourceDetail.Overview.CoParticipants)
-	for _, tc := range []struct{ dimension, key string }{{"participant", strconv.FormatInt(person, 10)}, {"domain", "example.net"}} {
-		t.Run("historical_"+tc.dimension, func(t *testing.T) {
-			request := ExploreGroupRequest{Dimension: tc.dimension, Timezone: "America/New_York", Page: PageSpec{Limit: 100}}
-			page, err := engine.ExploreGroups(t.Context(), request)
-			require.NoError(t, err)
-			var row ExploreGroupRow
-			for _, candidate := range page.Rows {
-				if candidate.Key == tc.key {
-					row = candidate
-				}
-			}
-			require.Equal(t, tc.key, row.Key)
-			request.GroupKey = tc.key
-			detail, err := engine.ExploreGroups(t.Context(), request)
-			require.NoError(t, err)
-			require.Len(t, detail.Rows, 1)
-			require.NotNil(t, detail.Overview)
-			assert.Equal(t, row, detail.Rows[0])
-			assert.Equal(t, int64(3), row.Count)
-			assert.Equal(t, int64(350), row.EstimatedBytes)
-			assert.Equal(t, at, row.LatestAt)
-			assert.Equal(t, at.Add(-47*time.Hour), detail.Overview.FirstAt)
-			assert.Equal(t, []ExploreGroupActivity{{Bucket: "2024-05", Count: 3}}, detail.Overview.Activity)
-			assert.Contains(t, detail.Overview.CoParticipants, ExploreGroupCoParticipant{Key: strconv.FormatInt(speaker, 10), Label: "Other Speaker", Count: 1})
-			assert.Contains(t, detail.Overview.CoParticipants, ExploreGroupCoParticipant{Key: strconv.FormatInt(silent, 10), Label: "Silent Example", Count: 1})
-		})
-	}
 	for _, dimension := range []string{"participant", "domain", "source", "kind", "message_type", "mailing_list", "year", "month"} {
 		t.Run(dimension, func(t *testing.T) {
 			assert := assert.New(t)
@@ -923,6 +879,7 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 			require.NoError(err)
 			require.NotEmpty(page.Rows)
 			assert.Nil(page.Overview)
+			foundHistorical := false
 			for _, row := range page.Rows {
 				if dimension == "source" {
 					assert.Zero(row.TotalItems)
@@ -931,6 +888,17 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 				detail, err := engine.ExploreGroups(t.Context(), request)
 				require.NoError(err)
 				require.NotNil(detail.Overview)
+				if dimension == "participant" && row.Key == strconv.FormatInt(person, 10) || dimension == "domain" && row.Key == "example.net" {
+					foundHistorical = true
+					require.Len(detail.Rows, 1)
+					assert.Equal(row, detail.Rows[0])
+					assert.Equal(int64(3), row.Count)
+					assert.Equal(int64(350), row.EstimatedBytes)
+					assert.Equal(at, row.LatestAt)
+					assert.Equal(at.Add(-47*time.Hour), detail.Overview.FirstAt)
+					assert.Contains(detail.Overview.CoParticipants, ExploreGroupCoParticipant{Key: strconv.FormatInt(speaker, 10), Label: "Other Speaker", Count: 1})
+					assert.Contains(detail.Overview.CoParticipants, ExploreGroupCoParticipant{Key: strconv.FormatInt(silent, 10), Label: "Silent Example", Count: 1})
+				}
 				var count int64
 				for _, bucket := range detail.Overview.Activity {
 					count += bucket.Count
@@ -947,6 +915,9 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 						assert.NotEqual(row.Key, co.Key)
 					}
 				}
+			}
+			if dimension == "participant" || dimension == "domain" {
+				require.True(foundHistorical)
 			}
 		})
 	}

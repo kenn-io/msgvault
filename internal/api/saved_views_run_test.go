@@ -171,18 +171,15 @@ func TestRunSavedViewCalendarGroupsUseRequestedTimezoneAndNewestFirst(t *testing
 					assertions.Equal(zone.second, next.Groups[0].Key)
 				})
 			}
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			first, page := runSavedView(t, srv, view.ID, `{"limit":1,"timezone":"America/New_York"}`)
-			requirements.Equal(http.StatusOK, first.Code, first.Body.String())
-			requirements.NotEmpty(page.NextCursor)
-			changed, _ := runSavedView(t, srv, view.ID, `{"limit":1,"cursor":"`+page.NextCursor+`","timezone":"UTC"}`)
-			assertions.Equal(http.StatusBadRequest, changed.Code, changed.Body.String())
-			assertions.Contains(changed.Body.String(), "invalid_cursor")
-			invalid, _ := runSavedView(t, srv, view.ID, `{"timezone":"Invalid/Zone"}`)
-			assertions.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
 		})
 	}
+	view := createRunTestView(t, st, "Cursor timezone", `{"grouping":["month"]}`)
+	first, page := runSavedView(t, srv, view.ID, `{"limit":1,"timezone":"America/New_York"}`)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	require.NotEmpty(t, page.NextCursor)
+	changed, _ := runSavedView(t, srv, view.ID, `{"limit":1,"cursor":"`+page.NextCursor+`","timezone":"UTC"}`)
+	assert.Equal(t, http.StatusBadRequest, changed.Code, changed.Body.String())
+	assert.Contains(t, changed.Body.String(), "invalid_cursor")
 }
 
 func TestRunSavedViewExecutesFilesPresentation(t *testing.T) {
@@ -228,6 +225,10 @@ func TestRunSavedViewRelaysSavedViewAndExploreErrors(t *testing.T) {
 	tooMany, _ := runSavedView(t, srv, view.ID, `{"limit":101}`)
 	assertions.Equal(http.StatusBadRequest, tooMany.Code, tooMany.Body.String())
 	assertions.Contains(tooMany.Body.String(), "invalid_limit")
+
+	calendar := createRunTestView(t, st, "Calendar", `{"grouping":["month"]}`)
+	invalid, _ := runSavedView(t, srv, calendar.ID, `{"timezone":"Invalid/Zone"}`)
+	assertions.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
 
 	badCursor, _ := runSavedView(t, srv, view.ID, `{"cursor":"not-a-cursor"}`)
 	assertions.Equal(http.StatusBadRequest, badCursor.Code, badCursor.Body.String())

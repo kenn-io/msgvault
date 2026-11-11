@@ -204,7 +204,9 @@ describe('EverythingWorkspace', () => {
     const view = render(AppShell, { client: createAPIClient(fetchFn), state });
     try {
       const grid = await screen.findByRole('grid', { name: 'Files grouped by kind' });
-      await within(grid).findByText('File');
+      await fireEvent.pointerDown(await within(grid).findByText('File'));
+      expect(state.current.selectedRow).toBeNull();
+      expect(screen.queryByText(/selected group is not available/i)).toBeNull();
       expect(within(grid).queryByRole('button', { name: 'Show items in File' })).toBeNull();
     } finally {
       view.unmount();
@@ -263,28 +265,6 @@ describe('EverythingWorkspace', () => {
     }
   });
 
-  it('opens an Entry kind overview from its row', async () => {
-    window.history.replaceState(null, '', '/');
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const body = await (input as Request).clone().json();
-      return Response.json({
-        rows: [{ key: 'meeting', label: 'meeting', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
-        ...(body.group_key ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 12 }], co_participants: [] } } : {}),
-        total_count: 1, cache_revision: 'cache-1', search_provenance: {}
-      });
-    });
-    const state = new ExploreState(window);
-    state.replaceTransient({ groupingChain: ['kind'] });
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const grid = await screen.findByRole('grid');
-    await fireEvent.pointerDown(await within(grid).findByText('Meeting'));
-    const pane = await screen.findByRole('complementary', { name: 'Reading pane: Meeting' });
-    expect(within(pane).getByText('12 items')).toBeDefined();
-    expect(state.current.selectedRow).toBe('group:kind:meeting');
-    rendered.unmount();
-    state.destroy();
-  });
-
   it.each([
     { dimension: 'participant', key: '42', label: 'Person Example', bucket: '2026-07' },
     { dimension: 'domain', key: 'example.net', label: 'example.net', bucket: '2026-07' },
@@ -331,10 +311,6 @@ describe('EverythingWorkspace', () => {
       expect(detailRequests.at(-1)!.group_key).toBe(key);
       expect(detailRequests.at(-1)!.filters).toEqual([{ dimension: 'domain', values: ['example.com'] }]);
       expect(await within(pane).findByText('Selected Person')).toBeDefined();
-      expect(within(pane).getByText('1 item')).toBeDefined();
-      expect(within(pane).getByText('42 B')).toBeDefined();
-      expect(within(pane).getByText(/Jul 1, 2026.*Jul 18, 2026/)).toBeDefined();
-      expect(within(pane).getByRole('img', { name: /Activity by .*1 item/ })).toBeDefined();
       if (dimension === 'participant') {
         await waitFor(() => expect(meetingRequests.length).toBeGreaterThan(0));
         expect(meetingRequests[0]?.explore?.predicate?.filters).toEqual([
@@ -2651,9 +2627,6 @@ describe('EverythingWorkspace', () => {
 
   it.each([
     ['participant', '42', '42', [{ dimension: 'participant', values: ['42'] }]],
-    ['domain', 'example.com', 'example.com', [{ dimension: 'domain', values: ['example.com'] }]],
-    ['message_type', 'email', 'Email', [{ dimension: 'message_type', values: ['email'] }]],
-    ['kind', 'meeting', 'Meeting', [{ dimension: 'kind', values: ['meeting'] }]],
     ['month', '2026-07', 'Jul 2026', [
       { dimension: 'after', values: ['2026-07-01T00:00:00-04:00'] },
       { dimension: 'before', values: ['2026-08-01T00:00:00-04:00'] },

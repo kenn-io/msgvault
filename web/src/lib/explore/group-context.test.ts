@@ -70,6 +70,13 @@ describe('group context', () => {
         { dimension: 'after', values: ['2026-07-01T00:00:00-04:00'] },
         { dimension: 'before', values: ['2026-08-01T00:00:00-04:00'] }
       ]);
+      vi.stubEnv('TZ', 'America/Asuncion');
+      const september = filtersForGroup([], 'month', '2023-09')!;
+      expect(september).toEqual([
+        { dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] },
+        { dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }
+      ]);
+      expect(Date.parse(september[1]!.values[0]!)).toBe(Date.parse('2023-10-01T01:00:00-03:00'));
       expect(filtersForGroup([], 'year', '2026', true)).toEqual([
         { dimension: 'after', values: ['2026-01-01T00:00:00.000Z'] },
         { dimension: 'before', values: ['2027-01-01T00:00:00.000Z'] }

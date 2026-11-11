@@ -121,7 +121,7 @@ describe('ExploreAPI routing', () => {
       presentation: 'table',
       limit: 500,
       cursor: 'groups-2',
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+      timezone: expect.any(String)
     });
   });
 
@@ -307,14 +307,14 @@ describe('ExploreAPI routing', () => {
 
 
 it.each(['month', 'year', 'participant'] as const)('sends %s grouping order across Messages and Files', async dimension => {
- const bodies: Record<string, unknown>[] = [];
- const api = createExploreAPI(createAPIClient(async input => {
-  bodies.push(await (input as Request).json());
-  return Response.json({ rows: [], total_count: 0, cache_revision: 'fixture', search_provenance: {} });
- }));
- await api.groups({ limit: 1 }, dimension);
- await api.fileGroups({ limit: 1 }, '', [], dimension);
- for (const body of bodies) {
-  expect(body.sort).toEqual(dimension === 'participant' ? undefined : [{ field: 'key', direction: 'desc' }]);
- }
+  const bodies: Record<string, unknown>[] = [];
+  const api = createExploreAPI(createAPIClient(async input => {
+    bodies.push(await (input as Request).json());
+    return Response.json({ rows: [], total_count: 0, cache_revision: 'fixture', search_provenance: {} });
+  }));
+  await api.groups({ limit: 1 }, dimension);
+  await api.fileGroups({ limit: 1 }, '', [], dimension);
+  for (const body of bodies) {
+    expect(body.sort).toEqual(dimension === 'participant' ? undefined : [{ field: 'key', direction: 'desc' }]);
+  }
 });

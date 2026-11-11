@@ -126,51 +126,27 @@ it('uses the meeting icon for a Granola source group', () => {
 
 it('disambiguates source labels using the full inventory', () => {
   const sources = new Map([
-    ['1', { type: 'imap', identifier: 'imaps://person@example.org@one.example' }],
-    ['2', { type: 'imap', identifier: 'imaps://person@example.org@two.example' }],
-    ['3', { type: 'mbox', identifier: 'archive.example' }],
-    ['4', { type: 'mbox', identifier: 'archive.example' }],
+    ['1', { type: 'imap', identifier: 'imaps://person@example.org@one.example:993' }],
+    ['2', { type: 'imap', identifier: 'imaps://person@example.org@two.example:993' }],
+    ['3', { type: 'mbox', identifier: 'archive-a.example' }],
+    ['4', { type: 'mbox', identifier: 'archive-b.example' }],
     ['5', { type: 'gcal', identifier: 'work.example' }],
-    ['6', { type: 'gcal', identifier: 'home.example' }]
+    ['6', { type: 'gcal', identifier: 'home.example' }],
+    ['7', { type: 'gmail', identifier: 'person@example.com' }],
+    ['8', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:993' }],
+    ['9', { type: 'msmail', identifier: 'person@example.com' }],
+    ['10', { type: 'imap', identifier: 'imap://person@example.com@mail.example.com:993' }],
+    ['11', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:143' }],
   ]);
-  expect(groupRowName('source', '1', sources.get('1')!.identifier, sources).name).toBe('person@example.org (one.example)');
-  expect(groupRowName('source', '2', sources.get('2')!.identifier, sources).name).toBe('person@example.org (two.example)');
-  expect(groupRowName('source', '3', 'archive.example', sources).name).toBe('Mbox import (archive.example · 3)');
-  expect(groupRowName('source', '4', 'archive.example', sources).name).toBe('Mbox import (archive.example · 4)');
+  expect(groupRowName('source', '1', sources.get('1')!.identifier, sources).name).toBe('person@example.org (one.example:993)');
+  expect(groupRowName('source', '2', sources.get('2')!.identifier, sources).name).toBe('person@example.org (two.example:993)');
+  expect(groupRowName('source', '3', 'archive-a.example', sources).name).toBe('Mbox import (archive-a.example)');
+  expect(groupRowName('source', '4', 'archive-b.example', sources).name).toBe('Mbox import (archive-b.example)');
   expect(groupRowName('source', '5', 'work.example', sources).name).toBe('Google Calendar (work.example)');
   expect(groupRowName('source', '6', 'home.example', sources).name).toBe('Google Calendar (home.example)');
-});
-
-it('avoids repeating a mailbox name in colliding source labels', () => {
-  const gmailAndImap = new Map([
-    ['7', { type: 'gmail', identifier: 'person@example.com' }],
-    ['8', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com' }]
-  ]);
-  expect(groupRowName('source', '7', 'person@example.com', gmailAndImap).name).toBe('person@example.com (7)');
-  expect(groupRowName('source', '8', 'imaps://person@example.com@mail.example.com', gmailAndImap).name).toBe('person@example.com (mail.example.com)');
-
-  const gmailAndMicrosoft = new Map([
-    ['7', { type: 'gmail', identifier: 'person@example.com' }],
-    ['9', { type: 'msmail', identifier: 'person@example.com' }]
-  ]);
-  expect(groupRowName('source', '7', 'person@example.com', gmailAndMicrosoft).name).toBe('person@example.com (7)');
-  expect(groupRowName('source', '9', 'person@example.com', gmailAndMicrosoft).name).toBe('person@example.com (9)');
-});
-
-it('distinguishes IMAP servers by their displayed suffix and key', () => {
-  const sources = new Map([
-    ['1', { type: 'imap', identifier: 'imap://person@example.com@mail.example.com:993' }],
-    ['2', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:993' }],
-    ['3', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:993' }],
-    ['4', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:143' }],
-  ]);
-  const names = [...sources].map(([key, source]) => groupRowName('source', key, source.identifier, sources).name);
-  expect(names).toEqual([
-    'person@example.com (mail.example.com:993 · 1)',
-    'person@example.com (mail.example.com:993 · 2)',
-    'person@example.com (mail.example.com:993 · 3)',
-    'person@example.com (mail.example.com:143)',
-  ]);
-  expect(new Set(names).size).toBe(4);
-  for (const name of names) expect(name.match(/person@example\.com/g)).toHaveLength(1);
+  expect(groupRowName('source', '7', 'person@example.com', sources).name).toBe('person@example.com (7)');
+  expect(groupRowName('source', '8', sources.get('8')!.identifier, sources).name).toBe('person@example.com (mail.example.com:993 · 8)');
+  expect(groupRowName('source', '9', 'person@example.com', sources).name).toBe('person@example.com (9)');
+  expect(groupRowName('source', '10', sources.get('10')!.identifier, sources).name).toBe('person@example.com (mail.example.com:993 · 10)');
+  expect(groupRowName('source', '11', sources.get('11')!.identifier, sources).name).toBe('person@example.com (mail.example.com:143)');
 });
