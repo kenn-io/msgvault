@@ -167,27 +167,8 @@ func newProjectionFreshnessSweep(t *testing.T) (personSweepJournalFixture, peopl
 	items, err := f.store.HydratePersonSweepMessages(t.Context(), f.alicePersonID, []int64{messageID}, 0)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	packetJSON, err := peoplesweep.CanonicalPacketJSON(peoplesweep.EvidencePacket{
-		PersonID: f.alicePersonID, Catalog: catalog, Seeds: items,
-		ProgramID: peoplesweep.ExtractionProgramID, ProgramVersion: peoplesweep.ExtractionProgramVersion,
-	})
-	require.NoError(t, err)
-	var wire struct {
-		Seeds []struct {
-			ID string `json:"id"`
-		} `json:"seeds"`
-	}
-	require.NoError(t, json.Unmarshal(packetJSON, &wire))
-	require.Len(t, wire.Seeds, 1)
-	var targetKey string
-	for _, target := range catalog.Targets {
-		if target.Slug == "location" {
-			targetKey = target.Key
-		}
-	}
-	require.NotEmpty(t, targetKey)
 	runner := emptyFreshnessRunner()
-	runner.response.Output = []byte(fmt.Sprintf(`{"claims":[{"target_key":%q,"relation":"support","value":"Lisbon","evidence_ids":[%q],"valid_from":null,"valid_until":null,"confidence_basis_points":1000}]}`, targetKey, wire.Seeds[0].ID))
+	runner.response.Output = projectionFreshnessClaim(t, f.alicePersonID, catalog, items)
 	serial := 0
 	worker := peoplesweep.Worker{Config: config, Store: f.store, Source: f.store,
 		Context: peoplesweep.NewContextRetriever(f.store), Sink: f.store, Runner: runner,
@@ -200,6 +181,31 @@ func newProjectionFreshnessSweep(t *testing.T) (personSweepJournalFixture, peopl
 	require.NoError(t, err)
 	require.Contains(t, projectedValues(t, state.Current), "Lisbon", "first real sweep must project the seeded claim")
 	return f, worker, catalog
+}
+
+func projectionFreshnessClaim(t *testing.T, personID int64, catalog personfacts.Catalog, items []peoplesweep.EvidenceItem) []byte {
+	t.Helper()
+	r := require.New(t)
+	packetJSON, err := peoplesweep.CanonicalPacketJSON(peoplesweep.EvidencePacket{
+		PersonID: personID, Catalog: catalog, Seeds: items,
+		ProgramID: peoplesweep.ExtractionProgramID, ProgramVersion: peoplesweep.ExtractionProgramVersion,
+	})
+	r.NoError(err)
+	var wire struct {
+		Seeds []struct {
+			ID string `json:"id"`
+		} `json:"seeds"`
+	}
+	r.NoError(json.Unmarshal(packetJSON, &wire))
+	r.Len(wire.Seeds, 1)
+	var targetKey string
+	for _, target := range catalog.Targets {
+		if target.Slug == "location" {
+			targetKey = target.Key
+		}
+	}
+	r.NotEmpty(targetKey)
+	return []byte(fmt.Sprintf(`{"claims":[{"target_key":%q,"relation":"support","value":"Lisbon","evidence_ids":[%q],"valid_from":null,"valid_until":null,"confidence_basis_points":1000}]}`, targetKey, wire.Seeds[0].ID))
 }
 
 func emptyFreshnessRunner() *capturingSweepRunner {
