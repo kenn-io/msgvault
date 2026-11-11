@@ -91,3 +91,50 @@ func TestCallsRejectDaemonWithoutCallRoutes(t *testing.T) {
 	assert.Empty(t, client.lists)
 	assert.Equal(t, 1, cleanups)
 }
+
+func TestCallsDiscordImportRequiresNewerDaemon(t *testing.T) {
+	const signal = `{"format":"signal_desktop","account":"example","record":{"callId":"one","timestamp":1790841600000}}`
+	const normalized = `{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"one","direction":"unknown","outcome":"unknown","owner_participation":"unknown","occurred_at":"2026-10-01T00:00:00Z","participants":[],"raw":{"id":"one"}}}`
+	const native = `{"format":"discord","account":"1","record":{"id":"100","channel_id":"200","type":3,"timestamp":"2026-10-01T00:00:00Z"}}`
+	const archived = `{"format":"discord_archived","account":"1","record":{"message_id":123}}`
+	const exporter = `{"format":"discord_chat_exporter","account":"1","record":{"id":"100","type":"Call","timestamp":"2026-10-01T00:00:00Z"}}`
+	for _, tc := range []struct {
+		name, version, input string
+		args                 []string
+		allowed              bool
+	}{
+		{"old native", "5.2.0", native, []string{"import", "-"}, false},
+		{"old archived", "5.2.0", archived, []string{"import", "-"}, false},
+		{"old exporter", "5.2.0", exporter, []string{"import", "-"}, false},
+		{"new native", "5.3.0", native, []string{"import", "-"}, true},
+		{"new archived", "5.3.0", archived, []string{"import", "-"}, true},
+		{"new exporter", "5.3.0", exporter, []string{"import", "-"}, true},
+		{"old signal", "5.2.0", signal, []string{"import", "-"}, true},
+		{"old normalized", "5.2.0", normalized, []string{"import", "-"}, true},
+		{"old list", "5.2.0", "", []string{"list"}, true},
+		{"old summary", "5.2.0", "", []string{"summary"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeCallCommandClient{version: tc.version}
+			cleanups := 0
+			command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) {
+				return client, func() { cleanups++ }, nil
+			}})
+			command.SetIn(strings.NewReader(tc.input))
+			command.SetOut(&bytes.Buffer{})
+			command.SetErr(&bytes.Buffer{})
+			command.SetArgs(tc.args)
+			err := command.ExecuteContext(t.Context())
+			if !tc.allowed {
+				require.ErrorContains(t, err, "calls require daemon API 5.3.0 or newer")
+				assert.Empty(t, client.imports)
+			} else {
+				require.NoError(t, err)
+				if tc.args[0] == "import" {
+					assert.Equal(t, [][]byte{[]byte(tc.input)}, client.imports)
+				}
+			}
+			assert.Equal(t, 1, cleanups)
+		})
+	}
+}

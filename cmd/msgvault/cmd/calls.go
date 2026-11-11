@@ -15,7 +15,10 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const callsMinAPIVersion = "5.2.0"
+const (
+	callsMinAPIVersion        = "5.2.0"
+	discordCallsMinAPIVersion = "5.3.0"
+)
 
 type callCommandClient interface {
 	APISchemaVersion(ctx context.Context) (string, error)
@@ -32,18 +35,18 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		Use: "calls", Short: "Import and inspect call history",
 		Long: "Read call evidence through the daemon. Invitations never count as calls. All output is JSON.",
 	}
-	open := func(ctx context.Context) (callCommandClient, func(), error) {
+	open := func(ctx context.Context, minimumVersion string) (callCommandClient, func(), error) {
 		client, cleanup, err := deps.open(ctx)
 		if err != nil {
 			return nil, func() {}, err
 		}
 		version, err := client.APISchemaVersion(ctx)
-		if err != nil || !daemonclient.APISchemaVersionAtLeast(version, callsMinAPIVersion) {
+		if err != nil || !daemonclient.APISchemaVersionAtLeast(version, minimumVersion) {
 			cleanup()
 			if err != nil {
 				return nil, func() {}, err
 			}
-			return nil, func() {}, fmt.Errorf("calls require daemon API %s or newer; daemon reports %s", callsMinAPIVersion, version)
+			return nil, func() {}, fmt.Errorf("calls require daemon API %s or newer; daemon reports %s", minimumVersion, version)
 		}
 		return client, cleanup, nil
 	}
@@ -67,10 +70,16 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 			if len(data) > callhistory.MaxRequestBytes {
 				return callhistory.ErrImportTooLarge
 			}
-			if _, err := callhistory.DecodeImportRequest(bytes.NewReader(data)); err != nil {
+			request, err := callhistory.DecodeImportRequest(bytes.NewReader(data))
+			if err != nil {
 				return err
 			}
-			client, cleanup, err := open(cmd.Context())
+			minimumVersion := callsMinAPIVersion
+			switch request.Format {
+			case "discord", "discord_archived", "discord_chat_exporter":
+				minimumVersion = discordCallsMinAPIVersion
+			}
+			client, cleanup, err := open(cmd.Context(), minimumVersion)
 			if err != nil {
 				return err
 			}
@@ -114,7 +123,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 				}
 				*bound.target = &at
 			}
-			client, cleanup, err := open(cmd.Context())
+			client, cleanup, err := open(cmd.Context(), callsMinAPIVersion)
 			if err != nil {
 				return err
 			}

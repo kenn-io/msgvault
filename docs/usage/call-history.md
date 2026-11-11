@@ -3,7 +3,7 @@
 Import call observations and inspect how often you called each person. The
 daemon keeps original evidence, explicit participant bindings and uncertain
 fields. Synced Google Calendar events stay in the calendar archive; invitations never count as calls.
-These commands require daemon API schema 5.2.0 or newer.
+These commands require daemon API schema 5.2.0 or newer. Discord imports require schema 5.3.0 or newer.
 
 ## Import a supplied record
 
@@ -83,8 +83,7 @@ changes connected account bindings, or requests additional platform permissions.
 
 ## Import Discord call evidence
 
-These formats require an unreleased daemon build containing the Discord adapter;
-an older call-history daemon rejects them. The existing guild-bot source does
+These formats require a daemon with API schema 5.2.0 or newer. The existing guild-bot source does
 not retrieve private call history. This importer uses stored or supplied JSON
 and does not contact Discord or need a token, new scope or additional dependency.
 
