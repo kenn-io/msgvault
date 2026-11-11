@@ -1820,7 +1820,9 @@ func messageBodyChanges(
 		SELECT body_text, body_html FROM message_bodies WHERE message_id = ?
 	`, messageID).Scan(&oldText, &oldHTML)
 	if errors.Is(err, sql.ErrNoRows) {
-		return embeddingRevisionBodyValue(bodyText, bodyHTML) != "",
+		// A missing row embeds like an empty body, so compare against the
+		// empty body's encoding rather than an empty string.
+		return embeddingRevisionBodyValue(bodyText, bodyHTML) != embeddingRevisionBodyValue(sql.NullString{}, sql.NullString{}),
 			nullStringValue(bodyText) != "", nil
 	}
 	if err != nil {
