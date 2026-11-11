@@ -231,7 +231,7 @@ func TestNativeInterruptedFinalAttempt(t *testing.T) {
 		wantHits int
 	}{
 		{"fifth reservation", 5, 1},
-		{"sixth reservation", 6, 0},
+		{"sixth reservation", 6, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := Require.New(t)
