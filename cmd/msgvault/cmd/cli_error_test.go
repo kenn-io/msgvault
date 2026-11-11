@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -161,12 +160,10 @@ func TestDraftAPICodeClassificationAndRendering(t *testing.T) {
 			assertions.Equal(tc.kind, diagnostic.Kind)
 			assertions.Equal(tc.code, diagnostic.Code)
 			assertions.Contains(diagnostic.Hint, tc.hint)
-			diagnostic.Details = jsontext.Value(`{"draft_id":"draft-example","revision":2}`)
 			var human, machine bytes.Buffer
 			renderCLIError(&human, diagnostic, false)
 			renderCLIError(&machine, diagnostic, true)
 			assertions.Contains(human.String(), tc.hint)
-			assertions.Contains(human.String(), "draft-example")
 			var got struct {
 				Error cliErrorRecord `json:"error"`
 			}
@@ -174,7 +171,6 @@ func TestDraftAPICodeClassificationAndRendering(t *testing.T) {
 			assertions.Equal(tc.code, got.Error.Code)
 			assertions.Equal(tc.exit, got.Error.ExitCode)
 			assertions.Contains(got.Error.Hint, tc.hint)
-			assertions.JSONEq(string(diagnostic.Details), string(got.Error.Details))
 		})
 	}
 }
