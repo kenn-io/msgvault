@@ -537,7 +537,7 @@ func TestListChangedMessages_UnreadableWatermarkReturnsAnError(t *testing.T) {
 
 	since := time.Date(1995, 6, 7, 8, 9, 10, 0, time.UTC)
 	_, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(since), 10)
-	require.Error(err)
+	require.ErrorIs(err, store.ErrNullChangeWatermark)
 	assert.Contains(err.Error(), "content_changed_at")
 }
 

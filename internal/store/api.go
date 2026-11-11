@@ -17,6 +17,9 @@ import (
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
+// ErrNullChangeWatermark signals that a change feed cannot safely advance.
+var ErrNullChangeWatermark = errors.New("NULL content_changed_at")
+
 // participantDisplaySQL formats a participant joined as `p` (with the
 // optional per-recipient `mr.display_name` row) into one display string
 // the way the query-backed engines do: "Name <addr>" when both name
@@ -1737,7 +1740,7 @@ func (s *Store) ListChangedMessages(
 	).Scan(&nullWatermarkID)
 	if err == nil {
 		return ChangedMessagePage{}, fmt.Errorf(
-			"message %d has NULL content_changed_at", nullWatermarkID)
+			"message %d has %w", nullWatermarkID, ErrNullChangeWatermark)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return ChangedMessagePage{}, fmt.Errorf("check message watermarks: %w", err)

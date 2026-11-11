@@ -32,12 +32,16 @@ type observedStore struct {
 	zeroBound     bool
 	fixedBound    time.Time
 	personErr     error
+	listErr       error
 	person        *store.Person
 	rejectAdvance bool
 }
 
 func (s *observedStore) ListChangedMessages(ctx context.Context, cursor store.ChangedMessagesCursor, limit int) (store.ChangedMessagePage, error) {
 	s.reads = append(s.reads, limit)
+	if s.listErr != nil {
+		return store.ChangedMessagePage{}, s.listErr
+	}
 	page, err := s.Store.ListChangedMessages(ctx, cursor, limit)
 	if s.zeroBound {
 		page.CompleteThrough = time.Time{}
@@ -426,4 +430,62 @@ func TestPreSendConflictDoesNotDeliver(t *testing.T) {
 	require.NoError(engine.RunPass(t.Context()))
 	assert.Zero(hits)
 	assert.Contains(logs.String(), "state_conflict")
+}
+
+func TestLaterSubscriptionUsesItsOwnAttemptTime(t *testing.T) {
+	require := Require.New(t)
+	assert := Assert.New(t)
+	st := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	start := now.Add(-time.Hour)
+	seedWakeup(t, st, "clock@example.com", 0, 1, now)
+	initializedWakeup(t, st, "a", start)
+	initializedWakeup(t, st, "z", start)
+	first := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		now = now.Add(time.Minute)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer first.Close()
+	second := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer second.Close()
+	filter := changefeed.Filter{IncomingOnly: true}
+	engine := Engine{Store: st, Now: func() time.Time { return now }, Subscriptions: []Subscription{testSubscription(t, "a", first, filter), testSubscription(t, "z", second, filter)}}
+	require.NoError(engine.RunPass(t.Context()))
+	state, _, err := st.LoadWakeupState(t.Context(), "z")
+	require.NoError(err)
+	assert.Equal(1, state.Failures)
+	assert.Equal(now.Add(30*time.Second), state.NextAttemptAt)
+}
+
+func TestStoreFailureCategoriesDoNotExposeErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		gate     bool
+		category string
+	}{
+		{"gate", nil, true, "gate_busy"},
+		{"null watermark", fmt.Errorf("message 987: %w", store.ErrNullChangeWatermark), false, "null_watermark"},
+		{"other", errors.New("private detail 987"), false, "store_error"},
+		{"cancelled operation", context.Canceled, false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := testutil.NewTestStore(t)
+			var logs bytes.Buffer
+			engine := Engine{Store: &observedStore{Store: base, listErr: tc.err}, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Subscriptions: []Subscription{{Name: "fixture"}}}
+			if tc.gate {
+				engine.Gate = func(context.Context) (func(), bool) { return nil, false }
+			}
+			Require.NoError(t, engine.RunPass(t.Context()))
+			if tc.category == "" {
+				Assert.Empty(t, logs.String())
+			} else {
+				Assert.Contains(t, logs.String(), tc.category)
+			}
+			Assert.NotContains(t, logs.String(), "987")
+			Assert.NotContains(t, logs.String(), "private detail")
+		})
+	}
 }

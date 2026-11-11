@@ -42,7 +42,7 @@ func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate ap
 		subs = append(subs, wakeups.NewSubscription(entry.Name, entry.URL, key, filter, entry.MaxMessageAge, entry.Timeout, origin, addresses))
 	}
 	var pruned int
-	if err := withBeeperMediaGate(ctx, gate, "Wakeup state", func() error {
+	if err := (&wakeups.Engine{Gate: beeperMediaGate(gate, "Wakeup state")}).GatedSetup(ctx, func() error {
 		var err error
 		pruned, err = st.PruneWakeupStates(ctx, names)
 		return err

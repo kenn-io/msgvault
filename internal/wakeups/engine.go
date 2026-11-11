@@ -42,16 +42,42 @@ type Engine struct {
 	Now           func() time.Time
 }
 
+// ErrGateBusy indicates that the operation gate could not be acquired.
+var ErrGateBusy = errors.New("operation gate unavailable")
+
+// StoreErrorCategory returns only safe diagnostic categories.
+func StoreErrorCategory(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return ""
+	case errors.Is(err, ErrGateBusy):
+		return "gate_busy"
+	case errors.Is(err, store.ErrNullChangeWatermark):
+		return "null_watermark"
+	default:
+		return "store_error"
+	}
+}
+
 func (e *Engine) gated(ctx context.Context, fn func() error) error {
 	if e.Gate != nil {
 		release, ok := e.Gate(ctx)
 		if !ok {
-			return errors.New("operation gate unavailable")
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return ErrGateBusy
 		}
 		defer release()
 	}
 	return fn()
 }
+
+// GatedSetup runs a setup store step under the same operation gate.
+func (e *Engine) GatedSetup(ctx context.Context, fn func() error) error {
+	return e.gated(ctx, fn)
+}
+
 func retryDelay(failures int) time.Duration {
 	d := 30 * time.Second
 	for i := 1; i < failures && d < time.Hour; i++ {
@@ -107,7 +133,6 @@ func (e *Engine) now() time.Time {
 	return time.Now()
 }
 func (e *Engine) RunPass(ctx context.Context) error {
-	now := e.now()
 	logger := e.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -134,6 +159,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			return swapped, err
 		}
 		err := e.gated(ctx, func() error {
+			now := e.now()
 			var err error
 			state, raw, err = e.Store.LoadWakeupState(ctx, sub.Name)
 			if err != nil {
@@ -225,7 +251,9 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			logger.Warn("wakeup store step failed", "name", sub.Name, "category", "store_error")
+			if category := StoreErrorCategory(err); category != "" {
+				logger.Warn("wakeup store step failed", "name", sub.Name, "category", category)
+			}
 			continue
 		}
 		if !ready {
@@ -258,7 +286,9 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		state.NextAttemptAt = time.Time{}
 		err = e.gated(ctx, func() error { _, err := advance(raw); return err })
 		if err != nil {
-			logger.Warn("wakeup store step failed", "name", sub.Name, "category", "store_error")
+			if category := StoreErrorCategory(err); category != "" {
+				logger.Warn("wakeup store step failed", "name", sub.Name, "category", category)
+			}
 		}
 	}
 	return ctx.Err()
