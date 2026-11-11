@@ -837,6 +837,8 @@ func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T
 		r.NoError(err)
 		_, err = st.RevokePersonInferenceConsent(ctx, fingerprint, "test-owner")
 		r.NoError(err)
+		_, _, err = st.GrantPersonCommitmentConsent(ctx, fingerprint, "test-owner")
+		r.NoError(err)
 		allowed, err := st.HasActivePersonInferenceConsent(ctx, fingerprint)
 		r.NoError(err)
 		r.False(allowed)
@@ -863,8 +865,9 @@ func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T
 					CommitmentID: fulfilled, SourceID: commitmentSourceID(window, completion), Quote: reply, End: int64(len(reply)), Confirmed: true,
 				})
 			}
-			_, err := st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
+			result, err := st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, output))
 			r.NoError(err)
+			r.Empty(result.CommitmentFailureClass)
 		}
 		apply(load(), 0)
 		f = nextCommitmentTestAttempt(t, f, "-initial-replay")
