@@ -240,7 +240,7 @@ func runCommitmentDecision(cmd *cobra.Command, id, state string, until *time.Tim
 	if cmd.Flags().Changed("questions") {
 		return usageErr(cmd, errors.New("--questions is available only for reply loops"))
 	}
-	return withLoopsClient(cmd, func(client *daemonclient.Client) error {
+	return withLoopsClientVersion(cmd, "5.2.0", func(client *daemonclient.Client) error {
 		decision, err := client.SetCommitmentDecision(cmd.Context(), id, state, until)
 		if err != nil {
 			return err
