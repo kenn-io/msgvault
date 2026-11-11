@@ -41,7 +41,7 @@ type embeddingRuntime struct {
 }
 
 type embeddingRuntimeDeps struct {
-	ContentReadGuard func(context.Context) (func(), error)
+	ContentReadGuard func(context.Context) (context.Context, func() error, error)
 	Backend          vector.Backend
 	VectorsDB        *sql.DB
 	MainDB           *sql.DB
@@ -610,7 +610,7 @@ func setupVectorFeatures(ctx context.Context, mainStore *store.Store, mainPath s
 				vecCfg, currentSemanticPersonVectorConfigSource(state), mainStore,
 			)
 			runtime, err := newEmbeddingRuntime(vecCfg, embeddingRuntimeDeps{
-				ContentReadGuard: NewXContentCleanup(mainStore, state.cfg, nil).AcquireRead,
+				ContentReadGuard: NewXContentCleanup(mainStore, state.cfg, nil).AcquireEmbeddingRead,
 				Backend:          backend, VectorsDB: vectorsDB, MainDB: mainDB, Store: mainStore,
 				Rebind: dialect.Rebind, LastModifiedExpr: lastModifiedExpr, Log: logger,
 				PersonGate: personGate,

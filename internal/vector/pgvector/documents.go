@@ -36,6 +36,9 @@ func (b *Backend) PublishScopes(ctx context.Context, gen vector.GenerationID, sc
 		return fmt.Errorf("begin document publication: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := vector.CheckContentLease(ctx, tx); err != nil {
+		return err
+	}
 
 	var dim int
 	var state vector.GenerationState

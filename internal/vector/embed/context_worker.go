@@ -54,7 +54,7 @@ type ContextWorkerHooks struct {
 // publication collaborators.
 type ContextWorkerDeps struct {
 	// ContentReadGuard holds the source-content fence through publication.
-	ContentReadGuard func(context.Context) (func(), error)
+	ContentReadGuard func(context.Context) (context.Context, func() error, error)
 	Backend          vector.Backend
 	Publisher        vector.DocumentPublisher
 	Store            ContextWorkStore
@@ -153,11 +153,12 @@ func (w *ContextWorker) runOperationPass(
 	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
 ) (result RunResult, retErr error) {
 	if w.deps.ContentReadGuard != nil {
-		release, err := w.deps.ContentReadGuard(ctx)
+		leaseCtx, release, err := w.deps.ContentReadGuard(ctx)
 		if err != nil {
 			return result, err
 		}
-		defer release()
+		defer func() { retErr = errors.Join(retErr, release()) }()
+		ctx = leaseCtx
 	}
 	pass, terminal, err := beginOperationPass(
 		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,

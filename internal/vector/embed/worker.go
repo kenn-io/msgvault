@@ -58,7 +58,7 @@ type WorkStore interface {
 type WorkerDeps struct {
 	// ContentReadGuard fences source reads, provider responses and publication
 	// against destructive X content cleanup.
-	ContentReadGuard func(context.Context) (func(), error)
+	ContentReadGuard func(context.Context) (context.Context, func() error, error)
 	Backend          vector.Backend
 	// VectorsDB is the generation-side DB handle (vectors.db on SQLite,
 	// the shared main DB on PG). Used for embed_runs and the watermark.
@@ -342,11 +342,12 @@ func (w *Worker) runOperationPass(
 	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
 ) (res RunResult, retErr error) {
 	if w.deps.ContentReadGuard != nil {
-		release, err := w.deps.ContentReadGuard(ctx)
+		leaseCtx, release, err := w.deps.ContentReadGuard(ctx)
 		if err != nil {
 			return res, err
 		}
-		defer release()
+		defer func() { retErr = errors.Join(retErr, release()) }()
+		ctx = leaseCtx
 	}
 	pass, terminal, err := beginOperationPass(
 		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,

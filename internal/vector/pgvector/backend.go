@@ -722,6 +722,9 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		return fmt.Errorf("begin upsert tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := vector.CheckContentLease(ctx, tx); err != nil {
+		return err
+	}
 
 	// Read the generation's dimension and lifecycle state under a row lock
 	// inside the SAME transaction that writes the embeddings. FOR UPDATE

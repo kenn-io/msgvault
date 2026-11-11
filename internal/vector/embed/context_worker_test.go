@@ -2784,12 +2784,12 @@ func TestContextWorkerContentGuardCoversProviderResponse(t *testing.T) {
 	checks := assert.New(t)
 	needs := require.New(t)
 	var fence sync.RWMutex
-	guard := func(ctx context.Context) (func(), error) {
+	guard := func(ctx context.Context) (context.Context, func() error, error) {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return ctx, nil, err
 		}
 		fence.RLock()
-		return fence.RUnlock, nil
+		return ctx, func() error { fence.RUnlock(); return nil }, nil
 	}
 	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) { deps.ContentReadGuard = guard })
 	f.seed("x", f.chatID, time.Now().UTC(), "synthetic X post")

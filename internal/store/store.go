@@ -593,12 +593,13 @@ func (s *Store) Close() error {
 		_ = s.CheckpointWAL()
 	}
 	lockErr := s.releaseAllSyncExecutionLocks()
+	contentErr := s.retryPendingXContentLeases()
 	err := s.db.Close()
 	if s.closeCleanup != nil {
 		s.closeCleanup()
 		s.closeCleanup = nil
 	}
-	return errors.Join(lockErr, err)
+	return errors.Join(lockErr, contentErr, err)
 }
 
 // CheckpointWAL forces a WAL checkpoint, folding the WAL back into the main

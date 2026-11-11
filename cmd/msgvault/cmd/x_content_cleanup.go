@@ -76,6 +76,20 @@ func (c *XContentCleanup) AcquireRead(ctx context.Context) (func(), error) {
 	return release, nil
 }
 
+// AcquireEmbeddingRead additionally fences PostgreSQL writers across hosts.
+func (c *XContentCleanup) AcquireEmbeddingRead(ctx context.Context) (context.Context, func() error, error) {
+	releaseLease, identity, err := c.store.AcquireXContentLeaseContext(ctx, false)
+	if err != nil {
+		return ctx, nil, err
+	}
+	releaseLocal, err := c.AcquireRead(ctx)
+	if err != nil {
+		return ctx, nil, errors.Join(err, releaseLease())
+	}
+	ctx = vector.WithContentLease(ctx, identity.PID, identity.BackendStart, identity.Key)
+	return ctx, func() error { releaseLocal(); return releaseLease() }, nil
+}
+
 // RemovePost owns the source fence for the complete local operation. It does
 // not load credentials, consult a spending policy or construct a provider API.
 func (c *XContentCleanup) RemovePost(ctx context.Context, sourceID int64, id, reason string) (work store.XRemovalWork, retErr error) {
@@ -140,6 +154,11 @@ func (c *XContentCleanup) removeXContentsBatch(ctx context.Context, groups []sto
 	if len(groups) == 0 && len(profiles) == 0 {
 		return work, errors.New("x removal batch is empty")
 	}
+	releaseLease, _, err := c.store.AcquireXContentLeaseContext(ctx, true)
+	if err != nil {
+		return work, err
+	}
+	defer func() { retErr = errors.Join(retErr, releaseLease()) }()
 	release, err := c.lock(ctx, true)
 	if err != nil {
 		return work, err

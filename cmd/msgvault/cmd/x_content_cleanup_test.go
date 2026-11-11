@@ -1178,3 +1178,140 @@ func TestXCheckpointCleanupFailureRemainsPending(t *testing.T) {
 	needs.NoError(err)
 	checks.Empty(saved)
 }
+
+func TestPostgresXContentLeaseCrossStoreAndDetachedSave(t *testing.T) {
+	needs := require.New(t)
+	checks := assert.New(t)
+	f := newXCleanupFixture(t)
+	if !f.st.IsPostgreSQL() {
+		t.Skip("PostgreSQL advisory lease")
+	}
+	peer, err := store.OpenForTest(t.Context(), f.cfg.Data.DatabaseURL)
+	needs.NoError(err)
+	defer func() { _ = peer.Close() }()
+	f.st.DB().SetMaxOpenConns(2)
+	peer.DB().SetMaxOpenConns(2)
+	otherCfg := *f.cfg
+	otherCfg.Data.DataDir = t.TempDir()
+	reader := NewXContentCleanup(f.st, f.cfg, f.backend)
+	remover := NewXContentCleanup(peer, &otherCfg, f.backend)
+	readCtx, cancel := context.WithCancel(t.Context())
+	leaseCtx, release, err := reader.AcquireEmbeddingRead(readCtx)
+	needs.NoError(err)
+	defer func() { _ = release() }()
+	owner := fmt.Sprintf("message:%d", f.message)
+	entries := []vector.EmbeddingCheckpoint{{Owner: owner, Revision: "r", Key: "k", Vectors: [][]float32{{1, 2, 3}}}, {Owner: "context:" + owner, Revision: "r", Key: "k", Vectors: [][]float32{{1, 2, 3}}}}
+	// A cancelled caller's completed provider response still saves under the lease.
+	cancel()
+	needs.NoError(f.backend.EmbeddingCheckpoints().Save(leaseCtx, f.generations[1], entries))
+	ctx, stop := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer stop()
+	_, err = remover.RemovePost(ctx, f.source, "100", "removed")
+	needs.ErrorIs(err, context.DeadlineExceeded)
+	var suppressed bool
+	needs.NoError(peer.DB().QueryRowContext(t.Context(), `SELECT suppressed_at IS NOT NULL FROM x_post_versions WHERE source_id=$1 AND post_id='102'`, f.source).Scan(&suppressed))
+	checks.False(suppressed)
+	// Reuse the reader Store for the second attempt to exercise a shared
+	// two-connection query pool while retaining a different content directory.
+	remover = NewXContentCleanup(f.st, &otherCfg, f.backend)
+	// The second remover owns its source execution while waiting for the
+	// shared lease. Its owned lease session must not consume a query-pool slot.
+	type removalResult struct {
+		work store.XRemovalWork
+		err  error
+	}
+	result := make(chan removalResult, 1)
+	go func() {
+		work, err := remover.RemovePost(t.Context(), f.source, "100", "removed")
+		result <- removalResult{work, err}
+	}()
+	needs.Eventually(func() bool {
+		execution, err := f.st.AcquireSyncExecutionContext(t.Context(), f.source)
+		if err == nil {
+			_ = execution.Release()
+			return false
+		}
+		return errors.Is(err, store.ErrSyncAlreadyActive)
+	}, 10*time.Second, 20*time.Millisecond)
+	needs.NoError(f.backend.EmbeddingCheckpoints().Save(leaseCtx, f.generations[1], entries))
+	publisher := f.backend.(vector.DocumentPublisher)
+	needs.NoError(publisher.PublishScopes(context.WithoutCancel(leaseCtx), f.generations[1], []vector.DocumentScopePublication{{ScopeKey: "unrelated-scope", SourceSequence: 1, FenceOnly: true}}))
+	needs.NoError(release())
+	select {
+	case completed := <-result:
+		needs.NoError(completed.err)
+		checks.False(completed.work.Pending)
+	case <-time.After(10 * time.Second):
+		needs.FailNow("removal did not finish after lease release")
+	}
+	for _, entry := range entries {
+		saved, err := f.backend.EmbeddingCheckpoints().Load(t.Context(), f.generations[1], entry.Owner, entry.Revision)
+		needs.NoError(err)
+		checks.Empty(saved)
+	}
+}
+
+func TestPostgresXLostContentLeaseRejectsWrites(t *testing.T) {
+	needs := require.New(t)
+	checks := assert.New(t)
+	f := newXCleanupFixture(t)
+	if !f.st.IsPostgreSQL() {
+		t.Skip("PostgreSQL advisory lease")
+	}
+	release, identity, err := f.st.AcquireXContentLeaseContext(t.Context(), false)
+	needs.NoError(err)
+	defer func() { _ = release() }()
+	leaseCtx := vector.WithContentLease(t.Context(), identity.PID, identity.BackendStart, identity.Key)
+	var terminated bool
+	needs.NoError(f.st.DB().QueryRowContext(t.Context(), `SELECT pg_terminate_backend($1)`, identity.PID).Scan(&terminated))
+	needs.True(terminated)
+	// Wait for PostgreSQL to observe the session exit rather than assuming
+	// pg_terminate_backend's return is the observable termination boundary.
+	needs.Eventually(func() bool {
+		var exists bool
+		return f.st.DB().QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND backend_start=$2)`, identity.PID, identity.BackendStart).Scan(&exists) == nil && !exists
+	}, 10*time.Second, 20*time.Millisecond)
+	cleaner := NewXContentCleanup(f.st, f.cfg, f.backend)
+	_, err = cleaner.RemovePost(t.Context(), f.source, "100", "removed")
+	needs.NoError(err)
+	owner := fmt.Sprintf("message:%d", f.message)
+	err = f.backend.EmbeddingCheckpoints().Save(leaseCtx, f.generations[1], []vector.EmbeddingCheckpoint{{Owner: owner, Revision: "r", Key: "k", Vectors: [][]float32{{1, 2, 3}}}})
+	needs.ErrorIs(err, vector.ErrContentLeaseLost)
+	err = f.backend.Upsert(leaseCtx, f.generations[1], []vector.Chunk{{MessageID: f.message, Vector: []float32{1, 2, 3}}})
+	needs.ErrorIs(err, vector.ErrContentLeaseLost)
+	publisher := f.backend.(vector.DocumentPublisher)
+	err = publisher.PublishScopes(leaseCtx, f.generations[1], []vector.DocumentScopePublication{{ScopeKey: owner, SourceSequence: 1}})
+	needs.ErrorIs(err, vector.ErrContentLeaseLost)
+	needs.Error(release())
+	saved, err := f.backend.EmbeddingCheckpoints().Load(t.Context(), f.generations[1], owner, "r")
+	needs.NoError(err)
+	checks.Empty(saved)
+}
+
+func TestPostgresXCancelledContentLeaseDoesNotLeak(t *testing.T) {
+	needs := require.New(t)
+	f := newXCleanupFixture(t)
+	if !f.st.IsPostgreSQL() {
+		t.Skip("PostgreSQL advisory lease")
+	}
+	writer, _, err := f.st.AcquireXContentLeaseContext(t.Context(), true)
+	needs.NoError(err)
+	defer func() { _ = writer() }()
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	_, _, err = f.st.AcquireXContentLeaseContext(ctx, false)
+	needs.ErrorIs(err, context.DeadlineExceeded)
+	needs.NoError(writer())
+	exclusive, _, err := f.st.AcquireXContentLeaseContext(t.Context(), true)
+	needs.NoError(err)
+	defer func() { _ = exclusive() }()
+	needs.NoError(exclusive())
+	reader, identity, err := f.st.AcquireXContentLeaseContext(t.Context(), false)
+	needs.NoError(err)
+	defer func() { _ = reader() }()
+	needs.NoError(reader())
+	needs.Eventually(func() bool {
+		var exists bool
+		return f.st.DB().QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND backend_start=$2)`, identity.PID, identity.BackendStart).Scan(&exists) == nil && !exists
+	}, 10*time.Second, 20*time.Millisecond)
+}

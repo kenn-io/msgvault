@@ -104,6 +104,11 @@ func (s EmbeddingCheckpoints) Save(ctx context.Context, gen GenerationID, entrie
 		return fmt.Errorf("begin embedding response save: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if s.LockGeneration {
+		if err := CheckContentLease(saveCtx, tx); err != nil {
+			return err
+		}
+	}
 	lock := ""
 	if s.LockGeneration {
 		lock = " FOR SHARE"

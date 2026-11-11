@@ -494,7 +494,7 @@ func TestEmbeddingRuntimeWiresContentReadGuard(t *testing.T) {
 			runtime, err := newEmbeddingRuntime(cfg.Vector, embeddingRuntimeDeps{
 				Backend: backend, VectorsDB: backend.DB(), MainDB: st.DB(), Store: st,
 				PersonGate: personGate, APIKey: "synthetic-key",
-				ContentReadGuard: func(context.Context) (func(), error) { return nil, sentinel },
+				ContentReadGuard: func(ctx context.Context) (context.Context, func() error, error) { return ctx, nil, sentinel },
 			})
 			needs.NoError(err)
 			_, err = runtime.Runner.RunOnce(t.Context(), gen, operations.PassScope{Key: "test-content-guard", Trigger: operations.TriggerManual, StartedAt: time.Now().UTC()})

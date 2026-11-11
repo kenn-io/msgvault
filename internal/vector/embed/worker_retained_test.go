@@ -363,11 +363,12 @@ func TestWorkerContentGuardCoversDetachedCheckpointSave(t *testing.T) {
 	var fence sync.RWMutex
 	var savedAtRelease int
 	var releaseErr error
-	guard := func(context.Context) (func(), error) {
+	guard := func(ctx context.Context) (context.Context, func() error, error) {
 		fence.RLock()
-		return func() {
+		return ctx, func() error {
 			releaseErr = f.VectorsDB.QueryRowContext(context.WithoutCancel(t.Context()), `SELECT count(*) FROM embedding_checkpoints WHERE owner = 'message:1'`).Scan(&savedAtRelease)
 			fence.RUnlock()
+			return nil
 		}, nil
 	}
 	ctx, cancel := context.WithCancel(t.Context())

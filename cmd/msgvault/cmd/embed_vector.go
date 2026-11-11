@@ -202,7 +202,7 @@ func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 	}
 
 	runtime, err := newEmbeddingRuntime(cfg.Vector, embeddingRuntimeDeps{
-		ContentReadGuard: NewXContentCleanup(s, cfg, nil).AcquireRead,
+		ContentReadGuard: NewXContentCleanup(s, cfg, nil).AcquireEmbeddingRead,
 		Backend:          backend, VectorsDB: vectorsDB, MainDB: s.DB(), Store: s,
 		Rebind: rebind, LastModifiedExpr: lastModifiedExpr,
 		TotalPending: totalPending,
