@@ -229,18 +229,29 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 				continue
 			}
 			seenDecisions[choice.id] = true
+			valid := true
 			for _, endpoint := range []*meetingDecisionEndpoint{&choice.a, &choice.b} {
 				canonical, _, record, err := s.materializedMeetingEndpointRecord(ctx, *endpoint, &budget)
 				if errors.Is(err, sql.ErrNoRows) {
+					if len(record.Unexpandable) == 0 {
+						valid = false
+						break
+					}
 					canonical = *endpoint
+					if canonical.Key == "" {
+						canonical.Key = canonical.Anchor
+					}
 				} else if err != nil {
 					return result, err
-				} else {
-					materialized[canonical.ref()] = record
 				}
+				materialized[canonical.ref()] = record
 				*endpoint = canonical
-				add(canonical, nil)
 			}
+			if !valid {
+				continue
+			}
+			add(choice.a, nil)
+			add(choice.b, nil)
 			candidates = append(candidates, choice)
 		}
 	}

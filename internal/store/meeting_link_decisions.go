@@ -185,6 +185,7 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 					left, right = right, left
 				}
 				matches := compareMeetingEndpoints(left, canonicalA) == 0 && compareMeetingEndpoints(right, canonicalB) == 0
+				equivalent := !matches
 				if !matches && decision == "link" && choice.decision == "split" {
 					note, event, requestedNote, requestedEvent, record := left, right, canonicalA, canonicalB, recordB
 					if note.Kind == meetingRefEvent {
@@ -200,7 +201,11 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 					}
 				}
 				if matches {
-					err = deleteMeetingDecisionTx(ctx, tx, choice, decision == "clear")
+					if equivalent && decision == "link" && choice.decision == "split" && !choice.isExplicit {
+						_, err = tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, choice.id)
+					} else {
+						err = deleteMeetingDecisionTx(ctx, tx, choice, decision == "clear")
+					}
 					if err != nil {
 						return err
 					}
@@ -285,7 +290,7 @@ func (s *Store) materializedMeetingEndpointRecord(ctx context.Context, endpoint 
 			return endpointFromRef(resolved), []int64{endpoint.ID, link.MessageID}, record, err
 		}
 	}
-	return endpoint, nil, MeetingRecord{}, sql.ErrNoRows
+	return endpoint, nil, record, sql.ErrNoRows
 }
 
 // copyMeetingLinkDecisionsTx keeps hidden originals for undo and preserves survivor choices.
