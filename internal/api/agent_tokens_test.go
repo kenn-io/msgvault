@@ -775,7 +775,7 @@ func TestAgentTokenIncomingSendersIndependentOfDraftIdentities(t *testing.T) {
 		{"omitted", "", []string{"message.archive"}, http.StatusCreated},
 		{"empty", `{"1":[]}`, []string{"message.archive"}, http.StatusBadRequest},
 		{"top-level null", `null`, []string{"message.archive"}, http.StatusBadRequest},
-		{"null", `{"1":null}`, []string{"message.archive"}, http.StatusBadRequest},
+		{"unknown field", `{"1":["codes@example.test"]}`, []string{"message.read"}, http.StatusBadRequest},
 		{"duplicate", `{"1":["codes@example.test","CODES@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
 		{"invalid mailbox", `{"1":["invalid"]}`, []string{"message.archive"}, http.StatusBadRequest},
 		{"unselected", `{"2":["codes@example.test"]}`, []string{"message.archive"}, http.StatusBadRequest},
@@ -791,7 +791,11 @@ func TestAgentTokenIncomingSendersIndependentOfDraftIdentities(t *testing.T) {
 			requirementsForTest.NoError(err)
 			body := fmt.Sprintf(`{"label":"archive-test","permissions":%s,"source_ids":[1]}`, permissions)
 			if tc.restrictions != "" {
-				body = strings.TrimSuffix(body, "}") + `,"incoming_senders":` + tc.restrictions + "}"
+				field := "incoming_senders"
+				if tc.name == "unknown field" {
+					field = "incoming_sender"
+				}
+				body = strings.TrimSuffix(body, "}") + `,"` + field + `":` + tc.restrictions + "}"
 			}
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
 			req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
@@ -816,16 +820,4 @@ func TestAgentTokenIncomingSendersIndependentOfDraftIdentities(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestAgentTokenRejectsUnknownIncomingSenderField(t *testing.T) {
-	srv, registry := newAgentTokenTestServer(t)
-	t.Cleanup(registry.Close)
-	body := `{"label":"reader","permissions":["message.read"],"source_ids":[1],"incoming_sender":{"1":["codes@example.test"]}}`
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(body))
-	req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }

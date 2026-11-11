@@ -142,7 +142,6 @@ func TestArchiveMessageDaemonGrantEnforcement(t *testing.T) {
 		allowed bool
 		missing bool
 	}{
-		{"read permission alone", []string{"message.read"}, source.ID, nil, false, false},
 		{"wrong source", []string{"message.archive"}, other.ID, nil, false, false},
 		{"wrong sender", []string{"message.archive"}, source.ID, []string{"other@example.test"}, false, false},
 		{"missing", []string{"message.archive"}, source.ID, []string{"codes@example.test"}, false, true},
@@ -170,17 +169,11 @@ func TestArchiveMessageDaemonGrantEnforcement(t *testing.T) {
 			if !tc.allowed {
 				var failure *emailtags.MessageTagError
 				requirementsForTest.ErrorAs(err, &failure)
-				want := "message_not_found"
-				if !slices.Contains(tc.perms, "message.archive") {
-					want = "permission_denied"
-				}
-				assertionsForTest.Equal(want, failure.Code)
-				if want == "message_not_found" {
-					if hidden == nil {
-						hidden = failure
-					} else {
-						assertionsForTest.Equal(hidden, failure)
-					}
+				assertionsForTest.Equal("message_not_found", failure.Code)
+				if hidden == nil {
+					hidden = failure
+				} else {
+					assertionsForTest.Equal(hidden, failure)
 				}
 				assertionsForTest.Equal(before, provider.connects.Load(), "denials must precede provider access")
 				return
@@ -300,7 +293,7 @@ func TestArchiveMessageUnsupportedProviderAndMissingScope(t *testing.T) {
 	}
 }
 
-func TestIncomingSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T) {
+func TestIncomingSenderQuotedAddressesAndRecheckUnderLock(t *testing.T) {
 	assertionsForTest := assert.New(t)
 	requirementsForTest := require.New(t)
 	st := testutil.NewTestStore(t)

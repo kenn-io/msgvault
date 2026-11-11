@@ -572,9 +572,9 @@ func createSearchScopeMessage(
 func TestAgentLabelInventoryIncomingScope(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
-	first, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "allowed", "allowed", "")
+	first, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "allowed", "allowed code", "")
 	requirements.NoError(err)
-	_, denied, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "denied", "denied", "")
+	_, denied, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "denied", "denied code", "")
 	requirements.NoError(err)
 	second, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "second@example.test", "other", "other", "")
 	requirements.NoError(err)
@@ -599,6 +599,22 @@ func TestAgentLabelInventoryIncomingScope(t *testing.T) {
 		}
 	}
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{first.ID: {"codes@example.test"}})
+	term := &search.Query{TextTerms: []string{"code"}}
+	deep, err := engine.SearchDeepWithStats(ctx, term, query.MessageFilter{}, 50, 0)
+	requirements.NoError(err)
+	requirements.Len(deep.Messages, 1)
+	requirements.Equal(allowed, deep.Messages[0].ID)
+	requirements.Equal(int64(1), deep.TotalCount)
+	requirements.NotNil(deep.Stats)
+	requirements.Equal(int64(1), deep.Stats.MessageCount)
+	fast, err := engine.SearchFastWithStats(ctx, term, "code", query.MessageFilter{}, query.ViewSenders, 50, 0)
+	requirements.NoError(err)
+	requirements.Len(fast.Messages, 1)
+	requirements.Equal(allowed, fast.Messages[0].ID)
+	requirements.Equal(int64(1), fast.TotalCount)
+	requirements.NotNil(fast.Stats)
+	requirements.Equal(int64(1), fast.Stats.MessageCount)
 	for _, tc := range []struct {
 		name              string
 		restricted, mixed bool

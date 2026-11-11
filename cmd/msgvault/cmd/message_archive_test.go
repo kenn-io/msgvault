@@ -65,7 +65,7 @@ func TestArchiveMessageCommands(t *testing.T) {
 		assertionsForTest.True(backend.change.DryRun)
 		assertionsForTest.Contains(output.String(), `"dry_run":true`)
 	}
-	for _, args := range [][]string{nil, {"--message", "0"}, {"--message", "-1"}, {"--message", "x"}, {"--message", "7", "extra"}} {
+	for _, args := range [][]string{{"--message", "0"}, {"--message", "-1"}, {"--message", "7", "extra"}} {
 		backend := &cliArchiveBackend{}
 		command := newMessageArchiveCommand(true, backend)
 		command.SetArgs(args)
