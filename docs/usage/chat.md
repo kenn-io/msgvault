@@ -828,7 +828,7 @@ source, cache, or person-edit tools.
 | `get_slack_sync_policy` | Read channel and direct-message selection, the settings ETag, and restart state. | — |
 | `update_slack_sync_policy` | Change Slack selection; requires confirmation. | Required `etag`; at least one of `dms`, `group_dms`, `channels`, `exclude_channels` |
 | `get_enrichment_policy` | Read provider policy, settings ETag, and restart state. | — |
-| `update_enrichment_policy` | Edit an existing provider policy; requires confirmation. | Required `name`, `etag`; at least one of `enabled`, `num_results`, `max_retries`, `max_requests_per_run`, `max_requests_per_day` |
+| `update_enrichment_policy` | Edit an existing provider policy; requires confirmation. | Required `name`, `etag`; at least one of `enabled`, `max_retries`, `max_requests_per_run`, `max_requests_per_day` |
 | `get_participant_identity` | Read observed identifiers, service and scope context, cluster members, and link evidence. | Required `participant_id` |
 | `get_cache_build_status` | Follow an accepted analytics refresh job. | Required `job_id` from a fresh query response |
 
@@ -838,7 +838,6 @@ daemon supplies it, such as `started`, `pending`, or `coalesced`; check source a
 scheduler status for progress.
 
 Native validation refuses to disable the last provider while enrichment is enabled.
-Enabled Exa rejects `num_results: 0`; disabled Exa reloads it as 1.
 `max_retries: 0` reloads as 5 for all providers. Consent remains separate, and
 the daemon may need a restart.
 
@@ -911,7 +910,7 @@ Enable only the writes intended for the assistant's session:
 | Existing enrichment policy | `--allow-enrichment-settings-writes` | `--http-allow-writes --allow-enrichment-settings-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
 
-On unreleased `main`, `get_enrichment_policy` reads existing provider enabled states, numeric limits, the settings ETag, and restart state. `update_enrichment_policy` accepts that exact ETag and changes only enabled state or numeric limits after approval. Provider setup and consent remain operator-managed. An edit proceeds only when the daemon response lets msgvault reconstruct the existing provider policy; otherwise it is refused. Exa edits are supported when the native settings read validates the provider and confirms its omitted poll endpoint is empty. SixtyFour edits require both endpoints to be available. A native update can remove a previously stored credential bound to a different origin. If a write reports `operation_may_have_completed: true`, read the policy again before retrying.
+On unreleased `main`, `get_enrichment_policy` reads existing provider enabled states, numeric limits, the settings ETag, and restart state. `update_enrichment_policy` accepts that exact ETag and changes only enabled state or numeric limits after approval. Provider setup remains operator-managed. Changing request caps changes the consent fingerprint; after restart, enrichment waits for renewed operator consent. Use `msgvault person enrichment profiles` to find the new fingerprint and `msgvault person enrichment consent <fingerprint>` to grant consent. An edit proceeds only when the daemon response lets msgvault reconstruct the existing provider policy; otherwise it is refused. Exa edits are supported when the native settings read validates the provider and confirms its omitted poll endpoint is empty. SixtyFour edits require both endpoints to be available. A native update can remove a previously stored credential bound to a different origin. If a write reports `operation_may_have_completed: true`, read the policy again before retrying.
 
 `draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available. On unreleased `main`, `--confirm-sensitive-drafts` also requires confirmation for flagged draft creation and edits; it grants no write access.
 

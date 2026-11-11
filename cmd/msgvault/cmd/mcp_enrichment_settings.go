@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
@@ -19,7 +20,6 @@ type enrichmentProvider struct {
 	PollEndpoint          *string                       `json:"poll_endpoint"`
 	Mode                  *string                       `json:"mode"`
 	Tier                  *string                       `json:"tier"`
-	NumResults            *int64                        `json:"num_results"`
 	AllowedIdentifiers    *[]string                     `json:"allowed_identifiers"`
 	TargetKeys            *[]string                     `json:"target_keys"`
 	AllowSensitiveTargets *bool                         `json:"allow_sensitive_targets"`
@@ -42,7 +42,6 @@ type enrichmentArguments struct {
 	Name              string `json:"name"`
 	ETag              string `json:"etag"`
 	Enabled           *bool  `json:"enabled,omitempty"`
-	NumResults        *int64 `json:"num_results,omitempty"`
 	MaxRetries        *int64 `json:"max_retries,omitempty"`
 	MaxRequestsPerRun *int64 `json:"max_requests_per_run,omitempty"`
 	MaxRequestsPerDay *int64 `json:"max_requests_per_day,omitempty"`
@@ -61,12 +60,20 @@ func enrichmentMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol
 
 // Full replacement is safe only for the exact request property set we reconstruct.
 func mcpEnrichmentPropertiesExact(capabilities *apiprotocol.MCPCapabilities, properties ...string) bool {
-	if !mcpRequestPropertiesPresent(capabilities, "putSettingsPersonEnrichmentProvider", properties...) {
+	if capabilities == nil {
 		return false
 	}
 	for _, route := range capabilities.Routes {
 		if route.OperationID == "putSettingsPersonEnrichmentProvider" {
-			return len(route.RequestProperties) == len(properties)
+			if len(route.RequestProperties) != len(properties) {
+				return false
+			}
+			for _, property := range properties {
+				if !slices.Contains(route.RequestProperties, property) {
+					return false
+				}
+			}
+			return true
 		}
 	}
 	return false
@@ -94,7 +101,7 @@ func enrichmentReplacement(p enrichmentProvider) (*generated.PersonEnrichmentPro
 	} else if pollEndpoint == nil || *pollEndpoint == "" {
 		return nil, false
 	}
-	return &generated.PersonEnrichmentProviderUpdate{Kind: generated.PersonEnrichmentProviderUpdateKind(*p.Kind), Enabled: *p.Enabled, Endpoint: *p.Endpoint, PollEndpoint: pollEndpoint, Mode: p.Mode, Tier: p.Tier, NumResults: p.NumResults, AllowedIdentifiers: *p.AllowedIdentifiers, TargetKeys: *p.TargetKeys, AllowSensitiveTargets: *p.AllowSensitiveTargets, RetentionPosture: *p.RetentionPosture, TrainingPosture: *p.TrainingPosture, RefreshInterval: *p.RefreshInterval, RequestTimeout: *p.RequestTimeout, PollInterval: p.PollInterval, MaxJobAge: p.MaxJobAge, MaxRetries: *p.MaxRetries, MaxRequestsPerRun: *p.MaxRequestsPerRun, MaxRequestsPerDay: *p.MaxRequestsPerDay}, true
+	return &generated.PersonEnrichmentProviderUpdate{Kind: generated.PersonEnrichmentProviderUpdateKind(*p.Kind), Enabled: *p.Enabled, Endpoint: *p.Endpoint, PollEndpoint: pollEndpoint, Mode: p.Mode, Tier: p.Tier, NumResults: nil, AllowedIdentifiers: *p.AllowedIdentifiers, TargetKeys: *p.TargetKeys, AllowSensitiveTargets: *p.AllowSensitiveTargets, RetentionPosture: *p.RetentionPosture, TrainingPosture: *p.TrainingPosture, RefreshInterval: *p.RefreshInterval, RequestTimeout: *p.RequestTimeout, PollInterval: p.PollInterval, MaxJobAge: p.MaxJobAge, MaxRetries: *p.MaxRetries, MaxRequestsPerRun: *p.MaxRequestsPerRun, MaxRequestsPerDay: *p.MaxRequestsPerDay}, true
 }
 
 func enrichmentProjection(result *mcpserver.OperationResult, writes bool) *mcpserver.OperationResult {
@@ -110,7 +117,7 @@ func enrichmentProjection(result *mcpserver.OperationResult, writes bool) *mcpse
 		if p.Name == "" || p.Enabled == nil || p.MaxRetries == nil || p.MaxRequestsPerRun == nil || p.MaxRequestsPerDay == nil {
 			return operationFailure("invalid_operation_response", writes)
 		}
-		output.Providers = append(output.Providers, mcpserver.EnrichmentProviderPolicy{Name: p.Name, Enabled: *p.Enabled, NumResults: p.NumResults, MaxRetries: *p.MaxRetries, MaxRequestsPerRun: *p.MaxRequestsPerRun, MaxRequestsPerDay: *p.MaxRequestsPerDay})
+		output.Providers = append(output.Providers, mcpserver.EnrichmentProviderPolicy{Name: p.Name, Enabled: *p.Enabled, MaxRetries: *p.MaxRetries, MaxRequestsPerRun: *p.MaxRequestsPerRun, MaxRequestsPerDay: *p.MaxRequestsPerDay})
 	}
 	result.Output = output
 	return result
@@ -120,7 +127,7 @@ func validEnrichmentArguments(a enrichmentArguments) bool {
 	if a.Name == "" || a.ETag == "" {
 		return false
 	}
-	if a.Enabled == nil && a.NumResults == nil && a.MaxRetries == nil && a.MaxRequestsPerRun == nil && a.MaxRequestsPerDay == nil {
+	if a.Enabled == nil && a.MaxRetries == nil && a.MaxRequestsPerRun == nil && a.MaxRequestsPerDay == nil {
 		return false
 	}
 	return true
@@ -145,9 +152,6 @@ func (b *daemonMCPOperations) enrichmentContext(ctx context.Context, a enrichmen
 		}
 		if a.Enabled != nil {
 			replacement.Enabled = *a.Enabled
-		}
-		if a.NumResults != nil {
-			replacement.NumResults = a.NumResults
 		}
 		if a.MaxRetries != nil {
 			replacement.MaxRetries = *a.MaxRetries
@@ -214,6 +218,6 @@ func (b *daemonMCPOperations) enrichmentOperationDisclosure(ctx context.Context,
 		Current   any                 `json:"current"`
 		Changes   enrichmentArguments `json:"changes"`
 		Effect    string              `json:"effect"`
-	}{name, current.Output, a, "Update the configured provider policy; consent remains separate, restart may be required, and native settings cleanup may remove a stored credential already bound to a different origin."}, json.Deterministic(true))
+	}{name, current.Output, a, "Update the configured provider policy; changing request caps changes the consent fingerprint, so after restart enrichment waits for operator consent to the new fingerprint; native settings cleanup may remove a stored credential already bound to a different origin."}, json.Deterministic(true))
 	return string(data), true, err
 }

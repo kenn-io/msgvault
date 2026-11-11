@@ -28,6 +28,7 @@ name = "example"
 kind = "exa"
 enabled = false
 endpoint = "https://provider.example/search"
+api_key_env = "TEST_ENRICHMENT_API_KEY"
 mode = "people"
 allowed_identifiers = ["name"]
 target_keys = ["attribute:bio"]
@@ -101,7 +102,7 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	missingJSON, err := json.Marshal(missing.Output)
 	require.NoError(err)
 	assert.Contains(string(missingJSON), "provider_not_found")
-	args := map[string]any{"name": "example", "etag": policy.ETag, "max_requests_per_day": 25, "max_requests_per_run": 7, "num_results": 1, "max_retries": 2}
+	args := map[string]any{"name": "example", "etag": policy.ETag, "max_requests_per_day": 25, "max_requests_per_run": 7, "max_retries": 2}
 	disclosure, handled, err := backend.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", args)
 	require.NoError(err)
 	require.True(handled)
@@ -111,14 +112,13 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	require.True(handled)
 	updated := operationOutput[mcpserver.EnrichmentPolicy](t, result)
 	assert.Equal(int64(25), updated.Providers[0].MaxRequestsPerDay)
-	require.NotNil(updated.Providers[0].NumResults)
-	assert.Equal(int64(1), *updated.Providers[0].NumResults)
 	assert.Equal(int64(2), updated.Providers[0].MaxRetries)
 	reloaded, err := config.Load(path, directory)
 	require.NoError(err)
 	require.Len(reloaded.People.Enrichment.Providers, 1)
 	native := reloaded.People.Enrichment.Providers[0]
 	assert.Equal("https://provider.example/search", native.Endpoint)
+	assert.Equal("TEST_ENRICHMENT_API_KEY", native.APIKeyEnv)
 	assert.Empty(native.PollEndpoint)
 	assert.Equal([]string{"attribute:bio"}, native.TargetKeys)
 	assert.Equal(int64(7), native.MaxRequestsPerRun)
@@ -131,7 +131,7 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	encoded, err := json.Marshal(result.Output)
 	require.NoError(err)
 	assert.Contains(string(encoded), "settings_conflict")
-	enable := map[string]any{"name": "example", "etag": updated.ETag, "enabled": true, "num_results": 1}
+	enable := map[string]any{"name": "example", "etag": updated.ETag, "enabled": true}
 	disclosure, _, err = backend.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", enable)
 	require.NoError(err)
 	result, _, err = backend.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", enable)
@@ -145,10 +145,12 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	sixtyConfig := `[[people.enrichment.providers]]
 name = "example"
 kind = "sixtyfour"
-enabled = true
+enabled = false
 endpoint = "https://provider.example/search"
 poll_endpoint = "https://provider.example/poll"
 tier = "standard"
+api_key_env = "TEST_SIXTYFOUR_API_KEY"
+max_cost_usd_micros_per_run = 1234
 allowed_identifiers = ["name", "current_company"]
 target_keys = ["attribute:bio"]
 retention_posture = "zero_retention"
@@ -166,11 +168,39 @@ max_requests_per_day = 50
 	require.NoError(err)
 	sixtyPolicy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
 	require.Len(sixtyPolicy.Providers, 1)
-	result, _, err = sixty.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": "example", "etag": sixtyPolicy.ETag, "num_results": 3})
+	result, _, err = sixty.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": "example", "etag": sixtyPolicy.ETag, "max_requests_per_run": 3})
 	require.NoError(err)
 	sixtyUpdated := operationOutput[mcpserver.EnrichmentPolicy](t, result)
-	require.NotNil(sixtyUpdated.Providers[0].NumResults)
-	assert.Equal(int64(3), *sixtyUpdated.Providers[0].NumResults)
+	assert.Equal(int64(3), sixtyUpdated.Providers[0].MaxRequestsPerRun)
+	sixtyReloaded, err := config.Load(sixtyPath, sixtyDir)
+	require.NoError(err)
+	require.Len(sixtyReloaded.People.Enrichment.Providers, 1)
+	assert.Equal("https://provider.example/poll", sixtyReloaded.People.Enrichment.Providers[0].PollEndpoint)
+	assert.Equal("standard", sixtyReloaded.People.Enrichment.Providers[0].Tier)
+	assert.Equal("TEST_SIXTYFOUR_API_KEY", sixtyReloaded.People.Enrichment.Providers[0].APIKeyEnv)
+	assert.Equal(int64(1234), sixtyReloaded.People.Enrichment.Providers[0].MaxCostUSDMicrosPerRun)
+
+	// Disabled invalid Exa has no credential metadata and must not be replaced.
+	invalidDir := t.TempDir()
+	invalidPath := filepath.Join(invalidDir, "config.toml")
+	invalid := enrichmentExaFixture + "poll_endpoint = \"https://provider.example/poll\"\n"
+	require.NoError(os.WriteFile(invalidPath, []byte(invalid), 0o600))
+	invalidCfg, err := config.Load(invalidPath, invalidDir)
+	require.NoError(err)
+	invalidCfg.Data.DataDir = invalidDir
+	invalidBackend := sourceOperationFixture(t, api.NewServer(invalidCfg, nil, nil, slog.New(slog.DiscardHandler)))
+	result, _, err = invalidBackend.executeEnrichmentOperation(t.Context(), "get_enrichment_policy", nil)
+	require.NoError(err)
+	invalidPolicy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
+	result, _, err = invalidBackend.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": "example", "etag": invalidPolicy.ETag, "max_retries": 2})
+	require.NoError(err)
+	require.True(result.IsError)
+	invalidJSON, err := json.Marshal(result.Output)
+	require.NoError(err)
+	assert.Contains(string(invalidJSON), "provider_policy_unreconstructable")
+	afterInvalid, err := os.ReadFile(invalidPath)
+	require.NoError(err)
+	assert.Equal(invalid, string(afterInvalid))
 
 	// A real settings snapshot with enrichment enabled cannot lose its last provider.
 	secondDir := t.TempDir()
