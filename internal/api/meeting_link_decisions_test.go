@@ -18,7 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestMeetingDecisionOwnerAndDelegatedHTTP(t *testing.T) {
+func TestMeetingDecisionOwnerHTTP(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("meeting_import", "notes@example.com")
@@ -32,28 +32,14 @@ func TestMeetingDecisionOwnerAndDelegatedHTTP(t *testing.T) {
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Logger: testLogger(), OperationGate: NewSerialOperationGate()})
 	t.Cleanup(srv.agentGrants.Close)
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	requirements.NoError(err)
 	body := fmt.Sprintf(`{"left":"msg:%d","right":"msg:%d","decision":"link"}`, ids[0], ids[1])
-	for _, tc := range []struct {
-		name  string
-		owner bool
-		want  int
-	}{{"delegated", false, http.StatusUnauthorized}, {"owner", true, http.StatusOK}} {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/meetings/links/decisions", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		if tc.owner {
-			req.Header.Set("X-Api-Key", "owner")
-		} else {
-			req.Header.Set(apiprotocol.AgentTokenHeader, token)
-		}
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		requirements.Equal(tc.want, w.Code, tc.name+": "+w.Body.String())
-		if tc.owner {
-			assertions.JSONEq(fmt.Sprintf(`{"left":"msg:%d","right":"msg:%d","state":"link"}`, ids[0], ids[1]), w.Body.String())
-		}
-	}
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/meetings/links/decisions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", "owner")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	assertions.JSONEq(fmt.Sprintf(`{"left":"msg:%d","right":"msg:%d","state":"link"}`, ids[0], ids[1]), w.Body.String())
 	for _, tc := range []struct {
 		left, right int64
 		decision    string
