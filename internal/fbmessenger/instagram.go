@@ -122,7 +122,9 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 		if record, ok := instagramArchivedRecord(archived[id]); ok {
 			key := instagramEvidence(record)
 			evidence[id] = key
-			instagramAddExact(exact, key, id, archived[id])
+			if !instagramIsSurplus(archived[id]) {
+				exact[key] = append(exact[key], id)
+			}
 		} else {
 			unreadable = true
 		}
@@ -167,12 +169,6 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 func instagramIsSurplus(stored store.StoredMessage) bool {
 	var wrapper instagramRaw
 	return json.Unmarshal(stored.Raw, &wrapper) == nil && wrapper.DerivedReactions != nil
-}
-
-func instagramAddExact(exact map[instagramOccurrence][]string, key instagramOccurrence, id string, stored store.StoredMessage) {
-	if !instagramIsSurplus(stored) {
-		exact[key] = append(exact[key], id)
-	}
 }
 
 // reconcileInstagramCopies settles changed copies that share content with
