@@ -638,24 +638,24 @@ func TestMCPCacheJobStatusRetainsRealLifecycle(t *testing.T) {
 }
 
 func TestListChangesRequiresAllFilterCapabilities(t *testing.T) {
-	check := func(available []string) mcpRouteCheck {
-		return func(id, method, path string, params ...string) bool {
-			if id != "listChangedMessages" || method != http.MethodGet || path != "/api/v1/messages/changes" {
-				return false
-			}
-			for _, param := range params {
-				if !slices.Contains(available, param) {
-					return false
+	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)})
+	backend := sourceOperationFixture(t, fixture)
+	for _, param := range []string{"person_id", "source_id", "conversation_id", "incoming_only"} {
+		t.Run(param, func(t *testing.T) {
+			capabilities, err := backend.client.MCPCapabilities(t.Context())
+			require.NoError(t, err)
+			found := false
+			for i := range capabilities.Routes {
+				route := &capabilities.Routes[i]
+				if route.OperationID == "listChangedMessages" {
+					found = true
+					require.Contains(t, route.QueryParameters, param)
+					route.QueryParameters = slices.DeleteFunc(route.QueryParameters, func(name string) bool { return name == param })
 				}
 			}
-			return true
-		}
-	}
-	all := []string{"person_id", "source_id", "conversation_id", "incoming_only"}
-	assert.Contains(t, sourceMCPCapabilities(check(all), nil), "list_changes")
-	for i := range all {
-		missing := append(slices.Clone(all[:i]), all[i+1:]...)
-		assert.NotContains(t, sourceMCPCapabilities(check(missing), nil), "list_changes")
+			require.True(t, found)
+			assert.NotContains(t, newDaemonMCPOperations(backend.client, capabilities).capabilities(), "list_changes")
+		})
 	}
 }
 

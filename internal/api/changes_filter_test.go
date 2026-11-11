@@ -32,7 +32,7 @@ func TestChangesFilteredCursorPagination(t *testing.T) {
 	assert.True(t, first.HasMore)
 	second := getChangesPage(t, srv, fmt.Sprintf("/api/v1/messages/changes?source_id=%d&cursor=%s&limit=1", src.ID, url.QueryEscape(first.NextCursor)))
 	require.Len(t, second.Messages, 1)
-	assert.NotEqual(t, first.Messages[0].ID, second.Messages[0].ID)
+	assert.Equal(t, ids[1], second.Messages[0].ID)
 	refused := doGet(t.Context(), srv, "/api/v1/messages/changes?cursor="+url.QueryEscape(first.NextCursor))
 	assert.Equal(t, http.StatusBadRequest, refused.Code, refused.Body.String())
 	assert.Contains(t, refused.Body.String(), "different filter")
@@ -64,7 +64,7 @@ func TestChangesScanPages(t *testing.T) {
 	bound := at.Add(time.Hour)
 	rows := make([]store.ChangedMessage, 2001)
 	for i := range rows {
-		rows[i] = store.ChangedMessage{ID: int64(i - 1), SourceID: 1, ContentChangedAt: at}
+		rows[i] = store.ChangedMessage{ID: int64(i + 1), SourceID: 1, ContentChangedAt: at}
 	}
 	from := store.ChangedMessagesFrom(at)
 	after := store.ChangedMessagesAfter(at, 0)
@@ -77,8 +77,8 @@ func TestChangesScanPages(t *testing.T) {
 		next         store.ChangedMessagesCursor
 		more         bool
 	}{
-		{"limit", store.ChangedMessagePage{Messages: rows, ServerTime: bound.Add(time.Second), CompleteThrough: bound}, from, 1, 1, 1, store.ChangedMessagesAfter(at, -1), true},
-		{"sentinel", store.ChangedMessagePage{Messages: rows, ServerTime: bound.Add(time.Second), CompleteThrough: bound}, from, 2, 100, 0, store.ChangedMessagesAfter(at, 1998), true},
+		{"limit", store.ChangedMessagePage{Messages: rows, ServerTime: bound.Add(time.Second), CompleteThrough: bound}, from, 1, 1, 1, store.ChangedMessagesAfter(at, 1), true},
+		{"sentinel", store.ChangedMessagePage{Messages: rows, ServerTime: bound.Add(time.Second), CompleteThrough: bound}, from, 2, 100, 0, store.ChangedMessagesAfter(at, 2000), true},
 		{"exhaustion", store.ChangedMessagePage{Messages: rows[:2000], ServerTime: bound.Add(time.Second), CompleteThrough: bound}, from, 2, 100, 0, store.ChangedMessagesFrom(bound), false},
 		{"no bound", store.ChangedMessagePage{ServerTime: bound}, after, 1, 1, 0, after, false},
 		{"earlier bound", store.ChangedMessagePage{ServerTime: bound, CompleteThrough: at.Add(-time.Second)}, after, 1, 1, 0, after, false},
@@ -122,7 +122,7 @@ func TestChangesPersonMatchesLinkedSenders(t *testing.T) {
 	require.NoError(t, err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')"), ids[3], other)
 	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET sender_id = ?, is_from_me = ? WHERE id = ?"), other, true, ids[4])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET sender_id = ? WHERE id = ?"), other, ids[4])
 	require.NoError(t, err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')"), ids[4], first)
 	require.NoError(t, err)

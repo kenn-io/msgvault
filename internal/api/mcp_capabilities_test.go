@@ -58,7 +58,7 @@ func TestMCPCapabilitiesRequiresOwner(t *testing.T) {
 	assertions.NotContains(delegated.Body.String(), agentTokenTestAPIKey)
 }
 
-func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
+func TestMCPCapabilitiesDescribeRealRoutes(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Logger: testLogger()})
