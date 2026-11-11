@@ -533,8 +533,6 @@ func TestResolvePersonSemanticCandidatesInOrganizationRevalidatesMembershipAndRe
 		check.NotEmpty(person.VCardUID)
 	}
 	check.Equal(want, got)
-	_, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, -1)
-	must.Error(err)
 	for _, id := range []int64{999999} {
 		people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, id)
 		must.NoError(err)

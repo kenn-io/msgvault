@@ -168,6 +168,12 @@ func TestOrganizationListSendsQueryParametersAndRendersTable(t *testing.T) {
 	require := require.New(t)
 	var rawQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			w.Header().Set("Content-Type", "application/json")
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.1.0"}`))
+			assert.NoError(err)
+			return
+		}
 		assert.Equal("/api/v1/organizations", r.URL.Path)
 		rawQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
@@ -285,4 +291,45 @@ func runOrganizationCommand(ctx context.Context, t *testing.T, template *cobra.C
 	command.SetContext(ctx)
 	require.NoError(t, command.Execute())
 	return output.String()
+}
+
+func TestOrganizationListQueryRequiresDiscoverySchema(t *testing.T) {
+	for _, tc := range []struct {
+		name, version string
+		args          []string
+		wantRequest   bool
+	}{
+		{"old query", "5.0.0", []string{"--query", "Coop", "--json"}, false},
+		{"current query", "5.1.0", []string{"--query", "Coop", "--json"}, true},
+		{"old plain list", "5.0.0", []string{"--json"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/api/v1/health" {
+					_, err := fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, tc.version)
+					require.NoError(t, err)
+					return
+				}
+				requests++
+				_, err := w.Write([]byte(`{"organizations":[],"total":0,"limit":20,"offset":0}`))
+				require.NoError(t, err)
+			}))
+			t.Cleanup(server.Close)
+			cmd := cloneOrganizationCommand(organizationListCmd)
+			cmd.SetContext(withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}}))
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs(tc.args)
+			err := cmd.Execute()
+			if tc.wantRequest {
+				require.NoError(t, err)
+				assert.Equal(t, 1, requests)
+			} else {
+				require.ErrorContains(t, err, "5.1.0")
+				assert.Zero(t, requests)
+			}
+		})
+	}
 }

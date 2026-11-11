@@ -17,7 +17,8 @@ const PersonDiscoveryMinAPISchemaVersion = "5.1.0"
 var _ peoplebrowser.SemanticPeopleSearcher = (*PeopleBrowser)(nil)
 var _ peoplebrowser.OrganizationLister = (*PeopleBrowser)(nil)
 
-func (c *Client) requirePersonDiscovery(ctx context.Context) error {
+// RequirePersonDiscovery checks support for scoped discovery and alias lookup.
+func (c *Client) RequirePersonDiscovery(ctx context.Context) error {
 	supported, err := c.SupportsAPISchemaVersion(ctx, PersonDiscoveryMinAPISchemaVersion)
 	if err != nil {
 		return fmt.Errorf("check person discovery capability: %w", err)
@@ -34,7 +35,7 @@ func (c *Client) RequirePersonDiscoveryScope(ctx context.Context, organizationID
 	if organizationID == 0 {
 		return nil
 	}
-	return c.requirePersonDiscovery(ctx)
+	return c.RequirePersonDiscovery(ctx)
 }
 
 func (b *PeopleBrowser) SearchSemanticPeople(ctx context.Context, request peoplebrowser.SemanticPeopleRequest) (*peoplebrowser.SemanticPeoplePage, error) {
@@ -62,7 +63,7 @@ func (b *PeopleBrowser) SearchSemanticPeople(ctx context.Context, request people
 }
 
 func (b *PeopleBrowser) ListOrganizations(ctx context.Context, query string, limit, offset int) (*peoplebrowser.OrganizationPage, error) {
-	if err := b.engine.store.requirePersonDiscovery(ctx); err != nil {
+	if err := b.engine.store.RequirePersonDiscovery(ctx); err != nil {
 		return nil, err
 	}
 	response, err := APIResponse(b.engine.store, func(client *apiclient.Client) (*generated.ListOrganizationsResp, error) {

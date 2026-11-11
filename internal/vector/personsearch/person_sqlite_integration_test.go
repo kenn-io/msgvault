@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,7 +67,12 @@ func TestEngineOrganizationScopeRealSQLiteBeyondVec0Ceiling(t *testing.T) {
 		persons = append(persons, vector.PersonEmbedding{PersonID: person.ID, Revision: doc.Revision, Vector: []float32{1, float32(rank) / 1000, 0, 0}})
 	}
 	for id := int64(1); id <= count; id++ {
-		persons = append(persons, vector.PersonEmbedding{PersonID: id + 10000, Revision: "missing", Vector: []float32{1, float32(id) / 1000, 0, 0}})
+		participant := f.EnsureParticipant(fmt.Sprintf("outsider-%d@example.invalid", id), "Outsider", "example.invalid")
+		person, _, err := data.CreatePersonFromParticipantContext(ctx, participant)
+		must.NoError(err)
+		doc, err := data.LoadPersonSemanticDocumentContext(ctx, person.ID)
+		must.NoError(err)
+		persons = append(persons, vector.PersonEmbedding{PersonID: person.ID, Revision: doc.Revision, Vector: []float32{1, float32(id) / 1000, 0, 0}})
 	}
 	must.NoError(backend.UpsertPersons(ctx, gen, persons))
 	must.NoError(backend.ActivateGeneration(ctx, gen, true))
@@ -92,7 +98,9 @@ func TestEngineOrganizationScopeRealSQLiteBeyondVec0Ceiling(t *testing.T) {
 					return personsearch.Coverage{}, nil
 				},
 			})
+			start := time.Now()
 			results, err := engine.Search(t.Context(), "synthetic query", tc.limit, tc.organizationID)
+			t.Logf("scoped search: %s", time.Since(start))
 			must.NoError(err)
 			got := make([]int64, 0, len(results))
 			for _, result := range results {

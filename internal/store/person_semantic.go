@@ -152,36 +152,45 @@ func (s *Store) ListPersonSemanticDocumentsContext(
 func (s *Store) ResolvePersonSemanticCandidatesContext(
 	ctx context.Context, candidates []PersonSemanticCandidate, organizationID int64,
 ) ([]Person, error) {
-	if organizationID < 0 {
-		return nil, errors.New("person semantic organization ID must not be negative")
-	}
 	people := make([]Person, 0, len(candidates))
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		var members map[int64]struct{}
+		if organizationID > 0 {
+			organization, err := getOrganizationTx(ctx, tx, organizationID)
+			if errors.Is(err, ErrOrganizationNotFound) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if organization.RetiredAt != nil || organization.MergedIntoID != nil {
+				return nil
+			}
+			employments, err := s.listAllEmploymentsContext(ctx, tx, EmploymentFilter{OrganizationID: organizationID, CurrentOnly: true})
+			if err != nil {
+				return fmt.Errorf("load organization employments: %w", err)
+			}
+			members = make(map[int64]struct{}, len(employments))
+			for _, employment := range employments {
+				members[employment.PersonID] = struct{}{}
+			}
+		}
 		allowed, err := s.loadPersonSemanticAttributeDefinitionsTx(ctx, tx)
 		if err != nil {
 			return err
 		}
 		for _, candidate := range candidates {
+			if members != nil {
+				if _, ok := members[candidate.PersonID]; !ok {
+					continue
+				}
+			}
 			snapshot, err := s.loadPersonSemanticSnapshotTx(ctx, tx, candidate.PersonID, allowed)
 			if errors.Is(err, ErrPersonNotFound) {
 				continue
 			}
 			if err != nil {
 				return fmt.Errorf("load person %d semantic search candidate: %w", candidate.PersonID, err)
-			}
-			if organizationID > 0 {
-				member := false
-				// The snapshot loader uses the employment is_current contract.
-				for _, employment := range snapshot.employments {
-					organization := employment.organization
-					if organization.ID == organizationID && organization.RetiredAt == nil && organization.MergedIntoID == nil {
-						member = true
-						break
-					}
-				}
-				if !member {
-					continue
-				}
 			}
 			document, err := renderPersonSemanticDocument(snapshot)
 			if err != nil {

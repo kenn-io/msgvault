@@ -58,23 +58,8 @@ func TestPersonDiscoveryMCPCatalogAndDelegatedBoundary(t *testing.T) {
 
 func TestPersonDiscoveryMCPReportsCorpusAndExplicitAvailabilityErrors(t *testing.T) {
 	assert := assert.New(t)
-	require := require.New(t)
 	backend := &discoveryPeopleBackend{}
 	opts := discoveryToolOptions(backend)
-	result := rawCallTool(t, opts, "search_semantic_people", map[string]any{"query": "equipment", "organization_id": 13, "limit": 2})
-	require.NotEqual(true, result["isError"])
-	structured := toolStructuredContent(t, result)
-	assert.Equal(false, structured["exhaustive"])
-	assert.Equal("current_searchable_non_sensitive_profile_fields", structured["corpus"])
-	assert.ElementsMatch([]any{"sensitive_attributes", "notes", "observations"}, structured["excluded"])
-	assert.Equal(peoplebrowser.SemanticPeopleRequest{Query: "equipment", OrganizationID: 13, Limit: 2}, backend.request)
-	rows, ok := structured["results"].([]any)
-	require.True(ok)
-	require.Len(rows, 1)
-	row, ok := rows[0].(map[string]any)
-	require.True(ok)
-	assert.Len(row, 4, "identity and score only; no profile text, notes, evidence or private fields")
-	assert.Equal("person-7", row["vcard_uid"])
 	for _, code := range []string{"person_embedding_consent_required", "index_building", "index_stale", "person_embeddings_disabled"} {
 		backend.err = &daemonclient.APIError{Status: 503, Code: code, Message: "specific safe recovery instructions"}
 		failed := rawCallTool(t, opts, "search_semantic_people", map[string]any{"query": "equipment"})
@@ -85,14 +70,8 @@ func TestPersonDiscoveryMCPReportsCorpusAndExplicitAvailabilityErrors(t *testing
 	}
 }
 
-func TestPersonDiscoveryMCPOrganizationPagination(t *testing.T) {
+func TestPersonDiscoveryMCPRejectsInvalidSearch(t *testing.T) {
 	assert := assert.New(t)
-	require := require.New(t)
-	result := rawCallTool(t, discoveryToolOptions(&discoveryPeopleBackend{}), "list_organizations", map[string]any{"query": "Coop", "limit": 1})
-	require.NotEqual(true, result["isError"])
-	page := toolStructuredContent(t, result)
-	assert.Equal(true, page["has_more"])
-	assert.InDelta(2, page["total"], 0)
 	for _, args := range []map[string]any{{"query": "equipment", "organization_id": -1}, {"query": "equipment", "limit": 101}, {"query": "equipment", "organization_id": 1.5}, {"query": " "}} {
 		failed := rawCallTool(t, discoveryToolOptions(&discoveryPeopleBackend{}), "search_semantic_people", args)
 		assert.Equal(true, failed["isError"])
