@@ -4500,7 +4500,7 @@ func TestHandleGetMessage_EngineBodyHTMLAndRelatedID(t *testing.T) {
 				RelatedMessageID:  new(int64(43)),
 				SourceMessageID:   "source-42",
 				Subject:           "HTML Email",
-				IsFromMe:          true,
+				IsFromMe:          new(true),
 				From:              []query.Address{{Email: "sender@example.com", Name: "Sender"}},
 				To:                []query.Address{{Email: "rcpt@example.com"}},
 				SentAt:            time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC),
@@ -4530,6 +4530,28 @@ func TestHandleGetMessage_EngineBodyHTMLAndRelatedID(t *testing.T) {
 	assert.Equal(true, resp["is_from_me"], "is_from_me")
 	assert.InDelta(43, resp["related_message_id"], 0)
 	assert.NotContains(resp, "deleted_at", "deleted_at should be omitted for live message")
+}
+
+func TestHandleGetMessage_EngineOwnershipIsOptional(t *testing.T) {
+	t.Parallel()
+	engine := &querytest.MockEngine{
+		Messages: map[int64]*query.MessageDetail{
+			1: {ID: 1, SentAt: time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC), IsFromMe: new(false)},
+			2: {ID: 2, SentAt: time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)},
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	for id, want := range map[string]any{"1": false, "2": nil} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/"+id, nil)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		got, present := resp["is_from_me"]
+		assert.Equal(t, want != nil, present, "message %s presence", id)
+		assert.Equal(t, want, got, "message %s ownership", id)
+	}
 }
 
 // TestHandleGetMessage_EngineDeletedAt verifies the engine path surfaces

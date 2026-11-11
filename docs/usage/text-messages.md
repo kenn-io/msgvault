@@ -78,8 +78,9 @@ chat. Choose `--chat-type direct` or `group`; `--chat-title` is display only.
 TXT records use a separate namespace from database imports, so importing both
 can retain two representations of the same history. Names are scoped labels
 within this account and chat. They are never inferred phone numbers or “me”
-identities. Source provenance records direction as unknown. Current people
-inboxes and relationship scores can count your own TXT messages as received.
+identities. Source provenance records direction as unknown, so people inboxes
+and relationship scores count TXT messages as neither sent nor received.
+Their text, sender label, conversation, and search results remain available.
 Senderless notices have no author. Only English notices are recognized; other notices
 with colons keep their prefix as a scoped label.
 

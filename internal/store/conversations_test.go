@@ -148,7 +148,8 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	require.NoError(err)
 	require.Len(window.Messages, 1)
 	message := window.Messages[0]
-	assert.True(message.IsFromMe)
+	require.NotNil(message.IsFromMe)
+	assert.True(*message.IsFromMe)
 	assert.Equal("Alice <alice@example.com>", message.From)
 	assert.Equal(senderID, message.FromParticipantID)
 	assert.ElementsMatch([]store.ParticipantDisplay{{ParticipantID: toID, Display: "Bob <bob@example.com>"}, {ParticipantID: duplicateID, Display: "Bob <Bob@example.com>"}, {ParticipantID: nameOnlyID, Display: "Bob"}}, message.ToParticipants)
@@ -169,7 +170,7 @@ func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *tes
 	assert.Equal(nameOnlyID, window.Messages[0].FromParticipantID)
 }
 
-func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
+func TestMessageReadsKeepMissingSenderAttributionUnknown(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
@@ -189,12 +190,12 @@ func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
 
 	message, err := st.GetMessage(messageID)
 	require.NoError(err)
-	assert.False(t, message.IsFromMe)
+	assert.Nil(t, message.IsFromMe)
 
 	window, err := st.GetConversationWindow(conversationID, messageID, 1, 1)
 	require.NoError(err)
 	require.Len(window.Messages, 1)
-	assert.False(t, window.Messages[0].IsFromMe)
+	assert.Nil(t, window.Messages[0].IsFromMe)
 }
 
 func TestConversationWindowContextScopesToTimeRange(t *testing.T) {

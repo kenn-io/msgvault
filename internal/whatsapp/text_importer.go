@@ -173,7 +173,7 @@ func (imp *Importer) ImportText(ctx context.Context, input *TextInput) (summary 
 					return summary, err
 				}
 				messageID, err = st.PersistMessageContext(ctx, &store.MessagePersistData{
-					Message:      &store.Message{SourceID: source.ID, ConversationID: convID, SourceMessageID: ids[i], MessageType: "whatsapp", SentAt: sql.NullTime{Time: row.SentAt, Valid: true}, SenderID: sender, Snippet: sql.NullString{String: row.Body, Valid: true}, SizeEstimate: int64(len(row.Body)), PreserveAttachmentStats: true},
+					Message:      &store.Message{SourceID: source.ID, ConversationID: convID, SourceMessageID: ids[i], MessageType: "whatsapp", SentAt: sql.NullTime{Time: row.SentAt, Valid: true}, SenderID: sender, Snippet: sql.NullString{String: row.Body, Valid: true}, SizeEstimate: int64(len(row.Body)), PreserveAttachmentStats: true, DirectionUnknown: true},
 					Conversation: &store.ConversationPersistData{SourceConversationID: textChatKey(opts.ChatID), ConversationType: map[bool]string{true: "group_chat", false: "direct_chat"}[opts.ChatType == "group"], Title: opts.ChatTitle, Participants: members, PreserveExistingParticipants: true},
 					BodyText:     sql.NullString{String: row.Body, Valid: true}, RawMIME: raw, RawFormat: "whatsapp_txt", PreserveLabels: true,
 					FTS: &store.FTSDoc{Body: row.Body, FromAddr: row.Sender},

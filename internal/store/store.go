@@ -1666,10 +1666,7 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("migrate person fact claim origins: %w", err)
 	}
-	if err := s.runOnceMigration(
-		ctx, migrationPersonSweepAttemptBriefFailure, 1, false,
-		s.migratePersonSweepAttemptBriefFailure,
-	); err != nil {
+	if err := s.runOnceMigration(ctx, migrationPersonSweepAttemptBriefFailure, 1, false, s.migratePersonSweepAttemptBriefFailure); err != nil {
 		return fmt.Errorf("migrate person sweep attempt brief failure class: %w", err)
 	}
 	if err := s.runOnceMigration(
@@ -2037,6 +2034,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		},
 	); err != nil {
 		return fmt.Errorf("ensure person sweep change triggers: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationPersonSweepUnknownDirectionScope, 1, false, s.migratePersonSweepUnknownDirectionScope); err != nil {
+		return fmt.Errorf("migrate person sweep unknown-direction scope: %w", err)
 	}
 	// Replace callers before dropping the document helper they used. Each
 	// committed migration boundary must leave message writes usable.

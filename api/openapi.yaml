@@ -8030,6 +8030,7 @@ components:
           format: int64
           type: integer
         is_from_me:
+          description: Whether the account owner sent the message. Omitted when the source does not say who sent it.
           type: boolean
         labels:
           items:

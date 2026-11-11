@@ -413,7 +413,7 @@ func personFileMatchCTEs(scope PersonFileScope) (string, []any) {
 			selectedDirections = append(selectedDirections, "has_group")
 		}
 	}
-	directChatDirectionEvidence := `(m.is_from_me
+	directChatDirectionEvidence := `(m.is_from_me IS TRUE
 	OR m.sender_id IS NOT NULL
 	OR EXISTS (
 		SELECT 1 FROM message_recipients known_from

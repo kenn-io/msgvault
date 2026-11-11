@@ -41,10 +41,10 @@ func TestTextPersistedKeys(t *testing.T) {
 	assert.Equal("asters", provenance.Body)
 	assert.Equal("13/6/26, 10:00 - Mira: asters", provenance.Raw)
 	var sender sql.NullInt64
-	var fromMe bool
+	var fromMe sql.NullBool
 	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT sender_id,is_from_me FROM messages WHERE snippet = 'fictional garden note'").Scan(&sender, &fromMe))
 	require.True(sender.Valid, "a literal You label is still sender evidence, not a senderless notice")
-	assert.False(fromMe, "a display label cannot establish owner direction")
+	assert.False(fromMe.Valid, "a display label cannot establish owner direction")
 	var kind string
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT identifier_type FROM participant_identifiers WHERE participant_id = ?"), sender.Int64).Scan(&kind))
 	assert.Equal("whatsapp_txt", kind)

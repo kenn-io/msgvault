@@ -716,6 +716,15 @@ func (e *DuckDBEngine) currentCacheFingerprint() string {
 	return e.cacheFP
 }
 
+// parquetBoolReplace normalizes a message boolean column; is_from_me stays NULL
+// when direction is unknown, every other flag defaults to false.
+func parquetBoolReplace(col string) string {
+	if col == "is_from_me" {
+		return "TRY_CAST(is_from_me AS BOOLEAN) AS is_from_me"
+	}
+	return "COALESCE(TRY_CAST(" + col + " AS BOOLEAN), false) AS " + col
+}
+
 // parquetCTEs returns common CTEs for reading all Parquet tables.
 // This is used by aggregate queries that need to join across tables.
 // parquetCTEs returns the WITH clause body that defines CTEs for all Parquet
@@ -784,7 +793,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	}
 	for _, col := range []string{"is_from_me", "hidden_text_present"} {
 		if e.hasCol(datasetMessages, col) {
-			msgReplace = append(msgReplace, "COALESCE(TRY_CAST("+col+" AS BOOLEAN), false) AS "+col)
+			msgReplace = append(msgReplace, parquetBoolReplace(col))
 		} else {
 			msgExtra = append(msgExtra, "false AS "+col)
 		}

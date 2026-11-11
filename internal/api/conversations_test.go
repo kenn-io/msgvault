@@ -97,8 +97,31 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 	require.NoError(json.NewDecoder(w.Body).Decode(&response))
 	require.Len(response.Messages, 3)
 	assert.Equal("imessage", response.Messages[0].MessageType)
-	assert.True(response.Messages[1].IsFromMe)
+	require.NotNil(response.Messages[1].IsFromMe)
+	assert.True(*response.Messages[1].IsFromMe)
 	assert.Equal(ids[1], response.AnchorID)
+}
+
+func TestConversationWindowOmitsUnknownOwnership(t *testing.T) {
+	t.Parallel()
+	srv, conversationID, ids := seedConversation(t, "imessage", 3)
+	st, ok := srv.store.(*store.Store)
+	require.True(t, ok)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET is_from_me = NULL, source_is_from_me = NULL WHERE id = ?`), ids[2])
+	require.NoError(t, err)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
+		fmt.Sprintf("/api/v1/conversations/%d?anchor=%d&before=1&after=1", conversationID, ids[1]), nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var response struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
+	require.Len(t, response.Messages, 3)
+	assert.Equal(t, false, response.Messages[0]["is_from_me"])
+	assert.Equal(t, true, response.Messages[1]["is_from_me"])
+	assert.NotContains(t, response.Messages[2], "is_from_me")
 }
 
 func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing.T) {

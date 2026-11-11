@@ -250,7 +250,7 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 					},
 					{
 						name:        "is_from_me",
-						replaceExpr: "COALESCE(TRY_CAST(is_from_me AS BOOLEAN), false) AS is_from_me",
+						replaceExpr: "TRY_CAST(is_from_me AS BOOLEAN) AS is_from_me",
 						defaultExpr: "false AS is_from_me",
 					},
 				},

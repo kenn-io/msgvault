@@ -1362,7 +1362,7 @@ func buildCacheLockedAttempt(
 	}
 	messageSourceAttribution := "COALESCE(m.is_from_me, FALSE)"
 	if messageSourceAttributionColumnCount > 0 {
-		messageSourceAttribution = "COALESCE(m.source_is_from_me, FALSE)"
+		messageSourceAttribution = "m.source_is_from_me"
 	}
 	sourceSnapshot.hasMessageSourceAttribution = messageSourceAttributionColumnCount > 0
 	var accountAttributionColumnCount int

@@ -480,7 +480,7 @@ func (g *generator) generateRelationshipScaleSetWise(ctx context.Context) error 
 			id, conversation_id, source_id, source_message_id,
 			rfc822_message_id, message_type, sent_at, received_at,
 			sender_id, is_from_me, subject, snippet, size_estimate,
-			has_attachments, attachment_count, archived_at
+			has_attachments, attachment_count, archived_at, source_is_from_me, identity_is_from_me
 		)
 		SELECT message_id,
 		       conversation_id,
@@ -498,7 +498,7 @@ func (g *generator) generateRelationshipScaleSetWise(ctx context.Context) error 
 		       512 + (i % 4096),
 		       FALSE,
 		       0,
-		       occurred_at
+		       occurred_at, (i % 7 = 0), FALSE
 		FROM shaped
 	`, g.opts.Messages, g.convCount, g.convCount, g.partCount); err != nil {
 		return fmt.Errorf("fakevault: inserting set-wise messages: %w", err)
@@ -549,8 +549,8 @@ func prepareBatch(ctx context.Context, tx *sql.Tx) (*batchStmts, error) {
 		{&s.msg, `INSERT INTO messages (id, conversation_id, source_id,
 			source_message_id, rfc822_message_id, message_type, sent_at,
 			received_at, sender_id, is_from_me, subject, snippet,
-			size_estimate, has_attachments, attachment_count, archived_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`},
+			size_estimate, has_attachments, attachment_count, archived_at, source_is_from_me, identity_is_from_me)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?10, FALSE)`},
 		{&s.body, `INSERT INTO message_bodies (message_id, body_text, body_html)
 			VALUES (?, ?, ?)`},
 		{&s.raw, `INSERT INTO message_raw (message_id, raw_data, raw_format, compression)

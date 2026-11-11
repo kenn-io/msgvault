@@ -151,7 +151,7 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 		ConversationTitle: stringValue(m.ConversationTitle),
 
 		ID:                m.ID,
-		IsFromMe:          boolValue(m.IsFromMe),
+		IsFromMe:          m.IsFromMe,
 		SenderAuth:        senderAuthFromGenerated(m.SenderAuth),
 		Calendar:          calendarProjectionFromGenerated(m.Calendar),
 		SourceID:          int64Value(m.SourceID),

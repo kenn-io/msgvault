@@ -104,6 +104,8 @@ const (
 	migrationCardDAVMultipleAccounts        = "carddav_multiple_accounts_v1"
 	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
 	migrationChatMembers                    = "chat_members_v1"
+	// The person-sweep direct-chat roster fallback tests ownership with IS TRUE.
+	migrationPersonSweepUnknownDirectionScope = "person_sweep_unknown_direction_scope_v1"
 )
 
 // hiddenTextBackfillCursorKey is the archive_metadata key holding the last

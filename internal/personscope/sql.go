@@ -63,7 +63,7 @@ func messagePredicate(scope Scope, message, conversation, probe string) (string,
 			WHERE person_member.conversation_id = ` + message + `.conversation_id
 			  AND person_member.participant_id IN (` + rosterIDs + `)` + probe + `))`, args
 	}
-	directionEvidence := `(` + message + `.is_from_me = TRUE OR ` + message + `.sender_id IS NOT NULL OR EXISTS (
+	directionEvidence := `(` + message + `.is_from_me IS TRUE OR ` + message + `.sender_id IS NOT NULL OR EXISTS (
 		SELECT 1 FROM message_recipients known_from
 		WHERE known_from.message_id = ` + message + `.id
 		  AND LOWER(known_from.recipient_type) = 'from'` + probe + `))`

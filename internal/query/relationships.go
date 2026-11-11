@@ -324,10 +324,10 @@ func (e *DuckDBEngine) buildFilteredRelationshipsSQL(
 	queryText := logicalSQL + `,
 relationship_interactions AS (
 	SELECT p.*,
-	       CASE WHEN p.is_from_me
+	       CASE WHEN p.is_from_me IS TRUE
 	                 AND p.entry_kind IN ('email','conversation','item')
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS sent_units,
-	       CASE WHEN NOT p.is_from_me
+	       CASE WHEN p.is_from_me IS FALSE
 	                 AND (p.entry_kind = 'conversation'
 	                      OR (p.entry_kind IN ('email','item') AND p.is_author))
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS received_units,

@@ -30,6 +30,7 @@ export interface MessageDetail {
   has_attachments: boolean;
   hidden_text_present: boolean;
   id: number;
+  /** Whether the account owner sent the message. Omitted when the source does not say who sent it. */
   is_from_me?: boolean;
   labels: string[];
   message_type?: string;

@@ -348,7 +348,7 @@ type MessageDetail struct {
 	Body     string  `json:"body"`
 	BodyText *string `json:"body_text,omitzero" nullable:"false" doc:"Stored plain-text body of a single message, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit this field; body keeps its HTML fallback."`
 	BodyHTML string  `json:"body_html,omitempty"`
-	IsFromMe bool    `json:"is_from_me,omitzero"`
+	IsFromMe *bool   `json:"is_from_me,omitempty" nullable:"false" doc:"Whether the account owner sent the message. Omitted when the source does not say who sent it."`
 	// BodyOmitted marks a conversation-window message whose body was left
 	// out to keep the response within the cumulative inline-body budget.
 	// The snippet is still present; fetch the full body via

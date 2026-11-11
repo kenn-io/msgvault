@@ -36,7 +36,7 @@ func (s *Store) PersonProvenanceForMessages(
 		participantRows[i] = "(CAST(? AS BIGINT))"
 		args = append(args, id)
 	}
-	directionEvidence := `(m.is_from_me = TRUE OR m.sender_id IS NOT NULL OR EXISTS (
+	directionEvidence := `(m.is_from_me IS TRUE OR m.sender_id IS NOT NULL OR EXISTS (
 		SELECT 1 FROM message_recipients known_from
 		WHERE known_from.message_id = m.id AND LOWER(known_from.recipient_type) = 'from'))`
 	rosterCondition := `LOWER(COALESCE(c.conversation_type, '')) IN ('group_chat', 'channel')`

@@ -564,7 +564,7 @@ func buildExploreSQL(conditions, candidateRankExpression, clustersGlob, ownersGl
     SELECT m.id AS message_id, cn.canonical_id
     FROM messages m
     JOIN canon cn ON cn.participant_id = m.owner_participant_id
-    WHERE m.is_from_me
+    WHERE m.is_from_me IS TRUE
 )
 SELECT
     entry_key,
@@ -589,11 +589,11 @@ SELECT
     deleted_from_source,
     total_count,
     CASE WHEN NOT EXISTS (SELECT 1 FROM owners)
-                  AND NOT (is_from_me AND message_owner.canonical_id IS NOT NULL) THEN NULL
+                  AND NOT (is_from_me IS TRUE AND message_owner.canonical_id IS NOT NULL) THEN NULL
         ELSE (SELECT MIN(pid) FROM UNNEST(participant_ids) AS u(pid)
               WHERE pid IN (SELECT participant_id FROM canon)
                 AND pid NOT IN (SELECT participant_id FROM owner_participant_ids)
-                AND NOT (is_from_me AND EXISTS (
+                AND NOT (is_from_me IS TRUE AND EXISTS (
                     SELECT 1 FROM canon participant_canon
                     WHERE participant_canon.participant_id = pid
                       AND participant_canon.canonical_id = message_owner.canonical_id
@@ -752,7 +752,7 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
     SELECT m.id AS message_id, cn.canonical_id
     FROM messages m
     JOIN canon cn ON cn.participant_id = m.owner_participant_id
-    WHERE m.is_from_me
+    WHERE m.is_from_me IS TRUE
 )
 SELECT
     p.entry_key,
@@ -777,11 +777,11 @@ SELECT
     p.deleted_from_source,
     (SELECT total_count FROM total) AS total_count,
     CASE WHEN NOT EXISTS (SELECT 1 FROM owners)
-                  AND NOT (p.is_from_me AND message_owner.canonical_id IS NOT NULL) THEN NULL
+                  AND NOT (p.is_from_me IS TRUE AND message_owner.canonical_id IS NOT NULL) THEN NULL
         ELSE (SELECT MIN(pid) FROM UNNEST(COALESCE(f.participant_ids, []::BIGINT[])) AS u(pid)
               WHERE pid IN (SELECT participant_id FROM canon)
                 AND pid NOT IN (SELECT participant_id FROM owner_participant_ids)
-                AND NOT (p.is_from_me AND EXISTS (
+                AND NOT (p.is_from_me IS TRUE AND EXISTS (
                     SELECT 1 FROM canon participant_canon
                     WHERE participant_canon.participant_id = pid
                       AND participant_canon.canonical_id = message_owner.canonical_id
@@ -944,7 +944,7 @@ func exploreLogicalEntriesCTE(withParticipantLists bool) string {
 		SUM(` + exploreEstimatedBytesSQL + `)::BIGINT AS estimated_bytes,
 		false AS deletable,
 		bool_or(has_attachments) AS has_attachments,
-		arg_max(is_from_me, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS is_from_me,
+		(arg_max(struct_pack(v := is_from_me), struct_pack(occurred_at := occurred_at, message_id := message_id))).v AS is_from_me,
         SUM(attachment_count)::BIGINT AS attachment_count,
         SUM(attachment_size)::BIGINT AS attachment_size,
         bool_or(deleted_from_source) AS deleted_from_source
