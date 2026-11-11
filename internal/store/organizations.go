@@ -300,7 +300,7 @@ func (s *Store) GetOrganizationContext(ctx context.Context, id int64) (*Organiza
 func (s *Store) ListOrganizationsContext(
 	ctx context.Context, filter OrganizationFilter,
 ) ([]Organization, error) {
-	where, args := organizationWhere(filter)
+	where, args := s.organizationWhere(filter)
 	limit, offset := organizationPage(filter)
 	args = append(args, limit, offset)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+organizationColumns+
@@ -328,7 +328,7 @@ func (s *Store) ListOrganizationsContext(
 func (s *Store) CountOrganizationsContext(
 	ctx context.Context, filter OrganizationFilter,
 ) (int64, error) {
-	where, args := organizationWhere(filter)
+	where, args := s.organizationWhere(filter)
 	var count int64
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM organizations`+where, args...).Scan(&count); err != nil {
@@ -580,7 +580,7 @@ func validateOrganizationInput(input OrganizationInput) (OrganizationInput, erro
 	return input, nil
 }
 
-func organizationWhere(filter OrganizationFilter) (string, []any) {
+func (s *Store) organizationWhere(filter OrganizationFilter) (string, []any) {
 	conditions := make([]string, 0, 2)
 	args := make([]any, 0, 1)
 	if !filter.IncludeRetired {
@@ -588,11 +588,16 @@ func organizationWhere(filter OrganizationFilter) (string, []any) {
 	}
 	if query := NormalizeOrganizationName(filter.Query); query != "" {
 		query = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
+		activeFrom := "alias.active_from <= ?"
+		if s.dialect.DriverName() != postgresDriverName {
+			// SQLite stores offsets in timestamp text, so compare instants.
+			activeFrom = "julianday(alias.active_from) <= julianday(?)"
+		}
 		conditions = append(conditions, `(name_normalized LIKE ? ESCAPE '\' OR EXISTS (
 			SELECT 1 FROM organization_names alias
 			WHERE alias.organization_id = organizations.id
 			AND alias.active_until IS NULL AND alias.superseded_at IS NULL
-			AND (alias.active_from IS NULL OR alias.active_from <= ?)
+			AND (alias.active_from IS NULL OR `+activeFrom+`)
 			AND alias.name_normalized LIKE ? ESCAPE '\'))`)
 		args = append(args, query+"%", time.Now().UTC(), query+"%")
 	}

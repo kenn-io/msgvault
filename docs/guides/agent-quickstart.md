@@ -288,6 +288,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `search_metadata` | read | — | search.read |
 | `search_people` | read | — | owner-only |
 | `search_person_files` | read | — | owner-only |
+| `search_semantic_people` | read | — | owner-only |
 | `search_visual_attachments` | read | — | owner-only |
 | `semantic_search_messages` | read | — | owner-only |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |

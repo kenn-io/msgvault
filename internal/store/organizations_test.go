@@ -541,7 +541,8 @@ func TestOrganizationAliasLookupSharesCurrentPrefixAndCount(t *testing.T) {
 	first := mustOrganization(t, st, "Canonical First")
 	second := mustOrganization(t, st, "Canonical Second")
 	mustOrganization(t, st, `Literal XY\ alias`)
-	future := time.Now().UTC().Add(24 * time.Hour)
+	future := time.Now().Add(time.Hour).In(time.FixedZone("behind", -12*60*60))
+	current := time.Now().Add(-time.Hour).In(time.FixedZone("ahead", 14*60*60))
 	for _, org := range []*store.Organization{first, second} {
 		_, err := st.ReplaceOrganizationProfileContext(ctx, org.ID, org.Revision, store.OrganizationProfileInput{Names: []store.OrganizationNameInput{
 			{Name: "  Shared Alias  ", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
@@ -549,6 +550,7 @@ func TestOrganizationAliasLookupSharesCurrentPrefixAndCount(t *testing.T) {
 			{Name: `Literal %_\ alias`, NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
 			{Name: "Ended Alias", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
 			{Name: "Future Alias", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, ActiveFrom: &future}},
+			{Name: "Current Alias", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, ActiveFrom: &current}},
 		}})
 		must.NoError(err)
 		// Materialize an ended historical row to test the current-envelope predicate.
@@ -556,7 +558,7 @@ func TestOrganizationAliasLookupSharesCurrentPrefixAndCount(t *testing.T) {
 			SET active_until = active_from WHERE organization_id = ? AND name_normalized = ?`), org.ID, "ended alias")
 		must.NoError(err)
 	}
-	for _, query := range []string{"SHARED", `literal %_\`, "canonical", "alias", "ended", "future"} {
+	for _, query := range []string{"SHARED", `literal %_\`, "canonical", "current", "alias", "ended", "future"} {
 		filter := store.OrganizationFilter{Query: query, Limit: 1}
 		want := int64(2)
 		if query == "alias" || query == "ended" || query == "future" {
