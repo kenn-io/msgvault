@@ -199,3 +199,23 @@ func TestDraftRecipientProvenanceLimitDoesNotRepeatProviderMutation(t *testing.T
 	require.NoError(t, err)
 	assertions.Equal(result.MessageID, draft.CurrentMessageID)
 }
+
+func TestDraftRecipientProvenanceSavedAddressStaysKnownAcrossDrafts(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newDraftReplyFixture(t)
+	var personID int64
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`INSERT INTO persons (vcard_uid) VALUES (?) RETURNING id`), "saved-recipient").Scan(&personID))
+	_, err := f.store.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "saved@example.test",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	requirements.NoError(err)
+	for range 2 {
+		result := composeProvenanceDraft(t, f, nil, "saved@example.test")
+		requirements.Len(result.RecipientProvenance, 1)
+		assertions.Equal("contact", result.RecipientProvenance[0].Relationship)
+		assertions.Equal("ok", result.RecipientProvenance[0].Flag)
+		assertions.Empty(result.Warnings)
+	}
+}

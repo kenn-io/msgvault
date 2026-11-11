@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-10"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -128,7 +128,7 @@ addresses. The same fields appear in the matching CLI command's `--json` output.
 
 | `flag` | Meaning |
 |---|---|
-| `ok` | The exact address has a curated contact binding (`relationship: contact`) or a prior direct message sent by the owner (`relationship: known`). |
+| `ok` | The exact address belongs to a saved contact (`relationship: contact`) or received a prior direct message sent by the owner (`relationship: known`). |
 | `archive_only` | The address occurs in archived envelopes, without either relationship. |
 | `unseen` | No prior envelope evidence was found in the readable archive. |
 
@@ -143,6 +143,11 @@ human approval. Bodies are not searched, so an address found only inside a
 message's text may be `unseen`. A reply's parent participants do not establish
 authority. Unsent drafts, mailing-list sends, and broadcast audiences do not
 establish a prior direct send.
+
+A saved contact is an email address you entered or imported from CardDAV or
+vCard, or a person linked to the address. A saved address counts for owner
+calls even before any mail. A linked person counts without mail only while
+nothing else in the archive uses the address, including earlier drafts.
 
 Delegated calls use only readable granted sources for history. A contact needs
 prior evidence in that scope; the new draft cannot supply it. Write-only grants

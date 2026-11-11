@@ -341,3 +341,67 @@ func TestSenderRelationshipsMissingFromAndChatSnapshotsCannotFollowMerge(t *test
 		})
 	}
 }
+
+func TestSenderRelationshipsSavedAddressSurvivesEarlierDraft(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	earlier := senderRelationshipMessage(t, f, true, "to", "target@example.com")
+	current := senderRelationshipMessage(t, f, true, "to", "target@example.com")
+	for _, id := range []int64{earlier, current} {
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET is_sent=FALSE WHERE id=?`), id)
+		requirements.NoError(err)
+	}
+	var personID int64
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO persons (vcard_uid) VALUES (?) RETURNING id`), "saved-target").Scan(&personID))
+	_, err := f.Store.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: "target@example.com",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	requirements.NoError(err)
+	owner, err := f.Store.SenderRelationshipsWithOptions(t.Context(), []string{"target@example.com"}, store.SenderRelationshipOptions{ExcludeMessageID: current})
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "contact"}, owner["target@example.com"],
+		"an earlier unsent draft cannot hide an address the owner saved")
+	scoped, err := f.Store.SenderRelationshipsWithOptions(t.Context(), []string{"target@example.com"}, store.SenderRelationshipOptions{AllowedSourceIDs: []int64{f.Source.ID}, ExcludeMessageID: current})
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "none"}, scoped["target@example.com"],
+		"unsent drafts never supply the history a scoped contact needs")
+}
+
+func TestSenderRelationshipsSavedContactAddresses(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, ReplaceAll: true, NextSyncToken: "token-1",
+		Upserts: []store.CardDAVRemoteResource{remoteResource(book.CanonicalURL+"saved.vcf", "remote-saved", "Saved Contact", "Saved@Example.test", `"one"`)},
+	})
+	requirements.NoError(err)
+	var personID int64
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid) VALUES (?) RETURNING id`), "unsaved-addresses").Scan(&personID))
+	confidence := 0.9
+	ended := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for address, envelope := range map[string]store.ValueEnvelopeInput{
+		"inferred@example.test": {Source: store.ProvenanceArchiveObservation, Confidence: &confidence},
+		"retired@example.test":  {Source: store.ProvenanceUser, ActiveUntil: &ended},
+	} {
+		_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+			AddressKind: store.ContactAddressEmail, OriginalValue: address, Envelope: envelope,
+		})
+		requirements.NoError(err)
+	}
+	addresses := []string{"saved@example.test", "inferred@example.test", "retired@example.test"}
+	got, err := st.SenderRelationships(t.Context(), addresses, nil)
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "contact"}, got["saved@example.test"])
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "none"}, got["inferred@example.test"])
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "none"}, got["retired@example.test"])
+	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
+	requirements.NoError(err)
+	scoped, err := st.SenderRelationships(t.Context(), []string{"saved@example.test"}, []int64{source.ID})
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "none"}, scoped["saved@example.test"],
+		"a scoped caller still needs readable history for a saved address")
+}

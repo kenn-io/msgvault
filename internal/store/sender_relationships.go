@@ -155,12 +155,22 @@ func (s *Store) senderContactRelationships(ctx context.Context, tx *loggedTx, ke
 			JOIN participants p ON LOWER(p.email_address)=requested.address
 			JOIN person_participants pp ON pp.participant_id=p.id
 			GROUP BY requested.address
+		),
+		saved_contacts(address) AS MATERIALIZED (
+			SELECT requested.address
+			FROM requested
+			WHERE EXISTS (SELECT 1 FROM person_contact_points cp
+				WHERE cp.address_kind='email' AND LOWER(TRIM(cp.normalized_value))=requested.address
+				AND cp.active_until IS NULL AND cp.superseded_at IS NULL
+				AND cp.source IN ('user','carddav_import','vcard_import'))
 		)`
 	args = append(args, sourceArgs...)
 	if !scoped {
-		// A saved contact with no archive history still counts. An address used
-		// only by an unsent draft does not. Mutable participant pointers are
-		// negative evidence for that empty-history fallback, never positive
+		// The owner's explicitly saved addresses count without history: a draft
+		// cannot create one. A participant binding can attach to a participant
+		// that only a draft introduced, so it counts without history only when
+		// the address has none at all, drafts included. Mutable participant
+		// pointers are negative evidence for that fallback, never positive
 		// evidence of an envelope address after a participant merge.
 		query += `,
 			envelope_uses(address) AS MATERIALIZED (
@@ -188,14 +198,16 @@ func (s *Store) senderContactRelationships(ctx context.Context, tx *loggedTx, ke
 	}
 	query += `
 		SELECT requested.address,
-		CASE WHEN contacts.address IS NOT NULL AND (real_matches.address IS NOT NULL`
+		CASE WHEN (contacts.address IS NOT NULL OR saved_contacts.address IS NOT NULL) AND real_matches.address IS NOT NULL`
 	if !scoped {
-		query += ` OR (envelope_uses.address IS NULL AND participant_uses.address IS NULL)`
+		query += ` OR saved_contacts.address IS NOT NULL
+			OR (contacts.address IS NOT NULL AND envelope_uses.address IS NULL AND participant_uses.address IS NULL)`
 	}
-	query += `) THEN 1 ELSE 0 END,
+	query += ` THEN 1 ELSE 0 END,
 		CASE WHEN real_matches.address IS NOT NULL THEN 1 ELSE 0 END
 		FROM requested
 		LEFT JOIN contacts ON contacts.address=requested.address
+		LEFT JOIN saved_contacts ON saved_contacts.address=requested.address
 		LEFT JOIN real_matches ON real_matches.address=requested.address`
 	if !scoped {
 		query += `
