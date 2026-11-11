@@ -103,7 +103,11 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				// Re-resolving this same generation must reuse its ledger decisions.
 				target := claims[0].Target
 				r.NoError(st.withTxContext(ctx, func(tx *loggedTx) error {
-					_, err := st.resolvePersonCommitmentTargetTx(ctx, tx, restored.Generation,
+					generation, err := st.loadPersonFactGenerationRowTx(ctx, tx, f.personID, restored.Generation.GenerationKey)
+					if err != nil {
+						return err
+					}
+					_, err = st.resolvePersonCommitmentTargetTx(ctx, tx, generation,
 						personfacts.TargetDescriptor{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, nil)
 					return err
 				}))
