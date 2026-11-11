@@ -235,7 +235,7 @@ func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID 
 			role = "admin"
 		}
 		checksum := rosterMemberInputs(p, detail, opts.AccountID, bridgePrefix)
-		if receipt, ok := receipts[key]; ok && owners[key] != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(checksum, owners[key]) {
+		if receipt, ok := receipts[key]; !opts.Full && ok && owners[key] != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(checksum, owners[key]) {
 			imp.res.rememberRosterOwner(p.ID, owners[key])
 			continue
 		}

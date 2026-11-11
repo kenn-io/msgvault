@@ -73,6 +73,9 @@ func TestMergeSourcesRepairsLiveRoster(t *testing.T) {
 			require.NoError(err)
 			assert.Contains(pending, chat.ID)
 			assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), departed)
+			shared, err := st.SharedConversationCountContext(t.Context(), peer, departed)
+			require.NoError(err)
+			assert.Zero(shared)
 			if !quiet {
 				f.appendMsg(chat.ID, fakeMsg{ID: "active", SortKey: 99, Timestamp: time.Now(), SenderID: "@signal_ann:beeper.local", Text: "active"})
 			}

@@ -274,4 +274,12 @@ func TestParticipantDisplayNamesAndSharedConversations(t *testing.T) {
 	shared, err = st.SharedConversationCountContext(ctx, alice, bob)
 	require.NoError(err, "second SharedConversationCountContext")
 	assert.Equal(1, shared)
+	require.NoError(st.SetConversationMessagingRouteEvidence(ctx, convID, store.MessagingRouteEvidence{MembershipComplete: false}))
+	shared, err = st.SharedConversationCountContext(ctx, alice, bob)
+	require.NoError(err)
+	assert.Zero(shared)
+	require.NoError(st.SetConversationMessagingRouteEvidence(ctx, convID, store.MessagingRouteEvidence{MembershipComplete: true}))
+	shared, err = st.SharedConversationCountContext(ctx, alice, bob)
+	require.NoError(err)
+	assert.Equal(1, shared)
 }

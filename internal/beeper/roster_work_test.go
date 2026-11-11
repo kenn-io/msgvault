@@ -330,6 +330,13 @@ func TestRosterResumeResolvesRicherIdentityAndName(t *testing.T) {
 	assert.Equal("Updated Name", name)
 	assert.Equal("+12025550123", phone)
 	assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET display_name = NULL WHERE id = ?`), id)
+	require.NoError(err)
+	imp = NewImporter(st, imp.client)
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Full: true})
+	require.NoError(err)
+	name, _ = saved()
+	assert.Equal("Updated Name", name)
 }
 
 func TestQuietMatchingRepairInvalidatesGoneRoute(t *testing.T) {

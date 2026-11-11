@@ -32,6 +32,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			if err := s.setConversationRosterRepairPending(boundQuerier{ctx: ctx, q: tx}, c.destination, true); err != nil {
 				return err
 			}
+			if err := s.invalidateMessagingRouteEvidenceWith(boundQuerier{ctx: ctx, q: tx}, c.destination, ""); err != nil {
+				return err
+			}
 		}
 	}
 	for _, m := range plan.messages {

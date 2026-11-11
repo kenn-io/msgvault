@@ -1,6 +1,7 @@
 package beeper
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -62,27 +63,34 @@ func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 			} else {
 				f.setChatGetFailure(old.ID, true)
 			}
-			imp = NewImporter(st, imp.client)
-			sum, err = imp.Import(t.Context(), opts)
-			var partial *PartialSyncError
-			require.ErrorAs(err, &partial)
-			require.Positive(sum.FetchErrors)
-			require.Positive(sum.Errors)
-			var count int
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "healthy-new").Scan(&count))
-			require.Equal(1, count)
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "old-new").Scan(&count))
-			require.Zero(count)
-			state, err = imp.loadResumeState(t.Context(), sum.SourceID, false)
-			require.NoError(err)
-			require.Equal(before.Newest, state.Chats[old.ID].Newest)
-			require.Equal(before.Oldest, state.Chats[old.ID].Oldest)
-			require.False(state.Chats[old.ID].RosterWork.MemberFirst)
-			require.Equal(signature, state.Chats[old.ID].RosterWork.Signature)
-			require.Equal(listingSignature, state.Chats[old.ID].RosterWork.ListingSignature)
-			afterReceipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(old.ID))
-			require.NoError(err)
-			require.Equal(receipts, afterReceipts)
+			for attempt := range 2 {
+				messageID := "healthy-new"
+				if attempt > 0 {
+					messageID = fmt.Sprintf("healthy-retry-%d", attempt)
+					f.appendMsg(healthy.ID, fakeMsg{ID: messageID, SortKey: 100 + attempt, Timestamp: now.Add(time.Duration(attempt+2) * time.Second), SenderID: "@signal_user:example.test", Text: "healthy"})
+				}
+				imp = NewImporter(st, imp.client)
+				sum, err = imp.Import(t.Context(), opts)
+				var partial *PartialSyncError
+				require.ErrorAs(err, &partial)
+				require.Positive(sum.FetchErrors)
+				require.Positive(sum.Errors)
+				var count int
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, messageID).Scan(&count))
+				require.Equal(1, count)
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "old-new").Scan(&count))
+				require.Zero(count)
+				state, err = imp.loadResumeState(t.Context(), sum.SourceID, false)
+				require.NoError(err)
+				require.Equal(before.Newest, state.Chats[old.ID].Newest)
+				require.Equal(before.Oldest, state.Chats[old.ID].Oldest)
+				require.False(state.Chats[old.ID].RosterWork.MemberFirst)
+				require.Equal(signature, state.Chats[old.ID].RosterWork.Signature)
+				require.Equal(listingSignature, state.Chats[old.ID].RosterWork.ListingSignature)
+				afterReceipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(old.ID))
+				require.NoError(err)
+				require.Equal(receipts, afterReceipts)
+			}
 			f.setChatGetFailure(old.ID, false)
 			f.mu.Lock()
 			old.DetailTruncated = false

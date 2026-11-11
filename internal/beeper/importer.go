@@ -1362,6 +1362,7 @@ func (imp *Importer) captureObservations(
 		}
 		outcome, merr := imp.matcher.match(ctx, participantID, result)
 		if merr != nil {
+			imp.obs = newObservationRecorder(imp.store)
 			if ctx.Err() == nil {
 				slog.Warn("beeper identity matching failed",
 					"participant_id", participantID, "beeper_user_id", u.ID, "error", merr)

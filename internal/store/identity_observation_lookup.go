@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -199,7 +200,7 @@ func (s *Store) SharedConversationsContext(
 		return nil, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.id, c.source_id, COALESCE(c.source_conversation_id, '')
+		SELECT c.id, c.source_id, COALESCE(c.source_conversation_id, ''), COALESCE(CAST(c.metadata AS TEXT), '')
 		FROM conversations c
 		WHERE EXISTS (
 			SELECT 1 FROM conversation_participants cp
@@ -217,11 +218,15 @@ func (s *Store) SharedConversationsContext(
 	shared := make([]SharedConversationEvidence, 0)
 	for rows.Next() {
 		var conversation SharedConversationEvidence
+		var raw string
 		if err := rows.Scan(
-			&conversation.ConversationID, &conversation.SourceID,
-			&conversation.SourceConversationID,
+			&conversation.ConversationID, &conversation.SourceID, &conversation.SourceConversationID, &raw,
 		); err != nil {
 			return nil, fmt.Errorf("scan shared conversation: %w", err)
+		}
+		var metadata routeMetadata
+		if raw != "" && json.Unmarshal([]byte(raw), &metadata) == nil && metadata.Route != nil && !metadata.Route.MembershipComplete {
+			continue
 		}
 		shared = append(shared, conversation)
 	}

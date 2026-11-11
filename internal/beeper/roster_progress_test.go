@@ -87,6 +87,80 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	}
 }
 
+func TestRosterMatchingFailureRetriesAcrossChats(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	first := observationChat("slack", "Slack", "@slack_alice:beeper.local", map[string]any{"id": "@slack_alice:beeper.local", "username": "alice"})
+	second := observationChat("slack", "Slack", "@slack_alice:beeper.local", map[string]any{"id": "@slack_alice:beeper.local", "username": "alice"})
+	second.ID = "!second:example.test"
+	f.addChat(first)
+	f.addChat(second)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	sourceID := newBeeperTestSource(t, st, "slack")
+	works := []*rosterWork{{}, {}}
+	for i, chat := range []*fakeChat{first, second} {
+		detail, err := imp.client.GetChat(t.Context(), chat.ID)
+		require.NoError(err)
+		_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: works[i]}, &ImportSummary{})
+		require.NoError(err)
+		require.True(complete)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE source_import_items SET status = 'pending' WHERE source_id = ? AND provider = ?`), sourceID, rosterProvider(chat.ID))
+		require.NoError(err)
+		works[i].Phase = "matching"
+		works[i].Next = 0
+	}
+	otherSource := newBeeperTestSource(t, st, "slack2")
+	other, err := newParticipantResolver(st, "slack2").resolveUser(t.Context(), &User{ID: "@slack_other:beeper.local"})
+	require.NoError(err)
+	_, err = newObservationRecorder(st).capture(t.Context(), other, &User{ID: "@slack_other:beeper.local", Username: "alice"}, captureContext{SourceID: otherSource, AccountID: "slack2", Network: "Slack"})
+	require.NoError(err)
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_roster_match() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END; $$`)
+		require.NoError(err)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_roster_match BEFORE INSERT ON identity_match_candidates FOR EACH ROW EXECUTE FUNCTION fail_roster_match()`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_roster_match BEFORE INSERT ON identity_match_candidates BEGIN SELECT RAISE(FAIL, 'injected failure'); END`)
+	}
+	require.NoError(err)
+	imp = NewImporter(st, imp.client)
+	for range 2 {
+		for i, chat := range []*fakeChat{first, second} {
+			detail, err := imp.client.GetChat(t.Context(), chat.ID)
+			require.NoError(err)
+			_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: works[i]}, &ImportSummary{}) //nolint:dogsled // Receipt status is the observable.
+			require.NoError(err)
+			receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+			require.NoError(err)
+			assert.Equal("failed", receipts[imp.res.identifierForUser("@slack_alice:beeper.local")].Status)
+		}
+	}
+	if st.IsPostgreSQL() {
+		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_roster_match ON identity_match_candidates`)
+		require.NoError(err)
+		_, err = st.DB().ExecContext(t.Context(), `DROP FUNCTION fail_roster_match()`)
+	} else {
+		_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_roster_match`)
+	}
+	require.NoError(err)
+	imp = NewImporter(st, imp.client)
+	for i, chat := range []*fakeChat{first, second} {
+		detail, err := imp.client.GetChat(t.Context(), chat.ID)
+		require.NoError(err)
+		_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: works[i]}, &ImportSummary{}) //nolint:dogsled // Receipt status is the observable.
+		require.NoError(err)
+		receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+		require.NoError(err)
+		assert.Equal("resolved", receipts[imp.res.identifierForUser("@slack_alice:beeper.local")].Status)
+	}
+	candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 100, 0)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
+	require.NoError(err)
+	assert.NotEmpty(candidate.Evidence)
+}
+
 func TestRosterResumeRevisitsChangedMember(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
@@ -163,6 +237,62 @@ func TestRosterJoinRefreshesSettledMatchAfterStop(t *testing.T) {
 		found = found || evidence.EvidenceKind == evidenceMembership
 	}
 	assert.True(found, "a settled candidate gains evidence when a member joins")
+}
+
+func TestUnverifiedTurnoverDoesNotAddSharedEvidence(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := observationChat("slack", "Slack", "@slack_alice:beeper.local", map[string]any{"id": "@slack_alice:beeper.local", "username": "alice"}, map[string]any{"id": "@slack_extra:beeper.local"})
+	later := observationChat("slack", "Slack", "@slack_alice:beeper.local", map[string]any{"id": "@slack_alice:beeper.local", "username": "alice"}, map[string]any{"id": "@slack_later:beeper.local"})
+	later.ID = "!later:example.test"
+	f.addChat(chat)
+	f.addChat(later)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	imp.res.accountID = "slack"
+	other, err := imp.res.resolveUser(t.Context(), &User{ID: "@slack_other:beeper.local"})
+	require.NoError(err)
+	otherSource := newBeeperTestSource(t, st, "slack2")
+	captureAndMatch(t, newObservationRecorder(st), newIdentityMatcher(st), other, &User{ID: "@slack_other:beeper.local", Username: "alice"}, captureContext{SourceID: otherSource, AccountID: "slack2", Network: "Slack"})
+	sourceID := newBeeperTestSource(t, st, "slack")
+	detail, err := imp.client.GetChat(t.Context(), chat.ID)
+	require.NoError(err)
+	work := &rosterWork{}
+	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
+	require.NoError(err)
+	require.True(complete)
+	candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 100, 0)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	f.mu.Lock()
+	chat.Participants[0] = map[string]any{"id": "@slack_other:beeper.local"}
+	f.mu.Unlock()
+	detail, err = imp.client.GetChat(t.Context(), chat.ID)
+	require.NoError(err)
+	f.setChatGetFailure(chat.ID, true)
+	imp = NewImporter(st, imp.client)
+	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
+	require.NoError(err)
+	require.False(complete)
+	check := func() {
+		candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
+		require.NoError(err)
+		for _, evidence := range candidate.Evidence {
+			assert.NotEqual(evidenceMembership, evidence.EvidenceKind)
+		}
+	}
+	check()
+	laterDetail, err := imp.client.GetChat(t.Context(), later.ID)
+	require.NoError(err)
+	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, laterDetail, ImportOptions{AccountID: "slack", rosterState: &rosterWork{}}, &ImportSummary{}) //nolint:dogsled // The later chat exercises matching.
+	require.NoError(err)
+	check()
+	f.setChatGetFailure(chat.ID, false)
+	imp = NewImporter(st, imp.client)
+	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
+	require.NoError(err)
+	assert.True(complete)
+	assert.NotContains(rosterMembers(t, st, sourceID, chat.ID), participantForBeeperUser(t, st, "@slack_alice:beeper.local"))
 }
 
 func TestRosterUnchangedVisitSkipsMatching(t *testing.T) {
