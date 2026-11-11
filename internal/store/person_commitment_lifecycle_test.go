@@ -343,41 +343,55 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 }
 
 func TestCommitmentEditedSourceDoesNotTransferDoneToReplacement(t *testing.T) {
-	r, a, ctx := require.New(t), assert.New(t), t.Context()
-	f := newPersonSweepApplyFixture(t, "commitment-edited-replacement", false)
-	st := f.store
-	_, persist := newCommitmentTestConversation(t, f)
-	const original, replacement = "I will send the draft.", "I will book the venue."
-	id := persist("promise", original, -time.Hour)
-	cfg := peoplesweep.Config{}
-	cfg.ApplyDefaults()
-	cfg.Commitments.Enabled = true
-	applyCommitmentTestSources(t, f, cfg.Commitments)
-	f = nextCommitmentTestAttempt(t, f, "-finish-initial")
-	applyCommitmentTestSources(t, f, cfg.Commitments)
-	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
-	r.NoError(err)
-	r.Len(items, 1)
-	_, err = st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, f.request.CompletedAt)
-	r.NoError(err)
-	_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), replacement, id)
-	r.NoError(err)
-	f = nextCommitmentTestAttempt(t, f, "-replacement")
-	f.request.Generation.ResolvedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
-	f.request.CompletedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
-	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
-	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
-	r.NoError(err)
-	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
-		Promises:    []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo, Quote: replacement, Summary: "Book venue", End: int64(len(replacement))}},
-		Fulfilments: []peoplesweep.CommitmentFulfilment{},
-	}))
-	r.NoError(err)
-	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
-	r.NoError(err)
-	r.Len(items, 1)
-	a.Equal(replacement, items[0].Quote)
-	a.Equal(LoopStateOpen, items[0].State, "a different obligation at overlapping source offsets is not the owner's completed promise")
+	for _, moved := range []bool{false, true} {
+		t.Run(fmt.Sprintf("moved=%t", moved), func(t *testing.T) {
+			r, a, ctx := require.New(t), assert.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "commitment-edited-replacement", false)
+			st := f.store
+			_, persist := newCommitmentTestConversation(t, f)
+			const original, replacement = "I will send the draft.", "I will book the venue."
+			id := persist("promise", original, -time.Hour)
+			cfg := peoplesweep.Config{}
+			cfg.ApplyDefaults()
+			cfg.Commitments.Enabled = true
+			applyCommitmentTestSources(t, f, cfg.Commitments)
+			f = nextCommitmentTestAttempt(t, f, "-finish-initial")
+			applyCommitmentTestSources(t, f, cfg.Commitments)
+			items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+			r.NoError(err)
+			r.Len(items, 1)
+			_, err = st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, f.request.CompletedAt)
+			r.NoError(err)
+			body := replacement
+			if moved {
+				body += " " + original
+			}
+			_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), body, id)
+			r.NoError(err)
+			f = nextCommitmentTestAttempt(t, f, "-replacement")
+			f.request.Generation.ResolvedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+			f.request.CompletedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+			window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+			r.NoError(err)
+			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+				Promises:    []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo, Quote: replacement, Summary: "Book venue", End: int64(len(replacement))}},
+				Fulfilments: []peoplesweep.CommitmentFulfilment{},
+			}))
+			r.NoError(err)
+			items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+			r.NoError(err)
+			r.Len(items, len(promises))
+			states := map[string]string{}
+			for _, item := range items {
+				states[item.Quote] = item.State
+			}
+			a.Equal(LoopStateOpen, states[replacement], "a different obligation at overlapping source offsets is not the owner's completed promise")
+			if moved {
+				a.Equal(LoopStateDone, states[original], "the unchanged uniquely moved promise retains its own decision")
+			}
+		})
+	}
 }
 
 func TestCommitmentRestoredEditRevalidatesEvidenceDuringExtraction(t *testing.T) {
