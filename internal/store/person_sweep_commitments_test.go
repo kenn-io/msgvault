@@ -939,3 +939,52 @@ func TestCommitmentAgendaAutomaticFilingWaitsForInitialMatchingReplay(t *testing
 	a.True(marked, "explicit manual filing remains available")
 
 }
+
+func TestCommitmentAgendaFinalMarkRechecksCurrentEvidence(t *testing.T) {
+	for _, confirmed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("confirmed=%t", confirmed), func(t *testing.T) {
+			r, a, ctx := require.New(t), assert.New(t), t.Context()
+			f, commitment, persist := newCommitmentAgendaReceiptFixture(t)
+			st, now := f.store, f.request.CompletedAt
+			cfg := peoplesweep.Config{}
+			cfg.ApplyDefaults()
+			cfg.Commitments.Enabled, cfg.Commitments.AutoFulfil = true, true
+			f = nextCommitmentTestAttempt(t, f, "-finish-matching")
+			applyCommitmentTestSources(t, f, cfg.Commitments)
+			_, err := st.GetOpenPersonCommitmentContext(ctx, commitment.ID, now)
+			r.NoError(err)
+			start, end := int(commitment.Start), int(commitment.End)
+			evidence, err := kataevidence.New(st).Prepare(ctx, []kataevidence.Selector{{Kind: "message", MessageID: commitment.AnchorMessageID, StartRune: &start, EndRune: &end}})
+			r.NoError(err)
+			r.Len(evidence, 1)
+			item, err := st.EnqueueCommitmentAgendaContext(ctx, CommitmentAgendaSuggestion{
+				CommitmentID: commitment.ID, TargetKey: commitment.TargetKey, Quote: commitment.Quote,
+				Request: kataissues.CreateInput{Title: commitment.Summary, List: "commitments", PersonUID: "synthetic-uid", Evidence: []kataevidence.Reference{evidence[0].Reference}},
+			})
+			r.NoError(err)
+			if confirmed {
+				const reply = "I sent the report."
+				id := persist("completion-before-mark", reply, -30*time.Minute)
+				f = nextCommitmentTestAttempt(t, f, "-confirm-before-mark")
+				window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
+					AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+				}, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+				r.NoError(err)
+				_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+					Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{{
+						CommitmentID: commitment.ID, SourceID: commitmentSourceID(window, id), Quote: reply, End: int64(len(reply)), Confirmed: true,
+					}},
+				}))
+				r.NoError(err)
+			} else {
+				_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), "The original promise was removed.", commitment.AnchorMessageID)
+				r.NoError(err)
+			}
+			_, err = st.GetOpenPersonCommitmentContext(ctx, commitment.ID, now)
+			r.ErrorIs(err, sql.ErrNoRows, "the final read already rejects this changed commitment")
+			marked, err := st.MarkCommitmentAgendaAttemptContext(ctx, item, now, false)
+			r.NoError(err)
+			a.False(marked, "a stale prepared item cannot start a new remote create after fulfilment or citation withdrawal")
+		})
+	}
+}
