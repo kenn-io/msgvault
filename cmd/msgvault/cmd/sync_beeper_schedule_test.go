@@ -146,7 +146,7 @@ func TestScheduledBeeperYieldFollowUpSkipsStoppedAccountUntilNextPass(t *testing
 	require.NoError(t, runScheduledBeeperAttempts(ctx, accounts, rotation, nil, visit(&first), func() error { return nil }))
 	assert.Equal([]string{"large"}, first)
 
-	followUp, requestFollowUpPreemption := jobctx.WithPreemption(t.Context())
+	followUp, requestFollowUpPreemption := jobctx.WithPreemption(jobctx.WithContinuation(t.Context()))
 	requestFollowUpPreemption()
 	var second []string
 	err := runScheduledBeeperAttempts(followUp, accounts, rotation, nil, visit(&second), func() error { return nil })
@@ -156,4 +156,27 @@ func TestScheduledBeeperYieldFollowUpSkipsStoppedAccountUntilNextPass(t *testing
 	var next []string
 	require.NoError(t, runScheduledBeeperAttempts(t.Context(), accounts, rotation, nil, visit(&next), func() error { return nil }))
 	assert.Equal([]string{"large"}, next, "the next pass resumes the stopped account")
+}
+
+func TestScheduledBeeperSyncMergedIntoYieldFollowUpStartsNewPass(t *testing.T) {
+	assert := assert.New(t)
+	rotation := &beeperAccountRotation{}
+	accounts := []string{"large", "small"}
+	visit := func(visited *[]string) func(string) (bool, error) {
+		return func(id string) (bool, error) {
+			*visited = append(*visited, id)
+			return id == "large", nil // large stops at a boundary on every turn
+		}
+	}
+
+	ctx, requestPreemption := jobctx.WithPreemption(t.Context())
+	requestPreemption()
+	var first []string
+	require.NoError(t, runScheduledBeeperAttempts(ctx, accounts, rotation, nil, visit(&first), func() error { return nil }))
+	assert.Equal([]string{"large"}, first)
+
+	// "Sync now" merged into the queued follow-up, so the run is no continuation.
+	var manual []string
+	require.NoError(t, runScheduledBeeperAttempts(t.Context(), accounts, rotation, nil, visit(&manual), func() error { return nil }))
+	assert.Equal([]string{"small", "large"}, manual, "a requested sync reaches the account the yield interrupted")
 }

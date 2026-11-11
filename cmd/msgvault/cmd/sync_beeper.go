@@ -476,9 +476,10 @@ const scheduledBeeperBudget = 3 * time.Minute
 var scheduledBeeperRotation = &beeperAccountRotation{}
 
 // beeperAccountRotation orders scheduled Beeper accounts starting from the
-// account after the previous run's last attempt. While runs keep yielding to
-// queued work, it also holds the accounts the current pass has visited. Like
-// the rotation, this lives only in the daemon; a restart begins a new pass.
+// account after the previous run's last attempt. While follow-ups resume runs
+// that yielded to queued work, it also holds the accounts the current pass has
+// visited. Like the rotation, this lives only in the daemon; a restart begins
+// a new pass.
 type beeperAccountRotation struct {
 	mu      sync.Mutex
 	next    string
@@ -503,11 +504,16 @@ func (r *beeperAccountRotation) resumeAt(accountID string) {
 }
 
 // remaining returns the accounts in rotation order that the current pass has
-// not visited. When none remain, it starts a new pass over every account.
-func (r *beeperAccountRotation) remaining(accountIDs []string) []string {
+// not visited. A run that is not a continuation, such as a scheduled tick or a
+// manual sync, starts a new pass over every account, as does a pass with none
+// left.
+func (r *beeperAccountRotation) remaining(accountIDs []string, continuation bool) []string {
 	ordered := r.order(accountIDs)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if !continuation {
+		r.visited = nil
+	}
 	left := slices.DeleteFunc(slices.Clone(ordered), func(id string) bool { return r.visited[id] })
 	if len(left) == 0 {
 		r.visited = nil
@@ -525,17 +531,16 @@ func (r *beeperAccountRotation) visit(accountID string) {
 	r.visited[accountID] = true
 }
 
-// endRun reports whether every account has had its turn in the current pass.
-// Pass progress carries over only into the follow-up of a run that yielded;
-// otherwise the next run starts a new pass over every account.
-func (r *beeperAccountRotation) endRun(accountIDs []string, yielded bool) bool {
+// completePass reports whether every account has had its turn in the current
+// pass, and if so clears the progress so the next run starts a new pass.
+func (r *beeperAccountRotation) completePass(accountIDs []string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	complete := !slices.ContainsFunc(accountIDs, func(id string) bool { return !r.visited[id] })
-	if complete || !yielded {
-		r.visited = nil
+	if slices.ContainsFunc(accountIDs, func(id string) bool { return !r.visited[id] }) {
+		return false
 	}
-	return complete
+	r.visited = nil
+	return true
 }
 
 // runScheduledBeeperAttempts keeps per-account failures isolated while
@@ -548,7 +553,8 @@ func (r *beeperAccountRotation) endRun(accountIDs []string, yielded bool) bool {
 // A pass gives every account one turn, whether the account finishes, fails, or
 // stops at a boundary; stopped accounts resume from their own cursors on their
 // next turn. A run asked to yield gets a follow-up from the scheduler, which
-// visits only the accounts the pass has not reached. Once a yielded run
+// visits only the accounts the pass has not reached; a scheduled tick or manual
+// sync merged into that follow-up starts a new pass instead. Once a yielded run
 // completes the pass, it defers until the next trigger, so queued work cannot
 // chain follow-ups indefinitely.
 func runScheduledBeeperAttempts(
@@ -562,7 +568,7 @@ func runScheduledBeeperAttempts(
 	var errs []error
 	attempted := 0
 	resumeAt := ""
-	ordered := rotation.remaining(accountIDs)
+	ordered := rotation.remaining(accountIDs, jobctx.Continuation(ctx))
 	for idx, accountID := range ordered {
 		if ctx.Err() != nil {
 			// Cancelled between accounts (a yield or shutdown): start here next.
@@ -601,8 +607,7 @@ func runScheduledBeeperAttempts(
 		errs = append(errs, ctx.Err())
 		return errors.Join(errs...)
 	}
-	yielded := jobctx.PreemptionRequested(ctx)
-	if rotation.endRun(accountIDs, yielded) && yielded {
+	if rotation.completePass(accountIDs) && jobctx.PreemptionRequested(ctx) {
 		return errors.Join(append([]error{scheduler.ErrDeferUntilNextTrigger}, errs...)...)
 	}
 	return errors.Join(errs...)

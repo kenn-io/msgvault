@@ -158,6 +158,9 @@ type Scheduler struct {
 	genericStartedAt   map[string]time.Time
 	genericManual      map[string]bool
 	genericNextManual  map[string]bool
+	// genericContinue marks a queued follow-up that only resumes a yield or
+	// reschedule; a tick or request merged into it clears the mark.
+	genericContinue map[string]bool
 
 	// queuedRuns counts runs blocked waiting for the work gate.
 	queuedRuns int
@@ -219,6 +222,7 @@ func New(syncFunc SyncFunc) *Scheduler {
 		genericStartedAt:   make(map[string]time.Time),
 		genericManual:      make(map[string]bool),
 		genericNextManual:  make(map[string]bool),
+		genericContinue:    make(map[string]bool),
 		ctx:                ctx,
 		cancel:             cancel,
 	}
@@ -835,6 +839,7 @@ func (s *Scheduler) reserveGenericJob(name string, coalesce bool, manual bool) (
 			target = s.genericManual
 		}
 		target[name] = target[name] || manual
+		delete(s.genericContinue, name)
 		if s.coalesceTickLocked("job", name, s.genericQueuedAt, s.genericPending) {
 			return nil, JobPending, nil
 		}
@@ -863,6 +868,8 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	done, ok := s.beginWork(name, !background)
 	s.mu.Lock()
 	delete(s.genericQueuedAt, name)
+	continuation := s.genericContinue[name]
+	delete(s.genericContinue, name)
 	if ok {
 		s.genericStartedAt[name] = time.Now()
 	}
@@ -873,6 +880,9 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	defer done()
 
 	runCtx, endRun := s.jobContext(name, preemptible, cooperative, maxRuntime)
+	if continuation {
+		runCtx = jobctx.WithContinuation(runCtx)
+	}
 	err := run(runCtx)
 	endRun()
 	s.mu.Lock()
@@ -916,7 +926,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	}
 	yielded := budgetExpired || yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
 	if errors.Is(err, ErrReschedule) {
-		s.genericPending[name] = true
+		s.queueContinuationLocked(name)
 		if _, failed := errors.AsType[*RescheduleError](err); failed {
 			s.genericLastErr[name] = err
 			return err
@@ -927,7 +937,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 		return nil
 	}
 	if yielded {
-		s.genericPending[name] = true
+		s.queueContinuationLocked(name)
 		if callbackErr := jobctx.ErrorAfterYield(runCtx, err); callbackErr != nil {
 			s.genericLastErr[name] = callbackErr
 			s.logger.Error("scheduled job yielded after callback error; queued follow-up",
@@ -951,6 +961,15 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	s.genericLastRun[name] = time.Now()
 	delete(s.genericLastErr, name)
 	return nil
+}
+
+// queueContinuationLocked queues the follow-up a yield or reschedule asks for.
+// It is a continuation only when no tick or request already queued one.
+func (s *Scheduler) queueContinuationLocked(name string) {
+	if !s.genericPending[name] {
+		s.genericContinue[name] = true
+	}
+	s.genericPending[name] = true
 }
 
 // finishGenericRun releases a generic job run, or hands its reservation to
@@ -982,6 +1001,7 @@ func (s *Scheduler) finishGenericRun(name string) {
 	}
 	delete(s.genericManual, name)
 	delete(s.genericNextManual, name)
+	delete(s.genericContinue, name)
 	s.genericRunning[name] = false
 }
 
