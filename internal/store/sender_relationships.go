@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"unicode"
@@ -15,14 +16,7 @@ import (
 func (s *Store) senderNativeOwnershipSQL() string {
 	original := `COALESCE(NULLIF((SELECT p.original_source_message_id
   FROM source_merge_archive_only_messages p WHERE p.message_id=m.id), ''), m.source_message_id)`
-	origin := `m.metadata ->> 'imap_content_origin'`
-	if s.dialect.DriverName() != postgresDriverName {
-		origin = `CASE WHEN json_valid(m.metadata) THEN m.metadata ->> 'imap_content_origin' END`
-	}
-	providerSent := `(src.source_type IN ('gmail','imap') AND (
-  (src.source_type='imap' AND COALESCE(` + origin + `,'')='sent') OR
-  EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
-   WHERE ml.message_id=m.id AND l.source_id=m.source_id AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))))`
+	providerSent := `(src.source_type IN ('gmail','imap') AND ` + sentConfirmedSQL(s.dialect, "", "m", "src") + `)`
 	return `(COALESCE(m.source_is_from_me,FALSE) OR ` + providerSent + `) AND NOT (
   COALESCE(NULLIF(m.message_type,''),'email')='email' AND ` + original + ` NOT LIKE '%|%' AND (
   ` + original + ` LIKE 'mbox-%' OR ` + original + ` LIKE 'eml-%' OR
@@ -96,16 +90,7 @@ func (s *Store) SenderRelationshipsWithOptions(ctx context.Context, addresses []
 	if len(result) == 0 || (allowedSourceIDs != nil && len(sources) == 0) {
 		return result, nil
 	}
-	keys := make([]string, 0, len(result))
-	for key := range result {
-		if key != "" {
-			keys = append(keys, key)
-		}
-	}
-	if len(keys) == 0 {
-		return result, nil
-	}
-	slices.Sort(keys)
+	keys := slices.Sorted(maps.Keys(result))
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		if err := s.senderContactRelationships(ctx, tx, keys, sources, allowedSourceIDs != nil, options.ExcludeMessageID, result); err != nil {
 			return err
