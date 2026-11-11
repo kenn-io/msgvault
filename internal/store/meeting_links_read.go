@@ -17,14 +17,14 @@ import (
 var ErrMeetingOccurrenceRequired = errors.New("copy the full occurrence reference from calendar events")
 
 type MeetingLink struct {
-	MessageID         int64     `json:"-"`
-	SubjectOriginID   int64     `json:"-"`
-	Ref               string    `json:"ref"`
-	Subject           string    `json:"subject,omitempty"`
-	Start             time.Time `json:"start"`
-	End               time.Time `json:"end"`
-	Status            string    `json:"status"`
-	DeletedFromSource bool      `json:"deleted_from_source"`
+	MessageID         int64      `json:"-"`
+	SubjectOriginID   int64      `json:"-"`
+	Ref               string     `json:"ref"`
+	Subject           string     `json:"subject,omitempty"`
+	Start             *time.Time `json:"start"`
+	End               *time.Time `json:"end"`
+	Status            string     `json:"status"`
+	DeletedFromSource bool       `json:"deleted_from_source"`
 }
 
 type MeetingRecord struct {
@@ -57,24 +57,39 @@ func occurrenceKeys(o CalendarOccurrence) []meetingLinkKey {
 		}
 	}
 	if row.ICalUID != "" {
-		keys = append(keys, canonicalMeetingKey("ical_uid", "", row.ICalUID, &o.Start))
+		keys = append(keys, meetingUIDKeys(row.ICalUID, o.Start)...)
 		if o.AllDay && o.StartDate != "" {
 			keys = append(keys, meetingLinkKey{"ical_date", "", row.ICalUID, o.StartDate})
 		}
 		if o.original != (calrecur.Identity{}) {
 			original := o.originalStart
-			if original.IsZero() {
+			// An all-day original needs the series zone, never the edit's zone.
+			if original.IsZero() && !o.original.AllDay {
 				original, _ = calendarOriginalStart(o.original, row.Event)
 			}
 			if o.original.AllDay {
 				keys = append(keys, meetingLinkKey{"ical_date", "", row.ICalUID, o.original.Date})
 			}
-			if !original.IsZero() {
-				keys = append(keys, canonicalMeetingKey("ical_uid", "", row.ICalUID, &original))
-			}
+			keys = append(keys, meetingUIDKeys(row.ICalUID, original)...)
 		}
 	}
 	return slices.Compact(keys)
+}
+
+// meetingUIDKeys returns no alias for an unavailable time.
+func meetingUIDKeys(uid string, at time.Time) []meetingLinkKey {
+	if at.IsZero() {
+		return nil
+	}
+	return []meetingLinkKey{canonicalMeetingKey("ical_uid", "", uid, &at)}
+}
+
+// meetingBound reports an unavailable time as nil.
+func meetingBound(at time.Time) *time.Time {
+	if at.IsZero() {
+		return nil
+	}
+	return &at
 }
 
 func (s *Store) meetingRowsForKey(ctx context.Context, key meetingLinkKey, budget *int) ([]CalendarEventRow, error) {
@@ -211,7 +226,7 @@ func uniqueMeetingOccurrences(in []CalendarOccurrence) []CalendarOccurrence {
 	slices.SortFunc(in, func(a, b CalendarOccurrence) int { return cmp.Compare(a.Ref, b.Ref) })
 	in = slices.CompactFunc(in, func(a, b CalendarOccurrence) bool { return a.Ref == b.Ref })
 	slices.SortFunc(in, func(a, b CalendarOccurrence) int {
-		if c := a.Start.Compare(b.Start); c != 0 {
+		if c := compareMeetingStart(a.Start, b.Start); c != 0 {
 			return c
 		}
 		if c := cmp.Compare(a.MessageID, b.MessageID); c != 0 {
@@ -406,7 +421,7 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 		}
 	}
 	for _, o := range uniqueMeetingOccurrences(copies) {
-		record.Links = append(record.Links, MeetingLink{MessageID: o.MessageID, SubjectOriginID: o.row.SubjectOriginID, Ref: o.Ref, Subject: o.Subject, Start: o.Start, End: o.End, Status: o.Status, DeletedFromSource: o.DeletedFromSource})
+		record.Links = append(record.Links, MeetingLink{MessageID: o.MessageID, SubjectOriginID: o.row.SubjectOriginID, Ref: o.Ref, Subject: o.Subject, Start: meetingBound(o.Start), End: meetingBound(o.End), Status: o.Status, DeletedFromSource: o.DeletedFromSource})
 	}
 	slices.Sort(record.MessageIDs)
 	record.MessageIDs = slices.Compact(record.MessageIDs)

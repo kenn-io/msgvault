@@ -312,3 +312,18 @@ func requiredStringPointerValidatorFixture(
 	result.WriteString("}\n")
 	return result.String()
 }
+
+func TestRewriteNullableMeetingLinkBoundsDropsRequiredTags(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	source := "type MeetingLink struct {\n\tEnd *time.Time `json:\"end\" validate:\"required\"`\n\tRef string `json:\"ref\" validate:\"required\"`\n\tStart *time.Time `json:\"start\" validate:\"required\"`\n}\n"
+	got, err := RewriteNullableMeetingLinkBounds([]byte(source))
+	require.NoError(err)
+	assert.Contains(string(got), "End *time.Time `json:\"end\"`")
+	assert.Contains(string(got), "Start *time.Time `json:\"start\"`")
+	assert.Contains(string(got), "Ref string `json:\"ref\" validate:\"required\"`")
+	again, err := RewriteNullableMeetingLinkBounds(got)
+	require.NoError(err)
+	assert.Equal(string(got), string(again))
+	_, err = RewriteNullableMeetingLinkBounds([]byte("type MeetingLink struct {\n}\n"))
+	require.Error(err)
+}

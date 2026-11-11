@@ -7716,11 +7716,13 @@ components:
           type: boolean
         end:
           format: date-time
+          nullable: true
           type: string
         ref:
           type: string
         start:
           format: date-time
+          nullable: true
           type: string
         status:
           type: string

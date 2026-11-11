@@ -88,10 +88,6 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		if o.Cancelled {
 			status = "cancelled"
 		}
-		attendees := e.Attendees
-		if attendees == nil {
-			attendees = []calevent.Attendee{}
-		}
 		ref := OccurrenceRef{MessageID: row.MessageID}
 		if seriesID != 0 && o.Original != (calrecur.Identity{}) {
 			ref = OccurrenceRef{MessageID: seriesID, Identity: o.Original}
@@ -100,7 +96,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		if original == (calrecur.Identity{}) && e.Kind == "exception" && e.Original != nil {
 			original = *e.Original
 		}
-		page.Occurrences = append(page.Occurrences, CalendarOccurrence{row: row, original: original, originalStart: originalStart, Ref: formatMeetingOccurrence(ref), MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: attendees})
+		page.Occurrences = append(page.Occurrences, CalendarOccurrence{row: row, original: original, originalStart: originalStart, Ref: formatMeetingOccurrence(ref), MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: calendarAttendees(e)})
 	}
 	addSeriesOccurrence := func(row CalendarEventRow, o calrecur.Occurrence) (err error) {
 		effective := row
@@ -150,10 +146,12 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			if e.Kind == "exception" && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
 				continue
 			}
-			if e.Start != nil && e.End != nil {
-				add(row, 0, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled"}, time.Time{})
-			} else {
+			if e.Start == nil || e.End == nil {
 				report(row.MessageID, calendarMissingBoundsReason(e))
+			}
+			// A record keeps an identifiable copy whose effective bounds are unavailable.
+			if e.Start != nil && e.End != nil || e.Kind == "exception" && e.Original != nil && !filterOverlap {
+				add(row, 0, calendarEventOccurrence(e), time.Time{})
 			}
 			if e.Kind == "exception" || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
 				continue
@@ -182,13 +180,43 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		}
 	}
 	slices.SortFunc(page.Occurrences, func(a, b CalendarOccurrence) int {
-		if c := a.Start.Compare(b.Start); c != 0 {
+		if c := compareMeetingStart(a.Start, b.Start); c != 0 {
 			return c
 		}
 		return cmp.Compare(a.MessageID, b.MessageID)
 	})
 	*budget = remaining
 	return page, nil
+}
+
+func calendarAttendees(e calevent.Event) []calevent.Attendee {
+	if e.Attendees == nil {
+		return []calevent.Attendee{}
+	}
+	return e.Attendees
+}
+
+// calendarEventOccurrence keeps each known bound and leaves unavailable ones zero.
+func calendarEventOccurrence(e calevent.Event) calrecur.Occurrence {
+	o := calrecur.Occurrence{AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled"}
+	if e.Start != nil {
+		o.Start = *e.Start
+	}
+	if e.End != nil {
+		o.End = *e.End
+	}
+	return o
+}
+
+// compareMeetingStart orders unknown (zero) starts after known ones.
+func compareMeetingStart(a, b time.Time) int {
+	if a.IsZero() != b.IsZero() {
+		if a.IsZero() {
+			return 1
+		}
+		return -1
+	}
+	return a.Compare(b)
 }
 
 func calendarOriginalStart(original calrecur.Identity, event calevent.Event) (time.Time, error) {

@@ -13,7 +13,7 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, "usage: codegenfix <generated-types.go> <generated-client.go>")
 		os.Exit(2)
 	}
-	if err := rewrite(os.Args[1], codegenfix.RewriteGeneratedValidators); err != nil {
+	if err := rewrite(os.Args[1], codegenfix.RewriteGeneratedTypes); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

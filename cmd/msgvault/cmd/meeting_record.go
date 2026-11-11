@@ -58,6 +58,14 @@ func meetingLinksRef(arg string) (string, error) {
 	return fmt.Sprintf("msg:%d", id), nil
 }
 
+// meetingTimeText shows an unavailable time as unknown.
+func meetingTimeText(at *time.Time) string {
+	if at == nil {
+		return "unknown"
+	}
+	return at.Format(time.RFC3339)
+}
+
 func writeMeetingRecord(out io.Writer, record store.MeetingRecord) error {
 	if len(record.Links) == 0 {
 		if _, err := fmt.Fprintln(out, "No linked calendar events"); err != nil {
@@ -70,7 +78,7 @@ func writeMeetingRecord(out io.Writer, record store.MeetingRecord) error {
 		}
 		for _, link := range record.Links {
 			status := calendarOccurrenceStatus(store.CalendarOccurrence{Status: link.Status, DeletedFromSource: link.DeletedFromSource})
-			if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", link.Ref, link.Start.Format(time.RFC3339), link.End.Format(time.RFC3339), status, normalizeSearchTableText(link.Subject)); err != nil {
+			if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", link.Ref, meetingTimeText(link.Start), meetingTimeText(link.End), status, normalizeSearchTableText(link.Subject)); err != nil {
 				return fmt.Errorf("write meeting links: %w", err)
 			}
 		}

@@ -220,3 +220,29 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 	result = optionalValueJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
 	return result, nil
 }
+
+// RewriteGeneratedTypes applies every rewrite the generated types file needs.
+func RewriteGeneratedTypes(source []byte) ([]byte, error) {
+	source, err := RewriteGeneratedValidators(source)
+	if err != nil {
+		return nil, err
+	}
+	return RewriteNullableMeetingLinkBounds(source)
+}
+
+// RewriteNullableMeetingLinkBounds lets a meeting link's start and end be JSON
+// null: the keys stay required in the contract, but a nil pointer is a valid
+// value, so the struct tag must not reject it.
+func RewriteNullableMeetingLinkBounds(source []byte) ([]byte, error) {
+	result := source
+	for _, field := range []string{"Start", "End"} {
+		prefix := `^type MeetingLink struct \{\n(?:\t[^\n]*\n)*?\t` + field + `\s+\*time\.Time\s+`
+		tagged := regexp.MustCompile(`(?m)(` + prefix + "`" + `json:"[^"]+")\s+validate:"required"` + "`")
+		if loc := tagged.FindSubmatchIndex(result); loc != nil {
+			result = append(append(append([]byte(nil), result[:loc[3]]...), '`'), result[loc[1]:]...)
+		} else if !regexp.MustCompile("(?m)" + prefix + "`" + `json:"[^"]+"` + "`").Match(result) {
+			return nil, fmt.Errorf("generated MeetingLink.%s shape changed", field)
+		}
+	}
+	return result, nil
+}

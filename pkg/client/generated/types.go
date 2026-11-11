@@ -7725,12 +7725,12 @@ func (m MeetingImportResponse) Validate() error {
 }
 
 type MeetingLink struct {
-	DeletedFromSource bool      `json:"deleted_from_source"`
-	End               time.Time `json:"end" validate:"required"`
-	Ref               string    `json:"ref" validate:"required"`
-	Start             time.Time `json:"start" validate:"required"`
-	Status            string    `json:"status" validate:"required"`
-	Subject           *string   `json:"subject,omitzero"`
+	DeletedFromSource bool       `json:"deleted_from_source"`
+	End               *time.Time `json:"end"`
+	Ref               string     `json:"ref" validate:"required"`
+	Start             *time.Time `json:"start"`
+	Status            string     `json:"status" validate:"required"`
+	Subject           *string    `json:"subject,omitzero"`
 }
 
 func (m MeetingLink) Validate() error {

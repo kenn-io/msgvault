@@ -67,6 +67,13 @@ When a recurrence cannot be expanded, the record keeps the copies it found and
 reports the affected message IDs and reasons in `unexpandable`. The CLI table
 prints those warnings to stderr; JSON and MCP return them with the record.
 
+An archived cancellation stays in the record even when its series master hasn't
+been archived. Its `start` and `end` are `null` in JSON and `unknown` in the
+CLI table, and `unexpandable` reports the missing series and bounds. A known
+bound is kept even if the other is missing. Importing the master later fills
+in the times. Note matches, calendar candidate reads, and recurrence steps share
+one request work limit; exceeding it returns `query_too_broad`.
+
 In Messages, select meeting rows and choose **Meeting context…** in the
 selection bar. In its popover, choose JSON or Markdown, optionally turn on
 **Include transcript**, and choose **Export meeting context**. You can select

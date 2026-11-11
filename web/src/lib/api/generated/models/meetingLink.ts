@@ -4,9 +4,11 @@
 
 export interface MeetingLink {
   deleted_from_source: boolean;
-  end: string;
+  /** @nullable */
+  end: string | null;
   ref: string;
-  start: string;
+  /** @nullable */
+  start: string | null;
   status: string;
   subject?: string;
   [key: string]: unknown;

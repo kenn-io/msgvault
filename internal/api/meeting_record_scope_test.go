@@ -138,6 +138,29 @@ func TestMeetingRecordPartialHTTP(t *testing.T) {
 	}
 }
 
+func TestMeetingRecordNullableBoundsHTTP(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gcal", "calendar@example.test")
+	require.NoError(t, err)
+	for _, tc := range []struct{ name, raw, start, end string }{
+		{"sparse", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`, `"start":null`, `"end":null`},
+		{"complete", `{"id":"single","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, `"start":"2027-03-14T10:00:00Z"`, `"end":"2027-03-14T11:00:00Z"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: tc.name, MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: tc.name, ConversationType: "calendar"}, RawMIME: []byte(tc.raw), RawFormat: "gcal_json"})
+			require.NoError(err)
+			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=evt:%d", id), nil)
+			response := httptest.NewRecorder()
+			srv.Router().ServeHTTP(response, req)
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
+			assert.Contains(response.Body.String(), tc.start)
+			assert.Contains(response.Body.String(), tc.end)
+		})
+	}
+}
+
 func TestParseMeetingLinkRef(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
