@@ -377,6 +377,13 @@ func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 	t.Run("masterless exception retains conversation", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
+		unrelated, err := st.GetOrCreateSource("mbox", "unrelated@example.com")
+		requirements.NoError(err)
+		persistInviteEmailForSource(t, st, unrelated.ID, "other-source", inviteEmail(calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T130000Z\r\nORGANIZER:mailto:other@example.com")))
+		other, err := st.GetOrCreateSource("mbox", "other-destination@example.com")
+		requirements.NoError(err)
+		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: unrelated.ID, IntoSourceID: other.ID})
+		requirements.NoError(err)
 		_, from := persistInviteEmail(t, st, "exception", inviteEmail(calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T130000Z\r\nSUMMARY:Exception\r\nORGANIZER:mailto:organizer@example.com")))
 		into, err := st.GetOrCreateSource("mbox", "destination@example.com")
 		requirements.NoError(err)
@@ -393,6 +400,14 @@ func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 		assertions.Equal(conversationID, gotConversation)
 		persistInviteEmailForSource(t, st, into.ID, "foreign-master", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:other@example.com")))
 		assertions.Equal(ids, emailEvents(t, st, into.ID))
+		persistInviteEmailForSource(t, st, into.ID, "sibling", inviteEmail(calendarDocument("REQUEST", "RECURRENCE-ID:20270304T120000Z\r\nDTSTART:20270304T130000Z\r\nORGANIZER:mailto:organizer@example.com")))
+		persistInviteEmailForSource(t, st, into.ID, "master", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com")))
+		family := emailEvents(t, st, into.ID)
+		requirements.Len(family, 3)
+		for _, id := range family {
+			requirements.NoError(st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, id).Scan(&gotConversation))
+			assertions.Equal(conversationID, gotConversation)
+		}
 		var count int
 		requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM conversations WHERE source_id=? AND conversation_type='calendar'`, into.ID).Scan(&count))
 		assertions.Equal(1, count)
