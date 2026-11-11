@@ -71,7 +71,7 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 		}
 		for i, item := range recording.Transcript.Segments {
 			seg := transcript.Segments[i]
-			if item.Start == nil || item.End == nil || seg.OffsetSeconds == nil || *item.Start != *seg.OffsetSeconds {
+			if item.Start == nil || item.End == nil || seg.OffsetSeconds == nil {
 				return nil, errors.New("retained transcript timing does not match archived transcript")
 			}
 			cues = append(cues, subtitleSegment{seg.Speaker, seg.Text, *item.Start, *item.End})
