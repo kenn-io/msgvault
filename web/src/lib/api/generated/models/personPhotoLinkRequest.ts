@@ -6,10 +6,6 @@ import type { PersonPhotoLinkRequestState } from "./personPhotoLinkRequestState"
 export interface PersonPhotoLinkRequest {
   /** @maxLength 256 */
   linked_uid?: string;
-  /**
-   * @minLength 1
-   * @maxLength 128
-   */
   person_id: string;
   /** @minimum 1 */
   revision: number;

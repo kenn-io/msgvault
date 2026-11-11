@@ -29,7 +29,7 @@ func TestImageAttachmentSearchFencesAndRevalidatesVisibleOccurrences(t *testing.
 	ids, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope)
 	require.NoError(err)
 	require.ElementsMatch([]string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003"}, ids)
-	occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids, 100, 0)
+	occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids, 100, nil)
 	require.NoError(err)
 	require.Len(occurrences, 3)
 	assert.Equal(mid, occurrences[0].MessageID)
@@ -42,7 +42,7 @@ func TestImageAttachmentSearchFencesAndRevalidatesVisibleOccurrences(t *testing.
 	assert.Empty(other)
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id=?`), time.Now().UTC(), mid)
 	require.NoError(err)
-	occurrences, err = f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids, 100, 0)
+	occurrences, err = f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids, 100, nil)
 	require.NoError(err)
 	assert.Empty(occurrences)
 }

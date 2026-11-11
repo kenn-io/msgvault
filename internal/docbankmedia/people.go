@@ -99,9 +99,6 @@ func (c *Client) SetExternalPersonIdentity(ctx context.Context, personID string,
 
 func (c *Client) PersonAssertions(ctx context.Context, personID, cursor string) (PersonAssertions, error) {
 	var out PersonAssertions
-	if personID == "" || len(cursor) > 4096 {
-		return out, ErrInvalidRequest
-	}
 	query := url.Values{"assertion_limit": {"100"}}
 	if cursor != "" {
 		query.Set("assertion_cursor", cursor)

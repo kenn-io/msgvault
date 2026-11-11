@@ -135,7 +135,7 @@ func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *Me
 	for _, hit := range hits {
 		ids = append(ids, hit.ContentVersionID)
 	}
-	occurrences, err := reader.Store.DocumentSearchOccurrences(ctx, reader.Destination, scope, ids, limit, 0)
+	occurrences, err := reader.Store.DocumentSearchOccurrences(ctx, reader.Destination, scope, ids, limit, nil)
 	if err != nil {
 		return err
 	}

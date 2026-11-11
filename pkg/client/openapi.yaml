@@ -13137,8 +13137,7 @@ components:
           maxLength: 256
           type: string
         person_id:
-          maxLength: 128
-          minLength: 1
+          format: uuid
           type: string
         revision:
           format: int64
@@ -13182,9 +13181,8 @@ components:
           type: string
         next_cursor:
           type: string
-        next_occurrence_offset:
-          format: int64
-          type: integer
+        next_occurrence_cursor:
+          type: string
         person_id:
           type: string
         photos:
@@ -27255,11 +27253,10 @@ paths:
             type: string
         - explode: false
           in: query
-          name: occurrence_offset
+          name: occurrence_cursor
           schema:
-            format: int64
-            minimum: 0
-            type: integer
+            maxLength: 1024
+            type: string
       responses:
         "200":
           content:

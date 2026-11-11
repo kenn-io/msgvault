@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json/v2"
 	"errors"
-	"math"
 	"net/http"
 	"slices"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -25,11 +27,11 @@ type PersonPhotosResponse struct {
 	Photos               []PersonPhotoEvidence `json:"photos"`
 	NextCursor           string                `json:"next_cursor,omitempty"`
 	Truncated            bool                  `json:"truncated"`
-	NextOccurrenceOffset *int                  `json:"next_occurrence_offset,omitempty"`
+	NextOccurrenceCursor string                `json:"next_occurrence_cursor,omitempty"`
 }
 type PersonPhotoLinkRequest struct {
 	UID       string `json:"uid" minLength:"1" maxLength:"256"`
-	PersonID  string `json:"person_id" minLength:"1" maxLength:"128"`
+	PersonID  string `json:"person_id" format:"uuid"`
 	Revision  int64  `json:"revision" minimum:"1"`
 	State     string `json:"state" enum:"current,unlinked"`
 	LinkedUID string `json:"linked_uid,omitempty" maxLength:"256"`
@@ -111,10 +113,17 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 	huma.Register(api, get, func(ctx context.Context, in *struct {
 		UID              string `query:"uid" required:"true" minLength:"1" maxLength:"256"`
 		Cursor           string `query:"cursor" maxLength:"4096"`
-		OccurrenceOffset int    `query:"occurrence_offset" minimum:"0"`
+		OccurrenceCursor string `query:"occurrence_cursor" maxLength:"1024"`
 	}) (*struct{ Body PersonPhotosResponse }, error) {
-		if in.OccurrenceOffset > math.MaxInt-11 {
-			return nil, huma.Error400BadRequest("occurrence offset is too large")
+		position := store.DocumentOccurrencePage{}
+		if in.OccurrenceCursor != "" {
+			data, err := base64.RawURLEncoding.DecodeString(in.OccurrenceCursor)
+			if err != nil || json.Unmarshal(data, &position) != nil || position.AttachmentID <= 0 {
+				return nil, huma.Error400BadRequest("invalid occurrence cursor")
+			}
+			if _, err := uuid.Parse(position.VersionID); err != nil {
+				return nil, huma.Error400BadRequest("invalid occurrence cursor")
+			}
 		}
 		r, err := s.photoReader()
 		if err != nil {
@@ -145,19 +154,23 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 				ids = append(ids, a.ContentVersionID)
 			}
 		}
-		occurrences, err := r.Store.DocumentSearchOccurrences(ctx, r.Destination, nil, ids, 10, in.OccurrenceOffset)
+		occurrences, err := r.Store.DocumentSearchOccurrences(ctx, r.Destination, nil, ids, 100, &position)
 		if err != nil {
 			return nil, photoFailure(err)
 		}
 		byVersion := map[string][]MediaAttachmentResult{}
 		truncated := map[string]bool{}
-		for _, o := range occurrences {
-			if len(byVersion[o.VersionID]) >= 10 {
-				truncated[o.VersionID] = true
-				next := in.OccurrenceOffset + 10
-				response.NextOccurrenceOffset = &next
-				continue
+		if len(occurrences) > 100 {
+			last := occurrences[99]
+			truncated[last.VersionID] = occurrences[100].VersionID == last.VersionID
+			token, err := json.Marshal(store.DocumentOccurrencePage{VersionID: last.VersionID, AttachmentID: last.AttachmentID})
+			if err != nil {
+				return nil, photoFailure(err)
 			}
+			response.NextOccurrenceCursor = base64.RawURLEncoding.EncodeToString(token)
+			occurrences = occurrences[:100]
+		}
+		for _, o := range occurrences {
 			byVersion[o.VersionID] = append(byVersion[o.VersionID], MediaAttachmentResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Filename: o.Filename, ContainingTitle: o.ContainingTitle, OccurredAt: o.OccurredAt})
 		}
 		for _, a := range page.Assertions {
@@ -202,9 +215,6 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 			}
 		}
 		identity := docbankmedia.ExternalPersonIdentity{System: "msgvault", ArchiveID: archive, UID: uid, UIDState: in.Body.State, LastSeenRevision: p.Revision}
-		if p.DisplayName != nil {
-			identity.DisplayNameSnapshot = *p.DisplayName
-		}
 		_, revision, err := r.Client.SetExternalPersonIdentity(ctx, in.Body.PersonID, in.Body.Revision, identity)
 		if err != nil {
 			return nil, photoFailure(err)

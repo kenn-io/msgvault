@@ -11,6 +11,7 @@ import (
 	"encoding/json/jsontext"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+	"github.com/google/uuid"
 )
 
 type AccountInfo struct {
@@ -13242,7 +13243,7 @@ func (p PersonPhotoEvidence) Validate() error {
 
 type PersonPhotoLinkRequest struct {
 	LinkedUID *string                     `json:"linked_uid,omitzero" validate:"omitempty,max=256"`
-	PersonID  string                      `json:"person_id" validate:"required,max=128,min=1"`
+	PersonID  uuid.UUID                   `json:"person_id" validate:"required"`
 	Revision  int64                       `json:"revision" validate:"gte=1"`
 	State     PersonPhotoLinkRequestState `json:"state" validate:"required"`
 	UID       string                      `json:"uid" validate:"required,max=256,min=1"`
@@ -13255,8 +13256,10 @@ func (p PersonPhotoLinkRequest) Validate() error {
 			errors = errors.Append("LinkedUID", err)
 		}
 	}
-	if err := typesValidator.Var(p.PersonID, "required,max=128,min=1"); err != nil {
-		errors = errors.Append("PersonID", err)
+	if v, ok := any(p.PersonID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("PersonID", err)
+		}
 	}
 	if err := typesValidator.Var(p.Revision, "gte=1"); err != nil {
 		errors = errors.Append("Revision", err)
@@ -13289,7 +13292,7 @@ func (p PersonPhotoLinkResponse) Validate() error {
 type PersonPhotosResponse struct {
 	LinkState            string                `json:"link_state" validate:"required"`
 	NextCursor           *string               `json:"next_cursor,omitzero"`
-	NextOccurrenceOffset *int64                `json:"next_occurrence_offset,omitempty"`
+	NextOccurrenceCursor *string               `json:"next_occurrence_cursor,omitzero"`
 	PersonID             *string               `json:"person_id,omitzero"`
 	Photos               []PersonPhotoEvidence `json:"photos" validate:"required"`
 	Truncated            bool                  `json:"truncated"`
