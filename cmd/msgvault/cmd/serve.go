@@ -64,7 +64,6 @@ import (
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/twilio"
 	"go.kenn.io/msgvault/internal/vector/visual"
-	"go.kenn.io/msgvault/internal/wakeups"
 	"golang.org/x/oauth2"
 )
 
@@ -592,9 +591,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		logger.Warn("Recording reference submission unavailable", "error", err)
 	}
 	if err := configureWakeupJob(ctx, mediaSched, operationGate, s, cfg, logger); err != nil {
-		if category := wakeups.StoreErrorCategory(err); category != "" {
-			logger.Warn("Wakeup scheduling unavailable", "category", category)
-		}
+		logger.Warn("Wakeup scheduling unavailable", "category", "scheduler_error")
 	}
 	if err := registerActivityProjectionJob(
 		sched, s, cfg.Activity, logger); err != nil {

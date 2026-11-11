@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,17 +88,30 @@ func TestWakeupJobRecoversAfterSetupGateFailure(t *testing.T) {
 	require := Require.New(t)
 	t.Setenv("MSGVAULT_TEST_WAKEUP_KEY", "whsec_"+base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 32))))
 	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(os.WriteFile(path, []byte("[[wakeups]]\nname='good'\nurl='https://example.com/'\nsecret_env='MSGVAULT_TEST_WAKEUP_KEY'\n"), 0600))
+	require.NoError(os.WriteFile(path, []byte("[[wakeups]]\nname='good'\nurl='https://example.com/'\nsecret_env='MSGVAULT_TEST_WAKEUP_KEY'\nsource_ids=[987654]\n[[wakeups]]\nname='kept'\nurl='https://example.com/'\nsecret_env='MSGVAULT_TEST_WAKEUP_KEY'\n"), 0600))
 	cfg, err := config.Load(path, "")
 	require.NoError(err)
 	st := testutil.NewTestStore(t)
+	ok, err := st.AdvanceWakeupState(t.Context(), "removed", nil, store.WakeupState{At: time.Now().UTC()})
+	require.NoError(err)
+	require.True(ok)
+	kept := store.WakeupState{At: time.Now().UTC().Add(-time.Hour), NextAttemptAt: time.Now().UTC().Add(time.Hour)}
+	ok, err = st.AdvanceWakeupState(t.Context(), "kept", nil, kept)
+	require.NoError(err)
+	require.True(ok)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	gate := &wakeupSetupGate{SerialOperationGate: api.NewSerialOperationGate(), refuse: true}
 	sched := scheduler.New(nil)
-	require.NoError(configureWakeupJob(t.Context(), sched, gate, st, cfg, nil))
+	require.NoError(configureWakeupJob(t.Context(), sched, gate, st, cfg, logger))
 	assert.True(sched.IsJobScheduled("wakeups"))
 	_, raw, err := st.LoadWakeupState(t.Context(), "good")
 	require.NoError(err)
 	assert.Nil(raw)
+	_, raw, err = st.LoadWakeupState(t.Context(), "removed")
+	require.NoError(err)
+	assert.NotNil(raw)
+	assert.NotContains(logs.String(), "selector_unresolved")
 	gate.refuse = false
 	sched.Start()
 	defer func() { <-sched.Stop().Done() }()
@@ -104,4 +119,38 @@ func TestWakeupJobRecoversAfterSetupGateFailure(t *testing.T) {
 	_, raw, err = st.LoadWakeupState(t.Context(), "good")
 	require.NoError(err)
 	assert.NotNil(raw)
+	_, raw, err = st.LoadWakeupState(t.Context(), "removed")
+	require.NoError(err)
+	assert.Nil(raw)
+	got, _, err := st.LoadWakeupState(t.Context(), "kept")
+	require.NoError(err)
+	assert.Equal(kept, got)
+	assert.Equal(1, strings.Count(logs.String(), "category=selector_unresolved"))
+	require.NoError(sched.TriggerJob("wakeups"))
+	assert.Equal(1, strings.Count(logs.String(), "category=selector_unresolved"))
+}
+
+func TestWakeupSetupSafeDiagnostics(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	t.Setenv("WAKEUP_BAD_SECRET", "short")
+	t.Setenv("WAKEUP_GOOD_SECRET", "whsec_"+base64.StdEncoding.EncodeToString([]byte(strings.Repeat("a", 32))))
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[[wakeups]]\nname='missing'\nurl='https://example.com/'\nsecret_env='WAKEUP_MISSING_SECRET'\n[[wakeups]]\nname='bad'\nurl='https://example.com/'\nsecret_env='WAKEUP_BAD_SECRET'\n[[wakeups]]\nname='good'\nurl='https://example.com/'\nsecret_env='WAKEUP_GOOD_SECRET'\nsource_ids=[987654]\nconversation_ids=[987655]\n"), 0600))
+	cfg, err := config.Load(path, "")
+	require.NoError(err)
+	t.Setenv("WAKEUP_MISSING_SECRET", "")
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	sched := scheduler.New(nil)
+	require.NoError(configureWakeupJob(t.Context(), sched, nil, testutil.NewTestStore(t), cfg, logger))
+	text := logs.String()
+	assert.Contains(text, "category=secret_unavailable")
+	assert.Contains(text, "category=invalid_secret")
+	assert.Contains(text, "field=source_ids")
+	assert.Contains(text, "field=conversation_ids")
+	assert.Equal(2, strings.Count(text, "category=selector_unresolved"))
+	assert.NotContains(text, "987654")
+	assert.NotContains(text, "987655")
+	assert.NotContains(text, "short")
 }
