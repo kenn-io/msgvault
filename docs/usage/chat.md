@@ -892,6 +892,8 @@ retries a write by itself. If a write reports
 
 ## Attachment mirror
 
+Each tool appears only when the daemon advertises its corresponding native route.
+
 On unreleased `main`, owner clients can use `get_docbank_attachment_status` to
 inspect the configured Docbank attachment mirror and aggregate counts. Processing
 `other` totals outcomes outside waiting, requested, and extracted without labels.
