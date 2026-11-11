@@ -712,7 +712,7 @@ func TestRosterResumeUsesArchivedBindingsAfterCheckpointLossAndJoin(t *testing.T
 }
 
 func TestInterruptedMatchingKeepsVerifiedMembership(t *testing.T) {
-	testutil.SkipIfPostgres(t, "uses a SQLite trigger to stop after route proof is invalidated")
+	testutil.SkipIfPostgres(t, "uses a SQLite trigger to stop after route proof is published")
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!unchanged-stop:example.test", 2, time.Now().Add(-48*time.Hour))
@@ -726,8 +726,8 @@ func TestInterruptedMatchingKeepsVerifiedMembership(t *testing.T) {
 	require.NoError(err)
 	st.DB().SetMaxOpenConns(1)
 	stop := false
-	registerSQLiteFunc(t, st, "yield_incomplete_proof", func() int { stop = true; return 0 })
-	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_incomplete_proof AFTER UPDATE OF metadata ON conversations WHEN json_extract(NEW.metadata, '$.messaging_route.membership_complete') = 0 BEGIN SELECT yield_incomplete_proof(); END`)
+	registerSQLiteFunc(t, st, "yield_published_proof", func() int { stop = true; return 0 })
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_published_proof AFTER UPDATE OF metadata ON conversations WHEN json_extract(NEW.metadata, '$.messaging_route.membership_complete') = 1 BEGIN SELECT yield_published_proof(); END`)
 	require.NoError(err)
 	_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", NoMedia: true, ShouldStop: func() bool { return stop }}, state, time.Now(), false, false, &ImportSummary{})
 	require.NoError(err)
@@ -737,7 +737,7 @@ func TestInterruptedMatchingKeepsVerifiedMembership(t *testing.T) {
 	assert.NotContains(unresolved, chat.ID, "verified membership stays complete while matching is deferred")
 	require.NotNil(state.Chats[chat.ID].RosterWork)
 	assert.True(state.Chats[chat.ID].RosterWork.Verified)
-	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER yield_incomplete_proof`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER yield_published_proof`)
 	require.NoError(err)
 	_, complete, err := imp.syncChat(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", NoMedia: true}, state, time.Now(), false, false, &ImportSummary{})
 	require.NoError(err)
