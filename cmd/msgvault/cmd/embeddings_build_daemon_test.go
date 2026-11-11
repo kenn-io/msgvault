@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -464,4 +466,39 @@ func TestManagedEmbedCancelledBeforeStoreOpen(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	_, err = os.Stat(cfg.DatabaseDSN())
 	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestEmbeddingRuntimeWiresContentReadGuard(t *testing.T) {
+	for _, format := range []vector.EmbeddingAPIFormat{vector.APIFormatOpenAI, vector.APIFormatVoyageContextual} {
+		t.Run(string(format), func(t *testing.T) {
+			needs := require.New(t)
+			dir := t.TempDir()
+			cfg := config.NewDefaultConfig()
+			cfg.HomeDir, cfg.Data.DataDir = dir, dir
+			cfg.Vector.Enabled = true
+			cfg.Vector.Embeddings.APIFormat = format
+			cfg.Vector.Embeddings.Dimension = 4
+			cfg.Vector.Embeddings.Model = "test-model"
+			if format == vector.APIFormatVoyageContextual {
+				cfg.Vector.Embeddings.Model = "voyage-context-4"
+			}
+			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+			backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: filepath.Join(dir, "vectors.db"), MainPath: cfg.DatabaseDSN(), MainDB: st.DB(), Dimension: 4})
+			needs.NoError(err)
+			defer func() { _ = backend.Close() }()
+			gen, err := backend.CreateGeneration(t.Context(), "synthetic", 4, cfg.Vector.GenerationFingerprint())
+			needs.NoError(err)
+			state := &invocation{cfg: cfg}
+			personGate := vector.NewPinnedExactSemanticPersonEmbeddingGate(cfg.Vector, currentSemanticPersonVectorConfigSource(state), st)
+			sentinel := errors.New("synthetic content guard refusal")
+			runtime, err := newEmbeddingRuntime(cfg.Vector, embeddingRuntimeDeps{
+				Backend: backend, VectorsDB: backend.DB(), MainDB: st.DB(), Store: st,
+				PersonGate: personGate, APIKey: "synthetic-key",
+				ContentReadGuard: func(context.Context) (func(), error) { return nil, sentinel },
+			})
+			needs.NoError(err)
+			_, err = runtime.Runner.RunOnce(t.Context(), gen, operations.PassScope{Key: "test-content-guard", Trigger: operations.TriggerManual, StartedAt: time.Now().UTC()})
+			needs.ErrorIs(err, sentinel)
+		})
+	}
 }
