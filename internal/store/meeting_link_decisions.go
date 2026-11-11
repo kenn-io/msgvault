@@ -102,54 +102,25 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			}
 			leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
 			rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
-			left, args := meetingDecisionSideClause(a, "left", true)
-			right, rightValues := meetingDecisionSideClause(b, "right", true)
+			left, args := meetingDecisionSideClause(a, "left")
+			right, rightValues := meetingDecisionSideClause(b, "right")
 			args = append(args, rightValues...)
 			args = append(args, leftArgs...)
 			args = append(args, rightArgs...)
-			rows, err := tx.QueryContext(ctx, `SELECT d.id FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE `+left+` AND `+right+leftScope+rightScope, args...)
+			deleted, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE choice_key IN (SELECT d.choice_key FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE `+left+` AND `+right+leftScope+rightScope+`)`, args...)
 			if err != nil {
 				return err
 			}
-			var ids []int64
-			for rows.Next() {
-				var id int64
-				if err := rows.Scan(&id); err != nil {
-					rows.Close()
-					return err
-				}
-				ids = append(ids, id)
-			}
-			if err := rows.Close(); err != nil {
+			if count, err := deleted.RowsAffected(); err != nil {
 				return err
-			}
-			if err := rows.Err(); err != nil {
-				return err
-			}
-			if len(ids) == 0 {
+			} else if count == 0 {
 				return cause
-			}
-			for _, id := range ids {
-				if err := deleteMeetingDecisionTx(ctx, tx, meetingDecisionEdge{id: id}, true); err != nil {
-					return err
-				}
 			}
 			result = MeetingLinkDecisionResult{Left: a.ref(), Right: b.ref(), State: "automatic"}
 			return nil
 		}
 		budget := calrecur.RequestReadBudget
 		for _, endpoint := range []*meetingDecisionEndpoint{&a, &b} {
-			ref, err := endpoint.meetingRef()
-			if err != nil {
-				return err
-			}
-			record, err := s.meetingAutomaticRecordContext(ctx, ref, &budget)
-			if err != nil {
-				return clearStored(err)
-			}
-			if endpoint.Kind == "evt" && len(record.Links) == 0 {
-				return clearStored(sql.ErrNoRows)
-			}
 			if endpoint.Kind == "evt" && endpoint.Key == "" {
 				rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{endpoint.ID}, &budget)
 				if err != nil {
@@ -176,8 +147,9 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			canonicalA, canonicalB = canonicalB, canonicalA
 		}
 		seen := map[int64]bool{}
+		decisions := meetingDecisionLoader{store: s}
 		for _, id := range append(aliasesA, aliasesB...) {
-			choices, err := s.meetingDecisionsForMessage(ctx, id, &budget)
+			choices, err := decisions.edges(ctx, meetingDecisionEndpoint{ID: id}, nil, &budget)
 			if err != nil {
 				return err
 			}
@@ -303,7 +275,6 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, into in
 	}
 	type copiedDecision struct {
 		meetingDecisionEdge
-		id        int64
 		choiceKey string
 	}
 	var decisions []copiedDecision

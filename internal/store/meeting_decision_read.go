@@ -22,11 +22,6 @@ type meetingDecisionConflict struct {
 	link, split meetingDecisionEdge
 }
 
-func (s *Store) meetingDecisionsForMessage(ctx context.Context, id int64, budget *int) ([]meetingDecisionEdge, error) {
-	loader := meetingDecisionLoader{store: s}
-	return loader.edges(ctx, meetingDecisionEndpoint{ID: id}, nil, budget)
-}
-
 // meetingDecisionLoader reads the choices of every waiting message in one query, so a
 // large group costs one lookup per batch instead of one per message.
 type meetingDecisionLoader struct {
@@ -58,13 +53,13 @@ func (l *meetingDecisionLoader) edges(ctx context.Context, endpoint meetingDecis
 }
 
 // meetingDecisionSideClause filters one stored endpoint before the read budget applies.
-func meetingDecisionSideClause(endpoint meetingDecisionEndpoint, side string, exact bool) (string, []any) {
+func meetingDecisionSideClause(endpoint meetingDecisionEndpoint, side string) (string, []any) {
 	clause := "d." + side + "_message_id=?"
 	args := []any{endpoint.ID}
 	if endpoint.Kind != "" {
 		clause += " AND d." + side + "_kind=?"
 		args = append(args, endpoint.Kind)
-		if endpoint.Kind == "evt" || exact {
+		if endpoint.Kind == "evt" {
 			clause += " AND (d." + side + "_key=? OR (d." + side + "_key='' AND d." + side + "_anchor=?))"
 			args = append(args, endpoint.Key, endpoint.Key)
 		}
@@ -77,7 +72,7 @@ func meetingDecisionEndpointClause(endpoints []meetingDecisionEndpoint) (string,
 	var args []any
 	for _, endpoint := range endpoints {
 		for _, side := range []string{"left", "right"} {
-			clause, values := meetingDecisionSideClause(endpoint, side, false)
+			clause, values := meetingDecisionSideClause(endpoint, side)
 			clauses = append(clauses, clause)
 			args = append(args, values...)
 		}
@@ -312,21 +307,12 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 			}
 		}
 	}
-	order := func(edges []meetingDecisionEdge) {
-		slices.SortFunc(edges, func(a, b meetingDecisionEdge) int {
-			if compareMeetingEndpoints(a.a, a.b) > 0 {
-				a.a, a.b = a.b, a.a
-			}
-			if compareMeetingEndpoints(b.a, b.b) > 0 {
-				b.a, b.b = b.b, b.a
-			}
-			if c := compareMeetingEndpoints(a.a, b.a); c != 0 {
-				return c
-			}
-			return compareMeetingEndpoints(a.b, b.b)
-		})
-	}
-	order(explicit)
+	slices.SortFunc(explicit, func(a, b meetingDecisionEdge) int {
+		if c := compareMeetingEndpoints(a.a, b.a); c != 0 {
+			return c
+		}
+		return compareMeetingEndpoints(a.b, b.b)
+	})
 	join := func(edge meetingDecisionEdge) {
 		a, b := root(edge.a.ref()), root(edge.b.ref())
 		if a == b {
