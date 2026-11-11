@@ -56,6 +56,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, personRecordCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, employmentMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, organizationMCPCapabilities(hasRoute)...)
 	return backend
 }
 
@@ -85,6 +86,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 			return result, err
 		}
 		if result, handled, err := b.executeEmploymentOperation(ctx, name, args); handled {
+			return result, err
+		}
+		if result, handled, err := b.executeOrganizationOperation(ctx, name, args); handled {
 			return result, err
 		}
 		if result, handled, err := b.executeSourceOperation(ctx, name, args); handled {
