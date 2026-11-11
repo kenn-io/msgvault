@@ -4534,6 +4534,7 @@ func TestHandleGetMessage_EngineBodyHTMLAndRelatedID(t *testing.T) {
 
 func TestHandleGetMessage_EngineOwnershipIsOptional(t *testing.T) {
 	t.Parallel()
+	assert, require := assert.New(t), require.New(t)
 	engine := &querytest.MockEngine{
 		Messages: map[int64]*query.MessageDetail{
 			1: {ID: 1, SentAt: time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC), IsFromMe: new(false)},
@@ -4545,12 +4546,12 @@ func TestHandleGetMessage_EngineOwnershipIsOptional(t *testing.T) {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/"+id, nil)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
-		require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+		require.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 		var resp map[string]any
-		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		require.NoError(json.NewDecoder(w.Body).Decode(&resp))
 		got, present := resp["is_from_me"]
-		assert.Equal(t, want != nil, present, "message %s presence", id)
-		assert.Equal(t, want, got, "message %s ownership", id)
+		assert.Equal(want != nil, present, "message %s presence", id)
+		assert.Equal(want, got, "message %s ownership", id)
 	}
 }
 
