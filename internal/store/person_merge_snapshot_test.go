@@ -140,15 +140,15 @@ func TestPostgresPersonMergeInventoryIncludesCompositeColumns(t *testing.T) {
 	assert := assert.New(t)
 	skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t)
-	_, err := st.db.Exec(`CREATE UNIQUE INDEX test_person_inventory_identity ON persons(id,vcard_uid)`)
+	_, err := st.db.ExecContext(t.Context(), `CREATE UNIQUE INDEX test_person_inventory_identity ON persons(id,vcard_uid)`)
 	require.NoError(err)
-	_, err = st.db.Exec(`CREATE TABLE test_person_inventory_composite (
+	_, err = st.db.ExecContext(t.Context(), `CREATE TABLE test_person_inventory_composite (
 		person_id BIGINT,
 		person_uid TEXT,
 		FOREIGN KEY (person_id,person_uid) REFERENCES persons(id,vcard_uid)
 	)`)
 	require.NoError(err)
-	rows, err := st.db.Query(postgresPersonMergeReferenceQuery)
+	rows, err := st.db.QueryContext(t.Context(), postgresPersonMergeReferenceQuery)
 	require.NoError(err)
 	defer func() { assert.NoError(rows.Close()) }()
 	var columns []string
@@ -178,7 +178,7 @@ func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 	if st.IsPostgreSQL() {
 		query = postgresPersonMergeReferenceQuery
 	}
-	rows, err := st.db.Query(query)
+	rows, err := st.db.QueryContext(t.Context(), query)
 	require.NoError(err)
 	for rows.Next() {
 		var table, column string
