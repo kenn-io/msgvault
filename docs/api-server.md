@@ -215,7 +215,6 @@ Schema 3.46.0 adds `has_more` to CLI full-text search and optional `ranking_limi
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
 
-
 Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
 
 Schema 3.39.0 adds the optional `account` to staged deletion list summaries.

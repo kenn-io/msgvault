@@ -14,11 +14,15 @@ import (
 )
 
 type fakeCallCommandClient struct {
+	version          string
 	imports          [][]byte
 	lists, summaries []store.CallQuery
 }
 
 func (c *fakeCallCommandClient) APISchemaVersion(context.Context) (string, error) {
+	if c.version != "" {
+		return c.version, nil
+	}
 	return callsMinAPIVersion, nil
 }
 
@@ -73,4 +77,17 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 	requirements.Error(err)
 	assertions.Len(client.summaries, 1)
 	assertions.Equal(3, cleanups, "invalid --after must fail before opening the daemon client")
+}
+
+func TestCallsRejectDaemonWithoutCallRoutes(t *testing.T) {
+	client := &fakeCallCommandClient{version: "5.0.0"}
+	cleanups := 0
+	command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) {
+		return client, func() { cleanups++ }, nil
+	}})
+	command.SetArgs([]string{"list"})
+	err := command.ExecuteContext(t.Context())
+	require.ErrorContains(t, err, "calls require daemon API 5.1.0 or newer")
+	assert.Empty(t, client.lists)
+	assert.Equal(t, 1, cleanups)
 }
