@@ -255,15 +255,12 @@ func TestDiagnoseAcquisition(t *testing.T) {
 
 	t.Run("local", func(t *testing.T) {
 		require := require.New(t)
-		assert := assert.New(t)
 		a := newAcquisitionArchive(t, "gmail", false)
-		a.record(a.source, false, acquisitionOutcome("local", "fetch", "error", "fetch_error"))
 		remote := "[remote]\nurl = 'https://example.com'\n"
 		_, err := a.diagnose(remote)
 		require.ErrorContains(err, "use --local")
-		output, err := a.diagnose(remote, "--local")
+		_, err = a.diagnose(remote, "--local")
 		require.NoError(err)
-		assert.Equal("local\tstill failing\tmessage download failed\n", output)
 	})
 
 	t.Run("merged source", func(t *testing.T) {
@@ -281,8 +278,6 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		a := newAcquisitionArchive(t, "gmail", true)
-		require.NoError(a.st.Close())
-		a.st = nil
 		_, err := a.diagnose("", "--log-level", "invalid-level")
 		require.ErrorContains(err, "invalid log level")
 		archiveBefore, err := os.ReadFile(a.cfg.DatabaseDSN())

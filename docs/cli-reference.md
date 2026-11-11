@@ -3126,7 +3126,6 @@ List Gmail message download, processing, and file-saving failures for a source:
 ```bash
 msgvault diagnose-acquisition --source-id 1
 msgvault diagnose-acquisition --source-id 1 --all
-msgvault diagnose-acquisition --source-id 1 --json
 ```
 
 The command reads the local database without starting the daemon or contacting Gmail. Use `--local` when a remote URL is configured. By default it lists failures that sync still retries, based on saved sync records. `--all` adds failures in the other states:
@@ -3138,7 +3137,7 @@ The command reads the local database without starting the daemon or contacting G
 | `retired` | `historical` | The failure was skipped, by cleanup of a message deleted from Gmail or by a later skipped download. |
 | `unknown` | `indeterminate` | No retry or confirmation is recorded, or msgvault does not recognize the failure. |
 
-Each row shows the message ID, state, and a description of the failure; JSON also includes the saved phase and error-kind codes. A message can appear once per state, such as an older fixed failure and a newer one still failing. An entry can remain after another operation archives the message, until a later incremental sync resolves it. The command does not check saved files, and an empty list does not prove the archive is complete.
+Each row shows the message ID, state, and a description of the failure; JSON also includes the saved phase and error-kind codes. A message can appear once per state, such as an older fixed failure and a newer one still failing. The command does not check saved files, and an empty list does not prove the archive is complete.
 
 ---
 
