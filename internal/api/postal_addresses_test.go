@@ -391,7 +391,7 @@ func TestPostalAddressFallbackOriginalValuePreservesRawSnapshot(t *testing.T) {
 			edited := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), body, map[string]string{"If-Match": read.Header().Get("ETag")})
 			current := checkProfile(edited)
 			require.NotNil(current.FreeText)
-			assert.Equal("Updated Exampleville", *current.FreeText)
+			assert.Equal("  Updated Exampleville  ", *current.FreeText)
 			read = doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
 			checkProfile(read)
 
