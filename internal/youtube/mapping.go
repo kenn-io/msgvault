@@ -7,12 +7,10 @@ import (
 	"errors"
 	yt "google.golang.org/api/youtube/v3"
 	"slices"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/textutil"
 )
 
 type commentMetadata struct {
@@ -106,7 +104,7 @@ func persistVideoSDK(ctx context.Context, st *store.Store, sourceID int64, chann
 		return 0, messageUnchanged, err
 	}
 	data := &store.MessagePersistData{
-		Message:      &store.Message{SourceID: sourceID, SourceMessageID: "video:" + v.Id, MessageType: SourceType, SenderID: sql.NullInt64{Int64: pid, Valid: true}, IsFromMe: true, SentAt: sql.NullTime{Time: published, Valid: !published.IsZero()}, Subject: sql.NullString{String: v.Snippet.Title, Valid: true}, Snippet: sql.NullString{String: snippet(body), Valid: true}, SizeEstimate: int64(len(body)), PreserveAttachmentStats: true},
+		Message:      &store.Message{SourceID: sourceID, SourceMessageID: "video:" + v.Id, MessageType: SourceType, SenderID: sql.NullInt64{Int64: pid, Valid: true}, IsFromMe: true, SentAt: sql.NullTime{Time: published, Valid: !published.IsZero()}, Subject: sql.NullString{String: v.Snippet.Title, Valid: true}, Snippet: sql.NullString{String: meetingarchive.Snippet(body), Valid: true}, SizeEstimate: int64(len(body)), PreserveAttachmentStats: true},
 		Conversation: &store.ConversationPersistData{SourceConversationID: v.Id, ConversationType: "group_chat", Title: v.Snippet.Title, Participants: []store.ConversationParticipantRef{{ParticipantID: pid, Role: "member"}}, PreserveExistingParticipants: true},
 		Metadata:     &sql.NullString{String: string(meta), Valid: true}, BodyText: sql.NullString{String: body, Valid: true}, RawMIME: raw, RawFormat: "youtube_json", LabelIDs: labelIDs,
 		FTS: &store.FTSDoc{Subject: v.Snippet.Title, Body: body}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{pid}}},
@@ -197,8 +195,6 @@ func youtubeMessageSnapshotMatches(
 	titleMatches := data.Conversation == nil || data.Conversation.Title == "" || titles[sourceConversationID] == data.Conversation.Title
 	return messageMatches && contentMatches && metadataMatches && recipientsMatch && labelsMatch && titleMatches, nil
 }
-
-func snippet(s string) string { return textutil.PrefixRunes(strings.TrimSpace(s), 200) }
 
 // persistComment stores a comment without recomputing statistics. Import pages
 // call it repeatedly, then refresh their one affected video conversation once.
@@ -349,7 +345,7 @@ func persistCommentSDK(ctx context.Context, st *store.Store, sourceID int64, cha
 		members = append(members, store.ConversationParticipantRef{ParticipantID: pid, Role: "member"})
 	}
 	data := &store.MessagePersistData{
-		Message:      &store.Message{SourceID: sourceID, SourceMessageID: c.Id, MessageType: SourceType, SentAt: sql.NullTime{Time: published, Valid: !published.IsZero()}, SenderID: sql.NullInt64{Int64: pid, Valid: pid != 0}, ReplyToMessageID: sql.NullInt64{Int64: parentRow.ID, Valid: true}, IsFromMe: self, Subject: sql.NullString{String: title, Valid: true}, Snippet: sql.NullString{String: snippet(text), Valid: text != ""}, SizeEstimate: int64(len(text)), PreserveAttachmentStats: true},
+		Message:      &store.Message{SourceID: sourceID, SourceMessageID: c.Id, MessageType: SourceType, SentAt: sql.NullTime{Time: published, Valid: !published.IsZero()}, SenderID: sql.NullInt64{Int64: pid, Valid: pid != 0}, ReplyToMessageID: sql.NullInt64{Int64: parentRow.ID, Valid: true}, IsFromMe: self, Subject: sql.NullString{String: title, Valid: true}, Snippet: sql.NullString{String: meetingarchive.Snippet(text), Valid: text != ""}, SizeEstimate: int64(len(text)), PreserveAttachmentStats: true},
 		Conversation: &store.ConversationPersistData{SourceConversationID: videoID, ConversationType: "group_chat", Title: title, Participants: members, PreserveExistingParticipants: true}, Metadata: &sql.NullString{String: string(encoded), Valid: true}, BodyText: sql.NullString{String: text, Valid: text != ""}, RawMIME: raw, RawFormat: "youtube_json", LabelIDs: labelIDs, Recipients: recipients, FTS: &store.FTSDoc{Subject: title, Body: text, FromAddr: fromName},
 	}
 	replyToNeedsRepair := false

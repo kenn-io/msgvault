@@ -154,6 +154,7 @@ func runConfiguredYouTubeSync(ctx context.Context, st *store.Store, src config.Y
 	if errors.Is(err, store.ErrSourceRetired) {
 		return nil
 	}
+	_ = recordSyncAttempt(ctx, youtube.SourceType, youtube.SourceIdentifier(src.ChannelID), err)
 	return errors.Join(err, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), job))
 }
 

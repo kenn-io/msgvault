@@ -58,6 +58,10 @@ func TestSourceSetupFailuresAreRecorded(t *testing.T) {
 		wantError  string
 		run        func(context.Context, *store.Store) error
 	}{
+		{"youtube", "https://www.youtube.com/channel/UCfixture", "FIXTURE_YOUTUBE_CLIENT", func(ctx context.Context, st *store.Store) error {
+			t.Setenv("FIXTURE_YOUTUBE_CLIENT", "")
+			return runConfiguredYouTubeSync(ctx, st, config.YouTubeSource{Identifier: "work", ChannelID: "UCfixture", ClientIDEnv: "FIXTURE_YOUTUBE_CLIENT"})
+		}},
 		{"granola", "work", "has no api_key", func(ctx context.Context, st *store.Store) error {
 			return runConfiguredGranolaSync(ctx, st, config.GranolaSource{Identifier: "work"})
 		}},
@@ -86,6 +90,7 @@ func TestSourceSetupFailuresAreRecorded(t *testing.T) {
 			st := storetest.New(t)
 			cfg := config.NewDefaultConfig()
 			cfg.Data.DataDir = t.TempDir()
+			cfg.Analytics.AutoBuildCache = false
 			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 			var events []map[string]any
 			invocationFromContext(ctx).syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
