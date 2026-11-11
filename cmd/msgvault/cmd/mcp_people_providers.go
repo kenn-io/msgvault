@@ -104,7 +104,7 @@ func (b *daemonMCPOperations) peopleProviderDisclosure(ctx context.Context, name
 	}
 	effect := "Enable people inference with the selected provider; native checks and consent remain required. Restart may be required for the new policy to run."
 	if name == "disable_people_inference" {
-		effect = "Disable inference and revoke active consent for both configured and running providers shown in the current policy. Operator re-consent is required before re-enabling a revoked policy. Restart may be required."
+		effect = "Disable inference and revoke active consent for both configured and running providers. The running policy may differ from the saved configuration until restart. Operator re-consent is required before re-enabling a revoked policy."
 	}
 	data, err := json.Marshal(struct {
 		Operation string         `json:"operation"`
