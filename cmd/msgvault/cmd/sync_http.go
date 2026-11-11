@@ -7,15 +7,16 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
+	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/textutil"
 	"golang.org/x/oauth2"
 )
 
@@ -93,44 +94,74 @@ func runSyncFullWithHint(cmd *cobra.Command, resume string, run func() (bool, er
 }
 
 func syncResumeCommand(cmd *cobra.Command, args []string) (string, error) {
-	var rootFlags, commandFlags []*pflag.Flag
-	cmd.Root().PersistentFlags().Visit(func(flag *pflag.Flag) { rootFlags = append(rootFlags, flag) })
-	cmd.Flags().Visit(func(flag *pflag.Flag) {
-		if isRootPersistentFlag(cmd, flag) || flag.Name == "sync-operation-id" {
-			return
+	runArgs, err := cobraCommandArgs(cmd, args, true)
+	if err != nil {
+		return "", err
+	}
+	return formatSyncResumeCommand(nativeCommandExecutable(), runArgs, runtime.GOOS)
+}
+
+func formatSyncResumeCommand(executable string, args []string, goos string) (string, error) {
+	commands, err := agenthook.BuildCommand(executable, args...)
+	if err != nil {
+		return "", err
+	}
+	values := append([]string{executable}, args...)
+	unsafe := false
+	for _, value := range values {
+		unsafe = unsafe || !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0
+	}
+	if !unsafe {
+		if goos == "windows" {
+			return commands.PowerShell, nil
 		}
-		commandFlags = append(commandFlags, flag)
-	})
-	sort.Slice(rootFlags, func(i, j int) bool { return rootFlags[i].Name < rootFlags[j].Name })
-	sort.Slice(commandFlags, func(i, j int) bool { return commandFlags[i].Name < commandFlags[j].Name })
-	var runArgs []string
-	for _, flag := range rootFlags {
-		runArgs = appendDaemonCLIFlag(runArgs, flag)
+		return commands.POSIX, nil
 	}
-	runArgs = append(runArgs, daemonCLICommandPath(cmd)...)
-	for _, flag := range commandFlags {
-		runArgs = appendDaemonCLIFlag(runArgs, flag)
+
+	var parts, assignments []string
+	for i, value := range values {
+		if !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+			if goos == "windows" {
+				var chars []string
+				for _, char := range utf16.Encode([]rune(value)) {
+					chars = append(chars, fmt.Sprintf("0x%04x", char))
+				}
+				parts = append(parts, "([string]::new([char[]]@("+strings.Join(chars, ",")+")))")
+			} else {
+				var encoded strings.Builder
+				for _, b := range []byte(value) {
+					fmt.Fprintf(&encoded, "\\0%03o", b)
+				}
+				name := fmt.Sprintf("_msgvault_arg_%d", i)
+				// The suffix keeps command substitution from dropping trailing newlines.
+				assignments = append(assignments, fmt.Sprintf("%s=$(printf '%%b_' '%s')", name, encoded.String()))
+				parts = append(parts, "\"${"+name+"%_}\"")
+			}
+			continue
+		}
+		quoted, err := agenthook.BuildCommand("x", value)
+		if err != nil {
+			return "", err
+		}
+		if goos == "windows" {
+			parts = append(parts, strings.TrimPrefix(quoted.PowerShell, "& 'x' "))
+		} else {
+			parts = append(parts, strings.TrimPrefix(quoted.POSIX, "x "))
+		}
 	}
-	if n := cmd.ArgsLenAtDash(); n >= 0 {
-		runArgs = append(append(runArgs, args[:n]...), "--")
-		args = args[n:]
+	line := strings.Join(parts, " ")
+	if goos == "windows" {
+		return "& " + line, nil
 	}
-	return formatNativeCommand(append(runArgs, args...))
+	return "( " + strings.Join(assignments, "; ") + "; " + line + " )", nil
 }
 
 func printSyncResumeCommand(w io.Writer, command, goos string) error {
-	clean := textutil.SanitizeTerminal(command)
 	message := "Sync interrupted. To run it again, run:"
 	if goos == "windows" {
 		message = "Sync interrupted. In PowerShell 7.3+, run:"
 	}
-	if clean != command {
-		message = "Sync interrupted. Control characters were removed; check the command before running it again:"
-		if goos == "windows" {
-			message = "Sync interrupted. Control characters were removed; check the command before running it in PowerShell 7.3+:"
-		}
-	}
-	if _, err := fmt.Fprintf(w, "%s\n  %s\n", message, clean); err != nil {
+	if _, err := fmt.Fprintf(w, "%s\n  %s\n", message, command); err != nil {
 		return fmt.Errorf("write sync instruction: %w", err)
 	}
 	return nil

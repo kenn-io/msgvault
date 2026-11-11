@@ -695,11 +695,7 @@ func daemonRestartCommand(ctx context.Context) string {
 }
 
 func formatNativeCommand(args []string) (string, error) {
-	executable, err := daemonCLIExecutableResolver()
-	if err != nil {
-		executable = os.Args[0]
-	}
-	commands, err := agenthook.BuildCommand(executable, args...)
+	commands, err := agenthook.BuildCommand(nativeCommandExecutable(), args...)
 	if err != nil {
 		return "", err
 	}
@@ -708,6 +704,14 @@ func formatNativeCommand(args []string) (string, error) {
 		restart = commands.PowerShell
 	}
 	return restart, nil
+}
+
+func nativeCommandExecutable() string {
+	executable, err := daemonCLIExecutableResolver()
+	if err != nil {
+		executable = os.Args[0]
+	}
+	return executable
 }
 
 func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, currentVersion string, policy string) bool {
