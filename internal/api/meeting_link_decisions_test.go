@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,6 +18,64 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestMeetingDecisionHTTPConcurrentUpdate(t *testing.T) {
+	r := require.New(t)
+	st := testutil.NewTestStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL transaction contract")
+	}
+	source, err := st.GetOrCreateSource("meeting_import", "concurrent@example.com")
+	r.NoError(err)
+	var ids []int64
+	for _, name := range []string{"concurrent-first", "concurrent-second"} {
+		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: name, MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: name, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
+		r.NoError(err)
+		ids = append(ids, id)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	tx, err := st.DB().BeginTx(ctx, nil)
+	r.NoError(err)
+	defer func() { _ = tx.Rollback() }()
+	var blocker int
+	r.NoError(tx.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blocker))
+	var locked int64
+	r.NoError(tx.QueryRowContext(ctx, st.Rebind(`SELECT id FROM messages WHERE id=? FOR UPDATE`), ids[0]).Scan(&locked))
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Logger: testLogger()})
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		body := fmt.Sprintf(`{"left":"msg:%d","right":"msg:%d","decision":"link"}`, ids[0], ids[1])
+		req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/meetings/links/decisions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Api-Key", "owner")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		done <- w
+	}()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var blocked bool
+		r.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid)))`), blocker).Scan(&blocked))
+		if blocked {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			t.Fatal("meeting request did not wait for the locked message")
+		}
+	}
+	_, err = tx.ExecContext(ctx, st.Rebind(`UPDATE messages SET subject=subject WHERE id=?`), ids[0])
+	r.NoError(err)
+	r.NoError(tx.Commit())
+	response := <-done
+	r.Equal(http.StatusOK, response.Code, response.Body.String())
+	record, err := st.MeetingRecordContext(ctx, store.MeetingLinkRef{Kind: "msg", OccurrenceRef: store.OccurrenceRef{MessageID: ids[0]}})
+	r.NoError(err)
+	r.Equal(ids, record.MessageIDs)
+}
 
 func TestMeetingDecisionOwnerAndDelegatedHTTP(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)

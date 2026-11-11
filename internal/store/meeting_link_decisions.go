@@ -76,8 +76,20 @@ func ValidateMeetingLinkDecision(left, right MeetingLinkRef, decision string) er
 	return nil
 }
 
-// DecideMeetingLinkContext saves or clears a choice between two copies.
-func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right MeetingLinkRef, decision string) (result MeetingLinkDecisionResult, err error) {
+// DecideMeetingLinkContext saves or clears a choice between two copies. On
+// PostgreSQL, waiting for a message lock under REPEATABLE READ fails with a
+// serialization failure when its holder commits an update first; nothing was
+// written, so the decision restarts on a fresh snapshot.
+func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right MeetingLinkRef, decision string) (MeetingLinkDecisionResult, error) {
+	for attempt := 1; ; attempt++ {
+		result, err := s.decideMeetingLinkOnce(ctx, left, right, decision)
+		if attempt == maxContendedWriteAttempts || !s.dialect.IsSerializationFailureError(err) {
+			return result, err
+		}
+	}
+}
+
+func (s *Store) decideMeetingLinkOnce(ctx context.Context, left, right MeetingLinkRef, decision string) (result MeetingLinkDecisionResult, err error) {
 	if err := ValidateMeetingLinkDecision(left, right, decision); err != nil {
 		return result, err
 	}
