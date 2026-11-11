@@ -220,6 +220,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
+| `create_import_job` | import_write | `--allow-import-writes` | owner-only |
 | `create_kata_issue` | kata_write | `--allow-kata-writes` | owner-only |
 | `link_kata_evidence` | kata_write | `--allow-kata-writes` | owner-only |
 | `close_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
@@ -248,6 +249,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_embeddings_status` | read | — | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
+| `get_import_job` | read | — | owner-only |
 | `get_kata_issue_context` | read | — | owner-only |
 | `get_meeting_context` | read | — | owner-only |
 | `get_meeting_metrics` | read | — | owner-only |
