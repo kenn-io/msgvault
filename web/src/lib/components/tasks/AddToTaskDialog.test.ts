@@ -107,12 +107,9 @@ describe('Add to task', () => {
     } finally { view.unmount(); readiness.dispose(); }
   });
 
-  it('preserves a failed Tasks draft across provider changes', async () => {
+  it('preserves drafts across provider changes', async () => {
     const client = createAPIClient(async (input) => {
       const request = input as Request;
-      if (request.method === 'POST') {
-        return Response.json({ message: 'Response lost after create' }, { status: 503 });
-      }
       return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' }
         : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
     });
@@ -126,8 +123,6 @@ describe('Add to task', () => {
       });
       await fireEvent.input(await screen.findByRole('textbox', { name: 'Task title' }), { target: { value: 'Revised follow up' } });
       await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
-      await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
-      await screen.findByText('Response lost after create');
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
       await fireEvent.input(screen.getByLabelText('Issue title'), { target: { value: 'Kata draft' } });

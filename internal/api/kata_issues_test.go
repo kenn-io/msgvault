@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -273,15 +274,35 @@ func TestKataIssueBackendOpenCombinesRefAndTitle(t *testing.T) {
 	require.NoError(t, err)
 	exact, err := client.CreateTask(t.Context(), katatest.Project, "exact", taskclient.KataCreate{Title: "First issue"})
 	require.NoError(t, err)
-	_, err = client.CreateTask(t.Context(), katatest.Project, "matching", taskclient.KataCreate{Title: "Review " + exact.Ref})
+	matching, err := client.CreateTask(t.Context(), katatest.Project, "matching", taskclient.KataCreate{Title: "Review " + exact.Ref})
 	require.NoError(t, err)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPatch, fmt.Sprintf("%s/api/v1/projects/%d/issues/%s", server.URL, native.ProjectID, exact.UID), strings.NewReader(`{"actor":"msgvault","title":"Review `+exact.Ref+`"}`))
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer "+katatest.Token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := server.Client().Do(request)
+	require.NoError(t, err)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, http.StatusOK, response.StatusCode, string(body))
+	matches, _, err := client.SearchOpenIssues(t.Context(), katatest.Project, exact.Ref, 25)
+	require.NoError(t, err)
+	require.Len(t, matches, 2)
+	assert.ElementsMatch(t, []string{exact.UID, matching.UID}, []string{matches[0].UID, matches[1].UID})
 	backend := &kataIssueBackend{config: cfg}
+	issues, truncated, err := backend.Open(t.Context(), exact.Ref)
+	require.NoError(t, err)
+	assert.False(t, truncated)
+	require.Len(t, issues, 2)
+	assert.Equal(t, exact.UID, issues[0].UID)
+	assert.Equal(t, matching.UID, issues[1].UID)
 	native.Endpoint(server).CloseIssue(t, exact.UID)
 	for i := range 24 {
 		_, err = client.CreateTask(t.Context(), katatest.Project, fmt.Sprintf("match-%d", i), taskclient.KataCreate{Title: "Review " + exact.Ref})
 		require.NoError(t, err)
 	}
-	issues, truncated, err := backend.Open(t.Context(), exact.Ref)
+	issues, truncated, err = backend.Open(t.Context(), exact.Ref)
 	require.NoError(t, err)
 	assert.True(t, truncated)
 	require.Len(t, issues, 25)

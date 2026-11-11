@@ -19,7 +19,7 @@ describe('TaskIssuePicker', () => {
     expect(load.mock.calls[0][0]).toBe('');
     expect(screen.getByRole('radio', { name: item.label })).toHaveProperty('checked', true);
     first.unmount();
-    render(TaskIssuePicker, { load, noun: 'tasks', empty: 'No tasks yet.', moreNote: 'More tasks available.', selected: item.id });
+    const second = render(TaskIssuePicker, { load, noun: 'tasks', empty: 'No tasks yet.', moreNote: 'More tasks available.', selected: item.id });
     expect(await screen.findByRole('radio', { name: item.label })).toHaveProperty('checked', false);
     expect(screen.getByText('More tasks available.')).toBeDefined();
     const filter = screen.getByRole('searchbox', { name: 'Filter tasks' });
@@ -44,9 +44,7 @@ describe('TaskIssuePicker', () => {
     fail(new Error('Task service unavailable'));
     expect((await screen.findByRole('alert')).textContent).toBe('Task service unavailable');
     expect(screen.queryByText('More tasks available.')).toBeNull();
-  });
-
-  it('shows an empty first list', async () => {
+    second.unmount();
     render(TaskIssuePicker, { load: async () => ({ items: [], truncated: false }), noun: 'open issues', empty: 'No open issues yet.' });
     expect(await screen.findByText('No open issues yet.')).toBeDefined();
   });
