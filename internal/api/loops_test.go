@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -401,6 +402,7 @@ func TestIncompleteListsContinueEachQueuedScope(t *testing.T) {
 	st.target.Store(target)
 	close(st.resume)
 	awaitLoopSignal(t, st.reached)
+	assert.Equal(person.ID, st.scope.Load())
 	close(st.resumeScope)
 	require.Eventually(func() bool {
 		server.importMu.Lock()
@@ -454,8 +456,14 @@ type scopePausingStore struct {
 	*pausedLoopStore
 
 	target      atomic.Int64
+	scope       atomic.Int64
 	reached     chan struct{}
 	resumeScope chan struct{}
+}
+
+func (s *scopePausingStore) LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error] {
+	s.scope.Store(q.PersonID)
+	return s.Store.LoopConversationsContext(ctx, q)
 }
 
 func (s *scopePausingStore) LoopOriginalEvidenceContext(ctx context.Context, id int64) (mime.AutomationSignals, bool, bool, error) {
