@@ -2593,7 +2593,7 @@ func (*postgresBackfillStore) NeedsFTSBackfillContext(context.Context) (bool, er
 	return true, nil
 }
 func (s *postgresBackfillStore) BackfillFTSContext(ctx context.Context, _ func(int64, int64)) (int64, error) {
-	close(s.started)
+	s.started <- struct{}{}
 	<-ctx.Done()
 	return 0, ctx.Err()
 }
@@ -2604,16 +2604,12 @@ func TestHandleCLISearchPostgresBackfillAllowsOtherOperations(t *testing.T) {
 		require := require.New(t)
 		gate := NewSerialOperationGate()
 		idle := newIdleTrackerFixture(t, 20*time.Millisecond)
-		st := &postgresBackfillStore{Store: base, started: make(chan struct{})}
+		st := &postgresBackfillStore{Store: base, started: make(chan struct{}, 1)}
 		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), OperationGate: gate, IdleTracker: idle.tracker})
 		defer srv.cancelImports()
 		srv.ensureCLISearchIndexAsync(bindCLIStoreContext(t.Context(), st), true)
 		synctest.Wait()
-		select {
-		case <-st.started:
-		default:
-			require.FailNow("backfill did not start")
-		}
+		require.NotEmpty(st.started, "backfill did not start")
 		idle.run(t)
 		idle.requireNotFiredWithin(t, 35*time.Millisecond, "idle fired while search repair was active")
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)

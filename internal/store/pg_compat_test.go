@@ -114,8 +114,8 @@ func TestSearchMessagesQuery_ToFilterCaseInsensitive(t *testing.T) {
 // lexemes that to_tsquery accepts.
 //
 // On both backends the test asserts the query returns *no error* —
-// that's the load-bearing R3 guarantee. We don't assert hit counts here
-// because SQLite's FTS5 path strips punctuation
+// that's the load-bearing R3 guarantee. We don't assert
+// hit counts here because SQLite's FTS5 path strips punctuation
 // without splitting (e.g. `foo-bar` becomes `foobar`, which won't
 // match a body containing the two separate words), so cross-backend
 // match-count assertions would diverge.
