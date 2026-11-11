@@ -173,6 +173,7 @@ func TestInstagramLimitReplayAndMissingValues(t *testing.T) {
 }
 
 func TestInstagramEmptyMediaURI(t *testing.T) {
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	record := instagramTestRecord("message with incomplete media")
@@ -183,24 +184,26 @@ func TestInstagramEmptyMediaURI(t *testing.T) {
 	instagramTestShard(t, root, "circle", "message_1.json", record)
 	summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
 	require.NoError(t, err)
-	assert.True(t, summary.Incomplete)
-	assert.Equal(t, 7, summary.MediaRejected)
-	assert.Equal(t, 1, countMessages(t, st, ""))
+	assert.True(summary.Incomplete)
+	assert.Equal(7, summary.MediaRejected)
+	assert.Equal(1, countMessages(t, st, ""))
 }
 
 func TestInstagramDuplicateMediaSlot(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("photo"), 0600))
+	require.NoError(os.WriteFile(filepath.Join(root, "photo.jpg"), []byte("photo"), 0600))
 	record := instagramTestRecord("duplicate photo")
 	record["photos"] = []map[string]string{{"uri": "photo.jpg"}, {"uri": "photo.jpg"}}
 	instagramTestShard(t, root, "circle", "message_1.json", record)
 	summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example", AttachmentsDir: t.TempDir()})
-	require.NoError(t, err)
-	assert.Equal(t, 1, summary.AttachmentsStored)
+	require.NoError(err)
+	assert.Equal(1, summary.AttachmentsStored)
 	var count int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments`).Scan(&count))
-	assert.Equal(t, 1, count)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM attachments`).Scan(&count))
+	assert.Equal(1, count)
 }
 
 func TestInstagramMediaRecoveryAndContainment(t *testing.T) {
