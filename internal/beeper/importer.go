@@ -206,6 +206,30 @@ func (imp *Importer) loadFullResumeState(ctx context.Context, sourceID int64) (*
 	return resumeState(prev, cp, true)
 }
 
+// loadSourceState reads run history, then applies roster progress saved on the
+// source row, which can be newer after an interrupted checkpoint. Only a full
+// import tolerates undecodable progress; newer progress always stops the run.
+func (imp *Importer) loadSourceState(ctx context.Context, src *store.Source, full bool) (*SyncState, error) {
+	load := imp.loadResumeState
+	if full {
+		load = imp.loadFullResumeState
+	}
+	state, err := load(ctx, src.ID)
+	if err != nil || !src.SyncCursor.Valid || src.SyncCursor.String == "" {
+		return state, err
+	}
+	current, err := loadSavedSyncState(src.SyncCursor.String, full)
+	if err != nil {
+		return nil, fmt.Errorf("load Beeper source progress: %w", err)
+	}
+	for id, room := range current.Chats {
+		if room != nil {
+			state.EnsureChat(id).RosterWork = room.RosterWork
+		}
+	}
+	return state, nil
+}
+
 // loadSavedSyncState reads saved Beeper progress. A full sync ignores
 // undecodable progress because it rebuilds it, but progress from a newer
 // msgvault still stops the run.
@@ -269,24 +293,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	}
 	sum = &ImportSummary{SourceID: src.ID}
 
-	load := imp.loadResumeState
-	if opts.Full {
-		load = imp.loadFullResumeState
-	}
-	state, err := load(ctx, src.ID)
+	state, err := imp.loadSourceState(ctx, src, opts.Full)
 	if err != nil {
 		return nil, err
-	}
-	if src.SyncCursor.Valid && src.SyncCursor.String != "" {
-		current, err := loadSavedSyncState(src.SyncCursor.String, opts.Full)
-		if err != nil {
-			return nil, fmt.Errorf("load Beeper source progress: %w", err)
-		}
-		for id, room := range current.Chats {
-			if room != nil {
-				state.EnsureChat(id).RosterWork = room.RosterWork
-			}
-		}
 	}
 	if opts.Full {
 		// Repair path: drop all cursors so every message is re-fetched and
@@ -1144,16 +1153,7 @@ func (imp *Importer) ensureRosterWork(
 		if err := imp.resolveRosterMembers(ctx, sourceID, convID, provider, detail, items, keys, opts, bridgePrefix, work); err != nil {
 			return convID, false, membership, err
 		}
-		var verified *Chat
-		var verifyErr error
-		if membershipComplete {
-			requestCtx, cancel := opts.requestContext(ctx)
-			verified, verifyErr = imp.client.GetChat(requestCtx, ch.ID)
-			cancel()
-			verifyErr = opts.budgetError(ctx, verifyErr)
-		} else {
-			verifyErr = errors.New("beeper roster is incomplete")
-		}
+		verified, verifyErr := imp.verifyRosterMembers(ctx, ch.ID, membershipComplete, opts)
 		if errors.Is(verifyErr, errBeeperBudgetExpired) {
 			return convID, false, membership, verifyErr
 		}

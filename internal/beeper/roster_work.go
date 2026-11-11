@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -254,6 +255,25 @@ func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID 
 		work.Next = i + 1
 	}
 	return nil
+}
+
+// verifyRosterMembers rereads a complete roster after its member writes. A
+// yield requested during the last write stops before the request, so the next
+// visit skips the committed members and verifies.
+func (imp *Importer) verifyRosterMembers(ctx context.Context, chatID string, complete bool, opts ImportOptions) (*Chat, error) {
+	if !complete {
+		return nil, errors.New("beeper roster is incomplete")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if opts.stopRequested() {
+		return nil, errBeeperBudgetExpired
+	}
+	requestCtx, cancel := opts.requestContext(ctx)
+	defer cancel()
+	verified, err := imp.client.GetChat(requestCtx, chatID)
+	return verified, opts.budgetError(ctx, err)
 }
 
 func (imp *Importer) rosterKeys(items []Participant) []string {

@@ -513,7 +513,7 @@ func (imp *Importer) BackfillMedia(ctx context.Context, opts ImportOptions) (*Im
 	}
 	sum := &ImportSummary{SourceID: src.ID}
 	// Carry the existing sync state forward as the next import's baseline.
-	state, err := imp.loadResumeState(ctx, src.ID)
+	state, err := imp.loadSourceState(ctx, src, false)
 	if err != nil {
 		return nil, err
 	}
