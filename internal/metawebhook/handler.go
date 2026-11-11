@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -29,7 +30,15 @@ const (
 	// maxConcurrentBodies bounds the POST bodies read at once, so request
 	// bodies hold at most 64 MiB.
 	maxConcurrentBodies = 8
+	// maxPendingFiles and maxPendingBytes bound the deliveries waiting in the
+	// pending directory. Above them a POST gets 503 and Meta retries later.
+	maxPendingFiles = 10_000
+	maxPendingBytes = 1 << 30
 )
+
+// errSpoolFull refuses a delivery that would take the pending directory past
+// its caps.
+var errSpoolFull = errors.New("too many pending Meta webhook deliveries")
 
 var (
 	appPattern       = regexp.MustCompile(`^[1-9][0-9]*$`)
@@ -48,21 +57,31 @@ type App struct {
 // pending directory before it answers 200, so an accepted delivery survives a
 // restart. A POST without a well-formed signature header gets 401 before its
 // body is read, and one that finds maxConcurrentBodies bodies being read gets
-// 503 at once.
+// 503 at once. A delivery that would take the pending directory past
+// maxPendingFiles or maxPendingBytes also gets 503.
 type Handler struct {
 	apps    map[string]App
 	pending string
 	wake    func()
 	bodies  chan struct{}
 
+	// maxFiles and maxBytes are maxPendingFiles and maxPendingBytes; tests
+	// lower them.
+	maxFiles int
+	maxBytes int64
+
 	// mu makes deliveries visible in the order of their names, so the
-	// worker never sees a newer delivery before an older one.
-	mu   sync.Mutex
-	last int64
+	// worker never sees a newer delivery before an older one. It also guards
+	// files and bytes, the pending totals.
+	mu    sync.Mutex
+	last  int64
+	files int
+	bytes int64
 }
 
-// NewHandler stores deliveries in pending. wake, when set, is called after
-// each stored delivery.
+// NewHandler stores deliveries in pending and counts the deliveries already
+// there toward the caps. wake, when set, is called after each stored
+// delivery.
 func NewHandler(apps map[string]App, pending string, wake func()) (*Handler, error) {
 	for app, credentials := range apps {
 		if !appPattern.MatchString(app) || len(credentials.Secret) == 0 || credentials.VerifyToken == "" {
@@ -72,7 +91,14 @@ func NewHandler(apps map[string]App, pending string, wake func()) (*Handler, err
 	if err := os.MkdirAll(pending, 0o700); err != nil {
 		return nil, fmt.Errorf("create Meta webhook directory: %w", err)
 	}
-	return &Handler{apps: apps, pending: pending, wake: wake, bodies: make(chan struct{}, maxConcurrentBodies)}, nil
+	files, bytes, err := countPending(pending)
+	if err != nil {
+		return nil, err
+	}
+	return &Handler{
+		apps: apps, pending: pending, wake: wake, bodies: make(chan struct{}, maxConcurrentBodies),
+		maxFiles: maxPendingFiles, maxBytes: maxPendingBytes, files: files, bytes: bytes,
+	}, nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +145,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.store(app, body); err != nil {
-			slog.Error("store Meta webhook delivery", "app", app, "error", err)
+			if errors.Is(err, errSpoolFull) {
+				slog.Warn("Meta webhook delivery refused; too many deliveries pending", "app", app)
+			} else {
+				slog.Error("store Meta webhook delivery", "app", app, "error", err)
+			}
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
@@ -146,11 +176,56 @@ func validSignature(secret, body []byte, header string) bool {
 }
 
 // store writes the delivery under a name that sorts in arrival order and
-// carries the app ID. The delivery becomes visible only once complete.
+// carries the app ID. The delivery becomes visible only once complete. It
+// returns errSpoolFull, without writing, when the delivery would take the
+// pending directory past maxFiles or maxBytes.
 func (h *Handler) store(app string, body []byte) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	size := int64(len(body))
+	full := func() bool { return h.files+1 > h.maxFiles || h.bytes+size > h.maxBytes }
+	if full() {
+		// The worker deletes applied deliveries without telling the handler,
+		// so the totals are an upper bound. Recount before refusing.
+		files, bytes, err := countPending(h.pending)
+		if err != nil {
+			return err
+		}
+		h.files, h.bytes = files, bytes
+		if full() {
+			return errSpoolFull
+		}
+	}
 	h.last = max(time.Now().UnixNano(), h.last+1)
 	name := fmt.Sprintf("%020d-%s-%s.json", h.last, app, rand.Text())
-	return atomicfile.WriteNew(filepath.Join(h.pending, name), body, atomicfile.WithPrivate())
+	err := atomicfile.WriteNew(filepath.Join(h.pending, name), body, atomicfile.WithPrivate())
+	if err == nil {
+		h.files++
+		h.bytes += size
+	}
+	return err
+}
+
+// countPending returns the number and total size of the deliveries in dir:
+// regular files whose names do not start with a dot.
+func countPending(dir string) (files int, bytes int64, err error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read Meta webhook directory: %w", err)
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // applied and deleted since ReadDir
+		}
+		if err != nil {
+			return 0, 0, fmt.Errorf("read Meta webhook delivery: %w", err)
+		}
+		files++
+		bytes += info.Size()
+	}
+	return files, bytes, nil
 }

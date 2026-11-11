@@ -32,9 +32,14 @@ func sign(body string) string {
 func newTestHandler(t *testing.T) (*Handler, string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "pending")
+	return newHandlerIn(t, dir), dir
+}
+
+func newHandlerIn(t *testing.T, dir string) *Handler {
+	t.Helper()
 	h, err := NewHandler(map[string]App{"9": {Secret: []byte(testSecret), VerifyToken: "synthetic-verify"}}, dir, nil)
 	require.NoError(t, err)
-	return h, dir
+	return h
 }
 
 func pendingFiles(t *testing.T, dir string) []string {
@@ -113,6 +118,46 @@ func TestHandlerRefusesPostsAboveTheBodyLimit(t *testing.T) {
 		assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)), "released slots admit new deliveries")
 		assert.Len(pendingFiles(t, dir), 1)
 	})
+}
+
+func TestHandlerRefusesDeliveriesAtTheCountCap(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := filepath.Join(t.TempDir(), "pending")
+	require.NoError(os.MkdirAll(filepath.Join(dir, "sub"), 0o700))
+	existing := filepath.Join(dir, "00000000000000000001-9-OLD.json")
+	require.NoError(os.WriteFile(existing, []byte(`{}`), 0o600))
+	require.NoError(os.WriteFile(filepath.Join(dir, ".ignored.set-aside"), []byte(`{}`), 0o600))
+	h := newHandlerIn(t, dir)
+	h.maxFiles = 2 // the existing delivery counts; dot-names and directories do not
+
+	body := `{"object":"page","entry":[]}`
+	assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)))
+	before := pendingFiles(t, dir)
+	assert.Equal(http.StatusServiceUnavailable, post(t, h, sign(body), strings.NewReader(body)))
+	assert.Equal(before, pendingFiles(t, dir), "a refused delivery is not stored")
+
+	require.NoError(os.Remove(existing)) // the worker applied it
+	assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)))
+	assert.Len(pendingFiles(t, dir), len(before), "the new delivery takes the removed one's place")
+}
+
+func TestHandlerRefusesDeliveriesAtTheByteCap(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := filepath.Join(t.TempDir(), "pending")
+	require.NoError(os.MkdirAll(dir, 0o700))
+	body := `{"object":"page","entry":[]}`
+	existing := filepath.Join(dir, "00000000000000000001-9-OLD.json")
+	require.NoError(os.WriteFile(existing, []byte(body), 0o600))
+	h := newHandlerIn(t, dir)
+	h.maxBytes = int64(2*len(body) + len(body)/2) // room for the existing delivery and one more
+
+	assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)))
+	before := pendingFiles(t, dir)
+	assert.Equal(http.StatusServiceUnavailable, post(t, h, sign(body), strings.NewReader(body)))
+	assert.Equal(before, pendingFiles(t, dir), "a refused delivery is not stored")
+
+	require.NoError(os.Remove(existing))
+	assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)))
 }
 
 func TestHandlerChallenge(t *testing.T) {
