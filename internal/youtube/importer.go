@@ -219,21 +219,25 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		sum.MessagesProcessed += stepCounts.processed
 		if err != nil {
 			var apiErr *APIError
-			if errors.As(err, &apiErr) && apiErr.Reason == "invalidPageToken" {
+			if !errors.As(err, &apiErr) {
+				return sum, err
+			}
+			switch {
+			case apiErr.Reason == "invalidPageToken":
 				state.Queue = state.Queue[1:]
 				if job.Token != "" {
 					job.Token = ""
 					state.Queue = appendUniqueWork(state.Queue, job)
 				}
-			} else if errors.As(err, &apiErr) && job.Kind == "videos" && (apiErr.Reason == "videoNotFound" || apiErr.Reason == "forbidden" && apiErr.StatusCode == http.StatusForbidden) {
+			case job.Kind == "videos" && (apiErr.Reason == "videoNotFound" || apiErr.Reason == "forbidden" && apiErr.StatusCode == http.StatusForbidden):
 				individual := make([]work, 0, len(job.VideoIDs))
 				for _, id := range job.VideoIDs {
 					individual = append(individual, work{Kind: "video", VideoID: id})
 				}
 				state.Queue = appendUniqueWork(state.Queue[1:], individual...)
-			} else if errors.As(err, &apiErr) && ((job.Kind == "video" || job.Kind == "threads" || job.Kind == "replies") && (apiErr.Reason == "videoNotFound" || apiErr.Reason == "commentNotFound" || apiErr.Reason == "commentsDisabled" || apiErr.Reason == "forbidden" && apiErr.StatusCode == http.StatusForbidden)) {
+			case (job.Kind == "video" || job.Kind == "threads" || job.Kind == "replies") && (apiErr.Reason == "videoNotFound" || apiErr.Reason == "commentNotFound" || apiErr.Reason == "commentsDisabled" || apiErr.Reason == "forbidden" && apiErr.StatusCode == http.StatusForbidden):
 				state.Queue = state.Queue[1:]
-			} else {
+			default:
 				return sum, err
 			}
 		} else {
