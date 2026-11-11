@@ -392,7 +392,7 @@ func applyPersonFactAPIGeneration(
 		ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture-catalog",
 		Provider: "fixture-provider-secret", ProviderVersion: "v1",
 		Model: "fixture-model", ModelVersion: "v1", ResolvedAt: personFactAPINow,
-		Policy: personfacts.PolicyContext{ProviderPolicyFingerprint: "fixture-policy"},
+		Policy: personfacts.PolicyContext{ProviderPolicyFingerprint: "fixture-policy", AllowSensitive: target.Sensitive},
 		Claims: []personfacts.ProposedClaim{{
 			Target: target, Relation: personfacts.RelationSupport,
 			SubmittedValue: json.RawMessage(submitted), Origin: personfacts.OriginExtraction,
@@ -451,4 +451,22 @@ func mapKeysAny(values map[string]any) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func TestPostalClaimResponseIncludesDecodedComponents(t *testing.T) {
+	srv, st, id, targets := newPersonFactAPIFixtureWithoutClaims(t)
+	target := targets["postal_address"]
+	require.NotEmpty(t, target.Key)
+	applyPersonFactAPIGeneration(t, st, id, target, "postal", `{"street_address":"12 Example Street","country_code":"CA","extended_components":";;;;;;;Room\\;3;Floor 2","source_text":"12 Example Street"}`)
+	response := doRequest(t, srv.Router(), http.MethodGet, fmt.Sprintf("/api/v1/people/%d/fact-claims", id), nil, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var body struct {
+		Claims []personfacts.Claim `json:"claims"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Len(t, body.Claims, 1)
+	require.NotNil(t, body.Claims[0].PostalReview)
+	require.NotNil(t, body.Claims[0].PostalReview.Assessment)
+	assert.Equal(t, []string{"Room;3", "Floor 2"}, body.Claims[0].PostalReview.Assessment.OriginalExtendedParts)
+	assert.Equal(t, []string{"Room;3", "Floor 2"}, body.Claims[0].PostalReview.Assessment.ProposedExtendedParts)
 }

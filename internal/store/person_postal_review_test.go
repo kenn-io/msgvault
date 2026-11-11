@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/postaladdress"
 )
 
-const postalClaimJSON = `{"street_address":" 12 Example Street ","extended_address":" Unit 7 ","locality":"Example City","country_code":" ca ","source_text":"  My address is 12 Example Street, Unit 7.  "}`
+const postalClaimJSON = `{"street_address":" 12 Example Street ","extended_address":" Unit 7 ","locality":"Example City","country_code":" ca ","extended_components":";;12 Example Street;Example City;;;;Room\\;3;Floor 2","source_text":"  My address is 12 Example Street, Unit 7.  "}`
 
 func TestPublicPostalAddressDistinguishesLegacyTextFromSnapshot(t *testing.T) {
 	require := require.New(t)
@@ -102,6 +102,9 @@ func TestPostalAddressSweepExtractionRetainsWithoutProjection(t *testing.T) {
 	require.NotNil(rows[0].PostalReview)
 	assert.True(rows[0].PostalReview.Eligible)
 	assert.NotEmpty(rows[0].PostalReview.SupportingEvidenceIDs)
+	require.NotNil(rows[0].PostalReview.Assessment)
+	assert.Equal([]string{"Room;3", "Floor 2"}, rows[0].PostalReview.Assessment.OriginalExtendedParts)
+	assert.Equal([]string{"Room;3", "Floor 2"}, rows[0].PostalReview.Assessment.ProposedExtendedParts)
 	addresses, err := f.store.ListPersonAddressesContext(t.Context(), f.personID, false)
 	require.NoError(err)
 	assert.Empty(addresses)
@@ -121,6 +124,34 @@ func TestPostalAddressSweepExtractionRetainsWithoutProjection(t *testing.T) {
 	assert.Len(rows, 1)
 	_, err = f.store.SetPersonFactPinContext(t.Context(), f.personID, rows[0].Target, true, "owner")
 	require.ErrorContains(err, "postal address pins are unsupported")
+
+	old, err := f.store.AddPersonAddressContext(t.Context(), f.personID, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("Old street"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser}})
+	require.NoError(err)
+	rows, err = f.store.ListPersonFactClaimsContext(t.Context(), f.personID, personfacts.ClaimFilter{Limit: 1})
+	require.NoError(err)
+	review := rows[0].PostalReview
+	require.True(review.Eligible)
+	input := review.Assessment.Proposed
+	snapshot, err := postaladdress.EncodeOriginalInput(review.Assessment.Original)
+	require.NoError(err)
+	sourceRef := "person-fact-claim:" + rows[0].ClaimKey
+	patch := PersonProfilePatch{Addresses: &PersonAddressPatch{Supersede: []int64{old.Envelope.ID}, Add: []PersonAddressInput{{AddressKind: PersonAddressPostal, StreetAddress: &input.StreetAddress, ExtendedComponents: &input.ExtendedComponents, OriginalValue: snapshot, Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &sourceRef}}}}}
+	_, err = f.store.ApplyPersonProfilePatchContext(t.Context(), f.personID, review.PersonRevision-1, patch)
+	require.ErrorIs(err, ErrPersonRevisionConflict)
+	current, err := f.store.ApplyPersonProfilePatchContext(t.Context(), f.personID, review.PersonRevision, patch)
+	require.NoError(err)
+	require.Len(current.Addresses, 1)
+	assert.Equal(&sourceRef, current.Addresses[0].Envelope.SourceRef)
+	assert.Equal([]string{"Room;3", "Floor 2"}, current.Addresses[0].Assessment.ProposedExtendedParts)
+	history, err := f.store.GetPersonProfileHistoryContext(t.Context(), f.personID)
+	require.NoError(err)
+	require.Len(history.Addresses, 2)
+	assert.NotNil(history.Addresses[0].Envelope.SupersededAt)
+	assert.Equal(review.Assessment.Original, current.Addresses[0].Assessment.Original)
+	rows, err = f.store.ListPersonFactClaimsContext(t.Context(), f.personID, personfacts.ClaimFilter{Limit: 1})
+	require.NoError(err)
+	assert.False(rows[0].PostalReview.Eligible)
+	assert.Contains(rows[0].PostalReview.ReasonCodes, "already_adopted")
 }
 
 func TestPostalAddressReviewUsesCompleteCurrentSupport(t *testing.T) {

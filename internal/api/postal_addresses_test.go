@@ -127,7 +127,7 @@ func TestPostalAddressUnavailableStillAllowsLocalSave(t *testing.T) {
 			if state != "no key" {
 				srv.SetPostalAddressValidator(validator)
 			}
-			body := []byte(`{"address":{"address_kind":"postal","street_address":"12 Example St","extended_address":"Unit 7","country_code":"CA"},"allow_external":true}`)
+			body := []byte(`{"address":{"address_kind":"postal","street_address":"12 Example St","extended_address":"Unit 7","country_code":"CA","extended_components":";;;;;;;Room\\;3;Floor 2"},"allow_external":true}`)
 			result := doRequest(t, srv.Router(), http.MethodPost, postalAssessPath(id), body, nil)
 			require := require.New(t)
 			require.Equal(http.StatusOK, result.Code, result.Body.String())
@@ -215,7 +215,7 @@ func TestPostalAddressExternalDeniesDelegatedAndReadOnlyKeys(t *testing.T) {
 func TestPostalAddressEditPreservesOriginalHistory(t *testing.T) {
 	srv, wrapped := newIdentityLinkTestServer(t)
 	id := seedAPIPerson(t, wrapped.Store)
-	raw := postaladdress.Input{AddressKind: "postal", StreetAddress: " imported street ", ExtendedAddress: " Unit 7 ", CountryCode: "ca", OriginalValue: " original line\n raw "}
+	raw := postaladdress.Input{AddressKind: "postal", StreetAddress: " imported street ", ExtendedAddress: " Unit 7 ", CountryCode: "ca", ExtendedComponents: `;;;;;;;Room\;3;Floor 2`, OriginalValue: " original line\n raw "}
 	street, unit, country, source, uid, label := "Old street", "Unit 7", "CA", "import:example", "synthetic-card", "home"
 	pref, ordinal := 1, 3
 	encoded, err := postaladdress.EncodeOriginalInput(raw)
@@ -261,6 +261,7 @@ func TestPostalAddressEditPreservesOriginalHistory(t *testing.T) {
 	assert.Equal(old.Envelope.SourceResourceUID, historic.Envelope.SourceResourceUID)
 	assert.Equal(old.Envelope.VCard, historic.Envelope.VCard)
 	assert.Equal(raw, historic.Assessment.Original)
+	assert.Equal([]string{"Room;3", "Floor 2"}, historic.Assessment.OriginalExtendedParts)
 	assert.Equal(raw.OriginalValue, historic.OriginalValue)
 }
 
@@ -471,6 +472,23 @@ func TestPostalAddressAssessmentRequiresPresentAddress(t *testing.T) {
 			profile, err := wrapped.GetPersonProfileContext(t.Context(), id)
 			require.NoError(err)
 			assert.Empty(profile.Addresses, "assessment requests must not store addresses")
+		})
+	}
+}
+
+func TestPostalAddressReadsRejectUnsupportedStoredSnapshots(t *testing.T) {
+	for _, raw := range []string{"msgvault:postal-input:v2\n{}", "msgvault:postal-input:v1\nnot json", "msgvault:postal-input:v1\n{\"schema\":1,\"input\":{},\"extra\":true}"} {
+		t.Run(raw, func(t *testing.T) {
+			srv, wrapped := newIdentityLinkTestServer(t)
+			id := seedAPIPerson(t, wrapped.Store)
+			address, err := wrapped.AddPersonAddressContext(t.Context(), id, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, StreetAddress: new("12 Example Street"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+			require.NoError(t, err)
+			_, err = wrapped.DB().ExecContext(t.Context(), wrapped.Rebind(`UPDATE person_addresses SET original_value = ? WHERE id = ?`), raw, address.Envelope.ID)
+			require.NoError(t, err)
+			for _, path := range []string{personProfilePath(id), personProfilePath(id) + "/history"} {
+				response := doRequest(t, srv.Router(), http.MethodGet, path, nil, nil)
+				assert.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
+			}
 		})
 	}
 }

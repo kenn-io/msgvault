@@ -71,6 +71,21 @@ describe('ProfileHistoryDialog', () => {
     expect(requests.filter(url => url.pathname.endsWith('/attributes')).every(url => url.searchParams.get('history') === 'true')).toBe(true);
   });
 
+  it('shows current and original postal components in history', async () => {
+    const client = createAPIClient(async input => {
+      const path = new URL((input instanceof Request ? input : new Request(input)).url).pathname;
+      if (path.endsWith('/merges')) return Response.json({ merges: [] });
+      return Response.json({ ...emptyProfile(person()), observations: [], addresses: [{
+        person_id: 7, address_kind: 'postal', original_value: 'Old street', street_address: 'New street',
+        envelope: { ...currentEnvelope, id: 31 },
+        assessment: { original: { address_kind: 'postal', street_address: 'Old street' }, proposed: { address_kind: 'postal', street_address: 'New street' }, original_extended_parts: ['Room;3'], proposed_extended_parts: ['Floor 2'], status: 'needs_review', reason_codes: [] },
+      }] });
+    });
+    render(ProfileHistoryDialog, { client, personID: 7, onClose: vi.fn() });
+    expect(await screen.findByText('New street, Floor 2')).toBeDefined();
+    expect(screen.getByText(/Original: Old street, Room;3/)).toBeDefined();
+  });
+
   it('preserves structured provenance and classifies every closed value as earlier', async () => {
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {

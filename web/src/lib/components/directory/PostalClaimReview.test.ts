@@ -8,7 +8,7 @@ import FactLedger from './FactLedger.svelte';
 
 const when = '2026-08-01T00:00:00Z';
 const person = { id: 7, revision: 3, participant_ids: [], vcard_uid: 'person-7', created_at: when, updated_at: when };
-const raw = { address_kind: 'postal', street_address: '12 Example Street', extended_address: 'Unit 7', country_code: 'CA', original_value: 'Source address text' };
+const raw = { address_kind: 'postal', street_address: '12 Example Street', extended_address: 'Unit 7', country_code: 'CA', extended_components: ';;;;;;;Room\\;3;Floor 2', original_value: 'Source address text' };
 const revision = `sha256:${'a'.repeat(64)}`;
 
 function setup(reason?: string, evidenceResponse?: Promise<Response>) {
@@ -25,7 +25,7 @@ function setup(reason?: string, evidenceResponse?: Promise<Response>) {
       if (server.readClaims) return server.readClaims();
       if (server.fail) return Response.json({ message: 'Synthetic failure' }, { status: 503 });
       if (server.absent) return Response.json({ claims: [] });
-      return Response.json({ claims: [{ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify(raw), relation: 'equals', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] } } }] });
+      return Response.json({ claims: [{ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify(raw), relation: 'equals', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: ['Room;3', 'Floor 2'], proposed_extended_parts: ['Room;3', 'Floor 2'] } } }] });
     }
     if (path.endsWith('/fact-evidence')) return evidenceResponse ?? Response.json({ evidence: [] });
     if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
@@ -41,6 +41,13 @@ function setup(reason?: string, evidenceResponse?: Promise<Response>) {
 }
 
 describe('Postal claim review', () => {
+  it('shows decoded room and floor in the claim comparison', async () => {
+    setup();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+    expect(screen.getByText(/Room;3, Floor 2/)).toBeDefined();
+  });
+
   it('keeps an edited claim open when the initial evidence response arrives', async () => {
     let release!: (response: Response) => void;
     const evidence = new Promise<Response>(resolve => { release = resolve; });
