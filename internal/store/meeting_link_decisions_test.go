@@ -713,7 +713,9 @@ func TestMeetingLinkDecisionRelinkAfterDedupUndo(t *testing.T) {
 	note := MeetingLinkRef{Kind: "msg", MessageID: duplicate}
 	firstRef := MeetingLinkRef{Kind: "evt", MessageID: first}
 	secondRef := MeetingLinkRef{Kind: "evt", MessageID: second}
-	_, err := st.DecideMeetingLinkContext(t.Context(), note, firstRef, "unlink")
+	_, err := st.DecideMeetingLinkContext(t.Context(), note, secondRef, "link")
+	r.NoError(err)
+	_, err = st.DecideMeetingLinkContext(t.Context(), note, firstRef, "unlink")
 	r.NoError(err)
 	_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "relink")
 	r.NoError(err)
