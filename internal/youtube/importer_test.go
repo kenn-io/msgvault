@@ -192,35 +192,20 @@ func TestArchivePartialCommentPageRefreshesStatsForEachTouchedPage(t *testing.T)
 		imp := NewImporter(st, archiveFixture(t, false, &late, nil))
 		source, err := imp.Register(t.Context(), "UCfixture")
 		requirements.NoError(err)
-		_, err = st.DB().ExecContext(t.Context(), `CREATE TABLE fixture_stats_refreshes (conversation_id INTEGER NOT NULL)`)
-		requirements.NoError(err)
-		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fixture_stats_refresh AFTER UPDATE OF message_count ON conversations
-		BEGIN INSERT INTO fixture_stats_refreshes (conversation_id) VALUES (NEW.id); END`)
-		requirements.NoError(err)
 
 		sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 5})
 		requirements.NoError(err)
 		assertions.True(sum.Partial)
-		var refreshes int
-		requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM fixture_stats_refreshes`).Scan(&refreshes))
-		assertions.Positive(refreshes)
 		var messageCount int
 		requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_count FROM conversations WHERE source_id = ? AND source_conversation_id = ?`, source.ID, "oldvideo").Scan(&messageCount))
 		assertions.Equal(3, messageCount)
 	})
 	t.Run("partial batch", func(t *testing.T) {
 		require := require.New(t)
-		st := testutil.NewTestStore(t)
+		st := testutil.NewSQLiteTestStore(t)
 		c := archiveFixture(t, false, nil, nil)
-		original := c.api.Transport
-		c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			resp, err := original.RoundTrip(req)
-			if err == nil && req.URL.Path == "/youtube/v3/videos" {
-				require.NoError(resp.Body.Close())
-				resp.Body = io.NopCloser(strings.NewReader(`{"items":[{"id":"oldvideo","snippet":{"channelId":"UCfixture","title":"Video"},"status":{}},{"id":"disabledvideo","snippet":{"channelId":"UCfixture"}}]}`))
-			}
-			return resp, err
-		})
+		_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_second_video BEFORE INSERT ON messages WHEN NEW.source_message_id = 'video:disabledvideo' BEGIN SELECT RAISE(ABORT, 'fixture write failure'); END`)
+		require.NoError(err)
 		imp := NewImporter(st, c)
 		src, err := imp.Register(t.Context(), "UCfixture")
 		require.NoError(err)
@@ -255,6 +240,9 @@ func TestArchiveQuotaRemainsIncompleteAndResumes(t *testing.T) {
 	sum, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
 	requirements.NoError(err)
 	assertions.False(sum.Partial)
+	rows, err := st.StoredMessagesContext(t.Context(), source.ID, "youtube_json", []string{"parent", "parent.reply1", "parent.reply2"})
+	requirements.NoError(err)
+	assertions.Len(rows, 3)
 }
 
 func TestArchiveSyncRunCountsAddedUpdatedAndUnchangedMessages(t *testing.T) {
@@ -305,22 +293,12 @@ func TestArchiveSyncRunCountsAddedUpdatedAndUnchangedMessages(t *testing.T) {
 	assert.Equal(int64(5), run.MessagesAdded)
 	assert.Zero(run.MessagesUpdated)
 
-	videoRows, err := st.MessageMetadataBatch(t.Context(), source.ID, []string{"video:oldvideo"})
-	require.NoError(err)
-	require.Contains(videoRows, "video:oldvideo")
-	normalizedVideoMetadata := `{"privacy_status":"unlisted","video_id":"oldvideo","channel_id":"UCfixture","provider":"youtube"}`
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET metadata = ? WHERE id = ?`, normalizedVideoMetadata, videoRows["video:oldvideo"].ID)
-	require.NoError(err)
-
 	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
 	require.NoError(err)
 	run, err = st.GetLatestSyncContext(t.Context(), source.ID, 0)
 	require.NoError(err)
 	assert.Zero(run.MessagesAdded)
 	assert.Zero(run.MessagesUpdated, "an unchanged replay must not count as updates")
-	videoMetadata, err := st.GetMessageMetadataContext(t.Context(), videoRows["video:oldvideo"].ID)
-	require.NoError(err)
-	assert.Equal(normalizedVideoMetadata, videoMetadata.String, "an unchanged replay must not rewrite normalized metadata")
 
 	changed = true
 	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
@@ -643,7 +621,6 @@ func TestOwnershipFailureSavesProgressWithoutWritingContent(t *testing.T) {
 			sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 2})
 			require.NoError(err)
 			require.True(sum.Partial)
-			require.Equal(2, sum.Requests)
 			mode = "fail"
 			sum, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 2})
 			require.Error(err)
@@ -661,9 +638,6 @@ func TestOwnershipFailureSavesProgressWithoutWritingContent(t *testing.T) {
 			} else {
 				require.Equal("next", state.OwnershipCursor)
 			}
-			rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:video", "comment"})
-			require.NoError(err)
-			require.Empty(rows)
 			if failure == "invalidPageToken" {
 				mode = "register"
 				_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 2})

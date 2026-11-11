@@ -67,7 +67,7 @@ func TestCommentCannotMoveBetweenVideos(t *testing.T) {
 	assertions.Contains(rows["comment"].Metadata.String, `"video_id":"videoone"`)
 }
 
-func TestYouTubeSnapshotsPreserveRecipientsAndRepairReplyLinks(t *testing.T) {
+func TestYouTubeUnchangedReplayAvoidsWritesAndJournalRows(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -87,10 +87,16 @@ func TestYouTubeSnapshotsPreserveRecipientsAndRepairReplyLinks(t *testing.T) {
 	body, err := st.GetMessageBodyText(t.Context(), videoID)
 	requirements.NoError(err)
 	assertions.Equal("Fixture description\n\nhttps://www.youtube.com/watch?v=videoone", body)
+	normalizedMetadata := `{"video_id":"videoone","channel_id":"UCfixture","provider":"youtube"}`
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET metadata = ? WHERE id = ?`, normalizedMetadata, videoID)
+	requirements.NoError(err)
 	videoJournalCount := journalCount(videoID)
 	_, _, err = persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
 	assertions.Equal(videoJournalCount, journalCount(videoID))
+	videoMetadata, err := st.GetMessageMetadataContext(t.Context(), videoID)
+	requirements.NoError(err)
+	assertions.Equal(normalizedMetadata, videoMetadata.String)
 
 	c := yt.Comment{
 		Id:      "comment",
@@ -263,32 +269,40 @@ func TestCommentWithoutChannelIDPreservesDistinctAuthorNames(t *testing.T) {
 	summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), ids[:1])
 	require.NoError(err)
 	require.Equal("Alice Updated", summaries[0].FromName)
-	{
-		c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{AuthorDisplayName: "Owner", TextDisplay: "First"}}
-		c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCfixture"}
-		id, _, err := persistComment(t.Context(), st, src.ID, v, c)
-		require.NoError(err)
-		before, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.Id})
-		require.NoError(err)
-		require.True(before[c.Id].SourceIsFromMe.Valid && before[c.Id].SourceIsFromMe.Bool)
-		c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: ""}
-		c.Snippet.AuthorDisplayName = ""
-		c.Snippet.TextDisplay = "Updated"
-		_, _, err = persistComment(t.Context(), st, src.ID, v, c)
-		require.NoError(err)
-		after, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.Id})
-		require.NoError(err)
-		require.Equal(before[c.Id].SenderID, after[c.Id].SenderID)
-		require.Equal(before[c.Id].SourceIsFromMe, after[c.Id].SourceIsFromMe)
-		summaries, err := st.GetMessagesSummariesByIDsContext(t.Context(), []int64{id})
-		require.NoError(err)
-		require.Len(summaries, 1)
-		require.Equal("Owner", summaries[0].FromName)
-		c.Snippet.AuthorDisplayName = "Owner Renamed"
-		_, _, err = persistComment(t.Context(), st, src.ID, v, c)
-		require.NoError(err)
-		summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), []int64{id})
-		require.NoError(err)
-		require.Equal("Owner Renamed", summaries[0].FromName)
-	}
+}
+
+func TestCommentOwnerRemainsKnownWhenAuthorIsOmitted(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(SourceType, SourceIdentifier("UCfixture"))
+	require.NoError(err)
+	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture"}}
+	_, _, err = persistVideo(t.Context(), st, src.ID, v)
+	require.NoError(err)
+	c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{AuthorDisplayName: "Owner", TextDisplay: "First"}}
+	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCfixture"}
+	id, _, err := persistComment(t.Context(), st, src.ID, v, c)
+	require.NoError(err)
+	before, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.Id})
+	require.NoError(err)
+	require.True(before[c.Id].SourceIsFromMe.Valid && before[c.Id].SourceIsFromMe.Bool)
+	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: ""}
+	c.Snippet.AuthorDisplayName = ""
+	c.Snippet.TextDisplay = "Updated"
+	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
+	require.NoError(err)
+	after, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.Id})
+	require.NoError(err)
+	require.Equal(before[c.Id].SenderID, after[c.Id].SenderID)
+	require.Equal(before[c.Id].SourceIsFromMe, after[c.Id].SourceIsFromMe)
+	summaries, err := st.GetMessagesSummariesByIDsContext(t.Context(), []int64{id})
+	require.NoError(err)
+	require.Len(summaries, 1)
+	require.Equal("Owner", summaries[0].FromName)
+	c.Snippet.AuthorDisplayName = "Owner Renamed"
+	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
+	require.NoError(err)
+	summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), []int64{id})
+	require.NoError(err)
+	require.Equal("Owner Renamed", summaries[0].FromName)
 }

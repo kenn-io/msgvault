@@ -1,9 +1,19 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"testing"
 )
 
@@ -35,6 +45,51 @@ func TestYouTubeNestedDaemonCommands(t *testing.T) {
 			assert.Equal([]string{"source", "youtube", "add", "example"}, forwarded)
 		}
 	}
-	assert.True(manualSyncCLICommand([]string{"source", "youtube", "sync", "example"}))
-	assert.False(manualSyncCLICommand([]string{"source", "youtube", "add", "example"}))
+	sched := scheduler.New(nil)
+	t.Cleanup(func() { <-sched.Stop().Done() })
+	profile := config.YouTubeSource{ChannelID: "UCfixture", Schedule: "0 * * * *"}
+	require.NoError(registerScheduledYouTubeJob(sched, profile, nil, func(context.Context) error { return nil }))
+	assert.True(sched.IsJobScheduled("youtube:UCfixture"))
+}
+
+func TestRunServeWarnsAboutYouTubeWithoutSchedule(t *testing.T) {
+	require := require.New(t)
+	clearServerKeyEnvironment(t)
+	t.Setenv("MSGVAULT_REMOTE_URL", "")
+	home := t.TempDir()
+	port := freeTCPPort(t)
+	path := filepath.Join(home, "config.toml")
+	text := fmt.Sprintf("[server]\nbind_addr='127.0.0.1'\napi_port=%d\ndaemon_auto_start=false\ndaemon_auto_restart='never'\n[analytics]\nengine='sql'\n[[youtube]]\nidentifier='fixture'\nchannel_id='UCfixture'\ntoken_env='FIXTURE_REFRESH'\nclient_id_env='FIXTURE_CLIENT'\nclient_secret_env='FIXTURE_SECRET'\nenabled=true\n", port)
+	require.NoError(os.WriteFile(path, []byte(text), 0o600))
+	cfg, err := config.Load(path, home)
+	require.NoError(err)
+	ctx, cancel := context.WithCancel(t.Context())
+	command := &cobra.Command{Use: "serve"}
+	command.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
+	var logs bytes.Buffer
+	invocationFromCommand(command).logger = slog.New(slog.NewTextHandler(&logs, nil))
+	done := make(chan error, 1)
+	go func() { done <- runServe(command, nil) }()
+	finished := false
+	t.Cleanup(func() {
+		cancel()
+		if !finished {
+			select {
+			case <-done:
+			case <-time.After(serveLifecycleTestTimeout):
+				assert.Fail(t, "daemon did not stop")
+			}
+		}
+	})
+	waitForServeHealthBounded(t, port, done)
+	cancel()
+	select {
+	case err := <-done:
+		finished = true
+		require.NoError(err)
+	case <-time.After(serveLifecycleTestTimeout):
+		require.FailNow("daemon did not stop")
+	}
+	require.Contains(logs.String(), "YouTube profile is enabled but has no schedule")
+	require.Contains(logs.String(), "fixture")
 }

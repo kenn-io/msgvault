@@ -28,9 +28,10 @@ func TestClientRefreshAndSafeErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name, response, want string
 		status               int
+		tokenError           bool
 	}{
 		{name: "quota takes precedence", status: http.StatusForbidden, response: `{"error":{"message":"fixture-secret","errors":[{"reason":"commentsDisabled"},{"reason":"quotaExceeded"}]}}`, want: "quota"},
-		{name: "expired token", status: http.StatusBadRequest, response: `{"error":"invalid_grant","error_description":"fixture-secret"}`, want: "reauthorize"},
+		{name: "expired token", status: http.StatusBadRequest, response: `{"error":"invalid_grant","error_description":"fixture-secret"}`, want: "reauthorize", tokenError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -39,7 +40,7 @@ func TestClientRefreshAndSafeErrors(t *testing.T) {
 				if r.URL.Path == "/token" {
 					tokens++
 					w.Header().Set("Content-Type", "application/json")
-					if tc.name == "expired token" {
+					if tc.tokenError {
 						w.WriteHeader(tc.status)
 						_, _ = fmt.Fprint(w, tc.response)
 						return

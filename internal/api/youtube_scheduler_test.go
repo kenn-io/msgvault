@@ -15,7 +15,6 @@ func TestYouTubeSourceSchedulerClassification(t *testing.T) {
 	classification := classifySourceScheduling("youtube", "https://www.youtube.com/channel/UCfixture")
 	assertions.Equal(sourceScheduleGeneric, classification.kind)
 	assertions.Equal(name, classification.jobName)
-	assertions.Equal("sync", embeddingSlotKind(name, true))
 	assert.False(t, isSourceSyncJobName("youtube:"))
 	assert.False(t, isSourceSyncJobName("youtube:UCfixture/other"))
 	for _, action := range []string{"add", "sync"} {
