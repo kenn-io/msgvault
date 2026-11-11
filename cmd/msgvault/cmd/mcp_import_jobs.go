@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
@@ -15,17 +14,9 @@ import (
 
 func importJobMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCapabilities) []string {
 	var names []string
-	if capabilities != nil {
-		for _, route := range capabilities.Routes {
-			if route.OperationID != "createImportJob" || route.Method != http.MethodPost || route.Path != "/api/v1/imports" {
-				continue
-			}
-			if slices.ContainsFunc([]string{"account", "limit", "after", "before", "query", "noresume"}, func(property string) bool { return !slices.Contains(route.RequestProperties, property) }) {
-				continue
-			}
-			names = append(names, "create_import_job")
-			break
-		}
+	if hasRoute("createImportJob", http.MethodPost, "/api/v1/imports") &&
+		mcpRequestPropertiesPresent(capabilities, "createImportJob", "account", "limit", "after", "before", "query", "noresume") {
+		names = append(names, "create_import_job")
 	}
 	if hasRoute("getImportJob", http.MethodGet, "/api/v1/imports/{job_id}") {
 		names = append(names, "get_import_job")

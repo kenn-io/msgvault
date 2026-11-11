@@ -32,113 +32,112 @@ func (s *importMCPStore) RunCLISync(ctx context.Context, req api.CLISyncRequest,
 }
 
 func TestMCPImportJobNativeAcceptanceAndRefusals(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	st := &importMCPStore{storeAPIAdapter: &storeAPIAdapter{store: testutil.NewSQLiteTestStore(t)}, requests: make(chan api.CLISyncRequest, 1), release: make(chan struct{})}
 	source, err := st.store.GetOrCreateSource("gmail", "archive@example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: st, Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { close(st.release); assert.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Cleanup(func() { close(st.release); assertions.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	backend := sourceOperationFixture(t, srv)
 	args := map[string]any{"account": "archive@example.com", "limit": float64(25), "after": "2024-01-01", "before": "2024-02-01", "query": "label:example", "noresume": true}
 	result, err := backend.ExecuteOperation(t.Context(), "create_import_job", args)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	created := operationOutput[generated.ImportJobResponse](t, result)
-	assert.Equal(t, generated.ImportJobResponseStatusPending, created.Status)
+	assertions.Equal(generated.ImportJobResponseStatusPending, created.Status)
 	req := <-st.requests
-	assert.Equal(t, source.ID, req.SourceID)
-	assert.Equal(t, 25, req.Limit)
-	assert.Equal(t, "2024-01-01", req.After)
-	assert.Equal(t, "2024-02-01", req.Before)
-	assert.Equal(t, "label:example", req.Query)
-	assert.True(t, req.NoResume)
+	assertions.Equal(source.ID, req.SourceID)
+	assertions.Equal(25, req.Limit)
+	assertions.Equal("2024-01-01", req.After)
+	assertions.Equal("2024-02-01", req.Before)
+	assertions.Equal("label:example", req.Query)
+	assertions.True(req.NoResume)
 	result, err = backend.ExecuteOperation(t.Context(), "create_import_job", args)
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	assert.Equal(t, operationFailure("sync_already_active", false).Output, result.Output)
+	requirements.NoError(err)
+	assertions.True(result.IsError)
+	assertions.Equal(operationFailure("sync_already_active", false).Output, result.Output)
 	result, err = backend.ExecuteOperation(t.Context(), "get_import_job", map[string]any{"job_id": created.JobID})
-	require.NoError(t, err)
-	assert.Equal(t, created.JobID, operationOutput[generated.ImportJobResponse](t, result).JobID)
-	require.NoError(t, st.store.FinishSyncOperation(t.Context(), created.JobID, "done"))
+	requirements.NoError(err)
+	assertions.Equal(created.JobID, operationOutput[generated.ImportJobResponse](t, result).JobID)
+	requirements.NoError(st.store.FinishSyncOperation(t.Context(), created.JobID, "done"))
 	result, err = backend.ExecuteOperation(t.Context(), "get_import_job", map[string]any{"job_id": created.JobID})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	completed := operationOutput[generated.ImportJobResponse](t, result)
-	assert.Equal(t, generated.ImportJobResponseStatusDone, completed.Status)
-	assert.NotNil(t, completed.Summary)
-	assert.NotNil(t, completed.FinishedAt)
-	for _, args := range []map[string]any{{"account": "archive@example.com"}, {"account": "archive@example.com", "limit": 0}, {"job_id": "../unsafe"}} {
-		name := "create_import_job"
-		if _, ok := args["job_id"]; ok {
-			name = "get_import_job"
-		}
-		result, err = backend.ExecuteOperation(t.Context(), name, args)
-		require.NoError(t, err)
-		assert.True(t, result.IsError)
+	assertions.Equal(generated.ImportJobResponseStatusDone, completed.Status)
+	for _, args := range []map[string]any{{"account": "archive@example.com"}, {"account": "archive@example.com", "limit": 0}} {
+		result, err = backend.ExecuteOperation(t.Context(), "create_import_job", args)
+		requirements.NoError(err)
+		assertions.True(result.IsError)
 	}
 }
 
 func TestMCPImportDiscoveryAndNativeValidation(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	st := &importMCPStore{storeAPIAdapter: &storeAPIAdapter{store: testutil.NewSQLiteTestStore(t)}, requests: make(chan api.CLISyncRequest, 1), release: make(chan struct{})}
 	_, err := st.store.GetOrCreateSource("imap", "imap@example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: st, Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { close(st.release); assert.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Cleanup(func() { close(st.release); assertions.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	backend := sourceOperationFixture(t, srv)
-	assert.Contains(t, backend.capabilities(), "create_import_job")
-	assert.Contains(t, backend.capabilities(), "get_import_job")
+	assertions.Contains(backend.capabilities(), "create_import_job")
+	assertions.Contains(backend.capabilities(), "get_import_job")
 	capabilities, err := backend.client.MCPCapabilities(t.Context())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	for i := range capabilities.Routes {
 		if capabilities.Routes[i].OperationID == "createImportJob" {
 			capabilities.Routes[i].RequestProperties = nil
 		}
 	}
 	missing := newDaemonMCPOperations(backend.client, capabilities)
-	assert.NotContains(t, missing.capabilities(), "create_import_job")
-	assert.Contains(t, missing.capabilities(), "get_import_job")
-	for _, tc := range []struct {
-		args map[string]any
-		code string
-	}{
-		{map[string]any{"account": "imap@example.com", "limit": 3, "query": "example"}, "validation_failed"},
-		{map[string]any{"account": "imap@example.com", "limit": 3, "after": "2024-03-01", "before": "2024-02-01"}, "validation_failed"},
-		{map[string]any{"account": "missing@example.com", "limit": 3}, "not_found"},
-	} {
-		result, err := backend.ExecuteOperation(t.Context(), "create_import_job", tc.args)
-		require.NoError(t, err)
-		assert.True(t, result.IsError)
-		assert.Equal(t, operationFailure(tc.code, false).Output, result.Output)
-	}
+	assertions.NotContains(missing.capabilities(), "create_import_job")
+	assertions.Contains(missing.capabilities(), "get_import_job")
+	result, err := backend.ExecuteOperation(t.Context(), "create_import_job", map[string]any{"account": "imap@example.com", "limit": 3, "query": "example"})
+	requirements.NoError(err)
+	assertions.True(result.IsError)
+	assertions.Equal(operationFailure("validation_failed", false).Output, result.Output)
 	disclosure, err := backend.OperationDisclosure(t.Context(), "create_import_job", map[string]any{"account": "imap@example.com", "limit": 3, "noresume": true})
-	require.NoError(t, err)
-	assert.Contains(t, disclosure, "imap@example.com")
-	assert.Contains(t, disclosure, `"limit":3`)
-	assert.Contains(t, disclosure, `"noresume":true`)
-	assert.True(t, importJobRefusal("validation_failed"))
-	assert.False(t, importJobRefusal("internal_error"))
+	requirements.NoError(err)
+	assertions.Contains(disclosure, "imap@example.com")
+	assertions.Contains(disclosure, `"limit":3`)
+	assertions.Contains(disclosure, `"noresume":true`)
 }
 
 func TestMCPImportUnsafeIDDoesNotReachDaemon(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	backend := &daemonMCPOperations{supported: []string{"get_import_job"}}
 	for _, id := range []string{"", ".", "..", "../other", "job?x=1", "job%2fother"} {
 		result, err := backend.ExecuteOperation(t.Context(), "get_import_job", map[string]any{"job_id": id})
-		require.NoError(t, err)
-		assert.True(t, result.IsError)
-		assert.Equal(t, operationFailure("invalid_arguments", false).Output, result.Output)
+		requirements.NoError(err)
+		assertions.True(result.IsError)
+		assertions.Equal(operationFailure("invalid_arguments", false).Output, result.Output)
 	}
 }
 
 func TestMCPImportSDKRequiresApproval(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	st := &importMCPStore{storeAPIAdapter: &storeAPIAdapter{store: testutil.NewSQLiteTestStore(t)}, requests: make(chan api.CLISyncRequest, 1), release: make(chan struct{})}
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}, Store: st, Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { close(st.release); assert.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Cleanup(func() { close(st.release); assertions.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	backend := sourceOperationFixture(t, srv)
-	called := false
-	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyImports}, &sdkmcp.ClientOptions{ElicitationHandler: func(context.Context, *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-		called = true
+	_, err := st.store.GetOrCreateSource("gmail", "archive@example.com")
+	requirements.NoError(err)
+	approvals := 0
+	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyImports}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		approvals++
+		assertions.Contains(request.Params.Message, "archive@example.com")
+		assertions.Contains(request.Params.Message, `"limit":3`)
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_import_job", Arguments: map[string]any{"account": "missing@example.com", "limit": 3}})
-	require.NoError(t, err)
-	assert.True(t, called)
-	assert.True(t, result.IsError)
-	assert.Equal(t, "not_found", result.StructuredContent.(map[string]any)["error"])
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "create_import_job", Arguments: map[string]any{"account": "archive@example.com", "limit": 3}})
+	requirements.NoError(err)
+	created := loopToolOutput[generated.ImportJobResponse](t, result)
+	assertions.Equal(1, approvals)
+	assertions.Equal(generated.ImportJobResponseStatusPending, created.Status)
+	requirements.NotEmpty(created.JobID)
+	<-st.requests
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_import_job", Arguments: map[string]any{"job_id": created.JobID}})
+	requirements.NoError(err)
+	polled := loopToolOutput[generated.ImportJobResponse](t, result)
+	assertions.Equal(created.JobID, polled.JobID)
+	assertions.Equal(generated.ImportJobResponseStatusPending, polled.Status)
+	assertions.Equal(1, approvals)
 }

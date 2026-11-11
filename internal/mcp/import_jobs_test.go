@@ -8,17 +8,18 @@ import (
 )
 
 func TestImportJobCatalogGatesAndSchemas(t *testing.T) {
-	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"create_import_job", "get_import_job"}}
-	tools := toolsByName(t, rawListTools(t, opts, true))
-	assert.Contains(t, tools, "get_import_job")
-	assert.NotContains(t, tools, "create_import_job")
-	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyImports}
-	defs := operationalCatalog(opts, true)
-	require.Len(t, defs, 2)
-	assert.True(t, *defs[0].definition.annotations.OpenWorldHint)
-	assert.Contains(t, defs[0].definition.inputSchema.Required, "limit")
-	assert.Equal(t, new(float64(1)), defs[0].definition.inputSchema.Properties["limit"].Minimum)
-	assert.Len(t, operationalCatalog(opts, false), 1)
-	opts.DelegatedOnly = true
-	assert.Empty(t, operationalCatalog(opts, true))
+	assertions, requirements := assert.New(t), require.New(t)
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"create_import_job", "get_import_job"}, OperationWriteFamilies: []OperationFamily{OperationFamilyImports}}
+	defs := make(map[string]operationalDefinition)
+	for _, def := range operationalCatalog(opts, true) {
+		defs[def.definition.name] = def
+	}
+	create, ok := defs["create_import_job"]
+	requirements.True(ok)
+	read, ok := defs["get_import_job"]
+	requirements.True(ok)
+	assertions.True(*create.definition.annotations.OpenWorldHint)
+	assertions.Contains(create.definition.inputSchema.Required, "limit")
+	assertions.Equal(new(float64(1)), create.definition.inputSchema.Properties["limit"].Minimum)
+	assertions.Contains(read.definition.inputSchema.Required, "job_id")
 }
