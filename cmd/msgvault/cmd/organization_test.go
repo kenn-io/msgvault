@@ -311,12 +311,12 @@ func TestOrganizationListQueryRequiresDiscoverySchema(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				if r.URL.Path == "/api/v1/health" {
 					_, err := fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, tc.version)
-					require.NoError(err)
+					assert.NoError(err)
 					return
 				}
 				requests++
 				_, err := w.Write([]byte(`{"organizations":[],"total":0,"limit":20,"offset":0}`))
-				require.NoError(err)
+				assert.NoError(err)
 			}))
 			t.Cleanup(server.Close)
 			cmd := cloneOrganizationCommand(organizationListCmd)

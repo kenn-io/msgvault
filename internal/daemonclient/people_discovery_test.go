@@ -27,11 +27,15 @@ func TestPersonDiscoveryClientRequiresSupportedScope(t *testing.T) {
 				case "/api/v1/people/directory":
 					assert.Equal("13", r.URL.Query().Get("organization_id"))
 				case "/api/v1/people/search":
-					var body map[string]any
-					require.NoError(json.NewDecoder(r.Body).Decode(&body))
-					assert.Equal("equipment", body["query"])
-					assert.Equal(float64(13), body["organization_id"])
-					assert.Equal(float64(3), body["limit"])
+					var body struct {
+						Query          string `json:"query"`
+						OrganizationID int64  `json:"organization_id"`
+						Limit          int    `json:"limit"`
+					}
+					assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+					assert.Equal("equipment", body.Query)
+					assert.Equal(int64(13), body.OrganizationID)
+					assert.Equal(3, body.Limit)
 				case "/api/v1/organizations":
 					assert.Equal("Example", r.URL.Query().Get("q"))
 					assert.Equal("2", r.URL.Query().Get("limit"))

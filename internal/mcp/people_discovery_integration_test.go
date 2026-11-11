@@ -82,7 +82,11 @@ func TestPersonDiscoveryMCPRealArchive(t *testing.T) {
 	companies, ok := matches["organizations"].([]any)
 	require.True(t, ok)
 	require.Len(t, companies, 1)
-	selectedID := int64(companies[0].(map[string]any)["id"].(float64))
+	company, ok := companies[0].(map[string]any)
+	require.True(t, ok)
+	id, ok := company["id"].(float64)
+	require.True(t, ok)
+	selectedID := int64(id)
 	assert.Equal(t, organizations[0].ID, selectedID)
 	first := rawCallTool(t, opts, "list_directory_people", map[string]any{"organization_id": selectedID, "sort": "name"})
 	page := decodeDirectoryToolPage(t, first)
@@ -93,6 +97,10 @@ func TestPersonDiscoveryMCPRealArchive(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, rows, 2)
 	for _, row := range rows {
-		assert.Contains(t, ids[:2], int64(row.(map[string]any)["person_id"].(float64)))
+		person, ok := row.(map[string]any)
+		require.True(t, ok)
+		id, ok := person["person_id"].(float64)
+		require.True(t, ok)
+		assert.Contains(t, ids[:2], int64(id))
 	}
 }

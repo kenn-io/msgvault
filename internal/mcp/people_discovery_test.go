@@ -58,7 +58,6 @@ func TestPersonDiscoveryMCPCatalogGatesOnBackends(t *testing.T) {
 	without := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}}, false))
 	assert.NotContains(without, "search_semantic_people")
 	assert.NotContains(without, "list_organizations")
-
 }
 
 func TestPersonDiscoveryMCPReportsCorpusAndExplicitAvailabilityErrors(t *testing.T) {
