@@ -325,12 +325,12 @@ func TestCommitmentMicrosecondPromiseTimesConvergeAcrossAnchorPages(t *testing.T
 		r.NoError(err)
 	}
 	a.Empty(window.Sources, "identical extraction must finish its bounded anchor replay")
-	first, err := st.loadCommitmentCandidates(ctx, f.personID, personFactLedgerNow, false, false, PersonCommitment{}, false, 8)
+	first, err := st.loadCommitmentCandidates(ctx, commitmentListFilter{personID: f.personID}, personFactLedgerNow, PersonCommitment{}, 8)
 	r.NoError(err)
 	r.Len(first, 8)
 	wantTime := personFactLedgerNow.Add(offset).UTC().Truncate(time.Microsecond)
 	a.True(first[0].commitment.PromisedAt.Equal(wantTime), "promise time must retain portable microsecond precision")
-	second, err := st.loadCommitmentCandidates(ctx, f.personID, personFactLedgerNow, false, false, first[7].commitment, false, 8)
+	second, err := st.loadCommitmentCandidates(ctx, commitmentListFilter{personID: f.personID}, personFactLedgerNow, first[7].commitment, 8)
 	r.NoError(err)
 	r.Len(second, 1, "chronological resume must not repeat promises at a precise timestamp")
 	for _, item := range first {
