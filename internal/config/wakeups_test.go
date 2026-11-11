@@ -102,8 +102,7 @@ func TestWakeupSecretFileResolutionPreservesConfig(t *testing.T) {
 
 func TestWakeupDestinationRejectsPrivateNativeTargets(t *testing.T) {
 	for _, endpoint := range []string{"http://example.com/hook", "https://127.0.0.1/hook", "https://localhost/hook", "https://example.com:444/hook"} {
-		assert.Error(t, ValidateWakeupDestination(endpoint, nil), endpoint)
+		assert.Error(t, ValidateWakeupDestination(endpoint), endpoint)
 	}
-	assert.NoError(t, ValidateWakeupDestination("https://example.com/hook", nil))
-
+	assert.NoError(t, ValidateWakeupDestination("https://example.com/hook"))
 }

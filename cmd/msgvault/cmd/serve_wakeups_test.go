@@ -38,16 +38,16 @@ func TestWakeupJobOnlyForUsableEntries(t *testing.T) {
 	entries := cfg.Wakeups
 	t.Setenv("MISSING_WAKEUP_TEST", "")
 	for _, name := range []string{"bad", "removed"} {
-		ok, err := st.AdvanceWakeupState(t.Context(), name, nil, store.WakeupState{At: time.Now().UTC()})
+		ok, err := st.AdvanceWakeupStateKey(t.Context(), store.WakeupStateKey(name), nil, store.WakeupState{At: time.Now().UTC()})
 		require.NoError(err)
 		require.True(ok)
 	}
 	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, &config.Config{Wakeups: entries[:1]}, nil))
 	assert.False(sched.IsJobScheduled("wakeups"))
-	_, raw, err := st.LoadWakeupState(t.Context(), "bad")
+	_, raw, err := st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("bad"))
 	require.NoError(err)
 	assert.NotNil(raw)
-	_, raw, err = st.LoadWakeupState(t.Context(), "removed")
+	_, raw, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("removed"))
 	require.NoError(err)
 	assert.Nil(raw)
 	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, cfg, nil))

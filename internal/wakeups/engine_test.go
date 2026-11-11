@@ -70,7 +70,7 @@ func TestEngineRetriesFailedDeliveryAndAdvancesAfterSuccess(t *testing.T) {
 		require.Len(bodies, 1)
 		require.NoError(decodeErr)
 		assert.Equal([]int64{id}, bodies[0].Matched.MessageIDs)
-		state, _, err := st.LoadWakeupState(ctx, "inbox")
+		state, _, err := st.LoadWakeupStateKey(ctx, store.WakeupStateKey("inbox"))
 		require.NoError(err)
 		assert.Equal(start, state.At)
 		assert.Equal(1, state.Failures)
@@ -84,7 +84,47 @@ func TestEngineRetriesFailedDeliveryAndAdvancesAfterSuccess(t *testing.T) {
 		assert.Equal(bodies[0].CursorFrom, bodies[1].CursorFrom)
 		assert.Equal(bodies[0].CursorTo, bodies[1].CursorTo)
 		assert.Equal(bodies[0].DeliveryID, bodies[1].DeliveryID)
-		state, _, err = st.LoadWakeupState(ctx, "inbox")
+		state, _, err = st.LoadWakeupStateKey(ctx, store.WakeupStateKey("inbox"))
+		require.NoError(err)
+		assert.True(state.At.After(start))
+		assert.Zero(state.Failures)
+	})
+	t.Run("empty rescan", func(t *testing.T) {
+		assert := Assert.New(t)
+		require := Require.New(t)
+
+		st := testutil.NewTestStore(t)
+		now := time.Now().UTC()
+		start := now.Add(-time.Hour)
+		seedWakeup(t, st, "empty-retry@example.com", 0, 1, now)
+		initializedWakeup(t, st, "empty-retry", start)
+		var bodies []payload
+		status := http.StatusInternalServerError
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var p payload
+			if err := json.NewDecoder(r.Body).Decode(&p); err == nil {
+				bodies = append(bodies, p)
+			}
+			w.WriteHeader(status)
+		}))
+		defer server.Close()
+		engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "empty-retry", server, changefeed.Filter{IncomingOnly: true})}, Now: func() time.Time { return now }}
+		require.NoError(engine.RunPass(t.Context()))
+		require.Len(bodies, 1)
+		now = now.Add(73 * time.Hour)
+		require.NoError(engine.RunPass(t.Context()))
+		require.Len(bodies, 2)
+		assert.Equal(bodies[0].CursorFrom, bodies[1].CursorFrom)
+		assert.Zero(bodies[1].Matched.Count)
+		assert.Empty(bodies[1].Matched.MessageIDs)
+		state, _, err := st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("empty-retry"))
+		require.NoError(err)
+		assert.Equal(start, state.At)
+		status = http.StatusNoContent
+		now = now.Add(time.Minute)
+		require.NoError(engine.RunPass(t.Context()))
+		require.Len(bodies, 3)
+		state, _, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("empty-retry"))
 		require.NoError(err)
 		assert.True(state.At.After(start))
 		assert.Zero(state.Failures)
@@ -167,8 +207,8 @@ func TestEngineTruncatesIDsWithoutLosingCount(t *testing.T) {
 func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 	for _, status := range []int{http.StatusGone, http.StatusRequestEntityTooLarge, http.StatusInternalServerError} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
+			assert := Assert.New(t)
+			require := Require.New(t)
 			st := testutil.NewTestStore(t)
 			ctx := t.Context()
 			now := time.Now().UTC()
@@ -212,12 +252,14 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 			require.NoError(err)
 			assert.True(state.At.After(start))
 			assert.Zero(state.Failures)
+			assert.NotEmpty(state.LastError)
+			assert.NotNil(state.FailedSince)
 		})
 	}
 }
 
 func TestNativePositionSurvivesDowntimeAndPrune(t *testing.T) {
-	require := require.New(t)
+	require := Require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
 	now := time.Now().UTC()
@@ -253,5 +295,23 @@ func TestNativePositionSurvivesDowntimeAndPrune(t *testing.T) {
 	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
 	require.NoError(engine.RunPass(ctx))
 	require.Len(bodies, 1)
-	assert.Equal(t, "msgvault.messages.changed", bodies[0]["name"])
+	Assert.Equal(t, "msgvault.messages.changed", bodies[0]["name"])
+}
+
+func TestNativePersonFailureDoesNotConsumeDeliveryAttempts(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	base := testutil.NewTestStore(t)
+	st := &observedStore{Store: base, personErr: store.ErrPersonNotFound}
+	now := time.Now().UTC()
+	key := store.MCPEventsPositionKey("person")
+	ok, err := base.AdvanceWakeupStateKey(t.Context(), key, nil, store.WakeupState{At: now.Add(-time.Hour)})
+	require.NoError(err)
+	require.True(ok)
+	engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "person", StateKey: key, Native: true, Filter: changefeed.Filter{PersonID: 123}}}, Now: func() time.Time { return now }}
+	require.NoError(engine.RunPass(t.Context()))
+	state, _, err := base.LoadWakeupStateKey(t.Context(), key)
+	require.NoError(err)
+	assert.Zero(state.Failures)
+	assert.Equal(now.Add(30*time.Second), state.NextAttemptAt)
 }

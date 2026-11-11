@@ -31,10 +31,10 @@ type Subscription struct {
 
 // Store supplies the bounded feed and durable positions for a pass.
 type Store interface {
-	LoadWakeupState(ctx context.Context, name string) (store.WakeupState, []byte, error)
-	AdvanceWakeupState(ctx context.Context, name string, before []byte, after store.WakeupState) (bool, error)
-	ListChangedMessages(ctx context.Context, cursor store.ChangedMessagesCursor, limit int) (store.ChangedMessagePage, error)
-	ArchiveUIDContext(ctx context.Context) (string, error)
+	LoadWakeupStateKey(context.Context, string) (store.WakeupState, []byte, error)
+	AdvanceWakeupStateKey(context.Context, string, []byte, store.WakeupState) (bool, error)
+	ListChangedMessages(context.Context, store.ChangedMessagesCursor, int) (store.ChangedMessagePage, error)
+	ArchiveUIDContext(context.Context) (string, error)
 }
 
 // Engine holds no delivery state; the archive stores the position and backoff.
@@ -200,6 +200,9 @@ func (e *Engine) RunPass(ctx context.Context) error {
 	pages := make(map[store.ChangedMessagesCursor]store.ChangedMessagePage)
 	var head initialHead
 	for _, sub := range subscriptions {
+		if sub.StateKey == "" {
+			sub.StateKey = store.WakeupStateKey(sub.Name)
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -216,7 +219,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		var uid string
 		var ready bool
 		advance := func(before []byte) (bool, error) {
-			swapped, err := e.advanceState(ctx, sub, before, state)
+			swapped, err := e.Store.AdvanceWakeupStateKey(ctx, sub.StateKey, before, state)
 			if err == nil && !swapped {
 				logger.Warn("wakeup state conflict", "name", sub.Name, "category", "state_conflict")
 			}
@@ -225,7 +228,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		err := e.GatedSetup(ctx, func() error {
 			now := e.now()
 			var err error
-			state, raw, err = e.loadState(ctx, sub)
+			state, raw, err = e.Store.LoadWakeupStateKey(ctx, sub.StateKey)
 			if err != nil {
 				return err
 			}
@@ -357,11 +360,17 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			state.Failures = 0
 			state.NextAttemptAt = time.Time{}
 			if sub.Native {
-				state.LastError = ""
-				state.FailedSince = nil
 				if category == "" {
+					state.LastError = ""
+					state.FailedSince = nil
 					stamp := e.now()
 					state.LastDeliveryAt = &stamp
+				} else {
+					state.LastError = category
+					if state.FailedSince == nil {
+						stamp := e.now()
+						state.FailedSince = &stamp
+					}
 				}
 			}
 		} else {
@@ -370,8 +379,8 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				stamp := e.now()
 				state.FailedSince = &stamp
 			}
-			delays := []time.Duration{30 * time.Second, time.Minute, 3 * time.Minute, 8 * time.Minute}
-			state.NextAttemptAt = e.now().Add(delays[min(state.Failures-1, len(delays)-1)])
+			failureTime := e.now()
+			state.NextAttemptAt = failureTime.Add(retryDelay(state.Failures))
 		}
 		err = e.GatedSetup(ctx, func() error { _, err := advance(raw); return err })
 		if err != nil {
@@ -383,7 +392,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 
 // NewSubscription builds the runtime-only endpoint and pinned destination policy.
 func NewSubscription(name, endpoint string, secret []byte, filter changefeed.Filter, maxAge, timeout time.Duration, trustedOrigin *url.URL, trusted []netip.Addr) Subscription {
-	return Subscription{Name: name, URL: endpoint, Secret: secret, Filter: filter, MaxMessageAge: maxAge, Client: webhookClient{timeout: timeout, trustedOrigin: trustedOrigin, trusted: trusted}}
+	return Subscription{Name: name, StateKey: store.WakeupStateKey(name), URL: endpoint, Secret: secret, Filter: filter, MaxMessageAge: maxAge, Client: webhookClient{timeout: timeout, trustedOrigin: trustedOrigin, trusted: trusted}}
 }
 
 // FilterFromConfig uses selectors normalized by config validation.
@@ -393,30 +402,4 @@ func FilterFromConfig(entry config.WakeupConfig) changefeed.Filter {
 		personID = *entry.PersonID
 	}
 	return changefeed.Filter{PersonID: personID, SourceIDs: entry.SourceIDs, ConversationIDs: entry.ConversationIDs, IncomingOnly: *entry.IncomingOnly}
-}
-
-type keyedStateStore interface {
-	LoadWakeupStateKey(context.Context, string) (store.WakeupState, []byte, error)
-	AdvanceWakeupStateKey(context.Context, string, []byte, store.WakeupState) (bool, error)
-}
-
-func (e *Engine) loadState(ctx context.Context, sub Subscription) (store.WakeupState, []byte, error) {
-	if sub.StateKey == "" {
-		return e.Store.LoadWakeupState(ctx, sub.Name)
-	}
-	s, ok := e.Store.(keyedStateStore)
-	if !ok {
-		return store.WakeupState{}, nil, errors.New("events positions unavailable")
-	}
-	return s.LoadWakeupStateKey(ctx, sub.StateKey)
-}
-func (e *Engine) advanceState(ctx context.Context, sub Subscription, raw []byte, state store.WakeupState) (bool, error) {
-	if sub.StateKey == "" {
-		return e.advanceState(ctx, sub, raw, state)
-	}
-	s, ok := e.Store.(keyedStateStore)
-	if !ok {
-		return false, errors.New("events positions unavailable")
-	}
-	return s.AdvanceWakeupStateKey(ctx, sub.StateKey, raw, state)
 }

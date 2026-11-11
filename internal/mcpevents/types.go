@@ -3,7 +3,6 @@ package mcpevents
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -81,6 +80,7 @@ type SubscribeRequest struct {
 	TTL       TTL       `json:"ttlMs,omitzero" required:"false"`
 	Cursor    *string   `json:"cursor,omitempty"`
 	MaxAgeMS  *int64    `json:"maxAgeMs,omitempty"`
+	secret    []byte
 }
 type UnsubscribeRequest struct {
 	Name      string    `json:"name"`
@@ -162,13 +162,8 @@ func validate(name string, args *Arguments, delivery Delivery, secret bool) erro
 	if delivery.URL == "" || (secret && delivery.Secret == "") {
 		return failure(InvalidParams, "invalid_delivery")
 	}
-	if config.ValidateWakeupDestination(delivery.URL, nil) != nil {
+	if config.ValidateWakeupDestination(delivery.URL) != nil {
 		return failure(InvalidParams, "invalid_callback")
-	}
-	if secret {
-		if _, err := wakeups.DecodeSecret(delivery.Secret); err != nil {
-			return failure(InvalidParams, "invalid_secret")
-		}
 	}
 	return nil
 }
@@ -177,7 +172,15 @@ func DecodeSubscribe(raw []byte) (SubscribeRequest, error) {
 	if err := decode(raw, &v); err != nil {
 		return v, err
 	}
-	return v, validate(v.Name, &v.Arguments, v.Delivery, true)
+	if err := validate(v.Name, &v.Arguments, v.Delivery, true); err != nil {
+		return v, err
+	}
+	var err error
+	v.secret, err = wakeups.DecodeSecret(v.Delivery.Secret)
+	if err != nil {
+		return v, failure(InvalidParams, "invalid_secret")
+	}
+	return v, nil
 }
 func DecodeUnsubscribe(raw []byte) (UnsubscribeRequest, error) {
 	var v UnsubscribeRequest
@@ -186,5 +189,3 @@ func DecodeUnsubscribe(raw []byte) (UnsubscribeRequest, error) {
 	}
 	return v, validate(v.Name, &v.Arguments, v.Delivery, false)
 }
-
-var ErrUnavailable = errors.New("events unavailable")

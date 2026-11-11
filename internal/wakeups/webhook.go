@@ -42,11 +42,6 @@ type webhookClient struct {
 	trusted       []netip.Addr
 }
 
-func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, body []byte) string {
-	category, _ := c.sendEvent(ctx, endpoint, id, "", secret, body)
-	return category
-}
-
 func (c webhookClient) sendEvent(ctx context.Context, endpoint, id, subscriptionID string, secret, body []byte) (string, int) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()

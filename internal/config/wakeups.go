@@ -40,7 +40,7 @@ func prepareWakeups(entries []WakeupConfig) error {
 			return fmt.Errorf("wakeups: invalid or duplicate name %q", c.Name)
 		}
 		seen[c.Name] = true
-		if err := ValidateWakeupDestination(c.URL, nil); err != nil {
+		if err := ValidateWakeupDestination(c.URL); err != nil {
 			return fmt.Errorf("wakeups %s: %w", c.Name, err)
 		}
 		if _, _, err := c.TrustedDestination(); err != nil {
@@ -110,8 +110,8 @@ func (c WakeupConfig) TrustedDestination() (*url.URL, []netip.Addr, error) {
 	return origin, addresses, nil
 }
 
-// ValidateWakeupDestination applies the shared callback rule. Native targets pass no trusted addresses.
-func ValidateWakeupDestination(endpoint string, trusted []string) error {
+// ValidateWakeupDestination applies the shared callback rule.
+func ValidateWakeupDestination(endpoint string) error {
 	target, err := url.Parse(endpoint)
 	if err != nil || target.Scheme != "https" || target.Hostname() == "" || target.User != nil || target.Fragment != "" || target.Opaque != "" || strings.Contains(endpoint, "#") || (target.Port() != "" && target.Port() != "443" && target.Port() != "8443") {
 		return fmt.Errorf("invalid callback")
@@ -123,7 +123,7 @@ func ValidateWakeupDestination(endpoint string, trusted []string) error {
 	} else if netguard.ProhibitedHostname(target.Hostname()) {
 		return fmt.Errorf("prohibited callback")
 	}
-	c := WakeupConfig{URL: endpoint, TrustedAddresses: trusted}
+	c := WakeupConfig{URL: endpoint}
 	_, _, err = c.TrustedDestination()
 	return err
 }

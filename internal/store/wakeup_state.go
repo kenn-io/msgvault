@@ -13,6 +13,23 @@ import (
 
 const wakeupStatePrefix = "wakeup:v1:"
 
+func WakeupStateKey(name string) string { return wakeupStatePrefix + name }
+
+func casArchiveMetadata(q boundQuerier, key string, before, after []byte) (bool, error) {
+	var result sql.Result
+	var err error
+	if before == nil {
+		result, err = q.Exec(`INSERT INTO archive_metadata (key,value) VALUES (?,?) ON CONFLICT (key) DO NOTHING`, key, string(after))
+	} else {
+		result, err = q.Exec(`UPDATE archive_metadata SET value=? WHERE key=? AND value=?`, string(after), key, string(before))
+	}
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
+}
+
 type WakeupState struct {
 	At             time.Time  `json:"at"`
 	AfterID        int64      `json:"after_id"`
@@ -22,10 +39,6 @@ type WakeupState struct {
 	LastError      string     `json:"last_error,omitempty"`
 	FailedSince    *time.Time `json:"failed_since,omitempty"`
 	LastDeliveryAt *time.Time `json:"last_delivery_at,omitempty"`
-}
-
-func (s *Store) LoadWakeupState(ctx context.Context, name string) (WakeupState, []byte, error) {
-	return s.LoadWakeupStateKey(ctx, wakeupStatePrefix+name)
 }
 
 func (s *Store) LoadWakeupStateKey(ctx context.Context, key string) (WakeupState, []byte, error) {
@@ -50,7 +63,6 @@ func EncodeWakeupState(state WakeupState) ([]byte, error) { return json.Marshal(
 func (s *Store) AdvanceWakeupState(ctx context.Context, name string, before []byte, after WakeupState) (bool, error) {
 	return s.AdvanceWakeupStateKey(ctx, wakeupStatePrefix+name, before, after)
 }
-
 func (s *Store) AdvanceWakeupStateKey(ctx context.Context, key string, before []byte, after WakeupState) (bool, error) {
 	value, err := EncodeWakeupState(after)
 	if err != nil {
@@ -59,18 +71,8 @@ func (s *Store) AdvanceWakeupStateKey(ctx context.Context, key string, before []
 	var swapped bool
 	err = s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
-		var result sql.Result
 		var err error
-		if before == nil {
-			result, err = q.Exec(`INSERT INTO archive_metadata (key,value) VALUES (?,?) ON CONFLICT (key) DO NOTHING`, key, string(value))
-		} else {
-			result, err = q.Exec(`UPDATE archive_metadata SET value=? WHERE key=? AND value=?`, string(value), key, string(before))
-		}
-		if err != nil {
-			return err
-		}
-		n, err := result.RowsAffected()
-		swapped = n == 1
+		swapped, err = casArchiveMetadata(q, key, before, value)
 		return err
 	})
 	if err != nil {

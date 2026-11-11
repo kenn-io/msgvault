@@ -49,11 +49,11 @@ func (s *observedStore) ListChangedMessages(ctx context.Context, cursor store.Ch
 	}
 	return page, err
 }
-func (s *observedStore) AdvanceWakeupState(ctx context.Context, name string, before []byte, after store.WakeupState) (bool, error) {
+func (s *observedStore) AdvanceWakeupStateKey(ctx context.Context, name string, before []byte, after store.WakeupState) (bool, error) {
 	if s.rejectAdvance {
 		return false, nil
 	}
-	return s.Store.AdvanceWakeupState(ctx, name, before, after)
+	return s.Store.AdvanceWakeupStateKey(ctx, name, before, after)
 }
 func (s *observedStore) GetPersonContext(ctx context.Context, id int64) (*store.Person, error) {
 	if s.personErr != nil {
@@ -82,7 +82,7 @@ func seedWakeup(t *testing.T, st *store.Store, source string, sender int64, n in
 }
 func initializedWakeup(t *testing.T, st *store.Store, name string, start time.Time) {
 	t.Helper()
-	ok, err := st.AdvanceWakeupState(t.Context(), name, nil, store.WakeupState{At: start})
+	ok, err := st.AdvanceWakeupStateKey(t.Context(), store.WakeupStateKey(name), nil, store.WakeupState{At: start})
 	Require.NoError(t, err)
 	Require.True(t, ok)
 }
@@ -102,7 +102,7 @@ func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
 	require.NoError(engine.RunPass(t.Context()))
 	assert.Equal([]int{1}, st.reads)
 	for _, name := range []string{"a", "b"} {
-		_, raw, err := base.LoadWakeupState(t.Context(), name)
+		_, raw, err := base.LoadWakeupStateKey(t.Context(), store.WakeupStateKey(name))
 		require.NoError(err)
 		assert.Nil(raw)
 	}
@@ -111,11 +111,11 @@ func TestZeroBoundDefersAndSharedPositionReadsOnce(t *testing.T) {
 	start := now.Add(-time.Hour)
 	initializedWakeup(t, base, "a", start)
 	initializedWakeup(t, base, "b", start)
-	_, before, err := base.LoadWakeupState(t.Context(), "a")
+	_, before, err := base.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("a"))
 	require.NoError(err)
 	require.NoError(engine.RunPass(t.Context()))
 	assert.Equal([]int{changefeed.ScanBudget + 1}, st.reads)
-	_, after, err := base.LoadWakeupState(t.Context(), "a")
+	_, after, err := base.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("a"))
 	require.NoError(err)
 	assert.Equal(before, after)
 	t.Run("walk after head", func(t *testing.T) {
@@ -152,14 +152,14 @@ func TestPersonResolutionBackoff(t *testing.T) {
 			if tc.failures > 0 {
 				initial.NextAttemptAt = now.Add(-time.Minute)
 			}
-			ok, err := base.AdvanceWakeupState(t.Context(), "person", nil, initial)
+			ok, err := base.AdvanceWakeupStateKey(t.Context(), store.WakeupStateKey("person"), nil, initial)
 			require.NoError(err)
 			require.True(ok)
 			var logs bytes.Buffer
 			engine := Engine{Store: st, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Now: func() time.Time { return now }, Subscriptions: []Subscription{{Name: "person", Filter: changefeed.Filter{PersonID: 1}}}}
 			require.NoError(engine.RunPass(t.Context()))
 			assert.Contains(logs.String(), tc.category)
-			state, _, err := base.LoadWakeupState(t.Context(), "person")
+			state, _, err := base.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("person"))
 			require.NoError(err)
 			assert.Equal(start, state.At)
 			assert.Equal(tc.failures, state.Failures)
@@ -189,10 +189,10 @@ func TestLostCASRedelivers(t *testing.T) {
 		if count == 1 {
 			var state store.WakeupState
 			var raw []byte
-			state, raw, mutateErr = st.LoadWakeupState(r.Context(), "cas")
+			state, raw, mutateErr = st.LoadWakeupStateKey(r.Context(), store.WakeupStateKey("cas"))
 			if mutateErr == nil {
 				state.Failures++
-				changed, mutateErr = st.AdvanceWakeupState(r.Context(), "cas", raw, state)
+				changed, mutateErr = st.AdvanceWakeupStateKey(r.Context(), store.WakeupStateKey("cas"), raw, state)
 			}
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -204,13 +204,13 @@ func TestLostCASRedelivers(t *testing.T) {
 	require.NoError(mutateErr)
 	require.True(changed)
 	assert.Contains(logs.String(), "state_conflict")
-	state, _, err := st.LoadWakeupState(t.Context(), "cas")
+	state, _, err := st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("cas"))
 	require.NoError(err)
 	assert.Equal(start, state.At)
 	now = now.Add(31 * time.Second)
 	require.NoError(engine.RunPass(t.Context()))
 	assert.Equal(2, count)
-	state, _, err = st.LoadWakeupState(t.Context(), "cas")
+	state, _, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("cas"))
 	require.NoError(err)
 	assert.True(state.At.After(start))
 }
@@ -239,7 +239,7 @@ func TestCancelledAttemptSurvivesRestartAndEmptyRescan(t *testing.T) {
 	sub.Client.dial = func(context.Context, string, string) (net.Conn, error) { cancel(); return nil, context.Canceled }
 	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
 	require.ErrorIs(engine.RunPass(ctx), context.Canceled)
-	state, _, err := st.LoadWakeupState(t.Context(), "cancel")
+	state, _, err := st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("cancel"))
 	require.NoError(err)
 	assert.Equal(start, state.At)
 	assert.Equal(1, state.Failures)
@@ -254,7 +254,7 @@ func TestCancelledAttemptSurvivesRestartAndEmptyRescan(t *testing.T) {
 	require.Len(bodies, 1)
 	assert.Equal(from, bodies[0].CursorFrom)
 	assert.Zero(bodies[0].Matched.Count)
-	state, _, err = st.LoadWakeupState(t.Context(), "cancel")
+	state, _, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("cancel"))
 	require.NoError(err)
 	assert.Equal(start, state.At)
 	assert.Equal(2, state.Failures)
@@ -343,9 +343,9 @@ func TestEndpointFailuresAreIndependent(t *testing.T) {
 			require.NoError(engine.RunPass(t.Context()))
 			assert.Equal(1, firstHits)
 			assert.Equal(1, secondHits)
-			firstState, _, err := st.LoadWakeupState(t.Context(), "a")
+			firstState, _, err := st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("a"))
 			require.NoError(err)
-			secondState, _, err := st.LoadWakeupState(t.Context(), "z")
+			secondState, _, err := st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("z"))
 			require.NoError(err)
 			if tc.advanceClock {
 				assert.Equal(1, secondState.Failures)

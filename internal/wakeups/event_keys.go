@@ -17,10 +17,19 @@ import (
 type EventKey [32]byte
 
 func LoadEventKey(home string, hasSubscriptions bool) (EventKey, error) {
+	return loadEventKey(home, !hasSubscriptions)
+}
+
+// ReadEventKey never creates a key on a read path.
+func ReadEventKey(home string) (EventKey, error) {
+	return loadEventKey(home, false)
+}
+
+func loadEventKey(home string, create bool) (EventKey, error) {
 	var key EventKey
 	path := filepath.Join(home, "mcp-events.key")
 	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) && !hasSubscriptions {
+	if errors.Is(err, os.ErrNotExist) && create {
 		if _, err = rand.Read(key[:]); err != nil {
 			return EventKey{}, err
 		}

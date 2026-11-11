@@ -2804,7 +2804,8 @@ enabled = true
 The default is false. The daemon delivers Events while it is running, and
 resumes from each subscription's saved position after a restart. The private
 `mcp-events.key` in the msgvault home encrypts callback secrets; backups omit
-it. Configured wake-ups and Events subscriptions share a limit of 32 targets.
+it. Back up this key separately and restore it with the archive to keep existing
+subscriptions available. Configured wake-ups and Events subscriptions share a limit of 32 targets.
 See [MCP Events](usage/chat.md#mcp-events) for subscription and verification.
 
 ### Wake-up webhooks

@@ -33,7 +33,8 @@ func TestWebhookSigns(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		}))
 		defer server.Close()
-		assert.Empty(testWebhookClient(t, server).send(t.Context(), "https://example.com/hook", "wk_test", secret, body))
+		category, _ := testWebhookClient(t, server).sendEvent(t.Context(), "https://example.com/hook", "wk_test", "", secret, body)
+		assert.Empty(category)
 		assert.Equal("wk_test", id)
 		assert.NotEmpty(stamp)
 		mac := hmac.New(sha256.New, secret)
@@ -89,7 +90,8 @@ func TestWebhookUsesOnlyTrustedPin(t *testing.T) {
 	// The standard httptest certificate includes example.com.
 	client.roots = client.roots.Clone()
 	client.roots.ServerName = "example.com"
-	assert.Empty(client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
+	category, _ := client.sendEvent(t.Context(), "https://example.com/hook", "wk_1", "", []byte(strings.Repeat("a", 32)), []byte("{}"))
+	assert.Empty(category)
 	assert.Equal([]string{"10.0.0.5:443"}, dialed)
 }
 
@@ -126,19 +128,21 @@ func TestWebhookFailureCategories(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := tc.client(t)
-			Assert.Equal(t, tc.want, client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
+			category, _ := client.sendEvent(t.Context(), "https://example.com/hook", "wk_1", "", []byte(strings.Repeat("a", 32)), []byte("{}"))
+			Assert.Equal(t, tc.want, category)
 		})
 	}
 	t.Run("timeout", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			client := webhookClient{timeout: 50 * time.Millisecond, resolver: staticResolver{netip.MustParseAddr("203.0.113.1")}, dial: func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }}
-			Assert.Equal(t, "timeout", client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
+			category, _ := client.sendEvent(t.Context(), "https://example.com/hook", "wk_1", "", []byte(strings.Repeat("a", 32)), []byte("{}"))
+			Assert.Equal(t, "timeout", category)
 		})
 	})
 }
 
 func TestNativeWebhookSignatureAndSubscriptionHeader(t *testing.T) {
-	assert := assert.New(t)
+	assert := Assert.New(t)
 	secret := []byte(strings.Repeat("s", 32))
 	body := []byte(`{"eventId":"evt_0011223344556677","name":"msgvault.messages.changed","timestamp":"2026-01-01T00:00:00Z","data":{"subscription_id":"sub-1"},"cursor":null}`)
 	var id, stamp, signature, subscription string
@@ -152,13 +156,13 @@ func TestNativeWebhookSignatureAndSubscriptionHeader(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	category, status := testWebhookClient(server).sendEvent(t.Context(), "https://example.com/hook", "evt_0011223344556677", "sub-1", secret, body)
+	category, status := testWebhookClient(t, server).sendEvent(t.Context(), "https://example.com/hook", "evt_0011223344556677", "sub-1", secret, body)
 	assert.Empty(category)
 	assert.Equal(http.StatusNoContent, status)
 	assert.Equal("sub-1", subscription)
 	assert.Equal(body, received)
 	mac := hmac.New(sha256.New, secret)
 	_, err := fmt.Fprintf(mac, "%s.%s.%s", id, stamp, received)
-	require.NoError(t, err)
+	Require.NoError(t, err)
 	assert.Equal("v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)), signature)
 }

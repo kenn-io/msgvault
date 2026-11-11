@@ -29,21 +29,11 @@ func (s *Store) SwapMCPEventsCatalog(ctx context.Context, before, after []byte, 
 	var swapped bool
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
-		var result sql.Result
 		var err error
-		if before == nil {
-			result, err = q.Exec(`INSERT INTO archive_metadata (key,value) VALUES (?,?) ON CONFLICT (key) DO NOTHING`, mcpEventsCatalogKey, string(after))
-		} else {
-			result, err = q.Exec(`UPDATE archive_metadata SET value=? WHERE key=? AND value=?`, string(after), mcpEventsCatalogKey, string(before))
-		}
+		swapped, err = casArchiveMetadata(q, mcpEventsCatalogKey, before, after)
 		if err != nil {
 			return err
 		}
-		n, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		swapped = n == 1
 		if !swapped {
 			return nil
 		}
