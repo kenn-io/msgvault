@@ -432,10 +432,7 @@ func (s *Store) commitmentFulfilmentConfirmedTx(ctx context.Context, tx *loggedT
 	if err != nil {
 		return 0, fmt.Errorf("check commitment completion provenance: %w", err)
 	}
-	if trusted {
-		return 1, nil
-	}
-	return 0, nil
+	return boolInt(trusted), nil
 }
 
 // Vacate every refreshed locator, and any other row still occupying a final
