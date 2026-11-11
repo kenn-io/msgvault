@@ -180,7 +180,7 @@ func TestSourceNotConfiguredSetupHint(t *testing.T) {
 			assertions := assert.New(t)
 			cause := errors.New(tc.message)
 			err := sourceNotConfigured("slack", cause)
-			assertions.ErrorIs(err, cause)
+			require.ErrorIs(t, err, cause)
 			assertions.Equal(5, ExitCode(err))
 			assertions.Contains(recoveryHint(err), tc.wantHint)
 		})
