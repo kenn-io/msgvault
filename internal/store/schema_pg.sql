@@ -4011,3 +4011,5 @@ CREATE TABLE IF NOT EXISTS meta_comment_replies (
 );
 CREATE INDEX IF NOT EXISTS idx_meta_comment_replies_comment
  ON meta_comment_replies(source_id, comment_id);
+CREATE INDEX IF NOT EXISTS idx_meta_comment_replies_sent
+ ON meta_comment_replies(source_id, reply_id) WHERE state = 'sent';
