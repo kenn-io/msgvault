@@ -69,6 +69,27 @@ func TestGetParticipantIdentityContext(t *testing.T) {
 	assert.Empty(details.Identifiers[0].ServiceSlug)
 	assert.Equal("+16045550103", details.Identifiers[0].NormalizedValue)
 
+	person, _, err := st.CreatePersonFromParticipantContext(ctx, root)
+	require.NoError(err)
+	groupmePhone, err := st.AddPersonContactPointContext(ctx, person.ID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressPhone, ServiceSlug: new("groupme"),
+		OriginalValue: "+1 (202) 555-0123", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
+	assert.Equal("+12025550123", groupmePhone.NormalizedValue)
+	for _, value := range []string{"Fictional-Member", "00042", "+12025550123"} {
+		participant, err := st.EnsureParticipantByIdentifierContext(ctx, "groupme_user", value, "GroupMe member")
+		require.NoError(err)
+		details, err := st.GetParticipantIdentityContext(ctx, []int64{participant})
+		require.NoError(err)
+		require.Len(details.Identifiers, 1)
+		assert.Equal(store.ParticipantIdentifierContext{
+			ParticipantID: participant, Type: "groupme_user", Value: value, DisplayValue: value,
+			NormalizedValue: "groupme_user:" + value, ServiceSlug: "groupme", ServiceLabel: "GroupMe",
+		}, details.Identifiers[0])
+		assert.NotEqual(groupmePhone.NormalizedValue, details.Identifiers[0].NormalizedValue)
+	}
+
 	migrated, scoped := migratedBeeperParticipant(ctx, t, st)
 	details, err = st.GetParticipantIdentityContext(ctx, []int64{migrated})
 	require.NoError(err)

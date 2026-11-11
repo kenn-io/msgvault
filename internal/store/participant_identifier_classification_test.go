@@ -77,6 +77,8 @@ func TestParticipantIdentifierWritePathsClassifyServiceAndScope(t *testing.T) {
 		{"inline", "api.inline.chat:user:042", "", "", ""},
 		{"inline", "example.com:user:42", "", "", ""},
 		{"telegram", "user42", "telegram", "", ""},
+		{"groupme_user", "fictional-member", "groupme", "", ""},
+		{"groupme_other", "fictional-member", "", "", ""},
 		{"matrix", "@alice:matrix.example:8448", "matrix", "server", "matrix.example:8448"},
 		{"matrix", "alice-without-server", "", "", ""},
 		{"slack", "user-without-workspace", "", "", ""},

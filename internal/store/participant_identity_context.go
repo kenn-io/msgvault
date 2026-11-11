@@ -157,7 +157,7 @@ func (s *Store) readParticipantIdentifierContext(
 			service = &CommunicationService{Normalization: strategy}
 		}
 		identifier.NormalizedValue, _ = NormalizeServiceValue(service, ContactAddressKind(identifier.Type), identifier.Value)
-		if identifier.Type == sourceTypeBeeper && !isExactMailbox(identifier.Value) && !strings.HasPrefix(identifier.Value, "+") {
+		if identifier.Type == "groupme_user" || identifier.Type == sourceTypeBeeper && !isExactMailbox(identifier.Value) && !strings.HasPrefix(identifier.Value, "+") {
 			identifier.NormalizedValue = identifier.Type + ":" + identifier.Value
 		}
 		*dest = append(*dest, identifier)
