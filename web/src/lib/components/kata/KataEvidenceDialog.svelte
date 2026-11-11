@@ -8,14 +8,14 @@
   import { errorMessage } from '../../api/session.svelte';
   import { EVIDENCE_STEP, EVIDENCE_WINDOW, retryKey, type EvidenceSelector, type PreparedEvidence } from '../../kata/evidence';
 
-  let { client, selector, defaultTitle = '', defaultBrief = '', showIssueLabel = true, onclose = () => undefined, busy = $bindable(false), receipt = $bindable(undefined) }: {
+  let { client, selector, defaultTitle = '', defaultBrief = '', modeLabel = true, onclose = () => undefined, busy = $bindable(false), receipt = $bindable(undefined) }: {
     client: APIClient;
     busy?: boolean;
     receipt?: KataIssueReceipt;
     selector: EvidenceSelector;
     defaultTitle?: string;
     defaultBrief?: string;
-    showIssueLabel?: boolean;
+    modeLabel?: boolean;
     onclose?: () => void;
   } = $props();
 
@@ -152,12 +152,13 @@
       {#if error}<p role="alert">{error}</p>{/if}
     {:else}
       <form onsubmit={(event) => { event.preventDefault(); void submit(); }} aria-busy={busy}>
-        <div class="issue-mode">{#if showIssueLabel}<span>Issue</span>{/if}<SegmentedControl ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} /></div>
+        {#snippet issueMode()}<SegmentedControl ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} />{/snippet}
+        {#if modeLabel}<div class="issue-mode"><span>Issue</span>{@render issueMode()}</div>{:else}{@render issueMode()}{/if}
         {#if mode === 'create'}
           <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
           <label>Brief<textarea aria-label="Brief" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
         {:else}
-          <TaskIssuePicker load={loadIssues} noun="open issues" moreNote="Search by whole word or enter a ref. The list is capped at 25." empty="No open issues yet." disabled={busy} bind:selected />
+          <TaskIssuePicker load={loadIssues} noun="open issues" moreNote="Search by whole word. The list is capped at 25." empty="No open issues yet." disabled={busy} bind:selected />
         {/if}
         <section aria-label="Quoted passage">
           <p class="disclosure">Quote saved in Kata</p>
@@ -193,7 +194,7 @@
   p { margin: 0; }
   .disclosure { color: var(--text-secondary); font-size: var(--font-size-sm); }
   .issue-mode { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .issue-mode :global(.kit-segmented) { justify-self: start; }
+  form :global(.kit-segmented) { justify-self: start; }
   label { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
   label :global(.kit-text-input__control), textarea { font-size: 16px; }
   textarea { resize: vertical; padding: var(--space-2); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }

@@ -175,6 +175,18 @@ describe('KataEvidenceDialog', () => {
     expect(await posts[0].json()).toEqual({ evidence: [passages[0].reference] });
   });
 
+  it('states the search rule when the issue list is capped', async () => {
+    const client = createAPIClient(async input => {
+      const url = new URL((input as Request).url);
+      if (url.pathname.endsWith('/open-issues')) return Response.json({ issues: [issue], truncated: true });
+      return Response.json({ evidence: [passages[0]] });
+    });
+    render(KataEvidenceDialog, { client, selector });
+    await screen.findByText('Opening passage');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    expect(await screen.findByText('Search by whole word. The list is capped at 25.')).toBeTruthy();
+  });
+
   it('keeps a new issue draft across modes', async () => {
     const h = harness(async () => Response.json({ issue, replayed: false }));
     render(KataEvidenceDialog, { client: h.client, selector });
