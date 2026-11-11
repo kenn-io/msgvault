@@ -104,7 +104,7 @@ func emailEvents(t *testing.T, st *Store, source int64) []int64 {
 	return ids
 }
 
-func TestEmailCalendarSourceCountsExcludeDerivedEvents(t *testing.T) {
+func TestEmailCalendarSourceCounts(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

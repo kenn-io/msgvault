@@ -196,27 +196,24 @@ func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 }
 
 func TestICalendarCancellationArrivalOrder(t *testing.T) {
-	t.Run("cancellation first", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		source := icsSource(t, st)
-		cancel := calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Cancelled meeting")
-		_, err := st.PersistICalendarContext(t.Context(), source, cancel)
-		requirements.NoError(err)
-		_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Older"))
-		requirements.NoError(err)
-		ids := emailEvents(t, st, source)
-		requirements.Len(ids, 1)
-		row := calendarRows(t, st, ids...)[0]
-		assertions.Equal("cancelled", row.Event.Status)
-		assertions.Equal("Older", row.Subject)
-		requirements.NotNil(row.Event.Start)
-		assertions.Equal("2027-03-02T13:00:00Z", row.Event.Start.Format(time.RFC3339))
-		stored, err := st.GetMessageRaw(ids[0])
-		requirements.NoError(err)
-		assertions.Equal(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Older"), stored)
-	})
-
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	cancel := calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Cancelled meeting")
+	_, err := st.PersistICalendarContext(t.Context(), source, cancel)
+	requirements.NoError(err)
+	_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Older"))
+	requirements.NoError(err)
+	ids := emailEvents(t, st, source)
+	requirements.Len(ids, 1)
+	row := calendarRows(t, st, ids...)[0]
+	assertions.Equal("cancelled", row.Event.Status)
+	assertions.Equal("Older", row.Subject)
+	requirements.NotNil(row.Event.Start)
+	assertions.Equal("2027-03-02T13:00:00Z", row.Event.Start.Format(time.RFC3339))
+	stored, err := st.GetMessageRaw(ids[0])
+	requirements.NoError(err)
+	assertions.Equal(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Older"), stored)
 }
 
 func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
