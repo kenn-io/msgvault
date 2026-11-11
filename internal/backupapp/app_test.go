@@ -161,3 +161,7 @@ func TestBackupRestorePreservesSavedViews(t *testing.T) {
 	assertions.Equal(created.SchemaVersion, got.SchemaVersion)
 	assertions.Equal(created.Revision, got.Revision)
 }
+
+func TestBackupExcludesMCPEventsKey(t *testing.T) {
+	assert.Contains(t, backupapp.New("test").ExcludedPaths(), "mcp-events.key")
+}

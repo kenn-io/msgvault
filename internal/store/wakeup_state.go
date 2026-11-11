@@ -22,8 +22,12 @@ type WakeupState struct {
 }
 
 func (s *Store) LoadWakeupState(ctx context.Context, name string) (WakeupState, []byte, error) {
+	return s.LoadWakeupStateKey(ctx, wakeupStatePrefix+name)
+}
+
+func (s *Store) LoadWakeupStateKey(ctx context.Context, key string) (WakeupState, []byte, error) {
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key = ?`, wakeupStatePrefix+name).Scan(&raw)
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key = ?`, key).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return WakeupState{}, nil, nil
 	}
@@ -41,6 +45,10 @@ func (s *Store) LoadWakeupState(ctx context.Context, name string) (WakeupState, 
 func EncodeWakeupState(state WakeupState) ([]byte, error) { return json.Marshal(state) }
 
 func (s *Store) AdvanceWakeupState(ctx context.Context, name string, before []byte, after WakeupState) (bool, error) {
+	return s.AdvanceWakeupStateKey(ctx, wakeupStatePrefix+name, before, after)
+}
+
+func (s *Store) AdvanceWakeupStateKey(ctx context.Context, key string, before []byte, after WakeupState) (bool, error) {
 	value, err := EncodeWakeupState(after)
 	if err != nil {
 		return false, err
@@ -51,9 +59,9 @@ func (s *Store) AdvanceWakeupState(ctx context.Context, name string, before []by
 		var result sql.Result
 		var err error
 		if before == nil {
-			result, err = q.Exec(`INSERT INTO archive_metadata (key,value) VALUES (?,?) ON CONFLICT (key) DO NOTHING`, wakeupStatePrefix+name, string(value))
+			result, err = q.Exec(`INSERT INTO archive_metadata (key,value) VALUES (?,?) ON CONFLICT (key) DO NOTHING`, key, string(value))
 		} else {
-			result, err = q.Exec(`UPDATE archive_metadata SET value=? WHERE key=? AND value=?`, string(value), wakeupStatePrefix+name, string(before))
+			result, err = q.Exec(`UPDATE archive_metadata SET value=? WHERE key=? AND value=?`, string(value), key, string(before))
 		}
 		if err != nil {
 			return err

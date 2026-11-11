@@ -52,3 +52,24 @@ func TestWakeupStateCompareAndSwapAndPrune(t *testing.T) {
 	require.NoError(err)
 	assert.NotNil(raw)
 }
+
+func TestEventsPositionSurvivesWakeupPruneAndNameCollision(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	position := store.WakeupState{At: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	key := "mcpevents:v1:pos:sub-x"
+	ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, position)
+	require.NoError(t, err)
+	require.True(t, ok)
+	ok, err = st.AdvanceWakeupState(ctx, "sub-x", nil, store.WakeupState{Failures: 2})
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, st.PruneWakeupStates(ctx, nil))
+	got, raw, err := st.LoadWakeupStateKey(ctx, key)
+	require.NoError(t, err)
+	assert.NotNil(t, raw)
+	assert.Equal(t, position, got)
+	_, raw, err = st.LoadWakeupState(ctx, "sub-x")
+	require.NoError(t, err)
+	assert.Nil(t, raw)
+}
