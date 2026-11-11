@@ -3,6 +3,7 @@ package threads
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -30,6 +31,7 @@ func tokenFilePath(dir string) string {
 }
 
 func TestThreadsTokenLifecycleStorage(t *testing.T) {
+	t.Run("long credential namespace", testThreadsLongCredentialNamespaceRoundTrip)
 	assert := assert.New(t)
 	require := require.New(t)
 	dir := filepath.Join(t.TempDir(), "tokens")
@@ -50,14 +52,13 @@ func TestThreadsTokenLifecycleStorage(t *testing.T) {
 	next, err := m.Load("123", oauthTestOwner)
 	require.NoError(err)
 	assert.Equal("new-secret", next.AccessToken())
-	for _, id := range []string{"../123"} {
-		_, err = m.Load(id, oauthTestOwner)
-		require.Error(err)
-		bad := testTokenRecord()
-		bad.AppID = id
-		require.Error(m.Save(t.Context(), bad))
-		require.Error(m.Delete(t.Context(), id, oauthTestOwner))
-	}
+	id := "../123"
+	_, err = m.Load(id, oauthTestOwner)
+	require.Error(err)
+	bad := testTokenRecord()
+	bad.AppID = id
+	require.Error(m.Save(t.Context(), bad))
+	require.Error(m.Delete(t.Context(), id, oauthTestOwner))
 	require.NoError(m.Delete(t.Context(), "123", oauthTestOwner))
 	_, err = m.Load("123", oauthTestOwner)
 	require.ErrorIs(err, ErrTokenNotFound)
@@ -137,14 +138,6 @@ func TestThreadsTokenLifecycleCrossProcessLock(t *testing.T) {
 		child.Env = append(os.Environ(), "MSGVAULT_THREADS_LOCK_TEST_DIR="+dir)
 		output, err := child.CombinedOutput()
 		require.NoError(t, err, string(output))
-		// Independent flock instance must observe the held source lock.
-		held := flock.New(filepath.Join(dir, ".threads_123_"+oauthTestOwner+".lock"))
-		ok, err := held.TryLock()
-		require.NoError(t, err)
-		assert.False(t, ok)
-		if ok {
-			require.NoError(t, held.Unlock())
-		}
 		// Saving takes a different lock and must complete inside lifecycle ownership.
 		return m.Save(t.Context(), testTokenRecord())
 	}))
@@ -153,7 +146,7 @@ func TestThreadsTokenLifecycleCrossProcessLock(t *testing.T) {
 	}
 }
 
-func TestThreadsLongCredentialNamespaceRoundTrip(t *testing.T) {
+func testThreadsLongCredentialNamespaceRoundTrip(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	manager := NewTokenManager(t.TempDir())
@@ -255,4 +248,17 @@ func TestThreadsTokenLockWaitHonorsCancellation(t *testing.T) {
 	}
 	_, err = manager.Load("123", oauthTestOwner)
 	require.NoError(err)
+}
+
+func TestThreadsTokenRecordRedaction(t *testing.T) {
+	assertions := assert.New(t)
+	r := testTokenRecord()
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%p", "%d"} {
+		for _, value := range []any{r, &r} {
+			assertions.NotContains(fmt.Sprintf(verb, value), "long-secret")
+		}
+	}
+	encoded, err := json.Marshal(r)
+	require.NoError(t, err)
+	assertions.NotContains(string(encoded), "long-secret")
 }

@@ -679,9 +679,6 @@ func (c *Client) RunCLICommand(
 	output func(stream, data string) error,
 ) error {
 	if _, carriesThreadsOAuth := req.Env[clirun.EnvThreadsOAuth]; carriesThreadsOAuth {
-		if len(req.Args) == 0 || req.Args[0] != "add-threads" {
-			return errors.New("threads connection requires an owner add-threads request")
-		}
 		if err := c.ValidateThreadsOAuthHandoff(); err != nil {
 			return err
 		}

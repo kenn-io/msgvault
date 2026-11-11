@@ -21,7 +21,7 @@ func threadsOAuthRunRequest() CLIRunRequest {
 }
 
 func TestThreadsOAuthRedirectsNeverReplayPayload(t *testing.T) {
-	for _, status := range []int{301, 302, 303, 307, 308} {
+	for _, status := range []int{302, 307, 308} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)

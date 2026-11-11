@@ -56,7 +56,6 @@ func TestThreadsRemovalKeepsResolvedSourceWhenDisplayNameMoves(t *testing.T) {
 			require.NoError(err)
 			second, err := st.GetOrCreateSource(sourceTypeThreads, "threads:124:21")
 			require.NoError(err)
-			require.NoError(st.UpdateSourceDisplayName(first.ID, "Shared"))
 			// Model the selector moving after resolution and before the locked continuation.
 			require.NoError(st.UpdateSourceDisplayName(first.ID, "Original"))
 			require.NoError(st.UpdateSourceDisplayName(second.ID, "Shared"))

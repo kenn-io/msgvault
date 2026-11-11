@@ -184,10 +184,6 @@ func TestAddThreadsDaemonExchange(t *testing.T) {
 	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeThreads, identifier)
 	require.NoError(err)
 	assert.Equal("Archive Owner", source.DisplayName.String)
-	identities, err := st.ListAccountIdentitiesContext(t.Context(), source.ID)
-	require.NoError(err)
-	require.Len(identities, 1)
-	assert.Equal(identifier, identities[0].Address)
 	originalConfig := source.SyncConfig
 	assert.False(originalConfig.Valid)
 	require.NoError(st.UpdateSourceDisplayName(source.ID, "Chosen name"))
@@ -333,6 +329,7 @@ func TestAddThreadsRespectsDefaultIdentityOptOut(t *testing.T) {
 	identities, err = st.ListAccountIdentitiesContext(t.Context(), source.ID)
 	require.NoError(err)
 	require.Len(identities, 1)
+	assert.Equal(source.Identifier, identities[0].Address)
 	removed, err := st.RemoveAccountIdentity(source.ID, source.Identifier)
 	require.NoError(err)
 	require.True(removed)

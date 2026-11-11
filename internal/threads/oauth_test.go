@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -38,7 +39,6 @@ func TestThreadsOAuthFullCallback(t *testing.T) {
 		{"duplicate code", registered, good + "&code=secret", "expected", false},
 		{"duplicate registered", registered, good + "&tenant=archive", "expected", false},
 		{"bare code", registered, "secret", "expected", false},
-		{"denial", registered, good + "&error=access_denied&error_description=secret", "expected", false},
 		{"origin", registered, strings.Replace(good, "example.com", "attacker.example", 1), "expected", false},
 		{"port", registered, strings.Replace(good, "example.com", "example.com:444", 1), "expected", false},
 		{"path", registered, strings.Replace(good, "/threads-callback", "/other", 1), "expected", false},
@@ -69,8 +69,10 @@ func TestThreadsOAuthFullCallback(t *testing.T) {
 		})
 	}
 	t.Run("authorization denied", func(t *testing.T) {
+		_, err := ParseOAuthCallback(registered, good+"&error=access_denied&error_description=secret", "expected")
+		require.Error(t, err)
 		callback := registered + "&state=expected&error=access_denied&error_description=provider-secret"
-		_, err := ParseOAuthCallback(registered, callback, "expected")
+		_, err = ParseOAuthCallback(registered, callback, "expected")
 		require.EqualError(t, err, "Threads authorization was denied")
 		_, err = ParseOAuthCallback(registered, callback, "other")
 		require.EqualError(t, err, "invalid Threads OAuth callback")
@@ -234,7 +236,7 @@ func TestThreadsTokenLifecycleExchange(t *testing.T) {
 			f := newOAuthFixture(t)
 			tt.change(f)
 			r, err := ExchangeCredential(t.Context(), f.options(), testOAuthRequest())
-			require.Error(t, err)
+			require.ErrorIs(t, err, ErrReauthorizationRequired)
 			assert.Empty(t, r.AccessToken())
 		})
 	}
@@ -251,24 +253,17 @@ func TestThreadsTokenLifecycleExchange(t *testing.T) {
 func TestThreadsOAuthRedactionAndRedirect(t *testing.T) {
 	assertions := assert.New(t)
 	req := testOAuthRequest()
-	r := testTokenRecord()
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%p", "%d"} {
 		for _, value := range []any{req, &req} {
 			formatted := fmt.Sprintf(verb, value)
 			assertions.NotContains(formatted, "app-secret")
 			assertions.NotContains(formatted, "authorization-code")
 		}
-		for _, value := range []any{r, &r} {
-			assertions.NotContains(fmt.Sprintf(verb, value), "long-secret")
-		}
 	}
 	requestJSON, err := json.Marshal(req)
 	require.NoError(t, err)
 	assertions.NotContains(string(requestJSON), "app-secret")
 	assertions.NotContains(string(requestJSON), "authorization-code")
-	tokenJSON, err := json.Marshal(r)
-	require.NoError(t, err)
-	assertions.NotContains(string(tokenJSON), "long-secret")
 	var targetCalls atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetCalls.Add(1) }))
 	defer target.Close()
@@ -318,4 +313,20 @@ type oauthFailTransport struct{}
 
 func (oauthFailTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, &url.Error{Op: "Get", URL: "https://example.com/?access_token=transport-secret", Err: context.DeadlineExceeded}
+}
+
+func TestThreadsOAuthBindsSourceBeforeLongExchange(t *testing.T) {
+	fixture := newOAuthFixture(t)
+	opts := fixture.options()
+	called := false
+	opts.WithOwnerLock = func(ctx context.Context, source string, exchange func() (TokenRecord, error)) (TokenRecord, error) {
+		called = true
+		assert.Equal(t, "threads:123:"+oauthTestOwner, source)
+		assert.Equal(t, int32(1), fixture.calls.Load())
+		return TokenRecord{}, errors.New("binding barrier")
+	}
+	_, err := ExchangeCredential(t.Context(), opts, testOAuthRequest())
+	require.ErrorContains(t, err, "binding barrier")
+	assert.True(t, called)
+	assert.Equal(t, int32(1), fixture.calls.Load())
 }
