@@ -384,6 +384,7 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 		owners, ok := packet["appreciation_owners"].([]any)
 		require.True(t, ok)
 		require.NotEmpty(t, owners)
+		assert.Equal(t, "Thanks for carrying my boxes upstairs!", owners[0].(map[string]any)["exact_excerpt"])
 		var anchor string
 		for _, value := range peers {
 			peer := value.(map[string]any)
@@ -403,6 +404,7 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, run.PeopleSucceeded)
 	require.NotEmpty(t, f.runner.extractionInputs)
+	assert.Contains(t, f.runner.extractionInputs[0], "I carried your boxes upstairs.")
 	for _, input := range f.runner.extractionInputs {
 		assert.NotContains(t, input, "Thanks for carrying my boxes upstairs!")
 	}
@@ -1231,7 +1233,7 @@ func TestAppreciationDismissalDoesNotAuthorizeRetryAfterPersonSplit(t *testing.T
 		ParticipantIDs: []int64{journal.bobID}, ExpectedSourceRevision: current.Revision, IdempotencyKey: "appreciation-scope-split", Actor: "owner"})
 	require.NoError(t, err)
 	_, err = st.DismissPersonAppreciationContext(t.Context(), merged.Person.ID, key, "owner", f.now.Add(time.Hour), profile)
-	assert.True(t, errors.Is(err, store.ErrPersonAppreciationNotFound) || errors.Is(err, store.ErrPersonBriefNotFound))
+	assert.ErrorIs(t, err, store.ErrPersonAppreciationNotFound)
 	states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{key})
 	require.NoError(t, err)
 	assert.Equal(t, first, states[key])

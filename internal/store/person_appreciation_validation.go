@@ -77,14 +77,27 @@ func (s *Store) revalidateAppreciationMemoryTx(ctx context.Context, tx *loggedTx
 	return current, nil
 }
 
-func recordAppreciationProofsTx(ctx context.Context, tx *loggedTx, briefID int64, memories []peoplesweep.BriefAppreciationMemory) error {
+func (s *Store) recordAppreciationProofsTx(ctx context.Context, tx *loggedTx, personID, briefID int64, profile peoplesweep.ProviderProfile, memories []peoplesweep.BriefAppreciationMemory) error {
 	for _, memory := range memories {
 		if memory.Suggestion.State != "already_thanked" || memory.OwnerRef == nil || memory.Suggestion.Thanked == nil {
 			continue
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO person_appreciation_state (contribution_key, thanks_brief_id)
- VALUES (?, ?) ON CONFLICT (contribution_key) DO UPDATE SET
- thanks_brief_id = COALESCE(person_appreciation_state.thanks_brief_id, excluded.thanks_brief_id)`, memory.Suggestion.Key, briefID)
+		var previous sql.NullInt64
+		err := tx.QueryRowContext(ctx, `SELECT thanks_brief_id FROM person_appreciation_state WHERE contribution_key = ?`, memory.Suggestion.Key).Scan(&previous)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("read appreciation proof: %w", err)
+		}
+		if previous.Valid {
+			_, valid, err := s.validAppreciationProofTx(ctx, tx, personID, memory.Suggestion.Key, previous.Int64, profile, true)
+			if err != nil {
+				return err
+			}
+			if valid {
+				continue
+			}
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO person_appreciation_state (contribution_key, thanks_brief_id)
+ VALUES (?, ?) ON CONFLICT (contribution_key) DO UPDATE SET thanks_brief_id = excluded.thanks_brief_id`, memory.Suggestion.Key, briefID)
 		if err != nil {
 			return fmt.Errorf("record appreciation proof: %w", err)
 		}

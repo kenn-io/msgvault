@@ -360,6 +360,25 @@ func BuildBriefWindow(
 	if err != nil {
 		return BriefWindow{}, fmt.Errorf("load appreciation owner context: %w", err)
 	}
+	// Leave one slot for useful later owner evidence when an optional seed can
+	// be removed without displacing the peer, mandatory contact, or memory.
+	if len(selected) == request.MaxItems {
+		for index := range slices.Backward(selected) {
+			item := selected[index]
+			if protected[packetEvidenceID(item)] || mandatory != nil && item.Ref == mandatory.Ref {
+				continue
+			}
+			useful := slices.ContainsFunc(peers, func(peer BriefAppreciationPeer) bool {
+				return peer.Ref != item.Ref && slices.ContainsFunc(owners, func(owner BriefAppreciationOwner) bool {
+					return owner.ConversationID == peer.ConversationID && owner.Ref.SourceID == peer.Ref.SourceID && owner.EventTime.After(peer.EventTime)
+				})
+			})
+			if useful {
+				selected = slices.Delete(selected, index, index+1)
+				break
+			}
+		}
+	}
 	for {
 		request.appreciationPeers = slices.DeleteFunc(slices.Clone(peers), func(peer BriefAppreciationPeer) bool {
 			return !slices.ContainsFunc(selected, func(item EvidenceItem) bool { return item.Ref == peer.Ref })

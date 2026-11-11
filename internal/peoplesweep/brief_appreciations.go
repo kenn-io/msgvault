@@ -108,11 +108,27 @@ func freezeAppreciationMemory(parsed ParsedBrief, window BriefWindow) []BriefApp
 	return memories
 }
 
+// ValidBriefAppreciationMemory bounds active replay and per-generation proofs.
+func ValidBriefAppreciationMemory(memory []BriefAppreciationMemory) bool {
+	var active, resolved int
+	for _, entry := range memory {
+		switch entry.Suggestion.State {
+		case "suggested":
+			active++
+		case "already_thanked":
+			resolved++
+		default:
+			return false
+		}
+	}
+	return active <= 3 && resolved <= 3
+}
+
 func retainedAppreciations(ctx context.Context, archive BriefArchive, request BriefWindowRequest, after, before *time.Time) ([]EvidenceItem, []BriefThanksSuggestion, error) {
 	if request.Previous == nil || len(request.Previous.AppreciationMemory) == 0 {
 		return nil, nil, nil
 	}
-	if len(request.Previous.AppreciationMemory) > 3 {
+	if !ValidBriefAppreciationMemory(request.Previous.AppreciationMemory) {
 		return nil, nil, errors.New("person brief appreciation memory exceeds three items")
 	}
 	keys := make([]string, 0, len(request.Previous.AppreciationMemory))

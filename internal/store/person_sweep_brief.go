@@ -85,6 +85,12 @@ func (s *Store) PersonSweepBriefEligibility(
 	if len(versions) == 0 {
 		return eligibility, true, nil
 	}
+	switch versions[0].ProgramVersion {
+	case "v1", "v2", "v3":
+	default:
+		return peoplesweep.BriefEligibility{}, false, fmt.Errorf(
+			"person %d brief has unsupported program version %q", personID, versions[0].ProgramVersion)
+	}
 	var boundary peoplesweep.BriefBoundary
 	if err := json.Unmarshal(versions[0].Boundary, &boundary); err != nil {
 		return peoplesweep.BriefEligibility{}, false, fmt.Errorf(

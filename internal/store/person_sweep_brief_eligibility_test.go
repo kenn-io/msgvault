@@ -58,3 +58,17 @@ func TestPersonSweepBriefEligibilityRejectsUnknownEventMemoryVersion(t *testing.
 	_, _, err = f.store.PersonSweepBriefEligibility(t.Context(), f.personID)
 	assert.Error(t, err)
 }
+
+func TestPersonSweepBriefEligibilityRejectsFutureProgramWithoutRetiringHistory(t *testing.T) {
+	f := newPersonBriefFixture(t, "future-program")
+	_, err := f.store.SetPersonBriefEnrollmentContext(t.Context(), f.personID, true, "test", false)
+	require.NoError(t, err)
+	input := f.briefInsert(7700, personBriefNow)
+	input.ProgramVersion = "v99"
+	f.applyBrief(t, input)
+	_, _, err = f.store.PersonSweepBriefEligibility(t.Context(), f.personID)
+	assert.ErrorContains(t, err, "unsupported program version")
+	brief, err := f.store.GetPersonBriefContext(t.Context(), f.personID, 0)
+	require.NoError(t, err)
+	assert.Equal(t, "v99", brief.ProgramVersion)
+}

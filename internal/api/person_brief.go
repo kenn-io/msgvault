@@ -233,11 +233,15 @@ func (s *Server) handleGetPersonBrief(w http.ResponseWriter, r *http.Request) {
 	}
 	var appreciationProjection *store.PersonAppreciationProjection
 	if brief.ProgramVersion == "v3" {
-		projection, ok := s.loadPersonAppreciations(w, r, personID)
-		if !ok {
-			return
+		projection := store.PersonAppreciationProjection{Brief: *brief}
+		if _, err := s.cfg.People.Sweep.Profile(); err == nil {
+			var ok bool
+			projection, ok = s.loadPersonAppreciations(w, r, personID)
+			if !ok {
+				return
+			}
+			brief = &projection.Brief
 		}
-		brief = &projection.Brief
 		appreciationProjection = &projection
 	}
 	response, ok := s.personBriefDTO(w, r, briefs, *brief)

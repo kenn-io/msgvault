@@ -410,7 +410,7 @@ func (s *Store) applyPersonSweepWithAligner(
 			if briefErr != nil {
 				return briefErr
 			}
-			if err := recordAppreciationProofsTx(ctx, tx, brief.ID, request.Brief.Boundary.AppreciationMemory); err != nil {
+			if err := s.recordAppreciationProofsTx(ctx, tx, request.Lease.PersonID, brief.ID, request.Brief.ValidationProfile, request.Brief.Boundary.AppreciationMemory); err != nil {
 				return err
 			}
 			result.Mutations.BriefVersion = brief.Version

@@ -89,29 +89,46 @@ func TestBriefAppreciationReplayProtectsActiveEvidence(t *testing.T) {
 func TestResolvedAppreciationsFreeSlotsForLaterContributions(t *testing.T) {
 	request := briefWindowRequest(t)
 	request.MaxItems = 4
-	var previous *BriefBoundary
-	for index := 0; index < 5; index++ {
+	archive := &briefFakeArchive{}
+	var resolved []BriefAppreciationMemory
+	for index := 0; index < 4; index++ {
 		item := briefWindowItem(int64(20+index), SourceConversationText, 10+index, "I carried your boxes upstairs.")
 		key := fmt.Sprintf("%064x", index+1)
-		archive := &briefFakeArchive{items: []EvidenceItem{item}, appreciationPeers: []BriefAppreciationPeer{{
-			Ref: item.Ref, ConversationID: 42, ContributionKey: key, RawSHA256: strings.Repeat("b", 64),
-			ExactExcerpt: item.Excerpt, EventTime: item.EventTime,
-		}}}
-		request.Previous = previous
-		window, err := BuildBriefWindow(t.Context(), archive, request)
-		require.NoError(t, err)
-		anchor := briefEvidenceID(t, window, item.Ref.MessageID)
-		candidate := fmt.Sprintf(`{"text":"carrying boxes","anchor_id":%q,"quote":"carried your boxes","thanked":null}`, anchor)
-		parsed, err := ParseBrief(briefOutputJSON{ThanksSuggestions: []string{candidate}}.raw(), window, request.Profile)
-		require.NoError(t, err)
-		require.Len(t, parsed.Output.ThanksSuggestions, 1)
-		assert.Equal(t, key, parsed.Output.ThanksSuggestions[0].Key)
-		// The next regeneration starts after this contribution became evidenced.
-		memory := freezeAppreciationMemory(parsed, window)
-		require.Len(t, memory, 1)
-		memory[0].Suggestion.State = "already_thanked"
-		previous = &BriefBoundary{AppreciationMemory: memory}
+		archive.items = append(archive.items, item)
+		archive.appreciationPeers = append(archive.appreciationPeers, BriefAppreciationPeer{Ref: item.Ref,
+			ConversationID: 42, ContributionKey: key, RawSHA256: strings.Repeat("b", 64),
+			ExactExcerpt: item.Excerpt, EventTime: item.EventTime})
+		if index < 3 {
+			resolved = append(resolved, BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{
+				Text: "carrying boxes", Quote: "carried your boxes", Key: key, State: "already_thanked"},
+				PeerRef: item.Ref, PeerRawSHA256: strings.Repeat("b", 64), ConversationID: 42})
+		}
 	}
+	request.Previous = &BriefBoundary{AppreciationMemory: resolved}
+	items, suggestions, err := retainedAppreciations(t.Context(), archive, request, nil, nil)
+	require.NoError(t, err)
+	assert.Empty(t, items)
+	assert.Empty(t, suggestions)
+	assert.Empty(t, archive.hydrateCalls, "resolved memory must not be rehydrated")
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	anchor := briefEvidenceID(t, window, 23)
+	candidate := fmt.Sprintf(`{"text":"carrying boxes","anchor_id":%q,"quote":"carried your boxes","thanked":null}`, anchor)
+	parsed, err := ParseBrief(briefOutputJSON{ThanksSuggestions: []string{candidate}}.raw(), window, request.Profile)
+	require.NoError(t, err)
+	require.Len(t, parsed.Output.ThanksSuggestions, 1)
+	assert.Equal(t, archive.appreciationPeers[3].ContributionKey, parsed.Output.ThanksSuggestions[0].Key)
+}
+
+func TestAppreciationMemoryBound(t *testing.T) {
+	var entries []BriefAppreciationMemory
+	for i := 0; i < 3; i++ {
+		entries = append(entries, BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "suggested"}})
+		entries = append(entries, BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "already_thanked"}})
+	}
+	assert.True(t, ValidBriefAppreciationMemory(entries))
+	entries = append(entries, BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "suggested"}})
+	assert.False(t, ValidBriefAppreciationMemory(entries))
 }
 
 func TestBriefWindowLoadsSidecarsOnceWhenTrimming(t *testing.T) {
@@ -798,4 +815,74 @@ func TestBriefWindowExcludesDismissedContributionsBeforeModelCap(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, window.Batch.Packet.BriefPeers, 1)
 	assert.Equal(t, fmt.Sprintf("%064x", 4), window.Batch.Packet.BriefPeers[0].ContributionKey)
+}
+
+func TestBriefWindowReservesOwnerEvidenceForRetainedContribution(t *testing.T) {
+	peer := briefWindowItem(10, SourceConversationText, 10, "I carried your boxes upstairs.")
+	optional := briefWindowItem(11, SourceConversationText, 12, "An unrelated update.")
+	key, hash := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	archive := &briefFakeArchive{items: []EvidenceItem{peer, optional}, appreciationPeers: []BriefAppreciationPeer{{
+		Ref: peer.Ref, ConversationID: 42, ContributionKey: key, RawSHA256: hash, ExactExcerpt: peer.Excerpt, EventTime: peer.EventTime,
+	}}, appreciationOwners: []BriefAppreciationOwner{{
+		EvidenceID: "owner:test", Ref: EvidenceRef{SourceLane: SourceConversationText, SourceID: peer.Ref.SourceID, MessageID: 99},
+		ConversationID: 42, RawSHA256: strings.Repeat("c", 64), ExactExcerpt: "Thanks for carrying my boxes!", EventTime: peer.EventTime.Add(time.Hour),
+	}}}
+	request := briefWindowRequest(t)
+	request.MaxItems = 2
+	request.Previous = &BriefBoundary{AppreciationMemory: []BriefAppreciationMemory{{
+		Suggestion: BriefThanksSuggestion{Text: "carrying boxes", Quote: "carried your boxes", Key: key, State: "suggested"},
+		PeerRef:    peer.Ref, PeerRawSHA256: hash, ConversationID: 42,
+	}}}
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	require.Len(t, window.Items, 1)
+	assert.Equal(t, peer.Ref.MessageID, window.Items[0].Ref.MessageID)
+	require.Len(t, window.Batch.Packet.BriefOwners, 1)
+	assert.Equal(t, 2, window.Boundary.ItemCount)
+}
+
+func TestRetainedThanksFreesSlotBeforeNewContribution(t *testing.T) {
+	request := briefWindowRequest(t)
+	request.MaxItems = 6
+	archive := &briefFakeArchive{}
+	for i := 0; i < 4; i++ {
+		item := briefWindowItem(int64(60+i), SourceConversationText, 10+i, "I reviewed and sent the draft today.")
+		key := fmt.Sprintf("%064x", i+1)
+		archive.items = append(archive.items, item)
+		archive.appreciationPeers = append(archive.appreciationPeers, BriefAppreciationPeer{Ref: item.Ref,
+			ConversationID: 42, ContributionKey: key, RawSHA256: strings.Repeat("b", 64), ExactExcerpt: item.Excerpt, EventTime: item.EventTime})
+		if i < 3 {
+			if request.Previous == nil {
+				request.Previous = &BriefBoundary{}
+			}
+			request.Previous.AppreciationMemory = append(request.Previous.AppreciationMemory, BriefAppreciationMemory{
+				Suggestion: BriefThanksSuggestion{Text: "sending the draft", Quote: "sent the draft", Key: key, State: "suggested", PriorThanks: "unknown"},
+				PeerRef:    item.Ref, PeerRawSHA256: strings.Repeat("b", 64), ConversationID: 42})
+		}
+	}
+	peer := archive.items[0]
+	archive.appreciationOwners = []BriefAppreciationOwner{{EvidenceID: "owner:test", Ref: EvidenceRef{
+		SourceLane: SourceConversationText, SourceID: peer.Ref.SourceID, MessageID: 99}, ConversationID: 42,
+		RawSHA256: strings.Repeat("c", 64), ExactExcerpt: "Thanks for sending the draft!", EventTime: peer.EventTime.Add(time.Hour)}}
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	fresh := briefEvidenceID(t, window, 63)
+	retained := briefEvidenceID(t, window, 60)
+	candidate := briefOutputJSON{ThanksSuggestions: []string{
+		fmt.Sprintf(`{"text":"new help","anchor_id":%q,"quote":"sent the draft","thanked":null}`, fresh),
+		fmt.Sprintf(`{"text":"changed text","anchor_id":%q,"quote":"reviewed and sent","thanked":{"evidence_id":"owner:test","quote":"Thanks for sending the draft!"}}`, retained),
+	}}
+	parsed, err := ParseBrief(candidate.raw(), window, request.Profile)
+	require.NoError(t, err)
+	require.Len(t, parsed.Output.ThanksSuggestions, 4)
+	assert.Equal(t, "already_thanked", parsed.Output.ThanksSuggestions[0].State)
+	assert.Equal(t, "sending the draft", parsed.Output.ThanksSuggestions[0].Text)
+	assert.Equal(t, "sent the draft", parsed.Output.ThanksSuggestions[0].Quote)
+	memory := freezeAppreciationMemory(parsed, window)
+	require.Len(t, memory, 4)
+	assert.True(t, ValidBriefAppreciationMemory(memory))
+	request.Previous = &BriefBoundary{AppreciationMemory: memory}
+	replayed, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	assert.Len(t, replayed.Request.retainedAppreciations, 3)
 }

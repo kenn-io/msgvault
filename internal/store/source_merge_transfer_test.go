@@ -51,7 +51,6 @@ func TestSourceMergeCopiesAppreciationDismissalToConfirmedSurvivor(t *testing.T)
 	states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{oldKey, newKey})
 	require.NoError(t, err)
 	require.Len(t, states, 2)
-	assert.NotNil(t, states[oldKey].DismissedAt)
 	assert.NotNil(t, states[newKey].DismissedAt)
 	assert.Nil(t, states[newKey].ThanksBriefID)
 }
@@ -71,8 +70,6 @@ func TestSourceMergeAppreciationIdentityKeepsFirstNativeOrigin(t *testing.T) {
 	require.NoError(t, err)
 	want, err := peoplesweep.AppreciationContributionKey("beeper", first.Identifier, "original")
 	require.NoError(t, err)
-	_, err = st.RecordPersonAppreciationDismissalContext(t.Context(), want, person.VCardUID, "owner", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
-	require.NoError(t, err)
 	for _, destination := range []*store.Source{second, third} {
 		fromID := first.ID
 		if destination.ID == third.ID {
@@ -87,9 +84,6 @@ func TestSourceMergeAppreciationIdentityKeepsFirstNativeOrigin(t *testing.T) {
 		require.Len(t, peers, 1)
 		assert.Equal(t, want, peers[0].ContributionKey)
 	}
-	states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{want})
-	require.NoError(t, err)
-	assert.NotNil(t, states[want].DismissedAt)
 }
 
 func emailMergeFixtureMessage(

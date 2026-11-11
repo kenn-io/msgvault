@@ -391,3 +391,24 @@ func TestPeopleBrowserWithoutBriefsHidesTheBriefSurfacesAndForwardsTheRest(t *te
 	assert.Equal([]string{"/api/v1/participants/11"}, paths,
 		"every other People operation still reaches the daemon")
 }
+
+func TestPersonBriefThanksSuggestionMapsSentenceAndCitation(t *testing.T) {
+	output := peoplesweep.BriefOutput{ThanksSuggestions: []peoplesweep.BriefThanksSuggestion{{
+		Text: "carrying the boxes", AnchorID: "evidence:aaa", State: "already_thanked", PriorThanks: "evidenced",
+	}}}
+	structured, err := json.Marshal(output)
+	require.NoError(t, err)
+	sentences, err := json.Marshal([]map[string]any{{"kind": "thanks_suggestion", "index": 0,
+		"text": "You already thanked them for carrying the boxes.", "evidence_ordinals": []int{0}}})
+	require.NoError(t, err)
+	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writePeopleBrowserJSON(t, w, http.StatusOK, briefResponseFixtureWithSentences(string(sentences), string(structured), briefEvidenceFixture))
+	}))
+	brief, err := engine.GetPersonBrief(t.Context(), 51)
+	require.NoError(t, err)
+	require.Len(t, brief.Items, 1)
+	assert.Equal(t, peoplebrowser.PersonBriefThanksSuggestion, brief.Items[0].Kind)
+	assert.Equal(t, "You already thanked them for carrying the boxes.", brief.Items[0].Text)
+	require.Len(t, brief.Items[0].Evidence, 1)
+	assert.Equal(t, int64(11), brief.Items[0].Evidence[0].EvidenceID)
+}

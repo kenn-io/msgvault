@@ -156,44 +156,61 @@ func ParseBrief(
 		parsed.Output.ThanksSuggestions = append(parsed.Output.ThanksSuggestions, suggestion)
 		cited.keep(items)
 	}
-	for _, suggestion := range candidate.ThanksSuggestions {
-		peer, ok := peers[suggestion.AnchorID]
-		items, citedOK := cited.resolve([]string{suggestion.AnchorID})
-		if !ok || !citedOK || len(items) != 1 || peer.Ref != items[0].Ref ||
-			!briefSpeakerSupported(BriefSpeakerPerson, items, packet.PersonID) ||
-			peer.ContributionKey == "" ||
-			strings.TrimSpace(suggestion.Text) == "" || strings.TrimSpace(suggestion.Quote) == "" ||
-			!strings.Contains(peer.ExactExcerpt, suggestion.Quote) {
-			parsed.DroppedItemCount++
-			continue
-		}
-		suggestion.Key = peer.ContributionKey
-		suggestion.State, suggestion.PriorThanks = "suggested", "unknown"
-		if suggestion.Thanked != nil {
-			owner, exists := owners[suggestion.Thanked.EvidenceID]
-			if !exists || owner.ConversationID != peer.ConversationID || owner.Ref.SourceID != peer.Ref.SourceID ||
-				!owner.EventTime.After(peer.EventTime) || strings.TrimSpace(suggestion.Thanked.Quote) == "" ||
-				!strings.Contains(owner.ExactExcerpt, suggestion.Thanked.Quote) {
-				suggestion.Thanked = nil
-			} else {
-				suggestion.State, suggestion.PriorThanks = "already_thanked", "evidenced"
+	retainedKeys := make(map[string]bool, len(seenKeys))
+	for key := range seenKeys {
+		retainedKeys[key] = true
+	}
+	// Resolve retained updates first so a newly evidenced thank-you frees an
+	// active slot even when a new contribution appeared earlier in the output.
+	for pass := 0; pass < 2; pass++ {
+		for _, suggestion := range candidate.ThanksSuggestions {
+			peer, ok := peers[suggestion.AnchorID]
+			if (pass == 0) != retainedKeys[peer.ContributionKey] {
+				continue
 			}
-		}
-		if index, exists := seenKeys[peer.ContributionKey]; exists {
-			old := parsed.Output.ThanksSuggestions[index]
+			items, citedOK := cited.resolve([]string{suggestion.AnchorID})
+			if !ok || !citedOK || len(items) != 1 || peer.Ref != items[0].Ref ||
+				!briefSpeakerSupported(BriefSpeakerPerson, items, packet.PersonID) ||
+				peer.ContributionKey == "" ||
+				strings.TrimSpace(suggestion.Text) == "" || strings.TrimSpace(suggestion.Quote) == "" ||
+				!strings.Contains(peer.ExactExcerpt, suggestion.Quote) {
+				parsed.DroppedItemCount++
+				continue
+			}
+			suggestion.Key = peer.ContributionKey
+			suggestion.State, suggestion.PriorThanks = "suggested", "unknown"
 			if suggestion.Thanked != nil {
-				old.Thanked, old.State, old.PriorThanks = suggestion.Thanked, suggestion.State, suggestion.PriorThanks
-				parsed.Output.ThanksSuggestions[index] = old
+				owner, exists := owners[suggestion.Thanked.EvidenceID]
+				if !exists || owner.ConversationID != peer.ConversationID || owner.Ref.SourceID != peer.Ref.SourceID ||
+					!owner.EventTime.After(peer.EventTime) || strings.TrimSpace(suggestion.Thanked.Quote) == "" ||
+					!strings.Contains(owner.ExactExcerpt, suggestion.Thanked.Quote) {
+					suggestion.Thanked = nil
+				} else {
+					suggestion.State, suggestion.PriorThanks = "already_thanked", "evidenced"
+				}
 			}
-			continue
+			if index, exists := seenKeys[peer.ContributionKey]; exists {
+				old := parsed.Output.ThanksSuggestions[index]
+				if suggestion.Thanked != nil {
+					old.Thanked, old.State, old.PriorThanks = suggestion.Thanked, suggestion.State, suggestion.PriorThanks
+					parsed.Output.ThanksSuggestions[index] = old
+				}
+				continue
+			}
+			count := 0
+			for _, existing := range parsed.Output.ThanksSuggestions {
+				if existing.State == suggestion.State {
+					count++
+				}
+			}
+			if count >= 3 {
+				parsed.DroppedItemCount++
+				continue
+			}
+			seenKeys[peer.ContributionKey] = len(parsed.Output.ThanksSuggestions)
+			cited.keep(items)
+			parsed.Output.ThanksSuggestions = append(parsed.Output.ThanksSuggestions, suggestion)
 		}
-		if len(parsed.Output.ThanksSuggestions) >= 3 {
-			parsed.DroppedItemCount++
-			continue
-		}
-		seenKeys[peer.ContributionKey] = len(parsed.Output.ThanksSuggestions)
-		cited.keep(items)
-		parsed.Output.ThanksSuggestions = append(parsed.Output.ThanksSuggestions, suggestion)
 	}
 
 	for _, uncertainty := range candidate.Uncertainties {

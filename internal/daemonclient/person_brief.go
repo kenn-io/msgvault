@@ -204,7 +204,7 @@ func personBriefItems(brief generated.PersonBrief) []peoplebrowser.PersonBriefIt
 	evidence := briefEvidenceByOrdinals(brief)
 	items := make([]peoplebrowser.PersonBriefItem, 0,
 		1+len(output.Highlights)+len(output.FollowUps)+
-			len(output.Appreciations)+len(output.Uncertainties))
+			len(output.Appreciations)+len(output.ThanksSuggestions)+len(output.Uncertainties))
 	if interaction := output.LastMeaningfulInteraction; interaction != nil {
 		items = append(items, peoplebrowser.PersonBriefItem{
 			Kind: peoplebrowser.PersonBriefLastInteraction, Index: 0,
@@ -236,6 +236,17 @@ func personBriefItems(brief generated.PersonBrief) []peoplebrowser.PersonBriefIt
 			Text:     appreciation.Text,
 			Evidence: evidence(peoplebrowser.PersonBriefAppreciation, index),
 		})
+	}
+	for index, suggestion := range output.ThanksSuggestions {
+		text := suggestion.Text
+		for _, sentence := range brief.Sentences {
+			if sentence.Kind == string(peoplesweep.BriefSentenceThanksSuggestion) && int(sentence.Index) == index && sentence.Text != "" {
+				text = sentence.Text
+				break
+			}
+		}
+		items = append(items, peoplebrowser.PersonBriefItem{Kind: peoplebrowser.PersonBriefThanksSuggestion,
+			Index: index, Text: text, Evidence: evidence(peoplebrowser.PersonBriefThanksSuggestion, index)})
 	}
 	for index, uncertainty := range output.Uncertainties {
 		items = append(items, peoplebrowser.PersonBriefItem{

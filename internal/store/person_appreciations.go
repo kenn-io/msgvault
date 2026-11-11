@@ -34,7 +34,7 @@ func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, person
 		return projection, nil
 	}
 	var boundary peoplesweep.BriefBoundary
-	if err := json.Unmarshal(brief.Boundary, &boundary); err != nil || len(boundary.AppreciationMemory) > 3 {
+	if err := json.Unmarshal(brief.Boundary, &boundary); err != nil || !peoplesweep.ValidBriefAppreciationMemory(boundary.AppreciationMemory) {
 		return PersonAppreciationProjection{}, errors.New("invalid appreciation brief boundary")
 	}
 	result := peoplesweep.BriefResult{Boundary: boundary, ValidationProfile: profile}
@@ -55,36 +55,49 @@ func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, person
 			return PersonAppreciationProjection{}, err
 		}
 		if proofID.Valid {
-			var raw, programVersion string
-			err := tx.QueryRowContext(ctx, `SELECT CAST(boundary_json AS TEXT), program_version FROM person_briefs WHERE id = ?`, proofID.Int64).Scan(&raw, &programVersion)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			proof, ok, err := s.validAppreciationProofTx(ctx, tx, personID, memory.Suggestion.Key, proofID.Int64, profile, lock)
+			if err != nil {
 				return PersonAppreciationProjection{}, err
 			}
-			if err == nil && programVersion == "v3" {
-				var old peoplesweep.BriefBoundary
-				if err := json.Unmarshal([]byte(raw), &old); err != nil || len(old.AppreciationMemory) > 3 {
-					return PersonAppreciationProjection{}, errors.New("invalid appreciation proof boundary")
-				}
-				for _, proof := range old.AppreciationMemory {
-					if proof.Suggestion.Key != memory.Suggestion.Key || proof.Suggestion.State != "already_thanked" {
-						continue
-					}
-					proofResult := peoplesweep.BriefResult{Boundary: peoplesweep.BriefBoundary{AppreciationMemory: []peoplesweep.BriefAppreciationMemory{proof}}, ValidationProfile: profile}
-					validated, err := s.revalidateAppreciationMemoryTx(ctx, tx, personID, &proofResult, true, true, lock)
-					if err != nil {
-						return PersonAppreciationProjection{}, err
-					}
-					if supported, ok := validated[proof.Suggestion.Key]; ok && supported.Suggestion.State == "already_thanked" {
-						memory.Suggestion.State, memory.Suggestion.PriorThanks = "already_thanked", "evidenced"
-						memory.Suggestion.Thanked, memory.OwnerRef, memory.OwnerRawSHA256 = supported.Suggestion.Thanked, supported.OwnerRef, supported.OwnerRawSHA256
-					}
-					break
-				}
+			if ok {
+				memory.Suggestion.State, memory.Suggestion.PriorThanks = "already_thanked", "evidenced"
+				memory.Suggestion.Thanked, memory.OwnerRef, memory.OwnerRawSHA256 = proof.Suggestion.Thanked, proof.OwnerRef, proof.OwnerRawSHA256
 			}
 		}
+
 		projection.Appreciations = append(projection.Appreciations, memory)
 	}
 	return projection, nil
+}
+
+// validAppreciationProofTx checks the exact immutable proof under the caller's
+// snapshot or locks. Unsupported or malformed evidence is not proof; I/O fails.
+func (s *Store) validAppreciationProofTx(ctx context.Context, tx *loggedTx, personID int64, key string, proofID int64, profile peoplesweep.ProviderProfile, lock bool) (peoplesweep.BriefAppreciationMemory, bool, error) {
+	var raw, version string
+	err := tx.QueryRowContext(ctx, `SELECT CAST(boundary_json AS TEXT), program_version FROM person_briefs WHERE id = ?`, proofID).Scan(&raw, &version)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && version != "v3" {
+		return peoplesweep.BriefAppreciationMemory{}, false, nil
+	}
+	if err != nil {
+		return peoplesweep.BriefAppreciationMemory{}, false, err
+	}
+	var boundary peoplesweep.BriefBoundary
+	if err := json.Unmarshal([]byte(raw), &boundary); err != nil || !peoplesweep.ValidBriefAppreciationMemory(boundary.AppreciationMemory) {
+		return peoplesweep.BriefAppreciationMemory{}, false, nil
+	}
+	for _, proof := range boundary.AppreciationMemory {
+		if proof.Suggestion.Key != key || proof.Suggestion.State != "already_thanked" {
+			continue
+		}
+		result := peoplesweep.BriefResult{Boundary: peoplesweep.BriefBoundary{AppreciationMemory: []peoplesweep.BriefAppreciationMemory{proof}}, ValidationProfile: profile}
+		validated, err := s.revalidateAppreciationMemoryTx(ctx, tx, personID, &result, true, true, lock)
+		if err != nil {
+			return peoplesweep.BriefAppreciationMemory{}, false, err
+		}
+		supported, ok := validated[key]
+		return supported, ok && supported.Suggestion.State == "already_thanked", nil
+	}
+	return peoplesweep.BriefAppreciationMemory{}, false, nil
 }
 
 func (s *Store) ProjectPersonAppreciationsContext(ctx context.Context, personID int64, profile peoplesweep.ProviderProfile) (PersonAppreciationProjection, error) {

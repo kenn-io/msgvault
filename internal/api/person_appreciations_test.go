@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +67,17 @@ func TestAppreciationHTTPProjectsDismissalAndPreservesHistory(t *testing.T) {
 	response := doRequest(t, f.server.Router(), http.MethodGet, base, nil, nil)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Contains(t, response.Body.String(), key)
+	response = doRequest(t, f.server.Router(), http.MethodGet, personBriefPath(f.personID, ""), nil, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "carrying the boxes")
+	f.server.cfg.People.Sweep.Enabled = false
+	response = doRequest(t, f.server.Router(), http.MethodGet, personBriefPath(f.personID, ""), nil, nil)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.NotContains(t, response.Body.String(), "carrying the boxes")
+	assert.NotContains(t, response.Body.String(), key)
+	response = doRequest(t, f.server.Router(), http.MethodGet, base, nil, nil)
+	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	f.server.cfg.People.Sweep.Enabled = true
 	response = doRequest(t, f.server.Router(), http.MethodPost, base+"/"+key+"/dismiss", nil, nil)
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	response = doRequest(t, f.server.Router(), http.MethodGet, personBriefPath(f.personID, ""), nil, nil)
@@ -79,5 +89,5 @@ func TestAppreciationHTTPProjectsDismissalAndPreservesHistory(t *testing.T) {
 	assert.Contains(t, response.Body.String(), "carrying the boxes")
 	assert.Contains(t, response.Body.String(), `"historical_snapshot":true`)
 	assert.Contains(t, response.Body.String(), `"appreciation_dismissal_keys":["`+key+`"]`)
-	assert.NotContains(t, response.Body.String(), strings.Repeat("b", 64))
+	assert.NotContains(t, response.Body.String(), hex.EncodeToString(hash[:]))
 }
