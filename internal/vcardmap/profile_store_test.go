@@ -28,6 +28,11 @@ func TestNativeProfileProjectionEndToEndPreservesResidueAndVersionViews(t *testi
 		Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 	})
 	require.NoError(err)
+	_, err = st.AddPersonAddressContext(ctx, person.ID, store.PersonAddressInput{
+		AddressKind: store.PersonAddressPostal, OriginalValue: "Box 1;;12 Example St;Town",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	require.NoError(err)
 	group := "item1"
 	_, err = st.AddPersonContactPointContext(ctx, person.ID, store.PersonContactPointInput{
 		AddressKind: store.ContactAddressEmail, OriginalValue: "new@example.com",
@@ -67,6 +72,7 @@ func TestNativeProfileProjectionEndToEndPreservesResidueAndVersionViews(t *testi
 	assert.Contains(string(committed.StoredBody), "item1.X-ABLABEL:Home")
 	assert.Contains(string(committed.StoredBody), "X-VENDOR;X-FUTURE=yes:untouched")
 	assert.Contains(string(committed.StoredBody), "N:Example;Alice;;;;Sample;")
+	assert.Contains(string(committed.StoredBody), "ADR:Box 1;;12 Example St;Town")
 	assert.Contains(string(committed.StoredBody), "FN:Imported Name\r\n",
 		"the imported FN stands; no derived FN is added beside it")
 	assert.NotContains(string(committed.StoredBody), "DERIVED")

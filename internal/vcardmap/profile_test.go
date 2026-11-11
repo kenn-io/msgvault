@@ -882,6 +882,10 @@ func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T)
 				Envelope:    store.ValueEnvelope{ID: 706, Source: store.ProvenanceUser},
 				AddressKind: store.PersonAddressPostal, OriginalValue: ";;12 Example St;Town;;",
 			},
+			{
+				Envelope:    store.ValueEnvelope{ID: 707, Source: store.ProvenanceUser},
+				AddressKind: store.PersonAddressPostal, OriginalValue: "Box 1;;12 Example St;Town",
+			},
 		},
 	}}
 
@@ -900,6 +904,9 @@ func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T)
 	shortADR := projectedByOwner(t, properties, "person_addresses", 706, fieldValue)
 	assert.Equal(";;12 Example St;Town;;", shortADR.Property.RawValue)
 	assert.Empty(projectedParameterValues(shortADR.Property, "LABEL"))
+	shortBox := projectedByOwner(t, properties, "person_addresses", 707, fieldValue)
+	assert.Equal("Box 1;;12 Example St;Town", shortBox.Property.RawValue)
+	assert.Empty(projectedParameterValues(shortBox.Property, "LABEL"))
 	fromFreeText := projectedByOwner(t, properties, "person_addresses", 702, fieldValue)
 	assert.Equal([]string{"Second Floor, 2 Side St"}, projectedParameterValues(fromFreeText.Property, "LABEL"))
 	components := projectedByOwner(t, properties, "person_addresses", 703, fieldValue)

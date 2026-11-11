@@ -4,7 +4,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"strings"
-	"unicode/utf8"
 )
 
 const originalPrefix = "msgvault:postal-input:v1\n"
@@ -17,14 +16,8 @@ type originalSnapshot struct {
 	Input  *Input `json:"input"`
 }
 
-// EncodeOriginalInput retains the raw draft, including whitespace. Invalid
-// UTF-8 is rejected rather than silently replaced by encoding/json.
+// EncodeOriginalInput retains the raw draft, including whitespace.
 func EncodeOriginalInput(input Input) (string, error) {
-	for _, field := range input.fields() {
-		if !utf8.ValidString(*field) {
-			return "", errors.New("postal input contains invalid UTF-8")
-		}
-	}
 	data, err := json.Marshal(originalSnapshot{Schema: 1, Input: &input})
 	if err != nil {
 		return "", err

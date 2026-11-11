@@ -30,7 +30,7 @@ func (a PersonAddress) PostalInput() postaladdress.Input {
 	return postaladdress.Input{AddressKind: string(a.AddressKind), PostOfficeBox: value(a.PostOfficeBox), ExtendedAddress: value(a.ExtendedAddress), StreetAddress: value(a.StreetAddress), Locality: value(a.Locality), Region: value(a.Region), PostalCode: value(a.PostalCode), CountryName: value(a.CountryName), ExtendedComponents: value(a.ExtendedComponents), FreeText: value(a.FreeText), Label: value(a.Label), GeoURI: value(a.GeoURI), Timezone: value(a.Timezone), CountryCode: value(a.CountryCode), PlaceURI: value(a.PlaceURI), OriginalValue: a.OriginalValue}
 }
 
-// ResolvePostalInput parses legacy text with an ADR shape or empty first fields;
+// ResolvePostalInput parses legacy text with an ADR shape or an empty second field;
 // otherwise it keeps the text intact. Explicit current text disables the fallback.
 func ResolvePostalInput(input postaladdress.Input, useOriginal bool) postaladdress.Input {
 	if !useOriginal || slices.ContainsFunc([]string{input.FreeText, input.PostOfficeBox, input.ExtendedAddress, input.StreetAddress, input.Locality, input.Region, input.PostalCode, input.CountryName, input.ExtendedComponents}, func(value string) bool { return strings.TrimSpace(value) != "" }) {
@@ -41,7 +41,7 @@ func ResolvePostalInput(input postaladdress.Input, useOriginal bool) postaladdre
 		return input
 	}
 	parts, err := vcard.SplitStructuredText(raw)
-	if err == nil && (len(parts) >= 7 || strings.HasPrefix(raw, ";;")) && slices.ContainsFunc(parts, func(part string) bool { return strings.TrimSpace(part) != "" }) {
+	if err == nil && (len(parts) >= 7 || len(parts) >= 4 && parts[1] == "" || strings.HasPrefix(raw, ";;")) && slices.ContainsFunc(parts, func(part string) bool { return strings.TrimSpace(part) != "" }) {
 		fields := []*string{&input.PostOfficeBox, &input.ExtendedAddress, &input.StreetAddress, &input.Locality, &input.Region, &input.PostalCode, &input.CountryName}
 		for i := range min(len(parts), len(fields)) {
 			*fields[i] = parts[i]
