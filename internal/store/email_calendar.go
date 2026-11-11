@@ -11,8 +11,6 @@ import (
 	"go.kenn.io/msgvault/internal/mime"
 )
 
-const rawFormatMIME = "mime"
-
 // Match the MIME type without allocating a lowercase copy of the email.
 func hasCalendarToken(raw []byte) bool {
 	for _, token := range []string{"text/calendar", "application/ics", "application/octet-stream"} {

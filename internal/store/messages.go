@@ -2463,7 +2463,7 @@ func (s *Store) persistMessageWith(
 	if data == nil || data.Message == nil {
 		return 0, errors.New("persist message requires a message")
 	}
-	calendarCandidate := len(data.RawMIME) > 0 && (data.RawFormat == "" || data.RawFormat == rawFormatMIME) && hasCalendarToken(data.RawMIME)
+	calendarCandidate := len(data.RawMIME) > 0 && (data.RawFormat == "" || data.RawFormat == emailLinkageRawFormat) && hasCalendarToken(data.RawMIME)
 	if calendarCandidate && IsEmailMessageType(data.Message.MessageType) {
 		if err := s.lockEmailCalendarParticipantsWith(ctx, tx); err != nil {
 			return 0, err
@@ -6284,7 +6284,7 @@ func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, form
 // UpsertMessageRawWithFormatContext honors cancellation during UpsertMessageRawWithFormat.
 func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID int64, rawData []byte, format string) error {
 	write := func(tx *loggedTx) error {
-		calendarCandidate := len(rawData) > 0 && format == rawFormatMIME && hasCalendarToken(rawData)
+		calendarCandidate := len(rawData) > 0 && format == emailLinkageRawFormat && hasCalendarToken(rawData)
 		if calendarCandidate {
 			if err := s.lockEmailCalendarParticipantsWith(ctx, tx); err != nil {
 				return err
@@ -6327,7 +6327,7 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
-		if format == rawFormatMIME && calendarCandidate {
+		if calendarCandidate {
 			if err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, rawData); err != nil {
 				return err
 			}
