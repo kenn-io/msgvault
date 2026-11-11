@@ -45,6 +45,35 @@ func (s *Store) CapturePersonSweepPolicyWork(ctx context.Context, personID int64
 	return context.WithValue(ctx, personSweepPolicyKey{}, personSweepPolicyWork{personID: personID, revision: revision}), nil
 }
 
+// RefreshPersonSweepPolicyWork rebinds the person input revision after the
+// attempt's own status phase changed the person's facts. The worker assembles
+// its packet again after that phase. The original conversation policy revision
+// and bound inputs stay unchanged.
+func (s *Store) RefreshPersonSweepPolicyWork(ctx context.Context, personID int64) (context.Context, error) {
+	work, ok := ctx.Value(personSweepPolicyKey{}).(personSweepPolicyWork)
+	if !ok || work.personID != personID {
+		return nil, ErrConversationPolicyStale
+	}
+	err := s.withConversationPolicyLocked(ctx, nil, func(tx *loggedTx) error {
+		if err := s.CheckConversationPolicyPublicationTx(ctx, tx.Tx, nil); err != nil {
+			return err
+		}
+		doc, err := s.loadPersonSemanticDocumentLoggedTx(ctx, tx, personID)
+		if errors.Is(err, ErrPersonNotFound) {
+			return ErrConversationPolicyStale
+		}
+		if err != nil {
+			return err
+		}
+		work.revision = doc.Revision
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return context.WithValue(ctx, personSweepPolicyKey{}, work), nil
+}
+
 // BindPersonSweepPolicyInputs keeps the exact assembled source versions through
 // retries and commit. Additional brief inputs extend, never replace, that set.
 func (s *Store) BindPersonSweepPolicyInputs(ctx context.Context, inputs []peoplesweep.EvidenceItem) (context.Context, error) {

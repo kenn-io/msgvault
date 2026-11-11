@@ -179,6 +179,10 @@ func TestDirectoryPeopleAddressLookupRefillsSparsePagesInEveryOrder(t *testing.T
 			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 		})
 		require.NoError(err)
+		// Seed refreshed contact state after contact-point edits invalidate it.
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_contact_state SET last_contact_at = ?, dirty_at = NULL WHERE person_id = ?`),
+			time.Date(2026, 1, 1, 0, index, 0, 0, time.UTC), personID)
+		require.NoError(err)
 	}
 	require.NoError(st.RefreshDirectoryProjectionContext(t.Context()))
 	for _, order := range []string{store.DirectoryPeopleSortName, store.DirectoryPeopleSortLastContactAsc, store.DirectoryPeopleSortLastContactDesc} {
