@@ -118,7 +118,7 @@
         </div>
       </div>
       {#if displayedPage.rows.length === 0}
-        <EmptyState title={emptyState(displayedPage.coverage)} description="MsgVault doesn't track whether action items are done." />
+        <EmptyState title={emptyState(displayedPage.coverage)} description="Action item status comes from the meeting record." />
       {:else}
         <ol>
           {#each displayedPage.rows as row (`${row.meeting.message_id}:${row.action.locator}`)}

@@ -13,7 +13,7 @@ describe('SearchCoverage', () => {
   it.each([
     ['disabled', 'Semantic search is disabled'],
     ['initializing', 'Semantic index is initializing'],
-    ['stale', 'Semantic search results may be out of date'],
+    ['stale', 'Semantic search is unavailable; check the index'],
     ['incomplete', 'Semantic index: 84% of 12,430 items'],
     ['unavailable', 'Semantic index is unavailable'],
     ['ready', 'Semantic index: 100% of 12,430 items']

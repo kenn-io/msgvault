@@ -21,7 +21,7 @@
     switch (coverage.status) {
       case 'disabled': return 'Semantic search is disabled';
       case 'initializing': return 'Semantic index is initializing';
-      case 'stale': return 'Semantic search results may be out of date';
+      case 'stale': return 'Semantic search is unavailable; check the index';
       case 'unavailable': return 'Semantic index is unavailable';
       case 'incomplete':
       case 'ready': return `Semantic index: ${percentage}% of ${count} items`;
