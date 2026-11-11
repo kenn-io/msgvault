@@ -275,7 +275,7 @@ func TestCommitmentDecisionSurvivesDuplicateMergeUndo(t *testing.T) {
 	}
 }
 
-func TestCommitmentMergeDoesNotCloseDifferentSurvivorPromise(t *testing.T) {
+func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) {
 	const original = "I will send the draft."
 	for _, tc := range []struct{ name, quote, prefix, state string }{
 		{"different", "I will book the venue.", "", LoopStateOpen},
