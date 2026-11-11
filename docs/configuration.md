@@ -437,10 +437,11 @@ direct conversations within the active provider's source and date scope.
 | `max_bytes` | `65536` | Maximum UTF-8 message-text bytes in a call. |
 | `max_output_tokens` | `2048` | Output cap within the shared per-person budget. |
 | `max_open_anchors` | `8` | Older open promises a call may revisit, up to 8. |
-| `expire_after_due` | `720h` | Time after the due date ends in the activity timezone. |
-| `max_duration` | `2160h` | Maximum age of a promise without a due date. |
-| `auto_fulfil` | `false` | Close promises on explicit, newer supported fulfilment. |
+| `expire_after_due` | `720h` | Time after the due date ends in the activity timezone; expiry is stored at extraction or refresh. |
+| `max_duration` | `2160h` | Maximum age without a due date; expiry is stored at extraction or refresh. |
+| `auto_fulfil` | `false` | Close promises on future explicit, newer supported confirmations; the owner can reopen them. |
 | `auto_agenda` | `false` | Create Kata agenda issues for cited promises when the Kata integration is enabled. |
+
 
 See [Open loops](usage/open-loops.md#see-cited-commitments) for consent and
 owner controls.
