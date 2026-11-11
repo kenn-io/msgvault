@@ -55,21 +55,27 @@ type changesCursorPayload struct {
 	Time    string `json:"t"`
 	ID      *int64 `json:"i,omitzero" nullable:"false"`
 	Archive string `json:"a"`
+	Filter  string `json:"f,omitzero"`
 }
 
 // encodeChangesCursor renders a feed position in archiveUID as the opaque token
 // clients send back. Both the digits and the `.` are unreserved in a query
 // string and RawURLEncoding keeps the rest so too, so the whole token needs no
 // escaping.
-func encodeChangesCursor(archiveUID string, position store.ChangedMessagesCursor) string {
+func encodeChangesCursor(archiveUID string, position store.ChangedMessagesCursor, digest ...string) string {
 	var id *int64
 	if after, ok := position.AfterID(); ok {
 		id = &after
+	}
+	filter := ""
+	if len(digest) > 0 {
+		filter = digest[0]
 	}
 	payload, err := json.Marshal(changesCursorPayload{
 		Time:    position.At().UTC().Format(changesTimeLayout),
 		ID:      id,
 		Archive: archiveUID,
+		Filter:  filter,
 	}, json.Deterministic(true))
 	if err != nil {
 		// Unreachable: every field of the payload marshals unconditionally.
@@ -89,6 +95,7 @@ func encodeChangesCursor(archiveUID string, position store.ChangedMessagesCursor
 type changesPosition struct {
 	cursor  store.ChangedMessagesCursor
 	archive string
+	filter  string
 	present bool
 }
 
@@ -133,7 +140,7 @@ func decodeChangesCursor(raw string) (changesPosition, error) {
 	if payload.ID != nil {
 		cursor = store.ChangedMessagesAfter(at.UTC(), *payload.ID)
 	}
-	return changesPosition{cursor: cursor, archive: payload.Archive, present: true}, nil
+	return changesPosition{cursor: cursor, archive: payload.Archive, filter: payload.Filter, present: true}, nil
 }
 
 // boundTo rejects a position that was issued against a different archive, and is

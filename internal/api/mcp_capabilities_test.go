@@ -86,3 +86,20 @@ func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
 	assertions.Contains(routes["markLoopDone"].QueryParameters, "question_message_ids")
 	assertions.Contains(routes["snoozeLoop"].QueryParameters, "question_message_ids")
 }
+
+func TestMCPCapabilitiesDescribeFilteredChanges(t *testing.T) {
+	descriptors := mcpRouteDescriptors(OpenAPIDocument())
+	var found bool
+	for _, route := range descriptors {
+		if route.OperationID != "listChangedMessages" {
+			continue
+		}
+		found = true
+		assert.Equal(t, http.MethodGet, route.Method)
+		assert.Equal(t, "/api/v1/messages/changes", route.Path)
+		for _, param := range []string{"person_id", "source_id", "conversation_id", "incoming_only"} {
+			assert.Contains(t, route.QueryParameters, param)
+		}
+	}
+	assert.True(t, found)
+}

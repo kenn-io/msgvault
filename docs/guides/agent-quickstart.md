@@ -53,6 +53,8 @@ mean the grant is too narrow or a write class is disabled; ask the owner to
 review access instead of attempting to bypass it. A grant without `stats.read`
 cannot use `get_stats` as a universal connection check.
 
+Use owner tool `list_changes` to follow filtered message changes with a cursor.
+
 ## Find people and read conversations
 
 Use `search_people` with a `query` to find observed contacts and saved profiles.

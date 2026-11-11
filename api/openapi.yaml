@@ -25014,6 +25014,33 @@ paths:
     get:
       operationId: listChangedMessages
       parameters:
+        - description: Only messages sent by a linked identity of this person
+          in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - description: Source IDs; repeat for multiple sources (maximum 50)
+          in: query
+          name: source_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+        - description: Conversation IDs; repeat for multiple conversations (maximum 50)
+          in: query
+          name: conversation_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+        - description: Only incoming messages
+          in: query
+          name: incoming_only
+          schema:
+            type: boolean
         - description: "Opaque cursor from the next_cursor of the previous response, sent back verbatim. Do not parse, construct, compare, or order it; its contents may change without notice. Omit, or send it empty, to start from the beginning of the archive. The token is not authenticated: the server does not sign it and cannot tell one it issued from a well-formed one you built, so a fabricated cursor naming this archive is accepted and simply moves your own position. Rejected with 400 invalid_cursor, rather than read as the beginning: a token the server cannot read, one carrying a cursor format this build does not speak, and one issued against a different archive"
           in: query
           name: cursor

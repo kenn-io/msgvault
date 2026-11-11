@@ -635,3 +635,25 @@ func TestMCPCacheJobStatusRetainsRealLifecycle(t *testing.T) {
 	requirements.NotNil(status.ErrorData)
 	assertions.NotContains(*status.ErrorData, directory)
 }
+
+func TestListChangesRequiresAllFilterCapabilities(t *testing.T) {
+	check := func(available []string) mcpRouteCheck {
+		return func(id, method, path string, params ...string) bool {
+			if id != "listChangedMessages" || method != http.MethodGet || path != "/api/v1/messages/changes" {
+				return false
+			}
+			for _, param := range params {
+				if !slices.Contains(available, param) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	all := []string{"person_id", "source_id", "conversation_id", "incoming_only"}
+	assert.Contains(t, sourceMCPCapabilities(check(all), nil), "list_changes")
+	for i := range all {
+		missing := append(slices.Clone(all[:i]), all[i+1:]...)
+		assert.NotContains(t, sourceMCPCapabilities(check(missing), nil), "list_changes")
+	}
+}

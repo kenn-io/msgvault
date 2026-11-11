@@ -1245,6 +1245,10 @@ func semanticMessageFilterParams() []*huma.Param {
 // outside this server is allowed to depend on its contents.
 func changesParams() []*huma.Param {
 	return []*huma.Param{
+		queryIntegerParam("person_id", "Only messages sent by a linked identity of this person"),
+		queryIntegerArrayParam("source_id", "Source IDs; repeat for multiple sources (maximum 50)"),
+		queryIntegerArrayParam("conversation_id", "Conversation IDs; repeat for multiple conversations (maximum 50)"),
+		queryBooleanParam("incoming_only", "Only incoming messages"),
 		queryStringParam("cursor",
 			"Opaque cursor from the next_cursor of the previous response, sent back "+
 				"verbatim. Do not parse, construct, compare, or order it; its contents may "+

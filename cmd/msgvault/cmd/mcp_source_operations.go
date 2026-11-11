@@ -41,6 +41,7 @@ type mcpRouteCheck func(string, string, string, ...string) bool
 func sourceMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCapabilities) []string {
 	var names []string
 	for _, route := range []struct{ name, id, method, path string }{
+		{"list_changes", "listChangedMessages", http.MethodGet, "/api/v1/messages/changes"},
 		{"list_source_status", "listSourceStatus", http.MethodGet, "/api/v1/sources/status"},
 		{"get_source_identities", "listSourceIdentities", http.MethodGet, "/api/v1/sources/{source_id}/identities"},
 		{"get_participant_identity", "getParticipant", http.MethodGet, "/api/v1/participants/{id}"},
@@ -49,6 +50,9 @@ func sourceMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCP
 		{"get_slack_sync_policy", "getSettings", http.MethodGet, "/api/v1/settings"},
 	} {
 		query := []string{}
+		if route.name == "list_changes" {
+			query = append(query, "person_id", "source_id", "conversation_id", "incoming_only")
+		}
 		if route.name == "list_source_status" {
 			query = append(query, "source_type")
 		}
@@ -83,6 +87,14 @@ func mcpRequestPropertiesPresent(capabilities *apiprotocol.MCPCapabilities, id s
 	return false
 }
 
+type changesArguments struct {
+	Cursor          *string `json:"cursor,omitempty"`
+	Limit           *int64  `json:"limit,omitempty"`
+	PersonID        *int64  `json:"person_id,omitempty"`
+	SourceIDs       []int64 `json:"source_ids,omitempty"`
+	ConversationIDs []int64 `json:"conversation_ids,omitempty"`
+	IncomingOnly    *bool   `json:"incoming_only,omitempty"`
+}
 type sourceStatusArguments struct {
 	SourceType *string `json:"source_type,omitempty"`
 }
@@ -130,6 +142,12 @@ func (b *daemonMCPOperations) executeSourceOperation(ctx context.Context, name s
 	var result *mcpserver.OperationResult
 	var err error
 	switch name {
+	case "list_changes":
+		input, decodeErr := decodeMCPOperationArguments[changesArguments](args)
+		if decodeErr != nil {
+			return invalid()
+		}
+		result, err = readMCPOperationJSON[generated.ChangesResponse](ctx, b.client, http.MethodGet, "/api/v1/messages/changes", &generated.ListChangedMessagesRequestOptions{Query: &generated.ListChangedMessagesQuery{Cursor: input.Cursor, Limit: input.Limit, PersonID: input.PersonID, SourceID: input.SourceIDs, ConversationID: input.ConversationIDs, IncomingOnly: input.IncomingOnly}}, http.StatusOK)
 	case "list_source_status":
 		input, decodeErr := decodeMCPOperationArguments[sourceStatusArguments](args)
 		if decodeErr != nil {
