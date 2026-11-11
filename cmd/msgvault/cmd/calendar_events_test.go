@@ -45,7 +45,7 @@ func TestCalendarEventsCommand(t *testing.T) {
 		want, wantErr, wantWarning string
 		err                        error
 	}{
-		{name: "table", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, SeriesMessageID: 377, Ref: "evt:377@20270302T170000Z", Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Ref: "evt:412", Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}, {MessageID: 413, Ref: "evt:413@20270304", Subject: "Cancelled", Status: "cancelled", AllDay: true, StartDate: "2027-03-04", EndDate: "2027-03-05"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)"},
+		{name: "table", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, SeriesMessageID: 377, Ref: "evt:377@20270302T170000Z", Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Ref: "evt:412", Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}, {MessageID: 413, Ref: "evt:413", Subject: "Cancelled", Status: "cancelled", AllDay: true, StartDate: "2027-03-04", EndDate: "2027-03-05"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)"},
 		{name: "empty", want: "No archived calendar events from 2027-03-01 to 2027-04-01."},
 		{name: "json", args: []string{"--json"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{}}, want: `"message_id":378`},
 		{name: "deleted", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},
@@ -107,7 +107,7 @@ func TestCalendarEventsCommand(t *testing.T) {
 				assertions.Contains(out.String(), "REF")
 				assertions.Regexp(`\s378\s+evt:377@20270302T170000Z\s+Standup`, out.String())
 				assertions.Contains(out.String(), "evt:412")
-				assertions.Regexp(`cancelled\s+413\s+evt:413@20270304\s+Cancelled`, out.String())
+				assertions.Regexp(`cancelled\s+413\s+evt:413\s+Cancelled`, out.String())
 			}
 			if tc.name == "json" {
 				var page store.CalendarOccurrencePage

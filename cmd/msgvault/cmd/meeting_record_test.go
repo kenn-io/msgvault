@@ -96,7 +96,7 @@ func TestMeetingLinksCLIEventRecord(t *testing.T) {
 }
 
 func TestMeetingLinksCLIWithoutNotes(t *testing.T) {
-	client := &meetingRecordClient{version: "5.1.0", record: &store.MeetingRecord{Links: []store.MeetingLink{{Ref: "evt:23", Start: new(time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)), End: new(time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC))}}}}
+	client := &meetingRecordClient{version: "5.1.0", record: &store.MeetingRecord{Links: []store.MeetingLink{{Ref: "evt:23", Start: new(time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)), End: new(time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC))}}, MessageIDs: []int64{}, Unexpandable: []store.CalendarUnexpandable{}}}
 	command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 	var out bytes.Buffer
 	command.SetOut(&out)

@@ -51,7 +51,7 @@ func firstDifference(left, right []byte) int {
 	return min(len(left), len(right))
 }
 
-func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) {
+func TestRewriteGeneratedValidatorsAllowsEmptyAndNullableFields(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
@@ -64,7 +64,15 @@ func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) 
 	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
 	assertions.Contains(string(got), "Address       string `json:\"address\"`\n")
 	assertions.Contains(string(got), "DisplayName   string `json:\"display_name\"`\n")
+	assertions.Contains(string(got), "End   *time.Time `json:\"end\"`\n\tStart *time.Time `json:\"start\"`\n")
 	assertions.NotContains(string(got), `typesValidator.Var(l.Summary, "required")`)
+}
+
+func TestRewriteNullableMeetingLinkBoundsDropsRequiredTags(t *testing.T) {
+	requirements := require.New(t)
+	missing := strings.Replace(generatedValidatorFixture(), "\tStart *time.Time `json:\"start\" validate:\"required\"`\n", "", 1) + "\ntype Other struct { Start *time.Time }\n"
+	_, err := RewriteGeneratedValidators([]byte(missing))
+	requirements.ErrorContains(err, "MeetingLink.Start")
 }
 
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
@@ -239,6 +247,8 @@ func loopCounterpartyEmptyStringValidatorFixture() string {
 	return "type LoopCounterparty struct {\n\tAddress       string `json:\"address\" validate:\"required\"`\n" +
 		"\tDisplayName   string `json:\"display_name\" validate:\"required\"`\n\tParticipantID int64  `json:\"participant_id\"`\n}\n" +
 		"func (l LoopCounterparty) Validate() error {\n\treturn runtime.ConvertValidatorError(typesValidator.Struct(l))\n}\n" +
+		"type MeetingLink struct {\n\tEnd   *time.Time `json:\"end\" validate:\"required\"`\n\tStart *time.Time `json:\"start\" validate:\"required\"`\n}\n" +
+		"func (m MeetingLink) Validate() error {\n\treturn runtime.ConvertValidatorError(typesValidator.Struct(m))\n}\n" +
 		"type LoopItem struct {\n\tSummary string\n}\n" +
 		"func (l LoopItem) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
 		"\tif err := typesValidator.Var(l.Summary, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Summary\", err)\n\t}\n" +
@@ -311,19 +321,4 @@ func requiredStringPointerValidatorFixture(
 	}
 	result.WriteString("}\n")
 	return result.String()
-}
-
-func TestRewriteNullableMeetingLinkBoundsDropsRequiredTags(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	source := "type MeetingLink struct {\n\tEnd *time.Time `json:\"end\" validate:\"required\"`\n\tRef string `json:\"ref\" validate:\"required\"`\n\tStart *time.Time `json:\"start\" validate:\"required\"`\n}\n"
-	got, err := RewriteNullableMeetingLinkBounds([]byte(source))
-	require.NoError(err)
-	assert.Contains(string(got), "End *time.Time `json:\"end\"`")
-	assert.Contains(string(got), "Start *time.Time `json:\"start\"`")
-	assert.Contains(string(got), "Ref string `json:\"ref\" validate:\"required\"`")
-	again, err := RewriteNullableMeetingLinkBounds(got)
-	require.NoError(err)
-	assert.Equal(string(got), string(again))
-	_, err = RewriteNullableMeetingLinkBounds([]byte("type MeetingLink struct {\n}\n"))
-	require.Error(err)
 }
