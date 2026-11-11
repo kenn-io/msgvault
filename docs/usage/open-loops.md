@@ -30,6 +30,11 @@ In the Web UI, open a saved person in **People** and choose **Details**. The
 **Open loops** section lists that person's loops. Select one to open its
 message.
 
+When a list says more history remains, the daemon continues filling the cache
+in the background. Later requests reuse completed work. If the daemon stops or
+the background pass reaches its time limit, a later incomplete request starts
+another pass.
+
 ## What counts as a loop
 
 A loop starts with a message that asks something and has no answer yet:

@@ -68,6 +68,11 @@ func sourceOperationFixture(t *testing.T, fixture *api.Server) *daemonMCPOperati
 	t.Helper()
 	server := httptest.NewServer(fixture.Router())
 	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+		defer cancel()
+		require.NoError(t, fixture.Shutdown(ctx))
+	})
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	require.NoError(t, err)
 	capabilities, err := client.MCPCapabilities(t.Context())

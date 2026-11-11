@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/loops"
+	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -78,19 +82,6 @@ func TestListLoopsFilters(t *testing.T) {
 	truncated := l.list(t, "?limit=1")
 	assert.Len(truncated.Items, 1)
 	assert.True(truncated.Truncated)
-}
-
-func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, time.Now().UTC())
-	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
-	w := httptest.NewRecorder()
-	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
-	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	var response LoopListResponse
-	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	require.True(response.CoverageIncomplete)
 }
 
 func TestListLoopsAnswersDuringBackupFreezeWithoutWritingEvidence(t *testing.T) {
@@ -307,4 +298,133 @@ func TestLoopReopenWithoutDecisionIsNotFound(t *testing.T) {
 	w := l.do(t, http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/reopen", l.owed), "")
 	assert.Equal(http.StatusNotFound, w.Code)
 	assert.Contains(w.Body.String(), `"error":"loop_decision_not_found"`)
+}
+
+type pausedLoopStore struct {
+	*store.Store
+
+	reads     atomic.Int64
+	pauseAt   int64
+	paused    chan struct{}
+	resume    chan struct{}
+	completed chan struct{}
+}
+
+func (s *pausedLoopStore) LoopOriginalEvidenceContext(ctx context.Context, id int64) (mime.AutomationSignals, bool, bool, error) {
+	n := s.reads.Add(1)
+	if n == s.pauseAt {
+		close(s.paused)
+		select {
+		case <-s.resume:
+		case <-ctx.Done():
+			return mime.AutomationSignals{}, false, false, ctx.Err()
+		}
+	}
+	signals, attachment, unreadable, err := s.Store.LoopOriginalEvidenceContext(ctx, id)
+	if n == s.pauseAt && s.completed != nil {
+		close(s.completed)
+	}
+	return signals, attachment, unreadable, err
+}
+
+func shutdownLoopServer(t *testing.T, s *Server) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+	defer cancel()
+	require.NoError(t, s.Shutdown(ctx))
+}
+
+func awaitLoopSignal(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "timed out waiting for loop worker")
+	}
+}
+
+func TestIncompleteListsContinueEachQueuedScope(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, now)
+	st := &pausedLoopStore{Store: f.Store, pauseAt: loops.MaxListEvidenceComputations + 1, paused: make(chan struct{}), resume: make(chan struct{})}
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+	t.Cleanup(func() { shutdownLoopServer(t, server) })
+	list := func(ctx context.Context, path string) LoopListResponse {
+		w := httptest.NewRecorder()
+		server.Router().ServeHTTP(w, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
+		require.Equal(http.StatusOK, w.Code, w.Body.String())
+		var result LoopListResponse
+		require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
+		return result
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	require.True(list(ctx, "/api/v1/loops").CoverageIncomplete)
+	cancel()
+	awaitLoopSignal(t, st.paused)
+	var first int64
+	for i := range loops.MaxListEvidenceComputations + 1 {
+		body := "Thanks!"
+		if i == 0 {
+			body = "Can you send the contract?"
+		}
+		id := f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("older-%d", i), From: "sam@example.test", To: []string{storetest.OwnerAddress}, Body: body, SentAt: now.Add(-30 * 24 * time.Hour)})
+		if i == 0 {
+			first = id
+		}
+	}
+	participant := f.EnsureParticipant("sam@example.test", "", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	personPath := fmt.Sprintf("/api/v1/loops?person_id=%d", person.ID)
+	require.True(list(t.Context(), personPath).CoverageIncomplete)
+	close(st.resume)
+	require.Eventually(func() bool {
+		server.importMu.Lock()
+		defer server.importMu.Unlock()
+		return !server.loopEvidenceRunning
+	}, 20*time.Second, 10*time.Millisecond)
+	reads := st.reads.Load()
+	personResult := list(t.Context(), personPath)
+	assert.False(personResult.CoverageIncomplete)
+	require.Len(personResult.Items, 1)
+	assert.Equal(first, personResult.Items[0].AnchorMessageID)
+	all := list(t.Context(), "/api/v1/loops")
+	assert.False(all.CoverageIncomplete)
+	assert.Equal(reads, st.reads.Load())
+}
+
+func TestLoopBackfillStopsWhenServerShutsDown(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	first := f.PersistEmail(storetest.EmailSpec{Thread: "first", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send it?", SentAt: now.Add(-5 * 24 * time.Hour)})
+	second := f.PersistEmail(storetest.EmailSpec{Thread: "second", From: "sam@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you review it?", SentAt: now.Add(-4 * 24 * time.Hour)})
+	st := &pausedLoopStore{Store: f.Store, pauseAt: 2, paused: make(chan struct{}), resume: make(chan struct{}), completed: make(chan struct{})}
+	gate := NewSerialOperationGate()
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger(), OperationGate: gate})
+	t.Cleanup(func() { shutdownLoopServer(t, server) })
+	server.startLoopEvidence(st, 0)
+	awaitLoopSignal(t, st.paused)
+	release, ok := gate.BeginWorkContext(t.Context())
+	require.True(ok)
+	close(st.resume)
+	awaitLoopSignal(t, st.completed)
+	shutdownLoopServer(t, server)
+	release()
+	reads := st.reads.Load()
+	next := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+	t.Cleanup(func() { shutdownLoopServer(t, next) })
+	w := httptest.NewRecorder()
+	next.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
+	require.Equal(http.StatusOK, w.Code)
+	var result LoopListResponse
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
+	require.Len(result.Items, 2)
+	assert.Equal(first, result.Items[0].AnchorMessageID)
+	assert.Equal(second, result.Items[1].AnchorMessageID)
+	assert.Equal(reads+1, st.reads.Load())
 }

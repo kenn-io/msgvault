@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"iter"
+	"math"
 	"slices"
 	"time"
 
@@ -138,6 +139,20 @@ func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks
 		}
 	}
 	return unparsed, nil
+}
+
+// Warm prepares evidence for a person, or all conversations when personID is zero.
+func Warm(ctx context.Context, st Store, personID int64) error {
+	reader := &storeReader{ctx: ctx, st: st, left: math.MaxInt}
+	for conv, err := range st.LoopConversationsContext(ctx, store.LoopQuery{PersonID: personID}) {
+		if err != nil {
+			return err
+		}
+		if _, err := Detect(conv, reader.in(conv)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // graceElapsed is whether a question has waited long enough to list: a reply

@@ -57,9 +57,11 @@ msgvault loops reopen 4521
 `list` prints a **Waiting on you** and a **Waiting on them** section, oldest
 first, with the age, person, subject, and message ID of each loop. It adds a
 line when `--limit` cuts the list, when stored messages couldn't be read, or
-when more history remains. Run it again to continue; JSON sets
-`coverage_incomplete`. With nothing open, it prints `No open loops.` Acting on
-a message that doesn't start an open loop, such as one you already answered,
+when more history remains. The daemon continues checking in the background, and
+later requests reuse completed work; JSON sets `coverage_incomplete`. If the
+daemon stops or its background pass times out, a later incomplete request starts
+another pass. With nothing open, it prints `No open loops.` Acting on a message
+that doesn't start an open loop, such as one you already answered,
 fails with `<id> isn't an open loop.`
 
 ## meetings
