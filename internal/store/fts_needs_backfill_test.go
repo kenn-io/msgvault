@@ -204,6 +204,49 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	}
 }
 
+// TestPG_BackfillFTSKeepsMergedRecipientAlias repairs a version-2 entry after
+// a participant merge: the original To alias stays searchable and recovered
+// recipient text does not join To and Cc into one phrase.
+func TestPG_BackfillFTSKeepsMergedRecipientAlias(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	from := f.EnsureParticipant("sender@example.com", "", "example.com")
+	alias := f.EnsureParticipant("old.alias@example.com", "", "example.com")
+	kept := f.EnsureParticipant("kept@example.net", "", "example.net")
+	carol := f.EnsureParticipant("carol@example.org", "", "example.org")
+	id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: f.Source.ID, ConversationID: f.ConvID, MessageType: store.MessageTypeEmail,
+			SourceMessageID: "merged-alias", SenderID: sql.NullInt64{Int64: from, Valid: true},
+		},
+		Recipients: []store.RecipientSet{
+			{Type: "from", ParticipantIDs: []int64{from}, EmailAddresses: []string{"sender@example.com"}},
+			{Type: "to", ParticipantIDs: []int64{alias}, EmailAddresses: []string{"old.alias@example.com"}},
+			{Type: "cc", ParticipantIDs: []int64{carol}, EmailAddresses: []string{"carol@example.org"}},
+		},
+	})
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2,
+		search_fts = setweight(to_tsvector('simple', 'sender@example.com'), 'B') || setweight(to_tsvector('simple', 'old.alias@example.com carol@example.org'), 'C')
+		WHERE id = $1`, id)
+	require.NoError(err)
+	require.NoError(f.Store.MergeParticipantsContext(t.Context(), alias, kept))
+	assert.Equal(t, kept, f.GetSingleRecipientID(id, "to"))
+
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	for term, want := range map[string][]int64{
+		"old.alias@example.com": {id},
+		"carol@example.org":     {id},
+		"example.com carol":     nil,
+	} {
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err, term)
+		assert.ElementsMatch(t, want, ids, term)
+	}
+}
+
 func TestPG_BackfillFTS_ContinuesAcrossLargeMessagePages(t *testing.T) {
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
