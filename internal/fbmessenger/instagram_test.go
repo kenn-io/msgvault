@@ -314,14 +314,15 @@ func TestInstagramReplayPreservesReplacedMedia(t *testing.T) {
 
 func TestInstagramRejectsBeforeSource(t *testing.T) {
 	for _, test := range []struct {
-		name, account, selfName, wantError string
-		limit                              int
-		unsupported                        bool
+		name, account, selfName, format, wantError string
+		limit                                      int
+		unsupported                                bool
 	}{
 		{name: "empty account", selfName: "Nova Example", wantError: "account"},
 		{name: "blank normalized account", account: "@", selfName: "Nova Example", wantError: "account"},
 		{name: "blank self name", account: "example", selfName: "   ", wantError: "self-name"},
 		{name: "negative limit", account: "example", selfName: "Nova Example", limit: -1, wantError: "--limit must be non-negative"},
+		{name: "unsupported format", account: "example", selfName: "Nova Example", format: "html", wantError: "valid: auto, json"},
 		{name: "unsupported layout", account: "example", selfName: "Nova Example", wantError: "no supported inbox message_<N>.json files", unsupported: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -333,7 +334,7 @@ func TestInstagramRejectsBeforeSource(t *testing.T) {
 				root = t.TempDir()
 				require.NoError(os.WriteFile(filepath.Join(root, "messages.html"), []byte("fictional HTML"), 0600))
 			}
-			_, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: test.account, SelfName: test.selfName, Limit: test.limit})
+			_, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: test.account, SelfName: test.selfName, Format: test.format, Limit: test.limit})
 			require.ErrorContains(err, test.wantError)
 			var n int
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM sources`).Scan(&n))
@@ -430,9 +431,12 @@ func TestInstagramRetryAfterCanceledRenameRepairsTitle(t *testing.T) {
 	var mixed int
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE COALESCE(subject, '') <> ?`), title).Scan(&mixed))
 	assert.Zero(t, mixed)
+	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Updated"}}, 0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total)
 	_, err = st.RebuildFTS(nil)
 	require.NoError(t, err)
-	_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Updated"}}, 0, 10)
+	_, total, err = st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Updated"}}, 0, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), total)
 	_, err = ImportDYI(t.Context(), st, opts)

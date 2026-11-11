@@ -212,6 +212,9 @@ func TestImportMessengerInstagramEndToEnd(t *testing.T) {
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
+	source, err := st.GetSourceByIdentifier(t.Context(), "example")
+	require.NoError(t, err)
+	assert.Equal(t, "instagram_messages", source.SourceType)
 	var count int
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE message_type='instagram'").Scan(&count))
 	assert.Equal(t, 6, count)

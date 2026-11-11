@@ -80,7 +80,7 @@ func TestImportInstagramRefreshesCache(t *testing.T) {
 }
 
 func TestImportMessengerInstagramRejectsUnsupportedFormat(t *testing.T) {
-	for _, format := range []string{"html", "both", "typo"} {
+	for _, format := range []string{"both", "typo"} {
 		t.Run(format, func(t *testing.T) {
 			markDaemonCLISubprocessForTest(t)
 			t.Cleanup(saveMessengerState(t))
