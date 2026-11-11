@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
 import { createAPIClient } from "../../api/client";
@@ -39,6 +39,52 @@ function clientFor(
   return { client: createAPIClient(fetcher), fetcher };
 }
 
+function commitmentClient(extraPromises = 0) {
+  let state: "open" | "done" | "snoozed" = "open";
+  const decisions: { path: string; state: string }[] = [];
+  const promise = (id: number, direction: 'owed_by' | 'owed_to', text: string, current: "open" | "done" | "snoozed" | "fulfilled" = "open") => ({
+    id: `c${id}`,
+    person_id: 7,
+    claim_id: id + 100,
+    direction,
+    summary: "Send the promised document",
+    promise: { message_id: id + 40, text, start: 0, end: text.length },
+    promised_at: "2026-10-12T12:00:00Z",
+    due_on: id === 12 ? "2026-11-15" : null,
+    expires_at: "2026-12-15T00:00:00Z",
+    state: current,
+  });
+  const fetcher = vi.fn<typeof fetch>(async (request, init) => {
+    const url = new URL(request instanceof Request ? request.url : String(request), "http://localhost");
+    if (url.pathname.endsWith("/decision")) {
+      const body = request instanceof Request ? await request.json() : JSON.parse(String(init?.body));
+      decisions.push({ path: url.pathname, state: body.state });
+      state = body.state;
+      return Response.json({ id: "c12", state });
+    }
+    const commitments = [
+      ...(state === "open" || url.searchParams.get("include_closed") === "true"
+        ? [promise(12, "owed_by", "I will send the draft.", state)] : []),
+      promise(13, "owed_to", "I will check the venue."),
+      ...Array.from({ length: extraPromises }, (_, index) =>
+        promise(15 + index, "owed_by", `I will send report ${index + 1}.`)),
+      ...(url.searchParams.get("include_closed") === "true" ? [{
+        ...promise(14, "owed_by", "I will send the agenda.", "fulfilled"),
+        proposed_fulfilment: { message_id: 55, text: "I sent the agenda.", start: 0, end: 18 },
+      }] : []),
+    ];
+    const limit = Number(url.searchParams.get("limit"));
+    return Response.json({
+      items: [],
+      commitments: commitments.slice(0, limit),
+      truncated: commitments.length > limit,
+      coverage_incomplete: false,
+      skipped_unparseable: 0,
+    });
+  });
+  return { client: createAPIClient(fetcher), decisions, fetcher };
+}
+
 describe("PersonOpenLoops", () => {
   it("lists a person's loops with reader links", async () => {
     const { client, fetcher } = clientFor([
@@ -68,13 +114,77 @@ describe("PersonOpenLoops", () => {
     expect(url.searchParams.get("limit")).toBe("5");
   });
 
-  it("shows a plus when more loops are open than the card lists", async () => {
-    const { client } = clientFor(
+  it.each(["done", "snoozed"] as const)("hides a %s commitment until closed promises are shown", async (closeState) => {
+    const { client, decisions } = commitmentClient();
+    const view = render(PersonOpenLoops, { client, personID: 7 });
+    const cite = await screen.findByRole("link", { name: "I will send the draft." });
+    expect(cite.getAttribute("href")).toBe("/messages/52");
+    expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Promises to you" })).toBeDefined();
+    await fireEvent.click(screen.getAllByRole("button", { name: closeState === "done" ? "Done" : "Snooze for 24h" })[0]);
+    expect(await screen.findByText("1 open")).toBeDefined();
+    view.unmount();
+    render(PersonOpenLoops, { client, personID: 7 });
+    expect(await screen.findByText("1 open")).toBeDefined();
+    await fireEvent.click(screen.getByRole("button", { name: "Show closed promises" }));
+    const restored = await screen.findByRole("link", { name: "I will send the draft." });
+    await fireEvent.click(within(restored.closest("li")!).getByRole("button", { name: "Reopen" }));
+    expect(await screen.findByText("2 open")).toBeDefined();
+    expect(decisions).toEqual([
+      { path: "/api/v1/loops/commitments/c12/decision", state: closeState },
+      { path: "/api/v1/loops/commitments/c12/decision", state: "open" },
+    ]);
+  });
+
+  it("refills the five-promise summary after a decision", async () => {
+    const { client } = commitmentClient(4);
+    render(PersonOpenLoops, { client, personID: 7 });
+    expect(await screen.findByText("5+ open")).toBeDefined();
+    expect(screen.queryByRole("link", { name: "I will send report 4." })).toBeNull();
+    await fireEvent.click(screen.getAllByRole("button", { name: "Done" })[0]);
+    expect(await screen.findByRole("link", { name: "I will send report 4." })).toBeDefined();
+    expect(screen.getByText("5 open")).toBeDefined();
+    expect(screen.getAllByRole("button", { name: "Done" })).toHaveLength(5);
+    expect(screen.queryByRole("link", { name: "I will send the draft." })).toBeNull();
+  });
+
+  it("shows a load failure if the decision succeeds but the refreshed summary fails", async () => {
+    const { client, fetcher } = commitmentClient();
+    render(PersonOpenLoops, { client, personID: 7 });
+    await screen.findByRole("link", { name: "I will send the draft." });
+    fetcher.mockResolvedValueOnce(Response.json({ id: "c12", state: "done" }))
+      .mockRejectedValueOnce(new Error("temporary list failure"));
+    await fireEvent.click(screen.getAllByRole("button", { name: "Done" })[0]);
+    expect((await screen.findByRole("alert")).textContent).toContain("Couldn't load open loops.");
+  });
+
+  it("shows exact promise text and labels fulfilment once", async () => {
+    const { client } = commitmentClient();
+    render(PersonOpenLoops, { client, personID: 7 });
+    await screen.findByRole("link", { name: "I will send the draft." });
+    expect(screen.queryByText("Send the promised document")).toBeNull();
+    expect(screen.getByText("Due 2026-11-15")).toBeDefined();
+    await fireEvent.click(screen.getByRole("button", { name: "Show closed promises" }));
+    expect(await screen.findByRole("link", { name: "Fulfilment · I sent the agenda." })).toBeDefined();
+    expect(screen.queryByText("Fulfilled")).toBeNull();
+  });
+
+  it("labels truncated open-only and closed-inclusive counts accurately", async () => {
+    const { client, fetcher } = clientFor(
       [loop(1), loop(2), loop(3), loop(4), loop(5)],
       true,
     );
     render(PersonOpenLoops, { client, personID: 7 });
     expect(await screen.findByText("5+ open")).toBeDefined();
+    fetcher.mockResolvedValueOnce(Response.json({
+      items: [loop(1)],
+      commitments: Array.from({ length: 5 }, (_, index) => ({ id: `c${index + 7}`, person_id: 7, claim_id: index + 107, direction: "owed_by", state: "done",
+        summary: "I will send the report.", promise: { message_id: 47, text: "I will send the report.", start: 0, end: 23 },
+        promised_at: "2026-10-12T12:00:00Z", due_on: null, expires_at: "2026-12-15T00:00:00Z" })),
+      truncated: true, coverage_incomplete: false, skipped_unparseable: 0,
+    }));
+    await fireEvent.click(screen.getByRole("button", { name: "Show closed promises" }));
+    expect(await screen.findByText("1 open shown")).toBeDefined();
   });
 
   it("says how many messages could not be read, with or without loops", async () => {

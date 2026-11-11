@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -122,23 +123,49 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 }
 
 func TestLoopsRequireDaemonSchema(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var loopRequests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.23.0"}`))
-			return
-		}
-		loopRequests++
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	_, err := runLoops(ctx, t, "list")
-	require.ErrorContains(err, "require daemon API schema 3.44.0")
-	require.ErrorContains(err, `daemon reports "3.23.0"`)
-	assert.Zero(loopRequests)
+	for _, tc := range []struct {
+		name, version, minimum string
+		includeClosed          bool
+	}{
+		{"old_reply_loop_daemon", "3.23.0", "3.44.0", false},
+		{"compatible_reply_loop_daemon", "3.44.0", "", false},
+		{"old_closed_commitment_daemon", "5.1.0", "5.2.0", true},
+		{"compatible_closed_commitment_daemon", "5.2.0", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, r := assert.New(t), require.New(t)
+			var loopRequests int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if req.URL.Path == "/api/v1/health" {
+					a.NoError(json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": tc.version}))
+					return
+				}
+				loopRequests++
+				a.Equal("/api/v1/loops", req.URL.Path)
+				if tc.includeClosed {
+					a.Equal("true", req.URL.Query().Get("include_closed"))
+				}
+				_, err := w.Write([]byte(`{"items":[],"commitments":[],"truncated":false}`))
+				a.NoError(err)
+			}))
+			t.Cleanup(server.Close)
+			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+			args := []string{"list", "--json"}
+			if tc.includeClosed {
+				args = append(args, "--include-closed")
+			}
+			_, err := runLoops(ctx, t, args...)
+			if tc.minimum != "" {
+				r.ErrorContains(err, "require daemon API schema "+tc.minimum)
+				r.ErrorContains(err, fmt.Sprintf("daemon reports %q", tc.version))
+				a.Zero(loopRequests)
+				return
+			}
+			r.NoError(err)
+			a.Equal(1, loopRequests)
+		})
+	}
 }
 
 func TestWriteLoopsLayout(t *testing.T) {
@@ -162,14 +189,14 @@ func TestWriteLoopsLayout(t *testing.T) {
 Waiting on them
   5d   Sam Rivera                         Lunch Friday?    4380
 
-Showing the oldest 50. Use --limit up to 200 to see more.
+Showing up to 50 reply loops and 50 cited promises. Use --limit up to 200 to see more.
 `, out.String(), "a truncated page does not claim totals")
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{Truncated: true, Items: []generated.LoopItem{
 		item("awaiting_reply", "email", "Lunch Friday?", 120*time.Hour, "Sam Rivera", "", 4380),
 	}}, loops.MaxLimit, now))
-	assert.Contains(out.String(), "Showing the oldest 200; more loops remain.\n")
+	assert.Contains(out.String(), "Showing up to 200 reply loops and 200 cited promises; more remain.\n")
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{SkippedUnparseable: 2, Items: []generated.LoopItem{
@@ -205,6 +232,17 @@ Showing the oldest 50. Use --limit up to 200 to see more.
 	}}, 50, now))
 	assert.Contains(out.String(), "(unknown)   (no subject)")
 	assert.NotContains(out.String(), "Waiting on you")
+
+	out.Reset()
+	const promise = "I will send the draft."
+	require.NoError(writeLoops(&out, generated.LoopListResponse{Commitments: []generated.LoopCommitment{{
+		ID: "c12", PersonID: 7, Direction: "owed_to", State: "done", Summary: "Send the draft",
+		Promise: generated.CommitmentQuote{MessageID: 19, Text: promise},
+	}}}, 50, now))
+	assert.Contains(out.String(), "c12   person 7 (done)")
+	assert.Contains(out.String(), "message 19: "+promise)
+	assert.NotContains(out.String(), "Send the draft")
+	assert.Equal(1, strings.Count(out.String(), promise), "the exact quote appears once")
 }
 
 func TestLoopsReopenClearsDecision(t *testing.T) {
@@ -227,4 +265,115 @@ func TestLoopsReopenClearsDecision(t *testing.T) {
 		anchors = append(anchors, item.AnchorMessageID)
 	}
 	assert.Contains(anchors, anchor)
+}
+
+func TestLoopsCommitmentDecisionUsesItsDaemonSchema(t *testing.T) {
+	for _, tc := range []struct {
+		name, version, id, path, output string
+		unsupported                     bool
+	}{
+		{"older_commitment_daemon", "5.1.0", "c12", "", "", true},
+		{"commitment", "5.2.0", "c12", "/api/v1/loops/commitments/c12/decision", "c12 is done.\n", false},
+		{"existing_reply_loop", "3.44.0", "42", "/api/v1/loops/42/done", "Marked 42 done.\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			var posts []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if req.URL.Path == "/api/v1/health" {
+					a.NoError(json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": tc.version}))
+					return
+				}
+				if req.Method == http.MethodPost {
+					posts = append(posts, req.URL.Path)
+				}
+				if req.URL.Path != tc.path {
+					http.NotFound(w, req)
+					return
+				}
+				if tc.id == "c12" {
+					var body map[string]string
+					a.NoError(json.NewDecoder(req.Body).Decode(&body))
+					a.Equal("done", body["state"])
+				}
+				a.NoError(json.NewEncoder(w).Encode(map[string]any{"id": tc.id, "state": "done", "anchor_message_id": 42}))
+			}))
+			t.Cleanup(server.Close)
+			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+			output, err := runLoops(ctx, t, "done", tc.id)
+			if tc.unsupported {
+				r.ErrorContains(err, "require daemon API schema 5.2.0")
+				a.Empty(posts)
+				return
+			}
+			r.NoError(err)
+			a.Equal([]string{tc.path}, posts)
+			a.Equal(tc.output, output)
+		})
+	}
+}
+
+func TestLoopsAgendaUsesDaemonHTTPContract(t *testing.T) {
+	for _, tc := range []struct {
+		name, version string
+		json          bool
+		status        int
+	}{
+		{"old_daemon", "5.2.0", false, http.StatusOK},
+		{"issue_reference", "5.3.0", false, http.StatusOK},
+		{"issue_json", "5.3.0", true, http.StatusOK},
+		{"citation_conflict", "5.3.0", false, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			posts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if req.URL.Path == "/api/v1/health" {
+					a.NoError(json.NewEncoder(w).Encode(map[string]string{"status": "ok", "api_schema_version": tc.version}))
+					return
+				}
+				posts++
+				a.Equal(http.MethodPost, req.Method)
+				a.Equal("/api/v1/loops/commitments/c12/agenda", req.URL.Path)
+				a.Empty(req.URL.RawQuery)
+				w.WriteHeader(tc.status)
+				if tc.status == http.StatusConflict {
+					a.NoError(json.NewEncoder(w).Encode(map[string]string{"error": "kata_citation_changed", "message": "The saved citation changed."}))
+					return
+				}
+				a.NoError(json.NewEncoder(w).Encode(generated.CommitmentAgendaResponse{
+					CommitmentID: "c12", IssueRef: "synthetic#7", IssueUID: "synthetic-issue-uid",
+				}))
+			}))
+			t.Cleanup(server.Close)
+			ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+			args := []string{"agenda", "c12"}
+			if tc.json {
+				args = append(args, "--json")
+			}
+			output, err := runLoops(ctx, t, args...)
+			if tc.version == "5.2.0" {
+				r.ErrorContains(err, "require daemon API schema 5.3.0")
+				a.Zero(posts)
+				return
+			}
+			a.Equal(1, posts)
+			if tc.status == http.StatusConflict {
+				var apiErr *daemonclient.APIError
+				r.ErrorAs(err, &apiErr)
+				a.Equal(http.StatusConflict, apiErr.Status)
+				a.Equal("kata_citation_changed", apiErr.Code)
+				a.Equal("The saved citation changed.", apiErr.Message)
+				return
+			}
+			r.NoError(err)
+			if tc.json {
+				a.JSONEq(`{"commitment_id":"c12","issue_ref":"synthetic#7","issue_uid":"synthetic-issue-uid"}`, output)
+			} else {
+				a.Equal("synthetic#7\n", output)
+			}
+		})
+	}
 }

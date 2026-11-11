@@ -78,7 +78,7 @@ func TestProductionPersonSweepCodexUsesReleasedIsolationGate(t *testing.T) {
 		checks.NoFileExists(marker)
 	}
 
-	err = newPeopleSweepScheduledRun(fullConfig, st)(t.Context())
+	err = newPeopleSweepScheduledRun(fullConfig, st, nil)(t.Context())
 	must.ErrorIs(err, peoplesweep.ErrCodexIsolationUnreleased)
 	if marker != "" {
 		checks.NoFileExists(marker)
@@ -257,7 +257,7 @@ func TestPeopleSweepSchedulerRecoversJournalGap(t *testing.T) {
 	fullConfig := configpkg.NewDefaultConfig()
 	fullConfig.Data.DataDir = t.TempDir()
 	fullConfig.People.Sweep = config
-	run := newPeopleSweepScheduledRun(fullConfig, st)
+	run := newPeopleSweepScheduledRun(fullConfig, st, nil)
 	must.NoError(run(t.Context()))
 	var cursorHighWater int64
 	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
@@ -307,6 +307,55 @@ func TestPersonBriefManualRunResultReportsThePersonsAttempt(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert.Equal(t, test.want, personBriefRunResult(7, test.result))
+		})
+	}
+}
+
+func TestPeopleSweepScheduledAgendaRequiresExplicitOptInAndConsent(t *testing.T) {
+	for _, tc := range []struct {
+		name                             string
+		commitments, auto, kata, consent bool
+		wantAgenda                       bool
+	}{
+		{"default_off", true, false, true, true, false},
+		{"opted_in", true, true, true, true, true},
+		{"without_consent", true, true, true, false, false},
+		{"commitments_disabled", false, true, true, true, false},
+		{"kata_disabled", true, true, false, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a, ctx := require.New(t), assert.New(t), t.Context()
+			st, _, sweep := newPersonSweepCommandStore(t, false)
+			mutateConfiguredPersonProvider(&sweep, func(provider *peoplesweep.ProviderConfig) {
+				provider.AllowSensitive = true
+			})
+			cfg := configpkg.NewDefaultConfig()
+			cfg.Data.DataDir = t.TempDir()
+			cfg.People.Sweep = sweep
+			a.False(cfg.People.Sweep.Commitments.AutoAgenda, "scheduled filing starts disabled")
+			cfg.People.Sweep.Commitments.Enabled = tc.commitments
+			cfg.People.Sweep.Commitments.AutoAgenda = tc.auto
+			cfg.Integrations.Kata.Enabled = tc.kata
+			profile, err := cfg.People.Sweep.Profile()
+			r.NoError(err)
+			_, err = st.EnsurePersonInferenceProfile(ctx, profile)
+			r.NoError(err)
+			if tc.consent {
+				_, _, err = st.GrantPersonCommitmentConsent(ctx, profile.Fingerprint, "test")
+				r.NoError(err)
+			}
+			// The real worker uses the live empty archive and completes without
+			// provider I/O. A separate closed archive makes agenda entry observable
+			// through the production constructor, without an injection surface.
+			closed := testutil.NewTestStore(t)
+			agenda := api.NewCommitmentAgenda(cfg.Integrations.Kata, closed, "http://localhost:8080")
+			r.NoError(closed.Close())
+			err = newPeopleSweepScheduledRun(cfg, st, agenda)(ctx)
+			if tc.wantAgenda {
+				r.ErrorContains(err, "database is closed")
+			} else {
+				r.NoError(err)
+			}
 		})
 	}
 }

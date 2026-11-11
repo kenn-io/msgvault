@@ -19,9 +19,10 @@ import (
 )
 
 type daemonMCPOperations struct {
-	now       func() time.Time
-	client    *daemonclient.Client
-	supported []string
+	now                func() time.Time
+	client             *daemonclient.Client
+	supported          []string
+	includeClosedLoops bool
 }
 
 func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotocol.MCPCapabilities) *daemonMCPOperations {
@@ -49,6 +50,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	if hasRoute("triggerSync", http.MethodPost, "/api/v1/sync/{account}", "source_type") && hasRoute("listSourceStatus", http.MethodGet, "/api/v1/sources/status", "source_type") {
 		backend.supported = append(backend.supported, "sync_source")
 	}
+	backend.includeClosedLoops = hasRoute("listLoops", http.MethodGet, "/api/v1/loops", "include_closed")
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	return backend

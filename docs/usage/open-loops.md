@@ -7,8 +7,7 @@ description: See which conversations still wait on your reply, and which replies
 Open loops show who is waiting on a reply from you, and who you are waiting
 on, across email and direct chats. msgvault works them out from your archive
 each time you ask, so a reply that just synced clears its loop on the next
-list. There is nothing to turn on. No model is called, and nothing changes at
-your email provider.
+list. Reply loops are available immediately. They use local wording rules and leave your email provider unchanged.
 
 Open loops are on unreleased `main`. They need a daemon with HTTP API schema
 3.44.0 or newer.
@@ -151,3 +150,72 @@ Only the owner can use loops. Delegated agent tokens and remote clients can't.
   something starts a loop. Mark it done.
 - **Email threads and direct chats only.** Group chats, channels, and meetings
   are skipped.
+
+## See cited commitments
+
+Commitments are optional and require daemon API schema 5.2.0 or newer.
+Enable `[people.sweep.commitments]` in [configuration](../configuration.md#commitment-extraction).
+Use `msgvault person provider consent --commitments` to see the provider,
+source dates, and what the request discloses. Repeat with `--yes` to consent
+to sending conversation text from both sides of verified direct chats and
+email. Each message contributes its first 2,000 runes after leading quoted
+history and whitespace, with embedded quoted history masked.
+Changing provider source dates, the commitment window, or message, byte and
+open-promise selection limits restarts recent discovery while keeping saved decisions.
+The profile must allow sensitive `conversation_text` sources. Check the grant
+with `msgvault person provider status`. Use `msgvault person provider revoke`
+to revoke both the ordinary inference and commitment grants for the profile.
+
+Cited promises appear under **Promises you made** and **Promises to you**.
+Each row links to the quoted message. The JSON response also gives the claim
+ID and original-body rune range. See the [person facts CLI reference](../cli-reference.md#person-track-tiers-provider-sweep-and-facts) for claim kinds
+and freshness. A due date is a calendar date in the
+configured activity timezone. A promise expires after the due date and
+configured grace period, or after the maximum duration if it has no due
+date. Expired and unsupported claims leave the list.
+
+Use the commitment ID for actions on a promise. This ID starts with `c`.
+The same message can anchor multiple promises and a reply loop. Choose
+**Show closed promises** in People Details for a five-item summary. Run
+`msgvault loops list --include-closed --limit 200` to find more done, snoozed,
+or fulfilled promises that you can reopen.
+
+```bash
+msgvault loops done c12
+msgvault loops snooze c12 --until 48h
+msgvault loops reopen c12
+```
+
+The list may show a proposed fulfilment with a quote from a newer message by
+the person who made the promise. Review the quote and mark it done if the
+promise was kept. With `auto_fulfil = true`, an explicit fulfilment supported
+by newer evidence can close it automatically. For promises you made, an email
+completion needs a saved Sent origin or a Sent label from its account. Without
+that provenance, it stays a proposal. Reopen keeps older evidence from closing
+it again. If the supporting fulfilment is withdrawn, the
+promise can appear again.
+
+## File a commitment in Kata
+
+With [Kata integration](../configuration.md#integrationskata) configured, run
+`msgvault loops agenda c12` to create an issue on the person's agenda. The
+issue quotes and links to the original message. Retrying a successful filing
+returns the same issue, including after it is closed in Kata. A promise must
+still have a current citation when it is first filed. Filing and recovery use
+the currently configured Kata project. If the original citation changes before
+filing completes, msgvault recovers an existing issue or returns
+`kata_citation_changed`. Use `msgvault kata create` to file current evidence.
+
+Manual filing uses the daemon's trusted request origin for the message link.
+Scheduled filing uses the daemon's local origin. The issue includes the exact
+archive citation, which you can use when the local address is out of reach.
+
+Set `auto_agenda = true` in `[people.sweep.commitments]` to let the scheduled
+sweep file open commitments in batches of up to eight. This includes promises
+already open when you enable the setting. Automatic creation is off by default.
+The manual command works without that setting and requires daemon API schema
+5.3.0 or newer.
+
+Copying a subset archive copies owner decisions for revalidation, but does not
+copy frozen Kata filing receipts or their recovery keys. Enabling automatic
+filing in that separate archive can create separate issues.

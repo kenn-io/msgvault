@@ -813,6 +813,11 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 	if err := copyMessages(ctx, tx); err != nil {
 		return nil, err
 	}
+	if options.IncludeProfiles {
+		if err := copySubsetCommitmentDecisions(ctx, tx); err != nil {
+			return nil, fmt.Errorf("copy commitment decisions: %w", err)
+		}
+	}
 	// Merge-protection markers are portable owning-row state. Copy them from
 	// the selected messages directly so they remain useful even when a subset
 	// omits the detailed merge provenance that originally justified them.
@@ -2315,6 +2320,21 @@ func copySubsetInferenceRevisions(ctx context.Context, tx *sql.Tx) error {
 		return fmt.Errorf("copy person inference review revisions: %w", err)
 	}
 	return nil
+}
+
+func copySubsetCommitmentDecisions(ctx context.Context, tx *sql.Tx) error {
+	present, err := sourceTableExists(ctx, tx, "person_commitments")
+	if err != nil || !present {
+		return err
+	}
+	// A subset does not copy the inference ledger. Preserve only decisions
+	// whose person and cited message are both present, pending revalidation.
+	const columns = `id, person_id, target_key, anchor_message_id, direction, quote, quote_start, quote_end,
+		summary, due_on, promised_at, expires_at, owner_state, snoozed_until, reopened_at`
+	_, err = tx.ExecContext(ctx, `INSERT INTO person_commitments (`+columns+`)
+		SELECT `+columns+` FROM src.person_commitments
+		WHERE person_id IN (SELECT id FROM persons) AND anchor_message_id IN (SELECT id FROM messages)`)
+	return err
 }
 
 func copyStructuredProfiles(ctx context.Context, tx *sql.Tx) (int64, error) {

@@ -224,6 +224,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `link_kata_evidence` | kata_write | `--allow-kata-writes` | owner-only |
 | `close_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `reopen_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
+| `set_commitment_decision` | loop_write | `--allow-loop-writes` | owner-only |
 | `snooze_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `merge_person` | person_merge | `--allow-person-merges` | owner-only |
 | `promote_person` | profile_write | `--allow-profile-writes` | owner-only |

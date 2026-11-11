@@ -233,10 +233,12 @@ type StartAttempt struct {
 // repair call on the same batch ordinal; the person brief spends a brief call
 // and at most one brief_repair call on its own, later, batch ordinal.
 const (
-	ProviderCallPurposePrimary     = "primary"
-	ProviderCallPurposeRepair      = "repair"
-	ProviderCallPurposeBrief       = "brief"
-	ProviderCallPurposeBriefRepair = "brief_repair"
+	ProviderCallPurposePrimary          = "primary"
+	ProviderCallPurposeRepair           = "repair"
+	ProviderCallPurposeBrief            = "brief"
+	ProviderCallPurposeBriefRepair      = "brief_repair"
+	ProviderCallPurposeCommitment       = "commitment"
+	ProviderCallPurposeCommitmentRepair = "commitment_repair"
 )
 
 type ProviderCallCoordinate struct {
@@ -328,22 +330,23 @@ type AttemptSummary struct {
 	// BriefFailureClass is why the attempt's person brief call produced no
 	// version while the attempt itself succeeded. It is empty when the attempt
 	// ran no brief call, or when the brief was stored.
-	BriefFailureClass   FailureClass
-	CursorEnvelope      []GenerationCursor
-	EnvelopeHash        string
-	ProgramFingerprint  string
-	CatalogFingerprint  string
-	ProviderFingerprint string
-	GenerationID        *int64
-	GenerationKey       string
-	SeedCount           int
-	ContextCount        int
-	ClaimCount          int
-	DecisionCount       int
-	ProjectedWrites     int
-	ProviderRequestID   string
-	Usage               Usage
-	Latency             time.Duration
+	BriefFailureClass      FailureClass
+	CommitmentFailureClass FailureClass
+	CursorEnvelope         []GenerationCursor
+	EnvelopeHash           string
+	ProgramFingerprint     string
+	CatalogFingerprint     string
+	ProviderFingerprint    string
+	GenerationID           *int64
+	GenerationKey          string
+	SeedCount              int
+	ContextCount           int
+	ClaimCount             int
+	DecisionCount          int
+	ProjectedWrites        int
+	ProviderRequestID      string
+	Usage                  Usage
+	Latency                time.Duration
 }
 
 // OperationalStatus is the safe, aggregate state exposed to operators. It

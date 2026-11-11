@@ -211,13 +211,25 @@ func newPersonFactsCommand() *cobra.Command {
 				return errors.New("person fact claims response was empty")
 			}
 			if options.jsonOutput {
-				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response.JSON200.Claims, json.Deterministic(true))
+				// Older compatible daemons omit the derived fields. Keep them
+				// absent in CLI JSON rather than emitting empty enum values.
+				type claimOutput struct {
+					generated.PersonFactClaim `json:",inline"`
+
+					Kind   string `json:"kind,omitzero"`
+					Status string `json:"status,omitzero"`
+				}
+				rows := make([]claimOutput, len(response.JSON200.Claims))
+				for i, item := range response.JSON200.Claims {
+					rows[i] = claimOutput{PersonFactClaim: item, Kind: string(item.Kind), Status: string(item.Status)}
+				}
+				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), rows, json.Deterministic(true))
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			_, _ = fmt.Fprintln(writer, "ID\tGENERATION\tTARGET\tRELATION\tORIGIN\tCLAIM KEY\tCREATED")
+			_, _ = fmt.Fprintln(writer, "ID\tGENERATION\tTARGET\tKIND\tSTATUS\tRELATION\tORIGIN\tCLAIM KEY\tCREATED")
 			for _, item := range response.JSON200.Claims {
-				_, _ = fmt.Fprintf(writer, "%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
-					item.ID, item.GenerationID, personFactCLIStoredTarget(item.Target), item.Relation,
+				_, _ = fmt.Fprintf(writer, "%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					item.ID, item.GenerationID, personFactCLIStoredTarget(item.Target), personFactCLIMetadata(string(item.Kind)), personFactCLIMetadata(string(item.Status)), item.Relation,
 					item.Origin, item.ClaimKey, item.CreatedAt.Format(time.RFC3339))
 			}
 			return writer.Flush()
@@ -497,4 +509,12 @@ func writePersonFactCLIRawJSON(cmd *cobra.Command, body []byte) error {
 		return err
 	}
 	return nil
+}
+
+// Older compatible daemons omit derived claim metadata.
+func personFactCLIMetadata(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }

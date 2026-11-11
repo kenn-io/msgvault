@@ -185,11 +185,8 @@ func (s *Store) ExecuteGCContext(
 			return fmt.Errorf("clear retries for messages deleted at source: %w", err)
 		}
 
-		result, err := q.Exec(`
-		DELETE FROM messages
-		WHERE deleted_from_source_at IS NOT NULL
-		  AND NOT (` + managedDraftRetainedMessageSQL + `)
-		`)
+		result, err := s.deleteMessagesWhere(ctx, tx, `deleted_from_source_at IS NOT NULL
+		  AND NOT (`+managedDraftRetainedMessageSQL+`)`)
 		if err != nil {
 			return fmt.Errorf("delete source-deleted messages: %w", err)
 		}

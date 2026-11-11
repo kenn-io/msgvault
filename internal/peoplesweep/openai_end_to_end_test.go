@@ -553,6 +553,9 @@ func TestOpenAIEndToEndNativeSchemaAppliesSupportedClaim(t *testing.T) {
 	catalog := &countingOpenAISweepCatalog{source: fixture.store}
 	fixture.worker.Catalog = catalog
 	wantProjection, wantUnresolved = seedOpenAISweepFactState(t, fixture)
+	// The claim history read includes freshness metadata that is excluded
+	// from the extraction packet.
+	wantUnresolved.Freshness = personfacts.Freshness{}
 
 	result, err := runOpenAISweep(t, fixture)
 	require.NoError(err)

@@ -787,10 +787,7 @@ func (s *Store) DeleteDedupedBatchesContext(
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		for _, batchID := range batchIDs {
-			result, err := tx.ExecContext(ctx, `
-				DELETE FROM messages
-				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
-			`, batchID)
+			result, err := s.deleteMessagesWhere(ctx, tx, "delete_batch_id = ? AND deleted_at IS NOT NULL", batchID)
 			if err != nil {
 				return fmt.Errorf("delete dedup batch %q: %w", batchID, err)
 			}
@@ -806,6 +803,16 @@ func (s *Store) DeleteDedupedBatchesContext(
 		return 0, err
 	}
 	return deleted, nil
+}
+
+// deleteMessagesWhere permanently deletes the selected messages. Commitment
+// agenda receipts freeze quotes of the messages they cite, so they are removed
+// first, in the same transaction, before the cascade can leave them behind.
+func (s *Store) deleteMessagesWhere(ctx context.Context, q contextQuerier, where string, args ...any) (sql.Result, error) {
+	if err := s.deleteCommitmentAgendaCiting(ctx, q, "SELECT id FROM messages WHERE "+where, args...); err != nil {
+		return nil, err
+	}
+	return q.ExecContext(ctx, s.Rebind("DELETE FROM messages WHERE "+where), args...)
 }
 
 func (s *Store) CountDedupedBatches(batchIDs []string) ([]DedupedBatchCount, int64, error) {
@@ -896,10 +903,7 @@ func (s *Store) DeleteAllDedupedContext(
 			return fmt.Errorf("delete all dedup-hidden: count batches: %w", err)
 		}
 
-		result, err := tx.ExecContext(ctx, `
-			DELETE FROM messages
-			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
-		`)
+		result, err := s.deleteMessagesWhere(ctx, tx, "deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL")
 		if err != nil {
 			return fmt.Errorf("delete all dedup-hidden: delete: %w", err)
 		}

@@ -1666,6 +1666,17 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("migrate person fact claim origins: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, "person_commitments_v1", 1, false, func(ctx context.Context) error {
+		if err := s.migratePersonFactClaimOriginBrief(ctx); err != nil {
+			return err
+		}
+		if err := s.migratePersonSweepBatchPurposeV2(ctx); err != nil {
+			return err
+		}
+		return s.migratePersonCommitmentFailure(ctx)
+	}); err != nil {
+		return fmt.Errorf("migrate commitments: %w", err)
+	}
 	if err := s.runOnceMigration(
 		ctx, migrationPersonSweepAttemptBriefFailure, 1, false,
 		s.migratePersonSweepAttemptBriefFailure,

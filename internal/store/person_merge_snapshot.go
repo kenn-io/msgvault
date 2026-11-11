@@ -241,6 +241,15 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		TableName: "person_sweep_attempts", KeyColumn: "id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
+	// Commitment decisions transfer to the survivor without rewriting immutable claims.
+	"person_commitments": {
+		TableName: "person_commitments", KeyColumn: "id", Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	"person_commitment_frontiers": {
+		TableName: "person_commitment_frontiers", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
 	// Enrichment rows are derived work, provider identity, audit, and accounting
 	// state. They stay scoped to the person that produced them and cascade with
 	// an absorbed root instead of becoming survivor profile state.

@@ -41,6 +41,7 @@ for what counts as a loop.
 msgvault loops list
 msgvault loops list --limit 10 --json
 msgvault loops list --person 42
+msgvault loops list --include-closed
 msgvault loops done 4521
 msgvault loops done 4521 --questions 4521,4530
 msgvault loops snooze 4521 --until 48h
@@ -49,7 +50,7 @@ msgvault loops reopen 4521
 
 | Command | What it does |
 |---|---|
-| `list` | Lists loops. `--limit` from 1 to 200 (default 50), `--person <id>` for one saved person, `--json` for machine-readable output. |
+| `list` | Lists loops and cited promises. `--limit` applies separately to each collection (1 to 200, default 50), `--person <id>` for one saved person, `--json` for machine-readable output. |
 | `done <message-id>` | Marks the loop done. `--questions <ids>` marks only those questions: the item's `question_message_ids` from `list --json`. |
 | `snooze <message-id> --until <when>` | Hides the loop until a duration such as `48h`, a date (`YYYY-MM-DD`, midnight local time), or an RFC3339 time. Takes `--questions` like `done`. |
 | `reopen <message-id>` | Clears the done or snooze decision on one question. |
@@ -61,6 +62,17 @@ when more history remains. Run it again to continue; JSON sets
 `coverage_incomplete`. With nothing open, it prints `No open loops.` Acting on
 a message that doesn't start an open loop, such as one you already answered,
 fails with `<id> isn't an open loop.`
+
+For cited commitments, use the displayed `c<ID>` with `done`, `snooze`, or
+`reopen`. `list --json` includes exact citations in `commitments` when
+promises are open. Add `--include-closed` to find done, snoozed, or fulfilled
+promises you can reopen. `--questions` selects reply-loop question IDs.
+Commitment extraction and decisions require API schema 5.2.0 or newer.
+See [cited commitments](usage/open-loops.md#see-cited-commitments).
+
+`msgvault loops agenda c12` creates or returns the cited Kata issue on that
+person’s agenda. Use `--json` for its reference and UID. Requires a configured
+Kata integration and API schema 5.3.0 or newer.
 
 ## meetings
 
@@ -3337,21 +3349,34 @@ grant consent to a provider or enroll a person in briefs.
 | `person provider list` | List configured model profiles |
 | `person provider use <name>` | Select a checked profile and enable sweeps |
 | `person provider check [name]` | Run fixed synthetic input without granting consent |
-| `person provider consent [name] --yes` | Grant consent to the exact checked policy |
-| `person provider revoke [name]` | Revoke that policy's consent; `--all` revokes all stored sweep policies |
+| `person provider consent [name] [--commitments] --yes` | Grant consent to the exact checked policy. `--commitments` grants the two-sided commitment lane. |
+| `person provider revoke [name] [--commitments]` | Revoke consent for that provider. Use `--commitments` to stop only commitment extraction, or `--all` to revoke all stored sweep policies. |
 | `person provider remove <name>` | Remove a configured profile and its stored key. For a profile no longer in the config, delete its leftover stored key and revoke consent for the policies that used it |
 | `person provider history [name] [--person <id>]` | Inspect redacted runs and attempts |
 | `person sweep run [--person <id>] [--limit 25]` | Run a bounded maintenance pass for tracked people |
 | `person sweep status` | Read redacted progress and usage |
-| `person sweep history [--person <id>] [--limit 20]` | Read recent maintenance attempts |
+| `person sweep history [--person <id>] [--limit 20]` | Read recent maintenance attempts, including any commitment-lane failure class |
 | `person facts catalog [--include-sensitive]` | List eligible fields, their keys, and revisions |
 | `person facts evidence <person-id>` | Inspect saved supporting evidence |
 | `person facts evidence-status <person-id>` | Inspect changes to evidence support |
-| `person facts claims <person-id>` | Inspect proposed values |
+| `person facts claims <person-id>` | Inspect proposed values, kind, and freshness |
 | `person facts decisions <person-id>` | Inspect resolver decisions |
 | `person facts pins <person-id>` | List fields protected from automatic replacement |
 | `person facts pin <person-id> <kind> <key>` | Protect a field's current or empty value |
 | `person facts unpin <person-id> <kind> <key>` | Allow automatic resolution for the field again |
+
+On unreleased main, claim reads include `kind` (`fact`, `event`, `preference`, `commitment`)
+and `status` (`fresh`, `stale`, or `expired`). Kind comes from the claim's saved
+identity. The shipped primary channel, “ask me about,” interest, and favorites
+categories are preferences even if renamed. Custom attributes without an end
+date are facts. Other time-bounded claims are events, and employment claims
+remain facts regardless of an end date. Preference identity takes precedence.
+
+Freshness uses the newest currently supported evidence: facts stay fresh for
+365 days, events for 7 days, and preferences and commitments for 90 days. A claim
+without supported evidence is stale. A claim expires exactly at `valid_until`,
+regardless of evidence freshness. `latest_supported_at` reports the evidence
+time when available. These read fields do not change inference packets.
 
 These commands accept `--json`. Use catalog keys, not slugs, for fact pins.
 Evidence, claims, and decisions accept an exact `--target`; fact-history

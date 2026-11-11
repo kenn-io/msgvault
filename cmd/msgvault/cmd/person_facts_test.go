@@ -139,7 +139,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 			}]}`))
 		case "/api/v1/people/7/fact-claims":
 			_, _ = w.Write([]byte(`{"claims":[{
-				"id":8,"generation_id":6,"claim_key":"claim-key",
+				"id":8,"generation_id":6,"claim_key":"claim-key","kind":"fact","status":"fresh","latest_supported_at":"2026-08-21T12:00:00Z",
 				"program_id":"fixture-program","program_version":"v1",
 				"program_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				"target":{"kind":"attribute","key":"target-key","revision":"` + personFactTestRevision + `"},
@@ -182,6 +182,10 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 			"--target", personFactEmploymentTarget, "--limit", "4", "--offset", "2")
 		requirements.NoError(err)
 		assertions.Contains(output, test.header)
+		if test.command == "claims" {
+			assertions.Regexp(`KIND\s+STATUS\s+RELATION`, output)
+			assertions.Regexp(`target-key:sha256:[0-9a-f]+\s+fact\s+fresh\s+support`, output)
+		}
 		query := requests[test.path]
 		assertions.Equal(personFactEmploymentTarget, query.Get("target"))
 		assertions.Equal("4", query.Get("limit"))
@@ -197,7 +201,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 	jsonOutput, err := runPersonFactsCommand(testCtx, t, "claims", "7", "--json")
 	requirements.NoError(err)
 	assertions.JSONEq(`[{
-		"id":8,"generation_id":6,"claim_key":"claim-key",
+		"id":8,"generation_id":6,"claim_key":"claim-key","kind":"fact","status":"fresh","latest_supported_at":"2026-08-21T12:00:00Z",
 		"program_id":"fixture-program","program_version":"v1",
 		"program_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"target":{"kind":"attribute","key":"target-key","revision":"`+personFactTestRevision+`"},
@@ -207,7 +211,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 	}]`, jsonOutput)
 }
 
-func TestPersonFactsClaimsTableRetainsMalformedPersistedTargets(t *testing.T) {
+func TestPersonFactsClaimsPreservesOlderDaemonResponse(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -244,7 +248,14 @@ func TestPersonFactsClaimsTableRetainsMalformedPersistedTargets(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Contains(output, "candidate:legacy:key:legacy-revision")
 	assertions.Contains(output, "legacy-claim")
+	assertions.Regexp(`candidate:legacy:key:legacy-revision\s+-\s+-\s+support`, output)
 	assertions.Contains(output, "valid-claim")
+
+	jsonOutput, err := runPersonFactsCommand(testCtx, t, "claims", "7", "--json")
+	requirements.NoError(err)
+	assertions.NotContains(jsonOutput, `"kind":""`)
+	assertions.NotContains(jsonOutput, `"status":`)
+	assertions.Contains(jsonOutput, `"claim_key":"legacy-claim"`)
 }
 
 func TestPersonFactsEvidenceStatusForwardsFalseFilterAndRendersNewestFirst(t *testing.T) {

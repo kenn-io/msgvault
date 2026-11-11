@@ -1857,6 +1857,46 @@ type ListLoopsErrorResponseJSON503 = ErrorResponse
 
 type ListLoopsErrorResponseJSONDefault = ErrorResponse
 
+type CreateCommitmentAgendaIssueResponse = CommitmentAgendaResponse
+
+type CreateCommitmentAgendaIssueErrorResponse = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON403 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON404 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON409 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON422 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON500 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSON503 = ErrorResponse
+
+type CreateCommitmentAgendaIssueErrorResponseJSONDefault = ErrorResponse
+
+type SetCommitmentDecisionResponse = CommitmentDecisionResponse
+
+type SetCommitmentDecisionErrorResponse = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON403 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON404 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON413 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON415 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON500 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSON503 = ErrorResponse
+
+type SetCommitmentDecisionErrorResponseJSONDefault = ErrorResponse
+
 type MarkLoopDoneResponse = LoopDecisionResponse
 
 type MarkLoopDoneErrorResponse = ErrorResponse
@@ -5768,6 +5808,38 @@ type ListLoopsResp struct {
 	JSON500      *ListLoopsErrorResponseJSON500
 	JSON503      *ListLoopsErrorResponseJSON503
 	JSONDefault  *ListLoopsErrorResponseJSONDefault
+}
+
+type CreateCommitmentAgendaIssueResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CreateCommitmentAgendaIssueResponse
+	JSON400      *CreateCommitmentAgendaIssueErrorResponse
+	JSON401      *CreateCommitmentAgendaIssueErrorResponseJSON
+	JSON403      *CreateCommitmentAgendaIssueErrorResponseJSON403
+	JSON404      *CreateCommitmentAgendaIssueErrorResponseJSON404
+	JSON409      *CreateCommitmentAgendaIssueErrorResponseJSON409
+	JSON422      *CreateCommitmentAgendaIssueErrorResponseJSON422
+	JSON500      *CreateCommitmentAgendaIssueErrorResponseJSON500
+	JSON503      *CreateCommitmentAgendaIssueErrorResponseJSON503
+	JSONDefault  *CreateCommitmentAgendaIssueErrorResponseJSONDefault
+}
+
+type SetCommitmentDecisionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SetCommitmentDecisionResponse
+	JSON400      *SetCommitmentDecisionErrorResponse
+	JSON401      *SetCommitmentDecisionErrorResponseJSON
+	JSON403      *SetCommitmentDecisionErrorResponseJSON403
+	JSON404      *SetCommitmentDecisionErrorResponseJSON404
+	JSON413      *SetCommitmentDecisionErrorResponseJSON413
+	JSON415      *SetCommitmentDecisionErrorResponseJSON415
+	JSON500      *SetCommitmentDecisionErrorResponseJSON500
+	JSON503      *SetCommitmentDecisionErrorResponseJSON503
+	JSONDefault  *SetCommitmentDecisionErrorResponseJSONDefault
 }
 
 type MarkLoopDoneResp503Headers struct {

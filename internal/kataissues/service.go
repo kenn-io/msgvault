@@ -56,11 +56,14 @@ type Service struct {
 }
 
 type CreateInput struct {
-	Title    string                   `json:"title"`
-	Brief    string                   `json:"brief"`
-	List     string                   `json:"list"`
-	PersonID *int64                   `json:"person_id,omitzero"`
-	Evidence []kataevidence.Reference `json:"evidence"`
+	Title    string `json:"title"`
+	Brief    string `json:"brief"`
+	List     string `json:"list"`
+	PersonID *int64 `json:"person_id,omitzero"`
+	// PersonUID is filled by trusted archive workflows that freeze a person
+	// identity before enqueue. The public HTTP request accepts only PersonID.
+	PersonUID string                   `json:"person_uid,omitzero"`
+	Evidence  []kataevidence.Reference `json:"evidence"`
 }
 
 // Result reports whether this call created the issue or found the one an
@@ -90,13 +93,10 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		return Result{}, err
 	}
 	hash := requestHash(input)
-	archive, err := s.archiveUID(ctx)
+	marker, err := s.createMarker(ctx, key)
 	if err != nil {
 		return Result{}, err
 	}
-	// The marker doubles as Kata's Idempotency-Key, so concurrent identical
-	// creates also collapse into one issue inside Kata.
-	marker := kataevidence.Digest("msgvault.kata.create-marker.v1", archive, key)
 	existing, found, err := s.Kata.FindActionTask(ctx, s.Project, marker)
 	if err != nil {
 		return Result{}, err
@@ -105,7 +105,9 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		return s.replay(existing, hash)
 	}
 	metadata := map[string]any{taskclient.ActionMetadataKey: marker, RequestMetadataKey: hash}
-	if input.PersonID != nil {
+	if input.PersonUID != "" {
+		metadata[personagenda.PersonMetadataKey], metadata[personagenda.ListMetadataKey] = input.PersonUID, input.List
+	} else if input.PersonID != nil {
 		uids, err := personagenda.PersonUIDs(ctx, s.People, *input.PersonID)
 		if err != nil {
 			return Result{}, err
@@ -125,6 +127,35 @@ func (s *Service) Create(ctx context.Context, key string, input CreateInput) (Re
 		return Result{}, err
 	}
 	return Result{Issue: issue, Replayed: reused}, nil
+}
+
+// FindCreated resolves an earlier idempotent create, including closed issues.
+// It performs no task mutation.
+func (s *Service) FindCreated(ctx context.Context, key string, input CreateInput) (Result, bool, error) {
+	input, err := normalizeCreate(input)
+	if err != nil {
+		return Result{}, false, err
+	}
+	marker, err := s.createMarker(ctx, key)
+	if err != nil {
+		return Result{}, false, err
+	}
+	existing, found, err := s.Kata.FindActionTask(ctx, s.Project, marker)
+	if err != nil || !found {
+		return Result{}, found, err
+	}
+	result, err := s.replay(existing, requestHash(input))
+	return result, true, err
+}
+
+func (s *Service) createMarker(ctx context.Context, key string) (string, error) {
+	archive, err := s.archiveUID(ctx)
+	if err != nil {
+		return "", err
+	}
+	// The marker doubles as Kata's Idempotency-Key, so concurrent identical
+	// creates also collapse into one issue inside Kata.
+	return kataevidence.Digest("msgvault.kata.create-marker.v1", archive, key), nil
 }
 
 // createConflict reads Kata's refusal of a create. A key Kata already holds
@@ -444,7 +475,8 @@ func normalizeCreate(input CreateInput) (CreateInput, error) {
 		return CreateInput{}, ErrInvalidRequest
 	}
 	// A list names a section of a person's agenda, so it needs the person.
-	if input.PersonID != nil && *input.PersonID < 1 || input.PersonID == nil && strings.TrimSpace(input.List) != "" {
+	if input.PersonID != nil && (*input.PersonID < 1 || input.PersonUID != "") ||
+		input.PersonID == nil && input.PersonUID == "" && strings.TrimSpace(input.List) != "" {
 		return CreateInput{}, ErrInvalidRequest
 	}
 	list, err := personagenda.NormalizeList(input.List)
@@ -495,7 +527,7 @@ func requestHash(input CreateInput) string {
 		passages[i] = kataevidence.PassageLocation(ref)
 	}
 	slices.Sort(passages)
-	person := ""
+	person := input.PersonUID
 	if input.PersonID != nil {
 		person = strconv.FormatInt(*input.PersonID, 10)
 	}

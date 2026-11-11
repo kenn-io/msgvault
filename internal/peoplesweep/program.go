@@ -222,20 +222,24 @@ func extractionPacketFromBatch(batch PacketBatch) (EvidencePacket, error) {
 }
 
 func validateExtractionOutput(output jsontext.Value) error {
+	return validateProgramOutput(output, extractionSchema, "person fact extraction")
+}
+
+func validateProgramOutput(output, schemaJSON jsontext.Value, name string) error {
 	var schema jsonschema.Schema
-	if err := decodeSingleJSON(extractionSchema, &schema); err != nil {
-		return errors.New("frozen person fact extraction schema is invalid")
+	if err := decodeSingleJSON(schemaJSON, &schema); err != nil {
+		return fmt.Errorf("frozen %s schema is invalid", name)
 	}
 	resolved, err := schema.Resolve(nil)
 	if err != nil {
-		return errors.New("frozen person fact extraction schema cannot be resolved")
+		return fmt.Errorf("frozen %s schema cannot be resolved", name)
 	}
 	var decoded any
 	if err := decodeJSONSchemaInstance(output, &decoded); err != nil {
-		return errors.New("person fact extraction output is not one JSON value")
+		return fmt.Errorf("%s output is not one JSON value", name)
 	}
 	if err := resolved.Validate(decoded); err != nil {
-		return errors.New("person fact extraction output does not match the closed schema")
+		return fmt.Errorf("%s output does not match the closed schema", name)
 	}
 	return nil
 }

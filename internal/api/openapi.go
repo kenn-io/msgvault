@@ -411,7 +411,10 @@ import (
 // registered service labels to current contact points, and identity keys to observations.
 // 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
 // 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
-const APISchemaVersion = "5.0.0"
+// 5.1.0 adds person fact kinds and evidence freshness.
+// 5.2.0 adds cited commitments and owner decisions.
+// 5.3.0 adds manual cited commitment agenda issues.
+const APISchemaVersion = "5.3.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

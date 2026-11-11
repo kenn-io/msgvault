@@ -899,6 +899,31 @@ func TestPersonProviderRevokeIsIdempotent(t *testing.T) {
 	assert.Equal(firstStatus.Consent.LastRevoked.ID, secondStatus.Consent.LastRevoked.ID)
 }
 
+func TestPersonProviderRevokesOnlyCommitmentConsent(t *testing.T) {
+	must, check := require.New(t), assert.New(t)
+	ctx := t.Context()
+	cfg := personProviderTestConfig()
+	profile, err := cfg.Profile()
+	must.NoError(err)
+	st := testutil.NewSQLiteTestStore(t)
+	_, err = st.EnsurePersonInferenceProfile(ctx, profile)
+	must.NoError(err)
+	_, _, err = st.GrantPersonInferenceConsent(ctx, profile.Fingerprint, "test")
+	must.NoError(err)
+	_, _, err = st.GrantPersonCommitmentConsent(ctx, profile.Fingerprint, "test")
+	must.NoError(err)
+	deps := localPersonProviderDeps(cfg, st, nil)
+	output, err := executePersonProviderCommand(t, deps, "revoke", "--commitments", "--json")
+	must.NoError(err)
+	check.Contains(output, `"revoked":true`)
+	commitments, err := st.HasActivePersonCommitmentConsent(ctx, profile.Fingerprint)
+	must.NoError(err)
+	ordinary, err := st.HasActivePersonInferenceConsent(ctx, profile.Fingerprint)
+	must.NoError(err)
+	check.False(commitments)
+	check.True(ordinary)
+}
+
 func TestPersonProviderListsAndRevokesAllGrantsWhenConfigIsDisabled(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -522,6 +522,42 @@ func (c CardDAVStatusResponseRepairReason) Validate() error {
 	}
 }
 
+type CommitmentDecisionRequestState string
+
+const (
+	Done    CommitmentDecisionRequestState = "done"
+	Open    CommitmentDecisionRequestState = "open"
+	Snoozed CommitmentDecisionRequestState = "snoozed"
+)
+
+// Validate checks if the CommitmentDecisionRequestState value is valid
+func (c CommitmentDecisionRequestState) Validate() error {
+	switch c {
+	case Done, Open, Snoozed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CommitmentDecisionRequestState value, got: %v", c))
+	}
+}
+
+type CommitmentDecisionResponseState string
+
+const (
+	CommitmentDecisionResponseStateDone    CommitmentDecisionResponseState = "done"
+	CommitmentDecisionResponseStateOpen    CommitmentDecisionResponseState = "open"
+	CommitmentDecisionResponseStateSnoozed CommitmentDecisionResponseState = "snoozed"
+)
+
+// Validate checks if the CommitmentDecisionResponseState value is valid
+func (c CommitmentDecisionResponseState) Validate() error {
+	switch c {
+	case CommitmentDecisionResponseStateDone, CommitmentDecisionResponseStateOpen, CommitmentDecisionResponseStateSnoozed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CommitmentDecisionResponseState value, got: %v", c))
+	}
+}
+
 type ConnectionSyncOutcomeStatus string
 
 const (
@@ -1185,18 +1221,54 @@ func (l LocalEmbeddingsStatusPhase) Validate() error {
 	}
 }
 
+type LoopCommitmentDirection string
+
+const (
+	OwedBy LoopCommitmentDirection = "owed_by"
+	OwedTo LoopCommitmentDirection = "owed_to"
+)
+
+// Validate checks if the LoopCommitmentDirection value is valid
+func (l LoopCommitmentDirection) Validate() error {
+	switch l {
+	case OwedBy, OwedTo:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopCommitmentDirection value, got: %v", l))
+	}
+}
+
+type LoopCommitmentState string
+
+const (
+	Fulfilled                  LoopCommitmentState = "fulfilled"
+	LoopCommitmentStateDone    LoopCommitmentState = "done"
+	LoopCommitmentStateOpen    LoopCommitmentState = "open"
+	LoopCommitmentStateSnoozed LoopCommitmentState = "snoozed"
+)
+
+// Validate checks if the LoopCommitmentState value is valid
+func (l LoopCommitmentState) Validate() error {
+	switch l {
+	case Fulfilled, LoopCommitmentStateDone, LoopCommitmentStateOpen, LoopCommitmentStateSnoozed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopCommitmentState value, got: %v", l))
+	}
+}
+
 type LoopDecisionResponseState string
 
 const (
-	Done    LoopDecisionResponseState = "done"
-	Open    LoopDecisionResponseState = "open"
-	Snoozed LoopDecisionResponseState = "snoozed"
+	LoopDecisionResponseStateDone    LoopDecisionResponseState = "done"
+	LoopDecisionResponseStateOpen    LoopDecisionResponseState = "open"
+	LoopDecisionResponseStateSnoozed LoopDecisionResponseState = "snoozed"
 )
 
 // Validate checks if the LoopDecisionResponseState value is valid
 func (l LoopDecisionResponseState) Validate() error {
 	switch l {
-	case Done, Open, Snoozed:
+	case LoopDecisionResponseStateDone, LoopDecisionResponseStateOpen, LoopDecisionResponseStateSnoozed:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopDecisionResponseState value, got: %v", l))
@@ -2274,6 +2346,43 @@ func (p PersonEnrichmentProviderUpdateKind) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonEnrichmentProviderUpdateKind value, got: %v", p))
+	}
+}
+
+type PersonFactClaimKind string
+
+const (
+	Commitment PersonFactClaimKind = "commitment"
+	Event      PersonFactClaimKind = "event"
+	Fact       PersonFactClaimKind = "fact"
+	Preference PersonFactClaimKind = "preference"
+)
+
+// Validate checks if the PersonFactClaimKind value is valid
+func (p PersonFactClaimKind) Validate() error {
+	switch p {
+	case Commitment, Event, Fact, Preference:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFactClaimKind value, got: %v", p))
+	}
+}
+
+type PersonFactClaimStatus string
+
+const (
+	Expired                    PersonFactClaimStatus = "expired"
+	Fresh                      PersonFactClaimStatus = "fresh"
+	PersonFactClaimStatusStale PersonFactClaimStatus = "stale"
+)
+
+// Validate checks if the PersonFactClaimStatus value is valid
+func (p PersonFactClaimStatus) Validate() error {
+	switch p {
+	case Expired, Fresh, PersonFactClaimStatusStale:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFactClaimStatus value, got: %v", p))
 	}
 }
 

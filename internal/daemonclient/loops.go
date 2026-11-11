@@ -18,13 +18,17 @@ const LoopDecisionNotFoundCode = "loop_decision_not_found"
 
 // LoopListOptions selects loops. Zero values use the daemon's defaults.
 type LoopListOptions struct {
-	PersonID int64
-	Limit    int
+	PersonID      int64
+	Limit         int
+	IncludeClosed bool
 }
 
 // ListLoops returns the open loops, oldest first.
 func (c *Client) ListLoops(ctx context.Context, opts LoopListOptions) (generated.LoopListResponse, error) {
 	query := &generated.ListLoopsQuery{}
+	if opts.IncludeClosed {
+		query.IncludeClosed = &opts.IncludeClosed
+	}
 	if opts.PersonID != 0 {
 		query.PersonID = &opts.PersonID
 	}
@@ -92,6 +96,39 @@ func (c *Client) ReopenLoop(ctx context.Context, messageID int64) (generated.Loo
 	}
 	if resp.JSON200 == nil {
 		return generated.LoopDecisionResponse{}, errors.New("empty open loop decision response")
+	}
+	return *resp.JSON200, nil
+}
+
+// SetCommitmentDecision updates a cited promise's owner state.
+func (c *Client) SetCommitmentDecision(ctx context.Context, id, state string, until *time.Time) (generated.CommitmentDecisionResponse, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.SetCommitmentDecisionResp, error) {
+		return client.SetCommitmentDecisionWithResponse(ctx, &generated.SetCommitmentDecisionRequestOptions{
+			PathParams: &generated.SetCommitmentDecisionPath{CommitmentID: id},
+			Body:       &generated.SetCommitmentDecisionBody{State: generated.CommitmentDecisionRequestState(state), Until: until},
+		})
+	})
+	if err != nil {
+		return generated.CommitmentDecisionResponse{}, err
+	}
+	if resp.JSON200 == nil {
+		return generated.CommitmentDecisionResponse{}, errors.New("empty commitment decision response")
+	}
+	return *resp.JSON200, nil
+}
+
+// CreateCommitmentAgendaIssue creates or finds the cited task for a promise.
+func (c *Client) CreateCommitmentAgendaIssue(ctx context.Context, id string) (generated.CommitmentAgendaResponse, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.CreateCommitmentAgendaIssueResp, error) {
+		return client.CreateCommitmentAgendaIssueWithResponse(ctx, &generated.CreateCommitmentAgendaIssueRequestOptions{
+			PathParams: &generated.CreateCommitmentAgendaIssuePath{CommitmentID: id},
+		})
+	})
+	if err != nil {
+		return generated.CommitmentAgendaResponse{}, err
+	}
+	if resp.JSON200 == nil {
+		return generated.CommitmentAgendaResponse{}, errors.New("empty commitment agenda issue response")
 	}
 	return *resp.JSON200, nil
 }
