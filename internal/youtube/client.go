@@ -84,13 +84,8 @@ func safeError(ctx context.Context, err error) error {
 		}
 		return &APIError{apiErr.Code, reason}
 	}
-	if oauthErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
-		switch oauthErr.ErrorCode {
-		case "invalid_grant":
-			return errors.New("YouTube authorization failed (invalid_grant); reauthorize the refresh token")
-		case "invalid_client":
-			return errors.New("YouTube authorization failed (invalid_client); check the client ID and secret")
-		}
+	if oauthErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok && oauthErr.ErrorCode == "invalid_grant" {
+		return errors.New("YouTube authorization failed (invalid_grant); reauthorize the refresh token")
 	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("YouTube request: %w", ctx.Err())

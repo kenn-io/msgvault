@@ -113,7 +113,6 @@ type MessagePersistData struct {
 	LabelIDs                  []int64
 	LabelRefs                 []MessageLabelRef
 	PreserveLabels            bool
-	LabelSourcePrefix         string // Replace only labels with this source-specific prefix when set.
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
 	SyncRunItem               *SyncRunItem
@@ -2556,16 +2555,7 @@ func (s *Store) persistMessageWith(
 	}
 
 	if !data.PreserveLabels {
-		var err error
-		if data.LabelSourcePrefix == "" {
-			err = replaceMessageLabelsTx(q, messageID, data.LabelIDs)
-		} else {
-			_, err = q.Exec(`DELETE FROM message_labels WHERE message_id=? AND label_id IN (SELECT id FROM labels WHERE source_id=? AND substr(source_label_id,1,length(?))=?)`, messageID, data.Message.SourceID, data.LabelSourcePrefix, data.LabelSourcePrefix)
-			if err == nil {
-				err = s.addMessageLabelsTx(q, messageID, data.LabelIDs)
-			}
-		}
-		if err != nil {
+		if err := replaceMessageLabelsTx(q, messageID, data.LabelIDs); err != nil {
 			return 0, fmt.Errorf("store labels: %w", err)
 		}
 	}
@@ -3281,24 +3271,6 @@ func ensureMessageLabelRefsWith(
 // MessageLabelIDsContext returns the labels currently assigned to a message.
 func (s *Store) MessageLabelIDsContext(ctx context.Context, messageID int64) ([]int64, error) {
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT label_id FROM message_labels WHERE message_id = ?`), messageID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
-// MessageSourceLabelIDsContext returns the message's labels in a provider namespace.
-func (s *Store) MessageSourceLabelIDsContext(ctx context.Context, messageID, sourceID int64, prefix string) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT ml.label_id FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=? AND l.source_id=? AND substr(l.source_label_id,1,length(?))=?`), messageID, sourceID, prefix, prefix)
 	if err != nil {
 		return nil, err
 	}

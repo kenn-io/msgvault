@@ -19,6 +19,7 @@ func TestFacebookSourceHelpGoldens(t *testing.T) {
 	for _, path := range [][]string{
 		{"source"}, {"source", "facebook-comments"},
 		{"source", "facebook-comments", "add"}, {"source", "facebook-comments", "sync"},
+		{"source", "youtube"}, {"source", "youtube", "add"}, {"source", "youtube", "sync"},
 	} {
 		t.Run(strings.Join(path, " "), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

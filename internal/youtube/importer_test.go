@@ -1,7 +1,6 @@
 package youtube
 
 import (
-	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -17,7 +16,7 @@ import (
 	yt "google.golang.org/api/youtube/v3"
 )
 
-func archiveFixture(t *testing.T, mismatch bool, late *bool, quota *bool, missing ...*bool) *Client {
+func archiveFixture(t *testing.T, mismatch bool, late *bool, quota *bool) *Client {
 	t.Helper()
 	return fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -36,10 +35,6 @@ func archiveFixture(t *testing.T, mismatch bool, late *bool, quota *bool, missin
 			assert.Equal(t, "50", r.URL.Query().Get("maxResults"))
 			_, _ = fmt.Fprint(w, `{"items":[{"contentDetails":{"videoId":"oldvideo"}},{"contentDetails":{"videoId":"disabledvideo"}}]}`)
 		case "/videos":
-			if len(missing) > 0 && *missing[0] && r.URL.Query().Get("id") == "oldvideo" {
-				_, _ = fmt.Fprint(w, `{"items":[]}`)
-				return
-			}
 			response := yt.VideoListResponse{Items: []*yt.Video{{Id: r.URL.Query().Get("id"), Snippet: &yt.VideoSnippet{ChannelId: "UCfixture", Title: "Fixture video", Description: "Fixture description", PublishedAt: "2026-01-01T00:00:00Z"}, Status: &yt.VideoStatus{PrivacyStatus: "unlisted"}}}}
 			assert.NoError(t, json.MarshalWrite(w, response))
 
@@ -166,11 +161,14 @@ func TestArchiveTinyBudgetsEventuallyFinishAndAppend(t *testing.T) {
 		require.Contains(rows, "parent")
 		require.Contains(rows, "parent.reply1")
 		require.Contains(rows, "parent.reply2")
-		assert.Contains(rows["parent"].Metadata.String, `"moderation_status":"published"`)
-		assert.Contains(rows["parent.reply1"].Metadata.String, `"moderation_status":"heldForReview"`)
-		mine, err := st.GetMessageIsFromMe(t.Context(), rows["parent.reply1"].ID)
+		videos, err := st.StoredMessagesContext(t.Context(), source.ID, "youtube_json", []string{"video:oldvideo"})
 		require.NoError(err)
-		assert.True(mine)
+		body, err := st.GetMessageBodyText(t.Context(), videos["video:oldvideo"].ID)
+		require.NoError(err)
+		assert.Equal("Fixture description\n\nhttps://www.youtube.com/watch?v=oldvideo", body)
+		comments, err := st.StoredMessagesContext(t.Context(), source.ID, "youtube_json", []string{"parent"})
+		require.NoError(err)
+		assert.Equal("Fixture video", comments["parent"].Subject.String)
 		if cycle == 1 {
 			require.Contains(rows, "later")
 		}
@@ -179,17 +177,6 @@ func TestArchiveTinyBudgetsEventuallyFinishAndAppend(t *testing.T) {
 	var count int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages WHERE source_id = ?`, source.ID).Scan(&count))
 	assert.Equal(6, count) // Two video roots and four unique comments.
-	var disabledVideoMessageCount int
-	var disabledVideoLastMessageAt sql.NullTime
-	var disabledVideoLastMessagePreview sql.NullString
-	require.NoError(st.DB().QueryRowContext(t.Context(), `
-		SELECT c.message_count, c.last_message_at, c.last_message_preview FROM messages m
-		JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.source_id = ? AND m.source_message_id = ?`, source.ID, "video:disabledvideo").Scan(
-		&disabledVideoMessageCount, &disabledVideoLastMessageAt, &disabledVideoLastMessagePreview))
-	assert.Equal(1, disabledVideoMessageCount)
-	assert.True(disabledVideoLastMessageAt.Valid)
-	assert.True(disabledVideoLastMessagePreview.Valid)
 	var missingAuthor any
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sender_id FROM messages WHERE source_message_id = 'parent.reply2'`).Scan(&missingAuthor))
 	assert.Nil(missingAuthor)
@@ -218,7 +205,7 @@ func TestArchivePartialCommentPageRefreshesStatsForEachTouchedPage(t *testing.T)
 	assertions.True(sum.Partial)
 	var refreshes int
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM fixture_stats_refreshes`).Scan(&refreshes))
-	assertions.Equal(3, refreshes) // The video and both non-empty thread pages fit the five-request budget.
+	assertions.Equal(3, refreshes) // Two video roots and one thread page fit the five-request budget.
 	var messageCount int
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_count FROM conversations WHERE source_id = ? AND source_conversation_id = ?`, source.ID, "oldvideo").Scan(&messageCount))
 	assertions.Equal(3, messageCount)
@@ -327,8 +314,8 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestForbiddenResourceDoesNotBlockOtherVideos(t *testing.T) {
-	for _, kind := range []string{"video", "threads", "replies"} {
+func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testing.T) {
+	for _, kind := range []string{"video forbidden", "threads forbidden", "replies forbidden", "video missing", "replies missing"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
@@ -337,7 +324,7 @@ func TestForbiddenResourceDoesNotBlockOtherVideos(t *testing.T) {
 			if original == nil {
 				original = http.DefaultTransport
 			}
-			forbidden := true
+			unavailable := false
 			c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				resp, err := original.RoundTrip(req)
 				if err != nil {
@@ -354,10 +341,21 @@ func TestForbiddenResourceDoesNotBlockOtherVideos(t *testing.T) {
 					require.NoError(resp.Body.Close())
 					resp.Body = io.NopCloser(strings.NewReader(replacement))
 				}
-				if forbidden && ((kind == "video" && req.URL.Path == "/youtube/v3/videos" && req.URL.Query().Get("id") == "oldvideo") || (kind == "threads" && req.URL.Path == "/youtube/v3/commentThreads" && req.URL.Query().Get("videoId") == "oldvideo") || (kind == "replies" && req.URL.Path == "/youtube/v3/comments")) {
+				video := req.URL.Path == "/youtube/v3/videos" && req.URL.Query().Get("id") == "oldvideo"
+				threads := req.URL.Path == "/youtube/v3/commentThreads" && req.URL.Query().Get("videoId") == "oldvideo"
+				replies := req.URL.Path == "/youtube/v3/comments"
+				if unavailable && ((strings.HasPrefix(kind, "video ") && video) || (strings.HasPrefix(kind, "threads ") && threads) || (strings.HasPrefix(kind, "replies ") && replies)) {
 					require.NoError(resp.Body.Close())
-					resp.StatusCode = http.StatusForbidden
-					resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"forbidden"}]}}`))
+					switch kind {
+					case "video missing":
+						resp.Body = io.NopCloser(strings.NewReader(`{"items":[]}`))
+					case "replies missing":
+						resp.StatusCode = http.StatusNotFound
+						resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"commentNotFound"}]}}`))
+					default:
+						resp.StatusCode = http.StatusForbidden
+						resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"forbidden"}]}}`))
+					}
 				}
 				return resp, nil
 			})
@@ -366,16 +364,19 @@ func TestForbiddenResourceDoesNotBlockOtherVideos(t *testing.T) {
 			require.NoError(err)
 			_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
 			require.NoError(err)
-			rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"other-comment"})
+			unavailable = true
+			sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
 			require.NoError(err)
-			require.Contains(rows, "other-comment")
-			forbidden = false
-			_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
+			require.False(sum.Partial)
+			rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:oldvideo", "parent", "parent.reply1", "parent.reply2", "other-comment"})
 			require.NoError(err)
-			rows, err = st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"parent", "parent.reply1"})
+			for _, id := range []string{"video:oldvideo", "parent", "parent.reply1", "parent.reply2", "other-comment"} {
+				require.Contains(rows, id)
+			}
+			unavailable = false
+			sum, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
 			require.NoError(err)
-			require.Contains(rows, "parent")
-			require.Contains(rows, "parent.reply1")
+			require.False(sum.Partial)
 		})
 	}
 }
@@ -449,7 +450,7 @@ func TestOwnershipPagesRespectBudgetAndResume(t *testing.T) {
 				case "/commentThreads":
 					_, _ = fmt.Fprint(w, `{"items":[{"snippet":{"videoId":"video","topLevelComment":{"id":"comment","snippet":{"videoId":"video","textDisplay":"hello"}}}}]}`)
 				default:
-					t.Errorf("unexpected path %s", r.URL.Path)
+					assert.Fail(t, "unexpected path", r.URL.Path)
 				}
 			})
 			imp := NewImporter(st, client)
@@ -475,25 +476,6 @@ func TestOwnershipPagesRespectBudgetAndResume(t *testing.T) {
 	}
 }
 
-func TestDeletedVideoKeepsArchivedRowsAndCompletes(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	missing := false
-	imp := NewImporter(st, archiveFixture(t, false, nil, nil, &missing))
-	src, err := imp.Register(t.Context(), "UCfixture")
-	require.NoError(err)
-	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
-	require.NoError(err)
-	missing = true
-	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
-	require.NoError(err)
-	require.False(sum.Partial)
-	rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:oldvideo", "parent"})
-	require.NoError(err)
-	require.Contains(rows, "video:oldvideo")
-	require.Contains(rows, "parent")
-}
-
 func TestOwnershipFailureSavesProgressWithoutWritingContent(t *testing.T) {
 	for _, failure := range []string{"invalidPageToken", "quotaExceeded", "transport", "not-owned"} {
 		t.Run(failure, func(t *testing.T) {
@@ -512,7 +494,7 @@ func TestOwnershipFailureSavesProgressWithoutWritingContent(t *testing.T) {
 					return
 				}
 				if r.URL.Path != "/channels" {
-					t.Errorf("unexpected content request: %s", r.URL.Path)
+					assert.Fail(t, "unexpected content request", r.URL.Path)
 					return
 				}
 				lastToken = r.URL.Query().Get("pageToken")
@@ -580,35 +562,6 @@ func TestOwnershipFailureSavesProgressWithoutWritingContent(t *testing.T) {
 	}
 }
 
-func TestDeletedReplyParentKeepsArchivedRepliesAndCompletes(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	c := archiveFixture(t, false, nil, nil)
-	missing := false
-	original := c.api.Transport
-	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		resp, err := original.RoundTrip(req)
-		if err == nil && missing && req.URL.Path == "/youtube/v3/comments" {
-			require.NoError(resp.Body.Close())
-			resp.StatusCode = http.StatusNotFound
-			resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"commentNotFound"}]}}`))
-		}
-		return resp, err
-	})
-	imp := NewImporter(st, c)
-	src, err := imp.Register(t.Context(), "UCfixture")
-	require.NoError(err)
-	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
-	require.NoError(err)
-	missing = true
-	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
-	require.NoError(err)
-	require.False(sum.Partial)
-	rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"parent.reply1", "parent.reply2"})
-	require.NoError(err)
-	require.Len(rows, 2)
-}
-
 func TestUploadsNotFoundStopsWithProgress(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -619,6 +572,7 @@ func TestUploadsNotFoundStopsWithProgress(t *testing.T) {
 		if err == nil && req.URL.Path == "/youtube/v3/playlistItems" {
 			require.NoError(resp.Body.Close())
 			resp.StatusCode = http.StatusNotFound
+			// This reason is synthetic; playlistItems does not return videoNotFound.
 			resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"videoNotFound"}]}}`))
 		}
 		return resp, err

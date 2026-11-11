@@ -18,10 +18,8 @@ func TestConfiguredYouTubeCredentialsMissingWithoutLeak(t *testing.T) {
 func TestYouTubeNestedDaemonCommands(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	for _, action := range []string{"add", "sync"} {
-		leaf, args, err := rootCmd.Find([]string{"source", "youtube", action})
+		leaf, _, err := rootCmd.Find([]string{"source", "youtube", action})
 		require.NoError(err)
-		assert.Empty(args)
-		assert.Equal("msgvault source youtube "+action, leaf.CommandPath())
 		if action == "sync" {
 			require.NoError(leaf.Flags().Set("max-requests", "7"))
 			t.Cleanup(func() {

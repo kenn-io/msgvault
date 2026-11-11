@@ -38,6 +38,16 @@ schedule="*/30 * * * *"
 			wantError: "youtube[0].channel_id invalid or duplicate",
 		},
 		{
+			name:      "duplicate identifier by case fold",
+			profile:   strings.Replace(validProfile, `identifier="fixture"`, `identifier="Σ"`, 1) + strings.Replace(strings.Replace(validProfile, `identifier="fixture"`, `identifier="ς"`, 1), `channel_id="UCfixture"`, `channel_id="UCsecond"`, 1),
+			wantError: "youtube[1].identifier missing or duplicate",
+		},
+		{
+			name:      "duplicate channel ID",
+			profile:   validProfile + strings.Replace(validProfile, `identifier="fixture"`, `identifier="second"`, 1),
+			wantError: "youtube[1].channel_id invalid or duplicate",
+		},
+		{
 			name:      "unknown key",
 			profile:   strings.Replace(validProfile, "enabled=true", "token='do-not-store'\nenabled=true", 1),
 			wantError: `unknown YouTube config key "youtube.token"`,
@@ -47,12 +57,4 @@ schedule="*/30 * * * *"
 			require.ErrorContains(t, loadConfigTextError(t, tc.profile), tc.wantError)
 		})
 	}
-}
-
-func TestYouTubeProfileLookupEquivalenceRejectsDuplicate(t *testing.T) {
-	cfg := &Config{YouTube: []YouTubeSource{
-		{Identifier: "Σ", ChannelID: "UCone", TokenEnv: "FIXTURE_REFRESH", ClientIDEnv: "FIXTURE_CLIENT", ClientSecretEnv: "FIXTURE_SECRET"},
-		{Identifier: "ς", ChannelID: "UCtwo", TokenEnv: "FIXTURE_REFRESH", ClientIDEnv: "FIXTURE_CLIENT", ClientSecretEnv: "FIXTURE_SECRET"},
-	}}
-	require.Error(t, cfg.validateYouTubeSources())
 }

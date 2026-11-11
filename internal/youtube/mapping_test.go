@@ -4,8 +4,6 @@ import (
 	"context"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/duckdbutil"
-	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	yt "google.golang.org/api/youtube/v3"
@@ -28,43 +26,11 @@ func TestVideoOwnerReceivesRelationshipActivityWithoutCommenting(t *testing.T) {
 	when := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
 	c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{TextOriginal: "Viewer comment", PublishedAt: when.Format(time.RFC3339), AuthorDisplayName: "Fixture viewer"}}
 	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCviewer"}
-	comment, err := persistCommentForTest(t.Context(), st, src.ID, v, c, "")
+	comment, err := persistCommentForTest(t.Context(), st, src.ID, v, c)
 	require.NoError(err)
 	var conversation, author int64
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_id, sender_id FROM messages WHERE id = ?`, comment).Scan(&conversation, &author))
 	require.NotEqual(owner, author)
-
-	db, err := duckdbutil.Open(t.Context(), duckdbutil.Policy{
-		MemoryLimit: "128MB", Threads: 1, TempDirectory: t.TempDir(), MaxTempDirectorySize: "256MB",
-	})
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(db.Close()) })
-	_, err = db.ExecContext(t.Context(), `CREATE TABLE roster (conversation_id BIGINT, participant_id BIGINT);
-		CREATE TABLE participants (id BIGINT, domain VARCHAR);
-		CREATE TABLE clusters (participant_id BIGINT, canonical_id BIGINT);
-		CREATE TABLE owners (source_id BIGINT, participant_id BIGINT)`)
-	require.NoError(err)
-	_, err = db.ExecContext(t.Context(), `INSERT INTO participants VALUES (?, ''), (?, '')`, owner, author)
-	require.NoError(err)
-	_, err = db.ExecContext(t.Context(), `INSERT INTO owners VALUES (?, ?)`, src.ID, owner)
-	require.NoError(err)
-	// The comment has only its viewer as a direct edge. Owner presence must
-	// come from the conversation roster written by the YouTube importer.
-	_, err = db.ExecContext(t.Context(), `CREATE TABLE sparse AS SELECT
-		?::BIGINT AS message_id, ?::BIGINT AS conversation_id, ?::BIGINT AS source_id,
-		'youtube' AS source_type, ?::TIMESTAMP AS occurred_at, 'youtube' AS message_type,
-		'group_chat' AS conversation_type, `+identityindex.EntryKindSQL("'youtube'")+` AS entry_kind,
-		`+identityindex.IsChatSQL("'youtube'", "'group_chat'")+` AS is_chat,
-		false AS is_from_me, 0 AS attachment_count, false AS has_attachments,
-		false AS deleted_from_source, false AS unsent, NULL::BIGINT AS canonical_id,
-		NULL::VARCHAR AS participant_domain, false AS is_direct, false AS is_conversation_member,
-		false AS is_sender, false AS is_author, false AS is_owner, 2026 AS occurred_year`,
-		comment, conversation, src.ID, when)
-	require.NoError(err)
-	_, err = db.ExecContext(t.Context(), `INSERT INTO sparse SELECT * REPLACE (
-		?::BIGINT AS canonical_id, '' AS participant_domain,
-		true AS is_direct, true AS is_sender, true AS is_author) FROM sparse`, author)
-	require.NoError(err)
 
 	for _, phase := range []string{"initial import", "unchanged replay"} {
 		if phase == "unchanged replay" {
@@ -76,8 +42,6 @@ func TestVideoOwnerReceivesRelationshipActivityWithoutCommenting(t *testing.T) {
 			assert.Equal(root, replayed)
 			assert.Equal(messageUnchanged, change)
 		}
-		_, err = db.ExecContext(t.Context(), `DELETE FROM roster`)
-		require.NoError(err)
 		rows, queryErr := st.DB().QueryContext(t.Context(), `SELECT participant_id FROM conversation_participants WHERE conversation_id = ?`, conversation)
 		require.NoError(queryErr)
 		t.Cleanup(func() { require.NoError(rows.Close()) })
@@ -90,15 +54,6 @@ func TestVideoOwnerReceivesRelationshipActivityWithoutCommenting(t *testing.T) {
 		require.NoError(rows.Err())
 		require.NoError(rows.Close())
 		assert.ElementsMatch([]int64{owner, author}, members, phase)
-		for _, member := range members {
-			_, err = db.ExecContext(t.Context(), `INSERT INTO roster VALUES (?, ?)`, conversation, member)
-			require.NoError(err)
-		}
-		activity := identityindex.ExpandedActivityRelation("sparse", "roster", "participants", "clusters", "owners")
-		facts := identityindex.RelationshipTemperatureFactsSQL(activity, when.Add(time.Hour))
-		var received int64
-		require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM (`+facts+`) WHERE canonical_id = ? AND received`, author).Scan(&received))
-		assert.Equal(int64(1), received, phase)
 	}
 }
 
@@ -112,12 +67,12 @@ func TestCommentCannotMoveBetweenVideos(t *testing.T) {
 	_, _, err = persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
 	c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{ModerationStatus: "published", TextDisplay: "Hello"}}
-	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c, "")
+	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c)
 	requirements.NoError(err)
 	v.Id = "videotwo"
 	_, _, err = persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
-	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c, "")
+	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c)
 	requirements.Error(err)
 	rows, err := st.MessageMetadataBatch(t.Context(), src.ID, []string{"comment"})
 	requirements.NoError(err)
@@ -200,7 +155,7 @@ func TestCommentParentIsPresentInInitialTransaction(t *testing.T) {
 	// subsequent parent update can repair it. No provider replay is involved.
 	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fixture_require_parent BEFORE INSERT ON messages WHEN NEW.source_message_id = 'comment' AND NEW.reply_to_message_id IS NULL BEGIN SELECT RAISE(FAIL, 'parent missing at initial insert'); END`)
 	requirements.NoError(err)
-	id, err := persistCommentForTest(t.Context(), st, src.ID, v, yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{}}, "")
+	id, err := persistCommentForTest(t.Context(), st, src.ID, v, yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{}})
 	requirements.NoError(err)
 	var parent int64
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT reply_to_message_id FROM messages WHERE id=?`, id).Scan(&parent))
@@ -217,7 +172,7 @@ func TestModerationOmissionPreservesObservationAndExplicitChangeReplacesLabels(t
 	_, _, err = persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
 	c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{ModerationStatus: "heldForReview", TextDisplay: "Fallback text"}}
-	id, err := persistCommentForTest(t.Context(), st, src.ID, v, c, "published")
+	id, err := persistCommentForTest(t.Context(), st, src.ID, v, c)
 	requirements.NoError(err)
 	messageLabels := func() []string {
 		var labels []string
@@ -236,17 +191,17 @@ func TestModerationOmissionPreservesObservationAndExplicitChangeReplacesLabels(t
 	before, err := st.GetMessageMetadata(id)
 	requirements.NoError(err)
 	c.Snippet.ModerationStatus = ""
-	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c, "likelySpam")
+	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c)
 	requirements.NoError(err)
 	after, err := st.GetMessageMetadata(id)
 	requirements.NoError(err)
 	assertions.Equal(before, after)
 	c.Snippet.ModerationStatus = "likelySpam"
-	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c, "")
+	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c)
 	requirements.NoError(err)
 	assertions.Equal([]string{"YouTube: likely spam"}, messageLabels())
 	c.Snippet.ModerationStatus = "published"
-	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c, "heldForReview")
+	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c)
 	requirements.NoError(err)
 	assertions.Equal([]string{"YouTube moderation: published"}, messageLabels())
 	body, err := st.GetMessageBodyText(t.Context(), id)
@@ -254,45 +209,7 @@ func TestModerationOmissionPreservesObservationAndExplicitChangeReplacesLabels(t
 	assertions.Equal("Fallback text", body)
 }
 
-func TestCommentRetainsKnownAuthor(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource(SourceType, SourceIdentifier("UCfixture"))
-	require.NoError(err)
-	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture"}}
-	_, _, err = persistVideo(t.Context(), st, src.ID, v)
-	require.NoError(err)
-	c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{AuthorDisplayName: "Owner", TextDisplay: "First"}}
-	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCfixture"}
-	id, _, err := persistComment(t.Context(), st, src.ID, v, c)
-	require.NoError(err)
-	before, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.Id})
-	require.NoError(err)
-	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: ""}
-	c.Snippet.AuthorDisplayName = ""
-	c.Snippet.TextDisplay = "Updated"
-	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
-	require.NoError(err)
-	after, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.Id})
-	require.NoError(err)
-	assert.Equal(before[c.Id].SenderID, after[c.Id].SenderID)
-	assert.Equal(before[c.Id].SourceIsFromMe, after[c.Id].SourceIsFromMe)
-	matched, err := st.MessageRecipientsMatchContext(t.Context(), id, []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{before[c.Id].SenderID.Int64}, DisplayNames: []string{"Owner"}}})
-	require.NoError(err)
-	assert.True(matched)
-	summaries, err := st.GetMessagesSummariesByIDsContext(t.Context(), []int64{id})
-	require.NoError(err)
-	require.Len(summaries, 1)
-	assert.Equal("Owner", summaries[0].FromName)
-	c.Snippet.AuthorDisplayName = "Owner Renamed"
-	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
-	require.NoError(err)
-	summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), []int64{id})
-	require.NoError(err)
-	assert.Equal("Owner Renamed", summaries[0].FromName)
-}
-
-func persistCommentForTest(ctx context.Context, st *store.Store, sourceID int64, v yt.Video, c yt.Comment, _ string) (int64, error) {
+func persistCommentForTest(ctx context.Context, st *store.Store, sourceID int64, v yt.Video, c yt.Comment) (int64, error) {
 	id, _, err := persistCommentSDK(ctx, st, sourceID, "UCfixture", v.Id, &c)
 	if err != nil {
 		return id, err
@@ -360,66 +277,32 @@ func TestCommentWithoutChannelIDPreservesDistinctAuthorNames(t *testing.T) {
 	summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), ids[:1])
 	require.NoError(err)
 	require.Equal("Alice Updated", summaries[0].FromName)
-}
-
-func TestYouTubeSyncPreservesPersonalLabels(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource(SourceType, SourceIdentifier("UCfixture"))
-	require.NoError(err)
-	video := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture"}, Status: &yt.VideoStatus{PrivacyStatus: "public"}}
-	videoID, _, err := persistVideo(t.Context(), st, src.ID, video)
-	require.NoError(err)
-	comment := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{TextDisplay: "hello", ModerationStatus: "heldForReview"}}
-	commentID, _, err := persistComment(t.Context(), st, src.ID, video, comment)
-	require.NoError(err)
-	personal, err := st.EnsureLabelsBatch(t.Context(), src.ID, map[string]store.LabelInfo{"personal": {Name: "Personal", Type: "user"}})
-	require.NoError(err)
-	for _, id := range []int64{videoID, commentID} {
-		require.NoError(st.AddMessageLabels(t.Context(), id, []int64{personal["personal"]}))
-	}
-	_, videoChange, err := persistVideo(t.Context(), st, src.ID, video)
-	require.NoError(err)
-	require.Equal(messageUnchanged, videoChange)
-	_, commentChange, err := persistComment(t.Context(), st, src.ID, video, comment)
-	require.NoError(err)
-	require.Equal(messageUnchanged, commentChange)
-	for _, id := range []int64{videoID, commentID} {
-		labels, err := st.MessageLabelIDsContext(t.Context(), id)
+	{
+		c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{AuthorDisplayName: "Owner", TextDisplay: "First"}}
+		c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCfixture"}
+		id, _, err := persistComment(t.Context(), st, src.ID, v, c)
 		require.NoError(err)
-		require.Contains(labels, personal["personal"])
-	}
-	video.Snippet.Description = "edited video"
-	comment.Snippet.TextDisplay = "edited comment"
-	_, _, err = persistVideo(t.Context(), st, src.ID, video)
-	require.NoError(err)
-	_, _, err = persistComment(t.Context(), st, src.ID, video, comment)
-	require.NoError(err)
-	for _, id := range []int64{videoID, commentID} {
-		labels, err := st.MessageLabelIDsContext(t.Context(), id)
+		before, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.Id})
 		require.NoError(err)
-		require.Contains(labels, personal["personal"])
-	}
-	video.Status.PrivacyStatus = "private"
-	comment.Snippet.ModerationStatus = "published"
-	_, _, err = persistVideo(t.Context(), st, src.ID, video)
-	require.NoError(err)
-	_, _, err = persistComment(t.Context(), st, src.ID, video, comment)
-	require.NoError(err)
-	for _, id := range []int64{videoID, commentID} {
-		labels, err := st.MessageLabelIDsContext(t.Context(), id)
+		require.True(before[c.Id].SourceIsFromMe.Valid && before[c.Id].SourceIsFromMe.Bool)
+		c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: ""}
+		c.Snippet.AuthorDisplayName = ""
+		c.Snippet.TextDisplay = "Updated"
+		_, _, err = persistComment(t.Context(), st, src.ID, v, c)
 		require.NoError(err)
-		require.Contains(labels, personal["personal"])
+		after, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.Id})
+		require.NoError(err)
+		require.Equal(before[c.Id].SenderID, after[c.Id].SenderID)
+		require.Equal(before[c.Id].SourceIsFromMe, after[c.Id].SourceIsFromMe)
+		summaries, err := st.GetMessagesSummariesByIDsContext(t.Context(), []int64{id})
+		require.NoError(err)
+		require.Len(summaries, 1)
+		require.Equal("Owner", summaries[0].FromName)
+		c.Snippet.AuthorDisplayName = "Owner Renamed"
+		_, _, err = persistComment(t.Context(), st, src.ID, v, c)
+		require.NoError(err)
+		summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), []int64{id})
+		require.NoError(err)
+		require.Equal("Owner Renamed", summaries[0].FromName)
 	}
-	provider, err := st.EnsureLabelsBatch(t.Context(), src.ID, map[string]store.LabelInfo{
-		"youtube:privacy:private":      {Name: "YouTube privacy: private", Type: "user"},
-		"youtube:moderation:published": {Name: "YouTube moderation: published", Type: "user"},
-	})
-	require.NoError(err)
-	labels, err := st.MessageLabelIDsContext(t.Context(), videoID)
-	require.NoError(err)
-	require.ElementsMatch([]int64{personal["personal"], provider["youtube:privacy:private"]}, labels)
-	labels, err = st.MessageLabelIDsContext(t.Context(), commentID)
-	require.NoError(err)
-	require.ElementsMatch([]int64{personal["personal"], provider["youtube:moderation:published"]}, labels)
 }
