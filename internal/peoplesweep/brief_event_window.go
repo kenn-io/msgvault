@@ -95,15 +95,14 @@ func briefRetainedEvents(
 // Only resolved events may be retired under capacity pressure.
 func briefRetireCapacityEvent(
 	events []BriefHighlight, protected map[string]bool,
-) ([]BriefHighlight, int, bool) {
+) ([]BriefHighlight, bool) {
 	retired := slices.IndexFunc(events, func(event BriefHighlight) bool {
 		return event.LifeEvent != nil && event.LifeEvent.State == BriefEventResolved
 	})
 	if retired < 0 {
-		return events, -1, false
+		return events, false
 	}
-	updated, ok := briefRetireEventAt(events, protected, retired)
-	return updated, retired, ok
+	return briefRetireEventAt(events, protected, retired)
 }
 
 func briefRetireEventAt(
@@ -154,7 +153,7 @@ func briefReserveEventItems(
 			continue
 		}
 		var retired bool
-		events, _, retired = briefRetireCapacityEvent(events, protected)
+		events, retired = briefRetireCapacityEvent(events, protected)
 		if !retired {
 			return nil, nil, ErrEvidenceItemTooLarge
 		}

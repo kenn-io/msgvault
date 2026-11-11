@@ -317,7 +317,7 @@ func BuildBriefWindow(
 		}
 		trimmed, ok := briefDropUnprotected(selected, mandatory, protected)
 		if !ok {
-			request.retainedEvents, _, ok = briefRetireCapacityEvent(request.retainedEvents, protected)
+			request.retainedEvents, ok = briefRetireCapacityEvent(request.retainedEvents, protected)
 			if !ok {
 				return BriefWindow{}, ErrEvidenceItemTooLarge
 			}

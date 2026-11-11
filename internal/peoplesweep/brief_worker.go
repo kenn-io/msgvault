@@ -511,9 +511,6 @@ func (w *Worker) runBriefCall(
 							return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 						}
 					}
-					if errors.Is(buildErr, ErrEvidenceItemTooLarge) {
-						return nil, briefFailureClass(buildErr), lease, nil
-					}
 					return nil, FailureInvalidOutput, lease, nil
 				}
 				// Brief text and citations do not independently establish a profile
