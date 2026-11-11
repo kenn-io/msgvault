@@ -51,7 +51,7 @@ func (s *Store) LoadWakeupStateKey(ctx context.Context, key string) (WakeupState
 		return WakeupState{}, nil, fmt.Errorf("load wakeup state: %w", err)
 	}
 	var state WakeupState
-	if err = json.Unmarshal([]byte(raw), &state); err != nil {
+	if err = json.Unmarshal([]byte(raw), &state, json.RejectUnknownMembers(true)); err != nil {
 		return WakeupState{}, nil, fmt.Errorf("decode wakeup state: %w", err)
 	}
 	return state, []byte(raw), nil
