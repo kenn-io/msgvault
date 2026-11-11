@@ -121,6 +121,7 @@ func TestGraphErrorKeepsOnlyCodes(t *testing.T) {
 		{"oversized", `{"error":{"code":4,"message":"` + strings.Repeat("x", 64<<10) + `"}}`, "graph request failed (HTTP 400)", 0, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
 			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = fmt.Fprint(w, tt.body)
@@ -128,9 +129,9 @@ func TestGraphErrorKeepsOnlyCodes(t *testing.T) {
 			_, err := c.VerifyPage(t.Context(), "100")
 			var apiErr *APIError
 			require.ErrorAs(t, err, &apiErr)
-			assert.Equal(t, tt.code, apiErr.Code)
-			assert.Equal(t, tt.subcode, apiErr.Subcode)
-			assert.EqualError(t, err, tt.want)
+			assert.Equal(tt.code, apiErr.Code)
+			assert.Equal(tt.subcode, apiErr.Subcode)
+			assert.EqualError(err, tt.want)
 		})
 	}
 }
@@ -144,19 +145,20 @@ func TestGraphRefusalWithHTTP200(t *testing.T) {
 		{"unreadable error", `{"error":"synthetic-page-secret"}`, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 				_, _ = fmt.Fprint(w, tt.body)
 			})
 			_, err := c.VerifyPage(t.Context(), "100")
-			require.Error(t, err)
-			assert.NotContains(t, err.Error(), "synthetic-page-secret")
+			require.Error(err)
+			assert.NotContains(err.Error(), "synthetic-page-secret")
 			apiErr, ok := errors.AsType[*APIError](err)
 			if tt.code == 0 {
-				assert.False(t, ok, "an error envelope without a code is not a provider refusal")
+				assert.False(ok, "an error envelope without a code is not a provider refusal")
 				return
 			}
-			require.True(t, ok)
-			assert.Equal(t, APIError{Status: http.StatusOK, Code: 10, Subcode: 2018}, *apiErr)
+			require.True(ok)
+			assert.Equal(APIError{Status: http.StatusOK, Code: 10, Subcode: 2018}, *apiErr)
 		})
 	}
 }

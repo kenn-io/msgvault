@@ -120,6 +120,36 @@ func TestModerateCommentSurvivesSync(t *testing.T) {
 	assert.True(target.Hidden, "a later sync keeps the hide made through msgvault")
 }
 
+func TestModerateCommentDeleteMarksReplies(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Parent comment"), *comment("100_203", "100_200", "Sibling comment")}
+	f.comments["100_201"] = []Object{*comment("100_202", "100_201", "First reply")}
+	f.comments["100_202"] = []Object{*comment("100_204", "100_202", "Nested reply")}
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	ids := map[string]int64{}
+	for _, id := range []string{"100_200", "100_201", "100_202", "100_203", "100_204"} {
+		ids[id] = message(t, st, src.ID, id).ID
+	}
+	require.Equal(ids["100_202"], message(t, st, src.ID, "100_204").ReplyToMessageID.Int64)
+	target, err := ResolveCommentTarget(t.Context(), st, ids["100_201"])
+	require.NoError(err)
+	client, _ := writeFixture(t, http.StatusOK, `{"success":true}`)
+	require.NoError(ModerateComment(t.Context(), st, client, target, ActionDelete))
+
+	for id, want := range map[string]bool{"100_200": false, "100_201": true, "100_202": true, "100_203": false, "100_204": true} {
+		var deleted bool
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`, ids[id]).Scan(&deleted))
+		assert.Equal(want, deleted, id)
+	}
+	for id, want := range map[string]string{"100_201": "Parent comment", "100_202": "First reply", "100_204": "Nested reply"} {
+		text, err := st.GetMessageBodyText(t.Context(), ids[id])
+		require.NoError(err)
+		assert.Equal(want, text, "the archive keeps the text of deleted %s", id)
+	}
+}
+
 func TestModerateCommentRefusals(t *testing.T) {
 	st, f, imp, src := setupImport(t)
 	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}

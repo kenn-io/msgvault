@@ -131,8 +131,9 @@ works for Facebook Page comments and [Instagram comments](instagram-comments.md)
 After Meta accepts the change, msgvault records it. A hidden comment stays
 hidden in the archive across later syncs. A deleted comment stays in the
 archive, marked as deleted from its source, like other messages removed from a
-provider. A comment already deleted from Meta cannot be changed. Posts and
-media captions cannot be changed with this command.
+provider. Its archived replies are marked deleted with it. A comment already
+deleted from Meta cannot be changed. Posts and media captions cannot be changed
+with this command.
 
 The token needs Meta's `pages_manage_engagement` permission for Facebook
 comments, or `instagram_manage_comments` for Instagram comments. When Meta

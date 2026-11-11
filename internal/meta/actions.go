@@ -125,7 +125,7 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 	// so the archive does not disagree with Meta.
 	local := context.WithoutCancel(ctx)
 	if action == ActionDelete {
-		return st.MarkMessageDeletedContext(local, target.SourceID, target.CommentID)
+		return st.MarkMessageThreadDeletedContext(local, target.SourceID, target.CommentID)
 	}
 	return setCommentHidden(local, st, target.MessageID, action == ActionHide)
 }

@@ -3620,6 +3620,32 @@ func (s *Store) MarkMessageDeletedContext(ctx context.Context, sourceID int64, s
 	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 }
 
+// MarkMessageThreadDeletedContext marks a source message and every archived
+// reply below it in the same source as deleted from source.
+func (s *Store) MarkMessageThreadDeletedContext(ctx context.Context, sourceID int64, sourceMessageID string) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	write := func(q querier) error {
+		_, err := q.Exec(fmt.Sprintf(`
+			WITH RECURSIVE thread(id) AS (
+				SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?
+				UNION
+				SELECT m.id FROM messages m JOIN thread ON m.reply_to_message_id = thread.id
+				WHERE m.source_id = ?
+			)
+			UPDATE messages
+			SET deleted_from_source_at = %s
+			WHERE id IN (SELECT id FROM thread) AND deleted_from_source_at IS NULL
+		`, s.dialect.Now()), sourceID, sourceMessageID, sourceID)
+		return err
+	}
+	if s.syncGeneration == nil {
+		return write(boundQuerier{ctx: ctx, q: s.db})
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+}
+
 // MessageDeletedFromSourceContext reports whether a source message is archived
 // and marked deleted from its source.
 func (s *Store) MessageDeletedFromSourceContext(ctx context.Context, sourceID int64, sourceMessageID string) (bool, error) {
