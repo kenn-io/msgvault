@@ -226,6 +226,9 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 			all := append([]map[string]any(nil), chat.Participants...)
 			before := rosterMembers(t, st, sum.SourceID, chat.ID)
 			require.Len(before, 4)
+			receiptsBefore, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
+			require.NoError(err)
+			require.Len(receiptsBefore, 4)
 			work := &rosterWork{}
 			if interrupted {
 				f.mu.Lock()
@@ -243,6 +246,12 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 				require.NoError(err)
 				assert.False(complete)
 				assert.Equal(remaining, rosterMembers(t, st, sum.SourceID, chat.ID))
+				receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
+				require.NoError(err)
+				assert.Len(receipts, len(receiptsBefore))
+				for key := range receiptsBefore {
+					assert.Contains(receipts, key)
+				}
 			} else {
 				detail, err := imp.client.GetChat(t.Context(), chat.ID)
 				require.NoError(err)
@@ -255,10 +264,20 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 				require.NoError(err)
 				assert.False(complete)
 				assert.Equal(before, rosterMembers(t, st, sum.SourceID, chat.ID))
+				receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
+				require.NoError(err)
+				assert.Len(receipts, len(receiptsBefore))
+				for key := range receiptsBefore {
+					assert.Contains(receipts, key)
+				}
 				_, complete, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 				require.NoError(err)
 				assert.True(complete)
 				assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 1)
+				finalReceipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
+				require.NoError(err)
+				require.Len(finalReceipts, 1)
+				assert.Contains(finalReceipts, imp.res.identifierForUser(all[0]["id"].(string)))
 			}
 		})
 	}

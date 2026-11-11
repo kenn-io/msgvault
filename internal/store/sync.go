@@ -434,6 +434,21 @@ type SourceImportItem struct {
 	ErrorMessage    sql.NullString
 }
 
+// DeleteBeeperRosterReceiptsContext removes the specified room receipts.
+func (s *Store) DeleteBeeperRosterReceiptsContext(ctx context.Context, sourceID int64, provider string, identifiers []string) error {
+	if len(identifiers) == 0 {
+		return nil
+	}
+	args := []any{sourceID, provider}
+	for _, id := range identifiers {
+		args = append(args, id)
+	}
+	return s.withSyncSourceWriteContext(ctx, sourceID, func(q querier) error {
+		_, err := q.Exec(`DELETE FROM source_import_items WHERE source_id = ? AND provider = ? AND provider_id IN (`+placeholders(len(identifiers))+`)`, args...)
+		return err
+	})
+}
+
 // BeeperRosterReceiptsContext reads the active member receipts for one room.
 func (s *Store) BeeperRosterReceiptsContext(ctx context.Context, sourceID int64, provider string) (map[string]SourceImportItem, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT provider_id, COALESCE(checksum, ''), status FROM source_import_items WHERE source_id = ? AND provider = ?`, sourceID, provider)

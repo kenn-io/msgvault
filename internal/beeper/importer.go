@@ -1063,10 +1063,7 @@ func (imp *Importer) ensureConversation(
 	if opts.skipRoster {
 		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature {
 			if ch.Participants.HasMore {
-				if routeEvidence.Failure != "" {
-					return convID, true, membership, imp.store.InvalidateConversationMessagingRouteEvidence(ctx, convID)
-				}
-				return convID, true, membership, nil
+				return convID, true, membership, imp.refreshTruncatedRoute(ctx, convID, routeEvidence)
 			}
 			keys := imp.rosterKeys(detail.Participants.Items)
 			settled, err := imp.refreshRosterProof(ctx, sourceID, convID, rosterProvider(ch.ID), detail, detail.Participants.Items, keys, opts.AccountID, routeEvidence, membership)

@@ -183,7 +183,39 @@ func (imp *Importer) replaceRosterMembership(ctx context.Context, sourceID, conv
 			return nil, err
 		}
 	}
+	if err := imp.cleanRosterReceipts(ctx, sourceID, provider, keys, opts); err != nil {
+		return nil, err
+	}
 	return owners, nil
+}
+
+func (imp *Importer) cleanRosterReceipts(ctx context.Context, sourceID int64, provider string, active []string, opts ImportOptions) error {
+	receipts, err := imp.store.BeeperRosterReceiptsContext(ctx, sourceID, provider)
+	if err != nil {
+		return err
+	}
+	for _, key := range active {
+		delete(receipts, key)
+	}
+	keys := make([]string, 0, len(receipts))
+	for key := range receipts {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for len(keys) > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if opts.stopRequested() {
+			return errBeeperBudgetExpired
+		}
+		n := min(16, len(keys))
+		if err := imp.store.DeleteBeeperRosterReceiptsContext(ctx, sourceID, provider, keys[:n]); err != nil {
+			return err
+		}
+		keys = keys[n:]
+	}
+	return nil
 }
 
 func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, keys []string, opts ImportOptions, bridgePrefix string) error {

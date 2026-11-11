@@ -526,55 +526,92 @@ func TestRosterMembershipResumesAfterStop(t *testing.T) {
 }
 
 func TestRosterCleanupResumesAgainstChangedSnapshot(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := rosterRetryChat()
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	work := &rosterWork{}
-	restoredMember := chat.Participants[40]
-	f.mu.Lock()
-	chat.Participants = chat.Participants[:24]
-	chat.Participants[1]["isAdmin"] = true
-	f.mu.Unlock()
-	detail, err := imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	opts := ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
-		var count int
-		err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = (SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?)`), sum.SourceID, chat.ID).Scan(&count)
-		require.NoError(err)
-		return count <= 48
-	}}
-	_, _, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{}) //nolint:dogsled // Only the stop error is needed.
-	require.ErrorIs(err, errBeeperBudgetExpired)
-	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 48)
-	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-	require.NoError(err)
-	assert.Contains(unresolved, chat.ID)
-	f.mu.Lock()
-	chat.Participants = append(chat.Participants, restoredMember)
-	f.mu.Unlock()
-	detail, err = imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	imp = NewImporter(st, imp.client)
-	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
-	require.NoError(err)
-	assert.True(complete)
-	members := rosterMembers(t, st, sum.SourceID, chat.ID)
-	assert.Len(members, 25)
-	restoredID, ok := restoredMember["id"].(string)
-	require.True(ok)
-	restored := participantForBeeperUser(t, st, restoredID)
-	assert.Contains(members, restored)
-	adminID, ok := chat.Participants[1]["id"].(string)
-	require.True(ok)
-	admin := participantForBeeperUser(t, st, adminID)
-	var role string
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT role FROM conversation_participants WHERE participant_id = ? AND conversation_id = (SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?)`), admin, sum.SourceID, chat.ID).Scan(&role))
-	assert.Equal("admin", role)
+	for _, prune := range []bool{false, true} {
+		t.Run(fmt.Sprintf("prune=%t", prune), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := newFakeBeeper(t)
+			chat := rosterRetryChat()
+			f.addChat(chat)
+			other := budgetTestChat("!other:example.test", 1, time.Now())
+			f.addChat(other)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+			require.NoError(err)
+			otherReceipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(other.ID))
+			require.NoError(err)
+			require.NotEmpty(otherReceipts)
+			work := &rosterWork{}
+			restoredMember := chat.Participants[40]
+			f.mu.Lock()
+			chat.Participants = chat.Participants[:24]
+			chat.Participants[1]["isAdmin"] = true
+			f.mu.Unlock()
+			detail, err := imp.client.GetChat(t.Context(), chat.ID)
+			require.NoError(err)
+			opts := ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
+				var count int
+				err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = (SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?)`), sum.SourceID, chat.ID).Scan(&count)
+				require.NoError(err)
+				if prune {
+					receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
+					require.NoError(err)
+					return len(receipts) <= 48
+				}
+				return count <= 48
+			}}
+			_, _, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{}) //nolint:dogsled // Only the stop error is needed.
+			require.ErrorIs(err, errBeeperBudgetExpired)
+			if prune {
+				receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
+				require.NoError(err)
+				require.Len(receipts, 48)
+				assert.Equal("members", work.Phase)
+				assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 24)
+			} else {
+				assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 48)
+			}
+			unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+			require.NoError(err)
+			assert.Contains(unresolved, chat.ID)
+			f.mu.Lock()
+			chat.Participants = append(chat.Participants, restoredMember)
+			f.mu.Unlock()
+			detail, err = imp.client.GetChat(t.Context(), chat.ID)
+			require.NoError(err)
+			imp = NewImporter(st, imp.client)
+			_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+			require.NoError(err)
+			assert.True(complete)
+			members := rosterMembers(t, st, sum.SourceID, chat.ID)
+			assert.Len(members, 25)
+			restoredID, ok := restoredMember["id"].(string)
+			require.True(ok)
+			restored := participantForBeeperUser(t, st, restoredID)
+			assert.Contains(members, restored)
+			adminID, ok := chat.Participants[1]["id"].(string)
+			require.True(ok)
+			admin := participantForBeeperUser(t, st, adminID)
+			var role string
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT role FROM conversation_participants WHERE participant_id = ? AND conversation_id = (SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?)`), admin, sum.SourceID, chat.ID).Scan(&role))
+			assert.Equal("admin", role)
+			receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(chat.ID))
+			require.NoError(err)
+			expected := make([]string, 0, len(chat.Participants))
+			for _, member := range chat.Participants {
+				expected = append(expected, imp.res.identifierForUser(member["id"].(string)))
+			}
+			actual := make([]string, 0, len(receipts))
+			for key := range receipts {
+				actual = append(actual, key)
+			}
+			assert.ElementsMatch(expected, actual)
+			otherAfter, err := st.BeeperRosterReceiptsContext(t.Context(), sum.SourceID, rosterProvider(other.ID))
+			require.NoError(err)
+			assert.Equal(otherReceipts, otherAfter)
+			assert.Equal("done", work.Phase)
+		})
+	}
 }
 
 // serial: SQL logging and the default logger are process-wide.

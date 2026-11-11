@@ -3,6 +3,7 @@ package beeper
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -84,8 +85,9 @@ func TestImportMessagingRouteBridgeProof(t *testing.T) {
 			}
 			requirements.NoError(json.Unmarshal([]byte(raw), &metadata))
 			requirements.NotNil(metadata.Route)
-			assertions.Len(metadata.Route.ParticipantIDs, 2)
-			assertions.Len(metadata.Route.SelfParticipantIDs, 1)
+			self := participantForBeeperUser(t, st, "@me:beeper.local")
+			assertions.ElementsMatch([]int64{peer, self}, metadata.Route.ParticipantIDs)
+			assertions.Equal([]int64{self}, metadata.Route.SelfParticipantIDs)
 		})
 	}
 }
@@ -1460,55 +1462,85 @@ func TestThrottledMissingChatProbesDoNotBlockListedChats(t *testing.T) {
 }
 
 func TestAppliedRosterRefreshesRouteAccountAndMerge(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := budgetTestChat("!applied-route:example.test", 2, time.Now().Add(-48*time.Hour))
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { requirements.NoError(st.Close()) })
-	source, err := st.GetOrCreateSource("beeper", "signal")
-	requirements.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET last_sync_at=? WHERE id=?`), time.Now().UTC(), source.ID)
-	requirements.NoError(err)
-	detail, err := imp.client.GetChat(t.Context(), chat.ID)
-	requirements.NoError(err)
-	opts := ImportOptions{AccountID: "signal", NoMedia: true, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"}}
-	state := NewSyncState()
-	_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
-	requirements.NoError(err)
-	requirements.Equal("done", state.Chats[chat.ID].RosterWork.Phase)
-	peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
-	person, _, err := st.CreatePersonFromParticipant(peer)
-	requirements.NoError(err)
-	query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
-	before, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
-	requirements.NoError(err)
-	requirements.Len(before.Routes.Items, 1)
-	assertions.Equal("archive_verified", before.Routes.Items[0].Status)
-	opts.routeAccount.Status = "disconnected"
-	imp = NewImporter(st, imp.client)
-	_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
-	requirements.NoError(err)
-	after, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
-	requirements.NoError(err)
-	requirements.Len(after.Routes.Items, 1)
-	assertions.Equal("unresolved", after.Routes.Items[0].Status)
-	assertions.Contains(after.Routes.Items[0].Reasons, "account_not_connected")
-	detail.Merge = &ChatMerge{ChatIDs: []string{"!underlying:example.test"}}
-	opts.routeAccount.Status = "connected"
-	imp = NewImporter(st, imp.client)
-	_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
-	requirements.NoError(err)
-	merged, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
-	requirements.NoError(err)
-	requirements.Len(merged.Routes.Items, 1)
-	assertions.Equal("merged_container", merged.Routes.Items[0].Status)
-	var raw string
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT metadata FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), source.ID, chat.ID).Scan(&raw))
-	var metadata struct {
-		Route store.MessagingRouteEvidence `json:"messaging_route"`
+	for _, truncated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("truncated=%t", truncated), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newFakeBeeper(t)
+			chat := budgetTestChat("!applied-route:example.test", 2, time.Now().Add(-48*time.Hour))
+			chat.ParticipantsTruncated = truncated
+			f.addChat(chat)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { requirements.NoError(st.Close()) })
+			source, err := st.GetOrCreateSource("beeper", "signal")
+			requirements.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET last_sync_at=? WHERE id=?`), time.Now().UTC(), source.ID)
+			requirements.NoError(err)
+			listing, err := imp.client.SearchChats(t.Context(), SearchChatsParams{AccountID: "signal"})
+			requirements.NoError(err)
+			requirements.Len(listing.Items, 1)
+			detail := &listing.Items[0]
+			opts := ImportOptions{AccountID: "signal", NoMedia: true, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"}}
+			state := NewSyncState()
+			_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
+			requirements.NoError(err)
+			requirements.Equal("done", state.Chats[chat.ID].RosterWork.Phase)
+			peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+			person, _, err := st.CreatePersonFromParticipant(peer)
+			requirements.NoError(err)
+			query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
+			before, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+			requirements.NoError(err)
+			requirements.Len(before.Routes.Items, 1)
+			assertions.Equal("archive_verified", before.Routes.Items[0].Status)
+			var beforeCount int
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_contact_observations`).Scan(&beforeCount))
+			state.Chats[chat.ID].RosterWork.MemberFirst = false
+			opts.routeAccount.Status = "disconnected"
+			imp = NewImporter(st, imp.client)
+			_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
+			requirements.NoError(err)
+			after, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+			requirements.NoError(err)
+			requirements.Len(after.Routes.Items, 1)
+			assertions.Equal("unresolved", after.Routes.Items[0].Status)
+			assertions.Contains(after.Routes.Items[0].Reasons, "account_not_connected")
+			opts.routeAccount.Status = "connected"
+			state.Chats[chat.ID].RosterWork.MemberFirst = false
+			imp = NewImporter(st, imp.client)
+			_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
+			requirements.NoError(err)
+			recovered, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+			requirements.NoError(err)
+			requirements.Len(recovered.Routes.Items, 1)
+			assertions.Equal("archive_verified", recovered.Routes.Items[0].Status)
+			state.Chats[chat.ID].RosterWork.MemberFirst = false
+			detail.MergedIntoChatID = "!destination:example.test"
+			detail.Merge = &ChatMerge{ChatIDs: []string{"!underlying:example.test"}}
+			opts.routeAccount.Status = "connected"
+			imp = NewImporter(st, imp.client)
+			_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
+			requirements.NoError(err)
+			merged, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
+			requirements.NoError(err)
+			requirements.Len(merged.Routes.Items, 1)
+			assertions.Equal("merged_container", merged.Routes.Items[0].Status)
+			var raw string
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT metadata FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), source.ID, chat.ID).Scan(&raw))
+			var metadata struct {
+				Route store.MessagingRouteEvidence `json:"messaging_route"`
+			}
+			requirements.NoError(json.Unmarshal([]byte(raw), &metadata))
+			assertions.True(metadata.Route.Merged)
+			assertions.Equal([]string{"!underlying:example.test"}, metadata.Route.MemberChatIDs)
+			assertions.Equal("!destination:example.test", metadata.Route.MergedIntoChatID)
+			assertions.True(metadata.Route.MembershipComplete)
+			self := participantForBeeperUser(t, st, "@me:beeper.local")
+			assertions.ElementsMatch([]int64{peer, self}, metadata.Route.ParticipantIDs)
+			assertions.Equal([]int64{self}, metadata.Route.SelfParticipantIDs)
+			assertions.Equal("done", state.Chats[chat.ID].RosterWork.Phase)
+			var afterCount int
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participant_contact_observations`).Scan(&afterCount))
+			assertions.Equal(beforeCount, afterCount)
+		})
 	}
-	requirements.NoError(json.Unmarshal([]byte(raw), &metadata))
-	assertions.True(metadata.Route.Merged)
-	assertions.Equal([]string{"!underlying:example.test"}, metadata.Route.MemberChatIDs)
 }
