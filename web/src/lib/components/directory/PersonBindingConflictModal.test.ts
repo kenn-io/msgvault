@@ -368,6 +368,7 @@ describe('PersonBindingConflictModal', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry profile reload' }));
     await vi.advanceTimersByTimeAsync(0);
     expect(retrySettlers).toHaveLength(2);
+    expect(screen.getByRole('status').textContent).toContain('Reloading profiles');
     expect(screen.queryByRole('button', { name: 'Retry profile reload' })).toBeNull();
 
     for (const settle of retrySettlers) {
@@ -471,6 +472,8 @@ describe('PersonBindingConflictModal', () => {
     await selectSurvivor();
     vi.useFakeTimers();
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByRole('status').textContent).toContain('Reloading profiles');
     await vi.advanceTimersByTimeAsync(500);
     expect(screen.getByText('Updated 7 (Person 7)')).toBeDefined();
     expect(screen.getByRole('checkbox')).toHaveProperty('checked', false);
