@@ -328,6 +328,9 @@
     color: var(--text-danger);
   }
   @media (max-width: 640px) {
+    .feedback {
+      min-height: 32px;
+    }
     .profiles {
       grid-template-columns: 1fr;
     }
