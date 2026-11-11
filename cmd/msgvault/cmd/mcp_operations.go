@@ -51,7 +51,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	}
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
-	backend.supported = append(backend.supported, peopleProviderMCPCapabilities(capabilities)...)
+	backend.supported = append(backend.supported, peopleProviderMCPCapabilities(hasRoute, capabilities)...)
 	return backend
 }
 

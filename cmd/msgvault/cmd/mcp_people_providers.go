@@ -12,29 +12,17 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func peopleProviderMCPCapabilities(c *apiprotocol.MCPCapabilities) []string {
-	if c == nil {
+func peopleProviderMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCapabilities) []string {
+	const path = "/api/v1/settings/people-inference"
+	if !hasRoute("getSettingsPeopleInference", http.MethodGet, path) {
 		return nil
 	}
-	var names []string
-	for _, want := range []struct {
-		name, id, method, path string
-		property               bool
-	}{
-		{"get_people_provider_settings", "getSettingsPeopleInference", http.MethodGet, "/api/v1/settings/people-inference", false},
-		{"select_people_provider", "selectSettingsPeopleInference", http.MethodPost, "/api/v1/settings/people-inference/select", true},
-		{"disable_people_inference", "disableSettingsPeopleInference", http.MethodPost, "/api/v1/settings/people-inference/disable", false},
-	} {
-		for _, route := range c.Routes {
-			if route.OperationID == want.id && route.Method == want.method && route.Path == want.path && (!want.property || slices.Contains(route.RequestProperties, "name")) {
-				names = append(names, want.name)
-				break
-			}
-		}
+	names := []string{"get_people_provider_settings"}
+	if hasRoute("selectSettingsPeopleInference", http.MethodPost, path+"/select") && mcpRequestPropertiesPresent(capabilities, "selectSettingsPeopleInference", "name") {
+		names = append(names, "select_people_provider")
 	}
-	// Mutations need a current safe view for disclosure and revision checks.
-	if !slices.Contains(names, "get_people_provider_settings") {
-		return nil
+	if hasRoute("disableSettingsPeopleInference", http.MethodPost, path+"/disable") {
+		names = append(names, "disable_people_inference")
 	}
 	return names
 }
@@ -42,6 +30,12 @@ func peopleProviderMCPCapabilities(c *apiprotocol.MCPCapabilities) []string {
 type peopleProviderArgs struct {
 	ETag string `json:"etag"`
 	Name string `json:"name,omitempty"`
+}
+
+func decodePeopleProviderWrite(name string, args map[string]any) (peopleProviderArgs, bool) {
+	input, err := decodeMCPOperationArguments[peopleProviderArgs](args)
+	valid := err == nil && input.ETag != "" && ((name == "select_people_provider" && strings.TrimSpace(input.Name) != "") || (name == "disable_people_inference" && input.Name == ""))
+	return input, valid
 }
 
 func peopleProviderDefinite(code string) bool {
@@ -57,8 +51,8 @@ func (b *daemonMCPOperations) executePeopleProviderOperation(ctx context.Context
 		}
 		result, err = readMCPOperationJSON[generated.PeopleInferenceSettingsResponse](ctx, b.client, http.MethodGet, "/api/v1/settings/people-inference", nil, http.StatusOK)
 	case "select_people_provider", "disable_people_inference":
-		input, e := decodeMCPOperationArguments[peopleProviderArgs](args)
-		if e != nil || input.ETag == "" || (name == "select_people_provider" && strings.TrimSpace(input.Name) == "") || (name == "disable_people_inference" && input.Name != "") {
+		input, valid := decodePeopleProviderWrite(name, args)
+		if !valid {
 			return operationFailure("invalid_arguments", false), true, nil
 		}
 		if name == "select_people_provider" {
@@ -97,15 +91,12 @@ func (b *daemonMCPOperations) peopleProviderDisclosure(ctx context.Context, name
 	if name != "select_people_provider" && name != "disable_people_inference" {
 		return "", false, nil
 	}
-	input, err := decodeMCPOperationArguments[peopleProviderArgs](args)
-	if err != nil || input.ETag == "" || (name == "select_people_provider" && strings.TrimSpace(input.Name) == "") || (name == "disable_people_inference" && input.Name != "") {
+	input, valid := decodePeopleProviderWrite(name, args)
+	if !valid {
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
 	current, _, err := b.executePeopleProviderOperation(ctx, "get_people_provider_settings", nil)
-	if err != nil {
-		return "", true, err
-	}
-	if current == nil || current.IsError {
+	if err != nil || current == nil || current.IsError {
 		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 	}
 	if current.ETag != input.ETag {
@@ -113,7 +104,7 @@ func (b *daemonMCPOperations) peopleProviderDisclosure(ctx context.Context, name
 	}
 	effect := "Enable people inference with the selected provider; native checks and consent remain required. Restart may be required for the new policy to run."
 	if name == "disable_people_inference" {
-		effect = "Disable inference and revoke active consent. Operator re-consent is required to enable later. Restart may be required."
+		effect = "Disable inference and revoke active consent for both configured and running providers shown in the current policy. Operator re-consent is required to enable later. Restart may be required."
 	}
 	data, err := json.Marshal(struct {
 		Operation string         `json:"operation"`

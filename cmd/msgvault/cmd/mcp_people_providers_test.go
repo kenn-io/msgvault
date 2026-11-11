@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,7 +65,7 @@ request_timeout = "45s"
 		if approved == 0 {
 			a.Contains(req.Params.Message, "Enable people inference with the selected provider")
 		} else if approved == 1 {
-			a.Contains(req.Params.Message, "revoke active consent")
+			a.Contains(req.Params.Message, "revoke active consent for both configured and running providers")
 			a.Contains(req.Params.Message, "re-consent")
 		}
 		approved++
@@ -134,18 +135,25 @@ func TestPeopleProviderDiscoveryRequiresEachNativeContract(t *testing.T) {
 		{OperationID: "selectSettingsPeopleInference", Method: "POST", Path: "/api/v1/settings/people-inference/select", RequestProperties: []string{"name"}},
 		{OperationID: "disableSettingsPeopleInference", Method: "POST", Path: "/api/v1/settings/people-inference/disable"},
 	}}
-	a.Len(peopleProviderMCPCapabilities(c), 3)
+	a.Len(newDaemonMCPOperations(nil, c).capabilities(), 3)
 	c.Routes[1].RequestProperties = nil
 	c.Routes[2].Path = "/wrong"
-	a.Equal([]string{"get_people_provider_settings"}, peopleProviderMCPCapabilities(c))
+	a.Equal([]string{"get_people_provider_settings"}, newDaemonMCPOperations(nil, c).capabilities())
 	c.Routes[0].Path = "/wrong"
-	a.Empty(peopleProviderMCPCapabilities(c))
+	a.Empty(newDaemonMCPOperations(nil, c).capabilities())
 }
 
 func TestPeopleProviderPostCommitFailureIsUncertain(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	var code string
+	var postCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"broken":`))
+			return
+		}
+		postCount.Add(1)
 		a.Equal(`"revision"`, req.Header.Get("If-Match"))
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":"` + code + `","message":"synthetic private diagnostic"}`))
@@ -153,7 +161,12 @@ func TestPeopleProviderPostCommitFailureIsUncertain(t *testing.T) {
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	r.NoError(err)
-	backend := &daemonMCPOperations{client: client, supported: []string{"disable_people_inference", "select_people_provider"}}
+	backend := &daemonMCPOperations{client: client, supported: []string{"get_people_provider_settings", "disable_people_inference", "select_people_provider"}}
+	_, err = backend.OperationDisclosure(t.Context(), "disable_people_inference", map[string]any{"etag": `"revision"`})
+	var refusal *mcpserver.OperationRefusalError
+	r.ErrorAs(err, &refusal)
+	a.Equal("operation_context_unavailable", refusal.Code)
+	a.Zero(postCount.Load())
 	for _, tc := range []struct {
 		name, code string
 		uncertain  bool
