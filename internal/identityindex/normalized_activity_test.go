@@ -300,7 +300,7 @@ func TestBuildUnsentTailKeepsSentAnchor(t *testing.T) {
 	}
 }
 
-func TestSparseNormalizedActivityExcludesEmailInviteEvents(t *testing.T) {
+func TestSparseNormalizedActivityRetainsEmailInviteEdges(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	root, db := writeRelationshipBaseFixture(t, true)
 	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
@@ -312,15 +312,28 @@ func TestSparseNormalizedActivityExcludesEmailInviteEvents(t *testing.T) {
 	path := func(dataset string) string { return parquetDatasetGlob(root, dataset) }
 	messages := "(SELECT * REPLACE (id::BIGINT AS source_id, id <= 3 AS archive_only) FROM " + readParquetRelation([]string{path("messages")}, true) + ")"
 	sql := buildSparseRelationshipActivitySQL(path, messages, readParquetRelation([]string{path("message_recipients")}, false), 2026, "")
-	rows, err := db.QueryContext(t.Context(), "SELECT DISTINCT message_id FROM ("+sql+") ORDER BY message_id")
+	rows, err := db.QueryContext(t.Context(), "SELECT DISTINCT message_id, email_invite FROM ("+sql+") ORDER BY message_id")
 	requirements.NoError(err)
 	defer func() { requirements.NoError(rows.Close()) }()
 	var got []int64
+	var invitations []int64
 	for rows.Next() {
 		var id int64
-		requirements.NoError(rows.Scan(&id))
+		var invite bool
+		requirements.NoError(rows.Scan(&id, &invite))
 		got = append(got, id)
+		if invite {
+			invitations = append(invitations, id)
+		}
 	}
 	requirements.NoError(rows.Err())
-	assertions.Equal([]int64{2, 3, 4}, got)
+	requirements.NoError(rows.Close())
+	assertions.Equal([]int64{1, 2, 3, 4}, got)
+	assertions.Equal([]int64{1}, invitations)
+	expanded := ExpandedActivityRelation("("+sql+")", readParquetRelation([]string{path("conversation_participants")}, false), readParquetRelation([]string{path("participants")}, false), readParquetRelation([]string{path("participant_clusters")}, false), readParquetRelation([]string{path("owner_participants")}, false))
+	var logicalCount, inviteCount int
+	requirements.NoError(db.QueryRowContext(t.Context(), logicalActivitySQL(expanded, "true")+" SELECT count(*) FROM logical_units").Scan(&logicalCount))
+	requirements.NoError(db.QueryRowContext(t.Context(), "SELECT count(*) FROM ("+RelationshipTemperatureFactsSQL(expanded, time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC))+") WHERE message_id = 1").Scan(&inviteCount))
+	assertions.Equal(3, logicalCount)
+	assertions.Zero(inviteCount)
 }

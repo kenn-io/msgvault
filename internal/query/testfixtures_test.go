@@ -39,6 +39,7 @@ type MessageFixture struct {
 	SizeEstimate        int64
 	HasAttachments      bool
 	HiddenTextPresent   bool
+	ArchiveOnly         bool
 	AttachmentCount     int
 	DeletedAt           *time.Time // nil = NULL
 	InternalDeletedAt   *time.Time // nil = omitted from legacy fixtures / NULL in opted-in fixtures
@@ -258,6 +259,7 @@ type MessageOpt struct {
 	SizeEstimate        int64
 	HasAttachments      bool
 	HiddenTextPresent   bool
+	ArchiveOnly         bool
 	DeletedAt           *time.Time
 	InternalDeletedAt   *time.Time
 	DeletedFromSourceAt *time.Time
@@ -310,6 +312,7 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 		SizeEstimate:           opt.SizeEstimate,
 		HasAttachments:         opt.HasAttachments,
 		HiddenTextPresent:      opt.HiddenTextPresent,
+		ArchiveOnly:            opt.ArchiveOnly,
 		DeletedAt:              opt.DeletedAt,
 		InternalDeletedAt:      opt.InternalDeletedAt,
 		DeletedFromSourceAt:    opt.DeletedFromSourceAt,
@@ -754,6 +757,13 @@ func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
 			columns = messagesColumnsWithDeletedAt
 			rowFormatter = func(message MessageFixture) string {
 				return formatMessageFixture(b.t, columns, message.sqlValuesWithInternalDeletion())
+			}
+		}
+		if slices.ContainsFunc(msgs, func(message MessageFixture) bool { return message.ArchiveOnly }) {
+			baseFormatter := rowFormatter
+			cols += ", archive_only"
+			rowFormatter = func(message MessageFixture) string {
+				return strings.TrimSuffix(baseFormatter(message), ")") + ", " + strconv.FormatBool(message.ArchiveOnly) + ")"
 			}
 		}
 		rows := joinRows(msgs, rowFormatter)

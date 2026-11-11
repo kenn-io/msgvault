@@ -37,11 +37,10 @@ func identityRequestIsSourceOnly(request ExploreRequest) bool {
 	return identityRequestIsUnfiltered(request)
 }
 
-// sentIdentityConditions filters before logical grouping so drafts cannot
-// become chat anchors or change identity counts. Explore keeps the full set.
+// sentIdentityConditions excludes drafts and email invitations before grouping.
 func sentIdentityConditions(conditions string) string {
 	return conditions + ` AND NOT EXISTS (
-		SELECT 1 FROM relationship_unsent_messages a
+		SELECT 1 FROM relationship_activity_exclusions a
 		WHERE a.message_id = analytical_entries.message_id
 	)`
 }
