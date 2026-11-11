@@ -230,7 +230,7 @@ func runAddThreads(cmd *cobra.Command, deps threadsCommandDeps, appID, redirectU
 			}
 			optOut, err := cmd.Flags().GetBool("no-default-identity")
 			if err != nil {
-				return err
+				return fmt.Errorf("read default identity preference: %w", err)
 			}
 			if err := setDefaultIdentityOptOut(ctx, cmd, st, source, optOut); err != nil {
 				return fmt.Errorf("the Threads account %s and its token were saved, but finishing setup failed; rerun add-threads: %w", identifier, err)

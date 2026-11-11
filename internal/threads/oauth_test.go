@@ -73,7 +73,7 @@ func TestThreadsOAuthFullCallback(t *testing.T) {
 		require.Error(t, err)
 		callback := registered + "&state=expected&error=access_denied&error_description=provider-secret"
 		_, err = ParseOAuthCallback(registered, callback, "expected")
-		require.EqualError(t, err, "Threads authorization was denied")
+		require.EqualError(t, err, "threads authorization was denied")
 		_, err = ParseOAuthCallback(registered, callback, "other")
 		require.EqualError(t, err, "invalid Threads OAuth callback")
 	})

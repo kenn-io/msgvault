@@ -98,7 +98,7 @@ func ParseOAuthCallback(registeredURI, returnedURL, expectedState string) (strin
 		return "", bad
 	}
 	if query.Get("error") == "access_denied" && query.Get("code") == "" {
-		return "", errors.New("Threads authorization was denied")
+		return "", errors.New("threads authorization was denied")
 	}
 	if query.Get("code") == "" || query.Has("error") || query.Has("error_reason") || query.Has("error_description") {
 		return "", bad
