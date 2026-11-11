@@ -123,11 +123,11 @@ func (s *Store) listPackVerificationCandidates(ctx context.Context, hashes []str
 func (s *Store) packVerificationCandidates(ctx context.Context, root string) ([]string, error) {
 	layout, err := packstore.NewLayout(root, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open attachment layout: %w", err)
 	}
 	backend, err := packstore.NewFilesystemBackend(layout, packstore.FilesystemBackendOptions{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open attachment backend: %w", err)
 	}
 	defer backend.Close() //nolint:errcheck // inventory opens no pack readers
 	inventory, err := backend.Inventory(ctx, "")
@@ -151,16 +151,14 @@ func (s *Store) packVerificationCandidates(ctx context.Context, root string) ([]
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			rows.Close() //nolint:errcheck // read-only cursor
-			return nil, err
+			return nil, errors.Join(fmt.Errorf("scan indexed pack: %w", err), rows.Close())
 		}
 		if _, ok := present[id]; !ok {
 			missing = append(missing, id)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close() //nolint:errcheck // read-only cursor
-		return nil, err
+		return nil, errors.Join(fmt.Errorf("list indexed packs: %w", err), rows.Close())
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

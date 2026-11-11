@@ -702,11 +702,13 @@ func TestAttachmentIngestMutationLeaseWaitsForMaintenance(t *testing.T) {
 	require.NoError(<-done)
 }
 
+const verificationFixtureBlobs = 140
+
 // restoreLooseCopies recreates canonical loose copies of packed fixtures.
-func (f *attachmentMaintenanceFixture) restoreLooseCopies(format string, count int) []string {
+func (f *attachmentMaintenanceFixture) restoreLooseCopies(format string) []string {
 	f.t.Helper()
 	var hashes []string
-	for i := range count {
+	for i := range verificationFixtureBlobs {
 		hashes = append(hashes, f.writeLoose(fmt.Appendf(nil, format, i)))
 	}
 	return hashes
@@ -728,24 +730,41 @@ func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newAttachmentMaintenanceFixture(t)
-	const existing = 140
+	const existing = verificationFixtureBlobs
 	for i := range existing {
 		f.addLoose([]byte(fmt.Sprintf("existing packed content %d", i)))
 	}
 	_, err := f.maintenance.pack(t.Context(), 0)
 	require.NoError(err)
-	restored := f.restoreLooseCopies("existing packed content %d", existing)
+	restored := f.restoreLooseCopies("existing packed content %d")
 	fresh := f.addLoose([]byte("new attachment while verification is pending"))
 	f.maintenance.markPackPending()
 	require.ErrorIs(f.maintenance.runPendingPack(t.Context()), scheduler.ErrReschedule)
 	require.NotNil(f.packedEntry(fresh), "new blobs must not wait for the whole verification cycle")
+	var swept, deferred []string
+	for _, hash := range restored {
+		_, err := os.Stat(filepath.Join(f.dir, hash[:2], hash))
+		if errors.Is(err, os.ErrNotExist) {
+			swept = append(swept, hash)
+		} else {
+			require.NoError(err)
+			deferred = append(deferred, hash)
+		}
+	}
+	require.NotEmpty(swept)
+	require.NotEmpty(deferred)
+	// Recreate swept copies so forgetting the cursor would require another window.
+	f.restoreLooseCopies("existing packed content %d")
 	// A reconstructed daemon resumes the durable verification cursor.
 	resumed, err := newAttachmentMaintenance(f.store, f.dir, nil, true)
 	require.NoError(err)
 	defer func() { require.NoError(resumed.close()) }()
 	resumed.markPackPending()
-	require.NoError(resumed.runPendingPack(t.Context()))
-	for _, hash := range restored {
+	require.NoError(resumed.runPendingPack(t.Context()), "only the tail after the saved cursor remains")
+	for _, hash := range swept {
+		assert.FileExists(filepath.Join(f.dir, hash[:2], hash), "hashes before the saved cursor are not rescanned")
+	}
+	for _, hash := range deferred {
 		assert.NoFileExists(filepath.Join(f.dir, hash[:2], hash))
 	}
 	stats, err := resumed.unpack(t.Context())
@@ -770,7 +789,7 @@ func TestDailyMaintenanceVerificationFollowupsReclaimDeadPacks(t *testing.T) {
 	}
 	_, err := f.maintenance.pack(t.Context(), 0)
 	require.NoError(err)
-	f.restoreLooseCopies("live packed content %d", 140)
+	f.restoreLooseCopies("live packed content %d")
 	sched := scheduler.New(nil).WithLogger(f.maintenance.logger)
 	t.Cleanup(func() { <-sched.Stop().Done() })
 	require.NoError(registerAttachmentMaintenanceJob(sched, f.maintenance))
@@ -824,7 +843,7 @@ func TestVerificationFollowupSkipsLooseEnumeration(t *testing.T) {
 			}
 			_, err := f.maintenance.pack(t.Context(), 0)
 			require.NoError(err)
-			f.restoreLooseCopies("existing packed content %d", 140)
+			f.restoreLooseCopies("existing packed content %d")
 			hash := f.addLoose([]byte("loose blob must wait for an enumerating pass"))
 			require.NoError(f.maintenance.runScheduledPack(t.Context(), false))
 
@@ -868,7 +887,7 @@ func TestVerificationPruningRequestsLoosePacking(t *testing.T) {
 			hash := f.addLoose(content)
 			_, err = f.maintenance.pack(t.Context(), 0)
 			require.NoError(err)
-			f.restoreLooseCopies("existing packed content %d", 140)
+			f.restoreLooseCopies("existing packed content %d")
 			old := f.packedEntry(hash)
 			require.NotNil(old)
 			f.writeLoose(content)
