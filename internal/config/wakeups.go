@@ -114,14 +114,14 @@ func (c WakeupConfig) TrustedDestination() (*url.URL, []netip.Addr, error) {
 func ValidateWakeupDestination(endpoint string) error {
 	target, err := url.Parse(endpoint)
 	if err != nil || target.Scheme != "https" || target.Hostname() == "" || target.User != nil || target.Fragment != "" || target.Opaque != "" || strings.Contains(endpoint, "#") || (target.Port() != "" && target.Port() != "443" && target.Port() != "8443") {
-		return fmt.Errorf("invalid callback")
+		return errors.New("invalid callback")
 	}
 	if ip, e := netip.ParseAddr(target.Hostname()); e == nil {
 		if netguard.ProhibitedIP(ip) {
-			return fmt.Errorf("prohibited callback")
+			return errors.New("prohibited callback")
 		}
 	} else if netguard.ProhibitedHostname(target.Hostname()) {
-		return fmt.Errorf("prohibited callback")
+		return errors.New("prohibited callback")
 	}
 	return nil
 }
