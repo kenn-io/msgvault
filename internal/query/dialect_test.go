@@ -6,12 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPostgreSQLBuildFTSTerm(t *testing.T) {
-	t.Parallel()
-	_, arg := (PostgreSQLQueryDialect{}).BuildFTSTerm([]string{"monthly", "foo-bar", "or"})
-	assert.Equal(t, "monthly:* & foo & bar:* & or:*", arg)
-}
-
 // TestSQLiteBuildFTSTerm asserts the SQLite dialect renders a
 // dialect-neutral term slice into an FTS5 MATCH argument: each term is
 // double-quote-wrapped with a trailing "*" for prefix matching, embedded

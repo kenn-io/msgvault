@@ -108,9 +108,24 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	require.NoError(t, f.Store.UpsertMessageBody(crossField, sql.NullString{String: strings.Repeat("filler ", 17000), Valid: true}, sql.NullString{}))
 	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'alpha'), 'A') || setweight(to_tsvector('simple', 'beta'), 'B'), indexing_version = 2 WHERE id = $1`, crossField)
 	require.NoError(t, err)
-	_, err = f.Store.BackfillFTS(nil)
+
+	for i, vector := range []string{
+		`'alpha':1B 'beta':3B`,
+		`'alpha':1B 'other':1B 'beta':2B`,
+		`'alpha':16382B 'beta':16383B`,
+	} {
+		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("legacy-position-%d", i)).Create(t, f.Store)
+		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = $2::tsvector, indexing_version = 2 WHERE id = $1`, id, vector)
+		require.NoError(t, err)
+	}
+	current := f.CreateMessage("current-index")
+	require.NoError(t, f.Store.UpsertFTS(current, "current marker", "", "", "", ""))
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = search_fts || to_tsvector('simple', 'obsolete') WHERE id = $1`, crossField)
 	require.NoError(t, err)
-	for term, want := range map[string][]int64{"lantern sender": ids, "sender lantern": nil, "sender filler": nil, "alpha beta": nil} {
+	n, err := f.Store.BackfillFTS(nil)
+	require.NoError(t, err)
+	assert.Equal(t, int64(6), n)
+	for term, want := range map[string][]int64{"lantern sender": ids, "sender lantern": nil, "sender filler": nil, "alpha beta": nil, "obsolete": nil, "current marker": {current}} {
 		got, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
 		require.NoError(t, err)
 		assert.ElementsMatch(t, want, got, term)
@@ -353,25 +368,6 @@ func TestStore_NeedsFTSBackfill_HoleAtLowestID(t *testing.T) {
 
 	assert.True(t, f.Store.NeedsFTSBackfill(),
 		"NeedsFTSBackfill must be true when a LOW id is unindexed even if later ids are indexed")
-}
-
-func TestPG_BackfillFTSLegacyPositionBreaks(t *testing.T) {
-	skipUnlessPostgres(t)
-	f := storetest.New(t)
-	for i, vector := range []string{
-		`'alpha':1B 'beta':3B`,
-		`'alpha':1B 'other':1B 'beta':2B`,
-		`'alpha':16382B 'beta':16383B`,
-	} {
-		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("legacy-position-%d", i)).Create(t, f.Store)
-		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = $2::tsvector, indexing_version = 2 WHERE id = $1`, id, vector)
-		require.NoError(t, err)
-	}
-	_, err := f.Store.BackfillFTS(nil)
-	require.NoError(t, err)
-	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alpha beta"}}, 10)
-	require.NoError(t, err)
-	assert.Empty(t, ids)
 }
 
 func TestPG_BackfillFTS_ConcurrentRebuild(t *testing.T) {
