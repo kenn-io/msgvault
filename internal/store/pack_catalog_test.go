@@ -390,10 +390,16 @@ func TestPackVerificationSelectsLooseAndMissingPackMappings(t *testing.T) {
 	require.NoError(err)
 	created := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
 	present, missing, unrecorded := pack.NewPackID(), pack.NewPackID(), pack.NewPackID()
-	healthy := fmt.Sprintf("%064x", 1)
-	loose := fmt.Sprintf("%064x", 2)
-	absent := fmt.Sprintf("%064x", 3)
-	dangling := fmt.Sprintf("%064x", 4)
+	healthy := fmt.Sprintf("%064x", 0x1001)
+	loose := fmt.Sprintf("%064x", 0x1002)
+	absent := fmt.Sprintf("%064x", 0x1003)
+	dangling := fmt.Sprintf("%064x", 0x1004)
+	for i := range 300 {
+		hash := fmt.Sprintf("%064x", i+1)
+		path := filepath.Join(root, hash[:2], hash)
+		require.NoError(os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(os.WriteFile(path, []byte("synthetic"), 0o600))
+	}
 	record := func(id string, hashes ...string) {
 		entries := make([]store.PackIndexEntry, 0, len(hashes))
 		for _, hash := range hashes {
@@ -419,9 +425,15 @@ func TestPackVerificationSelectsLooseAndMissingPackMappings(t *testing.T) {
 	require.NoError(err)
 	require.Len(first, 2)
 	assert.Equal([]string{loose, absent}, []string{first[0].Hash.String(), first[1].Hash.String()})
-	again, err := catalog.ListIndexed(ctx)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = st.FinishPackVerification(canceled, pass)
+	require.Error(err)
+	ctx, pass, err = st.BeginPackVerification(t.Context(), 2, 100)
 	require.NoError(err)
-	assert.Equal(first, again)
+	replayed, err := catalog.ListIndexed(ctx)
+	require.NoError(err)
+	assert.Equal(first, replayed)
 	more, err := st.FinishPackVerification(t.Context(), pass)
 	require.NoError(err)
 	require.True(more)
@@ -432,64 +444,6 @@ func TestPackVerificationSelectsLooseAndMissingPackMappings(t *testing.T) {
 	require.Len(last, 1)
 	assert.Equal(dangling, last[0].Hash.String())
 	more, err = st.FinishPackVerification(t.Context(), pass)
-	require.NoError(err)
-	assert.False(more)
-}
-
-func TestPackVerificationCanceledCheckpointReplaysWindow(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	id := pack.NewPackID()
-	hash := fmt.Sprintf("%064x", 1)
-	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{PackID: id, EntryCount: 2, StoredBytes: 2, CreatedAt: time.Now()},
-		[]store.PackIndexEntry{
-			{BlobHash: hash, PackID: id, Offset: 6, StoredLen: 1, RawLen: 1},
-			{BlobHash: fmt.Sprintf("%064x", 2), PackID: id, Offset: 7, StoredLen: 1, RawLen: 1},
-		}))
-	catalog := store.NewMaintenancePackCatalog(st, root)
-	ctx, pass, err := st.BeginPackVerification(t.Context(), 1, 100)
-	require.NoError(err)
-	first, err := catalog.ListIndexed(ctx)
-	require.NoError(err)
-	require.Len(first, 1)
-	canceled, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = st.FinishPackVerification(canceled, pass)
-	require.Error(err)
-	ctx, replayPass, err := st.BeginPackVerification(t.Context(), 1, 100)
-	require.NoError(err)
-	replayed, err := catalog.ListIndexed(ctx)
-	require.NoError(err)
-	assert.Equal(first, replayed)
-	more, err := st.FinishPackVerification(t.Context(), replayPass)
-	require.NoError(err)
-	assert.True(more, "a successful checkpoint advances this window")
-}
-
-func TestPackVerificationWindowFindsIndexedHashAfterUnindexedFiles(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	for i := range 300 {
-		hash := fmt.Sprintf("%064x", i+1)
-		path := filepath.Join(root, hash[:2], hash)
-		require.NoError(os.MkdirAll(filepath.Dir(path), 0o700))
-		require.NoError(os.WriteFile(path, []byte("synthetic"), 0o600))
-	}
-	id := pack.NewPackID()
-	indexed := fmt.Sprintf("%064x", 300)
-	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{PackID: id, EntryCount: 1, StoredBytes: 1, CreatedAt: time.Now()},
-		[]store.PackIndexEntry{{BlobHash: indexed, PackID: id, Offset: 6, StoredLen: 1, RawLen: 1}}))
-	ctx, pass, err := st.BeginPackVerification(t.Context(), 1, 100)
-	require.NoError(err)
-	entries, err := store.NewMaintenancePackCatalog(st, root).ListIndexed(ctx)
-	require.NoError(err)
-	require.Len(entries, 1)
-	assert.Equal(indexed, entries[0].Hash.String())
-	more, err := st.FinishPackVerification(t.Context(), pass)
 	require.NoError(err)
 	assert.False(more)
 }

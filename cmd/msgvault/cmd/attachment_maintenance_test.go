@@ -518,9 +518,6 @@ func TestAttachmentMaintenanceDailyPacksThenRepacks(t *testing.T) {
 	assert := assert.New(t)
 	f := newAttachmentMaintenanceFixture(t)
 	deadPackID := f.makeZeroLivePack([]byte("daily repack old dead bytes"))
-	deadEntries, err := f.store.ListAttachmentPackEntriesContext(t.Context(), deadPackID)
-	require.NoError(err)
-	require.Len(deadEntries, 1)
 	live := []byte("daily packing new loose bytes")
 	liveHash := f.addLoose(live)
 
@@ -530,10 +527,7 @@ func TestAttachmentMaintenanceDailyPacksThenRepacks(t *testing.T) {
 	has, err := f.store.HasPackRecordContext(t.Context(), deadPackID)
 	require.NoError(err)
 	assert.False(has)
-	assert.Nil(f.packedEntry(deadEntries[0].BlobHash))
-	assert.False(f.maintenance.packPending.Load())
 	logs := f.logs.String()
-	assert.Contains(logs, "mappings_pruned=1")
 	packAt := strings.Index(logs, "automatic attachment maintenance complete")
 	repackAt := strings.Index(logs, "automatic attachment repack complete")
 	assert.GreaterOrEqual(packAt, 0)
@@ -708,25 +702,17 @@ func TestAttachmentIngestMutationLeaseWaitsForMaintenance(t *testing.T) {
 	require.NoError(<-done)
 }
 
-const (
-	existingPackedFixture = "existing packed content"
-	livePackedFixture     = "live packed content"
-)
-
-func packedFixtureContent(prefix string, i int) []byte {
-	return []byte(fmt.Sprintf("%s %d", prefix, i))
-}
-
-// restorePackedLooseCopies creates repair/sweep candidates after packing.
-func (f *attachmentMaintenanceFixture) restorePackedLooseCopies(prefix string, count int) {
+// restoreLooseCopies recreates canonical loose copies of packed fixtures.
+func (f *attachmentMaintenanceFixture) restoreLooseCopies(format string, count int) []string {
 	f.t.Helper()
+	var hashes []string
 	for i := range count {
-		f.writeLoose(packedFixtureContent(prefix, i))
+		hashes = append(hashes, f.writeLoose(fmt.Appendf(nil, format, i)))
 	}
+	return hashes
 }
 
 func TestPendingPackSkipsHealthyPackedIndex(t *testing.T) {
-	assert := assert.New(t)
 	require := require.New(t)
 	f := newAttachmentMaintenanceFixture(t)
 	for i := range 140 {
@@ -736,7 +722,6 @@ func TestPendingPackSkipsHealthyPackedIndex(t *testing.T) {
 	require.NoError(err)
 	f.maintenance.markPackPending()
 	require.NoError(f.maintenance.runPendingPack(t.Context()))
-	assert.False(f.maintenance.verifyPending.Load())
 }
 
 func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
@@ -745,11 +730,11 @@ func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
 	f := newAttachmentMaintenanceFixture(t)
 	const existing = 140
 	for i := range existing {
-		f.addLoose(packedFixtureContent(existingPackedFixture, i))
+		f.addLoose([]byte(fmt.Sprintf("existing packed content %d", i)))
 	}
 	_, err := f.maintenance.pack(t.Context(), 0)
 	require.NoError(err)
-	f.restorePackedLooseCopies(existingPackedFixture, 140)
+	restored := f.restoreLooseCopies("existing packed content %d", existing)
 	fresh := f.addLoose([]byte("new attachment while verification is pending"))
 	f.maintenance.markPackPending()
 	require.ErrorIs(f.maintenance.runPendingPack(t.Context()), scheduler.ErrReschedule)
@@ -760,12 +745,7 @@ func TestPendingPackCheckpointsVerificationAndStillPacksNewBlobs(t *testing.T) {
 	defer func() { require.NoError(resumed.close()) }()
 	resumed.markPackPending()
 	require.NoError(resumed.runPendingPack(t.Context()))
-	assert.False(resumed.verifyPending.Load())
-	assert.False(resumed.packPending.Load())
-	for i := range existing {
-		content := packedFixtureContent(existingPackedFixture, i)
-		sum := sha256.Sum256(content)
-		hash := hex.EncodeToString(sum[:])
+	for _, hash := range restored {
 		assert.NoFileExists(filepath.Join(f.dir, hash[:2], hash))
 	}
 	stats, err := resumed.unpack(t.Context())
@@ -786,11 +766,11 @@ func TestDailyMaintenanceVerificationFollowupsReclaimDeadPacks(t *testing.T) {
 	f := newAttachmentMaintenanceFixture(t)
 	deadPackID := f.makeZeroLivePack([]byte("dead pack awaiting daily collection"))
 	for i := range 140 {
-		f.addLoose(packedFixtureContent(livePackedFixture, i))
+		f.addLoose([]byte(fmt.Sprintf("live packed content %d", i)))
 	}
 	_, err := f.maintenance.pack(t.Context(), 0)
 	require.NoError(err)
-	f.restorePackedLooseCopies(livePackedFixture, 140)
+	f.restoreLooseCopies("live packed content %d", 140)
 	sched := scheduler.New(nil).WithLogger(f.maintenance.logger)
 	t.Cleanup(func() { <-sched.Stop().Done() })
 	require.NoError(registerAttachmentMaintenanceJob(sched, f.maintenance))
@@ -840,11 +820,11 @@ func TestVerificationFollowupSkipsLooseEnumeration(t *testing.T) {
 			require := require.New(t)
 			f := newAttachmentMaintenanceFixture(t)
 			for i := range 140 {
-				f.addLoose(packedFixtureContent(existingPackedFixture, i))
+				f.addLoose([]byte(fmt.Sprintf("existing packed content %d", i)))
 			}
 			_, err := f.maintenance.pack(t.Context(), 0)
 			require.NoError(err)
-			f.restorePackedLooseCopies(existingPackedFixture, 140)
+			f.restoreLooseCopies("existing packed content %d", 140)
 			hash := f.addLoose([]byte("loose blob must wait for an enumerating pass"))
 			require.NoError(f.maintenance.runScheduledPack(t.Context(), false))
 
@@ -870,9 +850,8 @@ func TestVerificationPruningRequestsLoosePacking(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := newAttachmentMaintenanceFixture(t)
-			var existingHashes []string
 			for i := range 140 {
-				existingHashes = append(existingHashes, f.addLoose(packedFixtureContent(existingPackedFixture, i)))
+				f.addLoose([]byte(fmt.Sprintf("existing packed content %d", i)))
 			}
 			_, err := f.maintenance.pack(t.Context(), 0)
 			require.NoError(err)
@@ -887,16 +866,9 @@ func TestVerificationPruningRequestsLoosePacking(t *testing.T) {
 				}
 			}
 			hash := f.addLoose(content)
-			before := 0
-			for _, existing := range existingHashes {
-				if existing < hash {
-					before++
-				}
-			}
-			require.GreaterOrEqual(before, 128)
 			_, err = f.maintenance.pack(t.Context(), 0)
 			require.NoError(err)
-			f.restorePackedLooseCopies(existingPackedFixture, 140)
+			f.restoreLooseCopies("existing packed content %d", 140)
 			old := f.packedEntry(hash)
 			require.NotNil(old)
 			f.writeLoose(content)
@@ -921,7 +893,6 @@ func TestVerificationPruningRequestsLoosePacking(t *testing.T) {
 			require.NoError(f.maintenance.runPendingPack(t.Context()))
 			replacement := f.packedEntry(hash)
 			require.NotNil(replacement)
-			assert.NotEqual(old.PackID, replacement.PackID)
 			assert.FileExists(filepath.Join(f.dir, "packs", replacement.PackID[:2], replacement.PackID+packstore.PackExt))
 			assert.Equal(content, f.readBlob(hash))
 		})

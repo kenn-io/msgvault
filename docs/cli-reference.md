@@ -2668,8 +2668,6 @@ records an error and waits for the next trigger. The first pack tick after a
 restart also checks for blobs left by the previous daemon.
 This command processes the complete eligible backlog immediately.
 
-Automatic passes do not reread packs without a loose copy.
-
 With `[data].loose_attachments = true`, automatic packing is disabled and this
 command refuses to run.
 
