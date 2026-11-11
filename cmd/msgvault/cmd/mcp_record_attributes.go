@@ -88,7 +88,7 @@ func (o *attributePatchOptions) GetBody() any { return o.changes }
 
 func attributeRefusal(code string) bool {
 	switch code {
-	case "attribute_uniqueness_unsupported", "attribute_invalid", "attribute_value_invalid", "attribute_definition_not_found", "attribute_value_not_found", "person_profile_not_found", "attribute_definition_slug_conflict", "attribute_definition_universal_id_conflict", "attribute_definition_revision_conflict", "attribute_definition_not_deletable", "attribute_definition_has_values", "attribute_definition_not_writable", "attribute_definition_inactive", "attribute_value_conflict", "invalid_attribute_slug", "invalid_expected_value_id", "invalid_ordinal", "invalid_object_type", "invalid_attribute_definition_id", "invalid_if_match", "if_match_required", "attributes_unavailable", "persons_unavailable":
+	case "attribute_uniqueness_unsupported", "attribute_invalid", "attribute_value_invalid", "attribute_definition_not_found", "attribute_value_not_found", "attribute_definition_slug_conflict", "attribute_definition_universal_id_conflict", "attribute_definition_revision_conflict", "attribute_definition_not_deletable", "attribute_definition_has_values", "attribute_definition_not_writable", "attribute_definition_inactive", "attribute_value_conflict", "invalid_attribute_slug", "invalid_expected_value_id", "invalid_ordinal", "invalid_object_type", "invalid_attribute_definition_id", "invalid_if_match", "attributes_unavailable", "server_busy", "invalid_request":
 		return true
 	}
 	return false
@@ -217,7 +217,7 @@ func attributeContextRefusal(result *mcpserver.OperationResult) *mcpserver.Opera
 				code = failure.Error
 			}
 		}
-		if attributeRefusal(code) {
+		if code != "" {
 			return &mcpserver.OperationRefusalError{Code: code}
 		}
 	}
