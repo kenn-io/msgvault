@@ -4,13 +4,10 @@ import (
 	"context"
 	"encoding/json/v2"
 	"net/http"
-	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
-	"go.kenn.io/msgvault/internal/personenrichment"
-	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -80,6 +77,12 @@ func enrichmentReplacement(p enrichmentProvider) (*generated.PersonEnrichmentPro
 	if p.Credential == nil || p.Kind == nil || p.Enabled == nil || p.Endpoint == nil || *p.Endpoint == "" || p.AllowedIdentifiers == nil || p.TargetKeys == nil || p.AllowSensitiveTargets == nil || p.RetentionPosture == nil || p.TrainingPosture == nil || p.RefreshInterval == nil || p.RequestTimeout == nil || p.PollInterval == nil || p.MaxJobAge == nil || p.MaxRetries == nil || p.MaxRequestsPerRun == nil || p.MaxRequestsPerDay == nil {
 		return nil, false
 	}
+	// Native PUT trims these hidden fields, so padded values cannot be preserved.
+	for _, value := range []*string{p.Endpoint, p.PollEndpoint, p.Mode, p.Tier} {
+		if value != nil && *value != strings.TrimSpace(*value) {
+			return nil, false
+		}
+	}
 	pollEndpoint := p.PollEndpoint
 	if *p.Kind == string(generated.PersonEnrichmentProviderUpdateKindExa) {
 		// Successful native GETs omit Exa poll_endpoint; nonnil credential metadata proves CredentialEndpoint accepted its required empty value.
@@ -107,9 +110,6 @@ func enrichmentProjection(result *mcpserver.OperationResult, writes bool) *mcpse
 		if p.Name == "" || p.Enabled == nil || p.MaxRetries == nil || p.MaxRequestsPerRun == nil || p.MaxRequestsPerDay == nil {
 			return operationFailure("invalid_operation_response", writes)
 		}
-		if p.NumResults == nil {
-			p.NumResults = new(int64) // Native JSON omits zero.
-		}
 		output.Providers = append(output.Providers, mcpserver.EnrichmentProviderPolicy{Name: p.Name, Enabled: *p.Enabled, NumResults: p.NumResults, MaxRetries: *p.MaxRetries, MaxRequestsPerRun: *p.MaxRequestsPerRun, MaxRequestsPerDay: *p.MaxRequestsPerDay})
 	}
 	result.Output = output
@@ -117,16 +117,11 @@ func enrichmentProjection(result *mcpserver.OperationResult, writes bool) *mcpse
 }
 
 func validEnrichmentArguments(a enrichmentArguments) bool {
-	if a.Name == "" || strings.TrimSpace(a.Name) != a.Name || a.ETag == "" || providercredentials.ValidateID(providercredentials.PersonEnrichmentID(a.Name)) != nil {
+	if a.Name == "" || a.ETag == "" {
 		return false
 	}
 	if a.Enabled == nil && a.NumResults == nil && a.MaxRetries == nil && a.MaxRequestsPerRun == nil && a.MaxRequestsPerDay == nil {
 		return false
-	}
-	for _, n := range []*int64{a.NumResults, a.MaxRetries, a.MaxRequestsPerRun, a.MaxRequestsPerDay} {
-		if n != nil && *n < 0 {
-			return false
-		}
 	}
 	return true
 }
@@ -135,9 +130,6 @@ func (b *daemonMCPOperations) enrichmentContext(ctx context.Context, a enrichmen
 	result, err := readMCPOperationJSON[enrichmentSettings](ctx, b.client, http.MethodGet, "/api/v1/settings", nil, http.StatusOK)
 	if err != nil || result == nil || result.IsError {
 		return result, nil, "operation_context_unavailable", err
-	}
-	if result.ETag == "" {
-		return result, nil, "operation_context_unavailable", nil
 	}
 	if result.ETag != a.ETag {
 		return result, nil, "settings_conflict", nil
@@ -150,9 +142,6 @@ func (b *daemonMCPOperations) enrichmentContext(ctx context.Context, a enrichmen
 		replacement, ok := enrichmentReplacement(p)
 		if !ok {
 			return result, nil, "provider_policy_unreconstructable", nil
-		}
-		if (a.MaxRetries != nil && *a.MaxRetries == 0) || (a.NumResults != nil && *a.NumResults == 0 && *p.Kind == "exa") {
-			return result, nil, "provider_policy_zero_uses_default", nil
 		}
 		if a.Enabled != nil {
 			replacement.Enabled = *a.Enabled
@@ -216,35 +205,6 @@ func (b *daemonMCPOperations) enrichmentOperationDisclosure(ctx context.Context,
 	if refusal != "" {
 		return "", true, &mcpserver.OperationRefusalError{Code: refusal}
 	}
-	var enabling any
-	if a.Enabled != nil && *a.Enabled {
-		for _, provider := range current.Output.(enrichmentSettings).Providers {
-			if provider.Name == a.Name {
-				classes := []string{}
-				for _, class := range *provider.AllowedIdentifiers {
-					if !slices.Contains([]personenrichment.IdentifierClass{personenrichment.IdentifierName, personenrichment.IdentifierEmail, personenrichment.IdentifierPhone, personenrichment.IdentifierCurrentCompany, personenrichment.IdentifierPublicProfileURL}, personenrichment.IdentifierClass(class)) {
-						return "", true, &mcpserver.OperationRefusalError{Code: "provider_policy_unreconstructable"}
-					}
-					classes = append(classes, class)
-				}
-				// Postures and target keys are operator-supplied free text. Keep unknown
-				// text private while showing the approver that host review is needed.
-				posture := func(value string) string {
-					if value == "zero_retention" || value == "no_training" {
-						return value
-					}
-					return "custom; inspect on host"
-				}
-				enabling = struct {
-					AllowedIdentifiers    []string `json:"allowed_identifiers"`
-					TargetCount           int      `json:"target_count"`
-					AllowSensitiveTargets bool     `json:"allow_sensitive_targets"`
-					RetentionPosture      string   `json:"retention_posture"`
-					TrainingPosture       string   `json:"training_posture"`
-				}{classes, len(*provider.TargetKeys), *provider.AllowSensitiveTargets, posture(*provider.RetentionPosture), posture(*provider.TrainingPosture)}
-			}
-		}
-	}
 	current = enrichmentProjection(current, false)
 	if current.IsError {
 		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
@@ -254,7 +214,6 @@ func (b *daemonMCPOperations) enrichmentOperationDisclosure(ctx context.Context,
 		Current   any                 `json:"current"`
 		Changes   enrichmentArguments `json:"changes"`
 		Effect    string              `json:"effect"`
-		Enabling  any                 `json:"enabling,omitempty"`
-	}{name, current.Output, a, "Update the configured provider policy; consent remains separate, restart may be required, and native settings cleanup may remove a stored credential already bound to a different origin.", enabling}, json.Deterministic(true))
+	}{name, current.Output, a, "Update the configured provider policy; consent remains separate, restart may be required, and native settings cleanup may remove a stored credential already bound to a different origin."}, json.Deterministic(true))
 	return string(data), true, err
 }

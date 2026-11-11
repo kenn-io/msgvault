@@ -76,9 +76,6 @@ func newOperationalDefinition(name, description string, family OperationFamily, 
 	definition := toolDefinition{name: name, description: description, inputSchema: input, outputSchema: operationalOutputSchema(output), annotations: toolAnnotations(!writes)}
 	openWorld := writes && family == OperationFamilySources
 	definition.annotations.OpenWorldHint = &openWorld
-	if writes && family == OperationFamilyEnrichmentSettings {
-		definition.annotations.DestructiveHint = new(true)
-	}
 	return operationalDefinition{definition: definition, family: family, writes: writes}
 }
 

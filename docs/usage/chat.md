@@ -838,11 +838,9 @@ daemon supplies it, such as `started`, `pending`, or `coalesced`; check source a
 scheduler status for progress.
 
 Native validation refuses to disable the last provider while enrichment is enabled.
-For Exa, `num_results: 0` reloads as 1; `max_retries: 0` reloads as 5 for
-all providers. These ineffective edits are refused before approval. Enabling
-shows the provider's permitted data classes and retention and training posture
-for approval. Custom postures and target keys require host inspection. Consent
-remains separate, and the daemon may need a restart.
+Enabled Exa rejects `num_results: 0`; disabled Exa reloads it as 1.
+`max_retries: 0` reloads as 5 for all providers. Consent remains separate, and
+the daemon may need a restart.
 
 For Slack changes, read `get_slack_sync_policy` first and pass its exact `etag`.
 Omitted fields are preserved; `false` and empty arrays are explicit changes.

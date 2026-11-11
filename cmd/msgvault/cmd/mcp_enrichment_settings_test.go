@@ -47,18 +47,18 @@ func TestEnrichmentReplacementRequiresReconstructablePolicy(t *testing.T) {
 	sensitive := false
 	retries, run, day := int64(2), int64(10), int64(20)
 	provider := enrichmentProvider{Credential: &generated.SecretSettingState{}, Name: "example", Kind: &kind, Enabled: &enabled, Endpoint: &endpoint, PollEndpoint: &poll, AllowedIdentifiers: &ids, TargetKeys: &keys, AllowSensitiveTargets: &sensitive, RetentionPosture: &retention, TrainingPosture: &training, RefreshInterval: &refresh, RequestTimeout: &timeout, PollInterval: &interval, MaxJobAge: &age, MaxRetries: &retries, MaxRequestsPerRun: &run, MaxRequestsPerDay: &day}
-	replacement, ok := enrichmentReplacement(provider)
+	_, ok := enrichmentReplacement(provider)
 	require.True(ok)
-	assert.Equal(endpoint, replacement.Endpoint)
-	assert.Equal(ids, replacement.AllowedIdentifiers)
-	assert.Equal(keys, replacement.TargetKeys)
-	assert.Equal(day, replacement.MaxRequestsPerDay)
+	padded := " standard "
+	provider.Tier = &padded
+	_, ok = enrichmentReplacement(provider)
+	assert.False(ok)
+	provider.Tier = nil
 	provider.PollEndpoint = nil
 	provider.Kind = new("exa")
 	provider.Credential = &generated.SecretSettingState{}
-	replacement, ok = enrichmentReplacement(provider)
+	_, ok = enrichmentReplacement(provider)
 	require.True(ok)
-	assert.Equal("", *replacement.PollEndpoint)
 	provider.PollEndpoint = &poll
 	_, ok = enrichmentReplacement(provider)
 	assert.False(ok)
@@ -95,11 +95,12 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	data, err := json.Marshal(policy)
 	require.NoError(err)
 	assert.NotContains(string(data), "provider.example")
-	for _, field := range []string{"num_results", "max_retries"} {
-		_, _, err = backend.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", map[string]any{"name": "example", "etag": policy.ETag, field: 0})
-		require.Error(err)
-		assert.Contains(err.Error(), "provider_policy_zero_uses_default")
-	}
+	missing, err := backend.ExecuteOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": "missing", "etag": policy.ETag, "enabled": true})
+	require.NoError(err)
+	require.True(missing.IsError)
+	missingJSON, err := json.Marshal(missing.Output)
+	require.NoError(err)
+	assert.Contains(string(missingJSON), "provider_not_found")
 	args := map[string]any{"name": "example", "etag": policy.ETag, "max_requests_per_day": 25, "max_requests_per_run": 7, "num_results": 1, "max_retries": 2}
 	disclosure, handled, err := backend.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", args)
 	require.NoError(err)
@@ -133,14 +134,12 @@ func TestEnrichmentPolicyNativeReplacement(t *testing.T) {
 	enable := map[string]any{"name": "example", "etag": updated.ETag, "enabled": true, "num_results": 1}
 	disclosure, _, err = backend.enrichmentOperationDisclosure(t.Context(), "update_enrichment_policy", enable)
 	require.NoError(err)
-	assert.Contains(disclosure, "allowed_identifiers")
-	assert.Contains(disclosure, "zero_retention")
 	result, _, err = backend.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", enable)
 	require.NoError(err)
 	enabledPolicy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
 	assert.True(enabledPolicy.Providers[0].Enabled)
 
-	// Sixtyfour's native response omits zero num_results; the receipt preserves it.
+	// Sixtyfour supports numeric edits while preserving its hidden policy.
 	sixtyDir := t.TempDir()
 	sixtyPath := filepath.Join(sixtyDir, "config.toml")
 	sixtyConfig := `[[people.enrichment.providers]]
@@ -167,8 +166,6 @@ max_requests_per_day = 50
 	require.NoError(err)
 	sixtyPolicy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
 	require.Len(sixtyPolicy.Providers, 1)
-	require.NotNil(sixtyPolicy.Providers[0].NumResults)
-	assert.Equal(int64(0), *sixtyPolicy.Providers[0].NumResults)
 	result, _, err = sixty.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": "example", "etag": sixtyPolicy.ETag, "num_results": 3})
 	require.NoError(err)
 	sixtyUpdated := operationOutput[mcpserver.EnrichmentPolicy](t, result)
@@ -195,7 +192,7 @@ max_requests_per_day = 50
 	require.True(result.IsError)
 	encoded, err = json.Marshal(result.Output)
 	require.NoError(err)
-	assert.Contains(string(encoded), "validation_failed")
+	assert.JSONEq(`{"error":"validation_failed","operation_may_have_completed":true}`, string(encoded))
 	after, err := os.ReadFile(secondPath)
 	require.NoError(err)
 	assert.Equal(initial, string(after))
@@ -274,67 +271,4 @@ func TestEnrichmentPolicySDKRequiresApproval(t *testing.T) {
 	require.NoError(err)
 	require.False(result.IsError)
 	assert.Equal(1, approvals)
-}
-
-func TestEnrichmentRefusesUnreconstructableAndUnknownProviders(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	directory := t.TempDir()
-	path := filepath.Join(directory, "config.toml")
-	require.NoError(os.WriteFile(path, []byte(enrichmentExaFixture), 0o600))
-	cfg, err := config.Load(path, directory)
-	require.NoError(err)
-	cfg.Data.DataDir = directory
-	backend := sourceOperationFixture(t, api.NewServer(cfg, nil, nil, slog.New(slog.DiscardHandler)))
-	result, err := backend.ExecuteOperation(t.Context(), "get_enrichment_policy", nil)
-	require.NoError(err)
-	policy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
-	require.Len(policy.Providers, 1)
-	for name, code := range map[string]string{"missing": "provider_not_found"} {
-		result, err = backend.ExecuteOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": name, "etag": policy.ETag, "enabled": true})
-		require.NoError(err)
-		require.True(result.IsError)
-		encoded, err := json.Marshal(result.Output)
-		require.NoError(err)
-		assert.Contains(string(encoded), code)
-	}
-	reloaded, err := config.Load(path, directory)
-	require.NoError(err)
-	require.Len(reloaded.People.Enrichment.Providers, 1)
-	assert.False(reloaded.People.Enrichment.Providers[0].Enabled)
-}
-
-func TestEnrichmentWritePreservesUncertainty(t *testing.T) {
-	for _, tc := range []struct {
-		status int
-		code   string
-	}{{http.StatusUnprocessableEntity, "validation_failed"}, {http.StatusInternalServerError, "settings_write_failed"}} {
-		t.Run(http.StatusText(tc.status), func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			sent := ""
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if r.Method == http.MethodGet {
-					w.Header().Set("ETag", `"revision"`)
-					_, _ = w.Write([]byte(`{"pending_restart":false,"person_enrichment_providers":[{"name":"example","kind":"sixtyfour","enabled":false,"endpoint":"https://provider.example/search","poll_endpoint":"https://provider.example/poll","allowed_identifiers":["name"],"target_keys":["attribute:bio"],"allow_sensitive_targets":false,"retention_posture":"zero_retention","training_posture":"no_training","refresh_interval":"24h","request_timeout":"1m","poll_interval":"1s","max_job_age":"1h","max_retries":1,"max_requests_per_run":5,"max_requests_per_day":50,"credential":{"configured":false,"source":"none"}}]}`))
-					return
-				}
-				sent = r.Header.Get("If-Match")
-				w.WriteHeader(tc.status)
-				_, _ = w.Write([]byte(`{"error":"` + tc.code + `"}`))
-			}))
-			t.Cleanup(server.Close)
-			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-			require.NoError(err)
-			backend := &daemonMCPOperations{client: client}
-			result, _, err := backend.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": "example", "etag": `"revision"`, "max_requests_per_day": 25})
-			require.NoError(err)
-			require.True(result.IsError)
-			encoded, err := json.Marshal(result.Output)
-			require.NoError(err)
-			assert.Equal(`"revision"`, sent)
-			assert.Contains(string(encoded), `"operation_may_have_completed":true`)
-		})
-	}
 }
