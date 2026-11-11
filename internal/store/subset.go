@@ -1031,15 +1031,14 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 	if present, err := sourceTableExists(ctx, tx, "meeting_link_decisions"); err != nil {
 		return nil, err
 	} else if present {
-		if _, err := copyByName(ctx, tx, "meeting_link_decisions", `left_message_id IN (SELECT id FROM selected_messages) AND right_message_id IN (SELECT id FROM selected_messages)`); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,parent_decision_id,via_message_id,is_explicit)
+			SELECT id,left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,NULL,
+			CASE WHEN via_message_id IN (SELECT id FROM selected_messages) THEN via_message_id END,is_explicit
+			FROM src.meeting_link_decisions WHERE left_message_id IN (SELECT id FROM selected_messages) AND right_message_id IN (SELECT id FROM selected_messages)`); err != nil {
 			return nil, fmt.Errorf("copy meeting link decisions: %w", err)
 		}
-		if present, err := sourceTableExists(ctx, tx, "meeting_link_decision_origins"); err != nil {
-			return nil, err
-		} else if present {
-			if _, err := copyByName(ctx, tx, "meeting_link_decision_origins", `decision_id IN (SELECT id FROM meeting_link_decisions) AND origin_message_id IN (SELECT id FROM messages)`); err != nil {
-				return nil, fmt.Errorf("copy meeting decision origins: %w", err)
-			}
+		if _, err := tx.ExecContext(ctx, `UPDATE meeting_link_decisions SET parent_decision_id=(SELECT parent_decision_id FROM src.meeting_link_decisions s WHERE s.id=meeting_link_decisions.id) WHERE (SELECT parent_decision_id FROM src.meeting_link_decisions s WHERE s.id=meeting_link_decisions.id) IN (SELECT id FROM meeting_link_decisions)`); err != nil {
+			return nil, fmt.Errorf("copy meeting decision ancestry: %w", err)
 		}
 	}
 

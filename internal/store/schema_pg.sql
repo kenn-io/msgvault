@@ -4013,13 +4013,13 @@ CREATE TABLE IF NOT EXISTS meeting_link_decisions (
     right_key TEXT NOT NULL,
     right_anchor TEXT NOT NULL,
     decision TEXT NOT NULL CHECK (decision IN ('link', 'split')),
-    UNIQUE (left_message_id, left_kind, left_key, right_message_id, right_kind, right_key)
+    parent_decision_id BIGINT REFERENCES meeting_link_decisions(id) ON DELETE CASCADE,
+    via_message_id BIGINT REFERENCES messages(id) ON DELETE CASCADE,
+    is_explicit BOOLEAN NOT NULL DEFAULT TRUE
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_explicit ON meeting_link_decisions(left_message_id, left_kind, left_key, right_message_id, right_kind, right_key) WHERE is_explicit;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_reversible ON meeting_link_decisions(parent_decision_id, left_message_id, left_kind, left_key, right_message_id, right_kind, right_key, via_message_id) WHERE NOT is_explicit AND via_message_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_permanent ON meeting_link_decisions(parent_decision_id, left_message_id, left_kind, left_key, right_message_id, right_kind, right_key) WHERE NOT is_explicit AND via_message_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_right ON meeting_link_decisions(right_message_id);
-CREATE TABLE IF NOT EXISTS meeting_link_decision_origins (
-    decision_id BIGINT NOT NULL REFERENCES meeting_link_decisions(id) ON DELETE CASCADE,
-    path BIGINT NOT NULL,
-    origin_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    PRIMARY KEY (decision_id, path, origin_message_id)
-);
-CREATE INDEX IF NOT EXISTS idx_meeting_link_decision_origins_message ON meeting_link_decision_origins(origin_message_id);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_parent ON meeting_link_decisions(parent_decision_id);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_via ON meeting_link_decisions(via_message_id);

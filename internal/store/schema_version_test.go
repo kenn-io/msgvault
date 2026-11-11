@@ -120,15 +120,13 @@ func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
-func TestSchemaVersionMeetingDecisionsParentUpgrade(t *testing.T) {
+func TestSchemaVersionMeetingDecisionsPreviousUpgrade(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := t.Context()
-	_, err := f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decision_origins`)
+	_, err := f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decisions`)
 	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decisions`)
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '41' WHERE key = 'schema_version'`)
+	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '40' WHERE key = 'schema_version'`)
 	require.NoError(err)
 	require.Error(f.Store.ValidateSchemaContext(ctx))
 	require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))

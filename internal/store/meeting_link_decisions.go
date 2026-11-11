@@ -95,6 +95,45 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			}
 		}
 		ctx := withWritableSnapshot(ctx, s.db.DB, tx)
+		clearStored := func(cause error) error {
+			if decision != "clear" || !errors.Is(cause, sql.ErrNoRows) {
+				return cause
+			}
+			leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
+			rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
+			args := []any{a.ID, a.Kind, a.Key, b.ID, b.Kind, b.Key}
+			args = append(args, leftArgs...)
+			args = append(args, rightArgs...)
+			rows, err := tx.QueryContext(ctx, `SELECT d.id FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE d.left_message_id=? AND d.left_kind=? AND d.left_key=? AND d.right_message_id=? AND d.right_kind=? AND d.right_key=?`+leftScope+rightScope, args...)
+			if err != nil {
+				return err
+			}
+			var ids []int64
+			for rows.Next() {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					rows.Close()
+					return err
+				}
+				ids = append(ids, id)
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			if err := rows.Err(); err != nil {
+				return err
+			}
+			if len(ids) == 0 {
+				return cause
+			}
+			for _, id := range ids {
+				if err := deleteMeetingDecisionTx(ctx, tx, meetingDecisionEdge{id: id}, true); err != nil {
+					return err
+				}
+			}
+			result = MeetingLinkDecisionResult{Left: a.ref(), Right: b.ref(), State: "automatic"}
+			return nil
+		}
 		budget := calrecur.RequestReadBudget
 		for _, endpoint := range []*meetingDecisionEndpoint{&a, &b} {
 			ref, err := endpoint.meetingRef()
@@ -103,10 +142,10 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			}
 			record, err := s.meetingAutomaticRecordContext(ctx, ref, &budget)
 			if err != nil {
-				return err
+				return clearStored(err)
 			}
 			if endpoint.Kind == "evt" && len(record.Links) == 0 {
-				return sql.ErrNoRows
+				return clearStored(sql.ErrNoRows)
 			}
 			if endpoint.Kind == "evt" && endpoint.Key == "" {
 				rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{endpoint.ID}, &budget)
@@ -121,11 +160,11 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		}
 		canonicalA, aliasesA, err := s.materializedMeetingEndpoint(ctx, a, &budget)
 		if err != nil {
-			return err
+			return clearStored(err)
 		}
 		canonicalB, aliasesB, err := s.materializedMeetingEndpoint(ctx, b, &budget)
 		if err != nil {
-			return err
+			return clearStored(err)
 		}
 		if compareMeetingEndpoints(canonicalA, canonicalB) == 0 {
 			return ErrMeetingLinkSameCopy
@@ -133,18 +172,17 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		if compareMeetingEndpoints(canonicalA, canonicalB) > 0 {
 			canonicalA, canonicalB = canonicalB, canonicalA
 		}
-		seen := map[string]bool{}
+		seen := map[int64]bool{}
 		for _, id := range append(aliasesA, aliasesB...) {
 			choices, err := s.meetingDecisionsForMessage(ctx, id, &budget)
 			if err != nil {
 				return err
 			}
 			for _, choice := range choices {
-				key := choice.a.ref() + "/" + choice.b.ref()
-				if seen[key] {
+				if seen[choice.id] {
 					continue
 				}
-				seen[key] = true
+				seen[choice.id] = true
 				left, _, err := s.materializedMeetingEndpoint(ctx, choice.a, &budget)
 				if errors.Is(err, sql.ErrNoRows) {
 					continue
@@ -280,114 +318,33 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, into in
 		if compareMeetingEndpoints(d.a, d.b) > 0 {
 			d.a, d.b = d.b, d.a
 		}
-		newID, ok, err := insertMeetingDecisionCopy(ctx, tx, d.meetingDecisionEdge)
+		var via any
+		if dedup {
+			via = from
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,parent_decision_id,via_message_id,is_explicit) VALUES (?,?,?,?,?,?,?,?,?,?,?,FALSE) ON CONFLICT DO NOTHING`, d.a.ID, d.a.Kind, d.a.Key, d.a.Anchor, d.b.ID, d.b.Kind, d.b.Key, d.b.Anchor, d.decision, d.id, via)
 		if err != nil {
 			return fmt.Errorf("copy meeting link decision: %w", err)
 		}
-		if !ok {
-			continue
-		}
-		if err := addMeetingDecisionPaths(ctx, tx, newID, d.id, from, dedup); err != nil {
-			return fmt.Errorf("copy meeting decision origins: %w", err)
-		}
 	}
 	return nil
 }
 
-// insertMeetingDecisionCopy returns the copied choice, or the existing choice that other
-// merges also support. ok is false when a choice of the owner's own already stands there.
-func insertMeetingDecisionCopy(ctx context.Context, tx *loggedTx, d meetingDecisionEdge) (id int64, ok bool, err error) {
-	keys := []any{d.a.ID, d.a.Kind, d.a.Key, d.b.ID, d.b.Kind, d.b.Key}
-	err = tx.QueryRowContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,left_anchor,right_anchor,decision) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key) DO NOTHING RETURNING id`, append(keys, d.a.Anchor, d.b.Anchor, d.decision)...).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		err = tx.QueryRowContext(ctx, `SELECT id FROM meeting_link_decisions WHERE left_message_id=? AND left_kind=? AND left_key=? AND right_message_id=? AND right_kind=? AND right_key=? AND decision=? AND id IN (SELECT decision_id FROM meeting_link_decision_origins)`, append(keys, d.decision)...).Scan(&id)
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, false, nil
-		}
-	}
-	return id, err == nil, err
-}
-
-// addMeetingDecisionPaths gives the copy one support path per path of its source. A merge
-// extends every path, so undoing any step of a path drops it, and the choice stays while
-// another path stands.
-func addMeetingDecisionPaths(ctx context.Context, tx *loggedTx, id, source, from int64, dedup bool) error {
-	paths, err := meetingDecisionPaths(ctx, tx, source)
-	if err != nil {
-		return err
-	}
-	if len(paths) == 0 && !dedup {
-		// The source was the owner's own choice, so it now stands without undo.
-		_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decision_origins WHERE decision_id=?`, id)
-		return err
-	}
-	if dedup && len(paths) == 0 {
-		paths = [][]int64{nil}
-	}
-	var base int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(path)+1,0) FROM meeting_link_decision_origins WHERE decision_id=?`, id).Scan(&base); err != nil {
-		return err
-	}
-	for i, path := range paths {
-		if dedup {
-			path = append(path, from)
-		}
-		for _, origin := range path {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decision_origins(decision_id,path,origin_message_id) VALUES (?,?,?) ON CONFLICT(decision_id,path,origin_message_id) DO NOTHING`, id, base+int64(i), origin); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// meetingDecisionPaths returns the origin messages of each support path of a choice.
-func meetingDecisionPaths(ctx context.Context, tx *loggedTx, decision int64) ([][]int64, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT path,origin_message_id FROM meeting_link_decision_origins WHERE decision_id=? ORDER BY path`, decision)
-	if err != nil {
-		return nil, err
-	}
-	var paths [][]int64
-	last := int64(-1)
-	for rows.Next() {
-		var path, origin int64
-		if err := rows.Scan(&path, &origin); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		if path != last {
-			paths, last = append(paths, nil), path
-		}
-		paths[len(paths)-1] = append(paths[len(paths)-1], origin)
-	}
-	return paths, errors.Join(rows.Err(), rows.Close())
-}
-
-// undoMeetingLinkDecisionsTx drops the support paths that depend on the batch and the
-// copied choices left without any path.
+// undoMeetingLinkDecisionsTx removes copies created by the batch and their descendants.
 func undoMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, batchID string) error {
-	const hit = `SELECT 1 FROM meeting_link_decision_origins b JOIN messages m ON m.id=b.origin_message_id WHERE b.decision_id=o.decision_id AND b.path=o.path AND m.delete_batch_id=?`
-	if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id IN (SELECT decision_id FROM meeting_link_decision_origins) AND NOT EXISTS (SELECT 1 FROM meeting_link_decision_origins o WHERE o.decision_id=meeting_link_decisions.id AND NOT EXISTS (`+hit+`))`, batchID); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decision_origins WHERE EXISTS (SELECT 1 FROM meeting_link_decision_origins o WHERE o.decision_id=meeting_link_decision_origins.decision_id AND o.path=meeting_link_decision_origins.path AND EXISTS (`+hit+`))`, batchID)
+	_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE via_message_id IN (SELECT id FROM messages WHERE delete_batch_id=?)`, batchID)
 	return err
 }
 
-// deleteMeetingDecisionTx removes a choice. When the owner clears it, the hidden originals
-// it was copied from go too, so undoing the merge does not bring it back.
+// deleteMeetingDecisionTx clears source choices or replaces a direct choice.
 func deleteMeetingDecisionTx(ctx context.Context, tx *loggedTx, d meetingDecisionEdge, clear bool) error {
-	keys := []any{d.a.ID, d.a.Kind, d.a.Key, d.b.ID, d.b.Kind, d.b.Key}
-	const copied = `c.left_message_id=? AND c.left_kind=? AND c.left_key=? AND c.right_message_id=? AND c.right_kind=? AND c.right_key=?`
-	const touches = `(x.%[1]s_message_id=o.origin_message_id AND ((x.%[2]s_message_id=c.left_message_id AND x.%[2]s_kind=c.left_kind AND x.%[2]s_key=c.left_key) OR (x.%[2]s_message_id=c.right_message_id AND x.%[2]s_kind=c.right_kind AND x.%[2]s_key=c.right_key)))`
-	if !clear {
-		_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE left_message_id=? AND left_kind=? AND left_key=? AND right_message_id=? AND right_kind=? AND right_key=?`, keys...)
+	if clear {
+		_, err := tx.ExecContext(ctx, `WITH RECURSIVE ancestors(id,parent_decision_id) AS (SELECT id,parent_decision_id FROM meeting_link_decisions WHERE id=? UNION ALL SELECT d.id,d.parent_decision_id FROM meeting_link_decisions d JOIN ancestors a ON d.id=a.parent_decision_id) DELETE FROM meeting_link_decisions WHERE id IN (SELECT id FROM ancestors WHERE parent_decision_id IS NULL)`, d.id)
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id IN (SELECT x.id FROM meeting_link_decisions c JOIN meeting_link_decision_origins o ON o.decision_id=c.id JOIN meeting_link_decisions x ON x.id<>c.id AND x.decision=c.decision AND (`+fmt.Sprintf(touches, "left", "right")+` OR `+fmt.Sprintf(touches, "right", "left")+`) WHERE `+copied+`)`, keys...)
-	if err != nil {
+	if d.isExplicit {
+		_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, d.id)
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE left_message_id=? AND left_kind=? AND left_key=? AND right_message_id=? AND right_kind=? AND right_key=?`, keys...)
-	return err
+	return nil
 }

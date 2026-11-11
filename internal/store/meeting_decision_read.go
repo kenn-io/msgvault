@@ -11,8 +11,10 @@ import (
 )
 
 type meetingDecisionEdge struct {
-	a, b     meetingDecisionEndpoint
-	decision string
+	id         int64
+	isExplicit bool
+	a, b       meetingDecisionEndpoint
+	decision   string
 }
 
 type meetingDecisionConflict struct {
@@ -20,33 +22,77 @@ type meetingDecisionConflict struct {
 }
 
 func (s *Store) meetingDecisionsForMessage(ctx context.Context, id int64, budget *int) ([]meetingDecisionEdge, error) {
+	loader := meetingDecisionLoader{store: s}
+	return loader.edges(ctx, id, nil, budget)
+}
+
+// meetingDecisionLoader reads the choices of every waiting message in one query, so a
+// large group costs one lookup per batch instead of one per message.
+type meetingDecisionLoader struct {
+	store  *Store
+	loaded map[int64][]meetingDecisionEdge
+}
+
+const meetingDecisionBatch = 400
+
+// edges returns the choices touching id. Messages in waiting that are not loaded yet
+// are read in the same query, up to one batch.
+func (l *meetingDecisionLoader) edges(ctx context.Context, id int64, waiting []meetingDecisionEndpoint, budget *int) ([]meetingDecisionEdge, error) {
+	if edges, ok := l.loaded[id]; ok {
+		return edges, nil
+	}
+	ids := []int64{id}
+	for _, endpoint := range waiting {
+		_, done := l.loaded[endpoint.ID]
+		if len(ids) < meetingDecisionBatch && !done && !slices.Contains(ids, endpoint.ID) {
+			ids = append(ids, endpoint.ID)
+		}
+	}
+	if l.loaded == nil {
+		l.loaded = map[int64][]meetingDecisionEdge{}
+	}
+	if err := l.load(ctx, ids, budget); err != nil {
+		return nil, err
+	}
+	return l.loaded[id], nil
+}
+
+func (l *meetingDecisionLoader) load(ctx context.Context, ids []int64, budget *int) error {
 	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
 	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
-	args := []any{id, id}
+	in, idArgs := messageExportInClause("d.left_message_id", ids)
+	inRight, _ := messageExportInClause("d.right_message_id", ids)
+	args := append(slices.Clone(idArgs), idArgs...)
 	args = append(args, leftArgs...)
 	args = append(args, rightArgs...)
 	args = append(args, *budget+1)
-	rows, err := s.db.QueryContext(ctx, `SELECT d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (d.left_message_id=? OR d.right_message_id=?) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
+	rows, err := l.store.db.QueryContext(ctx, `SELECT d.id,d.is_explicit,d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (`+in+` OR `+inRight+`) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func() { _ = rows.Close() }()
-	var out []meetingDecisionEdge
+	for _, id := range ids {
+		l.loaded[id] = nil
+	}
 	for rows.Next() {
 		var edge meetingDecisionEdge
-		if err := rows.Scan(&edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.a.Anchor, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.b.Anchor, &edge.decision); err != nil {
-			return nil, err
+		if err := rows.Scan(&edge.id, &edge.isExplicit, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.a.Anchor, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.b.Anchor, &edge.decision); err != nil {
+			return err
 		}
-		out = append(out, edge)
+		for _, side := range []int64{edge.a.ID, edge.b.ID} {
+			if slices.Contains(ids, side) && (side == edge.a.ID || edge.a.ID != edge.b.ID) {
+				l.loaded[side] = append(l.loaded[side], edge)
+			}
+		}
 		*budget--
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
+		return err
 	}
 	if *budget < 0 {
-		return nil, calendarRecurrenceBudgetError()
+		return calendarRecurrenceBudgetError()
 	}
-	return out, nil
+	return nil
 }
 
 // MeetingRecordContext follows automatic evidence and owner choices in one snapshot.
@@ -89,9 +135,11 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 	var warnings []warningSource
 	var groups [][]meetingDecisionEndpoint
 	var explicit, splits []meetingDecisionEdge
-	seenDecisions := map[string]bool{}
+	var automatic MeetingRecord
+	seenDecisions := map[int64]bool{}
+	var candidates []meetingDecisionEdge
 	resolved := map[string]bool{}
-	loadedDecisions := map[int64]bool{}
+	decisions := meetingDecisionLoader{store: s}
 	for len(queue) > 0 {
 		endpoint := queue[0]
 		queue = queue[1:]
@@ -114,6 +162,9 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 			}
 			if err != nil {
 				return result, err
+			}
+			if endpoint == seed {
+				automatic = record
 			}
 			for _, warning := range record.Unexpandable {
 				warnings = append(warnings, warningSource{endpoint, warning})
@@ -151,27 +202,57 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 			}
 			groups = append(groups, members)
 		}
-		if loadedDecisions[endpoint.ID] {
-			continue
-		}
-		loadedDecisions[endpoint.ID] = true
-		choices, err := s.meetingDecisionsForMessage(ctx, endpoint.ID, &budget)
+		choices, err := decisions.edges(ctx, endpoint.ID, queue, &budget)
 		if err != nil {
 			return result, err
 		}
 		for _, choice := range choices {
-			key := choice.a.ref() + "/" + choice.b.ref()
-			if seenDecisions[key] {
+			if seenDecisions[choice.id] {
 				continue
 			}
-			seenDecisions[key] = true
+			seenDecisions[choice.id] = true
 			add(choice.a, nil)
 			add(choice.b, nil)
-			if choice.decision == "split" {
-				splits = append(splits, choice)
-			} else {
-				explicit = append(explicit, choice)
-			}
+			candidates = append(candidates, choice)
+		}
+	}
+	if len(candidates) == 0 {
+		return automatic, nil
+	}
+	// Materialize aliases before choosing one effective contribution per pair.
+	effective := map[string]meetingDecisionEdge{}
+	for _, choice := range candidates {
+		left, _, err := s.materializedMeetingEndpoint(ctx, choice.a, &budget)
+		if errors.Is(err, sql.ErrNoRows) {
+			left, err = choice.a, nil
+		}
+		if err != nil {
+			return result, err
+		}
+		right, _, err := s.materializedMeetingEndpoint(ctx, choice.b, &budget)
+		if errors.Is(err, sql.ErrNoRows) {
+			right, err = choice.b, nil
+		}
+		if err != nil {
+			return result, err
+		}
+		if compareMeetingEndpoints(left, right) > 0 {
+			left, right = right, left
+		}
+		choice.a, choice.b = left, right
+		key := left.ref() + "/" + right.ref()
+		old, exists := effective[key]
+		if !exists || choice.isExplicit && !old.isExplicit || choice.isExplicit == old.isExplicit && choice.decision == "split" && old.decision != "split" {
+			effective[key] = choice
+		}
+	}
+	for _, choice := range effective {
+		add(choice.a, nil)
+		add(choice.b, nil)
+		if choice.decision == "split" {
+			splits = append(splits, choice)
+		} else {
+			explicit = append(explicit, choice)
 		}
 	}
 	parent := map[string]string{}
@@ -252,18 +333,26 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 		join(edge)
 	}
 	slices.SortFunc(vertices, compareMeetingEndpoints)
-	for _, member := range vertices {
-		var others []meetingDecisionEndpoint
-		for _, group := range groupByMember[member.ref()] {
-			for _, other := range group {
-				if compareMeetingEndpoints(member, other) < 0 {
-					others = append(others, other)
-				}
+	if len(splits) == 0 {
+		for _, group := range groups {
+			for _, member := range group[1:] {
+				join(meetingDecisionEdge{a: group[0], b: member})
 			}
 		}
-		slices.SortFunc(others, compareMeetingEndpoints)
-		for _, other := range others {
-			join(meetingDecisionEdge{a: member, b: other})
+	} else {
+		for _, member := range vertices {
+			var others []meetingDecisionEndpoint
+			for _, group := range groupByMember[member.ref()] {
+				for _, other := range group {
+					if compareMeetingEndpoints(member, other) < 0 {
+						others = append(others, other)
+					}
+				}
+			}
+			slices.SortFunc(others, compareMeetingEndpoints)
+			for _, other := range others {
+				join(meetingDecisionEdge{a: member, b: other})
+			}
 		}
 	}
 	seedRoot := root(seed.ref())
