@@ -3596,7 +3596,7 @@ the matched person or participant. `--if-exists return` returns a single saved
 match unchanged, with `ensure.status` set to `matched_existing` in JSON; a new
 person reports `created`. Retry safety requires an email or phone; name-only
 calls create a new person each time. Return mode requires a daemon with API
-schema 3.50.0 or newer; the CLI checks this before creation and asks you to
+schema 5.2.0 or newer; the CLI checks this before creation and asks you to
 upgrade an older daemon.
 Unmatched contacts are reported without being added.
 Ambiguous matches and unbound clusters return coded errors with resolution

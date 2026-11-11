@@ -89,7 +89,7 @@ msgvault person create --name "Alex Example" --email alex@example.test --if-exis
 
 Name-only calls create a new person each time.
 
-`--if-exists return` requires a daemon with API schema 3.50.0 or newer.
+`--if-exists return` requires a daemon with API schema 5.2.0 or newer.
 The CLI checks this version before creation and asks you to upgrade an older
 daemon. Direct API requests to older daemons reject the unknown `if_exists`
 field.
@@ -137,7 +137,7 @@ It requires both MCP writes and profile writes to be enabled, like
 older than API schema 5.1.0. It records every value with enrichment
 provenance, like other MCP profile writes, so CardDAV publication requires
 review. It never publishes. The `if_exists` argument appears against daemons
-with API schema 3.50.0 or newer; return-mode conflicts are structured tool errors
+with API schema 5.2.0 or newer; return-mode conflicts are structured tool errors
 with the same resolution details.
 
 Each saved profile also has a vCard UID. A new profile imported from a subscribed

@@ -133,7 +133,7 @@ func TestPersonCreateCLIIfExistsPublishBoundary(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/api/v1/health":
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.50.0"}`))
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"5.2.0"}`))
 				case "/api/v1/people/create":
 					var input map[string]any
 					require.NoError(t, json.NewDecoder(r.Body).Decode(&input))
@@ -224,7 +224,7 @@ func TestPersonCreateCLIIfExistsRejectsInvalid(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			switch r.URL.Path {
 			case "/api/v1/health":
-				_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.49.0"}`))
+				_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"5.1.0"}`))
 			case "/api/v1/people/create":
 				creates++
 				w.WriteHeader(http.StatusBadRequest)
