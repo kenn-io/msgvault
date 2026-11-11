@@ -368,36 +368,43 @@ func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
 	makeRequest := func(url string) MCPEventsSubscribeRequest {
 		return preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: url, Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	}
-	results := make(chan error, 2)
+	type result struct {
+		request MCPEventsSubscribeRequest
+		err     error
+	}
+	results := make(chan result, 2)
 	for _, url := range []string{"https://example.com/one", "https://example.com/two"} {
 		request := makeRequest(url)
-		go func() { _, err := service.Subscribe(t.Context(), request); results <- err }()
+		go func() { _, err := service.Subscribe(t.Context(), request); results <- result{request, err} }()
 	}
 	var success, refused int
+	var winningRequest MCPEventsSubscribeRequest
 	for range 2 {
-		err := <-results
-		if err == nil {
+		got := <-results
+		if got.err == nil {
 			success++
+			winningRequest = got.request
 			continue
 		}
 		var eventErr *Error
-		require.ErrorAs(err, &eventErr)
+		require.ErrorAs(got.err, &eventErr)
 		if eventErr.Code == ResourceExhausted || (eventErr.Code == Unavailable && eventErr.Reason == "store_unavailable") {
 			refused++
 		}
 	}
-	assert.Equal(1, success)
+	require.Equal(1, success)
 	assert.Equal(1, refused)
 
 	// A restarted daemon with more configured targets must not claim delivery.
 	entries, _, err := service.catalog(t.Context())
 	require.NoError(err)
 	require.Len(entries, 1)
+	require.Equal(entries[0].ID, subscriptionID("owner", winningRequest.Arguments, winningRequest.Delivery.URL))
 	key := store.MCPEventsPositionKey(entries[0].ID)
 	before, _, err := st.LoadWakeupStateKey(t.Context(), key)
 	require.NoError(err)
 	service.ConfigTargets = 32
-	_, err = service.Subscribe(t.Context(), makeRequest("https://example.com/one"))
+	_, err = service.Subscribe(t.Context(), winningRequest)
 	var eventErr *Error
 	require.ErrorAs(err, &eventErr)
 	assert.Equal(ResourceExhausted, eventErr.Code)
