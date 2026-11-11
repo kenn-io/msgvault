@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -77,7 +78,16 @@ func Discover(root string) ([]ThreadDir, int, error) {
 			continue
 		}
 		// Check for DYI section subdirectories.
-		for _, section := range knownSections {
+		sections, err := os.ReadDir(candidate)
+		if err != nil {
+			skipped++
+			continue
+		}
+		for _, sectionEntry := range sections {
+			if strings.HasPrefix(sectionEntry.Name(), ".") || (!sectionEntry.IsDir() && !slices.Contains(knownSections, sectionEntry.Name())) {
+				continue
+			}
+			section := sectionEntry.Name()
 			sectionDir := filepath.Join(candidate, section)
 			entries, err := os.ReadDir(sectionDir)
 			if err != nil {
@@ -95,6 +105,19 @@ func Discover(root string) ([]ThreadDir, int, error) {
 					continue
 				}
 				threadPath := filepath.Join(sectionDir, name)
+				if !slices.Contains(knownSections, section) {
+					files, err := os.ReadDir(threadPath)
+					if err != nil {
+						skipped++
+						continue
+					}
+					for _, file := range files {
+						if !file.IsDir() && strings.HasPrefix(file.Name(), "message_") {
+							skipped++
+						}
+					}
+					continue
+				}
 				format, ok, unsupported := detectFormat(threadPath)
 				skipped += unsupported
 				if !ok {

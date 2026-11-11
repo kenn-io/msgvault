@@ -659,6 +659,28 @@ func TestInstagramExcludedCandidates(t *testing.T) {
 	assert.Zero(countMessages(t, st, "snippet='excluded request'"))
 }
 
+func TestInstagramUnknownSectionReportsMessageFiles(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	instagramTestShard(t, root, "circle", "message_1.json", instagramTestRecord("hello"))
+	messages := filepath.Join(root, "your_instagram_activity", "messages")
+	thread := filepath.Join(messages, "spam", "thread")
+	require.NoError(os.MkdirAll(thread, 0700))
+	for _, name := range []string{"message_1.json", "message_2.json", "message_1.html", "notes.txt"} {
+		require.NoError(os.WriteFile(filepath.Join(thread, name), []byte(`{}`), 0600))
+	}
+	media := filepath.Join(messages, "media", "photos")
+	require.NoError(os.MkdirAll(media, 0700))
+	require.NoError(os.WriteFile(filepath.Join(media, "photo.jpg"), []byte("photo"), 0600))
+	summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
+	require.NoError(err)
+	assert.True(summary.Incomplete)
+	assert.Equal(int64(3), summary.FilesSkipped)
+	assert.Equal(1, countMessages(t, st, ""))
+}
+
 func TestInstagramUnreadableThreadReportsIncomplete(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
