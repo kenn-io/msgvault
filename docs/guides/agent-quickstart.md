@@ -225,6 +225,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `close_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `reopen_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
 | `snooze_open_loop` | loop_write | `--allow-loop-writes` | owner-only |
+| `set_person_fact_pin` | person_fact_write | `--allow-person-fact-writes` | owner-only |
+| `set_person_tracking` | person_fact_write | `--allow-person-fact-writes` | owner-only |
 | `merge_person` | person_merge | `--allow-person-merges` | owner-only |
 | `promote_person` | profile_write | `--allow-profile-writes` | owner-only |
 | `set_person_display_name` | profile_write | `--allow-profile-writes` | owner-only |
@@ -250,8 +252,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_kata_issue_context` | read | — | owner-only |
 | `get_meeting_context` | read | — | owner-only |
 | `get_meeting_metrics` | read | — | owner-only |
-| `get_message` | read | — | message.read |
 | `get_message_tags` | read | — | owner-only |
+| `get_message` | read | — | message.read |
 | `get_participant_identity` | read | — | owner-only |
 | `get_person_agenda` | read | — | owner-only |
 | `get_person_edit_context` | read | — | owner-only |
@@ -260,6 +262,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_person_notes` | read | — | owner-only |
 | `get_person_profile` | read | — | owner-only |
 | `get_person_relationship` | read | — | owner-only |
+| `get_person_tracking` | read | — | owner-only |
 | `get_saved_view` | read | — | owner-only |
 | `get_slack_sync_policy` | read | — | owner-only |
 | `get_source_identities` | read | — | owner-only |
@@ -271,6 +274,12 @@ backend checks for action permissions, source scope, and sender identity;
 | `list_meeting_action_items` | read | — | owner-only |
 | `list_messages` | read | — | search.read |
 | `list_open_loops` | read | — | owner-only |
+| `list_person_fact_claims` | read | — | owner-only |
+| `list_person_fact_decisions` | read | — | owner-only |
+| `list_person_fact_evidence` | read | — | owner-only |
+| `list_person_fact_pins` | read | — | owner-only |
+| `list_person_fact_status_events` | read | — | owner-only |
+| `list_person_fact_targets` | read | — | owner-only |
 | `list_saved_views` | read | — | owner-only |
 | `list_source_status` | read | — | owner-only |
 | `list_thread` | read | — | message.read |
@@ -304,3 +313,5 @@ backend checks for action permissions, source scope, and sender identity;
 | `update_message_tags` | write | — | owner-only |
 | `update_saved_view` | write | — | owner-only |
 <!-- END GENERATED tools -->
+
+On unreleased `main`, person fact diagnostics expose native evidence, claims, decisions, pins and tracking. Target catalog reads include sensitive targets only when `include_sensitive` is true. Evidence and claims can contain sensitive content. The pin and tracking writes require `--allow-person-fact-writes` and confirmation for each call; tracking has no revision guard. HTTP writes also need the general write opt-in.
