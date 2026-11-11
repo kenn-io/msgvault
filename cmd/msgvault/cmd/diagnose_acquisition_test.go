@@ -164,13 +164,13 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		assert.Equal("reopened\tstill failing\tmessage processing failed\n", output)
 		output, err = a.diagnose("", "--all")
 		require.NoError(err)
-		assert.Equal("older\tfixed\tmessage download failed\nmatching-text\tfixed\tmessage download failed\nreopened\tfixed\tmessage download failed\nreopened\tstill failing\tmessage processing failed\nretired-first\tretired\tmessage download failed\nretired-first\tfixed\tmessage download failed\n", output)
+		assert.Equal("older\tfixed\tmessage download failed\nmatching-text\tfixed\tmessage download failed\nreopened\tfixed\tmessage download failed\nreopened\tstill failing\tmessage processing failed\nretired-first\tunknown\tmessage download failed\nretired-first\tfixed\tmessage download failed\n", output)
 		assert.Equal([]map[string]string{
 			acquisitionJSON("older", "fetch", "fetch_error", "resolved"),
 			acquisitionJSON("matching-text", "fetch", "fetch_error", "resolved"),
 			acquisitionJSON("reopened", "fetch", "fetch_error", "resolved"),
 			acquisitionJSON("reopened", "ingest", "ingest_error", "active"),
-			acquisitionJSON("retired-first", "fetch", "fetch_error", "historical"),
+			acquisitionJSON("retired-first", "fetch", "fetch_error", "indeterminate"),
 			acquisitionJSON("retired-first", "fetch", "fetch_error", "resolved"),
 		}, a.diagnoseJSON("--all"))
 	})
@@ -202,7 +202,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		assert.Equal([]map[string]string{
 			acquisitionJSON("unfinished", "ingest", "attachment_error", "historical"),
 			acquisitionJSON("cleaned", "ingest", "attachment_error", "historical"),
-			acquisitionJSON("gone", "fetch", "fetch_error", "historical"),
+			acquisitionJSON("gone", "fetch", "fetch_error", "indeterminate"),
 			acquisitionJSON("files", "ingest", "attachment_error", "indeterminate"),
 		}, a.diagnoseJSON("--all"))
 	})

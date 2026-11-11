@@ -3134,8 +3134,8 @@ The command reads the local database without starting the daemon or contacting G
 |---|---|---|
 | `still failing` | `active` | Sync retries the failure. |
 | `fixed` | `resolved` | A later sync recorded confirmation that the work succeeded. |
-| `retired` | `historical` | The failure was skipped, by cleanup of a message deleted from Gmail or by a later skipped download. |
-| `unknown` | `indeterminate` | No retry or confirmation is recorded, or msgvault does not recognize the failure. |
+| `retired` | `historical` | Cleanup retired the failure for a message deleted from Gmail. |
+| `unknown` | `indeterminate` | No retry or confirmation is recorded, sync skipped a later download, or msgvault does not recognize the failure. |
 
 Each row shows the message ID, state, and a description of the failure; JSON also includes the saved phase and error-kind codes. A message can appear once per state, such as an older fixed failure and a newer one still failing. The command does not check saved files, and an empty list does not prove the archive is complete.
 
