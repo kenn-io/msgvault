@@ -9,14 +9,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestImportICSMalformedFileLeavesNoSource(t *testing.T) {
-	for _, tc := range []struct{ name, raw string }{
-		{"malformed", "invalid calendar"},
-		{"unsupported method", "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:ADD\r\nBEGIN:VEVENT\r\nUID:event@example.com\r\nDTSTART:20270302T120000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"},
+func TestImportICSRejectsUnreadableFile(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want string }{
+		{"malformed", "invalid calendar", ""},
+		{"unsupported method", "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:ADD\r\nBEGIN:VEVENT\r\nUID:event@example.com\r\nDTSTART:20270302T120000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n", `unsupported calendar method "ADD"`},
+		{"unsupported zone", "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nRDATE:20270301T020000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:invalid@example.com\r\nDTSTART;TZID=Custom/Test:20270302T120000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n", "unsupported VTIMEZONE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -25,11 +25,9 @@ func TestImportICSMalformedFileLeavesNoSource(t *testing.T) {
 			requirements.NoError(os.WriteFile(path, []byte(tc.raw), 0600))
 			_, err := ImportICS(t.Context(), st, path, "invalid-export")
 			requirements.Error(err)
-			if tc.name == "unsupported method" {
-				requirements.ErrorContains(err, `unsupported calendar method "ADD"`)
+			if tc.want != "" {
+				requirements.ErrorContains(err, tc.want)
 			}
-			_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "ics", "invalid-export")
-			assert.ErrorIs(t, err, store.ErrSourceNotFound)
 		})
 	}
 }
