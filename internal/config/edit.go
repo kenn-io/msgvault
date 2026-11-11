@@ -911,6 +911,11 @@ func validateEditableCandidate(cfg *Config) error {
 	}
 	for index, account := range cfg.Accounts {
 		schedules[fmt.Sprintf("accounts[%d].schedule", index)] = account.Schedule
+		if account.PollInterval != 0 {
+			if err := ValidatePollInterval(account); err != nil {
+				return fmt.Errorf("invalid accounts[%d].poll_interval: %w", index, err)
+			}
+		}
 	}
 	for index, source := range cfg.SynctechSMS.Sources {
 		schedules[fmt.Sprintf("synctech_sms.sources[%d].schedule", index)] = source.Schedule

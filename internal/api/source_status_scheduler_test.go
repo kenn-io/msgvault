@@ -109,3 +109,31 @@ func TestTriggerSyncUsesArchiveAliasSchedule(t *testing.T) {
 	checks.Equal(http.StatusAccepted, response.Code, response.Body.String())
 	checks.Equal(alias, triggered)
 }
+
+func TestSourceStatusAndTriggerUseCaseInsensitiveAccount(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	requirements.NoError(err)
+	alias := "archive@example.test"
+	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{Alias: &alias})
+	requirements.NoError(err)
+	account := "READER@example.test"
+	sched := newMockScheduler()
+	sched.scheduled[account], sched.scheduled[alias] = true, true
+	sched.statuses = []AccountStatus{{Email: alias, Schedule: "0 2 * * *"}, {Email: account, Schedule: "0 * * * *", NextRun: time.Now().Add(time.Minute)}}
+	var triggered string
+	sched.triggerFn = func(email string, _ bool) error { triggered = email; return nil }
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+	status := sourceStatusFor(t, srv)
+	checks.True(status.Scheduled)
+	checks.True(status.CanSync)
+	checks.NotNil(status.NextSyncAt)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/sync/reader@example.test?source_type=gmail", nil)
+	req.SetPathValue("account", source.Identifier)
+	response := httptest.NewRecorder()
+	srv.handleTriggerSync(response, req)
+	checks.Equal(http.StatusAccepted, response.Code, response.Body.String())
+	checks.Equal(account, triggered)
+}

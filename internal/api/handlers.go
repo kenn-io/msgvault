@@ -1668,6 +1668,20 @@ func (s *Server) sourceScheduleAccount(source *store.Source, sources []*store.So
 		return source.Identifier
 	}
 	for _, scheduled := range s.scheduler.Status() {
+		if !strings.EqualFold(scheduled.Email, source.Identifier) {
+			continue
+		}
+		matches := 0
+		for _, candidate := range sources {
+			if candidate.MergedIntoSourceID == 0 && strings.EqualFold(candidate.Identifier, scheduled.Email) {
+				matches++
+			}
+		}
+		if matches == 1 {
+			return scheduled.Email
+		}
+	}
+	for _, scheduled := range s.scheduler.Status() {
 		key := scheduled.Email
 		if !strings.EqualFold(key, source.Alias) && (!source.DisplayName.Valid || !strings.EqualFold(key, source.DisplayName.String)) {
 			continue

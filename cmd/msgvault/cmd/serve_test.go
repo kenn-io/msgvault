@@ -3518,6 +3518,13 @@ func TestScheduledSyncPreemptibleRequiresResumableSources(t *testing.T) {
 	require.NoError(err)
 	assert.True(scheduledSyncPreemptible(t.Context(), st.Store, gmail.Identifier, testDiscardLogger()), "Gmail history sync is resumable after repair")
 	assert.False(scheduledSyncPreemptible(t.Context(), st.Store, imap.Identifier, testDiscardLogger()), "IMAP uses a full pass with non-resumable offsets")
+	alias := "imap-archive@example.test"
+	_, err = st.Store.UpdateSourceSettingsContext(t.Context(), imap.ID, store.SourceSettingsUpdate{Alias: &alias})
+	require.NoError(err)
+	assert.False(scheduledSyncPreemptible(t.Context(), st.Store, alias, testDiscardLogger()), "IMAP aliases must protect non-resumable passes")
+	unicodeIMAP, err := st.Store.GetOrCreateSource(sourceTypeIMAP, "imaps://Ü@example.test")
+	require.NoError(err)
+	assert.False(scheduledSyncPreemptible(t.Context(), st.Store, strings.ToLower(unicodeIMAP.Identifier), testDiscardLogger()), "poll selectors must protect non-resumable passes")
 	assert.True(scheduledSyncPreemptible(t.Context(), st.Store, teams.Identifier, testDiscardLogger()), "Teams sync does not run archive repair")
 	assert.True(scheduledSyncPreemptible(t.Context(), st.Store, "new-reader@example.test", testDiscardLogger()), "missing source rows use the resumable Gmail fallback")
 }

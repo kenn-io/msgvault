@@ -4504,7 +4504,7 @@ func findScheduledSyncSources(ctx context.Context, s *store.Store, identifier st
 // after the syncer stops. An unavailable source lookup also takes the safe
 // path and lets the current pass finish.
 func scheduledSyncPreemptible(ctx context.Context, s *store.Store, identifier string, logger *slog.Logger) bool {
-	sources, _, err := findScheduledSyncSources(ctx, s, identifier)
+	sources, err := s.ListSourcesContext(ctx, "")
 	if err != nil {
 		logger.Warn("could not determine scheduled sync preemption safety; allowing current pass to finish",
 			"identifier", identifier,
@@ -4513,6 +4513,10 @@ func scheduledSyncPreemptible(ctx context.Context, s *store.Store, identifier st
 		return false
 	}
 	for _, source := range sources {
+		matched := strings.EqualFold(source.Identifier, identifier) || source.DisplayName.Valid && strings.EqualFold(source.DisplayName.String, identifier) || source.Alias != "" && strings.EqualFold(source.Alias, identifier)
+		if source.MergedIntoSourceID != 0 || !matched {
+			continue
+		}
 		if source.SourceType == sourceTypeIMAP {
 			return false
 		}

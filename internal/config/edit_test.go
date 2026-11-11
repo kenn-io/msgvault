@@ -2250,3 +2250,18 @@ func TestEditConfigRejectsInvalidSourceSchedule(t *testing.T) {
 		})
 	}
 }
+
+func TestEditConfigRejectsInvalidAccountPollingInterval(t *testing.T) {
+	requirements := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	before := "[[accounts]]\nemail = \"reader@example.test\"\nenabled = true\nschedule = \"0 * * * *\"\npoll_interval = \"30s\"\n"
+	requirements.NoError(os.WriteFile(path, []byte(before), 0o600))
+	snapshot, err := ReadConfigFile(path)
+	requirements.NoError(err)
+	_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: "accounts.poll_interval", Value: "14s"}})
+	requirements.ErrorIs(err, ErrInvalidConfigCandidate)
+	requirements.ErrorContains(err, "poll_interval")
+	got, err := os.ReadFile(path)
+	requirements.NoError(err)
+	requirements.Equal(before, string(got))
+}
