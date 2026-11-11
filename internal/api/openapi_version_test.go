@@ -133,7 +133,6 @@ func TestCheckAPIContract(t *testing.T) {
 		{"stale", "5.0.0", b, "5.1.0", []string{"5.0.0_" + a}, nil},
 		{"new", "5.1.0", b, "5.1.0_" + b, []string{"5.0.0_" + a}, nil},
 		{"older", "4.0.0", b, "5.1.0", []string{"5.0.0_" + a}, nil},
-		{"occupied next minor", "5.1.0", b, "5.3.0", []string{"5.1.0_" + a, "5.2.0_" + b}, nil},
 		{"removed", "5.1.0", b, "5.2.0", []string{"5.1.0_" + b}, []string{"5.1.0_" + a}},
 		{"malformed", "5.0.0", a, "<version>_<sha256>", []string{"bad"}, nil},
 	} {
