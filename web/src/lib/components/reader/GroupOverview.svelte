@@ -18,7 +18,7 @@
   const stripLabel = $derived(first && last
     ? series.length === 1
       ? `Activity by ${daily ? 'day' : 'month'}: ${monthName(first.bucket)}, ${first.count.toLocaleString()} ${first.count === 1 ? 'item' : 'items'}`
-      : `Activity by ${daily ? 'day' : 'month'}, ${monthName(first.bucket)} to ${monthName(last.bucket)}, busiest ${monthName(busiest.bucket)} with ${busiest.count.toLocaleString()} items`
+      : `Activity by ${daily ? 'day' : 'month'}, ${monthName(first.bucket)} to ${monthName(last.bucket)}, busiest ${monthName(busiest.bucket)} with ${busiest.count.toLocaleString()} ${busiest.count === 1 ? 'item' : 'items'}`
     : 'Activity');
 </script>
 

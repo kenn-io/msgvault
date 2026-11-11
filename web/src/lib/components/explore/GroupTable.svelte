@@ -465,6 +465,8 @@
     white-space: nowrap;
   }
 
+  .group-header > :last-child { grid-column: -2; }
+
   .group-body {
     position: relative;
     min-height: 200px;
@@ -541,7 +543,7 @@
   .group-name strong { overflow: hidden; text-overflow: ellipsis; }
   .group-name :global(.group-icon) { flex-shrink: 0; color: var(--artifact-ink); }
   .group-row > .group-action { grid-column: -2; }
-  .group-row > .group-action { padding: 0; }
+  .group-row > .group-action { display: flex; justify-content: center; padding: 0; }
   .share-track { height: 6px; border-radius: var(--radius-sm); background: var(--bg-inset); overflow: hidden; }
   .share-fill { height: 100%; background: var(--accent-blue); }
 

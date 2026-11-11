@@ -578,6 +578,9 @@ test('keeps group actions at the grid edge in wide and inspected views', async (
   const sources = page.getByRole('grid', { name: 'Messages grouped by source' });
   const sourceAction = sources.getByRole('row', { name: /Example source/ }).getByRole('button', { name: 'Show items in Example source' });
   await expect(sourceAction).toBeVisible();
+  const actionHeader = (await sources.getByRole('columnheader', { name: 'Show items' }).boundingBox())!;
+  const actionButton = (await sourceAction.boundingBox())!;
+  expect(Math.abs(actionHeader.x + actionHeader.width / 2 - actionButton.x - actionButton.width / 2)).toBeLessThanOrEqual(1);
   const sourceGrid = (await sources.boundingBox())!;
   const sourceCell = (await sourceAction.locator('..').boundingBox())!;
   expect.soft(sourceGrid.x + sourceGrid.width - sourceCell.x - sourceCell.width, 'wide Source action inset').toBeLessThanOrEqual(2);

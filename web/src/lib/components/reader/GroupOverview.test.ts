@@ -54,4 +54,15 @@ describe('GroupOverview', () => {
     expect(screen.getByRole('img', { name: `Activity by ${unit}: ${label}, 3 items` })).toBeDefined();
     for (const text of visibleText) expect(screen.getAllByText(text)).toHaveLength(1);
   });
+
+  it('uses the singular item label for a busiest bucket of one', () => {
+    render(GroupOverview, { selection: {
+      kind: 'group', dimension: 'month', key: '2024-05', label: 'May 2024', count: 2,
+      latestAt: '2024-05-04T12:00:00Z', overview: {
+        first_at: '2024-05-03T12:00:00Z',
+        activity: [{ bucket: '2024-05-03', count: 1 }, { bucket: '2024-05-04', count: 1 }], co_participants: []
+      }
+    } });
+    expect(screen.getByRole('img', { name: 'Activity by day, May 3, 2024 to May 4, 2024, busiest May 3, 2024 with 1 item' })).toBeDefined();
+  });
 });
