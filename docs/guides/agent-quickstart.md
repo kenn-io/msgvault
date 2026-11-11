@@ -216,7 +216,10 @@ backend checks for action permissions, source scope, and sender identity;
 | `calendar_respond` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `calendar_update` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `approve_carddav_publication` | carddav_write | `--allow-carddav-writes` | owner-only |
+| `resolve_carddav_conflict` | carddav_write | `--allow-carddav-writes` | owner-only |
 | `sync_carddav` | carddav_write | `--allow-carddav-writes` | owner-only |
+| `unpublish_carddav_person` | carddav_write | `--allow-carddav-writes` | owner-only |
+| `update_carddav_book_roles` | carddav_write | `--allow-carddav-writes` | owner-only |
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
@@ -242,6 +245,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `find_similar_messages` | read | — | owner-only |
 | `get_attachment` | read | — | attachment.read |
 | `get_cache_build_status` | read | — | owner-only |
+| `get_carddav_conflict` | read | — | owner-only |
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
@@ -265,6 +269,10 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_source_identities` | read | — | owner-only |
 | `get_source_scheduler_status` | read | — | owner-only |
 | `get_stats` | read | — | stats.read |
+| `list_carddav_books` | read | — | owner-only |
+| `list_carddav_conflicts` | read | — | owner-only |
+| `list_carddav_connections` | read | — | owner-only |
+| `list_carddav_runs` | read | — | owner-only |
 | `list_directory_people` | read | — | owner-only |
 | `list_identity_judgments` | read | — | owner-only |
 | `list_identity_matches` | read | — | owner-only |

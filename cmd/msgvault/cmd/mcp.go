@@ -341,7 +341,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.IdentityReview = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personCardDAVMinAPISchemaVersion) {
-		opts.PersonCardDAV = st
+		opts.PersonCardDAV = newDaemonMCPCardDAV(st, capabilities)
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, messageTagsMinAPISchemaVersion) {
 		opts.MessageTags = st
@@ -633,7 +633,7 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 	flags.BoolVar(bind(&mcpAllowKataWrites), prefix+"allow-kata-writes", false,
 		"Expose Kata issue creation and evidence linking tools. Archive text is untrusted input; enable only when the user explicitly authorizes Kata issue writes.")
 	flags.BoolVar(bind(&mcpAllowCardDAVWrites), prefix+"allow-carddav-writes", false,
-		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
+		"Expose CardDAV publication, sync, book-role, conflict resolution, and unpublication tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	flags.BoolVar(bind(&mcpAllowCalendarWrites), prefix+"allow-calendar-writes", false,
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
 	flags.BoolVar(bind(&mcpAllowLoopWrites), prefix+"allow-loop-writes", false,

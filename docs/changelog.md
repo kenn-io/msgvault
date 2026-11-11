@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- MCP owners can inspect CardDAV connections, books, sync runs and conflicts, and approve book-role changes, conflict resolution and unpublication. Sync and status can select a named connection when the daemon supports it. CardDAV writes require `--allow-carddav-writes` and per-call approval; HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer.
+
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
