@@ -24,6 +24,7 @@
   } from '../../directory/person-merge';
   const PROFILE_RELOAD_RETRY_DELAYS_MS = [500, 1000, 2000];
   const PROFILE_RELOAD_TIMEOUT_MS = 10_000;
+  const PROFILE_RELOAD_MAX_RETRY_AFTER_MS = 30_000;
   type Profile = ValidatedPersonMergeRequired['profiles'][number];
   interface Props {
     client: APIClient;
@@ -97,8 +98,18 @@
         }
         return { person: result.data, etag };
       }
-      const delay = PROFILE_RELOAD_RETRY_DELAYS_MS[attempt];
+      let delay = PROFILE_RELOAD_RETRY_DELAYS_MS[attempt];
       if (delay === undefined || signal.aborted) throw new Error('Profile reload failed');
+      const retryAfter = result?.response.headers.get('Retry-After');
+      if (retryAfter) {
+        const requestedDelay = /^\d+$/.test(retryAfter)
+          ? Number(retryAfter) * 1000
+          : Date.parse(retryAfter) - Date.now();
+        if (requestedDelay > PROFILE_RELOAD_MAX_RETRY_AFTER_MS) throw new Error('Profile reload deferred');
+        if (Number.isFinite(requestedDelay)) {
+          delay = Math.max(delay, requestedDelay);
+        }
+      }
       await new Promise<void>((resolve) => setTimeout(resolve, delay));
       if (signal.aborted) throw new Error('Profile reload aborted');
     }
@@ -109,10 +120,6 @@
     try {
       const refreshed = await Promise.all(profiles.map((profile) => loadProfile(profile.person.id, reloadSignal)));
       if (disposed || generation !== requestGeneration || signal.aborted) return;
-      if (!refreshed[0] || !refreshed[1]) {
-        error = "The profiles changed, but couldn't be reloaded. Retry profile reload.";
-        return;
-      }
       const next = validatePersonMergeRequired({
         error: 'person_merge_required',
         message: conflict.message,
@@ -251,6 +258,7 @@
       }}
     />
 
+    {#if reloadRequired && pending}<p role="status">Reloading profiles…</p>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#if completed}<p role="status">People merged.</p>{/if}
   </div>
