@@ -1080,26 +1080,16 @@ func (w *Worker) runPerson(
 	// the next batch ordinal. A brief failure never rolls back the extraction.
 	var brief *BriefResult
 	var briefFailure FailureClass
-	var capacityEmpty bool
 	if plan.run {
 		var fatal error
 		brief, briefFailure, lease, fatal = w.runBriefCall(ctx, briefCall{
 			runID: runID, attemptID: attemptID, lease: lease, profile: profile,
 			catalog: catalog, resolvedAt: resolvedAt, plan: plan,
-			batchOrdinal: len(assembly.Batches), capacityEmpty: &capacityEmpty,
+			batchOrdinal: len(assembly.Batches),
 		}, accounting, &reservations)
 		if fatal != nil {
 			return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
 				accounting.completedUsage, fatal, resolvedAt)
-		}
-		if capacityEmpty && plan.retireVersion > 0 {
-			if err := w.Brief.RetirePersonSweepBrief(ctx, lease, plan.retireVersion, resolvedAt); err != nil {
-				if fatal := briefFatalError(ctx, err); fatal != nil {
-					return PersonRunResult{}, w.finalizeFailure(ctx, lease, attemptID, reservations,
-						accounting.completedUsage, fatal, resolvedAt)
-				}
-				briefFailure = briefFailureClass(err)
-			}
 		}
 	}
 

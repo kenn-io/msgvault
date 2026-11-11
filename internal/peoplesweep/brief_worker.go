@@ -290,8 +290,8 @@ func briefEvidenceInputs(parsed ParsedBrief) []personfacts.EvidenceInput {
 }
 
 // renderBriefResult renders, trims, and freezes one validated brief. The
-// paragraph is capped at the configured rune count by dropping structured items
-// from the tail, and the trimmed structure is what gets stored. It reports
+// paragraph targets the configured rune count by dropping ordinary structured
+// items from the tail; retained events can exceed it. It reports
 // ErrEmptyBrief when every structured item was dropped, which the caller
 // records as a brief failure rather than storing a blank version.
 func renderBriefResult(
@@ -299,6 +299,9 @@ func renderBriefResult(
 ) (BriefResult, error) {
 	trimmed, rendered, err := trimRenderedBrief(parsed, window, window.Request.MaxRenderedRunes)
 	if err != nil {
+		if window.capacityRetiredEvents && errors.Is(err, ErrEmptyBrief) && parsed.DroppedItemCount == 0 {
+			return BriefResult{}, fmt.Errorf("%w: %w", errBriefCapacityEmpty, ErrEvidenceItemTooLarge)
+		}
 		return BriefResult{}, err
 	}
 	return newBriefResult(trimmed, rendered, window, generatedAt)
@@ -391,15 +394,14 @@ func ValidateBriefResult(personID int64, result *BriefResult) error {
 
 // briefCall is everything the brief step needs from the attempt that owns it.
 type briefCall struct {
-	runID         string
-	attemptID     string
-	lease         Lease
-	profile       ProviderProfile
-	catalog       personfacts.Catalog
-	resolvedAt    time.Time
-	plan          briefPlan
-	batchOrdinal  int
-	capacityEmpty *bool
+	runID        string
+	attemptID    string
+	lease        Lease
+	profile      ProviderProfile
+	catalog      personfacts.Catalog
+	resolvedAt   time.Time
+	plan         briefPlan
+	batchOrdinal int
 }
 
 // runBriefCall appends the person brief to an attempt whose extraction batches
@@ -532,13 +534,10 @@ func (w *Worker) runBriefCall(
 				// The paid call is still reconciled and its failure is recorded.
 				result, buildErr := renderBriefResult(parsed, window, w.now())
 				if buildErr != nil {
-					preflightCapacityEmpty := window.capacityRetiredEvents &&
-						errors.Is(buildErr, ErrEmptyBrief) && parsed.DroppedItemCount == 0
-					if call.capacityEmpty != nil && (errors.Is(buildErr, errBriefCapacityEmpty) || preflightCapacityEmpty) {
-						*call.capacityEmpty = true
-					}
-					if preflightCapacityEmpty {
-						return nil, briefFailureClass(ErrEvidenceItemTooLarge), lease, nil
+					if errors.Is(buildErr, errBriefCapacityEmpty) && call.plan.retireVersion > 0 {
+						if err := w.Brief.RetirePersonSweepBrief(ctx, lease, call.plan.retireVersion, call.resolvedAt); err != nil {
+							return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
+						}
 					}
 					if errors.Is(buildErr, ErrEvidenceItemTooLarge) {
 						return nil, briefFailureClass(buildErr), lease, nil //nolint:nilerr // Capacity is a recorded brief outcome.

@@ -232,10 +232,7 @@ func validateBriefEventMemoryCapacity(parsed ParsedBrief, window BriefWindow) ([
 		return nil, nil
 	}
 
-	evidence := make(map[string]EvidenceItem, len(window.Items))
-	for _, item := range window.Items {
-		evidence[packetEvidenceID(item)] = item
-	}
+	evidence := briefEventEvidenceByID(window.Items)
 	// A maximal whole-second timestamp projects upcoming events to the longer
 	// follow_up state without adding fractional-second bytes to either clock.
 	futureAsOf := time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
@@ -333,10 +330,7 @@ func freezeBriefEventMemory(window BriefWindow, events []BriefHighlight) BriefBo
 	if previous := window.Request.Previous; previous != nil && previous.AdmissionThroughEventTime.After(boundary.AdmissionThroughEventTime) {
 		boundary.AdmissionThroughEventTime = previous.AdmissionThroughEventTime
 	}
-	byID := make(map[string]EvidenceItem, len(window.Items))
-	for _, item := range window.Items {
-		byID[packetEvidenceID(item)] = item
-	}
+	byID := briefEventEvidenceByID(window.Items)
 	for _, highlight := range events {
 		memory := BriefEventMemory{Highlight: highlight}
 		for _, id := range highlight.EvidenceIDs {
