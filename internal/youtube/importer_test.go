@@ -310,6 +310,49 @@ func TestArchiveSyncRunCountsAddedUpdatedAndUnchangedMessages(t *testing.T) {
 	assert.Equal(int64(3), run.MessagesUpdated, "both video roots and the changed comment must be counted")
 }
 
+func TestArchiveResolvesCommentAuthor(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	c := archiveFixture(t, false, nil, nil)
+	original := c.api.Transport
+	resolved := false
+	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp, err := original.RoundTrip(req)
+		if err != nil || req.URL.Path != "/youtube/v3/commentThreads" {
+			return resp, err
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		if err := resp.Body.Close(); err != nil {
+			return nil, err
+		}
+		text := string(body)
+		if resolved {
+			text = strings.ReplaceAll(text, `"authorDisplayName":"Same name","authorChannelId":{"value":"UCauthorA"}`, `"authorChannelId":{"value":"UCauthorA"}`)
+		} else {
+			text = strings.ReplaceAll(text, `,"authorChannelId":{"value":"UCauthorA"}`, "")
+		}
+		resp.Body = io.NopCloser(strings.NewReader(text))
+		return resp, nil
+	})
+	imp := NewImporter(st, c)
+	src, err := imp.Register(t.Context(), "UCfixture")
+	require.NoError(err)
+	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
+	require.NoError(err)
+	resolved = true
+	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
+	require.NoError(err)
+	rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"parent"})
+	require.NoError(err)
+	summaries, err := st.GetMessagesSummariesByIDsContext(t.Context(), []int64{rows["parent"].ID})
+	require.NoError(err)
+	require.Len(summaries, 1)
+	require.Equal("Same name", summaries[0].FromName)
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
@@ -325,6 +368,7 @@ func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testi
 				original = http.DefaultTransport
 			}
 			unavailable := false
+			sawUnavailable := false
 			c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				resp, err := original.RoundTrip(req)
 				if err != nil {
@@ -335,7 +379,15 @@ func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testi
 					replacement = `{"items":[{"contentDetails":{"videoId":"oldvideo"}},{"contentDetails":{"videoId":"newvideo"}}]}`
 				}
 				if req.URL.Path == "/youtube/v3/commentThreads" && req.URL.Query().Get("videoId") == "newvideo" && req.URL.Query().Get("moderationStatus") == "published" {
-					replacement = `{"items":[{"snippet":{"videoId":"newvideo","topLevelComment":{"id":"other-comment","snippet":{"videoId":"newvideo","textDisplay":"Other video"}}}}]}`
+					if req.URL.Query().Get("pageToken") == "later" {
+						replacement = `{"items":[]}`
+						if unavailable {
+							require.True(sawUnavailable)
+							replacement = `{"items":[{"snippet":{"videoId":"newvideo","topLevelComment":{"id":"other-comment","snippet":{"videoId":"newvideo","textDisplay":"Other video"}}}}]}`
+						}
+					} else {
+						replacement = `{"items":[],"nextPageToken":"later"}`
+					}
 				}
 				if replacement != "" {
 					require.NoError(resp.Body.Close())
@@ -345,6 +397,7 @@ func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testi
 				threads := req.URL.Path == "/youtube/v3/commentThreads" && req.URL.Query().Get("videoId") == "oldvideo"
 				replies := req.URL.Path == "/youtube/v3/comments"
 				if unavailable && ((strings.HasPrefix(kind, "video ") && video) || (strings.HasPrefix(kind, "threads ") && threads) || (strings.HasPrefix(kind, "replies ") && replies)) {
+					sawUnavailable = true
 					require.NoError(resp.Body.Close())
 					switch kind {
 					case "video missing":
@@ -364,11 +417,14 @@ func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testi
 			require.NoError(err)
 			_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
 			require.NoError(err)
+			rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"other-comment"})
+			require.NoError(err)
+			require.Empty(rows)
 			unavailable = true
 			sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
 			require.NoError(err)
 			require.False(sum.Partial)
-			rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:oldvideo", "parent", "parent.reply1", "parent.reply2", "other-comment"})
+			rows, err = st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:oldvideo", "parent", "parent.reply1", "parent.reply2", "other-comment"})
 			require.NoError(err)
 			for _, id := range []string{"video:oldvideo", "parent", "parent.reply1", "parent.reply2", "other-comment"} {
 				require.Contains(rows, id)

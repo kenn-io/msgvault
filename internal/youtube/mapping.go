@@ -276,11 +276,9 @@ func persistCommentSDK(ctx context.Context, st *store.Store, sourceID int64, cha
 			return 0, messageUnchanged, err
 		}
 	}
-	if prior, ok := storedMessages[c.Id]; ok && prior.SenderID.Valid && (pid == 0 || pid == prior.SenderID.Int64 && fromName == "") {
-		pid = prior.SenderID.Int64
-		self = prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool
+	if prior, ok := storedMessages[c.Id]; ok && prior.SenderID.Valid {
 		if fromName == "" {
-			emptyName, err := st.MessageRecipientsMatchContext(ctx, prior.ID, []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{pid}, DisplayNames: []string{""}}})
+			emptyName, err := st.MessageRecipientsMatchContext(ctx, prior.ID, []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{prior.SenderID.Int64}, DisplayNames: []string{""}}})
 			if err != nil {
 				return 0, messageUnchanged, err
 			}
@@ -291,6 +289,27 @@ func persistCommentSDK(ctx context.Context, st *store.Store, sourceID int64, cha
 				}
 				if len(summaries) > 0 {
 					fromName = summaries[0].FromName
+				}
+			}
+		}
+		if pid == 0 {
+			pid = prior.SenderID.Int64
+			self = prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool
+		} else if pid != prior.SenderID.Int64 {
+			key := SourceIdentifier(channelID) + "/comment/" + c.Id
+			anonymous, _, err := st.ParticipantByIdentifierContext(ctx, "youtube_comment_author", key)
+			if err != nil {
+				return 0, messageUnchanged, err
+			}
+			if anonymous == prior.SenderID.Int64 {
+				identity, err := st.GetParticipantIdentityContext(ctx, []int64{anonymous})
+				if err != nil {
+					return 0, messageUnchanged, err
+				}
+				if len(identity.Identifiers) == 1 {
+					if err := st.MergeParticipantsContext(ctx, anonymous, pid); err != nil {
+						return 0, messageUnchanged, err
+					}
 				}
 			}
 		}

@@ -268,12 +268,21 @@ func TestCommentWithoutChannelIDPreservesDistinctAuthorNames(t *testing.T) {
 	require.Len(summaries, 1)
 	require.Equal("Alice", summaries[0].FromName)
 	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCnew"}
+	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
+	require.NoError(err)
+	summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), ids[:1])
+	require.NoError(err)
+	assert.Equal(t, "Alice", summaries[0].FromName)
+	var oldMembers int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM conversation_participants WHERE conversation_id = ? AND participant_id = ?`), saved["comment-a"].ConversationID, saved["comment-a"].SenderID.Int64).Scan(&oldMembers))
+	require.Zero(oldMembers)
 	c.Snippet.AuthorDisplayName = "Alice Updated"
 	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
 	require.NoError(err)
-	updated, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"comment-a"})
+	updated, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"comment-a", "comment-b"})
 	require.NoError(err)
 	require.NotEqual(saved["comment-a"].SenderID.Int64, updated["comment-a"].SenderID.Int64)
+	require.Equal(saved["comment-b"].SenderID, updated["comment-b"].SenderID)
 	summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), ids[:1])
 	require.NoError(err)
 	require.Equal("Alice Updated", summaries[0].FromName)
