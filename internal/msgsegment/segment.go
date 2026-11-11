@@ -45,7 +45,7 @@ var wroteSuffix = regexp.MustCompile(`(?i)\bwrote:\s*$`)
 // https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/pt-PT/mail/chrome/messenger/messengercompose/composeMsgs.properties#L174-L184
 const (
 	thunderbirdDate = `.*\p{Nd}.*`
-	thunderbirdTime = `\d{1,2}:\d{2}(?:[\s\p{Z}]*(?:AM|PM))?`
+	thunderbirdTime = `\d{1,2}:\d{2}(?:[\s\p{Z}]*(?:AM|PM|[AP]\.[\s\p{Z}]*M\.))?`
 )
 
 var thunderbirdDatedAttribution = regexp.MustCompile(`(?i)^(?:` +

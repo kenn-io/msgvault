@@ -90,7 +90,7 @@ func TestSplitThunderbirdReplyHeaders(t *testing.T) {
 		{"French date first", "Le 5 novembre 2026 à 10:00, Max <m@x.fr> a écrit\u00a0:"},
 		{"French sender first", "Max <m@x.fr> a écrit le 5 novembre 2026 à 10:00\u00a0:"},
 		{"Spanish date first", "El 11/5/2026 a las 10:00\u00a0AM, Alex <alex@example.com> escribió:"},
-		{"Spanish sender first", "Alex <alex@example.com> escribió el 5 de noviembre de 2026 a las 10:00:"},
+		{"Spanish sender first", "Alex <alex@example.com> escribió el 5 de noviembre de 2026 a las 10:00\u202fa.\u00a0m.:"},
 		{"Italian date first", "Il 5 novembre 2026 10:00, Alex <alex@example.com> ha scritto:"},
 		{"Italian sender first", "Alex <alex@example.com> ha scritto il 5 novembre 2026 alle 10:00:"},
 		{"Brazilian Portuguese date first", "Em 5 de novembro de 2026 10:00, Alex <alex@example.com> escreveu:"},
