@@ -154,3 +154,25 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 	opts.DelegatedOnly = true
 	assertions.Empty(operationalCatalog(opts, true))
 }
+
+func TestVisualCatalogRequiresWriteOptInAndOwner(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_visual_attachment_status", "start_visual_attachment_build", "resume_visual_attachment_build", "retry_visual_attachment_owner", "retire_visual_attachment_generation"}}
+	tools := toolsByName(t, rawListTools(t, opts, true))
+	assert.Contains(tools, "get_visual_attachment_status")
+	assert.NotContains(tools, "start_visual_attachment_build")
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyVisual}
+	writable := toolsByName(t, rawListTools(t, opts, true))
+	assert.Contains(writable, "start_visual_attachment_build")
+	for _, name := range opts.OperationCapabilities {
+		tool, ok := writable[name]
+		require.True(ok)
+		schema, ok := tool["inputSchema"].(map[string]any)
+		require.True(ok)
+		assert.Equal(false, schema["additionalProperties"])
+	}
+	assert.NotContains(toolsByName(t, rawListTools(t, opts, false)), "start_visual_attachment_build")
+	opts.DelegatedOnly = true
+	assert.Empty(rawListTools(t, opts, true))
+}

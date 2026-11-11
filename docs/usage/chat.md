@@ -839,6 +839,18 @@ Omitted fields are preserved; `false` and empty arrays are explicit changes.
 A stale ETag returns `settings_conflict`. Selection changes retain archived data
 and may require a daemon restart; inspect `pending_restart` in the response.
 
+## Visual attachment indexing
+
+On unreleased `main`, `get_visual_attachment_status` reads indexing progress
+without write access.
+An optional `coverage` scan reads every candidate blob and is available only
+when the selected daemon advertises that query. The build tool requires
+explicit hosted-processing consent; resume and retry use existing consent.
+These passes may incur provider charges. Retry takes the exact message ID and
+blob hash; retirement takes the current generation ID from status. Each write
+requires confirmation. If a write may have completed, inspect status before
+deciding what to do next. These tools are owner-only.
+
 ## Open loops
 
 On unreleased `main`, an assistant connected as the owner can see who is
@@ -900,6 +912,7 @@ Enable only the writes intended for the assistant's session:
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
+| Visual attachment build controls | `--allow-visual-writes` | `--http-allow-writes --allow-visual-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
 
 `draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available. On unreleased `main`, `--confirm-sensitive-drafts` also requires confirmation for flagged draft creation and edits; it grants no write access.
@@ -988,6 +1001,7 @@ msgvault mcp --http 8080
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-visual-writes` | `false` | Expose visual attachment build controls. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |

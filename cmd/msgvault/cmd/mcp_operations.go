@@ -19,9 +19,10 @@ import (
 )
 
 type daemonMCPOperations struct {
-	now       func() time.Time
-	client    *daemonclient.Client
-	supported []string
+	now            func() time.Time
+	client         *daemonclient.Client
+	supported      []string
+	visualCoverage bool
 }
 
 func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotocol.MCPCapabilities) *daemonMCPOperations {
@@ -43,6 +44,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 		}
 		return false
 	}
+	backend.visualCoverage = hasRoute("getVisualAttachmentStatus", http.MethodGet, "/api/v1/multimodal/status", "coverage")
 	if hasRoute("getSchedulerStatus", http.MethodGet, "/api/v1/scheduler/status") {
 		backend.supported = append(backend.supported, "get_source_scheduler_status")
 	}
@@ -51,6 +53,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	}
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, visualMCPCapabilities(capabilities)...)
 	return backend
 }
 
@@ -70,6 +73,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.TriggerSyncResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if result, handled, err := b.executeVisualOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeLoopOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -82,6 +88,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if disclosure, handled, err := b.visualOperationDisclosure(name, args); handled {
+			return disclosure, err
+		}
 		if disclosure, handled, err := b.loopOperationDisclosure(name, args); handled {
 			return disclosure, err
 		}
