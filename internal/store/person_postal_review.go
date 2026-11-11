@@ -193,7 +193,7 @@ func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personI
 
 // validatePostalInputTx rejects a postal snapshot that cites a suggestion whose
 // submitted address it was not captured from. Edited fields stay free.
-func (s *Store) validatePostalInputTx(ctx context.Context, tx *loggedTx, personID int64, input PersonAddressInput, replacing bool) error {
+func (s *Store) validatePostalInputTx(ctx context.Context, tx *loggedTx, personID int64, input PersonAddressInput, replacedOriginal *string) error {
 	original, snapshot, err := postaladdress.DecodeOriginalInput(input.OriginalValue)
 	key, cited := "", false
 	if input.Envelope.SourceRef != nil {
@@ -201,6 +201,13 @@ func (s *Store) validatePostalInputTx(ctx context.Context, tx *loggedTx, personI
 	}
 	if err != nil || !cited {
 		return err
+	}
+	if replacedOriginal != nil {
+		previous, previousSnapshot, err := postaladdress.DecodeOriginalInput(*replacedOriginal)
+		if err != nil || !snapshot || !previousSnapshot || previous != original {
+			return ErrPostalSuggestionMismatch
+		}
+		return nil
 	}
 	var submitted []byte
 	err = tx.QueryRowContext(ctx, `SELECT submitted_value_json FROM person_fact_claims WHERE person_id = ? AND claim_key = ? AND target_kind = 'postal_address' LIMIT 1`, personID, key).Scan(&submitted)
@@ -217,14 +224,12 @@ func (s *Store) validatePostalInputTx(ctx context.Context, tx *loggedTx, personI
 	if !snapshot || claimed.Input() != original {
 		return ErrPostalSuggestionMismatch
 	}
-	if !replacing {
-		page := []personfacts.Claim{{ClaimKey: key, Target: personfacts.TargetRef{Kind: personfacts.TargetPostalAddress}, SubmittedValue: submitted}}
-		if err := s.attachPostalReviewsTx(ctx, tx, personID, page); err != nil {
-			return err
-		}
-		if !page[0].PostalReview.Eligible {
-			return ErrPostalSuggestionInvalid
-		}
+	page := []personfacts.Claim{{ClaimKey: key, Target: personfacts.TargetRef{Kind: personfacts.TargetPostalAddress}, SubmittedValue: submitted}}
+	if err := s.attachPostalReviewsTx(ctx, tx, personID, page); err != nil {
+		return err
+	}
+	if !page[0].PostalReview.Eligible {
+		return ErrPostalSuggestionInvalid
 	}
 	return nil
 }

@@ -89,7 +89,7 @@ func (s *Store) AddPersonAddressContext(
 			return err
 		}
 		var err error
-		result, err = s.addPersonAddressTx(ctx, tx, personID, input, false)
+		result, err = s.addPersonAddressTx(ctx, tx, personID, input, nil)
 		if err != nil {
 			return err
 		}
@@ -130,13 +130,13 @@ func (s *Store) SupersedePersonAddressContext(
 }
 
 func (s *Store) addPersonAddressTx(
-	ctx context.Context, tx *loggedTx, personID int64, input PersonAddressInput, replacing bool,
+	ctx context.Context, tx *loggedTx, personID int64, input PersonAddressInput, replacedOriginal *string,
 ) (*PersonAddress, error) {
 	if !input.AddressKind.Valid() {
 		return nil, ErrInvalidPersonAddressKind
 	}
 	if input.AddressKind == PersonAddressPostal {
-		if err := s.validatePostalInputTx(ctx, tx, personID, input, replacing); err != nil {
+		if err := s.validatePostalInputTx(ctx, tx, personID, input, replacedOriginal); err != nil {
 			return nil, err
 		}
 	}

@@ -154,6 +154,21 @@ func TestPostalAddressSweepExtractionAndAdoption(t *testing.T) {
 		require.NoError(err)
 		assert.False(rows[0].PostalReview.Eligible)
 		assert.Contains(rows[0].PostalReview.ReasonCodes, "already_adopted")
+		_, err = f.store.db.ExecContext(t.Context(), f.store.Rebind(`DELETE FROM person_fact_claims WHERE person_id = ?`), f.personID)
+		require.NoError(err)
+		patch.Addresses.Supersede = []int64{current.Addresses[0].Envelope.ID}
+		patch.Addresses.Add[0].StreetAddress = new("Later street")
+		current, err = f.store.ApplyPersonProfilePatchContext(t.Context(), f.personID, current.Person.Revision, patch)
+		require.NoError(err)
+		require.Len(current.Addresses, 1)
+		assert.Equal("Later street", *current.Addresses[0].StreetAddress)
+		assert.Equal(&sourceRef, current.Addresses[0].Envelope.SourceRef)
+		other, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", StreetAddress: "Different source"})
+		require.NoError(err)
+		patch.Addresses.Supersede = []int64{current.Addresses[0].Envelope.ID}
+		patch.Addresses.Add[0].OriginalValue = other
+		_, err = f.store.ApplyPersonProfilePatchContext(t.Context(), f.personID, current.Person.Revision, patch)
+		require.ErrorIs(err, ErrPostalSuggestionMismatch)
 	})
 }
 

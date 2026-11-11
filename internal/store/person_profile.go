@@ -218,7 +218,7 @@ func (s *Store) applyPersonProfilePatchTx(
 		}
 	}
 	if patch.Addresses != nil {
-		replaced := map[string]bool{}
+		replaced := map[string]*string{}
 		for _, id := range patch.Addresses.Supersede {
 			address, err := getPersonAddressTx(ctx, tx, personID, id)
 			if err != nil {
@@ -228,7 +228,7 @@ func (s *Store) applyPersonProfilePatchTx(
 				return err
 			}
 			if address.AddressKind == PersonAddressPostal && address.Envelope.SourceRef != nil {
-				replaced[*address.Envelope.SourceRef] = true
+				replaced[*address.Envelope.SourceRef] = &address.OriginalValue
 			}
 		}
 		for _, input := range patch.Addresses.Add {

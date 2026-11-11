@@ -42,6 +42,7 @@
     postalCandidate?: PostalCandidate;
     onDone?: () => void;
     onCancel?: () => void;
+    onComparisonChange?: (visible: boolean) => void;
   }
 
   let {
@@ -53,6 +54,7 @@
     postalCandidate = undefined,
     onDone = () => undefined,
     onCancel = () => undefined,
+    onComparisonChange = () => undefined,
   }: Props = $props();
 
   // One editor instance owns one explicit draft. The section replaces the
@@ -65,7 +67,8 @@
   const initialPersonID = untrack(() => controller.person?.id ?? controller.structuredProfile?.person.id ?? 0);
   const reviewedETag = initialCandidate ? `"person-${initialPersonID}-r${initialCandidate.personRevision}"` : untrack(() => controller.structuredProfileETag ?? undefined);
   const review = new PostalReviewSession(initialPersonID, (id, input, external, signal, previousResponseID) => initialController.assessPostalAddress(id, input, external, signal, previousResponseID));
-  onDestroy(() => review.destroy());
+  onDestroy(() => { review.destroy(); onComparisonChange(false); });
+  $effect(() => { onComparisonChange(!!review.result); });
   $effect(() => { if (controller !== initialController || (controller.person?.id ?? controller.structuredProfile?.person.id ?? 0) !== initialPersonID) review.destroy(); });
   const currentName = initialCurrent as GeneratedPersonName | undefined;
   const currentContact = initialCurrent as GeneratedPersonContactPoint | undefined;

@@ -29,6 +29,7 @@
     if (profileController?.draft?.kind === 'profile' && !profileController.discardProfileDraft()) return;
     controller.cancelPostalReview();
   }
+  let editorHasComparison = $state(false);
   let root: HTMLElement;
   let destroyed = false;
 
@@ -135,7 +136,9 @@
                     {#if review.supporting_evidence_ids.length}<p>Supporting evidence IDs: {review.supporting_evidence_ids.join(', ')}</p><Button label="View evidence" size="sm" onclick={() => void controller.selectSection('evidence')} />{:else if !review.reason_codes.map(postalReason).includes('Evidence unavailable')}<p>No supporting evidence</p>{/if}
                     {#if review.assessment}
                       {#if review.assessment.original.original_value && !(controller.postalReview?.rowToken === row.rowToken && controller.postalReview.candidate?.input.original_value === review.assessment.original.original_value) && !` ${postalAddressText(review.assessment.original, review.assessment.original_extended_parts).replace(/[\s,;]+/g, ' ').trim()} `.includes(` ${review.assessment.original.original_value.replace(/[\s,;]+/g, ' ').trim()} `)}<p>Source text: {review.assessment.original.original_value}</p>{/if}
+                      {#if !(controller.postalReview?.rowToken === row.rowToken && editorHasComparison)}
                       <dl><div><dt>Original address</dt><dd>{postalAddressText(review.assessment.original, review.assessment.original_extended_parts)}</dd></div>{#if postalAddressText(review.assessment.original, review.assessment.original_extended_parts) !== postalAddressText(review.assessment.proposed, review.assessment.proposed_extended_parts)}<div><dt>Suggested address</dt><dd>{postalAddressText(review.assessment.proposed, review.assessment.proposed_extended_parts)}</dd></div>{/if}<div><dt>Local assessment</dt><dd>{review.assessment.status.replaceAll('_', ' ')}</dd></div></dl>
+                      {/if}
                       {#if review.eligible && row.claimKey && profileController && controller.personID === profileController.person?.id}
                         <Button label="Review address" size="sm" disabled={!profileController.canWriteProfile || controller.postalReview?.loading === true || !!controller.postalReview?.candidate} onclick={() => openPostalDraft(row.rowToken)} />
                         {#if controller.postalReview?.rowToken === row.rowToken}
@@ -147,7 +150,7 @@
                             <Button label="Dismiss address review error" size="sm" onclick={() => controller.cancelPostalReview()} />
                           {:else if controller.postalReview.candidate}
                             {#key controller.postalReview}
-                              <StructuredProfileEditor controller={profileController} section="addresses" postalCandidate={controller.postalReview.candidate} onCancel={closePostalDraft} onDone={() => { controller.cancelPostalReview(); void controller.retrySection('claims'); }} />
+                              <StructuredProfileEditor controller={profileController} section="addresses" postalCandidate={controller.postalReview.candidate} onComparisonChange={(visible) => { editorHasComparison = visible; }} onCancel={closePostalDraft} onDone={() => { controller.cancelPostalReview(); void controller.retrySection('claims'); }} />
                             {/key}
                           {/if}
                         {/if}

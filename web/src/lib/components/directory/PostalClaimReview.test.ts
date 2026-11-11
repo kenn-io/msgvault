@@ -31,6 +31,7 @@ function setup(reason?: string, evidenceResponse?: Promise<Response>) {
     if (path.endsWith('/fact-evidence')) return evidenceResponse ?? Response.json({ evidence: [] });
     if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
     if (path.endsWith('/fact-pins')) return Response.json({ pins: [] });
+    if (path.endsWith('/addresses/assess')) return Response.json({ original: raw, proposed: raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] });
     if (request.method === 'PATCH') { adopted = true; return Response.json(emptyProfile({ ...person, revision: 4 }), { headers: { ETag: '"person-7-r4"' } }); }
     throw new Error(`Unexpected request ${path}`);
   });
@@ -55,6 +56,20 @@ describe('Postal claim review', () => {
     release(Response.json({ evidence: [] }));
     await waitFor(() => expect(ledger.evidence.loading).toBe(false));
     expect(screen.getByLabelText('Street address')).toHaveProperty('value', 'Edited street');
+  });
+
+  it('shows one comparison while checking a suggestion', async () => {
+    setup();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Review address' }));
+    await screen.findByLabelText('Street address');
+    expect(screen.getAllByText('Original address')).toHaveLength(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
+    await screen.findByRole('button', { name: 'Keep original' });
+    expect(screen.getAllByText('Original address')).toHaveLength(1);
+    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Changed street' } });
+    expect(screen.getAllByText('Original address')).toHaveLength(1);
   });
 
   it('uses server eligibility, reveals the sensitive address deliberately, and adopts once through guarded profile PATCH', async () => {
