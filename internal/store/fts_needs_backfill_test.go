@@ -239,6 +239,7 @@ func TestPG_FTSSearchUsesIndex(t *testing.T) {
 	}
 	require.NoError(rows.Err())
 	assert.Contains(t, strings.Join(plan, "\n"), "Bitmap Index Scan on messages_search_fts_idx")
+	assert.Equal(t, 1, strings.Count(strings.Join(plan, "\n"), " on messages "), "search must scan messages once")
 }
 
 func TestPG_BackfillFTS_SeesConcurrentBodyUpdate(t *testing.T) {
