@@ -9,6 +9,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRosterBareSenderFollowsCurrentOwner(t *testing.T) {
+	for _, omitted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("omitted=%t", omitted), func(t *testing.T) {
+			require := require.New(t)
+			f := newFakeBeeper(t)
+			old := budgetTestChat("!bare:example.test", 1, time.Now().Add(-time.Hour))
+			healthy := budgetTestChat("!rich:example.test", 1, time.Now().Add(-time.Hour))
+			for _, chat := range []*fakeChat{old, healthy} {
+				chat.Participants[0]["id"] = "@signal_shared:example.test"
+				chat.Msgs[0].SenderID = "@signal_shared:example.test"
+			}
+			healthy.Participants[0]["phoneNumber"] = "+12025550124"
+			if omitted {
+				old.Participants[0], old.Participants[1] = old.Participants[1], old.Participants[0]
+			}
+			old.ParticipantsTruncated = true
+			f.addChat(old)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			ownerA, err := newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_shared:example.test", PhoneNumber: "+12025550123"})
+			require.NoError(err)
+			opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true}
+			sum, err := imp.Import(t.Context(), opts)
+			require.NoError(err)
+			f.addChat(healthy)
+			imp = NewImporter(st, imp.client)
+			_, err = imp.Import(t.Context(), opts)
+			require.NoError(err)
+			ownerB := participantForBeeperUser(t, st, "@signal_shared:example.test")
+			require.NotEqual(ownerA, ownerB)
+			run, err := st.GetLastSuccessfulSync(sum.SourceID)
+			require.NoError(err)
+			state, err := LoadSyncState(run.CursorAfter.String)
+			require.NoError(err)
+			state.Chats[old.ID].RosterWork.MemberFirst = false
+			blob, err := state.Marshal()
+			require.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
+			require.NoError(err)
+			f.appendMsg(old.ID, fakeMsg{ID: "bare-new", SortKey: 100, Timestamp: time.Now(), SenderID: "@signal_shared:example.test", Text: "new"})
+			imp = NewImporter(st, imp.client)
+			_, err = imp.Import(t.Context(), opts)
+			require.NoError(err)
+			var sender int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "bare-new").Scan(&sender))
+			require.Equal(ownerB, sender)
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, old.Msgs[0].ID).Scan(&sender))
+			require.Equal(ownerA, sender)
+		})
+	}
+}
+
 func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 	for _, tc := range []struct {
 		name                string
@@ -95,8 +147,8 @@ func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
 				require.Equal(oldOwner, sender)
 				unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 				require.NoError(err)
+				require.Contains(unresolved, old.ID)
 				if attempt == 1 {
-					require.Contains(unresolved, old.ID)
 					if tc.incomplete {
 						var deferred int
 						require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM sync_run_items WHERE source_message_id = ? AND error_kind = 'beeper_roster_verification_deferred'`), old.ID).Scan(&deferred))

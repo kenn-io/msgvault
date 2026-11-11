@@ -602,8 +602,6 @@ func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
 	work.MemberFirst = false
 	work.Phase = "matching"
 	work.Next = 1
-	var metadataBefore string
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT metadata FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&metadataBefore))
 	blob, err := state.Marshal()
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
@@ -623,17 +621,31 @@ func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
 	}
 	var stateName string
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo2'`).Scan(&stateName))
-	assert.Equal("stored", stateName)
+	assert.Equal("skipped", stateName)
 	work = latestBeeperState(t, imp).Chats[chat.ID].RosterWork
 	assert.True(work.Verified)
 	assert.Equal("matching", work.Phase)
 	assert.Equal(1, work.Next)
-	var metadataAfter string
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT metadata FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&metadataAfter))
-	assert.JSONEq(metadataBefore, metadataAfter)
 	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 	require.NoError(err)
+	assert.Contains(unresolved, chat.ID)
+	f.mu.Lock()
+	f.blockChatGetID = ""
+	f.mu.Unlock()
+	imp = NewImporter(st, imp.client)
+	opts.StopAt = time.Time{}
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+	work = latestBeeperState(t, imp).Chats[chat.ID].RosterWork
+	assert.True(work.Verified)
+	assert.Equal("done", work.Phase)
+	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
 	assert.NotContains(unresolved, chat.ID)
+	_, err = imp.BackfillMedia(t.Context(), opts)
+	require.NoError(err)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo2'`).Scan(&stateName))
+	assert.Equal("stored", stateName)
 }
 
 func TestImportStopsAfterReconcilePage(t *testing.T) {

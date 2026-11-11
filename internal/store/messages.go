@@ -6049,9 +6049,16 @@ func (s *Store) writeBeeperRosterReceipt(q querier, sourceID int64, provider, id
 	return err
 }
 
+// BeeperRosterRichPrefix marks receipts based on a phone number or email.
+const BeeperRosterRichPrefix = "rich:"
+
 // BeeperRosterReceiptChecksum binds the consumed inputs to their current owner.
 func BeeperRosterReceiptChecksum(inputs string, owner int64) string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(inputs+":"+strconv.FormatInt(owner, 10))))
+	prefix := ""
+	if strings.HasPrefix(inputs, BeeperRosterRichPrefix) {
+		prefix = BeeperRosterRichPrefix
+	}
+	return prefix + fmt.Sprintf("%x", sha256.Sum256([]byte(inputs+":"+strconv.FormatInt(owner, 10))))
 }
 
 // BeeperRosterOwnersContext reads current identifier owners in bounded queries.

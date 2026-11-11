@@ -1063,22 +1063,6 @@ func (imp *Importer) ensureConversation(
 		routeEvidence.Failure = "chat_binding_mismatch"
 	}
 	if opts.skipRoster {
-		if ch.Participants.HasMore && opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature {
-			if !membership.known {
-				metadata, err := imp.store.GetConversationMetadataContext(ctx, convID)
-				if err != nil {
-					return convID, false, membership, err
-				}
-				var record struct {
-					MemberCount *int `json:"member_count"`
-					Unknown     bool `json:"member_count_unknown"`
-				}
-				if metadata.Valid && json.Unmarshal([]byte(metadata.String), &record) == nil && record.MemberCount != nil && !record.Unknown {
-					membership = chatMembership{count: *record.MemberCount, known: true}
-				}
-			}
-			return convID, true, membership, nil
-		}
 		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature && opts.rosterState.Signature == rosterSignature(detail, opts.AccountID) {
 			keys := imp.rosterKeys(detail.Participants.Items)
 			settled, err := imp.refreshRosterProof(ctx, sourceID, convID, rosterProvider(ch.ID), detail, detail.Participants.Items, keys, opts.AccountID, routeEvidence, membership)
@@ -1089,7 +1073,7 @@ func (imp *Importer) ensureConversation(
 				return convID, true, membership, nil
 			}
 		}
-		if opts.rosterState != nil && opts.rosterState.Verified {
+		if opts.rosterState != nil && opts.rosterState.Verified && (!ch.Participants.HasMore || opts.rosterState.ListingSignature != listingSignature) {
 			opts.rosterState.Verified = false
 			opts.rosterState.Phase = "members"
 			opts.rosterState.Next = 0

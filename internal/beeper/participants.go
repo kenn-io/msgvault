@@ -255,9 +255,13 @@ func (r *participantResolver) useMessageRoster(ctx context.Context, sourceID int
 	}
 	r.roomOwners = make(map[string]bool, len(receipts))
 	for key, receipt := range receipts {
+		delete(r.rich, key)
+		delete(r.fallback, key)
+		if !strings.HasPrefix(receipt.Checksum, store.BeeperRosterRichPrefix) {
+			continue
+		}
 		owner, err := strconv.ParseInt(receipt.Name, 10, 64)
 		if err == nil && owner > 0 && !r.mergedAway[owner] {
-			delete(r.rich, key)
 			r.fallback[key] = owner
 			r.roomOwners[key] = true
 		}
@@ -271,11 +275,11 @@ func (r *participantResolver) useMessageRoster(ctx context.Context, sourceID int
 			if owner != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(rosterMemberInputs(&item, ch, r.accountID, bridgePrefix), owner) {
 				continue
 			}
-			if r.messageUsers == nil {
-				r.messageUsers = make(map[string]User)
-			}
-			r.messageUsers[item.ID] = item.User
 		}
+		if r.messageUsers == nil {
+			r.messageUsers = make(map[string]User)
+		}
+		r.messageUsers[item.ID] = item.User
 	}
 	return nil
 }

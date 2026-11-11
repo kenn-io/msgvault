@@ -1,6 +1,8 @@
 package beeper
 
 import (
+	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -93,29 +95,79 @@ func TestRosterVerificationRejectsChangedSnapshot(t *testing.T) {
 }
 
 func TestTruncatedChangedListingDefersRoster(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := budgetTestChat("!changed-listing:example.test", 2, time.Now())
-	chat.ParticipantsTruncated = true
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	state := latestBeeperState(t, imp).Chats[chat.ID]
-	require.True(state.RosterWork.Verified)
-	f.mu.Lock()
-	chat.Participants[0]["fullName"] = "Changed"
-	f.mu.Unlock()
-	listing, err := imp.client.SearchChats(t.Context(), SearchChatsParams{AccountID: "signal"})
-	require.NoError(err)
-	require.Len(listing.Items, 1)
-	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, &listing.Items[0], ImportOptions{AccountID: "signal", skipRoster: true, rosterState: state.RosterWork, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"}}, &ImportSummary{})
-	require.NoError(err)
-	assert.False(complete)
-	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-	require.NoError(err)
-	assert.Contains(unresolved, chat.ID)
+	for _, hidden := range []bool{false, true} {
+		t.Run(fmt.Sprintf("hidden=%t", hidden), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := newFakeBeeper(t)
+			chat := budgetTestChat("!changed-listing:example.test", 2, time.Now())
+			chat.Participants = append(chat.Participants, map[string]any{"id": "@signal_hidden_old:example.test"})
+			chat.ParticipantsTruncated = true
+			f.addChat(chat)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+			require.NoError(err)
+			state := latestBeeperState(t, imp).Chats[chat.ID]
+			require.True(state.RosterWork.Verified)
+			state.RosterWork.Phase = "matching"
+			state.RosterWork.Next = 1
+			f.mu.Lock()
+			if hidden {
+				chat.Participants[2] = map[string]any{"id": "@signal_hidden_new:example.test"}
+			} else {
+				chat.Participants[0]["fullName"] = "Changed"
+			}
+			f.mu.Unlock()
+			listing, err := imp.client.SearchChats(t.Context(), SearchChatsParams{AccountID: "signal"})
+			require.NoError(err)
+			require.Len(listing.Items, 1)
+			_, complete, _, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, &listing.Items[0], ImportOptions{AccountID: "signal", skipRoster: true, rosterState: state.RosterWork, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"}}, &ImportSummary{})
+			require.NoError(err)
+			assert.False(complete)
+			unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+			require.NoError(err)
+			assert.Contains(unresolved, chat.ID)
+			if hidden {
+				assert.True(state.RosterWork.Verified)
+				assert.Equal("matching", state.RosterWork.Phase)
+				assert.Equal(1, state.RosterWork.Next)
+				var convID int64
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&convID))
+				routeComplete := func() bool {
+					metadata, err := st.GetConversationMetadataContext(t.Context(), convID)
+					require.NoError(err)
+					var value struct {
+						Route struct {
+							MembershipComplete bool `json:"membership_complete"`
+						} `json:"messaging_route"`
+					}
+					require.NoError(json.Unmarshal([]byte(metadata.String), &value))
+					return value.Route.MembershipComplete
+				}
+				assert.False(routeComplete())
+				state.RosterWork.MemberFirst = false
+				f.appendMsg(chat.ID, fakeMsg{ID: "hidden-change-message", SortKey: 99, Timestamp: time.Now(), SenderID: "@signal_ann:beeper.local", Text: "new"})
+				f.resetRequests()
+				syncState := NewSyncState()
+				syncState.Chats[chat.ID] = state
+				opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"}}
+				_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, &listing.Items[0], opts, syncState, time.Now().Add(-time.Hour), false, false, &ImportSummary{})
+				require.NoError(err)
+				for _, request := range f.requests() {
+					assert.False(strings.HasPrefix(request, "/v1/chats/"+chat.ID+"?"))
+				}
+				assert.Equal(3, countBeeperMessages(t, imp))
+				_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, &listing.Items[0], opts, syncState, time.Now().Add(-time.Hour), false, false, &ImportSummary{})
+				require.NoError(err)
+				unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+				require.NoError(err)
+				assert.NotContains(unresolved, chat.ID)
+				assert.True(routeComplete())
+				assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), participantForBeeperUser(t, st, "@signal_hidden_new:example.test"))
+				assert.NotContains(rosterMembers(t, st, sum.SourceID, chat.ID), participantForBeeperUser(t, st, "@signal_hidden_old:example.test"))
+			}
+		})
+	}
 }
 
 func TestImportVerifiesSmallRosterBeforeReplacement(t *testing.T) {

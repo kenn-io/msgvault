@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -345,5 +346,9 @@ func rosterMemberInputs(p *Participant, detail *Chat, accountID, bridgePrefix st
 	if p.IsAdmin {
 		role = "admin"
 	}
-	return rosterMemberSignature(&p.User, detail, accountID, bridgePrefix) + ":" + role
+	prefix := ""
+	if strings.HasPrefix(p.PhoneNumber, "+") || strings.Contains(p.Email, "@") {
+		prefix = store.BeeperRosterRichPrefix
+	}
+	return prefix + rosterMemberSignature(&p.User, detail, accountID, bridgePrefix) + ":" + role
 }
