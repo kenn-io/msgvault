@@ -65,6 +65,13 @@ func TestDraftComposeEndToEnd(t *testing.T) {
 	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &result))
 	assertions.Equal(draftReplyStatusCreated, result.Status)
 	assertions.Equal(int64(1), result.Revision)
+	assertions.Equal("checked", result.RecipientProvenanceStatus)
+	var advisoryAddresses []string
+	for _, recipient := range result.RecipientProvenance {
+		advisoryAddresses = append(advisoryAddresses, recipient.Address)
+		assertions.Equal("unseen", recipient.Flag)
+	}
+	assertions.ElementsMatch([]string{"to@example.test", "copy@example.test", "hidden@example.test"}, advisoryAddresses)
 
 	message, err := fixture.store.GetMessage(result.MessageID)
 	requirements.NoError(err)

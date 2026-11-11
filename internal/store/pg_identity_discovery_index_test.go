@@ -29,6 +29,7 @@ var concurrentlyBuiltIndexes = []struct{ index, table string }{
 	{"idx_person_match_scoring_contact_lookup", "participant_contact_observations"},
 	{"idx_beeper_media_occurrences_source", "beeper_media_occurrences"},
 	{"idx_message_recipients_email_from", "message_recipients"},
+	{"idx_message_recipients_normalized_email", "message_recipients"},
 }
 
 // Both probes below check pg_index.indisvalid rather than just counting rows
