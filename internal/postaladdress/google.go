@@ -152,7 +152,7 @@ func googleRequest(input Input) (googlePostalAddress, string) {
 	// metadata, recipients or organizations are sent to the provider.
 	for _, value := range []string{input.StreetAddress, input.ExtendedAddress, input.PostOfficeBox} {
 		if value != "" {
-			payload.AddressLines = append(payload.AddressLines, strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")...)
+			payload.AddressLines = append(payload.AddressLines, strings.Split(value, "\n")...)
 		}
 	}
 	if !knownCountry(input.CountryCode) {
@@ -172,17 +172,6 @@ func googleRequest(input Input) (googlePostalAddress, string) {
 		return payload, "external_input_too_long"
 	}
 	return payload, ""
-}
-
-// withoutBlock removes the provider lines matching a possibly multiline detail.
-func withoutBlock(lines []string, value string) ([]string, bool) {
-	block := strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
-	for i := 0; i+len(block) <= len(lines); i++ {
-		if slices.Equal(lines[i:i+len(block)], block) {
-			return slices.Delete(lines, i, i+len(block)), true
-		}
-	}
-	return lines, false
 }
 
 func googleAssessment(assessment Assessment, result googleResult) Assessment {
@@ -261,8 +250,9 @@ func googleAssessment(assessment Assessment, result googleResult) Assessment {
 		if detail.value == "" {
 			continue
 		}
-		if rest, ok := withoutBlock(lines, detail.value); ok {
-			lines = rest
+		index := slices.Index(lines, detail.value)
+		if index >= 0 {
+			lines = slices.Delete(lines, index, index+1)
 		} else {
 			preserveStreet = true
 			review(detail.reason)

@@ -80,29 +80,6 @@ func TestGoogleCarriesResponseIDToFollowUpChecks(t *testing.T) {
 	assert.Equal(t, "google-response-1", payload["previousResponseId"])
 }
 
-func TestGoogleSendsCRLFAddressAsSeparateLines(t *testing.T) {
-	var payload googleValidateRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
-		_, _ = io.WriteString(w, googleClean)
-	}))
-	defer server.Close()
-	v := GoogleValidator{APIKey: "synthetic-secret", Client: server.Client(), endpoint: server.URL}
-	_, err := v.Check(t.Context(), Input{StreetAddress: "1 Main St\r\nBuilding A", ExtendedAddress: "Unit 7\r\nFloor 2", PostOfficeBox: "PO Box 9\r\nAnnex", CountryCode: "CA"}, "")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"1 Main St", "Building A", "Unit 7", "Floor 2", "PO Box 9", "Annex"}, payload.Address.AddressLines)
-}
-
-func TestGoogleConfirmsMultilineUnit(t *testing.T) {
-	body := strings.ReplaceAll(googleClean, "PREMISE", "SUB_PREMISE")
-	body = strings.Replace(body, `["12 Example Street"]`, `["12 Example Street","Unit 7","Floor 2"]`, 1)
-	v, _ := googleTestValidator(t, http.StatusOK, body)
-	got, err := v.Check(t.Context(), Input{StreetAddress: "12 Example Street", ExtendedAddress: "Unit 7\r\nFloor 2", CountryCode: "CA"}, "")
-	require.NoError(t, err)
-	assert.NotContains(t, got.ReasonCodes, "unit_not_confirmed")
-	assert.Equal(t, "12 Example Street", got.Proposed.StreetAddress)
-}
-
 func TestGoogleRequiresCompleteConfirmedFineGrainedResult(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
