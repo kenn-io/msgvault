@@ -21,9 +21,10 @@ import (
 const invalidArguments = "invalid_arguments"
 
 type daemonMCPOperations struct {
-	now       func() time.Time
-	client    *daemonclient.Client
-	supported []string
+	now                func() time.Time
+	client             *daemonclient.Client
+	supported          []string
+	includeClosedLoops bool
 }
 
 func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotocol.MCPCapabilities) *daemonMCPOperations {
@@ -56,6 +57,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	if hasRoute("runCLI", http.MethodPost, "/api/v1/cli/run") {
 		backend.supported = append(backend.supported, "export_person_messages")
 	}
+	backend.includeClosedLoops = hasRoute("listLoops", http.MethodGet, "/api/v1/loops", "include_closed")
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, personRecordCapabilities(hasRoute, capabilities)...)

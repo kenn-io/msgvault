@@ -68,10 +68,10 @@ describe("PersonOpenLoops", () => {
     expect(url.searchParams.get("limit")).toBe("5");
   });
 
-  it("labels cited commitments by direction and reopens an owner decision", async () => {
-    let state: "open" | "done" = "open";
+  it.each(["done", "snoozed"] as const)("hides a %s commitment until closed promises are shown", async (closeState) => {
+    let state: "open" | "done" | "snoozed" = "open";
     const decisions: { path: string; state: string }[] = [];
-    const promise = (id: number, direction: 'owed_by' | 'owed_to', text: string, current: "open" | "done" = "open") => ({
+    const promise = (id: number, direction: 'owed_by' | 'owed_to', text: string, current: "open" | "done" | "snoozed" = "open") => ({
       id: `c${id}`,
       person_id: 7,
       claim_id: id + 100,
@@ -109,8 +109,9 @@ describe("PersonOpenLoops", () => {
     expect(cite.getAttribute("href")).toBe("/messages/52");
     expect(screen.getByRole("heading", { name: "Promises you made" })).toBeDefined();
     expect(screen.getByRole("heading", { name: "Promises to you" })).toBeDefined();
-    await fireEvent.click(screen.getAllByRole("button", { name: "Done" })[0]);
-    await screen.findByRole("button", { name: "Reopen" });
+    await fireEvent.click(screen.getAllByRole("button", { name: closeState === "done" ? "Done" : "Snooze for 24h" })[0]);
+    expect(await screen.findByText("1 open")).toBeDefined();
+    expect(screen.queryByRole("link", { name: "I will send the draft." })).toBeNull();
     view.unmount();
     render(PersonOpenLoops, { client, personID: 7 });
     expect(await screen.findByText("1 open")).toBeDefined();
@@ -118,7 +119,7 @@ describe("PersonOpenLoops", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Reopen" }));
     expect(await screen.findByText("2 open")).toBeDefined();
     expect(decisions).toEqual([
-      { path: "/api/v1/loops/commitments/c12/decision", state: "done" },
+      { path: "/api/v1/loops/commitments/c12/decision", state: closeState },
       { path: "/api/v1/loops/commitments/c12/decision", state: "open" },
     ]);
   });

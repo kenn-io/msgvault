@@ -96,7 +96,7 @@ func (w *Worker) runCommitmentCall(
 		Budget: w.Config.Budgets,
 	})
 	if err != nil {
-		// Budget exhaustion defers the brief to the next run; the reservation
+		// Budget exhaustion defers commitment extraction to the next run; the reservation
 		// rolled back, so there is nothing to reconcile.
 		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 	}
