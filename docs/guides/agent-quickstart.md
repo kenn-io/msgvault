@@ -252,8 +252,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_kata_issue_context` | read | — | owner-only |
 | `get_meeting_context` | read | — | owner-only |
 | `get_meeting_metrics` | read | — | owner-only |
-| `get_message_tags` | read | — | owner-only |
 | `get_message` | read | — | message.read |
+| `get_message_tags` | read | — | owner-only |
 | `get_participant_identity` | read | — | owner-only |
 | `get_person_agenda` | read | — | owner-only |
 | `get_person_edit_context` | read | — | owner-only |
@@ -314,4 +314,4 @@ backend checks for action permissions, source scope, and sender identity;
 | `update_saved_view` | write | — | owner-only |
 <!-- END GENERATED tools -->
 
-On unreleased `main`, person fact diagnostics expose native evidence, claims, decisions, pins and tracking. Target catalog reads include sensitive targets only when `include_sensitive` is true. Evidence and claims can contain sensitive content. The pin and tracking writes require `--allow-person-fact-writes` and confirmation for each call; tracking has no revision guard. HTTP writes also need the general write opt-in.
+On unreleased `main`, person fact diagnostics expose native evidence, claims, decisions, pins and tracking. Target catalog reads include sensitive targets only when the include-sensitive option is true. Evidence and claims can contain sensitive content. The pin and tracking writes require `--allow-person-fact-writes` and confirmation for each call; tracking has no revision guard. HTTP writes also need the general write opt-in and protocol `2026-07-28` or newer.

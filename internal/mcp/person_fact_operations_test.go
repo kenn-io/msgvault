@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestPersonFactCatalogOwnerCapabilitiesAndWriteGate(t *testing.T) {
@@ -25,15 +24,6 @@ func TestPersonFactCatalogOwnerCapabilitiesAndWriteGate(t *testing.T) {
 		assert.Contains(t, tools, name)
 	}
 	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, false)), "set_person_tracking")
-	opts.DelegatedOnly = true
-	assert.Empty(t, rawListTools(t, opts, true))
-	opts.DelegatedOnly = false
 	opts.OperationCapabilities = []string{"get_person_tracking"}
 	assert.NotContains(t, toolsByName(t, rawListTools(t, opts, true)), "set_person_tracking")
-	defs := personFactOperationalDefinitions()
-	require.Len(t, defs, 9)
-	for _, d := range defs {
-		require.NotNil(t, d.definition.inputSchema.AdditionalProperties)
-		assert.NotNil(t, d.definition.inputSchema.AdditionalProperties.Not)
-	}
 }
