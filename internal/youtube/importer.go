@@ -273,9 +273,6 @@ func (imp *Importer) step(ctx context.Context, st *store.Store, sourceID int64, 
 		if err != nil {
 			return nil, counts, safeError(ctx, err)
 		}
-		if len(result.Items) > 50 {
-			return nil, counts, errors.New("too many YouTube uploads in one page")
-		}
 		tail := nextPage(job, result.NextPageToken)
 		var ids []string
 		for _, item := range result.Items {
