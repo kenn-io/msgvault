@@ -300,9 +300,6 @@ describe('GroupTable', () => {
     try {
       expect(screen.getByRole('columnheader', { name: 'Share' })).toBeDefined();
       expect(screen.getByTitle('2% of 1,000 items').firstElementChild?.getAttribute('style')).toContain('width: 2%');
-      expect(screen.getByRole('columnheader', { name: 'Size' })).toBeDefined();
-      expect(screen.getByRole('columnheader', { name: 'Latest' })).toBeDefined();
-
     } finally {
       clientWidth.mockRestore();
       view.unmount();

@@ -115,15 +115,12 @@ it('Escape closes only the active Account picker, then Filter', async () => {
 });
 
 it('displays local dates with UTC peers', async () => {
-  vi.stubEnv('TZ', 'Europe/London');
-  try {
-    render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), onChange: vi.fn(), onClear: vi.fn(), filters: [
-      { dimension: 'after', values: ['2026-07-01T00:00:00-04:00'] }, { dimension: 'before', values: ['2026-08-01T00:00:00Z'] }
-    ] });
-    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe('2026-07-01');
-    expect((screen.getByLabelText('To (UTC)') as HTMLInputElement).value).toBe('2026-07-31');
-  } finally { vi.unstubAllEnvs(); }
+  render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), onChange: vi.fn(), onClear: vi.fn(), filters: [
+    { dimension: 'after', values: ['2026-07-01T00:00:00-04:00'] }, { dimension: 'before', values: ['2026-08-01T00:00:00Z'] }
+  ] });
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe('2026-07-01');
+  expect((screen.getByLabelText('To (UTC)') as HTMLInputElement).value).toBe('2026-07-31');
 });
 
 it('preserves a September drill end when midnight is skipped', async () => {

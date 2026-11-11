@@ -22,7 +22,12 @@ describe('GroupOverview', () => {
       kind: 'group' as const, dimension: 'participant' as const, key: '42', label: 'Person Example', count: 3, latestAt: '2024-06-20T12:00:00Z',
       overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 2 }, { bucket: '2024-06', count: 1 }], co_participants: [{ key: '1', label: 'Person Example', count: 2 }] }
     }, range: 'May 3, 2024 – Jun 20, 2024', showRange: true,
-    image: 'Activity by month, May 2024 to Jun 2024, busiest May 2024 with 2 items', dates: [] }
+    image: 'Activity by month, May 2024 to Jun 2024, busiest May 2024 with 2 items', dates: [] },
+    { name: 'singular', selection: {
+      kind: 'group' as const, dimension: 'month' as const, key: '2024-05', label: 'May 2024', count: 2, latestAt: '2024-05-04T12:00:00Z',
+      overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05-03', count: 1 }, { bucket: '2024-05-04', count: 1 }], co_participants: [{ key: '1', label: 'Person Example', count: 2 }] }
+    }, range: 'May 3, 2024 – May 4, 2024', showRange: false,
+    image: 'Activity by day, May 3, 2024 to May 4, 2024, busiest May 3, 2024 with 1 item', dates: ['May 3, 2024', 'May 4, 2024'] }
   ])('shows the range, $name strip, and people', async ({ selection, range, showRange, image, dates }) => {
     const view = render(GroupOverview, { selection });
 
@@ -53,16 +58,5 @@ describe('GroupOverview', () => {
 
     expect(screen.getByRole('img', { name: `Activity by ${unit}: ${label}, 3 items` })).toBeDefined();
     for (const text of visibleText) expect(screen.getAllByText(text)).toHaveLength(1);
-  });
-
-  it('uses the singular item label for a busiest bucket of one', () => {
-    render(GroupOverview, { selection: {
-      kind: 'group', dimension: 'month', key: '2024-05', label: 'May 2024', count: 2,
-      latestAt: '2024-05-04T12:00:00Z', overview: {
-        first_at: '2024-05-03T12:00:00Z',
-        activity: [{ bucket: '2024-05-03', count: 1 }, { bucket: '2024-05-04', count: 1 }], co_participants: []
-      }
-    } });
-    expect(screen.getByRole('img', { name: 'Activity by day, May 3, 2024 to May 4, 2024, busiest May 3, 2024 with 1 item' })).toBeDefined();
   });
 });

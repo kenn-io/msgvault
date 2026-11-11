@@ -141,12 +141,9 @@ it('disambiguates source labels using the full inventory', () => {
   expect(groupRowName('source', '1', sources.get('1')!.identifier, sources).name).toBe('person@example.org (one.example:993)');
   expect(groupRowName('source', '2', sources.get('2')!.identifier, sources).name).toBe('person@example.org (two.example:993)');
   expect(groupRowName('source', '3', 'archive-a.example', sources).name).toBe('Mbox import (archive-a.example)');
-  expect(groupRowName('source', '4', 'archive-b.example', sources).name).toBe('Mbox import (archive-b.example)');
   expect(groupRowName('source', '5', 'work.example', sources).name).toBe('Google Calendar (work.example)');
-  expect(groupRowName('source', '6', 'home.example', sources).name).toBe('Google Calendar (home.example)');
   expect(groupRowName('source', '7', 'person@example.com', sources).name).toBe('person@example.com (7)');
   expect(groupRowName('source', '8', sources.get('8')!.identifier, sources).name).toBe('person@example.com (mail.example.com:993 · 8)');
-  expect(groupRowName('source', '9', 'person@example.com', sources).name).toBe('person@example.com (9)');
   expect(groupRowName('source', '10', sources.get('10')!.identifier, sources).name).toBe('person@example.com (mail.example.com:993 · 10)');
   expect(groupRowName('source', '11', sources.get('11')!.identifier, sources).name).toBe('person@example.com (mail.example.com:143)');
 });

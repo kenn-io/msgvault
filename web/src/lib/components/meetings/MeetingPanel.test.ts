@@ -89,8 +89,8 @@ describe('MeetingPanel with hidden empty activity', () => {
   it('hides meeting activity after an empty scope loads', async () => {
     const scope = { kind: 'direct' as const, scope: { person_id: 7 } };
     const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/metrics')
-      ? meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: 0 } })
-      : meetingActions()));
+      ? meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: 0 }, months: [], duration_by_basis: [], first_meeting_at: null, last_meeting_at: null })
+      : meetingActions({ coverage: { meeting_count: 0, available: 0, partial: 0, unsupported: 0, unavailable: 0 } })));
     const controller = new MeetingsController(createMeetingsAPI(client));
     const view = render(MeetingPanel, { client, scope, controller, hideWhenEmpty: true });
     await controller.setScope(scope);

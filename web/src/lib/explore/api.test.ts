@@ -139,6 +139,15 @@ describe('ExploreAPI routing', () => {
       expect(await requests[0]!.json()).not.toHaveProperty('timezone');
       expect(await requests[1]!.json()).toMatchObject({ timezone: 'America/Chicago' });
       expect(await requests[2]!.json()).toMatchObject({ timezone: 'Europe/London' });
+      for (const dimension of ['month', 'year', 'participant'] as const) {
+        await api.groups({ limit: 1 }, dimension);
+        await api.fileGroups({ limit: 1 }, '', [], dimension);
+        const grouped = requests.splice(3);
+        expect(grouped).toHaveLength(2);
+        for (const request of grouped) {
+          expect((await request.json()).sort).toEqual(dimension === 'participant' ? undefined : [{ field: 'key', direction: 'desc' }]);
+        }
+      }
     } finally { vi.unstubAllEnvs(); }
   });
 
@@ -303,18 +312,4 @@ describe('ExploreAPI routing', () => {
     await expect(api.runCoverageAction('build_index', 'incomplete'))
       .rejects.toThrow(/failed|activation/i);
   });
-});
-
-
-it.each(['month', 'year', 'participant'] as const)('sends %s grouping order across Messages and Files', async dimension => {
- const bodies: Record<string, unknown>[] = [];
- const api = createExploreAPI(createAPIClient(async input => {
-  bodies.push(await (input as Request).json());
-  return Response.json({ rows: [], total_count: 0, cache_revision: 'fixture', search_provenance: {} });
- }));
- await api.groups({ limit: 1 }, dimension);
- await api.fileGroups({ limit: 1 }, '', [], dimension);
- for (const body of bodies) {
-  expect(body.sort).toEqual(dimension === 'participant' ? undefined : [{ field: 'key', direction: 'desc' }]);
- }
 });

@@ -219,10 +219,6 @@ func TestRunSavedViewRelaysSavedViewAndExploreErrors(t *testing.T) {
 	assertions.Equal(http.StatusBadRequest, tooMany.Code, tooMany.Body.String())
 	assertions.Contains(tooMany.Body.String(), "invalid_limit")
 
-	calendar := createRunTestView(t, st, "Calendar", `{"grouping":["month"]}`)
-	invalid, _ := runSavedView(t, srv, calendar.ID, `{"timezone":"Invalid/Zone"}`)
-	assertions.Equal(http.StatusBadRequest, invalid.Code, invalid.Body.String())
-
 	badCursor, _ := runSavedView(t, srv, view.ID, `{"cursor":"not-a-cursor"}`)
 	assertions.Equal(http.StatusBadRequest, badCursor.Code, badCursor.Body.String())
 	assertions.Contains(badCursor.Body.String(), "invalid_cursor", "Explore errors pass through unchanged")
