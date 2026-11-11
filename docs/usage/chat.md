@@ -1011,7 +1011,7 @@ msgvault mcp --http 8080
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-merge-recovery-writes` | `false` | Expose merge candidate decisions and lineage splits. Each call requires client confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
-| `--allow-curated-writes` | `false` | Expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-curated-writes` | `false` | On unreleased `main`, expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |

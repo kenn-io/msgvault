@@ -47,7 +47,7 @@ type personPatchArgs struct {
 
 func personRecordRefusal(code string) bool {
 	switch code {
-	case "profile_values_unavailable", "profile_media_not_found", "profile_media_content_unavailable", "profile_value_not_found", "invalid_profile_value", "profile_patch_too_large", "person_category_duplicate", "service_alias_conflict", "invalid_profile_media_id", "invalid_if_match", "server_busy":
+	case "profile_values_unavailable", "profile_media_not_found", "profile_media_content_unavailable", "profile_value_not_found", "invalid_profile_value", "profile_patch_too_large", "person_category_duplicate", "service_alias_conflict", "invalid_if_match", "server_busy":
 		return true
 	}
 	return false
@@ -122,37 +122,47 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 	if current.ETag != input.ETag {
 		return "", true, &mcpserver.OperationRefusalError{Code: "person_revision_conflict"}
 	}
-	encoded, err := json.Marshal(input)
-	if err != nil {
-		return "", true, err
+	type mediaAdd struct {
+		generated.PersonMediaInputRequest
+
+		DataSize   *int    `json:"data_size,omitzero"`
+		DataSHA256 *string `json:"data_sha256,omitzero"`
 	}
-	var changes map[string]any
-	if err := json.Unmarshal(encoded, &changes); err != nil {
-		return "", true, err
+	type mediaPatch struct {
+		Add       []mediaAdd `json:"add,omitempty"`
+		Supersede []int64    `json:"supersede,omitempty"`
 	}
-	if input.Patch.Media != nil && len(input.Patch.Media.Add) > 0 {
-		patch := changes["patch"].(map[string]any)
-		media := patch["media"].(map[string]any)
-		adds, _ := media["add"].([]any)
-		for i, item := range input.Patch.Media.Add {
-			if item.Data == nil {
-				continue
+	patch := struct {
+		generated.PersonProfilePatchRequest
+
+		Media *mediaPatch `json:"media,omitempty"`
+	}{PersonProfilePatchRequest: *input.Patch}
+	if input.Patch.Media != nil {
+		patch.Media = &mediaPatch{Supersede: input.Patch.Media.Supersede}
+		for _, item := range input.Patch.Media.Add {
+			add := mediaAdd{PersonMediaInputRequest: item}
+			if item.Data != nil {
+				data, err := base64.StdEncoding.DecodeString(*item.Data)
+				if err != nil {
+					return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+				}
+				sum := sha256.Sum256(data)
+				size, digest := len(data), hex.EncodeToString(sum[:])
+				add.Data, add.DataSize, add.DataSHA256 = nil, &size, &digest
 			}
-			data, err := base64.StdEncoding.DecodeString(*item.Data)
-			if err != nil {
-				return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
-			}
-			sum := sha256.Sum256(data)
-			add := adds[i].(map[string]any)
-			delete(add, "data")
-			add["data_size"], add["data_sha256"] = len(data), hex.EncodeToString(sum[:])
+			patch.Media.Add = append(patch.Media.Add, add)
 		}
 	}
+	changes := struct {
+		PersonID int64  `json:"person_id"`
+		ETag     string `json:"etag"`
+		Patch    any    `json:"patch"`
+	}{input.PersonID, input.ETag, patch}
 	data, err := json.Marshal(struct {
-		Operation string         `json:"operation"`
-		Current   any            `json:"current"`
-		Changes   map[string]any `json:"changes"`
-		Effect    string         `json:"effect"`
+		Operation string `json:"operation"`
+		Current   any    `json:"current"`
+		Changes   any    `json:"changes"`
+		Effect    string `json:"effect"`
 	}{name, current.Output, changes, "Atomically apply all requested adds and supersedes to this person."}, json.Deterministic(true))
 	return string(data), true, err
 }

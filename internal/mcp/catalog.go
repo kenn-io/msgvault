@@ -697,8 +697,8 @@ func chunkInputSchemas(object string) (offset, length *jsonschema.Schema) {
 	return offset, length
 }
 
-const chunkDownloadDescription = " Start at offset 0, then pass the returned sha256 with every nonzero offset and keep the same identifier and account. "
-const chunkSnapshotDescription = "Downloads retain a snapshot for 5 minutes, with at most 8 snapshots and 256 MiB total per server (256 MiB per object). " +
+const chunkDownloadDescription = " Start at offset 0, then pass the returned sha256 with every nonzero offset and keep the same identifier and account. " +
+	"Downloads retain a snapshot for 5 minutes, with at most 8 snapshots and 256 MiB total per server (256 MiB per object). " +
 	"If the snapshot expires or is evicted, restart at offset 0 without sha256."
 
 func exportEMLDefinition() toolDefinition {
@@ -712,7 +712,7 @@ func exportEMLDefinition() toolDefinition {
 			"last_sync_at is the account's latest sync activity: provider messages newer than it may not be archived yet. "+
 			"Messages without stored original MIME (chat and calendar sources, some imports) return raw_mime_unavailable. "+
 			"Gmail, IMAP (including Outlook over IMAP), and mbox/eml/emlx/maildir imports hold the bytes msgvault received; "+
-			"PST imports hold MIME rebuilt from Outlook data (source_type pst)."+chunkDownloadDescription+chunkSnapshotDescription,
+			"PST imports hold MIME rebuilt from Outlook data (source_type pst)."+chunkDownloadDescription,
 		closedObject(map[string]*jsonschema.Schema{
 			"id":               safeIDSchema("msgvault message ID"),
 			toolArgSourceMsgID: stringSchema("Provider message ID"),
@@ -762,7 +762,7 @@ func getAttachmentDefinition(_ *handlers) toolDefinition {
 		ToolGetAttachment,
 		"Get attachment content by attachment ID. Returns metadata as text and the file content as an embedded resource blob. Use get_message first to find attachment IDs. "+
 			"Pass offset or length to download in base64 chunks instead (no embedded resource): call from offset 0, then offset += length until complete is true, "+
-			"and verify the decoded concatenation against size and sha256. Full embedded responses are limited to 50 MiB."+chunkDownloadDescription+chunkSnapshotDescription,
+			"and verify the decoded concatenation against size and sha256. Full embedded responses are limited to 50 MiB."+chunkDownloadDescription,
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgAttachmentID: safeIDSchema("Attachment ID (from get_message response)"),
 			toolArgOffset:       offset,
