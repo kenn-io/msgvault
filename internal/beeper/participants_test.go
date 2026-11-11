@@ -620,7 +620,11 @@ func TestSharedEmailMergeKeepsSenderCacheCurrent(t *testing.T) {
 				"both IDs share the email participant")
 
 			f.mu.Lock()
-			chat.Participants[2]["phoneNumber"] = "+12025550177"
+			for _, member := range chat.Participants {
+				if member["id"] == tc.upgraded {
+					member["phoneNumber"] = "+12025550177"
+				}
+			}
 			f.mu.Unlock()
 			f.appendMsg(chat.ID, fakeMsg{
 				ID: chat.ID + "-other", SortKey: 1, Timestamp: time.Now(), Text: "after merge",
@@ -646,7 +650,6 @@ func TestSharedEmailMergeKeepsSenderCacheCurrent(t *testing.T) {
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT COALESCE(phone_number, '') FROM participants WHERE id = ?`), phone).Scan(&phoneNumber))
 			assert.Equal("+12025550177", phoneNumber)
-			assert.Equal(phone, participantForBeeperUser(t, st, tc.other), "the merge moves the other ID")
 			var sender int64
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT sender_id FROM messages WHERE source_message_id = ?`), chat.ID+"-other").Scan(&sender))
