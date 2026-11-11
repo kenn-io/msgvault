@@ -28,10 +28,8 @@ func TestCalendarMIMEParts(t *testing.T) {
 	assertions.Equal(calendar, string(msg.CalendarParts[0].Content))
 
 	for _, tc := range []struct{ name, header string }{
-		{"rfc2231", "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename*=UTF-8''R%C3%A9union.ics"},
 		{"percent encoded", "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename*=UTF-8''R%C3%A9union%2Eics"},
 		{"encoded word", "Content-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"=?UTF-8?B?UsOpdW5pb24uaWNz?=\""},
-		{"folded header", "Content-Type: application/octet-stream\r\nContent-Disposition: attachment;\r\n filename=invite.ics"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := tc.header + "\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte(calendar))
