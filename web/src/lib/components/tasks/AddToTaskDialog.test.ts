@@ -39,7 +39,7 @@ describe('Add to task', () => {
       }
       expect(screen.getByRole('dialog', { name: 'Kata issue' })).toBeTruthy();
       expect(screen.getByRole('radiogroup', { name: 'Issue' })).toBeTruthy();
-      expect(screen.queryByText('Issue')).toEqual(email ? expect.anything() : null);
+      expect(screen.queryByText('Issue')).toBeNull();
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
       expect(screen.getByLabelText('Brief')).toHaveProperty('value', `${location.origin}/messages/42`);
     } finally { view?.unmount(); readiness.dispose(); }
