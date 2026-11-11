@@ -100,12 +100,17 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	f := storetest.New(t)
 	ids := f.CreateMessages(2)
 	for i, id := range ids {
+		require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: strings.Repeat("filler ", 17000), Valid: true}, sql.NullString{}))
 		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'lantern', search_fts = setweight(to_tsvector('simple', 'Lantern Sender'), 'B'), indexing_version = $2 WHERE id = $1`, id, []any{2, nil}[i])
 		require.NoError(t, err)
 	}
-	_, err := f.Store.BackfillFTS(nil)
+	crossField := f.CreateMessage("legacy-cross-field")
+	require.NoError(t, f.Store.UpsertMessageBody(crossField, sql.NullString{String: strings.Repeat("filler ", 17000), Valid: true}, sql.NullString{}))
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'alpha'), 'A') || setweight(to_tsvector('simple', 'beta'), 'B'), indexing_version = 2 WHERE id = $1`, crossField)
 	require.NoError(t, err)
-	for term, want := range map[string][]int64{"lantern sender": ids, "sender lantern": nil} {
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(t, err)
+	for term, want := range map[string][]int64{"lantern sender": ids, "sender lantern": nil, "sender filler": nil, "alpha beta": nil} {
 		got, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
 		require.NoError(t, err)
 		assert.ElementsMatch(t, want, got, term)

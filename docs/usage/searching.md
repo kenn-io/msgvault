@@ -265,7 +265,7 @@ The two flags are mutually exclusive. Collection filters work in full-text, vect
 
 PostgreSQL full-text search splits punctuation into ordered word pieces. For example, `both@exam` finds `both@example.com`. After an upgrade, the daemon starts a resumable rebuild of older PostgreSQL search entries. Results can be incomplete until it finishes.
 
-For very long or repetitive messages, general search can match those pieces in a different order. Body-only search checks their order within its bounded body scan.
+For very long or repetitive messages, body search checks their order within its bounded body scan.
 
 SQLite FTS ranking is weighted to better match PostgreSQL-backed search behavior, so subject/body weighting should feel more consistent across local tools. The rankers are still different; see [Search Ranking Across Backends](/docs/architecture/search-ranking/).
 

@@ -119,6 +119,23 @@ func TestSearchFTSPunctuation(t *testing.T) {
 	}
 }
 
+func TestPostgresFTSSaturatedPhraseRejectsSeparatedPieces(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL indexing")
+	}
+	falseID := f.NewMessage().WithSourceMessageID("separated-pieces").Create(t, f.Store)
+	trueID := f.NewMessage().WithSourceMessageID("ordered-pieces").Create(t, f.Store)
+	require.NoError(t, f.Store.UpsertFTS(falseID, strings.Repeat("both unrelated example com ", 8), strings.Repeat("both ", 300)+"unrelated example com", "", "", ""))
+	require.NoError(t, f.Store.UpsertFTS(trueID, "", strings.Repeat("both ", 300)+"both@example.com", "", "", ""))
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"both@example.com"}}, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{trueID}, ids)
+	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"both@example.com"}}, 1)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{trueID}, ids)
+}
+
 func TestPostgresFTSSaturatedPhrases(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -134,7 +151,7 @@ func TestPostgresFTSSaturatedPhrases(t *testing.T) {
 		assert.Contains(ids, id)
 		ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"example@alice"}}, 10)
 		require.NoError(err)
-		assert.Contains(ids, id)
+		assert.NotContains(ids, id)
 	}
 	separated := f.NewMessage().WithSourceMessageID("separated").Create(t, f.Store)
 	crossField := f.NewMessage().WithSourceMessageID("cross-field-saturated").Create(t, f.Store)
@@ -144,8 +161,8 @@ func TestPostgresFTSSaturatedPhrases(t *testing.T) {
 	require.NoError(f.Store.UpsertFTS(plainCrossField, "alice", "", "example.com", "", ""))
 	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example"}}, 10)
 	require.NoError(err)
-	assert.Contains(ids, separated)
-	assert.Contains(ids, crossField)
+	assert.NotContains(ids, separated)
+	assert.NotContains(ids, crossField)
 	assert.NotContains(ids, plainCrossField)
 	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice", "example"}}, 10)
 	require.NoError(err)

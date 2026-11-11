@@ -412,7 +412,6 @@ func truncateBytesRuneSafe(s string) string {
 // write handles it in upsertFTSOrUnsearchable.
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	vector, args := pgFTSVector(doc)
-	args = append(args, truncateBytesRuneSafe(sqldialect.CanonicalFTSText(truncateBytesRuneSafe(doc.Body))))
 	_, err := q.Exec(
 		`UPDATE messages SET search_fts = `+pgFTSMarked("v.vector")+`, search_fts_body = `+pgFTSBody("v.vector", "$7")+`,
 			indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`
@@ -425,7 +424,6 @@ func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 // FTSMatches compares the stored tsvector with the one FTSUpsert would write.
 func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 	vector, args := pgFTSVector(doc)
-	args = append(args, truncateBytesRuneSafe(sqldialect.CanonicalFTSText(truncateBytesRuneSafe(doc.Body))))
 	var matches bool
 	err := q.QueryRow(
 		`SELECT COALESCE(search_fts = `+pgFTSMarked("v.vector")+`
@@ -458,24 +456,41 @@ func pgFTSMarked(vector string) string {
 // arguments, with $1 bound to doc.MessageID. The punctuation lexeme inserts
 // a position between fields and cannot appear in a normalized search term.
 func pgFTSVector(doc FTSDoc) (string, []any) {
+	doc, canonicalBody := preparePostgresFTSDoc(doc)
 	vector := pgFTSVectorFields("$2", "$3", "$4", "$5", "$6")
 	return vector, []any{
 		doc.MessageID,
-		truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Subject)))),
-		truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Body)))),
-		truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.FromAddr)))),
-		truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.ToAddrs)))),
-		truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.CcAddrs)))),
+		doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, canonicalBody,
 	}
 }
 
+func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, string) {
+	canonicalBody := truncateBytesRuneSafe(sqldialect.CanonicalFTSText(truncateBytesRuneSafe(doc.Body)))
+	prepare := func(s string) string {
+		return truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(s))))
+	}
+	doc.Subject = prepare(doc.Subject)
+	doc.Body = prepare(doc.Body)
+	doc.FromAddr = prepare(doc.FromAddr)
+	doc.ToAddrs = prepare(doc.ToAddrs)
+	doc.CcAddrs = prepare(doc.CcAddrs)
+	return doc, canonicalBody
+}
+
 func pgFTSVectorFields(subject, body, sender, to, cc string) string {
+	return pgFTSMetadataFields(subject, sender, to, cc) + ` || ` + pgFTSBodyField(body)
+}
+
+func pgFTSMetadataFields(subject, sender, to, cc string) string {
 	charCap := strconv.Itoa(maxFTSBodyChars)
 	return `setweight(to_tsvector('simple', LEFT(COALESCE(` + subject + `, ''), ` + charCap + `)), 'A') || '''!'':1'::tsvector ||
 			setweight(to_tsvector('simple', LEFT(COALESCE(` + sender + `, ''), ` + charCap + `)), 'B') || '''!'':1'::tsvector ||
 			setweight(to_tsvector('simple', LEFT(COALESCE(` + to + `, ''), ` + charCap + `)), 'C') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', LEFT(COALESCE(` + cc + `, ''), ` + charCap + `)), 'C') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', LEFT(COALESCE(` + body + `, ''), ` + charCap + `)), 'D')`
+			setweight(to_tsvector('simple', LEFT(COALESCE(` + cc + `, ''), ` + charCap + `)), 'C') || '''!'':1'::tsvector`
+}
+
+func pgFTSBodyField(body string) string {
+	return `setweight(to_tsvector('simple', LEFT(COALESCE(` + body + `, ''), ` + strconv.Itoa(maxFTSBodyChars) + `)), 'D')`
 }
 
 // FTSSearchClause returns SQL fragments for tsvector full-text search.

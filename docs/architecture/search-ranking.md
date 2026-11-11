@@ -84,8 +84,8 @@ Full-text query parsing also differs:
 | Path | Query grammar |
 |---|---|
 | SQLite FTS | FTS5 `MATCH` |
-| PostgreSQL FTS | Ordered phrases with a final-token prefix; saturated entries use unordered candidates |
-| PostgreSQL hybrid FTS signal | Ordered phrases with a final-token prefix; saturated entries use unordered candidates |
+| PostgreSQL FTS | Ordered phrases with a prefix on the final token |
+| PostgreSQL hybrid FTS signal | Ordered phrases with a prefix on the final token |
 
 PostgreSQL FTS and PostgreSQL hybrid mode use the same prefix-matching query
 grammar, so a prefix that matches in FTS mode should also contribute to the FTS

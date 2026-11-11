@@ -23,7 +23,6 @@ import (
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplesweep"
-	"go.kenn.io/msgvault/internal/sqldialect"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
@@ -7001,7 +7000,8 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	}
 	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `)
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ANY(?::bigint[]) AND (` + stale + `) ORDER BY m.id`
-	vector := pgFTSVectorFields("u.subject", "u.body", "u.sender", "u.to_addrs", "u.cc_addrs")
+	metadata := pgFTSMetadataFields("u.subject", "u.sender", "u.to_addrs", "u.cc_addrs")
+	bodyVector := pgFTSBodyField("u.body")
 	carry := `''::tsvector`
 	if useLegacy {
 		old := `ts_filter(m.search_fts, '{a,b,c}')`
@@ -7010,8 +7010,8 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 		punctuated := `(SELECT COALESCE(string_agg(regexp_replace(lexeme, '[[:punct:]]+', ' ', 'g'), ' ftsseparator '), '') FROM unnest(` + old + `) WHERE lexeme ~ '[[:punct:]]')`
 		carry = `CASE WHEN m.indexing_version IS DISTINCT FROM ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` AND m.search_fts IS NOT NULL THEN '''!'':1'::tsvector || ` + old + ` || '''!'':1'::tsvector || setweight(ts_delete(to_tsvector('simple', ` + punctuated + `), 'ftsseparator'), 'C') ELSE ''::tsvector END`
 	}
-	completeVector := `(u.vector || ` + carry + `)`
-	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, canonical_body)), v AS (SELECT u.*, ` + vector + ` AS vector FROM u) UPDATE messages m SET search_fts = ` + pgFTSMarked(completeVector) + `, search_fts_body = ` + pgFTSBody(completeVector, "u.canonical_body") + `, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
+	completeVector := `(u.metadata || ` + carry + ` || u.body_vector)`
+	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, canonical_body)), v AS (SELECT u.*, ` + metadata + ` AS metadata, ` + bodyVector + ` AS body_vector FROM u) UPDATE messages m SET search_fts = ` + pgFTSMarked(completeVector) + `, search_fts_body = ` + pgFTSBody(completeVector, "u.canonical_body") + `, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
 	var affected int64
 	for fromID < toID {
 		rows, err := tx.QueryContext(ctx, lockSQL, fromID, toID)
@@ -7052,22 +7052,17 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 				_ = rows.Close()
 				return 0, err
 			}
-			subject := truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Subject))))
-			body := truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Body))))
-			sender := truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.FromAddr))))
-			to := truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.ToAddrs))))
-			cc := truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.CcAddrs))))
-			canonicalBody := truncateBytesRuneSafe(sqldialect.CanonicalFTSText(truncateBytesRuneSafe(doc.Body)))
-			size := len(subject) + len(body) + len(sender) + len(to) + len(cc) + len(canonicalBody)
+			doc, canonicalBody := preparePostgresFTSDoc(doc)
+			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs) + len(canonicalBody)
 			if len(ids) > 0 && bytes+size > 4*1024*1024 {
 				break
 			}
 			ids = append(ids, doc.MessageID)
-			subjects = append(subjects, subject)
-			bodies = append(bodies, body)
-			senders = append(senders, sender)
-			tos = append(tos, to)
-			ccs = append(ccs, cc)
+			subjects = append(subjects, doc.Subject)
+			bodies = append(bodies, doc.Body)
+			senders = append(senders, doc.FromAddr)
+			tos = append(tos, doc.ToAddrs)
+			ccs = append(ccs, doc.CcAddrs)
 			canonicalBodies = append(canonicalBodies, canonicalBody)
 			bytes += size
 		}

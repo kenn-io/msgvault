@@ -67,8 +67,13 @@ func PostgreSQLSearchPredicate(arg string, terms []string) string {
 			continue
 		}
 		// TSQuery contains only letters and digits, so it is safe to inline.
-		phrase := TSQuery([]string{term}, "")
-		clauses = append(clauses, "(m.search_fts @@ to_tsquery('simple', '"+phrase+"') OR m.search_fts @@ '''!!'''::tsquery)")
+		var metadata []string
+		for _, weight := range []string{"A", "B", "C"} {
+			metadata = append(metadata, TSQuery([]string{term}, weight))
+		}
+		body := TSQuery([]string{term}, "D")
+		canonical := CanonicalFTSText(term)
+		clauses = append(clauses, "(m.search_fts @@ to_tsquery('simple', '"+strings.Join(metadata, " | ")+"') OR (m.search_fts_body IS NULL AND m.search_fts @@ to_tsquery('simple', '"+body+"')) OR (m.search_fts_body IS NOT NULL AND strpos(' ' || m.search_fts_body, ' "+canonical+"') > 0))")
 	}
 	return strings.Join(clauses, " AND ")
 }
