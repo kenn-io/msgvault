@@ -6,10 +6,10 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -39,17 +39,13 @@ func apiContractDigest(docs ...*huma.OpenAPI) (string, error) {
 }
 
 func apiBaseMarkers(ctx context.Context, base string, explicit bool) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", base+"^{commit}")
-	if err := cmd.Run(); err != nil {
+	cmd := exec.CommandContext(ctx, "git", "ls-tree", "-z", "--name-only", "--full-tree", base, "--", "internal/api/"+apiContractsDir+"/")
+	out, err := cmd.Output()
+	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && !explicit && ctx.Err() == nil {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("resolve API contract base %q: %w", base, err)
-	}
-	cmd = exec.CommandContext(ctx, "git", "ls-tree", "-z", "--name-only", "--full-tree", base, "--", "internal/api/"+apiContractsDir+"/")
-	out, err := cmd.Output()
-	if err != nil {
 		return nil, fmt.Errorf("read API contract markers at %q: %w", base, err)
 	}
 	var markers []string
@@ -68,9 +64,6 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 	candidate := make(map[string]bool)
 	for i, list := range [][]string{markers, base} {
 		for _, marker := range list {
-			if strings.HasPrefix(marker, ".") {
-				continue
-			}
 			v, hash, ok := strings.Cut(marker, "_")
 			if !ok || semver.Canonical("v"+v) != "v"+v || len(hash) != 64 || strings.Trim(hash, "0123456789abcdef") != "" {
 				return fmt.Errorf("invalid API contract marker %q; use <version>_<sha256> in %s", marker, apiContractsDir)
@@ -85,18 +78,9 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 			}
 		}
 	}
-	next := func() (string, error) {
-		majorMinor := semver.MajorMinor(greatest)
-		major, minor, _ := strings.Cut(strings.TrimPrefix(majorMinor, "v"), ".")
-		n, err := strconv.Atoi(minor)
-		if err != nil {
-			return "", fmt.Errorf("parse API version %s: %w", greatest, err)
-		}
-		return fmt.Sprintf("%s.%d.0", major, n+1), nil
-	}
 	problem := ""
 	for _, marker := range base {
-		if !strings.HasPrefix(marker, ".") && !candidate[marker] {
+		if !candidate[marker] {
 			problem = "restore removed API contract marker " + marker
 			break
 		}
@@ -111,11 +95,10 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 		problem = "API contract changed or has multiple markers for " + version
 	}
 	if problem != "" {
-		version, err := next()
-		if err != nil {
-			return err
-		}
-		return fmt.Errorf("%s; use %s and move feature minimum constants introduced by your change", problem, version)
+		major, minor, _ := strings.Cut(strings.TrimPrefix(semver.MajorMinor(greatest), "v"), ".")
+		n, _ := new(big.Int).SetString(minor, 10)
+		n.Add(n, big.NewInt(1))
+		return fmt.Errorf("%s; use %s.%s.0 and move feature minimum constants introduced by your change", problem, major, n)
 	}
 	return nil
 }
@@ -152,7 +135,6 @@ func TestCheckAPIContract(t *testing.T) {
 		{"older", "4.0.0", b, "5.1.0", []string{"5.0.0_" + a}, nil},
 		{"occupied next minor", "5.1.0", b, "5.3.0", []string{"5.1.0_" + a, "5.2.0_" + b}, nil},
 		{"removed", "5.1.0", b, "5.2.0", []string{"5.1.0_" + b}, []string{"5.1.0_" + a}},
-		{"dotfiles", "5.0.0", a, "", []string{".keep", "5.0.0_" + a}, []string{".old"}},
 		{"malformed", "5.0.0", a, "<version>_<sha256>", []string{"bad"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -171,15 +153,13 @@ func TestAPIBaseMarkers(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	_, err := apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base", true)
-	require.ErrorContains(err, "resolve API contract base")
+	require.ErrorContains(err, "read API contract markers")
 	markers, err := apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base", false)
 	require.NoError(err)
 	assert.Empty(markers)
 	markers, err = apiBaseMarkers(t.Context(), "HEAD", false)
 	require.NoError(err)
-	if len(markers) > 0 {
-		assert.Contains(markers, "5.0.0_f4c3cd16ffd3e2294f6c0690df7ae8b2024db4b66538f467bc2d2cba36b325cf")
-	}
+	assert.Contains(markers, "5.0.0_f4c3cd16ffd3e2294f6c0690df7ae8b2024db4b66538f467bc2d2cba36b325cf")
 }
 
 func TestAPIContractDigest(t *testing.T) {
