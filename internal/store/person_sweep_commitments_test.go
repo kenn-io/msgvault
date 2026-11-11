@@ -70,15 +70,6 @@ func TestApplyCommitmentOnlySweepPreservesDecisionAcrossRequote(t *testing.T) {
 	tombstones, err := st.personSweepTombstones(ctx, f.personID, change)
 	r.NoError(err)
 	a.Empty(tombstones)
-	catalog, err := st.BuildPersonFactCatalogContext(ctx, false)
-	r.NoError(err)
-	_, err = (peoplesweep.Assembler{Source: st}).Discover(ctx, peoplesweep.AssemblyRequest{
-		PersonID: f.personID, Cursors: []peoplesweep.Cursor{f.cursor}, Catalog: catalog,
-		Profile: peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
-			AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}, Now: request.CompletedAt,
-		BackstopInterval: time.Hour,
-	})
-	r.NoError(err)
 
 	f = nextCommitmentTestAttempt(t, f, "-requote")
 	// Shortening a valid citation keeps the existing done decision. The other

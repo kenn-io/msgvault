@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"encoding/json/jsontext"
+	"reflect"
 
+	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -13,7 +15,7 @@ func loopOperationalDefinitions() []operationalDefinition {
 			"person_id":      safeIDSchema("Only questions with this durable person ID"),
 			"include_closed": {Type: "boolean", Description: "Include done, snoozed and fulfilled promises to find a promise to reopen"},
 			"limit":          {Type: "integer", Minimum: new(float64(1)), Maximum: new(float64(200)), Default: jsontext.Value("50")},
-		}), outputSchemaFor[generated.LoopListResponse](), false),
+		}), loopListOutputSchema(), false),
 		newOperationalDefinition("close_open_loop", "Mark done exactly the listed questions after rechecking the anchor's evidence. Questions that appeared after the list stay open. Requires approval.", OperationFamilyLoops, closedObject(map[string]*jsonschema.Schema{
 			"message_id":           safeIDSchema("Exact anchor_message_id from a list or decision receipt"),
 			"question_message_ids": listedQuestionsSchema(),
@@ -30,6 +32,20 @@ func loopOperationalDefinitions() []operationalDefinition {
 			"until":         stringSchema("Future RFC3339 instant or YYYY-MM-DD at local midnight"),
 		}, "commitment_id", "state"), outputSchemaFor[generated.CommitmentDecisionResponse](), true),
 	}
+}
+
+func loopListOutputSchema() *jsonschema.Schema {
+	// The generated calendar date marshals as a string even though it embeds time.Time.
+	schema, err := jsonschema.For[generated.LoopListResponse](&jsonschema.ForOptions{
+		TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+			reflect.TypeFor[runtime.Date](): {Type: "string", Format: "date"},
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	schema.Schema = schema202012
+	return schema
 }
 
 func listedQuestionsSchema() *jsonschema.Schema {
