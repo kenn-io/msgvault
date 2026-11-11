@@ -183,7 +183,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			resultErr = imp.store.PauseSyncWithCheckpoint(ctx, runID, cp)
 			return
 		}
-		resultErr = imp.store.CompleteSyncAndUpdateSourceCursorContext(ctx, runID, src.ID, cp.PageToken)
+		resultErr = imp.store.CompleteSyncAndPreserveSourceCursorContext(ctx, runID, src.ID, cp.PageToken)
 	}()
 	owner, err := imp.client.ownedChannel(ctx, opts.ChannelID, state.OwnershipCursor, budget)
 	sum.Requests += owner.requests
