@@ -27,6 +27,7 @@ import (
 
 type documentScheduler struct {
 	api.SyncScheduler
+
 	startErr error
 	starts   int
 }
@@ -93,11 +94,21 @@ func TestMCPDocumentMirrorNativeRetryAndProjection(t *testing.T) {
 		receiptBody.Store(`{"status":"scheduled"}`)
 		future := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodPost {
+				body, ok := receiptBody.Load().(string)
+				if !ok {
+					http.Error(w, "invalid fixture", http.StatusInternalServerError)
+					return
+				}
 				w.WriteHeader(http.StatusAccepted)
-				_, _ = w.Write([]byte(receiptBody.Load().(string)))
+				_, _ = w.Write([]byte(body))
 				return
 			}
-			_, _ = w.Write([]byte(statusBody.Load().(string)))
+			body, ok := statusBody.Load().(string)
+			if !ok {
+				http.Error(w, "invalid fixture", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(body))
 		}))
 		t.Cleanup(future.Close)
 		client, err := daemonclient.New(daemonclient.Config{URL: future.URL, AllowInsecure: true})

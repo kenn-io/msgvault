@@ -25,7 +25,11 @@ func (b *daemonMCPOperations) executeDocumentOperation(ctx context.Context, name
 	}
 	if name == "retry_docbank_attachment_mirror" {
 		result, err := readMCPOperationJSONWithClassifier[generated.DocbankAttachmentBackfillResponse](ctx, b.client, http.MethodPost, "/api/v1/integrations/docbank/attachments/backfill", nil, documentRefusal, http.StatusAccepted)
-		if err == nil && !result.IsError && result.Output.(generated.DocbankAttachmentBackfillResponse).Status != "scheduled" {
+		if err != nil || result.IsError {
+			return result, true, err
+		}
+		receipt, ok := result.Output.(generated.DocbankAttachmentBackfillResponse)
+		if !ok || receipt.Status != "scheduled" {
 			return operationFailure("invalid_operation_response", true), true, nil
 		}
 		return result, true, err
@@ -34,9 +38,12 @@ func (b *daemonMCPOperations) executeDocumentOperation(ctx context.Context, name
 	if err != nil || result.IsError {
 		return result, true, err
 	}
-	status := result.Output.(generated.DocbankAttachmentStatus)
-	if err := status.State.Validate(); err != nil {
+	status, ok := result.Output.(generated.DocbankAttachmentStatus)
+	if !ok {
 		return operationFailure("invalid_operation_response", false), true, nil
+	}
+	if err := status.State.Validate(); err != nil {
+		return operationFailure("invalid_operation_response", false), true, nil //nolint:nilerr // Invalid states become a fixed structured tool refusal.
 	}
 	safe := mcpserver.DocumentMirrorStatus{State: string(status.State), UploadConsent: status.UploadConsent}
 	if c := status.Counts; c != nil {
