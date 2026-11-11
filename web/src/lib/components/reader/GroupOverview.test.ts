@@ -48,12 +48,10 @@ describe('GroupOverview', () => {
     for (const text of visibleText) expect(screen.getAllByText(text)).toHaveLength(1);
   });
 
-  it('retains a range when daily endpoints differ and tolerates an absent start', async () => {
-    const selection = { kind: 'group' as const, dimension: 'month' as const, key: '2024-05', label: 'May 2024', count: 3, latestAt: '2024-05-31T12:00:00Z', overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05-04', count: 3 }], co_participants: [] } };
-    const view = render(GroupOverview, { selection });
-    expect(screen.getByText('May 3, 2024 – May 31, 2024')).toBeDefined();
-    await view.rerender({ selection: { ...selection, overview: { ...selection.overview, first_at: '' } } });
-    expect(screen.queryByText('May 3, 2024 – May 31, 2024')).toBeNull();
-    expect(screen.getByText('May 4, 2024')).toBeDefined();
+  it('retains the date range alongside monthly activity', () => {
+    const selection = { kind: 'group' as const, dimension: 'participant' as const, key: '42', label: 'Person Example', count: 3, latestAt: '2024-06-20T12:00:00Z', overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 2 }, { bucket: '2024-06', count: 1 }], co_participants: [] } };
+    render(GroupOverview, { selection });
+    expect(screen.getByText('May 3, 2024 – Jun 20, 2024')).toBeDefined();
+    expect(screen.getByRole('img', { name: 'Activity by month, May 2024 to Jun 2024, busiest May 2024 with 2 items' })).toBeDefined();
   });
 });

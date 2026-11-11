@@ -142,5 +142,5 @@ it('leads group details with the overview and a friendly grouping label', () => 
   overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 3 }], co_participants: [] }
  } });
  expect(screen.getByText('Grouped by Person')).toBeDefined();
- expect(document.querySelector('.group-scroll')?.firstElementChild?.getAttribute('aria-label')).toBe('Group overview');
+ expect(screen.getByLabelText('Group details').firstElementChild).toBe(screen.getByRole('region', { name: 'Group overview' }));
 });

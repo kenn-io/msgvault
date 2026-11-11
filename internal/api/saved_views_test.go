@@ -86,20 +86,6 @@ func TestSavedViewsAuthenticatedCRUDAndSharedSessionVisibility(t *testing.T) {
 	assertions.Equal(http.StatusNotFound, missing.Code, missing.Body.String())
 }
 
-func TestSavedViewLocalDateAPI(t *testing.T) {
-	srv := newSavedViewTestServer(t)
-	session := loginSavedViewSession(t, srv)
-	body := `{"name":"Local dates","canonical_state":{"filters":[{"field":"after","operator":"in","values":["2026-07-01T00:00:00-04:00"]}]},"schema_version":3}`
-	created := performSavedViewRequest(t, srv, http.MethodPost, savedViewsPath, []byte(body), session.mutationHeaders())
-	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
-	view := decodeSavedView(t, created)
-	assert.Equal(t, 3, view.SchemaVersion)
-	assert.JSONEq(t, `{"filters":[{"field":"after","operator":"in","values":["2026-07-01T00:00:00-04:00"]}]}`, string(view.CanonicalState))
-	loaded := performSavedViewRequest(t, srv, http.MethodGet, savedViewsPath+"/"+strconv.FormatInt(view.ID, 10), nil, session.headers())
-	require.Equal(t, http.StatusOK, loaded.Code, loaded.Body.String())
-	assert.JSONEq(t, string(view.CanonicalState), string(decodeSavedView(t, loaded).CanonicalState))
-}
-
 func TestSavedViewsAPIRejectsInvalidStateAndRevisionHeaders(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

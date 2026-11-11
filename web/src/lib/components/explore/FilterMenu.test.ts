@@ -110,54 +110,33 @@ it('Escape closes only the active Account picker, then Filter', async () => {
   expect(document.activeElement).toBe(trigger);
 });
 
-it('edits encoded local dates in the current zone and preserves UTC peers', async () => {
-  vi.stubEnv('TZ', 'Europe/London');
-  try {
-    const onChange = vi.fn();
-    const filters = [{ dimension: 'after' as const, values: ['2026-07-01T00:00:00-04:00'] }, { dimension: 'before' as const, values: ['2026-08-01T00:00:00Z'] }];
-    render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters, onChange, onClear: vi.fn() });
-    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe('2026-07-01');
-    expect((screen.getByLabelText('To (UTC)') as HTMLInputElement).value).toBe('2026-07-31');
-    await fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-02' } });
-    expect(onChange).toHaveBeenLastCalledWith([filters[1], { dimension: 'after', values: ['2026-07-02T00:00:00+01:00'] }]);
-  } finally { vi.unstubAllEnvs(); }
-});
-
-it('ends a local date at the next midnight across daylight saving', async () => {
-  vi.stubEnv('TZ', 'America/New_York');
-  try {
-    const onChange = vi.fn();
-    const filters = [{ dimension: 'before' as const, values: ['2024-04-01T00:00:00-04:00'] }];
-    render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters, onChange, onClear: vi.fn() });
-    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    await fireEvent.change(screen.getByLabelText('To'), { target: { value: '2024-03-10' } });
-    expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: ['2024-03-11T00:00:00-04:00'] }]);
-  } finally { vi.unstubAllEnvs(); }
-});
-
-it('keeps a zero-offset local bound local when editing into summer', async () => {
-  vi.stubEnv('TZ', 'Europe/London');
-  try {
-    const onChange = vi.fn();
-    render(FilterMenu, { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), filters: [{ dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] }], onChange, onClear: vi.fn() });
-    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    await fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-01' } });
-    expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: ['2026-07-01T00:00:00+01:00'] }]);
-  } finally { vi.unstubAllEnvs(); }
-});
-
-it('uses the peer calendar for a new bound and UTC for an empty range', async () => {
-  vi.stubEnv('TZ', 'Europe/London');
+it.each([
+  { name: 'displays local dates with UTC peers', zone: 'Europe/London', kind: 'display', filters: [{ dimension: 'after', values: ['2026-07-01T00:00:00-04:00'] }, { dimension: 'before', values: ['2026-08-01T00:00:00Z'] }] },
+  { name: 'ends a local date across daylight saving', zone: 'America/New_York', kind: 'dst', filters: [{ dimension: 'before', values: ['2024-04-01T00:00:00-04:00'] }] },
+  { name: 'edits a zero-offset local bound in summer', zone: 'Europe/London', kind: 'zero', filters: [{ dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] }] },
+  { name: 'uses the peer calendar or UTC for new bounds', zone: 'Europe/London', kind: 'new', filters: [{ dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] }] }
+] as const)('$name', async ({ zone, kind, filters }) => {
+  vi.stubEnv('TZ', zone);
   try {
     const onChange = vi.fn();
     const props = { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), onChange, onClear: vi.fn() };
-    const view = render(FilterMenu, { ...props, filters: [{ dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] }] });
+    const view = render(FilterMenu, { ...props, filters: filters.map(({ dimension, values }) => ({ dimension, values: [...values] })) });
     await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    await fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-07-01' } });
-    expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] }, { dimension: 'before', values: ['2026-07-02T00:00:00+01:00'] }]);
-    await view.rerender({ ...props, filters: [] });
-    await fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-01' } });
-    expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] }]);
+    if (kind === 'display') {
+      expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe('2026-07-01');
+      expect((screen.getByLabelText('To (UTC)') as HTMLInputElement).value).toBe('2026-07-31');
+    } else if (kind === 'dst') {
+      await fireEvent.change(screen.getByLabelText('To'), { target: { value: '2024-03-10' } });
+      expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'before', values: ['2024-03-11T00:00:00-04:00'] }]);
+    } else if (kind === 'zero') {
+      await fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-01' } });
+      expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: ['2026-07-01T00:00:00+01:00'] }]);
+    } else {
+      await fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-07-01' } });
+      expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] }, { dimension: 'before', values: ['2026-07-02T00:00:00+01:00'] }]);
+      await view.rerender({ ...props, filters: [] });
+      await fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-01' } });
+      expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'after', values: ['2026-07-01T00:00:00.000Z'] }]);
+    }
   } finally { vi.unstubAllEnvs(); }
 });

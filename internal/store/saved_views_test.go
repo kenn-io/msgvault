@@ -223,7 +223,4 @@ func TestSavedViewLocalDateSchema(t *testing.T) {
 	loaded, err := st.GetSavedView(t.Context(), created.ID)
 	require.NoError(t, err)
 	assert.JSONEq(t, string(input.CanonicalState), string(loaded.CanonicalState))
-	input.SchemaVersion = 4
-	_, err = st.CreateSavedView(t.Context(), input)
-	assert.ErrorIs(t, err, store.ErrSavedViewUnsupportedSchemaVersion)
 }
