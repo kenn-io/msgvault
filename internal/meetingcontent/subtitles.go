@@ -9,7 +9,10 @@ import (
 	"strings"
 )
 
-var srtControlText = regexp.MustCompile(`<[^ \t\r\n][^>\r\n]*>|\{\\[^}\r\n]*\}`)
+const subtitleInteger = `[ \t\f\v]*[+-]?[0-9]+`
+const subtitleClock = subtitleInteger + `:` + subtitleInteger + `:` + subtitleInteger + `[,.]` + subtitleInteger
+
+var srtControlText = regexp.MustCompile(`<[^ \t\r\n][^>\r\n]*>|\{\\[^}\r\n]*\}|(?m)^` + subtitleClock + `[ \t\f\v]*-->` + subtitleClock)
 
 type subtitleSegment struct {
 	Speaker, Text string

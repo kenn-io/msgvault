@@ -208,3 +208,28 @@ func TestMeetingSubtitleMarkupPreservesFile(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingSubtitleTimingTextPreservesFile(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("omi", "owner@example.test")
+	must.NoError(err)
+	raw := []byte(`{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":"Hello\n00:00:05,000 --> 00:00:06,000\nWorld","start":0,"end":2}]}`)
+	snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "owner@example.test", SourceMessageID: "one", SourceConversationID: "one", Raw: raw, RawFormat: "omi_json"}
+	archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	must.NoError(err)
+	server := httptest.NewServer(api.NewServer(&config.Config{}, st, nil, slog.New(slog.DiscardHandler)).Router())
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+	must.NoError(err)
+	t.Cleanup(func() { checks.NoError(client.Close()) })
+	output := filepath.Join(t.TempDir(), "meeting.srt")
+	must.NoError(os.WriteFile(output, []byte("keep"), 0600))
+	stdout, _, err := executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--format", "srt", "-o", output)
+	must.ErrorContains(err, "vtt")
+	checks.Empty(stdout)
+	saved, err := os.ReadFile(output)
+	must.NoError(err)
+	checks.Equal("keep", string(saved))
+}

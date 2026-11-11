@@ -1,6 +1,7 @@
 package meetingcontent
 
 import (
+	"encoding/json/v2"
 	"os/exec"
 	"strings"
 	"testing"
@@ -197,4 +198,41 @@ func TestSubtitleMarkupPlayer(t *testing.T) {
 	altered := convert("srt", "1\n00:00:00,000 --> 00:00:02,000\nPlease type <i> literally</i>\n\n")
 	checks.Contains(altered, `Please type {\i1} literally{\i0}`)
 	checks.Contains(convert("webvtt", vtt.Content), "Please type <i> literally</i>")
+}
+
+func TestSubtitleSRTTimingLines(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text string
+		bad  bool
+	}{
+		{"timecode", "Hello\n00:00:05,000 --> 00:00:06,000\nWorld", true},
+		{"coordinates", "Hello\n+0:0:05.0 --> 0:0:06.0 X1:2\nWorld", true},
+		{"ordinary numbers", "Hello\n2025 --> 2026\nWorld", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			must := require.New(t)
+			raw, err := json.Marshal(map[string]any{"started_at": "2026-01-01T00:00:00Z", "transcript_segments": []any{map[string]any{"text": tc.text, "start": 0, "end": 2}}})
+			must.NoError(err)
+			_, err = RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+			if tc.bad {
+				must.ErrorIs(err, ErrInvalidSubtitles)
+				if tc.name == "timecode" {
+					ffmpeg, err := exec.LookPath("ffmpeg")
+					if err != nil {
+						t.Skip("ffmpeg not installed")
+					}
+					command := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-f", "srt", "-i", "pipe:0", "-f", "srt", "pipe:1")
+					command.Stdin = strings.NewReader("1\n00:00:00,000 --> 00:00:02,000\n" + tc.text + "\n\n")
+					output, err := command.CombinedOutput()
+					must.NoError(err, string(output))
+					parsed, err := mediatranscript.ParseSubRip(output, "msgvault", "und")
+					must.NoError(err)
+					must.Len(parsed.Segments, 2)
+				}
+			} else {
+				must.NoError(err)
+			}
+		})
+	}
 }
