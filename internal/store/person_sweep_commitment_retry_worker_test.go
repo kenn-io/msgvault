@@ -23,6 +23,7 @@ func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testi
 	owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
 	r.NoError(err)
 	r.NoError(st.AddAccountIdentity(f.journal.sourceID, "owner@example.test", "manual"))
+	sourcePeople := make(map[string]int64)
 	for index, participant := range []int64{f.journal.aliceID, f.journal.bobID} {
 		thread, err := st.EnsureConversationWithType(f.journal.sourceID,
 			fmt.Sprintf("commitment-retry-%d", index), "direct_chat", "Planning")
@@ -30,7 +31,7 @@ func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testi
 		r.NoError(st.EnsureConversationParticipant(thread, owner, "member"))
 		r.NoError(st.EnsureConversationParticipant(thread, participant, "member"))
 		for message := range 3 {
-			_, err = st.PersistMessageContext(ctx, &store.MessagePersistData{
+			messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
 				Message: &store.Message{SourceID: f.journal.sourceID, ConversationID: thread,
 					SourceMessageID: fmt.Sprintf("commitment-retry-%d-%d", index, message), MessageType: "slack",
 					SenderID: sql.NullInt64{Int64: participant, Valid: true},
@@ -38,6 +39,11 @@ func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testi
 				BodyText: sql.NullString{String: fmt.Sprintf("I will send person %d draft %d.", index, message), Valid: true},
 			})
 			r.NoError(err)
+			personID := f.journal.alicePersonID
+			if participant == f.journal.bobID {
+				personID = f.journal.bobPersonID
+			}
+			sourcePeople[fmt.Sprintf("m%d", messageID)] = personID
 		}
 	}
 	f.config.ChangeBatchSize = 1
@@ -67,7 +73,9 @@ func TestPersonSweepWorkerDefersCommitmentPrepareFailureForTheRestOfRun(t *testi
 		r.NoError(json.Unmarshal([]byte(request.InputText[strings.LastIndex(request.InputText, "\n")+1:]), &window))
 		r.NotEmpty(window.Sources)
 		source := window.Sources[0]
-		if strings.Contains(source.Text, "person 1") {
+		personID, known := sourcePeople[source.ID]
+		r.True(known, "the provider's exact source locator must belong to a fixture person")
+		if personID == f.journal.bobPersonID {
 			bobCalls++
 			// A normal intervening provider request outlasts the fixed retry minute.
 			clock = clock.Add(2 * time.Minute)
