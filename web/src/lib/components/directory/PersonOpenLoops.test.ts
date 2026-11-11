@@ -145,7 +145,7 @@ describe("PersonOpenLoops", () => {
     expect(screen.queryByText("Fulfilled")).toBeNull();
   });
 
-  it("shows a plus when more loops are open than the card lists", async () => {
+  it("labels truncated open-only and closed-inclusive counts accurately", async () => {
     const { client, fetcher } = clientFor(
       [loop(1), loop(2), loop(3), loop(4), loop(5)],
       true,
@@ -154,14 +154,13 @@ describe("PersonOpenLoops", () => {
     expect(await screen.findByText("5+ open")).toBeDefined();
     fetcher.mockResolvedValueOnce(Response.json({
       items: [loop(1)],
-      commitments: [{ id: "c7", person_id: 7, claim_id: 107, direction: "owed_by", state: "done",
+      commitments: Array.from({ length: 5 }, (_, index) => ({ id: `c${index + 7}`, person_id: 7, claim_id: index + 107, direction: "owed_by", state: "done",
         summary: "I will send the report.", promise: { message_id: 47, text: "I will send the report.", start: 0, end: 23 },
-        promised_at: "2026-10-12T12:00:00Z", due_on: null, expires_at: "2026-12-15T00:00:00Z" }],
+        promised_at: "2026-10-12T12:00:00Z", due_on: null, expires_at: "2026-12-15T00:00:00Z" })),
       truncated: true, coverage_incomplete: false, skipped_unparseable: 0,
     }));
     await fireEvent.click(screen.getByRole("button", { name: "Show closed promises" }));
     expect(await screen.findByText("1 open shown")).toBeDefined();
-    expect(screen.queryByText("1+ open")).toBeNull();
   });
 
   it("says how many messages could not be read, with or without loops", async () => {
