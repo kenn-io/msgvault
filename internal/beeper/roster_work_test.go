@@ -653,9 +653,19 @@ func TestServiceRegistrationRematchesSettledRoster(t *testing.T) {
 	imp, st := newHandlerTestImporter(t, f)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	opts := ImportOptions{AccountID: "acct-custom", NoMedia: true}
-	_, err := imp.Import(t.Context(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
-	state := latestBeeperState(t, imp).Chats[chat.ID]
+	// The helper latestBeeperState reads the signal account; this roster
+	// belongs to acct-custom, so read the state saved for its source.
+	savedRoster := func() *ChatState {
+		run, err := st.GetLastSuccessfulSync(sum.SourceID)
+		require.NoError(err)
+		state, err := LoadSyncState(run.CursorAfter.String)
+		require.NoError(err)
+		return state.Chats[chat.ID]
+	}
+	state := savedRoster()
+	require.NotNil(state)
 	require.NotNil(state.RosterWork)
 	require.True(state.RosterWork.Settled)
 	alice := participantForBeeperUser(t, st, "@bridge-a_alice:beeper.local")
@@ -690,7 +700,8 @@ func TestServiceRegistrationRematchesSettledRoster(t *testing.T) {
 		`SELECT COALESCE(service_id, 0) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = ?`),
 		alice, participantIdentifierType).Scan(&serviceID))
 	assert.Equal(configured.ID, serviceID, "the member's Beeper identifier moves to the registered service")
-	state = latestBeeperState(t, imp).Chats[chat.ID]
+	state = savedRoster()
+	require.NotNil(state)
 	require.NotNil(state.RosterWork)
 	assert.True(state.RosterWork.Settled)
 	assert.NotEmpty(state.RosterWork.Routes, "the settled roster keeps its routing digest")
