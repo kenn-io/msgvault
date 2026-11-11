@@ -467,11 +467,22 @@ func TestPostalClaimResponseIncludesReview(t *testing.T) {
 	require.Len(t, body.Claims, 1)
 	require.NotNil(t, body.Claims[0].PostalReview)
 	require.NotNil(t, body.Claims[0].PostalReview.Assessment)
+	claims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
 	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
 	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	mismatch, err := json.Marshal(map[string]any{"addresses": map[string]any{"add": []any{map[string]any{
+		"address_kind": "postal", "street_address": "Other street", "original_input": map[string]any{"address_kind": "postal", "street_address": "Other street"},
+		"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + claims[0].ClaimKey},
+	}}}})
+	require.NoError(t, err)
+	rejected := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), mismatch, map[string]string{"If-Match": read.Header().Get("ETag")})
+	require.Equal(t, http.StatusBadRequest, rejected.Code, rejected.Body.String())
+	assert.Contains(t, rejected.Body.String(), "postal address snapshot does not match the cited suggestion")
 	patch, err := json.Marshal(map[string]any{"addresses": map[string]any{"add": []any{map[string]any{
 		"address_kind": "postal", "street_address": "Corrected street", "original_input": body.Claims[0].PostalReview.Assessment.Original,
-		"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + body.Claims[0].ClaimKey},
+		"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + claims[0].ClaimKey},
 	}}}})
 	require.NoError(t, err)
 	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), patch, map[string]string{"If-Match": read.Header().Get("ETag")})

@@ -212,7 +212,7 @@ func validatePostalInputTx(ctx context.Context, tx *loggedTx, personID int64, in
 		err = json.Unmarshal(submitted, &claimed)
 	}
 	if err == nil && (!snapshot || claimed.Input() != original) {
-		err = errors.New("postal address snapshot does not match the cited suggestion")
+		err = ErrPostalSuggestionMismatch
 	}
 	return err
 }

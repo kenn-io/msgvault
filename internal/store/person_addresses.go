@@ -73,6 +73,7 @@ type PersonAddressInput struct {
 var (
 	ErrInvalidPersonAddressKind  = errors.New("invalid person address kind")
 	ErrPersonAddressValueMissing = errors.New("person address requires at least one component")
+	ErrPostalSuggestionMismatch  = errors.New("postal address snapshot does not match the cited suggestion")
 )
 
 func (s *Store) AddPersonAddressContext(
