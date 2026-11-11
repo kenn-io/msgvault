@@ -97,6 +97,7 @@ type personProviderStatusOutput struct {
 	Profile             peoplesweep.ProviderProfile         `json:"profile"`
 	Check               *store.PersonInferenceCheck         `json:"check,omitzero"`
 	Consent             store.ProviderConsentStatus         `json:"consent"`
+	CommitmentsConsent  *bool                               `json:"commitments_consent_active,omitempty"`
 	StaleProgramCheck   bool                                `json:"stale_program_check,omitzero"`
 	StaleProgramConsent bool                                `json:"stale_program_consent,omitzero"`
 	CodexIsolation      *personProviderCodexIsolationStatus `json:"codex_isolation,omitzero"`
@@ -2075,7 +2076,17 @@ func personProviderStatusFor(
 	if status == nil {
 		return personProviderStatusOutput{}, errors.New("people inference consent status is empty")
 	}
-	return personProviderStatusOutput{Profile: profile, Check: check, Consent: *status}, nil
+	output := personProviderStatusOutput{Profile: profile, Check: check, Consent: *status}
+	if commitments, ok := st.(interface {
+		HasActivePersonCommitmentConsent(context.Context, string) (bool, error)
+	}); ok {
+		active, err := commitments.HasActivePersonCommitmentConsent(ctx, profile.Fingerprint)
+		if err != nil {
+			return personProviderStatusOutput{}, err
+		}
+		output.CommitmentsConsent = &active
+	}
+	return output, nil
 }
 
 func personProviderStaleProgramState(
@@ -2155,6 +2166,13 @@ func writePersonProviderStatus(
 		state = "revoked"
 	}
 	_, _ = fmt.Fprintf(w, "Consent: %s\n", state)
+	if output.CommitmentsConsent != nil {
+		state := "inactive"
+		if *output.CommitmentsConsent {
+			state = "active"
+		}
+		_, _ = fmt.Fprintf(w, "Commitment consent: %s\n", state)
+	}
 	if output.StaleProgramConsent {
 		_, _ = fmt.Fprintf(w, "Consent: a matching grant uses a different extraction program; run msgvault person provider reverify %s --yes\n", output.Name)
 	}

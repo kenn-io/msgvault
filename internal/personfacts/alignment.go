@@ -12,6 +12,13 @@ import (
 	"unicode/utf8"
 )
 
+// CommitmentOwnerSubjectRef identifies verified owner authorship in a
+// commitment. Owner participants need not have a tracked person row.
+const CommitmentOwnerSubjectRef = "commitment-owner"
+
+// CommitmentMessageRefPrefix distinguishes commitment citations from ordinary sweep evidence.
+const CommitmentMessageRefPrefix = "commitment-message:"
+
 var lowercaseSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type evidenceValidationError struct {
@@ -41,7 +48,7 @@ func validateEvidenceInput(input EvidenceInput) error {
 	if input.PersonID <= 0 {
 		return invalid(ReasonMalformedValue, "evidence person id must be positive")
 	}
-	if input.SubjectPersonID == nil || *input.SubjectPersonID != input.PersonID {
+	if !evidenceSubjectMatches(input, true) {
 		return invalid(ReasonIdentityMismatch, "evidence subject person id must equal evidence person id")
 	}
 	if !validEvidenceSourceClass(input.SourceClass) {
@@ -129,6 +136,15 @@ func validateEvidenceInput(input EvidenceInput) error {
 		}
 	}
 	return nil
+}
+
+func evidenceSubjectMatches(input EvidenceInput, commitment bool) bool {
+	if input.SubjectRef == CommitmentOwnerSubjectRef {
+		return commitment && input.SubjectPersonID == nil && input.SourceClass == EvidenceArchive &&
+			input.Directness == DirectSelf && input.Authority == AuthorityAuthoritative &&
+			strings.HasPrefix(input.SourceRef, CommitmentMessageRefPrefix)
+	}
+	return input.SubjectPersonID != nil && *input.SubjectPersonID == input.PersonID
 }
 
 func validEvidenceSourceClass(value EvidenceSourceClass) bool {

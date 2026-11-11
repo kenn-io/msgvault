@@ -1238,6 +1238,25 @@ func (l LoopCommitmentDirection) Validate() error {
 	}
 }
 
+type LoopCommitmentState string
+
+const (
+	Fulfilled                  LoopCommitmentState = "fulfilled"
+	LoopCommitmentStateDone    LoopCommitmentState = "done"
+	LoopCommitmentStateOpen    LoopCommitmentState = "open"
+	LoopCommitmentStateSnoozed LoopCommitmentState = "snoozed"
+)
+
+// Validate checks if the LoopCommitmentState value is valid
+func (l LoopCommitmentState) Validate() error {
+	switch l {
+	case Fulfilled, LoopCommitmentStateDone, LoopCommitmentStateOpen, LoopCommitmentStateSnoozed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopCommitmentState value, got: %v", l))
+	}
+}
+
 type LoopDecisionResponseState string
 
 const (

@@ -3,16 +3,20 @@
  */
 import type { CommitmentQuote } from "./commitmentQuote";
 import type { LoopCommitmentDirection } from "./loopCommitmentDirection";
+import type { LoopCommitmentState } from "./loopCommitmentState";
 
 export interface LoopCommitment {
   claim_id: number;
   direction: LoopCommitmentDirection;
   due_on?: string;
+  expires_at: string;
   id: string;
   person_id: number;
   promise: CommitmentQuote;
   promised_at: string;
   proposed_fulfilment?: CommitmentQuote;
+  snoozed_until?: string;
+  state: LoopCommitmentState;
   summary: string;
   [key: string]: unknown;
 }

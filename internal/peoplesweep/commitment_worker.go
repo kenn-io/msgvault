@@ -10,7 +10,7 @@ import (
 // CommitmentStore supplies the bounded separately consented conversation lane.
 type CommitmentStore interface {
 	HasActivePersonCommitmentConsent(context.Context, string) (bool, error)
-	PersonCommitmentsDue(context.Context, int64, time.Time, time.Duration) (bool, error)
+	PersonCommitmentsDue(context.Context, int64, time.Time, time.Duration, time.Duration) (bool, error)
 	LoadPersonCommitmentWindow(context.Context, int64, ProviderProfile, CommitmentConfig, time.Time, string) (CommitmentWindow, error)
 	EnsurePersonSweepWork(context.Context, int64, bool) (bool, error)
 }
@@ -33,7 +33,7 @@ func (w *Worker) commitmentDue(ctx context.Context, personID int64, profile Prov
 	if err != nil || !active {
 		return false, err
 	}
-	return store.PersonCommitmentsDue(ctx, personID, now, w.Config.Commitments.MinInterval)
+	return store.PersonCommitmentsDue(ctx, personID, now, w.Config.Commitments.MinInterval, w.Config.Commitments.Window)
 }
 
 func (w *Worker) runCommitmentCall(
@@ -54,7 +54,7 @@ func (w *Worker) runCommitmentCall(
 		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 	}
 	if len(window.Sources) == 0 {
-		return nil, "", lease, nil
+		return &CommitmentResult{Window: window, Config: w.Config.Commitments}, "", lease, nil
 	}
 	request, err := commitmentRequest(window, w.Config.Commitments.MaxOutputTokens)
 	if err != nil {

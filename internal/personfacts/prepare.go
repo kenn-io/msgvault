@@ -149,6 +149,12 @@ func prepareClaim(
 			}
 			continue
 		}
+		if evidence.SubjectRef == CommitmentOwnerSubjectRef && (claim.Origin != OriginCommitment || claim.Target.Kind != TargetCommitment) {
+			if prepared.Failure == nil {
+				prepared.Failure = evidenceFailure(&evidenceValidationError{reason: ReasonIdentityMismatch, detail: "evidence subject does not match the claim"})
+			}
+			continue
+		}
 		evidence.EventTime = portableFactTime(evidence.EventTime)
 		evidence.RecordedTime = portableFactTime(evidence.RecordedTime)
 		alignExternal := claim.Origin == OriginEnrichment && aligner != nil &&
