@@ -203,7 +203,7 @@ func snippet(s string) string { return textutil.PrefixRunes(strings.TrimSpace(s)
 // persistComment stores a comment without recomputing statistics. Import pages
 // call it repeatedly, then refresh their one affected video conversation once.
 func persistCommentSDK(ctx context.Context, st *store.Store, sourceID int64, channelID string, videoID string, c *yt.Comment) (int64, messageChange, error) {
-	if c == nil || c.Snippet == nil || !validCommentID(c.Id) || !validID(videoID) || !validID(channelID) || c.Snippet.VideoId != "" && c.Snippet.VideoId != videoID {
+	if c == nil || c.Snippet == nil || !validCommentID(c.Id) || c.Snippet.VideoId != "" && c.Snippet.VideoId != videoID {
 		return 0, messageUnchanged, errors.New("invalid YouTube comment identity")
 	}
 	parent := "video:" + videoID

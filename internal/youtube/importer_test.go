@@ -381,7 +381,7 @@ func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testi
 	}
 }
 
-func TestInvalidPageTokenRestartsListingOnce(t *testing.T) {
+func TestInvalidPageTokenRestartsListing(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	c := archiveFixture(t, false, nil, nil)
@@ -394,28 +394,59 @@ func TestInvalidPageTokenRestartsListingOnce(t *testing.T) {
 			return resp, err
 		}
 		require.NoError(resp.Body.Close())
-		if req.URL.Query().Get("pageToken") == "expired" {
+		token := req.URL.Query().Get("pageToken")
+		if token == "expired-first" || token == "expired-later" {
 			invalid++
 			resp.StatusCode = http.StatusBadRequest
 			resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"invalidPageToken"}]}}`))
-		} else {
+		} else if token == "" {
 			initial++
 			if initial == 1 {
-				resp.Body = io.NopCloser(strings.NewReader(`{"items":[],"nextPageToken":"expired"}`))
+				resp.Body = io.NopCloser(strings.NewReader(`{"items":[],"nextPageToken":"expired-first"}`))
 			} else {
-				resp.Body = io.NopCloser(strings.NewReader(`{"items":[]}`))
+				resp.Body = io.NopCloser(strings.NewReader(`{"items":[],"nextPageToken":"later"}`))
 			}
+		} else if invalid == 1 {
+			resp.Body = io.NopCloser(strings.NewReader(`{"items":[],"nextPageToken":"expired-later"}`))
+		} else {
+			resp.Body = io.NopCloser(strings.NewReader(`{"items":[]}`))
 		}
 		return resp, nil
 	})
 	imp := NewImporter(st, c)
-	_, err := imp.Register(t.Context(), "UCfixture")
+	src, err := imp.Register(t.Context(), "UCfixture")
 	require.NoError(err)
-	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 10})
+	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 20})
 	require.NoError(err)
 	assert.False(sum.Partial)
-	assert.Equal(2, initial)
-	assert.Equal(1, invalid)
+	assert.Equal(3, initial)
+	assert.Equal(2, invalid)
+	run, err := st.GetLatestSyncContext(t.Context(), src.ID, 0)
+	require.NoError(err)
+	assert.Equal("completed", run.Status)
+}
+
+func TestInvalidPageTokenWithoutTokenFinishes(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	c := archiveFixture(t, false, nil, nil)
+	original := c.api.Transport
+	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp, err := original.RoundTrip(req)
+		if err == nil && req.URL.Path == "/youtube/v3/playlistItems" {
+			require.Empty(req.URL.Query().Get("pageToken"))
+			require.NoError(resp.Body.Close())
+			resp.StatusCode = http.StatusBadRequest
+			resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"invalidPageToken"}]}}`))
+		}
+		return resp, err
+	})
+	imp := NewImporter(st, c)
+	_, err := imp.Register(t.Context(), "UCfixture")
+	require.NoError(err)
+	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 5})
+	require.NoError(err)
+	require.False(sum.Partial)
 }
 
 func TestOwnershipPagesRespectBudgetAndResume(t *testing.T) {

@@ -61,13 +61,11 @@ type work struct {
 	Parent  string `json:"parent,omitempty"`
 	Token   string `json:"token,omitempty"`
 	Pass    string `json:"pass,omitempty"`
-	Reset   bool   `json:"reset,omitempty"`
 }
 type syncState struct {
 	Version         int    `json:"version"`
 	OwnershipCursor string `json:"ownership_cursor,omitempty"`
 	Queue           []work `json:"queue"`
-	Deferred        []work `json:"deferred,omitempty"`
 }
 
 func (imp *Importer) Register(ctx context.Context, channelID string) (*store.Source, error) {
@@ -99,29 +97,18 @@ func (imp *Importer) Register(ctx context.Context, channelID string) (*store.Sou
 
 func (imp *Importer) resume(ctx context.Context, sourceID int64) (*syncState, error) {
 	state := &syncState{Version: 1, Queue: []work{{Kind: "uploads"}}}
-	prior, err := imp.store.GetLastSuccessfulSyncByType(ctx, sourceID, SourceType)
-	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-		return nil, err
-	}
 	checkpoint, err := imp.store.GetLatestCheckpointedSyncByType(ctx, sourceID, SourceType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return nil, err
 	}
 	blob := ""
-	if checkpoint != nil && checkpoint.CursorBefore.Valid && (prior == nil || checkpoint.ID > prior.ID) {
+	if checkpoint != nil && checkpoint.CursorBefore.Valid {
 		blob = checkpoint.CursorBefore.String
 	}
 	if blob != "" {
 		if json.Unmarshal([]byte(blob), state) != nil || state.Version != 1 {
 			return nil, errors.New("invalid saved sync progress")
 		}
-	}
-	// A failed resource gets one turn per coverage cycle, not per invocation.
-	// Otherwise budgets smaller than the retry backlog rotate failures forever
-	// without ever letting the current cycle finish and revisit discovery.
-	if len(state.Queue) == 0 {
-		state.Queue = appendUniqueWork([]work{{Kind: "uploads"}}, nil, state.Deferred...)
-		state.Deferred = nil
 	}
 	return state, nil
 }
@@ -134,14 +121,10 @@ func identity(job work) workIdentity {
 	return workIdentity{job.Kind, job.VideoID, job.Parent, job.Pass}
 }
 
-// Preserve the already pending job, including its page token and cycle
-// history, when another discovery pass finds the same resource.
-func appendUniqueWork(queue, blocked []work, jobs ...work) []work {
-	known := make(map[workIdentity]bool, len(queue)+len(blocked)+len(jobs))
+// Preserve the already pending job and page token when discovery repeats it.
+func appendUniqueWork(queue []work, jobs ...work) []work {
+	known := make(map[workIdentity]bool, len(queue)+len(jobs))
 	for _, job := range queue {
-		known[identity(job)] = true
-	}
-	for _, job := range blocked {
 		known[identity(job)] = true
 	}
 	for _, job := range jobs {
@@ -226,20 +209,19 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		sum.MessagesProcessed += stepCounts.processed
 		if err != nil {
 			var apiErr *APIError
-			if errors.As(err, &apiErr) && apiErr.Reason == "invalidPageToken" && job.Token != "" && !job.Reset {
-				job.Token = ""
-				job.Reset = true
-				state.Queue = appendUniqueWork(state.Queue[1:], state.Deferred, job)
-			} else if errors.As(err, &apiErr) && apiErr.Reason == "invalidPageToken" {
-				state.Deferred = appendUniqueWork(state.Deferred, nil, job)
+			if errors.As(err, &apiErr) && apiErr.Reason == "invalidPageToken" {
 				state.Queue = state.Queue[1:]
+				if job.Token != "" {
+					job.Token = ""
+					state.Queue = appendUniqueWork(state.Queue, job)
+				}
 			} else if errors.As(err, &apiErr) && ((job.Kind == "video" || job.Kind == "threads" || job.Kind == "replies") && (apiErr.Reason == "videoNotFound" || apiErr.Reason == "commentNotFound" || apiErr.Reason == "commentsDisabled" || apiErr.Reason == "forbidden" && apiErr.StatusCode == http.StatusForbidden)) {
 				state.Queue = state.Queue[1:]
 			} else {
 				return sum, err
 			}
 		} else {
-			state.Queue = appendUniqueWork(state.Queue[1:], state.Deferred, next...)
+			state.Queue = appendUniqueWork(state.Queue[1:], next...)
 		}
 		cp, err := checkpoint()
 		if err != nil {
@@ -249,7 +231,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			return sum, err
 		}
 	}
-	sum.Partial = len(state.Queue) > 0 || len(state.Deferred) > 0
+	sum.Partial = len(state.Queue) > 0
 
 	return sum, nil
 }
@@ -350,7 +332,7 @@ func (imp *Importer) step(ctx context.Context, st *store.Store, sourceID int64, 
 				}
 			}
 			if th.Snippet.TotalReplyCount > int64(len(replies)) {
-				next = appendUniqueWork(next, nil, work{Kind: "replies", VideoID: job.VideoID, Parent: c.Id})
+				next = appendUniqueWork(next, work{Kind: "replies", VideoID: job.VideoID, Parent: c.Id})
 			}
 		}
 		return next, counts, nil
