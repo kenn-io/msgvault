@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -35,7 +36,10 @@ func archiveFixture(t *testing.T, mismatch bool, late *bool, quota *bool) *Clien
 			assert.Equal(t, "50", r.URL.Query().Get("maxResults"))
 			_, _ = fmt.Fprint(w, `{"items":[{"contentDetails":{"videoId":"oldvideo"}},{"contentDetails":{"videoId":"disabledvideo"}}]}`)
 		case "/videos":
-			response := yt.VideoListResponse{Items: []*yt.Video{{Id: r.URL.Query().Get("id"), Snippet: &yt.VideoSnippet{ChannelId: "UCfixture", Title: "Fixture video", Description: "Fixture description", PublishedAt: "2026-01-01T00:00:00Z"}, Status: &yt.VideoStatus{PrivacyStatus: "unlisted"}}}}
+			response := yt.VideoListResponse{}
+			for id := range strings.SplitSeq(r.URL.Query().Get("id"), ",") {
+				response.Items = append(response.Items, &yt.Video{Id: id, Snippet: &yt.VideoSnippet{ChannelId: "UCfixture", Title: "Fixture video", Description: "Fixture description", PublishedAt: "2026-01-01T00:00:00Z"}, Status: &yt.VideoStatus{PrivacyStatus: "unlisted"}})
+			}
 			assert.NoError(t, json.MarshalWrite(w, response))
 
 		case "/commentThreads":
@@ -205,7 +209,7 @@ func TestArchivePartialCommentPageRefreshesStatsForEachTouchedPage(t *testing.T)
 	assertions.True(sum.Partial)
 	var refreshes int
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM fixture_stats_refreshes`).Scan(&refreshes))
-	assertions.Equal(3, refreshes) // Two video roots and one thread page fit the five-request budget.
+	assertions.Equal(4, refreshes) // Two video roots and two thread pages fit the five-request budget.
 	var messageCount int
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_count FROM conversations WHERE source_id = ? AND source_conversation_id = ?`, source.ID, "oldvideo").Scan(&messageCount))
 	assertions.Equal(3, messageCount)
@@ -358,7 +362,7 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testing.T) {
-	for _, kind := range []string{"video forbidden", "threads forbidden", "replies forbidden", "video missing", "replies missing"} {
+	for _, kind := range []string{"video forbidden", "threads forbidden", "replies forbidden", "video missing", "video missing error", "replies missing"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
@@ -393,15 +397,22 @@ func TestUnavailableResourceKeepsArchivedRowsAndDoesNotBlockOtherVideos(t *testi
 					require.NoError(resp.Body.Close())
 					resp.Body = io.NopCloser(strings.NewReader(replacement))
 				}
-				video := req.URL.Path == "/youtube/v3/videos" && req.URL.Query().Get("id") == "oldvideo"
+				video := req.URL.Path == "/youtube/v3/videos" && strings.Contains(req.URL.Query().Get("id"), "oldvideo")
 				threads := req.URL.Path == "/youtube/v3/commentThreads" && req.URL.Query().Get("videoId") == "oldvideo"
 				replies := req.URL.Path == "/youtube/v3/comments"
 				if unavailable && ((strings.HasPrefix(kind, "video ") && video) || (strings.HasPrefix(kind, "threads ") && threads) || (strings.HasPrefix(kind, "replies ") && replies)) {
 					sawUnavailable = true
 					require.NoError(resp.Body.Close())
 					switch kind {
+					case "video missing error":
+						resp.StatusCode = http.StatusNotFound
+						resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"videoNotFound"}]}}`))
 					case "video missing":
-						resp.Body = io.NopCloser(strings.NewReader(`{"items":[]}`))
+						if strings.Contains(req.URL.Query().Get("id"), ",") {
+							resp.Body = io.NopCloser(strings.NewReader(`{"items":[{"id":"newvideo","snippet":{"channelId":"UCfixture"},"status":{}}]}`))
+						} else {
+							resp.Body = io.NopCloser(strings.NewReader(`{"items":[]}`))
+						}
 					case "replies missing":
 						resp.StatusCode = http.StatusNotFound
 						resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"commentNotFound"}]}}`))
@@ -676,4 +687,145 @@ func TestUploadsNotFoundStopsWithProgress(t *testing.T) {
 	var state syncState
 	require.NoError(json.Unmarshal([]byte(cp.CursorBefore.String), &state))
 	require.Equal("uploads", state.Queue[0].Kind)
+}
+
+func TestArchiveBatchesVideosAcrossResumedRuns(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	var batches []int
+	owners := 0
+	passes := map[string]int{}
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/token":
+			_, _ = fmt.Fprint(w, `{"access_token":"fixture","token_type":"Bearer","expires_in":3600}`)
+		case "/channels":
+			owners++
+			_, _ = fmt.Fprint(w, `{"items":[{"id":"UCfixture","snippet":{"title":"Channel"},"contentDetails":{"relatedPlaylists":{"uploads":"UUfixture"}}}]}`)
+		case "/playlistItems":
+			start := 0
+			if r.URL.Query().Get("pageToken") != "" {
+				_, _ = fmt.Sscan(r.URL.Query().Get("pageToken"), &start)
+			}
+			items := make([]*yt.PlaylistItem, 0, 50)
+			for i := start; i < min(start+50, 120); i++ {
+				items = append(items, &yt.PlaylistItem{ContentDetails: &yt.PlaylistItemContentDetails{VideoId: fmt.Sprintf("video%d", i)}})
+			}
+			result := yt.PlaylistItemListResponse{Items: items}
+			if start+50 < 120 {
+				result.NextPageToken = strconv.Itoa(start + 50)
+			}
+			assert.NoError(t, json.MarshalWrite(w, result))
+		case "/videos":
+			ids := strings.Split(r.URL.Query().Get("id"), ",")
+			batches = append(batches, len(ids))
+			result := yt.VideoListResponse{}
+			for _, id := range ids {
+				result.Items = append(result.Items, &yt.Video{Id: id, Snippet: &yt.VideoSnippet{ChannelId: "UCfixture", Title: id}, Status: &yt.VideoStatus{PrivacyStatus: "public"}})
+			}
+			assert.NoError(t, json.MarshalWrite(w, result))
+		case "/commentThreads":
+			pass := r.URL.Query().Get("moderationStatus")
+			passes[pass]++
+			if pass == "published" {
+				id := r.URL.Query().Get("videoId")
+				result := yt.CommentThreadListResponse{Items: []*yt.CommentThread{{Snippet: &yt.CommentThreadSnippet{VideoId: id, TopLevelComment: &yt.Comment{Id: "comment-" + id, Snippet: &yt.CommentSnippet{VideoId: id, TextDisplay: "Comment"}}}}}}
+				assert.NoError(t, json.MarshalWrite(w, result))
+			} else {
+				_, _ = fmt.Fprint(w, `{"items":[]}`)
+			}
+		default:
+			assert.Fail(t, "unexpected route", r.URL.Path)
+		}
+	})
+	imp := NewImporter(st, c)
+	src, err := imp.Register(t.Context(), "UCfixture")
+	require.NoError(err)
+	runs := 0
+	completed := false
+	for range 40 {
+		runs++
+		sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 25})
+		require.NoError(err)
+		require.LessOrEqual(sum.Requests, 25)
+		if !sum.Partial {
+			completed = true
+			break
+		}
+	}
+	require.Greater(runs, 1)
+	require.True(completed)
+	require.Equal(runs+1, owners)
+	require.Equal([]int{50, 50, 20}, batches)
+	for _, pass := range []string{"published", "heldForReview", "likelySpam"} {
+		require.Equal(120, passes[pass], pass)
+	}
+	rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:video0", "comment-video0", "video:video119", "comment-video119"})
+	require.NoError(err)
+	require.Len(rows, 4)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), src.ID, "video119").Scan(&count))
+	require.Equal(2, count)
+}
+
+func TestVideoBatchQuotaRetainsWork(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	c := archiveFixture(t, false, nil, nil)
+	original := c.api.Transport
+	quota := true
+	var batches []string
+	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp, err := original.RoundTrip(req)
+		if err == nil && req.URL.Path == "/youtube/v3/videos" {
+			batches = append(batches, req.URL.Query().Get("id"))
+			if quota {
+				require.NoError(resp.Body.Close())
+				resp.StatusCode = http.StatusForbidden
+				resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"quotaExceeded"}]}}`))
+			}
+		}
+		return resp, err
+	})
+	imp := NewImporter(st, c)
+	src, err := imp.Register(t.Context(), "UCfixture")
+	require.NoError(err)
+	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 10})
+	require.ErrorIs(err, ErrQuota)
+	require.True(sum.Partial)
+	require.LessOrEqual(sum.Requests, 10)
+	quota = false
+	sum, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 20})
+	require.NoError(err)
+	require.False(sum.Partial)
+	require.LessOrEqual(sum.Requests, 20)
+	require.Len(batches, 2)
+	require.Equal(batches[0], batches[1])
+	rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:oldvideo", "video:disabledvideo", "parent"})
+	require.NoError(err)
+	require.Len(rows, 3)
+}
+
+func TestVideoBatchRefreshesStatsBeforeLaterFailure(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	c := archiveFixture(t, false, nil, nil)
+	original := c.api.Transport
+	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp, err := original.RoundTrip(req)
+		if err == nil && req.URL.Path == "/youtube/v3/videos" {
+			require.NoError(resp.Body.Close())
+			resp.Body = io.NopCloser(strings.NewReader(`{"items":[{"id":"oldvideo","snippet":{"channelId":"UCfixture","title":"Video"},"status":{}},{"id":"disabledvideo","snippet":{"channelId":"UCother"},"status":{}}]}`))
+		}
+		return resp, err
+	})
+	imp := NewImporter(st, c)
+	src, err := imp.Register(t.Context(), "UCfixture")
+	require.NoError(err)
+	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 10})
+	require.Error(err)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), src.ID, "oldvideo").Scan(&count))
+	require.Equal(1, count)
 }

@@ -39,6 +39,13 @@ func resolveYouTubeProfiles(args []string, cfg *config.Config) ([]config.YouTube
 }
 
 func syncYouTubeProfile(ctx context.Context, st *store.Store, src config.YouTubeSource, budget int) (*youtube.ImportSummary, error) {
+	registered, err := st.GetSourceByTypeAndIdentifier(ctx, youtube.SourceType, youtube.SourceIdentifier(src.ChannelID))
+	if err != nil {
+		return nil, err
+	}
+	if registered.MergedIntoSourceID != 0 {
+		return nil, store.ErrSourceRetired
+	}
 	client, err := configuredYouTubeClient(ctx, src)
 	if err != nil {
 		return nil, err
@@ -108,6 +115,9 @@ func newSyncYouTubeCmd() *cobra.Command {
 		var errs []error
 		for _, src := range profiles {
 			sum, err := syncYouTubeProfile(ctx, st, src, budget)
+			if errors.Is(err, store.ErrSourceRetired) {
+				continue
+			}
 			if sum != nil {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "YouTube %s: %d messages processed, %d API requests, partial=%t\n", src.Identifier, sum.MessagesProcessed, sum.Requests, sum.Partial)
 			}

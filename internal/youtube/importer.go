@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
 	yt "google.golang.org/api/youtube/v3"
@@ -56,11 +57,12 @@ type Importer struct {
 func NewImporter(st *store.Store, c *Client) *Importer { return &Importer{st, c} }
 
 type work struct {
-	Kind    string `json:"kind"`
-	VideoID string `json:"video_id,omitempty"`
-	Parent  string `json:"parent,omitempty"`
-	Token   string `json:"token,omitempty"`
-	Pass    string `json:"pass,omitempty"`
+	Kind     string   `json:"kind"`
+	VideoID  string   `json:"video_id,omitempty"`
+	VideoIDs []string `json:"video_ids,omitempty"`
+	Parent   string   `json:"parent,omitempty"`
+	Token    string   `json:"token,omitempty"`
+	Pass     string   `json:"pass,omitempty"`
 }
 type syncState struct {
 	Version         int    `json:"version"`
@@ -114,11 +116,11 @@ func (imp *Importer) resume(ctx context.Context, sourceID int64) (*syncState, er
 }
 
 type workIdentity struct {
-	kind, videoID, parent, pass string
+	kind, videoID, videoIDs, parent, pass string
 }
 
 func identity(job work) workIdentity {
-	return workIdentity{job.Kind, job.VideoID, job.Parent, job.Pass}
+	return workIdentity{job.Kind, job.VideoID, strings.Join(job.VideoIDs, ","), job.Parent, job.Pass}
 }
 
 // Preserve the already pending job and page token when discovery repeats it.
@@ -215,6 +217,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 					job.Token = ""
 					state.Queue = appendUniqueWork(state.Queue, job)
 				}
+			} else if errors.As(err, &apiErr) && job.Kind == "videos" && (apiErr.Reason == "videoNotFound" || apiErr.Reason == "forbidden" && apiErr.StatusCode == http.StatusForbidden) {
+				individual := make([]work, 0, len(job.VideoIDs))
+				for _, id := range job.VideoIDs {
+					individual = append(individual, work{Kind: "video", VideoID: id})
+				}
+				state.Queue = appendUniqueWork(state.Queue[1:], individual...)
 			} else if errors.As(err, &apiErr) && ((job.Kind == "video" || job.Kind == "threads" || job.Kind == "replies") && (apiErr.Reason == "videoNotFound" || apiErr.Reason == "commentNotFound" || apiErr.Reason == "commentsDisabled" || apiErr.Reason == "forbidden" && apiErr.StatusCode == http.StatusForbidden)) {
 				state.Queue = state.Queue[1:]
 			} else {
@@ -245,16 +253,18 @@ func nextPage(job work, token string) []work {
 }
 
 func (imp *Importer) step(ctx context.Context, st *store.Store, sourceID int64, channelID, uploads string, job work) (nextWork []work, counts messageCounts, stepErr error) {
-	var lastStatsMessageID int64
+	var statsMessageIDs []int64
 	defer func() {
-		if lastStatsMessageID == 0 {
+		if len(statsMessageIDs) == 0 {
 			return
 		}
 		statsCtx := ctx
 		if ctx.Err() != nil {
 			statsCtx = context.WithoutCancel(ctx)
 		}
-		stepErr = errors.Join(stepErr, st.RecomputeConversationStatsForMessageContext(statsCtx, lastStatsMessageID))
+		for _, id := range statsMessageIDs {
+			stepErr = errors.Join(stepErr, st.RecomputeConversationStatsForMessageContext(statsCtx, id))
+		}
 	}()
 
 	switch job.Kind {
@@ -263,33 +273,54 @@ func (imp *Importer) step(ctx context.Context, st *store.Store, sourceID int64, 
 		if err != nil {
 			return nil, counts, safeError(ctx, err)
 		}
+		if len(result.Items) > 50 {
+			return nil, counts, errors.New("too many YouTube uploads in one page")
+		}
 		tail := nextPage(job, result.NextPageToken)
-		next := []work{}
+		var ids []string
 		for _, item := range result.Items {
 			if item == nil || item.ContentDetails == nil || !validID(item.ContentDetails.VideoId) {
 				return nil, counts, errors.New("invalid YouTube upload video ID")
 			}
-			next = append(next, work{Kind: "video", VideoID: item.ContentDetails.VideoId})
+			ids = append(ids, item.ContentDetails.VideoId)
 		}
-		return append(next, tail...), counts, nil
-	case "video":
-		result, err := imp.client.service.Videos.List([]string{"snippet", "status"}).Id(job.VideoID).Context(ctx).Do()
+		if len(ids) > 0 {
+			return append([]work{{Kind: "videos", VideoIDs: ids}}, tail...), counts, nil
+		}
+		return tail, counts, nil
+	case "video", "videos":
+		ids := job.VideoIDs
+		if job.Kind == "video" {
+			ids = []string{job.VideoID}
+		}
+		result, err := imp.client.service.Videos.List([]string{"snippet", "status"}).Id(strings.Join(ids, ",")).Context(ctx).Do()
 		if err != nil {
 			return nil, counts, safeError(ctx, err)
 		}
-		if len(result.Items) != 1 || result.Items[0] == nil || result.Items[0].Id != job.VideoID {
+		if job.Kind == "video" && len(result.Items) == 0 {
 			return nil, counts, &APIError{404, "videoNotFound"}
 		}
-		v := result.Items[0]
-		id, change, persistErr := persistVideoSDK(ctx, st, sourceID, channelID, v)
-		counts.record(change, persistErr)
-		lastStatsMessageID = id
-		if persistErr != nil {
-			return nil, counts, persistErr
+		wanted := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			wanted[id] = true
 		}
 		next := []work{}
-		for _, pass := range []string{"published", "heldForReview", "likelySpam"} {
-			next = append(next, work{Kind: "threads", VideoID: v.Id, Pass: pass})
+		for _, v := range result.Items {
+			if v == nil || !wanted[v.Id] || v.Snippet == nil || v.Snippet.ChannelId != channelID {
+				return nil, counts, errors.New("invalid YouTube video response")
+			}
+			delete(wanted, v.Id)
+			id, change, persistErr := persistVideoSDK(ctx, st, sourceID, channelID, v)
+			counts.record(change, persistErr)
+			if id != 0 {
+				statsMessageIDs = append(statsMessageIDs, id)
+			}
+			if persistErr != nil {
+				return nil, counts, persistErr
+			}
+			for _, pass := range []string{"published", "heldForReview", "likelySpam"} {
+				next = append(next, work{Kind: "threads", VideoID: v.Id, Pass: pass})
+			}
 		}
 		return next, counts, nil
 	case "threads":
@@ -309,7 +340,7 @@ func (imp *Importer) step(ctx context.Context, st *store.Store, sourceID int64, 
 			id, change, persistErr := persistCommentSDK(ctx, st, sourceID, channelID, job.VideoID, c)
 			counts.record(change, persistErr)
 			if id != 0 {
-				lastStatsMessageID = id
+				statsMessageIDs = []int64{id}
 			}
 			if persistErr != nil {
 				return nil, counts, persistErr
@@ -325,7 +356,7 @@ func (imp *Importer) step(ctx context.Context, st *store.Store, sourceID int64, 
 				id, change, persistErr := persistCommentSDK(ctx, st, sourceID, channelID, job.VideoID, reply)
 				counts.record(change, persistErr)
 				if id != 0 {
-					lastStatsMessageID = id
+					statsMessageIDs = []int64{id}
 				}
 				if persistErr != nil {
 					return nil, counts, persistErr
@@ -349,7 +380,7 @@ func (imp *Importer) step(ctx context.Context, st *store.Store, sourceID int64, 
 			id, change, persistErr := persistCommentSDK(ctx, st, sourceID, channelID, job.VideoID, c)
 			counts.record(change, persistErr)
 			if id != 0 {
-				lastStatsMessageID = id
+				statsMessageIDs = []int64{id}
 			}
 			if persistErr != nil {
 				return nil, counts, persistErr

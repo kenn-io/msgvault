@@ -722,6 +722,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, source := range cfg.YouTube {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("YouTube profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
 	for _, source := range cfg.ScheduledYouTubeSources() {
 		if err := registerScheduledYouTubeJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
 			return runConfiguredYouTubeSync(ctx, s, source)

@@ -74,7 +74,7 @@ coverage complete. Deleted videos and comments leave their archived rows in plac
 the channel. An invalid page token restarts only its affected listing; stable
 IDs make replay safe.
 
-A complete cycle needs one request per ownership page, one per uploads page, one per video, and three comment-thread requests per video, before extra thread or reply pages.
+A complete cycle needs one request per ownership page, one per uploads page, one per batch of up to 50 videos, and three comment-thread requests per returned video, before extra thread or reply pages. A forbidden or missing batch is retried one video at a time. Scheduled runs use a budget of 1,000 requests.
 
 The usual default Google project quota is 10,000 units per day. These list
 calls cost one unit each; a local request budget is not a quota grant. OAuth
