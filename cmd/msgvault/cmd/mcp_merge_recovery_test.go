@@ -163,17 +163,25 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 func TestMCPMergeRecoveryRejectsUnsupportedAndInvalid(t *testing.T) {
 	backend := &daemonMCPOperations{supported: []string{"list_person_merges", "get_person_merge", "decide_person_merge_candidate", "split_person_merge"}}
 	for _, tc := range []struct {
-		name string
-		args map[string]any
+		name       string
+		args       map[string]any
+		disclosure bool
 	}{
-		{"list_person_merges", map[string]any{"person_id": 1, "limit": 501}}, {"list_person_merges", map[string]any{"person_id": 1, "offset": -1}},
-		{"get_person_merge", map[string]any{"merge_id": 0}},
-		{"decide_person_merge_candidate", map[string]any{"person_id": 1, "merge_id": 1, "candidate_id": 1, "etag": "x", "decision": "maybe"}},
-		{"split_person_merge", map[string]any{"person_id": 1, "merge_id": 1, "participant_ids": nil, "etag": "x", "idempotency_key": "key"}},
-		{"split_person_merge", map[string]any{"person_id": 1, "merge_id": 1, "participant_ids": []int64{1, 1}, "etag": "x", "idempotency_key": "key"}},
-		{"split_person_merge", map[string]any{"person_id": 1, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": ""}},
-		{"split_person_merge", map[string]any{"person_id": 1, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": strings.Repeat("x", 129)}},
+		{"list_person_merges", map[string]any{"person_id": 1, "limit": 501}, false},
+		{"list_person_merges", map[string]any{"person_id": 1, "offset": -1}, false},
+		{"get_person_merge", map[string]any{"merge_id": 0}, false},
+		{"split_person_merge", map[string]any{"person_id": 1, "merge_id": 1, "participant_ids": []int64{1, 1}, "etag": "x", "idempotency_key": "key"}, true},
+		{"split_person_merge", map[string]any{"person_id": 1, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": ""}, true},
+		{"split_person_merge", map[string]any{"person_id": 1, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": strings.Repeat("x", 129)}, true},
+		{"decide_person_merge_candidate", map[string]any{"person_id": 1, "merge_id": 1, "candidate_id": 1, "decision": "reject", "etag": ""}, true},
 	} {
+		if tc.disclosure {
+			_, err := backend.OperationDisclosure(t.Context(), tc.name, tc.args)
+			var refusal *mcpserver.OperationRefusalError
+			require.ErrorAs(t, err, &refusal)
+			assert.Equal(t, "invalid_arguments", refusal.Code)
+			continue
+		}
 		result, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
 		require.NoError(t, err)
 		assertLoopRefusal(t, result, "invalid_arguments", false)

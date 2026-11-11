@@ -62,15 +62,15 @@ type mergeSplitArgs struct {
 }
 
 func validMergeDecision(a mergeDecisionArgs) bool {
-	return a.PersonID > 0 && a.MergeID > 0 && a.CandidateID > 0 && a.ETag != "" && (a.Decision == "accept" || a.Decision == "reject")
+	return a.ETag != ""
 }
 func validMergeSplit(a mergeSplitArgs) bool {
-	if a.PersonID <= 0 || a.MergeID <= 0 || a.ETag == "" || strings.TrimSpace(a.Key) == "" || len(strings.TrimSpace(a.Key)) > 128 || a.ParticipantIDs == nil {
+	if a.ETag == "" || strings.TrimSpace(a.Key) == "" || len(strings.TrimSpace(a.Key)) > 128 {
 		return false
 	}
 	ids := map[int64]bool{}
 	for _, id := range a.ParticipantIDs {
-		if id <= 0 || ids[id] {
+		if ids[id] {
 			return false
 		}
 		ids[id] = true
@@ -134,7 +134,7 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		}
 	case "decide_person_merge_candidate":
 		a, e := decodeMCPOperationArguments[mergeDecisionArgs](args)
-		if e != nil || !validMergeDecision(a) {
+		if e != nil {
 			return invalid()
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonMergeReviewCandidate](ctx, b.client, http.MethodPost, "/api/v1/person-merge-candidates/{candidate_id}/decision", &generated.DecidePersonMergeCandidateRequestOptions{PathParams: &generated.DecidePersonMergeCandidatePath{CandidateID: a.CandidateID}, Header: &generated.DecidePersonMergeCandidateHeaders{IfMatch: a.ETag}, Body: &generated.DecidePersonMergeCandidateBody{PersonID: a.PersonID, Decision: generated.DecidePersonMergeCandidateRequestDecision(a.Decision)}}, mergeRefusal, http.StatusOK)
@@ -147,7 +147,7 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		}
 	case "split_person_merge":
 		a, e := decodeMCPOperationArguments[mergeSplitArgs](args)
-		if e != nil || !validMergeSplit(a) {
+		if e != nil {
 			return invalid()
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonSplitResult](ctx, b.client, http.MethodPost, "/api/v1/people/{id}/split", &generated.SplitPersonMergeRequestOptions{PathParams: &generated.SplitPersonMergePath{ID: a.PersonID}, Header: &generated.SplitPersonMergeHeaders{IfMatch: a.ETag, IdempotencyKey: a.Key}, Body: &generated.SplitPersonMergeBody{MergeID: a.MergeID, ParticipantIds: a.ParticipantIDs}}, mergeRefusal, http.StatusOK)
