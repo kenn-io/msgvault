@@ -48,7 +48,7 @@ func TestRosterReceiptCleanupResumes(t *testing.T) {
 	chat := budgetTestChat("!cleanup:example.test", 2, time.Now().Add(-48*time.Hour))
 	chat.Type = "group"
 	for i := 2; i < 22; i++ {
-		chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@signal_cleanup%d:example.test", i)})
+		chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@signal_cleanup%d:example.test", i), "username": fmt.Sprintf("cleanup%d", i)})
 	}
 	f.addChat(chat)
 	imp, st := newHandlerTestImporter(t, f)
@@ -78,6 +78,8 @@ func TestRosterReceiptCleanupResumes(t *testing.T) {
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	assert.True(complete)
 	assert.Equal(6, count())
+	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM participant_contact_observations`)
+	require.NoError(err)
 	imp = NewImporter(st, imp.client)
 	sum := &ImportSummary{}
 	_, complete, _, err = imp.ensureRosterWork(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, sum)

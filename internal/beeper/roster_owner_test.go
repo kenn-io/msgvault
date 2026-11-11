@@ -8,23 +8,23 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
-func TestRosterInputReviewDifferentChatPhones(t *testing.T) {
-	testRosterInputDifferentChatPhones(t, false, false, false)
+func TestRosterEachChatKeepsItsOwnPhone(t *testing.T) {
+	testRosterEachChatKeepsItsOwnPhone(t, false, false, false)
 }
 
-func TestRosterInputReviewDifferentChatPhonesMessageFirst(t *testing.T) {
-	testRosterInputDifferentChatPhones(t, true, false, false)
+func TestRosterEachChatKeepsItsOwnPhoneMessageFirst(t *testing.T) {
+	testRosterEachChatKeepsItsOwnPhone(t, true, false, false)
 }
 
-func TestRosterInputReviewDifferentChatPhonesSameRun(t *testing.T) {
-	testRosterInputDifferentChatPhones(t, false, true, false)
+func TestRosterEachChatKeepsItsOwnPhoneInOneRun(t *testing.T) {
+	testRosterEachChatKeepsItsOwnPhone(t, false, true, false)
 }
 
-func TestRosterInputReviewChangedOwnerInvalidatesResumedProof(t *testing.T) {
-	testRosterInputDifferentChatPhones(t, true, false, true)
+func TestRosterChangedOwnerInvalidatesResumedProof(t *testing.T) {
+	testRosterEachChatKeepsItsOwnPhone(t, true, false, true)
 }
 
-func testRosterInputDifferentChatPhones(t *testing.T, messageFirst, sameRun, verified bool) {
+func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, verified bool) {
 	t.Helper()
 	require := require.New(t)
 	f := newFakeBeeper(t)
@@ -78,7 +78,7 @@ func testRosterInputDifferentChatPhones(t *testing.T, messageFirst, sameRun, ver
 	}
 }
 
-func TestRosterInputReviewMessageFirstUsesListedMediaCount(t *testing.T) {
+func TestRosterMessageFirstUsesListedMediaCount(t *testing.T) {
 	require := require.New(t)
 	f := newFakeBeeper(t)
 	chat := mediaChat()
@@ -103,7 +103,7 @@ func TestRosterInputReviewMessageFirstUsesListedMediaCount(t *testing.T) {
 	require.NotEmpty(assetRequests(f))
 }
 
-func TestRosterInputReviewChangedOwnerInSettledPrefix(t *testing.T) {
+func TestRosterResumeRechecksOwnerOfSettledPrefix(t *testing.T) {
 	require := require.New(t)
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!prefix-owner:example.test", 1, time.Now())

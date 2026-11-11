@@ -780,7 +780,7 @@ func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
 	ch.Participants.Total = 2
 	fake := &fakeChat{ID: ch.ID, AccountID: ch.AccountID, Type: ch.Type, Participants: []map[string]any{{"id": "@self:example.test", "isSelf": true}, {"id": "@avery:example.test", "fullName": "Avery Example"}}}
 	f.addChat(fake)
-	conv, _, err := imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{}, &ChatState{})
+	conv, _, _, err := imp.ensureRosterWork(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
 	requirements.NoError(err)
 	peer, _, err := st.ParticipantByIdentifierContext(t.Context(), participantIdentifierType, imp.res.identifierForUser("@avery:example.test"))
 	requirements.NoError(err)
@@ -797,7 +797,7 @@ func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
 	ch.Participants.HasMore = true
 	ch.Participants.Items = ch.Participants.Items[:1]
 	f.setChatGetFailure(ch.ID, true)
-	refreshed, _, err := imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{}, &ChatState{})
+	refreshed, _, _, err := imp.ensureRosterWork(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
 	requirements.NoError(err)
 	assertions.Equal(conv, refreshed)
 	incomplete, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
@@ -812,7 +812,7 @@ func TestMessagingRouteRefreshInvalidatesIncompleteRoster(t *testing.T) {
 	f.mu.Lock()
 	fake.Participants = fake.Participants[:1]
 	f.mu.Unlock()
-	refreshed, _, err = imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{}, &ChatState{})
+	refreshed, _, _, err = imp.ensureRosterWork(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
 	requirements.NoError(err)
 	assertions.Equal(conv, refreshed)
 	removed, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
@@ -860,17 +860,16 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 					{ID: "@avery:example.test", FullName: "Avery Example"},
 				}
 				ch.Participants.Total = 2
-				conversationID, _, err := imp.ensureConversation(t.Context(), 0, source.ID, ch, opts, &ImportSummary{}, &ChatState{})
+				_, _, _, err = imp.ensureRosterWork(t.Context(), 0, source.ID, ch, opts, &ImportSummary{}) //nolint:dogsled // Only the error matters; the member is read by identifier below.
 				requirements.NoError(err)
-				var participantID int64
-				requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_id FROM conversation_participants WHERE conversation_id=? ORDER BY participant_id DESC LIMIT 1`), conversationID).Scan(&participantID))
+				participantID := participantForBeeperUser(t, st, "@avery:example.test")
 				person, _, err := st.CreatePersonFromParticipant(participantID)
 				requirements.NoError(err)
 				query := store.PersonMessagingRouteQuery{PersonUID: person.VCardUID}
 				before, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
 				requirements.NoError(err)
 				requirements.Len(before.Routes.Items, 1)
-				assertions.Equal("archive_verified", before.Routes.Items[0].Status)
+				assertions.Equal("archive_verified", before.Routes.Items[0].Status, before.Routes.Items[0].Reasons)
 
 				imp.client.http.Transport = handlerTransport(handler)
 				ch.Participants.HasMore = true
@@ -887,7 +886,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 				} else {
 					opts.StopAt = time.Now().Add(500 * time.Millisecond)
 				}
-				_, _, err = imp.ensureConversation(ctx, 0, source.ID, ch, opts, &ImportSummary{}, &ChatState{})
+				_, _, _, err = imp.ensureRosterWork(ctx, 0, source.ID, ch, opts, &ImportSummary{}) //nolint:dogsled // Only the interruption error matters.
 				if test.cancelContext {
 					requirements.ErrorIs(err, context.Canceled)
 				} else {

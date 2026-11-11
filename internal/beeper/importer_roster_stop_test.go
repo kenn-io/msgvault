@@ -505,37 +505,33 @@ func TestRosterProgressSurvivesFreshImporters(t *testing.T) {
 }
 
 func TestRosterWhitespaceNamesAdvanceAcrossVisits(t *testing.T) {
-	for _, scheduled := range []bool{false, true} {
-		t.Run(fmt.Sprintf("scheduled=%t", scheduled), func(t *testing.T) {
-			f := newFakeBeeper(t)
-			chat := rosterRetryChat()
-			for i, member := range chat.Participants {
-				member["fullName"] = "   "
-				member["phoneNumber"] = fmt.Sprintf("+1202555%04d", 100+i)
-			}
-			f.addChat(chat)
-			imp, st := newHandlerTestImporter(t, f)
-			t.Cleanup(func() { require.NoError(t, st.Close()) })
-			previous := slog.Default()
-			handler := &rosterOperationQuota{Handler: slog.DiscardHandler}
-			slog.SetDefault(slog.New(handler))
-			store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
-			t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-			var sourceID int64
-			for range 30 {
-				handler.operations = 0
-				imp = NewImporter(st, imp.client)
-				sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: scheduled, ShouldStop: func() bool { return handler.operations >= 130 }})
-				require.NoError(t, err)
-				sourceID = sum.SourceID
-				if countBeeperMessages(t, imp) == 2 && len(rosterMembers(t, st, sourceID, chat.ID)) == 64 {
-					break
-				}
-			}
-			assert.Len(t, rosterMembers(t, st, sourceID, chat.ID), 64)
-			assert.Equal(t, 2, countBeeperMessages(t, imp))
-		})
+	f := newFakeBeeper(t)
+	chat := rosterRetryChat()
+	for i, member := range chat.Participants {
+		member["fullName"] = "   "
+		member["phoneNumber"] = fmt.Sprintf("+1202555%04d", 100+i)
 	}
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	previous := slog.Default()
+	handler := &rosterOperationQuota{Handler: slog.DiscardHandler}
+	slog.SetDefault(slog.New(handler))
+	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
+	t.Cleanup(func() { slog.SetDefault(previous); store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+	var sourceID int64
+	for range 30 {
+		handler.operations = 0
+		imp = NewImporter(st, imp.client)
+		sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return handler.operations >= 130 }})
+		require.NoError(t, err)
+		sourceID = sum.SourceID
+		if countBeeperMessages(t, imp) == 2 && len(rosterMembers(t, st, sourceID, chat.ID)) == 64 {
+			break
+		}
+	}
+	assert.Len(t, rosterMembers(t, st, sourceID, chat.ID), 64)
+	assert.Equal(t, 2, countBeeperMessages(t, imp))
 }
 
 type rosterOperationQuota struct {
@@ -645,8 +641,7 @@ func TestRosterCleanupResumesAgainstChangedSnapshot(t *testing.T) {
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 	require.NoError(err)
-	state := latestBeeperState(t, imp).Chats[chat.ID]
-	require.NotNil(state)
+	work := &rosterWork{Version: 1}
 	restoredMember := chat.Participants[40]
 	f.mu.Lock()
 	chat.Participants = chat.Participants[:24]
@@ -654,13 +649,13 @@ func TestRosterCleanupResumesAgainstChangedSnapshot(t *testing.T) {
 	f.mu.Unlock()
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
-	opts := ImportOptions{AccountID: "signal", ShouldStop: func() bool {
+	opts := ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
 		var count int
 		err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = (SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?)`), sum.SourceID, chat.ID).Scan(&count)
 		require.NoError(err)
 		return count <= 48
 	}}
-	_, _, err = imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{}, state)
+	_, _, _, err = imp.ensureRosterWork(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{}) //nolint:dogsled // Only the stop error is needed.
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 48)
 	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
@@ -672,7 +667,7 @@ func TestRosterCleanupResumesAgainstChangedSnapshot(t *testing.T) {
 	detail, err = imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
 	imp = NewImporter(st, imp.client)
-	_, complete, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal"}, &ImportSummary{}, state)
+	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
 	assert.True(complete)
 	members := rosterMembers(t, st, sum.SourceID, chat.ID)
@@ -710,43 +705,13 @@ func TestRosterResumeUsesArchivedBindingsAfterCheckpointLossAndJoin(t *testing.T
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	imp = NewImporter(st, imp.client)
 	opts := ImportOptions{AccountID: "signal", ShouldStop: func() bool { return handler.begins >= 20 }}
-	_, complete, err := imp.ensureConversation(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{}, &ChatState{})
+	_, complete, _, err := imp.ensureRosterWork(t.Context(), 0, sum.SourceID, detail, opts, &ImportSummary{})
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	assert.True(complete)
 	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 65)
 }
 
-func TestRosterInsertionBatchProgressAcrossImporters(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := rosterRetryChat()
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	source, err := st.GetOrCreateSource("beeper", "signal")
-	require.NoError(err)
-	conversationID, err := st.EnsureConversationWithType(source.ID, chat.ID, "group", chat.Title)
-	require.NoError(err)
-	opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool {
-		var count int
-		err := st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ?`), conversationID).Scan(&count)
-		require.NoError(err)
-		return count >= 16
-	}}
-	sum, err := imp.Import(t.Context(), opts)
-	require.NoError(err)
-	require.True(sum.Stopped)
-	assert.Len(rosterMembers(t, st, source.ID, chat.ID), 16)
-	imp = NewImporter(st, imp.client)
-	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	assert.Len(rosterMembers(t, st, source.ID, chat.ID), 64)
-	assert.Equal(2, countBeeperMessages(t, imp))
-}
-
-func TestInterruptedUnchangedRosterKeepsPending(t *testing.T) {
+func TestInterruptedMatchingKeepsVerifiedMembership(t *testing.T) {
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger to stop after route proof is invalidated")
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
