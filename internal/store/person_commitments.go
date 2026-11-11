@@ -730,7 +730,14 @@ func (s *Store) resolvePersonCommitmentTargetTx(ctx context.Context, tx *loggedT
 		}
 		claimID = id
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE person_commitments SET current_claim_id = ? WHERE person_id = ? AND target_key = ?`, claimID, generation.PersonID, descriptor.Key)
+	// A retained merge copy shares the old target until re-extraction, but
+	// only the claim's own cited message may receive that claim on restoration.
+	_, err = tx.ExecContext(ctx, `UPDATE person_commitments SET current_claim_id = (
+		SELECT ce.claim_id FROM person_fact_claim_evidence ce
+		JOIN person_fact_evidence e ON e.id = ce.evidence_id
+		WHERE ce.claim_id = ? AND e.source_ref = ? || CAST(person_commitments.anchor_message_id AS TEXT)
+		LIMIT 1) WHERE person_id = ? AND target_key = ?`,
+		claimID, personfacts.CommitmentMessageRefPrefix, generation.PersonID, descriptor.Key)
 	return false, err
 }
 
