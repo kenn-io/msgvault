@@ -31,7 +31,7 @@ func TestICSFamilyLookupUsesIndexes(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	rows, err := st.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+icsFamilyQuery, 0, 1, 1, "family", "family", 1, "family", 1, "family")
 	requirements.NoError(err)
-	defer rows.Close()
+	defer func() { requirements.NoError(rows.Close()) }()
 	var details []string
 	for rows.Next() {
 		var id, parent, unused int
