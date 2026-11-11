@@ -135,7 +135,7 @@ func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store
 	scopes := []string{oauth.ScopeGmailModify, oauth.ScopeGmailFull}
 	if target.Provider == sourceTypeGmail && write {
 		if err := gmailDraftScopeGate(ctx, a.config, source, scopes); err != nil {
-			return nil, emailtags.Failure("insufficient_scope", "Gmail edits require gmail.modify; reauthorize with add-account --force", nil, err)
+			return nil, emailtags.Failure("insufficient_scope", "Gmail tag editing requires gmail.modify; reauthorize the account with add-account --force", nil, err)
 		}
 	}
 	factory := a.emailTagClientFactory
