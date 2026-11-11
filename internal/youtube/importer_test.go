@@ -156,7 +156,7 @@ func TestArchivePreservesNewerCheckpoint(t *testing.T) {
 	imp := NewImporter(st, client)
 	source, err := imp.Register(t.Context(), "UCfixture")
 	require.NoError(err)
-	const saved = `{"version":2,"ownership_cursor":"future-owner","queue":[{"kind":"uploads","token":"future-page"}],"future_field":"preserve"}`
+	const saved = `{"version":2,"ownership_cursor":"future-owner","queue":{"kind":"uploads","token":"future-page"},"future_field":"preserve"}`
 	run, err := st.StartSyncContext(t.Context(), source.ID, SourceType)
 	require.NoError(err)
 	require.NoError(st.PauseSyncWithCheckpoint(t.Context(), run, &store.Checkpoint{PageToken: saved}))
