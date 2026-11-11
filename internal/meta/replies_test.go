@@ -254,6 +254,38 @@ func TestReplyToNestedFacebookCommentWaitsForSync(t *testing.T) {
 	assert.Equal(message(t, st, src.ID, "100_201").ID, message(t, st, src.ID, "100_204").ReplyToMessageID.Int64)
 }
 
+func TestInstagramReplyWithoutParent(t *testing.T) {
+	const read = `{"id":"600","text":"Thanks","timestamp":"2026-10-02T12:00:00+0000"}`
+	t.Run("nested target waits for sync", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		st := testutil.NewSQLiteTestStore(t)
+		src := archiveInstagramComment(t, st)
+		target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "500").ID)
+		require.NoError(err)
+		_, client := newReplyFixture(t, `{"id":"600"}`, read)
+
+		replyID, err := ReplyToComment(t.Context(), st, client, target, "Thanks")
+		require.ErrorIs(err, ErrReplyNotArchived)
+		assert.Equal("600", replyID)
+		ids, err := st.MessageExistsBatch(src.ID, []string{"600"})
+		require.NoError(err)
+		assert.Zero(ids["600"], "a reply without a known parent is left for sync")
+		_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
+		require.ErrorIs(err, ErrReplySent, "the reply still counts as sent")
+	})
+	t.Run("top-level target is the parent", func(t *testing.T) {
+		st := testutil.NewSQLiteTestStore(t)
+		src := archiveInstagramComment(t, st)
+		target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "400").ID)
+		require.NoError(t, err)
+		_, client := newReplyFixture(t, `{"id":"600"}`, read)
+
+		_, err = ReplyToComment(t.Context(), st, client, target, "Thanks")
+		require.NoError(t, err)
+		assert.Equal(t, target.MessageID, message(t, st, src.ID, "600").ReplyToMessageID.Int64)
+	})
+}
+
 func TestInstagramReplyStaysFromMe(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewSQLiteTestStore(t)

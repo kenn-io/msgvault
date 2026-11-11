@@ -74,7 +74,7 @@ func ReplyToComment(ctx context.Context, st *store.Store, client *Client, target
 	case err != nil:
 	case reply.ID != posted.ID:
 		err = errors.New("meta returned a different comment")
-	case reply.Parent == nil && target.SourceType == SourceType && target.metadata.ParentID != target.metadata.PostID:
+	case reply.Parent == nil && target.metadata.ParentID != target.metadata.root():
 		// Only Meta knows where a reply to a nested comment went. Guessing
 		// would make every later sync of that thread fail.
 		err = errors.New("meta did not say which comment the reply belongs to")
@@ -124,15 +124,15 @@ func (c *Client) readComment(ctx context.Context, sourceType, id string) (Object
 
 func archiveReply(ctx context.Context, st *store.Store, source *store.Source, target CommentTarget, reply Object) error {
 	m := target.metadata
-	root, edge := m.PostID, Posts
+	edge := Posts
 	switch {
 	case m.InstagramAccountID != "":
-		root, edge = m.MediaID, instagramMediaEdge
+		edge = instagramMediaEdge
 	case m.Visitor:
 		edge = VisitorPosts
 	case m.Ad && !m.Organic:
 		edge = AdsPosts
 	}
 	run := &importRun{imp: &Importer{store: st, instagram: m.InstagramAccountID}, app: m.AppID, page: m.PageID, source: source, sum: &ImportSummary{}}
-	return run.persist(ctx, reply, root, target.CommentID, edge)
+	return run.persist(ctx, reply, m.root(), target.CommentID, edge)
 }

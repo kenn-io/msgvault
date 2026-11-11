@@ -33,6 +33,14 @@ type objectMetadata struct {
 	Outbound bool `json:"outbound,omitempty"`
 }
 
+// root is the post, or for Instagram the media, the comment belongs to.
+func (m objectMetadata) root() string {
+	if m.InstagramAccountID != "" {
+		return m.MediaID
+	}
+	return m.PostID
+}
+
 func (m objectMetadata) matches(app, page, account, root string) bool {
 	if m.AppID != app || m.PageID != page || m.InstagramAccountID != account {
 		return false
