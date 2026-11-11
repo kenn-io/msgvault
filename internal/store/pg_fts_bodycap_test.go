@@ -126,6 +126,28 @@ func TestPG_FTSUpsert_OversizedBodyTruncates(t *testing.T) {
 	assert.False(t, isNull, "search_fts must be non-NULL after truncated upsert")
 }
 
+func TestPG_FTSMultibyteWriteAndBackfillBounds(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	body := strings.Repeat("é ", 250_000) + "latebeacon " + strings.Repeat("x", 100_000) + " beyondbeacon"
+	live := f.CreateMessage("live-multibyte")
+	require.NoError(f.Store.UpsertFTS(live, "", body, "", "", ""))
+	backfill := f.CreateMessage("backfill-multibyte")
+	require.NoError(f.Store.UpsertMessageBody(backfill, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	matches, total, err := f.Store.SearchMessages("latebeacon", 0, 10)
+	require.NoError(err)
+	require.EqualValues(1, total)
+	require.Len(matches, 1)
+	assert.Equal(backfill, matches[0].ID)
+	_, total, err = f.Store.SearchMessages("beyondbeacon", 0, 10)
+	require.NoError(err)
+	assert.Zero(total)
+}
+
 // TestPG_BackfillFTS_OversizedBodyDoesNotWedge (finding T2b) seeds >5000
 // messages with one oversized body in a middle batch, then runs BackfillFTS.
 // It must complete WITHOUT error and every row — including those AFTER the
