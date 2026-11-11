@@ -77,6 +77,11 @@ func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 		ADD COLUMN IF NOT EXISTS source_basis SMALLINT NOT NULL DEFAULT 0`); err != nil {
 		return fmt.Errorf("add embeddings.source_basis: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `
+		ALTER TABLE IF EXISTS embeddings
+		ADD COLUMN IF NOT EXISTS embedding_revision BIGINT NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add embeddings.embedding_revision: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply pgvector schema: %w", err)
 	}

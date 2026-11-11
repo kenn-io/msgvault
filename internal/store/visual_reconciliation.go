@@ -89,7 +89,7 @@ func (s *Store) ActivateVisualGeneration(ctx context.Context, generationID, sour
 		return nil, errors.New("invalid visual generation activation")
 	}
 	var retired []VisualGeneration
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		var currentHighWater int64
 		if err := q.QueryRow(`
@@ -279,25 +279,32 @@ func (s *Store) SyncVisualGenerationCapabilityFingerprint(
 		// requires last_sequence >= baseline_sequence): entries before the
 		// new baseline need no replay because the reopened full scan
 		// re-evaluates every owner, and later changes land after it.
-		if s.IsPostgreSQL() {
-			if _, err := q.Exec(`LOCK TABLE attachments, messages IN SHARE MODE`); err != nil {
-				return fmt.Errorf("lock visual rebaseline boundary: %w", err)
-			}
-		}
-		baseline, err := attachmentChangeBaseline(q)
-		if err != nil {
-			return err
-		}
-		if _, err := q.Exec(`
-			UPDATE attachment_change_consumers
-			SET reconciliation_complete = FALSE, baseline_sequence = ?,
-			    last_sequence = ?, updated_at = `+s.dialect.Now()+`
-			WHERE consumer_key = ?`, baseline, baseline, consumerKey); err != nil {
-			return fmt.Errorf("reopen visual reconciliation: %w", err)
-		}
-		return nil
+		return s.reopenVisualReconciliationTx(q, consumerKey)
 	})
 	return changed, err
+}
+
+// reopenVisualReconciliationTx restarts a consumer's full scan at the current
+// journal boundary. Keeping the old baseline would treat every retained entry
+// as a concurrent change, so commits would be rejected forever.
+func (s *Store) reopenVisualReconciliationTx(q boundQuerier, consumerKey string) error {
+	if s.IsPostgreSQL() {
+		if _, err := q.Exec(`LOCK TABLE attachments, messages IN SHARE MODE`); err != nil {
+			return fmt.Errorf("lock visual rebaseline boundary: %w", err)
+		}
+	}
+	baseline, err := attachmentChangeBaseline(q)
+	if err != nil {
+		return err
+	}
+	if _, err := q.Exec(`
+		UPDATE attachment_change_consumers
+		SET reconciliation_complete = FALSE, baseline_sequence = ?,
+		    last_sequence = ?, updated_at = `+s.dialect.Now()+`
+		WHERE consumer_key = ?`, baseline, baseline, consumerKey); err != nil {
+		return fmt.Errorf("reopen visual reconciliation: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) CountActiveVisualClaims(
@@ -327,21 +334,31 @@ func (s *Store) AdvanceVisualGenerationSourceFence(
 	if generationID <= 0 || sourceFence < 0 {
 		return errors.New("invalid visual generation source fence")
 	}
-	result, err := s.db.ExecContext(ctx, `
+	// The policy check reads before this update writes, so a peer commit in
+	// between fails SQLite's snapshot upgrade. Rerun the whole transaction.
+	return retryBusyWriteErr(ctx, s, "advance visual generation source fence", func() error {
+		return s.advanceVisualGenerationSourceFence(ctx, generationID, sourceFence)
+	})
+}
+
+func (s *Store) advanceVisualGenerationSourceFence(ctx context.Context, generationID, sourceFence int64) error {
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
+		result, err := tx.ExecContext(ctx, `
 		UPDATE visual_generations
 		SET source_fence = CASE WHEN source_fence < ? THEN ? ELSE source_fence END
 		WHERE id = ?`, sourceFence, sourceFence, generationID)
-	if err != nil {
-		return fmt.Errorf("advance visual generation source fence: %w", err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("read visual generation fence result: %w", err)
-	}
-	if rows != 1 {
-		return sql.ErrNoRows
-	}
-	return nil
+		if err != nil {
+			return fmt.Errorf("advance visual generation source fence: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read visual generation fence result: %w", err)
+		}
+		if rows != 1 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
 }
 
 // VisualPublicationTally is one (state, outcome) bucket of a generation's

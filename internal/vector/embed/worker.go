@@ -51,6 +51,14 @@ type WorkStore interface {
 	SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, covered int, err error)
 }
 
+type skipStampPolicyStore interface {
+	IsPostgreSQL() bool
+	AcquireSQLiteConversationPolicyFence(ctx context.Context, mode store.ConversationPolicyLockMode) (func(), error)
+	CheckSQLiteConversationPolicyPublication(ctx context.Context, ids []int64) error
+	LockPostgresConversationPolicyTx(ctx context.Context, tx store.ConversationPolicyTx, mode store.ConversationPolicyLockMode) error
+	CheckConversationPolicyPublicationTx(ctx context.Context, tx store.ConversationPolicyTx, ids []int64) error
+}
+
 // WorkerDeps bundles the collaborators a Worker needs. Backend, VectorsDB,
 // MainDB, Store, and Client are required; the remaining fields have
 // sensible defaults when zero: BatchSize defaults to 32,
@@ -224,10 +232,11 @@ func (w *Worker) finishScan(ctx context.Context, gen vector.GenerationID, res Ru
 // records the message as truncated regardless of which chunk surfaces
 // it.
 type msgText struct {
-	ID            int64
-	Text          string
-	Chars         int
-	BodyTruncated bool
+	ID                int64
+	Text              string
+	Chars             int
+	BodyTruncated     bool
+	EmbeddingRevision int64
 }
 
 // inputChunk is one window into a message's preprocessed text, fed
@@ -235,13 +244,14 @@ type msgText struct {
 // way back. The (ID, ChunkIndex) pair is the durable key the backend
 // stores. ChunkIndex is dense and 0-based.
 type inputChunk struct {
-	ID         int64
-	ChunkIndex int
-	Text       string
-	Chars      int
-	CharStart  int
-	CharEnd    int
-	Trunc      bool
+	ID                int64
+	ChunkIndex        int
+	EmbeddingRevision int64
+	Text              string
+	Chars             int
+	CharStart         int
+	CharEnd           int
+	Trunc             bool
 }
 
 // ReclaimStale is a no-op retained to satisfy the scheduler's EmbedRunner
@@ -338,6 +348,15 @@ func (w *Worker) RunBackstop(
 func (w *Worker) runOperationPass(
 	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
 ) (res RunResult, retErr error) {
+	if policy, ok := w.deps.Store.(interface {
+		CaptureConversationPolicyWork(ctx context.Context) (context.Context, error)
+	}); ok {
+		var err error
+		ctx, err = policy.CaptureConversationPolicyWork(ctx)
+		if err != nil {
+			return res, err
+		}
+	}
 	pass, terminal, err := beginOperationPass(
 		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,
 	)
@@ -434,6 +453,9 @@ func (w *Worker) run(
 			return res, err
 		}
 		if err != nil {
+			if errors.Is(err, store.ErrConversationPolicyStale) {
+				return res, err
+			}
 			if w.stopIfYielded(ctx, gen) || jobctx.StopRequested(ctx) {
 				return res, stopError(ctx, err)
 			}
@@ -556,7 +578,7 @@ func (w *Worker) run(
 				if len(eb.empty) > 0 {
 					w.deps.Log.Warn("messages have no embeddable text after preprocess", "gen", gen, "ids", eb.empty)
 				}
-				missed, serr := w.stampSkipped(ctx, gen, skipIDs, eb.lastModified)
+				missed, serr := w.stampSkipped(ctx, gen, skipIDs, eb.lastModified, eb.embeddingRevisions)
 				if serr != nil {
 					if w.stopIfYielded(ctx, gen) {
 						return res, nil
@@ -587,6 +609,9 @@ func (w *Worker) run(
 
 		// Step 1: upsert embeddings (VectorsDB side).
 		if err := w.upsertMeasured(ctx, gen, eb.chunks); err != nil {
+			if errors.Is(err, store.ErrConversationPolicyStale) {
+				return res, err
+			}
 			if errors.Is(err, vector.ErrGenerationRetired) {
 				// The generation was retired out from under this worker. Per
 				// the ErrGenerationRetired contract this is a benign "stop"
@@ -618,7 +643,7 @@ func (w *Worker) run(
 		var skipMissed []int64
 		if len(skipIDs) > 0 {
 			var err error
-			skipMissed, err = w.stampSkipped(ctx, gen, skipIDs, eb.lastModified)
+			skipMissed, err = w.stampSkipped(ctx, gen, skipIDs, eb.lastModified, eb.embeddingRevisions)
 			if err != nil {
 				if w.stopIfYielded(ctx, gen) {
 					return res, nil
@@ -641,7 +666,7 @@ func (w *Worker) run(
 
 		// Safe to stamp after the upsert: the upsert is idempotent, so a crash
 		// before this stamp just re-does the embedded rows next scan.
-		missed, serr := w.stampCovered(ctx, gen, eb.embeddedIDs, eb.lastModified)
+		missed, serr := w.stampCovered(ctx, gen, eb.embeddedIDs, eb.lastModified, eb.embeddingRevisions)
 		if serr != nil {
 			if w.stopIfYielded(ctx, gen) {
 				return res, nil
@@ -756,7 +781,8 @@ type embedBatchResult struct {
 	// lastModified maps each FETCHED id (embedded or empty) to the CAS token
 	// captured at read time. Missing ids are absent (they have no row, so
 	// there is nothing to CAS-stamp — they are skip-marked unconditionally).
-	lastModified map[int64]any
+	lastModified       map[int64]any
+	embeddingRevisions map[int64]int64
 }
 
 // embedBatch fetches subject/body for ids, preprocesses each, calls the
@@ -765,6 +791,19 @@ type embedBatchResult struct {
 // reported in the returned result's missing slice rather than causing
 // a failure — the caller skip-marks them.
 func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []int64) (embedBatchResult, error) {
+	policyWhere := ""
+	if policy, ok := w.deps.Store.(interface {
+		CaptureConversationPolicyWork(ctx context.Context) (context.Context, error)
+	}); ok {
+		var err error
+		ctx, err = policy.CaptureConversationPolicyWork(ctx)
+		if err != nil {
+			return embedBatchResult{}, err
+		}
+		policyWhere = " AND " + store.FullMessageWhere("m")
+	}
+	policyFiltered := policyWhere != ""
+
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
@@ -772,10 +811,12 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 		args[i] = id
 	}
 	query := w.rebind(fmt.Sprintf(`
-        SELECT m.id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''), COALESCE(mb.body_html, ''), %s
+	        SELECT m.id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''), COALESCE(mb.body_html, ''), %s,
+	               COALESCE(m.embedding_revision, 0)
           FROM messages m
           LEFT JOIN message_bodies mb ON mb.message_id = m.id
-         WHERE m.id IN (%s)`, w.lastModifiedExpr, strings.Join(placeholders, ",")))
+         WHERE m.id IN (%s)%s
+         ORDER BY m.id`, w.lastModifiedExpr, strings.Join(placeholders, ","), policyWhere))
 
 	rows, err := w.deps.MainDB.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -792,14 +833,17 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 	// that bumped last_modified between this read and the stamp blocks the
 	// stamp (0 rows) and the row is re-found next scan.
 	lastModified := make(map[int64]any, len(ids))
+	embeddingRevisions := make(map[int64]int64, len(ids))
 	for rows.Next() {
 		var id int64
 		var subject, bodyText, bodyHTML string
 		var lm any
-		if err := rows.Scan(&id, &subject, &bodyText, &bodyHTML, &lm); err != nil {
+		var embeddingRevision int64
+		if err := rows.Scan(&id, &subject, &bodyText, &bodyHTML, &lm, &embeddingRevision); err != nil {
 			return embedBatchResult{}, fmt.Errorf("scan message row: %w", err)
 		}
 		lastModified[id] = lm
+		embeddingRevisions[id] = embeddingRevision
 		// Fall back to HTML-to-text when the plaintext body is empty —
 		// HTML-only messages would otherwise get subject-only embeddings
 		// and have materially worse semantic recall.
@@ -829,25 +873,60 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 			empty = append(empty, id)
 			continue
 		}
-		msgs = append(msgs, msgText{ID: id, Text: txt, Chars: utf8.RuneCountInString(txt), BodyTruncated: bodyTrunc})
+		msgs = append(msgs, msgText{ID: id, Text: txt, Chars: utf8.RuneCountInString(txt), BodyTruncated: bodyTrunc, EmbeddingRevision: embeddingRevision})
 	}
 	if err := rows.Err(); err != nil {
 		return embedBatchResult{}, fmt.Errorf("iterate message rows: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return embedBatchResult{}, fmt.Errorf("close message rows: %w", err)
+	}
 
 	// Identify scanned ids that had no row in messages; we'll report
 	// them back so the caller can skip-mark them.
-	var missing []int64
+	var missingCandidates []int64
 	for _, id := range ids {
 		if _, ok := fetched[id]; !ok {
-			missing = append(missing, id)
+			missingCandidates = append(missingCandidates, id)
+		}
+	}
+	missing := missingCandidates
+	if policyFiltered && len(missingCandidates) > 0 {
+		placeholders := make([]string, len(missingCandidates))
+		args := make([]any, len(missingCandidates))
+		for i, id := range missingCandidates {
+			placeholders[i] = "?"
+			args[i] = id
+		}
+		existsQuery := w.rebind(fmt.Sprintf(`SELECT id FROM messages WHERE id IN (%s)`, strings.Join(placeholders, ",")))
+		existingRows, err := w.deps.MainDB.QueryContext(ctx, existsQuery, args...)
+		if err != nil {
+			return embedBatchResult{}, fmt.Errorf("check policy-filtered messages: %w", err)
+		}
+		defer func() { _ = existingRows.Close() }()
+		existing := make(map[int64]struct{}, len(missingCandidates))
+		for existingRows.Next() {
+			var id int64
+			if err := existingRows.Scan(&id); err != nil {
+				return embedBatchResult{}, fmt.Errorf("scan policy-filtered message id: %w", err)
+			}
+			existing[id] = struct{}{}
+		}
+		if err := existingRows.Err(); err != nil {
+			return embedBatchResult{}, fmt.Errorf("iterate policy-filtered message rows: %w", err)
+		}
+		missing = make([]int64, 0, len(missingCandidates))
+		for _, id := range missingCandidates {
+			if _, ok := existing[id]; !ok {
+				missing = append(missing, id)
+			}
 		}
 	}
 
 	if len(msgs) == 0 {
 		// All scanned ids are missing/empty — return an empty result (no
 		// chunks, no error). Caller skip-marks them.
-		return embedBatchResult{missing: missing, empty: empty, lastModified: lastModified}, nil
+		return embedBatchResult{missing: missing, empty: empty, lastModified: lastModified, embeddingRevisions: embeddingRevisions}, nil
 	}
 
 	// Chunk every message into windows of at most MaxInputChars runes.
@@ -876,12 +955,13 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 				continue
 			}
 			ic := inputChunk{
-				ID:         m.ID,
-				ChunkIndex: chunkIndex,
-				Text:       sp.Text,
-				Chars:      sp.CharEnd - sp.CharStart,
-				CharStart:  sp.CharStart,
-				CharEnd:    sp.CharEnd,
+				ID:                m.ID,
+				ChunkIndex:        chunkIndex,
+				EmbeddingRevision: m.EmbeddingRevision,
+				Text:              sp.Text,
+				Chars:             sp.CharEnd - sp.CharStart,
+				CharStart:         sp.CharStart,
+				CharEnd:           sp.CharEnd,
 				// Trunc flags either: a hard-cut chunk where a
 				// sentence may have been split across the boundary
 				// (overlap exists to recover from this), or any
@@ -945,12 +1025,24 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 		}
 		batch := pending[from:min(from+embedSubBatchSize, len(pending))]
 		batchInputs := make([]string, len(batch))
+		// Admission names exactly the messages whose text this request sends.
+		requestIDs := make([]int64, 0, len(batch))
+		seenRequestIDs := make(map[int64]struct{}, len(batch))
 		for j, i := range batch {
 			batchInputs[j] = inputs[i]
+			if _, ok := seenRequestIDs[pieces[i].ID]; ok {
+				continue
+			}
+			seenRequestIDs[pieces[i].ID] = struct{}{}
+			requestIDs = append(requestIDs, pieces[i].ID)
 		}
 		subBatches++
-		finishProvider := measureEmbeddingProvider(ctx, batchInputs)
-		got, err := w.deps.Client.Embed(ctx, batchInputs)
+		requestCtx := store.WithConversationPolicyMessageIDs(ctx, requestIDs)
+		finishProvider := measureEmbeddingProvider(requestCtx, batchInputs)
+		if err := store.CheckConversationPolicyAdmission(requestCtx); err != nil {
+			return embedBatchResult{}, err
+		}
+		got, err := w.deps.Client.Embed(requestCtx, batchInputs)
 		accepted := 0
 		if err == nil {
 			accepted = len(got)
@@ -964,10 +1056,11 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 		finishProvider(accepted, recorded)
 		if err != nil {
 			return embedBatchResult{
-				missing:      missing,
-				empty:        empty,
-				lastModified: lastModified,
-				fresh:        fresh,
+				missing:            missing,
+				empty:              empty,
+				lastModified:       lastModified,
+				fresh:              fresh,
+				embeddingRevisions: embeddingRevisions,
 			}, fmt.Errorf("embed: %w", err)
 		}
 		if len(got) != len(batch) {
@@ -1007,13 +1100,14 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 	truncatedMsg := make(map[int64]struct{}, len(msgs))
 	for i, p := range pieces {
 		chunks = append(chunks, vector.Chunk{
-			MessageID:      p.ID,
-			ChunkIndex:     p.ChunkIndex,
-			Vector:         vecs[i],
-			SourceCharLen:  p.Chars,
-			ChunkCharStart: p.CharStart,
-			ChunkCharEnd:   p.CharEnd,
-			Truncated:      p.Trunc,
+			MessageID:         p.ID,
+			ChunkIndex:        p.ChunkIndex,
+			Vector:            vecs[i],
+			EmbeddingRevision: p.EmbeddingRevision,
+			SourceCharLen:     p.Chars,
+			ChunkCharStart:    p.CharStart,
+			ChunkCharEnd:      p.CharEnd,
+			Truncated:         p.Trunc,
 		})
 		if _, ok := seenMsg[p.ID]; !ok {
 			seenMsg[p.ID] = struct{}{}
@@ -1032,13 +1126,14 @@ func (w *Worker) embedBatch(ctx context.Context, gen vector.GenerationID, ids []
 		}
 	}
 	return embedBatchResult{
-		chunks:       chunks,
-		embeddedIDs:  embeddedIDs,
-		missing:      missing,
-		empty:        empty,
-		truncated:    truncated,
-		fresh:        fresh,
-		lastModified: lastModified,
+		chunks:             chunks,
+		embeddedIDs:        embeddedIDs,
+		missing:            missing,
+		empty:              empty,
+		truncated:          truncated,
+		fresh:              fresh,
+		lastModified:       lastModified,
+		embeddingRevisions: embeddingRevisions,
 	}, nil
 }
 
@@ -1102,6 +1197,7 @@ func (w *Worker) downshiftDrain(
 	// rejected it) has no token here and falls back to an unconditional
 	// stamp in stampCovered — acceptable for the already-degraded 4xx path.
 	lm := make(map[int64]any, len(ids))
+	embeddingRevisions := make(map[int64]int64, len(ids))
 	// contiguousStampedID tracks the highest id with an unbroken
 	// stamped-from-the-start prefix. The first time an id is left unresolved
 	// (a deferred 4xx, or a non-4xx error return) brokeContiguity latches
@@ -1128,6 +1224,7 @@ func (w *Worker) downshiftDrain(
 			}
 			if errors.Is(e, ErrPermanent4xx) {
 				maps.Copy(lm, eb.lastModified)
+				maps.Copy(embeddingRevisions, eb.embeddingRevisions)
 				// Defer the drop decision. See function-level comment. A
 				// deferred id breaks the contiguous-stamped prefix: even if it
 				// is stamped at end-of-drain, the watermark must not skip past
@@ -1144,6 +1241,7 @@ func (w *Worker) downshiftDrain(
 		}
 		// Carry forward the CAS token for this fetched id.
 		maps.Copy(lm, eb.lastModified)
+		maps.Copy(embeddingRevisions, eb.embeddingRevisions)
 		if len(eb.chunks) == 0 {
 			// Missing/empty singleton — skip-mark it.
 			skip := append(append([]int64(nil), eb.missing...), eb.empty...)
@@ -1153,7 +1251,7 @@ func (w *Worker) downshiftDrain(
 			// NOT break contiguity: there is no unstamped row to strand.
 			stampedThisID := true
 			if len(skip) > 0 {
-				missed, serr := w.stampSkipped(ctx, gen, skip, eb.lastModified)
+				missed, serr := w.stampSkipped(ctx, gen, skip, eb.lastModified, eb.embeddingRevisions)
 				if serr != nil {
 					if jobctx.YieldedToWaiter(ctx) {
 						return embedded, embeddedOK, stamped, contiguousStampedID, serr
@@ -1209,7 +1307,7 @@ func (w *Worker) downshiftDrain(
 		if eb.fresh > 0 {
 			embeddedOK++
 		}
-		missed, serr := w.stampCovered(ctx, gen, eb.embeddedIDs, eb.lastModified)
+		missed, serr := w.stampCovered(ctx, gen, eb.embeddedIDs, eb.lastModified, eb.embeddingRevisions)
 		if serr != nil {
 			if jobctx.YieldedToWaiter(ctx) {
 				return embedded, embeddedOK, stamped, contiguousStampedID, serr
@@ -1278,7 +1376,7 @@ func (w *Worker) downshiftDrain(
 		// Deferred drops carry the last_modified token captured before the
 		// singleton embedder call failed, so stampSkipped CAS-protects them and
 		// deletes stale vectors only for rows whose drop stamp actually landed.
-		missed, serr := w.stampSkipped(ctx, gen, deferredDrops, lm)
+		missed, serr := w.stampSkipped(ctx, gen, deferredDrops, lm, embeddingRevisions)
 		if serr != nil {
 			if jobctx.YieldedToWaiter(ctx) {
 				return embedded, embeddedOK, stamped, contiguousStampedID, serr
@@ -1334,14 +1432,14 @@ func (w *Worker) downshiftDrain(
 // accounting. The watermark still advances (the caller's job) and the backstop
 // recovers them. A missed CAS is NOT an error — only a real driver failure on
 // either path returns err, for the caller's consecutive-failure accounting.
-func (w *Worker) stampCovered(ctx context.Context, gen vector.GenerationID, ids []int64, lm map[int64]any) (missed []int64, err error) {
+func (w *Worker) stampCovered(ctx context.Context, gen vector.GenerationID, ids []int64, lm map[int64]any, embeddingRevisions map[int64]int64) (missed []int64, err error) {
 	finish := measureEmbeddingWrite(ctx)
 	defer func() { finish(err) }()
 	var cas []store.EmbedGenStamp
 	var plain []int64
 	for _, id := range ids {
 		if tok, ok := lm[id]; ok {
-			cas = append(cas, store.EmbedGenStamp{ID: id, LastModified: tok})
+			cas = append(cas, store.EmbedGenStamp{ID: id, LastModified: tok, EmbeddingRevision: embeddingRevisions[id]})
 		} else {
 			plain = append(plain, id)
 		}
@@ -1368,7 +1466,7 @@ func (w *Worker) stampCovered(ctx context.Context, gen vector.GenerationID, ids 
 	return missed, nil
 }
 
-func (w *Worker) stampSkipped(ctx context.Context, gen vector.GenerationID, ids []int64, lm map[int64]any) (missed []int64, err error) {
+func (w *Worker) stampSkipped(ctx context.Context, gen vector.GenerationID, ids []int64, lm map[int64]any, embeddingRevisions map[int64]int64) (missed []int64, err error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -1377,20 +1475,49 @@ func (w *Worker) stampSkipped(ctx context.Context, gen vector.GenerationID, ids 
 	if w.deps.beforeSkipStamp != nil {
 		w.deps.beforeSkipStamp(ctx, ids)
 	}
+	var policyIDs []int64
+	var releasePolicy func()
+	policyStore, hasPolicyStore := w.deps.Store.(skipStampPolicyStore)
+	if hasPolicyStore {
+		for _, id := range ids {
+			if _, ok := lm[id]; ok {
+				policyIDs = append(policyIDs, id)
+			}
+		}
+		ctx = store.WithConversationPolicyMessageIDs(ctx, policyIDs)
+		if len(policyIDs) > 0 && !policyStore.IsPostgreSQL() {
+			releasePolicy, err = policyStore.AcquireSQLiteConversationPolicyFence(ctx, store.ConversationPolicyShared)
+			if err != nil {
+				return nil, fmt.Errorf("acquire policy fence for skip stamp: %w", err)
+			}
+			defer releasePolicy()
+			if err := policyStore.CheckSQLiteConversationPolicyPublication(ctx, policyIDs); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	tx, err := w.deps.MainDB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin skip stamp tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if len(policyIDs) > 0 && hasPolicyStore && policyStore.IsPostgreSQL() {
+		if err := policyStore.LockPostgresConversationPolicyTx(ctx, tx, store.ConversationPolicyShared); err != nil {
+			return nil, fmt.Errorf("acquire policy fence for skip stamp: %w", err)
+		}
+		if err := policyStore.CheckConversationPolicyPublicationTx(ctx, tx, policyIDs); err != nil {
+			return nil, err
+		}
+	}
 
 	deleteIDs := make([]int64, 0, len(ids))
 	covered := 0
 	for _, id := range ids {
 		if tok, ok := lm[id]; ok {
 			res, err := tx.ExecContext(ctx,
-				w.rebind(`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`),
-				int64(gen), id, tok)
+				w.rebind(`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ? AND embedding_revision = ?`),
+				int64(gen), id, tok, embeddingRevisions[id])
 			if err != nil {
 				return nil, fmt.Errorf("set skipped embed_gen if unchanged (id=%d): %w", id, err)
 			}
