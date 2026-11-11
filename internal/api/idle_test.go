@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 type idleTrackerFixture struct {
@@ -82,6 +83,40 @@ func TestIdleTrackerInternalWorkBlocksIdle(t *testing.T) {
 
 		done()
 		f.requireFiredWithin(t, 80*time.Millisecond, "idle did not fire after internal work ended")
+	})
+}
+
+func TestIdleTrackerBlocksWhileSearchIndexRepairs(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		f := newIdleTrackerFixture(t, 20*time.Millisecond)
+		started := make(chan struct{})
+		release := make(chan struct{})
+		st := &mockStore{needsFTSBackfill: true, needsFTSBackfillQuick: true,
+			backfillFTSFunc: func(func(int64, int64)) (int64, error) {
+				close(started)
+				<-release
+				return 1, nil
+			}}
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), IdleTracker: f.tracker})
+		defer func() {
+			if release != nil {
+				close(release)
+			}
+			require.NoError(srv.Shutdown(t.Context()))
+		}()
+		srv.ensureCLISearchIndexAsync(st, true)
+		synctest.Wait()
+		select {
+		case <-started:
+		default:
+			require.FailNow("backfill did not start")
+		}
+		f.run(t)
+		f.requireNotFiredWithin(t, 35*time.Millisecond, "idle fired while search repair was active")
+		close(release)
+		release = nil
+		f.requireFiredWithin(t, 80*time.Millisecond, "idle did not fire after search repair")
 	})
 }
 

@@ -108,17 +108,75 @@ func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
 	n, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
 	assert.Equal(int64(1), n, "only the outdated entry needs backfill")
-	assertFTSContains(t, f.Store, "obsolete", 0)
+	assertFTSContains(t, f.Store, "obsolete", 1)
+}
+
+func TestPG_BackfillFTSPreservesIndexedFields(t *testing.T) {
+	require := require.New(t)
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	cases := []struct {
+		name, subject, sender, recipient, body, query string
+	}{
+		{"messenger", "hidden title.example", "", "", "", "title.example"},
+		{"imazing", "", "", "+15550123457", "", "+15550123457"},
+		{"beeper", "", "Lantern Sender", "", "", "lantern"},
+		{"relay", "", "relay@example.test", "", "", "relay@example.test"},
+	}
+	ids := make([]int64, len(cases))
+	for i, tc := range cases {
+		ids[i] = f.CreateMessage(tc.name)
+		require.NoError(f.Store.UpsertFTS(ids[i], tc.subject, tc.body, tc.sender, tc.recipient, ""))
+	}
+	participant, err := f.Store.EnsureParticipantByIdentifierContext(t.Context(), "beeper", "sender-c", "Different Current Name")
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET sender_id = $1, message_type = 'beeper' WHERE id = $2`, participant, ids[2])
+	require.NoError(err)
+	check := func() {
+		t.Helper()
+		for i, tc := range cases {
+			matches, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{tc.query}}, 10)
+			require.NoError(err, tc.name)
+			require.Equal([]int64{ids[i]}, matches, tc.name)
+		}
+	}
+	check()
+	for i, tc := range cases {
+		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts =
+			setweight(to_tsvector('simple', $1), 'A') || setweight(to_tsvector('simple', $2), 'B') ||
+			setweight(to_tsvector('simple', $3), 'C') || setweight(to_tsvector('simple', $4), 'D'),
+			indexing_version = 2 WHERE id = $5`, tc.subject, tc.sender, tc.recipient, tc.body, ids[i])
+		require.NoError(err, tc.name)
+	}
+	saturated := f.CreateMessage("saturated-old")
+	require.NoError(f.Store.UpsertMessageBody(saturated, sql.NullString{String: "stored saturated@example.test", Valid: true}, sql.NullString{}))
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', $1), indexing_version = 2 WHERE id = $2`, strings.Repeat("filler ", 300), saturated)
+	require.NoError(err)
+	missing := f.CreateMessage("missing-old")
+	require.NoError(f.Store.UpsertMessageBody(missing, sql.NullString{String: "stored missing@example.test", Valid: true}, sql.NullString{}))
+	terminal := f.CreateMessage("unsearchable-old")
+	require.NoError(f.Store.UpsertMessageBody(terminal, sql.NullString{String: "hidden terminal@example.test", Valid: true}, sql.NullString{}))
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = ''::tsvector, indexing_version = 2 WHERE id = $1`, terminal)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	check()
+	for _, tc := range []struct {
+		term string
+		id   int64
+	}{{"saturated@example.test", saturated}, {"missing@example.test", missing}} {
+		matches, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{tc.term}}, 10)
+		require.NoError(err)
+		require.Equal([]int64{tc.id}, matches)
+	}
+	var empty bool
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts = ''::tsvector FROM messages WHERE id = $1`, terminal).Scan(&empty))
+	require.True(empty)
 }
 
 func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	slack, err := f.Store.EnsureParticipantByPhone(t.Context(), "+15550123457", "Current name", "slack")
-	require.NoError(err)
-	teams := f.EnsureParticipant("alpha@example.org", "Current name", "example.org")
-	beeper, err := f.Store.EnsureParticipantByIdentifierContext(t.Context(), "beeper", "sender-c", "Lantern Sender")
-	require.NoError(err)
 	phone, err := f.Store.EnsureParticipantByPhone(t.Context(), "+15550123456", "", "whatsapp")
 	require.NoError(err)
 	email := f.EnsureParticipant("sender@example.test", "Email Sender", "example.test")
@@ -126,9 +184,6 @@ func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
 		kind, name, indexed, query, addressQuery string
 		sender                                   int64
 	}{
-		{"slack", "Horizon Sender", "Horizon Sender +15550123457", "horizon", "+15550123457", slack},
-		{"teams", "Monarch Sender", "Monarch Sender alpha@example.org", "monarch", "alpha@example.org", teams},
-		{"beeper", "", "Lantern Sender", "lantern", "", beeper},
 		{"whatsapp", "", "+15550123456", "+15550123456", "", phone},
 		{"email", "Email Sender", "sender@example.test", "sender@example.test", "", email},
 	}
