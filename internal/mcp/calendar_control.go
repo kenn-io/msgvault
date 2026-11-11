@@ -172,10 +172,10 @@ var stableCalendarTools = sync.OnceValue(func() []toolDefinition {
 			definition = writeDefinition("calendar_"+action, description, closedObject(properties, required...), outputSchemaFor[calcontrol.Result](), handler)
 			definition.security = toolSecurityCalendarWrite
 		}
-		if action == "delete" {
-			yes := true
-			definition.annotations.DestructiveHint = &yes
-		}
+		// Availability also contacts Google. Mutations of existing events can
+		// replace or remove data, even when they are not named "delete".
+		definition.annotations.OpenWorldHint = new(true)
+		definition.annotations.DestructiveHint = new(!calcontrol.IsRead(action) && action != "create")
 		definitions = append(definitions, definition)
 	}
 	return definitions
