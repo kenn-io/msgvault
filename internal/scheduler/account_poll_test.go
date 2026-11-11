@@ -199,3 +199,56 @@ func TestInvalidIntervalReplacesEarlierPollingSchedule(t *testing.T) {
 	requirements.Empty(sched.Status()[0].PollInterval)
 	<-sched.Stop().Done()
 }
+
+func TestYieldedAccountPreservesScheduledContinuation(t *testing.T) {
+	for _, pollFirst := range []bool{false, true} {
+		name := "scheduled yields to pending poll"
+		if pollFirst {
+			name = "poll yields to pending scheduled run"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				requirements := require.New(t)
+				checks := assert.New(t)
+				tracker := &yieldingWorkTracker{}
+				var calls []string
+				var completions int
+				run := func(ctx context.Context, kind string) error {
+					calls = append(calls, kind)
+					if len(calls) == 1 {
+						<-ctx.Done()
+						tracker.yield.Store(false)
+						return ctx.Err()
+					}
+					return nil
+				}
+				s := New(func(ctx context.Context, _ string) error { return run(ctx, "scheduled") }).
+					WithAccountPoll(func(ctx context.Context, _ string) error { return run(ctx, "poll") }).
+					WithWorkTracker(tracker).WithAccountPreemptionPolicy(func(string) bool { return false })
+				s.WithCompletion(func() { completions++ })
+				defer func() { <-s.Stop().Done() }()
+				requirements.NoError(s.AddAccount("a@example.test", "0 * * * *"))
+				if pollFirst {
+					go s.onAccountTrigger("a@example.test", true)
+				} else {
+					requirements.NoError(s.TriggerSync("a@example.test", true))
+				}
+				synctest.Wait()
+				if pollFirst {
+					s.onAccountTick("a@example.test")
+				} else {
+					s.onAccountTrigger("a@example.test", true)
+				}
+				tracker.yield.Store(true)
+				time.Sleep(2 * yieldPollInterval)
+				synctest.Wait()
+				if pollFirst {
+					checks.Equal([]string{"poll", "scheduled"}, calls)
+				} else {
+					checks.Equal([]string{"scheduled", "scheduled"}, calls)
+					checks.Equal(1, completions)
+				}
+			})
+		})
+	}
+}

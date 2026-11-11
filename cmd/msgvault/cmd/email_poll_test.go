@@ -140,10 +140,30 @@ func TestPollingSourceRecoversOnNextAttempt(t *testing.T) {
 	original := rebuildCacheAfterScheduledSourceRun
 	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error { return nil }
 	t.Cleanup(func() { rebuildCacheAfterScheduledSourceRun = original })
+	// Database drivers can retain timers on pooled connections. Run provider
+	// and store operations outside the simulated-time bubble that owns ticks.
+	type externalWork struct {
+		run  func() error
+		done chan error
+	}
+	work := make(chan externalWork)
+	done := make(chan error, 1)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		for item := range work {
+			item.done <- item.run()
+		}
+	}()
+	defer func() { close(work); <-stopped }()
+	runExternal := func(fn func() error) error {
+		work <- externalWork{run: fn, done: done}
+		return <-done
+	}
 	synctest.Test(t, func(t *testing.T) {
 		requirements := require.New(t)
 		sched := scheduler.New(func(context.Context, string) error { return nil }).WithAccountPoll(func(ctx context.Context, identifier string) error {
-			return runEmailPoll(withInvocation(ctx, state), identifier, st, nil, state)
+			return runExternal(func() error { return runEmailPoll(withInvocation(ctx, state), identifier, st, nil, state) })
 		})
 		defer func() { <-sched.Stop().Done() }()
 		count, errs := sched.AddAccountsFromConfig(cfg)
@@ -152,7 +172,7 @@ func TestPollingSourceRecoversOnNextAttempt(t *testing.T) {
 		sched.Start()
 		synctest.Wait()
 		requirements.Contains(sched.Status()[0].LastError, "no active")
-		requirements.NoError(st.UpdateSourceDisplayName(source.ID, cfg.Accounts[0].Email))
+		requirements.NoError(runExternal(func() error { return st.UpdateSourceDisplayName(source.ID, cfg.Accounts[0].Email) }))
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
 		requirements.Empty(sched.Status()[0].LastError)
@@ -161,7 +181,7 @@ func TestPollingSourceRecoversOnNextAttempt(t *testing.T) {
 		ic.Folders = []string{"INBOX"}
 		filtered, err := ic.ToJSON()
 		requirements.NoError(err)
-		requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, filtered))
+		requirements.NoError(runExternal(func() error { return st.UpdateSourceSyncConfig(t.Context(), source.ID, filtered) }))
 		time.Sleep(15 * time.Second)
 		synctest.Wait()
 		requirements.Contains(sched.Status()[0].LastError, "folder filter")

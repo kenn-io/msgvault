@@ -1695,6 +1695,9 @@ func (s *Server) sourceScheduleAccount(source *store.Source, sources []*store.So
 				matches = -1
 				break
 			}
+			if (source.SourceType == "gmail" || source.SourceType == "imap") && candidate.SourceType != "gmail" && candidate.SourceType != "imap" {
+				continue
+			}
 			if strings.EqualFold(candidate.Alias, key) || candidate.DisplayName.Valid && strings.EqualFold(candidate.DisplayName.String, key) {
 				matches++
 			}

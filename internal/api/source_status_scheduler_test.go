@@ -137,3 +137,46 @@ func TestSourceStatusAndTriggerUseCaseInsensitiveAccount(t *testing.T) {
 	checks.Equal(http.StatusAccepted, response.Code, response.Body.String())
 	checks.Equal(account, triggered)
 }
+
+func TestSourceStatusAndTriggerIgnoreNonMailAliasCollision(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "provider@example.test")
+	requirements.NoError(err)
+	alias := "archive@example.test"
+	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{Alias: &alias})
+	requirements.NoError(err)
+	other, err := st.GetOrCreateSource("slack", "workspace")
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET display_name = ? WHERE id = ?`), alias, other.ID)
+	requirements.NoError(err)
+	sched := newMockScheduler()
+	sched.scheduled[alias] = true
+	sched.statuses = []AccountStatus{{Email: alias, Schedule: "0 * * * *", NextRun: time.Now().Add(time.Minute)}}
+	var triggered string
+	sched.triggerFn = func(email string, _ bool) error { triggered = email; return nil }
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/status", nil)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, req)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var result SourceStatusResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+	found := false
+	for _, status := range result.Sources {
+		if status.ID == source.ID {
+			found = true
+			checks.True(status.Scheduled)
+			checks.True(status.CanSync)
+			checks.NotNil(status.NextSyncAt)
+		}
+	}
+	requirements.True(found)
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/sync/provider@example.test?source_type=gmail", nil)
+	req.SetPathValue("account", source.Identifier)
+	response = httptest.NewRecorder()
+	srv.handleTriggerSync(response, req)
+	checks.Equal(http.StatusAccepted, response.Code, response.Body.String())
+	checks.Equal(alias, triggered)
+}

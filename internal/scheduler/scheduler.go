@@ -693,7 +693,7 @@ func (s *Scheduler) runAccountSync(email string, poll bool) {
 			logScheduledSyncError(s.logger, email, time.Since(start), callbackErr)
 		}
 		if _, scheduled := s.jobs[email]; scheduled {
-			if !s.pending[email] {
+			if !s.pending[email] || !poll {
 				s.pollPending[email] = poll
 			}
 			s.pending[email] = true

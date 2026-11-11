@@ -1827,4 +1827,17 @@ func TestIMAPPollQresyncAppendAndFlags(t *testing.T) {
 	inbox.Messages[1].MissingRaw = false
 	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: "IMAP4rev1", Mailboxes: []scriptedRFC7162Mailbox{inbox}})
 	requirements.NoError(runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
+
+	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{inbox}})
+	requirements.NoError(runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET is_read = ? WHERE source_id = ? AND source_message_id = ?`), false, source.ID, "INBOX|1")
+	requirements.NoError(err)
+	changed := scriptedRFC7162Inbox(77, 4, 3, newScriptedRFC7162Message(1, "existing@example.test", imapapi.FlagSeen), newScriptedRFC7162Message(2, "missing@example.test"), newScriptedRFC7162Message(3, "appended@example.test"))
+	changed.ChangedUIDs = []imapapi.UID{1, 3}
+	server.setSnapshot(scriptedRFC7162Snapshot{Capabilities: scriptedRFC7162Capabilities(), Mailboxes: []scriptedRFC7162Mailbox{changed}})
+	requirements.NoError(runEmailPoll(ctx, ic.Identifier(), st, nil, invocationFromContext(ctx)))
+	checks.Contains(server.commandsFor(server.connectionCount()), "CHANGEDSINCE 2 VANISHED")
+	checks.Equal([]string{`INBOX|1|["\\Seen"]`, "INBOX|2|[]", "INBOX|3|[]"}, queryScriptedRFC7162Memberships(t, st, source.ID))
+	_, _, read := queryScriptedRFC7162MessageState(t, st, source.ID, "existing@example.test")
+	checks.False(read)
 }
