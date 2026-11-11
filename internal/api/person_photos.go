@@ -229,7 +229,7 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 		if linked != "" && linked != in.Body.PersonID {
 			return nil, huma.Error409Conflict("person is linked elsewhere; review required")
 		}
-		if in.Body.State == "current" || len(targets) == 0 {
+		if in.Body.State == "current" {
 			targets = []string{p.VCardUID}
 		}
 		revision := in.Body.Revision

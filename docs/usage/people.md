@@ -65,9 +65,11 @@ current, retired, or bound CardDAV UID), the selected Docbank `person_id`, its
 current `revision`, and `state` set to `current` or `unlinked`. A current link
 uses the profile's canonical vCard UID. An unlink clears every UID that Docbank
 resolves to that person. The response returns the canonical `uid`, the resulting
-`state`, and the new Docbank `revision`. A stale revision returns 412; conflicting
-links return 409 for review. Changing a selection after unlinking requires a
-Docbank version that allows the withdrawn UID to be linked to another person.
+`state`, and the new Docbank `revision`. When no link exists, unlink makes no
+write and returns the supplied revision. A stale revision returns 412 on a
+write; conflicting links return 409 for review. Changing a selection after
+unlinking requires a Docbank version that allows the withdrawn UID to be linked
+to another person.
 
 `GET /api/v1/people/by-uid/photos?uid=<uid>` returns the canonical UID, a
 `link_state` of `linked` or `unlinked`, and confirmed photo assertions with

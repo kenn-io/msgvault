@@ -490,11 +490,12 @@ func TestPersonPhotoUnlink(t *testing.T) {
 		remote               map[string]string
 		status, remoteStatus int
 		mapped, forwarded    bool
+		noWrites             bool
 	}{
 		{name: "retired link", uid: "current", wantUID: "old", remote: map[string]string{"old": person}, status: 200},
-		{name: "unlinked retired UID", uid: "old", wantUID: "current", status: 200},
+		{name: "unlinked retired UID", uid: "old", status: 200, noWrites: true},
 		{name: "mapped UID", uid: "mapped", wantUID: "current", remote: map[string]string{"current": person}, status: 200, mapped: true},
-		{name: "unlinked mapped UID", uid: "mapped", wantUID: "current", status: 200, mapped: true},
+		{name: "unlinked mapped UID", uid: "mapped", status: 200, mapped: true, noWrites: true},
 		{name: "forwarded UID", uid: "current", wantUID: "old", remote: map[string]string{"current": person, "old": person}, status: 200, forwarded: true},
 		{name: "conflicting links", uid: "current", remote: map[string]string{"current": person, "old": other}, status: 409},
 		{name: "stale revision", uid: "old", wantUID: "old", remote: map[string]string{"old": person}, status: 412, remoteStatus: 412},
@@ -561,7 +562,7 @@ func TestPersonPhotoUnlink(t *testing.T) {
 			response := httptest.NewRecorder()
 			server.Router().ServeHTTP(response, req)
 			requirements.Equal(tc.status, response.Code, response.Body.String())
-			if tc.status == http.StatusConflict || tc.status == http.StatusBadRequest {
+			if tc.noWrites || tc.status == http.StatusConflict || tc.status == http.StatusBadRequest {
 				requirements.Zero(writes)
 			} else {
 				requirements.Equal(1, writes)
@@ -569,7 +570,9 @@ func TestPersonPhotoUnlink(t *testing.T) {
 			for _, n := range reads {
 				requirements.Equal(1, n)
 			}
-			if tc.status == http.StatusOK {
+			if tc.noWrites {
+				requirements.Contains(response.Body.String(), `"revision":7`)
+			} else if tc.status == http.StatusOK {
 				requirements.Contains(response.Body.String(), `"revision":8`)
 			}
 		})
