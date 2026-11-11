@@ -443,8 +443,9 @@ func TestCommitmentOnlyMaintenanceInvalidatesEvidenceBeyondFirstBatch(t *testing
 	f := newPersonSweepApplyFixture(t, "commitment-maintenance-pages", false)
 	st := f.store
 	_, persist := newCommitmentTestConversation(t, f)
+	var messageIDs []int64
 	for n := range 3 {
-		persist(fmt.Sprintf("promise-%d", n), fmt.Sprintf("I will send report %d.", n), -time.Hour)
+		messageIDs = append(messageIDs, persist(fmt.Sprintf("promise-%d", n), fmt.Sprintf("I will send report %d.", n), -time.Hour))
 	}
 	cfg := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderSelection{Name: "test"},
 		Providers: map[string]peoplesweep.ProviderConfig{"test": {
@@ -470,24 +471,34 @@ func TestCommitmentOnlyMaintenanceInvalidatesEvidenceBeyondFirstBatch(t *testing
 	active, err := st.HasActivePersonInferenceConsent(ctx, profile.Fingerprint)
 	r.NoError(err)
 	r.False(active)
-	for n := range 3 {
-		persist(fmt.Sprintf("promise-%d", n), "The old promise was removed.", -time.Hour)
+	for _, id := range messageIDs {
+		_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), id)
+		r.NoError(err)
 	}
+	// This lane consumes its own bounded journal range only once it is due.
+	now := f.request.CompletedAt.Add(cfg.Commitments.MinInterval)
+	due, err := st.PersonCommitmentsDue(ctx, f.personID, now, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
+	r.NoError(err)
+	r.True(due)
+	latest, err := st.LatestPersonSweepChangeSequence(ctx)
+	r.NoError(err)
 	runner := &commitmentMaintenanceDeniedRunner{}
 	serial := 0
 	worker := peoplesweep.Worker{Config: cfg, Store: st, Source: st, Sink: st, Catalog: st,
 		Context: peoplesweep.NewContextRetriever(st), Runner: runner, WorkerID: "maintenance-worker",
-		Clock: func() time.Time { return personFactLedgerNow }, NewID: func() string { serial++; return fmt.Sprintf("maintenance-%d", serial) }}
-	for range 8 {
-		_, err = worker.Run(ctx, peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental, PersonID: f.personID})
-		r.NoError(err)
-	}
+		Clock: func() time.Time { return now }, NewID: func() string { serial++; return fmt.Sprintf("maintenance-%d", serial) }}
+	result, err := worker.Run(ctx, peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental, PersonID: f.personID})
+	r.NoError(err)
+	r.Equal(1, result.PeopleSucceeded)
+	var observed int64
+	r.NoError(st.db.QueryRowContext(ctx, st.Rebind("SELECT observed_sequence FROM person_commitment_frontiers WHERE person_id = ?"), f.personID).Scan(&observed))
+	r.Equal(latest, observed, "the due empty-source apply consumed the deleted-source journal range")
 	a.Zero(runner.calls)
 	evidence, err := st.ListPersonFactEvidenceContext(ctx, f.personID, personfacts.EvidenceFilter{Limit: 10})
 	r.NoError(err)
 	r.Len(evidence, 3)
 	for _, item := range evidence {
-		a.False(item.Supported, "bounded local maintenance must eventually reach every edited message")
+		a.False(item.Supported, "the consumed commitment range must invalidate every deleted citation")
 	}
 	catalog, err := st.BuildPersonFactCatalogContext(ctx, true)
 	r.NoError(err)
