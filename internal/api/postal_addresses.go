@@ -85,7 +85,7 @@ func (s *Server) handleAssessPersonPostalAddress(w http.ResponseWriter, r *http.
 	}
 	cfg := s.cfg.People.AddressValidation
 	var assessment postaladdress.Assessment
-	if input.AllowExternal && cfg.Enabled && cfg.Provider == "google" && s.postalAddressValidator != nil {
+	if input.AllowExternal && cfg.Enabled && s.postalAddressValidator != nil {
 		// Deliberate single call; never retry billed work or persist its result.
 		assessment, _ = s.postalAddressValidator.Check(r.Context(), *input.Address, input.PreviousResponseID)
 	} else {

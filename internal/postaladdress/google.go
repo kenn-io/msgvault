@@ -2,6 +2,7 @@ package postaladdress
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"google.golang.org/api/addressvalidation/v1"
 )
 
 // GoogleAddressValidationEnvVar names the dedicated address-validation credential environment variable.
@@ -28,50 +31,6 @@ type GoogleValidator struct {
 	Client   *http.Client
 	endpoint string // package tests only; never exposed through operator config
 	timeout  time.Duration
-}
-
-type googlePostalAddress struct {
-	RegionCode         string   `json:"regionCode,omitempty"`
-	PostalCode         string   `json:"postalCode,omitempty"`
-	AdministrativeArea string   `json:"administrativeArea,omitempty"`
-	Locality           string   `json:"locality,omitempty"`
-	AddressLines       []string `json:"addressLines"`
-}
-
-type googleValidateRequest struct {
-	Address            googlePostalAddress `json:"address"`
-	PreviousResponseID string              `json:"previousResponseId,omitempty"`
-}
-
-type googleResponse struct {
-	Result     *googleResult `json:"result"`
-	ResponseID string        `json:"responseId"`
-}
-
-type googleResult struct {
-	Verdict struct {
-		AddressComplete             bool   `json:"addressComplete"`
-		ValidationGranularity       string `json:"validationGranularity"`
-		HasUnconfirmedComponents    bool   `json:"hasUnconfirmedComponents"`
-		HasInferredComponents       bool   `json:"hasInferredComponents"`
-		HasReplacedComponents       bool   `json:"hasReplacedComponents"`
-		HasSpellCorrectedComponents bool   `json:"hasSpellCorrectedComponents"`
-		PossibleNextAction          string `json:"possibleNextAction"`
-	} `json:"verdict"`
-	Address *struct {
-		PostalAddress     googlePostalAddress `json:"postalAddress"`
-		AddressComponents []struct {
-			ComponentType     string `json:"componentType"`
-			ConfirmationLevel string `json:"confirmationLevel"`
-			Inferred          bool   `json:"inferred"`
-			Replaced          bool   `json:"replaced"`
-			Unexpected        bool   `json:"unexpected"`
-			SpellCorrected    bool   `json:"spellCorrected"`
-		} `json:"addressComponents"`
-		MissingComponentTypes     []string `json:"missingComponentTypes"`
-		UnconfirmedComponentTypes []string `json:"unconfirmedComponentTypes"`
-		UnresolvedTokens          []string `json:"unresolvedTokens"`
-	} `json:"address"`
 }
 
 // Check maps only explicit postal components, enforces Google's 280-character
@@ -105,7 +64,7 @@ func (v *GoogleValidator) Check(ctx context.Context, input Input, previousRespon
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	data, err := json.Marshal(googleValidateRequest{payload, previousResponseID})
+	data, err := json.Marshal(addressvalidation.GoogleMapsAddressvalidationV1ValidateAddressRequest{Address: &payload, PreviousResponseId: previousResponseID})
 	if err != nil {
 		return fail("provider_request_failed", nil)
 	}
@@ -138,16 +97,16 @@ func (v *GoogleValidator) Check(ctx context.Context, input Input, previousRespon
 	if err != nil || len(body) > maxGoogleResponse {
 		return fail("provider_response_invalid", ctx.Err())
 	}
-	var decoded googleResponse
+	var decoded addressvalidation.GoogleMapsAddressvalidationV1ValidateAddressResponse
 	if err := json.Unmarshal(body, &decoded); err != nil || decoded.Result == nil || decoded.Result.Address == nil {
 		return fail("provider_response_invalid", nil)
 	}
-	assessment.ResponseID = decoded.ResponseID
+	assessment.ResponseID = decoded.ResponseId
 	return googleAssessment(assessment, *decoded.Result), nil
 }
 
-func googleRequest(input Input) (googlePostalAddress, string) {
-	payload := googlePostalAddress{RegionCode: input.CountryCode, PostalCode: input.PostalCode, AdministrativeArea: input.Region, Locality: input.Locality}
+func googleRequest(input Input) (addressvalidation.GoogleTypePostalAddress, string) {
+	payload := addressvalidation.GoogleTypePostalAddress{RegionCode: input.CountryCode, PostalCode: input.PostalCode, AdministrativeArea: input.Region, Locality: input.Locality}
 	// No original/free text, labels, citations, opaque extended JSON, location
 	// metadata, recipients or organizations are sent to the provider.
 	for _, value := range []string{input.StreetAddress, input.ExtendedAddress, input.PostOfficeBox} {
@@ -174,7 +133,7 @@ func googleRequest(input Input) (googlePostalAddress, string) {
 	return payload, ""
 }
 
-func googleAssessment(assessment Assessment, result googleResult) Assessment {
+func googleAssessment(assessment Assessment, result addressvalidation.GoogleMapsAddressvalidationV1ValidationResult) Assessment {
 	address := result.Address
 	reasons := []string{}
 	review := func(reason string) {
@@ -182,7 +141,7 @@ func googleAssessment(assessment Assessment, result googleResult) Assessment {
 			reasons = append(reasons, reason)
 		}
 	}
-	verdict := result.Verdict
+	verdict := cmp.Or(result.Verdict, &addressvalidation.GoogleMapsAddressvalidationV1Verdict{})
 	if !verdict.AddressComplete || len(address.MissingComponentTypes) > 0 {
 		review("provider_incomplete")
 	}
@@ -208,6 +167,7 @@ func googleAssessment(assessment Assessment, result googleResult) Assessment {
 		review("provider_confirmation_required")
 	}
 	for _, component := range address.AddressComponents {
+		component = cmp.Or(component, &addressvalidation.GoogleMapsAddressvalidationV1AddressComponent{})
 		if component.ConfirmationLevel != "CONFIRMED" {
 			review("provider_unconfirmed")
 		}
@@ -225,7 +185,7 @@ func googleAssessment(assessment Assessment, result googleResult) Assessment {
 		}
 	}
 	proposal := assessment.Proposed
-	postal := address.PostalAddress
+	postal := cmp.Or(address.PostalAddress, &addressvalidation.GoogleTypePostalAddress{})
 	// Missing response fields cannot clear input. An uncertain country change
 	// also stays a review item rather than inheriting an unrelated country name.
 	for _, pair := range []struct {

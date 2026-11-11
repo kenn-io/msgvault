@@ -1064,7 +1064,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
-	if cfg.People.AddressValidation.Enabled && cfg.People.AddressValidation.Provider == "google" {
+	if cfg.People.AddressValidation.Enabled {
 		apiServer.SetPostalAddressValidator(&postaladdress.GoogleValidator{APIKey: os.Getenv(postaladdress.GoogleAddressValidationEnvVar)})
 	}
 	if cfg.People.Sweep.Enabled {

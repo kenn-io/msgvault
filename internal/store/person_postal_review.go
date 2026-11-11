@@ -65,15 +65,15 @@ func SetPostalFields(current postaladdress.Input, fields [9]**string) {
 }
 
 // ResolvedPostalInput separates current data from the captured source.
-func (a PersonAddress) ResolvedPostalInput() (postaladdress.Input, postaladdress.Input, error) {
+func (a PersonAddress) ResolvedPostalInput() (postaladdress.Input, postaladdress.Input) {
 	current := a.PostalInput()
 	original, snapshot := postaladdress.DecodeStoredOriginalInput(a.OriginalValue)
 	if snapshot {
 		current.OriginalValue = ""
-		return current, original, nil
+		return current, original
 	}
 	current = ResolvePostalInput(current, a.FreeText == nil)
-	return current, current, nil
+	return current, current
 }
 
 type personFactPostalProjector struct {
@@ -91,10 +91,7 @@ func (p *personFactPostalProjector) loadCurrent(ctx context.Context, personID in
 		if row.AddressKind != PersonAddressPostal {
 			continue
 		}
-		input, _, err := row.ResolvedPostalInput()
-		if err != nil {
-			return nil, err
-		}
+		input, _ := row.ResolvedPostalInput()
 		v := personfacts.PostalAddressValue{PostOfficeBox: input.PostOfficeBox, ExtendedAddress: input.ExtendedAddress, StreetAddress: input.StreetAddress, Locality: input.Locality, Region: input.Region, PostalCode: input.PostalCode, CountryName: input.CountryName, CountryCode: input.CountryCode, ExtendedComponents: input.ExtendedComponents, FreeText: input.FreeText, SourceText: input.OriginalValue}
 		data, err := json.Marshal(v, json.Deterministic(true))
 		if err != nil {
@@ -170,10 +167,7 @@ func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personI
 			adopted[*row.Envelope.SourceRef] = true
 		}
 		if row.Envelope.ActiveUntil == nil && row.Envelope.SupersededAt == nil {
-			input, _, err := row.ResolvedPostalInput()
-			if err != nil {
-				return err
-			}
+			input, _ := row.ResolvedPostalInput()
 			current[postalReviewComponents(input)] = true
 		}
 	}
@@ -256,20 +250,15 @@ func (s *Store) validatePostalInputTx(ctx context.Context, tx *loggedTx, personI
 }
 
 // LocalPostalAssessment is derived on read; no external verdict is stored.
-//
-//nolint:nilnil // Non-postal addresses have no postal assessment.
-func (a PersonAddress) LocalPostalAssessment() (*postaladdress.Assessment, error) {
+func (a PersonAddress) LocalPostalAssessment() *postaladdress.Assessment {
 	if a.AddressKind != PersonAddressPostal {
-		return nil, nil
+		return nil
 	}
-	current, original, err := a.ResolvedPostalInput()
-	if err != nil {
-		return nil, err
-	}
+	current, original := a.ResolvedPostalInput()
 	assessment := postaladdress.Assess(current)
 	assessment.Original = original
 	assessment.OriginalExtendedParts = postaladdress.ExtendedParts(original.ExtendedComponents)
-	return &assessment, nil
+	return &assessment
 }
 
 // PublicAddress exposes current fields and source text without the stored envelope.
@@ -277,10 +266,7 @@ func (a PersonAddress) PublicAddress() (PersonAddress, error) {
 	if a.AddressKind != PersonAddressPostal {
 		return a, nil
 	}
-	current, original, err := a.ResolvedPostalInput()
-	if err != nil {
-		return a, err
-	}
+	current, original := a.ResolvedPostalInput()
 	a.OriginalValue = original.OriginalValue
 	SetPostalFields(current, [9]**string{&a.PostOfficeBox, &a.ExtendedAddress, &a.StreetAddress, &a.Locality, &a.Region, &a.PostalCode, &a.CountryName, &a.ExtendedComponents, &a.FreeText})
 	return a, nil

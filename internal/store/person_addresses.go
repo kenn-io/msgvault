@@ -317,10 +317,6 @@ func scanPersonAddress(row scanner) (*PersonAddress, error) {
 	if err := env.apply(&address.Envelope); err != nil {
 		return nil, err
 	}
-	var err error
-	address.Assessment, err = address.LocalPostalAssessment()
-	if err != nil {
-		return nil, err
-	}
+	address.Assessment = address.LocalPostalAssessment()
 	return &address, nil
 }
