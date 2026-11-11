@@ -122,7 +122,7 @@ func (imp *Importer) ImportText(ctx context.Context, input *TextInput) (summary 
 			retErr = errors.Join(retErr, st.RecomputeConversationStatsForConversationContext(post, convID))
 		}
 		if retErr == nil {
-			retErr = imp.store.CompleteSyncContext(ctx, syncID, "")
+			retErr = imp.store.CompleteSyncAndPreserveSourceCursorContext(ctx, syncID, source.ID, "")
 		}
 		if retErr != nil {
 			retErr = errors.Join(retErr, imp.store.FailSyncWithCheckpointContext(post, syncID, retErr.Error(), &store.Checkpoint{MessagesProcessed: int64(summary.Records), MessagesAdded: int64(summary.Added)}))

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,6 +65,31 @@ func TestTextImportRepeatOverlap(t *testing.T) {
 	assert.Equal(1, s.Added)
 	assert.Equal(4, textCount(t, st, "messages"))
 	assert.Equal(2, textCount(t, st, "participants"))
+}
+
+func TestTextImportUpdatesSourceFreshness(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	imp := NewImporter(st, nil)
+	path, opts := textFile(t, "13/6/26, 10:00 - Mira: asters\n"), textOptions()
+	summary, err := importTextForTest(t.Context(), imp, path, opts)
+	require.NoError(err)
+	source, err := st.GetSourceByID(summary.SourceID)
+	require.NoError(err)
+	assert.True(source.LastSyncAt.Valid)
+	assert.False(source.SyncCursor.Valid)
+
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET last_sync_at = ?, sync_cursor = ? WHERE id = ?`), old, "existing-cursor", summary.SourceID)
+	require.NoError(err)
+	_, err = importTextForTest(t.Context(), imp, path, opts)
+	require.NoError(err)
+	source, err = st.GetSourceByID(summary.SourceID)
+	require.NoError(err)
+	require.True(source.LastSyncAt.Valid)
+	assert.True(source.LastSyncAt.Time.After(old))
+	assert.Equal("existing-cursor", source.SyncCursor.String)
+	assert.True(source.SyncCursor.Valid)
 }
 
 func TestTextImportRefreshesOnlyTouchedChat(t *testing.T) {

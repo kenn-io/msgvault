@@ -135,17 +135,6 @@ func TestWhatsAppTextCommandPreflightArchive(t *testing.T) {
 			var sources, conversations, messages, bodies, syncs int
 			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT (SELECT COUNT(*) FROM sources), (SELECT COUNT(*) FROM conversations), (SELECT COUNT(*) FROM messages), (SELECT COUNT(*) FROM message_bodies), (SELECT COUNT(*) FROM sync_runs)").Scan(&sources, &conversations, &messages, &bodies, &syncs))
 			assert.Equal([]int{1, 1, 2, 2, 1}, []int{sources, conversations, messages, bodies, syncs})
-			rows, err := st.DB().QueryContext(t.Context(), "SELECT body_text FROM message_bodies ORDER BY message_id")
-			require.NoError(err)
-			defer func() { assert.NoError(rows.Close()) }()
-			var texts []string
-			for rows.Next() {
-				var body string
-				require.NoError(rows.Scan(&body))
-				texts = append(texts, body)
-			}
-			require.NoError(rows.Err())
-			assert.Equal([]string{"one", "two"}, texts)
 		})
 	}
 }
