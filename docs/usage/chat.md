@@ -59,6 +59,39 @@ five failed attempts or HTTP 410 or 413 drop the ping. Messages older than 72
 hours and deleted messages are excluded from matches. A lost ping costs latency,
 so retain your own feed cursor.
 
+Callback URLs and signing secrets are kept in the permissions-protected
+`tokens/mcp-events-credentials.json` file. The archive retains the callback
+origin and a deterministic subscription ID; someone with the archive can test
+guesses for a low-entropy URL offline. Token-inclusive backups contain the
+private file. Older draft catalogs stored full URLs in the archive; existing
+backups and database pages may still contain them.
+
+### Reset an older draft Events catalog
+
+Older draft subscriptions whose catalog contains full URLs are refused. To
+reset them, stop the daemon and any foreground `msgvault serve` process on the
+archive host. This removes all Events subscriptions and their saved positions;
+clients must resubscribe and catch up using their own `list_changes` cursors.
+Set `MSGVAULT_ARCHIVE_DB` to the configured SQLite database path or PostgreSQL
+DSN and `MSGVAULT_DATA_DIR` to the configured `[data].data_dir`. The default
+SQLite path is `{data_dir}/msgvault.db`.
+
+For SQLite, run:
+
+```sh
+sqlite3 "$MSGVAULT_ARCHIVE_DB" "DELETE FROM archive_metadata WHERE key = 'mcpevents:v1:subscriptions' OR key LIKE 'mcpevents:v1:pos:%';"
+```
+
+For PostgreSQL, run the same deletion against the configured DSN:
+
+```sh
+psql "$MSGVAULT_ARCHIVE_DB" -c "DELETE FROM archive_metadata WHERE key = 'mcpevents:v1:subscriptions' OR key LIKE 'mcpevents:v1:pos:%';"
+```
+
+Remove `tokens/mcp-events-credentials.json` from the configured data directory,
+restart the daemon, and resubscribe. This reset does not erase older backups,
+database pages or write-ahead logs.
+
 ## Calendar control
 
 Daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,

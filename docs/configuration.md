@@ -2802,7 +2802,7 @@ enabled = true
 ```
 
 The default is false. The daemon delivers Events while it is running, and
-resumes from each subscription's saved position after a restart. Callback secrets are kept in `tokens/mcp-events-credentials.json` outside the archive.
+resumes from each subscription's saved position after a restart. Callback URLs and signing secrets are kept in `tokens/mcp-events-credentials.json` outside the archive.
 A default restore resumes each subscription after its client refreshes its secret;
 backups made with `--include-tokens` also restore the credentials. Older versions
 ignore this separate file. Configured wake-ups

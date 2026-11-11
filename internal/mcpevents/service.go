@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/changefeed"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
@@ -23,9 +24,14 @@ type entry struct {
 	ID        string             `json:"id"`
 	Owner     string             `json:"owner"`
 	Arguments MCPEventsArguments `json:"arguments"`
-	URL       string             `json:"url"`
+	Origin    string             `json:"origin"`
 	Expires   time.Time          `json:"expires_at"`
 }
+type privateCallback struct {
+	URL    string `json:"url"`
+	Secret string `json:"secret"`
+}
+
 type Service struct {
 	Store         *store.Store
 	TokensDir     string
@@ -91,9 +97,15 @@ func (s *Service) deleteCredential(id string) error {
 func same(a, b MCPEventsArguments) bool {
 	return a.IncomingOnly != nil && b.IncomingOnly != nil && a.PersonID == b.PersonID && a.SourceID == b.SourceID && *a.IncomingOnly == *b.IncomingOnly
 }
+func subscriptionID(owner string, args MCPEventsArguments, url string) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%t\x00%s", owner, Name, args.PersonID, args.SourceID, *args.IncomingOnly, url)))
+	return hex.EncodeToString(sum[:16])
+}
+
 func find(entries []entry, args MCPEventsArguments, url string) int {
+	id := subscriptionID("owner", args, url)
 	for i, e := range entries {
-		if e.Owner == "owner" && same(e.Arguments, args) && e.URL == url {
+		if e.Owner == "owner" && e.ID == id && same(e.Arguments, args) {
 			return i
 		}
 	}
@@ -140,8 +152,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 		if len(entries)+s.ConfigTargets >= 32 {
 			return out, failure(ResourceExhausted, "subscriptions")
 		}
-		sum := sha256.Sum256([]byte(fmt.Sprintf("owner\x00%s\x00%d\x00%d\x00%t\x00%s", Name, in.Arguments.PersonID, in.Arguments.SourceID, *in.Arguments.IncomingOnly, in.Delivery.URL)))
-		id = hex.EncodeToString(sum[:16])
+		id = subscriptionID("owner", in.Arguments, in.Delivery.URL)
 		page, err := s.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
 		if err != nil || page.CompleteThrough.IsZero() {
 			return out, failure(Unavailable, "head_unavailable")
@@ -156,8 +167,12 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 	if credentialErr != nil {
 		return out, failure(Unavailable, "credential_unavailable")
 	}
+	private, err := json.Marshal(privateCallback{URL: in.Delivery.URL, Secret: base64.StdEncoding.EncodeToString(in.secret)})
+	if err != nil {
+		return out, failure(Unavailable, "credential_unavailable")
+	}
 	expires := s.now().Add(in.TTL.Duration())
-	item := entry{ID: id, Owner: "owner", Arguments: in.Arguments, URL: in.Delivery.URL, Expires: expires}
+	item := entry{ID: id, Owner: "owner", Arguments: in.Arguments, Origin: origin, Expires: expires}
 	if index >= 0 {
 		entries[index] = item
 	} else {
@@ -178,7 +193,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 	if !ok {
 		return out, failure(Unavailable, "store_unavailable")
 	}
-	_, err = providercredentials.PutIfRevision(s.TokensDir, revision, providercredentials.EventsID(id), origin, base64.StdEncoding.EncodeToString(in.secret))
+	_, err = providercredentials.PutIfRevision(s.TokensDir, revision, providercredentials.EventsID(id), origin, string(private))
 	if err != nil {
 		if initial != nil {
 			if removed, cleanupErr := s.removeEntry(ctx, entries, next, len(entries)-1); cleanupErr != nil || !removed {
@@ -298,21 +313,20 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 			logger.Warn("native wakeup unavailable", "id", e.ID, "category", "over_limit")
 			continue
 		}
-		origin, err := callbackOrigin(e.URL)
-		if err != nil {
-			return nil, err
-		}
-		encoded, _, err := credentials.Resolve(providercredentials.EventsID(e.ID), origin, "", nil)
-		secret, decodeErr := base64.StdEncoding.DecodeString(encoded)
-		if err != nil || decodeErr != nil || len(secret) == 0 {
-			logger.Debug("native wakeup unavailable", "id", e.ID, "category", "secret_unavailable")
-			continue
-		}
 		if e.Arguments.IncomingOnly == nil {
 			return nil, errors.New("invalid events catalog")
 		}
+		encoded, _, err := credentials.Resolve(providercredentials.EventsID(e.ID), e.Origin, "", nil)
+		var private privateCallback
+		decodeErr := json.Unmarshal([]byte(encoded), &private, json.RejectUnknownMembers(true))
+		secret, secretErr := base64.StdEncoding.DecodeString(private.Secret)
+		origin, originErr := callbackOrigin(private.URL)
+		if err != nil || decodeErr != nil || secretErr != nil || len(secret) == 0 || originErr != nil || origin != e.Origin || config.ValidateWakeupDestination(private.URL) != nil || subscriptionID(e.Owner, e.Arguments, private.URL) != e.ID {
+			logger.Debug("native wakeup unavailable", "id", e.ID, "category", "secret_unavailable")
+			continue
+		}
 		f := e.Arguments.filter()
-		sub := wakeups.NewSubscription(e.ID, e.URL, secret, f, 72*time.Hour, 10*time.Second, nil, nil)
+		sub := wakeups.NewSubscription(e.ID, private.URL, secret, f, 72*time.Hour, 10*time.Second, nil, nil)
 		sub.Native = true
 		sub.StateKey = store.MCPEventsPositionKey(e.ID)
 		out = append(out, sub)

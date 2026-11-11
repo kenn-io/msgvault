@@ -121,14 +121,21 @@ func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {
 	st := newEventsTestStore(t)
 	var logs bytes.Buffer
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook?token=x", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/path-token?token=x", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	first, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
+	catalogBytes, err := st.LoadMCPEventsCatalog(t.Context())
+	require.NoError(err)
+	assert.NotContains(string(catalogBytes), "path-token")
+	assert.NotContains(string(catalogBytes), "token=x")
+	assert.NotContains(string(catalogBytes), in.Delivery.Secret)
+	assert.Contains(string(catalogBytes), "https://example.com")
 	assert.Empty(first.DeliveryStatus.LastError)
 	otherInput := in
-	otherInput.Delivery.URL = "https://example.com/other"
+	otherInput.Delivery.URL = "https://example.com/path-token?token=y"
 	other, err := service.Subscribe(t.Context(), otherInput)
 	require.NoError(err)
+	assert.NotEqual(first.ID, other.ID)
 	state, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
 	require.NoError(err)
 	stamp := time.Now().UTC().Add(-time.Hour)
@@ -167,7 +174,15 @@ func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {
 	require.NoError(err)
 	require.Len(targets, 2)
 	assert.Equal(first.ID, targets[0].Name)
+	assert.Equal(in.Delivery.URL, targets[0].URL)
+	assert.Equal(bytes.Repeat([]byte("a"), 24), targets[0].Secret)
 	assert.Equal(other.ID, targets[1].Name)
+	require.NoError(os.Remove(filepath.Join(service.TokensDir, providercredentials.EventsFilename)))
+	require.NoError(service.Unsubscribe(t.Context(), MCPEventsUnsubscribeRequest{Name: in.Name, Arguments: in.Arguments, Delivery: in.Delivery}))
+	entries, _, err := service.catalog(t.Context())
+	require.NoError(err)
+	require.Len(entries, 1)
+	assert.Equal(other.ID, entries[0].ID)
 }
 
 func preparedSubscribe(t *testing.T, in MCPEventsSubscribeRequest) MCPEventsSubscribeRequest {
@@ -319,6 +334,27 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 			assertions.NotNil(livePosition)
 		})
 	}
+	t.Run("missing credential", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		st := newEventsTestStore(t)
+		now := time.Now().UTC()
+		service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
+		in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+		result, err := service.Subscribe(t.Context(), in)
+		requirements.NoError(err)
+		requirements.NoError(os.Remove(filepath.Join(service.TokensDir, providercredentials.EventsFilename)))
+		now = now.Add(25 * time.Hour)
+		targets, err := service.Native(t.Context())
+		requirements.NoError(err)
+		assertions.Empty(targets)
+		entries, _, err := service.catalog(t.Context())
+		requirements.NoError(err)
+		assertions.Empty(entries)
+		_, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+		requirements.NoError(err)
+		assertions.Nil(raw)
+	})
 	targets, err := (&Service{}).Native(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, targets)
@@ -361,7 +397,7 @@ func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
 	before, _, err := st.LoadWakeupStateKey(t.Context(), key)
 	require.NoError(err)
 	service.ConfigTargets = 32
-	_, err = service.Subscribe(t.Context(), makeRequest(entries[0].URL))
+	_, err = service.Subscribe(t.Context(), makeRequest("https://example.com/one"))
 	var eventErr *Error
 	require.ErrorAs(err, &eventErr)
 	assert.Equal(ResourceExhausted, eventErr.Code)
@@ -453,6 +489,7 @@ func TestCredentialWriteFailurePreservesSubscriptionState(t *testing.T) {
 
 func TestCatalogRejectsUnknownMembersWithoutMutation(t *testing.T) {
 	for _, raw := range []string{
+		`[{"id":"one","owner":"owner","url":"https://example.com/old?token=secret"}]`,
 		`[{"id":"one","owner":"owner","future":true}]`,
 		`[{"id":"one","owner":"owner","arguments":{"source_id":1,"future":true}}]`,
 	} {
@@ -581,5 +618,52 @@ func TestCredentialReadFailureDoesNotChangeCatalogOrPositions(t *testing.T) {
 		var afterCount int
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&afterCount))
 		assert.Equal(beforeCount, afterCount)
+	}
+}
+
+func TestNativeRejectsInvalidPrivateCallbackPairs(t *testing.T) {
+	for _, tc := range []struct {
+		name, value, recordOrigin string
+	}{
+		{"malformed", `{`, "https://example.com"},
+		{"legacy", "YWFhYQ==", "https://example.com"},
+		{"unknown member", `{"url":"https://example.com/one","secret":"YQ==","future":true}`, "https://example.com"},
+		{"different URL", `{"url":"https://example.com/wrong","secret":"YQ=="}`, "https://example.com"},
+		{"private origin mismatch", `{"url":"https://example.com/one","secret":"YQ=="}`, "https://other.example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := newEventsTestStore(t)
+			service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/one", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			first, err := service.Subscribe(t.Context(), in)
+			requirements.NoError(err)
+			in.Delivery.URL = "https://example.com/two"
+			second, err := service.Subscribe(t.Context(), in)
+			requirements.NoError(err)
+			snapshot, err := providercredentials.ReadEvents(service.TokensDir)
+			requirements.NoError(err)
+			revision, err := snapshot.Revision(providercredentials.EventsID(first.ID))
+			requirements.NoError(err)
+			_, err = providercredentials.PutIfRevision(service.TokensDir, revision, providercredentials.EventsID(first.ID), tc.recordOrigin, tc.value)
+			requirements.NoError(err)
+			if tc.recordOrigin != "https://example.com" {
+				raw, loadErr := st.LoadMCPEventsCatalog(t.Context())
+				requirements.NoError(loadErr)
+				var entries []map[string]any
+				requirements.NoError(json.Unmarshal(raw, &entries))
+				entries[0]["origin"] = tc.recordOrigin
+				modified, marshalErr := json.Marshal(entries)
+				requirements.NoError(marshalErr)
+				ok, swapErr := st.SwapMCPEventsCatalog(t.Context(), raw, modified, "", nil, "")
+				requirements.NoError(swapErr)
+				requirements.True(ok)
+			}
+			targets, err := service.Native(t.Context())
+			requirements.NoError(err)
+			requirements.Len(targets, 1)
+			assertions.Equal(second.ID, targets[0].Name)
+		})
 	}
 }

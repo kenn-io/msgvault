@@ -43,13 +43,13 @@ func TestMCPEventsBackupRestoreTokens(t *testing.T) {
 			t.Cleanup(func() { _ = st.Close() })
 			source, err := st.GetOrCreateSource("gmail", "fixture@example.test")
 			require.NoError(err)
-			req := mcpevents.MCPEventsSubscribeRequest{Name: mcpevents.Name, Arguments: mcpevents.MCPEventsArguments{SourceID: source.ID}, Delivery: mcpevents.MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
+			req := mcpevents.MCPEventsSubscribeRequest{Name: mcpevents.Name, Arguments: mcpevents.MCPEventsArguments{SourceID: source.ID}, Delivery: mcpevents.MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/private-path?token=fixture-token", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
 			raw, err := json.Marshal(req)
 			require.NoError(err)
 			req, err = mcpevents.DecodeSubscribe(raw)
 			require.NoError(err)
 			service := mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
-			_, err = service.Subscribe(t.Context(), req)
+			original, err := service.Subscribe(t.Context(), req)
 			require.NoError(err)
 			key, err := providercredentials.EnsureServerKey(cfg.TokensDir())
 			require.NoError(err)
@@ -96,6 +96,27 @@ func TestMCPEventsBackupRestoreTokens(t *testing.T) {
 			targets, err := recovered.Native(t.Context())
 			require.NoError(err)
 			assert.Equal(include && tc.missing != providercredentials.EventsFilename, len(targets) == 1)
+			catalog, err := db.LoadMCPEventsCatalog(t.Context())
+			require.NoError(err)
+			assert.NotContains(string(catalog), "private-path")
+			assert.NotContains(string(catalog), "fixture-token")
+			if len(targets) == 1 {
+				assert.Equal(req.Delivery.URL, targets[0].URL)
+			} else {
+				_, before, err := db.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(original.ID))
+				require.NoError(err)
+				refreshed, err := recovered.Subscribe(t.Context(), req)
+				require.NoError(err)
+				assert.Equal(original.ID, refreshed.ID)
+				assert.Equal("secret_unavailable", refreshed.DeliveryStatus.LastError)
+				_, after, err := db.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(original.ID))
+				require.NoError(err)
+				assert.Equal(before, after)
+				targets, err = recovered.Native(t.Context())
+				require.NoError(err)
+				require.Len(targets, 1)
+				assert.Equal(req.Delivery.URL, targets[0].URL)
+			}
 		})
 	}
 }
