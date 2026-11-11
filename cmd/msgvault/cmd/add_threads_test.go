@@ -335,7 +335,7 @@ func TestAddThreadsRespectsDefaultIdentityOptOut(t *testing.T) {
 	assert.Equal(source.Identifier, identities[0].Address)
 	removed, err := st.RemoveAccountIdentity(source.ID, source.Identifier)
 	require.NoError(err)
-	require.True(removed)
+	require.Equal(int64(1), removed)
 	connect("")
 	identities, err = st.ListAccountIdentitiesContext(t.Context(), source.ID)
 	require.NoError(err)
