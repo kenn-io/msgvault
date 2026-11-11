@@ -49,8 +49,8 @@ Choose a search mode with --mode fts|vector|hybrid:
   hybrid: combine keyword and meaning search when wording is uncertain.
 Vector and hybrid require a usable embedding generation and free text.
 
-Search covers full conversations by default. Use include:cold or --include-cold
-with --mode fts to search retained cold text.
+Search covers full conversations by default. include:cold is equivalent to
+--include-cold.
 Combine intent queries with after:, newer_than:, from:, or filename: filters.
 Use --explain to see per-signal scores. --sort date orders the retrieved
 semantic page newest first; date filters restrict candidates before ranking.

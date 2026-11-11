@@ -580,10 +580,16 @@ func buildNarrowFileEntriesCTE(name string) string {
 }
 
 func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool) string {
-	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only")
+	return buildScalarAnalyticalEntriesCTEWithSource(name, includeAttachmentSummary, "s.account_email", "m.archive_only", "")
 }
 
-func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly string) string {
+// A non-empty where filters the message rows. Cache datasets already exclude
+// Cold rooms, so only live SQLite reads pass the policy predicate.
+func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSummary bool, sourceIdentifier, archiveOnly, where string) string {
+	if where != "" {
+		where = `
+	WHERE ` + where
+	}
 	attachmentColumns := `
 		CAST(0 AS BIGINT) AS attachment_count,
 		CAST(0 AS BIGINT) AS attachment_size`
@@ -628,7 +634,7 @@ func buildScalarAnalyticalEntriesCTEWithSource(name string, includeAttachmentSum
 	FROM messages m
 	JOIN sources s ON s.id = m.source_id
 	LEFT JOIN conversations c ON c.id = m.conversation_id
-	LEFT JOIN participants sender ON sender.id = m.sender_id` + attachmentJoin + `
+	LEFT JOIN participants sender ON sender.id = m.sender_id` + attachmentJoin + where + `
 )`
 }
 
