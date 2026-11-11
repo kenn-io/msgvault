@@ -642,18 +642,19 @@ func TestListChangesRequiresAllFilterCapabilities(t *testing.T) {
 	backend := sourceOperationFixture(t, fixture)
 	for _, param := range []string{"person_id", "source_id", "conversation_id", "incoming_only"} {
 		t.Run(param, func(t *testing.T) {
+			requirements := require.New(t)
 			capabilities, err := backend.client.MCPCapabilities(t.Context())
-			require.NoError(t, err)
+			requirements.NoError(err)
 			found := false
 			for i := range capabilities.Routes {
 				route := &capabilities.Routes[i]
 				if route.OperationID == "listChangedMessages" {
 					found = true
-					require.Contains(t, route.QueryParameters, param)
+					requirements.Contains(route.QueryParameters, param)
 					route.QueryParameters = slices.DeleteFunc(route.QueryParameters, func(name string) bool { return name == param })
 				}
 			}
-			require.True(t, found)
+			requirements.True(found)
 			assert.NotContains(t, newDaemonMCPOperations(backend.client, capabilities).capabilities(), "list_changes")
 		})
 	}
@@ -669,6 +670,7 @@ func TestListChangesPreservesActionableRefusals(t *testing.T) {
 		{"invalid_source_id", http.StatusBadRequest}, {"person_scope_unavailable", http.StatusServiceUnavailable},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
+			requirements := require.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.status)
@@ -676,48 +678,51 @@ func TestListChangesPreservesActionableRefusals(t *testing.T) {
 			})
 			backend := &daemonMCPOperations{client: client}
 			result, handled, err := backend.executeSourceOperation(t.Context(), "list_changes", nil)
-			require.NoError(t, err)
-			require.True(t, handled)
-			require.True(t, result.IsError)
+			requirements.NoError(err)
+			requirements.True(handled)
+			requirements.True(result.IsError)
 			data, err := json.Marshal(result.Output)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			assert.JSONEq(t, `{"error":"`+tc.code+`","operation_may_have_completed":false}`, string(data))
 		})
 	}
 }
 
 func TestListChangesReturnsLargeArchivedSnippet(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "large@example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	conversation, err := st.EnsureConversationWithType(source.ID, "large-thread", "email_thread", "Large thread")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	snippet := strings.Repeat("x", (1<<20)+1)
 	id, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, SourceMessageID: "large-message", ConversationID: conversation,
 		MessageType: "email", Snippet: sql.NullString{String: snippet, Valid: true},
 	})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET content_changed_at = '2020-01-01 00:00:00.000' WHERE id = ?"), id)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
 	result, err := backend.ExecuteOperation(t.Context(), "list_changes", map[string]any{"limit": 1, "source_ids": []int64{source.ID}})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	page := operationOutput[generated.ChangesResponse](t, result)
-	require.Len(t, page.Messages, 1)
-	assert.Equal(t, id, page.Messages[0].ID)
-	require.NotNil(t, page.Messages[0].Snippet)
-	assert.Equal(t, snippet, *page.Messages[0].Snippet)
+	requirements.Len(page.Messages, 1)
+	assertions.Equal(id, page.Messages[0].ID)
+	requirements.NotNil(page.Messages[0].Snippet)
+	assertions.Equal(snippet, *page.Messages[0].Snippet)
 }
 
 func TestOtherMCPOperationsStillLimitResponseSize(t *testing.T) {
+	requirements := require.New(t)
 	client := newMCPDaemonClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("x", (1<<20)+1)))
 	})
 	result, err := readMCPOperationJSON[generated.SourceStatusResponse](t.Context(), client, http.MethodGet, "/api/v1/sources/status", nil, http.StatusOK)
-	require.NoError(t, err)
-	require.True(t, result.IsError)
+	requirements.NoError(err)
+	requirements.True(result.IsError)
 	data, err := json.Marshal(result.Output)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	assert.JSONEq(t, `{"error":"operation_response_limit_exceeded","operation_may_have_completed":false}`, string(data))
 }

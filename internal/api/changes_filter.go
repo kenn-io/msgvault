@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
-	"fmt"
 	"net/http"
 	"slices"
 
@@ -37,11 +36,11 @@ func parseChangesFilter(r *http.Request) (changesFilter, error) {
 			return f, e
 		}
 		if len(values) > 50 {
-			return f, newParamError(item.name, fmt.Sprintf("%s accepts at most 50 values", item.name))
+			return f, newParamError(item.name, item.name+" accepts at most 50 values")
 		}
 		for _, id := range values {
 			if id <= 0 {
-				return f, newParamError(item.name, fmt.Sprintf("%s values must be positive", item.name))
+				return f, newParamError(item.name, item.name+" values must be positive")
 			}
 		}
 		slices.Sort(values)

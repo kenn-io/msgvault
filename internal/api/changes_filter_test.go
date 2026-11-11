@@ -15,30 +15,32 @@ import (
 )
 
 func TestChangesFilteredCursorPagination(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	srv, st := newChangesServer(t)
 	ids := seedChangedMessages(t, st, 3)
 	setChangesWatermark(t, st, "2020-01-01 00:00:00.000", ids...)
 	counted := &countingChangesStore{Store: st}
 	srv.store = counted
 	empty := getChangesPage(t, srv, "/api/v1/messages/changes?source_id=999999")
-	assert.Empty(t, empty.Messages)
-	assert.Equal(t, 1, counted.calls)
-	assert.Equal(t, 2001, counted.limit)
+	assertions.Empty(empty.Messages)
+	assertions.Equal(1, counted.calls)
+	assertions.Equal(2001, counted.limit)
 	src, err := st.GetOrCreateSource("gmail", "changes@example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	query := fmt.Sprintf("source_id=%d&source_id=%d&limit=1", src.ID, src.ID)
 	first := getChangesPage(t, srv, "/api/v1/messages/changes?"+query)
-	require.Len(t, first.Messages, 1)
-	assert.True(t, first.HasMore)
+	requirements.Len(first.Messages, 1)
+	assertions.True(first.HasMore)
 	second := getChangesPage(t, srv, fmt.Sprintf("/api/v1/messages/changes?source_id=%d&cursor=%s&limit=1", src.ID, url.QueryEscape(first.NextCursor)))
-	require.Len(t, second.Messages, 1)
-	assert.Equal(t, ids[1], second.Messages[0].ID)
+	requirements.Len(second.Messages, 1)
+	assertions.Equal(ids[1], second.Messages[0].ID)
 	refused := doGet(t.Context(), srv, "/api/v1/messages/changes?cursor="+url.QueryEscape(first.NextCursor))
-	assert.Equal(t, http.StatusBadRequest, refused.Code, refused.Body.String())
-	assert.Contains(t, refused.Body.String(), "different filter")
+	assertions.Equal(http.StatusBadRequest, refused.Code, refused.Body.String())
+	assertions.Contains(refused.Body.String(), "different filter")
 	refused = doGet(t.Context(), srv, "/api/v1/messages/changes?source_id=999999&cursor="+url.QueryEscape(first.NextCursor))
-	assert.Equal(t, http.StatusBadRequest, refused.Code, refused.Body.String())
-	assert.Contains(t, refused.Body.String(), "different filter")
+	assertions.Equal(http.StatusBadRequest, refused.Code, refused.Body.String())
+	assertions.Contains(refused.Body.String(), "different filter")
 }
 
 func TestChangesFilterMatchesAllDimensions(t *testing.T) {
@@ -102,48 +104,51 @@ func TestChangesFilterDigestStable(t *testing.T) {
 }
 
 func TestChangesPersonMatchesLinkedSenders(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	srv, st := newChangesServer(t)
 	first, err := st.EnsureParticipant("first@example.com", "First", "example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	second, err := st.EnsureParticipant("second@example.com", "Second", "example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	other, err := st.EnsureParticipant("other@example.com", "Other", "example.com")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.LinkParticipants(first, second)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(first)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	ids := seedChangedMessages(t, st, 5)
 	for i, sender := range []int64{first, second, other} {
 		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET sender_id = ? WHERE id = ?"), sender, ids[i])
-		require.NoError(t, err)
+		requirements.NoError(err)
 	}
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')"), ids[3], second)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')"), ids[3], other)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET sender_id = ? WHERE id = ?"), other, ids[4])
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (?, ?, 'from')"), ids[4], first)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET is_from_me = ? WHERE id = ?"), true, ids[1])
-	require.NoError(t, err)
+	requirements.NoError(err)
 	setChangesWatermark(t, st, "2020-01-01 00:00:00.000", ids...)
 	page := getChangesPage(t, srv, fmt.Sprintf("/api/v1/messages/changes?person_id=%d", person.ID))
-	require.Len(t, page.Messages, 3)
-	assert.Equal(t, ids[0], page.Messages[0].ID)
-	assert.Equal(t, ids[1], page.Messages[1].ID)
-	assert.Equal(t, ids[3], page.Messages[2].ID)
+	requirements.Len(page.Messages, 3)
+	assertions.Equal(ids[0], page.Messages[0].ID)
+	assertions.Equal(ids[1], page.Messages[1].ID)
+	assertions.Equal(ids[3], page.Messages[2].ID)
 	incoming := getChangesPage(t, srv, fmt.Sprintf("/api/v1/messages/changes?person_id=%d&incoming_only=true", person.ID))
-	require.Len(t, incoming.Messages, 2)
-	assert.Equal(t, ids[0], incoming.Messages[0].ID)
-	assert.Equal(t, ids[3], incoming.Messages[1].ID)
+	requirements.Len(incoming.Messages, 2)
+	assertions.Equal(ids[0], incoming.Messages[0].ID)
+	assertions.Equal(ids[3], incoming.Messages[1].ID)
 	refused := doGet(t.Context(), srv, "/api/v1/messages/changes?person_id=999999999")
-	assert.Equal(t, http.StatusNotFound, refused.Code, refused.Body.String())
+	assertions.Equal(http.StatusNotFound, refused.Code, refused.Body.String())
 }
 
 type countingChangesStore struct {
 	*store.Store
+
 	calls int
 	limit int
 }
@@ -155,12 +160,13 @@ func (s *countingChangesStore) ListChangedMessages(ctx context.Context, since st
 }
 
 func TestChangesPersonErrorsAreDeclared(t *testing.T) {
+	requirements := require.New(t)
 	operation := pathOperation(OpenAPIDocument().Paths["/api/v1/messages/changes"], http.MethodGet)
-	require.NotNil(t, operation)
+	requirements.NotNil(operation)
 	for _, status := range []string{"404", "409", "422"} {
 		response, ok := operation.Responses[status]
-		require.True(t, ok, "missing response %s", status)
-		require.NotNil(t, response.Content[applicationJSONMediaType])
+		requirements.True(ok, "missing response %s", status)
+		requirements.NotNil(response.Content[applicationJSONMediaType])
 		assert.Equal(t, "#/components/schemas/ErrorResponse", response.Content[applicationJSONMediaType].Schema.Ref)
 	}
 }
