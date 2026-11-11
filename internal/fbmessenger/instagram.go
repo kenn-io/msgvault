@@ -513,6 +513,77 @@ func instagramFingerprint(record rawJSONMessage) string {
 	return instagramHash(string(encoded))
 }
 
+// instagramThreadNames lists the header participants plus any sender the
+// header omits, so every sender is a recipient of the thread's other messages.
+func instagramThreadNames(thread *Thread) []string {
+	var names []string
+	seen := map[string]bool{"": true}
+	add := func(name string) {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	for _, p := range thread.Participants {
+		add(p.Name)
+	}
+	for _, m := range thread.Messages {
+		add(m.SenderName)
+	}
+	return names
+}
+
+// instagramThreadParticipants maps each participant name to its ID and address.
+// Archived participants keep their stored identity even when the display name
+// was edited, so a replay that omits or renames one never hashes a new identity.
+func instagramThreadParticipants(ctx context.Context, st *store.Store, sourceID int64, account string, thread *Thread) (map[string]int64, map[string]string, error) {
+	rows, err := st.DB().QueryContext(ctx, st.Rebind(`SELECT p.id, COALESCE(p.display_name, ''), COALESCE(p.email_address, '') FROM conversation_participants cp
+		JOIN conversations c ON c.id = cp.conversation_id JOIN participants p ON p.id = cp.participant_id
+		WHERE c.source_id = ? AND c.source_conversation_id = ?`), sourceID, thread.instagramKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load archived Instagram participants: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	type archivedParticipant struct {
+		id          int64
+		name, email string
+	}
+	archived := map[string]archivedParticipant{}
+	for rows.Next() {
+		var p archivedParticipant
+		if err := rows.Scan(&p.id, &p.name, &p.email); err != nil {
+			return nil, nil, err
+		}
+		archived[p.email] = p
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	// Export names win over edited display names so direction and recipients
+	// follow the export; archived participants the replay omits keep their own.
+	nameToID, nameToEmail := map[string]int64{}, map[string]string{}
+	var addrs []mime.Address
+	for _, name := range instagramThreadNames(thread) {
+		addr := instagramAddress(account, name)
+		if p, ok := archived[addr.Email]; ok {
+			nameToID[name], nameToEmail[name] = p.id, p.email
+			delete(archived, addr.Email)
+		} else {
+			addrs = append(addrs, addr)
+		}
+	}
+	for _, p := range archived {
+		if p.name != "" {
+			nameToID[p.name], nameToEmail[p.name] = p.id, p.email
+		}
+	}
+	ids, err := st.EnsureParticipantsBatch(ctx, addrs)
+	for _, addr := range addrs {
+		nameToID[addr.Name], nameToEmail[addr.Name] = ids[addr.Email], addr.Email
+	}
+	return nameToID, nameToEmail, err
+}
+
 func instagramAddress(account, name string) mime.Address {
 	return mime.Address{Name: name, Email: instagramHash(account+"\x00"+name) + "@instagram.messages", Domain: "instagram.messages"}
 }

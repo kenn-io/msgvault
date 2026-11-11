@@ -619,22 +619,12 @@ func writeThreadToStore(
 		parentLabelID = labelIDs["Messenger"]
 		sectionLabelID = labelIDs[sectionLabelName(td.Section)]
 	} else {
-		nameToID, nameToEmail = map[string]int64{}, map[string]string{}
-		var addrs []mime.Address
-		for _, p := range thread.Participants {
-			addr := address(p.Name)
-			nameToEmail[p.Name] = addr.Email
-			addrs = append(addrs, addr)
-		}
-		participants, err := st.EnsureParticipantsBatch(ctx, addrs)
+		nameToID, nameToEmail, err = instagramThreadParticipants(ctx, st, sourceID, opts.Account, thread)
 		if err == nil {
 			err = keepInstagramTitle(ctx, st, sourceID, thread)
 		}
 		if err != nil {
 			return err
-		}
-		for name, email := range nameToEmail {
-			nameToID[name] = participants[email]
 		}
 	}
 	rawFormat := "fbmessenger_" + thread.Format

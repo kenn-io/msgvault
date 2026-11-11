@@ -151,6 +151,70 @@ func TestInstagramAccountAndExactNameIdentity(t *testing.T) {
 	assert.Equal(2, n)
 }
 
+func TestInstagramSenderMissingFromHeader(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	filename := instagramTestShard(t, root, "circle", "message_1.json")
+	require.NoError(os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","title":"Fictional circle","participants":[{"name":"Nova Example"},{"name":"Nova Example"}],"messages":[{"sender_name":"Nova Example","timestamp_ms":1730500000123,"content":"outgoing"},{"sender_name":"Mira Example","timestamp_ms":1730500000124,"content":"incoming"}]}`), 0600))
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	for range 2 {
+		_, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		var recipients int
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_recipients r JOIN messages m ON m.id = r.message_id WHERE m.snippet = 'outgoing' AND r.recipient_type = 'to' AND r.display_name = 'Mira Example'`).Scan(&recipients))
+		assert.Equal(1, recipients)
+	}
+	require.NoError(os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","title":"Fictional circle","participants":[{"name":"Nova Example"}],"messages":[{"sender_name":"Nova Example","timestamp_ms":1730500000123,"content":"outgoing"}]}`), 0600))
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	var recipients int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_recipients r JOIN messages m ON m.id = r.message_id WHERE m.snippet = 'outgoing' AND r.recipient_type = 'to' AND r.display_name = 'Mira Example'`).Scan(&recipients))
+	assert.Equal(1, recipients)
+}
+
+func TestInstagramReplayDiscoversSenderMissingFromHeader(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	filename := instagramTestShard(t, root, "circle", "message_1.json")
+	require.NoError(os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","participants":[{"name":"Nova Example"}],"messages":[{"sender_name":"Nova Example","timestamp_ms":1730500000123,"content":"outgoing"}]}`), 0600))
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	require.NoError(os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","participants":[{"name":"Nova Example"}],"messages":[{"sender_name":"Nova Example","timestamp_ms":1730500000123,"content":"outgoing"},{"sender_name":"Mira Example","timestamp_ms":1730500000124,"content":"incoming"}]}`), 0600))
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	var recipients int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_recipients r JOIN messages m ON m.id = r.message_id WHERE m.snippet = 'outgoing' AND r.recipient_type = 'to' AND r.display_name = 'Mira Example'`).Scan(&recipients))
+	assert.Equal(1, recipients)
+}
+
+func TestInstagramReplayKeepsEditedParticipant(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	filename := instagramTestShard(t, root, "circle", "message_1.json")
+	require.NoError(os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","participants":[{"name":"Nova Example"}],"messages":[{"sender_name":"Nova Example","timestamp_ms":1730500000123,"content":"outgoing"},{"sender_name":"Mira Example","timestamp_ms":1730500000124,"content":"incoming"}]}`), 0600))
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE participants SET display_name = 'Mira Renamed' WHERE display_name = 'Mira Example'`)
+	require.NoError(err)
+	require.NoError(os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","participants":[{"name":"Nova Example"}],"messages":[{"sender_name":"Nova Example","timestamp_ms":1730500000123,"content":"outgoing"}]}`), 0600))
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	var participants int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participants`).Scan(&participants))
+	assert.Equal(2, participants)
+	require.NoError(os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","participants":[{"name":"Nova Example"}],"messages":[{"sender_name":"Nova Example","timestamp_ms":1730500000123,"content":"outgoing"},{"sender_name":"Mira Example","timestamp_ms":1730500000124,"content":"incoming"}]}`), 0600))
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	var selfRecipients int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM message_recipients r JOIN messages m ON m.id = r.message_id WHERE m.snippet = 'incoming' AND r.recipient_type = 'to' AND r.participant_id = m.sender_id`).Scan(&selfRecipients))
+	assert.Zero(selfRecipients)
+}
+
 func TestInstagramLimitReplay(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
