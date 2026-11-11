@@ -52,11 +52,9 @@ func TestAppreciationConcurrentDismissal(t *testing.T) {
 	results := make([]store.PersonAppreciationState, 2)
 	errs := make([]error, 2)
 	for i := range results {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			results[i], errs[i] = f.Store.RecordPersonAppreciationDismissalContext(t.Context(), key, "person", []string{"one", "two"}[i], at.Add(time.Duration(i)*time.Hour))
-		}()
+		})
 	}
 	wg.Wait()
 	require.NoError(errs[0])
@@ -67,22 +65,22 @@ func TestAppreciationConcurrentDismissal(t *testing.T) {
 }
 
 func TestAppreciationStateValidation(t *testing.T) {
-	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	ctx := t.Context()
 	_, err := f.Store.RecordPersonAppreciationDismissalContext(ctx, "bad", "person", "owner", time.Now())
-	assert.ErrorIs(err, store.ErrInvalidPersonAppreciationKey)
+	require.ErrorIs(err, store.ErrInvalidPersonAppreciationKey)
 	_, err = f.Store.GetPersonAppreciationStatesContext(ctx, []string{strings.Repeat("a", 64), "bad"})
-	assert.ErrorIs(err, store.ErrInvalidPersonAppreciationKey)
-	assert.ErrorContains(err, "index 1")
+	require.ErrorIs(err, store.ErrInvalidPersonAppreciationKey)
+	require.ErrorContains(err, "index 1")
 	_, err = f.Store.GetPersonAppreciationStatesContext(ctx, make([]string, 501))
-	assert.ErrorIs(err, store.ErrTooManyPersonAppreciationKeys)
-	assert.ErrorContains(err, "500")
+	require.ErrorIs(err, store.ErrTooManyPersonAppreciationKeys)
+	require.ErrorContains(err, "500")
 	_, err = f.Store.RecordPersonAppreciationDismissalContext(ctx, strings.Repeat("a", 64), "person", " ", time.Now())
-	assert.ErrorIs(err, store.ErrInvalidPersonAppreciationAudit)
+	require.ErrorIs(err, store.ErrInvalidPersonAppreciationAudit)
 	for _, tc := range []struct{ uid, actor string }{{"person\x00uid", "owner"}, {"person", "owner\x00actor"}} {
 		_, err = f.Store.RecordPersonAppreciationDismissalContext(ctx, strings.Repeat("a", 64), tc.uid, tc.actor, time.Now())
-		assert.ErrorIs(err, store.ErrInvalidPersonAppreciationAudit)
+		require.ErrorIs(err, store.ErrInvalidPersonAppreciationAudit)
 	}
 }
 
@@ -125,7 +123,7 @@ func TestAppreciationProofDeletionPreservesDismissal(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(first, states[key])
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO person_appreciation_state (contribution_key, dismissed_by) VALUES (?, ?)`), strings.Repeat("f", 64), "owner")
-	assert.Error(err)
+	require.Error(err)
 }
 
 func TestAppreciationDismissalSurvivesMergeSplit(t *testing.T) {
