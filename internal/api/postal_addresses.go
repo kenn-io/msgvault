@@ -83,25 +83,21 @@ func (s *Server) handleAssessPersonPostalAddress(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "bad_request", "Only postal addresses can be assessed")
 		return
 	}
-	assessment := postaladdress.Assess(*input.Address)
-	if input.AllowExternal {
-		reason := ""
-		cfg := s.cfg.People.AddressValidation
-		switch {
-		case !cfg.Enabled:
-			reason = "provider_disabled"
-		case cfg.Provider != "google" || s.postalAddressValidator == nil:
-			reason = "provider_not_configured"
-		default:
-			// Deliberate single call; never retry billed work or persist its result.
-			assessment, _ = s.postalAddressValidator.Check(r.Context(), *input.Address, input.PreviousResponseID)
-		}
-		if reason != "" {
+	cfg := s.cfg.People.AddressValidation
+	var assessment postaladdress.Assessment
+	if input.AllowExternal && cfg.Enabled && cfg.Provider == "google" && s.postalAddressValidator != nil {
+		// Deliberate single call; never retry billed work or persist its result.
+		assessment, _ = s.postalAddressValidator.Check(r.Context(), *input.Address, input.PreviousResponseID)
+	} else {
+		assessment = postaladdress.Assess(*input.Address)
+		if input.AllowExternal {
+			reason := "provider_not_configured"
+			if !cfg.Enabled {
+				reason = "provider_disabled"
+			}
 			assessment.Status = postaladdress.StatusUnavailable
 			assessment.ReasonCodes = append(assessment.ReasonCodes, reason)
 		}
 	}
-	assessment.OriginalExtendedParts = postaladdress.ExtendedParts(assessment.Original.ExtendedComponents)
-	assessment.ProposedExtendedParts = postaladdress.ExtendedParts(assessment.Proposed.ExtendedComponents)
 	writeJSON(w, http.StatusOK, assessment)
 }

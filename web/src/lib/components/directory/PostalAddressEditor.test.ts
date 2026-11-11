@@ -42,6 +42,19 @@ async function enterRaw() {
 }
 
 describe('Postal address editor', () => {
+  it.each(['Save address', 'Check locally'])('captures the address entered after an empty %s', async action => {
+    const { controller, requests } = setup();
+    render(StructuredProfileEditor, { controller, section: 'addresses' });
+    await fireEvent.click(screen.getByRole('button', { name: action }));
+    if (action === 'Save address') expect(await screen.findByText('Enter at least one address component.')).toBeDefined();
+    else await screen.findByText('Original address');
+    expect(screen.getByLabelText('Original text')).toHaveProperty('readOnly', false);
+    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: '12 Example Street' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
+    await waitFor(() => expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1));
+    expect((await requests.find(request => request.method === 'PATCH')!.clone().json()).addresses.add[0].original_input.street_address).toBe('12 Example Street');
+  });
+
   it('saves raw input and unit/PO box/country without an implicit external check', async () => {
     const { controller, requests, check } = setup();
     render(StructuredProfileEditor, { controller, section: 'addresses' });

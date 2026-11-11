@@ -58,6 +58,8 @@ func TestPostalAddressAssessmentRequiresExplicitConsent(t *testing.T) {
 		require.NoError(json.Unmarshal(response.Body.Bytes(), &assessment))
 		assert.Equal("raw", assessment.Original.OriginalValue)
 		assert.Equal("Unit 7", assessment.Proposed.ExtendedAddress)
+		assert.Equal([]string{"Room;3", "Floor 2"}, assessment.OriginalExtendedParts)
+		assert.Equal([]string{"Room;3", "Floor 2"}, assessment.ProposedExtendedParts)
 		if external {
 			assert.Equal(postaladdress.StatusValidated, assessment.Status)
 			assert.Equal(1, validator.calls)

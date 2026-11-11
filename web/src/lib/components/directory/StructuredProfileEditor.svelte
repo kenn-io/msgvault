@@ -7,7 +7,6 @@
   import type {
     PartialDate as GeneratedPartialDate,
     PersonAddress as GeneratedPersonAddress,
-    PersonAddressInputRequest as GeneratedPersonAddressInputRequest,
     PersonCategory as GeneratedPersonCategory,
     PersonContactPoint as GeneratedPersonContactPoint,
     PersonDate as GeneratedPersonDate,
@@ -33,7 +32,6 @@
     | GeneratedPersonDate
     | GeneratedPersonCategory
     | GeneratedPersonMedia;
-  type PersonAddressInputRequest = GeneratedPersonAddressInputRequest;
 
   interface Props {
     controller: DirectoryProfileController;
@@ -202,7 +200,7 @@
     }
   }
 
-  function addressHasValue(input: PersonAddressInputRequest): boolean {
+  function addressHasValue(input: Input): boolean {
     return [
       input.original_value,
       input.post_office_box,
@@ -333,7 +331,7 @@
     if (!originalInput && !currentTextTouched && !currentText && originalText && !addressDraft().extended_components && !postalAddressText({ ...addressDraft(), free_text: '', country_code: '' })) currentText = originalText;
   }
   function captureOriginal(): void {
-    if (!originalInput) originalInput = copyPostalInput(addressDraft());
+    if (!originalInput && addressHasValue(addressDraft())) originalInput = copyPostalInput(addressDraft());
   }
   function edited(): void {
     if (initialSection !== 'addresses') return;
@@ -365,14 +363,11 @@
       addressTargetSelect?.focus();
       return;
     }
-    const body = patch();
-    if (initialSection === 'addresses') {
-      const address = body.addresses?.add?.[0];
-      if (!address || !addressHasValue(address)) {
-        validationError = 'Enter at least one address component.';
-        return;
-      }
+    if (initialSection === 'addresses' && !addressHasValue(addressDraft())) {
+      validationError = 'Enter at least one address component.';
+      return;
     }
+    const body = patch();
     submitting = true;
     try {
       const result = await controller.patchProfile(body, initialSection === 'addresses' ? reviewedETag : undefined);
