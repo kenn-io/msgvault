@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -188,6 +189,32 @@ func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personI
 		claim.PostalReview = &review
 	}
 	return nil
+}
+
+// validatePostalInputTx rejects a postal snapshot that cites a suggestion whose
+// submitted address it was not captured from. Edited fields stay free.
+func validatePostalInputTx(ctx context.Context, tx *loggedTx, personID int64, input PersonAddressInput) error {
+	original, snapshot, err := postaladdress.DecodeOriginalInput(input.OriginalValue)
+	key, cited := "", false
+	if input.Envelope.SourceRef != nil {
+		key, cited = strings.CutPrefix(*input.Envelope.SourceRef, "person-fact-claim:")
+	}
+	if err != nil || !cited {
+		return err
+	}
+	var submitted []byte
+	err = tx.QueryRowContext(ctx, `SELECT submitted_value_json FROM person_fact_claims WHERE person_id = ? AND claim_key = ? LIMIT 1`, personID, key).Scan(&submitted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	var claimed personfacts.PostalAddressValue
+	if err == nil {
+		err = json.Unmarshal(submitted, &claimed)
+	}
+	if err == nil && (!snapshot || claimed.Input() != original) {
+		err = errors.New("postal address snapshot does not match the cited suggestion")
+	}
+	return err
 }
 
 // LocalPostalAssessment is derived on read; no external verdict is stored.

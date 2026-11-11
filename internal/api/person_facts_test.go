@@ -467,4 +467,19 @@ func TestPostalClaimResponseIncludesReview(t *testing.T) {
 	require.Len(t, body.Claims, 1)
 	require.NotNil(t, body.Claims[0].PostalReview)
 	require.NotNil(t, body.Claims[0].PostalReview.Assessment)
+	read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	patch, err := json.Marshal(map[string]any{"addresses": map[string]any{"add": []any{map[string]any{
+		"address_kind": "postal", "street_address": "Corrected street", "original_input": body.Claims[0].PostalReview.Assessment.Original,
+		"envelope": map[string]any{"source": "user", "source_ref": "person-fact-claim:" + body.Claims[0].ClaimKey},
+	}}}})
+	require.NoError(t, err)
+	saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), patch, map[string]string{"If-Match": read.Header().Get("ETag")})
+	require.Equal(t, http.StatusOK, saved.Code, saved.Body.String())
+	var profile store.PersonProfile
+	require.NoError(t, json.Unmarshal(saved.Body.Bytes(), &profile))
+	require.Len(t, profile.Addresses, 1)
+	require.NotNil(t, profile.Addresses[0].StreetAddress)
+	assert.Equal(t, "Corrected street", *profile.Addresses[0].StreetAddress)
+	assert.Equal(t, body.Claims[0].PostalReview.Assessment.Original, profile.Addresses[0].Assessment.Original)
 }

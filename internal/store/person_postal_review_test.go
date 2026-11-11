@@ -120,6 +120,7 @@ func TestPostalAddressSweepExtractionRetainsWithoutProjection(t *testing.T) {
 	review := rows[0].PostalReview
 	require.True(review.Eligible)
 	input := review.Assessment.Proposed
+	input.StreetAddress = "Corrected street"
 	snapshot, err := postaladdress.EncodeOriginalInput(review.Assessment.Original)
 	require.NoError(err)
 	sourceRef := "person-fact-claim:" + rows[0].ClaimKey
@@ -128,6 +129,7 @@ func TestPostalAddressSweepExtractionRetainsWithoutProjection(t *testing.T) {
 	require.NoError(err)
 	require.Len(current.Addresses, 1)
 	assert.Equal(&sourceRef, current.Addresses[0].Envelope.SourceRef)
+	assert.Equal("Corrected street", *current.Addresses[0].StreetAddress)
 	history, err := f.store.GetPersonProfileHistoryContext(t.Context(), f.personID)
 	require.NoError(err)
 	require.Len(history.Addresses, 2)
@@ -137,6 +139,33 @@ func TestPostalAddressSweepExtractionRetainsWithoutProjection(t *testing.T) {
 	require.NoError(err)
 	assert.False(rows[0].PostalReview.Eligible)
 	assert.Contains(rows[0].PostalReview.ReasonCodes, "already_adopted")
+}
+
+func TestPostalClaimReferenceCannotHideDifferentSuggestion(t *testing.T) {
+	st, id, _ := newPersonFactProjectionStore(t)
+	target := projectionTargetBySlug(t, st, "postal_address")
+	claim := personFactProjectionClaim(id, target, postalClaimJSON, "different-address")
+	_, err := st.ApplyPersonFactGenerationContext(t.Context(), postalGeneration(t, st, id, "different-address", []personfacts.ProposedClaim{claim}, nil), nil)
+	require.NoError(t, err)
+	claims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+	require.True(t, claims[0].PostalReview.Eligible)
+	ref := "person-fact-claim:" + claims[0].ClaimKey
+	original, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", StreetAddress: "99 Other Road", OriginalValue: "99 Other Road"})
+	require.NoError(t, err)
+	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("99 Other Road"), OriginalValue: original, Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
+	require.Error(t, err, "a different address must not consume this suggestion")
+	claims, err = st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+	assert.True(t, claims[0].PostalReview.Eligible, "a different address must not consume this suggestion")
+	_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("99 Other Road"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
+	require.Error(t, err, "a different address without a snapshot must not consume this suggestion")
+	claims, err = st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+	assert.True(t, claims[0].PostalReview.Eligible, "a different address without a snapshot must not consume this suggestion")
 }
 
 func TestPostalAddressReviewUsesCompleteCurrentSupport(t *testing.T) {
@@ -232,7 +261,11 @@ func TestPostalAddressPacketBoundsBacklogAndExcludesAdoptedHistory(t *testing.T)
 		selected[claim.ClaimKey] = true
 	}
 	assert.True(selected[selectedKey])
-	address, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("12 Example Street"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
+	var submitted personfacts.PostalAddressValue
+	require.NoError(json.Unmarshal(state.Unresolved[0].SubmittedValue, &submitted))
+	original, err := postaladdress.EncodeOriginalInput(submitted.Input())
+	require.NoError(err)
+	address, err := st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("12 Example Street"), OriginalValue: original, Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
 	require.NoError(err)
 	require.NoError(st.SupersedePersonAddressContext(t.Context(), id, address.Envelope.ID, nil))
 	state, err = st.LoadPersonFactState(t.Context(), id, catalog)

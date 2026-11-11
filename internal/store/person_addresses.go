@@ -134,7 +134,7 @@ func (s *Store) addPersonAddressTx(
 		return nil, ErrInvalidPersonAddressKind
 	}
 	if input.AddressKind == PersonAddressPostal {
-		if _, _, err := postaladdress.DecodeOriginalInput(input.OriginalValue); err != nil {
+		if err := validatePostalInputTx(ctx, tx, personID, input); err != nil {
 			return nil, err
 		}
 	}

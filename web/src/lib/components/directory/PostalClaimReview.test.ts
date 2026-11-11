@@ -65,13 +65,14 @@ describe('Postal claim review', () => {
     expect(await screen.findByLabelText('Unit or apartment')).toHaveProperty('value', 'Unit 7');
     expect(requests.some(request => request.url.endsWith('/addresses/assess'))).toBe(false);
     expect(screen.getByLabelText('Address kind')).toHaveProperty('disabled', true);
+    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Corrected street' } });
     await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'add' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
     await waitFor(() => expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1));
     const patch = requests.find(request => request.method === 'PATCH')!;
     expect(patch.headers.get('If-Match')).toBe('"person-7-r3"');
     const body = await patch.clone().json();
-    expect(body.addresses.add[0]).toMatchObject({ address_kind: 'postal', original_input: raw, envelope: { source: 'user', source_ref: 'person-fact-claim:synthetic-claim' } });
+    expect(body.addresses.add[0]).toMatchObject({ address_kind: 'postal', street_address: 'Corrected street', original_input: raw, envelope: { source: 'user', source_ref: 'person-fact-claim:synthetic-claim' } });
     expect(body.addresses.add[0].envelope).not.toHaveProperty('confidence');
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Review address' })).toBeNull());
     await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
