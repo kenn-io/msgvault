@@ -136,10 +136,6 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 	old := newDaemonMCPCardDAV(backend.client, caps)
 	assert.False(t, old.SupportsCardDAVSelector(true))
 	assert.False(t, old.SupportsCardDAVSelector(false))
-	_, err = old.SyncCardDAVConnection(t.Context(), false, new("work"))
-	assert.Error(t, err)
-	_, err = old.GetCardDAVConnectionStatus(t.Context(), new("work"))
-	assert.Error(t, err)
 	for i := range caps.Routes {
 		if caps.Routes[i].OperationID == "listCardDAVRuns" {
 			caps.Routes[i].QueryParameters = []string{"limit", "before_id"}

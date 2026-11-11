@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"encoding/json/v2"
-	"errors"
 	"net/http"
 	"slices"
 
@@ -41,19 +40,6 @@ func (b *daemonMCPCardDAV) SupportsCardDAVSelector(sync bool) bool {
 	}
 	return b.statusSelector
 }
-func (b *daemonMCPCardDAV) SyncCardDAVConnection(ctx context.Context, full bool, connection *string) (*generated.SyncResult, error) {
-	if connection != nil && !b.syncSelector {
-		return nil, errors.New("named CardDAV sync is not supported by the daemon")
-	}
-	return b.Client.SyncCardDAVConnection(ctx, full, connection)
-}
-func (b *daemonMCPCardDAV) GetCardDAVConnectionStatus(ctx context.Context, connection *string) (*generated.CardDAVStatusResponse, error) {
-	if connection != nil && !b.statusSelector {
-		return nil, errors.New("named CardDAV status is not supported by the daemon")
-	}
-	return b.Client.GetCardDAVConnectionStatus(ctx, connection)
-}
-
 func cardDAVMCPCapabilities(has mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
 	for _, r := range []struct {
