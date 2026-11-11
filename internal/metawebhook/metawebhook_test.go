@@ -57,6 +57,7 @@ func pendingFiles(t *testing.T, dir string) []string {
 
 // post serves one POST and returns the status. It runs on any goroutine.
 func post(t *testing.T, h *Handler, signature string, body io.Reader) int {
+	t.Helper()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/meta/webhook/9", body)
 	req.Header.Set("X-Hub-Signature-256", signature)
 	rec := httptest.NewRecorder()
@@ -67,6 +68,7 @@ func post(t *testing.T, h *Handler, signature string, body io.Reader) int {
 // readRecorder records whether the handler read the request body.
 type readRecorder struct {
 	io.Reader
+
 	read bool
 }
 
