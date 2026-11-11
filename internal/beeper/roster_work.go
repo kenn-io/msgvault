@@ -303,7 +303,7 @@ func (imp *Importer) publishRosterEvidence(ctx context.Context, convID int64, ev
 	return imp.store.SetConversationMessagingRouteEvidence(ctx, convID, evidence)
 }
 
-func (imp *Importer) refreshRosterProof(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, keys []string, accountID string, evidence store.MessagingRouteEvidence, membership chatMembership) (bool, error) {
+func (imp *Importer) refreshRosterProof(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, keys []string, accountID string, evidence store.MessagingRouteEvidence, membership chatMembership, work *rosterWork) (bool, error) {
 	owners, err := imp.store.BeeperRosterOwnersContext(ctx, keys)
 	if err != nil {
 		return false, err
@@ -336,6 +336,19 @@ func (imp *Importer) refreshRosterProof(ctx context.Context, sourceID, convID in
 	for _, member := range members {
 		if !desired[member.ParticipantID] {
 			return false, nil
+		}
+	}
+	// Failed receipts behind an active cursor have already had their turn.
+	// Pending receipts can belong to an owner changed after that cursor was saved.
+	for i, key := range keys {
+		status := receipts[key].Status
+		if work.Phase == "done" && (status == "pending" || status == rosterMatchFailed) {
+			work.Phase, work.Next = "matching", i
+			break
+		}
+		if status == "pending" && (work.Phase == "matching" || work.Phase == "matching_retry") {
+			work.Phase = "matching"
+			work.Next = min(work.Next, i)
 		}
 	}
 	return true, imp.publishRosterEvidence(ctx, convID, evidence, items, keys, owners, membership)

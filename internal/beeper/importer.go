@@ -1065,7 +1065,7 @@ func (imp *Importer) ensureConversation(
 	if opts.skipRoster {
 		if opts.rosterState != nil && opts.rosterState.Verified && opts.rosterState.ListingSignature == listingSignature && opts.rosterState.Signature == rosterSignature(detail, opts.AccountID) {
 			keys := imp.rosterKeys(detail.Participants.Items)
-			settled, err := imp.refreshRosterProof(ctx, sourceID, convID, rosterProvider(ch.ID), detail, detail.Participants.Items, keys, opts.AccountID, routeEvidence, membership)
+			settled, err := imp.refreshRosterProof(ctx, sourceID, convID, rosterProvider(ch.ID), detail, detail.Participants.Items, keys, opts.AccountID, routeEvidence, membership, opts.rosterState)
 			if err != nil {
 				return convID, false, membership, err
 			}
@@ -1119,7 +1119,7 @@ func (imp *Importer) ensureConversation(
 	slices.SortStableFunc(items, func(a, b Participant) int { return strings.Compare(a.ID, b.ID) })
 	keys := imp.rosterKeys(items)
 	if work.Verified && work.Phase != "members" {
-		settled, err := imp.refreshRosterProof(ctx, sourceID, convID, provider, detail, items, keys, opts.AccountID, routeEvidence, membership)
+		settled, err := imp.refreshRosterProof(ctx, sourceID, convID, provider, detail, items, keys, opts.AccountID, routeEvidence, membership, work)
 		if err != nil {
 			return convID, false, membership, err
 		}
@@ -1129,7 +1129,8 @@ func (imp *Importer) ensureConversation(
 		}
 	}
 	// Invalidate earlier proof before any roster writes.
-	if work.Phase == "members" {
+	needsMembers := work.Phase == "members" || !work.Verified
+	if needsMembers {
 		if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
 			return 0, false, chatMembership{}, err
 		}
@@ -1138,7 +1139,7 @@ func (imp *Importer) ensureConversation(
 	if membershipComplete {
 		bridgePrefix = participantBridgePrefix(detail.Participants.Items)
 	}
-	if work.Phase == "members" {
+	if needsMembers {
 		if err := imp.store.SetConversationRosterRepairPendingContext(ctx, convID, true); err != nil {
 			return convID, false, membership, err
 		}
@@ -1173,8 +1174,10 @@ func (imp *Importer) ensureConversation(
 			imp.obs = newObservationRecorder(imp.store)
 			imp.matcher = newIdentityMatcher(imp.store)
 		}
-		work.Phase = "matching"
-		work.Next = 0
+		if verifyErr == nil || work.Phase == "members" {
+			work.Phase = "matching"
+			work.Next = 0
+		}
 	}
 	// Membership must be visible before matching. The roster supplies contact
 	// details used to gather shared-conversation evidence for new candidates.

@@ -16,7 +16,7 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 		t.Run(fmt.Sprintf("unverified=%t", unverified), func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			f := newFakeBeeper(t)
-			chat := observationChat("telegram", "Telegram", "@telegram_first:example.test", map[string]any{"id": "@telegram_first:example.test", "username": "first"}, map[string]any{"id": "@telegram_second:example.test", "username": "second"}, map[string]any{"id": "@telegram_third:example.test", "username": "third"})
+			chat := observationChat("telegram", "Telegram", "@telegram_first:example.test", map[string]any{"id": "@telegram_first:example.test", "username": "first"}, map[string]any{"id": "@telegram_second:example.test", "username": "second"}, map[string]any{"id": "@telegram_third:example.test", "username": "third"}, map[string]any{"id": "@telegram_zfourth:example.test", "username": "fourth"})
 			f.addChat(chat)
 			imp, st := newHandlerTestImporter(t, f)
 			t.Cleanup(func() { require.NoError(st.Close()) })
@@ -56,6 +56,25 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 			observations, err := st.ListParticipantObservationsContext(t.Context(), second, true)
 			require.NoError(err)
 			assert.NotEmpty(observations, "a failed member must not block later matching")
+			if unverified {
+				// A failed verification must not reset the matching position on retry.
+				f.resetRequests()
+				_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work, ShouldStop: func() bool { return work.Phase == "matching" && work.Next >= 3 }}, &ImportSummary{})
+				require.ErrorIs(err, errBeeperBudgetExpired)
+				assert.False(complete)
+				assert.Equal(3, work.Next)
+				assert.NotEmpty(f.requests(), "the retry must attempt verification")
+			} else {
+				// A persistent failure before Next must not starve later members.
+				attempt := &ImportSummary{}
+
+				_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work, ShouldStop: func() bool { return attempt.Errors > 0 }}, attempt)
+				require.NoError(err)
+				third := participantForBeeperUser(t, st, "@telegram_third:example.test")
+				observations, err := st.ListParticipantObservationsContext(t.Context(), third, true)
+				require.NoError(err)
+				assert.NotEmpty(observations, "matching must advance beyond the failed member")
+			}
 			_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
 			require.NoError(err)
 			assert.Equal(!unverified, complete)
@@ -172,6 +191,8 @@ func TestRosterMatchingFailureRetriesAcrossChats(t *testing.T) {
 	require.NoError(err)
 	imp = NewImporter(st, imp.client)
 	for i, chat := range []*fakeChat{first, second} {
+		works[i].Phase = "done"
+		works[i].Next = len(chat.Participants)
 		detail, err := imp.client.GetChat(t.Context(), chat.ID)
 		require.NoError(err)
 		_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: works[i]}, &ImportSummary{})
