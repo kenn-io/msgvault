@@ -1,14 +1,12 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json/v2"
 	"net/http"
 	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/changefeed"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -20,9 +18,7 @@ type changesFilter struct {
 	grantRefs                  []changeGrantRef
 }
 
-func (f changesFilter) hasSelectors() bool {
-	return f.PersonID != 0 || len(f.SourceIDs) != 0 || len(f.ConversationIDs) != 0 || f.IncomingOnly
-}
+func (f changesFilter) hasSelectors() bool { return f.shared().HasSelectors() }
 
 func parseChangesFilter(r *http.Request) (changesFilter, error) {
 	var f changesFilter
@@ -80,27 +76,15 @@ func (f changesFilter) bindGrant(grant *agentgrant.Grant) changesFilter {
 	return f
 }
 
-func (f changesFilter) digest() string {
-	if !f.hasSelectors() && f.grantRefs == nil {
-		return ""
+func (f changesFilter) shared() changefeed.Filter {
+	var refs []changefeed.GrantRef
+	if f.grantRefs != nil {
+		refs = make([]changefeed.GrantRef, 0, len(f.grantRefs))
+		for _, r := range f.grantRefs {
+			refs = append(refs, changefeed.GrantRef{Type: r.Type, Identifier: r.Identifier})
+		}
 	}
-	// Omit nil grant references to preserve the owner's filter encoding.
-	data, err := json.Marshal(struct {
-		PersonID                   int64
-		SourceIDs, ConversationIDs []int64
-		IncomingOnly               bool
-		GrantRefs                  []changeGrantRef `json:",omitzero"`
-	}{f.PersonID, f.SourceIDs, f.ConversationIDs, f.IncomingOnly, f.grantRefs}, json.Deterministic(true))
-	if err != nil {
-		panic(err)
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:8])
+	return changefeed.Filter{PersonID: f.PersonID, SourceIDs: f.SourceIDs, ConversationIDs: f.ConversationIDs, IncomingOnly: f.IncomingOnly, Participants: f.participants, GrantRefs: refs}
 }
-
-func (f changesFilter) matches(m store.ChangedMessage) bool {
-	return (f.PersonID == 0 || slices.Contains(f.participants, m.SenderID)) &&
-		(len(f.SourceIDs) == 0 || slices.Contains(f.SourceIDs, m.SourceID)) &&
-		(len(f.ConversationIDs) == 0 || slices.Contains(f.ConversationIDs, m.ConversationID)) &&
-		(!f.IncomingOnly || !m.IsFromMe)
-}
+func (f changesFilter) digest() string                      { return f.shared().Digest() }
+func (f changesFilter) matches(m store.ChangedMessage) bool { return f.shared().Matches(m) }

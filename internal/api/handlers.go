@@ -20,6 +20,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/attachmentstore"
+	"go.kenn.io/msgvault/internal/changefeed"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -3341,7 +3342,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 	}
 	if filter.PersonID != 0 {
 		reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: filter.PersonID}
-		resolution, resolveErr := resolver.Resolve(r.Context(), s.store, reference, nil)
+		resolvedFilter, resolveErr := changefeed.ResolveFilter(r.Context(), s.store, filter.shared())
 		if resolveErr != nil {
 			if grant != nil && (errors.Is(resolveErr, store.ErrPersonNotFound) || errors.Is(resolveErr, resolver.ErrEmptyPopulation)) {
 				writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionSearchRead))
@@ -3350,7 +3351,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 			s.writePersonScopeError(w, reference, resolveErr, "change feed")
 			return
 		}
-		filter.participants = resolution.Scope.ParticipantIDs
+		filter.participants = resolvedFilter.Participants
 		if grant != nil {
 			checker, ok := s.store.(interface {
 				PersonInSources(ctx context.Context, participantIDs, sourceIDs []int64) (bool, error)

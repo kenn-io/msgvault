@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/changefeed"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -63,26 +64,7 @@ type changesCursorPayload struct {
 // string and RawURLEncoding keeps the rest so too, so the whole token needs no
 // escaping.
 func encodeChangesCursor(archiveUID string, position store.ChangedMessagesCursor, digest string) string {
-	var id *int64
-	if after, ok := position.AfterID(); ok {
-		id = &after
-	}
-	payload, err := json.Marshal(changesCursorPayload{
-		Time:    position.At().UTC().Format(changesTimeLayout),
-		ID:      id,
-		Archive: archiveUID,
-		Filter:  digest,
-	}, json.Deterministic(true))
-	if err != nil {
-		// Unreachable: every field of the payload marshals unconditionally.
-		panic(fmt.Sprintf("encode changes cursor: %v", err))
-	}
-	version := unfilteredChangesCursorVersion
-	if digest != "" {
-		version = filteredChangesCursorVersion
-	}
-	return strconv.Itoa(version) + "." +
-		base64.RawURLEncoding.EncodeToString(payload)
+	return changefeed.EncodeCursor(archiveUID, position, digest)
 }
 
 // changesPosition is a decoded change-feed cursor: a keyset position, plus the
