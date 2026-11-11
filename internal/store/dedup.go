@@ -630,7 +630,7 @@ func (s *Store) GetAllRawMIMECandidates(
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
 		JOIN message_raw mr ON mr.message_id = m.id
-		WHERE ` + LiveMessagesWhere("m", true) + `
+		WHERE mr.raw_format = 'mime' AND ` + LiveMessagesWhere("m", true) + `
 		  AND COALESCE(m.message_type, '') <> ?`
 	args := []any{callhistory.MessageType}
 	if len(sourceIDs) > 0 {

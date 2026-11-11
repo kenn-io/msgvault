@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -61,6 +62,12 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 			}
 			data, err := io.ReadAll(io.LimitReader(input, callhistory.MaxRequestBytes+1))
 			if err != nil {
+				return err
+			}
+			if len(data) > callhistory.MaxRequestBytes {
+				return callhistory.ErrImportTooLarge
+			}
+			if _, err := callhistory.DecodeImportRequest(bytes.NewReader(data)); err != nil {
 				return err
 			}
 			client, cleanup, err := open(cmd.Context())

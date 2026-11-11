@@ -44,6 +44,9 @@ Supported formats:
 | Format | Record and binding contract |
 | --- | --- |
 | `signal_desktop` | One supplied `callsHistory` JSON row. Signal `Deleted` rows are rejected. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
+| `discord` | One native type-3 CALL message. Account is the owner’s Discord user ID; bindings name roster members. |
+| `discord_chat_exporter` | One exported `Call` message; no participant bindings are available. |
+| `discord_archived` | An archive message ID referencing live Discord JSON; account and bindings follow `discord`. |
 | `normalized` | A version-1 observation with provider/account, record ID, direction, outcome, owner participation, occurrence time, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. Reimporting the same `record_id` replaces its evidence. See the example below. |
 
 This normalized request binds the call to existing archive participant `42`. Timestamps use RFC3339; `ended_at` is optional.
@@ -77,6 +80,60 @@ The first supplied label fills an empty source display name unless it conflicts 
 The request limit is 1 MiB; its record and original raw payload are each limited
 to 512 KiB. No importer opens protected databases, retrieves encryption keys,
 changes connected account bindings, or requests additional platform permissions.
+
+## Import Discord call evidence
+
+These formats require an unreleased daemon build containing the Discord adapter;
+an older call-history daemon rejects them. The existing guild-bot source does
+not retrieve private call history. This importer uses stored or supplied JSON
+and does not contact Discord or need a token, new scope or additional dependency.
+
+To map an already archived CALL message, supply its **archive message ID**, the
+owner's native Discord user ID, and optional exact peer-to-participant bindings:
+
+```sh
+printf '%s\n' '{"format":"discord_archived","account":"1","record":{"message_id":123},"bindings":{"2":42}}' | msgvault calls import -
+```
+
+Alternatively, wrap one supplied native message in a `discord` request:
+
+```json
+{
+  "format": "discord",
+  "account": "1",
+  "record": {
+    "id": "100", "channel_id": "200", "type": 3,
+    "timestamp": "2026-10-01T00:00:00Z",
+    "call": {"participants": ["1", "2"], "ended_timestamp": null}
+  },
+  "bindings": {"2": 42}
+}
+```
+
+All IDs above are synthetic. Discord IDs must be nonzero decimal strings with
+no leading zeros. Bindings name existing **participant IDs**, not person IDs.
+Only the call roster proves joined attendance; authors, mentions and channel
+membership do not. Owner absence stays unknown. Direction, outcome and talk
+duration remain unknown even when the call has an end timestamp. A bound peer
+therefore contributes an unknown count, never an answered count.
+
+For an existing DiscordChatExporter JSON file, extract a single Call message:
+
+```sh
+jq '{format:"discord_chat_exporter",account:"1",record:(.messages | map(select(.type == "Call")) | first)}' export.json > discord-call.json
+msgvault calls import discord-call.json
+```
+
+Exporter messages appear in `calls list`, but lack a participant roster and
+produce no per-person summary row. Native and exporter representations retain
+separate original evidence under stable representation IDs.
+Reimporting an archived/native record replaces that native observation; it does
+not create another call. Later changes to the original archived message do not
+automatically update or withdraw its separately imported call evidence.
+
+The documented Discord data package's message transcript lacks structured call
+type and attendance fields. That lossy shape, whole export files and ZIP files
+are not accepted as single call records. Calls are never inferred from prose.
 
 ## Read the evidence and counts
 
