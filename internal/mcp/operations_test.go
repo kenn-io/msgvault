@@ -153,6 +153,25 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 	}
 	opts.DelegatedOnly = true
 	assertions.Empty(operationalCatalog(opts, true))
+
+	recovery := []string{"list_person_merges", "get_person_merge", "get_person_merge_snapshot", "decide_person_merge_candidate", "split_person_merge"}
+	opts = ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: recovery}
+	for _, d := range operationalCatalog(opts, true) {
+		assertions.Contains(recovery[:3], d.definition.name)
+	}
+	assertions.Len(operationalCatalog(opts, true), 3)
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyLoops, OperationFamilySources}
+	assertions.Len(operationalCatalog(opts, true), 3)
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyMergeRecovery}
+	defs := operationalCatalog(opts, true)
+	requirements.Len(defs, 5)
+	for _, d := range defs {
+		if d.writes {
+			requirements.NotNil(d.definition.annotations.OpenWorldHint)
+			assertions.False(*d.definition.annotations.OpenWorldHint)
+		}
+	}
+	assertions.Len(operationalCatalog(opts, false), 3)
 }
 
 func TestPersonRecordCatalogRequiresCuratedWriteOptIn(t *testing.T) {

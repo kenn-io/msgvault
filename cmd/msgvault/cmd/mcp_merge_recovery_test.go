@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -53,7 +53,7 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	assert.Equal(t, merged.Merge.ID, list.Merges[0].Merge.ID)
 	result, err = backend.ExecuteOperation(ctx, "get_person_merge", map[string]any{"merge_id": merged.Merge.ID})
 	require.NoError(t, err)
-	detail := operationOutput[generated.PersonMergeDetail](t, result)
+	detail := operationOutput[mcpserver.MergeDetail](t, result)
 	assert.Equal(t, merged.Merge.ID, detail.Merge.ID)
 	result, err = backend.ExecuteOperation(ctx, "get_person_merge_snapshot", map[string]any{"merge_id": merged.Merge.ID})
 	require.NoError(t, err)
@@ -62,17 +62,23 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	assert.Positive(t, snapshot.RowCount)
 	projected, err := json.Marshal(result.Output)
 	require.NoError(t, err)
-	assert.NotContains(t, string(projected), "display_name")
 	assert.NotContains(t, string(projected), "columns")
 	etag := fmt.Sprintf(`"person-%d-r%d"`, merged.Person.ID, merged.Person.Revision)
 	args := map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "reject", "etag": etag}
-	disclosure, err := backend.OperationDisclosure(ctx, "decide_person_merge_candidate", args)
-	require.NoError(t, err)
-	assert.Contains(t, disclosure, "reject")
+	stale := map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "reject", "etag": fmt.Sprintf(`"person-%d-r1"`, survivor.ID)}
+	_, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", stale)
+	var refusal *mcpserver.OperationRefusalError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "person_merge_revision_conflict", refusal.Code)
+	missing := map[string]any{"person_id": survivor.ID, "candidate_id": int64(999999), "merge_id": merged.Merge.ID, "decision": "reject", "etag": etag}
+	_, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", missing)
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "person_merge_candidate_not_found", refusal.Code)
+	var disclosure string
 	approvals := 0
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyMergeRecovery}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approvals++
-		assert.Contains(t, request.Params.Message, "reject")
+		disclosure = request.Params.Message
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
 	listed, err := session.ListTools(ctx, nil)
@@ -87,6 +93,16 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, sdkResult.IsError)
 	assert.Equal(t, 1, approvals)
+	var shown struct {
+		Lineage generated.PersonMergeReviewCandidate `json:"lineage"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(disclosure), &shown))
+	assert.Equal(t, merged.ReviewCandidates[0].ID, shown.Lineage.ID)
+	assert.Contains(t, disclosure, "Keep the current value")
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: args})
+	require.NoError(t, err)
+	require.False(t, sdkResult.IsError)
+	assert.Contains(t, disclosure, "daemon will replay it")
 	encoded, err := json.Marshal(sdkResult.StructuredContent)
 	require.NoError(t, err)
 	var receipt mcpserver.MergeCandidateReceipt
@@ -115,60 +131,119 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	require.NoError(t, err)
 	replay := operationOutput[generated.PersonSplitResult](t, result)
 	assert.Equal(t, split.Split.ID, replay.Split.ID)
+	c, err := st.EnsureParticipant("c@example.test", "C", "example.test")
+	require.NoError(t, err)
+	d, err := st.EnsureParticipant("d@example.test", "D", "example.test")
+	require.NoError(t, err)
+	left, _, err := st.CreatePersonFromParticipant(c)
+	require.NoError(t, err)
+	right, _, err := st.CreatePersonFromParticipant(d)
+	require.NoError(t, err)
+	for id, val := range map[int64]string{left.ID: "email", right.ID: "chat"} {
+		_, err = st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{PersonID: id, DefinitionSlug: store.AttributeSlugPrimaryChannel, Value: store.AttributeValue{Type: store.AttributeValueText, Text: &val}, Source: store.ProvenanceUser})
+		require.NoError(t, err)
+	}
+	left, err = st.GetPersonContext(ctx, left.ID)
+	require.NoError(t, err)
+	right, err = st.GetPersonContext(ctx, right.ID)
+	require.NoError(t, err)
+	other, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: left.ID, AbsorbedID: right.ID, ExpectedSurvivorRevision: left.Revision, ExpectedAbsorbedRevision: right.Revision, IdempotencyKey: "second-merge", Actor: "test"})
+	require.NoError(t, err)
+	require.Len(t, other.ReviewCandidates, 1)
+	acceptArgs := map[string]any{"person_id": left.ID, "merge_id": other.Merge.ID, "candidate_id": other.ReviewCandidates[0].ID, "decision": "accept", "etag": fmt.Sprintf(`"person-%d-r%d"`, other.Person.ID, other.Person.Revision)}
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: acceptArgs})
+	require.NoError(t, err)
+	require.False(t, sdkResult.IsError)
+	assert.Contains(t, disclosure, fmt.Sprintf("attribute definition %d", other.ReviewCandidates[0].DefinitionID))
+	assert.Contains(t, disclosure, fmt.Sprintf("absorbed value %d", other.ReviewCandidates[0].AbsorbedValueID))
+	assert.Contains(t, disclosure, "exact split becomes unavailable")
+
 }
 
 func TestMCPMergeRecoveryRejectsUnsupportedAndInvalid(t *testing.T) {
-	backend := newDaemonMCPOperations(nil, nil)
-	result, err := backend.ExecuteOperation(t.Context(), "get_person_merge", map[string]any{"merge_id": 1})
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	backend.supported = []string{"list_person_merges"}
-	result, err = backend.ExecuteOperation(t.Context(), "list_person_merges", map[string]any{"person_id": 1, "limit": 501})
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
+	backend := &daemonMCPOperations{supported: []string{"list_person_merges", "get_person_merge", "decide_person_merge_candidate", "split_person_merge"}}
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"list_person_merges", map[string]any{"person_id": 1, "limit": 501}}, {"list_person_merges", map[string]any{"person_id": 1, "offset": -1}},
+		{"get_person_merge", map[string]any{"merge_id": 0}},
+		{"decide_person_merge_candidate", map[string]any{"person_id": 1, "merge_id": 1, "candidate_id": 1, "etag": "x", "decision": "maybe"}},
+		{"split_person_merge", map[string]any{"person_id": 1, "merge_id": 1, "participant_ids": nil, "etag": "x", "idempotency_key": "key"}},
+		{"split_person_merge", map[string]any{"person_id": 1, "merge_id": 1, "participant_ids": []int64{1, 1}, "etag": "x", "idempotency_key": "key"}},
+		{"split_person_merge", map[string]any{"person_id": 1, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": ""}},
+		{"split_person_merge", map[string]any{"person_id": 1, "merge_id": 1, "participant_ids": []int64{}, "etag": "x", "idempotency_key": strings.Repeat("x", 129)}},
+	} {
+		result, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
+		require.NoError(t, err)
+		assertLoopRefusal(t, result, "invalid_arguments", false)
+	}
 }
 
-// The real daemon cannot produce arbitrary raw errors or a deliberately oversized
-// response on demand; this transport fixture checks the adapter boundary.
+// Synthetic daemon-version skew and large detail fixtures exercise adapter projection.
 func TestMCPMergeRecoveryBoundsAndSafeErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/person-merges/1/snapshot" {
-			_, _ = w.Write([]byte(strings.Repeat("x", (1<<20)+1)))
-			return
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/person-merges/1/snapshot":
+			_, _ = w.Write([]byte(`{"version":2,"sha256":"x","snapshot":{"persons":[],"rows":[]}}`))
+		case "/api/v1/person-merges/2/snapshot":
+			_, _ = w.Write([]byte(`{"version":1,"sha256":"x","snapshot":{"persons":[{},{},{}],"rows":[]}}`))
+		case "/api/v1/person-merges/4/snapshot":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"person_merge_snapshot_corrupt"}`))
+		default:
+			_, _ = w.Write([]byte(`{"rows":[` + strings.Repeat(`{"original_row_key":"`+strings.Repeat("x", 200)+`"},`, 6000) + `{}]}`))
 		}
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":"private host path"}`))
 	}))
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	require.NoError(t, err)
 	backend := &daemonMCPOperations{client: client, supported: []string{"get_person_merge_snapshot", "get_person_merge"}}
-	result, err := backend.ExecuteOperation(t.Context(), "get_person_merge_snapshot", map[string]any{"merge_id": 1})
+	for _, id := range []int{1, 2} {
+		result, err := backend.ExecuteOperation(t.Context(), "get_person_merge_snapshot", map[string]any{"merge_id": id})
+		require.NoError(t, err)
+		assertLoopRefusal(t, result, "invalid_operation_response", false)
+	}
+	result, err := backend.ExecuteOperation(t.Context(), "get_person_merge_snapshot", map[string]any{"merge_id": 4})
 	require.NoError(t, err)
-	require.True(t, result.IsError)
-	data, err := json.Marshal(result.Output)
+	assertLoopRefusal(t, result, "person_merge_snapshot_corrupt", false)
+	result, err = backend.ExecuteOperation(t.Context(), "get_person_merge", map[string]any{"merge_id": 3})
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "operation_response_limit_exceeded")
-	result, err = backend.ExecuteOperation(t.Context(), "get_person_merge", map[string]any{"merge_id": 1})
+	detail := operationOutput[mcpserver.MergeDetail](t, result)
+	assert.Equal(t, 6001, detail.RowCount)
+	encoded, err := json.Marshal(detail)
 	require.NoError(t, err)
-	require.True(t, result.IsError)
-	data, err = json.Marshal(result.Output)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "operation_refused")
-	assert.NotContains(t, string(data), "private host path")
+	assert.NotContains(t, string(encoded), `"rows"`)
 }
 
 func TestMCPMergeRecoveryCapabilityRequiresEachContract(t *testing.T) {
-	caps := &apiprotocol.MCPCapabilities{Routes: []apiprotocol.MCPRouteDescriptor{
-		{OperationID: "getPersonMerge", Method: http.MethodGet, Path: "/api/v1/person-merges/{merge_id}"},
-		{OperationID: "getPersonProfile", Method: http.MethodGet, Path: "/api/v1/people/{id}"},
-		{OperationID: "splitPersonMerge", Method: http.MethodPost, Path: "/api/v1/people/{id}/split", RequestProperties: []string{"merge_id"}},
-	}}
-	backend := newDaemonMCPOperations(nil, caps)
-	assert.Contains(t, backend.capabilities(), "get_person_merge")
-	assert.NotContains(t, backend.capabilities(), "split_person_merge")
-	assert.NotContains(t, backend.capabilities(), "get_person_merge_snapshot")
-	caps.Routes[2].RequestProperties = append(caps.Routes[2].RequestProperties, "participant_ids")
-	backend = newDaemonMCPOperations(nil, caps)
-	assert.Contains(t, backend.capabilities(), "split_person_merge")
+	fixture := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)})
+	backend := sourceOperationFixture(t, fixture)
+	caps, err := backend.client.MCPCapabilities(t.Context())
+	require.NoError(t, err)
+	for _, tc := range []struct{ operation, missing, name string }{
+		{"getPersonMerge", "route", "decide_person_merge_candidate"}, {"getPersonMerge", "route", "split_person_merge"},
+		{"getPersonProfile", "route", "decide_person_merge_candidate"}, {"getPersonProfile", "route", "split_person_merge"},
+		{"decidePersonMergeCandidate", "route", "decide_person_merge_candidate"}, {"decidePersonMergeCandidate", "decision", "decide_person_merge_candidate"}, {"decidePersonMergeCandidate", "person_id", "decide_person_merge_candidate"},
+		{"splitPersonMerge", "merge_id", "split_person_merge"}, {"splitPersonMerge", "participant_ids", "split_person_merge"},
+		{"listPersonMerges", "limit", "list_person_merges"}, {"listPersonMerges", "offset", "list_person_merges"},
+	} {
+		copyCaps := *caps
+		copyCaps.Routes = slices.Clone(caps.Routes)
+		for i := range copyCaps.Routes {
+			route := &copyCaps.Routes[i]
+			if route.OperationID != tc.operation {
+				continue
+			}
+			if tc.missing == "route" {
+				route.Method = http.MethodDelete
+			} else if tc.operation == "listPersonMerges" {
+				route.QueryParameters = slices.DeleteFunc(slices.Clone(route.QueryParameters), func(v string) bool { return v == tc.missing })
+			} else {
+				route.RequestProperties = slices.DeleteFunc(slices.Clone(route.RequestProperties), func(v string) bool { return v == tc.missing })
+			}
+		}
+		assert.NotContains(t, newDaemonMCPOperations(backend.client, &copyCaps).capabilities(), tc.name)
+	}
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -64,7 +65,7 @@ func validMergeDecision(a mergeDecisionArgs) bool {
 	return a.PersonID > 0 && a.MergeID > 0 && a.CandidateID > 0 && a.ETag != "" && (a.Decision == "accept" || a.Decision == "reject")
 }
 func validMergeSplit(a mergeSplitArgs) bool {
-	if a.PersonID <= 0 || a.MergeID <= 0 || a.ETag == "" || strings.TrimSpace(a.Key) == "" || len(a.Key) > 128 || a.ParticipantIDs == nil || len(a.ParticipantIDs) > 500 {
+	if a.PersonID <= 0 || a.MergeID <= 0 || a.ETag == "" || strings.TrimSpace(a.Key) == "" || len(strings.TrimSpace(a.Key)) > 128 || a.ParticipantIDs == nil {
 		return false
 	}
 	ids := map[int64]bool{}
@@ -78,7 +79,7 @@ func validMergeSplit(a mergeSplitArgs) bool {
 }
 func mergeRefusal(code string) bool {
 	switch code {
-	case "person_profile_not_found", "person_merge_not_found", "person_merge_revision_conflict", "person_merge_idempotency_conflict", "person_split_idempotency_conflict", "person_merge_already_split", "person_split_reviewed_candidates", "person_split_merge_not_owned", "person_carddav_published", "person_merge_candidate_not_found", "person_merge_candidate_state_changed", "person_split_invalid_participants", "person_merge_invalid", "if_match_required", "invalid_if_match", "idempotency_key_required", "invalid_idempotency_key":
+	case "person_profile_not_found", "person_merge_not_found", "person_merge_snapshot_corrupt", "invalid_merge_id", "invalid_candidate_id", "invalid_limit", "invalid_offset", "person_merge_revision_conflict", "person_merge_idempotency_conflict", "person_split_idempotency_conflict", "person_merge_already_split", "person_split_reviewed_candidates", "person_split_merge_not_owned", "person_carddav_published", "person_merge_candidate_not_found", "person_merge_candidate_state_changed", "person_split_invalid_participants", "person_merge_invalid", "if_match_required", "invalid_if_match", "idempotency_key_required", "invalid_idempotency_key":
 		return true
 	}
 	return false
@@ -102,7 +103,15 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		if e != nil || a.MergeID <= 0 {
 			return invalid()
 		}
-		result, err = readMCPOperationJSONWithClassifier[generated.PersonMergeDetail](ctx, b.client, http.MethodGet, "/api/v1/person-merges/{merge_id}", &generated.GetPersonMergeRequestOptions{PathParams: &generated.GetPersonMergePath{MergeID: a.MergeID}}, mergeRefusal, http.StatusOK)
+		data, _, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/person-merges/{merge_id}", &generated.GetPersonMergeRequestOptions{PathParams: &generated.GetPersonMergePath{MergeID: a.MergeID}}, 16<<20, mergeRefusal, http.StatusOK)
+		if failure != nil {
+			return failure, true, readErr
+		}
+		var detail generated.PersonMergeDetail
+		if e := json.Unmarshal(data, &detail); e != nil {
+			return operationFailure("invalid_operation_response", false), true, e
+		}
+		result = &mcpserver.OperationResult{Output: mcpserver.MergeDetail{Labels: detail.Labels, Merge: detail.Merge, Participants: detail.Participants, ReviewCandidates: detail.ReviewCandidates, Splits: detail.Splits, RowCount: len(detail.Rows)}}
 	case "get_person_merge_snapshot":
 		a, e := decodeMCPOperationArguments[mergeIDArgs](args)
 		if e != nil || a.MergeID <= 0 {
@@ -118,13 +127,8 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 				Persons []mcpserver.MergeSnapshotPerson `json:"persons"`
 				Rows    []struct{}                      `json:"rows"`
 			}
-			if json.Unmarshal(raw.Snapshot, &snapshot) != nil || len(snapshot.Persons) > 2 {
+			if raw.Version != 1 || json.Unmarshal(raw.Snapshot, &snapshot) != nil || len(snapshot.Persons) > 2 {
 				return operationFailure("invalid_operation_response", false), true, nil
-			}
-			for _, p := range snapshot.Persons {
-				if len(p.ParticipantIDs) > 500 {
-					return operationFailure("operation_response_limit_exceeded", false), true, nil
-				}
 			}
 			result.Output = mcpserver.MergeSnapshot{Version: raw.Version, SHA256: raw.Sha256, Persons: snapshot.Persons, RowCount: len(snapshot.Rows)}
 		}
@@ -181,31 +185,46 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 	if current == nil || current.IsError {
 		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 	}
-	if current.ETag != etag {
-		if name != "split_person_merge" {
+	var lineage any
+	detail, _, err := b.executeMergeRecovery(ctx, "get_person_merge", map[string]any{"merge_id": mergeID})
+	if err != nil {
+		return "", true, err
+	}
+	if detail == nil || detail.IsError {
+		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+	}
+	value, ok := detail.Output.(mcpserver.MergeDetail)
+	if !ok {
+		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+	}
+	if name == "decide_person_merge_candidate" {
+		a, _ := decodeMCPOperationArguments[mergeDecisionArgs](args)
+		i := slices.IndexFunc(value.ReviewCandidates, func(c generated.PersonMergeReviewCandidate) bool {
+			return c.ID == a.CandidateID && c.PersonID == a.PersonID
+		})
+		if i < 0 {
+			return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_not_found"}
+		}
+		candidate := value.ReviewCandidates[i]
+		lineage = candidate
+		wanted := "accepted"
+		if a.Decision == "reject" {
+			wanted = "rejected"
+		}
+		if a.Decision == "accept" {
+			effect = fmt.Sprintf("Replace the person's current value for attribute definition %d with absorbed value %d; exact split becomes unavailable.", candidate.DefinitionID, candidate.AbsorbedValueID)
+		} else {
+			effect = "Keep the current value."
+		}
+		if candidate.State == wanted {
+			effect += " This decision has already been recorded; the daemon will replay it."
+		} else if candidate.State == "pending" && current.ETag != etag {
 			return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_revision_conflict"}
 		}
-		// A completed split may be replayed with its original revision and key.
-		effect += " The supplied revision differs from current; the daemon will only allow a valid idempotent replay."
-	}
-	var lineage any
-	if mergeID > 0 {
-		detail, _, e := b.executeMergeRecovery(ctx, "get_person_merge", map[string]any{"merge_id": mergeID})
-		if e != nil {
-			return "", true, e
-		}
-		if detail == nil || detail.IsError {
-			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
-		}
-		lineage = detail.Output
-		if name == "decide_person_merge_candidate" {
-			a, _ := decodeMCPOperationArguments[mergeDecisionArgs](args)
-			value, ok := detail.Output.(generated.PersonMergeDetail)
-			if !ok || !slices.ContainsFunc(value.ReviewCandidates, func(c generated.PersonMergeReviewCandidate) bool {
-				return c.ID == a.CandidateID && c.PersonID == a.PersonID
-			}) {
-				return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_not_found"}
-			}
+	} else {
+		lineage = value
+		if current.ETag != etag {
+			effect += " The supplied revision differs from current; the daemon will only allow a valid idempotent replay."
 		}
 	}
 	data, err := json.Marshal(struct {
