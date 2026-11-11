@@ -23,8 +23,8 @@ import (
 )
 
 // EmailInviteSQL identifies email-derived events; source merges preserve source types.
-func EmailInviteSQL(messageType, sourceType, archiveOnly string) string {
-	return fmt.Sprintf("(COALESCE(%s, '') = 'calendar_event' AND COALESCE(%s, '') NOT IN ('gcal', 'ics') AND %s)", messageType, sourceType, archiveOnly)
+func EmailInviteSQL(messageType, sourceType string) string {
+	return fmt.Sprintf("(COALESCE(%s, '') = 'calendar_event' AND COALESCE(%s, '') NOT IN ('gcal', 'ics'))", messageType, sourceType)
 }
 
 // ICSMetadata records the accepted revision independently of the retained raw.
