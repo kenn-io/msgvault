@@ -172,9 +172,6 @@ For example, call `list_meeting_action_items` with:
 }
 ```
 
-For subtitles, call `get_meeting_context` with
-`{"message_ids":[42],"format":"vtt"}`; see [subtitle export](meetings.md#export-subtitles).
-
 Call `get_meeting_context` with `{"message_ids":[42],"format":"json"}`;
 add `"include_transcript":true` only when needed. Call `get_meeting_metrics`
 with `{"domains":["example.com"]}`. MCP scope filters are top-level arguments

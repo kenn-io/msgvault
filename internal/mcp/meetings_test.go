@@ -303,6 +303,10 @@ func TestMeetingMCPSubtitleOldDaemon(t *testing.T) {
 	must := require.New(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/health" {
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"5.0.0"}`))
+			return
+		}
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"invalid_meeting_format","message":"format must be json or markdown"}`))
 	}))
@@ -318,13 +322,18 @@ func TestMeetingMCPSubtitleOldDaemon(t *testing.T) {
 	clientSession, err := client.Connect(t.Context(), clientTransport, nil)
 	must.NoError(err)
 	t.Cleanup(func() { _ = clientSession.Close() })
-	result, err := clientSession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(1)}, "format": "srt"}})
-	must.NoError(err)
-	must.True(result.IsError)
-	must.NotEmpty(result.Content)
-	message, ok := result.Content[0].(*sdkmcp.TextContent)
-	must.True(ok)
-	must.Contains(message.Text, "invalid_meeting_format")
-	must.Contains(message.Text, "5.1.0")
-	must.Contains(message.Text, "upgrade")
+	for _, format := range []string{"srt", "vtt"} {
+		t.Run(format, func(t *testing.T) {
+			must := require.New(t)
+			result, err := clientSession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(1)}, "format": format}})
+			must.NoError(err)
+			must.True(result.IsError)
+			must.NotEmpty(result.Content)
+			message, ok := result.Content[0].(*sdkmcp.TextContent)
+			must.True(ok)
+			must.Contains(message.Text, "invalid_meeting_format")
+			must.Contains(message.Text, "5.1.0")
+			must.Contains(message.Text, "upgrade")
+		})
+	}
 }

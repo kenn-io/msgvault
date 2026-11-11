@@ -48,41 +48,6 @@ matches. Meetings mode does not offer selection or deletion.
 Unscoped search includes meetings and chats. Email-specific CLI and TUI
 aggregates remain email-only unless you choose another message type.
 
-## Export subtitles
-
-Export one archived meeting as SRT or WebVTT through the daemon:
-
-```bash
-msgvault meetings context --id 42 --format srt
-msgvault meetings context --id 42 --format vtt -o meeting.vtt
-```
-
-Subtitle formats require daemon API schema 5.1.0 or newer. Cues show
-`Speaker: text`; an unnamed Omi or Twenty speaker appears as `Unknown speaker`.
-Nonblank line breaks survive, and interior blank lines collapse to one line
-break.
-
-WebVTT preserves indentation and escapes text and labels. SRT trims each line
-and refuses timing lines, tags, and subtitle override syntax that players
-interpret as formatting. Use WebVTT for literal control text. Multiline speaker
-labels and NUL characters cause an error. The command validates and renders
-before replacing a file, so timing, formatting, and size errors leave an
-existing destination untouched.
-
-Export uses retained structured segments from Omi, Pocket, and Twenty. Every cue
-needs a start and end, and the recording start must be known: Omi uses
-`started_at`; Pocket uses `recorded_at` or `recording.recording_at`; and Twenty
-uses `recording.startedAt`. Calendar, creation, and message dates cannot supply
-it. Missing bounds and other sources return an error. Overlaps and leading
-silence survive.
-
-Pocket's current transcript must have matching timing; pending evidence can make
-timing unavailable. Twenty uses both relative bounds when available; otherwise
-both absolute bounds must be available.
-
-Subtitle exports load transcript evidence automatically and require exactly one
-distinct meeting ID. `--max-bytes` limits the complete output.
-
 ## Export context and read follow-ups
 
 In Messages, select meeting rows and choose **Meeting context…** in the
@@ -124,6 +89,19 @@ permission. CLI dates use `YYYY-MM-DD`; HTTP and MCP scope dates use full
 RFC3339 timestamps. See the [CLI flags](../cli-reference.md#meetings),
 [HTTP contract](../api-server.md#meeting-intelligence), and
 [MCP examples](chat.md#meeting-evidence).
+
+### Export subtitles
+
+Format `srt` or `vtt` exports one meeting's transcript with recording-relative
+cue times and speaker labels. It needs exactly one meeting ID, includes the
+transcript without opting in, and the byte budget limits the complete output.
+
+Omi, Pocket, and Twenty meetings export when every cue has a start and end and
+the recording start is known: Omi's `started_at`, Pocket's `recorded_at` or
+`recording.recording_at`, or Twenty's `recording.startedAt`. Calendar,
+creation, and message dates don't substitute. Other sources and missing times
+return an error. SRT refuses speech containing tags, override commands, or
+timing lines, which players reinterpret; use WebVTT for that speech.
 
 ## Understand meeting time and coverage
 

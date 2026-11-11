@@ -122,64 +122,45 @@ func TestSubtitleBlankLinesStayWithinCue(t *testing.T) {
 }
 
 func TestSubtitleMarkupPlayer(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, speaker string
+		bad                 bool
+	}{
+		{"tag", "Please type <i> literally</i>", "", true},
+		{"override", `{\i1}literal`, "", true},
+		{"spaced tag", "Please type < i> literally", "", true},
+		{"speaker tag", "Hello", "<i>A</i>", true},
+		{"timecode", "Hello\n00:00:05,000 --> 00:00:06,000\nWorld", "", true},
+		{"coordinates", "Hello\n+0:0:05.0 --> 0:0:06.0 X1:2\nWorld", "", true},
+		{"ordinary numbers", "Hello\n2025 --> 2026\nWorld", "", false},
+		{"comparison", "2 < 3 > 1", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			must := require.New(t)
+			raw, err := json.Marshal(map[string]any{"started_at": "2026-01-01T00:00:00Z", "transcript_segments": []any{map[string]any{"text": tc.text, "speaker_name": tc.speaker, "start": 0, "end": 2}}})
+			must.NoError(err)
+			result, err := RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+			if tc.bad {
+				must.ErrorIs(err, ErrInvalidSubtitles)
+				must.ErrorContains(err, "vtt")
+			} else {
+				must.NoError(err)
+				must.Contains(result.Content, tc.text)
+			}
+		})
+	}
+
 	must := require.New(t)
-	checks := assert.New(t)
 	raw := []byte(`{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":"Please type <i> literally</i>","start":0,"end":2}]}`)
-	_, err := RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
-	must.ErrorIs(err, ErrInvalidSubtitles)
-	_, err = RenderSubtitles("omi_json", []byte(`{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":"{\\i1}literal","start":0,"end":2}]}`), PacketOptions{Format: FormatSRT, MaxBytes: 4096})
-	must.ErrorIs(err, ErrInvalidSubtitles)
 	vtt, err := RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatVTT, MaxBytes: 4096})
 	must.NoError(err)
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
 		t.Skip("ffmpeg not installed")
 	}
-	convert := func(format, input string) string {
-		command := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-f", format, "-i", "pipe:0", "-f", "ass", "pipe:1")
-		command.Stdin = strings.NewReader(input)
-		out, err := command.CombinedOutput()
-		must.NoError(err, string(out))
-		return string(out)
-	}
-	checks.Contains(convert("webvtt", vtt.Content), "Please type <i> literally</i>")
-}
-
-func TestSubtitleSRTTimingLines(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		text string
-		bad  bool
-	}{
-		{"coordinates", "Hello\n+0:0:05.0 --> 0:0:06.0 X1:2\nWorld", true},
-		{"ordinary numbers", "Hello\n2025 --> 2026\nWorld", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			must := require.New(t)
-			raw, err := json.Marshal(map[string]any{"started_at": "2026-01-01T00:00:00Z", "transcript_segments": []any{map[string]any{"text": tc.text, "start": 0, "end": 2}}})
-			must.NoError(err)
-			_, err = RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
-			if tc.bad {
-				must.ErrorIs(err, ErrInvalidSubtitles)
-			} else {
-				must.NoError(err)
-			}
-		})
-	}
-}
-
-func TestSubtitleInputFindings(t *testing.T) {
-	for _, tc := range []struct{ name, format, raw, message string }{
-		{"spaced tag", "omi_json", `{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":"Please type < i> literally","start":0,"end":2}]}`, "vtt"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			must := require.New(t)
-			_, err := RenderSubtitles(tc.format, []byte(tc.raw), PacketOptions{Format: FormatSRT, MaxBytes: 4096})
-			must.ErrorIs(err, ErrInvalidSubtitles)
-			must.ErrorContains(err, tc.message)
-		})
-	}
-	result, err := RenderSubtitles("omi_json", []byte(`{"started_at":"2026-01-01T00:00:00Z","transcript_segments":[{"text":"2 < 3 > 1","start":0,"end":2}]}`), PacketOptions{Format: FormatSRT, MaxBytes: 4096})
-	require.NoError(t, err)
-	assert.Contains(t, result.Content, "2 < 3 > 1")
+	command := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-f", "webvtt", "-i", "pipe:0", "-f", "ass", "pipe:1")
+	command.Stdin = strings.NewReader(vtt.Content)
+	out, err := command.CombinedOutput()
+	must.NoError(err, string(out))
+	must.Contains(string(out), "Please type <i> literally</i>")
 }

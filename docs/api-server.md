@@ -2448,8 +2448,6 @@ envelope. Save `content` directly; `content_bytes`, `truncated`, and
 `omitted_message_ids` describe that exact download. Mixed selections fail with
 `selection_not_all_meetings`.
 
-See [subtitle export](usage/meetings.md#export-subtitles) for SRT and VTT limits.
-
 A direct `scope` supports `message_ids`, `source_ids`, `participant_id` or
 `participant_ids`, `person_id`, `domains`, `after`, `before`, and `deletion`.
 Person and participant scopes are mutually exclusive. Different filter groups
