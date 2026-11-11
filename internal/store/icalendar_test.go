@@ -293,6 +293,24 @@ func TestICalendarCancellationKeepsImplicitAllDayEnd(t *testing.T) {
 	assertions.Equal("2027-03-11", page.Occurrences[0].EndDate)
 }
 
+func TestICalendarOversizedRevisionPreservesEvent(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	initial := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Original")
+	_, err := st.PersistICalendarContext(t.Context(), source, initial)
+	requirements.NoError(err)
+	revision := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Updated\r\nDESCRIPTION:"+strings.Repeat("x", maxMeetingRawBytes))
+	_, err = st.PersistICalendarContext(t.Context(), source, revision)
+	requirements.ErrorIs(err, errMeetingRawTooLarge)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal("Original", page.Occurrences[0].Subject)
+	assertions.Empty(page.Unexpandable)
+}
+
 func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
