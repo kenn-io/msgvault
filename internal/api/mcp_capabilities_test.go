@@ -84,6 +84,7 @@ func TestMCPCapabilitiesDescribeRealOperationRoutes(t *testing.T) {
 		{"markLoopDone", http.MethodPost, "/api/v1/loops/{message_id}/done"},
 		{"snoozeLoop", http.MethodPost, "/api/v1/loops/{message_id}/snooze"},
 		{"reopenLoop", http.MethodPost, "/api/v1/loops/{message_id}/reopen"},
+		{"setCommitmentDecision", http.MethodPost, "/api/v1/loops/commitments/{commitment_id}/decision"},
 	} {
 		requirements.Contains(routes, tc.id)
 		assertions.Equal(tc.method, routes[tc.id].Method)
@@ -92,11 +93,12 @@ func TestMCPCapabilitiesDescribeRealOperationRoutes(t *testing.T) {
 	assertions.ElementsMatch([]string{"names", "contact_points", "addresses", "dates", "categories", "media"}, routes["patchPersonStructuredProfile"].RequestProperties)
 	assertions.Contains(routes["listDeletions"].QueryParameters, "status")
 	assertions.Contains(routes["runCLI"].RequestProperties, "args")
-	assertions.ElementsMatch([]string{"limit", "person_id"}, routes["listLoops"].QueryParameters)
+	assertions.ElementsMatch([]string{"include_closed", "limit", "person_id"}, routes["listLoops"].QueryParameters)
 	for _, param := range []string{"person_id", "source_id", "conversation_id", "incoming_only"} {
 		assertions.Contains(routes["listChangedMessages"].QueryParameters, param)
 	}
 	assertions.Contains(routes["snoozeLoop"].RequestProperties, "until")
+	assertions.ElementsMatch([]string{"state", "until"}, routes["setCommitmentDecision"].RequestProperties)
 	assertions.Contains(routes["markLoopDone"].QueryParameters, "question_message_ids")
 	assertions.Contains(routes["snoozeLoop"].QueryParameters, "question_message_ids")
 }
