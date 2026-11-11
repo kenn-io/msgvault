@@ -84,6 +84,8 @@ func find(entries []entry, args Arguments, url string) int {
 	}
 	return -1
 }
+
+// Subscribe requires a request returned by DecodeSubscribe.
 func (s *Service) Subscribe(ctx context.Context, in SubscribeRequest) (SubscribeResult, error) {
 	var out SubscribeResult
 	if !s.Enabled || s.Store == nil {
@@ -171,6 +173,8 @@ func (s *Service) Subscribe(ctx context.Context, in SubscribeRequest) (Subscribe
 		return SubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: status}, nil
 	}
 }
+
+// Unsubscribe requires a request returned by DecodeUnsubscribe.
 func (s *Service) Unsubscribe(ctx context.Context, in UnsubscribeRequest) error {
 	if !s.Enabled || s.Store == nil {
 		return failure(Unavailable, "disabled")
