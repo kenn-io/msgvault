@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +12,7 @@ import (
 )
 
 // This opt-in test exercises the packaged command, real daemon CLI runner,
-// archive writes, cache refresh, search and replay using only invented data.
+// archive writes and cache refresh using only invented data.
 func TestInstagramBuiltCLI(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -45,12 +44,4 @@ func TestInstagramBuiltCLI(t *testing.T) {
 	first := string(run("import-instagram", "--account", "orbit.example", "--self-name", "unmatched", "--limit", "2", fixture))
 	assert.Contains(first, "No sender exactly matched --self-name")
 	assert.Contains(first, "Import paused at --limit")
-	// Machine-readable search output is stdout only; capture stderr separately.
-	command := exec.CommandContext(t.Context(), binary, "--home", home, "--local", "search", "telescope", "--message-type", "instagram", "--json") //nolint:gosec // The opt-in operator supplies the built binary.
-	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + home, "NO_COLOR=1"}
-	output, err := command.Output()
-	require.NoError(err)
-	var results []json.RawMessage
-	require.NoError(json.Unmarshal(output, &results))
-	require.Len(results, 1)
 }

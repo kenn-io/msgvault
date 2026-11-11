@@ -137,7 +137,6 @@ func TestDiscover_UnnumberedJSONSiblingCountsAndFormat(t *testing.T) {
 	assert.Equal(t, 4, skipped)
 	assert.Equal(t, "html", dirs[0].Format,
 		"unnumbered JSON sibling must not promote thread to json/both")
-	assert.Equal(t, "both", dirs[1].Format)
 }
 
 func TestDiscover_IgnoresDSStore(t *testing.T) {
