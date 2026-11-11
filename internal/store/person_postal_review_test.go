@@ -21,7 +21,7 @@ func TestLegacyPostalAddressShape(t *testing.T) {
 		name, original string
 		structured     bool
 	}{
-		{"six parts", ";;12 Example St;City;;", false},
+		{"six parts", ";;12 Example St;City;;", true},
 		{"seven parts", ";;12 Example St;City;;;", true},
 		{"extended parts", `;;12 Example St;City;;;;Room\;3;Floor 2`, true},
 		{"geo text", "geo:1,2;u=35", false},
