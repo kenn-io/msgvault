@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/callhistory"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 // CallQuery uses an inclusive After and exclusive Before. Evidence pages use
@@ -92,6 +93,14 @@ func (s *Store) callRolesSQL() string {
 			WHERE pp.participant_id = r.participant_id AND pp.person_id IN (` + fmt.Sprintf(personIDsForParticipantsSQL, ownerParticipantIDsSQL) + `))`
 }
 
+// callTimeBound compares SQLite timestamps as exact instants, including offsets.
+func (s *Store) callTimeBound(column string, bound time.Time) (string, any) {
+	if s.IsPostgreSQL() {
+		return column, bound.UTC()
+	}
+	return sqliteutil.TimestampKeyFunction + "(" + column + ")", sqliteutil.TimestampKey(bound)
+}
+
 // ListCallObservationsContext excludes archive-deleted and source-deleted calls.
 // It never reads raw payloads or bodies.
 func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([]CallObservationView, error) {
@@ -111,10 +120,12 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 		args = append(args, q.PersonID)
 	}
 	if q.After != nil {
-		where, args = append(where, "c.occurred_at >= ?"), append(args, q.After.UTC())
+		column, bound := s.callTimeBound("c.occurred_at", *q.After)
+		where, args = append(where, column+" >= ?"), append(args, bound)
 	}
 	if q.Before != nil {
-		where, args = append(where, "c.occurred_at < ?"), append(args, q.Before.UTC())
+		column, bound := s.callTimeBound("c.occurred_at", *q.Before)
+		where, args = append(where, column+" < ?"), append(args, bound)
 	}
 	args = append(args, limit)
 	out := []CallObservationView{}
@@ -201,10 +212,12 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		where, args = append(where, "p.person_id = ?"), append(args, q.PersonID)
 	}
 	if q.After != nil {
-		where, args = append(where, "a.occurred_at >= ?"), append(args, q.After.UTC())
+		column, bound := s.callTimeBound("a.occurred_at", *q.After)
+		where, args = append(where, column+" >= ?"), append(args, bound)
 	}
 	if q.Before != nil {
-		where, args = append(where, "a.occurred_at < ?"), append(args, q.Before.UTC())
+		column, bound := s.callTimeBound("a.occurred_at", *q.Before)
+		where, args = append(where, column+" < ?"), append(args, bound)
 	}
 	args = append(args, limit, q.Offset)
 	out := []PersonCallSummary{}
