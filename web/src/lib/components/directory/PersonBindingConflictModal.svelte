@@ -259,9 +259,11 @@
       }}
     />
 
-    {#if reloadRequired && pending}<p class="loading" role="status"><span aria-hidden="true"><Spinner size={16} /></span> Reloading profiles…</p>{/if}
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
-    {#if completed}<p role="status">People merged.</p>{/if}
+    <div class="feedback">
+      {#if reloadRequired && pending}<p class="loading" role="status"><span aria-hidden="true"><Spinner size={16} /></span> Reloading profiles…</p>{/if}
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
+      {#if completed}<p role="status">People merged.</p>{/if}
+    </div>
   </div>
 
   {#snippet footer()}
@@ -312,6 +314,9 @@
   article span {
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+  }
+  .feedback {
+    min-height: 20px;
   }
   .loading {
     display: flex;
