@@ -150,7 +150,10 @@ func (b *daemonMCPOperations) executeVisualOperation(ctx context.Context, name s
 			DuplicateCost: mcpserver.VisualDuplicateCost{AtLeastOnce: status.DuplicateCost.AtLeastOnce, ProviderIdempotent: status.DuplicateCost.ProviderIdempotent},
 		}
 		if name == "get_visual_attachment_status" && input.Coverage {
-			projection := result.Output.(mcpserver.VisualOperationStatus)
+			projection, ok := result.Output.(mcpserver.VisualOperationStatus)
+			if !ok {
+				return operationFailure("invalid_operation_response", method != http.MethodGet), true, nil
+			}
 			projection.Eligible, projection.UnknownRole, projection.Unavailable = &status.Eligible, &status.UnknownRole, &status.Unavailable
 			projection.Formats = &status.Formats
 			result.Output = projection
