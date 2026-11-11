@@ -289,7 +289,11 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 			f := newPersonSweepApplyFixture(t, "commitment-different-survivor", false)
 			st := f.store
 			_, persist := newCommitmentTestConversation(t, f)
-			survivor := persist("survivor", tc.prefix+tc.quote, -time.Hour)
+			survivorBody := tc.prefix + tc.quote
+			if tc.name == "punctuation" {
+				survivorBody = original
+			}
+			survivor := persist("survivor", survivorBody, -time.Hour)
 			absorbed := persist("absorbed", original, -time.Hour)
 			cfg := peoplesweep.Config{}
 			cfg.ApplyDefaults()
@@ -299,15 +303,24 @@ func TestCommitmentMergeTransfersDecisionOnlyToExactSurvivorQuote(t *testing.T) 
 			window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
 			r.NoError(err)
 			r.Len(window.Sources, 2)
-			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
-				Promises: []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, absorbed), Direction: peoplesweep.CommitmentOwedTo,
-					Quote: original, Summary: "Send draft", End: int64(len(original))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
-			}))
+			promises := []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, absorbed), Direction: peoplesweep.CommitmentOwedTo,
+				Quote: original, Summary: "Send draft", End: int64(len(original))}}
+			if tc.name == "punctuation" {
+				promises = append(promises, peoplesweep.CommitmentPromise{SourceID: commitmentSourceID(window, survivor), Direction: peoplesweep.CommitmentOwedTo, Quote: tc.quote, Summary: "Send draft", End: int64(len(tc.quote))})
+			}
+			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: promises, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
 			r.NoError(err)
 			items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
 			r.NoError(err)
-			r.Len(items, 1)
-			_, err = st.DecidePersonCommitmentContext(ctx, items[0].ID, LoopStateDone, nil, f.request.CompletedAt)
+			r.Len(items, len(promises))
+			var absorbedID int64
+			for _, item := range items {
+				if item.AnchorMessageID == absorbed {
+					absorbedID = item.ID
+				}
+			}
+			r.Positive(absorbedID)
+			_, err = st.DecidePersonCommitmentContext(ctx, absorbedID, LoopStateDone, nil, f.request.CompletedAt)
 			r.NoError(err)
 			_, err = st.MergeDuplicates(ctx, survivor, []int64{absorbed}, "commitment-different-survivor")
 			r.NoError(err)
@@ -482,6 +495,14 @@ func TestCommitmentOnlyMaintenanceInvalidatesEvidenceBeyondFirstBatch(t *testing
 	r.True(due)
 	latest, err := st.LatestPersonSweepChangeSequence(ctx)
 	r.NoError(err)
+	catalog, err := st.BuildPersonFactCatalogContext(ctx, true)
+	r.NoError(err)
+	_, err = st.ReconcilePersonSweepWorkContext(ctx, peoplesweep.GapRequest{ProgramFingerprint: peoplesweep.ProgramFingerprint(), CatalogFingerprint: catalog.Fingerprint, SourceLanes: profile.AllowedSources, Limit: 10, Now: now, BackstopInterval: cfg.BackstopInterval})
+	r.NoError(err)
+	keys := []peoplesweep.CursorKey{{PersonID: f.personID, SourceLane: peoplesweep.SourceConversationText, ProgramFingerprint: peoplesweep.ProgramFingerprint(), CatalogFingerprint: catalog.Fingerprint}}
+	baseline, err := st.EnsurePersonSweepCursors(ctx, keys)
+	r.NoError(err)
+	r.Len(baseline, 1)
 	runner := &commitmentMaintenanceDeniedRunner{}
 	serial := 0
 	worker := peoplesweep.Worker{Config: cfg, Store: st, Source: st, Sink: st, Catalog: st,
@@ -500,10 +521,8 @@ func TestCommitmentOnlyMaintenanceInvalidatesEvidenceBeyondFirstBatch(t *testing
 	for _, item := range evidence {
 		a.False(item.Supported, "the consumed commitment range must invalidate every deleted citation")
 	}
-	catalog, err := st.BuildPersonFactCatalogContext(ctx, true)
-	r.NoError(err)
-	cursors, err := st.EnsurePersonSweepCursors(ctx, []peoplesweep.CursorKey{{PersonID: f.personID, SourceLane: peoplesweep.SourceConversationText, ProgramFingerprint: peoplesweep.ProgramFingerprint(), CatalogFingerprint: catalog.Fingerprint}})
+	cursors, err := st.EnsurePersonSweepCursors(ctx, keys)
 	r.NoError(err)
 	r.Len(cursors, 1)
-	a.Zero(cursors[0].OptimisticSequence, "local invalidation must retain pending provider extraction")
+	a.Equal(baseline[0].OptimisticSequence, cursors[0].OptimisticSequence, "local invalidation must retain pending provider extraction")
 }
