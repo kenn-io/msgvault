@@ -106,7 +106,8 @@ func (s *Store) GetPersonAppreciationStatesContext(ctx context.Context, keys []s
 }
 
 // RecordPersonAppreciationDismissalContext preserves the first audit, including
-// when another caller has already inserted a proof-only row.
+// when another caller has already inserted a proof-only row. Audit identities
+// are stored byte-for-byte without normalization; whitespace-only values are rejected.
 func (s *Store) RecordPersonAppreciationDismissalContext(ctx context.Context, key, personUID, actor string, at time.Time) (PersonAppreciationState, error) {
 	if !validAppreciationKey(key) {
 		return PersonAppreciationState{}, fmt.Errorf("dismiss appreciation: %w", ErrInvalidPersonAppreciationKey)

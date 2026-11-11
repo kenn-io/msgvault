@@ -9,10 +9,9 @@ import (
 )
 
 // AppreciationContributionKey identifies a native message independently of
-// person membership, local database coordinates, and message content. The v1
-// encoding/json v1 encoding, including its escaping, is immutable: changing it
-// requires an archive migration that
-// preserves existing dismissal tombstones.
+// person membership, local database coordinates, and message content. Version 1
+// uses the encoding/json v1 format, including its escaping. Changing that format
+// requires an archive migration that preserves existing dismissal tombstones.
 func AppreciationContributionKey(sourceType, sourceIdentifier, sourceMessageID string) (string, error) {
 	for _, value := range []string{sourceType, sourceIdentifier, sourceMessageID} {
 		if value == "" || !utf8.ValidString(value) {
