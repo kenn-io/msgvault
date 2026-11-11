@@ -74,7 +74,7 @@ func newMacOSCallsCommand(open func(context.Context) (callCommandClient, func(),
 			}{imported})
 		}}
 	command.Flags().StringVar(&path, "db", "", "Path to CallHistory.storedata (default: macOS call history)")
-	command.Flags().StringVar(&account, "account", "", "Stable namespace for this call history; reuse for later imports")
+	command.Flags().StringVar(&account, "account", "", "History label; reuse it for later imports")
 	_ = command.MarkFlagRequired("account")
 	return command
 }
