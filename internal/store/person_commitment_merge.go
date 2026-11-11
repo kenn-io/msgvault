@@ -51,8 +51,14 @@ func (s *Store) transferCommitmentDecisionTx(ctx context.Context, tx *loggedTx, 
 		WHERE person_id = ? AND anchor_message_id = ? AND direction = ? AND quote_start = ? AND quote_end = ?`,
 		personID, messageID, from.Direction, from.Start, from.End))
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = tx.ExecContext(ctx, `UPDATE person_commitments SET person_id = ?, anchor_message_id = ?,
-			current_claim_id = NULL, fulfilment_evidence_id = NULL, fulfilment_confirmed = 0 WHERE id = ?`, personID, messageID, from.ID)
+		_, err = tx.ExecContext(ctx, `INSERT INTO person_commitments
+			(person_id, anchor_message_id, current_claim_id, target_key, direction,
+			quote, quote_start, quote_end, summary, due_on, promised_at, expires_at,
+			owner_state, snoozed_until, reopened_at, fulfilment_evidence_id, fulfilment_confirmed)
+			SELECT ?, ?, NULL, target_key, direction,
+			quote, quote_start, quote_end, summary, due_on, promised_at, expires_at,
+			owner_state, snoozed_until, reopened_at, NULL, 0
+			FROM person_commitments WHERE id = ?`, personID, messageID, from.ID)
 	} else if err == nil {
 		state, snooze := current.State, laterCommitmentTime(current.SnoozedUntil, from.SnoozedUntil)
 		if from.State == LoopStateDone || current.State == LoopStateDone {
@@ -62,9 +68,6 @@ func (s *Store) transferCommitmentDecisionTx(ctx context.Context, tx *loggedTx, 
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE person_commitments SET owner_state = ?, snoozed_until = ?, reopened_at = ? WHERE id = ?`,
 			state, s.commitmentTimestamp(snooze), s.commitmentTimestamp(laterCommitmentTime(current.ReopenedAt, from.ReopenedAt)), current.ID)
-		if err == nil {
-			_, err = tx.ExecContext(ctx, `DELETE FROM person_commitments WHERE id = ?`, from.ID)
-		}
 	}
 	if err != nil {
 		return err
