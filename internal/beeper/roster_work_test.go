@@ -635,3 +635,63 @@ func TestLateSharedEmailExplainsExistingSuggestion(t *testing.T) {
 		"the separate chat recorded the email")
 	assert.NotNil(sharedEmail(), "the newly shared email must explain the existing suggestion")
 }
+
+// A service registered for the account after its roster settled must reach
+// the unchanged members on the next visit.
+func TestServiceRegistrationRematchesSettledRoster(t *testing.T) {
+	t.Parallel()
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!mystery-room:example.test", 1, time.Now().Add(-48*time.Hour))
+	chat.AccountID, chat.Network, chat.Type = "acct-custom", "Mystery Bridge", "group"
+	chat.Participants = []map[string]any{
+		{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+		{"id": "@bridge-a_alice:beeper.local", "fullName": "Alice Example", "username": "alice"},
+	}
+	chat.Msgs[0].SenderID = "@bridge-a_alice:beeper.local"
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	opts := ImportOptions{AccountID: "acct-custom", NoMedia: true}
+	_, err := imp.Import(t.Context(), opts)
+	require.NoError(err)
+	state := latestBeeperState(t, imp).Chats[chat.ID]
+	require.NotNil(state.RosterWork)
+	require.True(state.RosterWork.Settled)
+	alice := participantForBeeperUser(t, st, "@bridge-a_alice:beeper.local")
+	usernameServices := func() []string {
+		observations, err := st.ListParticipantObservationsContext(t.Context(), alice, true)
+		require.NoError(err)
+		var slugs []string
+		for _, observation := range observations {
+			if observation.AddressKind == store.ContactAddressUsername && observation.ServiceSlug != nil {
+				slugs = append(slugs, *observation.ServiceSlug)
+			}
+		}
+		return slugs
+	}
+	require.Equal([]string{"bridge-a"}, usernameServices())
+
+	configured, created, err := st.EnsureCommunicationServiceContext(t.Context(), store.CommunicationServiceInput{
+		Slug: "acct-custom", DisplayLabel: "Configured Account Service",
+		ScopePolicy: store.ScopePolicyOptional, Normalization: store.NormalizationLower, NormalizationVersion: 1,
+	})
+	require.NoError(err)
+	require.True(created)
+	f.appendMsg(chat.ID, fakeMsg{
+		ID: chat.ID + "-new", SortKey: 1, Timestamp: time.Now(), Text: "new", SenderID: "@bridge-a_alice:beeper.local",
+	})
+	_, err = imp.Import(t.Context(), opts)
+	require.NoError(err)
+
+	assert.Contains(usernameServices(), "acct-custom", "the registered service must reach the unchanged member")
+	var serviceID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT COALESCE(service_id, 0) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = ?`),
+		alice, participantIdentifierType).Scan(&serviceID))
+	assert.Equal(configured.ID, serviceID, "the member's Beeper identifier moves to the registered service")
+	state = latestBeeperState(t, imp).Chats[chat.ID]
+	require.NotNil(state.RosterWork)
+	assert.True(state.RosterWork.Settled)
+	assert.Empty(state.RosterWork.Members, "a settled roster keeps no per-member progress")
+}

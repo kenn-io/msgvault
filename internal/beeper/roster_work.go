@@ -29,6 +29,9 @@ type rosterWork struct {
 	MembershipApplied bool                        `json:"membership_applied,omitzero"`
 	MatchingPending   bool                        `json:"matching_pending,omitzero"`
 	DetailBacked      bool                        `json:"detail_backed,omitzero"`
+	// Routes digests how this roster's bridge prefixes map to services when
+	// its matching last started, so a catalog change matches every member again.
+	Routes string `json:"routes,omitempty"`
 }
 
 func (w *rosterWork) setSignature(signature string) {
@@ -52,6 +55,54 @@ func (w *rosterWork) settle() {
 func shortDigest(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:16])
+}
+
+// rosterRoutes digests each member's bridge prefix with the service capture
+// resolves for it and that service's scope and normalization rules. Scope also
+// depends on the member and account IDs, which the roster signature covers.
+// It polls the cooperative stop between members and uses the run's resolver
+// cache, so it reads the catalog once per distinct prefix.
+func (imp *Importer) rosterRoutes(ctx context.Context, opts ImportOptions, roster *rosterObservations) (string, error) {
+	type route struct {
+		Prefix               string
+		ServiceID            int64
+		Slug                 string
+		ScopePolicy          string
+		Normalization        string
+		NormalizationVersion int
+	}
+	cc := captureContext{AccountID: opts.AccountID, Network: roster.detail.Network, BridgePrefix: roster.bridgePrefix}
+	seen := make(map[route]bool)
+	routes := make([]jsontext.Value, 0, 1)
+	for _, member := range roster.members {
+		if err := opts.rosterStop(ctx); err != nil {
+			return "", err
+		}
+		service, prefix, err := imp.obs.memberRoute(ctx, member.user, cc)
+		if err != nil {
+			return "", err
+		}
+		item := route{Prefix: prefix}
+		if service != nil {
+			item.ServiceID, item.Slug, item.ScopePolicy = service.ID, service.Slug, service.ScopePolicy
+			item.Normalization, item.NormalizationVersion = service.Normalization, service.NormalizationVersion
+		}
+		if seen[item] {
+			continue
+		}
+		seen[item] = true
+		data, err := json.Marshal(item, json.Deterministic(true))
+		if err != nil {
+			return "", err
+		}
+		routes = append(routes, data)
+	}
+	slices.SortFunc(routes, func(a, b jsontext.Value) int { return bytes.Compare(a, b) })
+	data, err := json.Marshal(routes, json.Deterministic(true))
+	if err != nil {
+		return "", err
+	}
+	return shortDigest(data), nil
 }
 
 func (imp *Importer) completeRoster(ctx context.Context, convID int64, complete bool, members []resolvedMember, work *rosterWork) error {

@@ -1293,8 +1293,31 @@ type rosterObservations struct {
 // Capture follows committed membership and alternates with message work.
 // A member already in flight may finish its own transactions before yielding.
 func (imp *Importer) captureRosterObservations(ctx context.Context, sourceID int64, opts ImportOptions, roster *rosterObservations, sum *ImportSummary) error {
+	// A service registered or changed after matching must reach unchanged
+	// members too, so a changed routing digest matches every member again.
+	routes, err := imp.rosterRoutes(ctx, opts, roster)
+	if cerr := ctx.Err(); cerr != nil {
+		return cerr
+	}
+	switch {
+	case errors.Is(err, errBeeperBudgetExpired):
+		return err
+	case err != nil:
+		// The saved completion stands; the next visit checks the routes again.
+		slog.Warn("beeper roster service routes unavailable", "chat_id", roster.detail.ID, "error", err)
+	case routes != roster.work.Routes:
+		roster.work.Routes = routes
+		roster.work.Settled = false
+		roster.work.MatchingPending = true
+		roster.work.Members = make(map[string]rosterMemberWork, len(roster.members))
+		for _, member := range roster.members {
+			roster.work.Members[member.key] = rosterMemberWork{
+				Inputs: rosterMemberSignature(member.user, roster.detail, opts.AccountID, roster.bridgePrefix),
+			}
+		}
+	}
 	if roster.work.Settled {
-		return ctx.Err()
+		return nil
 	}
 	for _, member := range roster.members {
 		if err := opts.rosterStop(ctx); err != nil {
