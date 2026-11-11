@@ -81,8 +81,8 @@ func (r record) observation(account string) (callhistory.Observation, error) {
 	id, _ := r["ZUNIQUE_ID"].(string)
 	o := callhistory.Observation{
 		RecordID: id, Raw: data,
-		Evidence: {Version: 1, Provider: "macos", Account: account,
-			Direction: "unknown", Outcome: "unknown", OwnerParticipation: "unknown", OccurredAt: at},
+		Version: 1, Provider: "macos", Account: account,
+		Direction: "unknown", Outcome: "unknown", OwnerParticipation: "unknown", OccurredAt: at,
 	}
 	switch r["ZORIGINATED"] {
 	case int64(0):
