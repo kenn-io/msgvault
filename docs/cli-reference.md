@@ -2169,7 +2169,7 @@ Timed recurring events reuse the first occurrence's elapsed duration. Durations 
 When a recurring series starts during skipped local clock time, later occurrences inherit the adjusted start time.
 
 An email and its event count as two archive records in account listings and
-statistics. Provider verification counts the email once. Deleting or hiding the
+statistics. Provider verification counts the email once. Hiding the
 email keeps the event; removing its account removes both.
 
 The next email re-derivation extracts invites from archived MIME automatically
