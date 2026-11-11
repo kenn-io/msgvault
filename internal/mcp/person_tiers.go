@@ -23,8 +23,8 @@ func personTierAvailable(c catalogCapabilities) bool { return c.personTier }
 
 func previewPersonTiersDefinition() toolDefinition {
 	d := readDefinition(ToolPreviewPersonTiers,
-		"List saved people in tier 1 (sustained two-way contact in the short window) or tier 2 (two-way contact or meetings in the long window), "+
-			"with the matching rule, whether each is tracked, and the latest day that counted. readiness.ready is false while the activity projection "+
+		"List saved people in contact tiers 1 and 2. Tier 1 means sustained two-way contact in the short window; tier 2 means two-way contact or meetings in the long window. "+
+			"Each row includes the matching rule, whether the person is tracked, and the latest day that counted. readiness.ready is false while the activity projection "+
 			"is behind or built under other settings, so counts may be low. "+personTierHandling,
 		closedObject(map[string]*jsonschema.Schema{}),
 		outputSchemaFor[generated.PersonTierPreview](),

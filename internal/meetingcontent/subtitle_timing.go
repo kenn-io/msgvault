@@ -20,10 +20,16 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 	cues := make([]subtitleSegment, 0, len(content.Transcript.Segments))
 	switch format {
 	case "omi_json":
+		origin, ok := rawTime(fields["started_at"], false)
+		if !ok || origin.IsZero() {
+			return nil, errors.New("recording start is unknown")
+		}
 		var items []struct {
-			Text  string   `json:"text"`
-			Start *float64 `json:"start"`
-			End   *float64 `json:"end"`
+			Text      string   `json:"text"`
+			Name      string   `json:"speaker_name"`
+			SpeakerID *int     `json:"speaker_id"`
+			Start     *float64 `json:"start"`
+			End       *float64 `json:"end"`
 		}
 		if json.Unmarshal(fields["transcript_segments"], &items) != nil {
 			return nil, errors.New("invalid transcript")
@@ -40,9 +46,22 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 				return nil, errors.New("transcript changed")
 			}
 			seg := content.Transcript.Segments[i]
-			cues = append(cues, subtitleSegment{seg.Speaker, seg.Text, *item.Start, *item.End})
+			speaker := seg.Speaker
+			if strings.TrimSpace(item.Name) == "" && item.SpeakerID == nil {
+				speaker = ""
+			}
+			cues = append(cues, subtitleSegment{speaker, seg.Text, *item.Start, *item.End})
 		}
 	case "pocket_json":
+		origin, ok := rawTime(fields["recorded_at"], false)
+		if !ok || origin.IsZero() {
+			var recording map[string]jsontext.Value
+			_ = json.Unmarshal(fields["recording"], &recording)
+			origin, ok = rawTime(recording["recording_at"], false)
+		}
+		if !ok || origin.IsZero() {
+			return nil, errors.New("recording start is unknown")
+		}
 		var recording struct {
 			TranscriptError string `json:"transcript_error"`
 			Transcript      struct {
@@ -80,43 +99,35 @@ func subtitleTiming(format string, raw []byte) ([]subtitleSegment, error) {
 			return nil, errors.New("invalid recording")
 		}
 		entries, ok := twentyEntries(recording["transcript"])
-		if !ok || len(entries) != len(content.Transcript.Segments) {
+		if !ok {
 			return nil, errors.New("invalid transcript")
 		}
 		origin, hasOrigin := rawTime(recording["startedAt"], false)
+		if !hasOrigin || origin.IsZero() {
+			return nil, errors.New("recording start is unknown")
+		}
 		for i, entry := range entries {
 			startStamp, endStamp := entry.words[0].start, entry.words[len(entry.words)-1].end
 			start, hasStart := twentyOffset(startStamp)
 			end, hasEnd := twentyOffset(endStamp)
 			if !hasStart || !hasEnd {
-				if !hasOrigin {
-					return nil, errors.New("recording start is unknown")
+				startTime, startOK := rawTime(startStamp["absolute"], false)
+				endTime, endOK := rawTime(endStamp["absolute"], false)
+				if !startOK || !endOK {
+					return nil, errors.New("transcript needs matching start and end times")
 				}
-				if !hasStart {
-					stamp, ok := rawTime(startStamp["absolute"], false)
-					if !ok {
-						return nil, errors.New("transcript needs start and end times")
-					}
-					var err error
-					start, err = subtitleSeconds(origin, stamp)
-					if err != nil {
-						return nil, err
-					}
+				var err error
+				start, err = subtitleSeconds(origin, startTime)
+				if err != nil {
+					return nil, err
 				}
-				if !hasEnd {
-					stamp, ok := rawTime(endStamp["absolute"], false)
-					if !ok {
-						return nil, errors.New("transcript needs start and end times")
-					}
-					var err error
-					end, err = subtitleSeconds(origin, stamp)
-					if err != nil {
-						return nil, err
-					}
+				end, err = subtitleSeconds(origin, endTime)
+				if err != nil {
+					return nil, err
 				}
 			}
 			seg := content.Transcript.Segments[i]
-			cues = append(cues, subtitleSegment{seg.Speaker, seg.Text, start, end})
+			cues = append(cues, subtitleSegment{entry.speaker, seg.Text, start, end})
 		}
 	default:
 		return nil, fmt.Errorf("recording start is unknown or timing is unavailable for %s", format)

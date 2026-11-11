@@ -114,13 +114,6 @@ and require daemon API schema 5.1.0; --max-bytes caps the requested content
 				return usageErr(command, errors.New("--format must be json, markdown, srt or vtt"))
 			}
 			if format == "srt" || format == "vtt" {
-				distinct := make(map[int64]bool)
-				for _, id := range messageIDs {
-					distinct[id] = true
-				}
-				if len(distinct) != 1 {
-					return usageErr(command, errors.New("subtitles require exactly one distinct meeting ID"))
-				}
 				includeTranscript = true
 			}
 			if maxBytes < 4096 || maxBytes > 1048576 {
@@ -475,6 +468,9 @@ func meetingCommandError(err error) error {
 	var apiErr *daemonclient.APIError
 	if !errors.As(err, &apiErr) {
 		return err
+	}
+	if apiErr.APIErrorCode() == "context_budget_too_small" {
+		return fmt.Errorf("increase --max-bytes up to 1048576: %w", err)
 	}
 	switch apiErr.Status {
 	case http.StatusNotFound:

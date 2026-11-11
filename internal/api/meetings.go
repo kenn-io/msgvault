@@ -523,7 +523,7 @@ func (s *Server) writeMeetingError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_meeting_subtitles", err.Error())
 	case errors.Is(err, meetingcontent.ErrBudgetTooSmall):
 		writeError(w, http.StatusBadRequest, "context_budget_too_small",
-			"The meeting context budget is too small for the requested content")
+			"The meeting context budget is too small for the requested content; increase max_bytes up to 1048576")
 	default:
 		if s.logger != nil {
 			s.logger.Error("meeting intelligence failed", "error", err)

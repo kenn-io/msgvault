@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -216,6 +217,28 @@ func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.
 	must.NoError(err)
 	must.False(subtitles.IsError)
 	checks.Equal("WEBVTT\n\n1\n00:00:10.000 --> 00:00:12.000\nA: Hello\n\n", meetingStructuredContent(t, subtitles)["content"])
+	snapshot.Raw = []byte(strings.Replace(string(raw), `"startedAt":"2026-01-01T00:00:00Z",`, "", 1))
+	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	must.NoError(err)
+	invalid, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(archived.MessageID)}, "format": "vtt"}})
+	must.NoError(err)
+	must.True(invalid.IsError)
+	must.NotEmpty(invalid.Content)
+	message, ok := invalid.Content[0].(*sdkmcp.TextContent)
+	must.True(ok)
+	checks.Contains(message.Text, "invalid_meeting_subtitles")
+	snapshot.Raw = []byte(strings.Replace(string(raw), `"Hello"`, `"`+strings.Repeat("x", 5000)+`"`, 1))
+	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	must.NoError(err)
+	budget, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingContext, Arguments: map[string]any{"message_ids": []any{float64(archived.MessageID)}, "format": "vtt", "max_bytes": 4096}})
+	must.NoError(err)
+	must.True(budget.IsError)
+	must.NotEmpty(budget.Content)
+	message, ok = budget.Content[0].(*sdkmcp.TextContent)
+	must.True(ok)
+	checks.Contains(message.Text, "context_budget_too_small")
+	checks.Contains(message.Text, "max_bytes")
+	checks.Contains(message.Text, "1048576")
 
 }
 

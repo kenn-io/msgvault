@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,4 +62,47 @@ func TestMeetingSubtitleTwentyCLIAndHTTP(t *testing.T) {
 	stdout, _, err := executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--format", "vtt", "--include-transcript=false")
 	require.NoError(t, err)
 	assert.Equal(t, want, stdout)
+	snapshot.Raw = []byte(strings.Replace(string(raw), `"Hello"`, `"`+strings.Repeat("x", 5000)+`"`, 1))
+	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	require.NoError(t, err)
+	stdout, _, err = executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--format", "vtt", "--max-bytes", "4096")
+	require.ErrorContains(t, err, "--max-bytes")
+	assert.Empty(t, stdout)
+}
+
+func TestMeetingSubtitleRelativeUnknownOriginPreservesFile(t *testing.T) {
+	cases := []struct{ name, raw string }{
+		{"omi", `{"structured":{},"transcript_segments":[{"text":"Hello","start":0,"end":2}]}`},
+		{"pocket", `{"schema_version":1,"started_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"Hello","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"Hello","start":0,"end":2}]}}}`},
+		{"twenty", `{"schema_version":1,"calendar_event":{"startsAt":"2026-01-01T00:00:00Z"},"recording":{"transcript":[{"words":[{"text":"Hello","start_timestamp":{"relative":0},"end_timestamp":{"relative":2}}]}]}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource(tc.name, "owner@example.test")
+			require.NoError(t, err)
+			snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "owner@example.test", SourceMessageID: "one", SourceConversationID: "one", Title: "Meeting", StartedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), Raw: []byte(tc.raw), RawFormat: tc.name + "_json", Organizer: &meetingarchive.Person{Name: "Owner", Email: "owner@example.test"}}
+			archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+			require.NoError(t, err)
+			server := httptest.NewServer(api.NewServer(&config.Config{}, st, nil, slog.New(slog.DiscardHandler)).Router())
+			t.Cleanup(server.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, client.Close()) })
+			output := filepath.Join(t.TempDir(), "meeting.srt")
+			require.NoError(t, os.WriteFile(output, []byte("keep"), 0600))
+			stdout, _, err := executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--format", "srt", "-o", output)
+			require.ErrorContains(t, err, "recording start")
+			assert.Empty(t, stdout)
+			saved, err := os.ReadFile(output)
+			require.NoError(t, err)
+			assert.Equal(t, "keep", string(saved))
+			format := generated.MeetingContextRequestFormat("srt")
+			_, err = client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{archived.MessageID}), Format: &format})
+			var apiErr *daemonclient.APIError
+			require.ErrorAs(t, err, &apiErr)
+			assert.Equal(t, "invalid_meeting_subtitles", apiErr.Code)
+			assert.Equal(t, 400, apiErr.Status)
+		})
+	}
 }

@@ -15,6 +15,8 @@ import (
 const subtitleInteger = `[ \t\r\n\f\x0b]*[+-]?[0-9]+`
 const subtitleClock = subtitleInteger + ":" + subtitleInteger + ":" + subtitleInteger + "[,.]" + subtitleInteger
 
+var srtTag = regexp.MustCompile(`<[^ \t\r\n][^>\r\n]*>`)
+
 var srtTimingHeader = regexp.MustCompile("^" + subtitleClock + `[ \t\r\n\f\x0b]*-->` + subtitleClock)
 
 type subtitleSegment struct {
@@ -75,7 +77,7 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 		if format == "vtt" {
 			text = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
 		} else {
-			unsafe := strings.ContainsAny(text, "<{}\\")
+			unsafe := strings.ContainsAny(text, "{}\\") || srtTag.MatchString(text)
 			for line := range strings.SplitSeq(text, "\n") {
 				// FFmpeg splits SRT input after 4095 UTF-8 bytes, exposing new headers.
 				unsafe = unsafe || len(line) > 4095 || srtTimingHeader.MatchString(line) || strings.Trim(line, " \t\r\f\v") != line
