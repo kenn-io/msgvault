@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -132,7 +133,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 		omittedFTS, omittedANN := "FALSE", "FALSE"
 		var ctes []string
 		if !emptyFilter {
-			filterSQL := applyFilterClauses(req.Filter, bind)
+			filterSQL := applyFilterClauses(req.Filter, bind, b.senderEligibility())
 			ctes = append(ctes, fmt.Sprintf(
 				"filtered AS (SELECT m.id FROM messages m WHERE %s%s)", liveSQL, filterSQL))
 		}
@@ -415,7 +416,7 @@ func (b *Backend) filteredChunkMessageCount(ctx context.Context, gen vector.Gene
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
-	clauses := append([]string{b.embeddedMessageWhere("e")}, buildPGFilterClauses(f, bind)...)
+	clauses := append([]string{b.embeddedMessageWhere("e")}, buildPGFilterClauses(f, bind, b.senderEligibility())...)
 	query := `SELECT COUNT(DISTINCT e.message_id)
 	            FROM embeddings e
 	            JOIN messages m ON m.id = e.message_id
@@ -432,8 +433,8 @@ func (b *Backend) filteredChunkMessageCount(ctx context.Context, gen vector.Gene
 // down to messages matching the structured filter. Delegates to
 // buildPGFilterFragment (filter.go) so the clause logic stays in one
 // place and evolves consistently across the fast-path and fused paths.
-func applyFilterClauses(f vector.Filter, bind func(any) string) string {
-	return buildPGFilterFragment(f, bind)
+func applyFilterClauses(f vector.Filter, bind func(any) string, eligible search.SenderEligibility) string {
+	return buildPGFilterFragment(f, bind, eligible)
 }
 
 // applySubjectBoost re-ranks hits whose subject contains any of the
