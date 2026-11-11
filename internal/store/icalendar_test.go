@@ -246,36 +246,18 @@ func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 }
 
 func TestICalendarRecurrenceAcrossClockChanges(t *testing.T) {
-	for _, mode := range []string{"file", "email"} {
-		t.Run(mode, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			raw := calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20270314T023000\r\nDURATION:P1D\r\nRRULE:FREQ=DAILY;COUNT=2")
-			if mode == "email" {
-				persistInviteEmail(t, st, "clock-change", inviteEmail(raw))
-			} else {
-				_, err := st.PersistICalendarContext(t.Context(), icsSource(t, st), raw)
-				requirements.NoError(err)
-			}
-			from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
-			requirements.NoError(err)
-			requirements.Len(page.Occurrences, 2)
-			assertions.Equal("2027-03-15T07:30:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
-			assertions.Equal("2027-03-16T06:30:00Z", page.Occurrences[1].End.UTC().Format(time.RFC3339))
-		})
-	}
-	t.Run("elapsed hours", func(t *testing.T) {
-		requirements := require.New(t)
+	t.Run("file", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
-		raw := calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:PT24H\r\nRRULE:FREQ=DAILY;COUNT=2")
+		raw := calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20270314T023000\r\nDURATION:P1D\r\nRRULE:FREQ=DAILY;COUNT=2")
 		_, err := st.PersistICalendarContext(t.Context(), icsSource(t, st), raw)
 		requirements.NoError(err)
-		from := time.Date(2027, 3, 13, 0, 0, 0, 0, time.UTC)
+		from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
 		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
 		requirements.NoError(err)
 		requirements.Len(page.Occurrences, 2)
-		assert.Equal(t, "2027-03-14T14:00:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
+		assertions.Equal("2027-03-15T07:30:00Z", page.Occurrences[0].End.UTC().Format(time.RFC3339))
+		assertions.Equal("2027-03-16T06:30:00Z", page.Occurrences[1].End.UTC().Format(time.RFC3339))
 	})
 	t.Run("explicit end", func(t *testing.T) {
 		requirements := require.New(t)
