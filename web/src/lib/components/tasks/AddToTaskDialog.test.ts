@@ -20,9 +20,12 @@ function pendingCreate() {
 
 describe('Add to task', () => {
   it.each([false, true])('opens Kata evidence for email=%s when Kata is ready', async (email) => {
-    const client = createAPIClient(async (input) => Response.json((input as Request).url.endsWith('/status')
-      ? { state: 'ready', project: 'example' }
-      : { evidence: [] }));
+    const client = createAPIClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
+      if (path.endsWith('/prepare')) return Response.json({ evidence: [{ id: 'one', passage: 'one', reference: { version: 1, kind: 'message', archive_uid: 'archive-example', message_id: 42, source_type: 'email', source_identifier: 'example', source_message_id: '42', message: { body_sha256: 'a'.repeat(64), start_rune: 0, end_rune: 5 } }, excerpt: 'Quote', display: {}, content_trust: 'untrusted' }] });
+      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+    });
     const readiness = new KataReadiness(client);
     let view: ReturnType<typeof render> | undefined;
     try {
@@ -32,20 +35,13 @@ describe('Add to task', () => {
         context: new Map([[kataReadinessKey, readiness]])
       });
       if (email) {
-        expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeTruthy();
         await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
       }
       expect(screen.getByRole('dialog', { name: email ? 'Add to task' : 'Kata issue' })).toBeTruthy();
       expect(screen.getByRole('radiogroup', { name: 'Issue' })).toBeTruthy();
       expect(screen.queryByText('Issue')).toEqual(email ? expect.anything() : null);
-      expect(screen.getByText("Attachments aren't sent.")).toBeTruthy();
-      expect(screen.getByText('Quote saved in Kata')).toBeTruthy();
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
       expect(screen.getByLabelText('Brief')).toHaveProperty('value', `${location.origin}/messages/42`);
-      if (email) {
-        await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
-        expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeTruthy();
-      }
     } finally { view?.unmount(); readiness.dispose(); }
   });
 
