@@ -170,6 +170,22 @@ func TestPostalClaimReferenceCannotHideDifferentSuggestion(t *testing.T) {
 	assert.True(claims[0].PostalReview.Eligible, "a different address without a snapshot must not consume this suggestion")
 }
 
+func TestPostalClaimReferenceRequiresMatchingPostalClaim(t *testing.T) {
+	require := require.New(t)
+	st, id, targets := newPersonFactProjectionStore(t)
+	claim := personFactProjectionClaim(id, targets[AttributeSlugPrimaryChannel], `"chat"`, "nonpostal")
+	_, err := st.ApplyPersonFactGenerationContext(t.Context(), postalGeneration(t, st, id, "nonpostal", []personfacts.ProposedClaim{claim}, nil), nil)
+	require.NoError(err)
+	claims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{Limit: 1})
+	require.NoError(err)
+	require.Len(claims, 1)
+	for _, key := range []string{"missing", claims[0].ClaimKey} {
+		ref := "person-fact-claim:" + key
+		_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("12 Example Street"), Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
+		require.ErrorIs(err, ErrPostalSuggestionInvalid)
+	}
+}
+
 func TestPostalAddressReviewUsesCompleteCurrentSupport(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -210,6 +226,13 @@ func TestPostalAddressReviewUsesCompleteCurrentSupport(t *testing.T) {
 			if tc.name == "unknown field" {
 				assert.Nil(review.Assessment)
 			}
+			if tc.name == "contradict" {
+				original, err := postaladdress.EncodeOriginalInput(review.Assessment.Original)
+				require.NoError(err)
+				ref := "person-fact-claim:" + rows[0].ClaimKey
+				_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("12 Example Street"), OriginalValue: original, Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
+				require.ErrorIs(err, ErrPostalSuggestionInvalid)
+			}
 			if tc.name == "supported" {
 				profile, err := st.GetPersonProfileContext(t.Context(), id)
 				require.NoError(err)
@@ -239,6 +262,13 @@ func TestPostalAddressReviewUsesCompleteCurrentSupport(t *testing.T) {
 		require.NoError(err)
 		require.Len(rows, 1)
 		assert.Equal(t, supported, rows[0].PostalReview.Eligible)
+		if !supported {
+			original, err := postaladdress.EncodeOriginalInput(rows[0].PostalReview.Assessment.Original)
+			require.NoError(err)
+			ref := "person-fact-claim:" + rows[0].ClaimKey
+			_, err = st.AddPersonAddressContext(t.Context(), id, PersonAddressInput{AddressKind: PersonAddressPostal, StreetAddress: new("12 Example Street"), OriginalValue: original, Envelope: ValueEnvelopeInput{Source: ProvenanceUser, SourceRef: &ref}})
+			require.ErrorIs(err, ErrPostalSuggestionInvalid)
+		}
 	}
 }
 

@@ -74,6 +74,7 @@ var (
 	ErrInvalidPersonAddressKind  = errors.New("invalid person address kind")
 	ErrPersonAddressValueMissing = errors.New("person address requires at least one component")
 	ErrPostalSuggestionMismatch  = errors.New("postal address snapshot does not match the cited suggestion")
+	ErrPostalSuggestionInvalid   = errors.New("cited postal suggestion does not exist or cannot be reviewed")
 )
 
 func (s *Store) AddPersonAddressContext(
@@ -88,7 +89,7 @@ func (s *Store) AddPersonAddressContext(
 			return err
 		}
 		var err error
-		result, err = s.addPersonAddressTx(ctx, tx, personID, input)
+		result, err = s.addPersonAddressTx(ctx, tx, personID, input, false)
 		if err != nil {
 			return err
 		}
@@ -129,13 +130,13 @@ func (s *Store) SupersedePersonAddressContext(
 }
 
 func (s *Store) addPersonAddressTx(
-	ctx context.Context, tx *loggedTx, personID int64, input PersonAddressInput,
+	ctx context.Context, tx *loggedTx, personID int64, input PersonAddressInput, replacing bool,
 ) (*PersonAddress, error) {
 	if !input.AddressKind.Valid() {
 		return nil, ErrInvalidPersonAddressKind
 	}
 	if input.AddressKind == PersonAddressPostal {
-		if err := validatePostalInputTx(ctx, tx, personID, input); err != nil {
+		if err := s.validatePostalInputTx(ctx, tx, personID, input, replacing); err != nil {
 			return nil, err
 		}
 	}

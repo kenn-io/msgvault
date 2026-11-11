@@ -218,15 +218,25 @@ func (s *Store) applyPersonProfilePatchTx(
 		}
 	}
 	if patch.Addresses != nil {
+		replaced := map[string]bool{}
 		for _, id := range patch.Addresses.Supersede {
+			address, err := getPersonAddressTx(ctx, tx, personID, id)
+			if err != nil {
+				return err
+			}
 			if err := s.supersedePersonAddressTx(ctx, tx, personID, id, nil); err != nil {
 				return err
 			}
+			if address.AddressKind == PersonAddressPostal && address.Envelope.SourceRef != nil {
+				replaced[*address.Envelope.SourceRef] = true
+			}
 		}
 		for _, input := range patch.Addresses.Add {
-			if _, err := s.addPersonAddressTx(ctx, tx, personID, input); err != nil {
+			ref := derefString(input.Envelope.SourceRef)
+			if _, err := s.addPersonAddressTx(ctx, tx, personID, input, replaced[ref]); err != nil {
 				return err
 			}
+			delete(replaced, ref)
 		}
 	}
 	if patch.Dates != nil {

@@ -193,7 +193,7 @@ func (s *Store) attachPostalReviewsTx(ctx context.Context, tx *loggedTx, personI
 
 // validatePostalInputTx rejects a postal snapshot that cites a suggestion whose
 // submitted address it was not captured from. Edited fields stay free.
-func validatePostalInputTx(ctx context.Context, tx *loggedTx, personID int64, input PersonAddressInput) error {
+func (s *Store) validatePostalInputTx(ctx context.Context, tx *loggedTx, personID int64, input PersonAddressInput, replacing bool) error {
 	original, snapshot, err := postaladdress.DecodeOriginalInput(input.OriginalValue)
 	key, cited := "", false
 	if input.Envelope.SourceRef != nil {
@@ -203,18 +203,30 @@ func validatePostalInputTx(ctx context.Context, tx *loggedTx, personID int64, in
 		return err
 	}
 	var submitted []byte
-	err = tx.QueryRowContext(ctx, `SELECT submitted_value_json FROM person_fact_claims WHERE person_id = ? AND claim_key = ? LIMIT 1`, personID, key).Scan(&submitted)
+	err = tx.QueryRowContext(ctx, `SELECT submitted_value_json FROM person_fact_claims WHERE person_id = ? AND claim_key = ? AND target_kind = 'postal_address' LIMIT 1`, personID, key).Scan(&submitted)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return ErrPostalSuggestionInvalid
+	}
+	if err != nil {
+		return err
 	}
 	var claimed personfacts.PostalAddressValue
-	if err == nil {
-		err = json.Unmarshal(submitted, &claimed)
+	if json.Unmarshal(submitted, &claimed, json.RejectUnknownMembers(true)) != nil {
+		return ErrPostalSuggestionInvalid
 	}
-	if err == nil && (!snapshot || claimed.Input() != original) {
-		err = ErrPostalSuggestionMismatch
+	if !snapshot || claimed.Input() != original {
+		return ErrPostalSuggestionMismatch
 	}
-	return err
+	if !replacing {
+		page := []personfacts.Claim{{ClaimKey: key, Target: personfacts.TargetRef{Kind: personfacts.TargetPostalAddress}, SubmittedValue: submitted}}
+		if err := s.attachPostalReviewsTx(ctx, tx, personID, page); err != nil {
+			return err
+		}
+		if !page[0].PostalReview.Eligible {
+			return ErrPostalSuggestionInvalid
+		}
+	}
+	return nil
 }
 
 // LocalPostalAssessment is derived on read; no external verdict is stored.

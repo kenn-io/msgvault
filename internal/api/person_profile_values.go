@@ -388,7 +388,7 @@ func isPersonProfileValidationError(err error) bool {
 		store.ErrInvalidPersonNameKind, store.ErrPersonNameValueMissing,
 		store.ErrInvalidContactAddressKind, store.ErrContactPointValueMissing,
 		store.ErrProviderIdentityNotExportable,
-		store.ErrInvalidPersonAddressKind, store.ErrPersonAddressValueMissing, store.ErrPostalSuggestionMismatch,
+		store.ErrInvalidPersonAddressKind, store.ErrPersonAddressValueMissing, store.ErrPostalSuggestionMismatch, store.ErrPostalSuggestionInvalid,
 		store.ErrInvalidPersonDateKind, store.ErrPersonDateValueMissing,
 		store.ErrPersonCategoryEmpty, store.ErrInvalidPersonMediaKind,
 		store.ErrPersonMediaEmpty, store.ErrPersonMediaTooLarge,
