@@ -63,7 +63,7 @@ func runImportTumblr(cmd *cobra.Command, input string, opts tumblrCLIOptions) er
 	}
 	err = errors.Join(importErr, runExportPostImportMigrations(maintenanceCtx, cmd.OutOrStdout(), st, s.SourceID, true, state))
 	out := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(out, "Files: %d read, %d skipped; conversations: %d imported, %d foreign scope\n", s.Files, s.FilesSkipped, s.Conversations, s.ForeignConversations)
+	_, _ = fmt.Fprintf(out, "Files: %d conversation reads attempted, %d files skipped; conversations: %d imported, %d foreign scope\n", s.Files, s.FilesSkipped, s.Conversations, s.ForeignConversations)
 	_, _ = fmt.Fprintf(out, "Messages: %d added, %d present, %d unsupported, %d malformed, %d undated, %d conflicting dates; unknown blocks: %d\n", s.MessagesAdded, s.MessagesPresent, s.Unsupported, s.Malformed, s.Undated, s.ConflictingDates, s.UnknownBlocks)
 	if len(s.UnsupportedTypes) > 0 {
 		_, _ = fmt.Fprintf(out, "Unsupported types: %v\n", s.UnsupportedTypes)

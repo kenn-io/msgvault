@@ -26,7 +26,7 @@ func mediaPath(filename, ref string) (string, string) {
 		}
 		return "", "invalid"
 	}
-	if u.Scheme != "" || u.Path == "" || strings.HasPrefix(u.Path, "/") || strings.ContainsAny(u.Path, `\:`) {
+	if u.Path == "" || strings.HasPrefix(u.Path, "/") || strings.ContainsAny(u.Path, `\:`) {
 		return "", "invalid"
 	}
 	// url.Parse decodes escapes once. Clean after joining, allowing sibling media.
