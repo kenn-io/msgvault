@@ -167,20 +167,22 @@ func TestEngineTruncatesIDsWithoutLosingCount(t *testing.T) {
 func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 	for _, status := range []int{http.StatusGone, http.StatusRequestEntityTooLarge, http.StatusInternalServerError} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			ctx := t.Context()
 			now := time.Now().UTC()
 			start := now.Add(-time.Hour)
 			src, err := st.GetOrCreateSource("gmail", "events@example.com")
-			require.NoError(t, err)
+			require.NoError(err)
 			conv, err := st.EnsureConversationWithType(src.ID, "events-conversation", "email_thread", "Events")
-			require.NoError(t, err)
+			require.NoError(err)
 			_, err = st.UpsertMessage(&store.Message{SourceID: src.ID, SourceMessageID: "events-1", ConversationID: conv, MessageType: "email", SentAt: sql.NullTime{Time: now, Valid: true}})
-			require.NoError(t, err)
+			require.NoError(err)
 			key := store.MCPEventsPositionKey("sub-x")
 			ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, store.WakeupState{At: start})
-			require.NoError(t, err)
-			require.True(t, ok)
+			require.NoError(err)
+			require.True(ok)
 			var bodies []map[string]any
 			var ids []string
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +190,7 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 				_ = json.NewDecoder(r.Body).Decode(&body)
 				bodies = append(bodies, body)
 				ids = append(ids, r.Header.Get("webhook-id"))
-				assert.Equal(t, "sub-x", r.Header.Get("X-MCP-Subscription-Id"))
+				assert.Equal("sub-x", r.Header.Get("X-MCP-Subscription-Id"))
 				w.WriteHeader(status)
 			}))
 			defer server.Close()
@@ -199,45 +201,46 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 				attempts = 5
 			}
 			for range attempts {
-				require.NoError(t, engine.RunPass(ctx))
+				require.NoError(engine.RunPass(ctx))
 				now = now.Add(time.Hour)
 			}
-			require.Len(t, bodies, attempts)
-			assert.Equal(t, "msgvault.messages.changed", bodies[0]["name"])
-			assert.Nil(t, bodies[0]["cursor"])
-			assert.Equal(t, ids[0], bodies[0]["eventId"])
+			require.Len(bodies, attempts)
+			assert.Equal("msgvault.messages.changed", bodies[0]["name"])
+			assert.Nil(bodies[0]["cursor"])
+			assert.Equal(ids[0], bodies[0]["eventId"])
 			state, _, err := st.LoadWakeupStateKey(ctx, key)
-			require.NoError(t, err)
-			assert.True(t, state.At.After(start))
-			assert.Zero(t, state.Failures)
+			require.NoError(err)
+			assert.True(state.At.After(start))
+			assert.Zero(state.Failures)
 		})
 	}
 }
 
 func TestNativePositionSurvivesDowntimeAndPrune(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
 	now := time.Now().UTC()
 	start := now.Add(-time.Hour)
 	src, err := st.GetOrCreateSource("gmail", "downtime@example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	conv, err := st.EnsureConversationWithType(src.ID, "downtime", "email_thread", "Fixture")
-	require.NoError(t, err)
+	require.NoError(err)
 	key := store.MCPEventsPositionKey("restart")
 	ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, store.WakeupState{At: start})
-	require.NoError(t, err)
-	require.True(t, ok)
+	require.NoError(err)
+	require.True(ok)
 	_, err = st.PruneWakeupStates(ctx, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, SourceMessageID: "while-down", ConversationID: conv, MessageType: "email", SentAt: sql.NullTime{Time: now, Valid: true}})
-	require.NoError(t, err)
+	require.NoError(err)
 	stamp := now.Add(-time.Minute)
 	var value any = stamp
 	if !st.IsPostgreSQL() {
 		value = stamp.Format(store.SQLiteTimestampLayout)
 	}
 	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), value, id)
-	require.NoError(t, err)
+	require.NoError(err)
 	var bodies []map[string]any
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var b map[string]any
@@ -248,7 +251,7 @@ func TestNativePositionSurvivesDowntimeAndPrune(t *testing.T) {
 	defer server.Close()
 	sub := Subscription{Name: "restart", Native: true, StateKey: key, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{SourceIDs: []int64{src.ID}, IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(server)}
 	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
-	require.NoError(t, engine.RunPass(ctx))
-	require.Len(t, bodies, 1)
+	require.NoError(engine.RunPass(ctx))
+	require.Len(bodies, 1)
 	assert.Equal(t, "msgvault.messages.changed", bodies[0]["name"])
 }

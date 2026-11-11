@@ -138,6 +138,7 @@ func TestWebhookFailureCategories(t *testing.T) {
 }
 
 func TestNativeWebhookSignatureAndSubscriptionHeader(t *testing.T) {
+	assert := assert.New(t)
 	secret := []byte(strings.Repeat("s", 32))
 	body := []byte(`{"eventId":"evt_0011223344556677","name":"msgvault.messages.changed","timestamp":"2026-01-01T00:00:00Z","data":{"subscription_id":"sub-1"},"cursor":null}`)
 	var id, stamp, signature, subscription string
@@ -152,12 +153,12 @@ func TestNativeWebhookSignatureAndSubscriptionHeader(t *testing.T) {
 	}))
 	defer server.Close()
 	category, status := testWebhookClient(server).sendEvent(t.Context(), "https://example.com/hook", "evt_0011223344556677", "sub-1", secret, body)
-	assert.Empty(t, category)
-	assert.Equal(t, http.StatusNoContent, status)
-	assert.Equal(t, "sub-1", subscription)
-	assert.Equal(t, body, received)
+	assert.Empty(category)
+	assert.Equal(http.StatusNoContent, status)
+	assert.Equal("sub-1", subscription)
+	assert.Equal(body, received)
 	mac := hmac.New(sha256.New, secret)
 	_, err := fmt.Fprintf(mac, "%s.%s.%s", id, stamp, received)
 	require.NoError(t, err)
-	assert.Equal(t, "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)), signature)
+	assert.Equal("v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)), signature)
 }

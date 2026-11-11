@@ -483,6 +483,12 @@ func (a AppendPersonNoteRequest) Validate() error {
 	return errors
 }
 
+type Arguments struct {
+	IncomingOnly *bool  `json:"incoming_only,omitempty"`
+	PersonID     *int64 `json:"person_id,omitempty"`
+	SourceID     *int64 `json:"source_id,omitempty"`
+}
+
 type AttachmentInfo struct {
 	ContentHash *string                `json:"content_hash,omitzero"`
 	Docbank     []DocbankAttachmentRef `json:"docbank,omitempty"`
@@ -3546,6 +3552,18 @@ func (d DeepSearchResponse) Validate() error {
 	return errors
 }
 
+type Definition struct {
+	Delivery      []string            `json:"delivery" validate:"required"`
+	Description   string              `json:"description" validate:"required"`
+	InputSchema   map[string]struct{} `json:"inputSchema"`
+	Name          string              `json:"name" validate:"required"`
+	PayloadSchema map[string]struct{} `json:"payloadSchema"`
+}
+
+func (d Definition) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type DeletionManifestDetail struct {
 	Account      *string          `json:"account,omitzero"`
 	CreatedAt    time.Time        `json:"created_at" validate:"required"`
@@ -3627,6 +3645,23 @@ type DeletionTarget struct {
 
 func (d DeletionTarget) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type Delivery struct {
+	Mode   string  `json:"mode" validate:"required"`
+	Secret *string `json:"secret,omitzero"`
+	URL    string  `json:"url" validate:"required"`
+}
+
+func (d Delivery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DeliveryStatus struct {
+	Active         bool       `json:"active"`
+	FailedSince    *time.Time `json:"failedSince,omitempty"`
+	LastDeliveryAt *time.Time `json:"lastDeliveryAt,omitempty"`
+	LastError      *string    `json:"lastError,omitzero"`
 }
 
 type DirectoryPeopleResponse struct {
@@ -7093,6 +7128,29 @@ func (l ListDeletionsResponse) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Manifests[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ListResult struct {
+	Enabled bool         `json:"enabled"`
+	Events  []Definition `json:"events" validate:"required"`
+}
+
+func (l ListResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Events, "required"); err != nil {
+		errors = errors.Append("Events", err)
+	}
+	for i, item := range l.Events {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Events[%d]", i), err)
 			}
 		}
 	}
@@ -16134,6 +16192,68 @@ func (s StructuredPersonProfile) Validate() error {
 	return errors
 }
 
+type SubscribeRequest struct {
+	Arguments Arguments `json:"arguments"`
+	Cursor    *string   `json:"cursor,omitzero"`
+	Delivery  Delivery  `json:"delivery"`
+	MaxAgeMs  *int64    `json:"maxAgeMs,omitempty"`
+	Name      string    `json:"name" validate:"required"`
+	TTLMs     *int      `json:"ttlMs,omitempty"`
+}
+
+func (s SubscribeRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(s.Arguments).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Arguments", err)
+		}
+	}
+	if v, ok := any(s.Delivery).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Delivery", err)
+		}
+	}
+	if err := typesValidator.Var(s.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type SubscribeResult struct {
+	Cursor         *string        `json:"cursor" validate:"required"`
+	DeliveryStatus DeliveryStatus `json:"deliveryStatus"`
+	ID             string         `json:"id" validate:"required"`
+	RefreshBefore  time.Time      `json:"refreshBefore" validate:"required"`
+	Truncated      bool           `json:"truncated"`
+}
+
+func (s SubscribeResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if s.Cursor != nil {
+		if err := typesValidator.Var(s.Cursor, "required"); err != nil {
+			errors = errors.Append("Cursor", err)
+		}
+	}
+	if v, ok := any(s.DeliveryStatus).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("DeliveryStatus", err)
+		}
+	}
+	if err := typesValidator.Var(s.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if err := typesValidator.Var(s.RefreshBefore, "required"); err != nil {
+		errors = errors.Append("RefreshBefore", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type Summary struct {
 	Accounts       []string      `json:"accounts" validate:"required"`
 	DateRange      []string      `json:"date_range" validate:"required"`
@@ -16828,6 +16948,35 @@ type TriggerSyncResponse struct {
 func (t TriggerSyncResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(t))
 }
+
+type UnsubscribeRequest struct {
+	Arguments Arguments `json:"arguments"`
+	Delivery  Delivery  `json:"delivery"`
+	Name      string    `json:"name" validate:"required"`
+}
+
+func (u UnsubscribeRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(u.Arguments).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Arguments", err)
+		}
+	}
+	if v, ok := any(u.Delivery).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Delivery", err)
+		}
+	}
+	if err := typesValidator.Var(u.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type UnsubscribeResult = map[string]any
 
 type UpdateRequest struct {
 	AcceptReanchor *bool   `json:"accept_reanchor,omitempty"`

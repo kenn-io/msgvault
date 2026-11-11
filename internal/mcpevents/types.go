@@ -87,6 +87,7 @@ type UnsubscribeRequest struct {
 	Arguments Arguments `json:"arguments"`
 	Delivery  Delivery  `json:"delivery"`
 }
+type UnsubscribeResult struct{}
 type DeliveryStatus struct {
 	Active         bool       `json:"active"`
 	LastDeliveryAt *time.Time `json:"lastDeliveryAt,omitempty"`

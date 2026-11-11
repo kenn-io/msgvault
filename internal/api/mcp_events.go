@@ -16,7 +16,7 @@ func (s *Server) eventsService() *mcpevents.Service {
 func (s *Server) registerMCPEventsRoutes(api huma.API) {
 	registerAPIV1RawHumaJSONRoute[mcpevents.ListResult](api, "mcpEventsList", http.MethodGet, "/mcp-events/list", "List owner MCP Events", s.handleMCPEventsList)
 	registerAPIV1RawHumaJSONRouteWithRequest[mcpevents.SubscribeRequest, mcpevents.SubscribeResult](api, "mcpEventsSubscribe", http.MethodPost, "/mcp-events/subscribe", "Subscribe to owner MCP Events", s.handleMCPEventsSubscribe)
-	registerAPIV1RawHumaJSONRouteWithRequest[mcpevents.UnsubscribeRequest, struct{}](api, "mcpEventsUnsubscribe", http.MethodPost, "/mcp-events/unsubscribe", "Unsubscribe from owner MCP Events", s.handleMCPEventsUnsubscribe)
+	registerAPIV1RawHumaJSONRouteWithRequest[mcpevents.UnsubscribeRequest, mcpevents.UnsubscribeResult](api, "mcpEventsUnsubscribe", http.MethodPost, "/mcp-events/unsubscribe", "Unsubscribe from owner MCP Events", s.handleMCPEventsUnsubscribe)
 }
 func eventsError(w http.ResponseWriter, err error) {
 	var e *mcpevents.Error

@@ -268,6 +268,7 @@ import type {
   ListPersonRelationshipReviewsParams,
   ListPersonRelationshipsParams,
   ListPersonRelationshipsPathParameters,
+  ListResult,
   ListSourceIdentitiesPathParameters,
   ListSourceStatusParams,
   ListTextConversationMessagesParams,
@@ -451,6 +452,8 @@ import type {
   Status,
   StatusMessageResponse,
   StructuredPersonProfile,
+  SubscribeRequest,
+  SubscribeResult,
   SyncCLIParams,
   SyncFullCLIParams,
   SyncResult,
@@ -473,6 +476,8 @@ import type {
   UnlinkMessageTaskPathParameters,
   UnlinkPersonAgendaItemPathParameters,
   UnpublishCardDAVPersonPathParameters,
+  UnsubscribeRequest,
+  UnsubscribeResult,
   UpdateCardDAVBookRolesPathParameters,
   UpdateMessageTagsPathParameters,
   UpdatePersonAgendaItemPathParameters,
@@ -2265,6 +2270,51 @@ export const snoozeLoop = (
       headers: { "Content-Type": "application/json" },
       data: snoozeLoopRequest,
       params,
+    },
+    options,
+  );
+};
+/**
+ * @summary List owner MCP Events
+ */
+export const mcpEventsList = (
+  options?: SecondParameter<typeof orvalFetch<ListResult>>,
+) => {
+  return orvalFetch<ListResult>(
+    { url: `/api/v1/mcp-events/list`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Subscribe to owner MCP Events
+ */
+export const mcpEventsSubscribe = (
+  subscribeRequest: SubscribeRequest,
+  options?: SecondParameter<typeof orvalFetch<SubscribeResult>>,
+) => {
+  return orvalFetch<SubscribeResult>(
+    {
+      url: `/api/v1/mcp-events/subscribe`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: subscribeRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Unsubscribe from owner MCP Events
+ */
+export const mcpEventsUnsubscribe = (
+  unsubscribeRequest: UnsubscribeRequest,
+  options?: SecondParameter<typeof orvalFetch<UnsubscribeResult>>,
+) => {
+  return orvalFetch<UnsubscribeResult>(
+    {
+      url: `/api/v1/mcp-events/unsubscribe`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: unsubscribeRequest,
     },
     options,
   );

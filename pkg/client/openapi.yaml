@@ -517,6 +517,18 @@ components:
       required:
         - text
       type: object
+    Arguments:
+      additionalProperties: false
+      properties:
+        incoming_only:
+          type: boolean
+        person_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+      type: object
     AttachmentInfo:
       properties:
         content_hash:
@@ -3678,6 +3690,29 @@ components:
         - offset
         - limit
       type: object
+    Definition:
+      properties:
+        delivery:
+          items:
+            type: string
+          type: array
+        description:
+          type: string
+        inputSchema:
+          additionalProperties: {}
+          type: object
+        name:
+          type: string
+        payloadSchema:
+          additionalProperties: {}
+          type: object
+      required:
+        - name
+        - description
+        - delivery
+        - inputSchema
+        - payloadSchema
+      type: object
     DeletionManifestDetail:
       properties:
         account:
@@ -3756,6 +3791,34 @@ components:
         - source_type
         - source_identifier
         - source_message_id
+      type: object
+    Delivery:
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+        secret:
+          type: string
+        url:
+          type: string
+      required:
+        - mode
+        - url
+      type: object
+    DeliveryStatus:
+      properties:
+        active:
+          type: boolean
+        failedSince:
+          format: date-time
+          type: string
+        lastDeliveryAt:
+          format: date-time
+          type: string
+        lastError:
+          type: string
+      required:
+        - active
       type: object
     DirectoryPeopleResponse:
       properties:
@@ -7171,6 +7234,18 @@ components:
           type: array
       required:
         - manifests
+      type: object
+    ListResult:
+      properties:
+        enabled:
+          type: boolean
+        events:
+          items:
+            $ref: "#/components/schemas/Definition"
+          type: array
+      required:
+        - enabled
+        - events
       type: object
     LocalEmbeddingsStatus:
       properties:
@@ -15852,6 +15927,49 @@ components:
         - categories
         - media
       type: object
+    SubscribeRequest:
+      additionalProperties: false
+      properties:
+        arguments:
+          $ref: "#/components/schemas/Arguments"
+        cursor:
+          type: string
+        delivery:
+          $ref: "#/components/schemas/Delivery"
+        maxAgeMs:
+          format: int64
+          type: integer
+        name:
+          type: string
+        ttlMs:
+          nullable: true
+          type: integer
+      required:
+        - name
+        - arguments
+        - delivery
+      type: object
+    SubscribeResult:
+      properties:
+        cursor:
+          nullable: true
+          type: string
+        deliveryStatus:
+          $ref: "#/components/schemas/DeliveryStatus"
+        id:
+          type: string
+        refreshBefore:
+          format: date-time
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - id
+        - refreshBefore
+        - cursor
+        - truncated
+        - deliveryStatus
+      type: object
     Summary:
       additionalProperties: false
       properties:
@@ -16601,6 +16719,22 @@ components:
       required:
         - status
         - message
+      type: object
+    UnsubscribeRequest:
+      additionalProperties: false
+      properties:
+        arguments:
+          $ref: "#/components/schemas/Arguments"
+        delivery:
+          $ref: "#/components/schemas/Delivery"
+        name:
+          type: string
+      required:
+        - name
+        - arguments
+        - delivery
+      type: object
+    UnsubscribeResult:
       type: object
     UpdateRequest:
       additionalProperties: false
@@ -24332,6 +24466,81 @@ paths:
       security:
         - apiKey: []
       summary: Hide a loop until a later time
+      tags:
+        - API
+  /api/v1/mcp-events/list:
+    get:
+      operationId: mcpEventsList
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List owner MCP Events
+      tags:
+        - API
+  /api/v1/mcp-events/subscribe:
+    post:
+      operationId: mcpEventsSubscribe
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscribeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscribeResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Subscribe to owner MCP Events
+      tags:
+        - API
+  /api/v1/mcp-events/unsubscribe:
+    post:
+      operationId: mcpEventsUnsubscribe
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UnsubscribeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnsubscribeResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Unsubscribe from owner MCP Events
       tags:
         - API
   /api/v1/mcp/capabilities:

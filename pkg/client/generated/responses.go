@@ -1917,6 +1917,18 @@ type SnoozeLoopErrorResponseJSON503 = ErrorResponse
 
 type SnoozeLoopErrorResponseJSONDefault = ErrorResponse
 
+type McpEventsListResponse = ListResult
+
+type McpEventsListErrorResponse = ErrorResponse
+
+type McpEventsSubscribeResponse = SubscribeResult
+
+type McpEventsSubscribeErrorResponse = ErrorResponse
+
+type McpEventsUnsubscribeResponse = UnsubscribeResult
+
+type McpEventsUnsubscribeErrorResponse = ErrorResponse
+
 type GetMCPCapabilitiesResponse = MCPCapabilities
 
 type GetMCPCapabilitiesErrorResponse = ErrorResponse
@@ -5839,6 +5851,30 @@ type SnoozeLoopResp struct {
 	JSON503      *SnoozeLoopErrorResponseJSON503
 	Headers503   *SnoozeLoopResp503Headers
 	JSONDefault  *SnoozeLoopErrorResponseJSONDefault
+}
+
+type McpEventsListResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *McpEventsListResponse
+	JSONDefault  *McpEventsListErrorResponse
+}
+
+type McpEventsSubscribeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *McpEventsSubscribeResponse
+	JSONDefault  *McpEventsSubscribeErrorResponse
+}
+
+type McpEventsUnsubscribeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *McpEventsUnsubscribeResponse
+	JSONDefault  *McpEventsUnsubscribeErrorResponse
 }
 
 type GetMCPCapabilitiesResp struct {

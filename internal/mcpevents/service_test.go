@@ -39,64 +39,70 @@ func TestTTLClampAndDefaults(t *testing.T) {
 }
 
 func TestSubscribeRefreshPreservesPosition(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	service := Service{Store: st, Home: t.TempDir(), Enabled: true}
 	input := SubscribeRequest{Name: Name, Arguments: Arguments{SourceID: 1}, Delivery: Delivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
 	first, err := service.Subscribe(t.Context(), input)
-	require.NoError(t, err)
+	require.NoError(err)
 	key := store.MCPEventsPositionKey(first.ID)
 	pos, raw, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(t, err)
-	require.NotNil(t, raw)
+	require.NoError(err)
+	require.NotNil(raw)
 	pos.Failures = 2
 	ok, err := st.AdvanceWakeupStateKey(t.Context(), key, raw, pos)
-	require.NoError(t, err)
-	require.True(t, ok)
+	require.NoError(err)
+	require.True(ok)
 	second, err := service.Subscribe(t.Context(), input)
-	require.NoError(t, err)
-	assert.Equal(t, first.ID, second.ID)
+	require.NoError(err)
+	assert.Equal(first.ID, second.ID)
 	got, _, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(t, err)
-	assert.Equal(t, pos, got)
+	require.NoError(err)
+	assert.Equal(pos, got)
 }
 
 func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	now := time.Now().UTC()
 	service := Service{Store: st, Home: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
 	in := SubscribeRequest{Name: Name, Arguments: Arguments{SourceID: 1}, Delivery: Delivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
 	result, err := service.Subscribe(t.Context(), in)
-	require.NoError(t, err)
+	require.NoError(err)
 	now = now.Add(25 * time.Hour)
 	targets, err := service.Native(t.Context())
-	require.NoError(t, err)
-	assert.Empty(t, targets)
+	require.NoError(err)
+	assert.Empty(targets)
 	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
-	require.NoError(t, err)
-	assert.Nil(t, position)
+	require.NoError(err)
+	assert.Nil(position)
 }
 
 func TestRefreshReturnsCategorizedDeliveryStatus(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	service := Service{Store: st, Home: t.TempDir(), Enabled: true}
 	in := SubscribeRequest{Name: Name, Arguments: Arguments{SourceID: 1}, Delivery: Delivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
 	first, err := service.Subscribe(t.Context(), in)
-	require.NoError(t, err)
+	require.NoError(err)
 	key := store.MCPEventsPositionKey(first.ID)
 	state, raw, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(t, err)
+	require.NoError(err)
 	stamp := time.Now().UTC().Truncate(time.Second)
 	state.Failures = 1
 	state.LastError = "http_5xx"
 	state.FailedSince = &stamp
 	ok, err := st.AdvanceWakeupStateKey(t.Context(), key, raw, state)
-	require.NoError(t, err)
-	require.True(t, ok)
+	require.NoError(err)
+	require.True(ok)
 	refreshed, err := service.Subscribe(t.Context(), in)
-	require.NoError(t, err)
-	assert.Equal(t, "http_5xx", refreshed.DeliveryStatus.LastError)
-	require.NotNil(t, refreshed.DeliveryStatus.FailedSince)
-	assert.Equal(t, stamp, *refreshed.DeliveryStatus.FailedSince)
+	require.NoError(err)
+	assert.Equal("http_5xx", refreshed.DeliveryStatus.LastError)
+	require.NotNil(refreshed.DeliveryStatus.FailedSince)
+	assert.Equal(stamp, *refreshed.DeliveryStatus.FailedSince)
 }
 
 func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {

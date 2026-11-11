@@ -44,27 +44,66 @@ func (b *eventTestBackend) MCPEventsUnsubscribe(context.Context, mcpevents.Unsub
 type eventListParams struct{ sdkmcp.ParamsBase }
 type eventListResult struct {
 	sdkmcp.ResultBase
+
 	Events []mcpevents.Definition `json:"events"`
+}
+type eventSubscribeParams struct {
+	sdkmcp.ParamsBase
+
+	Name      string              `json:"name"`
+	Arguments mcpevents.Arguments `json:"arguments"`
+	Delivery  mcpevents.Delivery  `json:"delivery"`
+}
+type eventSubscribeResult struct {
+	sdkmcp.ResultBase
+
+	ID string `json:"id"`
 }
 
 func TestEventsListStdioAndModernHTTP(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	backend := &eventTestBackend{}
 	opts := ServeOptions{Events: backend}
 	response := rawModernCall(t, opts, HTTPOptions{}, "events/list", nil)
-	assert.Len(t, response.Result["events"], 1)
+	assert.Len(response.Result["events"], 1)
 	ct, st := sdkmcp.NewInMemoryTransports()
 	server, err := newMCPServer(opts, false).Connect(t.Context(), st, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = server.Close() })
 	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "test", Version: "1"}, nil)
-	require.NoError(t, sdkmcp.AddSendingCustomMethod[*eventListParams, *eventListResult](client, "events/list"))
+	require.NoError(sdkmcp.AddSendingCustomMethod[*eventListParams, *eventListResult](client, "events/list"))
 	session, err := client.Connect(t.Context(), ct, nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = session.Close() })
 	result, err := sdkmcp.CallCustomMethod[*eventListParams, *eventListResult](t.Context(), session, "events/list", &eventListParams{})
-	require.NoError(t, err)
-	require.Len(t, result.Events, 1)
-	assert.Equal(t, mcpevents.Name, result.Events[0].Name)
+	require.NoError(err)
+	require.Len(result.Events, 1)
+	assert.Equal(mcpevents.Name, result.Events[0].Name)
+}
+
+func TestEventsSubscribeStdioAndModernHTTP(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	backend := &eventTestBackend{}
+	delivery := mcpevents.Delivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}
+	response := rawModernCall(t, ServeOptions{Events: backend}, HTTPOptions{}, "events/subscribe", map[string]any{
+		"name": mcpevents.Name, "arguments": map[string]any{"source_id": 1}, "delivery": delivery,
+	})
+	assert.Equal("fixture", response.Result["id"])
+	ct, st := sdkmcp.NewInMemoryTransports()
+	server, err := newMCPServer(ServeOptions{Events: backend}, false).Connect(t.Context(), st, nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = server.Close() })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "test", Version: "1"}, nil)
+	require.NoError(sdkmcp.AddSendingCustomMethod[*eventSubscribeParams, *eventSubscribeResult](client, "events/subscribe"))
+	session, err := client.Connect(t.Context(), ct, nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = session.Close() })
+	result, err := sdkmcp.CallCustomMethod[*eventSubscribeParams, *eventSubscribeResult](t.Context(), session, "events/subscribe", &eventSubscribeParams{Name: mcpevents.Name, Arguments: mcpevents.Arguments{SourceID: 1}, Delivery: delivery})
+	require.NoError(err)
+	assert.Equal("fixture", result.ID)
+	assert.Equal(2, backend.calls)
 }
 func TestEventsLegacyAndDisabledDoNotReachBackend(t *testing.T) {
 	backend := &eventTestBackend{}
