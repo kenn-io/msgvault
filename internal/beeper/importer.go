@@ -218,7 +218,13 @@ func (imp *Importer) loadFullResumeState(ctx context.Context, sourceID int64) (*
 }
 
 func resumeState(prev, cp *store.SyncRun, full bool) (*SyncState, error) {
-	load := LoadSyncState
+	load := func(blob string) (*SyncState, error) {
+		state, err := LoadSyncState(blob)
+		if err != nil {
+			return nil, fmt.Errorf("read saved Beeper sync progress: %w (a full sync with 'msgvault sync-beeper --full' rebuilds it)", err)
+		}
+		return state, nil
+	}
 	if full {
 		load = func(blob string) (*SyncState, error) {
 			state, err := decodeSyncState(blob)
@@ -1130,10 +1136,14 @@ func (imp *Importer) ensureConversation(
 			continue
 		}
 		active[key] = true
-		inputs := rosterMemberSignature(&p.User, detail, opts.AccountID, bridgePrefix)
-		if progress := work.Members[key]; progress.Inputs != inputs {
-			work.Members[key] = rosterMemberWork{Inputs: inputs}
-			work.MatchingPending = true
+		// A settled roster has no per-member progress; its unchanged signature
+		// already shows every member is matched.
+		if !work.Settled {
+			inputs := rosterMemberSignature(&p.User, detail, opts.AccountID, bridgePrefix)
+			if progress := work.Members[key]; progress.Inputs != inputs {
+				work.Members[key] = rosterMemberWork{Inputs: inputs}
+				work.MatchingPending = true
+			}
 		}
 		role := "member"
 		if p.IsAdmin {
@@ -1210,7 +1220,8 @@ func (imp *Importer) ensureConversation(
 	if err := opts.rosterStop(ctx); err != nil {
 		return convID, false, chatMembership{}, nil, err
 	}
-	if complete && !work.MembershipApplied {
+	// Removing members needs a fresh roster read; additions alone do not.
+	if complete && len(removals) > 0 {
 		requestCtx, cancel := opts.requestContext(ctx)
 		verified, verifyErr := imp.client.GetChat(requestCtx, ch.ID)
 		cancel()
@@ -1282,6 +1293,9 @@ type rosterObservations struct {
 // Capture follows committed membership and alternates with message work.
 // A member already in flight may finish its own transactions before yielding.
 func (imp *Importer) captureRosterObservations(ctx context.Context, sourceID int64, opts ImportOptions, roster *rosterObservations, sum *ImportSummary) error {
+	if roster.work.Settled {
+		return ctx.Err()
+	}
 	for _, member := range roster.members {
 		if err := opts.rosterStop(ctx); err != nil {
 			return err
@@ -1302,7 +1316,7 @@ func (imp *Importer) captureRosterObservations(ctx context.Context, sourceID int
 		}
 	}
 	if roster.complete {
-		roster.work.MatchingPending = false
+		roster.work.settle()
 	}
 	return ctx.Err()
 }
