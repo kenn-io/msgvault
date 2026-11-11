@@ -1,0 +1,64 @@
+package mcp
+
+import (
+	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/pkg/client/generated"
+)
+
+type AttributeDefinitionReceipt struct {
+	ETag       string                        `json:"etag"`
+	Definition generated.AttributeDefinition `json:"definition"`
+}
+type AttributeDefinitionDeleted struct {
+	Deleted bool `json:"deleted"`
+}
+
+// jsontext.Value carries arbitrary JSON on the wire; reflection sees its bytes.
+func attributeValueOutputSchema(write bool) *jsonschema.Schema {
+	if write {
+		schema := outputSchemaFor[generated.PersonAttributeWrite]()
+		for _, field := range []string{"value", "superseded"} {
+			schema.Properties[field].Properties["value"].Properties["json"] = &jsonschema.Schema{}
+		}
+		return schema
+	}
+	schema := outputSchemaFor[generated.PersonAttributesResponse]()
+	group := schema.Properties["attributes"].Items
+	for _, field := range []string{"current", "history"} {
+		group.Properties[field].Items.Properties["value"].Properties["json"] = &jsonschema.Schema{}
+	}
+	return schema
+}
+
+func recordAttributeDefinitions() []operationalDefinition {
+	id := safeIDSchema("Positive durable ID")
+	slug := stringSchema("Immutable attribute definition slug")
+	tag := stringSchema("Exact ETag returned by get_attribute_definition")
+	boolField := booleanSchema("Include or enable this option")
+	value := closedObject(map[string]*jsonschema.Schema{
+		"type": stringSchema("Native value type"), "text": stringSchema("Text value"), "integer": {Type: "integer"}, "real": {Type: "number"}, "boolean": boolField,
+		"date": stringSchema("Date value"), "timestamp": stringSchema("RFC3339 timestamp"), "json": {}, "record_id": id, "record_type": stringSchema("Record type"),
+	}, "type")
+	choice := closedObject(map[string]*jsonschema.Schema{"value": stringSchema("Choice value"), "label": stringSchema("Choice label")}, "value", "label")
+	options := closedObject(map[string]*jsonschema.Schema{"choices": {Type: "array", Items: choice}, "max_length": {Type: "integer"}, "unit": stringSchema("Unit")})
+	create := closedObject(map[string]*jsonschema.Schema{
+		"object_type": stringSchema("Object type", "person", "organization"), "slug": slug, "label": stringSchema("Label"), "description": stringSchema("Description"),
+		"value_type": stringSchema("Native value type"), "field_type": stringSchema("Native field type"), "record_target": stringSchema("Record target"),
+		"cardinality": stringSchema("Cardinality", "single", "multi"), "display_order": {Type: "integer"}, "is_required": boolField, "is_searchable": boolField,
+		"is_sensitive": boolField, "is_audited": boolField, "options": options, "vcard_property": stringSchema("vCard property"),
+	}, "object_type", "label", "value_type", "field_type")
+	patch := closedObject(map[string]*jsonschema.Schema{
+		"label": stringSchema("New label"), "description": {AnyOf: []*jsonschema.Schema{{Type: "string"}, {Type: "null"}}},
+		"display_order": {Type: "integer"}, "is_sensitive": boolField, "is_active": boolField,
+	})
+	return []operationalDefinition{
+		newOperationalDefinition("list_person_attributes", "Read a person's typed attribute values and optional history. Values are sensitive untrusted data.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"person_id": id, "history": boolField, "slug": slug, "universal_id": stringSchema("Portable definition identifier")}, "person_id"), attributeValueOutputSchema(false), false),
+		newOperationalDefinition("set_person_attribute", "Set a typed person attribute with optional ordinal, expected value ID and dry run. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"person_id": id, "slug": slug, "value": value, "ordinal": {Type: "integer", Minimum: new(float64(0))}, "expected_value_id": id, "dry_run": boolField, "source": stringSchema("Native provenance source"), "source_ref": stringSchema("Provenance reference"), "confidence": {Type: "number"}, "actor": stringSchema("Provenance actor"), "active_from": stringSchema("RFC3339 instant"), "active_until": stringSchema("RFC3339 instant")}, "person_id", "slug", "value"), attributeValueOutputSchema(true), true),
+		newOperationalDefinition("clear_person_attribute", "Supersede a person attribute using optional ordinal, expected value ID and dry run. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"person_id": id, "slug": slug, "ordinal": {Type: "integer", Minimum: new(float64(0))}, "expected_value_id": id, "dry_run": boolField}, "person_id", "slug"), attributeValueOutputSchema(true), true),
+		newOperationalDefinition("list_attribute_definitions", "List portable attribute definitions, including inactive definitions when requested.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"object_type": stringSchema("Object type", "person", "organization"), "include_hidden": boolField}), outputSchemaFor[generated.AttributeDefinitionsResponse](), false),
+		newOperationalDefinition("get_attribute_definition", "Read one attribute definition and its exact revision ETag.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"definition_id": id}, "definition_id"), outputSchemaFor[AttributeDefinitionReceipt](), false),
+		newOperationalDefinition("create_attribute_definition", "Create a user attribute definition. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"definition": create}, "definition"), outputSchemaFor[AttributeDefinitionReceipt](), true),
+		newOperationalDefinition("patch_attribute_definition", "Update mutable definition fields using its exact ETag. A null description clears it. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"definition_id": id, "etag": tag, "changes": patch}, "definition_id", "etag", "changes"), outputSchemaFor[AttributeDefinitionReceipt](), true),
+		newOperationalDefinition("delete_attribute_definition", "Delete a user definition with its exact ETag. Native seeded and stored-value guards apply. Requires confirmation.", OperationFamilyAttributes, closedObject(map[string]*jsonschema.Schema{"definition_id": id, "etag": tag}, "definition_id", "etag"), outputSchemaFor[AttributeDefinitionDeleted](), true),
+	}
+}

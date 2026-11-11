@@ -59,6 +59,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, personRecordCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, recordAttributeMCPCapabilities(hasRoute, capabilities)...)
 	return backend
 }
 
@@ -89,6 +90,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		if result, handled, err := b.executeImportJob(ctx, name, args); handled {
 			return result, err
 		}
+		if result, handled, err := b.executeRecordAttributeOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeLoopOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -105,6 +109,9 @@ func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name stri
 			return disclosure, err
 		}
 		if disclosure, handled, err := b.personRecordDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
+		if disclosure, handled, err := b.recordAttributeDisclosure(name, args); handled {
 			return disclosure, err
 		}
 		if disclosure, handled, err := b.loopOperationDisclosure(name, args); handled {
