@@ -394,3 +394,57 @@ func TestCallReadersIgnoreGenericImportedCallRecord(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal([]store.PersonCallSummary{{PersonID: person.ID, Answered: 1, ExampleMessageID: callID}}, summary)
 }
+
+func TestCallReadersCompareWindowInstants(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	peer, err := f.Store.EnsureParticipantByPhone(t.Context(), "+12025550101", "Example", "signal")
+	require.NoError(err)
+	person, _, err := f.Store.CreatePersonFromParticipant(peer)
+	require.NoError(err)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 123456000, time.UTC)
+	step := time.Nanosecond
+	if f.Store.IsPostgreSQL() {
+		step = time.Microsecond
+	}
+	end := at.Add(2 * step)
+	var expected []int64
+	for _, messageType := range []string{store.MessageTypeSynctechCall, store.MessageTypeGoogleVoiceCall} {
+		for i, delta := range []time.Duration{-step, 0, step, 2 * step} {
+			offset := 7 * 3600
+			if (i%2 == 0) != (messageType == store.MessageTypeGoogleVoiceCall) {
+				offset = -5 * 3600
+			}
+			message := f.NewMessage().Build()
+			message.MessageType = messageType
+			message.SentAt = sql.NullTime{Time: at.Add(delta).In(time.FixedZone("offset", offset)), Valid: true}
+			id, err := f.Store.UpsertMessage(message)
+			require.NoError(err)
+			require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{peer}, nil))
+			require.NoError(f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(60)))
+			if delta == 0 || delta == step {
+				expected = append(expected, id)
+			}
+		}
+	}
+	o, sourceID := validCallObservation(t, f.Store)
+	o.OccurredAt = at.Add(step)
+	o.EndedAt = new(o.OccurredAt.Add(time.Minute))
+	o.Participants = []callhistory.Participant{{ID: peer, Participation: "joined"}}
+	id, err := f.Store.PutCallObservationContext(t.Context(), sourceID, o)
+	require.NoError(err)
+	expected = append(expected, id)
+
+	query := store.CallQuery{After: &at, Before: &end}
+	items, err := f.Store.ListCallObservationsContext(t.Context(), query)
+	require.NoError(err)
+	var got []int64
+	for _, item := range items {
+		got = append(got, item.MessageID)
+	}
+	assert.Equal(t, expected, got)
+	summary, err := f.Store.SummarizeCallsContext(t.Context(), query)
+	require.NoError(err)
+	require.Len(summary, 1)
+	assert.Equal(t, []store.PersonCallSummary{{PersonID: person.ID, Answered: len(expected), ExampleMessageID: expected[0]}}, summary)
+}
