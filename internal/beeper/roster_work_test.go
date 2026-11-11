@@ -237,13 +237,9 @@ func TestRosterResumeUsesMergedParticipant(t *testing.T) {
 	require.NoError(err)
 	other := &detail.Participants.Items[1].User
 	require.NoError(st.SetParticipantIdentifierContext(t.Context(), old, participantIdentifierType, imp.res.identifierForUser(other.ID)))
-	state := &ChatState{RosterWork: &rosterWork{Signature: rosterSignature(detail, "signal"), Phase: "members"}}
-	blob, err := (&SyncState{Chats: map[string]*ChatState{chat.ID: state}}).Marshal()
-	require.NoError(err)
-	restored, err := LoadSyncState(blob)
-	require.NoError(err)
+	work := &rosterWork{Signature: rosterSignature(detail, "signal"), Phase: "members"}
 	imp = NewImporter(st, imp.client)
-	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: restored.Chats[chat.ID].RosterWork}, &ImportSummary{}) //nolint:dogsled // Only the error matters here.
+	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{}) //nolint:dogsled // Only the error matters here.
 	require.NoError(err)
 	winner := participantForBeeperUser(t, st, other.ID)
 	assert.NotEqual(old, winner, "resolving the second member merges the first binding")
