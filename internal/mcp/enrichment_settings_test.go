@@ -23,3 +23,23 @@ func TestEnrichmentSettingsInputSchemaRejectsProviderSetup(t *testing.T) {
 	}
 	assert.Error(schema.Validate(map[string]any{"name": "example", "etag": `"revision"`, "max_retries": float64(-1)}))
 }
+
+func TestEnrichmentCatalogRequiresOwnWriteAllowance(t *testing.T) {
+	assert := assert.New(t)
+	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_enrichment_policy", "update_enrichment_policy"}}
+	names := func(writes bool) map[string]bool {
+		result := map[string]bool{}
+		for _, d := range operationalCatalog(opts, writes) {
+			result[d.definition.name] = true
+		}
+		return result
+	}
+	assert.Equal(map[string]bool{"get_enrichment_policy": true}, names(true))
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilySources}
+	assert.Equal(map[string]bool{"get_enrichment_policy": true}, names(true))
+	opts.OperationWriteFamilies = []OperationFamily{OperationFamilyEnrichmentSettings}
+	assert.True(names(true)["update_enrichment_policy"])
+	assert.False(names(false)["update_enrichment_policy"])
+	opts.DelegatedOnly = true
+	assert.Empty(names(true))
+}

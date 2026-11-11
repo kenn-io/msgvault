@@ -301,7 +301,7 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 			if mode != "read" {
 				must.NoError(cmd.Flags().Set("mcp-allow-writes", "true"))
 			}
-			families := map[string]string{"profile-writes": "promote_person", "identity-decisions": "accept_identity_match", "identity-scoring": "score_identity_matches", "person-merges": "merge_person", "carddav-writes": "approve_carddav_publication", "calendar-writes": "calendar_create", "kata-writes": "create_kata_issue", "source-writes": "sync_source"}
+			families := map[string]string{"profile-writes": "promote_person", "identity-decisions": "accept_identity_match", "identity-scoring": "score_identity_matches", "person-merges": "merge_person", "carddav-writes": "approve_carddav_publication", "calendar-writes": "calendar_create", "kata-writes": "create_kata_issue", "source-writes": "sync_source", "enrichment-settings-writes": "update_enrichment_policy"}
 			if mode != "writes" {
 				for flag := range families {
 					must.NoError(cmd.Flags().Set("mcp-allow-"+flag, "true"))
@@ -323,6 +323,7 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 				}
 				must.Equal(http.StatusOK, response.Code, response.Body.String())
 				checks.Contains(response.Body.String(), `"get_stats"`)
+				checks.Contains(response.Body.String(), `"get_enrichment_policy"`)
 				if path == "/mcp" {
 					checks.NotContains(response.Body.String(), `"stage_deletion"`)
 				} else {

@@ -217,6 +217,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `calendar_update` | calendar_write | `--allow-calendar-writes` | backend-dependent |
 | `approve_carddav_publication` | carddav_write | `--allow-carddav-writes` | owner-only |
 | `sync_carddav` | carddav_write | `--allow-carddav-writes` | owner-only |
+| `update_enrichment_policy` | enrichment_settings_write | `--allow-enrichment-settings-writes` | owner-only |
 | `accept_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `reject_identity_match` | identity_decision | `--allow-identity-decisions` | owner-only |
 | `score_identity_matches` | identity_scoring | `--allow-identity-scoring` | owner-only |
@@ -245,6 +246,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
+| `get_enrichment_policy` | read | — | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
 | `get_kata_issue_context` | read | — | owner-only |

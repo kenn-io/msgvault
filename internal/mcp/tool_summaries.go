@@ -100,6 +100,8 @@ func ToolSummaries() []ToolSummary {
 				summary.Security, summary.Flag = "source_write", "--allow-source-writes"
 			case OperationFamilyLoops:
 				summary.Security, summary.Flag = "loop_write", "--allow-loop-writes"
+			case OperationFamilyEnrichmentSettings:
+				summary.Security, summary.Flag = "enrichment_settings_write", "--allow-enrichment-settings-writes"
 			}
 		}
 		summaries = append(summaries, summary)

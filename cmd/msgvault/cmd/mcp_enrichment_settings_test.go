@@ -1,20 +1,24 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json/v2"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestEnrichmentReplacementRequiresReconstructablePolicy(t *testing.T) {
@@ -124,4 +128,122 @@ func TestEnrichmentProjectionRejectsMissingPolicyFields(t *testing.T) {
 	assert.False(policy.Providers[0].Enabled)
 	broken := enrichmentProjection(&mcpserver.OperationResult{ETag: `"revision"`, Output: enrichmentSettings{Providers: []enrichmentProvider{{Name: "example"}}}}, false)
 	assert.True(broken.IsError)
+}
+
+func TestEnrichmentPolicySDKRequiresApproval(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.toml")
+	require.NoError(os.WriteFile(path, []byte(`[[people.enrichment.providers]]
+name = "example"
+kind = "sixtyfour"
+enabled = false
+endpoint = "https://provider.example/search"
+poll_endpoint = "https://provider.example/poll"
+tier = "standard"
+allowed_identifiers = ["name"]
+target_keys = ["attribute:bio"]
+retention_posture = "zero_retention"
+training_posture = "no_training"
+refresh_interval = "24h"
+max_requests_per_run = 5
+max_requests_per_day = 50
+`), 0o600))
+	cfg, err := config.Load(path, directory)
+	require.NoError(err)
+	cfg.Data.DataDir = directory
+	backend := sourceOperationFixture(t, api.NewServer(cfg, nil, nil, slog.New(slog.DiscardHandler)))
+	approvals := 0
+	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyEnrichmentSettings}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		approvals++
+		assert.Contains(request.Params.Message, "stored credential")
+		assert.NotContains(request.Params.Message, "provider.example")
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	}})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_enrichment_policy"})
+	require.NoError(err)
+	require.False(result.IsError)
+	data, err := json.Marshal(result.StructuredContent)
+	require.NoError(err)
+	var policy mcpserver.EnrichmentPolicy
+	require.NoError(json.Unmarshal(data, &policy))
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_enrichment_policy", Arguments: map[string]any{"name": "example", "etag": policy.ETag, "max_requests_per_day": 25}})
+	require.NoError(err)
+	require.False(result.IsError)
+	assert.Equal(1, approvals)
+	reloaded, err := config.Load(path, directory)
+	require.NoError(err)
+	assert.Equal(int64(25), reloaded.People.Enrichment.Providers[0].MaxRequestsPerDay)
+}
+
+func TestEnrichmentRefusesUnreconstructableAndUnknownProviders(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.toml")
+	require.NoError(os.WriteFile(path, []byte(`[[people.enrichment.providers]]
+name = "example"
+kind = "exa"
+enabled = false
+allowed_identifiers = ["name"]
+target_keys = ["attribute:bio"]
+retention_posture = "zero_retention"
+training_posture = "no_training"
+refresh_interval = "24h"
+max_requests_per_run = 5
+max_requests_per_day = 50
+`), 0o600))
+	cfg, err := config.Load(path, directory)
+	require.NoError(err)
+	cfg.Data.DataDir = directory
+	backend := sourceOperationFixture(t, api.NewServer(cfg, nil, nil, slog.New(slog.DiscardHandler)))
+	result, err := backend.ExecuteOperation(t.Context(), "get_enrichment_policy", nil)
+	require.NoError(err)
+	policy := operationOutput[mcpserver.EnrichmentPolicy](t, result)
+	require.Len(policy.Providers, 1)
+	for name, code := range map[string]string{"example": "provider_policy_unreconstructable", "missing": "provider_not_found"} {
+		result, err = backend.ExecuteOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": name, "etag": policy.ETag, "enabled": true})
+		require.NoError(err)
+		require.True(result.IsError)
+		encoded, err := json.Marshal(result.Output)
+		require.NoError(err)
+		assert.Contains(string(encoded), code)
+	}
+	reloaded, err := config.Load(path, directory)
+	require.NoError(err)
+	require.Len(reloaded.People.Enrichment.Providers, 1)
+	assert.False(reloaded.People.Enrichment.Providers[0].Enabled)
+}
+
+func TestEnrichmentWritePreservesUncertainty(t *testing.T) {
+	for _, status := range []int{http.StatusUnprocessableEntity, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			sent := ""
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					w.Header().Set("ETag", `"revision"`)
+					_, _ = w.Write([]byte(`{"person_enrichment_providers":[{"name":"example","kind":"sixtyfour","enabled":false,"endpoint":"https://provider.example/search","poll_endpoint":"https://provider.example/poll","allowed_identifiers":["name"],"target_keys":["attribute:bio"],"allow_sensitive_targets":false,"retention_posture":"zero_retention","training_posture":"no_training","refresh_interval":"24h","request_timeout":"1m","poll_interval":"1s","max_job_age":"1h","max_retries":1,"max_requests_per_run":5,"max_requests_per_day":50}]}`))
+					return
+				}
+				sent = r.Header.Get("If-Match")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"error":"validation_failed"}`))
+			}))
+			t.Cleanup(server.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+			require.NoError(err)
+			backend := &daemonMCPOperations{client: client}
+			result, _, err := backend.executeEnrichmentOperation(t.Context(), "update_enrichment_policy", map[string]any{"name": "example", "etag": `"revision"`, "max_requests_per_day": 25})
+			require.NoError(err)
+			require.True(result.IsError)
+			encoded, err := json.Marshal(result.Output)
+			require.NoError(err)
+			assert.Equal(`"revision"`, sent)
+			assert.Contains(string(encoded), `"operation_may_have_completed":true`)
+		})
+	}
 }
