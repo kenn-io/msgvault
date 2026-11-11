@@ -120,13 +120,11 @@ Note on topic phrasing: it is an experimental variable, not a constant. FTS5
 matches on AND semantics, so a verbose natural-language topic requires every
 one of its words to appear in a message and will usually score near zero,
 while its keyword reduction scores well. Dense retrieval can move the other
-way. Compare runs only across the same topics file.
-
-Example:
-  msgvault eval --qrels qrels.txt --topics topics.tsv --modes fts,vector,hybrid -n 100`,
-	Example: "  msgvault eval --qrels ./qrels.txt --topics ./topics.tsv --modes fts --json",
-	Args:    cobra.NoArgs,
-	RunE:    runEval,
+way. Compare runs only across the same topics file.`,
+	Example: `  msgvault eval --qrels qrels.txt --topics topics.tsv --modes fts,vector,hybrid -n 100
+  msgvault eval --qrels ./qrels.txt --topics ./topics.tsv --modes fts --json`,
+	Args: cobra.NoArgs,
+	RunE: runEval,
 }
 
 func init() {

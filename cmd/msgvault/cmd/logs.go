@@ -28,9 +28,16 @@ var (
 )
 
 var logsCmd = &cobra.Command{
-	Use:     "logs",
-	Short:   "View and tail msgvault's structured log files",
-	Example: "  msgvault logs --run-id example-run --level error",
+	Use:   "logs",
+	Short: "View and tail msgvault's structured log files",
+	Example: `  msgvault logs                       # last 50 lines of today's log
+  msgvault logs -n 200 --follow       # tail with --follow
+  msgvault logs --run-id a1b2c3d4     # just one run
+  msgvault logs --level error         # only errors
+  msgvault logs --grep deduplicate    # substring over the JSON
+  msgvault logs --all                 # every log file we still have
+  msgvault logs --path                # print the log path and exit
+  msgvault logs --run-id example-run --level error`,
 	Long: `Show msgvault's structured log output from the selected daemon's
 on-disk logs: the JSON logs under <data dir>/logs and the background
 daemon's <data dir>/serve.log. With [remote].url configured, this shows the
@@ -40,17 +47,7 @@ By default this prints the last 50 lines of today's log file in a
 compact, human-friendly format (level + run_id + message + the
 interesting attrs). Use --follow to tail the file live, --run-id
 to filter to a single invocation, --level to filter by severity,
-or --grep to filter on a substring match across the whole record.
-
-Examples:
-
-  msgvault logs                       # last 50 lines of today's log
-  msgvault logs -n 200 --follow       # tail with --follow
-  msgvault logs --run-id a1b2c3d4     # just one run
-  msgvault logs --level error         # only errors
-  msgvault logs --grep deduplicate    # substring over the JSON
-  msgvault logs --all                 # every log file we still have
-  msgvault logs --path                # print the log path and exit`,
+or --grep to filter on a substring match across the whole record.`,
 	Args: cobra.NoArgs,
 	RunE: runLogsCmd,
 }

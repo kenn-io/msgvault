@@ -34,15 +34,14 @@ Use --strip-quoted=false to print the archived body text unchanged.
 The default page contains at most 100 messages; --limit accepts 1–500.
 Use --offset to read another page. JSON includes conversation_id, total, offset,
 has_more, and messages. An exhausted offset returns an empty page.
-Provider IDs that match several accounts require an internal message ID.
-
-Examples:
-  msgvault thread show 123
-  msgvault thread show 123 --json --limit 50 --offset 50`,
+Provider IDs that match several accounts require an internal message ID.`,
+		Example: `  msgvault thread show 123
+  msgvault thread show 123 --json --limit 50 --offset 50
+  msgvault thread show 123 --json --limit 50`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (result error) {
 			if limit < 1 || limit > query.ThreadMaxLimit {
-				return withHint(validationErr(cmd, errors.New("--limit must be between 1 and 500")), "use --limit 1 through 500 (default 100); page with --offset")
+				return withHint(validationErr(cmd, errors.New("--limit must be between 1 and 500")), "default is 100; page with --offset")
 			}
 			if offset < 0 {
 				return withHint(validationErr(cmd, errors.New("--offset must be non-negative")), "start with --offset 0 and advance it by the page length while has_more is true")

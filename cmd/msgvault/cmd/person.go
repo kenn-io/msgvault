@@ -686,7 +686,7 @@ func personCLICandidateDecision(
 	case "rejected", "reject":
 		return generated.Reject, nil
 	default:
-		return "", withHint(validationErr(cmd, errors.New("decision must be accepted or rejected")), "pass --decision accepted or --decision rejected after inspecting 'msgvault person merge-show <merge-id> --json'")
+		return "", withHint(validationErr(cmd, errors.New("decision must be accepted or rejected")), "inspect 'msgvault person merge-show <merge-id> --json' before deciding")
 	}
 }
 

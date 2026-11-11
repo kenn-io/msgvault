@@ -21,9 +21,11 @@ var (
 
 func newRepairIdentityCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "repair-identity [identifier]",
-		Short:   "Confirm account identities and recompute is_from_me",
-		Example: "  msgvault repair identity you@example.com",
+		Use:   "repair-identity [identifier]",
+		Short: "Confirm account identities and recompute is_from_me",
+		Example: `  msgvault repair identity                       # all Gmail accounts missing an identity
+  msgvault repair identity you@example.com       # one account
+  msgvault repair identity --type imap`,
 		Long: `Confirm each account's own address as its identity and recompute the
 is_from_me attribution on messages already in the archive.
 
@@ -40,12 +42,7 @@ already confirmed, and only plain, valid email addresses are touched. Other
 confirmed aliases do not suppress repair of the account address.
 Other email account types with an unconfirmed account address are listed with
 a --type repair hint. If you supplied an identifier, reuse it.
-Activity and contacts update at the daemon's next refresh, or now with msgvault activity build.
-
-Examples:
-  msgvault repair identity                       # all Gmail accounts missing an identity
-  msgvault repair identity you@example.com       # one account
-  msgvault repair identity --type imap`,
+Activity and contacts update at the daemon's next refresh, or now with msgvault activity build.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)

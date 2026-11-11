@@ -85,17 +85,16 @@ Bare words and "quoted phrases" perform full-text search in the default mode.
 Use | between alternatives, for example invoice from:alice | receipt from:bob.
 filename: values use case-insensitive literal substring matching, including
 %, _, and backslashes. Repeat filename: to require every value to match.
-The filename operator requires daemon API schema 3.14.0 or newer.
-
-Examples:
-  msgvault search from:alice@example.com has:attachment
+The filename operator requires daemon API schema 3.14.0 or newer.`,
+	Example: `  msgvault search from:alice@example.com has:attachment
   msgvault search subject:meeting after:2024-01-01
   msgvault search 'list:"<announce.example.org>"'
   msgvault search project report newer_than:30d
   msgvault search '"exact phrase"' label:INBOX
   msgvault search 'planning the next release after:2026-01-01 from:sender@example.com' --mode hybrid --explain
   msgvault search 'a discussion about release planning newer_than:30d' --mode vector --sort date --snippet
-  msgvault search 'filename:"project plan.pdf"' --json`,
+  msgvault search 'filename:"project plan.pdf"' --json
+  msgvault search 'from:alice@example.com newer_than:30d' --json`,
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Join all args to form the query (allows unquoted multi-term searches)
@@ -110,7 +109,7 @@ Examples:
 		}
 		// Validate mode before any scope work so we fail fast on a typo.
 		if searchMode != fullTextSearchMode && searchMode != "vector" && searchMode != "hybrid" {
-			return withHint(validationErr(cmd, fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode)), "choose --mode fts, --mode vector, or --mode hybrid; inspect semantic indexes with 'msgvault embeddings status'")
+			return withHint(validationErr(cmd, fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode)), "inspect semantic indexes with 'msgvault embeddings status'")
 		}
 		if searchSort == "date" && searchMode == fullTextSearchMode {
 			return withHint(usageErr(cmd, errors.New("--sort date requires --mode vector or hybrid")), "add --mode hybrid or --mode vector, or omit --sort")

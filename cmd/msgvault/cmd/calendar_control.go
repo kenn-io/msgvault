@@ -110,7 +110,7 @@ func newCalendarControlCmd(run calendarRunner) *cobra.Command {
 				}
 				dt, err := parseCalendarBound(bound.value, tz, allDay)
 				if err != nil {
-					return withHint(validationErr(cmd, fmt.Errorf("invalid --%s %q: %w", bound.flag, bound.value, err)), "use an RFC3339 time such as 2026-10-10T09:00:00-07:00, or a local time with --tz America/Los_Angeles")
+					return validationErr(cmd, fmt.Errorf("invalid --%s %q: %w", bound.flag, bound.value, err))
 				}
 				if calcontrol.IsRead(action) {
 					instant, ok := dt.Instant()

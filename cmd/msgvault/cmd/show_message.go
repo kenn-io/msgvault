@@ -42,11 +42,11 @@ Inline replies, uncertain wrapped headers, and complete URLs are preserved.
 Only ">" quoting and English "On ... wrote:" headers are recognized; Outlook
 "Original Message" blocks and other languages stay as written.
 --strip-quoted also cleans body_text in JSON; the archived body and body_html
-are unchanged. --body-only and --json cannot be combined.
-
-Examples:
-  msgvault show 12345
-  msgvault show 18f0abc123def --json`,
+are unchanged. --body-only and --json cannot be combined.`,
+	Example: `  msgvault show 12345
+  msgvault show 18f0abc123def --json
+  msgvault show 123 --json
+  msgvault show 123 --body-only --strip-quoted`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := resolveMessageIDArg(args[0])

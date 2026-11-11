@@ -191,14 +191,12 @@ func runShowDeletion(cmd *cobra.Command, args []string) error {
 var cancelAll bool
 
 var cancelDeletionCmd = &cobra.Command{
-	Use:     "cancel-deletion [batch-id]",
-	Short:   "Cancel pending or in-progress deletion batches",
-	Example: "  msgvault deletion cancel batch-example",
-	Long: `Cancel deletion batches by ID, or use --all to cancel all pending and in-progress batches.
-
-Examples:
-  msgvault deletion cancel 20260202-195132-Senders-wingide-user
-  msgvault deletion cancel --all`,
+	Use:   "cancel-deletion [batch-id]",
+	Short: "Cancel pending or in-progress deletion batches",
+	Example: `  msgvault deletion cancel 20260202-195132-Senders-wingide-user
+  msgvault deletion cancel --all
+  msgvault deletion cancel batch-example`,
+	Long: `Cancel deletion batches by ID, or use --all to cancel all pending and in-progress batches.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runCancelDeletion,
 }
@@ -927,9 +925,15 @@ func newDeleteStagedScopeEscalation(
 }
 
 var deleteStagedCmd = &cobra.Command{
-	Use:     "delete-staged [batch-id]",
-	Short:   "Execute staged deletions",
-	Example: "  msgvault deletion execute --dry-run\n  msgvault deletion execute batch-example --yes",
+	Use:   "delete-staged [batch-id]",
+	Short: "Execute staged deletions",
+	Example: `  msgvault deletion execute --list         # Show staged batches (always allowed)
+  msgvault deletion execute --dry-run      # Preview without executing (always allowed)
+  msgvault deletion execute                 # With durable config consent
+  msgvault deletion execute batch-123       # With durable config consent
+  msgvault deletion execute --permanent     # With durable config consent
+  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault deletion execute --yes  # One command
+  msgvault deletion execute batch-example --yes`,
 	Long: `Execute pending deletion batches.
 
 By default, messages are moved to the trash: Gmail Trash (recoverable for
@@ -951,15 +955,7 @@ remote daemon's deletion section is not policy for a command invoked
 elsewhere. Staging and read-only modes (--list, --dry-run) work without the
 gate. Ask the archive owner to approve remote deletion; agent grants cannot enable it.
 --yes skips the ordinary trash prompt when stdin is closed. Permanent deletion
-always requires typing delete, even with --yes.
-
-Examples:
-  msgvault deletion execute --list         # Show staged batches (always allowed)
-  msgvault deletion execute --dry-run      # Preview without executing (always allowed)
-  msgvault deletion execute                 # With durable config consent
-  msgvault deletion execute batch-123       # With durable config consent
-  msgvault deletion execute --permanent     # With durable config consent
-  MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault deletion execute --yes  # One command`,
+always requires typing delete, even with --yes.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		state := invocationFromCommand(cmd)
 		if state == nil || state.cfg == nil {

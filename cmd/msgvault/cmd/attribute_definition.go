@@ -273,7 +273,7 @@ func attributeObjectTypeArg(cmd *cobra.Command) (string, error) {
 	if value == "" || value == personValue || value == "organization" {
 		return value, nil
 	}
-	return "", withHint(validationErr(cmd, errors.New("object type must be person or organization")), "choose --object-type person or --object-type organization")
+	return "", validationErr(cmd, errors.New("object type must be person or organization"))
 }
 
 func readCLIDocument(cmd *cobra.Command, value string) ([]byte, error) {

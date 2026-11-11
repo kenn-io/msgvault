@@ -30,14 +30,14 @@ Results are candidates: read the messages before linking identities.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			q := store.ChatDiscoveryQuery{Query: strings.Join(args, " "), Limit: limit, SourceID: sourceID}
-			if limit == 0 {
+			if limit < 1 || limit > 100 {
 				return withHint(validationErr(cmd, errors.New("--limit must be between 1 and 100")), "for example, pass --limit 20")
 			}
-			if cmd.Flags().Changed("source-id") && sourceID == 0 {
+			if cmd.Flags().Changed("source-id") && sourceID <= 0 {
 				return withHint(validationErr(cmd, errors.New("--source-id must be positive")), "find source IDs with 'msgvault account list --json'")
 			}
 			if err := store.ValidateChatDiscoveryQuery(q); err != nil {
-				return withHint(validationErr(cmd, err), "use --limit 1 through 100; source IDs come from 'msgvault account list --json'")
+				return validationErr(cmd, err)
 			}
 			client, _, err := OpenHTTPStore(cmd.Context())
 			if err != nil {

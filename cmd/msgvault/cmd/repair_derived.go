@@ -25,9 +25,12 @@ func newRepairDerivedCmd() *cobra.Command {
 	var attachmentMessage string
 	var sourceID int64
 	cmd := &cobra.Command{
-		Use:     "repair-derived",
-		Short:   "Re-derive message text and metadata from stored payloads",
-		Example: "  msgvault repair derived --source-type imap",
+		Use:   "repair-derived",
+		Short: "Re-derive message text and metadata from stored payloads",
+		Example: `  msgvault repair derived
+  msgvault repair derived --source-type imap
+  msgvault repair derived --source-type beeper
+  msgvault repair derived --source-type beeper --identifier instagramgo`,
 		Long: `Re-derive stored message columns from the payloads archived with them.
 
 Message bodies, snippets, the search index, and attachment metadata are computed
@@ -50,13 +53,7 @@ idempotent.
 
 Empty attachments are omitted. Valid files and existing metadata are preserved.
 Corrupt files, conflicting metadata or unusable archived originals cause an error
-without changes.
-
-Examples:
-  msgvault repair derived
-  msgvault repair derived --source-type imap
-  msgvault repair derived --source-type beeper
-  msgvault repair derived --source-type beeper --identifier instagramgo`,
+without changes.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
