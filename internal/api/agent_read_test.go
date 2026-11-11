@@ -924,7 +924,7 @@ func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 	tx, err := st.DB().BeginTx(t.Context(), nil)
 	requirements.NoError(err)
 	defer func() { _ = tx.Rollback() }()
-	for i := 0; i <= changesScanBudget; i++ {
+	for i := 0; i <= changefeed.ScanBudget; i++ {
 		_, err = tx.ExecContext(t.Context(), st.Rebind(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type) VALUES (?, ?, ?, ?)`), b.ID, conv, fmt.Sprintf("outside-%d", i), "email")
 		requirements.NoError(err)
 	}
