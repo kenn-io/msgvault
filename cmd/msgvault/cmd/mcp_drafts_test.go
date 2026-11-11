@@ -452,7 +452,7 @@ func TestMCPDelegatedChangeFeedUnavailableRefusals(t *testing.T) {
 	// Inject daemon refusals that depend on transient snapshot capacity or failure.
 	server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if code := refusal.Load().(string); r.URL.Path == "/api/v1/messages/changes" && code != "" {
+			if code, ok := refusal.Load().(string); ok && r.URL.Path == "/api/v1/messages/changes" && code != "" {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusServiceUnavailable)
 				_ = json.NewEncoder(w).Encode(map[string]string{"error": code, "message": "unavailable"})

@@ -3309,7 +3309,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if grant != nil {
-		filter.bindGrant(grant)
+		filter = filter.bindGrant(grant)
 	}
 	digest := filter.digest()
 	if position.filter != "" && position.filter != digest {
@@ -3353,7 +3353,7 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		filter.participants = resolution.Scope.ParticipantIDs
 		if grant != nil {
 			checker, ok := s.store.(interface {
-				PersonInSources(context.Context, []int64, []int64) (bool, error)
+				PersonInSources(ctx context.Context, participantIDs, sourceIDs []int64) (bool, error)
 			})
 			if !ok {
 				writeError(w, 503, "source_scope_unavailable", "Source authorization is unavailable")

@@ -15,6 +15,7 @@ import (
 // bound read and snapshot start without adding a production hook.
 type changeFeedOrderingDialect struct {
 	Dialect
+
 	t     *testing.T
 	write func()
 }

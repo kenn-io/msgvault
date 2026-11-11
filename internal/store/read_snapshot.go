@@ -73,7 +73,7 @@ func (s *Store) BeginReadSnapshotContext(ctx context.Context) (context.Context, 
 // BeginChangedMessagesReadSnapshotContext captures the commit bound before any snapshot read.
 func (s *Store) BeginChangedMessagesReadSnapshotContext(ctx context.Context) (context.Context, func(), error) {
 	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); ok && snapshot.db == s.db.DB {
-		return ctx, nil, fmt.Errorf("change feed snapshot already open")
+		return ctx, nil, errors.New("change feed snapshot already open")
 	}
 	bounds, err := s.dialect.ReadWatermarkBounds(ctx, s.db.DB)
 	if err != nil {
@@ -83,7 +83,12 @@ func (s *Store) BeginChangedMessagesReadSnapshotContext(ctx context.Context) (co
 	if err != nil {
 		return ctx, nil, err
 	}
-	readCtx.Value(readSnapshotKey{}).(*readSnapshot).bounds = &bounds
+	snapshot, ok := readCtx.Value(readSnapshotKey{}).(*readSnapshot)
+	if !ok || snapshot == nil {
+		release()
+		return ctx, nil, errors.New("change feed snapshot unavailable")
+	}
+	snapshot.bounds = &bounds
 	return readCtx, release, nil
 }
 

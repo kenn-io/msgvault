@@ -1009,7 +1009,7 @@ func TestChangeFeedGrantDigestUsesStableSourceReferences(t *testing.T) {
 	b := agentgrant.SourceRef{ID: 2, Type: "gmail", Identifier: "b@example.com"}
 	filter := func(refs ...agentgrant.SourceRef) changesFilter {
 		var f changesFilter
-		f.bindGrant(&agentgrant.Grant{Sources: refs})
+		f = f.bindGrant(&agentgrant.Grant{Sources: refs})
 		return f
 	}
 	original := filter(a, b)

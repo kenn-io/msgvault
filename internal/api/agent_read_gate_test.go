@@ -1125,6 +1125,7 @@ func TestAgentReadAtCapacityFailsWhenRequestEnds(t *testing.T) {
 
 type changeFeedProbeStore struct {
 	*store.Store
+
 	probes    atomic.Int32
 	readLimit atomic.Int32
 	beginErr  error

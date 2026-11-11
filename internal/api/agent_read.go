@@ -88,7 +88,7 @@ func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agen
 	begin := snapshotStore.BeginReadSnapshotContext
 	if operation == "listChangedMessages" {
 		feedStore, ok := s.store.(interface {
-			BeginChangedMessagesReadSnapshotContext(context.Context) (context.Context, func(), error)
+			BeginChangedMessagesReadSnapshotContext(ctx context.Context) (context.Context, func(), error)
 		})
 		if !ok {
 			<-s.readSnapshotSlots

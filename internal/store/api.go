@@ -1717,7 +1717,7 @@ func (s *Store) ListChangedMessages(
 	var err error
 	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); ok && snapshot.db == s.db.DB {
 		if snapshot.bounds == nil {
-			return ChangedMessagePage{}, fmt.Errorf("change feed snapshot has no captured bounds")
+			return ChangedMessagePage{}, errors.New("change feed snapshot has no captured bounds")
 		}
 		bounds = *snapshot.bounds
 	} else {

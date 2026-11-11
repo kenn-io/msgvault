@@ -65,7 +65,7 @@ func parseChangesFilter(r *http.Request) (changesFilter, error) {
 
 type changeGrantRef struct{ Type, Identifier string }
 
-func (f *changesFilter) bindGrant(grant *agentgrant.Grant) {
+func (f changesFilter) bindGrant(grant *agentgrant.Grant) changesFilter {
 	// A non-nil slice distinguishes even an empty grant from an owner.
 	f.grantRefs = make([]changeGrantRef, 0, len(grant.Sources))
 	for _, ref := range grant.Sources {
@@ -77,6 +77,7 @@ func (f *changesFilter) bindGrant(grant *agentgrant.Grant) {
 		}
 		return strings.Compare(a.Identifier, b.Identifier)
 	})
+	return f
 }
 
 func (f changesFilter) digest() string {
