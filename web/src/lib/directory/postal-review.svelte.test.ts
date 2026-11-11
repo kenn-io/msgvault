@@ -40,6 +40,18 @@ describe('postalAddressText', () => {
 });
 
 describe('PostalReviewSession', () => {
+  it('retries an unavailable Google check without changing the address', async () => {
+    const unavailable = { ...await assessment(), status: 'unavailable' as const, reason_codes: ['provider_unavailable'] };
+    const recovered = await assessment();
+    const check = vi.fn().mockResolvedValueOnce(unavailable).mockResolvedValueOnce(recovered);
+    const state = new PostalReviewSession(7, check);
+    await state.check(input, true);
+    expect(state.result?.status).toBe('unavailable');
+    await state.check(input, true);
+    expect(check).toHaveBeenCalledTimes(2);
+    expect(state.result).toEqual(recovered);
+  });
+
   it('ignores the response ID from an invalidated check', async () => {
     const first = deferred<Assessment>(), second = deferred<Assessment>();
     const check = vi.fn().mockImplementationOnce(() => first.promise).mockImplementationOnce(() => second.promise).mockImplementation(async (_id: number, draft: Input) => ({ ...await assessment(draft), response_id: 'third' }));
@@ -58,7 +70,7 @@ describe('PostalReviewSession', () => {
     expect(check).toHaveBeenLastCalledWith(7, editedAgain, true, expect.any(AbortSignal), 'current-id');
   });
 
-  it('suppresses duplicate pending and displayed checks without saving anything', async () => {
+  it('suppresses duplicate pending checks without saving anything', async () => {
     const reply = deferred<Assessment>();
     const check = vi.fn(async (_personID: number, _input: Input, _external: boolean, _signal: AbortSignal) => reply.promise);
     const state = new PostalReviewSession(7, check);
@@ -68,8 +80,6 @@ describe('PostalReviewSession', () => {
     expect(check).toHaveBeenCalledTimes(1);
     const result = await assessment(); reply.resolve(result); await pending;
     expect(state.result).toEqual(result);
-    await state.check(input, true);
-    expect(check).toHaveBeenCalledTimes(1);
     expect(state.pending).toBe(false);
     expect(check.mock.calls[0]?.[0]).toBe(7);
   });

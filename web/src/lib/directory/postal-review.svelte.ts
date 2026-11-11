@@ -34,8 +34,6 @@ export class PostalReviewSession {
   private draftGeneration = 0;
   private requestID = 0;
   private abort?: AbortController;
-  private resultKey: string | undefined;
-  private resultExternal: boolean | undefined;
   private firstResponseID: string | undefined;
 
   constructor(readonly personID: number, private readonly assess: PostalAssessmentCheck) {}
@@ -47,7 +45,6 @@ export class PostalReviewSession {
     this.pending = false;
     this.result = null;
     this.error = null;
-    this.resultKey = undefined;
   }
 
   destroy(): void { this.live = false; this.invalidate(); }
@@ -61,7 +58,7 @@ export class PostalReviewSession {
 
   async check(input: Input, external: boolean): Promise<void> {
     const key = postalInputKey(input);
-    if (!this.live || this.pending || (this.result && key === this.resultKey && external === this.resultExternal)) return;
+    if (!this.live || this.pending) return;
     const generation = this.draftGeneration;
     const request = ++this.requestID;
     const abort = new AbortController();
@@ -77,8 +74,6 @@ export class PostalReviewSession {
         throw new Error('mismatched postal assessment');
       }
       this.result = result;
-      this.resultKey = key;
-      this.resultExternal = external;
     } catch {
       if (current()) this.error = 'Address check unavailable.';
     } finally {
