@@ -211,14 +211,10 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 	// Handle Ctrl+C gracefully
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigChan)
 	go func() {
-		select {
-		case <-sigChan:
-			fmt.Println("\nInterrupted. Saving checkpoint...")
-			cancel()
-		case <-ctx.Done():
-		}
+		<-sigChan
+		fmt.Println("\nInterrupted. Saving checkpoint...")
+		cancel()
 	}()
 
 	// Embedding is no longer driven by sync: newly-ingested messages
@@ -248,6 +244,7 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	cacheErr := rebuildCacheAfterManualSync(dbPath, state)
 	var sourceErr error
 	if len(syncErrors) > 0 {
 		fmt.Println()
@@ -257,11 +254,10 @@ func runSyncFullLocal(cmd *cobra.Command, args []string) error {
 		}
 		sourceErr = fmt.Errorf("%d account(s) failed to sync: %s", len(syncErrors), strings.Join(syncErrors, "; "))
 	}
-	if err := ctx.Err(); err != nil {
+	if ctx.Err() != nil {
 		cmd.SilenceErrors = true
-		return errors.Join(sourceErr, err)
 	}
-	return errors.Join(sourceErr, rebuildCacheAfterManualSync(dbPath, state))
+	return errors.Join(sourceErr, cacheErr, ctx.Err())
 }
 
 // buildAPIClient creates the appropriate gmail.API client for the given

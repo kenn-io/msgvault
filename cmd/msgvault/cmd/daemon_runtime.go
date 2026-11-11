@@ -731,7 +731,7 @@ func formatCommand(executable string, args []string, goos string) (string, error
 		}
 		quoted, err := agenthook.BuildCommand("x", value)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("quote command argument: %w", err)
 		}
 		if goos == "windows" {
 			parts = append(parts, strings.TrimPrefix(quoted.PowerShell, "& 'x' "))

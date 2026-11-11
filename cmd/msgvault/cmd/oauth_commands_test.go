@@ -383,7 +383,7 @@ func TestSyncFullCredentialDiscoveryHonorsCancellation(t *testing.T) {
 	select {
 	case err := <-result:
 		require.ErrorIs(t, err, context.Canceled)
-		assert.ErrorContains(t, err, "reader@example.test")
+		require.ErrorContains(t, err, "reader@example.test")
 	case <-time.After(15 * time.Second):
 		require.FailNow(t, "credential discovery did not stop")
 	}
@@ -438,7 +438,7 @@ func headlessNativeArgs(t *testing.T, shell, fixture, line string) []string {
 	if err != nil {
 		t.Skipf("native shell unavailable: %s", shell)
 	}
-	tail := strings.TrimPrefix(line, "msgvault ")
+	tail := strings.TrimPrefix(strings.TrimPrefix(line, "'msgvault' "), "msgvault ")
 	var command *exec.Cmd
 	switch shell {
 	case "cmd":

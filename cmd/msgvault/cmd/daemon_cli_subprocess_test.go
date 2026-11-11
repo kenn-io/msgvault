@@ -81,15 +81,16 @@ func TestClassifyDaemonCLIWaitErrExitStatus(t *testing.T) {
 				events = append(events, stream+"="+data)
 				return nil
 			})
-			if mode == "interrupted-emit-failure" {
-				assert.ErrorIs(got, want)
-			} else if mode == "paused" {
+			switch mode {
+			case "interrupted-emit-failure":
+				require.ErrorIs(got, want)
+			case "paused":
 				require.NoError(got)
 				assert.Equal([]string{"outcome=" + mode}, events)
-			} else if mode == "interrupted" {
+			case "interrupted":
 				require.EqualError(got, cliSubprocessExitSentinel)
 				assert.Equal([]string{"outcome=interrupted"}, events)
-			} else {
+			default:
 				require.EqualError(got, cliSubprocessExitSentinel)
 				assert.Empty(events)
 			}

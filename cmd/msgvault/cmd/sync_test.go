@@ -32,10 +32,12 @@ func TestSyncFullCancellationRetainsEarlierSourceError(t *testing.T) {
 	require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), "bad@example.test", "test"))
 	good, err := s.GetOrCreateSource("imap", "good@example.test")
 	require.NoError(t, err)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
-	port := listener.Addr().(*net.TCPAddr).Port
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	port := addr.Port
 	require.NoError(t, s.UpdateSourceSyncConfig(t.Context(), good.ID, fmt.Sprintf(`{"host":"127.0.0.1","port":%d,"username":"good@example.test","tls":false}`, port)))
 	require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), "good@example.test", "test"))
 	require.NoError(t, s.Close())
@@ -58,7 +60,7 @@ func TestSyncFullCancellationRetainsEarlierSourceError(t *testing.T) {
 	_ = listener.Close()
 	<-done
 	require.ErrorIs(t, err, context.Canceled)
-	assert.ErrorContains(t, err, "bad@example.test")
+	require.ErrorContains(t, err, "bad@example.test")
 	assert.Contains(t, printed, "bad@example.test")
 }
 

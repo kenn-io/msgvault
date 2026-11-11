@@ -105,10 +105,9 @@ func syncInterruptionDetails(err error) string {
 		}
 		return strings.Join(details, "\n")
 	}
-	var streamErr *daemonclient.CLIRunError
-	if errors.As(err, &streamErr) {
+	if streamErr, ok := errors.AsType[*daemonclient.CLIRunError](err); ok {
 		var details []string
-		for _, line := range strings.Split(streamErr.Error(), "\n") {
+		for line := range strings.SplitSeq(streamErr.Error(), "\n") {
 			if line != cliSubprocessExitSentinel {
 				details = append(details, line)
 			}
