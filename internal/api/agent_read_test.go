@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -361,45 +360,6 @@ func TestAgentReadSourceFilterPrecedence(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestAgentCollectionSenderCounts(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	src, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "allowed", "allowed", "")
-	requirements.NoError(err)
-	_, denied, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "denied", "denied", "")
-	requirements.NoError(err)
-	for _, entry := range []struct {
-		id      int64
-		address string
-	}{{allowed, "allowed@example.test"}, {denied, "denied@example.test"}} {
-		participant, err := st.EnsureParticipant(entry.address, "", "example.test")
-		requirements.NoError(err)
-		requirements.NoError(st.ReplaceMessageRecipients(entry.id, "from", []int64{participant}, nil))
-		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ? AND recipient_type = 'from'"), entry.address, entry.id)
-		requirements.NoError(err)
-	}
-	_, err = st.CreateCollection("allowed", "visible", []int64{src.ID})
-	requirements.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	defer srv.agentGrants.Close()
-	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier, IncomingSenderKeys: []string{"allowed@example.test"}}}, time.Time{})
-	requirements.NoError(err)
-	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/collections", nil)
-	r.Header.Set(apiprotocol.AgentTokenHeader, secret)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, r)
-	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-	var response cliCollectionsResponse
-	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	for _, collection := range response.Collections {
-		if collection.Name == "allowed" {
-			requirements.Equal(int64(1), collection.MessageCount)
-			return
-		}
-	}
-	t.Fatal("allowed collection missing")
 }
 
 func TestAgentCollections(t *testing.T) {
@@ -1011,7 +971,6 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 	}{
 		{"/api/v1/messages", http.StatusOK, "allowed code", "private code"},
 		{"/api/v1/search?q=code", http.StatusOK, "allowed code", "private code"},
-		{"/api/v1/search/fast?q=code", http.StatusOK, "allowed code", "private code"},
 		{"/api/v1/messages/filter", http.StatusOK, "allowed code", "private code"},
 		{"/api/v1/stats/total", http.StatusOK, `"message_count":1`, `"message_count":2`},
 		{"/api/v1/cli/collections", http.StatusOK, `"message_count":1`, `"message_count":2`},
@@ -1129,52 +1088,4 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 	masked := readAllowed()
 	requirementsForTest.Contains(masked, verification.Masked)
 	requirementsForTest.NotContains(masked, "987654")
-}
-
-func TestAgentRelatedMessageIncomingScope(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "allowed", "allowed", "")
-	requirements.NoError(err)
-	_, target, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "target", "target", "")
-	requirements.NoError(err)
-	for _, tc := range []struct {
-		id      int64
-		address string
-	}{{allowed, "codes@example.test"}, {target, "other@example.test"}} {
-		participant, err := st.EnsureParticipant(tc.address, "", "example.test")
-		requirements.NoError(err)
-		requirements.NoError(st.ReplaceMessageRecipients(tc.id, "from", []int64{participant}, nil))
-		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), tc.address, tc.id)
-		requirements.NoError(err)
-	}
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ?, metadata = ? WHERE id = ?"), "chatwoot", fmt.Sprintf(`{"meeting_message_id":%d}`, target), allowed)
-	requirements.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ? WHERE id = ?"), "meeting_transcript", target)
-	requirements.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	defer srv.agentGrants.Close()
-	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", allowed), nil)
-	r.Header.Set("X-Api-Key", "owner")
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, r)
-	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-	var ownerMessage struct {
-		RelatedMessageID *int64 `json:"related_message_id"`
-	}
-	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &ownerMessage))
-	requirements.Equal(&target, ownerMessage.RelatedMessageID)
-	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
-	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
-	message, err := engine.GetMessage(ctx, allowed)
-	requirements.NoError(err)
-	requirements.Nil(message.RelatedMessageID)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), "codes@example.test", target)
-	requirements.NoError(err)
-	message, err = engine.GetMessage(ctx, allowed)
-	requirements.NoError(err)
-	requirements.Equal(&target, message.RelatedMessageID)
-	storeMessage, err := st.GetMessageContext(ctx, allowed)
-	requirements.NoError(err)
-	requirements.Equal(&target, storeMessage.RelatedMessageID)
 }

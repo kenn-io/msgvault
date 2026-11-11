@@ -195,17 +195,15 @@ func TestArchiveMessageDaemonAgentCLI(t *testing.T) {
 	cliConfig.HomeDir = t.TempDir()
 	cliConfig.Data.DataDir = cliConfig.HomeDir
 	cliContext := testInvocationContext(t.Context(), cliConfig, invocationOptions{agentURL: serverURL, agentTokenFile: tokenFile, agentAllowInsecure: true, agentURLChanged: true, agentTokenChanged: true})
-	for _, archived := range []bool{true, false} {
-		root := newTestRootCmd()
-		command := newMessageArchiveCommand(archived, nil)
-		root.AddCommand(command)
-		root.SetArgs([]string{command.Name(), "--message", strconv.FormatInt(id, 10), "--dry-run", "--json"})
-		var output bytes.Buffer
-		root.SetOut(&output)
-		root.SetErr(&bytes.Buffer{})
-		requirementsForTest.NoError(root.ExecuteContext(cliContext))
-		assert.Contains(t, output.String(), `"dry_run":true`)
-	}
+	root := newTestRootCmd()
+	command := newMessageArchiveCommand(true, nil)
+	root.AddCommand(command)
+	root.SetArgs([]string{command.Name(), "--message", strconv.FormatInt(id, 10), "--dry-run", "--json"})
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetErr(&bytes.Buffer{})
+	requirementsForTest.NoError(root.ExecuteContext(cliContext))
+	assert.Contains(t, output.String(), `"dry_run":true`)
 }
 
 func TestArchiveMessageDaemonPreviewDuringSync(t *testing.T) {

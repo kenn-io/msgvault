@@ -17,7 +17,10 @@ type archiveToolBackend struct {
 
 func (b *archiveToolBackend) ArchiveMessage(_ context.Context, id int64, change emailtags.ArchiveChange) (*emailtags.ArchiveResult, error) {
 	b.change = change
-	return &emailtags.ArchiveResult{MessageID: id, Archived: *change.Archived, Changed: true, DryRun: change.DryRun}, b.failure
+	if b.failure != nil {
+		return nil, b.failure
+	}
+	return &emailtags.ArchiveResult{MessageID: id, Archived: *change.Archived, Changed: true, DryRun: change.DryRun}, nil
 }
 func TestArchiveMessageToolPolicyAndArguments(t *testing.T) {
 	assertionsForTest := assert.New(t)

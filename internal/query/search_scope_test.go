@@ -2,6 +2,7 @@ package query_test
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -569,7 +570,7 @@ func createSearchScopeMessage(
 	return messageID
 }
 
-func TestAgentLabelInventoryIncomingScope(t *testing.T) {
+func TestAgentSearchAndLabelInventoryIncomingScope(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	first, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "first@example.test", "allowed", "allowed code", "")
@@ -637,4 +638,40 @@ func TestAgentLabelInventoryIncomingScope(t *testing.T) {
 			requirements.Equal(tc.want, stats.LabelCount)
 		})
 	}
+}
+
+func TestAgentRelatedMessageIncomingScope(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, allowed, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "allowed", "allowed", "")
+	requirements.NoError(err)
+	_, target, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "owner@example.test", "target", "target", "")
+	requirements.NoError(err)
+	for _, tc := range []struct {
+		id      int64
+		address string
+	}{{allowed, "codes@example.test"}, {target, "other@example.test"}} {
+		participant, err := st.EnsureParticipant(tc.address, "", "example.test")
+		requirements.NoError(err)
+		requirements.NoError(st.ReplaceMessageRecipients(tc.id, "from", []int64{participant}, nil))
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), tc.address, tc.id)
+		requirements.NoError(err)
+	}
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ?, metadata = ? WHERE id = ?"), "chatwoot", fmt.Sprintf(`{"meeting_message_id":%d}`, target), allowed)
+	requirements.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET message_type = ? WHERE id = ?"), "meeting_transcript", target)
+	requirements.NoError(err)
+	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
+	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
+	message, err := engine.GetMessage(ctx, allowed)
+	requirements.NoError(err)
+	requirements.Nil(message.RelatedMessageID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), "codes@example.test", target)
+	requirements.NoError(err)
+	message, err = engine.GetMessage(ctx, allowed)
+	requirements.NoError(err)
+	requirements.Equal(&target, message.RelatedMessageID)
+	storeMessage, err := st.GetMessageContext(ctx, allowed)
+	requirements.NoError(err)
+	requirements.Equal(&target, storeMessage.RelatedMessageID)
 }

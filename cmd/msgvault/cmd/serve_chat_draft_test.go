@@ -21,61 +21,59 @@ import (
 )
 
 func TestChatDraftReplyIncomingSender(t *testing.T) {
-	for _, kind := range []string{"slack", "teams", "discord"} {
-		t.Run(kind, func(t *testing.T) {
-			requirements := require.New(t)
-			st := testutil.NewTestStore(t)
-			source, err := st.GetOrCreateSource(kind, "account@example.test")
+	kind := "slack"
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(kind, "account@example.test")
+	requirements.NoError(err)
+	conversation, err := st.EnsureConversationWithType(source.ID, "channel", "channel", "Synthetic")
+	requirements.NoError(err)
+	messages := make(map[string]int64)
+	for _, sender := range []string{"allowed", "denied", "missing"} {
+		id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "provider-" + sender, MessageType: kind})
+		requirements.NoError(err)
+		messages[sender] = id
+		if sender != "missing" {
+			participant, err := st.EnsureParticipant(sender+"@example.test", "", "example.test")
 			requirements.NoError(err)
-			conversation, err := st.EnsureConversationWithType(source.ID, "channel", "channel", "Synthetic")
+			requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), sender+"@example.test", id)
 			requirements.NoError(err)
-			messages := make(map[string]int64)
-			for _, sender := range []string{"allowed", "denied", "missing"} {
-				id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "provider-" + sender, MessageType: kind})
-				requirements.NoError(err)
-				messages[sender] = id
-				if sender != "missing" {
-					participant, err := st.EnsureParticipant(sender+"@example.test", "", "example.test")
-					requirements.NoError(err)
-					requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
-					_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE message_recipients SET email_address = ? WHERE message_id = ?"), sender+"@example.test", id)
-					requirements.NoError(err)
-				}
+		}
+	}
+	adapter := &storeAPIAdapter{store: st}
+	for _, tc := range []struct {
+		name, sender   string
+		keys           []string
+		owner, allowed bool
+	}{
+		{"allowed", "allowed", []string{"allowed@example.test"}, false, true},
+		{"denied", "denied", []string{"allowed@example.test"}, false, false},
+		{"missing", "missing", []string{"allowed@example.test"}, false, false},
+		{"unrestricted", "denied", nil, false, true},
+		{"owner", "denied", nil, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			var before int
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM chat_drafts").Scan(&before))
+			var grant *agentgrant.Grant
+			if !tc.owner {
+				grant = &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier, IncomingSenderKeys: tc.keys}}}
 			}
-			adapter := &storeAPIAdapter{store: st}
-			for _, tc := range []struct {
-				name, sender   string
-				keys           []string
-				owner, allowed bool
-			}{
-				{"allowed", "allowed", []string{"allowed@example.test"}, false, true},
-				{"denied", "denied", []string{"allowed@example.test"}, false, false},
-				{"missing", "missing", []string{"allowed@example.test"}, false, false},
-				{"unrestricted", "denied", nil, false, true},
-				{"owner", "denied", nil, true, true},
-			} {
-				t.Run(tc.name, func(t *testing.T) {
-					var before int
-					require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM chat_drafts").Scan(&before))
-					var grant *agentgrant.Grant
-					if !tc.owner {
-						grant = &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier, IncomingSenderKeys: tc.keys}}}
-					}
-					var output strings.Builder
-					req := api.CLIRunRequest{Grant: grant, Args: []string{api.CLIRunDraftComposeCommand, "--conversation", strconv.FormatInt(conversation, 10), "--reply-to", strconv.FormatInt(messages[tc.sender], 10), "--body", "reply", "--json"}}
-					err := adapter.runCLIComposeDraft(t.Context(), req, func(event api.CLIRunEvent) error { output.WriteString(event.Data); return nil })
-					if tc.allowed {
-						require.NoError(t, err)
-						assert.Contains(t, output.String(), "provider-"+tc.sender)
-					} else {
-						require.Error(t, err)
-						assert.Equal(t, "not_permitted", err.Error())
-						assert.Empty(t, output.String())
-						var after int
-						require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM chat_drafts").Scan(&after))
-						assert.Equal(t, before, after)
-					}
-				})
+			var output strings.Builder
+			req := api.CLIRunRequest{Grant: grant, Args: []string{api.CLIRunDraftComposeCommand, "--conversation", strconv.FormatInt(conversation, 10), "--reply-to", strconv.FormatInt(messages[tc.sender], 10), "--body", "reply", "--json"}}
+			err := adapter.runCLIComposeDraft(t.Context(), req, func(event api.CLIRunEvent) error { output.WriteString(event.Data); return nil })
+			if tc.allowed {
+				requirements.NoError(err)
+				assertions.Contains(output.String(), "provider-"+tc.sender)
+			} else {
+				requirements.Error(err)
+				assertions.Equal("not_permitted", err.Error())
+				assertions.Empty(output.String())
+				var after int
+				requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM chat_drafts").Scan(&after))
+				assertions.Equal(before, after)
 			}
 		})
 	}

@@ -19,7 +19,7 @@ func TestIncomingSenderPredicate(t *testing.T) {
 		CREATE TABLE message_recipients (message_id INTEGER, recipient_type TEXT, email_address TEXT);
 		INSERT INTO messages VALUES (1,1),(2,1),(3,1),(4,1),(5,1),(6,2),(7,1);
 		INSERT INTO message_recipients VALUES (1,'from','CODES@example.test'),(2,'from','other@example.test'),
-		(3,'from',NULL),(4,'from','codes@example.test'),(4,'from','other@example.test'),
+		(2,'to','codes@example.test'),(3,'from',NULL),(4,'from','codes@example.test'),(4,'from','other@example.test'),
 		(6,'from','any@example.test'),(7,'from','first last@example.test')`)
 	requirementsForTest.NoError(err)
 	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{1: {"codes@example.test", "first last@example.test"}, 2: nil})
