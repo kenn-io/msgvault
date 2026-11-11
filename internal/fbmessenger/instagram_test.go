@@ -476,7 +476,9 @@ func TestInstagramRejectsConcurrentSourceBeforeReadingArchive(t *testing.T) {
 	require.NoError(err)
 	syncID, err := st.StartSyncContext(t.Context(), summary.SourceID, "import-instagram")
 	require.NoError(err)
-	t.Cleanup(func() { require.NoError(st.FailSyncContext(context.Background(), syncID, "test cleanup")) })
+	t.Cleanup(func() {
+		require.NoError(st.FailSyncContext(context.WithoutCancel(t.Context()), syncID, "test cleanup"))
+	})
 	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET source_message_id = 'ig:v2:' || substr(source_message_id, 7)`)
 	require.NoError(err)
 	_, err = ImportDYI(t.Context(), st, opts)
