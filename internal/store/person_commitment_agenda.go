@@ -108,6 +108,8 @@ func (s *Store) ListPendingCommitmentAgendaContext(ctx context.Context, now time
 	}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+commitmentAgendaColumns+
 		` FROM person_commitment_agenda WHERE state = 'pending'
+		AND EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
+			AND EXISTS (SELECT 1 FROM person_tracking pt WHERE pt.person_id = c.person_id))
 		AND (deferred_at IS NULL OR `+s.loopTimeKey("deferred_at")+` <= `+s.loopTimeKey("?")+`)
 		AND NOT EXISTS (SELECT 1 FROM person_commitments c WHERE c.id = commitment_id
 			AND c.owner_state = 'snoozed' AND `+s.loopTimeKey("c.snoozed_until")+` > `+s.loopTimeKey("?")+`)
@@ -137,7 +139,8 @@ func (s *Store) MarkCommitmentAgendaAttemptContext(ctx context.Context, item Com
 			AND ` + s.loopTimeKey("c.expires_at") + ` > ` + s.loopTimeKey("?")
 	args := []any{s.dialect.TimestampParam(now), item.CommitmentID, item.IdempotencyKey, item.TargetKey, item.Quote, s.dialect.TimestampParam(now)}
 	if automatic {
-		query += ` AND (c.owner_state <> 'snoozed' OR ` + s.loopTimeKey("c.snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
+		query += ` AND EXISTS (SELECT 1 FROM person_tracking pt WHERE pt.person_id = c.person_id)
+			AND (c.owner_state <> 'snoozed' OR ` + s.loopTimeKey("c.snoozed_until") + ` <= ` + s.loopTimeKey("?") + `)`
 		args = append(args, s.dialect.TimestampParam(now))
 	}
 	result, err := s.db.ExecContext(ctx, s.Rebind(query+`) `), args...)

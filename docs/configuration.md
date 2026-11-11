@@ -442,7 +442,6 @@ direct conversations within the active provider's source and date scope.
 | `auto_fulfil` | `false` | Close promises on future explicit, newer supported confirmations; the owner can reopen them. |
 | `auto_agenda` | `false` | Create Kata agenda issues for cited promises when the Kata integration is enabled. |
 
-
 See [Open loops](usage/open-loops.md#see-cited-commitments) for consent and
 owner controls.
 

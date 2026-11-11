@@ -338,6 +338,8 @@ func (s *Server) handleCommitmentAgenda(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "commitment_not_found", "Open commitment not found")
 	case errors.Is(err, errCommitmentAgendaCitation):
 		writeError(w, http.StatusConflict, "kata_citation_changed", err.Error())
+	case errors.Is(err, kataevidence.ErrChanged):
+		writeError(w, http.StatusConflict, "evidence_changed", "The commitment or filing changed. Refresh and try again.")
 	case err != nil:
 		s.writeKataIssueError(w, err)
 	default:
