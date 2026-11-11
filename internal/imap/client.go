@@ -364,6 +364,30 @@ func (c *Client) connect(ctx context.Context) error {
 		}
 	}
 
+	// go-imap sends UTF-8 mailbox names when IMAP4rev2 is advertised. A
+	// server advertising both revisions still uses rev1 mailbox syntax until
+	// ENABLE IMAP4rev2 (RFC 9051 section 6.1.1), so negotiate it before any
+	// mailbox command. Otherwise LIST succeeds but STATUS/SELECT of non-ASCII
+	// names can fail, preventing a complete incremental baseline.
+	if caps := conn.Caps(); caps.Has(imap.CapIMAP4rev1) && caps.Has(imap.CapIMAP4rev2) {
+		if err := waitAuthenticationContext(ctx, conn, func() error {
+			if err := c.waitCommand(ctx); err != nil {
+				return err
+			}
+			data, err := conn.Enable(imap.CapIMAP4rev2).Wait()
+			if err != nil {
+				return fmt.Errorf("ENABLE IMAP4rev2: %w", err)
+			}
+			if data == nil || !data.Caps.Has(imap.CapIMAP4rev2) {
+				return errors.New("server did not enable IMAP4rev2")
+			}
+			return nil
+		}); err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("enable IMAP4rev2 mailbox encoding: %w", err)
+		}
+	}
+
 	c.conn = conn
 	c.selectedMailbox = ""
 	c.selectedUIDValidity = 0
