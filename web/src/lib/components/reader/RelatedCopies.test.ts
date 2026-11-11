@@ -109,7 +109,7 @@ describe('RelatedCopies', () => {
     await screen.findByRole('link', { name: 'Quote' });
 
     const groups = screen.getAllByRole('region').filter((region) => region.classList.contains('group'));
-    // One account holding copies from two sources keeps a group, and a badge, for each.
+    // One account holding copies from two source types keeps a group and badge for each type.
     expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual(['archive-5', 'home@example.test', 'home@example.test', 'work@example.test']);
 
     const work = within(groups[3]);
@@ -205,12 +205,36 @@ describe('RelatedCopies', () => {
       ['invalid_headers', /Some identifiers in this email couldn't be read/],
       ['size_limit', /Some identifiers in this email couldn't be read/],
       ['missing_raw', /The original message isn't stored for this email/],
-      ['unsupported_raw', /This email is stored in a format that can't be read/]
+      ['unsupported_raw', /This email is stored in a format that can't be read/],
+      ['missing_message_id', /This email has no stored Message-ID; replies that name it cannot find it/]
     ].map(([outcome, note]) => ({
       name: `an opened email that is ${outcome}`,
       members: unreadable(outcome as string),
       shown: [note as RegExp, 'No related copies found.']
     })),
+    {
+      name: 'a listed copy with no stored Message-ID',
+      members: [anchor, member(2, { linkage_outcome: 'missing_message_id' })],
+      shown: ['This copy has no stored Message-ID; replies that name it cannot find it.'],
+      hidden: [/identifiers.*couldn't be read/]
+    },
+    {
+      name: 'copies already shown with different linkage limits',
+      members: [
+        anchor,
+        member(2, { conversation_id: 100, linkage_outcome: 'missing_message_id' }),
+        member(3, { conversation_id: 100, linkage_outcome: 'missing_raw' }),
+        member(4, { conversation_id: 100, linkage_outcome: 'missing_raw' }),
+        member(5, { conversation_id: 100, linkage_outcome: 'unsupported_raw' })
+      ],
+      loadedIDs: [1, 2, 3, 4, 5],
+      shown: [
+        /A copy already shown in this conversation has no stored Message-ID; replies that name it cannot find it/,
+        /The original message isn't stored for a copy already shown in this conversation/,
+        /A copy already shown in this conversation is stored in a format that can't be read/
+      ],
+      hidden: [/identifiers.*couldn't be read/]
+    },
     {
       name: 'an unreadable member of the opened conversation that has no row',
       members: [
@@ -218,7 +242,7 @@ describe('RelatedCopies', () => {
         member(2, { evidence: 'thread', conversation_id: 100, linkage_outcome: 'invalid_headers' })
       ],
       loadedIDs: [1, 2],
-      shown: [/Some identifiers in this conversation couldn't be read/, 'Related emails are already shown in this conversation.']
+      shown: [/Some identifiers in a copy already shown in this conversation couldn't be read/, 'Related emails are already shown in this conversation.']
     }
   ] as Array<{
     name: string;

@@ -86,17 +86,6 @@
   const anchorIncomplete = $derived(anchorOutcome !== 'complete');
   // The anchor's own pending note already covers it; this is about other emails.
   const othersPending = $derived(!!family?.pending_linkage && anchorOutcome !== 'pending');
-  // A member the conversation view shows has no row here, so its unreadable
-  // headers need a note of their own.
-  const hiddenUnreadable = $derived(
-    (family?.members ?? []).some(
-      (member) =>
-        member.message_id !== family?.anchor_message_id &&
-        loadedIDs.includes(member.message_id) &&
-        member.linkage_outcome !== 'complete' &&
-        member.linkage_outcome !== 'pending'
-    )
-  );
   const truncationNotice = $derived.by(() => {
     if (family?.truncated_reason === 'members') return 'The lookup stopped at its 500-email limit, so some related emails may be missing.';
     if (family?.truncated_reason === 'identifiers') {
@@ -113,7 +102,12 @@
   // Messages the conversation view has loaded are already on screen.
   const shown = $derived((family?.members ?? []).filter((member) => member.message_id !== family?.anchor_message_id && loadedIDs.includes(member.message_id)));
 
-  // One account can hold copies from several sources, so each source keeps its own group and badge.
+  // Copies already shown have no row here, but their linkage limits still matter.
+  const shownOutcomes = $derived(
+    [...new Set(shown.map((member) => member.linkage_outcome))].filter((outcome) => outcome !== 'complete' && outcome !== 'pending')
+  );
+
+  // Group by account and source type; imports of the same type share a group.
   const groups = $derived.by(() => {
     const byAccount = new Map<string, { key: string; label: string; sourceType: string; members: EmailFamilyMember[] }>();
     for (const member of family?.members ?? []) {
@@ -133,11 +127,13 @@
       }));
   });
 
-  // Where the original message is missing or in an unreadable format, say so; later raw storage fixes it.
-  function unreadableNote(outcome: string, what: 'copy' | 'email'): string {
-    if (outcome === 'missing_raw') return `The original message isn't stored for this ${what}`;
-    if (outcome === 'unsupported_raw') return `This ${what} is stored in a format that can't be read`;
-    return `Some identifiers in this ${what} couldn't be read`;
+  function linkageNote(outcome: string, what: 'copy' | 'email' | 'conversation'): string {
+    const subject = what === 'conversation' ? 'a copy already shown in this conversation' : `this ${what}`;
+    const sentenceSubject = what === 'conversation' ? 'A copy already shown in this conversation' : `This ${what}`;
+    if (outcome === 'missing_message_id') return `${sentenceSubject} has no stored Message-ID; replies that name it cannot find it`;
+    if (outcome === 'missing_raw') return `The original message isn't stored for ${subject}`;
+    if (outcome === 'unsupported_raw') return `${sentenceSubject} is stored in a format that can't be read`;
+    return `Some identifiers in ${subject} couldn't be read`;
   }
 
   function direction(member: EmailFamilyMember): string {
@@ -151,7 +147,7 @@
 <Button size="sm" surface="soft" label="Related copies" ariaExpanded={open} onclick={toggle} />
 
 {#if open}
-  <section class="related-copies" aria-label="Copies of this email in other conversations">
+  <section class="related-copies" aria-label="Related copies of this email">
     {#if loading}
       <p class="state" role="status"><span aria-hidden="true"><Spinner size={14} label="" /></span> Loading related copies…</p>
     {:else if failed}
@@ -189,7 +185,7 @@
                 </div>
                 {#if member.linkage_outcome !== 'complete'}
                   <p class="incomplete">
-                    {member.linkage_outcome === 'pending' ? "This copy hasn't been indexed yet." : `${unreadableNote(member.linkage_outcome, 'copy')}.`}
+                    {member.linkage_outcome === 'pending' ? "This copy hasn't been indexed yet." : `${linkageNote(member.linkage_outcome, 'copy')}.`}
                   </p>
                 {/if}
               </li>
@@ -202,11 +198,11 @@
           This email hasn't been indexed yet. The next sync indexes it; for a source that no longer syncs, run <code>msgvault repair-derived</code>.
         </p>
       {:else if anchorIncomplete}
-        <p class="incomplete">{unreadableNote(anchorOutcome, 'email')}, so related copies may be missing.</p>
+        <p class="incomplete">{linkageNote(anchorOutcome, 'email')}, so related copies may be missing.</p>
       {/if}
-      {#if hiddenUnreadable}
-        <p class="incomplete">Some identifiers in this conversation couldn't be read, so related copies may be missing.</p>
-      {/if}
+      {#each shownOutcomes as outcome (outcome)}
+        <p class="incomplete">{linkageNote(outcome, 'conversation')}, so related copies may be missing.</p>
+      {/each}
       {#if othersPending}
         <p class="incomplete">
           Some archived emails haven't been indexed yet, so related copies may be missing. The next sync indexes them; for a source that no longer syncs, run <code>msgvault repair-derived</code>.

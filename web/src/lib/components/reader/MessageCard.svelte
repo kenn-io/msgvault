@@ -260,10 +260,6 @@
     padding: var(--space-3) var(--space-4) 0;
   }
 
-  .card-actions:not(:has(*)) {
-    display: none;
-  }
-
   .card-header {
     display: flex;
     align-items: flex-start;
