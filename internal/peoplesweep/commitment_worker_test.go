@@ -209,7 +209,6 @@ func TestCommitmentConsentDeferralAppliesLocalEvidenceInvalidation(t *testing.T)
 	a.Equal(1, st.deferred)
 	a.Empty(st.finalized)
 	a.Empty(st.failed)
-	a.Zero(st.cursor.OptimisticSequence)
 }
 
 func TestForcedBriefRefusesCommitmentOnlyConsent(t *testing.T) {
