@@ -120,7 +120,7 @@
 </script>
 
 <DetailSection title="Open loops">
-  {#snippet control()}{#if !loading && !failed && openCount > 0}<span class="muted">{openCount}{truncated ? '+' : ''} open</span>{/if}{/snippet}
+  {#snippet control()}{#if !loading && !failed && openCount > 0}<span class="muted">{openCount}{truncated && !showClosed ? '+' : ''} open{truncated && showClosed ? ' shown' : ''}</span>{/if}{/snippet}
   <div class="open-loops">
   <div><Button size="sm" label={showClosed ? 'Hide closed promises' : 'Show closed promises'} onclick={() => { showClosed = !showClosed; }} /></div>
   {#if loading}<p class="muted" role="status">Loading…</p>
