@@ -837,9 +837,13 @@ configured shared scheduler job. The response preserves `disposition` when the
 daemon supplies it, such as `started`, `pending`, or `coalesced`; check source and
 scheduler status for progress.
 
-Native validation refuses to disable the last provider while enrichment is enabled.
-`max_retries: 0` reloads as 5 for all providers. Consent remains separate, and
-the daemon may need a restart.
+Enrichment numeric inputs must be integers from 0 through 9007199254740991.
+`max_retries: 0` reloads as 5. Request caps must be positive for an enabled
+provider; zero may be saved while it is disabled, subject to native validation,
+but does not mean an unlimited budget. Omitted fields are preserved and
+`enabled: false` is explicit. Enabling requires valid provider configuration;
+native validation refuses to disable the last provider while global enrichment
+is enabled. Restart the daemon to apply provider policy changes.
 
 For Slack changes, read `get_slack_sync_policy` first and pass its exact `etag`.
 Omitted fields are preserved; `false` and empty arrays are explicit changes.
@@ -910,7 +914,9 @@ Enable only the writes intended for the assistant's session:
 | Existing enrichment policy | `--allow-enrichment-settings-writes` | `--http-allow-writes --allow-enrichment-settings-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
 
-On unreleased `main`, `get_enrichment_policy` reads existing provider enabled states, numeric limits, the settings ETag, and restart state. `update_enrichment_policy` accepts that exact ETag and changes only enabled state or numeric limits after approval. Provider setup remains operator-managed. Changing request caps changes the consent fingerprint; after restart, enrichment waits for renewed operator consent. Use `msgvault person enrichment profiles` to find the new fingerprint and `msgvault person enrichment consent <fingerprint>` to grant consent. An edit proceeds only when the daemon response lets msgvault reconstruct the existing provider policy; otherwise it is refused. Exa edits are supported when the native settings read validates the provider and confirms its omitted poll endpoint is empty. SixtyFour edits require both endpoints to be available. A native update can remove a previously stored credential bound to a different origin. If a write reports `operation_may_have_completed: true`, read the policy again before retrying.
+On unreleased `main`, `get_enrichment_policy` reads existing provider enabled states, numeric limits, the settings ETag, and restart state. `update_enrichment_policy` accepts that exact ETag and changes only enabled state or numeric limits after approval. Provider setup remains operator-managed. After editing, restart the daemon. For an enabled provider under globally enabled enrichment, inspect `msgvault person enrichment profiles --json`, review the resulting policy, and use `msgvault person enrichment consent <fingerprint>` if that exact fingerprint lacks active consent. Enabling a provider does not enable global enrichment. Request caps affect the fingerprint, but changing a disabled provider's caps does not register a new profile. Retry and enabled-state changes alone do not change the fingerprint.
+
+An edit proceeds only when the daemon response lets msgvault reconstruct the existing provider policy; otherwise it is refused. Exa reconstruction requires credential metadata from successful native credential-endpoint validation, which proves its omitted poll endpoint is empty. Missing metadata or a contradictory nonempty poll endpoint causes refusal; other required policy fields must also be reconstructable. SixtyFour edits require both endpoints to be available. A native update can remove a previously stored credential bound to a different origin. If a write reports `operation_may_have_completed: true`, read the policy again before retrying.
 
 `draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available. On unreleased `main`, `--confirm-sensitive-drafts` also requires confirmation for flagged draft creation and edits; it grants no write access.
 
