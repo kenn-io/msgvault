@@ -693,5 +693,5 @@ func TestServiceRegistrationRematchesSettledRoster(t *testing.T) {
 	state = latestBeeperState(t, imp).Chats[chat.ID]
 	require.NotNil(state.RosterWork)
 	assert.True(state.RosterWork.Settled)
-	assert.Empty(state.RosterWork.Members, "a settled roster keeps no per-member progress")
+	assert.NotEmpty(state.RosterWork.Routes, "the settled roster keeps its routing digest")
 }
