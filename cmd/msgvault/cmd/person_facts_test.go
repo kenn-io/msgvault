@@ -139,7 +139,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 			}]}`))
 		case "/api/v1/people/7/fact-claims":
 			_, _ = w.Write([]byte(`{"claims":[{
-				"id":8,"generation_id":6,"claim_key":"claim-key","kind":"fact","status":"fresh",
+				"id":8,"generation_id":6,"claim_key":"claim-key","kind":"fact","status":"fresh","latest_supported_at":"2026-08-21T12:00:00Z",
 				"program_id":"fixture-program","program_version":"v1",
 				"program_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				"target":{"kind":"attribute","key":"target-key","revision":"` + personFactTestRevision + `"},
@@ -201,7 +201,7 @@ func TestPersonFactsHistoryCommandsUseExactGeneratedPathsQueriesAndTables(t *tes
 	jsonOutput, err := runPersonFactsCommand(testCtx, t, "claims", "7", "--json")
 	requirements.NoError(err)
 	assertions.JSONEq(`[{
-		"id":8,"generation_id":6,"claim_key":"claim-key","kind":"fact","status":"fresh",
+		"id":8,"generation_id":6,"claim_key":"claim-key","kind":"fact","status":"fresh","latest_supported_at":"2026-08-21T12:00:00Z",
 		"program_id":"fixture-program","program_version":"v1",
 		"program_fingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"target":{"kind":"attribute","key":"target-key","revision":"`+personFactTestRevision+`"},

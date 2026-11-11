@@ -215,8 +215,9 @@ func newPersonFactsCommand() *cobra.Command {
 				// absent in CLI JSON rather than emitting empty enum values.
 				type claimOutput struct {
 					generated.PersonFactClaim `json:",inline"`
-					Kind                      string `json:"kind,omitzero"`
-					Status                    string `json:"status,omitzero"`
+
+					Kind   string `json:"kind,omitzero"`
+					Status string `json:"status,omitzero"`
 				}
 				rows := make([]claimOutput, len(response.JSON200.Claims))
 				for i, item := range response.JSON200.Claims {
