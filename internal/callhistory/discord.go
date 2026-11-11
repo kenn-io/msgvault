@@ -67,9 +67,9 @@ func (r ImportRequest) discordObservation() (Observation, error) {
 	}
 	o := Observation{
 		RecordID: prefix + message.ID,
-		Evidence: Evidence{Version: 1, Provider: "discord", Account: r.Account,
-			Direction: unknown, Outcome: unknown, OwnerParticipation: unknown,
-			OccurredAt: message.Timestamp, EndedAt: ended}, Raw: r.Record,
+		Version:  1, Provider: "discord", Account: r.Account,
+		Direction: unknown, Outcome: unknown, OwnerParticipation: unknown,
+		OccurredAt: message.Timestamp, EndedAt: ended, Raw: r.Record,
 	}
 	seen := make(map[string]bool, len(roster))
 	for _, id := range roster {

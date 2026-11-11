@@ -83,7 +83,7 @@ changes connected account bindings, or requests additional platform permissions.
 
 ## Import Discord call evidence
 
-These formats require a daemon with API schema 5.2.0 or newer. The current
+These formats require a daemon with API schema 5.3.0 or newer. The current
 Discord guild bot cannot archive private CALL messages. An archived lookup
 requires an archive that already holds the native Discord JSON. The importer
 uses stored or supplied JSON and does not contact Discord or need a token, new

@@ -115,6 +115,8 @@ func TestCallsDiscordImportRequiresNewerDaemon(t *testing.T) {
 		{"old summary", "5.2.0", "", []string{"summary"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			client := &fakeCallCommandClient{version: tc.version}
 			cleanups := 0
 			command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) {
@@ -126,15 +128,15 @@ func TestCallsDiscordImportRequiresNewerDaemon(t *testing.T) {
 			command.SetArgs(tc.args)
 			err := command.ExecuteContext(t.Context())
 			if !tc.allowed {
-				require.ErrorContains(t, err, "calls require daemon API 5.3.0 or newer")
-				assert.Empty(t, client.imports)
+				requirements.ErrorContains(err, "calls require daemon API 5.3.0 or newer")
+				assertions.Empty(client.imports)
 			} else {
-				require.NoError(t, err)
+				requirements.NoError(err)
 				if tc.args[0] == "import" {
-					assert.Equal(t, [][]byte{[]byte(tc.input)}, client.imports)
+					assertions.Equal([][]byte{[]byte(tc.input)}, client.imports)
 				}
 			}
-			assert.Equal(t, 1, cleanups)
+			assertions.Equal(1, cleanups)
 		})
 	}
 }
