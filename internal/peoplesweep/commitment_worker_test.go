@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -197,18 +198,31 @@ func newConsentOnlyCommitmentWorker(t *testing.T, due bool) (Worker, *commitment
 }
 
 func TestCommitmentConsentDeferralAppliesLocalEvidenceInvalidation(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	worker, st, sink := newConsentOnlyCommitmentWorker(t, false)
-	result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
-	r.NoError(err)
-	r.Len(sink.statuses, 1)
-	r.Len(sink.statuses[0].Generation.EvidenceStatusChanges, 1)
-	a.False(sink.statuses[0].Generation.EvidenceStatusChanges[0].Supported)
-	a.Empty(sink.requests, "no provider output or cursor progress is applied")
-	a.Zero(result.PeopleSucceeded)
-	a.Equal(1, st.deferred)
-	a.Empty(st.finalized)
-	a.Empty(st.failed)
+	for _, idle := range []bool{false, true} {
+		t.Run(fmt.Sprintf("idle=%t", idle), func(t *testing.T) {
+			r, a := require.New(t), assert.New(t)
+			worker, st, sink := newConsentOnlyCommitmentWorker(t, false)
+			if idle {
+				source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{}}
+				worker.Source, worker.Context = source, NewContextRetriever(source)
+			}
+			result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
+			r.NoError(err)
+			a.Empty(sink.requests, "no provider output or cursor progress is applied")
+			if idle {
+				a.Equal(1, result.PeopleSucceeded, "idle claim completion succeeds without inference")
+				a.Empty(st.started, "caught-up unauthorized work has no source envelope for a durable attempt")
+				return
+			}
+			r.Len(sink.statuses, 1)
+			r.Len(sink.statuses[0].Generation.EvidenceStatusChanges, 1)
+			a.False(sink.statuses[0].Generation.EvidenceStatusChanges[0].Supported)
+			a.Zero(result.PeopleSucceeded)
+			a.Equal(1, st.deferred)
+			a.Empty(st.finalized)
+			a.Empty(st.failed)
+		})
+	}
 }
 
 func TestForcedBriefRefusesCommitmentOnlyConsent(t *testing.T) {
@@ -220,19 +234,4 @@ func TestForcedBriefRefusesCommitmentOnlyConsent(t *testing.T) {
 	r.ErrorIs(err, ErrPersonBriefPolicyRefused)
 	a.Empty(sink.requests, "a forced brief must not silently become a successful promise sweep")
 	a.Empty(st.failed)
-}
-
-func TestCommitmentConsentIdleDeferralDoesNotStartEmptyAttempt(t *testing.T) {
-	r, a := require.New(t), assert.New(t)
-	worker, st, sink := newConsentOnlyCommitmentWorker(t, false)
-	source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{}}
-	worker.Source, worker.Context = source, NewContextRetriever(source)
-	result, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7})
-	r.NoError(err)
-	a.Equal(1, result.PeopleSucceeded, "idle claim completion succeeds without inference")
-	a.Empty(st.started, "caught-up unauthorized work has no source envelope for a durable attempt")
-	a.Empty(st.finalized)
-	a.Empty(st.failed)
-	a.Empty(sink.statuses)
-	a.Empty(sink.requests)
 }
