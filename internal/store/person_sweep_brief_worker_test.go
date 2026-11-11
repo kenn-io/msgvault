@@ -421,6 +421,7 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	require.NotNil(t, states[key].ThanksBriefID)
 	assert.Equal(t, projection.Brief.ID, *states[key].ThanksBriefID)
 	proofID := projection.Brief.ID
+	proofBoundary := append([]byte(nil), projection.Brief.Boundary...)
 	var laterBoundary peoplesweep.BriefBoundary
 	require.NoError(t, json.Unmarshal(projection.Brief.Boundary, &laterBoundary))
 	require.Len(t, laterBoundary.AppreciationMemory, 1)
@@ -453,6 +454,14 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	retired, err := st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
 	require.NoError(t, err)
 	assert.True(t, retired[key], "a valid old proof frees the active slot before provider input")
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET boundary_json = ? WHERE id = ?`), `{"appreciation_memory":[{}, {}, {}, {}]}`, proofID)
+	require.NoError(t, err)
+	_, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
+	assert.ErrorContains(t, err, "invalid appreciation proof boundary")
+	_, err = st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
+	assert.ErrorContains(t, err, "invalid appreciation proof boundary")
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET boundary_json = ? WHERE id = ?`), string(proofBoundary), proofID)
+	require.NoError(t, err)
 	// Simulate another apply publishing the proof while this provider call is
 	// in flight. The apply fence must suppress the re-admitted contribution.
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_appreciation_state SET thanks_brief_id = NULL WHERE contribution_key = ?`), key)
