@@ -218,9 +218,9 @@ func briefEventContext(request BriefWindowRequest) *BriefEventContext {
 // validateBriefEventMemoryCapacity makes sure the memory saved with this
 // result can fit in a later paid packet and leaves one item for new mandatory
 // evidence such as a last-contact message or an explicit outcome. Capacity
-// pressure may retire event memory, while the current brief still reports its
-// structured events and keeps their sources mandatory for final alignment.
-func validateBriefEventMemoryCapacity(parsed ParsedBrief, window BriefWindow) ([]BriefHighlight, error) {
+// pressure may retire event memory. The caller removes retired unresolved
+// events from the current output and retains resolved statements with alignment.
+func validateBriefEventMemoryCapacity(parsed ParsedBrief, window BriefWindow) ([]int, error) {
 	eventHighlights := make([]BriefHighlight, 0, len(parsed.Output.Highlights))
 	for _, highlight := range parsed.Output.Highlights {
 		if highlight.LifeEvent == nil {
@@ -302,11 +302,7 @@ func validateBriefEventMemoryCapacity(parsed ParsedBrief, window BriefWindow) ([
 			return nil, fmt.Errorf("project next person brief event packet: %w", err)
 		}
 		if boundary.InputBytes <= window.Request.MaxBytes {
-			retained := make([]BriefHighlight, 0, len(projectedSourceIndexes))
-			for _, index := range projectedSourceIndexes {
-				retained = append(retained, parsed.Output.Highlights[index])
-			}
-			return retained, nil
+			return projectedSourceIndexes, nil
 		}
 		trimmed, ok := briefDropUnprotected(projectedItems, mandatory, projectionProtectedIDs)
 		if ok {

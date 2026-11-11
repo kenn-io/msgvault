@@ -166,16 +166,15 @@ func TestCurrentEventMemoryRetiresWhenTheNextPacketCannotFit(t *testing.T) {
 			highlight := eventHighlight(anchor, "")
 			parsed, err := ParseBrief(eventCandidate(t, highlight), window, window.Request.Profile)
 			requirements.NoError(err)
+			parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
 
 			result, err := renderBriefResult(parsed, window, window.Request.AsOf)
 
 			requirements.NoError(err)
 			assertions.Empty(result.Boundary.EventMemory,
 				"future memory retires when the lowered cap cannot preserve it")
-			assertions.Contains(result.Rendered.Text, highlight.LifeEvent.Question,
-				"the current brief still reports the supported event")
-			assertions.Len(result.CurrentEventEvidenceRefs, 1,
-				"final source alignment still protects current event output")
+			assertions.NotContains(result.Rendered.Text, highlight.LifeEvent.Question)
+			assertions.Empty(result.CurrentEventEvidenceRefs)
 		})
 	}
 }
@@ -302,22 +301,39 @@ func TestBriefEventMandatorySourcesFitExactlyAndResolvedMemoryRetiresUnderPressu
 		"retiring resolved memory must keep the admission watermark")
 }
 
-func TestBriefEventMemoryRetiresWhenNoRoomForLaterMandatoryEvidence(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
+func TestBriefEventCapacityDoesNotDisplayUnscheduledUpcoming(t *testing.T) {
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
 	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T00:00:00Z")
-	highlight := eventHighlight(anchor, "2026-08-15")
-	parsed, err := ParseBrief(eventCandidate(t, highlight), window, window.Request.Profile)
-	requirements.NoError(err)
+	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)
+	require.NoError(t, err)
+	parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
 	window.Request.MaxItems = 1
 	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
-	requirements.NoError(err)
-	assertions.Empty(result.Boundary.EventMemory)
-	assertions.Contains(result.Rendered.Text, "Upcoming:",
-		"the current brief still reports the supported event")
-	assertions.Len(result.CurrentEventEvidenceRefs, 1,
-		"final source alignment still protects current event output")
+	require.NoError(t, err)
+	assert.Empty(t, result.Boundary.EventMemory)
+	assert.Nil(t, result.Boundary.NextEventAt)
+	assert.NotContains(t, result.Rendered.Text, "Upcoming:")
+	assert.NotContains(t, string(result.Structured), "life_event")
+	assert.Empty(t, result.CurrentEventEvidenceRefs)
+	config, _ := workerTestConfig(t)
+	store := &briefFakeStore{enrolled: true, highWater: result.Boundary.ThroughSequence,
+		changedAfter: result.Boundary.ThroughSequence, eligibility: BriefEligibility{
+			Version: 1, Status: BriefStatusCurrent, Boundary: &result.Boundary}}
+	worker := Worker{Config: config, Brief: store, Archive: &briefFakeArchive{}}
+	plan, err := worker.planPersonBrief(t.Context(), window.Request.PersonID, BriefModeAuto,
+		window.Request.Profile, window.Request.AsOf.AddDate(0, 0, 2))
+	require.NoError(t, err)
+	assert.False(t, plan.run, "no due event remains displayed or scheduled")
+}
+
+func TestBriefEventCapacityRejectsEmptyParagraph(t *testing.T) {
+	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
+	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T00:00:00Z")
+	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)
+	require.NoError(t, err)
+	window.Request.MaxItems = 1
+	_, err = renderBriefResult(parsed, window, window.Request.AsOf)
+	assert.ErrorIs(t, err, ErrEmptyBrief)
 }
 
 func TestBriefEventResolutionFitsTheReservedPacketItem(t *testing.T) {
@@ -381,6 +397,26 @@ func TestBriefEventMemoryCapacityTrimsOrdinaryEvidenceBeforeRejecting(t *testing
 	window.Request.MaxBytes = retainedOnlyBoundary.InputBytes
 	_, err = renderBriefResult(parsed, window, window.Request.AsOf)
 	require.NoError(err, "ordinary evidence can be trimmed while retaining event sources")
+}
+
+func TestBriefEventBytePressureOmitsUnretainedUpcoming(t *testing.T) {
+	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
+	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T00:00:00Z")
+	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)
+	require.NoError(t, err)
+	parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
+	future := window.Request
+	future.AsOf = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+	future.Previous = &BriefBoundary{EventMemoryVersion: 1, AdmissionThroughEventTime: future.AsOf}
+	future.retainedEvents = nil
+	_, empty, err := briefBatch(future, briefWindowLanes(future.Profile.AllowedSources), window.Items)
+	require.NoError(t, err)
+	window.Request.MaxBytes = empty.InputBytes
+	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
+	require.NoError(t, err)
+	assert.Empty(t, result.Boundary.EventMemory)
+	assert.Nil(t, result.Boundary.NextEventAt)
+	assert.NotContains(t, result.Rendered.Text, "Upcoming:")
 }
 
 func TestResolvedEventMemoryRetiresWhenItsExpandedFuturePacketExceedsBudget(t *testing.T) {

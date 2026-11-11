@@ -130,6 +130,14 @@ type BriefBoundary struct {
 	PacketSHA256     string    `json:"packet_sha256"`
 }
 
+// ValidateBriefEventMemoryVersion refuses formats this reader cannot interpret.
+func ValidateBriefEventMemoryVersion(boundary *BriefBoundary) error {
+	if boundary != nil && boundary.EventMemoryVersion != 0 && boundary.EventMemoryVersion != 1 {
+		return fmt.Errorf("unsupported person brief event memory version %d", boundary.EventMemoryVersion)
+	}
+	return nil
+}
+
 // Canonical sorts lanes and normalizes UTC times. Input window bounds use
 // seconds; admission retains full precision so tied-second replays stay old.
 func (b BriefBoundary) Canonical() BriefBoundary {
@@ -166,6 +174,9 @@ type BriefWindow struct {
 func BuildBriefWindow(
 	ctx context.Context, archive BriefArchive, request BriefWindowRequest,
 ) (BriefWindow, error) {
+	if err := ValidateBriefEventMemoryVersion(request.Previous); err != nil {
+		return BriefWindow{}, err
+	}
 	if archive == nil {
 		return BriefWindow{}, errors.New("person brief window requires an archive")
 	}

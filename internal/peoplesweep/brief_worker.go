@@ -180,6 +180,9 @@ func (w *Worker) planPersonBrief(
 	if !enrolled {
 		return briefPlan{}, nil
 	}
+	if err := ValidateBriefEventMemoryVersion(eligibility.Boundary); err != nil {
+		return briefPlan{}, err
+	}
 	// Refused profiles skip generation, but must still retire existing event memory.
 	profileAllowed := profile.AllowSensitive && len(briefWindowLanes(profile.AllowedSources)) > 0
 	if !profileAllowed {
@@ -333,7 +336,28 @@ func renderBriefResult(
 func newBriefResult(
 	parsed ParsedBrief, rendered RenderedBrief, window BriefWindow, generatedAt time.Time,
 ) (BriefResult, error) {
-	eventMemory, err := validateBriefEventMemoryCapacity(parsed, window)
+	retainedIndexes, err := validateBriefEventMemoryCapacity(parsed, window)
+	if err != nil {
+		return BriefResult{}, err
+	}
+	retained := make(map[int]bool, len(retainedIndexes))
+	eventMemory := make([]BriefHighlight, 0, len(retainedIndexes))
+	for _, index := range retainedIndexes {
+		retained[index] = true
+		eventMemory = append(eventMemory, parsed.Output.Highlights[index])
+	}
+	before := briefCitationOrder(parsed.Output)
+	for index := len(parsed.Output.Highlights) - 1; index >= 0; index-- {
+		event := parsed.Output.Highlights[index].LifeEvent
+		if event == nil || event.State == BriefEventResolved || retained[index] {
+			continue
+		}
+		var dropped int
+		parsed.Output, dropped = briefDropHighlight(parsed.Output, index)
+		parsed.DroppedItemCount += dropped
+	}
+	parsed.Evidence = briefKeptEvidence(before, parsed.Evidence, parsed.Output)
+	rendered, err = RenderBrief(parsed, window)
 	if err != nil {
 		return BriefResult{}, err
 	}

@@ -90,6 +90,9 @@ func (s *Store) PersonSweepBriefEligibility(
 		return peoplesweep.BriefEligibility{}, false, fmt.Errorf(
 			"decode person %d brief boundary: %w", personID, err)
 	}
+	if err := peoplesweep.ValidateBriefEventMemoryVersion(&boundary); err != nil {
+		return peoplesweep.BriefEligibility{}, false, fmt.Errorf("decode person %d brief boundary: %w", personID, err)
+	}
 	eligibility.Boundary = &boundary
 	eligibility.ProgramVersion = versions[0].ProgramVersion
 	eligibility.Version = versions[0].Version
