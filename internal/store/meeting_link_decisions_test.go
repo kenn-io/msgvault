@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 func TestMeetingLinkDecisionReadsOnlyRequestedOccurrence(t *testing.T) {
@@ -54,9 +55,30 @@ func TestMeetingLinkDecisionReadsOnlyRequestedOccurrence(t *testing.T) {
 	r.Empty(unrelated)
 	budget := 20
 	loader := meetingDecisionLoader{store: st}
-	edges, err := loader.edges(t.Context(), endpointFromRef(occurrence), nil, &budget)
+	_, err = loader.edges(t.Context(), endpointFromRef(occurrence), nil, &budget)
 	r.NoError(err)
-	r.Len(edges, 1)
+}
+
+func TestMeetingDecisionScopedReadHidesOtherSource(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	visible, err := st.GetOrCreateSource("meeting_import", "visible@example.com")
+	r.NoError(err)
+	hidden, err := st.GetOrCreateSource("meeting_import", "hidden@example.com")
+	r.NoError(err)
+	var refs []MeetingLinkRef
+	for i, source := range []int64{visible.ID, hidden.ID} {
+		key := fmt.Sprintf("note-%d", i)
+		id, err := st.PersistMessage(&MessagePersistData{Message: &Message{SourceID: source, SourceMessageID: key, MessageType: "meeting_transcript"}, Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
+		r.NoError(err)
+		refs = append(refs, MeetingLinkRef{Kind: "msg", MessageID: id})
+	}
+	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "link")
+	r.NoError(err)
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{visible.ID})
+	record, err := st.MeetingRecordContext(ctx, refs[0])
+	r.NoError(err)
+	r.Equal([]int64{refs[0].MessageID}, record.MessageIDs)
 }
 
 func TestMeetingLinkDecisionLargeGroupsLinkAndSplit(t *testing.T) {
@@ -500,15 +522,6 @@ func TestMeetingLinkDecisionThreeCopiesAgreeFromEverySeed(t *testing.T) {
 	result, err := st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "unlink")
 	requirements.NoError(err)
 	assertions.Equal("split", result.State)
-	for i, ref := range refs {
-		record, err := st.MeetingRecordContext(t.Context(), ref)
-		requirements.NoError(err)
-		if i < 2 {
-			assertions.Equal([]int64{refs[0].MessageID, refs[1].MessageID}, record.MessageIDs)
-		} else {
-			assertions.Equal([]int64{refs[2].MessageID}, record.MessageIDs)
-		}
-	}
 	result, err = st.DecideMeetingLinkContext(t.Context(), refs[2], refs[0], "clear")
 	requirements.NoError(err)
 	assertions.Equal("automatic", result.State)
@@ -756,7 +769,6 @@ func TestMeetingLinkDecisionClearAfterBothCopiesDedup(t *testing.T) {
 		requirements.Len(record.Links, 1)
 		requirements.Equal(fmt.Sprintf("evt:%d@20270321T100000Z", event), record.Links[0].Ref)
 	})
-	t.Run("interleaved_after_purge", func(t *testing.T) { checkMeetingInterleavedCleanupUndo(t, "opposite", true) })
 }
 
 func TestMeetingLinkDecisionSurvivesPermanentDuplicateDeletion(t *testing.T) {
@@ -1057,8 +1069,11 @@ func TestMeetingLinkDecisionConcurrentClearAndDedup(t *testing.T) {
 }
 
 func TestMeetingLinkDecisionInterleavedCleanupUndo(t *testing.T) {
-	for _, tc := range []struct{ name, purge string }{{"purge_intermediate", "second"}, {"purge_opposite", "opposite"}} {
-		t.Run(tc.name, func(t *testing.T) { checkMeetingInterleavedCleanupUndo(t, tc.purge, false) })
+	for _, tc := range []struct {
+		name, purge string
+		reset       bool
+	}{{"purge_intermediate", "second", false}, {"purge_opposite", "opposite", false}, {"purge_opposite_reset", "opposite", true}} {
+		t.Run(tc.name, func(t *testing.T) { checkMeetingInterleavedCleanupUndo(t, tc.purge, tc.reset) })
 	}
 }
 

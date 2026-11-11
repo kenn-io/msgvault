@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +12,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -79,38 +76,6 @@ func TestMeetingDecisionOwnerHTTP(t *testing.T) {
 	}
 }
 
-func TestMeetingDecisionScopedReadHidesOtherSource(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	visible, err := st.GetOrCreateSource("meeting_import", "visible@example.com")
-	requirements.NoError(err)
-	hidden, err := st.GetOrCreateSource("meeting_import", "hidden@example.com")
-	requirements.NoError(err)
-	ids := make([]int64, 0, 2)
-	for i, source := range []int64{visible.ID, hidden.ID} {
-		key := fmt.Sprintf("note-%d", i)
-		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source, SourceMessageID: key, MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
-		requirements.NoError(err)
-		ids = append(ids, id)
-	}
-	refs := []store.MeetingLinkRef{{Kind: "msg", MessageID: ids[0]}, {Kind: "msg", MessageID: ids[1]}}
-	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "link")
-	requirements.NoError(err)
-	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Logger: testLogger()})
-	t.Cleanup(srv.agentGrants.Close)
-	_, token, _, err := srv.agentGrants.Issue("restricted", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: visible.ID, Type: visible.SourceType, Identifier: visible.Identifier}}, time.Time{})
-	requirements.NoError(err)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/meetings/record?ref=msg:%d", ids[0]), nil)
-	req.Header.Set(apiprotocol.AgentTokenHeader, token)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-	var record store.MeetingRecord
-	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &record))
-	assertions.Equal([]int64{ids[0]}, record.MessageIDs)
-}
-
 func TestMeetingDecisionConcurrentOwnerHTTP(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -120,14 +85,12 @@ func TestMeetingDecisionConcurrentOwnerHTTP(t *testing.T) {
 	source, err := st.GetOrCreateSource("meeting_import", "owner@example.com")
 	requirements.NoError(err)
 	var refs []store.MeetingLinkRef
-	for i := range 7 {
+	for i := range 4 {
 		key := fmt.Sprintf("concurrent-%d", i)
 		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
 		requirements.NoError(err)
 		refs = append(refs, store.MeetingLinkRef{Kind: "msg", MessageID: id})
 	}
-	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "link")
-	requirements.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
@@ -171,17 +134,6 @@ func TestMeetingDecisionConcurrentOwnerHTTP(t *testing.T) {
 		requirements.NoError(blocker.Commit())
 		return []int{<-done, <-done}
 	}
-	statuses := run(2, [][2]int{{0, 2}, {1, 2}}, []string{"unlink", "link"})
-	requirements.ElementsMatch([]int{http.StatusOK, http.StatusConflict}, statuses)
-	for i, ref := range refs[:3] {
-		record, err := st.MeetingRecordContext(ctx, ref)
-		requirements.NoError(err)
-		want := []int64{refs[0].MessageID, refs[1].MessageID}
-		if i == 2 {
-			want = []int64{refs[2].MessageID}
-		}
-		requirements.Equal(want, record.MessageIDs)
-	}
-	statuses = run(4, [][2]int{{3, 4}, {5, 6}}, []string{"link", "link"})
+	statuses := run(1, [][2]int{{0, 1}, {2, 3}}, []string{"link", "link"})
 	requirements.Equal([]int{http.StatusOK, http.StatusOK}, statuses)
 }

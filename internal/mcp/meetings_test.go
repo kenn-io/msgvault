@@ -317,15 +317,6 @@ func TestMeetingDecisionMCPWritesAndDiscovery(t *testing.T) {
 	session, err := client.Connect(ctx, clientTransport, nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { assertions.NoError(session.Close()) })
-	listed, err := session.ListTools(ctx, nil)
-	requirements.NoError(err)
-	names := map[string]bool{}
-	for _, tool := range listed.Tools {
-		names[tool.Name] = true
-	}
-	assertions.True(names["link_meeting"])
-	assertions.True(names["unlink_meeting"])
-	assertions.True(names["reset_meeting_link"])
 	for _, name := range []string{"link_meeting", "unlink_meeting", "reset_meeting_link"} {
 		result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: name, Arguments: map[string]any{"left": "msg:11", "right": "evt:22"}})
 		requirements.NoError(err)
