@@ -62,6 +62,12 @@ func TestMeetingSubtitleTwentyCLIAndHTTP(t *testing.T) {
 	stdout, _, err := executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--format", "vtt", "--include-transcript=false")
 	require.NoError(t, err)
 	assert.Equal(t, want, stdout)
+	stdout, _, err = executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--id", meetingTestInt64(archived.MessageID), "--format", "vtt")
+	require.NoError(t, err)
+	assert.Equal(t, want, stdout)
+	stdout, _, err = executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--id", "999999", "--format", "vtt")
+	require.ErrorContains(t, err, "exactly one distinct meeting ID")
+	assert.Empty(t, stdout)
 	snapshot.Raw = []byte(strings.Replace(string(raw), `"Hello"`, `"`+strings.Repeat("x", 5000)+`"`, 1))
 	_, err = meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
 	require.NoError(t, err)
@@ -114,6 +120,8 @@ func TestMeetingSubtitleTwilioAndPocketWhitespace(t *testing.T) {
 	}{
 		{"twilio", `{"recordings":[{"sid":"RE1","start_time":"Sat, 03 Oct 2026 10:00:00 +0000"}],"transcript":"A: Hello","transcript_segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"evidence":{"transcripts":[{"kind":"classic","id":"GT1","source_id":"RE1","usable":true,"segments":[{"speaker":"A","text":"Hello","scope":"RE1","offset_seconds":1.25}],"raw":{"metadata":{"channel":{"participants":[{"channel_participant":1,"role":"A"}]}},"sentences":[{"sentence_index":0,"media_channel":1,"start_time":"1.25","end_time":"2.5","transcript":"Hello"}]}}]}}`, "srt", "1\n00:00:01,250 --> 00:00:02,500\nA: Hello\n\n", false},
 		{"pocket-vtt", `{"schema_version":1,"recorded_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"  Hello  ","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"  Hello  ","start":0,"end":2}]}}}`, "vtt", "WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\n  Hello  \n\n", false},
+		{"pocket-blank-srt", `{"schema_version":1,"recorded_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"Open C:\\tmp {x}\n\nworld","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"Open C:\\tmp {x}\n\nworld","start":0,"end":2}]}}}`, "srt", "1\n00:00:00,000 --> 00:00:02,000\nOpen C:\\tmp {x}\nworld\n\n", false},
+		{"pocket-blank-vtt", `{"schema_version":1,"recorded_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"Open C:\\tmp {x}\n\nworld","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"Open C:\\tmp {x}\n\nworld","start":0,"end":2}]}}}`, "vtt", "WEBVTT\n\n1\n00:00:00.000 --> 00:00:02.000\nOpen C:\\tmp {x}\nworld\n\n", false},
 		{"pocket-srt", `{"schema_version":1,"recorded_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"  Hello  ","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"  Hello  ","start":0,"end":2}]}}}`, "srt", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

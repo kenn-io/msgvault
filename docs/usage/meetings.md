@@ -61,14 +61,13 @@ Subtitle formats require daemon API schema 5.1.0 or newer; the default context
 format remains Markdown. Output goes to stdout unless `-o FILE` is
 specified; `-o -` also uses stdout. Both formats show available speakers as
 `Speaker: text`. Nonblank line breaks survive. WebVTT escapes text and labels.
-SRT writes plain text, preserving literal ampersands, arrows, and comparisons such as `2 < 3`. SRT refuses tag-shaped text such as `<hello>`, braces, and backslashes because players can interpret them as markup or formatting controls. SRT also refuses complete timing headers
+SRT writes plain text, preserving literal ampersands, arrows, and comparisons such as `2 < 3`. SRT refuses tag-shaped text such as `<hello>` and subtitle formatting controls that players can interpret as markup. Ordinary braces and backslashes remain literal. SRT also refuses complete timing headers
 at the start of a payload line, including signed timestamps, which players can
 treat as another cue. SRT also refuses leading or trailing ASCII whitespace on
 cue lines and lines over 4095 UTF-8 bytes, including the speaker prefix.
 VTT preserves retained indentation and longer lines. Use `--format vtt` for those transcripts.
 Ordinary numeric arrows such as `2025 --> 2026` remain literal.
-Interior blank cue lines, multiline speaker labels, and NUL characters cause an
-explicit error.
+Interior blank lines become a single line break within the cue. Multiline speaker labels and NUL characters cause an explicit error.
 The command validates and renders everything before replacing a file. Timing,
 formatting, and size errors leave an existing destination untouched.
 

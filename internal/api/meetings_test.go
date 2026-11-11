@@ -714,3 +714,15 @@ func TestMeetingRouteStoreErrorDoesNotLeakDetails(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, response.Code)
 	assert.NotContains(t, response.Body.String(), "private transcript content")
 }
+
+func TestMeetingSubtitleExploreSelectionRejectsMultipleMeetings(t *testing.T) {
+	fixture := storetest.New(t)
+	engine := &meetingRouteEngine{MockEngine: &querytest.MockEngine{}, result: &query.ExploreMeetingSelection{SelectedCount: 2, MeetingCount: 2, MessageIDs: []int64{41, 42}, CacheRevision: "r"}}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: fixture.Store, Engine: engine, Logger: testLogger()})
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/context", `{"format":"srt","selection":{"mode":"all_matching","predicate":{},"cache_revision":"r","search_provenance":{}}}`))
+	require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	var failure ErrorResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
+	assert.Equal(t, "invalid_meeting_subtitles", failure.Error)
+}

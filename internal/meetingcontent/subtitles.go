@@ -15,6 +15,9 @@ import (
 const subtitleInteger = `[ \t\r\n\f\x0b]*[+-]?[0-9]+`
 const subtitleClock = subtitleInteger + ":" + subtitleInteger + ":" + subtitleInteger + "[,.]" + subtitleInteger
 
+var srtFormatting = regexp.MustCompile(`(?:\{\\[^}\r\n]*\}|\\[Nnh])`)
+var subtitleBlankLines = regexp.MustCompile(`\n(?:[\t \f\v\x{0085}\p{Z}]*\n)+`)
+
 var srtTag = regexp.MustCompile(`<[^ \t\r\n][^>\r\n]*>`)
 
 var srtTimingHeader = regexp.MustCompile("^" + subtitleClock + `[ \t\r\n\f\x0b]*-->` + subtitleClock)
@@ -57,11 +60,7 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 		if strings.ContainsAny(s.Speaker, "\r\n") {
 			return "", fmt.Errorf("subtitle format error at segment %d: multiline speaker label", i+1)
 		}
-		for line := range strings.SplitSeq(text, "\n") {
-			if strings.TrimSpace(line) == "" {
-				return "", fmt.Errorf("subtitle format error at segment %d: blank cue line", i+1)
-			}
-		}
+		text = strings.Trim(subtitleBlankLines.ReplaceAllString(text, "\n"), "\n")
 		start, end := s.Start, s.End
 		if !validSubtitleSeconds(start) || !validSubtitleSeconds(end) || end <= start {
 			return "", fmt.Errorf("subtitle timing invalid at segment %d: negative, overflowing, or reversed interval", i+1)
@@ -77,7 +76,7 @@ func renderSubtitles(segments []subtitleSegment, format string) (string, error) 
 		if format == "vtt" {
 			text = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)
 		} else {
-			unsafe := strings.ContainsAny(text, "{}\\") || srtTag.MatchString(text)
+			unsafe := srtFormatting.MatchString(text) || srtTag.MatchString(text)
 			for line := range strings.SplitSeq(sourceText, "\n") {
 				unsafe = unsafe || strings.Trim(line, " \t\r\f\v") != line
 			}

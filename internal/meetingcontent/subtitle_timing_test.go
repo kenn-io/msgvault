@@ -176,3 +176,52 @@ func TestTwilioSubtitleRecordingOrigins(t *testing.T) {
 	_, err = RenderSubtitles("twilio_call_json", []byte(different), PacketOptions{Format: FormatVTT, MaxBytes: 4096})
 	require.ErrorIs(t, err, ErrInvalidSubtitles)
 }
+
+func TestSubtitleSRTLiteralFormattingCharacters(t *testing.T) {
+	for _, value := range []string{`Open C:\tmp {x}`, `Use \ slash`} {
+		t.Run(value, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]any{"started_at": "2026-01-01T00:00:00Z", "transcript_segments": []any{map[string]any{"text": value, "start": 1, "end": 2}}})
+			require.NoError(t, err)
+			result, err := RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+			require.NoError(t, err)
+			parsed, err := mediatranscript.ParseSubRip([]byte(result.Content), "msgvault", "und")
+			require.NoError(t, err)
+			require.Len(t, parsed.Segments, 1)
+			assert.Equal(t, value, parsed.Segments[0].Text)
+			ffmpeg, err := exec.LookPath("ffmpeg")
+			if err != nil {
+				return
+			}
+			command := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-f", "srt", "-i", "pipe:0", "-f", "ass", "pipe:1")
+			command.Stdin = strings.NewReader(result.Content)
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, string(output))
+			assert.Contains(t, string(output), ","+value+"\n")
+		})
+	}
+	for _, value := range []string{`line\Nbreak`, `{\i1}styled`} {
+		t.Run(value, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]any{"started_at": "2026-01-01T00:00:00Z", "transcript_segments": []any{map[string]any{"text": value, "start": 1, "end": 2}}})
+			require.NoError(t, err)
+			_, err = RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+			require.ErrorIs(t, err, ErrInvalidSubtitles)
+		})
+	}
+}
+
+func TestSubtitleBlankLinesStayWithinCue(t *testing.T) {
+	raw := []byte(`{"schema_version":1,"recorded_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"Hello\n\u0085\n\nworld","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"Hello\n\u0085\n\nworld","start":0,"end":2}]}}}`)
+	for _, format := range []Format{FormatSRT, FormatVTT} {
+		t.Run(string(format), func(t *testing.T) {
+			result, err := RenderSubtitles("pocket_json", raw, PacketOptions{Format: format, MaxBytes: 4096})
+			require.NoError(t, err)
+			assert.Contains(t, result.Content, "Hello\nworld\n\n")
+			if format == FormatSRT {
+				parsed, err := mediatranscript.ParseSubRip([]byte(result.Content), "msgvault", "und")
+				require.NoError(t, err)
+				require.Len(t, parsed.Segments, 1)
+				assert.Equal(t, "Hello\nworld", parsed.Segments[0].Text)
+			}
+		})
+	}
+}
