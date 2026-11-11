@@ -516,6 +516,8 @@ func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 }
 
 func TestSearchMessageBodies_PostgreSQLSaturatedPagination(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	if !f.Store.IsPostgreSQL() {
 		t.Skip("PostgreSQL indexing")
@@ -523,45 +525,46 @@ func TestSearchMessageBodies_PostgreSQLSaturatedPagination(t *testing.T) {
 	id := createSearchScopeMessage(t, f, "exact-candidate", strings.Repeat("alpha ", 300), "ordinary", "alpha@beta.example marker", 0, 0)
 	falseID := createSearchScopeMessage(t, f, "false-candidate", "ordinary", "ordinary", strings.Repeat("alpha ", 300)+"middle beta marker", 0, 0)
 	var firstID int64
-	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE id IN ($1, $2) ORDER BY sent_at DESC, id DESC LIMIT 1`, id, falseID).Scan(&firstID))
-	require.Equal(t, falseID, firstID, "nonmatching candidate must sort first")
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE id IN ($1, $2) ORDER BY sent_at DESC, id DESC LIMIT 1`, id, falseID).Scan(&firstID))
+	require.Equal(falseID, firstID, "nonmatching candidate must sort first")
 	createSearchScopeMessage(t, f, "subject-only", strings.Repeat("subjectonly ", 300)+"subjectonly@example.com", "", "ordinary body", 0, 0)
 	_, err := f.Store.BackfillFTS(nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	engine := query.NewEngine(f.Store.DB(), true)
 	messages, err := engine.Search(t.Context(), &search.Query{TextTerms: []string{"alpha@beta", "marker"}}, 1, 0)
-	require.NoError(t, err)
-	require.Len(t, messages, 1)
-	assert.Equal(t, id, messages[0].ID)
+	require.NoError(err)
+	require.Len(messages, 1)
+	assert.Equal(id, messages[0].ID)
 	searcher, ok := engine.(query.MessageBodySearcher)
-	require.True(t, ok)
+	require.True(ok)
 	result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"alpha@beta", "marker"}}, 1, 0)
-	require.NoError(t, err)
-	require.Len(t, result.Messages, 1)
-	assert.Equal(t, id, result.Messages[0].ID)
-	assert.Contains(t, strings.Join(result.Messages[0].BodyContextSnippets, " "), "alpha@beta.example")
+	require.NoError(err)
+	require.Len(result.Messages, 1)
+	assert.Equal(id, result.Messages[0].ID)
+	assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "alpha@beta.example")
 	result, err = searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"beta@alpha"}}, 10, 0)
-	require.NoError(t, err)
-	assert.Empty(t, result.Messages)
+	require.NoError(err)
+	assert.Empty(result.Messages)
 	result, err = searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"subjectonly@example.com"}}, 10, 0)
-	require.NoError(t, err)
-	assert.Empty(t, result.Messages)
+	require.NoError(err)
+	assert.Empty(result.Messages)
 }
 
 func TestSearchMessageBodies_PostgreSQLSaturatedEditAndRebuild(t *testing.T) {
+	require := require.New(t)
 	f := storetest.New(t)
 	if !f.Store.IsPostgreSQL() {
 		t.Skip("PostgreSQL indexing")
 	}
 	id := createSearchScopeMessage(t, f, "edited-body", "ordinary", "ordinary", strings.Repeat("padding ", 17000)+"old@example.test", 0, 0)
 	_, err := f.Store.BackfillFTS(nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
-	require.True(t, ok)
+	require.True(ok)
 	check := func(term string, want []int64) {
 		t.Helper()
 		result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{term}}, 10, 0)
-		require.NoError(t, err)
+		require.NoError(err)
 		var ids []int64
 		for _, message := range result.Messages {
 			ids = append(ids, message.ID)
@@ -569,13 +572,13 @@ func TestSearchMessageBodies_PostgreSQLSaturatedEditAndRebuild(t *testing.T) {
 		assert.Equal(t, want, ids)
 	}
 	check("old@example.test", []int64{id})
-	require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: strings.Repeat("padding ", 17000) + "new@example.test", Valid: true}, sql.NullString{}))
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: strings.Repeat("padding ", 17000) + "new@example.test", Valid: true}, sql.NullString{}))
 	_, err = f.Store.RebuildFTS(nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	check("new@example.test", []int64{id})
-	require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: "short@example.test", Valid: true}, sql.NullString{}))
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "short@example.test", Valid: true}, sql.NullString{}))
 	_, err = f.Store.RebuildFTS(nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	check("short@example.test", []int64{id})
 }
 

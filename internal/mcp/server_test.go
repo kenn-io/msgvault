@@ -918,19 +918,21 @@ func TestSearchMessageBodies_PostgreSQLContextTokens(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			id := f.NewMessage().WithSourceMessageID("mcp-postgres-context-"+tc.name).Create(t, f.Store)
-			require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: tc.body, Valid: true}, sql.NullString{}))
+			require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: tc.body, Valid: true}, sql.NullString{}))
 			_, err := f.Store.BackfillFTS(nil)
-			require.NoError(t, err)
+			require.NoError(err)
 			engine := query.NewEngine(f.Store.DB(), true)
 			resp := runTool[paginatedSearchMessages](t, "search_message_bodies", newTestHandlers(engine).searchMessageBodies, map[string]any{"query": tc.query})
-			require.Len(t, resp.Data, 1)
-			assert.Equal(t, id, resp.Data[0].ID)
+			require.Len(resp.Data, 1)
+			assert.Equal(id, resp.Data[0].ID)
 			var snippets []string
 			for _, match := range resp.Data[0].Matches {
 				snippets = append(snippets, match.Snippet)
 			}
-			assert.Contains(t, strings.Join(snippets, " "), tc.want)
+			assert.Contains(strings.Join(snippets, " "), tc.want)
 		})
 	}
 }

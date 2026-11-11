@@ -96,18 +96,20 @@ func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
 // TestPG_BackfillFTSUpgradesLegacyEntries keeps old sender phrases when
 // an archive predates the current indexing version.
 func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
 	ids := f.CreateMessages(2)
 	for i, id := range ids {
-		require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: strings.Repeat("filler ", 17000), Valid: true}, sql.NullString{}))
+		require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: strings.Repeat("filler ", 17000), Valid: true}, sql.NullString{}))
 		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'lantern', search_fts = setweight(to_tsvector('simple', 'Lantern Sender'), 'B'), indexing_version = $2 WHERE id = $1`, id, []any{2, nil}[i])
-		require.NoError(t, err)
+		require.NoError(err)
 	}
 	crossField := f.CreateMessage("legacy-cross-field")
-	require.NoError(t, f.Store.UpsertMessageBody(crossField, sql.NullString{String: strings.Repeat("filler ", 17000), Valid: true}, sql.NullString{}))
+	require.NoError(f.Store.UpsertMessageBody(crossField, sql.NullString{String: strings.Repeat("filler ", 17000), Valid: true}, sql.NullString{}))
 	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'alpha'), 'A') || setweight(to_tsvector('simple', 'beta'), 'B'), indexing_version = 2 WHERE id = $1`, crossField)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	for i, vector := range []string{
 		`'alpha':1B 'beta':3B`,
@@ -116,19 +118,19 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	} {
 		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("legacy-position-%d", i)).Create(t, f.Store)
 		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = $2::tsvector, indexing_version = 2 WHERE id = $1`, id, vector)
-		require.NoError(t, err)
+		require.NoError(err)
 	}
 	current := f.CreateMessage("current-index")
-	require.NoError(t, f.Store.UpsertFTS(current, "current marker", "", "", "", ""))
+	require.NoError(f.Store.UpsertFTS(current, "current marker", "", "", "", ""))
 	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = search_fts || to_tsvector('simple', 'obsolete') WHERE id = $1`, crossField)
-	require.NoError(t, err)
+	require.NoError(err)
 	n, err := f.Store.BackfillFTS(nil)
-	require.NoError(t, err)
-	assert.Equal(t, int64(6), n)
+	require.NoError(err)
+	assert.Equal(int64(6), n)
 	for term, want := range map[string][]int64{"lantern sender": ids, "sender lantern": nil, "sender filler": nil, "alpha beta": nil, "obsolete": nil, "current marker": {current}} {
 		got, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
-		require.NoError(t, err)
-		assert.ElementsMatch(t, want, got, term)
+		require.NoError(err)
+		assert.ElementsMatch(want, got, term)
 	}
 }
 
@@ -371,34 +373,35 @@ func TestStore_NeedsFTSBackfill_HoleAtLowestID(t *testing.T) {
 }
 
 func TestPG_BackfillFTS_ConcurrentRebuild(t *testing.T) {
+	require := require.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
 	ids := f.CreateMessages(65)
 	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'repair marker', search_fts = NULL, indexing_version = NULL WHERE id = ANY($1)`, ids[:64])
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'repair marker', search_fts = NULL, indexing_version = NULL WHERE id = $1`, ids[64])
-	require.NoError(t, err)
+	require.NoError(err)
 	// Put the last row before the first page in heap order.
 	_, err = f.Store.DB().ExecContext(t.Context(), `CREATE INDEX test_messages_reverse_id ON messages (id DESC)`)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(t.Context(), `CLUSTER messages USING test_messages_reverse_id`)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(t.Context(), `DROP INDEX test_messages_reverse_id`)
-	require.NoError(t, err)
+	require.NoError(err)
 	var scrambled bool
-	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT NOT EXISTS (SELECT 1 FROM messages WHERE id = ANY($2) AND ctid <= (SELECT ctid FROM messages WHERE id = $1))`, ids[64], ids[:64]).Scan(&scrambled))
-	require.True(t, scrambled)
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT NOT EXISTS (SELECT 1 FROM messages WHERE id = ANY($2) AND ctid <= (SELECT ctid FROM messages WHERE id = $1))`, ids[64], ids[:64]).Scan(&scrambled))
+	require.True(scrambled)
 
 	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	_, err = tx.ExecContext(t.Context(), `SELECT id FROM messages WHERE id = $1 FOR UPDATE`, ids[64])
-	require.NoError(t, err)
+	require.NoError(err)
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	backfillDone := make(chan error, 1)
 	go func() { _, err := f.Store.BackfillFTSContext(ctx, nil); backfillDone <- err }()
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		var blocked bool
 		err := f.Store.DB().QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'SELECT m.id FROM messages m WHERE m.id IN (%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&blocked)
 		return err == nil && blocked
@@ -406,16 +409,16 @@ func TestPG_BackfillFTS_ConcurrentRebuild(t *testing.T) {
 
 	rebuildDone := make(chan error, 1)
 	go func() { _, err := f.Store.RebuildFTSContext(ctx, nil); rebuildDone <- err }()
-	require.Eventually(t, func() bool {
+	require.Eventually(func() bool {
 		var blocked bool
 		err := f.Store.DB().QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'DROP INDEX IF EXISTS messages_search_fts_idx%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&blocked)
 		return err == nil && blocked
 	}, 30*time.Second, 20*time.Millisecond)
-	require.NoError(t, tx.Commit())
-	require.NoError(t, <-backfillDone)
-	require.NoError(t, <-rebuildDone)
+	require.NoError(tx.Commit())
+	require.NoError(<-backfillDone)
+	require.NoError(<-rebuildDone)
 	assertFTSContains(t, f.Store, "repair marker", 65)
 	needs, err := f.Store.NeedsFTSBackfillContext(t.Context())
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.False(t, needs)
 }

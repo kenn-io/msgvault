@@ -96,13 +96,14 @@ type recordingFTSQuerier struct {
 }
 
 func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
+	assert := assert.New(t)
 	d := &PostgreSQLDialect{}
 	join, where, orderBy, orderArgCount := d.FTSSearchClause(false, []string{"foo-bar"})
-	assert.Empty(t, join)
-	assert.Contains(t, where, "m.search_fts @@ to_tsquery('simple', ?)")
-	assert.Contains(t, where, "foo:A <-> bar:*A")
-	assert.Equal(t, "-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?))", orderBy)
-	assert.Equal(t, 1, orderArgCount)
+	assert.Empty(join)
+	assert.Contains(where, "m.search_fts @@ to_tsquery('simple', ?)")
+	assert.Contains(where, "foo:A <-> bar:*A")
+	assert.Equal("-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?))", orderBy)
+	assert.Equal(1, orderArgCount)
 }
 
 func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
