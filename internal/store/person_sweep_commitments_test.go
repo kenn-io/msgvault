@@ -876,6 +876,61 @@ func TestCommitmentRefreshedPromiseReplaysSameBatchCompletion(t *testing.T) {
 	a.NotEmpty(commitmentSourceID(next, completion))
 }
 
+func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T) {
+	for _, after := range []time.Duration{0, time.Minute} {
+		t.Run(after.String(), func(t *testing.T) {
+			r, a, ctx := require.New(t), assert.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "corrected-promise-time", false)
+			st := f.store
+			_, persist := newCommitmentTestConversation(t, f)
+			const promise, reply = "I will send the report.", "I sent the report."
+			id := persist("promise", promise, -2*time.Hour)
+			cfg := peoplesweep.Config{}
+			cfg.ApplyDefaults()
+			cfg.Commitments.Enabled, cfg.Commitments.AutoFulfil = true, true
+			applyCommitmentTestSources(t, f, cfg.Commitments)
+			f = nextCommitmentTestAttempt(t, f, "-finish-initial")
+			applyCommitmentTestSources(t, f, cfg.Commitments)
+			completion := persist("completion", reply, -time.Hour)
+			f = nextCommitmentTestAttempt(t, f, "-complete")
+			profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+				AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+			window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+			r.NoError(err)
+			r.Len(window.Anchors, 1)
+			commitmentID := window.Anchors[0].ID
+			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+				Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{{
+					CommitmentID: commitmentID, SourceID: commitmentSourceID(window, completion), Quote: reply, End: int64(len(reply)), Confirmed: true,
+				}},
+			}))
+			r.NoError(err)
+			items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+			r.NoError(err)
+			r.Len(items, 1)
+			r.Equal(CommitmentStateFulfilled, items[0].State)
+			corrected := personFactLedgerNow.Add(-time.Hour).Add(after)
+			_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE messages SET sent_at = ? WHERE id = ?"), st.dialect.TimestampParam(corrected), id)
+			r.NoError(err)
+			f = nextCommitmentTestAttempt(t, f, "-corrected")
+			window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+			r.NoError(err)
+			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+				Promises: []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo,
+					Quote: promise, Summary: "Keep the promise", End: int64(len(promise))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+			}))
+			r.NoError(err)
+			items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, false)
+			r.NoError(err)
+			r.Len(items, 1, "a completion at or before the corrected promise cannot close it")
+			a.Equal(commitmentID, items[0].ID)
+			a.Equal(LoopStateOpen, items[0].State)
+			a.True(corrected.Equal(items[0].PromisedAt))
+			a.Nil(items[0].Fulfilment)
+		})
+	}
+}
+
 func TestCommitmentReopenSuppressesExistingFutureDatedFulfilment(t *testing.T) {
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "future-fulfilment-reopen", false)
