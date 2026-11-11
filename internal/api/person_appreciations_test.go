@@ -75,6 +75,8 @@ func TestAppreciationHTTPProjectsDismissalAndPreservesHistory(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.NotContains(t, response.Body.String(), "carrying the boxes")
 	assert.NotContains(t, response.Body.String(), key)
+	assert.Contains(t, response.Body.String(), "they were preparing for a role change")
+	assert.NotContains(t, response.Body.String(), "carried the boxes")
 	response = doRequest(t, f.server.Router(), http.MethodGet, base, nil, nil)
 	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 	f.server.cfg.People.Sweep.Enabled = true

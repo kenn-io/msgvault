@@ -152,7 +152,7 @@ func (f *personBriefAPIFixture) seedBrief(t *testing.T, seed personBriefAPISeed)
 		peoplesweep.BriefProgramID, "v2",
 		"68a9b10d59ac78803f5e43736b082f31d4062eb09ffca80dc57aafda21714c6c", "openai_chat", "provider-v1",
 		"gpt-test", "model-v1", "policy-fingerprint", seed.boundary, seed.structured,
-		seed.rendered, peoplesweep.BriefRendererPolicyV1, seed.dropped,
+		seed.rendered, peoplesweep.BriefRendererPolicyV2, seed.dropped,
 		seed.generatedAt.UTC()).Scan(&briefID))
 	for ordinal, evidenceID := range seed.evidenceIDs {
 		_, err := f.store.DB().ExecContext(ctx, f.store.Rebind(
@@ -325,7 +325,7 @@ func TestPersonBriefHTTPReturnsCurrentVersionWithSentencesAndEvidence(t *testing
 
 	// The join key: every item here cites the fixture's one evidence item, so
 	// every sentence names ordinal 0 of the response's own evidence list.
-	assertions.Equal(peoplesweep.BriefRendererPolicyV1, brief.RendererPolicy)
+	assertions.Equal(peoplesweep.BriefRendererPolicyV2, brief.RendererPolicy)
 	for _, sentence := range brief.Sentences {
 		assertions.Equal([]int{0}, sentence.EvidenceOrdinals, "sentence %s", sentence.Kind)
 	}
@@ -367,7 +367,7 @@ func TestPersonBriefHTTPOmitsSentenceOrdinalsWhenTheCitationOrderCannotBeRebuilt
 
 	var brief PersonBrief
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &brief))
-	assertions.Equal(peoplesweep.BriefRendererPolicyV1, brief.RendererPolicy)
+	assertions.Equal(peoplesweep.BriefRendererPolicyV2, brief.RendererPolicy)
 	requirements.Len(brief.Evidence, 1, "the whole-brief citation list is still served")
 	requirements.Len(brief.Sentences, 4, "the paragraph the owner read is still mapped")
 	for _, sentence := range brief.Sentences {

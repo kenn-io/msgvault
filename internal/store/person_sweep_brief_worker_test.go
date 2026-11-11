@@ -1351,6 +1351,15 @@ func TestPersonSweepEmptyAfterConcurrentDismissalPreservesExtraction(t *testing.
 	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT COUNT(*) FROM person_sweep_batches WHERE attempt_id = ? AND status = 'succeeded'`), run.People[0].AttemptID).Scan(&successfulBatches))
 	assert.GreaterOrEqual(t, successfulBatches, 2, "paid extraction and brief calls are recorded")
 	var generationID sql.NullInt64
-	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT generation_id FROM person_sweep_attempts WHERE id = ?`), run.People[0].AttemptID).Scan(&generationID))
+	var inputTokens, outputTokens int
+	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT generation_id, input_tokens, output_tokens FROM person_sweep_attempts WHERE id = ?`), run.People[0].AttemptID).Scan(&generationID, &inputTokens, &outputTokens))
 	assert.True(t, generationID.Valid, "extraction generation is committed")
+	assert.GreaterOrEqual(t, inputTokens, 22)
+	assert.GreaterOrEqual(t, outputTokens, 8)
+	var cursor int64
+	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT MAX(optimistic_sequence) FROM person_sweep_cursors WHERE person_id = ?`), f.journal.alicePersonID).Scan(&cursor))
+	assert.Positive(t, cursor, "extraction cursor advances")
+	var retryClass string
+	require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT last_failure_class FROM person_sweep_work WHERE person_id = ?`), f.journal.alicePersonID).Scan(&retryClass))
+	assert.Equal(t, string(peoplesweep.FailureInvalidOutput), retryClass)
 }
