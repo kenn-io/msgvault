@@ -305,7 +305,7 @@ func TestPostalAddressCurrentStateExcludesBirthPlace(t *testing.T) {
 	assert.Equal("raw original", value.SourceText)
 }
 
-func TestPostalAddressRejectsUnsupportedSnapshots(t *testing.T) {
+func TestPostalAddressSnapshotReadAndWriteBoundaries(t *testing.T) {
 	st, id, _ := newPersonFactProjectionStore(t)
 	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"})
 	require.NoError(t, err)

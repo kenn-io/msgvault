@@ -183,7 +183,7 @@ func TestGoogleDoesNotSendWithoutKeyOrAfterCancellation(t *testing.T) {
 	assert.Zero(calls.Load())
 }
 
-func TestGoogleTimeoutAndRedirectDoNotLeakKey(t *testing.T) {
+func TestGoogleTimeoutAndRedirect(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			require := require.New(t)

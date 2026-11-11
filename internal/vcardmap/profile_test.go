@@ -1343,9 +1343,9 @@ func TestPostalSnapshotExportsCurrentLabel(t *testing.T) {
 	}
 }
 
-func TestPostalAddressExportPreservesComponentsForUnsupportedSnapshot(t *testing.T) {
-	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}", StreetAddress: new("12 Example Street")})
+func TestPostalAddressExportHidesUnsupportedSnapshot(t *testing.T) {
+	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}"})
 	require.NoError(t, err)
-	assert.Equal(t, ";;12 Example Street;;;;", value)
+	assert.Empty(t, value)
 	assert.Nil(t, label)
 }

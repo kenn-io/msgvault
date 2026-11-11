@@ -16,7 +16,7 @@ function setup(reason?: string, evidenceResponse?: Promise<Response>) {
   let adopted = false;
   const server = { reason, absent: false, fail: false, raw, personRevision: 3, readClaims: undefined as (() => Promise<Response>) | undefined };
   let claimReads = 0;
-  const claim = () => ({ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify(raw), relation: 'support', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: ['Room;3', 'Floor 2'], proposed_extended_parts: ['Room;3', 'Floor 2'] } } });
+  const claim = () => ({ id: 1, claim_key: 'synthetic-claim', generation_id: 1, target: { kind: 'postal_address', key: 'system:postal_address', revision }, submitted_value: JSON.stringify({ street_address: raw.street_address, extended_address: raw.extended_address, country_code: raw.country_code, extended_components: raw.extended_components, source_text: raw.original_value }), relation: 'support', origin: 'observed', confidence: { reported_score: 99 }, evidence_ids: [5], created_at: when, postal_review: { eligible: !server.reason && !adopted, person_revision: server.personRevision, reason_codes: adopted ? ['already_adopted'] : server.reason ? [server.reason] : [], supporting_evidence_ids: [5], assessment: { original: server.raw, proposed: server.raw, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: ['Room;3', 'Floor 2'], proposed_extended_parts: ['Room;3', 'Floor 2'] } } });
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input); requests.push(request);
     const path = new URL(request.url).pathname;
@@ -179,10 +179,11 @@ it.each(['history restoration', 'section change', 'profile replacement', 'person
   await screen.findByRole('button', { name: 'Cancel opening address review' });
   server.readClaims = undefined;
   if (change === 'history restoration') ledger.applyContext(true, 7, true);
-  else if (change === 'section change') await fireEvent.click(screen.getByRole('radio', { name: 'Evidence' }));
+  else if (change === 'section change') await ledger.selectSection('evidence');
   else if (change === 'person change') ledger.applyContext(false, null);
   else await view.rerender({ controller: ledger, profileController: new DirectoryProfileController(createAPIClient(async () => Response.json({})), 7, { person, structuredProfile: emptyProfile(person), etags: { structuredProfile: '\"person-7-r3\"' }, errors: {} }) });
   release(Response.json({ message: 'Late failure' }, { status: 503 }));
+  expect(ledger.postalReview).toBeUndefined();
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel opening address review' })).toBeNull());
   expect(screen.queryByLabelText('Street address')).toBeNull();
   expect(screen.queryByRole('alert')).toBeNull();
