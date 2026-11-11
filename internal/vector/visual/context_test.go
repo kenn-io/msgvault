@@ -81,14 +81,12 @@ func TestAssembleDocumentUsesMediaOnlyWhenContextNormalizesEmpty(t *testing.T) {
 
 func TestAssembleDocumentChatContext(t *testing.T) {
 	for _, kind := range []string{"telegram", "instagram"} {
-		t.Run(kind, func(t *testing.T) {
-			request := revisionRequest()
-			request.Context = MessageContext{Body: "Photo caption", MessageType: kind}
-			doc, _, err := AssembleDocument(request)
-			require.NoError(t, err)
-			require.Len(t, doc.Parts, 2)
-			assert.Equal(t, "Photo caption\n\nMessage type: chat message", doc.Parts[0].Text)
-		})
+		request := revisionRequest()
+		request.Context = MessageContext{Body: "Photo caption", MessageType: kind}
+		doc, _, err := AssembleDocument(request)
+		require.NoError(t, err)
+		require.Len(t, doc.Parts, 2)
+		assert.Equal(t, "Photo caption\n\nMessage type: chat message", doc.Parts[0].Text, kind)
 	}
 }
 

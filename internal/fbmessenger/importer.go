@@ -897,18 +897,16 @@ func writeThreadToStore(
 				}
 				prev, found := existing[slot]
 				if found && prev.StoragePath != "" {
-					write.StoragePath, write.ContentHash, write.Size = prev.StoragePath, prev.ContentHash, int64(prev.Size)
+					continue
 				}
 				filename := resolveAttachmentURI(absRoot, att.URI)
 				if filename == "" {
 					summary.MediaRejected, summary.Incomplete = summary.MediaRejected+1, true
 				} else if info, err := os.Lstat(filename); errors.Is(err, os.ErrNotExist) {
-					if write.StoragePath == "" {
-						summary.MediaMissing, summary.Incomplete = summary.MediaMissing+1, true
-					}
+					summary.MediaMissing, summary.Incomplete = summary.MediaMissing+1, true
 				} else if err != nil || !info.Mode().IsRegular() {
 					summary.MediaRejected, summary.Incomplete = summary.MediaRejected+1, true
-				} else if opts.AttachmentsDir != "" && write.StoragePath == "" {
+				} else if opts.AttachmentsDir != "" {
 					var err error
 					write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentFromPath(ctx, opts.AttachmentsDir, filename, 0)
 					if err != nil {
@@ -916,16 +914,13 @@ func writeThreadToStore(
 					}
 					summary.AttachmentsStored++
 				}
-
-				if found {
-					if prev.Filename == write.Filename && prev.MimeType == write.MIMEType && prev.StoragePath == write.StoragePath && prev.ContentHash == write.ContentHash && int64(prev.Size) == write.Size && prev.MediaType == write.MediaType && prev.Role == write.Role && prev.RoleSource == write.RoleSource && prev.SourcePartKey == write.SourcePartKey {
-						continue
-					}
+				if found && write.StoragePath == "" {
+					continue
 				}
 				if err := st.UpsertAttachmentRecordWithStats(ctx, messageID, write, true); err != nil {
 					return err
 				}
-				existing[slot] = store.AttachmentRef{Filename: write.Filename, MimeType: write.MIMEType, StoragePath: write.StoragePath, ContentHash: write.ContentHash, Size: int(write.Size), MediaType: write.MediaType, Role: write.Role, RoleSource: write.RoleSource, SourcePartKey: write.SourcePartKey}
+				existing[slot] = store.AttachmentRef{StoragePath: write.StoragePath}
 				continue
 			}
 			storagePath, contentHash, size := handleAttachment(ctx, att, opts.AttachmentsDir)

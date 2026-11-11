@@ -149,9 +149,9 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 	var title string
 	var participants []Participant
 	var shards []string
-	var instagramHeader bool
+	var headerRead bool
 
-	for i, f := range files {
+	for _, f := range files {
 		if instagram != nil {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -165,12 +165,22 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 		} else if decodeErr := json.Unmarshal(data, &decoded); decodeErr != nil {
 			err = fmt.Errorf("%w: %s: %w", ErrCorruptJSON, f.name, decodeErr)
 		}
-		if instagram != nil {
-			if err != nil || decoded.Messages == nil {
-				instagram.summary.FilesSkipped++
-				instagram.summary.Incomplete = true
-				continue
+		if instagram != nil && (err != nil || decoded.Messages == nil) {
+			instagram.summary.FilesSkipped++
+			instagram.summary.Incomplete = true
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !headerRead {
+			headerRead = true
+			title = DecodeMojibake(decoded.Title)
+			for _, p := range decoded.Participants {
+				participants = append(participants, Participant{Name: DecodeMojibake(p.Name)})
 			}
+		}
+		if instagram != nil {
 			threadPath := filepath.ToSlash(filepath.Join(instagramInbox, instagram.td.Name))
 			key := DecodeMojibake(decoded.ThreadPath)
 			if key == "" {
@@ -184,23 +194,6 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 				return nil, errors.New("conflicting thread_path across directories")
 			}
 			instagram.keys[key] = threadPath
-			if !instagramHeader {
-				thread.Title = DecodeMojibake(decoded.Title)
-				names := map[string]bool{}
-				for _, participant := range decoded.Participants {
-					if name := DecodeMojibake(participant.Name); name != "" {
-						if !names[name] {
-							thread.Participants = append(thread.Participants, Participant{Name: name})
-							names[name] = true
-						}
-					}
-				}
-				thread.ConvType = "direct_chat"
-				if len(names) > 2 {
-					thread.ConvType = "group_chat"
-				}
-				instagramHeader = true
-			}
 			for _, raw := range decoded.Messages {
 				if err := ctx.Err(); err != nil {
 					return nil, err
@@ -248,15 +241,6 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 			}
 			continue
 		}
-		if err != nil {
-			return nil, err
-		}
-		if i == 0 {
-			title = DecodeMojibake(decoded.Title)
-			for _, p := range decoded.Participants {
-				participants = append(participants, Participant{Name: DecodeMojibake(p.Name)})
-			}
-		}
 		for _, raw := range decoded.Messages {
 			var record rawJSONMessage
 			if err := json.Unmarshal(raw, &record); err != nil {
@@ -266,28 +250,18 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 		}
 		shards = append(shards, string(data))
 	}
-	if instagram != nil {
-		instagram.summary.FilesSkipped += int64(len(badSiblings))
-		instagram.summary.Incomplete = instagram.summary.Incomplete || len(badSiblings) > 0
-		return &thread, nil
-	}
 
 	// Deduplicate participants (Facebook sometimes repeats).
 	seen := make(map[string]bool, len(participants))
 	uniq := participants[:0]
 	for _, p := range participants {
-		if seen[p.Name] {
+		if seen[p.Name] || (instagram != nil && p.Name == "") {
 			continue
 		}
 		seen[p.Name] = true
 		uniq = append(uniq, p)
 	}
 	participants = uniq
-
-	// Sort concatenated messages chronologically.
-	sort.SliceStable(rawConcat, func(i, j int) bool {
-		return rawConcat[i].TimestampMs < rawConcat[j].TimestampMs
-	})
 
 	thread.Title = title
 	thread.Participants = participants
@@ -296,6 +270,16 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 	} else {
 		thread.ConvType = "group_chat"
 	}
+	if instagram != nil {
+		instagram.summary.FilesSkipped += int64(len(badSiblings))
+		instagram.summary.Incomplete = instagram.summary.Incomplete || len(badSiblings) > 0
+		return &thread, nil
+	}
+
+	// Sort concatenated messages chronologically.
+	sort.SliceStable(rawConcat, func(i, j int) bool {
+		return rawConcat[i].TimestampMs < rawConcat[j].TimestampMs
+	})
 
 	// Store raw bytes: we concatenate the original JSON files into a
 	// JSON array so the stored raw is a self-contained round-trippable
@@ -424,10 +408,7 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 			if it.URI == "" {
 				continue
 			}
-			var abs string
-			if absRoot != "" {
-				abs = resolveAttachmentURI(absRoot, it.URI)
-			}
+			abs := resolveAttachmentURI(absRoot, it.URI)
 			out = append(out, Attachment{
 				URI:      it.URI,
 				AbsPath:  abs,
@@ -444,10 +425,7 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 	add("gif", m.Gifs)
 	add("file", m.Media)
 	if m.Sticker != nil && m.Sticker.URI != "" {
-		var abs string
-		if absRoot != "" {
-			abs = resolveAttachmentURI(absRoot, m.Sticker.URI)
-		}
+		abs := resolveAttachmentURI(absRoot, m.Sticker.URI)
 		out = append(out, Attachment{
 			URI:      m.Sticker.URI,
 			AbsPath:  abs,
@@ -464,10 +442,10 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 // parent, which in the post-2024 layout lives at
 // absRoot/your_activity_across_facebook. We try both candidates and
 // return the first that stays inside absRoot and refers to an existing
-// file. Empty string if the path escapes the root or nothing matches.
+// file. Empty string without a root, or if the path escapes it or nothing matches.
 func resolveAttachmentURI(absRoot, uri string) string {
 	cleaned := filepath.Clean(uri)
-	if path.IsAbs(uri) || filepath.IsAbs(cleaned) {
+	if absRoot == "" || path.IsAbs(uri) || filepath.IsAbs(cleaned) {
 		return ""
 	}
 	// Reject early if the cleaned path tries to escape.

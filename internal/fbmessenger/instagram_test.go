@@ -446,17 +446,19 @@ func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 		st := testutil.NewTestStore(t)
 		root := t.TempDir()
 		first := instagramTestShard(t, root, "circle", "message_1.json")
-		require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","title":"Fictional circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[]}`), 0600))
+		require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","title":"Fictional circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"},{"name":""}],"messages":[]}`), 0600))
 		record := instagramTestRecord("old")
 		record["sender_name"] = "Lumen Example"
 		instagramTestShard(t, root, "circle", "message_2.json", record)
 		opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
 		_, err := ImportDYI(t.Context(), st, opts)
 		require.NoError(err)
+		var kind string
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
+		require.Equal("direct_chat", kind)
 		require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","title":"Fictional circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"},{"name":"Lumen Example"}],"messages":[]}`), 0600))
 		_, err = ImportDYI(t.Context(), st, opts)
 		require.NoError(err)
-		var kind string
 		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
 		require.Equal("group_chat", kind)
 	})
