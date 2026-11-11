@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveExternalPersonEscapesAndValidates(t *testing.T) {
+func TestResolveExternalPersonEscapesIdentifiers(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "a&b", r.URL.Query().Get("archive_id"))
 		assert.Equal(t, "u+id", r.URL.Query().Get("uid"))
@@ -70,25 +70,21 @@ func TestSetExternalPersonIdentityRevision(t *testing.T) {
 	require.EqualValues(t, 5, revision)
 }
 
-func TestPersonAssertionsRejectsMismatchedPerson(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "100", r.URL.Query().Get("assertion_limit"))
-		_, _ = w.Write([]byte(`{"person_id":"p","state":"active","revision":1,"assertions":[{"person_id":"other","assertion_id":"a","content_version_id":"v","role":"depicted","action":"assert"}]}`))
-	}))
-	defer server.Close()
-	client, err := NewClient(server.URL, nil)
-	require.NoError(t, err)
-	_, err = client.PersonAssertions(t.Context(), "p", "")
-	require.ErrorIs(t, err, ErrInvalidReceipt)
-}
-
-func TestPersonAssertionsRejectsMissingPage(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"person_id":"p","state":"curated","revision":1}`))
-	}))
-	defer server.Close()
-	client, err := NewClient(server.URL, nil)
-	require.NoError(t, err)
-	_, err = client.PersonAssertions(t.Context(), "p", "")
-	require.ErrorIs(t, err, ErrInvalidReceipt)
+func TestPersonAssertionsRejectsInvalidPage(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"mismatched person", `{"person_id":"p","state":"active","revision":1,"assertions":[{"person_id":"other","assertion_id":"a","content_version_id":"v","role":"depicted","action":"assert"}]}`},
+		{"missing assertions", `{"person_id":"p","state":"curated","revision":1}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "100", r.URL.Query().Get("assertion_limit"))
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL, nil)
+			require.NoError(t, err)
+			_, err = client.PersonAssertions(t.Context(), "p", "")
+			require.ErrorIs(t, err, ErrInvalidReceipt)
+		})
+	}
 }

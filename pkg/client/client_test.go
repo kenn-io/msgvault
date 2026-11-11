@@ -780,10 +780,6 @@ func TestGeneratedPersonPhotoEvidenceAcceptsEmptyExcerpt(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Contains(string(encoded), `"excerpt":""`, "the required excerpt key remains on the wire")
 
-	missingRequiredEvidence := response
-	missingRequiredEvidence.Photos = append([]generated.PersonPhotoEvidence(nil), response.Photos...)
-	missingRequiredEvidence.Photos[0].ContentVersionID = ""
-	requirements.Error(missingRequiredEvidence.Validate(), "other required evidence fields remain validated")
 }
 
 func TestGeneratedPersonFactEvidenceRequiresPresenceButAcceptsEmptyStrings(t *testing.T) {

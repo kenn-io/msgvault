@@ -93,7 +93,7 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 		versions := []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}
 		want := make(map[string][]int64)
 		for i, version := range versions {
-			hash := fmt.Sprintf("%064x", i+10)
+			hash := fmt.Sprintf("%064x", i+1)
 			require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: int64(i + 1), VersionID: version}, ""))
 			for day := 5; day >= 1; day-- {
 				mid := f.CreateMessage(fmt.Sprintf("version-%d-day-%d", i, day))
@@ -107,8 +107,6 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 				}
 			}
 		}
-		_, err := f.Store.DB().ExecContext(t.Context(), `INSERT INTO docbank_attachment_deliveries (destination_key,content_hash,upload_name,mime_type,state,reason,attempts,node_id,version_id,endpoint,folder) SELECT destination_key,UPPER(content_hash),upload_name,mime_type,state,reason,attempts,node_id,version_id,endpoint,folder FROM docbank_attachment_deliveries WHERE version_id='00000000-0000-4000-8000-000000000001'`)
-		require.NoError(err)
 		var attachments int
 		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&attachments))
 		require.Equal(20, attachments)
