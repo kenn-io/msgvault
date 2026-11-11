@@ -38,9 +38,6 @@ func (s *Store) SwapMCPEventsCatalog(ctx context.Context, before, after []byte, 
 			return nil
 		}
 		if createID != "" {
-			if initial == nil {
-				return errors.New("missing initial events position")
-			}
 			raw, err := json.Marshal(initial)
 			if err != nil {
 				return err

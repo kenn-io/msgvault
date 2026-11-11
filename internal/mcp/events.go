@@ -44,17 +44,6 @@ func (p *nativeEventParams) clean() ([]byte, error) {
 	delete(fields, "_meta")
 	return json.Marshal(fields)
 }
-func (p *nativeEventParams) subscribe() (mcpevents.MCPEventsSubscribeRequest, error) {
-	b, err := p.clean()
-	if err != nil {
-		return mcpevents.MCPEventsSubscribeRequest{}, err
-	}
-	v, err := mcpevents.DecodeSubscribe(b)
-	if err != nil {
-		return v, rpcEventError(err)
-	}
-	return v, nil
-}
 
 type nativeEventResult struct {
 	sdkmcp.ResultBase
@@ -137,9 +126,13 @@ func registerNativeEvents(server *sdkmcp.Server, backend EventsBackend) {
 		return &nativeEventResult{value: map[string]any{"events": out.Events}, complete: true}, nil
 	})
 	_ = sdkmcp.AddReceivingCustomMethod(server, "events/subscribe", func(ctx context.Context, _ *sdkmcp.ServerSession, p *nativeEventParams) (*nativeEventResult, error) {
-		in, err := p.subscribe()
+		b, err := p.clean()
 		if err != nil {
 			return nil, err
+		}
+		in, err := mcpevents.DecodeSubscribe(b)
+		if err != nil {
+			return nil, rpcEventError(err)
 		}
 		out, err := backend.MCPEventsSubscribe(ctx, in)
 		if err != nil {

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"io"
@@ -49,12 +50,20 @@ func readEventsBody(r *http.Request) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r.Body, 64<<10+1))
 }
 func (s *Server) handleMCPEventsSubscribe(w http.ResponseWriter, r *http.Request) {
+	serveEventsMutation(w, r, s, mcpevents.DecodeSubscribe, s.mcpEvents.Subscribe)
+}
+func (s *Server) handleMCPEventsUnsubscribe(w http.ResponseWriter, r *http.Request) {
+	serveEventsMutation(w, r, s, mcpevents.DecodeUnsubscribe, func(ctx context.Context, in mcpevents.MCPEventsUnsubscribeRequest) (mcpevents.MCPEventsUnsubscribeResult, error) {
+		return mcpevents.MCPEventsUnsubscribeResult{}, s.mcpEvents.Unsubscribe(ctx, in)
+	})
+}
+func serveEventsMutation[Req, Resp any](w http.ResponseWriter, r *http.Request, s *Server, decode func([]byte) (Req, error), run func(context.Context, Req) (Resp, error)) {
 	raw, err := readEventsBody(r)
 	if err != nil {
 		eventsError(w, &mcpevents.Error{Code: mcpevents.InvalidParams, Reason: "invalid_params"})
 		return
 	}
-	in, err := mcpevents.DecodeSubscribe(raw)
+	in, err := decode(raw)
 	if err != nil {
 		eventsError(w, err)
 		return
@@ -65,34 +74,10 @@ func (s *Server) handleMCPEventsSubscribe(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer release()
-	result, err := s.mcpEvents.Subscribe(r.Context(), in)
+	result, err := run(r.Context(), in)
 	if err != nil {
 		eventsError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.MarshalWrite(w, result)
-}
-func (s *Server) handleMCPEventsUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	raw, err := readEventsBody(r)
-	if err != nil {
-		eventsError(w, &mcpevents.Error{Code: mcpevents.InvalidParams, Reason: "invalid_params"})
-		return
-	}
-	in, err := mcpevents.DecodeUnsubscribe(raw)
-	if err != nil {
-		eventsError(w, err)
-		return
-	}
-	release, err := s.beginMutation("MCP Events")(r.Context())
-	if err == nil {
-		defer release()
-		err = s.mcpEvents.Unsubscribe(r.Context(), in)
-	}
-	if err != nil {
-		eventsError(w, err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{}`))
+	writeJSON(w, http.StatusOK, result)
 }

@@ -383,17 +383,14 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		recordFailure(category)
 		if category == "" || sub.Native && (status == 410 || status == 413 || state.Failures >= 5) {
 			skipTo(next)
-			if sub.Native {
-				if category == "" {
-					state.LastError = ""
-					state.FailedSince = nil
-					stamp := e.now()
-					state.LastDeliveryAt = &stamp
-				}
+			if sub.Native && category == "" {
+				state.LastError = ""
+				state.FailedSince = nil
+				stamp := e.now()
+				state.LastDeliveryAt = &stamp
 			}
 		} else {
-			failureTime := e.now()
-			state.NextAttemptAt = failureTime.Add(retryDelay(state.Failures))
+			state.NextAttemptAt = e.now().Add(retryDelay(state.Failures))
 		}
 		err = e.GatedSetup(ctx, func() error { _, err := advance(raw); return err })
 		if err != nil {
