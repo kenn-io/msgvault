@@ -17,6 +17,7 @@ import (
 
 type importMCPStore struct {
 	*storeAPIAdapter
+
 	requests chan api.CLISyncRequest
 	release  chan struct{}
 }

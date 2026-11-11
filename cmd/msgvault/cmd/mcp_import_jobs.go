@@ -49,7 +49,7 @@ func (b *daemonMCPOperations) executeImportJob(ctx context.Context, name string,
 			JobID string `json:"job_id"`
 		}](args)
 		if err != nil || input.JobID == "" || input.JobID == "." || input.JobID == ".." || url.PathEscape(input.JobID) != input.JobID {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure("invalid_arguments", false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 		}
 		result, err := readMCPOperationJSON[generated.ImportJobResponse](ctx, b.client, http.MethodGet, "/api/v1/imports/{job_id}", &generated.GetImportJobRequestOptions{PathParams: &generated.GetImportJobPath{JobID: input.JobID}}, http.StatusOK)
 		return result, true, err
