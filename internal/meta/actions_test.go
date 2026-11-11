@@ -293,6 +293,27 @@ func TestImportResumesPastDeletedCommentAfterGC(t *testing.T) {
 	assert.NotContains(f.paths[before:], "/v26.0/100_201/comments")
 }
 
+func TestDropDeletedTraversalWithoutArchiveRow(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 3})
+	require.NoError(err)
+	require.True(sum.Partial)
+	// An unmarked row stands in for gc purging it between the mark and the prune.
+	execution, err := st.AcquireSyncExecutionContext(t.Context(), src.ID)
+	require.NoError(err)
+	require.NoError(dropDeletedTraversal(t.Context(), st, execution, src, "100_201"))
+	require.NoError(execution.Release())
+
+	f.denied["100_201/comments"] = true
+	before := len(f.paths)
+	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	assert.False(sum.Partial)
+	assert.NotContains(f.paths[before:], "/v26.0/100_201/comments")
+}
+
 func TestImportResumesPastDeletedPendingCommentAfterGC(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)

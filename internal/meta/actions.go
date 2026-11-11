@@ -127,7 +127,7 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 	if action == ActionDelete {
 		err = st.MarkMessageThreadDeletedContext(local, target.SourceID, target.CommentID)
 		if err == nil {
-			err = dropDeletedTraversal(local, st, execution, source)
+			err = dropDeletedTraversal(local, st, execution, source, target.CommentID)
 		}
 	} else {
 		err = setCommentHidden(local, st, target.MessageID, action == ActionHide)
@@ -139,16 +139,16 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 	return nil
 }
 
-// dropDeletedTraversal republishes a paused sync's saved traversal without
-// the comments just deleted. Doing it now, while the deleted rows still exist,
-// keeps a later `msgvault gc` from hiding them from the resume.
-func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store.SyncExecution, source *store.Source) error {
+// dropDeletedTraversal republishes a paused sync's saved traversal without the
+// deleted comment and its replies. It prunes now, so a later `msgvault gc`
+// cannot matter, and by ID, so it does not depend on the archive row.
+func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store.SyncExecution, source *store.Source, commentID string) error {
 	state, err := loadState(ctx, st, source, false)
 	if err != nil {
 		return err
 	}
-	run := &importRun{imp: &Importer{store: st}, source: source, state: state, sum: &ImportSummary{}}
-	changed, err := run.dropDeletedFrames(ctx)
+	run := &importRun{state: state, sum: &ImportSummary{}}
+	changed, err := run.dropDeletedFrames(func(id string) (bool, error) { return id == commentID, nil })
 	if err != nil || !changed {
 		return err
 	}

@@ -158,7 +158,9 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, checkpoint.PageToken)
 		}
 	}()
-	if _, err = run.dropDeletedFrames(ctx); err != nil {
+	if _, err = run.dropDeletedFrames(func(id string) (bool, error) {
+		return scoped.store.MessageDeletedFromSourceContext(ctx, source.ID, id)
+	}); err != nil {
 		return sum, err
 	}
 	// Publish the inherited state before any new request, so a crash cannot
@@ -204,10 +206,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 // there, so asking would fail on every run. The run holds the source lock, so
 // no comment is deleted while it traverses. It reports whether it dropped
 // anything.
-func (r *importRun) dropDeletedFrames(ctx context.Context) (bool, error) {
-	deleted := func(id string) (bool, error) {
-		return r.imp.store.MessageDeletedFromSourceContext(ctx, r.source.ID, id)
-	}
+func (r *importRun) dropDeletedFrames(deleted func(id string) (bool, error)) (bool, error) {
 	changed := false
 	for _, p := range r.state.Phases {
 		for i := range p.Stack {
