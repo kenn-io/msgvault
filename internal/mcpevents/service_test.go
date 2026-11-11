@@ -19,10 +19,54 @@ import (
 	"go.kenn.io/msgvault/internal/wakeups"
 )
 
+func newEventsTestStore(t *testing.T) *store.Store {
+	t.Helper()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "events@example.test")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), source.ID)
+	return st
+}
+
+func TestSubscribeRequiresExistingSource(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	_, err := service.Subscribe(t.Context(), in)
+	var eventErr *Error
+	requirements.ErrorAs(err, &eventErr)
+	assertions.Equal(InvalidParams, eventErr.Code)
+	assertions.Equal("invalid_scope", eventErr.Reason)
+	catalog, err := st.LoadMCPEventsCatalog(t.Context())
+	requirements.NoError(err)
+	assertions.Nil(catalog)
+	var count int
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&count))
+	assertions.Zero(count)
+	source, err := st.GetOrCreateSource("imap", "events@example.test")
+	requirements.NoError(err)
+	requirements.Equal(int64(1), source.ID)
+	result, err := service.Subscribe(t.Context(), in)
+	requirements.NoError(err)
+	assertions.NotEmpty(result.ID)
+	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+	requirements.NoError(err)
+	assertions.NotNil(position)
+
+	_, err = st.DB().ExecContext(t.Context(), "ALTER TABLE sources RENAME TO unavailable_sources")
+	requirements.NoError(err)
+	_, err = service.Subscribe(t.Context(), in)
+	requirements.ErrorAs(err, &eventErr)
+	assertions.Equal(Unavailable, eventErr.Code)
+	assertions.Equal("store_unavailable", eventErr.Reason)
+}
+
 func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook?token=x", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	first, err := service.Subscribe(t.Context(), in)
@@ -52,7 +96,7 @@ func preparedSubscribe(t *testing.T, in MCPEventsSubscribeRequest) MCPEventsSubs
 func TestLegacyCatalogRefreshPreservesPosition(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	first, err := service.Subscribe(t.Context(), in)
@@ -131,7 +175,7 @@ func TestTTLClampAndDefaults(t *testing.T) {
 func TestSubscribeRefreshPreservesPosition(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 	input := MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
 	input = preparedSubscribe(t, input)
@@ -162,7 +206,7 @@ func TestSubscribeRefreshPreservesPosition(t *testing.T) {
 func TestResubscribeReusesIdentityAndStartsAtCurrentBound(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	first, err := service.Subscribe(t.Context(), in)
@@ -195,7 +239,7 @@ func TestResubscribeReusesIdentityAndStartsAtCurrentBound(t *testing.T) {
 func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	now := time.Now().UTC()
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
 	in := MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
@@ -215,7 +259,7 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 func TestExpiredGrantEntryPurgedByOwnerService(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	now := time.Now().UTC()
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
@@ -245,7 +289,7 @@ func TestExpiredGrantEntryPurgedByOwnerService(t *testing.T) {
 func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, ConfigTargets: 31}
 	makeRequest := func(url string) MCPEventsSubscribeRequest {
 		return preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: url, Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
@@ -305,7 +349,7 @@ func (s *countingWakeupStore) LoadWakeupStateKey(ctx context.Context, key string
 func TestNativeRespectsConfiguredTargetLimitAfterRestart(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	var logs bytes.Buffer
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
 	var ids []string
@@ -335,7 +379,7 @@ func TestNativeRespectsConfiguredTargetLimitAfterRestart(t *testing.T) {
 func TestUnsubscribeWhileDisabledRemovesPosition(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	result, err := service.Subscribe(t.Context(), in)
@@ -353,7 +397,7 @@ func TestUnsubscribeWhileDisabledRemovesPosition(t *testing.T) {
 func TestCredentialWriteFailureLeavesRecoverableCatalog(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	dir := t.TempDir()
 	tokens := filepath.Join(dir, "tokens")
 	require.NoError(os.MkdirAll(filepath.Join(tokens, ".provider-credentials.lock"), 0700))
@@ -374,7 +418,7 @@ func TestOwnerServiceRejectsOtherCatalogOwners(t *testing.T) {
 	for _, owner := range []string{"", "grant:fixture", "unknown"} {
 		t.Run(owner, func(t *testing.T) {
 			require := require.New(t)
-			st := testutil.NewTestStore(t)
+			st := newEventsTestStore(t)
 			service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 			_, err := service.Subscribe(t.Context(), in)
@@ -398,7 +442,7 @@ func TestOwnerServiceRejectsOtherCatalogOwners(t *testing.T) {
 func TestCredentialCleanupFailureRetainsLiveButExpiresOldEntry(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	now := time.Now().UTC()
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
@@ -424,7 +468,7 @@ func TestCredentialCleanupFailureRetainsLiveButExpiresOldEntry(t *testing.T) {
 
 func TestNativeSkipsOriginMismatchWithoutBlockingOtherEntries(t *testing.T) {
 	require := require.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/one?token=x", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	first, err := service.Subscribe(t.Context(), in)
@@ -448,7 +492,7 @@ func TestNativeSkipsOriginMismatchWithoutBlockingOtherEntries(t *testing.T) {
 func TestCredentialReadFailureDoesNotChangeCatalogOrPositions(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	now := time.Now().UTC()
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/one", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})

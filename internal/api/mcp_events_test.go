@@ -86,6 +86,9 @@ func TestMCPEventsRejectsRemoteClient(t *testing.T) {
 func TestEventsRouterSerialGate(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "events@example.test")
+	requirements.NoError(err)
+	requirements.Equal(int64(1), source.ID)
 	cfg := &config.Config{HomeDir: t.TempDir()}
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, OperationGate: NewSerialOperationGate(), Logger: testLogger()})

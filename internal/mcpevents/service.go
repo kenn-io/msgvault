@@ -112,6 +112,14 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 	if _, err := changefeed.ResolveFilter(ctx, s.Store, filter); err != nil {
 		return out, failure(InvalidParams, "invalid_scope")
 	}
+	if in.Arguments.SourceID != 0 {
+		if _, err := s.Store.GetSourceByIDContext(ctx, in.Arguments.SourceID); err != nil {
+			if errors.Is(err, store.ErrSourceNotFound) {
+				return out, failure(InvalidParams, "invalid_scope")
+			}
+			return out, failure(Unavailable, "store_unavailable")
+		}
+	}
 	for {
 		entries, raw, err := s.catalog(ctx)
 		if err != nil {
