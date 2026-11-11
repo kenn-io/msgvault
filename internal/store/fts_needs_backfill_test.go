@@ -144,7 +144,7 @@ func TestPG_BackfillFTSKeepsMergedRecipientAlias(t *testing.T) {
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT email_address FROM message_recipients WHERE message_id = $1 AND recipient_type = 'to'`, id).Scan(&address))
 	require.False(address.Valid)
 	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2,
-search_fts = setweight(to_tsvector('simple', 'sender@example.com'), 'B') || setweight(to_tsvector('simple', 'old.alias@example.com carol@example.org'), 'C')
+search_fts = setweight(to_tsvector('simple', 'sender@example.com'), 'B') || setweight(to_tsvector('simple', 'old.alias@example.com old.alias@example.com carol@example.org'), 'C')
 WHERE id = $1`, id)
 	require.NoError(err)
 	require.NoError(f.Store.MergeParticipantsContext(t.Context(), alias, kept))
@@ -372,4 +372,54 @@ func TestPG_BackfillFTSLegacyPositionBreaks(t *testing.T) {
 	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alpha beta"}}, 10)
 	require.NoError(t, err)
 	assert.Empty(t, ids)
+}
+
+func TestPG_BackfillFTS_ConcurrentRebuild(t *testing.T) {
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	ids := f.CreateMessages(65)
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'repair marker', search_fts = NULL, indexing_version = NULL WHERE id = ANY($1)`, ids[:64])
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'repair marker', search_fts = NULL, indexing_version = NULL WHERE id = $1`, ids[64])
+	require.NoError(t, err)
+	// Put the last row before the first page in heap order.
+	_, err = f.Store.DB().ExecContext(t.Context(), `CREATE INDEX test_messages_reverse_id ON messages (id DESC)`)
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(t.Context(), `CLUSTER messages USING test_messages_reverse_id`)
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(t.Context(), `DROP INDEX test_messages_reverse_id`)
+	require.NoError(t, err)
+	var scrambled bool
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT NOT EXISTS (SELECT 1 FROM messages WHERE id = ANY($2) AND ctid <= (SELECT ctid FROM messages WHERE id = $1))`, ids[64], ids[:64]).Scan(&scrambled))
+	require.True(t, scrambled)
+
+	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	_, err = tx.ExecContext(t.Context(), `SELECT id FROM messages WHERE id = $1 FOR UPDATE`, ids[64])
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	backfillDone := make(chan error, 1)
+	go func() { _, err := f.Store.BackfillFTSContext(ctx, nil); backfillDone <- err }()
+	require.Eventually(t, func() bool {
+		var blocked bool
+		err := f.Store.DB().QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'SELECT m.id FROM messages m WHERE m.id IN (%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&blocked)
+		return err == nil && blocked
+	}, 30*time.Second, 20*time.Millisecond)
+
+	rebuildDone := make(chan error, 1)
+	go func() { _, err := f.Store.RebuildFTSContext(ctx, nil); rebuildDone <- err }()
+	require.Eventually(t, func() bool {
+		var blocked bool
+		err := f.Store.DB().QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'DROP INDEX IF EXISTS messages_search_fts_idx%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&blocked)
+		return err == nil && blocked
+	}, 30*time.Second, 20*time.Millisecond)
+	require.NoError(t, tx.Commit())
+	require.NoError(t, <-backfillDone)
+	require.NoError(t, <-rebuildDone)
+	assertFTSContains(t, f.Store, "repair marker", 65)
+	needs, err := f.Store.NeedsFTSBackfillContext(t.Context())
+	require.NoError(t, err)
+	assert.False(t, needs)
 }

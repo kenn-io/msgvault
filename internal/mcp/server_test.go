@@ -906,6 +906,35 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 	}
 }
 
+func TestSearchMessageBodies_PostgreSQLContextTokens(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL context semantics")
+	}
+	cases := []struct{ name, query, body, want string }{
+		{"accent lookalikes", "resume", strings.Repeat("résumé "+strings.Repeat("padding ", 60), query.MessageBodyContextMaxSnippets) + "resume marker", "resume marker"},
+		{"decomposed phrase", `"cafe teria"`, "cafe\u0301teria marker", "cafe\u0301teria"},
+		{"punctuated phrase", `"foo bar"`, "foo.bar marker", "foo.bar"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id := f.NewMessage().WithSourceMessageID("mcp-postgres-context-"+tc.name).Create(t, f.Store)
+			require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: tc.body, Valid: true}, sql.NullString{}))
+			_, err := f.Store.BackfillFTS(nil)
+			require.NoError(t, err)
+			engine := query.NewEngine(f.Store.DB(), true)
+			resp := runTool[paginatedSearchMessages](t, "search_message_bodies", newTestHandlers(engine).searchMessageBodies, map[string]any{"query": tc.query})
+			require.Len(t, resp.Data, 1)
+			assert.Equal(t, id, resp.Data[0].ID)
+			var snippets []string
+			for _, match := range resp.Data[0].Matches {
+				snippets = append(snippets, match.Snippet)
+			}
+			assert.Contains(t, strings.Join(snippets, " "), tc.want)
+		})
+	}
+}
+
 func TestSearchMessageBodies_ContextIgnoresFullFoldExpansionLookalikes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
