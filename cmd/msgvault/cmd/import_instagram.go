@@ -47,6 +47,5 @@ func runImportInstagram(cmd *cobra.Command, exportDir string, opts instagramCLIO
 	if summary.Incomplete {
 		_, _ = fmt.Fprintln(out, "Incomplete coverage: some content could not be imported.")
 	}
-	_, _ = fmt.Fprintln(out, "Coverage: inbox JSON only; deleted, unsent, encrypted and unexported history cannot be recovered.")
 	return errors.Join(importErr, err)
 }

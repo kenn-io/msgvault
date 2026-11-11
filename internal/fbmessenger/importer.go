@@ -99,19 +99,6 @@ type ImportSummary struct {
 	WasResumed           bool
 }
 
-// validateFormat rejects formats the source cannot import. Instagram exports
-// are JSON only, so html and both would silently import JSON.
-func validateFormat(format string, instagram bool) error {
-	if instagram && format != formatAuto && format != formatJSON {
-		return fmt.Errorf("instagram: --format %q is unsupported (valid: auto, json)", format)
-	}
-	switch format {
-	case formatAuto, formatJSON, "html", "both":
-		return nil
-	}
-	return fmt.Errorf("fbmessenger: unknown --format %q (valid: auto, json, html, both)", format)
-}
-
 // ImportDYI imports a Meta account download into the store.
 func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summary *ImportSummary, retErr error) {
 	start := time.Now()
@@ -128,11 +115,18 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summar
 	if format == "" {
 		format = formatAuto
 	}
-	if err := validateFormat(format, opts.Source == "instagram"); err != nil {
-		return summary, err
+	// Instagram exports are JSON only, so html and both would silently import JSON.
+	instagram := opts.Source == "instagram"
+	if instagram && format != formatAuto && format != formatJSON {
+		return summary, fmt.Errorf("instagram: --format %q is unsupported (valid: auto, json)", format)
+	}
+	switch format {
+	case formatAuto, formatJSON, "html", "both":
+		// valid
+	default:
+		return summary, fmt.Errorf("fbmessenger: unknown --format %q (valid: auto, json, html, both)", format)
 	}
 
-	instagram := opts.Source == "instagram"
 	if instagram {
 		if opts.Limit < 0 {
 			return summary, errors.New("--limit must be non-negative")
@@ -654,17 +648,12 @@ func writeThreadToStore(
 				// synthesize.
 				addr := address(senderName)
 				m2, err := st.EnsureParticipantsBatch(ctx, []mime.Address{addr})
-				if err != nil && instagram {
-					return err
-				}
 				if err == nil {
 					if id, ok := m2[addr.Email]; ok {
 						senderID = sql.NullInt64{Int64: id, Valid: true}
+						nameToID[senderName] = id
 						nameToEmail[senderName] = addr.Email
-						if !instagram {
-							nameToID[senderName] = id
-							_ = st.EnsureConversationParticipantContext(ctx, convID, id, "member")
-						}
+						_ = st.EnsureConversationParticipantContext(ctx, convID, id, "member")
 					}
 				}
 			}
@@ -773,9 +762,6 @@ func writeThreadToStore(
 				if name != senderName {
 					toIDs, toNames, toAddresses = append(toIDs, nameToID[name]), append(toNames, name), append(toAddresses, nameToEmail[name])
 				}
-			}
-			if senderID.Valid && nameToID[senderName] == 0 {
-				members = append(members, store.ConversationParticipantRef{ParticipantID: senderID.Int64, Role: "member"})
 			}
 			recipients := []store.RecipientSet{{Type: "to", ParticipantIDs: toIDs, DisplayNames: toNames}}
 			if senderID.Valid {
