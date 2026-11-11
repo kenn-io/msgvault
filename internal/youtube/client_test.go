@@ -26,12 +26,12 @@ func fixtureClient(t *testing.T, handler http.HandlerFunc) *Client {
 
 func TestClientRefreshAndSafeErrors(t *testing.T) {
 	for _, tc := range []struct {
-		name, response, want string
-		status               int
-		tokenError           bool
+		name, response, want  string
+		status, wantTokens    int
+		tokenError, wantQuota bool
 	}{
-		{name: "quota takes precedence", status: http.StatusForbidden, response: `{"error":{"message":"fixture-secret","errors":[{"reason":"commentsDisabled"},{"reason":"quotaExceeded"}]}}`, want: "quota"},
-		{name: "expired token", status: http.StatusBadRequest, response: `{"error":"invalid_grant","error_description":"fixture-secret"}`, want: "reauthorize", tokenError: true},
+		{name: "quota takes precedence", status: http.StatusForbidden, response: `{"error":{"message":"fixture-secret","errors":[{"reason":"commentsDisabled"},{"reason":"quotaExceeded"}]}}`, want: "quota", wantQuota: true, wantTokens: 1},
+		{name: "expired token", status: http.StatusBadRequest, response: `{"error":"invalid_grant","error_description":"fixture-secret"}`, want: "reauthorize", tokenError: true, wantTokens: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -40,13 +40,13 @@ func TestClientRefreshAndSafeErrors(t *testing.T) {
 				if r.URL.Path == "/token" {
 					tokens++
 					w.Header().Set("Content-Type", "application/json")
+					assert.NoError(r.ParseForm())
+					assert.Equal("fixture-refresh", r.Form.Get("refresh_token"))
 					if tc.tokenError {
 						w.WriteHeader(tc.status)
 						_, _ = fmt.Fprint(w, tc.response)
 						return
 					}
-					assert.NoError(r.ParseForm())
-					assert.Equal("fixture-refresh", r.Form.Get("refresh_token"))
 					_, _ = fmt.Fprint(w, `{"access_token":"fixture-access","expires_in":3600,"token_type":"Bearer"}`)
 					return
 				}
@@ -56,10 +56,10 @@ func TestClientRefreshAndSafeErrors(t *testing.T) {
 			})
 			_, err := c.ownedChannel(t.Context(), "UCfixture", "", 0)
 			require.Error(err)
-			if tc.name == "quota takes precedence" {
+			if tc.wantQuota {
 				require.ErrorIs(err, ErrQuota)
-				assert.Equal(1, tokens)
 			}
+			assert.Equal(tc.wantTokens, tokens)
 			assert.Contains(err.Error(), tc.want)
 			assert.NotContains(err.Error(), "fixture-secret")
 		})

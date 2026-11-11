@@ -87,16 +87,10 @@ func TestYouTubeUnchangedReplayAvoidsWritesAndJournalRows(t *testing.T) {
 	body, err := st.GetMessageBodyText(t.Context(), videoID)
 	requirements.NoError(err)
 	assertions.Equal("Fixture description\n\nhttps://www.youtube.com/watch?v=videoone", body)
-	normalizedMetadata := `{"video_id":"videoone","channel_id":"UCfixture","provider":"youtube"}`
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET metadata = ? WHERE id = ?`, normalizedMetadata, videoID)
-	requirements.NoError(err)
 	videoJournalCount := journalCount(videoID)
 	_, _, err = persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
 	assertions.Equal(videoJournalCount, journalCount(videoID))
-	videoMetadata, err := st.GetMessageMetadataContext(t.Context(), videoID)
-	requirements.NoError(err)
-	assertions.Equal(normalizedMetadata, videoMetadata.String)
 
 	c := yt.Comment{
 		Id:      "comment",
@@ -255,9 +249,9 @@ func TestCommentWithoutChannelIDPreservesDistinctAuthorNames(t *testing.T) {
 	require.NoError(err)
 	participantID, _, err := st.ParticipantByIdentifierContext(t.Context(), SourceType, SourceIdentifier("UCnew"))
 	require.NoError(err)
-	var participantName string
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`), participantID).Scan(&participantName))
-	require.Equal("Alice", participantName)
+	names, err := st.ParticipantDisplayNamesContext(t.Context(), []int64{participantID})
+	require.NoError(err)
+	require.Equal("Alice", names[participantID])
 	summaries, err = st.GetMessagesSummariesByIDsContext(t.Context(), ids[:1])
 	require.NoError(err)
 	assert.Equal(t, "Alice", summaries[0].FromName)

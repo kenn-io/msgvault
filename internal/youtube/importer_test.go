@@ -218,31 +218,45 @@ func TestArchivePartialCommentPageRefreshesStatsForEachTouchedPage(t *testing.T)
 }
 
 func TestArchiveQuotaRemainsIncompleteAndResumes(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
-	quota := true
-	imp := NewImporter(st, archiveFixture(t, false, nil, &quota))
-	source, err := imp.Register(t.Context(), "UCfixture")
-	requirements.NoError(err)
-	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
-	requirements.ErrorIs(err, ErrQuota)
-	assertions.True(sum.Partial)
-	run, err := st.GetLatestSyncContext(t.Context(), source.ID, 0)
-	requirements.NoError(err)
-	assertions.Equal(int64(2), run.MessagesProcessed)
-	assertions.Equal(int64(2), run.MessagesAdded, "both video writes before the quota error must be recorded")
-	assertions.Zero(run.MessagesUpdated)
-	var completed int
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM sync_runs WHERE source_id=? AND status='completed'`, source.ID).Scan(&completed))
-	assertions.Zero(completed)
-	quota = false
-	sum, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
-	requirements.NoError(err)
-	assertions.False(sum.Partial)
-	rows, err := st.StoredMessagesContext(t.Context(), source.ID, "youtube_json", []string{"parent", "parent.reply1", "parent.reply2"})
-	requirements.NoError(err)
-	assertions.Len(rows, 3)
+	for _, endpoint := range []string{"/commentThreads", "/videos"} {
+		t.Run(endpoint, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			quota := true
+			imp := NewImporter(st, archiveFixture(t, false, nil, &quota, endpoint))
+			source, err := imp.Register(t.Context(), "UCfixture")
+			require.NoError(err)
+			sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 10})
+			require.ErrorIs(err, ErrQuota)
+			require.True(sum.Partial)
+			require.LessOrEqual(sum.Requests, 10)
+			if endpoint == "/commentThreads" {
+				run, err := st.GetLatestSyncContext(t.Context(), source.ID, 0)
+				require.NoError(err)
+				require.Equal(int64(2), run.MessagesProcessed)
+				require.Equal(int64(2), run.MessagesAdded)
+				require.Zero(run.MessagesUpdated)
+				var completed int
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM sync_runs WHERE source_id=? AND status='completed'`), source.ID).Scan(&completed))
+				require.Zero(completed)
+			} else {
+				checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), source.ID, SourceType)
+				require.NoError(err)
+				var saved syncState
+				require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &saved))
+				require.Equal("videos", saved.Queue[0].Kind)
+				require.Equal([]string{"oldvideo", "disabledvideo"}, saved.Queue[0].VideoIDs)
+			}
+			quota = false
+			sum, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 20})
+			require.NoError(err)
+			require.False(sum.Partial)
+			require.LessOrEqual(sum.Requests, 20)
+			rows, err := st.StoredMessagesContext(t.Context(), source.ID, "youtube_json", []string{"video:oldvideo", "video:disabledvideo", "parent", "parent.reply1", "parent.reply2"})
+			require.NoError(err)
+			require.Len(rows, 5)
+		})
+	}
 }
 
 func TestArchiveSyncRunCountsAddedUpdatedAndUnchangedMessages(t *testing.T) {
@@ -723,34 +737,6 @@ func TestArchiveBatchesVideosAcrossResumedRuns(t *testing.T) {
 	rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:video0", "comment-video0", "video:video119", "comment-video119"})
 	require.NoError(err)
 	require.Len(rows, 4)
-}
-
-func TestVideoBatchQuotaRetainsWork(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	quota := true
-	c := archiveFixture(t, false, nil, &quota, "/videos")
-	imp := NewImporter(st, c)
-	src, err := imp.Register(t.Context(), "UCfixture")
-	require.NoError(err)
-	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 10})
-	require.ErrorIs(err, ErrQuota)
-	require.True(sum.Partial)
-	require.LessOrEqual(sum.Requests, 10)
-	checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, SourceType)
-	require.NoError(err)
-	var saved syncState
-	require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &saved))
-	require.Equal("videos", saved.Queue[0].Kind)
-	require.Equal([]string{"oldvideo", "disabledvideo"}, saved.Queue[0].VideoIDs)
-	quota = false
-	sum, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 20})
-	require.NoError(err)
-	require.False(sum.Partial)
-	require.LessOrEqual(sum.Requests, 20)
-	rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:oldvideo", "video:disabledvideo", "parent"})
-	require.NoError(err)
-	require.Len(rows, 3)
 }
 
 func TestUnknownModerationDoesNotBlockLaterVideos(t *testing.T) {

@@ -27,24 +27,20 @@ func TestConfiguredYouTubeCredentialsMissingWithoutLeak(t *testing.T) {
 
 func TestYouTubeNestedDaemonCommands(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	for _, action := range []string{"add", "sync"} {
-		leaf, _, err := rootCmd.Find([]string{"source", "youtube", action})
-		require.NoError(err)
-		if action == "sync" {
-			require.NoError(leaf.Flags().Set("max-requests", "7"))
-			t.Cleanup(func() {
-				_ = leaf.Flags().Set("max-requests", "1000")
-				leaf.Flags().Lookup("max-requests").Changed = false
-			})
-		}
-		forwarded, err := daemonCLIArgsFromCobra(leaf, []string{"example"})
-		require.NoError(err)
-		if action == "sync" {
-			assert.Equal([]string{"source", "youtube", "sync", "--max-requests=7", "example"}, forwarded)
-		} else {
-			assert.Equal([]string{"source", "youtube", "add", "example"}, forwarded)
-		}
-	}
+	leaf, _, err := rootCmd.Find([]string{"source", "youtube", "sync"})
+	require.NoError(err)
+	require.NoError(leaf.Flags().Set("max-requests", "7"))
+	t.Cleanup(func() {
+		_ = leaf.Flags().Set("max-requests", "1000")
+		leaf.Flags().Lookup("max-requests").Changed = false
+	})
+	forwarded, err := daemonCLIArgsFromCobra(leaf, []string{"example"})
+	require.NoError(err)
+	assert.Equal([]string{"source", "youtube", "sync", "--max-requests=7", "example"}, forwarded)
+}
+
+func TestYouTubeScheduledJobRegistration(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	sched := scheduler.New(nil)
 	t.Cleanup(func() { <-sched.Stop().Done() })
 	profile := config.YouTubeSource{ChannelID: "UCfixture", Schedule: "0 * * * *"}

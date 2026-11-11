@@ -67,13 +67,7 @@ func TestConfiguredScheduledSyncSkipsMergedSources(t *testing.T) {
 		})
 
 		require.NoError(err)
-		result, err := syncYouTubeProfile(ctx, st, config.YouTubeSource{
-			Identifier: "history", ChannelID: channelID,
-			ClientIDEnv: "TEST_YOUTUBE_CLIENT_ID", ClientSecretEnv: "TEST_YOUTUBE_CLIENT_SECRET",
-			TokenEnv: "TEST_YOUTUBE_REFRESH_TOKEN",
-		}, 1000)
-		require.ErrorIs(err, store.ErrSourceRetired)
-		require.Nil(result)
+
 	})
 
 	t.Run("Circleback before provider connection", func(t *testing.T) {

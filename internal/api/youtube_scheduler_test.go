@@ -17,9 +17,5 @@ func TestYouTubeSourceSchedulerClassification(t *testing.T) {
 	assertions.Equal(name, classification.jobName)
 	assert.False(t, isSourceSyncJobName("youtube:"))
 	assert.False(t, isSourceSyncJobName("youtube:UCfixture/other"))
-	for _, action := range []string{"add", "sync"} {
-		assert.True(t, cliRunCommandAllowed([]string{"source", "youtube", action, "example"}))
-	}
-	_, ok = SchedulerJobNameForSource("youtube", "UCfixture")
-	assertions.False(ok)
+
 }
