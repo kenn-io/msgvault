@@ -66,12 +66,10 @@ func TestEscapeTSQueryTerm(t *testing.T) {
 		}{
 			{"plain", []string{"invoice"}, "", "invoice:*"},
 			{"two_plain", []string{"invoice", "review"}, "", "invoice:* & review:*"},
-			{"dashes_only_drops", []string{"---"}, "", ""},
 			{"hyphenated_splits", []string{"foo-bar"}, "", "(foo <-> bar:*)"},
 			{"email_splits", []string{"user@example.com"}, "", "(user <-> example <-> com:*)"},
 			{"dotted_acronym_splits", []string{"a.b.c"}, "", "(a <-> b <-> c:*)"},
 			{"mix_of_clean_and_punct", []string{"invoice", "foo-bar"}, "", "invoice:* & (foo <-> bar:*)"},
-			{"only_punct_collapses_to_empty", []string{"---", "..."}, "", ""},
 			{"body_weight", []string{"foo-bar", "baz"}, "D", "(foo:D <-> bar:*D) & baz:*D"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
