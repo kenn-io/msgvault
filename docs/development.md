@@ -132,6 +132,42 @@ scripts have been removed. Pushing a tag no longer invokes those publishers. The
 Docker inputs, local build commands, installers, and ordinary CI remain
 available.
 
+### Check a standalone executable
+
+Run the standalone contract against an already built or extracted executable
+on macOS or Linux:
+
+```bash
+make smoke-standalone BINARY=/absolute/path/to/msgvault
+```
+
+The check copies only the executable to a temporary directory with spaces,
+clears its environment, and uses a new temporary home. It imports one
+synthetic email into SQLite, builds the Parquet cache, and requires the exact
+result of a DuckDB-specific query. It stops its daemon and removes the home
+on exit. It never reads a personal archive or rebuilds/installs the binary.
+
+A developer host can still supply shared libraries even with a cleared
+environment. For a clean Linux check, run the same script in a stock runtime
+with networking disabled; use an executable built for the container's native
+architecture:
+
+```bash
+docker run --rm --network none --read-only --tmpfs /tmp:rw,exec \
+  --mount type=bind,src=/absolute/path/to/msgvault,dst=/artifact/msgvault,readonly \
+  --mount type=bind,src="$PWD/scripts/smoke-standalone.sh",dst=/smoke.sh,readonly \
+  debian:bookworm-slim sh /smoke.sh /artifact/msgvault
+```
+
+The Linux CI build uses Debian bookworm as its compiler baseline and transfers
+its AMD64 and ARM64 executables to separate stock bookworm runtime jobs. Those
+jobs install no build tools or DuckDB. They complement the Docker-image smoke
+above, which checks a different build and its packaged runtime. They do not
+publish release assets.
+See [runtime requirements](setup.md#runtime-requirements) for the inspected
+v0.23.0 requirements; a passing check on one host does not certify other OS
+versions or architectures.
+
 ## Test
 
 ```bash
