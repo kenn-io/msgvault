@@ -1364,11 +1364,22 @@ func TestPostalSnapshotPreservesLabelAndFreeText(t *testing.T) {
 func TestPostalAddressPartialComponentsKeepFreeText(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, CountryName: new("Canada"), FreeText: new("12 Example Street")})
+	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal"})
+	require.NoError(err)
+	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, CountryName: new("Canada"), FreeText: new("12 Example Street")})
 	require.NoError(err)
 	require.NotNil(label)
 	assert.Equal(";;;;;;Canada", value)
 	assert.Equal("12 Example Street", *label)
+}
+
+func TestLegacyPostalExportOmitsFreeTextLabelWithComponents(t *testing.T) {
+	for _, original := range []string{"", "legacy source"} {
+		value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: original, StreetAddress: new("1 Main"), FreeText: new("gate code 42")})
+		require.NoError(t, err)
+		assert.Equal(t, ";;1 Main;;;;", value)
+		assert.Nil(t, label)
+	}
 }
 
 func TestLegacyExtendedAddressSurvivesPublicReadAndExport(t *testing.T) {
@@ -1405,4 +1416,12 @@ func TestPostalAddressSnapshotExportsGeoWithoutRestoringText(t *testing.T) {
 func TestPostalAddressExportRejectsUnsupportedSnapshot(t *testing.T) {
 	_, _, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}", StreetAddress: new("12 Example Street")})
 	require.Error(t, err)
+}
+
+func TestLegacyPostalExportRetainsOriginalLabel(t *testing.T) {
+	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "legacy source", StreetAddress: new("1 Main"), Label: new("Home"), FreeText: new("gate code 42")})
+	require.NoError(t, err)
+	require.NotNil(t, label)
+	assert.Equal(t, ";;1 Main;;;;", value)
+	assert.Equal(t, "Home", *label)
 }

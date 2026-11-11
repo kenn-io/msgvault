@@ -632,13 +632,7 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	label := current.Label
-	if current.FreeText != "" && current.FreeText != label {
-		if label != "" {
-			label += "\n"
-		}
-		label += current.FreeText
-	}
+	label := postalLabel(address, current, components)
 	if allBlank(components) && label == "" && current.CountryCode == "" && current.GeoURI == "" && current.Timezone == "" {
 		return "", nil, nil
 	}
@@ -646,6 +640,28 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 		return vcard.JoinStructuredText(components), &label, nil
 	}
 	return vcard.JoinStructuredText(components), nil, nil
+}
+
+// postalLabel returns the LABEL text. A captured snapshot appends the current
+// free text to the label. A legacy row keeps the earlier export: the label
+// wins, and free text stands in for it only when no components render.
+func postalLabel(address store.PersonAddress, current postaladdress.Input, components []string) string {
+	label, text := current.Label, current.FreeText
+	// ResolvedPostalInput clears OriginalValue on a snapshot and keeps it on a
+	// legacy row, so a difference marks a snapshot without decoding it again.
+	if current.OriginalValue == address.OriginalValue {
+		if label != "" || !allBlank(components) {
+			return label
+		}
+		return text
+	}
+	if text == "" || text == label {
+		return label
+	}
+	if label == "" {
+		return text
+	}
+	return label + "\n" + text
 }
 
 // postalComponents renders the seven typed ADR fields followed by any
