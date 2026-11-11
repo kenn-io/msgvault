@@ -149,10 +149,9 @@
           <h4>{group.label}</h4>
           <ul>
             {#each group.items as promise (promise.id)}
-              {@const summary = promise.summary === promise.promise.text ? '' : promise.summary}
               <li class="promise">
-                {#if summary || promise.due_on}
-                  <span>{summary}{promise.due_on ? `${summary ? ' · ' : ''}Due ${promise.due_on}` : ''}</span>
+                {#if promise.due_on}
+                  <span>Due {promise.due_on}</span>
                 {/if}
                 <a href={`/messages/${promise.promise.message_id}`} title={promise.promise.text}>{promise.promise.text}</a>
                 {#if promise.proposed_fulfilment}

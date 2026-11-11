@@ -745,6 +745,12 @@ func (w *Worker) runPerson(
 		lease = applied
 		return nil
 	}
+	if !ordinaryAllowed && !commitmentPlanned && len(progress.CursorEnvelope) == 0 {
+		if err := w.Store.CompleteIdlePersonSweep(ctx, lease, ProgramFingerprint(), catalog.Fingerprint); err != nil {
+			return PersonRunResult{}, failAttemptOrClaim(err)
+		}
+		return PersonRunResult{PersonID: lease.PersonID}, nil
+	}
 	if !ordinaryAllowed && !commitmentPlanned {
 		if err := startAttempt(progress.CursorEnvelope); err != nil {
 			return PersonRunResult{}, err
@@ -1265,6 +1271,16 @@ func (w *Worker) now() time.Time { return w.Clock().UTC() }
 func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
 	catalog personfacts.Catalog, now time.Time, request RunRequest,
 ) error {
+	ordinaryAllowed := true
+	if authority, ok := w.Runner.(interface {
+		OrdinaryInferenceAllowed(ctx context.Context) (bool, error)
+	}); ok && w.Config.Commitments.Enabled {
+		allowed, err := authority.OrdinaryInferenceAllowed(ctx)
+		if err != nil {
+			return err
+		}
+		ordinaryAllowed = allowed
+	}
 	after := int64(0)
 	for {
 		page, err := w.Store.ReconcilePersonSweepWorkContext(ctx, GapRequest{
@@ -1282,7 +1298,7 @@ func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
 		// Brief cadence and enrollment can become due without an extraction
 		// cursor gap. Reuse this tracked-person page to publish eligible work,
 		// leaving the bounded backstop fallback to the person actually claimed.
-		if w.Config.Brief.IsEnabled() && w.Brief != nil && w.Archive != nil &&
+		if ordinaryAllowed && w.Config.Brief.IsEnabled() && w.Brief != nil && w.Archive != nil &&
 			request.Brief.normalized() != BriefModeSkip && !w.forcedSinglePersonBrief(request) {
 			for _, personID := range page.PersonIDs {
 				if request.PersonID > 0 && personID != request.PersonID {

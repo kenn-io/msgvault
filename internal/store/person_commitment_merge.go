@@ -51,14 +51,24 @@ func (s *Store) transferCommitmentDecisionsTx(ctx context.Context, tx *loggedTx,
 }
 
 func (s *Store) transferCommitmentDecisionTx(ctx context.Context, tx *loggedTx, from PersonCommitment, personID, messageID int64) error {
-	from, err := rebaseCommitmentDecision(ctx, tx, from, messageID)
+	source, err := commitmentAuthoredSourceTx(ctx, tx, messageID)
 	if err != nil {
 		return err
 	}
-	current, err := scanPersonCommitment(tx.QueryRowContext(ctx, `SELECT `+commitmentColumns+` FROM person_commitments
-		WHERE person_id = ? AND anchor_message_id = ? AND direction = ? AND quote_start = ? AND quote_end = ?`,
-		personID, messageID, from.Direction, from.Start, from.End))
-	if errors.Is(err, sql.ErrNoRows) {
+	if located, live := locateCommitmentQuote(source, from); live {
+		from = located
+	} else if from.AnchorMessageID != messageID {
+		from.State, from.SnoozedUntil, from.ReopenedAt = LoopStateOpen, nil, nil
+	}
+	promise := peoplesweep.CommitmentPromise{Direction: from.Direction, Start: from.Start, End: from.End}
+	current, ambiguous, err := s.matchCommitmentLocator(ctx, tx, personID, messageID, promise, source, false)
+	if err != nil {
+		return err
+	}
+	if ambiguous {
+		return nil // Retain the source decision for undo; no unique survivor owns it.
+	}
+	if current.ID == 0 {
 		_, err = tx.ExecContext(ctx, `INSERT INTO person_commitments
 			(person_id, anchor_message_id, current_claim_id, target_key, direction,
 			quote, quote_start, quote_end, summary, due_on, promised_at, expires_at,
@@ -87,35 +97,19 @@ func (s *Store) transferCommitmentDecisionTx(ctx context.Context, tx *loggedTx, 
 
 // A duplicate may render the same promise at different original-body offsets.
 // Only an exact authored quote can carry its incoming owner decision.
-func rebaseCommitmentDecision(ctx context.Context, tx *loggedTx, from PersonCommitment, messageID int64) (PersonCommitment, error) {
-	if from.AnchorMessageID == messageID {
-		return from, nil
-	}
+func commitmentAuthoredSourceTx(ctx context.Context, tx *loggedTx, messageID int64) (peoplesweep.CommitmentSource, error) {
 	var body string
 	var kind sql.NullString
 	err := tx.QueryRowContext(ctx, `SELECT COALESCE(body_text, ''),
 		(SELECT conversation_type FROM conversations WHERE id = (SELECT conversation_id FROM messages WHERE id = ?))
 		FROM message_bodies WHERE message_id = ?`, messageID, messageID).Scan(&body, &kind)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return PersonCommitment{}, err
+		return peoplesweep.CommitmentSource{}, err
 	}
 	if kind.String == "email_thread" {
 		body = string(commitmentEmailRunes(body))
 	}
-	source := peoplesweep.CommitmentSource{Text: body}
-	if source.MatchesQuote(from.Quote, from.Start, from.End) {
-		return from, nil
-	}
-	if at := strings.Index(body, from.Quote); from.Quote != "" && at >= 0 && !strings.Contains(body[at+1:], from.Quote) {
-		start := int64(utf8.RuneCountInString(body[:at]))
-		end := start + int64(utf8.RuneCountInString(from.Quote))
-		if source.MatchesQuote(from.Quote, start, end) {
-			from.Start, from.End = start, end
-			return from, nil
-		}
-	}
-	from.State, from.SnoozedUntil, from.ReopenedAt = LoopStateOpen, nil, nil
-	return from, nil
+	return peoplesweep.CommitmentSource{Text: body}, nil
 }
 
 func (s *Store) commitmentTimestamp(at *time.Time) any {
@@ -130,4 +124,22 @@ func laterCommitmentTime(a, b *time.Time) *time.Time {
 		return b
 	}
 	return a
+}
+
+// Only unchanged authored words at their current range or a unique moved
+// location retain a promise's owner decisions and fulfilment.
+func locateCommitmentQuote(source peoplesweep.CommitmentSource, c PersonCommitment) (PersonCommitment, bool) {
+	if c.ID == 0 || c.Quote == "" {
+		return c, false
+	}
+	if source.MatchesQuote(c.Quote, c.Start, c.End) {
+		return c, true
+	}
+	at := strings.Index(source.Text, c.Quote)
+	if at < 0 || strings.Contains(source.Text[at+1:], c.Quote) {
+		return c, false
+	}
+	start := source.Start + int64(utf8.RuneCountInString(source.Text[:at]))
+	c.Start, c.End = start, start+int64(utf8.RuneCountInString(c.Quote))
+	return c, source.MatchesQuote(c.Quote, c.Start, c.End)
 }
