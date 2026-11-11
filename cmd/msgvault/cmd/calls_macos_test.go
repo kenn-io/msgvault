@@ -30,7 +30,7 @@ func TestCallsImportMacOSThroughDaemon(t *testing.T) {
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
-	_, err = db.Exec(`CREATE TABLE ZCALLRECORD(Z_PK INTEGER PRIMARY KEY,ZUNIQUE_ID TEXT,ZDATE REAL,ZANSWERED INTEGER,ZADDRESS TEXT); INSERT INTO ZCALLRECORD VALUES(1,'example-call',0.125,1,'peer@example.com')`)
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE ZCALLRECORD(Z_PK INTEGER PRIMARY KEY,ZUNIQUE_ID TEXT,ZDATE REAL,ZANSWERED INTEGER,ZADDRESS TEXT); INSERT INTO ZCALLRECORD VALUES(1,'example-call',0.125,1,'peer@example.com')`)
 	require.NoError(err)
 	st := testutil.NewTestStore(t)
 	emailSource, err := st.GetOrCreateSource("gmail", "synthetic@example.org")
@@ -129,7 +129,7 @@ func TestCallsImportMacOSThroughDaemon(t *testing.T) {
 	}
 	assert.ElementsMatch(wantIDs, gotIDs)
 
-	_, err = db.Exec(`INSERT INTO ZCALLRECORD VALUES(2,'invalid',NULL,1,NULL)`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO ZCALLRECORD VALUES(2,'invalid',NULL,1,NULL)`)
 	require.NoError(err)
 	_, err = run("import-macos", "--db", path, "--account", "example")
 	require.ErrorContains(err, "after 1 imported")

@@ -25,7 +25,7 @@ func sourceDB(t *testing.T, schema string) (*sql.DB, string) {
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { assert.NoError(t, db.Close()) })
-	_, err = db.Exec(schema)
+	_, err = db.ExecContext(t.Context(), schema)
 	require.NoError(t, err)
 	return db, path
 }
@@ -38,10 +38,10 @@ func TestReadWALSnapshot(t *testing.T) {
 	db, path := sourceDB(t, `PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
  CREATE TABLE ZCALLRECORD(Z_PK INTEGER PRIMARY KEY,ZUNIQUE_ID TEXT,ZDATE TIMESTAMP,ZDURATION REAL,ZORIGINATED INTEGER,ZANSWERED INTEGER,ZADDRESS TEXT,ZNAME TEXT,ZHANDLE_TYPE INTEGER,ZSERVICE_PROVIDER TEXT,ZCALLTYPE INTEGER,ZPARTICIPANTGROUPUUID TEXT,ZORIGINATINGDEVICENAME TEXT,ZDISCONNECTED_CAUSE INTEGER);
  INSERT INTO ZCALLRECORD VALUES(1,'committed',0.125,5.25,0,1,'peer@example.com','Example',1,'com.apple.FaceTime',8,NULL,'Example device',0);`)
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(t.Context(), nil)
 	require.NoError(err)
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.Exec(`INSERT INTO ZCALLRECORD(Z_PK,ZUNIQUE_ID,ZDATE,ZANSWERED) VALUES(2,'pending',0,1)`)
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO ZCALLRECORD(Z_PK,ZUNIQUE_ID,ZDATE,ZANSWERED) VALUES(2,'pending',0,1)`)
 	require.NoError(err)
 	before, err := os.ReadFile(path)
 	require.NoError(err)
@@ -116,9 +116,9 @@ func TestSnapshotCancellationWhileLocked(t *testing.T) {
 	dc, err := dest.Conn(t.Context())
 	require.NoError(err)
 	defer func() { _ = dc.Close() }()
-	_, err = db.Exec(`BEGIN EXCLUSIVE`)
+	_, err = db.ExecContext(t.Context(), `BEGIN EXCLUSIVE`)
 	require.NoError(err)
-	defer func() { _, _ = db.Exec(`ROLLBACK`) }()
+	defer func() { _, _ = db.ExecContext(t.Context(), `ROLLBACK`) }()
 	// Bound the blocked backup after its connections and lock are ready.
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -144,7 +144,7 @@ func FuzzReadDeclaredTypes(f *testing.F) {
 		require := require.New(t)
 		assert := assert.New(t)
 		db, path := sourceDB(t, `CREATE TABLE ZCALLRECORD(Z_PK INTEGER PRIMARY KEY,ZUNIQUE_ID TEXT,ZDATE TIMESTAMP,ZANSWERED BOOLEAN);`)
-		_, err := db.Exec(`INSERT INTO ZCALLRECORD VALUES(1,'typed-call',?,?)`, seconds, answered)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO ZCALLRECORD VALUES(1,'typed-call',?,?)`, seconds, answered)
 		require.NoError(err)
 		var got []callhistory.Observation
 		err = Read(t.Context(), path, "example", func(o callhistory.Observation) error { got = append(got, o); return nil })
