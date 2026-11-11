@@ -59,7 +59,7 @@ func TestZoomRosterThroughDaemon(t *testing.T) {
 	page, err := client.SummarizeCalls(t.Context(), q)
 	require.NoError(err)
 	require.Len(page.Items, 1)
-	assert.Equal(1, page.Items[0].Answered)
+	assert.Equal(int64(1), page.Items[0].Answered)
 	run(`{"participants":[]}`)
 	page, err = client.SummarizeCalls(t.Context(), q)
 	require.NoError(err)
@@ -68,7 +68,7 @@ func TestZoomRosterThroughDaemon(t *testing.T) {
 	page, err = client.SummarizeCalls(t.Context(), q)
 	require.NoError(err)
 	require.Len(page.Items, 1)
-	assert.Equal(1, page.Items[0].Answered)
+	assert.Equal(int64(1), page.Items[0].Answered)
 }
 
 // Generated daemon metadata pages exercise the real staging/parser path at its
