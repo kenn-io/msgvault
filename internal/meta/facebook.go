@@ -78,3 +78,17 @@ func readNode[T any](ctx context.Context, c *Client, id, fields string, nodeID f
 	}
 	return node, nil
 }
+
+// commentVisibility is the part of a comment node that says whether Meta
+// hides it. It is kept apart from Object so the comment JSON that polling and
+// webhooks archive stays the same.
+type commentVisibility struct {
+	ID       string `json:"id"`
+	IsHidden bool   `json:"is_hidden"`
+}
+
+// CommentHidden reads whether Meta currently hides a comment.
+func (c *Client) CommentHidden(ctx context.Context, id string) (bool, error) {
+	node, err := readNode(ctx, c, id, "id,is_hidden", func(v commentVisibility) string { return v.ID })
+	return node.IsHidden, err
+}
