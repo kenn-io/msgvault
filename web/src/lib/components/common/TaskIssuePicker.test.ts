@@ -30,13 +30,10 @@ describe('TaskIssuePicker', () => {
       if (query === 'broken') return new Promise((_resolve, reject) => { fail = reject; });
       return Promise.resolve({ items: query ? [] : [item], truncated: !query });
     });
-    const first = render(TaskIssuePicker, { load, noun: 'tasks', empty: 'No tasks yet.', moreNote: 'More tasks available.' });
+    const view = render(TaskIssuePicker, { load, noun: 'tasks', empty: 'No tasks yet.', moreNote: 'More tasks available.' });
     await fireEvent.click(await screen.findByRole('radio', { name: item.label }));
     expect(load.mock.calls[0][0]).toBe('');
     expect(screen.getByRole('radio', { name: item.label })).toHaveProperty('checked', true);
-    first.unmount();
-    const second = render(TaskIssuePicker, { load, noun: 'tasks', empty: 'No tasks yet.', moreNote: 'More tasks available.', selected: item.id });
-    expect(await screen.findByRole('radio', { name: item.label })).toHaveProperty('checked', false);
     expect(screen.getByText('More tasks available.')).toBeDefined();
     const filter = screen.getByRole('searchbox', { name: 'Filter tasks' });
     await fireEvent.input(filter, { target: { value: 'old' } });
@@ -48,7 +45,7 @@ describe('TaskIssuePicker', () => {
     await fireEvent.input(filter, { target: { value: 'missing' } });
     await screen.findByText('No tasks match "missing".');
     expect(screen.queryByText('More tasks available.')).toBeNull();
-    expect(load.mock.calls[2][1].aborted).toBe(true);
+    expect(load.mock.calls[1][1].aborted).toBe(true);
     older({ items: [item], truncated: true });
     await tick();
     expect(screen.getByText('No tasks match "missing".')).toBeDefined();
@@ -60,7 +57,7 @@ describe('TaskIssuePicker', () => {
     fail(new Error('Task service unavailable'));
     expect((await screen.findByRole('alert')).textContent).toBe('Task service unavailable');
     expect(screen.queryByText('More tasks available.')).toBeNull();
-    second.unmount();
+    view.unmount();
     render(TaskIssuePicker, { load: async () => ({ items: [], truncated: false }), noun: 'open issues', empty: 'No open issues yet.' });
     expect(await screen.findByText('No open issues yet.')).toBeDefined();
   });

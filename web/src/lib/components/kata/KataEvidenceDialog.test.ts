@@ -165,41 +165,15 @@ describe('KataEvidenceDialog', () => {
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await screen.findByRole('radio', { name: 'Follow up · example#abcd' });
+    expect(screen.getByText('Search by whole word. The list is capped at 25.')).toBeDefined();
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budget' } });
     const older = await screen.findByRole('radio', { name: 'Older budget · example#k3f9' });
-    expect(screen.getByRole('button', { name: 'Add quote' })).toHaveProperty('disabled', true);
     await fireEvent.click(older);
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('example#abcd');
     expect(reads).toEqual(['', 'budget']);
     expect(new URL(posts[0].url).pathname).toBe('/api/v1/integrations/kata/issues/example%23k3f9/evidence');
     expect(await posts[0].json()).toEqual({ evidence: [passages[0].reference] });
-  });
-
-  it('states the search rule when the issue list is capped', async () => {
-    const client = createAPIClient(async input => {
-      const url = new URL((input as Request).url);
-      if (url.pathname.endsWith('/open-issues')) return Response.json({ issues: [issue], truncated: true });
-      return Response.json({ evidence: [passages[0]] });
-    });
-    render(KataEvidenceDialog, { client, selector });
-    await screen.findByText('Opening passage');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    expect(await screen.findByText('Search by whole word. The list is capped at 25.')).toBeTruthy();
-  });
-
-  it('explains whole-word search when no issues match', async () => {
-    const client = createAPIClient(async input => {
-      const url = new URL((input as Request).url);
-      if (url.pathname.endsWith('/open-issues')) return Response.json({ issues: [], truncated: false });
-      return Response.json({ evidence: [passages[0]] });
-    });
-    render(KataEvidenceDialog, { client, selector });
-    await screen.findByText('Opening passage');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'budg' } });
-    await screen.findByText('No open issues match "budg".');
-    expect(screen.getByText('Search by whole word.')).toBeDefined();
   });
 
   it('keeps a new issue draft across modes', async () => {

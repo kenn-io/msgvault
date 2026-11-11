@@ -38,7 +38,7 @@ handle a person:
 3. If Kata's own MCP server is connected, use its `kata.search` tool for
    person or topic searches. Search closed issues too: a completed task may
    hold the answer. Configuring `[integrations.kata]` in msgvault does not
-   connect that separate MCP server. The Web UI searches open issues by whole word.
+   connect that separate MCP server.
 4. If the available context does not answer the question, ask the owner once.
    With explicit user intent, record the answer in a Kata issue or comment
    through Kata itself. Msgvault's Kata write tools create issues from

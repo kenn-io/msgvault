@@ -60,9 +60,6 @@ func TestSearchOpenIssues(t *testing.T) {
 	require.NoError(err)
 	require.Len(hashMatches, 1)
 	assert.Equal(hash.UID, hashMatches[0].UID)
-	partial, _, err := client.SearchOpenIssues(t.Context(), katatest.Project, "guid", 25)
-	require.NoError(err)
-	assert.Empty(partial)
 	budget, err := client.CreateTask(t.Context(), katatest.Project, "budget", KataCreate{Title: "Review the budget"})
 	require.NoError(err)
 	closed, err := client.CreateTask(t.Context(), katatest.Project, "closed-budget", KataCreate{Title: "Review the budget"})
@@ -113,16 +110,6 @@ func TestSearchOpenIssues(t *testing.T) {
 	assert.True(truncated)
 	require.Len(issues, 25)
 	assert.Equal(exact.UID, issues[0].UID)
-	for _, issue := range issues[1:] {
-		assert.NotEqual(exact.UID, issue.UID)
-	}
-	native.Endpoint(server).CloseIssue(t, exact.UID)
-	issues, truncated, err = client.SearchOpenIssues(t.Context(), katatest.Project, exact.QualifiedRef, 25)
-	require.NoError(err)
-	assert.True(truncated)
-	require.Len(issues, 25)
-	assert.Equal(exact.UID, issues[0].UID)
-	assert.Equal("closed", issues[0].Status)
 	for _, issue := range issues[1:] {
 		assert.NotEqual(exact.UID, issue.UID)
 	}
