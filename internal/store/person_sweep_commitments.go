@@ -519,10 +519,24 @@ func (s *Store) currentCommitmentSource(ctx context.Context, personID, messageID
 	if err != nil {
 		return peoplesweep.CommitmentSource{}, false, err
 	}
-	return s.currentCommitmentSourceWithOwners(ctx, personID, messageID, owners)
+	return s.currentCommitmentSourceWithOwners(ctx, personID, messageID, owners, s.commitmentConversations(owners))
 }
 
-func (s *Store) currentCommitmentSourceWithOwners(ctx context.Context, personID, messageID int64, owners loopOwners) (peoplesweep.CommitmentSource, bool, error) {
+// commitmentConversationReader returns a person's live conversation scope.
+// It never depends on which message a promise cites.
+type commitmentConversationReader func(ctx context.Context, personID, conversationID int64) ([]LoopConversation, error)
+
+func (s *Store) commitmentConversations(owners loopOwners) commitmentConversationReader {
+	return func(ctx context.Context, personID, conversationID int64) ([]LoopConversation, error) {
+		heads, err := s.loopConversationHeads(ctx, LoopQuery{PersonID: personID, ConversationID: conversationID})
+		if err != nil {
+			return nil, err
+		}
+		return s.loopChunk(ctx, heads, owners)
+	}
+}
+
+func (s *Store) currentCommitmentSourceWithOwners(ctx context.Context, personID, messageID int64, owners loopOwners, read commitmentConversationReader) (peoplesweep.CommitmentSource, bool, error) {
 	var conversationID int64
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.conversation_id
 		FROM messages m JOIN sources src ON src.id = m.source_id
@@ -533,11 +547,7 @@ func (s *Store) currentCommitmentSourceWithOwners(ctx context.Context, personID,
 	if err != nil {
 		return peoplesweep.CommitmentSource{}, false, err
 	}
-	heads, err := s.loopConversationHeads(ctx, LoopQuery{PersonID: personID, ConversationID: conversationID})
-	if err != nil {
-		return peoplesweep.CommitmentSource{}, false, err
-	}
-	conversations, err := s.loopChunk(ctx, heads, owners)
+	conversations, err := read(ctx, personID, conversationID)
 	if err != nil {
 		return peoplesweep.CommitmentSource{}, false, err
 	}
