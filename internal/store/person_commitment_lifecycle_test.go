@@ -541,3 +541,130 @@ func TestCommitmentOnlyMaintenanceInvalidatesEvidenceBeyondFirstBatch(t *testing
 	r.Len(cursors, 1)
 	a.Equal(baseline[0].OptimisticSequence, cursors[0].OptimisticSequence, "local invalidation must retain pending provider extraction")
 }
+
+func TestCommitmentEditedSourceSwapsExistingPromiseLocators(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-swap", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	const first, second = "I will send the draft.", "I will book the venue."
+	r.Len(second, len(first), "the edit swaps the two existing unique ranges")
+	id := persist("promise", first+" "+second, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	apply := func(quotes []string) {
+		window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
+			AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+		}, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+		r.NoError(err)
+		r.NotEmpty(window.Sources)
+		parsed := peoplesweep.ParsedCommitments{Fulfilments: []peoplesweep.CommitmentFulfilment{}}
+		var start int64
+		for _, quote := range quotes {
+			end := start + int64(len(quote))
+			parsed.Promises = append(parsed.Promises, peoplesweep.CommitmentPromise{
+				SourceID: commitmentSourceID(window, id), Direction: peoplesweep.CommitmentOwedTo,
+				Quote: quote, Summary: "Keep promise", Start: start, End: end,
+			})
+			start = end + 1
+		}
+		_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, parsed))
+		r.NoError(err)
+	}
+	apply([]string{first, second})
+	f = nextCommitmentTestAttempt(t, f, "-finish-initial")
+	apply([]string{first, second})
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+	r.NoError(err)
+	r.Len(items, 2)
+	var completedID int64
+	for _, item := range items {
+		if item.Quote == first {
+			completedID = item.ID
+		}
+	}
+	r.Positive(completedID)
+	_, err = st.DecidePersonCommitmentContext(ctx, completedID, LoopStateDone, nil, f.request.CompletedAt)
+	r.NoError(err)
+	_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), second+" "+first, id)
+	r.NoError(err)
+	f = nextCommitmentTestAttempt(t, f, "-swap")
+	f.request.Generation.ResolvedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+	f.request.CompletedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+	apply([]string{second, first})
+	items, err = st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+	r.NoError(err)
+	r.Len(items, 2)
+	for _, item := range items {
+		if item.Quote == first {
+			a.Equal(completedID, item.ID)
+			a.Equal(LoopStateDone, item.State)
+		} else {
+			a.Equal(LoopStateOpen, item.State)
+		}
+	}
+}
+
+func TestCommitmentRestoredOriginalEvidenceKeepsMergeCopyDetached(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-restore-merge-copy", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send the draft."
+	survivor := persist("survivor", quote, -time.Hour)
+	absorbed := persist("absorbed", quote, -time.Hour)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
+		AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+	}, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+	r.NoError(err)
+	_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+		Promises: []peoplesweep.CommitmentPromise{{SourceID: commitmentSourceID(window, absorbed), Direction: peoplesweep.CommitmentOwedTo,
+			Quote: quote, Summary: "Send draft", End: int64(len(quote))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+	}))
+	r.NoError(err)
+	_, err = st.MergeDuplicates(ctx, survivor, []int64{absorbed}, "commitment-status-copy")
+	r.NoError(err)
+	restored, err := st.UndoDedup(ctx, "commitment-status-copy")
+	r.NoError(err)
+	r.Equal(int64(1), restored)
+	var copyID int64
+	r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT id FROM person_commitments WHERE person_id = ? AND anchor_message_id = ?`), f.personID, survivor).Scan(&copyID))
+	for i, body := range []string{"Changed source", quote} {
+		before, err := st.LatestPersonSweepChangeSequence(ctx)
+		r.NoError(err)
+		_, err = st.db.ExecContext(ctx, st.Rebind("UPDATE message_bodies SET body_text = ? WHERE message_id = ?"), body, absorbed)
+		r.NoError(err)
+		journal, err := st.ScanPersonSweepChanges(ctx, f.personID, before, 100)
+		r.NoError(err)
+		r.NotEmpty(journal)
+		if i == 1 {
+			for j := range journal {
+				journal[j].EvidenceEffect = peoplesweep.EvidenceEffectSourceReimported
+			}
+		}
+		changes, err := st.BuildPersonSweepEvidenceStatusChanges(ctx, f.personID, journal)
+		r.NoError(err)
+		r.Len(changes, 1)
+		a.Equal(i == 1, changes[0].Supported)
+		f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-status-%d", i))
+		f.request.Generation.ResolvedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+		f.request.CompletedAt = f.request.Generation.ResolvedAt.Add(time.Minute)
+		request := f.request
+		request.CommitmentOnly = true
+		request.Generation.Policy.AllowSensitive = true
+		request.Generation.EvidenceStatusChanges = changes
+		_, err = st.ApplyPersonSweep(ctx, request)
+		r.NoError(err)
+	}
+	var claimID sql.NullInt64
+	r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT current_claim_id FROM person_commitments WHERE id = ?`), copyID).Scan(&claimID))
+	a.False(claimID.Valid, "original-source evidence cannot attach its claim to the detached survivor citation")
+	items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+	r.NoError(err)
+	r.Len(items, 1)
+	a.Equal(absorbed, items[0].AnchorMessageID)
+}
