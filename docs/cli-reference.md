@@ -2165,6 +2165,9 @@ contributing email keeps its full MIME and attachments, and the event survives
 deletion of any of them.
 Invalid calendar parts leave the email intact and log a warning with its message ID.
 
+Timed recurring events reuse the first occurrence's elapsed duration. Durations expressed in days or weeks can produce incorrect end times across clock changes.
+When a recurring series starts during skipped local clock time, later occurrences inherit the adjusted start time.
+
 An email and its event count as two archive records in account listings and
 statistics. Provider verification counts the email once. Deleting or hiding the
 email keeps the event; removing its account removes both.
