@@ -13287,12 +13287,13 @@ func (p PersonPhotoLinkResponse) Validate() error {
 }
 
 type PersonPhotosResponse struct {
-	LinkState  string                `json:"link_state" validate:"required"`
-	NextCursor *string               `json:"next_cursor,omitzero"`
-	PersonID   *string               `json:"person_id,omitzero"`
-	Photos     []PersonPhotoEvidence `json:"photos" validate:"required"`
-	Truncated  bool                  `json:"truncated"`
-	UID        string                `json:"uid" validate:"required"`
+	LinkState            string                `json:"link_state" validate:"required"`
+	NextCursor           *string               `json:"next_cursor,omitzero"`
+	NextOccurrenceOffset *int64                `json:"next_occurrence_offset,omitempty"`
+	PersonID             *string               `json:"person_id,omitzero"`
+	Photos               []PersonPhotoEvidence `json:"photos" validate:"required"`
+	Truncated            bool                  `json:"truncated"`
+	UID                  string                `json:"uid" validate:"required"`
 }
 
 func (p PersonPhotosResponse) Validate() error {

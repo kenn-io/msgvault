@@ -12,4 +12,8 @@ export type GetPersonPhotosParams = {
    * @maxLength 4096
    */
   cursor?: string;
+  /**
+   * @minimum 0
+   */
+  occurrence_offset?: number;
 };

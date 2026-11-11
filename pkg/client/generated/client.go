@@ -13772,8 +13772,9 @@ func (c *Client) GetPersonPhotos(ctx context.Context, options *GetPersonPhotosRe
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
-		"uid":    {Style: "form", Explode: &[]bool{false}[0]},
+		"cursor":            {Style: "form", Explode: &[]bool{false}[0]},
+		"occurrence_offset": {Style: "form", Explode: &[]bool{false}[0]},
+		"uid":               {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/v1/people/by-uid/photos",

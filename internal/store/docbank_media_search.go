@@ -146,7 +146,7 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 
 // DocumentSearchOccurrences maps hit versions to their current visible attachments.
 // Each version returns at most limit+1 rows so callers can detect truncation.
-func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination string, scope *personscope.Scope, versionIDs []string, limit int) ([]DocumentSearchOccurrence, error) {
+func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination string, scope *personscope.Scope, versionIDs []string, limit, offset int) ([]DocumentSearchOccurrence, error) {
 	var result []DocumentSearchOccurrence
 	if len(versionIDs) == 0 {
 		return result, nil
@@ -164,8 +164,8 @@ func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination strin
  ), ranked AS (SELECT *,
  ROW_NUMBER() OVER (PARTITION BY version_id ORDER BY occurred_at DESC NULLS LAST, attachment_id) AS occurrence_rank FROM duplicates WHERE duplicate_rank = 1
  ) SELECT version_id, attachment_id, message_id, conversation_id, filename, containing_title, occurred_at
- FROM ranked WHERE occurrence_rank <= ? ORDER BY occurred_at DESC NULLS LAST, attachment_id`
-	args = append(args, limit+1)
+ FROM ranked WHERE occurrence_rank > ? AND occurrence_rank <= ? ORDER BY occurred_at DESC NULLS LAST, attachment_id`
+	args = append(args, offset, offset+limit+1)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list document search occurrences: %w", err)

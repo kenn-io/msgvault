@@ -74,11 +74,17 @@ current visible attachment occurrences. Results include Docbank assertion and
 content version IDs. A retained original remains queryable after a Docbank
 node is replaced; an assertion on the replacement version cannot match the
 original attachment receipt. Results do not include unconfirmed face
-suggestions. If `truncated` is true, pass `next_cursor` as the `cursor` query
-parameter for the next assertion page. Each photo returns at most ten
-occurrences and reports `occurrences_truncated` when more may exist. Distinct Docbank people linked to
-the same profile's current and retired UIDs produce a 409 instead of a guessed
-merge.
+suggestions. Each photo returns at most ten occurrences. When
+`next_occurrence_offset` is present, repeat the same assertion `cursor` with
+`occurrence_offset` set to that value. Once it is absent, follow `next_cursor`
+when `truncated` is true, and omit the offset for the next assertion page.
+`occurrences_truncated` identifies photos with more occurrences in that page.
+Distinct Docbank people linked to the same profile's current and retired UIDs
+produce a 409 for review. A linked person with no visible photos returns an
+empty list. A Docbank service without person identity routes returns 503.
+
+If a link write has an uncertain outcome, read the selected Docbank person's
+current link and revision before retrying.
 
 ## Review identity matches
 

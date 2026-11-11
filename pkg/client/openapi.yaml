@@ -13112,6 +13112,95 @@ components:
         - nodes
         - edges
       type: object
+    PersonPhotoEvidence:
+      properties:
+        assertion_id:
+          type: string
+        content_version_id:
+          type: string
+        occurrences:
+          items:
+            $ref: "#/components/schemas/MediaAttachmentResult"
+          type: array
+        occurrences_truncated:
+          type: boolean
+      required:
+        - assertion_id
+        - content_version_id
+        - occurrences
+        - occurrences_truncated
+      type: object
+    PersonPhotoLinkRequest:
+      additionalProperties: false
+      properties:
+        linked_uid:
+          maxLength: 256
+          type: string
+        person_id:
+          maxLength: 128
+          minLength: 1
+          type: string
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        state:
+          enum:
+            - current
+            - unlinked
+          type: string
+        uid:
+          maxLength: 256
+          minLength: 1
+          type: string
+      required:
+        - uid
+        - person_id
+        - revision
+        - state
+      type: object
+    PersonPhotoLinkResponse:
+      properties:
+        linked_uid:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        state:
+          type: string
+        uid:
+          type: string
+      required:
+        - uid
+        - linked_uid
+        - state
+        - revision
+      type: object
+    PersonPhotosResponse:
+      properties:
+        link_state:
+          type: string
+        next_cursor:
+          type: string
+        next_occurrence_offset:
+          format: int64
+          type: integer
+        person_id:
+          type: string
+        photos:
+          items:
+            $ref: "#/components/schemas/PersonPhotoEvidence"
+          type: array
+        truncated:
+          type: boolean
+        uid:
+          type: string
+      required:
+        - uid
+        - link_state
+        - photos
+        - truncated
+      type: object
     PersonProfile:
       properties:
         display_name:
@@ -16851,7 +16940,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.0.0
+  version: 5.1.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -27075,6 +27164,154 @@ paths:
       security:
         - apiKey: []
       summary: Look up a durable person by vCard or CardDAV UID
+      tags:
+        - API
+  /api/v1/people/by-uid/photo-link:
+    put:
+      operationId: putPersonPhotoLink
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonPhotoLinkRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonPhotoLinkResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Conflict
+        "412":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Precondition Failed
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: Link a person to Docbank
+      tags:
+        - API
+  /api/v1/people/by-uid/photos:
+    get:
+      operationId: getPersonPhotos
+      parameters:
+        - explode: false
+          in: query
+          name: uid
+          required: true
+          schema:
+            maxLength: 256
+            minLength: 1
+            type: string
+        - explode: false
+          in: query
+          name: cursor
+          schema:
+            maxLength: 4096
+            type: string
+        - explode: false
+          in: query
+          name: occurrence_offset
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonPhotosResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiHTTPError"
+          description: Service Unavailable
+      security:
+        - apiKey: []
+      summary: List confirmed person photo attachments
       tags:
         - API
   /api/v1/people/contact-candidates:
