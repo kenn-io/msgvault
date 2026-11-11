@@ -58,6 +58,7 @@ When the Docbank integration and attachment upload consent are enabled, the
 HTTP API can link a saved profile to an explicitly chosen Docbank person and
 list confirmed photos in mirrored message attachments. This needs a Docbank
 service that supports external person identities. Names never establish a link.
+These routes need daemon API schema 5.1.0 or newer.
 
 Send `PUT /api/v1/people/by-uid/photo-link` with JSON containing `uid` (a
 current, retired, or bound CardDAV UID), the selected Docbank `person_id`, its
