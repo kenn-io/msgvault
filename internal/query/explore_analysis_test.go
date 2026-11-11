@@ -81,7 +81,7 @@ func TestExploreGroupTimezoneValidationAndCalendarBuckets(t *testing.T) {
 	assertions.Equal("2024", localYear.Rows[0].Key)
 }
 
-func TestExploreGroupsCountEmailInvitesOnce(t *testing.T) {
+func TestEmailInvitesAppearInExploreButNotActivity(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("owner@example.test", "gmail")
