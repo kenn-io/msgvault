@@ -442,6 +442,45 @@ func TestMeetingLinkDecisionGroupWarnings(t *testing.T) {
 	}
 }
 
+func TestMeetingLinkDecisionClearUnsupportedRecurrence(t *testing.T) {
+	for _, initial := range []string{"series", "single"} {
+		t.Run(initial, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			raw := `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}`
+			if initial == "series" {
+				raw += `,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]`
+			}
+			data, event := calendarFixture(t, st, "unsupported-clear", raw+`}`)
+			_, note := projectionFixture(t, st, "unsupported-clear-note", "meeting_json", `{}`)
+			noteRef := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}
+			dateRef, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270314T100000Z", event))
+			r.NoError(err)
+			original := dateRef
+			if initial == "single" {
+				original = MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: event}}
+			}
+			_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, original, "link")
+			r.NoError(err)
+			data.RawMIME = []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
+			_, err = st.PersistMessage(data)
+			r.NoError(err)
+			otherDate, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270321T100000Z", event))
+			r.NoError(err)
+			for _, action := range []string{"clear", "link", "unlink"} {
+				_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, otherDate, action)
+				r.ErrorIs(err, sql.ErrNoRows)
+			}
+			_, err = st.DecideMeetingLinkContext(t.Context(), noteRef, dateRef, "clear")
+			r.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), noteRef)
+			r.NoError(err)
+			r.Empty(record.Links)
+			r.Empty(record.Unexpandable)
+		})
+	}
+}
+
 func TestMeetingLinkDecisionSubsetRetainsSelectedPairs(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	path := filepath.Join(t.TempDir(), "source.db")

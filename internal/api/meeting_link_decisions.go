@@ -46,12 +46,6 @@ func (s *Server) handleMeetingDecision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "meetings_unavailable", "Meeting decisions are unavailable")
 		return
 	}
-	done, err := s.beginMutation("meeting link decision")(r.Context())
-	if err != nil {
-		writeOperationGateBusy(w, r, s.operationGate)
-		return
-	}
-	defer done()
 	result, err := backend.DecideMeetingLinkContext(r.Context(), left, right, request.Decision)
 	if errors.Is(err, store.ErrMeetingLinkSameCopy) {
 		writeError(w, 400, "invalid_argument", err.Error())
