@@ -3187,9 +3187,9 @@ msgvault export-token <email> [flags]
 ## verify
 
 Verify archive integrity against Gmail through the configured remote server or
-local daemon. The provider-message counts used by `verify` and
-`remove-account` exclude calendar events extracted from invitations. The
-command streams the daemon's stdout/stderr back to the terminal.
+local daemon. The provider-message counts used by `verify` exclude calendar
+events extracted from invitations. The command streams the daemon's
+stdout/stderr back to the terminal.
 
 ```bash
 msgvault verify <email> [flags]

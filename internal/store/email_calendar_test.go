@@ -230,7 +230,7 @@ func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 			source, err := st.GetOrCreateSource("gmail", "owner@example.com")
 			requirements.NoError(err)
 			if tc.confirmed {
-				requirements.NoError(st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+				requirements.NoError(st.AddAccountIdentityContext(t.Context(), source.ID, "owner@example.com", "manual"))
 			}
 			persistInviteEmailForSource(t, st, source.ID, "calendar-account-scope", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
 			if tc.confirmLater {
