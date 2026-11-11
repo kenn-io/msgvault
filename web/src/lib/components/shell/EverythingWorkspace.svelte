@@ -365,7 +365,7 @@
       cursor: undefined,
       candidate_snapshot_id: undefined,
       grouping: undefined,
-      filters: target.dimension === 'month' || target.dimension === 'year' ? predicate.filters : filters,
+      filters: predicate.filters,
       presentation: 'table' as const,
     };
     // Filtering by target.key does not make it the top-ranked group: every

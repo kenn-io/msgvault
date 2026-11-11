@@ -133,8 +133,8 @@ it('disambiguates source labels using the full inventory', () => {
     ['5', { type: 'gcal', identifier: 'work.example' }],
     ['6', { type: 'gcal', identifier: 'home.example' }]
   ]);
-  expect(groupRowName('source', '1', sources.get('1')!.identifier, sources).name).toBe('person@example.org (imaps://person@example.org@one.example)');
-  expect(groupRowName('source', '2', sources.get('2')!.identifier, sources).name).toBe('person@example.org (imaps://person@example.org@two.example)');
+  expect(groupRowName('source', '1', sources.get('1')!.identifier, sources).name).toBe('person@example.org (one.example)');
+  expect(groupRowName('source', '2', sources.get('2')!.identifier, sources).name).toBe('person@example.org (two.example)');
   expect(groupRowName('source', '3', 'archive.example', sources).name).toBe('Mbox import (archive.example · 3)');
   expect(groupRowName('source', '4', 'archive.example', sources).name).toBe('Mbox import (archive.example · 4)');
   expect(groupRowName('source', '5', 'work.example', sources).name).toBe('Google Calendar (work.example)');
@@ -147,7 +147,7 @@ it('avoids repeating a mailbox name in colliding source labels', () => {
     ['8', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com' }]
   ]);
   expect(groupRowName('source', '7', 'person@example.com', gmailAndImap).name).toBe('person@example.com (7)');
-  expect(groupRowName('source', '8', 'imaps://person@example.com@mail.example.com', gmailAndImap).name).toBe('person@example.com (imaps://person@example.com@mail.example.com)');
+  expect(groupRowName('source', '8', 'imaps://person@example.com@mail.example.com', gmailAndImap).name).toBe('person@example.com (mail.example.com)');
 
   const gmailAndMicrosoft = new Map([
     ['7', { type: 'gmail', identifier: 'person@example.com' }],
@@ -155,4 +155,22 @@ it('avoids repeating a mailbox name in colliding source labels', () => {
   ]);
   expect(groupRowName('source', '7', 'person@example.com', gmailAndMicrosoft).name).toBe('person@example.com (7)');
   expect(groupRowName('source', '9', 'person@example.com', gmailAndMicrosoft).name).toBe('person@example.com (9)');
+});
+
+it('distinguishes IMAP servers by their displayed suffix and key', () => {
+  const sources = new Map([
+    ['1', { type: 'imap', identifier: 'imap://person@example.com@mail.example.com:993' }],
+    ['2', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:993' }],
+    ['3', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:993' }],
+    ['4', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:143' }],
+  ]);
+  const names = [...sources].map(([key, source]) => groupRowName('source', key, source.identifier, sources).name);
+  expect(names).toEqual([
+    'person@example.com (mail.example.com:993 · 1)',
+    'person@example.com (mail.example.com:993 · 2)',
+    'person@example.com (mail.example.com:993 · 3)',
+    'person@example.com (mail.example.com:143)',
+  ]);
+  expect(new Set(names).size).toBe(4);
+  for (const name of names) expect(name.match(/person@example\.com/g)).toHaveLength(1);
 });

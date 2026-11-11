@@ -867,14 +867,16 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 	outsider := b.AddParticipant("outside@example.org", "example.org", "Outside Example")
 	upper, lower := "<List@Example.com>", "<list@example.com>"
 	at := time.Date(2024, 6, 1, 2, 0, 0, 0, time.UTC)
-	first := b.AddMessage(MessageOpt{SourceID: source, SentAt: at, ListID: &upper, IsFromMe: true})
+	first := b.AddMessage(MessageOpt{SourceID: source, SentAt: at, ListID: &upper, IsFromMe: true, SizeEstimate: 100})
 	b.AddFrom(first, owner, "Owner")
 	b.AddTo(first, person, "Person Example")
-	second := b.AddMessage(MessageOpt{SourceID: source, SentAt: at.Add(-24 * time.Hour), ListID: &lower, IsFromMe: true})
+	second := b.AddMessage(MessageOpt{SourceID: source, SentAt: at.Add(-24 * time.Hour), ListID: &lower, IsFromMe: true, SizeEstimate: 200})
 	b.AddFrom(second, owner, "Owner")
 	b.AddTo(second, alias, "Person Alias")
-	chat := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 900, ConversationType: "chat", MessageType: "chat", SentAt: at.Add(-48 * time.Hour), SenderID: &person})
+	chat := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 900, ConversationType: "chat", MessageType: "chat", SentAt: at.Add(-48 * time.Hour), SenderID: &person, SizeEstimate: 20})
 	b.AddFrom(chat, person, "Person Example")
+	speaker := b.AddParticipant("speaker@example.edu", "example.edu", "Other Speaker")
+	b.AddMessage(MessageOpt{SourceID: source, ConversationID: 900, ConversationType: "chat", MessageType: "chat", SentAt: at.Add(-47 * time.Hour), SenderID: &speaker, SizeEstimate: 30})
 	b.AddConversationParticipant(900, silent)
 	unrelated := b.AddMessage(MessageOpt{SourceID: other, SentAt: at.AddDate(0, 1, 0)})
 	b.AddFrom(unrelated, outsider, "Outside Example")
@@ -883,8 +885,35 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 	sourceDetail, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "source", GroupKey: strconv.FormatInt(source, 10)})
 	requirements.NoError(err)
 	requirements.NotNil(sourceDetail.Overview)
-	assertions.Equal(at.Add(-48*time.Hour), sourceDetail.Overview.FirstAt)
-	assertions.Equal([]ExploreGroupCoParticipant{{Key: strconv.FormatInt(person, 10), Label: "Person Example", Count: 3}, {Key: strconv.FormatInt(silent, 10), Label: "Silent Example", Count: 1}}, sourceDetail.Overview.CoParticipants)
+	assertions.Equal(at.Add(-47*time.Hour), sourceDetail.Overview.FirstAt)
+	assertions.Equal([]ExploreGroupCoParticipant{{Key: strconv.FormatInt(person, 10), Label: "Person Example", Count: 3}, {Key: strconv.FormatInt(silent, 10), Label: "Silent Example", Count: 1}, {Key: strconv.FormatInt(speaker, 10), Label: "Other Speaker", Count: 1}}, sourceDetail.Overview.CoParticipants)
+	for _, tc := range []struct{ dimension, key string }{{"participant", strconv.FormatInt(person, 10)}, {"domain", "example.net"}} {
+		t.Run("historical_"+tc.dimension, func(t *testing.T) {
+			request := ExploreGroupRequest{Dimension: tc.dimension, Timezone: "America/New_York", Page: PageSpec{Limit: 100}}
+			page, err := engine.ExploreGroups(t.Context(), request)
+			require.NoError(t, err)
+			var row ExploreGroupRow
+			for _, candidate := range page.Rows {
+				if candidate.Key == tc.key {
+					row = candidate
+				}
+			}
+			require.Equal(t, tc.key, row.Key)
+			request.GroupKey = tc.key
+			detail, err := engine.ExploreGroups(t.Context(), request)
+			require.NoError(t, err)
+			require.Len(t, detail.Rows, 1)
+			require.NotNil(t, detail.Overview)
+			assert.Equal(t, row, detail.Rows[0])
+			assert.Equal(t, int64(3), row.Count)
+			assert.Equal(t, int64(350), row.EstimatedBytes)
+			assert.Equal(t, at, row.LatestAt)
+			assert.Equal(t, at.Add(-47*time.Hour), detail.Overview.FirstAt)
+			assert.Equal(t, []ExploreGroupActivity{{Bucket: "2024-05", Count: 3}}, detail.Overview.Activity)
+			assert.Contains(t, detail.Overview.CoParticipants, ExploreGroupCoParticipant{Key: strconv.FormatInt(speaker, 10), Label: "Other Speaker", Count: 1})
+			assert.Contains(t, detail.Overview.CoParticipants, ExploreGroupCoParticipant{Key: strconv.FormatInt(silent, 10), Label: "Silent Example", Count: 1})
+		})
+	}
 	for _, dimension := range []string{"participant", "domain", "source", "kind", "message_type", "mailing_list", "year", "month"} {
 		t.Run(dimension, func(t *testing.T) {
 			assert := assert.New(t)
@@ -910,7 +939,7 @@ func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
 				assert.False(detail.Overview.FirstAt.IsZero())
 				assert.False(detail.Overview.FirstAt.After(row.LatestAt))
 				if dimension == "month" && row.Key == "2024-05" {
-					assert.Equal(at.Add(-48*time.Hour), detail.Overview.FirstAt)
+					assert.Equal(at.Add(-47*time.Hour), detail.Overview.FirstAt)
 				}
 				for _, co := range detail.Overview.CoParticipants {
 					assert.NotEqual(strconv.FormatInt(owner, 10), co.Key)

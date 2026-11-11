@@ -286,22 +286,36 @@ describe('EverythingWorkspace', () => {
   });
 
   it.each([
+    { dimension: 'participant', key: '42', label: 'Person Example', bucket: '2026-07' },
+    { dimension: 'domain', key: 'example.net', label: 'example.net', bucket: '2026-07' },
+    { dimension: 'source', key: '7', label: 'archive', bucket: '2026-07' },
+    { dimension: 'kind', key: 'meeting', label: 'Meeting', bucket: '2026-07' },
+    { dimension: 'message_type', key: 'email', label: 'Email', bucket: '2026-07' },
+    { dimension: 'mailing_list', key: 'list@example.net', label: 'list@example.net', bucket: '2026-07' },
     { dimension: 'month', key: '2026-07', label: 'Jul 2026', bucket: '2026-07-18' },
     { dimension: 'year', key: '2026', label: '2026', bucket: '2026-07' }
   ] as const)('opens the selected $dimension row using the table scope', async ({ dimension, key, label, bucket }) => {
     vi.stubEnv('TZ', 'America/New_York');
     window.history.replaceState(null, '', '/');
     const detailRequests: Array<{ group_key?: string; filters?: Array<{ dimension: string; values: string[] }> }> = [];
+    const meetingRequests: Array<{ explore?: { predicate?: { filters?: Array<{ dimension: string; values: string[] }> } } }> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input as Request;
-      if (!new URL(request.url).pathname.endsWith('/groups')) return Response.json(exploreResponse());
+      const path = new URL(request.url).pathname;
+      if (path.startsWith('/api/v1/meetings/')) {
+        meetingRequests.push(await request.clone().json());
+        return meetingFixtureResponse(path)!;
+      }
+      if (path.endsWith('/explore/files')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1' });
+      if (!path.endsWith('/groups')) return Response.json(exploreResponse());
       const body = await request.clone().json() as typeof detailRequests[number];
       if (body.group_key) detailRequests.push(body);
+      const narrowed = (body.filters?.length ?? 0) > 1;
       return Response.json({
-        rows: [{ key, label, count: 1, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+        rows: [{ key, label, count: narrowed ? 9 : 1, estimated_bytes: narrowed ? 99 : 42, latest_at: narrowed ? '2026-07-17T12:00:00Z' : '2026-07-18T12:00:00Z' }],
         ...(body.group_key ? { overview: {
-          first_at: '2026-07-18T12:00:00Z',
-          activity: [{ bucket, count: 1 }], co_participants: [{ key: '1', label: 'Selected Person', count: 1 }]
+          first_at: narrowed ? '2026-07-17T12:00:00Z' : '2026-07-01T12:00:00Z',
+          activity: [{ bucket, count: narrowed ? 9 : 1 }], co_participants: [{ key: '1', label: narrowed ? 'Wrong Person' : 'Selected Person', count: 1 }]
         } } : {}),
         total_count: 1, cache_revision: 'cache-1', search_provenance: {}
       });
@@ -317,6 +331,16 @@ describe('EverythingWorkspace', () => {
       expect(detailRequests.at(-1)!.group_key).toBe(key);
       expect(detailRequests.at(-1)!.filters).toEqual([{ dimension: 'domain', values: ['example.com'] }]);
       expect(await within(pane).findByText('Selected Person')).toBeDefined();
+      expect(within(pane).getByText('1 item')).toBeDefined();
+      expect(within(pane).getByText('42 B')).toBeDefined();
+      expect(within(pane).getByText(/Jul 1, 2026.*Jul 18, 2026/)).toBeDefined();
+      expect(within(pane).getByRole('img', { name: /Activity by .*1 item/ })).toBeDefined();
+      if (dimension === 'participant') {
+        await waitFor(() => expect(meetingRequests.length).toBeGreaterThan(0));
+        expect(meetingRequests[0]?.explore?.predicate?.filters).toEqual([
+          { dimension: 'domain', values: ['example.com'] }, { dimension: 'participant', values: ['42'] }
+        ]);
+      }
     } finally {
       rendered.unmount();
       state.destroy();
@@ -1746,8 +1770,7 @@ describe('EverythingWorkspace', () => {
     expect(groupRequests).toHaveLength(1);
     await expect(groupRequests[0]!.clone().json()).resolves.toMatchObject({
       filters: [
-        { dimension: 'domain', values: ['example.com'] },
-        { dimension: 'participant', values: ['42'] }
+        { dimension: 'domain', values: ['example.com'] }
       ],
       query: 'alpha',
       search_mode: 'full_text',

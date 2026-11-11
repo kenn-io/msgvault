@@ -216,8 +216,12 @@ export function groupRowName(dimension: ExploreGroupDimension, key: string, labe
     const source = sources?.get(key);
     const base = sourceDisplayName(source?.type, source?.identifier ?? label);
     const collisions = [...(sources ?? [])].filter(([, item]) => sourceDisplayName(item.type, item.identifier) === base);
-    const sameIdentifier = collisions.filter(([, item]) => item.identifier === source?.identifier).length > 1;
-    const suffix = source?.identifier === base ? key : `${source?.identifier}${sameIdentifier ? ` · ${key}` : ''}`;
+    const displaySuffix = (item: { type: string; identifier: string }) =>
+      item.type === 'imap' && item.identifier.includes('://') && item.identifier.lastIndexOf('@') > item.identifier.indexOf('://') + 3
+        ? item.identifier.slice(item.identifier.lastIndexOf('@') + 1) : item.identifier;
+    const suffixValue = source && displaySuffix(source);
+    const sameSuffix = collisions.filter(([, item]) => displaySuffix(item) === suffixValue).length > 1;
+    const suffix = source?.identifier === base ? key : `${suffixValue}${sameSuffix ? ` · ${key}` : ''}`;
     const name = source && collisions.length > 1 ? `${base} (${suffix})` : base;
     return { name, icon: source?.type ? sourceIcon(source.type) : undefined, title: label };
   }
