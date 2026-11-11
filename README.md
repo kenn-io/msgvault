@@ -77,6 +77,11 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 
 The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary. You can review the script ([bash](https://msgvault.io/install.sh), [PowerShell](https://msgvault.io/install.ps1)) before running, or download a release binary directly from GitHub.
 
+Direct downloads include DuckDB, SQLite, and the Web UI; no developer tools or
+separate DuckDB installation are needed. See the setup guide for
+[native runtime requirements](docs/setup.md#runtime-requirements) and
+[vendoring a pinned executable](docs/setup.md#vendor-a-pinned-binary).
+
 To build from source on macOS or Linux instead (requires **Go 1.27+**, **Bun
 1.3.14+**, **Node.js 20.19+ on 20.x, 22.13+ on 22.x, or 24+**, and a C/C++
 compiler for CGO and to statically link DuckDB; on Debian/Ubuntu also install

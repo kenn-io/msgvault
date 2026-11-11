@@ -42,7 +42,7 @@ func TestIngestRawMessage_CanceledAfterMessageCommitFinishesAttachmentAndSearch(
 		src.ID, "owner@example.test", filepath.Join(t.TempDir(), "attachments"),
 		nil, "source-msg-cancel", "fakehash",
 		raw, time.Time{}, slog.New(slog.DiscardHandler),
-	)
+		nil)
 	require.ErrorIs(err, context.Canceled, "reply-header write still observes the cancellation")
 	require.True(canceled(), "cancellation landed after the message commit")
 
