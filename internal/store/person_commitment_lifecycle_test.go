@@ -117,8 +117,15 @@ func TestCommitmentEvidenceFollowsSourceLifecycleWithoutOrdinaryConsent(t *testi
 				r.NoError(err)
 				claims, err = st.ListPersonFactClaimsContext(ctx, f.personID, personfacts.ClaimFilter{Limit: 10})
 				r.NoError(err)
-				r.Len(claims, 1)
-				a.NotNil(claims[0].Freshness.LatestSupportedAt)
+				wantClaims := 1
+				if mutation.extract {
+					// A refreshed summary adds immutable support for the same promise.
+					wantClaims = 2
+				}
+				r.Len(claims, wantClaims)
+				for _, claim := range claims {
+					a.NotNil(claim.Freshness.LatestSupportedAt)
+				}
 				evidence, err = st.ListPersonFactEvidenceContext(ctx, f.personID, personfacts.EvidenceFilter{Limit: 10})
 				r.NoError(err)
 				r.Len(evidence, 1)
@@ -415,6 +422,7 @@ func TestCommitmentOnlyMaintenanceInvalidatesEvidenceBeyondFirstBatch(t *testing
 	r.Empty(window.Sources)
 	request := f.request
 	request.CommitmentOnly = true
+	request.Budget = personSweepApplyBudget()
 	request.Generation.Policy.AllowSensitive = true
 	request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
 	_, err = st.ApplyPersonSweep(ctx, request)
