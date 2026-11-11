@@ -210,7 +210,7 @@ func runCommitmentDecision(cmd *cobra.Command, id, state string, until *time.Tim
 	if cmd.Flags().Changed("questions") {
 		return usageErr(cmd, errors.New("--questions is available only for reply loops"))
 	}
-	return withLoopsClient(cmd, func(client *daemonclient.Client) error {
+	return withLoopsClientVersion(cmd, "5.2.0", func(client *daemonclient.Client) error {
 		decision, err := client.SetCommitmentDecision(cmd.Context(), id, state, until)
 		if err != nil {
 			return err
@@ -232,6 +232,10 @@ func loopActionError(id int64, err error) error {
 
 // withLoopsClient opens the daemon and refuses one that predates the loop routes.
 func withLoopsClient(cmd *cobra.Command, run func(*daemonclient.Client) error) error {
+	return withLoopsClientVersion(cmd, loopsMinAPISchemaVersion, run)
+}
+
+func withLoopsClientVersion(cmd *cobra.Command, minimum string, run func(*daemonclient.Client) error) error {
 	client, _, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
@@ -241,9 +245,9 @@ func withLoopsClient(cmd *cobra.Command, run func(*daemonclient.Client) error) e
 	if err != nil {
 		return fmt.Errorf("check daemon open loops capability: %w", err)
 	}
-	if !daemonclient.APISchemaVersionAtLeast(version, loopsMinAPISchemaVersion) {
+	if !daemonclient.APISchemaVersionAtLeast(version, minimum) {
 		return fmt.Errorf("open loops require daemon API schema %s or newer (daemon reports %q); upgrade and restart the daemon",
-			loopsMinAPISchemaVersion, version)
+			minimum, version)
 	}
 	return run(client)
 }
