@@ -746,3 +746,54 @@ func TestInterruptedMatchingKeepsVerifiedMembership(t *testing.T) {
 	require.NoError(err)
 	assert.NotContains(unresolved, chat.ID)
 }
+
+func TestFinalMemberStopKeepsMessageTurn(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses a SQLite trigger to stop during the last member's capture")
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!final-member:example.test", 2, time.Now().Add(-48*time.Hour))
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	state := latestBeeperState(t, imp)
+	f.mu.Lock()
+	chat.Participants[1]["username"] = "newname"
+	chat.Msgs = append(chat.Msgs, fakeMsg{ID: chat.ID + "-2", SortKey: 2, Timestamp: time.Now().Add(-time.Hour), Text: "msg 2", SenderID: "@signal_ann:beeper.local", SenderName: "Ann"})
+	chat.LastActivity = time.Now().Add(-time.Hour)
+	f.mu.Unlock()
+	detail, err := imp.client.GetChat(t.Context(), chat.ID)
+	require.NoError(err)
+	st.DB().SetMaxOpenConns(1)
+	stop := false
+	registerSQLiteFunc(t, st, "yield_final_member", func() int { stop = true; return 0 })
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_final_member AFTER UPDATE OF service_id ON participant_identifiers
+		WHEN NEW.identifier_value = '`+imp.res.identifierForUser("@signal_ann:beeper.local")+`' BEGIN SELECT yield_final_member(); END`)
+	require.NoError(err)
+	opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return stop }}
+	_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, detail, opts, state, time.Now(), false, false, &ImportSummary{})
+	require.NoError(err)
+	require.True(stop, "the last member's capture must request the stop")
+	require.NotNil(state.Chats[chat.ID].RosterWork, "a stop after the last member keeps the message turn")
+	assert.False(state.Chats[chat.ID].RosterWork.MemberFirst)
+	assert.Equal(2, countBeeperMessages(t, imp), "no message work starts after the stop")
+
+	stop = false
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_proof AFTER UPDATE OF metadata ON conversations
+		WHEN json_extract(NEW.metadata, '$.messaging_route.membership_complete') = 1 BEGIN SELECT yield_final_member(); END`)
+	require.NoError(err)
+	_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, detail, opts, state, time.Now(), false, false, &ImportSummary{})
+	require.NoError(err)
+	require.True(stop, "the message turn's proof refresh must request the stop")
+	assert.False(state.Chats[chat.ID].RosterWork.MemberFirst, "a message turn spent on proof is not used up")
+	assert.Equal(2, countBeeperMessages(t, imp))
+
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER yield_proof`)
+	require.NoError(err)
+	stop = false
+	_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, detail, opts, state, time.Now(), false, false, &ImportSummary{})
+	require.NoError(err)
+	assert.False(stop, "the message turn does not match members again")
+	assert.Equal(3, countBeeperMessages(t, imp))
+}
