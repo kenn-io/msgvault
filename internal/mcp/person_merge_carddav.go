@@ -261,28 +261,13 @@ func (h *handlers) syncCardDAV(ctx context.Context, req toolRequest) (*toolResul
 	if connection != nil {
 		message = fmt.Sprintf("Run %s CardDAV synchronization for connection %q? This may create, update, or remove remote contacts.", mode, *connection)
 	}
+	var status *generated.CardDAVStatusResponse
 	if connection == nil {
-		var names []string
-		if lister, ok := h.personCardDAV.(interface {
-			CardDAVConnectionNames(context.Context) ([]string, error)
-		}); ok {
-			var listErr error
-			names, listErr = lister.CardDAVConnectionNames(ctx)
-			if listErr != nil {
-				return toolErrorResult("CardDAV connection list unavailable; synchronization was not started"), nil
-			}
-		}
-		if len(names) > 0 {
-			message += fmt.Sprintf("\nConfigured connections: %q.", names)
-		} else if names != nil {
-			message += "\nNo configured connections were found."
-		} else {
-			message += "\nConnection list unavailable."
-			if status, _ := h.personCardDAV.GetCardDAVSyncStatus(ctx); status != nil && status.Account != nil {
-				message += fmt.Sprintf("\nAccount: %q at %q.", status.Account.Username, status.Account.BaseURL)
-			}
-		}
-	} else if status, _ := named.GetCardDAVConnectionStatus(ctx, connection); status != nil && status.Account != nil {
+		status, _ = h.personCardDAV.GetCardDAVSyncStatus(ctx)
+	} else {
+		status, _ = named.GetCardDAVConnectionStatus(ctx, connection)
+	}
+	if status != nil && status.Account != nil {
 		message += fmt.Sprintf("\nAccount: %q at %q.", status.Account.Username, status.Account.BaseURL)
 	} else {
 		message += "\nAccount details unavailable."

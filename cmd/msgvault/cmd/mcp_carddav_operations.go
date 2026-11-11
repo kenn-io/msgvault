@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"encoding/json/v2"
-	"fmt"
 	"net/http"
 	"slices"
 
@@ -15,12 +14,11 @@ import (
 
 type daemonMCPCardDAV struct {
 	*daemonclient.Client
-	selector, connectionList bool
+	selector bool
 }
 
 func newDaemonMCPCardDAV(client *daemonclient.Client, caps *apiprotocol.MCPCapabilities) *daemonMCPCardDAV {
 	b := &daemonMCPCardDAV{Client: client}
-	b.connectionList = hasRoute(caps, "listCardDAVConnections", http.MethodGet, "/api/v1/carddav/connections")
 	b.selector = hasRoute(caps, "syncCardDAV", http.MethodPost, "/api/v1/carddav/sync") &&
 		mcpRequestPropertiesPresent(caps, "syncCardDAV", "connection") &&
 		hasRoute(caps, "getCardDAVStatus", http.MethodGet, "/api/v1/carddav/status", "connection")
@@ -29,29 +27,6 @@ func newDaemonMCPCardDAV(client *daemonclient.Client, caps *apiprotocol.MCPCapab
 
 func (b *daemonMCPCardDAV) SupportsCardDAVSelector() bool { return b.selector }
 
-func (b *daemonMCPCardDAV) CardDAVConnectionNames(ctx context.Context) ([]string, error) {
-	if !b.connectionList {
-		return nil, nil
-	}
-	client, err := b.GeneratedClient()
-	if err != nil {
-		return nil, err
-	}
-	response, err := client.ListCardDAVConnectionsWithResponse(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if response.JSON200 == nil {
-		return nil, fmt.Errorf("CardDAV connection list unavailable")
-	}
-	names := make([]string, 0, len(response.JSON200.Connections))
-	for _, connection := range response.JSON200.Connections {
-		if !connection.Orphaned {
-			names = append(names, connection.Connection)
-		}
-	}
-	return names, nil
-}
 func cardDAVMCPCapabilities(has mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
 	for _, r := range []struct {
@@ -102,18 +77,12 @@ type cardDAVArguments struct {
 
 func validCardDAVArguments(name string, a cardDAVArguments) bool {
 	switch name {
-	case "list_carddav_connections", "list_carddav_conflicts", "list_carddav_books":
+	case "list_carddav_connections", "list_carddav_conflicts", "list_carddav_books", "list_carddav_runs", "get_carddav_conflict", "unpublish_carddav_person":
 		return true
-	case "list_carddav_runs":
-		return (a.Limit == nil || *a.Limit >= 1 && *a.Limit <= 100) && (a.BeforeID == nil || validLoopID(*a.BeforeID))
-	case "get_carddav_conflict":
-		return validLoopID(a.ConflictID)
 	case "update_carddav_book_roles":
-		return validLoopID(a.BookID) && a.WriteTarget != nil && a.Subscribed != nil && a.LookupSource != nil
+		return a.WriteTarget != nil && a.Subscribed != nil && a.LookupSource != nil
 	case "resolve_carddav_conflict":
-		return validLoopID(a.ConflictID) && (a.Choice == "keep_local" || a.Choice == "keep_remote")
-	case "unpublish_carddav_person":
-		return validLoopID(a.PersonID)
+		return a.Choice == "keep_local" || a.Choice == "keep_remote"
 	}
 	return false
 }
@@ -136,9 +105,6 @@ func cardDAVUncertainRefusals(enabled bool) []string {
 }
 
 func (b *daemonMCPOperations) executeCardDAVOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
-	if !slices.Contains(b.supported, name) {
-		return nil, false, nil
-	}
 	if !slices.Contains([]string{"list_carddav_connections", "list_carddav_books", "list_carddav_runs", "list_carddav_conflicts", "get_carddav_conflict", "update_carddav_book_roles", "resolve_carddav_conflict", "unpublish_carddav_person"}, name) {
 		return nil, false, nil
 	}
@@ -200,7 +166,6 @@ func (b *daemonMCPOperations) cardDAVOperationDisclosure(ctx context.Context, na
 	}
 	bookID := a.BookID
 	var current any
-	unpublishEffect := "unpublish the person; this can remove a remote contact while retaining the local person"
 	switch name {
 	case "resolve_carddav_conflict":
 		r, _, e := b.executeCardDAVOperation(ctx, "get_carddav_conflict", map[string]any{"conflict_id": a.ConflictID})
@@ -222,9 +187,6 @@ func (b *daemonMCPOperations) cardDAVOperationDisclosure(ctx context.Context, na
 			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 		}
 		bookID, current = v.AddressBook.ID, v
-		if v.State == "unpublished" && !v.Desired && v.PendingOperation == nil {
-			unpublishEffect = "the person is currently unpublished; retain the local person and remove a remote contact if one remains"
-		}
 	}
 	r, _, e := b.executeCardDAVOperation(ctx, "list_carddav_books", nil)
 	if e != nil || r == nil || r.IsError {
@@ -255,7 +217,7 @@ func (b *daemonMCPOperations) cardDAVOperationDisclosure(ctx context.Context, na
 			if a.Choice == "keep_remote" {
 				resolveEffect = "resolve the conflict by keeping the remote version; this can change the local person"
 			}
-			effect := map[string]string{"update_carddav_book_roles": "replace all three address book roles; setting the write target releases the previous target; removing subscription or lookup can demote or remove local CardDAV resource mappings", "resolve_carddav_conflict": resolveEffect, "unpublish_carddav_person": unpublishEffect}[name]
+			effect := map[string]string{"update_carddav_book_roles": "replace all three address book roles; setting the write target releases the previous target; removing subscription or lookup can demote or remove local CardDAV resource mappings", "resolve_carddav_conflict": resolveEffect, "unpublish_carddav_person": "unpublish the person; this can remove a remote contact while retaining the local person"}[name]
 			data, e := json.Marshal(struct {
 				Operation      string                         `json:"operation"`
 				Connection     string                         `json:"connection"`

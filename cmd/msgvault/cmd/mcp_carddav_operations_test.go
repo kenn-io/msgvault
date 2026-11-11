@@ -85,7 +85,7 @@ func TestCardDAVRoleApprovalUsesRealStore(t *testing.T) {
 func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	backend, bookID, st := cardDAVOperationFixture(t)
+	backend, bookID, _ := cardDAVOperationFixture(t)
 	for _, name := range []string{"list_carddav_connections", "list_carddav_books", "list_carddav_runs", "list_carddav_conflicts", "get_carddav_conflict", "update_carddav_book_roles", "resolve_carddav_conflict", "unpublish_carddav_person"} {
 		assert.Contains(backend.capabilities(), name)
 	}
@@ -133,8 +133,7 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 	require.NoError(err)
 	require.Len(prompts, 2)
 	assert.Contains(prompts[0], `connection "work"`)
-	assert.Contains(prompts[1], `"default"`)
-	assert.Contains(prompts[1], `"work"`)
+	assert.Contains(prompts[1], "Account details unavailable.")
 	assert.NotContains(prompts[1], "private-app")
 	assert.NotContains(prompts[1], "contacts.example")
 	status, err := named.GetCardDAVConnectionStatus(t.Context(), new("work"))
@@ -179,33 +178,6 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 		}
 	}
 	assert.False(newDaemonMCPCardDAV(backend.client, caps).SupportsCardDAVSelector())
-	orphanCfg := config.NewDefaultConfig()
-	orphanCfg.HomeDir = t.TempDir()
-	orphanCfg.Data.DataDir = orphanCfg.HomeDir
-	orphanController, err := api.NewCardDAVController(orphanCfg, st, slog.New(slog.DiscardHandler))
-	require.NoError(err)
-	orphanBackend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: orphanCfg, Store: st, CardDAV: orphanController, Logger: slog.New(slog.DiscardHandler)}))
-	orphanCaps, err := orphanBackend.client.MCPCapabilities(t.Context())
-	require.NoError(err)
-	for _, tc := range []struct {
-		listSupported bool
-		want          string
-	}{
-		{true, "No configured connections were found."},
-		{false, "Connection list unavailable."},
-	} {
-		orphanNamed := newDaemonMCPCardDAV(orphanBackend.client, orphanCaps)
-		orphanNamed.connectionList = tc.listSupported
-		var prompt string
-		orphanSession := operationMCPSession(t, orphanBackend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, req *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
-			prompt = req.Params.Message
-			return &sdkmcp.ElicitResult{Action: "decline"}, nil
-		}}, orphanNamed)
-		_, err = orphanSession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "sync_carddav", Arguments: map[string]any{}})
-		require.NoError(err)
-		assert.Contains(prompt, tc.want)
-		assert.NotContains(prompt, `"work"`)
-	}
 	for i := range caps.Routes {
 		if caps.Routes[i].OperationID == "listCardDAVRuns" {
 			caps.Routes[i].QueryParameters = []string{"limit", "before_id"}
@@ -226,8 +198,8 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 		{"getCardDAVConflict", []string{"get_carddav_conflict", "resolve_carddav_conflict"}},
 		{"getCardDAVPublication", []string{"unpublish_carddav_person"}},
 	} {
-		copyCaps := *orphanCaps
-		copyCaps.Routes = slices.DeleteFunc(slices.Clone(orphanCaps.Routes), func(r apiprotocol.MCPRouteDescriptor) bool { return r.OperationID == tc.missing })
+		copyCaps := *caps
+		copyCaps.Routes = slices.DeleteFunc(slices.Clone(caps.Routes), func(r apiprotocol.MCPRouteDescriptor) bool { return r.OperationID == tc.missing })
 		pruned := newDaemonMCPOperations(backend.client, &copyCaps).capabilities()
 		for _, name := range tc.dropped {
 			assert.NotContains(pruned, name, tc.missing)
@@ -326,7 +298,7 @@ func TestCardDAVUnpublishDisclosesOwnerAndKeepsPersonOnUnavailableConnection(t *
 	session := operationMCPSession(t, backend, []mcpserver.OperationFamily{mcpserver.OperationFamilyCardDAV}, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, request *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
 		approved = true
 		assert.Contains(request.Params.Message, `"connection":"work"`)
-		assert.Contains(request.Params.Message, "the person is currently unpublished; retain the local person and remove a remote contact if one remains")
+		assert.Contains(request.Params.Message, "unpublish the person; this can remove a remote contact while retaining the local person")
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "unpublish_carddav_person", Arguments: args})
