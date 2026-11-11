@@ -276,6 +276,23 @@ func TestICalendarCancellationInheritsMissingEnd(t *testing.T) {
 
 }
 
+func TestICalendarCancellationKeepsImplicitAllDayEnd(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	raw := strings.Replace(string(calendarDocument("REQUEST", "DTSTART;VALUE=DATE:20270310")), "METHOD:REQUEST\r\n", "", 1)
+	_, err := st.PersistICalendarContext(t.Context(), source, []byte(raw))
+	requirements.NoError(err)
+	_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "SEQUENCE:1\r\nSTATUS:CANCELLED"))
+	requirements.NoError(err)
+	from := time.Date(2027, 3, 10, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal("cancelled", page.Occurrences[0].Status)
+	assertions.Equal("2027-03-11", page.Occurrences[0].EndDate)
+}
+
 func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

@@ -72,7 +72,7 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 		return Event{}, false, fmt.Errorf("decode ICS metadata: %w", err)
 	}
 	method := ""
-	if meta.Status == "cancelled" {
+	if meta.Status == "cancelled" && meta.Details == nil {
 		method = "CANCEL"
 	}
 	components, err := ParseICS(raw, method, calendarZone)
