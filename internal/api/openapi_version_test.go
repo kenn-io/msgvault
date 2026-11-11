@@ -124,10 +124,11 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 }
 
 func TestAPISchemaVersionContract(t *testing.T) {
+	require := require.New(t)
 	digest, err := apiContractDigest(OpenAPIDocument(), openAPIClientDocument())
-	require.NoError(t, err)
+	require.NoError(err)
 	entries, err := os.ReadDir(apiContractsDir)
-	require.NoError(t, err)
+	require.NoError(err)
 	markers := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		markers = append(markers, entry.Name())
@@ -137,8 +138,8 @@ func TestAPISchemaVersionContract(t *testing.T) {
 		base = "origin/main"
 	}
 	baseMarkers, err := apiBaseMarkers(t.Context(), base, explicit)
-	require.NoError(t, err)
-	require.NoError(t, checkAPIContract(APISchemaVersion, digest, markers, baseMarkers))
+	require.NoError(err)
+	require.NoError(checkAPIContract(APISchemaVersion, digest, markers, baseMarkers))
 }
 
 func TestCheckAPIContract(t *testing.T) {
@@ -158,41 +159,46 @@ func TestCheckAPIContract(t *testing.T) {
 		{"malformed", "5.0.0", a, "<version>_<sha256>", []string{"bad"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
 			err := checkAPIContract(tc.version, tc.digest, tc.markers, tc.base)
 			if tc.want == "" {
-				require.NoError(t, err)
+				require.NoError(err)
 			} else {
-				require.ErrorContains(t, err, tc.want)
+				require.ErrorContains(err, tc.want)
 			}
 		})
 	}
 }
 
 func TestAPIBaseMarkers(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	_, err := apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base", true)
-	require.ErrorContains(t, err, "resolve API contract base")
+	require.ErrorContains(err, "resolve API contract base")
 	markers, err := apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base", false)
-	require.NoError(t, err)
-	assert.Empty(t, markers)
+	require.NoError(err)
+	assert.Empty(markers)
 	markers, err = apiBaseMarkers(t.Context(), "HEAD", false)
-	require.NoError(t, err)
+	require.NoError(err)
 	if len(markers) == 0 {
 		t.Skip("HEAD has no API contract markers")
 	}
-	assert.Contains(t, markers, "5.0.0_f4c3cd16ffd3e2294f6c0690df7ae8b2024db4b66538f467bc2d2cba36b325cf")
+	assert.Contains(markers, "5.0.0_f4c3cd16ffd3e2294f6c0690df7ae8b2024db4b66538f467bc2d2cba36b325cf")
 }
 
 func TestAPIContractDigest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	base, err := apiContractDigest(OpenAPIDocument(), openAPIClientDocument())
-	require.NoError(t, err)
+	require.NoError(err)
 	public, client := OpenAPIDocument(), openAPIClientDocument()
 	public.Info.Version, client.Info.Version = "9.0.0", "9.0.0"
 	versionOnly, err := apiContractDigest(public, client)
-	require.NoError(t, err)
-	assert.Equal(t, base, versionOnly)
+	require.NoError(err)
+	assert.Equal(base, versionOnly)
 	public = OpenAPIDocument()
 	public.Paths["/api/v1/test-contract"] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-contract"}}
 	changed, err := apiContractDigest(public, openAPIClientDocument())
-	require.NoError(t, err)
-	assert.NotEqual(t, base, changed)
+	require.NoError(err)
+	assert.NotEqual(base, changed)
 }
