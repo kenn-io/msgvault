@@ -34,7 +34,7 @@ describe('AccountFilter', () => {
     const onChange = vi.fn();
     const filters = [{ dimension: 'source' as const, values: [' +07'] }];
     render(AccountFilter, { client: createAPIClient(fetchFn), filters, onChange });
-    expect((await screen.findByRole('status')).textContent).toContain('Account matching is pending for 1 messages.');
+    expect((await screen.findByRole('status')).textContent).toContain('Messages awaiting account matching: 1.');
     const select = await screen.findByRole('combobox', { name: /^Account:/ });
     await waitFor(() => expect(select).toHaveProperty('disabled', false));
     await chooseSelectOption(select, 'inbox@example.net / work@example.org (3)');
