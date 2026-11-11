@@ -160,6 +160,30 @@ func TestHandlerRefusesDeliveriesAtTheByteCap(t *testing.T) {
 	assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)))
 }
 
+func TestNewHandlerCleansStagingAndOrdersAfterPendingDeliveries(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := filepath.Join(t.TempDir(), "pending")
+	require.NoError(os.MkdirAll(dir, 0o700))
+	existing := "09000000000000000000-9-FUTURE.json" // written before the clock stepped back
+	for _, name := range []string{existing, ".x.json.tmp-123", ".y.json.set-aside", "notanumber-9-X.json"} {
+		require.NoError(os.WriteFile(filepath.Join(dir, name), []byte(`{}`), 0o600))
+	}
+	h := newHandlerIn(t, dir)
+	assert.NoFileExists(filepath.Join(dir, ".x.json.tmp-123"), "a staging file left by a crash is removed")
+	assert.FileExists(filepath.Join(dir, ".y.json.set-aside"), "a set-aside delivery is kept")
+
+	body := `{"object":"page","entry":[]}`
+	require.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)))
+	var stored []string
+	for _, name := range pendingFiles(t, dir) {
+		if !strings.HasPrefix(name, ".") && name != existing && name != "notanumber-9-X.json" {
+			stored = append(stored, name)
+		}
+	}
+	require.Len(stored, 1)
+	assert.Greater(stored[0], existing, "the new delivery sorts after the pending one")
+}
+
 func TestHandlerChallenge(t *testing.T) {
 	h, _ := newTestHandler(t)
 	for _, tc := range []struct {

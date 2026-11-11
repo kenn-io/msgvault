@@ -17,11 +17,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"go.kenn.io/kit/atomicfile"
+	"go.kenn.io/kit/pack"
 )
 
 const (
@@ -79,26 +81,50 @@ type Handler struct {
 	bytes int64
 }
 
-// NewHandler stores deliveries in pending and counts the deliveries already
-// there toward the caps. wake, when set, is called after each stored
-// delivery.
+// NewHandler stores deliveries in pending. It removes staging files left by
+// a crash, counts the deliveries already there toward the caps, and names
+// new deliveries after them even if the clock stepped back. wake, when set,
+// is called after each stored delivery.
 func NewHandler(apps map[string]App, pending string, wake func()) (*Handler, error) {
 	for app, credentials := range apps {
 		if !appPattern.MatchString(app) || len(credentials.Secret) == 0 || credentials.VerifyToken == "" {
 			return nil, fmt.Errorf("meta webhook app %q needs a secret and a verify token", app)
 		}
 	}
-	if err := os.MkdirAll(pending, 0o700); err != nil {
+	if err := pack.MkdirAllSynced(pending); err != nil {
 		return nil, fmt.Errorf("create Meta webhook directory: %w", err)
 	}
-	files, bytes, err := countPending(pending)
+	if err := removeStaging(pending); err != nil {
+		return nil, err
+	}
+	files, bytes, last, err := scanPending(pending)
 	if err != nil {
 		return nil, err
 	}
 	return &Handler{
 		apps: apps, pending: pending, wake: wake, bodies: make(chan struct{}, maxConcurrentBodies),
-		maxFiles: maxPendingFiles, maxBytes: maxPendingBytes, files: files, bytes: bytes,
+		maxFiles: maxPendingFiles, maxBytes: maxPendingBytes, last: last, files: files, bytes: bytes,
 	}, nil
+}
+
+// removeStaging deletes atomicfile staging files, named
+// ".<final name>.tmp-<random>", that a crash left in dir. Other dot-names,
+// such as set-aside deliveries, stay.
+func removeStaging(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read Meta webhook directory: %w", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, ".") || !strings.Contains(name, ".tmp-") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove Meta webhook staging file: %w", err)
+		}
+	}
+	return nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +213,7 @@ func (h *Handler) store(app string, body []byte) error {
 	if full() {
 		// The worker deletes applied deliveries without telling the handler,
 		// so the totals are an upper bound. Recount before refusing.
-		files, bytes, err := countPending(h.pending)
+		files, bytes, _, err := scanPending(h.pending)
 		if err != nil {
 			return err
 		}
@@ -206,15 +232,17 @@ func (h *Handler) store(app string, body []byte) error {
 	return err
 }
 
-// countPending returns the number and total size of the deliveries in dir:
-// regular files whose names do not start with a dot.
-func countPending(dir string) (files int, bytes int64, err error) {
+// scanPending returns the number and total size of the deliveries in dir,
+// regular files whose names do not start with a dot, and the largest
+// timestamp among their names.
+func scanPending(dir string) (files int, bytes, last int64, err error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0, 0, fmt.Errorf("read Meta webhook directory: %w", err)
+		return 0, 0, 0, fmt.Errorf("read Meta webhook directory: %w", err)
 	}
 	for _, entry := range entries {
-		if !entry.Type().IsRegular() || strings.HasPrefix(entry.Name(), ".") {
+		name := entry.Name()
+		if !entry.Type().IsRegular() || strings.HasPrefix(name, ".") {
 			continue
 		}
 		info, err := entry.Info()
@@ -222,10 +250,14 @@ func countPending(dir string) (files int, bytes int64, err error) {
 			continue // applied and deleted since ReadDir
 		}
 		if err != nil {
-			return 0, 0, fmt.Errorf("read Meta webhook delivery: %w", err)
+			return 0, 0, 0, fmt.Errorf("read Meta webhook delivery: %w", err)
 		}
 		files++
 		bytes += info.Size()
+		prefix, _, _ := strings.Cut(name, "-")
+		if stamp, err := strconv.ParseInt(prefix, 10, 64); err == nil {
+			last = max(last, stamp)
+		}
 	}
-	return files, bytes, nil
+	return files, bytes, last, nil
 }
