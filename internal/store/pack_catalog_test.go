@@ -394,6 +394,9 @@ func TestPackVerificationSelectsLooseAndMissingPackMappings(t *testing.T) {
 	loose := fmt.Sprintf("%064x", 0x1002)
 	absent := fmt.Sprintf("%064x", 0x1003)
 	dangling := fmt.Sprintf("%064x", 0x1004)
+	// More missing-pack mappings than one window's lookahead must still be
+	// reached after the cursor advances.
+	tail := []string{fmt.Sprintf("%064x", 0x1005), fmt.Sprintf("%064x", 0x1006), fmt.Sprintf("%064x", 0x1007)}
 	for i := range 300 {
 		hash := fmt.Sprintf("%064x", i+1)
 		path := filepath.Join(root, hash[:2], hash)
@@ -408,7 +411,7 @@ func TestPackVerificationSelectsLooseAndMissingPackMappings(t *testing.T) {
 		require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{PackID: id, EntryCount: int64(len(entries)), StoredBytes: int64(len(entries)), CreatedAt: created}, entries))
 	}
 	record(present, healthy, loose)
-	record(missing, absent)
+	record(missing, append([]string{absent}, tail...)...)
 	record(unrecorded, dangling)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM attachment_packs WHERE pack_id = ?`), unrecorded)
 	require.NoError(err)
@@ -437,13 +440,24 @@ func TestPackVerificationSelectsLooseAndMissingPackMappings(t *testing.T) {
 	more, err := st.FinishPackVerification(t.Context(), pass)
 	require.NoError(err)
 	require.True(more)
-	ctx, pass, err = st.BeginPackVerification(t.Context(), 2, 100)
-	require.NoError(err)
-	last, err := catalog.ListIndexed(ctx)
-	require.NoError(err)
-	require.Len(last, 1)
-	assert.Equal(dangling, last[0].Hash.String())
-	more, err = st.FinishPackVerification(t.Context(), pass)
-	require.NoError(err)
-	assert.False(more)
+	for _, window := range []struct {
+		want []string
+		more bool
+	}{
+		{want: []string{dangling, tail[0]}, more: true},
+		{want: tail[1:], more: false},
+	} {
+		windowCtx, windowPass, err := st.BeginPackVerification(t.Context(), 2, 100)
+		require.NoError(err)
+		listed, err := catalog.ListIndexed(windowCtx)
+		require.NoError(err)
+		got := make([]string, 0, len(listed))
+		for _, entry := range listed {
+			got = append(got, entry.Hash.String())
+		}
+		assert.Equal(window.want, got)
+		more, err := st.FinishPackVerification(t.Context(), windowPass)
+		require.NoError(err)
+		assert.Equal(window.more, more)
+	}
 }
