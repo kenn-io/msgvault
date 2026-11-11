@@ -33,30 +33,32 @@ func (d *changeFeedOrderingDialect) ReadWatermarkBounds(ctx context.Context, db 
 }
 
 func TestChangedMessagesSnapshotDoesNotSkipLaterCommit(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "feed.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	require.NoError(t, st.InitSchema())
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(st.Close()) })
+	requirements.NoError(st.InitSchema())
 	source, err := st.GetOrCreateSource("test", "ordering@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	conv, err := st.EnsureConversation(t.Context(), source.ID, "ordering", "Ordering")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var id int64
 	st.dialect = &changeFeedOrderingDialect{Dialect: st.dialect, t: t, write: func() {
 		var err error
 		id, err = st.UpsertMessage(&Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "between-bound-and-snapshot", MessageType: "email"})
-		require.NoError(t, err)
+		requirements.NoError(err)
 	}}
 	ctx, release, err := st.BeginChangedMessagesReadSnapshotContext(t.Context())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	defer release()
-	require.NotZero(t, id)
+	requirements.NotZero(id)
 	page, err := st.ListChangedMessages(ctx, ChangedMessagesFrom(time.Time{}), 10)
-	require.NoError(t, err)
-	require.False(t, page.CompleteThrough.IsZero())
+	requirements.NoError(err)
+	requirements.False(page.CompleteThrough.IsZero())
 	release()
 	cursor := ChangedMessagesFrom(page.CompleteThrough)
-	require.Eventually(t, func() bool {
+	requirements.Eventually(func() bool {
 		later, err := st.ListChangedMessages(t.Context(), cursor, 10)
 		if err != nil {
 			return false

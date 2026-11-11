@@ -1144,9 +1144,11 @@ func (s *changeFeedProbeStore) ListChangedMessages(ctx context.Context, since st
 }
 
 func TestAgentChangeFeedRateLimitBeforeSnapshot(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "feed-rate@example.test", "message", "rate test", "")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	wrapped := &changeFeedProbeStore{Store: st}
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: wrapped, Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
@@ -1154,7 +1156,7 @@ func TestAgentChangeFeedRateLimitBeforeSnapshot(t *testing.T) {
 	srv.changesRateLimiter = NewRateLimiter(0, 1)
 	t.Cleanup(func() { srv.changesRateLimiter.Close(); srv.rateLimiter.Close(); srv.mediaSearchRateLimiter.Close() })
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	get := func(secret string) *httptest.ResponseRecorder {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/changes?limit=1", nil)
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -1162,8 +1164,8 @@ func TestAgentChangeFeedRateLimitBeforeSnapshot(t *testing.T) {
 		srv.Router().ServeHTTP(w, req)
 		return w
 	}
-	require.Equal(t, http.StatusOK, get(token).Code)
-	assert.Equal(t, int32(2), wrapped.readLimit.Load())
-	assert.Equal(t, http.StatusTooManyRequests, get(token).Code)
-	assert.Equal(t, int32(1), wrapped.probes.Load())
+	requirements.Equal(http.StatusOK, get(token).Code)
+	assertions.Equal(int32(2), wrapped.readLimit.Load())
+	assertions.Equal(http.StatusTooManyRequests, get(token).Code)
+	assertions.Equal(int32(1), wrapped.probes.Load())
 }

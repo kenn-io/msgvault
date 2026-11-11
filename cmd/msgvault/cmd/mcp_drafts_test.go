@@ -417,6 +417,8 @@ func TestMCPDelegatedChangeFeedDiscovery(t *testing.T) {
 		{"older daemon", "5.2.0", "search.read", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			fixture := newDraftReplyFixture(t)
 			server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -431,14 +433,14 @@ func TestMCPDelegatedChangeFeedDiscovery(t *testing.T) {
 			session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{tc.permission}), t)
 			names := mcpDraftToolNames(t, session)
 			if !tc.want {
-				assert.NotContains(t, names, "list_changes")
+				assertions.NotContains(names, "list_changes")
 				return
 			}
-			require.Contains(t, names, "list_changes")
+			requirements.Contains(names, "list_changes")
 			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_changes", Arguments: map[string]any{}})
-			require.NoError(t, err)
-			assert.False(t, result.IsError)
-			assert.NotNil(t, result.StructuredContent)
+			requirements.NoError(err)
+			assertions.False(result.IsError)
+			assertions.NotNil(result.StructuredContent)
 		})
 	}
 }
@@ -462,6 +464,8 @@ func TestMCPDelegatedChangeFeedUnavailableRefusals(t *testing.T) {
 	session := mcpDraftTestSession(mcpDraftAgentContext(t, server, fixture.source.ID, []string{"search.read"}), t)
 	for _, code := range []string{"permission_denied", "agent_read_busy", "source_scope_unavailable"} {
 		t.Run(code, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			args := map[string]any{}
 			if code == "permission_denied" {
 				refusal.Store("")
@@ -470,11 +474,11 @@ func TestMCPDelegatedChangeFeedUnavailableRefusals(t *testing.T) {
 				refusal.Store(code)
 			}
 			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_changes", Arguments: args})
-			require.NoError(t, err)
-			assert.True(t, result.IsError)
+			requirements.NoError(err)
+			assertions.True(result.IsError)
 			body, ok := result.StructuredContent.(map[string]any)
-			require.True(t, ok)
-			assert.Equal(t, code, body["error"])
+			requirements.True(ok)
+			assertions.Equal(code, body["error"])
 		})
 	}
 }

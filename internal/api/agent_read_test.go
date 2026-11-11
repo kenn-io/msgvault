@@ -910,17 +910,19 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 }
 
 func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	a, aID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "feed-a@example.test", "a", "allowed feed", "")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	setChangesWatermark(t, st, "2020-01-01 00:00:00.000", aID)
 	b, bID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "feed-b@example.test", "b", "private feed", "")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	participant, err := st.EnsureParticipant("outside-person@example.test", "Outside", "example.test")
-	require.NoError(t, err)
-	require.NoError(t, st.ReplaceMessageRecipients(bID, "to", []int64{participant}, nil))
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(bID, "to", []int64{participant}, nil))
 	person, _, err := st.CreatePersonFromParticipant(participant)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	wrapped := &changeFeedProbeStore{Store: st}
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}, Store: wrapped, Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
@@ -930,7 +932,7 @@ func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 	}
 	issue := func(perms []agentgrant.Permission, refs []agentgrant.SourceRef) string {
 		_, token, _, err := srv.agentGrants.Issue("feed", perms, refs, time.Time{})
-		require.NoError(t, err)
+		requirements.NoError(err)
 		return token
 	}
 	one := issue([]agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{ref(a)})
@@ -949,42 +951,42 @@ func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 		return w
 	}
 	for _, query := range []string{"?limit=bad", "?cursor=bad", "?source_id=0"} {
-		assert.Equal(t, http.StatusBadRequest, get(one, query).Code)
+		assertions.Equal(http.StatusBadRequest, get(one, query).Code)
 	}
-	assert.Zero(t, wrapped.probes.Load())
+	assertions.Zero(wrapped.probes.Load())
 	response := get(one, "")
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), "allowed feed")
-	assert.NotContains(t, response.Body.String(), "private feed")
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Contains(response.Body.String(), "allowed feed")
+	assertions.NotContains(response.Body.String(), "private feed")
 	var page ChangesResponse
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &page))
 	cursor := "?cursor=" + url.QueryEscape(page.NextCursor)
-	assert.Equal(t, http.StatusOK, get(same, cursor).Code)
-	assert.Equal(t, http.StatusBadRequest, get(wider, cursor).Code)
-	assert.Equal(t, http.StatusBadRequest, get("owner", cursor).Code)
+	assertions.Equal(http.StatusOK, get(same, cursor).Code)
+	assertions.Equal(http.StatusBadRequest, get(wider, cursor).Code)
+	assertions.Equal(http.StatusBadRequest, get("owner", cursor).Code)
 	ownerPage := get("owner", "")
-	require.Equal(t, http.StatusOK, ownerPage.Code)
+	requirements.Equal(http.StatusOK, ownerPage.Code)
 	var ownerChanges ChangesResponse
-	require.NoError(t, json.Unmarshal(ownerPage.Body.Bytes(), &ownerChanges))
-	assert.Equal(t, http.StatusOK, get(one, "?cursor="+url.QueryEscape(ownerChanges.NextCursor)).Code)
-	assert.Equal(t, http.StatusForbidden, get(denied, "").Code)
-	assert.Equal(t, http.StatusForbidden, get(one, fmt.Sprintf("?source_id=%d", b.ID)).Code)
-	assert.Equal(t, http.StatusForbidden, get(one, fmt.Sprintf("?source_id=%d&source_id=%d", a.ID, b.ID)).Code)
-	assert.Equal(t, http.StatusOK, get(one, fmt.Sprintf("?source_id=%d&source_id=%d", a.ID, a.ID)).Code)
-	assert.Equal(t, http.StatusBadRequest, get(one, "?source_id="+strings.TrimSuffix(strings.Repeat(strconv.FormatInt(b.ID, 10)+",", 51), ",")).Code)
+	requirements.NoError(json.Unmarshal(ownerPage.Body.Bytes(), &ownerChanges))
+	assertions.Equal(http.StatusOK, get(one, "?cursor="+url.QueryEscape(ownerChanges.NextCursor)).Code)
+	assertions.Equal(http.StatusForbidden, get(denied, "").Code)
+	assertions.Equal(http.StatusForbidden, get(one, fmt.Sprintf("?source_id=%d", b.ID)).Code)
+	assertions.Equal(http.StatusForbidden, get(one, fmt.Sprintf("?source_id=%d&source_id=%d", a.ID, b.ID)).Code)
+	assertions.Equal(http.StatusOK, get(one, fmt.Sprintf("?source_id=%d&source_id=%d", a.ID, a.ID)).Code)
+	assertions.Equal(http.StatusBadRequest, get(one, "?source_id="+strings.TrimSuffix(strings.Repeat(strconv.FormatInt(b.ID, 10)+",", 51), ",")).Code)
 	outside := get(one, fmt.Sprintf("?person_id=%d", person.ID))
 	missing := get(one, "?person_id=999999999")
-	assert.Equal(t, http.StatusForbidden, outside.Code)
-	assert.Equal(t, outside.Body.String(), missing.Body.String())
+	assertions.Equal(http.StatusForbidden, outside.Code)
+	assertions.Equal(outside.Body.String(), missing.Body.String())
 	_, _, err = st.RemoveSourceSerialized(t.Context(), a.ID)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	replacement, replacementID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, a.Identifier, "replacement", "replacement feed", "")
-	require.NoError(t, err)
-	assert.NotEqual(t, a.ID, replacement.ID)
+	requirements.NoError(err)
+	assertions.NotEqual(a.ID, replacement.ID)
 	setChangesWatermark(t, st, "2020-01-02 00:00:00.000", replacementID)
 	replayed := get(one, cursor)
-	assert.Equal(t, http.StatusOK, replayed.Code)
-	assert.Contains(t, replayed.Body.String(), "replacement feed")
+	assertions.Equal(http.StatusOK, replayed.Code)
+	assertions.Contains(replayed.Body.String(), "replacement feed")
 	for _, tc := range []struct {
 		err    error
 		status int
@@ -996,12 +998,13 @@ func TestAgentChangeFeedScopeAndCursor(t *testing.T) {
 	} {
 		wrapped.beginErr = tc.err
 		w := get(one, "")
-		assert.Equal(t, tc.status, w.Code)
-		assert.Contains(t, w.Body.String(), tc.code)
+		assertions.Equal(tc.status, w.Code)
+		assertions.Contains(w.Body.String(), tc.code)
 	}
 }
 
 func TestChangeFeedGrantDigestUsesStableSourceReferences(t *testing.T) {
+	assertions := assert.New(t)
 	a := agentgrant.SourceRef{ID: 1, Type: "gmail", Identifier: "a@example.com", SenderKeys: []string{"old"}}
 	b := agentgrant.SourceRef{ID: 2, Type: "gmail", Identifier: "b@example.com"}
 	filter := func(refs ...agentgrant.SourceRef) changesFilter {
@@ -1013,66 +1016,68 @@ func TestChangeFeedGrantDigestUsesStableSourceReferences(t *testing.T) {
 	a.ID = 99
 	a.SenderKeys = []string{"new"}
 	same := filter(b, a)
-	assert.NotEmpty(t, original.digest())
-	assert.Equal(t, original.digest(), same.digest())
-	assert.NotEqual(t, original.digest(), filter(a).digest())
-	assert.NotEqual(t, original.digest(), (changesFilter{}).digest())
+	assertions.NotEmpty(original.digest())
+	assertions.Equal(original.digest(), same.digest())
+	assertions.NotEqual(original.digest(), filter(a).digest())
+	assertions.NotEqual(original.digest(), (changesFilter{}).digest())
 }
 
 func TestAgentChangeFeedDoesNotExposeOtherSourcePositions(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	outside, err := st.GetOrCreateSource("test", "outside-feed@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	conv, err := st.EnsureConversation(t.Context(), outside.ID, "outside", "Outside")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	tx, err := st.DB().BeginTx(t.Context(), nil)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	defer func() { _ = tx.Rollback() }()
 	for i := 0; i <= changesScanBudget; i++ {
 		var id int64
 		err := tx.QueryRowContext(t.Context(), st.Rebind(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type) VALUES (?, ?, ?, ?) RETURNING id`), outside.ID, conv, fmt.Sprintf("outside-%d", i), "email").Scan(&id)
-		require.NoError(t, err)
+		requirements.NoError(err)
 	}
 	_, err = tx.ExecContext(t.Context(), st.Rebind(`UPDATE messages SET content_changed_at = ? WHERE source_id = ?`), "2020-01-01 00:00:00.000", outside.ID)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
+	requirements.NoError(err)
+	requirements.NoError(tx.Commit())
 	allowed, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "allowed-feed@example.test", "allowed", "allowed", "")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	setChangesWatermark(t, st, "2020-01-02 00:00:00.000", id)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
 	t.Cleanup(srv.agentGrants.Close)
 	relaxChangeFeedRateLimit(t, srv)
 	get := func(ref agentgrant.SourceRef, query string) ChangesResponse {
 		_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{ref}, time.Time{})
-		require.NoError(t, err)
+		requirements.NoError(err)
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/changes"+query, nil)
 		req.Header.Set(apiprotocol.AgentTokenHeader, token)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 		var page ChangesResponse
-		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
+		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &page))
 		return page
 	}
 	ref := func(s *store.Source) agentgrant.SourceRef {
 		return agentgrant.SourceRef{ID: s.ID, Type: s.SourceType, Identifier: s.Identifier}
 	}
 	sparse := get(ref(allowed), "?limit=1")
-	require.Len(t, sparse.Messages, 1)
-	assert.Equal(t, 1, sparse.Count)
-	assert.Equal(t, id, sparse.Messages[0].ID)
-	assert.False(t, sparse.HasMore)
+	requirements.Len(sparse.Messages, 1)
+	assertions.Equal(1, sparse.Count)
+	assertions.Equal(id, sparse.Messages[0].ID)
+	assertions.False(sparse.HasMore)
 	position, err := decodeChangesCursor(sparse.NextCursor)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	after, hasID := position.cursor.AfterID()
-	require.True(t, hasID)
-	assert.Equal(t, id, after)
+	requirements.True(hasID)
+	assertions.Equal(id, after)
 	empty := get(agentgrant.SourceRef{ID: 999999, Type: "test", Identifier: "gone@example.test"}, "")
-	assert.Empty(t, empty.Messages)
-	assert.Zero(t, empty.Count)
-	assert.False(t, empty.HasMore)
+	assertions.Empty(empty.Messages)
+	assertions.Zero(empty.Count)
+	assertions.False(empty.HasMore)
 	position, err = decodeChangesCursor(empty.NextCursor)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, hasID = position.cursor.AfterID()
-	assert.False(t, hasID)
+	assertions.False(hasID)
 }
