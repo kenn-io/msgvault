@@ -12,7 +12,7 @@ import (
 )
 
 func TestVisualColdPolicyCleanupBoundsOrphans(t *testing.T) {
-	b, st, _, _, _ := newPolicyBackend(t)
+	b, st, _, _, _ := newPolicyBackend(t) //nolint:dogsled // orphan cleanup needs only the backend and archive
 	ctx := t.Context()
 	st.DB().SetMaxOpenConns(1)
 	b.db.SetMaxOpenConns(1)
