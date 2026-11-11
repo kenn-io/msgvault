@@ -1180,4 +1180,8 @@ func TestAttachmentResourceVerificationRefusal(t *testing.T) {
 	require.NotNil(result)
 	assert.Equal(verificationMaskedMessage, result.text)
 	assert.NotContains(result.text, "reveal flag")
+	result = translateDaemonRequestError(directoryPeopleError{code: "verification_unavailable"})
+	require.NotNil(result)
+	assert.Contains(result.text, "Ask the archive owner to upgrade the daemon")
+	assert.NotContains(result.text, "reveal")
 }

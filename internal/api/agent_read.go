@@ -80,9 +80,8 @@ func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.
 	return permission, nil
 }
 
-// readSnapshotConcurrency stays below the SQLite pool size (4). Agent,
-// caller-scoped, and protected owner reads each hold a connection for their
-// snapshot. Sync writes and other reads keep the rest.
+// readSnapshotConcurrency limits delegated and caller-scoped snapshots below
+// the SQLite pool size. Protected owner reads use the database pool directly.
 const readSnapshotConcurrency = 2
 
 type agentReadSnapshotStore interface {
@@ -92,29 +91,35 @@ type agentReadSnapshotStore interface {
 }
 
 // beginAgentRead binds req to one read snapshot and authorizes its source scope.
-// The returned release frees the snapshot and its concurrency slot.
+// The returned release frees the snapshot and any delegated concurrency slot.
 func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agentgrant.Grant, permission agentgrant.Permission) (func(), *apiHTTPError) {
 	snapshotStore, ok := s.store.(agentReadSnapshotStore)
 	if !ok {
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
 	}
-	select {
-	case s.readSnapshotSlots <- struct{}{}:
-	case <-req.Context().Done():
-		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "agent_read_busy", "Agent reads are at capacity; retry later")
+	if grant != nil {
+		select {
+		case s.readSnapshotSlots <- struct{}{}:
+		case <-req.Context().Done():
+			return nil, newAPIHTTPError(http.StatusServiceUnavailable, "agent_read_busy", "Agent reads are at capacity; retry later")
+		}
 	}
 	indexGeneration := s.ftsRebuildGen.Load()
 	indexComplete := s.ftsIndexComplete.Load()
 	readContext, releaseSnapshot, err := snapshotStore.BeginReadSnapshotContext(req.Context())
 	if err != nil {
-		<-s.readSnapshotSlots
+		if grant != nil {
+			<-s.readSnapshotSlots
+		}
 		return nil, newAPIHTTPError(http.StatusServiceUnavailable, "source_scope_unavailable", "Source authorization is unavailable")
 	}
 	var once sync.Once
 	release := func() {
 		once.Do(func() {
 			releaseSnapshot()
-			<-s.readSnapshotSlots
+			if grant != nil {
+				<-s.readSnapshotSlots
+			}
 		})
 	}
 	if boundary, ok := req.Context().Value(readResponseKey{}).(*readResponseWriter); ok {

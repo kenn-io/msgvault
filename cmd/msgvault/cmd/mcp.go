@@ -89,9 +89,6 @@ Add to Claude Desktop config:
 			if err != nil {
 				return err
 			}
-			if _, err = st.Health(cmd.Context()); err != nil {
-				return fmt.Errorf("verify daemon withholding support: %w", err)
-			}
 		}
 		if httpAddr != "" {
 			if !cmd.Flags().Changed("http-token-file") && !cmd.Flags().Changed("http-token-env") {
@@ -118,7 +115,10 @@ Add to Claude Desktop config:
 				return err
 			}
 		} else {
-			opts = daemonMCPServeOptions(ctx, st, state)
+			opts, err = daemonMCPServeOptions(ctx, st, state)
+			if !mcpRevealVerification && err != nil {
+				return fmt.Errorf("verify daemon withholding support: %w", err)
+			}
 		}
 		applyMCPWriteFlags(cmd, "", &opts)
 
@@ -245,7 +245,7 @@ const vectorLaneHealthMinAPISchemaVersion = "2.28.0"
 // Schema 2.4.0 added the visual attachment search route.
 const visualSearchMinAPISchemaVersion = "2.4.0"
 
-func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *invocation) mcpserver.ServeOptions {
+func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *invocation) (mcpserver.ServeOptions, error) {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
@@ -363,7 +363,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.DraftCommands = mcpDraftCommands(false)
 	}
 
-	return opts
+	return opts, capabilityErr
 }
 
 // probeKataDocbank reports whether the daemon can cite Docbank transcripts.

@@ -521,6 +521,7 @@ func TestRunArchiveSQLQueryPreservesRowsAndAcceptedBuild(t *testing.T) {
 	var apiErr *APIError
 	require.ErrorAs(err, &apiErr)
 	assert.Equal("verification_masked", apiErr.APIErrorCode())
+	assert.EqualError(err, "verification content is withheld")
 }
 
 func TestGeneratedClientUsesConfiguredHTTPClient(t *testing.T) {
@@ -1024,16 +1025,32 @@ func (r *boundaryErrorReader) Close() error { return nil }
 
 func TestVerificationWithholdingAcknowledgement(t *testing.T) {
 	require := require.New(t)
-	var acknowledge atomic.Bool
+	assert := assert.New(t)
+	var acknowledge, writeMarked, archiveMarked atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		marked := r.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold
+		if r.URL.Path == "/prefix/api/v1/saved-views" {
+			writeMarked.Store(marked)
+		}
+		if r.URL.Path == "/prefix/api/v1/query/archive" {
+			archiveMarked.Store(marked)
+		}
 		if acknowledge.Load() && r.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold {
 			w.Header().Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/prefix/api/v1/query/archive" {
+			_, _ = io.WriteString(w, `{"columns":[],"rows":[],"row_count":0}`)
+			return
+		}
+		if r.URL.Path == "/prefix/api/v1/saved-views" {
+			_, _ = io.WriteString(w, `{"id":42}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	}))
 	t.Cleanup(server.Close)
-	ordinary, err := New(Config{URL: server.URL, AllowInsecure: true})
+	ordinary, err := New(Config{URL: server.URL + "/prefix", AllowInsecure: true})
 	require.NoError(err)
 	protected, err := ordinary.WithVerificationWithheld()
 	require.NoError(err)
@@ -1047,8 +1064,21 @@ func TestVerificationWithholdingAcknowledgement(t *testing.T) {
 	require.ErrorContains(err, "upgrade the daemon")
 	_, err = ordinary.Health(t.Context())
 	require.NoError(err)
+	response, err = protected.DoGeneratedRequestWithContext(t.Context(), http.MethodPost, "/api/v1/saved-views", nil)
+	require.NoError(err)
+	body, err := io.ReadAll(response.Body)
+	closeErr := response.Body.Close()
+	require.NoError(err)
+	require.NoError(closeErr)
+	assert.JSONEq(`{"id":42}`, string(body))
+	assert.False(writeMarked.Load())
+	_, _, err = protected.RunArchiveSQLQueryWithFresh(t.Context(), "SELECT 1", false)
+	require.ErrorContains(err, "upgrade the daemon")
+	assert.True(archiveMarked.Load())
 	acknowledge.Store(true)
 	_, err = protected.Health(t.Context())
+	require.NoError(err)
+	_, _, err = protected.RunArchiveSQLQueryWithFresh(t.Context(), "SELECT 1", false)
 	require.NoError(err)
 	response, err = protected.DoGeneratedRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 	require.NoError(err)

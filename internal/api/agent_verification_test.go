@@ -579,3 +579,33 @@ func TestOwnerVerificationVectorResults(t *testing.T) {
 		})
 	}
 }
+
+func TestOwnerVerificationReadsWhileAgentSlotsOccupied(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
+	require.NoError(err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	for range readSnapshotConcurrency {
+		srv.readSnapshotSlots <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for range readSnapshotConcurrency {
+			<-srv.readSnapshotSlots
+		}
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/messages", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("X-Api-Key", "owner")
+	req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(w.Body.String(), verification.Masked)
+	assert.NotContains(w.Body.String(), "482913")
+	assert.Len(srv.readSnapshotSlots, readSnapshotConcurrency)
+}

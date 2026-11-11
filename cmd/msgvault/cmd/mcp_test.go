@@ -78,8 +78,12 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
+	var markedHealth atomic.Int32
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
+			if r.Header.Get("X-Msgvault-Verification") == "withhold" {
+				markedHealth.Add(1)
+			}
 			acknowledgeMCPVerification(w, r)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -165,6 +169,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	err := mcpCmd.RunE(mcpCmd, nil)
 
 	require.ErrorIs(err, wantErr)
+	assert.Equal(int32(1), markedHealth.Load())
 	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
 	assert.True(gotServeOpts.AllowProfileWrites)
 	assert.True(gotServeOpts.AllowIdentityDecisions)
@@ -268,7 +273,12 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 				_, _ = w.Write([]byte(tt.health))
 			})
 
-			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
+			opts, err := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
+			if tt.health == "" {
+				assert.Error(err)
+			} else {
+				assert.NoError(err)
+			}
 			assert.Equal(tt.wantText, opts.HybridSearcher != nil, "semantic search")
 			assert.Equal(tt.wantText, opts.SimilarSearcher != nil, "similar messages")
 			assert.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
@@ -307,7 +317,7 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 		http.Error(w, `{"error":"vector_initializing","message":"Vector search is initializing"}`, http.StatusServiceUnavailable)
 	})
 
-	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	opts, _ := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	_, err := opts.HybridSearcher.SearchHybrid(testCtx, mcpserver.HybridSearchRequest{
 		Query: "term",
 		Mode:  "hybrid",
@@ -388,7 +398,7 @@ func TestDaemonMCPServeOptionsGatesPeopleToolsByAPISchema(t *testing.T) {
 				}
 			})
 
-			opts := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
+			opts, _ := daemonMCPServeOptions(t.Context(), client, invocationFromContext(t.Context()))
 			if tt.wantPeople {
 				assert.NotNil(opts.PeopleBackend)
 			} else {
@@ -437,7 +447,7 @@ func TestDaemonMCPServeOptionsWarnsWhenPeopleCapabilityProbeFails(t *testing.T) 
 		http.NotFound(w, r)
 	})
 
-	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	opts, _ := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	assert.Nil(opts.PeopleBackend)
 	assert.Nil(opts.DirectoryBackend)
 	assert.Nil(opts.ChatDiscoveryBackend)
@@ -461,6 +471,7 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/health":
 			if healthRequests.Add(1) == 1 {
+				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"status": "ok", "api_schema_version": "2.28.0",
 					"vector": map[string]any{
@@ -477,7 +488,8 @@ func TestDaemonMCPServeOptionsUsesOneCapabilityProbe(t *testing.T) {
 		}
 	})
 
-	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	opts, err := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	assert.NoError(err)
 	assert.NotNil(opts.PeopleBackend)
 	assert.NotNil(opts.DirectoryBackend)
 	assert.NotNil(opts.SavedViews)
@@ -512,7 +524,7 @@ func TestDaemonMCPServeOptionsSavesDeletionManifestsThroughDaemon(t *testing.T) 
 		}
 	})
 
-	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	opts, _ := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
 	require.NotNil(opts.ManifestSaver, "manifest saver")
 
 	manifest := deletion.NewManifest("mcp test", []string{"gmail-001"})
@@ -623,7 +635,7 @@ func TestDaemonMCPDocbankCapability(t *testing.T) {
 					http.NotFound(w, r)
 				}
 			})
-			opts := daemonMCPServeOptions(ctx, client, invocationFromContext(ctx))
+			opts, _ := daemonMCPServeOptions(ctx, client, invocationFromContext(ctx))
 			assert.True(opts.KataLookup)
 			assert.Equal(tc.want, opts.KataDocbank)
 			if tc.version == "3.12.0" {
@@ -651,7 +663,7 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	var logs bytes.Buffer
 	state := *invocationFromContext(ctx)
 	state.logger = slog.New(slog.NewTextHandler(&logs, nil))
-	opts := daemonMCPServeOptions(ctx, client, &state)
+	opts, _ := daemonMCPServeOptions(ctx, client, &state)
 	assert.False(opts.KataDocbank)
 	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
 	assert.Contains(logs.String(), "503")

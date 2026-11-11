@@ -59,6 +59,12 @@ func (e *APIError) Unwrap() error {
 	}
 }
 
+// cliAPIError preserves the CLI message while exposing the daemon error code.
+type cliAPIError struct{ *APIError }
+
+func (e *cliAPIError) Error() string { return e.Message }
+func (e *cliAPIError) Unwrap() error { return e.APIError }
+
 // CLIRunError marks a decoded daemon CLI refusal or stream error event.
 type CLIRunError struct {
 	err error
@@ -120,9 +126,9 @@ func handleCLIErrorBody(status int, body []byte) error {
 	if err := operationInProgressFromBody(body); err != nil {
 		return err
 	}
-	message, _, decoded := apiErrorMessage(body)
+	message, code, decoded := apiErrorMessage(body)
 	if decoded {
-		return errors.New(message)
+		return &cliAPIError{APIError: &APIError{Status: status, Code: code, Message: message}}
 	}
 
 	return fmt.Errorf("API error (%d): %s", status, message)

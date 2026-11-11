@@ -70,7 +70,7 @@ func TestDaemonMCPLaunchDiscoversRealOperationalTools(t *testing.T) {
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	requirements.NoError(err)
-	opts := daemonMCPServeOptions(t.Context(), client, nil)
+	opts, _ := daemonMCPServeOptions(t.Context(), client, nil)
 	requirements.NotNil(opts.Operations)
 	assertions.Contains(opts.OperationCapabilities, "get_source_scheduler_status")
 	assertions.Empty(opts.OperationWriteFamilies)

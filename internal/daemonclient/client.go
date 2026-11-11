@@ -221,13 +221,17 @@ func (c *Client) GeneratedClient() (*apiclient.Client, error) {
 	if c.typedClient != nil {
 		return c.typedClient, nil
 	}
+	baseURL, err := url.Parse(c.baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse daemon URL: %w", err)
+	}
 	apiClient, err := apiclient.New(
 		c.baseURL,
 		runtime.WithHTTPClient(httpDoer{
 			client:      c.httpClient,
 			rootContext: c.requestContext(),
 		}),
-		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.agentToken, c.requestMode, c.localDaemonToken, c.withholdVerification)),
+		runtime.WithRequestEditorFn(requestEditor(c.apiKey, c.agentToken, c.requestMode, c.localDaemonToken, c.withholdVerification, strings.TrimSuffix(baseURL.Path, "/"))),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create generated API client: %w", err)
@@ -427,9 +431,10 @@ func (b *cancelOnCloseBody) Close() error {
 
 type grantDecisionContextKey struct{}
 
-func requestEditor(apiKey, agentToken string, mode RequestMode, localDaemonToken string, withholdVerification bool) apiclient.RequestEditorFn {
+func requestEditor(apiKey, agentToken string, mode RequestMode, localDaemonToken string, withholdVerification bool, basePath string) apiclient.RequestEditorFn {
 	return func(ctx context.Context, req *http.Request) error {
-		if withholdVerification {
+		if withholdVerification && (req.Method == http.MethodGet || req.Method == http.MethodHead ||
+			req.Method == http.MethodPost && req.URL.Path == basePath+"/api/v1/query/archive") {
 			req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 		}
 		if agentToken != "" {

@@ -32,7 +32,7 @@ func loopOperationMCPSession(t *testing.T, backend *daemonMCPOperations, familie
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	directory := filepath.Join(t.TempDir(), "mcp")
-	opts := daemonMCPServeOptions(ctx, backend.client, nil)
+	opts, _ := daemonMCPServeOptions(ctx, backend.client, nil)
 	opts.Operations = backend
 	opts.OperationCapabilities = backend.capabilities()
 	opts.OperationWriteFamilies = families

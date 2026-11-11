@@ -1636,7 +1636,7 @@ func (c *Client) RunArchiveSQLQueryWithFresh(ctx context.Context, sql string, fr
 	if fresh {
 		body.Fresh = &fresh
 	}
-	resp, err := APIResponseWithStatuses(c, []int{http.StatusOK, http.StatusAccepted}, func(client *apiclient.Client) (*generated.RunArchiveQueryResp, error) {
+	resp, err := CLIResponseWithStatuses(c, []int{http.StatusOK, http.StatusAccepted}, func(client *apiclient.Client) (*generated.RunArchiveQueryResp, error) {
 		return client.RunArchiveQueryWithResponse(ctx, &generated.RunArchiveQueryRequestOptions{Body: body})
 	})
 	if err != nil {
