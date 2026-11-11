@@ -383,9 +383,13 @@ func TestWorkerContentGuardCoversDetachedCheckpointSave(t *testing.T) {
 	var fence sync.RWMutex
 	var savedAtRelease int
 	var releaseErr error
+	type leaseKey struct{}
+	marker := new(int)
+	observed := false
+	f.FakeClient.observeContext = func(ctx context.Context) { observed = ctx.Value(leaseKey{}) == marker }
 	guard := func(ctx context.Context) (context.Context, func() error, error) {
 		fence.RLock()
-		return ctx, func() error {
+		return context.WithValue(ctx, leaseKey{}, marker), func() error {
 			releaseErr = f.VectorsDB.QueryRowContext(context.WithoutCancel(t.Context()), `SELECT count(*) FROM embedding_checkpoints WHERE owner = 'message:1'`).Scan(&savedAtRelease)
 			fence.RUnlock()
 			return nil
@@ -407,6 +411,7 @@ func TestWorkerContentGuardCoversDetachedCheckpointSave(t *testing.T) {
 	_, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	needs.Error(err)
 	needs.NoError(releaseErr)
+	checks.True(observed, "guard context reaches the provider")
 	checks.Positive(savedAtRelease, "the detached response was saved before the lease was released")
 	acquired := fence.TryLock()
 	checks.True(acquired)

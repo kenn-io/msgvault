@@ -29,6 +29,57 @@ type XRemovalWork struct {
 // cross-source derived cleanup has finished.
 var ErrXRemovalPending = errors.New("x content cleanup is still pending")
 
+// MarkXRemovalPendingContext admits owned removals without deleting content.
+func (s *Store) MarkXRemovalPendingContext(ctx context.Context, posts []XRemovalWork, profiles []XAuthorProfileRemovalWork) error {
+	for _, post := range posts {
+		if err := s.requireSyncSource(post.SourceID); err != nil {
+			return err
+		}
+		if post.SourceID <= 0 || !validXControlID(post.CanonicalID) {
+			return errors.New("invalid X removal identity")
+		}
+		switch post.Reason {
+		case "removed", "deleted", "protected", "withheld":
+		default:
+			return errors.New("invalid X removal reason")
+		}
+	}
+	for _, profile := range profiles {
+		if err := s.requireSyncSource(profile.SourceID); err != nil {
+			return err
+		}
+		if profile.SourceID <= 0 || profile.ObservationID <= 0 || !validXAuthorID(profile.AuthorID) {
+			return errors.New("invalid X author profile cleanup")
+		}
+	}
+	return s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+		for _, post := range posts {
+			var kind string
+			if err := tx.QueryRowContext(ctx, `SELECT source_type FROM sources WHERE id=?`, post.SourceID).Scan(&kind); err != nil {
+				return err
+			}
+			if kind != "x" {
+				return errors.New("x removal requires an X source")
+			}
+			if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, post.SourceID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE x_post_versions SET cleanup_pending=1, suppression_reason=COALESCE(suppression_reason,?) WHERE source_id=? AND canonical_id=?`, post.Reason, post.SourceID, post.CanonicalID); err != nil {
+				return err
+			}
+		}
+		for _, profile := range profiles {
+			if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, profile.SourceID); err != nil {
+				return err
+			}
+			if err := s.addXAuthorProfilePendingTokenTx(ctx, tx, profile); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // RemoveXPostContentContext requires source execution ownership. Suppression
 // commits before external I/O and includes every known alias of the native ID.
 func (s *Store) RemoveXPostContentContext(ctx context.Context, sourceID int64, nativeID, reason string) (work XRemovalWork, err error) {

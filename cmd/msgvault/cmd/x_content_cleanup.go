@@ -154,38 +154,6 @@ func (c *XContentCleanup) removeXContentsBatch(ctx context.Context, groups []sto
 	if len(groups) == 0 && len(profiles) == 0 {
 		return work, errors.New("x removal batch is empty")
 	}
-	releaseLease, _, err := c.store.AcquireXContentLeaseContext(ctx, true)
-	if err != nil {
-		return work, err
-	}
-	defer func() { retErr = errors.Join(retErr, releaseLease()) }()
-	release, err := c.lock(ctx, true)
-	if err != nil {
-		return work, err
-	}
-	defer release()
-	if c.beforeCacheLock != nil {
-		if err := c.beforeCacheLock(); err != nil {
-			return work, err
-		}
-	}
-	unlock, err := lockCacheAndInvalidateSyncState(c.cfg.AnalyticsDir())
-	if err != nil {
-		return work, err
-	}
-	cacheLockHeld := true
-	defer func() {
-		if cacheLockHeld {
-			retErr = errors.Join(retErr, unlock())
-		}
-	}()
-	// A builder that was already running may have published while we waited.
-	// Observe its committed cache only after builders and readers are drained.
-	_, statErr := os.Stat(c.cfg.AnalyticsDir())
-	hadCache := statErr == nil
-	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-		return work, statErr
-	}
 	var root store.XRemovalWork
 	if len(groups) > 0 {
 		root = groups[0].Root
@@ -238,6 +206,54 @@ func (c *XContentCleanup) removeXContentsBatch(ctx context.Context, groups []sto
 		}
 		return strings.Compare(a.canonical, b.canonical)
 	})
+	if c.store.IsPostgreSQL() {
+		marks := make([]store.XRemovalWork, 0, len(keys))
+		for _, key := range keys {
+			reason := explicitReason[key]
+			if reason == "" {
+				reason = defaultReason[key]
+			}
+			if reason == "" {
+				reason = rootReason
+			}
+			marks = append(marks, store.XRemovalWork{SourceID: key.source, CanonicalID: key.canonical, Reason: reason})
+		}
+		if err := c.store.MarkXRemovalPendingContext(ctx, marks, profiles); err != nil {
+			return work, err
+		}
+	}
+	releaseLease, _, err := c.store.AcquireXContentLeaseContext(ctx, true)
+	if err != nil {
+		return work, err
+	}
+	defer func() { retErr = errors.Join(retErr, releaseLease()) }()
+	release, err := c.lock(ctx, true)
+	if err != nil {
+		return work, err
+	}
+	defer release()
+	if c.beforeCacheLock != nil {
+		if err := c.beforeCacheLock(); err != nil {
+			return work, err
+		}
+	}
+	unlock, err := lockCacheAndInvalidateSyncState(c.cfg.AnalyticsDir())
+	if err != nil {
+		return work, err
+	}
+	cacheLockHeld := true
+	defer func() {
+		if cacheLockHeld {
+			retErr = errors.Join(retErr, unlock())
+		}
+	}()
+	// A builder that was already running may have published while we waited.
+	// Observe its committed cache only after builders and readers are drained.
+	_, statErr := os.Stat(c.cfg.AnalyticsDir())
+	hadCache := statErr == nil
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return work, statErr
+	}
 	completed := make(map[targetKey]store.XRemovalWork, len(keys))
 	for _, key := range keys {
 		local, ok := inputByKey[key]

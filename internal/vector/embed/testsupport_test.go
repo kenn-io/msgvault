@@ -277,10 +277,11 @@ func newWorkerFixture(t *testing.T, n int) *workerFixture {
 // (after the scan, before Upsert/stamp) to perturb DB state for race or
 // failure testing.
 type fakeEmbeddingClient struct {
-	dim       int
-	failN     int
-	calls     int
-	preReturn func() // optional callback fired right before Embed returns success
+	dim            int
+	failN          int
+	calls          int
+	preReturn      func() // optional callback fired right before Embed returns success
+	observeContext func(context.Context)
 	// LastInputs captures the most recent batch of inputs passed to Embed,
 	// letting tests assert what text the worker actually sent to the
 	// embedder (e.g. body_text vs HTML-stripped body_html).
@@ -297,7 +298,10 @@ type fakeEmbeddingClient struct {
 func (c *fakeEmbeddingClient) FailNext(n int) { c.failN = n }
 
 // Embed returns one deterministic, non-zero vector per input.
-func (c *fakeEmbeddingClient) Embed(_ context.Context, inputs []string) ([][]float32, error) {
+func (c *fakeEmbeddingClient) Embed(ctx context.Context, inputs []string) ([][]float32, error) {
+	if c.observeContext != nil {
+		c.observeContext(ctx)
+	}
 	c.calls++
 	if c.OnEmbed != nil {
 		out, err := c.OnEmbed(inputs)

@@ -28,14 +28,15 @@ import (
 )
 
 type contextSemanticFake struct {
-	mu         sync.Mutex
-	dim        int
-	docs       int
-	calls      int
-	err        error
-	before     func()
-	sizeOnce   bool
-	rejectText string
+	observeContext func(context.Context)
+	mu             sync.Mutex
+	dim            int
+	docs           int
+	calls          int
+	err            error
+	before         func()
+	sizeOnce       bool
+	rejectText     string
 }
 
 type contextPartialSemanticFake struct {
@@ -129,9 +130,12 @@ func (c *contextPartialSemanticFake) EmbedDocuments(_ context.Context, documents
 	return out, nil
 }
 
-func (c *contextSemanticFake) EmbedDocuments(_ context.Context, documents []DocumentInput) ([][][]float32, error) {
+func (c *contextSemanticFake) EmbedDocuments(ctx context.Context, documents []DocumentInput) ([][][]float32, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.observeContext != nil {
+		c.observeContext(ctx)
+	}
 	c.calls++
 	if c.before != nil {
 		c.before()
@@ -2784,14 +2788,18 @@ func TestContextWorkerContentGuardCoversProviderResponse(t *testing.T) {
 	checks := assert.New(t)
 	needs := require.New(t)
 	var fence sync.RWMutex
+	type leaseKey struct{}
+	marker := new(int)
+	observed := false
 	guard := func(ctx context.Context) (context.Context, func() error, error) {
 		if err := ctx.Err(); err != nil {
 			return ctx, nil, err
 		}
 		fence.RLock()
-		return ctx, func() error { fence.RUnlock(); return nil }, nil
+		return context.WithValue(ctx, leaseKey{}, marker), func() error { fence.RUnlock(); return nil }, nil
 	}
 	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) { deps.ContentReadGuard = guard })
+	f.client.observeContext = func(ctx context.Context) { observed = ctx.Value(leaseKey{}) == marker }
 	f.seed("x", f.chatID, time.Now().UTC(), "synthetic X post")
 	called := false
 	f.client.before = func() {
@@ -2805,6 +2813,7 @@ func TestContextWorkerContentGuardCoversProviderResponse(t *testing.T) {
 	_, err := f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	needs.NoError(err)
 	checks.True(called)
+	checks.True(observed, "guard context reaches the provider")
 	acquired := fence.TryLock()
 	checks.True(acquired)
 	if acquired {

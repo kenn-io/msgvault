@@ -230,3 +230,57 @@ func TestXRemovalDifferentIndependentNameDoesNotSupportRemovedLabel(t *testing.T
 	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`), saved.MessageID).Scan(&name))
 	_testAssert.Equal("Independent Label", name.String)
 }
+
+func TestMarkXRemovalPendingPreservesContentAndRecovery(t *testing.T) {
+	needs := require.New(t)
+	checks := assert.New(t)
+	st, source := xPostFixture(t)
+	saved, err := st.PersistXPostContext(t.Context(), xPostInput(source, "102", "100", "retained until cleanup", "100", "102"))
+	needs.NoError(err)
+	_, err = st.PersistXPostContext(t.Context(), xPostInput(source, "200", "200", "other post"))
+	needs.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE x_post_versions SET suppressed_at=CURRENT_TIMESTAMP,cleanup_pending=1,suppression_reason='deleted' WHERE source_id=? AND canonical_id='200'`), source)
+	needs.NoError(err)
+	var observation int64
+	needs.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM participant_contact_observations WHERE source_id=? AND address_kind='provider_identity' AND source_resource_uid='x:author:1002'`), source).Scan(&observation))
+	posts := []store.XRemovalWork{{SourceID: source, CanonicalID: "100", Reason: "withheld"}, {SourceID: source, CanonicalID: "200", Reason: "removed"}, {SourceID: source, CanonicalID: "999", Reason: "removed"}}
+	profile := store.XAuthorProfileRemovalWork{SourceID: source, ObservationID: observation, AuthorID: "1002"}
+	needs.NoError(st.MarkXRemovalPendingContext(t.Context(), posts, []store.XAuthorProfileRemovalWork{profile}))
+	needs.NoError(st.MarkXRemovalPendingContext(t.Context(), posts, []store.XAuthorProfileRemovalWork{profile}))
+	var pending int
+	var suppressed sql.NullTime
+	var reason string
+	needs.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT cleanup_pending,suppressed_at,suppression_reason FROM x_post_versions WHERE source_id=? AND post_id='102'`), source).Scan(&pending, &suppressed, &reason))
+	checks.Equal(1, pending)
+	checks.False(suppressed.Valid)
+	checks.Equal("withheld", reason)
+	body, err := st.GetMessageBodyText(t.Context(), saved.MessageID)
+	needs.NoError(err)
+	checks.Equal("retained until cleanup", body)
+	raw, err := st.GetMessageRaw(saved.MessageID)
+	needs.NoError(err)
+	checks.NotEmpty(raw)
+	var existingReason string
+	needs.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT suppression_reason FROM x_post_versions WHERE source_id=? AND post_id='200'`), source).Scan(&existingReason))
+	checks.Equal("deleted", existingReason)
+	var unknown int
+	needs.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM x_post_versions WHERE source_id=? AND post_id='999'`), source).Scan(&unknown))
+	checks.Zero(unknown)
+	works, err := st.PendingXRemovalsContext(t.Context(), source)
+	needs.NoError(err)
+	needs.Len(works, 2)
+	checks.Equal("withheld", works[0].Reason)
+	profiles, err := st.PendingXAuthorProfileRemovalsContext(t.Context())
+	needs.NoError(err)
+	needs.Len(profiles, 1)
+	profile.DerivedComplete = true
+	needs.NoError(st.FinishXAuthorProfileRemovalContext(t.Context(), profile))
+	profiles, err = st.PendingXAuthorProfileRemovalsContext(t.Context())
+	needs.NoError(err)
+	checks.Empty(profiles)
+	blocked, err := st.XCleanupPendingContext(t.Context())
+	needs.NoError(err)
+	checks.True(blocked)
+	scoped := st.ScopedToSync(source+1, 1)
+	needs.Error(scoped.MarkXRemovalPendingContext(t.Context(), posts, nil))
+}

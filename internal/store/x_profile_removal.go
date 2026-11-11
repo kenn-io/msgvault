@@ -36,6 +36,21 @@ type XAuthorProfileRemovalWork struct {
 	DerivedComplete         bool
 }
 
+func (s *Store) addXAuthorProfilePendingTokenTx(ctx context.Context, tx *loggedTx, input XAuthorProfileRemovalWork) error {
+	anchor := beeperidentity.ProviderIdentityKey("x", "service", "", input.AuthorID)
+	var tokens string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(type_tokens,'') FROM participant_contact_observations
+ WHERE id=? AND source_id=? AND provider_user_id=? AND address_kind='provider_identity' AND source='archive_observation'`, input.ObservationID, input.SourceID, anchor).Scan(&tokens); err != nil {
+		return err
+	}
+	values := strings.Split(tokens, ",")
+	if !slices.Contains(values, xAuthorProfilePending) {
+		values = append(values, xAuthorProfilePending)
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations SET type_tokens=? WHERE id=?`, joinTypeTokens(values), input.ObservationID)
+	return err
+}
+
 func (s *Store) PendingXAuthorProfileRemovalsContext(ctx context.Context) ([]XAuthorProfileRemovalWork, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT o.id,o.source_id,o.provider_user_id,pi.identifier_value
  FROM participant_contact_observations o JOIN participant_identifiers pi
@@ -73,16 +88,7 @@ func (s *Store) RemoveXAuthorProfileContext(ctx context.Context, input XAuthorPr
 		if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, input.SourceID); err != nil {
 			return err
 		}
-		var tokens string
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(type_tokens,'') FROM participant_contact_observations
- WHERE id=? AND source_id=? AND provider_user_id=? AND address_kind='provider_identity' AND source='archive_observation'`, input.ObservationID, input.SourceID, anchor).Scan(&tokens); err != nil {
-			return err
-		}
-		values := strings.Split(tokens, ",")
-		if !slices.Contains(values, xAuthorProfilePending) {
-			values = append(values, xAuthorProfilePending)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations SET type_tokens=? WHERE id=?`, joinTypeTokens(values), input.ObservationID); err != nil {
+		if err := s.addXAuthorProfilePendingTokenTx(ctx, tx, input); err != nil {
 			return err
 		}
 		protectedAt, _, err := s.xAuthorProtectionTimesAcrossSourcesTx(ctx, tx, input.AuthorID)

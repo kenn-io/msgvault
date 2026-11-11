@@ -242,6 +242,9 @@ IDs/status and supported independent or curated facts. It does not delete the
 post on X. Incomplete cleanup remains pending and blocks affected reads until
 finished, including after daemon restart. If an embedding build is running,
 removal may wait for it to finish; cancel the build if cleanup is urgent.
+Shared PostgreSQL archives require direct connections or PgBouncer session mode;
+transaction pooling breaks X content and sync locks. Upgrade all hosts before
+running X removal or embedding against a shared archive.
 
 Existing owner exports and backup snapshots are separate copies. A database
 mutation does not retroactively scrub them. Stop publishing affected copies,

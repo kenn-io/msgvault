@@ -1222,11 +1222,17 @@ func TestPostgresXContentLeaseCrossStoreAndDetachedSave(t *testing.T) {
 		firstResult <- err
 	}()
 	needs.Eventually(sourceLocked, 10*time.Second, 20*time.Millisecond)
+	needs.Eventually(func() bool {
+		pending, err := peer.XCleanupPendingContext(t.Context())
+		return err == nil && pending
+	}, 10*time.Second, 20*time.Millisecond)
 	stop()
 	needs.ErrorIs(<-firstResult, context.Canceled)
 	var suppressed bool
 	needs.NoError(peer.DB().QueryRowContext(t.Context(), `SELECT suppressed_at IS NOT NULL FROM x_post_versions WHERE source_id=$1 AND post_id='102'`, f.source).Scan(&suppressed))
 	checks.False(suppressed)
+	_, _, err = remover.AcquireEmbeddingRead(t.Context())
+	needs.ErrorContains(err, "cleanup pending")
 	// Reuse the reader Store for the second attempt to exercise a shared
 	// two-connection query pool while retaining a different content directory.
 	remover = NewXContentCleanup(f.st, &otherCfg, f.backend)
@@ -1336,4 +1342,64 @@ func TestPostgresXCancelledContentLeaseDoesNotLeak(t *testing.T) {
 		var exists bool
 		return f.st.DB().QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND backend_start=$2)`, identity.PID, identity.BackendStart).Scan(&exists) == nil && !exists
 	}, 10*time.Second, 20*time.Millisecond)
+}
+
+func TestPostgresXLostCleanerLeaseKeepsReadersFenced(t *testing.T) {
+	needs := require.New(t)
+	checks := assert.New(t)
+	f := newXCleanupFixture(t)
+	if !f.st.IsPostgreSQL() {
+		t.Skip("PostgreSQL advisory lease")
+	}
+	peer, err := store.OpenForTest(t.Context(), f.cfg.Data.DatabaseURL)
+	needs.NoError(err)
+	defer func() { _ = peer.Close() }()
+	otherCfg := *f.cfg
+	otherCfg.Data.DataDir = t.TempDir()
+	reader := NewXContentCleanup(peer, &otherCfg, f.backend)
+	cleaner := NewXContentCleanup(f.st, f.cfg, f.backend)
+	owner := fmt.Sprintf("message:%d", f.message)
+	entries := []vector.EmbeddingCheckpoint{{Owner: owner, Revision: "r", Key: "k", Vectors: [][]float32{{1, 2, 3}}}, {Owner: "context:" + owner, Revision: "r", Key: "k", Vectors: [][]float32{{1, 2, 3}}}}
+	needs.NoError(f.backend.EmbeddingCheckpoints().Save(t.Context(), f.generations[1], entries))
+	cleaner.beforeCacheLock = func() error {
+		var pid int
+		err := peer.DB().QueryRowContext(t.Context(), `SELECT pid FROM pg_locks WHERE locktype='advisory' AND granted AND mode='ExclusiveLock'
+ AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND objsubid=1
+ AND classid=((hashtextextended(current_schema() || ':msgvault-x-content',0) >> 32) & 4294967295)::oid
+ AND objid=(hashtextextended(current_schema() || ':msgvault-x-content',0) & 4294967295)::oid`).Scan(&pid)
+		if err != nil {
+			return err
+		}
+		var terminated bool
+		if err := peer.DB().QueryRowContext(t.Context(), `SELECT pg_terminate_backend($1)`, pid).Scan(&terminated); err != nil {
+			return err
+		}
+		if !terminated {
+			return errors.New("could not terminate cleanup lease")
+		}
+		needs.Eventually(func() bool {
+			var exists bool
+			return peer.DB().QueryRowContext(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1)`, pid).Scan(&exists) == nil && !exists
+		}, 10*time.Second, 20*time.Millisecond)
+		_, _, readErr := reader.AcquireEmbeddingRead(t.Context())
+		needs.ErrorContains(readErr, "cleanup pending")
+		return nil
+	}
+	_, err = cleaner.RemovePost(t.Context(), f.source, "100", "removed")
+	needs.Error(err, "lost cleanup session must be reported on release")
+	cleaner.beforeCacheLock = nil
+	needs.NoError(cleaner.Resume(t.Context()))
+	pending, err := f.st.XCleanupPendingContext(t.Context())
+	needs.NoError(err)
+	checks.False(pending)
+	for _, entry := range entries {
+		saved, err := f.backend.EmbeddingCheckpoints().Load(t.Context(), f.generations[1], entry.Owner, entry.Revision)
+		needs.NoError(err)
+		checks.Empty(saved)
+	}
+	for _, gen := range f.generations {
+		stats, err := f.backend.Stats(t.Context(), gen)
+		needs.NoError(err)
+		checks.Zero(stats.EmbeddingCount)
+	}
 }
