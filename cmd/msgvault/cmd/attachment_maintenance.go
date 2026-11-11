@@ -294,8 +294,8 @@ func (m *attachmentMaintenance) markPackPending() {
 	}
 }
 
-// runPendingPack runs one automatic pack pass when a sync or unfinished
-// verification queued it. A failed pass leaves the request pending;
+// runPendingPack runs one automatic pack pass when ingestion, startup, or an
+// unfinished pack or verification pass queued it. A failed pass leaves the request pending;
 // an exhausted byte budget queues another pass behind waiting work.
 func (m *attachmentMaintenance) runPendingPack(ctx context.Context) error {
 	if m == nil {

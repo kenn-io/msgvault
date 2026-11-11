@@ -227,6 +227,37 @@ func TestAutomaticAttachmentMaintenanceCancellationIsInformational(t *testing.T)
 	assert.NotContains(f.logs.String(), "level=WARN")
 }
 
+func TestAutomaticAttachmentMaintenanceFailureLogsPartialStatsAndRetry(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	maintenance, logs := newFailingAttachmentMaintenance(t)
+
+	require.Error(maintenance.runAutomaticPack(t.Context()))
+
+	logOutput := logs.String()
+	progressAt := strings.Index(logOutput, "level=INFO msg=\"automatic attachment maintenance progress\"")
+	warnAt := strings.Index(logOutput, "level=WARN msg=\"automatic attachment maintenance failed\"")
+	assert.GreaterOrEqual(progressAt, 0, "partial stats are logged on error")
+	assert.Greater(warnAt, progressAt, "progress must be observable before the warning")
+	assert.NotContains(logOutput, "automatic attachment maintenance complete")
+	assert.Contains(logOutput, "blobs_deferred_oversized=0")
+	assert.Contains(logOutput, "packs_deferred_oversized=0")
+	assert.Contains(logOutput, "pack-attachments", "log names the explicit retry command")
+}
+
+func TestPendingPackFailureReachesSchedulerAndStaysPending(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	maintenance, _ := newFailingAttachmentMaintenance(t)
+	maintenance.markPackPending()
+
+	err := maintenance.runPendingPack(t.Context())
+
+	require.Error(err, "the scheduler records the failure in job status")
+	require.NotErrorIs(err, scheduler.ErrReschedule)
+	assert.True(maintenance.packPending.Load(), "a failed pass keeps loose blobs queued for the next tick")
+}
+
 func TestAttachmentIngestDefersPackingAndPreservesResult(t *testing.T) {
 	for _, partial := range []bool{false, true} {
 		t.Run(fmt.Sprintf("partial=%v", partial), func(t *testing.T) {
