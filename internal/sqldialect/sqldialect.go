@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // RebindPostgreSQL converts `?` placeholders in query to PostgreSQL
@@ -44,7 +45,7 @@ func RebindPostgreSQL(query string) string {
 func PostgreSQLSearchArg(terms []string) string {
 	var groups []string
 	for _, term := range terms {
-		parts := EscapeTSQueryTerm(term)
+		parts := EscapeTSQueryTerm(strings.ToLower(term))
 		if len(parts) > 0 {
 			parts[len(parts)-1] += ":*"
 		}
@@ -53,27 +54,38 @@ func PostgreSQLSearchArg(terms []string) string {
 	return strings.Join(groups, " & ")
 }
 
-// PostgreSQLPhrasePattern matches adjacent normalized pieces with a final prefix.
-func PostgreSQLPhrasePattern(term string) string {
-	parts := EscapeTSQueryTerm(term)
-	if len(parts) == 0 {
-		return ""
-	}
-	return "(^| )" + strings.Join(parts, " +")
+// CanonicalFTSText prepares text for collation-independent phrase matching.
+func CanonicalFTSText(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(NormalizeFTSText(s))), " ")
 }
 
-// PostgreSQLSearchPredicate refines an indexed candidate by field and phrase.
-func PostgreSQLSearchPredicate(arg, fields string, terms []string, weight string) string {
+// PostgreSQLSearchPredicate narrows unordered candidates to ordered phrases.
+func PostgreSQLSearchPredicate(arg string, terms []string) string {
 	clauses := []string{"m.search_fts @@ to_tsquery('simple', " + arg + ")"}
 	for _, term := range terms {
-		phrase := TSQuery([]string{term}, weight)
-		if phrase == "" {
+		if len(EscapeTSQueryTerm(term)) < 2 {
 			continue
 		}
-		pattern := PostgreSQLPhrasePattern(term)
-		clauses = append(clauses, "((m.search_fts_fields[1] IS NULL AND m.search_fts @@ to_tsquery('simple', '"+phrase+"')) OR EXISTS (SELECT 1 FROM unnest("+fields+") AS field WHERE field ~* '"+pattern+"'))")
+		// TSQuery contains only letters and digits, so it is safe to inline.
+		phrase := TSQuery([]string{term}, "")
+		clauses = append(clauses, "(m.search_fts @@ to_tsquery('simple', '"+phrase+"') OR m.search_fts @@ '''!!'''::tsquery)")
 	}
 	return strings.Join(clauses, " AND ")
+}
+
+// PostgreSQLBodyPredicate confirms every term against a saturated body copy.
+func PostgreSQLBodyPredicate(arg string, terms []string) string {
+	checks := []string{}
+	for _, term := range terms {
+		canonical := CanonicalFTSText(term)
+		if canonical != "" {
+			checks = append(checks, "strpos(' ' || m.search_fts_body, ' "+canonical+"') > 0")
+		}
+	}
+	if len(checks) == 0 {
+		return "FALSE"
+	}
+	return "(m.search_fts @@ to_tsquery('simple', " + arg + ") AND ((m.search_fts_body IS NULL AND m.search_fts @@ to_tsquery('simple', '" + TSQuery(terms, "D") + "')) OR (m.search_fts_body IS NOT NULL AND " + strings.Join(checks, " AND ") + ")))"
 }
 
 // tokenSpans returns byte offsets of Unicode letter and digit runs.
@@ -117,11 +129,37 @@ func NormalizeFTSText(s string) string {
 	return string(b)
 }
 
+// FoldFTSText maps each output byte boundary back to the original text.
+func FoldFTSText(s string) (string, []int) {
+	var b strings.Builder
+	b.Grow(len(s))
+	offsets := make([]int, 1, len(s)+1)
+	for i, r := range s {
+		end := i + utf8.RuneLen(r)
+		length := end - i
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			length, _ = b.WriteRune(unicode.ToLower(r))
+		} else {
+			for range length {
+				b.WriteByte(' ')
+			}
+		}
+		for j := 1; j <= length; j++ {
+			if j == length {
+				offsets = append(offsets, end)
+			} else {
+				offsets = append(offsets, i)
+			}
+		}
+	}
+	return b.String(), offsets
+}
+
 // TSQuery builds ordered phrases, with a prefix on each final token.
 func TSQuery(terms []string, weight string) string {
 	var groups []string
 	for _, term := range terms {
-		parts := EscapeTSQueryTerm(term)
+		parts := EscapeTSQueryTerm(strings.ToLower(term))
 		for i := range parts {
 			if i == len(parts)-1 {
 				parts[i] += ":*" + weight

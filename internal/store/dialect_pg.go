@@ -329,7 +329,7 @@ func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
 	return col + " IS DISTINCT FROM ?::JSONB"
 }
 
-// BuildFTSArg builds ordered phrases whose final pieces match prefixes.
+// BuildFTSArg builds unordered candidates whose final pieces match prefixes.
 func (d *PostgreSQLDialect) BuildFTSArg(terms []string) string {
 	return sqldialect.PostgreSQLSearchArg(terms)
 }
@@ -412,8 +412,9 @@ func truncateBytesRuneSafe(s string) string {
 // write handles it in upsertFTSOrUnsearchable.
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	vector, args := pgFTSVector(doc)
+	args = append(args, truncateBytesRuneSafe(sqldialect.CanonicalFTSText(truncateBytesRuneSafe(doc.Body))))
 	_, err := q.Exec(
-		`UPDATE messages SET search_fts = v.vector, search_fts_fields = `+pgFTSOverflowFields("v.vector")+`,
+		`UPDATE messages SET search_fts = `+pgFTSMarked("v.vector")+`, search_fts_body = `+pgFTSBody("v.vector", "$7")+`,
 			indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`
 		FROM (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -424,10 +425,11 @@ func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 // FTSMatches compares the stored tsvector with the one FTSUpsert would write.
 func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 	vector, args := pgFTSVector(doc)
+	args = append(args, truncateBytesRuneSafe(sqldialect.CanonicalFTSText(truncateBytesRuneSafe(doc.Body))))
 	var matches bool
 	err := q.QueryRow(
-		`SELECT COALESCE(search_fts = v.vector
-			AND search_fts_fields IS NOT DISTINCT FROM `+pgFTSOverflowFields("v.vector")+`
+		`SELECT COALESCE(search_fts = `+pgFTSMarked("v.vector")+`
+			AND search_fts_body IS NOT DISTINCT FROM `+pgFTSBody("v.vector", "$7")+`
 			AND indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`, FALSE)
 		FROM messages, (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -440,29 +442,40 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 
 // PostgreSQL caps positions at 16383 and stores at most 255 per lexeme.
 // Inspect the completed vector so concatenated fields share the same limit.
-func pgFTSOverflowFields(vector string) string {
-	charCap := strconv.Itoa(maxFTSBodyChars)
-	return `CASE WHEN ` + vector + `::text ~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' OR ` + vector + `::text ~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)' THEN ARRAY[LEFT(COALESCE($2, ''), ` + charCap + `), LEFT(COALESCE($4, ''), ` + charCap + `), LEFT(COALESCE($5, ''), ` + charCap + `), LEFT(COALESCE($6, ''), ` + charCap + `), LEFT(COALESCE($3, ''), ` + charCap + `)] ELSE NULL END`
+func pgFTSIsSaturated(vector string) string {
+	return `((` + vector + `)::text ~ '(^|[ ,:])16383(A|B|C|D)?([, ]|$)' OR (` + vector + `)::text ~ ':[0-9]+[A-D]?(,[0-9]+[A-D]?){254}([, ]|$)')`
+}
+
+func pgFTSBody(vector, body string) string {
+	return `CASE WHEN ` + pgFTSIsSaturated(vector) + ` THEN ` + body + ` ELSE NULL END`
+}
+
+func pgFTSMarked(vector string) string {
+	return vector + ` || CASE WHEN ` + pgFTSIsSaturated(vector) + ` THEN '''!!'':1'::tsvector ELSE ''::tsvector END`
 }
 
 // pgFTSVector returns the bounded tsvector expression for doc and its
 // arguments, with $1 bound to doc.MessageID. The punctuation lexeme inserts
 // a position between fields and cannot appear in a normalized search term.
 func pgFTSVector(doc FTSDoc) (string, []any) {
-	charCap := strconv.Itoa(maxFTSBodyChars)
-	vector := `setweight(to_tsvector('simple', LEFT(COALESCE($2, ''), ` + charCap + `)), 'A') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', LEFT(COALESCE($4, ''), ` + charCap + `)), 'B') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', LEFT(COALESCE($5, ''), ` + charCap + `)), 'C') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', LEFT(COALESCE($6, ''), ` + charCap + `)), 'C') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', LEFT(COALESCE($3, ''), ` + charCap + `)), 'D')`
+	vector := pgFTSVectorFields("$2", "$3", "$4", "$5", "$6")
 	return vector, []any{
 		doc.MessageID,
-		sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Subject)),
-		sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Body)),
-		sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.FromAddr)),
-		sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.ToAddrs)),
-		sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.CcAddrs)),
+		truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Subject)))),
+		truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Body)))),
+		truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.FromAddr)))),
+		truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.ToAddrs)))),
+		truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.CcAddrs)))),
 	}
+}
+
+func pgFTSVectorFields(subject, body, sender, to, cc string) string {
+	charCap := strconv.Itoa(maxFTSBodyChars)
+	return `setweight(to_tsvector('simple', LEFT(COALESCE(` + subject + `, ''), ` + charCap + `)), 'A') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', LEFT(COALESCE(` + sender + `, ''), ` + charCap + `)), 'B') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', LEFT(COALESCE(` + to + `, ''), ` + charCap + `)), 'C') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', LEFT(COALESCE(` + cc + `, ''), ` + charCap + `)), 'C') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', LEFT(COALESCE(` + body + `, ''), ` + charCap + `)), 'D')`
 }
 
 // FTSSearchClause returns SQL fragments for tsvector full-text search.
@@ -470,19 +483,19 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 // Rank uses BuildFTSArg's candidate query, binding the argument a second time.
 func (d *PostgreSQLDialect) FTSSearchClause(rowIDs bool, terms []string) (join, where, orderBy string, orderArgCount int) {
 	return "",
-		sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields", terms, ""),
+		sqldialect.PostgreSQLSearchPredicate("?", terms),
 		"-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?))",
 		1
 }
 
 // FTSDeleteSQL returns the SQL to clear tsvector data for messages belonging to a source.
 func (d *PostgreSQLDialect) FTSDeleteSQL() string {
-	return `UPDATE messages SET search_fts = NULL, search_fts_fields = NULL WHERE source_id = $1`
+	return `UPDATE messages SET search_fts = NULL, search_fts_body = NULL WHERE source_id = $1`
 }
 
 func (d *PostgreSQLDialect) InvalidateFTSForMessage(q querier, messageID int64) error {
 	_, err := q.Exec(
-		"UPDATE messages SET search_fts = NULL, search_fts_fields = NULL, indexing_version = NULL WHERE id = $1",
+		"UPDATE messages SET search_fts = NULL, search_fts_body = NULL, indexing_version = NULL WHERE id = $1",
 		messageID,
 	)
 	return err
@@ -576,7 +589,7 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 	if _, err := q.ExecContext(ctx, "DROP INDEX IF EXISTS messages_search_fts_idx"); err != nil {
 		return fmt.Errorf("drop messages_search_fts_idx: %w", err)
 	}
-	if _, err := q.ExecContext(ctx, "UPDATE messages SET search_fts = NULL, search_fts_fields = NULL"); err != nil {
+	if _, err := q.ExecContext(ctx, "UPDATE messages SET search_fts = NULL, search_fts_body = NULL"); err != nil {
 		return fmt.Errorf("clear search_fts: %w", err)
 	}
 	if _, err := q.ExecContext(ctx,
@@ -666,7 +679,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// column and FTS stays unavailable. Its GIN index is created
 		// separately by EnsureFTSIndex AFTER this migration runs. [cr2-10]
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR`, "search_fts"},
-		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts_fields TEXT[]`, "search_fts_fields"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts_body TEXT`, "search_fts_body"},
 		// embed_gen: per-message vector-embedding watermark. NULL default
 		// means every legacy row reads as "needs embedding", which is
 		// correct — the scan-and-fill worker (and backstop) will embed and

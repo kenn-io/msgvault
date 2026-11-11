@@ -33,7 +33,7 @@ func newFusedFixture(t *testing.T) *fusedFixture {
 	// The shared minimal test schema lacks the inline search_fts column
 	// the fused query reads, so add it here. In production this column
 	// lives on the messages table from the main store schema.
-	_, err := db.ExecContext(t.Context(), `ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR, ADD COLUMN IF NOT EXISTS search_fts_fields TEXT[]`)
+	_, err := db.ExecContext(t.Context(), `ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_fts TSVECTOR, ADD COLUMN IF NOT EXISTS search_fts_body TEXT`)
 	require.NoError(t, err, "add search_fts")
 	_, err = db.ExecContext(t.Context(), `CREATE TABLE IF NOT EXISTS attachments (
         id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -352,7 +352,7 @@ func TestFusedSearchFiltersPhrasesBeforePoolLimit(t *testing.T) {
 	base := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	// Rows 4-6 fill the pool unless the phrase check runs first; only row 7 matches.
 	for id, tail := range map[int64]string{4: "middle example alice", 5: "middle example alice", 6: "middle example alice", 7: "alice example"} {
-		body := strings.Repeat("alice ", 300) + tail
+		body := tail
 		subject := ""
 		if id != 7 {
 			subject = strings.Repeat("alice middle example ", 8)

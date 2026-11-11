@@ -95,6 +95,33 @@ type recordingFTSQuerier struct {
 	all   []string
 }
 
+func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
+	d := &PostgreSQLDialect{}
+	join, where, orderBy, orderArgCount := d.FTSSearchClause(false, nil)
+	assert.Empty(t, join)
+	assert.Equal(t, "m.search_fts @@ to_tsquery('simple', ?)", where)
+	assert.Equal(t, "-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?))", orderBy)
+	assert.Equal(t, 1, orderArgCount)
+}
+
+func TestPostgreSQLDialect_BuildFTSArg(t *testing.T) {
+	d := &PostgreSQLDialect{}
+	for _, tc := range []struct {
+		terms []string
+		want  string
+	}{
+		{[]string{"invoice"}, "invoice:*"},
+		{[]string{"invoice", "review"}, "invoice:* & review:*"},
+		{[]string{"---"}, ""},
+		{[]string{"foo-bar"}, "foo & bar:*"},
+		{[]string{"user@example.com"}, "user & example & com:*"},
+		{[]string{"a.b.c"}, "a & b & c:*"},
+		{[]string{"invoice", "foo-bar"}, "invoice:* & foo & bar:*"},
+	} {
+		assert.Equal(t, tc.want, d.BuildFTSArg(tc.terms))
+	}
+}
+
 func (q *recordingFTSQuerier) Exec(query string, args ...any) (sql.Result, error) {
 	q.query = query
 	q.args = args

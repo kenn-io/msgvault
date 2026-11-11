@@ -144,7 +144,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			_, tsArg := query.PostgreSQLQueryDialect{}.BuildFTSTerm(req.FTSTerms)
 			ftsArg := bind(tsArg)
 			ftsRank := postgresFTSRankExpression("m.search_fts", ftsArg)
-			ftsPredicate := sqldialect.PostgreSQLSearchPredicate(ftsArg, "m.search_fts_fields", req.FTSTerms, "")
+			ftsPredicate := sqldialect.PostgreSQLSearchPredicate(ftsArg, req.FTSTerms)
 			kp1Arg := bind(kPlus1)
 			kArg := bind(req.KPerSignal)
 			// Empty filter: scan messages directly with an inline liveness

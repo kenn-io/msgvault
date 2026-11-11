@@ -6775,7 +6775,7 @@ func (s *Store) EndWaitingProviderAttachments(ctx context.Context, sourceID int6
 
 // markFTSMessageUnsearchable shares the terminal PostgreSQL overflow policy.
 func markFTSMessageUnsearchable(q querier, messageID int64) error {
-	_, err := q.Exec(`UPDATE messages SET search_fts = ''::tsvector, search_fts_fields = NULL, indexing_version = ? WHERE id = ?`, CurrentFTSIndexingVersion, messageID)
+	_, err := q.Exec(`UPDATE messages SET search_fts = ''::tsvector, search_fts_body = NULL, indexing_version = ? WHERE id = ?`, CurrentFTSIndexingVersion, messageID)
 	return err
 }
 
@@ -6990,66 +6990,28 @@ func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *lo
 	return changed, setArchiveMetadataValueTx(ctx, tx, pendingDerivedEmailRevisionKey, "1")
 }
 
-func legacyFTSText(old, stored string) string {
-	parts := strings.Split(truncateBytesRuneSafe(old), " ! ")
-	for i := range parts {
-		parts[i] = sqldialect.NormalizeFTSText(parts[i])
-	}
-	old = strings.Join(parts, " ! ")
-	canonical := func(s string) string { return " " + strings.Join(strings.Fields(strings.ToLower(s)), " ") + " " }
-	if strings.TrimSpace(old) == "" || strings.Contains(canonical(sqldialect.NormalizeFTSText(stored)), canonical(old)) {
-		return ""
-	}
-	return old
-}
-
-// legacyFTSVector reserves an unused word for each gap, then removes it while
-// retaining its position. The overflow text keeps the corresponding ! marker.
-// Words already present in the stored field need no second ranked occurrence.
-func legacyFTSVector(field, stored string) string {
-	return `(SELECT ts_delete(ts_delete(to_tsvector('simple', replace(` + field + `, ' ! ', ' ' || marker || ' ')), marker), tsvector_to_array(to_tsvector('simple', ` + stored + `)))
-		FROM (SELECT 'ftsbreak' || n AS marker FROM generate_series(1, length(` + field + `) + 1) n WHERE strpos(lower(` + field + `), 'ftsbreak' || n) = 0 LIMIT 1) gap)`
-}
-
-// legacyFTSOldJoinSQL recovers a version-2 row's subject, sender, and recipient
-// text from its stored positions, marking gaps and dropping compound-word
-// tokens that duplicate their parts.
-func legacyFTSOldJoinSQL(legacy string) string {
-	return `LEFT JOIN LATERAL (SELECT
-			string_agg(CASE WHEN p.pos <> p.previous + 1 OR p.raw_pos >= 16383 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'A') AS subject,
-			string_agg(CASE WHEN p.pos <> p.previous + 1 OR p.raw_pos >= 16383 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'B') AS sender,
-			CASE WHEN EXISTS (SELECT 1 FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'cc')
-				THEN string_agg(p.lexeme, ' ! ' ORDER BY p.pos) FILTER (WHERE p.weight = 'C')
-				ELSE string_agg(CASE WHEN p.pos <> p.previous + 1 OR p.raw_pos >= 16383 THEN '! ' ELSE '' END || p.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'C') END AS recipient
-			FROM (SELECT lexeme, pos AS raw_pos, pos - skipped AS pos, weight, lag(pos - skipped) OVER (PARTITION BY weight ORDER BY pos) AS previous FROM
-				(SELECT *, count(*) FILTER (WHERE compound) OVER (PARTITION BY weight ORDER BY pos ROWS UNBOUNDED PRECEDING) AS skipped FROM
-					(SELECT e.lexeme, pos, weight, strpos(e.lexeme, '-') > 0 AND EXISTS (SELECT 1 FROM ts_debug('simple', e.lexeme) d WHERE d.token = e.lexeme AND d.alias IN ('asciihword', 'hword', 'numhword')) AS compound FROM unnest(m.search_fts) e CROSS JOIN LATERAL unnest(e.positions, e.weights) p(pos, weight) WHERE ` + legacy + ` AND weight IN ('A', 'B', 'C')) tokens) marked WHERE NOT compound) p) old ON TRUE`
-}
-
 // backfillPostgresFTS locks and indexes bounded pages inside the batch transaction.
 func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query string, fromID, toID int64, useLegacy bool) (int64, error) {
 	env := storedFTSEnvelopeSQL("STRING_AGG")
 	lockSQL := `SELECT m.id FROM messages m WHERE m.id IN (` + query + `) ORDER BY m.id LIMIT 64 FOR UPDATE OF m`
 	charCap := strconv.Itoa(maxFTSBodyChars)
-	legacy := `m.indexing_version = 2 AND m.search_fts IS NOT NULL`
-	terminal := `m.indexing_version IS NOT NULL AND m.search_fts = ''::tsvector`
 	stale := `m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM ` + strconv.Itoa(CurrentFTSIndexingVersion)
 	if !useLegacy {
-		legacy, terminal = "FALSE", "FALSE"
 		stale = "TRUE"
 	}
-	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), COALESCE(` + terminal + `, FALSE),
-		LEFT(COALESCE(old.subject, ''), ` + charCap + `), LEFT(COALESCE(old.sender, ''), ` + charCap + `), LEFT(COALESCE(old.recipient, ''), ` + charCap + `)
-		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id
-		` + legacyFTSOldJoinSQL(legacy) + ` WHERE m.id = ANY(?::bigint[]) AND (` + stale + `) ORDER BY m.id`
-	vector, _ := pgFTSVector(FTSDoc{})
-	replace := strings.NewReplacer("$2", "u.subject", "$3", "u.body", "$4", "u.sender", "$5", "u.to_addrs", "$6", "u.cc_addrs")
-	vector = replace.Replace(vector)
-	hasOld := `u.old_subject <> '' OR u.old_sender <> '' OR u.old_recipient <> ''`
-	vector += ` || CASE WHEN ` + hasOld + ` THEN '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_subject", "u.subject") + `, 'A') || '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_sender", "u.sender") + `, 'B') || '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_recipient", "u.to_addrs || ' ' || u.cc_addrs") + `, 'C') ELSE ''::tsvector END`
-	overflow := replace.Replace(pgFTSOverflowFields("u.vector"))
-	fields := `CASE WHEN ` + hasOld + ` THEN ARRAY[u.subject, u.sender, u.to_addrs, u.cc_addrs, u.body, u.old_subject, u.old_sender] || string_to_array(u.old_recipient, ' ! ') ELSE ` + overflow + ` END`
-	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::boolean[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, terminal, old_subject, old_sender, old_recipient)), v AS (SELECT u.*, CASE WHEN u.terminal THEN ''::tsvector ELSE ` + vector + ` END AS vector FROM u) UPDATE messages m SET search_fts = u.vector, search_fts_fields = ` + fields + `, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
+	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `)
+		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ANY(?::bigint[]) AND (` + stale + `) ORDER BY m.id`
+	vector := pgFTSVectorFields("u.subject", "u.body", "u.sender", "u.to_addrs", "u.cc_addrs")
+	carry := `''::tsvector`
+	if useLegacy {
+		old := `ts_filter(m.search_fts, '{a,b,c}')`
+		// Older indexes may be the only record of a merged recipient address.
+		// Split each punctuated lexeme and leave a gap between recovered values.
+		punctuated := `(SELECT COALESCE(string_agg(regexp_replace(lexeme, '[[:punct:]]+', ' ', 'g'), ' ftsseparator '), '') FROM unnest(` + old + `) WHERE lexeme ~ '[[:punct:]]')`
+		carry = `CASE WHEN m.indexing_version IS DISTINCT FROM ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` AND m.search_fts IS NOT NULL THEN '''!'':1'::tsvector || ` + old + ` || '''!'':1'::tsvector || setweight(ts_delete(to_tsvector('simple', ` + punctuated + `), 'ftsseparator'), 'C') ELSE ''::tsvector END`
+	}
+	completeVector := `(u.vector || ` + carry + `)`
+	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, canonical_body)), v AS (SELECT u.*, ` + vector + ` AS vector FROM u) UPDATE messages m SET search_fts = ` + pgFTSMarked(completeVector) + `, search_fts_body = ` + pgFTSBody(completeVector, "u.canonical_body") + `, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
 	var affected int64
 	for fromID < toID {
 		rows, err := tx.QueryContext(ctx, lockSQL, fromID, toID)
@@ -7082,31 +7044,31 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 		}
 		var ids []int64
 		var subjects, bodies, senders, tos, ccs []string
-		var oldSubjects, oldSenders, oldRecipients []string
-		var terminals []bool
+		var canonicalBodies []string
 		bytes := 0
 		for rows.Next() {
 			var doc FTSDoc
-			var isTerminal bool
-			var oldSubject, oldSender, oldRecipient string
-			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &isTerminal, &oldSubject, &oldSender, &oldRecipient); err != nil {
+			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs); err != nil {
 				_ = rows.Close()
 				return 0, err
 			}
-			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs) + len(oldSubject) + len(oldSender) + len(oldRecipient)
+			subject := truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Subject))))
+			body := truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Body))))
+			sender := truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.FromAddr))))
+			to := truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.ToAddrs))))
+			cc := truncateBytesRuneSafe(strings.ToLower(sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.CcAddrs))))
+			canonicalBody := truncateBytesRuneSafe(sqldialect.CanonicalFTSText(truncateBytesRuneSafe(doc.Body)))
+			size := len(subject) + len(body) + len(sender) + len(to) + len(cc) + len(canonicalBody)
 			if len(ids) > 0 && bytes+size > 4*1024*1024 {
 				break
 			}
 			ids = append(ids, doc.MessageID)
-			subjects = append(subjects, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Subject)))
-			bodies = append(bodies, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.Body)))
-			senders = append(senders, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.FromAddr)))
-			tos = append(tos, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.ToAddrs)))
-			ccs = append(ccs, sqldialect.NormalizeFTSText(truncateBytesRuneSafe(doc.CcAddrs)))
-			oldSubjects = append(oldSubjects, legacyFTSText(oldSubject, doc.Subject))
-			oldSenders = append(oldSenders, legacyFTSText(oldSender, doc.FromAddr))
-			oldRecipients = append(oldRecipients, legacyFTSText(oldRecipient, doc.ToAddrs+" "+doc.CcAddrs))
-			terminals = append(terminals, isTerminal)
+			subjects = append(subjects, subject)
+			bodies = append(bodies, body)
+			senders = append(senders, sender)
+			tos = append(tos, to)
+			ccs = append(ccs, cc)
+			canonicalBodies = append(canonicalBodies, canonicalBody)
 			bytes += size
 		}
 		err = rows.Err()
@@ -7120,7 +7082,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 			fromID = lockedIDs[len(lockedIDs)-1] + 1
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs, terminals, oldSubjects, oldSenders, oldRecipients); err != nil {
+		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs, canonicalBodies); err != nil {
 			return 0, err
 		}
 		affected += int64(len(ids))

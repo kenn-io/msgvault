@@ -477,7 +477,10 @@ func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 	createSearchScopeMessage(t, f, "combining-body", "ordinary", "ordinary", "cafe\u0301teria marker foo.bar", 0, 0)
 	createSearchScopeMessage(t, f, "accent-body", "ordinary", "ordinary", strings.Repeat("résumé "+strings.Repeat("padding ", 60), query.MessageBodyContextMaxSnippets)+"resume marker", 0, 0)
 	createSearchScopeMessage(t, f, "saturated-subject", strings.Repeat("shared ", 300), "ordinary", "shared body marker", 0, 0)
-	createSearchScopeMessage(t, f, "omitted-context", "ordinary", "ordinary", "needle "+strings.Repeat("padding ", 45)+"needle tail-marker", 0, 0)
+	createSearchScopeMessage(t, f, "omitted-context", "ordinary", "ordinary", "soloneedle "+strings.Repeat("padding ", 45)+"soloneedle tail-marker", 0, 0)
+	mergedID := createSearchScopeMessage(t, f, "merged-omitted-context", "ordinary", "ordinary", "alpha needle "+strings.Repeat("padding ", 45)+"needle tail-marker", 0, 0)
+	longID := createSearchScopeMessage(t, f, "late-address", "ordinary", "ordinary", strings.Repeat("padding ", 17000)+"CAFÉ@東京.example appears here", 0, 0)
+	foldedID := createSearchScopeMessage(t, f, "folded-address", "ordinary", "ordinary", strings.Repeat("padding ", 17000)+"Ⱥ@東京.example appears here", 0, 0)
 	_, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
 	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
@@ -489,11 +492,84 @@ func TestSearchMessageBodies_PostgreSQLPhraseContexts(t *testing.T) {
 		require.Len(result.Messages, 1, term)
 		assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), excerpt, term)
 	}
-	result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"needle"}}, 10, 0)
+	result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"soloneedle"}}, 10, 0)
 	require.NoError(err)
 	require.Len(result.Messages, 1)
 	assert.True(result.Messages[0].BodyContextSnippetsTruncated)
 	assert.NotContains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "tail-marker")
+	result, err = searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"alpha", "needle"}}, 10, 0)
+	require.NoError(err)
+	require.Len(result.Messages, 1)
+	assert.Equal(mergedID, result.Messages[0].ID)
+	assert.True(result.Messages[0].BodyContextSnippetsTruncated)
+	assert.NotContains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "tail-marker")
+	result, err = searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"café@東京.exam"}}, 10, 0)
+	require.NoError(err)
+	require.Len(result.Messages, 1)
+	assert.Equal(longID, result.Messages[0].ID)
+	assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "CAFÉ@東京.exam")
+	result, err = searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"ⱥ@東京.exam"}}, 10, 0)
+	require.NoError(err)
+	require.Len(result.Messages, 1)
+	assert.Equal(foldedID, result.Messages[0].ID)
+	assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "Ⱥ@東京.exam")
+}
+
+func TestSearchMessageBodies_PostgreSQLSaturatedPagination(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL indexing")
+	}
+	createSearchScopeMessage(t, f, "false-candidate", "ordinary", "ordinary", strings.Repeat("alpha ", 300)+"middle beta marker", 0, 0)
+	id := createSearchScopeMessage(t, f, "exact-candidate", strings.Repeat("alpha ", 300), "ordinary", "alpha@beta.example marker", 0, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(t, err)
+	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
+	require.True(t, ok)
+	result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"alpha@beta", "marker"}}, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, result.Messages, 1)
+	assert.Equal(t, id, result.Messages[0].ID)
+	assert.Contains(t, strings.Join(result.Messages[0].BodyContextSnippets, " "), "alpha@beta.example")
+	result, err = searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"beta@alpha"}}, 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, result.Messages)
+}
+
+func TestSearchMessageBodies_PostgreSQLSaturatedEditAndRebuild(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL indexing")
+	}
+	id := createSearchScopeMessage(t, f, "edited-body", "ordinary", "ordinary", strings.Repeat("padding ", 17000)+"old@example.test", 0, 0)
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(t, err)
+	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
+	require.True(t, ok)
+	check := func(term string, want []int64) {
+		t.Helper()
+		result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{term}}, 10, 0)
+		require.NoError(t, err)
+		var ids []int64
+		for _, message := range result.Messages {
+			ids = append(ids, message.ID)
+		}
+		assert.Equal(t, want, ids)
+	}
+	check("old@example.test", []int64{id})
+	require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: strings.Repeat("padding ", 17000) + "new@example.test", Valid: true}, sql.NullString{}))
+	_, err = f.Store.RebuildFTS(nil)
+	require.NoError(t, err)
+	check("old@example.test", nil)
+	check("new@example.test", []int64{id})
+	require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: "short@example.test", Valid: true}, sql.NullString{}))
+	_, err = f.Store.RebuildFTS(nil)
+	require.NoError(t, err)
+	check("new@example.test", nil)
+	check("short@example.test", []int64{id})
+	var cleared bool
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts_body IS NULL FROM messages WHERE id = $1`, id).Scan(&cleared))
+	assert.True(t, cleared)
 }
 
 func TestSearchMessageBodies_IgnoresUnsearchableContextGroups(t *testing.T) {

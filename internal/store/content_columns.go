@@ -98,7 +98,7 @@ var MessagesNonContentColumns = []string{
 	"content_changed_at",  // itself
 	"embed_gen",           // embedding watermark -- the whole reason this list exists
 	"search_fts",          // PostgreSQL-only tsvector, maintained by the FTS path
-	"search_fts_fields",   // PostgreSQL-only derived search data
+	"search_fts_body",     // PostgreSQL-only derived search data
 }
 
 // contentChangedTriggerColumnList renders MessagesContentColumns for a
