@@ -95,7 +95,9 @@ func (a commitmentEvidenceAligner) Align(_ context.Context, input personfacts.Ev
 
 // Match an exact locator first. A unique overlapping re-quote is another
 // description of the existing promise. A span covering several promises is
-// ambiguous and cannot replace one of their owner decisions.
+// ambiguous and cannot replace one of their owner decisions. With replacements,
+// a stale row is a candidate only until a live promise owns the range; the first
+// live match discards stale candidates and later ones.
 func (s *Store) matchCommitmentLocator(ctx context.Context, reader contextRowsQuerier, personID, messageID int64, promise peoplesweep.CommitmentPromise, source peoplesweep.CommitmentSource, replacements bool) (PersonCommitment, bool, error) {
 	rows, err := reader.QueryContext(ctx, `SELECT `+commitmentColumns+` FROM person_commitments
 		WHERE person_id = ? AND anchor_message_id = ? AND direction = ? ORDER BY id`, personID, messageID, promise.Direction)
@@ -109,15 +111,15 @@ func (s *Store) matchCommitmentLocator(ctx context.Context, reader contextRowsQu
 		if err != nil {
 			return PersonCommitment{}, false, err
 		}
-		located, live := locateCommitmentQuote(source, existing)
-		if live {
-			existing = located
-		} else if !replacements {
+		existing, live := locateCommitmentQuote(source, existing)
+		overlaps := existing.Start < promise.End && existing.End > promise.Start
+		if !overlaps || (!live && !replacements) {
 			continue
 		}
-		if existing.Start < promise.End && existing.End > promise.Start {
-			matches = append(matches, existing)
+		if live && replacements {
+			matches, replacements = nil, false
 		}
+		matches = append(matches, existing)
 	}
 	if err := rows.Err(); err != nil || len(matches) == 0 {
 		return PersonCommitment{}, false, err
@@ -312,7 +314,7 @@ func (s *Store) withdrawnCommitmentFulfilment(ctx context.Context, personID int6
 	if err != nil || evidence.ID == 0 {
 		return 0, err
 	}
-	if !evidence.Supported || anchor.ReopenedAt != nil && !evidence.Input.EventTime.After(*anchor.ReopenedAt) {
+	if !commitmentFulfilmentCurrent(evidence, anchor.PromisedAt, anchor.ReopenedAt) {
 		return evidence.ID, nil
 	}
 	_, live, err := s.currentCommitmentCitation(ctx, personID, anchor.Direction, evidence.Input, s.currentCommitmentSource)
@@ -411,11 +413,15 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 	return s.saveCommitmentFrontierTx(ctx, tx, request, prepared, newAnchorNeedsReplay)
 }
 
-// Vacate every refreshed locator before writing final coordinates. Exact
-// authored promises can swap positions; ordering their final writes cannot
-// break that unique-key cycle. Temporary ranges exist only in this transaction.
+// Vacate every refreshed locator, and any other row still occupying a final
+// destination, before writing final coordinates. Exact authored promises can
+// swap positions; ordering their final writes cannot break that unique-key
+// cycle. Refreshed rows are rewritten in this transaction. A displaced omitted
+// row keeps its identity, decision and history; its parked range lies beyond
+// every quote, and its quote still relocates by text, so a later extraction
+// can reattach it.
 func (s *Store) vacateCommitmentLocatorsTx(ctx context.Context, tx *loggedTx, personID int64, promises []preparedCommitmentPromise) error {
-	if !slices.ContainsFunc(promises, func(p preparedCommitmentPromise) bool { return p.existingID != 0 }) {
+	if len(promises) == 0 {
 		return nil
 	}
 	var end int64
@@ -426,14 +432,12 @@ func (s *Store) vacateCommitmentLocatorsTx(ctx context.Context, tx *loggedTx, pe
 		end = max(end, p.promise.End)
 	}
 	for _, p := range promises {
-		if p.existingID == 0 {
-			continue
+		// Adding the row ID keeps every parked range distinct.
+		if _, err := tx.ExecContext(ctx, `UPDATE person_commitments SET quote_start = ? + id, quote_end = ? + id
+			WHERE person_id = ? AND (id = ? OR (anchor_message_id = ? AND direction = ? AND quote_start = ? AND quote_end = ?))`,
+			end+1, end+2, personID, p.existingID, p.source.MessageID, p.promise.Direction, p.promise.Start, p.promise.End); err != nil {
+			return fmt.Errorf("vacate commitment locator: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE person_commitments SET quote_start = ?, quote_end = ?
-			WHERE id = ? AND person_id = ?`, end+1, end+2, p.existingID, personID); err != nil {
-			return fmt.Errorf("vacate refreshed commitment locator: %w", err)
-		}
-		end += 2
 	}
 	return nil
 }
