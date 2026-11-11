@@ -562,15 +562,16 @@ ignored.
 
 ## API schema version maintenance
 
-When the generated HTTP API documents change, bump `APISchemaVersion` in
-`internal/api/openapi.go` and run `make api-generate` and `make web-generate`.
+When the generated HTTP API documents, including descriptions, change, bump
+`APISchemaVersion` in `internal/api/openapi.go` and run `make api-generate` and
+`make web-generate`.
 `TestAPISchemaVersionContract` hashes both complete documents, except for
 `info.version`, and prints the path of an empty marker to add under
 `internal/api/testdata/api-version-contracts/`. Keep existing markers. If two
 changes use the same version, take the next minor version and move any feature
-minimum constants introduced by your change to that version. Description changes
-also require a bump. Handler changes that leave the documents unchanged still
-need an explicit version bump when they change the API contract.
+minimum constants introduced by your change to that version. Handler changes
+that leave the documents unchanged still need an explicit version bump when they
+change the API contract.
 
 Add the change to the version-history comment above `APISchemaVersion`. The test
 compares markers with `origin/main` when available. To reproduce the CI history
