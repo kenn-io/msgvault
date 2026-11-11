@@ -31,7 +31,7 @@ func TestXRemovalSuppressesEveryAliasAndNewerIntersectingVersion(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.Equal([]int64{saved.MessageID}, work.MessageIDs)
 	_testAssert.True(work.Pending)
-	body, err := st.GetMessageBodyText(saved.MessageID)
+	body, err := st.GetMessageBodyText(t.Context(), saved.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Empty(body)
 	raw, err := st.GetMessageRaw(saved.MessageID)
@@ -67,7 +67,7 @@ func TestXRemovalSuppressesEveryAliasAndNewerIntersectingVersion(t *testing.T) {
 	after, err := st.LoadXControlContext(t.Context(), source)
 	_testRequire.NoError(err)
 	_testAssert.Equal(before, after)
-	body, err = st.GetMessageBodyText(saved.MessageID)
+	body, err = st.GetMessageBodyText(t.Context(), saved.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Empty(body)
 }
@@ -134,7 +134,7 @@ func TestXRemovalPreservesIndependentAuthorSupport(t *testing.T) {
 	defer func() { assert.NoError(t, execution.Release()) }()
 	_, err = st.RemoveXPostContentContext(t.Context(), source, "100", "removed")
 	_testRequire.NoError(err)
-	text, err := st.GetMessageBodyText(kept.MessageID)
+	text, err := st.GetMessageBodyText(t.Context(), kept.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Equal("independent payload", text)
 	var name sql.NullString

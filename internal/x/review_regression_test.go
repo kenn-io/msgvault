@@ -130,7 +130,7 @@ func TestXExpandedAuthorErrorCannotRemoveCollidingPost(t *testing.T) {
 			pending, err := st.XCleanupPendingContext(t.Context())
 			require.NoError(err)
 			assert.False(pending)
-			body, err := st.GetMessageBodyText(saved.MessageID)
+			body, err := st.GetMessageBodyText(t.Context(), saved.MessageID)
 			require.NoError(err)
 			assert.Equal("unrelated retained post", body)
 			walk, err := prepareTimelineWalk("1001", "mentions", nil, time.Time{}, at.Add(time.Hour))

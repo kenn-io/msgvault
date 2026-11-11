@@ -285,7 +285,7 @@ func TestXSubsetReplyRequiresOwnerOptInAndCanSendBeforeSync(t *testing.T) {
 	_testRequire.NoError(source.Close())
 
 	destinationDir := filepath.Join(t.TempDir(), "subset")
-	_, err = store.CopySubset(sourcePath, destinationDir, 1, false)
+	_, err = store.CopySubset(t.Context(), sourcePath, destinationDir, 1, false)
 	_testRequire.NoError(err)
 	subset, err := store.Open(filepath.Join(destinationDir, "msgvault.db"))
 	_testRequire.NoError(err)

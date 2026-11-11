@@ -30,7 +30,7 @@ func xReplyPeer(t *testing.T, st *store.Store) *store.Store {
 	} else {
 		require.NoError(t, st.DB().QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path))
 	}
-	peer, err := store.OpenForTest(path)
+	peer, err := store.OpenForTest(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, peer.Close()) })
 	return peer

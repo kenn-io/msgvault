@@ -16,7 +16,7 @@ func TestXArchiveRegisteredUsernameSurvivesSourceLabelChanges(t *testing.T) {
 	stageXRecord(t, f.cfg, xTestRecord("old-access"))
 	_, err := f.run(t, f.clientConfig(t), "--register", "--user-id", "1001", "--json")
 	_testRequire.NoError(err)
-	source, err := f.st.GetSourceByTypeAndIdentifier("x", "1001")
+	source, err := f.st.GetSourceByTypeAndIdentifier(t.Context(), "x", "1001")
 	_testRequire.NoError(err)
 	_testRequire.NoError(f.st.UpdateSourceDisplayName(source.ID, "Synthetic archive label"))
 	state, err := f.st.LoadXControlContext(t.Context(), source.ID)

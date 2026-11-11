@@ -936,7 +936,7 @@ func (s *Store) ResolveXParentsContext(ctx context.Context, source, after int64,
 	if err := s.requireSyncSource(source); err != nil {
 		return 0, err
 	}
-	candidates, err := s.ListUnresolvedMessageRepliesAfterContext(ctx, source, "x", after, limit)
+	candidates, err := s.ListUnresolvedMessageRepliesAfterContext(ctx, source, "x", after, limit, 0)
 	if err != nil {
 		return 0, err
 	}

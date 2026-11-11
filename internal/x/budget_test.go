@@ -650,7 +650,7 @@ func TestXReadModelExcessPersistsAcrossRestart(t *testing.T) {
 	_testRequire.Len(state.Reservations, 1)
 	original := state.Reservations[0]
 	_testRequire.NoError(handle.Close())
-	reopened, err := store.OpenForTest(path)
+	reopened, err := store.OpenForTest(t.Context(), path)
 	_testRequire.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, reopened.Close()) })
 	execution, err := reopened.AcquireSyncExecutionContext(t.Context(), f.source)

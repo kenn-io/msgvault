@@ -91,7 +91,7 @@ func TestXSourceRemovalWaitsForCrossSourceContentCleanup(t *testing.T) {
 	_testRequire.NoError(err)
 	_, err = stage.Load(t.Context(), f.source.Identifier)
 	_testRequire.NoError(err)
-	body, err := f.st.GetMessageBodyText(saved.MessageID)
+	body, err := f.st.GetMessageBodyText(t.Context(), saved.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Equal("surviving source copy", body)
 	var pending int

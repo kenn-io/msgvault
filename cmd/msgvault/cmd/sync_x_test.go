@@ -816,7 +816,7 @@ func TestSyncXOrdinaryCollectionInstallsActualCleanup(t *testing.T) {
 	f.deps.httpClient = provider.Client()
 	_, _, err = f.run(t, f.clientConfig(t), "--source-id", strconv.FormatInt(f.source.ID, 10), "--json", "--no-build-cache")
 	_testRequire.NoError(err)
-	body, err := f.st.GetMessageBodyText(saved.MessageID)
+	body, err := f.st.GetMessageBodyText(t.Context(), saved.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Empty(body)
 	pending, err := f.st.XCleanupPendingContext(t.Context())

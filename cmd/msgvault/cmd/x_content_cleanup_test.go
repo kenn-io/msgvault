@@ -124,9 +124,9 @@ func TestXRemovalLeavesNoReadableCopy(t *testing.T) {
 	var engine = query.NewEngine(f.st.DB(), f.st.IsPostgreSQL())
 	var duck *query.DuckDBEngine
 	if !f.st.IsPostgreSQL() {
-		_, err := buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+		_, err := buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 		_testRequire.NoError(err)
-		duck, err = query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
+		duck, err = query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
 		_testRequire.NoError(err)
 		t.Cleanup(func() { assert.NoError(t, duck.Close()) })
 		engine = duck
@@ -191,7 +191,7 @@ func TestXRemovalLeavesNoReadableCopy(t *testing.T) {
 	if duck != nil {
 		_, err := duck.QuerySQL(t.Context(), `SELECT 1`)
 		_testRequire.Error(err)
-		fresh, err := query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
+		fresh, err := query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
 		_testRequire.NoError(err)
 		defer func() { assert.NoError(t, fresh.Close()) }()
 		decoded, err := fresh.QuerySQL(t.Context(), `SELECT * FROM read_parquet('`+filepath.ToSlash(filepath.Join(f.cfg.AnalyticsDir(), "messages", "**", "*.parquet"))+`')`)
@@ -284,9 +284,9 @@ func TestXRemovalAlreadyOpenParquetReaderRejectsPending(t *testing.T) {
 	if f.st.IsPostgreSQL() {
 		t.Skip("Parquet is the SQLite analytics path")
 	}
-	_, err := buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 	_testRequire.NoError(err)
-	duck, err := query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
+	duck, err := query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
 	_testRequire.NoError(err)
 	defer func() { assert.NoError(t, duck.Close()) }()
 	_, err = duck.QuerySQL(t.Context(), `SELECT count(*) FROM messages`)
@@ -308,14 +308,14 @@ func TestXRemovalClosesRetiredAnalyticsAndOwnedTempDirectories(t *testing.T) {
 	if f.st.IsPostgreSQL() {
 		t.Skip("DuckDB handles apply to the SQLite cache")
 	}
-	_, err := buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 	_testRequire.NoError(err)
 	var engines []*query.DuckDBEngine
 	var paths []string
 	for i := range 2 {
 		path := filepath.Join(f.cfg.Data.DataDir, fmt.Sprintf("owned-query-%d", i))
 		_testRequire.NoError(os.MkdirAll(path, 0700))
-		engine, err := query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2, TempDirectory: path, OwnTempDirectory: true})
+		engine, err := query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2, TempDirectory: path, OwnTempDirectory: true})
 		_testRequire.NoError(err)
 		engines = append(engines, engine)
 		paths = append(paths, path)
@@ -354,7 +354,7 @@ func TestXRemovalClosesRetiredAnalyticsAndOwnedTempDirectories(t *testing.T) {
 	// Simulate a background initializer that publishes only after cleanup.
 	latePath := filepath.Join(f.cfg.Data.DataDir, "late-owned-query")
 	_testRequire.NoError(os.MkdirAll(latePath, 0700))
-	late, err := query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2, TempDirectory: latePath, OwnTempDirectory: true})
+	late, err := query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2, TempDirectory: latePath, OwnTempDirectory: true})
 	_testRequire.NoError(err)
 	server.SetAnalyticsEngine(late, api.AnalyticsModeDuckDB)
 	_, err = late.QuerySQL(t.Context(), `SELECT 1`)
@@ -364,7 +364,7 @@ func TestXRemovalClosesRetiredAnalyticsAndOwnedTempDirectories(t *testing.T) {
 
 	stalePath := filepath.Join(f.cfg.Data.DataDir, "stale-generation-query")
 	_testRequire.NoError(os.MkdirAll(stalePath, 0700))
-	stale, err := query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2, TempDirectory: stalePath, OwnTempDirectory: true})
+	stale, err := query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2, TempDirectory: stalePath, OwnTempDirectory: true})
 	_testRequire.NoError(err)
 	_testAssert.False(server.SetAnalyticsEngineForGeneration(staleGeneration, stale, api.AnalyticsModeDuckDB),
 		"a worker opened before cleanup cannot replace the fresh generation")
@@ -396,7 +396,7 @@ func TestXRemovalDuringSQLFallbackInitializationReopensFreshAnalytics(t *testing
 			return err
 		}
 		defer func() { _ = lock.Unlock() }()
-		_, err = buildCacheLocked(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true, false, acquirePublishLock)
+		_, err = buildCacheLocked(ctx, f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true, false)
 		return err
 	})
 
@@ -490,7 +490,7 @@ func TestXRemovalBetweenAnalyticsSnapshotAndRetirementReopensFreshAnalytics(t *t
 			return err
 		}
 		defer func() { _ = lock.Unlock() }()
-		_, err = buildCacheLocked(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true, false, acquirePublishLock)
+		_, err = buildCacheLocked(ctx, f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true, false)
 		return err
 	})
 
@@ -629,7 +629,7 @@ func TestXRemovalResumeBatchesPendingVectorAndCacheCleanup(t *testing.T) {
 	}
 	_testRequire.NoError(execution.Release())
 	if !f.st.IsPostgreSQL() {
-		_, err = buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+		_, err = buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 		_testRequire.NoError(err)
 	}
 
@@ -804,7 +804,7 @@ func TestXRemovalSemanticRouteUsesActualDeletedVectors(t *testing.T) {
 	_, err = cleaner.RemovePost(t.Context(), f.source, "100", "removed")
 	_testRequire.NoError(err)
 	_testAssert.NotContains(read(), f.message)
-	body, err := f.st.GetMessageBodyText(seed.MessageID)
+	body, err := f.st.GetMessageBodyText(t.Context(), seed.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Equal("independent seed", body)
 }
@@ -817,7 +817,7 @@ func TestXRemovalCachePublicationRace(t *testing.T) {
 	if f.st.IsPostgreSQL() {
 		t.Skip("Parquet publication applies to SQLite")
 	}
-	_, err := buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 	_testRequire.NoError(err)
 	captured := make(chan struct{})
 	releaseBuild := make(chan struct{})
@@ -832,7 +832,10 @@ func TestXRemovalCachePublicationRace(t *testing.T) {
 		}
 	})
 	built := make(chan error, 1)
-	go func() { _, err := buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true); built <- err }()
+	go func() {
+		_, err := buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+		built <- err
+	}()
 	select {
 	case <-captured:
 	case <-time.After(30 * time.Second):
@@ -855,13 +858,13 @@ func TestXRemovalCachePublicationRace(t *testing.T) {
 		}
 		return !ok
 	}, 30*time.Second, 20*time.Millisecond)
-	body, err := f.st.GetMessageBodyText(f.message)
+	body, err := f.st.GetMessageBodyText(t.Context(), f.message)
 	_testRequire.NoError(err)
 	_testAssert.Contains(body, "constellation")
 	close(releaseBuild)
 	_testRequire.NoError(<-built)
 	_testRequire.NoError(<-removed)
-	fresh, err := query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
+	fresh, err := query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
 	_testRequire.NoError(err)
 	defer func() { assert.NoError(t, fresh.Close()) }()
 	decoded, err := fresh.QuerySQL(t.Context(), `SELECT * FROM messages`)
@@ -905,12 +908,12 @@ func TestXRemovalRetriesFailedOwnedSpillCleanup(t *testing.T) {
 	if f.st.IsPostgreSQL() {
 		t.Skip("DuckDB spill applies to SQLite")
 	}
-	_, err := buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 	_testRequire.NoError(err)
 	parent := filepath.Join(f.cfg.Data.DataDir, "restricted-spill-parent")
 	path := filepath.Join(parent, "engine-owned")
 	_testRequire.NoError(os.MkdirAll(path, 0700))
-	engine, err := query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2, TempDirectory: path, OwnTempDirectory: true})
+	engine, err := query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2, TempDirectory: path, OwnTempDirectory: true})
 	_testRequire.NoError(err)
 	t.Cleanup(func() { _ = os.Chmod(parent, 0700); _ = os.Chmod(path, 0700); assert.NoError(t, engine.Close()) })
 	_testRequire.
@@ -950,7 +953,7 @@ func TestXContentSpillCrashHelper(t *testing.T) {
 	//nolint:usetesting // The child must leave this crash spill for the parent process to recover.
 	path, err := os.MkdirTemp(parent, "engine-crash-")
 	_testRequire.NoError(err)
-	engine, err := query.NewDuckDBEngine("", "", nil, query.DuckDBOptions{TempDirectory: path, OwnTempDirectory: true, Threads: 2})
+	engine, err := query.NewDuckDBEngine(t.Context(), "", "", nil, query.DuckDBOptions{TempDirectory: path, OwnTempDirectory: true, Threads: 2})
 	_testRequire.NoError(err)
 	_, err = engine.QuerySQL(t.Context(), `SELECT 'fixture constellation bytes'`)
 	_testRequire.NoError(err)
@@ -1000,7 +1003,7 @@ func TestXRemovalRebuildsCachePublishedWhileWaitingForBuilder(t *testing.T) {
 	t.Cleanup(func() { releaseBuilder(); releaseCleanup(); cancel(); wg.Wait() })
 	built, removed := make(chan error, 1), make(chan error, 1)
 	wg.Go(func() {
-		_, err := buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+		_, err := buildCache(t.Context(), cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
 		built <- err
 	})
 	select {
@@ -1046,7 +1049,7 @@ func TestXRemovalRebuildsCachePublishedWhileWaitingForBuilder(t *testing.T) {
 	readiness, err := query.InspectCacheReadiness(cfg.AnalyticsDir())
 	_testRequire.NoError(err)
 	_testRequire.Equal(query.CacheReady, readiness)
-	before, err := query.NewDuckDBEngine(cfg.AnalyticsDir(), cfg.DatabaseDSN(), st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
+	before, err := query.NewDuckDBEngine(t.Context(), cfg.AnalyticsDir(), cfg.DatabaseDSN(), st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
 	_testRequire.NoError(err)
 	rows, err := before.QuerySQL(ctx, `SELECT * FROM messages`)
 	_testRequire.NoError(err)
@@ -1062,7 +1065,7 @@ func TestXRemovalRebuildsCachePublishedWhileWaitingForBuilder(t *testing.T) {
 	readiness, err = query.InspectCacheReadiness(cfg.AnalyticsDir())
 	_testRequire.NoError(err)
 	_testRequire.Equal(query.CacheReady, readiness, "a cache published by the drained builder must be rebuilt after removal")
-	fresh, err := query.NewDuckDBEngine(cfg.AnalyticsDir(), cfg.DatabaseDSN(), st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
+	fresh, err := query.NewDuckDBEngine(t.Context(), cfg.AnalyticsDir(), cfg.DatabaseDSN(), st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
 	_testRequire.NoError(err)
 	defer func() { assert.NoError(t, fresh.Close()) }()
 	rows, err = fresh.QuerySQL(ctx, `SELECT * FROM messages`)
@@ -1083,9 +1086,9 @@ func TestXRemovalInvalidatesOldMaterializedSearch(t *testing.T) {
 		t.Skip("SQLite Parquet reader")
 	}
 	f := newXCleanupFixture(t)
-	_, err := buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+	_, err := buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 	_testRequire.NoError(err)
-	duck, err := query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
+	duck, err := query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
 	_testRequire.NoError(err)
 	defer func() { assert.NoError(t, duck.Close()) }()
 	page, err := duck.SearchFastWithStats(t.Context(), &search.Query{TextTerms: []string{"constellation"}}, "constellation", query.MessageFilter{}, query.ViewNoStats, 10, 0)

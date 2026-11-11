@@ -362,7 +362,7 @@ func (c *XContentCleanup) removeXContentsBatch(ctx context.Context, groups []sto
 		}
 	}
 	if hadCache && !c.store.IsPostgreSQL() {
-		if _, err := buildCacheLocked(c.cfg.DatabaseDSN(), c.cfg.AnalyticsDir(), true, false, publishLockHeld); err != nil {
+		if _, err := buildCacheLocked(ctx, c.cfg.DatabaseDSN(), c.cfg.AnalyticsDir(), true, false, analyticsBuilderOverrides(c.cfg.Analytics)); err != nil {
 			return work, err
 		}
 	}

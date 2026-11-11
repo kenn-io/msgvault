@@ -94,7 +94,7 @@ func TestXDraftAdmissionFreezesAndRetainsReceipt(t *testing.T) {
 	_testAssert.Equal(int64(200_000), state.SpendBuckets[0].SpentMicros)
 	target, err := st.ResolveXPostContext(t.Context(), d.SourceID, "9001")
 	_testRequire.NoError(err)
-	body, err := st.GetMessageBodyText(target.MessageID)
+	body, err := st.GetMessageBodyText(t.Context(), target.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Equal(d.Body, body)
 	// Receipts are independent of drafts, but source removal owns their lifetime.

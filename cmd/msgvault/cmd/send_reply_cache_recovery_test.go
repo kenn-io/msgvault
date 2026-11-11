@@ -85,7 +85,7 @@ func TestXReplyWritesRefreshRealAnalyticsWithoutScheduledSync(t *testing.T) {
 				if err := f.st.BackupDatabase(cacheDB); err != nil {
 					return fmt.Errorf("snapshot reply archive: %w", err)
 				}
-				_, err = buildCache(cacheDB, analyticsDir, true)
+				_, err = buildCache(t.Context(), cacheDB, analyticsDir, true)
 				if err != nil {
 					return fmt.Errorf("build reply analytics: %w", err)
 				}
@@ -112,7 +112,7 @@ func TestXReplyWritesRefreshRealAnalyticsWithoutScheduledSync(t *testing.T) {
 			target, err := f.st.ResolveXPostContext(t.Context(), f.source.ID, "9001")
 			require.NoError(err)
 			require.Positive(target.MessageID)
-			engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+			engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 			require.NoError(err)
 			t.Cleanup(func() { assert.NoError(engine.Close()) })
 			results, err := engine.SearchFast(t.Context(), search.Parse(needle), query.MessageFilter{}, 100, 0)

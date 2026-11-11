@@ -14,7 +14,7 @@ func TestXBudgetTransactionRollbackAndScopedFence(t *testing.T) {
 	_testAssert := assert.New(t)
 	_testRequire := require.New(t)
 
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "budget.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "budget.db"))
 	_testRequire.NoError(err)
 	defer func() { assert.NoError(t, st.Close()) }()
 	_testRequire.NoError(st.InitSchema())

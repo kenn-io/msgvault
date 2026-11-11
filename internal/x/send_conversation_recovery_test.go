@@ -95,7 +95,7 @@ func TestXReplyRecoveryAfterConversationConsolidation(t *testing.T) {
 				reply, err := f.st.ResolveXPostContext(t.Context(), f.source.ID, "9001")
 				require.NoError(err)
 				assert.Equal(target.ConversationID, reply.ConversationID)
-				body, err := f.st.GetMessageBodyText(reply.MessageID)
+				body, err := f.st.GetMessageBodyText(t.Context(), reply.MessageID)
 				require.NoError(err)
 				assert.Equal("provider reply", body)
 			} else {

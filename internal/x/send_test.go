@@ -157,7 +157,7 @@ func openSendStore(t *testing.T, st *store.Store, closeOld bool) *store.Store {
 	if closeOld {
 		require.NoError(t, st.Close())
 	}
-	peer, err := store.OpenForTest(path)
+	peer, err := store.OpenForTest(t.Context(), path)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, peer.Close()) })
 	return peer

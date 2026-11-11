@@ -49,7 +49,7 @@ func TestXIDOnlyRemovalJoinsArchivedEditChain(t *testing.T) {
 				require.NoError(err)
 				work.DerivedComplete = true
 				require.NoError(st.FinishXRemovalContext(t.Context(), source, work))
-				body, err := st.GetMessageBodyText(saved.MessageID)
+				body, err := st.GetMessageBodyText(t.Context(), saved.MessageID)
 				require.NoError(err)
 				assert.Empty(body)
 				_, err = st.GetMessageRaw(saved.MessageID)
@@ -102,7 +102,7 @@ func TestXCompletedForeignRemovalQueuesNewlyLinkedEdit(t *testing.T) {
 	require.NoError(err)
 	work.DerivedComplete = true
 	require.NoError(st.FinishXRemovalContext(t.Context(), source, work))
-	body, err := st.GetMessageBodyText(saved.MessageID)
+	body, err := st.GetMessageBodyText(t.Context(), saved.MessageID)
 	require.NoError(err)
 	assert.Empty(body)
 }

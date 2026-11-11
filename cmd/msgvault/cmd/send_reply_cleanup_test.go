@@ -213,7 +213,7 @@ func TestXReplyMismatchKeepsUnavailableAdoptionEvidence(t *testing.T) {
 			_testRequire.NoError(err)
 			_testAssert.Equal("public", unrequestedTarget.Availability,
 				"a terminal result outside the requested-ID set must not suppress unrelated aliases")
-			unrequestedBody, err := f.st.GetMessageBodyText(unrequestedCopy.MessageID)
+			unrequestedBody, err := f.st.GetMessageBodyText(t.Context(), unrequestedCopy.MessageID)
 			_testRequire.NoError(err)
 			_testAssert.Equal("synthetic unrelated reply body", unrequestedBody)
 			var bodies int

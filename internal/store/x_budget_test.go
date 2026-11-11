@@ -78,7 +78,7 @@ func TestBudgetSurvivesRestartAndUTCMonth(t *testing.T) {
 	st, id, cost := xBudgetFixture(t)
 	old, err := st.ReserveXRequestContext(t.Context(), id, cost)
 	_testRequire.NoError(err)
-	peer, err := store.OpenForTest(store.DBPathForTest(st))
+	peer, err := store.OpenForTest(t.Context(), store.DBPathForTest(st))
 	_testRequire.NoError(err)
 	defer func() { assert.NoError(t, peer.Close()) }()
 	cost.At = cost.At.Add(2 * time.Minute)
@@ -105,7 +105,7 @@ func TestXBudgetConcurrentAdmissionHasOneWinner(t *testing.T) {
 	_testRequire := require.New(t)
 
 	st, id, cost := xBudgetFixture(t)
-	peer, err := store.OpenForTest(store.DBPathForTest(st))
+	peer, err := store.OpenForTest(t.Context(), store.DBPathForTest(st))
 	_testRequire.NoError(err)
 	defer func() { assert.NoError(t, peer.Close()) }()
 	start := make(chan struct{})

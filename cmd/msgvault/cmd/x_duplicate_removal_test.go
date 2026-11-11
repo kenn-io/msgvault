@@ -47,9 +47,9 @@ func TestXRemovalDuplicateNativeContentAcrossSources(t *testing.T) {
 	}
 	var engine = query.NewEngine(f.st.DB(), f.st.IsPostgreSQL())
 	if !f.st.IsPostgreSQL() {
-		_, err := buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+		_, err := buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 		_testRequire.NoError(err)
-		duck, err := query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
+		duck, err := query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
 		_testRequire.NoError(err)
 		engine = duck
 		t.Cleanup(func() { assert.NoError(t, duck.Close()) })
@@ -103,7 +103,7 @@ func TestXRemovalDuplicateNativeContentAcrossSources(t *testing.T) {
 		_testAssert.Zero(stats.EmbeddingCount, "generation %d", gen)
 	}
 	if !f.st.IsPostgreSQL() {
-		fresh, err := query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
+		fresh, err := query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
 		_testRequire.NoError(err)
 		defer func() { assert.NoError(t, fresh.Close()) }()
 		rows, err := fresh.QuerySQL(t.Context(), `SELECT * FROM read_parquet('`+strings.ReplaceAll(filepath.ToSlash(filepath.Join(f.cfg.AnalyticsDir(), "messages", "**", "*.parquet")), "'", "''")+`')`)
@@ -143,7 +143,7 @@ func TestXRemovalSourceOwnedCallbackDefersDuplicatesWithoutNestedLocks(t *testin
 	_testRequire.ErrorIs(err, store.ErrXRemovalNeedsOwner)
 	// The callback's generation fence cannot mutate the foreign source. Its
 	// existing readable copy remains gated by the durable global pending flag.
-	body, err := f.st.GetMessageBodyText(duplicate.MessageID)
+	body, err := f.st.GetMessageBodyText(t.Context(), duplicate.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Equal("erased constellation secret", body)
 	_, err = cleaner.AcquireRead(ctx)
@@ -151,7 +151,7 @@ func TestXRemovalSourceOwnedCallbackDefersDuplicatesWithoutNestedLocks(t *testin
 	_testRequire.NoError(f.st.CompleteSyncContext(ctx, run, ""))
 	_testRequire.NoError(execution.Release())
 	_testRequire.NoError(cleaner.Resume(ctx))
-	body, err = f.st.GetMessageBodyText(duplicate.MessageID)
+	body, err = f.st.GetMessageBodyText(t.Context(), duplicate.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Empty(body)
 	pending, err := f.st.XCleanupPendingContext(ctx)
@@ -220,7 +220,7 @@ func TestXRemovalNewEditLinkQueuesForeignCopyCleanup(t *testing.T) {
 			}
 			_testRequire.Error(readErr)
 			_testRequire.NoError(cleaner.Resume(t.Context()))
-			body, err := f.st.GetMessageBodyText(foreignCopy.MessageID)
+			body, err := f.st.GetMessageBodyText(t.Context(), foreignCopy.MessageID)
 			_testRequire.NoError(err)
 			_testAssert.Empty(body)
 			stats, err := f.backend.Stats(t.Context(), gen)

@@ -138,8 +138,8 @@ const postgresPersonMergeReferenceQuery = `SELECT child.relname, columns.attname
 func TestPostgresPersonMergeInventoryIncludesCompositeColumns(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	dbURL := skipUnlessPostgresInternal(t)
-	st := newPGStoreInternal(t, dbURL)
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	_, err := st.db.Exec(`CREATE UNIQUE INDEX test_person_inventory_identity ON persons(id,vcard_uid)`)
 	require.NoError(err)
 	_, err = st.db.Exec(`CREATE TABLE test_person_inventory_composite (

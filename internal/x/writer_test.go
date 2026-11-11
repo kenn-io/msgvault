@@ -55,7 +55,7 @@ func TestWritePageAvailabilityAndAuthorRaw(t *testing.T) {
 				_testAssert.True(pending, "first-seen protected IDs retain their cleanup obligation")
 				return
 			}
-			body, err := st.GetMessageBodyText(target.MessageID)
+			body, err := st.GetMessageBodyText(t.Context(), target.MessageID)
 			_testRequire.NoError(err)
 			_testAssert.Equal("synthetic constellation", body)
 			raw, err := st.GetMessageRaw(target.MessageID)
@@ -193,7 +193,7 @@ func TestXPropertyMinimalEditConvergence(t *testing.T) {
 	_testRequire.NoError(err)
 	_testRequire.Positive(target.MessageID)
 	_testAssert.Equal("1", target.CurrentID)
-	body, err := st.GetMessageBodyText(target.MessageID)
+	body, err := st.GetMessageBodyText(t.Context(), target.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Equal("version 0 ", body)
 }

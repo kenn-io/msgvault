@@ -210,7 +210,7 @@ func readXClientSecret(in io.Reader) (string, error) {
 	method, output := choosePasswordStrategy(isatty.IsTerminal(os.Stdin.Fd()), isatty.IsCygwinTerminal(os.Stdin.Fd()), isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd()), isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()))
 	switch method {
 	case passwordInteractive:
-		return readPasswordInteractive("X client secret:", output)
+		return readPasswordInteractive("X client secret:", output, false)
 	case passwordPipe:
 		return readPasswordFromPipe(in)
 	default:

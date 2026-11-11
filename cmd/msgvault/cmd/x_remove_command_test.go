@@ -60,7 +60,7 @@ func TestSyncXRemoveNoBudgetUsesSelectedDaemon(t *testing.T) {
 	_testRequire.NoError(json.Unmarshal([]byte(out), &work))
 	_testAssert.False(work.Pending)
 	_testAssert.Equal("100", work.CanonicalID)
-	body, err := f.st.GetMessageBodyText(f.message)
+	body, err := f.st.GetMessageBodyText(t.Context(), f.message)
 	_testRequire.NoError(err)
 	_testAssert.Empty(body)
 	target, err := f.st.ResolveXPostContext(t.Context(), f.source, "102")

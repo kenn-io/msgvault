@@ -148,7 +148,7 @@ func TestXRefreshDistinguishesRemovalFromUnknown(t *testing.T) {
 				_testAssert.True(got.summary.LastCompleteAt.IsZero())
 			}
 			_testAssert.Positive(calls.Load())
-			body, err := f.st.GetMessageBodyText(f.message)
+			body, err := f.st.GetMessageBodyText(t.Context(), f.message)
 			_testRequire.NoError(err)
 			if tc.confirmed {
 				_testAssert.Empty(body)
@@ -158,7 +158,7 @@ func TestXRefreshDistinguishesRemovalFromUnknown(t *testing.T) {
 				_testRequire.NoError(err)
 				_testAssert.Zero(count)
 				if second != 0 {
-					body, err := f.st.GetMessageBodyText(second)
+					body, err := f.st.GetMessageBodyText(t.Context(), second)
 					_testRequire.NoError(err)
 					_testAssert.Empty(body, "a confirmed protected author invalidates all known chains")
 				}
@@ -219,7 +219,7 @@ func TestXRefreshRequiresActualCleanupAndResumesWithoutReadAccess(t *testing.T) 
 			_testAssert.False(summary.Complete)
 			_testAssert.True(summary.PendingRemoval)
 			_testAssert.True(summary.LastCompleteAt.IsZero())
-			body, err := f.st.GetMessageBodyText(f.message)
+			body, err := f.st.GetMessageBodyText(t.Context(), f.message)
 			_testRequire.NoError(err)
 			_testAssert.Empty(body, "the source-scoped primary purge commits before external cleanup")
 			for _, gen := range f.generations {
@@ -311,7 +311,7 @@ func TestXRefreshFollowsLatestEditWithSeparateAdmission(t *testing.T) {
 				_testAssert.True(summary.Complete)
 				_testAssert.Equal("104", target.CurrentID)
 				_testAssert.Equal("public", target.Availability)
-				body, err := f.st.GetMessageBodyText(f.message)
+				body, err := f.st.GetMessageBodyText(t.Context(), f.message)
 				_testRequire.NoError(err)
 				_testAssert.Equal("current version 104", body)
 			}
@@ -385,7 +385,7 @@ func TestXCollectionCleanupResolvesTerminalItemsWithoutPaidReplay(t *testing.T) 
 			_testAssert.Empty(state.Mentions.UnresolvedIDs)
 			_testAssert.Equal(int32(1), mentions.Load(), "committed page must not be replayed")
 			_testAssert.Zero(lookups.Load(), "completed local cleanup resolves terminal obligation without paid retry")
-			body, err := f.st.GetMessageBodyText(f.message)
+			body, err := f.st.GetMessageBodyText(t.Context(), f.message)
 			_testRequire.NoError(err)
 			_testAssert.Empty(body)
 			for _, gen := range f.generations {
@@ -447,7 +447,7 @@ func TestXCollectionOwnerResumesForeignCopyAfterReleasingExecution(t *testing.T)
 	_testRequire.NoError(err)
 	_testAssert.False(pending, "owner Resume must run after releasing Import execution")
 	for _, message := range []int64{f.message, foreignCopy.MessageID} {
-		body, err := f.st.GetMessageBodyText(message)
+		body, err := f.st.GetMessageBodyText(t.Context(), message)
 		_testRequire.NoError(err)
 		_testAssert.Empty(body)
 	}

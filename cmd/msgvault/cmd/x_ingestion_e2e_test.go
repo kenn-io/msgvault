@@ -162,7 +162,7 @@ func TestXIngestionThroughDaemonAndScheduler(t *testing.T) {
 	jobs := newCacheBuildJobs(jobsCtx, nil, func(ctx context.Context, _ buildCacheMode) error {
 		var err error
 		if !f.st.IsPostgreSQL() {
-			_, err = buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+			_, err = buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 		}
 		built <- err
 		return err
@@ -201,7 +201,7 @@ func TestXIngestionThroughDaemonAndScheduler(t *testing.T) {
 	rebuildCacheAfterScheduledSourceRun = func(ctx context.Context, _ string) error {
 		var err error
 		if !f.st.IsPostgreSQL() {
-			_, err = buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+			_, err = buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 		}
 		built <- err
 		return err
@@ -335,7 +335,7 @@ func TestXFirstSeenWithheldPostPurgesConnectedCopiesBeforeRetry(t *testing.T) {
 	pending, err := f.st.XCleanupPendingContext(t.Context())
 	_testRequire.NoError(err)
 	_testAssert.False(pending, "the owner cleanup coordinator must finish the connected chain after sync releases it")
-	body, err := f.st.GetMessageBodyText(retained.MessageID)
+	body, err := f.st.GetMessageBodyText(t.Context(), retained.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Empty(body)
 	target, err := f.st.ResolveXPostContext(t.Context(), foreign.ID, "700")
@@ -424,7 +424,7 @@ func TestXFirstSeenProtectedPostCommitsCleanupWithAlias(t *testing.T) {
 	_testAssert.Equal("removed", localTarget.Availability,
 		"suppressed targets stay unavailable to send resolution")
 	assertXStoredSuppressionReason(t, f.st, f.source.ID, "700", "protected")
-	body, err := f.st.GetMessageBodyText(retained.MessageID)
+	body, err := f.st.GetMessageBodyText(t.Context(), retained.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Empty(body)
 	var rawRows int
@@ -491,7 +491,7 @@ func TestXImporterBatchesSamePageUnavailableCleanup(t *testing.T) {
 		_testRequire.NoError(f.st.DB().QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &path))
 		_testRequire.NotEmpty(path, "cache builder must use the actual SQLite test archive")
 		f.cfg.Data.DatabaseURL = path
-		_, err := buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+		_, err := buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 		_testRequire.NoError(err)
 	}
 	deps := f.deps
@@ -516,7 +516,7 @@ func TestXImporterBatchesSamePageUnavailableCleanup(t *testing.T) {
 		_testAssert.Equal("removed", target.Availability,
 			"suppressed targets resolve as unavailable to send resolution")
 		assertXStoredSuppressionReason(t, f.st, f.source.ID, post.id, "withheld")
-		body, err := f.st.GetMessageBodyText(messageIDs[post.id])
+		body, err := f.st.GetMessageBodyText(t.Context(), messageIDs[post.id])
 		_testRequire.NoError(err)
 		_testAssert.Empty(body)
 	}
@@ -588,9 +588,9 @@ func TestXScheduledSyncRetiresDaemonReaders(t *testing.T) {
 		var name, path string
 		_testRequire.NoError(f.st.DB().QueryRow("PRAGMA database_list").Scan(&seq, &name, &path))
 		f.cfg.Data.DatabaseURL = path
-		_, err = buildCache(f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
+		_, err = buildCache(t.Context(), f.cfg.DatabaseDSN(), f.cfg.AnalyticsDir(), true)
 		_testRequire.NoError(err)
-		duck, err = query.NewDuckDBEngine(f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
+		duck, err = query.NewDuckDBEngine(t.Context(), f.cfg.AnalyticsDir(), f.cfg.DatabaseDSN(), f.st.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, Threads: 2})
 		_testRequire.NoError(err)
 		t.Cleanup(func() { assert.NoError(t, duck.Close()) })
 		engine = duck

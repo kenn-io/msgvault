@@ -44,7 +44,7 @@ func TestXRemovalKeepsUnsupportedPersonEvidenceOutOfLedger(t *testing.T) {
 	defer func() { assert.NoError(t, execution.Release()) }()
 	work, err := st.RemoveXPostContentContext(t.Context(), source.ID, "100", "removed")
 	_testRequire.NoError(err)
-	body, err := st.GetMessageBodyText(saved.MessageID)
+	body, err := st.GetMessageBodyText(t.Context(), saved.MessageID)
 	_testRequire.NoError(err)
 	_testAssert.Empty(body)
 	work.DerivedComplete = true

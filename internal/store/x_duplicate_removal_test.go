@@ -34,7 +34,7 @@ func TestXRemovalSuppressionBlocksAnotherSourceImport(t *testing.T) {
 	_testRequire.NoError(err)
 	_testAssert.Equal("removed", target.Availability)
 	if saved.MessageID != 0 {
-		body, err := st.GetMessageBodyText(saved.MessageID)
+		body, err := st.GetMessageBodyText(t.Context(), saved.MessageID)
 		_testRequire.NoError(err)
 		_testAssert.Empty(body)
 	}
@@ -90,7 +90,7 @@ func TestXRemovalPreservesScopedSyncFence(t *testing.T) {
 	scoped := st.ScopedToSync(source, run)
 	_, err = scoped.RemoveXPostContentContext(t.Context(), other.ID, "100", "removed")
 	_testRequire.Error(err)
-	body, err := st.GetMessageBodyText(saved.MessageID)
+	body, err := st.GetMessageBodyText(t.Context(), saved.MessageID)
 	_testRequire.NoError(err)
 	assert.Equal(t, "second occurrence", body)
 	_, err = scoped.AcquireXRemovalExecutionContext(t.Context(), source, "100")

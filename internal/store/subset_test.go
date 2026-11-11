@@ -1400,7 +1400,7 @@ func TestCopySubsetKeepsXSendAuthorityAndReceiptsTogether(t *testing.T) {
 	sourceOpen = false
 
 	destinationDir := filepath.Join(t.TempDir(), "subset")
-	copyResult, err := CopySubset(sourcePath, destinationDir, 1, false)
+	copyResult, err := CopySubset(t.Context(), sourcePath, destinationDir, 1, false)
 	require.NoError(err)
 	assert.Equal(int64(1), copyResult.Messages)
 	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
@@ -1453,7 +1453,7 @@ func TestCopySubsetKeepsXSendAuthorityAndReceiptsTogether(t *testing.T) {
 	work.DerivedComplete = true
 	require.NoError(destination.FinishXRemovalContext(ctx, 1, work))
 	require.NoError(execution.Release())
-	body, err := destination.GetMessageBodyText(selectedPost.MessageID)
+	body, err := destination.GetMessageBodyText(t.Context(), selectedPost.MessageID)
 	require.NoError(err)
 	assert.Empty(body)
 	var rawRows int
