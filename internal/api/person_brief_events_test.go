@@ -70,7 +70,7 @@ func TestPersonBriefHTTPBoundarySanitizesEventProsePreservingReferences(t *testi
 	required := require.New(t)
 	f := newPersonBriefAPIFixture(t)
 	seed := personBriefAPISeedFor(t, personBriefAPIStructure(), personBriefAPINow, []int64{f.evidence[0].ID})
-	seed.boundary = `{"event_memory_version":1,"event_memory":[{"highlight":{"text":"move\u001b[31m soon","evidence_ids":["id\u001b[31m"],"life_event":{"quote":"I \u001b[31mmove","question":"How \u001b[31mwas it?","anchor_id":"id\u001b[31m","resolution":{"quote":"It \u001b[31mwent well","evidence_id":"outcome\u001b[31m"}}},"sources":[{"message_id":9007199254740993,"source_message_id":"source\u001b[31m"}]}],"future_field":{"value":9007199254740993}}`
+	seed.boundary = `{"event_memory_version":1,"event_memory":[{"highlight":{"text":"move\u001b[31m soon","evidence_ids":["id\u001b[31m"],"life_event":{"quote":"I \u001b[31mmove","question":"How \u001b[31mwas it?","anchor_id":"id\u001b[31m","resolution":{"quote":"It \u001b[31mwent well","evidence_id":"outcome\u001b[31m"}}},"sources":[{"message_id":9007199254740993,"source_message_id":"source\u001b[31m"}]}],"through_sequence":42,"packet_sha256":"abc123"}`
 	f.seedBrief(t, seed)
 	for _, suffix := range []string{"", "/versions"} {
 		response := doRequest(t, f.server.Router(), http.MethodGet, personBriefPath(f.personID, suffix), nil, nil)
@@ -103,9 +103,8 @@ func TestPersonBriefHTTPBoundarySanitizesEventProsePreservingReferences(t *testi
 					SourceMessageID string `json:"source_message_id"`
 				} `json:"sources"`
 			} `json:"event_memory"`
-			FutureField struct {
-				Value int64 `json:"value"`
-			} `json:"future_field"`
+			ThroughSequence int64  `json:"through_sequence"`
+			PacketSHA256    string `json:"packet_sha256"`
 		}
 		required.NoError(json.Unmarshal(payload["boundary"], &boundary))
 		required.Len(boundary.EventMemory, 1)
@@ -120,6 +119,7 @@ func TestPersonBriefHTTPBoundarySanitizesEventProsePreservingReferences(t *testi
 		required.Len(event.Sources, 1)
 		checks.Equal(int64(9007199254740993), event.Sources[0].MessageID)
 		checks.Equal("source\x1b[31m", event.Sources[0].SourceMessageID)
-		checks.Equal(int64(9007199254740993), boundary.FutureField.Value)
+		checks.Equal(int64(42), boundary.ThroughSequence)
+		checks.Equal("abc123", boundary.PacketSHA256)
 	}
 }

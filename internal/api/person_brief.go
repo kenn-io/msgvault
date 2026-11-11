@@ -393,14 +393,7 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext
 			textutil.SanitizeTerminal(output.LastMeaningfulInteraction.Summary)
 	}
 	for index := range output.Highlights {
-		output.Highlights[index].Text = textutil.SanitizeTerminal(output.Highlights[index].Text)
-		if event := output.Highlights[index].LifeEvent; event != nil {
-			event.Quote = textutil.SanitizeTerminal(event.Quote)
-			event.Question = textutil.SanitizeTerminal(event.Question)
-			if event.Resolution != nil {
-				event.Resolution.Quote = textutil.SanitizeTerminal(event.Resolution.Quote)
-			}
-		}
+		sanitizeBriefHighlight(&output.Highlights[index])
 	}
 	for index := range output.FollowUps {
 		output.FollowUps[index].Question = textutil.SanitizeTerminal(output.FollowUps[index].Question)
@@ -421,59 +414,33 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext
 	return encoded
 }
 
-// sanitizedPersonBriefBoundary sanitizes display prose without interpreting or
-// rewriting evidence references and fields from newer boundary formats.
-func sanitizedPersonBriefBoundary(raw jsontext.Value) jsontext.Value {
-	boundary := personBriefJSON(raw)
-	for _, path := range [][]string{
-		{"event_memory", "*", "highlight", "text"},
-		{"event_memory", "*", "highlight", "life_event", "quote"},
-		{"event_memory", "*", "highlight", "life_event", "question"},
-		{"event_memory", "*", "highlight", "life_event", "resolution", "quote"},
-	} {
-		boundary = sanitizeBriefJSONPath(boundary, path)
+// sanitizeBriefHighlight leaves evidence identifiers untouched.
+func sanitizeBriefHighlight(highlight *peoplesweep.BriefHighlight) {
+	highlight.Text = textutil.SanitizeTerminal(highlight.Text)
+	if event := highlight.LifeEvent; event != nil {
+		event.Quote = textutil.SanitizeTerminal(event.Quote)
+		event.Question = textutil.SanitizeTerminal(event.Question)
+		if event.Resolution != nil {
+			event.Resolution.Quote = textutil.SanitizeTerminal(event.Resolution.Quote)
+		}
 	}
-	return boundary
 }
 
-func sanitizeBriefJSONPath(raw jsontext.Value, path []string) jsontext.Value {
-	if len(path) == 0 {
-		var value string
-		if json.Unmarshal(raw, &value) != nil {
-			return raw
-		}
-		encoded, err := json.Marshal(textutil.SanitizeTerminal(value))
-		if err != nil {
-			return raw
-		}
-		return encoded
+// sanitizedPersonBriefBoundary sanitizes event prose in the response only.
+func sanitizedPersonBriefBoundary(raw jsontext.Value) jsontext.Value {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return personBriefJSON(raw)
 	}
-	if path[0] == "*" {
-		var items []jsontext.Value
-		if json.Unmarshal(raw, &items) != nil || items == nil {
-			return raw
-		}
-		for i := range items {
-			items[i] = sanitizeBriefJSONPath(items[i], path[1:])
-		}
-		encoded, err := json.Marshal(items, json.Deterministic(true))
-		if err != nil {
-			return raw
-		}
-		return encoded
+	var boundary peoplesweep.BriefBoundary
+	if err := json.Unmarshal(raw, &boundary); err != nil {
+		return personBriefJSON(raw)
 	}
-	var object map[string]jsontext.Value
-	if json.Unmarshal(raw, &object) != nil || object == nil {
-		return raw
+	for index := range boundary.EventMemory {
+		sanitizeBriefHighlight(&boundary.EventMemory[index].Highlight)
 	}
-	value, ok := object[path[0]]
-	if !ok {
-		return raw
-	}
-	object[path[0]] = sanitizeBriefJSONPath(value, path[1:])
-	encoded, err := json.Marshal(object, json.Deterministic(true))
+	encoded, err := json.Marshal(boundary, json.Deterministic(true))
 	if err != nil {
-		return raw
+		return personBriefJSON(raw)
 	}
 	return encoded
 }
