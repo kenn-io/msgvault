@@ -167,7 +167,7 @@ func TestArchivePreservesNewerCheckpoint(t *testing.T) {
 		require.ErrorContains(err, "unsupported")
 		checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), source.ID, SourceType)
 		require.NoError(err)
-		require.Equal(saved, checkpoint.CursorBefore.String)
+		require.Equal(saved, checkpoint.CursorBefore.String) //nolint:testifylint // Newer checkpoints must remain byte-for-byte unchanged.
 	}
 }
 

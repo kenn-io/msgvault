@@ -67,7 +67,6 @@ func TestConfiguredScheduledSyncSkipsMergedSources(t *testing.T) {
 		})
 
 		require.NoError(err)
-
 	})
 
 	t.Run("Circleback before provider connection", func(t *testing.T) {
