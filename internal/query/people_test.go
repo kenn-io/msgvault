@@ -28,6 +28,25 @@ func newPeopleRankingFixture(t *testing.T) (engine *DuckDBEngine, exact, prefix,
 	return b.BuildEngine(), exact, prefix, substring, when
 }
 
+func TestSearchPeopleRelayedSender(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("owner@example.test")
+	author := b.AddParticipant("", "", "Alice")
+	b.AddParticipantIdentifier(author, "github", "alice", "alice", true)
+	id := b.AddMessage(MessageOpt{SenderID: &author})
+	b.AddRecipientWithEnvelope(id, author, "from", "Alice", "notifications@github.com")
+	b.recipients[len(b.recipients)-1].IsRelayed = true
+	engine := b.BuildEngine()
+	for _, tc := range []struct {
+		query string
+		want  int64
+	}{{"alice", 1}, {"notifications@github.com", 0}} {
+		response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: tc.query, Page: PageSpec{Limit: 25}})
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, response.TotalCount, tc.query)
+	}
+}
+
 func TestSearchPeopleRanksExactPrefixAndSubstring(t *testing.T) {
 	t.Parallel()
 	engine, exact, prefix, substring, _ := newPeopleRankingFixture(t)

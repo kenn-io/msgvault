@@ -152,10 +152,10 @@ func IsTextMessageType(mt string) bool {
 	return slices.Contains(TextMessageTypes, mt)
 }
 
-// KnownMessageTypes enumerates every message_type value that msgvault's sync
-// and import paths write to the messages table. The search --message-type
-// flag validates against this set so a typo fails fast with the allowed
-// values instead of silently returning no results.
+// KnownMessageTypes enumerates every message_type value that msgvault's own
+// sync and import paths write to the messages table. Message imports add
+// caller-chosen types beyond this list. The search --message-type flag names
+// these as examples when it rejects a malformed type.
 var KnownMessageTypes = []string{
 	messageTypeEmail,
 	"google_chat",
@@ -169,6 +169,7 @@ var KnownMessageTypes = []string{
 	"teams",
 	"discord",
 	"fbmessenger",
+	"facebook_comments", "instagram_comments",
 	"synctech_sms_call",
 	"google_voice_text",
 	"google_voice_call",
@@ -179,10 +180,5 @@ var KnownMessageTypes = []string{
 	"inline",
 	"matrix",
 	"telegram",
-}
-
-// IsKnownMessageType reports whether mt is a message_type value that msgvault
-// can produce.
-func IsKnownMessageType(mt string) bool {
-	return slices.Contains(KnownMessageTypes, mt)
+	"x_dm",
 }

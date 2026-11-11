@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -896,6 +897,16 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 		INSERT INTO message_raw SELECT * FROM src.message_raw
 		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy message_raw: %w", err)
+	}
+
+	present, err := sourceTableExists(ctx, tx, "email_link_keys")
+	if err != nil {
+		return nil, fmt.Errorf("check email_link_keys: %w", err)
+	}
+	if present {
+		if _, err := copyByName(ctx, tx, "email_link_keys", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy email_link_keys: %w", err)
+		}
 	}
 
 	if _, err := copyByName(ctx, tx, "message_recipients",
@@ -2894,7 +2905,7 @@ func populateFTS(ctx context.Context, db *sql.DB) error {
 				CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
 				     THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id)
 				END,
-				(SELECT GROUP_CONCAT(p.email_address, ' ')
+				(SELECT GROUP_CONCAT(`+identityindex.SenderAddressExpr("mr", "p")+`, ' ')
 				 FROM message_recipients mr
 				 JOIN participants p ON p.id = mr.participant_id
 				 WHERE mr.message_id = m.id

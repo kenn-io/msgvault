@@ -282,7 +282,34 @@ func (s *Server) handleExplore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, scope *ExploreFilter) {
-	prepared, ok := s.prepareExploreRequest(w, r, scope)
+	var request ExploreHTTPRequest
+	if !decodeExploreJSON(w, r, &request) {
+		return
+	}
+	canonicalizeExploreRequest(&request)
+	engine := s.queryEngineForContext(r.Context())
+	explorer, _ := engine.(query.Explorer)
+	var entries query.EntryExplorer = explorer
+	reader, live := engine.(*query.LiveExploreEngine)
+	if live && (request.SearchMode == exploreSearchModeSemantic || request.SearchMode == exploreSearchModeHybrid) {
+		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
+		return
+	}
+	var releaseSnapshot func()
+	if live {
+		started := time.Now()
+		ctx, release, _, err := reader.BeginExploreSnapshot(r.Context())
+		addExploreTiming(w, "snapshot", time.Since(started))
+		if err != nil {
+			s.writeExploreError(r.Context(), w, err)
+			return
+		}
+		defer release()
+		releaseSnapshot = release
+		r = r.WithContext(ctx)
+		entries = reader
+	}
+	prepared, ok := s.prepareExploreRequest(w, r, request, scope)
 	if !ok {
 		return
 	}
@@ -320,13 +347,12 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	if semanticPage {
 		prepared.query.Page = query.PageSpec{Limit: exploreMaxLimit}
 	}
-	explorer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
-	if !ok {
+	if entries == nil {
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
 	projectionStarted := time.Now()
-	result, err := explorer.Explore(r.Context(), prepared.query)
+	result, err := entries.Explore(r.Context(), prepared.query)
 	addExploreTiming(w, "projection", time.Since(projectionStarted))
 	if err != nil {
 		s.writeExploreError(r.Context(), w, err)
@@ -344,7 +370,7 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	if prepared.offset > 0 {
 		cursor, err := s.decodeExploreCursor(prepared.request.Cursor)
 		if err != nil || cursor.Revision != result.CacheRevision {
-			writeError(w, http.StatusConflict, "archive_revision_changed", "The committed analytical cache changed; restart pagination")
+			writeError(w, http.StatusConflict, "archive_revision_changed", "Results changed; restart pagination")
 			return
 		}
 	}
@@ -358,6 +384,9 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusServiceUnavailable, "identity_matches_unavailable", "Message identity matches could not be resolved")
 		return
 	}
+	if releaseSnapshot != nil {
+		releaseSnapshot()
+	}
 	response := ExploreHTTPResponse{
 		Rows: result.Rows, CacheRevision: result.CacheRevision,
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID,
@@ -365,6 +394,13 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 	}
 	if prepared.request.SearchMode == exploreSearchModeFullText {
 		response.Warnings = search.LiteralORWarnings(prepared.request.Query)
+	}
+	if live {
+		warning := "Showing live archive data because the analytical cache is unavailable. Grouping, person filters, semantic search, and bulk actions need it: run msgvault build-cache --full-rebuild, then restart msgvault."
+		if s.analyticsCacheInitializingForContext(r.Context()) {
+			warning = "Showing live archive data while the analytical cache rebuilds. Grouping, person filters, semantic search, and bulk actions return when it finishes."
+		}
+		response.Warnings = append(response.Warnings, warning)
 	}
 	response.CandidatePoolSaturated = searchSpec.CandidatePoolSaturated
 	if snapshotID != "" && s.exploreState != nil {
@@ -761,12 +797,7 @@ func exploreCanonicalQueryHash(queryText, mode string) string {
 	return hashCanonicalValue(canonicalParsedExploreQuery(parsed), false)
 }
 
-func (s *Server) prepareExploreRequest(w http.ResponseWriter, r *http.Request, scope *ExploreFilter) (explorePrepared, bool) {
-	var request ExploreHTTPRequest
-	if !decodeExploreJSON(w, r, &request) {
-		return explorePrepared{}, false
-	}
-	canonicalizeExploreRequest(&request)
+func (s *Server) prepareExploreRequest(w http.ResponseWriter, r *http.Request, request ExploreHTTPRequest, scope *ExploreFilter) (explorePrepared, bool) {
 	if request.Limit == 0 {
 		request.Limit = exploreDefaultLimit
 	}

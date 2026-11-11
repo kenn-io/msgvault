@@ -1,5 +1,5 @@
-import { person } from './person-fixtures.test-support';
-import type { DirectoryPersonSummary } from '../api/generated/models/directoryPersonSummary';
+import { organization, employment } from './entity-data.test-support';
+export { organization, employment, directoryPerson, relationshipType, relationship, candidate } from './entity-data.test-support';
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
 
@@ -11,13 +11,6 @@ export function requestOf(input: RequestInfo | URL): Request {
 
 export function pathOf(request: Request): string {
   return new URL(request.url, document.baseURI).pathname;
-}
-
-export function organization(id = 21, revision = 1, name = 'Synthetic Org') {
-  return {
-    id, revision, name, kind: 'company', primary_domain: 'synthetic.example', description: 'A synthetic organization.',
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-  };
 }
 
 export function organizationProfile(revision = 1, name = 'Synthetic Org') {
@@ -36,7 +29,7 @@ export function envelope(id: number, overrides: Record<string, unknown> = {}) {
 export function richOrganizationProfile(revision = 3) {
   const importedEnvelope = envelope(40, {
     ordinal: 7, pref: 2, type_label: 'work', type_tokens: ['WORK', 'INTERNET'], source: 'vcard_import',
-    source_ref: 'card-42', source_resource_uid: 'resource-card-42', confidence: 0.87, active_from: '2025-02-03T04:05:06Z',
+    source_ref: 'card-42', source_resource_uid: 'resource-card-42', active_from: '2025-02-03T04:05:06Z',
     vcard: { property: 'EMAIL', group: 'item2', prop_id: 'prop-9', pid: ['1.1', '2.1'], altid: 'alt-4' }
   });
   return {
@@ -53,27 +46,13 @@ export function richOrganizationProfile(revision = 3) {
   };
 }
 
-export function employment(id = 11, revision = 1, overrides: Record<string, unknown> = {}) {
-  return {
-    id, revision, person_id: 7, organization_id: 21, source: 'user', is_current: true, is_primary: false,
-    title: 'Engineer', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
-  };
-}
+
 
 export function collection(rows = [employment()], projection = { employment_id: 11, organization_id: 21, organization_name: 'Synthetic Org', title: 'Engineer', vcard: {} }) {
   return Response.json({ employments: rows, projection });
 }
 
-export function controllerWith(fetchFn: typeof fetch, personID = 7) {
+export function controllerWith(fetchFn: typeof fetch, personID = 7, options: { onDirectoryChange?: () => void | Promise<void> } = {}) {
   const client = createAPIClient(fetchFn);
-  return { client, controller: new DirectoryEntityController(client, personID) };
-}
-
-export function directoryPerson(id: number, overrides: Partial<DirectoryPersonSummary> = {}): DirectoryPersonSummary {
-  const detail = person(id);
-  return { id, revision: detail.revision, display_name: detail.display_name, categories: [], organizations: [], carddav_bindings: [], contact_state: 'active', vcard_uid: detail.vcard_uid, ...overrides };
-}
-
-export function candidate(id: number, state = 'candidate') {
-  return { id, left_id: id * 10, left_kind: 'participant', right_id: id * 10 + 1, right_kind: 'participant', basis: 'email', source: 'user', state, actionable: state === 'candidate' || state === 'conflict', application_pending: false, review_token: `token-${id}-${state}`, evidence: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+  return { client, controller: new DirectoryEntityController(client, personID, options) };
 }

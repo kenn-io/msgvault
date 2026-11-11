@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -119,44 +118,6 @@ func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	var count int
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&count))
 	assert.Equal(t, 1, count)
-}
-
-func TestSchemaVersionDocumentRangesUpgrade(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	profile, hash := seedDocumentPublicationAuthority(t, f)
-	input := documentClaimInputForHash(t, f, store.DocumentExtractionClaimInput{
-		ExtractionID: "pre-range-upload", ProfileID: profile.ID, CanonicalBlobHash: hash,
-		ExtractionInputKey: "original", LeaseOwner: "worker", LeaseUntil: time.Now().UTC().Add(time.Minute), LocalBytes: 128, SourceSequence: 1,
-	})
-	claim, err := f.Store.ClaimDocumentExtraction(t.Context(), input)
-	require.NoError(err)
-	require.NoError(f.Store.FailDocumentExtraction(t.Context(), store.DocumentExtractionFailure{
-		Claim: claim, ReasonCode: "provider_timeout", Terminal: true, RequestCount: 2, UploadCount: 1,
-	}))
-	_, err = f.Store.DB().ExecContext(t.Context(), "ALTER TABLE document_extractions DROP COLUMN upload_count")
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), "DROP TABLE document_extraction_ranges")
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value='16' WHERE key='schema_version'")
-	require.NoError(err)
-	require.ErrorContains(f.Store.ValidateSchemaContext(t.Context()), "run setup")
-	version, err := f.Store.SchemaVersionContext(t.Context())
-	require.NoError(err)
-	assert.Equal(16, version)
-	var count int
-	require.Error(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
-	require.NoError(f.Store.InitSchemaContext(t.Context()))
-	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
-	version, err = f.Store.SchemaVersionContext(t.Context())
-	require.NoError(err)
-	assert.Equal(store.SchemaVersion, version)
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM document_extraction_ranges").Scan(&count))
-	assert.Zero(count)
-	status, err := f.Store.GetDocumentIndexStatus(t.Context(), profile.ID)
-	require.NoError(err)
-	assert.Equal(int64(128), status.VerifiedUploadBytes)
 }
 
 func TestSchemaVersionDocbankUpgrade(t *testing.T) {
@@ -370,6 +331,13 @@ var (
 		31: "cad2b896394a3b1df1cb8b71cc2db52e893623272d87e1ede64ad757e6aba500",
 		32: "67195ce591cb53fde19ccf89d46f57a8d1cba7fcb96efd0b1d120dcde4c0dceb",
 		33: "7158a0bdc0768658194eacd650486e790f43ce0ab26f9aeffcd01843e3958ecb",
+		34: "46790542c505c944c29e50066f1875ac7cfe3ea42cccf0b0ec098ff23ca5d1eb",
+		35: "20e21e50260dd31c150213d13e0600661424e54885c9938e6895314dde23a2aa",
+		36: "ad076c4da9652ccf15eb7cb0a55cf57d6ec49f8c5db885db0bc44cac836c79ce",
+		37: "f6d6ae3d753476a4261d54df5d413994ec987dc34137fccf421f215bf0a11b7e",
+		38: "ac18227f57322ed8e822c5406000375e7e3aa2b47c73246ba36e9b0628c9bb66",
+		39: "3b4a4d69ac0ae321fddcd1836b788118f5a7f25cda49d89ef8c327bd7338288d",
+		40: "a26d72acc985ec3ca25ab69f8173b6fc2fb050f26298e162a0cc1358abeda0f9",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -400,6 +368,13 @@ var (
 		31: "f4b83986f7def2d4f1f49dce1074b828bb0bb2a3ff042ced1a512b8443407c90",
 		32: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
 		33: "d1947235dc5ffd4d0c8f611722e887faa3464bfaa8565e8713af1701e128b947",
+		34: "7a1753c30acf49ee4b97ec23e42228cd94f70b0f3dca308bffd0f038d5461f59",
+		35: "7a1753c30acf49ee4b97ec23e42228cd94f70b0f3dca308bffd0f038d5461f59",
+		36: "9bd56e75e273ac9afb7f9acdd76732b2494d011b57f88951951d9be1649824d1",
+		37: "7620e8c5b65db28a3b5bd6a0f709e53df28c5d7ee2fae42454e372508d9bc10e",
+		38: "5244b660c5b79ef46144ba5a9fa9470f84a15fe6b2cb1a3ffd11d2a39157ec32",
+		39: "77f763ebf58ff6f1df95dac4e187489afb6cc3521177cac60e7eef0894a8306a",
+		40: "fd168ca80dd687aba404bf05be9a932eb5530303b9ac0cd73f91cc7ee01c14f2",
 	}
 )
 

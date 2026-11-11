@@ -56,7 +56,8 @@ func (e *RescheduleError) Error() string { return e.Err.Error() }
 
 func (e *RescheduleError) Unwrap() []error { return []error{ErrReschedule, e.Err} }
 
-// ErrDeferUntilNextTrigger finishes this attempt without requesting a continuation.
+// ErrDeferUntilNextTrigger finishes this attempt without requesting a continuation,
+// even when the run was asked to yield. Failures joined with it are recorded.
 // An already accepted trigger still runs its pending follow-up.
 var ErrDeferUntilNextTrigger = errors.New("scheduled job deferred until next trigger")
 
@@ -157,6 +158,9 @@ type Scheduler struct {
 	genericStartedAt   map[string]time.Time
 	genericManual      map[string]bool
 	genericNextManual  map[string]bool
+	// genericContinue marks a queued follow-up that only resumes a yield or
+	// reschedule; a tick or request merged into it clears the mark.
+	genericContinue map[string]bool
 
 	// queuedRuns counts runs blocked waiting for the work gate.
 	queuedRuns int
@@ -218,6 +222,7 @@ func New(syncFunc SyncFunc) *Scheduler {
 		genericStartedAt:   make(map[string]time.Time),
 		genericManual:      make(map[string]bool),
 		genericNextManual:  make(map[string]bool),
+		genericContinue:    make(map[string]bool),
 		ctx:                ctx,
 		cancel:             cancel,
 	}
@@ -445,10 +450,7 @@ func (s *Scheduler) RemoveAccount(email string) {
 
 // Indexing job names, shared by registration, status reporting, and the
 // operation gate's holder label.
-const (
-	embedJobName          = jobctx.ScheduledEmbeddingLabel
-	documentVectorJobName = "scheduled document indexing"
-)
+const embedJobName = jobctx.ScheduledEmbeddingLabel
 
 // indexingPassRuntime bounds each automatic indexing pass. A pass that saved
 // progress, or newly kept provider output for an unfinished unit, queues one
@@ -466,23 +468,6 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 		run = job.Run
 	}
 	return s.setIndexingJob(embedJobName, "embed", run, schedule, runAfterSync)
-}
-
-// SetDocumentVectorJob installs the bounded document-vector convergence job
-// on the same cron/post-sync policy used by message embeddings. The job
-// returns ErrReschedule when its bounded pass leaves committed work.
-func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedule string, runAfterSync bool) error {
-	var run func(context.Context) error
-	if job != nil {
-		run = func(ctx context.Context) error {
-			err := job(ctx)
-			if failure := jobctx.ErrorAfterYield(ctx, err, ErrReschedule); failure != nil {
-				s.logger.Error("scheduled document vector reconciliation failed", "error", failure)
-			}
-			return err
-		}
-	}
-	return s.setIndexingJob(documentVectorJobName, "document vector", run, schedule, runAfterSync)
 }
 
 // setIndexingJob registers an indexing job as a preemptible background job
@@ -628,7 +613,7 @@ func (s *Scheduler) runSync(email string) {
 	if (err != nil && err != ErrDeferUntilNextTrigger) || yielded { //nolint:errorlint // Only a bare deferral is a clean no-work run.
 		return
 	}
-	for _, name := range []string{embedJobName, documentVectorJobName} {
+	for _, name := range []string{embedJobName} {
 		s.mu.RLock()
 		afterSync := s.genericAfterSync[name]
 		s.mu.RUnlock()
@@ -854,6 +839,7 @@ func (s *Scheduler) reserveGenericJob(name string, coalesce bool, manual bool) (
 			target = s.genericManual
 		}
 		target[name] = target[name] || manual
+		delete(s.genericContinue, name)
 		if s.coalesceTickLocked("job", name, s.genericQueuedAt, s.genericPending) {
 			return nil, JobPending, nil
 		}
@@ -882,6 +868,8 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	done, ok := s.beginWork(name, !background)
 	s.mu.Lock()
 	delete(s.genericQueuedAt, name)
+	continuation := s.genericContinue[name]
+	delete(s.genericContinue, name)
 	if ok {
 		s.genericStartedAt[name] = time.Now()
 	}
@@ -892,6 +880,9 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	defer done()
 
 	runCtx, endRun := s.jobContext(name, preemptible, cooperative, maxRuntime)
+	if continuation {
+		runCtx = jobctx.WithContinuation(runCtx)
+	}
 	err := run(runCtx)
 	endRun()
 	s.mu.Lock()
@@ -921,9 +912,21 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 			"error", err)
 		return err
 	}
+	if errors.Is(err, ErrDeferUntilNextTrigger) {
+		// A deferral ends the chain even after a yield request; the failures
+		// joined with it stay visible.
+		err = jobctx.ErrorAfterYield(runCtx, err, ErrDeferUntilNextTrigger)
+		if err == nil {
+			s.genericLastRun[name] = time.Now()
+			delete(s.genericLastErr, name)
+			return nil
+		}
+		s.genericLastErr[name] = err
+		return err
+	}
 	yielded := budgetExpired || yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
 	if errors.Is(err, ErrReschedule) {
-		s.genericPending[name] = true
+		s.queueContinuationLocked(name)
 		if _, failed := errors.AsType[*RescheduleError](err); failed {
 			s.genericLastErr[name] = err
 			return err
@@ -934,7 +937,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 		return nil
 	}
 	if yielded {
-		s.genericPending[name] = true
+		s.queueContinuationLocked(name)
 		if callbackErr := jobctx.ErrorAfterYield(runCtx, err); callbackErr != nil {
 			s.genericLastErr[name] = callbackErr
 			s.logger.Error("scheduled job yielded after callback error; queued follow-up",
@@ -958,6 +961,15 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	s.genericLastRun[name] = time.Now()
 	delete(s.genericLastErr, name)
 	return nil
+}
+
+// queueContinuationLocked queues the follow-up a yield or reschedule asks for.
+// It is a continuation only when no tick or request already queued one.
+func (s *Scheduler) queueContinuationLocked(name string) {
+	if !s.genericPending[name] {
+		s.genericContinue[name] = true
+	}
+	s.genericPending[name] = true
 }
 
 // finishGenericRun releases a generic job run, or hands its reservation to
@@ -989,6 +1001,7 @@ func (s *Scheduler) finishGenericRun(name string) {
 	}
 	delete(s.genericManual, name)
 	delete(s.genericNextManual, name)
+	delete(s.genericContinue, name)
 	s.genericRunning[name] = false
 }
 
@@ -1035,8 +1048,19 @@ var preemptAfter = time.Minute
 // jobctx.ErrRunBudgetExceeded. Other jobs keep their own runtime budgets. The
 // returned stop function must be called when the job finishes.
 func (s *Scheduler) jobContext(label string, preemptible, cooperative bool, maxRuntime time.Duration) (context.Context, func()) {
+	return s.cooperativeJobContext(s.ctx, label, preemptible, cooperative, maxRuntime)
+}
+
+// CooperativeJobContext gives daemon-owned work the same yield policy as scheduled jobs.
+func (s *Scheduler) CooperativeJobContext(ctx context.Context, label string) (context.Context, func()) {
+	return s.cooperativeJobContext(ctx, label, true, true, 0)
+}
+
+func (s *Scheduler) cooperativeJobContext(parent context.Context, label string, preemptible, cooperative bool, maxRuntime time.Duration) (context.Context, func()) {
 	started := time.Now()
-	baseCtx := jobctx.WithProgress(s.ctx)
+	baseCtx, cancelShutdown := context.WithCancel(parent)
+	stopShutdown := context.AfterFunc(s.ctx, cancelShutdown)
+	baseCtx = jobctx.WithProgress(baseCtx)
 	stopBudget := func() {}
 	if maxRuntime > 0 {
 		baseCtx, stopBudget = context.WithTimeoutCause(baseCtx, maxRuntime, jobctx.ErrRunBudgetExceeded)
@@ -1044,7 +1068,7 @@ func (s *Scheduler) jobContext(label string, preemptible, cooperative bool, maxR
 	preemptCtx, requestPreemption := jobctx.WithPreemption(baseCtx)
 	yc, canYield := s.work.(YieldChecker)
 	if s.work == nil {
-		return preemptCtx, stopBudget
+		return preemptCtx, func() { stopBudget(); stopShutdown(); cancelShutdown() }
 	}
 	ctx, cancel := context.WithCancelCause(preemptCtx)
 	go func() {
@@ -1074,7 +1098,7 @@ func (s *Scheduler) jobContext(label string, preemptible, cooperative bool, maxR
 			}
 		}
 	}()
-	return ctx, func() { cancel(nil); stopBudget() }
+	return ctx, func() { cancel(nil); stopBudget(); stopShutdown(); cancelShutdown() }
 }
 
 func (s *Scheduler) hasQueuedRuns() bool {

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-23"
+last_edited: "2026-11-07"
 title: Setup Guide
 description: Install msgvault, choose a source, and explore your first archived messages.
 ---
@@ -24,6 +24,8 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 
 The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary.
 
+The Unix installer adds msgvault to your Bash, Zsh, or Fish profile; `MSGVAULT_NO_MODIFY_PATH=1` skips the profile edit.
+
 Windows releases include native AMD64 and ARM64 packages. On Windows ARM64,
 the PowerShell installer selects the native package when the release provides
 one and falls back to the AMD64 package under emulation for older releases.
@@ -36,6 +38,39 @@ Verify the installation:
 ```bash
 msgvault --help
 ```
+
+### Runtime requirements
+
+Direct release downloads include DuckDB, SQLite with FTS5, sqlite-vec, and
+the Web UI in the executable. You do not need to install DuckDB, Go, a C/C++
+compiler, Bun, or Node.js to run them. Build tools are required only when
+[building from source](#build-from-source).
+
+Including DuckDB does not make the whole executable statically linked. The
+v0.23.0 direct archives have these native runtime requirements on both AMD64
+and ARM64:
+
+| Platform | Runtime requirements |
+| --- | --- |
+| macOS | The executables declare macOS 26.0 as their minimum deployment target and load Apple system libraries, including libc++. |
+| Linux | glibc with `GLIBC_2.34`, plus system `libstdc++.so.6` with `GLIBCXX_3.4.30` and `CXXABI_1.3.13`, `libgcc_s.so.1`, and `libm.so.6`. Debian 12 (bookworm) supplies these. Alpine/musl does not supply the required glibc loader. |
+| Windows | Windows system DLLs and the Universal C Runtime supplied by current Windows installations. The executables do not import separate DuckDB, MinGW, or MSVC C++ runtime DLLs. |
+
+These are inspected loader requirements, not a claim that every OS version
+has been tested. v0.23.0 was also exercised with a fresh home on macOS ARM64
+and in stock Debian 12 ARM64 with networking disabled: one synthetic email
+was imported, exported to Parquet, and queried through DuckDB. Windows and
+native Intel macOS execution were not part of that check. Use the release
+archive that matches your host; the presence of an archive alone does not
+establish compatibility with an older OS.
+
+DuckDB may try to download its optional SQLite scanner extension. When it is
+unavailable, including offline, msgvault uses its built-in SQLite/CSV fallback.
+The Parquet cache and DuckDB queries do not require that download.
+
+Homebrew and Conda builds have their own dependency management. In particular,
+`make homebrew` intentionally links Homebrew's DuckDB; the direct-download
+runtime contract above applies to the ordinary release archives.
 
 ## Vendor a pinned binary
 
@@ -391,13 +426,12 @@ TUI](/docs/usage/tui/) for more.
 
 ## Optional: Turn On Search and People Lanes
 
-Semantic search, visual and document attachment search, and the people sweep
+Semantic search, visual attachment search, and the people sweep
 are opt-in. Put your API keys in the environment so setup can propose search
 features. Hosted people inference also needs an explicit provider and model:
 
 ```bash
 export VOYAGE_API_KEY="..."     # text, people, and visual search
-export MISTRAL_API_KEY="..."    # document attachments
 export OPENAI_API_KEY="..."     # text search without a Voyage key
 msgvault setup providers        # review provider disclosures and write opt-in config
 msgvault setup status           # what is on, what is off, and why
@@ -405,7 +439,7 @@ msgvault setup status           # what is on, what is off, and why
 
 Message embeddings are authorized by enabling their configuration and have no
 separate stored consent record. Semantic people search, visual processing,
-document extraction and vectors, and people sweeps have separate consent gates;
+and people sweeps have separate consent gates;
 `setup status` names any command still required. The people sweep additionally
 requires an explicit hosted provider choice, for example:
 
@@ -421,6 +455,9 @@ remains unavailable until an approved build ships.
 
 See [Recommended Configuration](/docs/usage/recommended-configuration/) for the
 values it writes and the probe steps the hosted lanes still need.
+
+Document text search uses Docbank processing and its consent settings. See
+[Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) for the profile and setup steps.
 
 ## Optional: Sync Google Calendar
 
@@ -438,10 +475,10 @@ full workflow, scheduled sync, and headless-server setup.
 
 ## Open the Web UI
 
-Start the daemon, or find the one already running:
+Restart the daemon to keep the Web UI available until stopped:
 
 ```bash
-msgvault daemon start
+msgvault daemon restart
 ```
 
 Open the URL it prints in your browser. The daemon builds a missing or stale

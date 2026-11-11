@@ -67,7 +67,8 @@ func ConnectKata(ctx context.Context, cfg IntegrationConfig) (*KataClient, error
 		return nil, ErrNotFound
 	}
 	client, err := NewKata(ClientOptions{Endpoint: cfg.Endpoint, APIKey: cfg.APIKey,
-		Timeout: cfg.Timeout, MaxResponseBytes: cfg.MaxResponseBytes, HTTPClient: cfg.HTTPClient})
+		TrustPrivateNetwork: cfg.TrustPrivateNetwork,
+		Timeout:             cfg.Timeout, MaxResponseBytes: cfg.MaxResponseBytes, HTTPClient: cfg.HTTPClient})
 	if err != nil {
 		return nil, err
 	}

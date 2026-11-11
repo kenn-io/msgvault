@@ -14,6 +14,8 @@ import (
 	"net/textproto"
 	"net/url"
 	"strings"
+
+	"go.kenn.io/kit/embedconfig"
 )
 
 const (
@@ -51,10 +53,15 @@ func newHTTPError(status int, body []byte) *HTTPError {
 	if json.Unmarshal(body, &problem) == nil && problem.Code == "capability_unavailable" {
 		code = problem.Code
 	}
-	if len(problem.Code) > 64 || strings.Trim(problem.Code, "abcdefghijklmnopqrstuvwxyz_") != "" {
+	if !ValidErrorCode(problem.Code) {
 		problem.Code = ""
 	}
 	return &HTTPError{Status: status, Code: code, Reason: problem.Code}
+}
+
+// ValidErrorCode reports whether value matches Docbank's bounded error token.
+func ValidErrorCode(value string) bool {
+	return value != "" && len(value) <= 64 && strings.Trim(value, "abcdefghijklmnopqrstuvwxyz_") == ""
 }
 
 func (e *HTTPError) Error() string {
@@ -246,9 +253,25 @@ type MediaTranscript struct {
 	Transcript       *MediaTranscriptEvidence `json:"transcript,omitempty"`
 }
 
+type clientOptions struct {
+	trustPrivateNetwork bool
+}
+
+// ClientOption configures the destination policy.
+type ClientOption func(*clientOptions)
+
+// WithTrustPrivateNetwork permits plaintext HTTP on an explicitly trusted network.
+func WithTrustPrivateNetwork(trust bool) ClientOption {
+	return func(options *clientOptions) { options.trustPrivateNetwork = trust }
+}
+
 // NewClient validates the destination without making a network request.
-// HTTPS is required for remote destinations; HTTP is allowed only on loopback.
-func NewClient(baseURL string, lookupKey func() (string, error)) (*Client, error) {
+// Non-loopback HTTP requires WithTrustPrivateNetwork(true).
+func NewClient(baseURL string, lookupKey func() (string, error), options ...ClientOption) (*Client, error) {
+	var opts clientOptions
+	for _, option := range options {
+		option(&opts)
+	}
 	parsed, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil ||
 		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
@@ -258,7 +281,15 @@ func NewClient(baseURL string, lookupKey func() (string, error)) (*Client, error
 	case "https":
 	case "http":
 		if !isLoopbackHost(parsed.Hostname()) {
-			return nil, errors.New("docbank HTTP URL must use loopback")
+			// Reuse kit's address policy without changing the existing request URL.
+			errPlaintext := errors.New("docbank HTTP URL requires loopback or trust_private_network = true for a trusted private network")
+			if !opts.trustPrivateNetwork {
+				return nil, errPlaintext
+			}
+			origin := &url.URL{Scheme: "http", Host: parsed.Host}
+			if _, err := embedconfig.CanonicalEndpoint(origin.String(), true); err != nil {
+				return nil, errPlaintext
+			}
 		}
 	default:
 		return nil, errors.New("docbank URL must use HTTPS or loopback HTTP")

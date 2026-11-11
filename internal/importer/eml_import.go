@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/eml"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
@@ -30,6 +31,7 @@ type EMLImportOptions struct {
 	AttachmentsDir     string
 	// RemoteImages is nil unless remote image archiving was explicitly enabled.
 	RemoteImages    *remoteimage.Fetcher
+	RelayedSenders  []mime.RelayedSenderRule
 	MaxMessageBytes int64
 	// IngestFunc overrides message ingestion for focused importer tests.
 	// Nil uses IngestRawMessage.
@@ -119,7 +121,7 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 	}
 	ingestFn := opts.IngestFunc
 	if ingestFn == nil {
-		ingestFn = rawMessageIngester(opts.RemoteImages)
+		ingestFn = rawMessageIngester(opts.RemoteImages, opts.RelayedSenders)
 	}
 	log := opts.Logger
 	if log == nil {

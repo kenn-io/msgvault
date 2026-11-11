@@ -51,6 +51,7 @@ func runMSMailSync(ctx context.Context, s *store.Store, email string, progress f
 	return msmail.Import(ctx, s, client, msmail.Options{
 		Email:          email,
 		AttachmentsDir: cfg.AttachmentsDir(),
+		RelayedSenders: cfg.RelayedSenders,
 		Progress:       progress,
 	}, state.logger)
 }

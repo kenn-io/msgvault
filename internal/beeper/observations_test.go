@@ -3,6 +3,7 @@ package beeper
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -1172,4 +1173,90 @@ func TestSameUsernameUnderDifferentStableIDsStaysAConflict(t *testing.T) {
 	aliceCurrent, err := st.ListParticipantObservationsContext(ctx, alice, true)
 	require.NoError(err, "alice current")
 	assert.Len(aliceCurrent, 1, "neither observation is repointed or superseded by the collision")
+}
+
+func TestWhatsAppMergeCountsResolvedAddresses(t *testing.T) {
+	st, participant, owner, merge, err := whatsappMergeFixture(t)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name string
+		read func() (store.PersonMergeLabels, error)
+	}{
+		{"detail", func() (store.PersonMergeLabels, error) {
+			detail, err := st.GetPersonMergeContext(t.Context(), merge)
+			if err != nil {
+				return store.PersonMergeLabels{}, err
+			}
+			return detail.Labels, nil
+		}},
+		{"list", func() (store.PersonMergeLabels, error) {
+			page, err := st.ListPersonMergesContext(t.Context(), owner)
+			if err != nil {
+				return store.PersonMergeLabels{}, err
+			}
+			if len(page) != 1 {
+				return store.PersonMergeLabels{}, fmt.Errorf("got %d merges, want 1", len(page))
+			}
+			return page[0].Labels, nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			labels, err := tc.read()
+			require.NoError(t, err)
+			assert.Equal(t, 2, labels.AbsorbedAddressCount)
+			var keys []string
+			for _, address := range labels.Addresses {
+				if address.ParticipantID == participant {
+					keys = append(keys, address.IdentityKey)
+				}
+			}
+			assert.ElementsMatch(t, []string{`["phone","","","+12025550123"]`, `["whatsapp","","","+12025550123"]`}, keys)
+		})
+	}
+	t.Run("durable identifier", func(t *testing.T) {
+		user := &User{ID: "@garden-reader:beeper.local", FullName: "Reader", PhoneNumber: "+12025550123"}
+		again, err := newParticipantResolver(st, "garden").resolveUser(t.Context(), user)
+		require.NoError(t, err)
+		assert.Equal(t, participant, again)
+	})
+}
+
+func whatsappMergeFixture(t *testing.T) (*store.Store, int64, int64, int64, error) {
+	t.Helper()
+	st, ctx := testutil.NewTestStore(t), t.Context()
+	account := "garden"
+	user := &User{ID: "@garden-reader:beeper.local", FullName: "Reader", PhoneNumber: "+12025550123"}
+	participant, err := newParticipantResolver(st, account).resolveUser(ctx, user)
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	_, err = newObservationRecorder(st).capture(ctx, participant, user, captureContext{SourceID: newBeeperTestSource(t, st, account), AccountID: account, Network: "WhatsApp"})
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	guest, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	_, err = st.AddPersonContactPointContext(ctx, guest.ID, store.PersonContactPointInput{AddressKind: store.ContactAddressPhone, ServiceSlug: new("whatsapp"), OriginalValue: "+12025550123", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	guest, err = st.GetPersonContext(ctx, guest.ID)
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	ownerID, err := st.EnsureParticipantContext(ctx, "owner@example.org", "Owner", "example.org")
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	ownerPerson, _, err := st.CreatePersonFromParticipantContext(ctx, ownerID)
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: ownerPerson.ID, AbsorbedID: guest.ID, ExpectedSurvivorRevision: ownerPerson.Revision, ExpectedAbsorbedRevision: guest.Revision, IdempotencyKey: "whatsapp-merge", Actor: "test"})
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
+	return st, participant, ownerPerson.ID, merged.Merge.ID, nil
 }

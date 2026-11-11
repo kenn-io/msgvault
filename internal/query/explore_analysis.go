@@ -221,11 +221,14 @@ func sqlIndexedPersonGroupLabelExpr(peopleGlob string) string {
 }
 
 // sqlPersonGroupLabelExpr applies the shared cluster-name policy only to
-// paged groups missing from the sent-activity directory.
+// paged groups missing from the sent-activity directory. Membership equality
+// lets DuckDB join members without pairing every participant with every group.
 func sqlPersonGroupLabelExpr(participantsGlob, clustersGlob, personDisplayNamesGlob string) string {
-	members := "(SELECT CAST(group_key AS BIGINT) UNION SELECT participant_id FROM read_parquet('" + clustersGlob + "') WHERE canonical_id = CAST(group_key AS BIGINT))"
-	name := sqlClusterBestNameExpr("pbn.id IN " + members)
-	override := sqlPersonNameOverrideExpr(personDisplayNamesGlob, "pnv.participant_id IN "+members)
+	memberFilter := func(id string) string {
+		return "COALESCE((SELECT c.canonical_id FROM read_parquet('" + clustersGlob + "') c WHERE c.participant_id = " + id + "), " + id + ") = CAST(group_key AS BIGINT)"
+	}
+	name := sqlClusterBestNameExpr(memberFilter("pbn.id"))
+	override := sqlPersonNameOverrideExpr(personDisplayNamesGlob, memberFilter("pnv.participant_id"))
 	return "(SELECT COALESCE(" + override + ", " + name + ", " + sqlPersonIdentifierFallbackExpr("pb") + ") FROM read_parquet('" + participantsGlob + "') pb WHERE pb.id = CAST(group_key AS BIGINT))"
 }
 

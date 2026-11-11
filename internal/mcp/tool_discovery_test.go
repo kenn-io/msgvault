@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -56,7 +55,7 @@ func TestToolDiscoveryColdStart(t *testing.T) {
 		}
 	}
 	must.NotNil(id)
-	assertions.Equal("integer", id.Type)
+	assertions.Equal([]string{"integer"}, id.Types)
 	assertions.True(id.Required)
 	assertions.True(response.Results[0].ReadOnly)
 }
@@ -93,7 +92,12 @@ func TestToolDiscoveryUsefulQueriesAndMetadataParity(t *testing.T) {
 				for _, input := range result.Inputs {
 					assertions.Contains(properties, input.Name)
 					actual := toolInputProperty(t, listed[result.Name], input.Name)
-					assertions.Equal(actual["type"], input.Type)
+					switch types := actual["type"].(type) {
+					case string:
+						assertions.Equal([]string{types}, input.Types)
+					case []any:
+						assertions.ElementsMatch(types, input.Types)
+					}
 					assertions.Equal(slices.Contains(required, any(input.Name)), input.Required)
 				}
 			}
@@ -233,100 +237,61 @@ func TestToolDiscoveryInputLimits(t *testing.T) {
 	assertions.LessOrEqual(len(response.Results), 5)
 }
 
-func TestToolDiscoveryEncodedBudgetAndStableOrdering(t *testing.T) {
+func TestToolDiscoveryFullMetadataAndStableOrdering(t *testing.T) {
 	assertions := assert.New(t)
 	must := require.New(t)
-
-	// Synthetic server metadata exercises JSON escaping and wide UTF-8 without
-	// opening an archive. The real SDK supplies output validation and text fallback.
 	definitions := make([]toolDefinition, 0, 21)
 	for i := range 21 {
 		inputs := map[string]*jsonschema.Schema{}
 		for j := range 40 {
-			inputs[fmt.Sprintf("input_%02d", j)] = stringSchema(strings.Repeat("<&\"\\\x00界🌲", 40))
+			inputs[fmt.Sprintf("input_%02d", j)] = stringSchema(strings.Repeat("description ", 30))
 		}
-		definitions = append(definitions, readDefinition(fmt.Sprintf("fixture_%02d", i), strings.Repeat("fixture <&\"\\\x00界🌲", 40), closedObject(inputs, "input_39"), outputSchemaFor[toolDiscoveryResponse](), nil))
+		definitions = append(definitions, readDefinition(fmt.Sprintf("fixture_%02d", i), strings.Repeat("fixture ", 50), closedObject(inputs, "input_39"), outputSchemaFor[toolDiscoveryResponse](), nil))
 	}
-	handler := func(ctx context.Context, req toolRequest) (*toolResult, error) {
-		return discoverTools(definitions, strings.Repeat("<&\"\\\x00界🌲", 20), 20)
-	}
-	// officialToolHandler returns the object separately; round-trip through an SDK server.
-	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "synthetic", Version: "1"}, nil)
-	sdkmcp.AddTool[map[string]any, any](server, stableToolDiscoveryDefinition.tool(), officialToolHandler(handler))
-	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-	serverSession, err := server.Connect(t.Context(), serverTransport, nil)
+	result, err := discoverTools(definitions, "fixture", 20)
 	must.NoError(err)
-	t.Cleanup(func() { assertions.NoError(serverSession.Close()) })
-	client, err := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "fixture", Version: "1"}, nil).Connect(t.Context(), clientTransport, nil)
-	must.NoError(err)
-	t.Cleanup(func() { assertions.NoError(client.Close()) })
-	wire, err := client.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolSearchTools, Arguments: map[string]any{"query": "fixture", "limit": 20}})
-	must.NoError(err)
-	must.False(wire.IsError)
-	encoded, err := json.Marshal(wire)
-	must.NoError(err)
-	assertions.LessOrEqual(len(encoded), maxToolDiscoveryBytes)
-	response := task5StructuredAs[toolDiscoveryResponse](t, wire)
-	must.NotEmpty(response.Results)
+	var response toolDiscoveryResponse
+	must.NoError(json.Unmarshal(result.structuredContent, &response))
+	must.Len(response.Results, 20)
 	assertions.True(response.Truncated)
-	assertions.Less(len(response.Results), 20)
-	for i, result := range response.Results {
-		assertions.Equal(fmt.Sprintf("fixture_%02d", i), result.Name)
-		assertions.True(result.InputsTruncated)
-		assertions.Len(result.Inputs, maxToolDiscoveryInputs)
-		assertions.Equal("input_39", result.Inputs[0].Name)
-		assertions.True(result.Inputs[0].Required)
-		assertions.True(utf8.ValidString(result.Description))
-		assertions.LessOrEqual(len(result.Description), 320)
-		for _, input := range result.Inputs {
-			assertions.True(utf8.ValidString(input.Description))
-			assertions.LessOrEqual(len(input.Description), 160)
-		}
+	for i, item := range response.Results {
+		assertions.Equal(fmt.Sprintf("fixture_%02d", i), item.Name)
+		assertions.Equal(strings.Repeat("fixture ", 50), item.Description)
+		must.Len(item.Inputs, 40)
+		assertions.Equal("input_00", item.Inputs[0].Name)
+		assertions.Equal(strings.Repeat("description ", 30), item.Inputs[0].Description)
+		assertions.True(item.Inputs[39].Required)
 	}
 	slices.Reverse(definitions)
-	again, err := discoverTools(definitions, response.Query, 20)
+	again, err := discoverTools(definitions, "fixture", 20)
 	must.NoError(err)
-	assertions.JSONEq(string(again.structuredContent), string(mustDiscoveryJSON(t, response)))
+	assertions.JSONEq(string(result.structuredContent), string(again.structuredContent))
 }
 
-func mustDiscoveryJSON(t *testing.T, response toolDiscoveryResponse) []byte {
-	t.Helper()
-	encoded, err := json.Marshal(response)
-	require.NoError(t, err)
-	return encoded
-}
-
-func TestToolDiscoverySDKTextFallbackBudget(t *testing.T) {
-	for _, size := range []int{140, 145, 150, 155, 160} {
-		t.Run(strconv.Itoa(size), func(t *testing.T) {
-			assertions := assert.New(t)
-			must := require.New(t)
-
-			inputs := map[string]*jsonschema.Schema{}
-			for i := range 16 {
-				inputs[fmt.Sprintf("input_%02d", i)] = stringSchema(strings.Repeat("<", size))
-			}
-			definitions := []toolDefinition{readDefinition("fixture", "fixture", closedObject(inputs), outputSchemaFor[toolDiscoveryResponse](), nil)}
-			handler := func(context.Context, toolRequest) (*toolResult, error) {
-				return discoverTools(definitions, "fixture", 1)
-			}
-			server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "synthetic", Version: "1"}, nil)
-			sdkmcp.AddTool[map[string]any, any](server, stableToolDiscoveryDefinition.tool(), officialToolHandler(handler))
-			clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
-			serverSession, err := server.Connect(t.Context(), serverTransport, nil)
-			must.NoError(err)
-			t.Cleanup(func() { assertions.NoError(serverSession.Close()) })
-			client, err := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "fixture", Version: "1"}, nil).Connect(t.Context(), clientTransport, nil)
-			must.NoError(err)
-			t.Cleanup(func() { assertions.NoError(client.Close()) })
-			wire, err := client.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolSearchTools, Arguments: map[string]any{"query": "fixture", "limit": 1}})
-			must.NoError(err)
-			must.False(wire.IsError)
-			encoded, err := json.Marshal(wire)
-			must.NoError(err)
-			assertions.LessOrEqual(len(encoded), maxToolDiscoveryBytes)
-		})
+func TestToolDiscoveryUnionTypes(t *testing.T) {
+	assertions := assert.New(t)
+	must := require.New(t)
+	backend := &namedPromotionTestBackend{recordingPeopleBackend: &recordingPeopleBackend{}}
+	opts := peopleToolOptions(backend)
+	listed := toolsByName(t, rawListTools(t, opts, true))
+	response, _ := searchToolsResponse(t, opts, true, ToolPromotePerson, 20)
+	for _, result := range response.Results {
+		if result.Name != ToolPromotePerson {
+			continue
+		}
+		inputs := make(map[string]toolDiscoveryInput)
+		for _, input := range result.Inputs {
+			inputs[input.Name] = input
+		}
+		assertions.Equal([]string{"null", "string"}, inputs["display_name"].Types)
+		assertions.False(inputs["display_name"].Required)
+		assertions.ElementsMatch([]string{"null", "string"}, toolInputProperty(t, listed[ToolPromotePerson], "display_name")["type"])
+		assertions.Equal([]string{"integer"}, inputs["participant_id"].Types)
+		assertions.Zero(backend.namedParticipantID)
+		assertions.Zero(backend.promoteParticipantID)
+		return
 	}
+	must.Fail("promote_person missing from discovery")
 }
 
 func TestToolDiscoveryHTTPProtocolAndBearerPolicy(t *testing.T) {
@@ -406,4 +371,73 @@ func TestToolDiscoveryHTTPProtocolAndBearerPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestToolDiscoveryStdioCatalogSnapshot(t *testing.T) {
+	for _, initial := range []bool{true, false} {
+		t.Run(strconv.FormatBool(initial), func(t *testing.T) {
+			assertions := assert.New(t)
+			must := require.New(t)
+			families := &ArchiveFamilies{Calendar: initial}
+			opts := ServeOptions{Calendar: &calendarMCPFake{}, AllowCalendarWrites: true, Families: &ArchiveFamilies{Calendar: initial}, DiscoverFamilies: func(context.Context) *ArchiveFamilies { return families }}
+			clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+			server, err := newMCPServer(opts, true).Connect(t.Context(), serverTransport, nil)
+			must.NoError(err)
+			t.Cleanup(func() { assertions.NoError(server.Close()) })
+			client, err := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "snapshot", Version: "1"}, nil).Connect(t.Context(), clientTransport, nil)
+			must.NoError(err)
+			t.Cleanup(func() { assertions.NoError(client.Close()) })
+			families.Calendar = !initial
+			listed, err := client.ListTools(t.Context(), nil)
+			must.NoError(err)
+			names := make([]string, 0, len(listed.Tools))
+			for _, tool := range listed.Tools {
+				names = append(names, tool.Name)
+			}
+			assertions.Equal(initial, slices.Contains(names, "calendar_create"))
+			wire, err := client.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolSearchTools, Arguments: map[string]any{"query": "calendar_create", "limit": 20}})
+			must.NoError(err)
+			must.False(wire.IsError)
+			response := task5StructuredAs[toolDiscoveryResponse](t, wire)
+			names = names[:0]
+			for _, result := range response.Results {
+				names = append(names, result.Name)
+			}
+			assertions.Equal(initial, slices.Contains(names, "calendar_create"))
+		})
+	}
+}
+
+func TestToolDiscoveryServeTransportSnapshotsOnce(t *testing.T) {
+	assertions := assert.New(t)
+	must := require.New(t)
+	probes := 0
+	families := &ArchiveFamilies{Calendar: true}
+	opts := ServeOptions{Calendar: &calendarMCPFake{}, AllowCalendarWrites: true, DiscoverFamilies: func(context.Context) *ArchiveFamilies { probes++; return families }}
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- ServeTransport(ctx, opts, serverTransport) }()
+	t.Cleanup(func() { cancel(); <-done })
+	client, err := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "snapshot", Version: "1"}, nil).Connect(ctx, clientTransport, nil)
+	must.NoError(err)
+	families = &ArchiveFamilies{}
+	listed, err := client.ListTools(ctx, nil)
+	must.NoError(err)
+	var names []string
+	for _, tool := range listed.Tools {
+		names = append(names, tool.Name)
+	}
+	assertions.Contains(names, "calendar_create")
+	wire, err := client.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolSearchTools, Arguments: map[string]any{"query": "calendar_create", "limit": 20}})
+	must.NoError(err)
+	must.False(wire.IsError)
+	response := task5StructuredAs[toolDiscoveryResponse](t, wire)
+	names = nil
+	for _, result := range response.Results {
+		names = append(names, result.Name)
+	}
+	assertions.Contains(names, "calendar_create")
+	assertions.Equal(1, probes)
+	assertions.NoError(client.Close())
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 
 	"github.com/spf13/cobra"
@@ -46,6 +48,21 @@ func newDocbankCmd(open func(context.Context) (*daemonclient.Client, func(), err
 		for _, reason := range reasons {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s: %d\n", textutil.SanitizeTerminal(reason), result.Counts.Reasons[reason]); err != nil {
 				return fmt.Errorf("write status: %w", err)
+			}
+		}
+		if result.LastError != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Last error: %s\n", textutil.SanitizeTerminal(*result.LastError)); err != nil {
+				return fmt.Errorf("write status: %w", err)
+			}
+		}
+		if p := result.Processing; p != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Document profile: %s\nText extracted: %d\nProcessing: %d\nWaiting: %d\n", textutil.SanitizeTerminal(p.Profile), p.Extracted, p.Requested, p.Waiting); err != nil {
+				return fmt.Errorf("write status: %w", err)
+			}
+			for _, reason := range slices.Sorted(maps.Keys(p.Outcomes)) {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Without text (%s): %d\n", textutil.SanitizeTerminal(reason), p.Outcomes[reason]); err != nil {
+					return fmt.Errorf("write status: %w", err)
+				}
 			}
 		}
 		return nil

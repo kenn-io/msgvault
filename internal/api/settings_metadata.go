@@ -109,7 +109,7 @@ var settingsMetadata = map[string]settingMetadata{
 	"server.api_key":             {"API key", "Key that remote clients and browser logins use.", "listener"},
 	"server.allow_insecure":      {"Allow insecure access", "Allow connections from other machines without an API key.", "listener"},
 	"server.trusted_proxies":     {"Trusted proxies", "IP addresses or ranges allowed to forward HTTPS details for a request.", "listener"},
-	"server.daemon_idle_timeout": {"Idle timeout", "How long a background daemon waits with nothing to do before it stops.", "lifecycle"},
+	"server.daemon_idle_timeout": {"Idle timeout", "How long an automatically started daemon waits with nothing to do before it stops.", "lifecycle"},
 	"server.daemon_auto_start":   {"Automatic start", "Allow local commands to start or replace the daemon. Disable when a supervisor manages the service.", "lifecycle"},
 	"server.daemon_auto_restart": {"Automatic restart", "When the CLI restarts a running daemon after its binary changes.", "lifecycle"},
 	"log.enabled":                {"Persistent logs", "Write structured logs to the daemon log directory.", "logging"},
@@ -239,14 +239,15 @@ var settingsMetadata = map[string]settingMetadata{
 	"people.enrichment.batch_size":     {"Enrichment batch size", "People handled per run.", ""},
 	"people.enrichment.lease_duration": {"Enrichment lease", "How long one run holds a batch before another run may take it.", ""},
 
-	"integrations.tasks.enabled":         {"Task integration", "Send tasks to the configured task service.", ""},
-	"integrations.tasks.endpoint":        {"Task endpoint", "Where the task service listens.", ""},
-	"integrations.tasks.api_key":         {"Task API key", "Bearer key the daemon sends to the task service.", ""},
-	"integrations.tasks.default_project": {"Default task project", "Project used when creating or looking up tasks.", ""},
-	"integrations.kata.enabled":          {"Kata person agendas", "Show live Kata tasks linked to people.", ""},
-	"integrations.kata.endpoint":         {"Kata endpoint", "Where the Kata service listens. Required when enabled.", ""},
-	"integrations.kata.api_key":          {"Kata API key", "Bearer key the daemon sends to Kata.", ""},
-	"integrations.kata.default_project":  {"Kata project", "Existing Kata project used for person agendas.", ""},
+	"integrations.tasks.enabled":              {"Task integration", "Send tasks to the configured task service.", ""},
+	"integrations.tasks.endpoint":             {"Task endpoint", "Where the task service listens.", ""},
+	"integrations.tasks.api_key":              {"Task API key", "Bearer key the daemon sends to the task service.", ""},
+	"integrations.tasks.default_project":      {"Default task project", "Project used when creating or looking up tasks.", ""},
+	"integrations.kata.enabled":               {"Kata person agendas", "Show live Kata tasks linked to people.", ""},
+	"integrations.kata.trust_private_network": {"Trust private network", "Allow plaintext HTTP, including the API key, on a network you trust.", ""},
+	"integrations.kata.endpoint":              {"Kata endpoint", "Where the Kata service listens. Required when enabled.", ""},
+	"integrations.kata.api_key":               {"Kata API key", "Bearer key the daemon sends to Kata.", ""},
+	"integrations.kata.default_project":       {"Kata project", "Existing Kata project used for person agendas.", ""},
 }
 
 // settingsValidation carries format and range rules. A hint says how to
@@ -322,7 +323,7 @@ var settingsValidation = map[string]SettingValidation{
 	"people.enrichment.batch_size":     atLeast(1),
 	"people.enrichment.lease_duration": {Hint: "Duration such as 5m or 1h.", Required: true},
 	"integrations.tasks.endpoint":      {Hint: "HTTPS URL, loopback HTTP URL, or a Unix socket you own."},
-	"integrations.kata.endpoint":       {Hint: "HTTPS URL, loopback HTTP URL, or a Unix socket you own."},
+	"integrations.kata.endpoint":       {Hint: "HTTPS, loopback HTTP, trusted private-network HTTP, or a Unix socket you own."},
 }
 
 func atLeast(minimum float64) SettingValidation {

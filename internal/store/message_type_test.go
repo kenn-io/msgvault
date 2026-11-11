@@ -22,3 +22,26 @@ func TestIsEmailMessageType(t *testing.T) {
 		})
 	}
 }
+
+func TestIsWellFormedMessageType(t *testing.T) {
+	for _, tc := range []struct {
+		messageType string
+		want        bool
+	}{
+		{messageType: "email", want: true},
+		{messageType: "google_voice_text", want: true},
+		{messageType: "feed_item", want: true},
+		{messageType: "v2", want: true},
+		{messageType: "", want: false},
+		{messageType: "SMS", want: false},
+		{messageType: "feed-item", want: false},
+		{messageType: "feed item", want: false},
+		{messageType: "_feed", want: false},
+		{messageType: "2fa", want: false},
+		{messageType: "flüssig", want: false},
+	} {
+		t.Run(tc.messageType, func(t *testing.T) {
+			assert.Equal(t, tc.want, IsWellFormedMessageType(tc.messageType))
+		})
+	}
+}

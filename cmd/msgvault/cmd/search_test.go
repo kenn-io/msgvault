@@ -292,6 +292,41 @@ func TestSearchCmd_MessageTypeFlagForwardsToRemoteMode(t *testing.T) {
 	assert.Equal(t, "lunch", gotQuery, "remote query should keep search terms")
 }
 
+func TestSearchCmd_MessageTypeFlagAcceptsImportedTypes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	defer resetSearchFlags()
+
+	var gotType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotType = r.URL.Query().Get("message_type")
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(json.NewEncoder(w).Encode(map[string]any{"results": []map[string]any{}}), "write response")
+	}))
+	defer srv.Close()
+
+	run := func(messageType string) error {
+		resetSearchFlags()
+		cfg := &config.Config{}
+		cfg.Remote.URL = srv.URL
+		cfg.Remote.AllowInsecure = true
+		root := newTestRootCmd()
+		root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+		root.AddCommand(searchCmd)
+		root.SetArgs([]string{"search", "--message-type", messageType, "release"})
+		return root.Execute()
+	}
+
+	require.NoError(run("feed_item"), "an imported type should be forwarded")
+	assert.Equal("feed_item", gotType, "message_type query")
+
+	gotType = ""
+	err := run("Feed-Item")
+	require.Error(err, "a malformed type should fail before the request")
+	assert.Contains(err.Error(), `invalid --message-type: "Feed-Item"`)
+	assert.Empty(gotType, "no request for a malformed type")
+}
+
 func TestSearchCmd_DeletionScopeForwardsToRemoteFTS(t *testing.T) {
 	cfg := testConfigValue()
 	useLocal := false
@@ -1118,38 +1153,6 @@ func TestSearchCmd_JSONEmptyResultsEmitEmptyArray(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(out), &results),
 		"--json output must be valid JSON with zero results, got: %q", out)
 	assert.Empty(results)
-}
-
-func TestSearchCmd_EmptyResultsPrintHintsToStderr(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/cli/search", r.URL.Path)
-		assert.Equal(t, "from:alex", r.URL.Query().Get("q"))
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"results":[],"hints":[{"code":"sender_name_requires_address","message":"try from:alex@example.com","retry_with":{"query":"from:alex@example.com"}}]}`))
-	}))
-	defer srv.Close()
-	for _, tc := range []struct {
-		name, stdout string
-		args         []string
-	}{
-		{"text", "No messages found.\n", []string{"search", "from:alex"}},
-		{"json", "[]\n", []string{"search", "from:alex", "--json"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			defer resetSearchFlags()
-			cfg := &config.Config{Remote: config.RemoteConfig{URL: srv.URL, AllowInsecure: true}}
-			root := newTestRootCmd()
-			root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-			root.AddCommand(searchCmd)
-			root.SetArgs(tc.args)
-			doneOut, doneErr := captureStdout(t), captureStderr(t)
-			err := root.Execute()
-			stdout, stderr := doneOut(), doneErr()
-			require.NoError(t, err)
-			assert.Equal(t, tc.stdout, stdout)
-			assert.Contains(t, stderr, "Hint: try from:alex@example.com\n")
-		})
-	}
 }
 
 func TestOutputSearchResultsJSONIncludesBrowserURL(t *testing.T) {

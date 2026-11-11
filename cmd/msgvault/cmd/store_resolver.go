@@ -286,6 +286,7 @@ func openHTTPStoreWithStartupCacheIntent(
 	if err != nil {
 		return nil, HTTPStoreInfo{}, err
 	}
+	reportRetainedDaemonVersion(ctx, os.Stderr, rt)
 	return st, HTTPStoreInfo{
 		Kind:                     HTTPStoreLocalDaemon,
 		URL:                      url,
@@ -498,6 +499,7 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 		options = state.options
 	}
 	proc, err := startServeBackgroundProcessForRun(c, backgroundServeStartOptions{
+		Persistent:       prep.Persistent,
 		CacheBuildIntent: intent,
 		Invocation:       &options,
 	})
