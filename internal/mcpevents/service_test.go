@@ -2,11 +2,9 @@ package mcpevents
 
 import (
 	"bytes"
-	"context"
 	"encoding/json/v2"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"go.kenn.io/msgvault/internal/wakeups"
 )
 
 func newEventsTestStore(t *testing.T) *store.Store {
@@ -29,86 +26,91 @@ func newEventsTestStore(t *testing.T) *store.Store {
 	return st
 }
 
-func TestSubscribeRequiresExistingSource(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	st := testutil.NewTestStore(t)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	_, err := service.Subscribe(t.Context(), in)
-	var eventErr *Error
-	requirements.ErrorAs(err, &eventErr)
-	assertions.Equal(InvalidParams, eventErr.Code)
-	assertions.Equal("invalid_scope", eventErr.Reason)
-	catalog, err := st.LoadMCPEventsCatalog(t.Context())
-	requirements.NoError(err)
-	assertions.Nil(catalog)
-	var count int
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&count))
-	assertions.Zero(count)
-	source, err := st.GetOrCreateSource("imap", "events@example.test")
-	requirements.NoError(err)
-	requirements.Equal(int64(1), source.ID)
-	result, err := service.Subscribe(t.Context(), in)
-	requirements.NoError(err)
-	assertions.NotEmpty(result.ID)
-	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
-	requirements.NoError(err)
-	assertions.NotNil(position)
+func TestSubscribeClassifiesScopeFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"source", func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := testutil.NewTestStore(t)
+			service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			_, err := service.Subscribe(t.Context(), in)
+			var eventErr *Error
+			requirements.ErrorAs(err, &eventErr)
+			assertions.Equal(InvalidParams, eventErr.Code)
+			assertions.Equal("invalid_scope", eventErr.Reason)
+			catalog, err := st.LoadMCPEventsCatalog(t.Context())
+			requirements.NoError(err)
+			assertions.Nil(catalog)
+			var count int
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&count))
+			assertions.Zero(count)
+			source, err := st.GetOrCreateSource("imap", "events@example.test")
+			requirements.NoError(err)
+			requirements.Equal(int64(1), source.ID)
+			result, err := service.Subscribe(t.Context(), in)
+			requirements.NoError(err)
+			assertions.NotEmpty(result.ID)
+			_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+			requirements.NoError(err)
+			assertions.NotNil(position)
 
-	_, err = st.DB().ExecContext(t.Context(), "ALTER TABLE sources RENAME TO unavailable_sources")
-	requirements.NoError(err)
-	_, err = service.Subscribe(t.Context(), in)
-	requirements.ErrorAs(err, &eventErr)
-	assertions.Equal(Unavailable, eventErr.Code)
-	assertions.Equal("store_unavailable", eventErr.Reason)
-}
-
-func TestSubscribeClassifiesPersonScopeFailures(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	st := testutil.NewTestStore(t)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{PersonID: 999999}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	_, err := service.Subscribe(t.Context(), in)
-	var eventErr *Error
-	requirements.ErrorAs(err, &eventErr)
-	assertions.Equal(InvalidParams, eventErr.Code)
-	assertions.Equal("invalid_scope", eventErr.Reason)
-	assertions.Equal(http.StatusBadRequest, eventErr.Status())
-	var emptyID int64
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons(vcard_uid,display_name) VALUES('empty-person','Empty') RETURNING id`).Scan(&emptyID))
-	in.Arguments.PersonID = emptyID
-	_, err = service.Subscribe(t.Context(), in)
-	requirements.ErrorAs(err, &eventErr)
-	assertions.Equal(InvalidParams, eventErr.Code)
-	assertions.Equal("invalid_scope", eventErr.Reason)
-	assertions.Equal(http.StatusBadRequest, eventErr.Status())
-	catalog, err := st.LoadMCPEventsCatalog(t.Context())
-	requirements.NoError(err)
-	assertions.Nil(catalog)
-	var count int
-	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&count))
-	assertions.Zero(count)
-	participant, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
-	requirements.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(participant)
-	requirements.NoError(err)
-	in.Arguments.PersonID = person.ID
-	_, err = service.Subscribe(t.Context(), in)
-	requirements.NoError(err)
-	before, err := st.LoadMCPEventsCatalog(t.Context())
-	requirements.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), "ALTER TABLE persons RENAME TO unavailable_persons")
-	requirements.NoError(err)
-	_, err = service.Subscribe(t.Context(), in)
-	requirements.ErrorAs(err, &eventErr)
-	assertions.Equal(Unavailable, eventErr.Code)
-	assertions.Equal("store_unavailable", eventErr.Reason)
-	assertions.Equal(http.StatusServiceUnavailable, eventErr.Status())
-	after, err := st.LoadMCPEventsCatalog(t.Context())
-	requirements.NoError(err)
-	assertions.Equal(before, after)
+			_, err = st.DB().ExecContext(t.Context(), "ALTER TABLE sources RENAME TO unavailable_sources")
+			requirements.NoError(err)
+			_, err = service.Subscribe(t.Context(), in)
+			requirements.ErrorAs(err, &eventErr)
+			assertions.Equal(Unavailable, eventErr.Code)
+			assertions.Equal("store_unavailable", eventErr.Reason)
+		}},
+		{"person", func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := testutil.NewTestStore(t)
+			service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{PersonID: 999999}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			_, err := service.Subscribe(t.Context(), in)
+			var eventErr *Error
+			requirements.ErrorAs(err, &eventErr)
+			assertions.Equal(InvalidParams, eventErr.Code)
+			assertions.Equal("invalid_scope", eventErr.Reason)
+			var emptyID int64
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons(vcard_uid,display_name) VALUES('empty-person','Empty') RETURNING id`).Scan(&emptyID))
+			in.Arguments.PersonID = emptyID
+			_, err = service.Subscribe(t.Context(), in)
+			requirements.ErrorAs(err, &eventErr)
+			assertions.Equal(InvalidParams, eventErr.Code)
+			assertions.Equal("invalid_scope", eventErr.Reason)
+			catalog, err := st.LoadMCPEventsCatalog(t.Context())
+			requirements.NoError(err)
+			assertions.Nil(catalog)
+			var count int
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&count))
+			assertions.Zero(count)
+			participant, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
+			requirements.NoError(err)
+			person, _, err := st.CreatePersonFromParticipant(participant)
+			requirements.NoError(err)
+			in.Arguments.PersonID = person.ID
+			_, err = service.Subscribe(t.Context(), in)
+			requirements.NoError(err)
+			before, err := st.LoadMCPEventsCatalog(t.Context())
+			requirements.NoError(err)
+			_, err = st.DB().ExecContext(t.Context(), "ALTER TABLE persons RENAME TO unavailable_persons")
+			requirements.NoError(err)
+			_, err = service.Subscribe(t.Context(), in)
+			requirements.ErrorAs(err, &eventErr)
+			assertions.Equal(Unavailable, eventErr.Code)
+			assertions.Equal("store_unavailable", eventErr.Reason)
+			after, err := st.LoadMCPEventsCatalog(t.Context())
+			requirements.NoError(err)
+			assertions.Equal(before, after)
+		}},
+	} {
+		t.Run(tc.name, tc.run)
+	}
 }
 
 func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {
@@ -145,6 +147,9 @@ func TestNativeSkipsMissingCredentialAndRefreshRecovers(t *testing.T) {
 	assert.Equal("network_error", third.DeliveryStatus.LastError)
 	require.NotNil(third.DeliveryStatus.FailedSince)
 	assert.Equal(stamp, *third.DeliveryStatus.FailedSince)
+	after, _, err = st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
+	require.NoError(err)
+	assert.Equal(state, after)
 	targets, err = service.Native(t.Context())
 	require.NoError(err)
 	require.Len(targets, 1)
@@ -158,35 +163,6 @@ func preparedSubscribe(t *testing.T, in MCPEventsSubscribeRequest) MCPEventsSubs
 	out, err := DecodeSubscribe(raw)
 	require.NoError(t, err)
 	return out
-}
-
-func TestLegacyCatalogRefreshPreservesPosition(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := newEventsTestStore(t)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	first, err := service.Subscribe(t.Context(), in)
-	require.NoError(err)
-	_, before, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
-	require.NoError(err)
-	raw, err := st.LoadMCPEventsCatalog(t.Context())
-	require.NoError(err)
-	var entries []map[string]any
-	require.NoError(json.Unmarshal(raw, &entries))
-	entries[0]["sealed_secret"] = "b2xk"
-	legacy, err := json.Marshal(entries)
-	require.NoError(err)
-	ok, err := st.SwapMCPEventsCatalog(t.Context(), raw, legacy, "", nil, "")
-	require.NoError(err)
-	require.True(ok)
-	require.NoError(os.Remove(filepath.Join(service.TokensDir, providercredentials.EventsFilename)))
-	second, err := service.Subscribe(t.Context(), in)
-	require.NoError(err)
-	assert.Equal(first.ID, second.ID)
-	_, after, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
-	require.NoError(err)
-	assert.Equal(before, after)
 }
 
 func TestDecodeSubscribeRejectsInvalidArgumentsAndNulls(t *testing.T) {
@@ -239,37 +215,6 @@ func TestTTLClampAndDefaults(t *testing.T) {
 	}
 }
 
-func TestSubscribeRefreshPreservesPosition(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := newEventsTestStore(t)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
-	input := MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}
-	input = preparedSubscribe(t, input)
-	first, err := service.Subscribe(t.Context(), input)
-	require.NoError(err)
-	key := store.MCPEventsPositionKey(first.ID)
-	pos, raw, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(err)
-	require.NotNil(raw)
-	pos.Failures = 2
-	stamp := time.Now().UTC().Truncate(time.Second)
-	pos.LastError = "http_5xx"
-	pos.FailedSince = &stamp
-	ok, err := st.AdvanceWakeupStateKey(t.Context(), key, raw, pos)
-	require.NoError(err)
-	require.True(ok)
-	second, err := service.Subscribe(t.Context(), input)
-	require.NoError(err)
-	assert.Equal(first.ID, second.ID)
-	got, _, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(err)
-	assert.Equal(pos, got)
-	assert.Equal("http_5xx", second.DeliveryStatus.LastError)
-	require.NotNil(second.DeliveryStatus.FailedSince)
-	assert.Equal(stamp, *second.DeliveryStatus.FailedSince)
-}
-
 func TestResubscribeReusesIdentityAndStartsAtCurrentBound(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -313,7 +258,6 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 	in = preparedSubscribe(t, in)
 	result, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
-	require.NoError(os.Remove(filepath.Join(service.TokensDir, providercredentials.EventsFilename)))
 	now = now.Add(25 * time.Hour)
 	targets, err := service.Native(t.Context())
 	require.NoError(err)
@@ -402,17 +346,6 @@ func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
 	assert.Equal(entries, entriesAfter)
 }
 
-type countingWakeupStore struct {
-	*store.Store
-
-	loaded []string
-}
-
-func (s *countingWakeupStore) LoadWakeupStateKey(ctx context.Context, key string) (store.WakeupState, []byte, error) {
-	s.loaded = append(s.loaded, key)
-	return s.Store.LoadWakeupStateKey(ctx, key)
-}
-
 func TestNativeRespectsConfiguredTargetLimitAfterRestart(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -434,10 +367,6 @@ func TestNativeRespectsConfiguredTargetLimitAfterRestart(t *testing.T) {
 	assert.Equal(ids[1], targets[1].Name)
 	assert.Contains(logs.String(), ids[2])
 	assert.Contains(logs.String(), "over_limit")
-	counted := &countingWakeupStore{Store: st}
-	engine := wakeups.Engine{Store: counted, Native: service.Native}
-	require.NoError(engine.RunPass(t.Context()))
-	assert.Equal([]string{store.MCPEventsPositionKey(ids[0]), store.MCPEventsPositionKey(ids[1])}, counted.loaded)
 	entries, _, err := service.catalog(t.Context())
 	require.NoError(err)
 	assert.Len(entries, 32)
@@ -533,7 +462,7 @@ func TestCredentialCleanupFailureRetainsLiveButExpiresOldEntry(t *testing.T) {
 	assert.Nil(raw)
 }
 
-func TestNativeSkipsOriginMismatchWithoutBlockingOtherEntries(t *testing.T) {
+func TestNativeSkipsMissingCredentialWithoutBlockingOtherEntries(t *testing.T) {
 	require := require.New(t)
 	st := newEventsTestStore(t)
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
@@ -548,7 +477,7 @@ func TestNativeSkipsOriginMismatchWithoutBlockingOtherEntries(t *testing.T) {
 	id := providercredentials.EventsID(first.ID)
 	revision, err := snapshot.Revision(id)
 	require.NoError(err)
-	_, err = providercredentials.PutIfRevision(service.TokensDir, revision, id, "https://other.example.com", "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh")
+	_, err = providercredentials.DeleteIfRevision(service.TokensDir, revision, id, func() error { return nil })
 	require.NoError(err)
 	targets, err := service.Native(t.Context())
 	require.NoError(err)

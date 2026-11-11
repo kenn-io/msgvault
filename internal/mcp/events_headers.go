@@ -77,58 +77,21 @@ func eventsNameHeaderHandler(next http.Handler) http.Handler {
 	})
 }
 
-// jsonMembers returns the top-level member values of a single JSON object,
-// keyed case-sensitively, keeping every occurrence of a repeated name. Leading
-// or trailing bytes, including a byte order mark, make it fail.
-func jsonMembers(raw []byte) (map[string][]jsontext.Value, bool) {
-	dec := jsontext.NewDecoder(bytes.NewReader(bytes.TrimSpace(raw)), jsontext.AllowDuplicateNames(true))
-	if tok, err := dec.ReadToken(); err != nil || tok.Kind() != '{' {
-		return nil, false
-	}
-	members := make(map[string][]jsontext.Value)
-	for dec.PeekKind() != '}' {
-		key, err := dec.ReadToken()
-		if err != nil || key.Kind() != '"' {
-			return nil, false
-		}
-		name := key.String() // the token is voided by the next read
-		value, err := dec.ReadValue()
-		if err != nil {
-			return nil, false
-		}
-		members[name] = append(members[name], append(jsontext.Value(nil), value...))
-	}
-	if _, err := dec.ReadToken(); err != nil {
-		return nil, false
-	}
-	if _, err := dec.ReadToken(); !errors.Is(err, io.EOF) {
-		return nil, false
-	}
-	return members, true
-}
-
-// eventsRequestName extracts params.name and the request id. ok is false for
-// anything that is not one object holding exactly one params object with
-// exactly one string name; id is then best effort.
+// eventsRequestName rejects malformed or duplicate JSON before comparing names.
 func eventsRequestName(body []byte) (name string, id jsontext.Value, ok bool) {
-	top, valid := jsonMembers(body)
-	if !valid {
+	var request struct {
+		ID     jsontext.Value `json:"id"`
+		Params *struct {
+			Name *string `json:"name"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil {
 		return "", nil, false
 	}
-	if ids := top["id"]; len(ids) == 1 {
-		id = ids[0]
+	if request.Params == nil || request.Params.Name == nil {
+		return "", request.ID, false
 	}
-	if len(top["params"]) != 1 {
-		return "", id, false
-	}
-	params, valid := jsonMembers(top["params"][0])
-	if !valid || len(params["name"]) != 1 {
-		return "", id, false
-	}
-	if err := json.Unmarshal(params["name"][0], &name); err != nil {
-		return "", id, false
-	}
-	return name, id, true
+	return *request.Params.Name, request.ID, true
 }
 
 type errReader struct{ err error }

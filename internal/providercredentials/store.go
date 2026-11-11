@@ -547,57 +547,6 @@ func mutate(tokenDir, name string, precondition func(Snapshot) error, mutation f
 	})
 }
 
-// MigrateEvents moves draft Events records to their separate file under the
-// same lock, publishing the destination before removing any shared records.
-func MigrateEvents(tokenDir string) error {
-	probe, err := Read(tokenDir)
-	if err != nil {
-		return fmt.Errorf("read shared credentials for Events migration: %w", err)
-	}
-	hasEvents := func(snapshot Snapshot) bool {
-		for id := range snapshot.credentials {
-			if strings.HasPrefix(id, eventsCredentialIDPrefix) {
-				return true
-			}
-		}
-		return false
-	}
-	if !hasEvents(probe) {
-		return nil
-	}
-	_, err = locked(tokenDir, Filename, func(shared Snapshot, permissions permissionBackend) (Snapshot, error) {
-		if !hasEvents(shared) {
-			return shared, nil
-		}
-		destination, err := readWithPermissions(tokenDir, EventsFilename, permissions)
-		if err != nil {
-			return Snapshot{}, err
-		}
-		remaining := maps.Clone(shared.credentials)
-		moved := maps.Clone(destination.credentials)
-		copied := false
-		for id, value := range shared.credentials {
-			if strings.HasPrefix(id, eventsCredentialIDPrefix) {
-				if _, exists := moved[id]; !exists {
-					moved[id] = value
-					copied = true
-				}
-				delete(remaining, id)
-			}
-		}
-		if copied {
-			if _, err := persist(tokenDir, EventsFilename, permissions, moved); err != nil {
-				return Snapshot{}, err
-			}
-		}
-		return persist(tokenDir, Filename, permissions, remaining)
-	})
-	if err != nil {
-		return fmt.Errorf("migrate Events credentials: %w", err)
-	}
-	return nil
-}
-
 // locked runs fn against a fresh read while holding the store lock.
 func locked(tokenDir, name string, fn func(Snapshot, permissionBackend) (Snapshot, error)) (Snapshot, error) {
 	permissions := nativePermissions{}

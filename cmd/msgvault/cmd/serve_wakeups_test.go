@@ -43,7 +43,7 @@ func TestWakeupJobOnlyForUsableEntries(t *testing.T) {
 		require.NoError(err)
 		require.True(ok)
 	}
-	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, &config.Config{Wakeups: entries[:1]}, nil))
+	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, &config.Config{Wakeups: entries[:1]}, nil, nil))
 	assert.False(sched.IsJobScheduled("wakeups"))
 	_, raw, err := st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("bad"))
 	require.NoError(err)
@@ -51,7 +51,7 @@ func TestWakeupJobOnlyForUsableEntries(t *testing.T) {
 	_, raw, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("removed"))
 	require.NoError(err)
 	assert.Nil(raw)
-	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, cfg, nil))
+	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, cfg, nil, nil))
 	assert.True(sched.IsJobScheduled("wakeups"))
 	_, raw, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("good"))
 	require.NoError(err)
@@ -86,7 +86,7 @@ func TestWakeupJobRecoversAfterSetupGateFailure(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	gate := &wakeupSetupGate{SerialOperationGate: api.NewSerialOperationGate(), refuse: true}
 	sched := scheduler.New(nil)
-	require.NoError(configureWakeupJob(t.Context(), sched, gate, st, cfg, nil))
+	require.NoError(configureWakeupJob(t.Context(), sched, gate, st, cfg, nil, nil))
 	assert.True(sched.IsJobScheduled("wakeups"))
 	_, raw, err := st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("good"))
 	require.NoError(err)
@@ -111,7 +111,7 @@ func TestWakeupSetupSafeDiagnostics(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	sched := scheduler.New(nil)
-	require.NoError(configureWakeupJob(t.Context(), sched, nil, testutil.NewTestStore(t), cfg, logger))
+	require.NoError(configureWakeupJob(t.Context(), sched, nil, testutil.NewTestStore(t), cfg, logger, nil))
 	text := logs.String()
 	assert.Contains(text, "category=secret_unavailable")
 	assert.Contains(text, "category=invalid_secret")

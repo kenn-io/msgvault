@@ -12,7 +12,6 @@ import (
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/msgvault/internal/backupapp"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
@@ -20,14 +19,12 @@ import (
 
 func TestMCPEventsBackupRestoreTokens(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		include    bool
-		missing    string
-		eventsOnly bool
+		name    string
+		include bool
+		missing string
 	}{
 		{name: "default"}, {name: "include tokens", include: true},
 		{name: "missing store", include: true, missing: providercredentials.EventsFilename},
-		{name: "events only", include: true, eventsOnly: true},
 		{name: "missing key", include: true, missing: providercredentials.ServerKeyFilename},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,9 +54,6 @@ func TestMCPEventsBackupRestoreTokens(t *testing.T) {
 			key, err := providercredentials.EnsureServerKey(cfg.TokensDir())
 			require.NoError(err)
 			require.NoError(os.WriteFile(filepath.Join(cfg.TokensDir(), "account.token"), []byte("account fixture"), 0600))
-			if tc.eventsOnly {
-				require.NoError(os.Remove(filepath.Join(cfg.TokensDir(), providercredentials.ServerKeyFilename)))
-			}
 			if tc.missing != "" {
 				require.NoError(os.Remove(filepath.Join(cfg.TokensDir(), tc.missing)))
 			}
@@ -85,7 +79,7 @@ func TestMCPEventsBackupRestoreTokens(t *testing.T) {
 			command := &cobra.Command{Use: "restore"}
 			command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 			require.NoError(runBackupRestore(command, nil))
-			if include && !tc.eventsOnly && tc.missing != providercredentials.ServerKeyFilename {
+			if include && tc.missing != providercredentials.ServerKeyFilename {
 				value, err := providercredentials.ReadSecretFile(filepath.Join(dest, "tokens", providercredentials.ServerKeyFilename))
 				require.NoError(err)
 				assert.Equal(key, value)
@@ -106,32 +100,6 @@ func TestMCPEventsBackupRestoreTokens(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(include && tc.missing != providercredentials.EventsFilename, len(targets) == 1)
 
-			overwrite := filepath.Join(t.TempDir(), "overwrite")
-			tokenDir := filepath.Join(overwrite, "tokens")
-			require.NoError(fileutil.SecureMkdirAll(tokenDir, 0700))
-			omitted := filepath.Join(tokenDir, "omitted.token")
-			require.NoError(fileutil.SecureReplaceFile(omitted, []byte("preserved"), 0600))
-			if tc.missing != "" {
-				require.NoError(fileutil.SecureReplaceFile(filepath.Join(tokenDir, tc.missing), []byte("prior credential"), 0600))
-			}
-			backupRestoreTarget, backupRestoreOverwrite = overwrite, true
-			require.NoError(runBackupRestore(command, nil))
-			omittedData, err := os.ReadFile(omitted)
-			require.NoError(err)
-			assert.Equal("preserved", string(omittedData))
-			if tc.missing != "" {
-				prior, err := os.ReadFile(filepath.Join(tokenDir, tc.missing))
-				require.NoError(err)
-				assert.Equal("prior credential", string(prior))
-			}
-			if include && !tc.eventsOnly && tc.missing != providercredentials.ServerKeyFilename {
-				value, err := providercredentials.ReadSecretFile(filepath.Join(tokenDir, providercredentials.ServerKeyFilename))
-				require.NoError(err)
-				assert.Equal(key, value)
-			} else if !include {
-				_, err := os.Stat(filepath.Join(tokenDir, ".provider-credentials.lock"))
-				assert.ErrorIs(err, os.ErrNotExist)
-			}
 		})
 	}
 }

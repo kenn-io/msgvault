@@ -38,22 +38,34 @@ func (b *eventTestBackend) MCPEventsSubscribe(_ context.Context, in mcpevents.MC
 }
 
 func TestEventsListPropagatesBackendFailure(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	backend := &eventTestBackend{listErr: errors.New("daemon offline")}
-	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "events/list", "params": map[string]any{"_meta": modernRequestMeta()}})
-	requirements.NoError(err)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("Mcp-Protocol-Version", modernProtocolVersion)
-	req.Header.Set("Mcp-Method", "events/list")
-	recorder := httptest.NewRecorder()
-	newMCPHTTPServer(ServeOptions{Events: backend}, HTTPOptions{}).Handler.ServeHTTP(recorder, req)
-	requirements.Equal(http.StatusOK, recorder.Code)
-	var response rawRPCResponse
-	requirements.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
-	assertions.InDelta(float64(mcpevents.Unavailable), response.Error["code"], 0)
+	for _, tc := range []struct {
+		name   string
+		err    error
+		reason string
+	}{
+		{"generic", errors.New("daemon offline"), "daemon_unavailable"},
+		{"typed", &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "disabled"}, "disabled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			backend := &eventTestBackend{listErr: tc.err}
+			body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "events/list", "params": map[string]any{"_meta": modernRequestMeta()}})
+			requirements.NoError(err)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			req.Header.Set("Mcp-Protocol-Version", modernProtocolVersion)
+			req.Header.Set("Mcp-Method", "events/list")
+			recorder := httptest.NewRecorder()
+			newMCPHTTPServer(ServeOptions{Events: backend}, HTTPOptions{}).Handler.ServeHTTP(recorder, req)
+			requirements.Equal(http.StatusOK, recorder.Code)
+			var response rawRPCResponse
+			requirements.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
+			assertions.InDelta(float64(mcpevents.Unavailable), response.Error["code"], 0)
+			assertions.Equal(map[string]any{"reason": tc.reason}, response.Error["data"])
+		})
+	}
 }
 
 func (b *eventTestBackend) MCPEventsUnsubscribe(_ context.Context, in mcpevents.MCPEventsUnsubscribeRequest) error {
@@ -161,15 +173,4 @@ func TestEventsLegacyAndDelegatedDoNotReachBackend(t *testing.T) {
 			assert.Zero(t, backend.calls)
 		})
 	}
-}
-
-func TestEventsUnavailableReasonReachesRPC(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	err := rpcEventError(&mcpevents.Error{Code: mcpevents.Unavailable, Reason: "disabled"})
-	var rpcErr *jsonrpc.Error
-	requirements.ErrorAs(err, &rpcErr)
-	assertions.Equal(int64(mcpevents.Unavailable), rpcErr.Code)
-	assertions.Equal("Unavailable", rpcErr.Message)
-	assertions.JSONEq(`{"reason":"disabled"}`, string(rpcErr.Data))
 }

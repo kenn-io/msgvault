@@ -1,6 +1,7 @@
 package wakeups
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -193,7 +194,11 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 			}))
 			defer server.Close()
 			sub := Subscription{Name: "sub-x", StateKey: key, Native: true, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{SourceIDs: []int64{src.ID}, IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(t, server)}
-			engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
+			nativeCalls := 0
+			engine := Engine{Store: st, Native: func(context.Context) ([]Subscription, error) {
+				nativeCalls++
+				return []Subscription{sub}, nil
+			}, Now: func() time.Time { return now }}
 			attempts := 1
 			if status == 500 {
 				attempts = 5
@@ -202,6 +207,7 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 				require.NoError(engine.RunPass(ctx))
 				now = now.Add(time.Hour)
 			}
+			assert.Equal(attempts, nativeCalls)
 			require.Len(bodies, attempts)
 			assert.Equal("msgvault.messages.changed", bodies[0]["name"])
 			cursor, present := bodies[0]["cursor"]

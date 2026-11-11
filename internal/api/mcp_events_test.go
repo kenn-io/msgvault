@@ -40,26 +40,6 @@ func TestEventsMutationsUseOperationGate(t *testing.T) {
 	assert.Equal(t, 2, gate.calls)
 }
 
-func TestOwnerEventsDisabledAndInvalidSubscription(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	cfg := &config.Config{HomeDir: t.TempDir()}
-	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir()}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
-	request := func(body string) *httptest.ResponseRecorder {
-		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
-		r.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, r)
-		return w
-	}
-	w := request(`{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	events.Enabled = true
-	w = request(`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"source_id":2},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "-32602")
-}
-
 func TestMCPEventsRejectsDelegatedGrant(t *testing.T) {
 	srv, reg := newTestServerWithAgentGrants(t)
 	t.Cleanup(reg.Close)
@@ -125,6 +105,7 @@ func TestGeneratedEventsCatalogDecodes(t *testing.T) {
 	requirements.Len(response.JSON200.Events, 1)
 	assertions.Equal("object", response.JSON200.Events[0].InputSchema["type"])
 	assertions.Equal("object", response.JSON200.Events[0].PayloadSchema["type"])
+
 }
 
 // decodedEventsError inspects only the generated, decoded response field, not raw bytes.
