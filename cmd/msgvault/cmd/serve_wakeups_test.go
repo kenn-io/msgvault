@@ -6,11 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -25,6 +27,20 @@ func TestWakeupJobOnlyForUsableEntries(t *testing.T) {
 	cfg, err := config.Load(path, "")
 	require.NoError(t, err)
 	entries := cfg.Wakeups
+	t.Setenv("MISSING_WAKEUP_TEST", "")
+	for _, name := range []string{"bad", "removed"} {
+		ok, err := st.AdvanceWakeupState(t.Context(), name, nil, store.WakeupState{At: time.Now().UTC()})
+		require.NoError(t, err)
+		require.True(t, ok)
+	}
+	require.NoError(t, configureWakeupJob(t.Context(), sched, nil, st, entries[:1], nil))
+	assert.False(t, sched.IsJobScheduled("wakeups"))
+	_, raw, err := st.LoadWakeupState(t.Context(), "bad")
+	require.NoError(t, err)
+	assert.NotNil(t, raw)
+	_, raw, err = st.LoadWakeupState(t.Context(), "removed")
+	require.NoError(t, err)
+	assert.Nil(t, raw)
 	require.NoError(t, configureWakeupJob(t.Context(), sched, nil, st, entries, nil))
 	assert.True(t, sched.IsJobScheduled("wakeups"))
 }

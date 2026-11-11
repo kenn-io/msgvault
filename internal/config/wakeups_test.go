@@ -30,7 +30,7 @@ func TestWakeupValidationAndDefaults(t *testing.T) {
 		{"both secrets", func(c *WakeupConfig) { c.SecretFile = "secret" }},
 		{"timeout", func(c *WakeupConfig) { c.Timeout = 61 * time.Second }},
 		{"age", func(c *WakeupConfig) { c.MaxMessageAge = -time.Second }},
-		{"person", func(c *WakeupConfig) { c.PersonID = -1 }},
+		{"person", func(c *WakeupConfig) { c.PersonID = func() *int64 { v := int64(-1); return &v }() }},
 		{"source", func(c *WakeupConfig) { c.SourceIDs = []int64{0} }},
 		{"conversation", func(c *WakeupConfig) { c.ConversationIDs = []int64{-1} }},
 	} {
@@ -44,4 +44,19 @@ func TestInlineWakeupSecretRejectedByConfigLoader(t *testing.T) {
 	path := writeDaemonSectionConfig(t, "[[wakeups]]\nname='inbox'\nurl='https://example.com/hook'\nsecret_env='WAKEUP_KEY'\nsecret='not-allowed'\n")
 	_, err := Load(path, "")
 	require.ErrorContains(t, err, "unknown wakeups config key")
+}
+
+func TestWakeupPersonSelectorPresence(t *testing.T) {
+	for _, tc := range []struct {
+		selector string
+		valid    bool
+	}{{"", true}, {"person_id=0\n", false}, {"person_id=-1\n", false}, {"person_id=42\n", true}} {
+		path := writeDaemonSectionConfig(t, "[[wakeups]]\nname='inbox'\nurl='https://example.com/hook'\nsecret_env='WAKEUP_KEY'\n"+tc.selector)
+		_, err := Load(path, "")
+		if tc.valid {
+			assert.NoError(t, err)
+		} else {
+			assert.Error(t, err)
+		}
+	}
 }

@@ -127,6 +127,13 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		var uid string
 		var category string
 		var ready bool
+		advance := func(before []byte) error {
+			swapped, err := e.Store.AdvanceWakeupState(ctx, sub.Name, before, state)
+			if err == nil && !swapped {
+				logger.Warn("wakeup state conflict", "name", sub.Name, "category", "state_conflict")
+			}
+			return err
+		}
 		err := e.gated(ctx, func() error {
 			var err error
 			state, raw, err = e.Store.LoadWakeupState(ctx, sub.Name)
@@ -153,8 +160,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 					return nil
 				}
 				state.At = page.CompleteThrough
-				_, err = e.Store.AdvanceWakeupState(ctx, sub.Name, nil, state)
-				return err
+				return advance(nil)
 			}
 			filter, err := changefeed.ResolveFilter(ctx, e.Store, sub.Filter)
 			if err != nil {
@@ -164,8 +170,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				category = "person_unavailable"
 				state.Failures++
 				state.NextAttemptAt = now.Add(retryDelay(state.Failures))
-				_, err = e.Store.AdvanceWakeupState(ctx, sub.Name, raw, state)
-				return err
+				return advance(raw)
 			}
 			uid, err = e.Store.ArchiveUIDContext(ctx)
 			if err != nil {
@@ -188,12 +193,11 @@ func (e *Engine) RunPass(ctx context.Context) error {
 					matches = append(matches, row)
 				}
 			}
-			if len(matches) == 0 && state.Failures == 0 {
+			if len(matches) == 0 && state.Failures == 0 && len(page.Messages) > 0 {
 				state.At = next.At()
 				state.AfterID, state.AfterRow = next.AfterID()
-				state.Failures = 0
 				state.NextAttemptAt = time.Time{}
-				_, err = e.Store.AdvanceWakeupState(ctx, sub.Name, raw, state)
+				err = advance(raw)
 			}
 			return err
 		})
@@ -235,11 +239,10 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			state.NextAttemptAt = time.Time{}
 		} else {
 			state.Failures++
-			failureTime := e.now()
-			state.NextAttemptAt = failureTime.Add(retryDelay(state.Failures))
+			state.NextAttemptAt = e.now().Add(retryDelay(state.Failures))
 			logger.Warn("wakeup failed", "name", sub.Name, "category", category, "failures", state.Failures)
 		}
-		err = e.gated(ctx, func() error { _, err := e.Store.AdvanceWakeupState(ctx, sub.Name, raw, state); return err })
+		err = e.gated(ctx, func() error { return advance(raw) })
 		if err != nil {
 			logger.Warn("wakeup store step failed", "name", sub.Name, "category", "store_error")
 		}
@@ -254,5 +257,9 @@ func NewSubscription(name, endpoint string, secret []byte, filter changefeed.Fil
 
 // FilterFromConfig uses selectors normalized by config validation.
 func FilterFromConfig(entry config.WakeupConfig) changefeed.Filter {
-	return changefeed.Filter{PersonID: entry.PersonID, SourceIDs: entry.SourceIDs, ConversationIDs: entry.ConversationIDs, IncomingOnly: *entry.IncomingOnly}
+	var personID int64
+	if entry.PersonID != nil {
+		personID = *entry.PersonID
+	}
+	return changefeed.Filter{PersonID: personID, SourceIDs: entry.SourceIDs, ConversationIDs: entry.ConversationIDs, IncomingOnly: *entry.IncomingOnly}
 }

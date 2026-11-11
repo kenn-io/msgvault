@@ -84,8 +84,7 @@ func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, bo
 		return pinnedDial(ctx, network, address)
 	}, TLSClientConfig: tlsConfig, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport}
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return "invalid_callback"
@@ -122,6 +121,8 @@ func (c webhookClient) send(ctx context.Context, endpoint, id string, secret, bo
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return ""
+	case resp.StatusCode >= 300 && resp.StatusCode < 400:
+		return "http_3xx"
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		return "http_4xx"
 	default:

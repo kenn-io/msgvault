@@ -19,7 +19,7 @@ type WakeupConfig struct {
 	SecretEnv        string        `toml:"secret_env"`
 	TrustedAddresses []string      `toml:"trusted_addresses"`
 	Timeout          time.Duration `toml:"timeout"`
-	PersonID         int64         `toml:"person_id"`
+	PersonID         *int64        `toml:"person_id"`
 	SourceIDs        []int64       `toml:"source_ids"`
 	ConversationIDs  []int64       `toml:"conversation_ids"`
 	IncomingOnly     *bool         `toml:"incoming_only"`
@@ -72,25 +72,20 @@ func prepareWakeups(entries []WakeupConfig) error {
 			v := true
 			c.IncomingOnly = &v
 		}
-		if c.PersonID < 0 || len(c.SourceIDs) > 50 || len(c.ConversationIDs) > 50 {
+		if (c.PersonID != nil && *c.PersonID <= 0) || len(c.SourceIDs) > 50 || len(c.ConversationIDs) > 50 {
 			return fmt.Errorf("wakeups %s: invalid selectors", c.Name)
 		}
-		for _, ids := range [][]int64{c.SourceIDs, c.ConversationIDs} {
-			for _, id := range ids {
+		for _, ids := range []*[]int64{&c.SourceIDs, &c.ConversationIDs} {
+			for _, id := range *ids {
 				if id <= 0 {
 					return fmt.Errorf("wakeups %s: invalid selector", c.Name)
 				}
 			}
-		}
-		slices.Sort(c.SourceIDs)
-		c.SourceIDs = slices.Compact(c.SourceIDs)
-		if len(c.SourceIDs) == 0 {
-			c.SourceIDs = nil
-		}
-		slices.Sort(c.ConversationIDs)
-		c.ConversationIDs = slices.Compact(c.ConversationIDs)
-		if len(c.ConversationIDs) == 0 {
-			c.ConversationIDs = nil
+			slices.Sort(*ids)
+			*ids = slices.Compact(*ids)
+			if len(*ids) == 0 {
+				*ids = nil
+			}
 		}
 	}
 	return nil

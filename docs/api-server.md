@@ -3516,12 +3516,15 @@ A notification contains `schema_version`, `type` (`msgvault.wakeup`),
 `matched.truncated` indicates additional matches. It contains no message
 content or addresses. The message date is the first available of `sent_at`,
 `received_at` and `internal_date`; undated, old and deleted messages do not
-trigger a ping, but the cursor advances past them.
+trigger a ping, but the cursor advances past them. After a failed delivery,
+the retry is sent even if its messages no longer qualify (`matched.count` 0);
+the same happens once after a person who could not be resolved resolves again.
 
 Read the feed with the same selectors from `cursor_from` to replay the range.
 A delegated client uses its own authorized feed cursor: its cursor is bound to
 its grant as well as the selectors. A 2xx response acknowledges delivery;
-failures keep the cursor and retry after 30 seconds, doubling to one hour.
+failures keep the cursor and retry after 30 seconds, doubling to at most one
+hour with no attempt limit. Redirects are not followed and log `http_3xx`.
 Delivery is at least once. A retry of the same range has the same delivery ID;
 a retry whose range end moved has a new ID. Logs report the wake-up name,
 error category and failure count.
