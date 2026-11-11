@@ -72,6 +72,35 @@ func TestCommitmentAgendaReceiptFollowsSurvivor(t *testing.T) {
 	}
 }
 
+func TestCommitmentAgendaTransferredReceiptPurgesWithOriginalCitation(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "agenda-delete-original", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	const quote = "I will send the report."
+	survivorMessage := persist("survivor", quote, -time.Hour)
+	absorbedMessage := persist("absorbed", quote, -time.Hour)
+	survivor := insertAgendaMergeFixture(t, st, f.personID, survivorMessage, "survivor-key", false, false)
+	absorbed := insertAgendaMergeFixture(t, st, f.personID, absorbedMessage, "absorbed-key", true, false)
+	frozen, err := st.GetCommitmentAgendaContext(ctx, absorbed)
+	r.NoError(err)
+	_, err = st.MergeDuplicates(ctx, survivorMessage, []int64{absorbedMessage}, "agenda-delete-original")
+	r.NoError(err)
+	transferred, err := st.GetCommitmentAgendaContext(ctx, survivor)
+	r.NoError(err)
+	r.Equal(frozen.IdempotencyKey, transferred.IdempotencyKey)
+	r.Equal(frozen.Request, transferred.Request)
+	deleted, err := st.DeleteDedupedBatchesContext(ctx, []string{"agenda-delete-original"})
+	r.NoError(err)
+	r.Equal(int64(1), deleted)
+	var survivorRows int
+	r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM person_commitments
+		WHERE id = ? AND anchor_message_id = ?`), survivor, survivorMessage).Scan(&survivorRows))
+	a.Equal(1, survivorRows, "permanent deletion retains the survivor obligation")
+	_, err = st.GetCommitmentAgendaContext(ctx, survivor)
+	a.ErrorIs(err, sql.ErrNoRows, "the frozen request still cites the permanently deleted original")
+}
+
 func TestCommitmentAgendaReceiptPurgesWithPerson(t *testing.T) {
 	r, ctx := require.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "agenda-person-purge", false)
