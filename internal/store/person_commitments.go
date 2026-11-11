@@ -306,13 +306,13 @@ func (s *Store) hydrateCommitmentCandidate(ctx context.Context, candidate commit
 	if candidate.promise.ID == 0 || !c.ExpiresAt.After(now) {
 		return c, false, nil
 	}
-	promise, live, err := s.currentCommitmentCitationWithSource(ctx, c.PersonID, c.Direction, candidate.promise.Input, lookup)
+	promise, live, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, candidate.promise.Input, lookup)
 	if err != nil || !live || promise.MessageID != c.AnchorMessageID || promise.Quote != c.Quote || promise.Start != c.Start || promise.End != c.End {
 		return c, false, err
 	}
 	if evidence := candidate.fulfilment; evidence != nil && evidence.Supported &&
 		(c.ReopenedAt == nil || evidence.Input.EventTime.After(*c.ReopenedAt)) {
-		fulfilment, live, err := s.currentCommitmentCitationWithSource(ctx, c.PersonID, c.Direction, evidence.Input, lookup)
+		fulfilment, live, err := s.currentCommitmentCitation(ctx, c.PersonID, c.Direction, evidence.Input, lookup)
 		if err != nil {
 			return c, false, err
 		}
@@ -343,11 +343,7 @@ func (s *Store) loadCommitmentFulfilmentTx(ctx context.Context, tx *loggedTx, id
 	return page[0], err
 }
 
-func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput) (CommitmentCitation, bool, error) {
-	return s.currentCommitmentCitationWithSource(ctx, personID, direction, input, s.currentCommitmentSource)
-}
-
-func (s *Store) currentCommitmentCitationWithSource(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput, lookup func(context.Context, int64, int64) (peoplesweep.CommitmentSource, bool, error)) (CommitmentCitation, bool, error) {
+func (s *Store) currentCommitmentCitation(ctx context.Context, personID int64, direction string, input personfacts.EvidenceInput, lookup func(context.Context, int64, int64) (peoplesweep.CommitmentSource, bool, error)) (CommitmentCitation, bool, error) {
 	message, found := strings.CutPrefix(input.SourceRef, personfacts.CommitmentMessageRefPrefix)
 	if !found {
 		return CommitmentCitation{}, false, nil

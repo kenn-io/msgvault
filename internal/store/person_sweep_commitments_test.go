@@ -751,7 +751,7 @@ func TestCommitmentRequoteReconcilesLocators(t *testing.T) {
 func TestCommitmentCitationIgnoresOrdinaryReferenceBeforeParsing(t *testing.T) {
 	r, a := require.New(t), assert.New(t)
 	f := newPersonSweepApplyFixture(t, "ordinary-citation", false)
-	_, live, err := f.store.currentCommitmentCitation(t.Context(), f.personID, peoplesweep.CommitmentOwedTo, personfacts.EvidenceInput{SourceRef: "message:42"})
+	_, live, err := f.store.currentCommitmentCitation(t.Context(), f.personID, peoplesweep.CommitmentOwedTo, personfacts.EvidenceInput{SourceRef: "message:42"}, f.store.currentCommitmentSource)
 	r.NoError(err)
 	a.False(live)
 }
