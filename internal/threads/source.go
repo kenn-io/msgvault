@@ -18,7 +18,10 @@ func ParseSourceIdentifier(identifier string) (appID, ownerID string, err error)
 }
 
 func AuthorizationURL(appID, redirectURI, state string) (string, error) {
-	if !tokenValidID(appID) || state == "" {
+	if !tokenValidID(appID) {
+		return "", errors.New("--app-id must be a nonzero decimal ID of at most 128 digits with no leading zeroes")
+	}
+	if state == "" {
 		return "", errors.New("invalid Threads authorization request")
 	}
 	if _, err := oauthCallbackURI(redirectURI); err != nil {
