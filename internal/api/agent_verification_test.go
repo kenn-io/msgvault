@@ -580,7 +580,7 @@ func TestOwnerVerificationVectorResults(t *testing.T) {
 	}
 }
 
-func TestOwnerVerificationReadsWhileAgentSlotsOccupied(t *testing.T) {
+func TestOwnerVerificationSnapshotAdmission(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -592,20 +592,29 @@ func TestOwnerVerificationReadsWhileAgentSlotsOccupied(t *testing.T) {
 		srv.readSnapshotSlots <- struct{}{}
 	}
 	t.Cleanup(func() {
-		for range readSnapshotConcurrency {
+		for len(srv.readSnapshotSlots) > 0 {
 			<-srv.readSnapshotSlots
 		}
 	})
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/v1/messages", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
 	req.Header.Set("X-Api-Key", "owner")
 	req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
+	assert.Equal(http.StatusServiceUnavailable, w.Code, w.Body.String())
+	assert.Contains(w.Body.String(), "agent_read_busy")
+	assert.Len(srv.readSnapshotSlots, readSnapshotConcurrency)
+
+	for range readSnapshotConcurrency {
+		<-srv.readSnapshotSlots
+	}
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req.Clone(t.Context()))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	assert.Contains(w.Body.String(), verification.Masked)
 	assert.NotContains(w.Body.String(), "482913")
-	assert.Len(srv.readSnapshotSlots, readSnapshotConcurrency)
+	assert.Empty(srv.readSnapshotSlots)
 }
