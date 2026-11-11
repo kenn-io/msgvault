@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,4 +109,79 @@ func TestMeetingDecisionScopedReadHidesOtherSource(t *testing.T) {
 	var record store.MeetingRecord
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &record))
 	assertions.Equal([]int64{ids[0]}, record.MessageIDs)
+}
+
+func TestMeetingDecisionConcurrentOwnerHTTP(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL transaction contract")
+	}
+	source, err := st.GetOrCreateSource("meeting_import", "owner@example.com")
+	requirements.NoError(err)
+	var refs []store.MeetingLinkRef
+	for i := range 7 {
+		key := fmt.Sprintf("concurrent-%d", i)
+		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
+		requirements.NoError(err)
+		refs = append(refs, store.MeetingLinkRef{Kind: "msg", MessageID: id})
+	}
+	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "link")
+	requirements.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
+	run := func(blocked int, pairs [][2]int, decisions []string) []int {
+		blocker, err := st.DB().BeginTx(ctx, nil)
+		requirements.NoError(err)
+		defer func() { _ = blocker.Rollback() }()
+		var pid int
+		requirements.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
+		var id int64
+		requirements.NoError(blocker.QueryRowContext(ctx, `SELECT id FROM messages WHERE id=$1 FOR UPDATE`, refs[blocked].MessageID).Scan(&id))
+		done := make(chan int, 2)
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		for i, pair := range pairs {
+			workers.Go(func() {
+				body := fmt.Sprintf(`{"left":"msg:%d","right":"msg:%d","decision":%q}`, refs[pair[0]].MessageID, refs[pair[1]].MessageID, decisions[i])
+				req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/meetings/links/decisions", strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Api-Key", "owner")
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, req)
+				done <- w.Code
+			})
+			for {
+				var count int
+				requirements.NoError(st.DB().QueryRowContext(ctx, `WITH RECURSIVE waiting(pid) AS (SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) UNION SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid=ANY(pg_blocking_pids(a.pid))) SELECT count(*) FROM waiting`, pid).Scan(&count))
+				if count >= i+1 {
+					break
+				}
+				select {
+				case <-ticker.C:
+				case <-ctx.Done():
+					requirements.FailNow("requests did not overlap")
+				}
+			}
+		}
+		requirements.NoError(blocker.Commit())
+		return []int{<-done, <-done}
+	}
+	statuses := run(2, [][2]int{{0, 2}, {1, 2}}, []string{"unlink", "link"})
+	requirements.ElementsMatch([]int{http.StatusOK, http.StatusConflict}, statuses)
+	for i, ref := range refs[:3] {
+		record, err := st.MeetingRecordContext(ctx, ref)
+		requirements.NoError(err)
+		want := []int64{refs[0].MessageID, refs[1].MessageID}
+		if i == 2 {
+			want = []int64{refs[2].MessageID}
+		}
+		requirements.Equal(want, record.MessageIDs)
+	}
+	statuses = run(4, [][2]int{{3, 4}, {5, 6}}, []string{"link", "link"})
+	requirements.Equal([]int{http.StatusOK, http.StatusOK}, statuses)
 }

@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -891,6 +893,85 @@ func TestMeetingLinkDecisionSurvivesPermanentDuplicateDeletion(t *testing.T) {
 	}
 }
 
+func TestMeetingLinkDecisionConcurrentContradiction(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL transaction contract")
+	}
+	var refs []MeetingLinkRef
+	for _, key := range []string{"concurrent-a", "concurrent-b", "concurrent-c"} {
+		_, id := projectionFixture(t, st, key, "meeting_json", `{}`)
+		refs = append(refs, MeetingLinkRef{Kind: "msg", MessageID: id})
+	}
+	_, err := st.DecideMeetingLinkContext(t.Context(), refs[0], refs[1], "link")
+	requirements.NoError(err)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	var workers sync.WaitGroup
+	defer func() { cancel(); workers.Wait() }()
+	blocker, err := st.db.BeginTx(ctx, nil)
+	requirements.NoError(err)
+	defer func() { _ = blocker.Rollback() }()
+	var pid int
+	requirements.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
+	var locked int64
+	requirements.NoError(blocker.QueryRowContext(ctx, `SELECT id FROM messages WHERE id=? FOR UPDATE`, refs[2].MessageID).Scan(&locked))
+	type outcome struct {
+		index int
+		err   error
+	}
+	done := make(chan outcome, 2)
+	for i, decision := range []string{"unlink", "link"} {
+		workers.Go(func() {
+			_, err := st.DecideMeetingLinkContext(ctx, refs[i], refs[2], decision)
+			done <- outcome{i, err}
+		})
+	}
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var blocked int
+		requirements.NoError(st.db.QueryRowContext(ctx, `WITH RECURSIVE waiting(pid) AS (SELECT pid FROM pg_stat_activity WHERE ?=ANY(pg_blocking_pids(pid)) UNION SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid=ANY(pg_blocking_pids(a.pid))) SELECT count(*) FROM waiting`, pid).Scan(&blocked))
+		if blocked >= 2 {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			requirements.FailNow("decisions did not overlap")
+		}
+	}
+	requirements.NoError(blocker.Commit())
+	results := []outcome{<-done, <-done}
+	var accepted, rejected, successes int
+	for _, result := range results {
+		if result.err == nil {
+			successes++
+			accepted = result.index
+		} else {
+			requirements.ErrorIs(result.err, ErrMeetingLinkConflict)
+			rejected = result.index
+		}
+	}
+	requirements.Equal(1, successes, "one decision must succeed and one must conflict")
+	for i, ref := range refs {
+		record, err := st.MeetingRecordContext(ctx, ref)
+		requirements.NoError(err)
+		want := []int64{refs[0].MessageID, refs[1].MessageID}
+		if accepted == 1 {
+			want = append(want, refs[2].MessageID)
+		} else if i == 2 {
+			want = []int64{refs[2].MessageID}
+		}
+		requirements.Equal(want, record.MessageIDs)
+	}
+	var count int
+	requirements.NoError(st.db.QueryRowContext(ctx, `SELECT count(*) FROM meeting_link_decisions WHERE left_message_id=? AND right_message_id=?`, refs[rejected].MessageID, refs[2].MessageID).Scan(&count))
+	requirements.Zero(count)
+	_, err = st.DecideMeetingLinkContext(ctx, refs[rejected], refs[2], []string{"unlink", "link"}[rejected])
+	requirements.ErrorIs(err, ErrMeetingLinkConflict)
+}
+
 func TestMeetingLinkDecisionConcurrentClearAndDedup(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -950,7 +1031,7 @@ func TestMeetingLinkDecisionConcurrentClearAndDedup(t *testing.T) {
 	requirements.NoError(blocker.Commit())
 	results := []outcome{<-done, <-done}
 	for _, result := range results {
-		if st.dialect.IsSerializationFailureError(result.err) {
+		if st.dialect.IsSerializationFailureError(result.err) || errors.Is(result.err, ErrMeetingLinkConflict) {
 			if result.clear {
 				_, result.err = st.DecideMeetingLinkContext(t.Context(), ref(duplicate), ref(other), "clear")
 			} else {

@@ -86,9 +86,17 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 	if compareMeetingEndpoints(a, b) > 0 {
 		a, b = b, a
 	}
-	err = s.withTxOptionsContext(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead}, func(tx *loggedTx) error {
+	err = s.withTxOptionsContext(ctx, nil, func(tx *loggedTx) error {
 		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
 			return err
+		}
+		// Queue choice writers before reading their shared graph. The maintenance
+		// gate precedes this row lock, as it does for the tables choices touch.
+		if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO archive_metadata (key, value) VALUES (?, '0')`), "meeting_link_decision_lock"); err != nil {
+			return fmt.Errorf("seed meeting decision lock: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE archive_metadata SET value = value WHERE key = ?`, "meeting_link_decision_lock"); err != nil {
+			return fmt.Errorf("lock meeting decisions: %w", err)
 		}
 		for _, endpoint := range []meetingDecisionEndpoint{a, b} {
 			if err := s.lockMeetingEvidenceWith(ctx, tx, endpoint.ID); err != nil {
