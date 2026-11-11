@@ -53,7 +53,7 @@ func TestExploreGroupTimezoneValidation(t *testing.T) {
 		for _, timezone := range []string{"Invalid/Zone", "Local"} {
 			_, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: dimension, Timezone: timezone})
 			requirements.ErrorContains(err, "invalid timezone")
-			assertions.ErrorIs(err, ErrInvalidExploreRequest)
+			requirements.ErrorIs(err, ErrInvalidExploreRequest)
 		}
 	}
 	groupBuilder := NewTestDataBuilder(t)
@@ -850,7 +850,6 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	require.NoError(err)
 	require.Len(local.Rows, 3)
 	assert.Equal("2023-12-31", local.Rows[0].Key)
-
 }
 
 func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
