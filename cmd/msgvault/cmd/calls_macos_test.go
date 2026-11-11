@@ -88,7 +88,7 @@ func TestCallsImportMacOSThroughDaemon(t *testing.T) {
 	require.NoError(err)
 	rawJSON, err := json.Marshal(raw)
 	require.NoError(err)
-	manual := callhistory.Observation{Evidence: callhistory.Evidence{Version: int(o.Version), Provider: o.Provider, Account: o.Account, Direction: o.Direction, Outcome: o.Outcome, OwnerParticipation: o.OwnerParticipation, OccurredAt: o.OccurredAt, EndedAt: o.EndedAt, DurationSeconds: o.DurationSeconds}, RecordID: "manual-attribution", Raw: rawJSON, Participants: []callhistory.Participant{{ID: peer, Participation: "joined"}}}
+	manual := callhistory.Observation{Evidence: {Version: int(o.Version), Provider: o.Provider, Account: o.Account, Direction: o.Direction, Outcome: o.Outcome, OwnerParticipation: o.OwnerParticipation, OccurredAt: o.OccurredAt, EndedAt: o.EndedAt, DurationSeconds: o.DurationSeconds}, RecordID: "manual-attribution", Raw: rawJSON, Participants: []callhistory.Participant{{ID: peer, Participation: "joined"}}}
 	record, err := json.Marshal(manual)
 	require.NoError(err)
 	wire, err := json.Marshal(callhistory.ImportRequest{Format: "normalized", Account: "example", Record: record})
