@@ -121,6 +121,7 @@ func TestGraphErrorKeepsOnlyCodes(t *testing.T) {
 		{"oversized", `{"error":{"code":4,"message":"` + strings.Repeat("x", 64<<10) + `"}}`, "graph request failed (HTTP 400)", 0, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
 			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = fmt.Fprint(w, tt.body)
@@ -128,9 +129,9 @@ func TestGraphErrorKeepsOnlyCodes(t *testing.T) {
 			_, err := c.VerifyPage(t.Context(), "100")
 			var apiErr *APIError
 			require.ErrorAs(t, err, &apiErr)
-			assert.Equal(t, tt.code, apiErr.Code)
-			assert.Equal(t, tt.subcode, apiErr.Subcode)
-			assert.EqualError(t, err, tt.want)
+			assert.Equal(tt.code, apiErr.Code)
+			assert.Equal(tt.subcode, apiErr.Subcode)
+			assert.EqualError(err, tt.want)
 		})
 	}
 }
