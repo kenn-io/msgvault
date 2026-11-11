@@ -87,6 +87,34 @@ func TestSourceStatusReportsAliasSchedule(t *testing.T) {
 	checks.NotNil(status.NextSyncAt)
 }
 
+func TestFilteredSourceStatusRejectsAmbiguousSchedule(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	st := testutil.NewTestStore(t)
+	gmail, err := st.GetOrCreateSource("gmail", "provider@example.test")
+	requirements.NoError(err)
+	imap, err := st.GetOrCreateSource("imap", "imaps://provider@example.test")
+	requirements.NoError(err)
+	for _, source := range []*store.Source{gmail, imap} {
+		requirements.NoError(st.UpdateSourceDisplayName(source.ID, "shared@example.test"))
+	}
+	sched := newMockScheduler()
+	sched.scheduled["shared@example.test"] = true
+	sched.statuses = []AccountStatus{{Email: "shared@example.test", Schedule: "0 * * * *", NextRun: time.Now().Add(time.Minute)}}
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/sources/status?source_type=gmail", nil)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, req)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var result SourceStatusResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+	requirements.Len(result.Sources, 1)
+	checks.Equal(gmail.ID, result.Sources[0].ID)
+	checks.False(result.Sources[0].Scheduled)
+	checks.False(result.Sources[0].CanSync)
+	checks.Nil(result.Sources[0].NextSyncAt)
+}
+
 func TestTriggerSyncUsesArchiveAliasSchedule(t *testing.T) {
 	requirements := require.New(t)
 	checks := assert.New(t)

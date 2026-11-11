@@ -1604,7 +1604,7 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sourceType := r.URL.Query().Get("source_type")
-	sources, err := statusStore.ListSourcesContext(r.Context(), sourceType)
+	sources, err := statusStore.ListSourcesContext(r.Context(), "")
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -1619,6 +1619,9 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 
 	statuses := make([]SourceStatus, 0, len(sources))
 	for _, source := range sources {
+		if sourceType != "" && source.SourceType != sourceType {
+			continue
+		}
 		if r.Context().Err() != nil {
 			return
 		}
