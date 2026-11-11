@@ -54,6 +54,7 @@ func TestBriefAppreciationRequiresExactPeerAndLaterOwnerEvidence(t *testing.T) {
 	}{
 		{"supported later thanks", "carried your boxes", `{"evidence_id":"owner:test","quote":"Thanks for carrying my boxes!"}`, 1, "already_thanked"},
 		{"unknown owner", "carried your boxes", `{"evidence_id":"owner:other","quote":"Thanks"}`, 1, "suggested"},
+		{"peer cannot serve as owner", "carried your boxes", fmt.Sprintf(`{"evidence_id":%q,"quote":"Thanks"}`, anchor), 1, "suggested"},
 		{"changed peer quote", "moved your piano", `null`, 0, ""},
 		{"changed owner quote", "carried your boxes", `{"evidence_id":"owner:test","quote":"different words"}`, 1, "suggested"},
 	} {
@@ -68,6 +69,10 @@ func TestBriefAppreciationRequiresExactPeerAndLaterOwnerEvidence(t *testing.T) {
 			}
 		})
 	}
+	candidate := `{"text":"carrying the boxes","anchor_id":"owner:test","quote":"Thanks for carrying my boxes!","thanked":null}`
+	parsed, err := ParseBrief(briefOutputJSON{ThanksSuggestions: []string{candidate}}.raw(), window, request.Profile)
+	require.NoError(t, err)
+	assert.Empty(t, parsed.Output.ThanksSuggestions, "an owner citation cannot establish peer authorship")
 }
 
 func briefEvidenceID(t *testing.T, window BriefWindow, messageID int64) string {

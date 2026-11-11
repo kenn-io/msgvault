@@ -25,6 +25,7 @@ type scriptedBriefRunner struct {
 	briefPackets  []map[string]any
 
 	extractionRequests int
+	extractionInputs   []string
 	candidate          func(map[string]any) json.RawMessage
 	afterBrief         func()
 }
@@ -64,6 +65,7 @@ func (r *scriptedBriefRunner) RunPreparedStructured(
 	}
 	if request.ProgramID != peoplesweep.BriefProgramID {
 		r.extractionRequests++
+		r.extractionInputs = append(r.extractionInputs, request.InputText)
 		response.Output = json.RawMessage(`{"claims":[]}`)
 		return response, nil
 	}
@@ -400,6 +402,10 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 		PersonID: journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
 	require.NoError(t, err)
 	require.Equal(t, 1, run.PeopleSucceeded)
+	require.NotEmpty(t, f.runner.extractionInputs)
+	for _, input := range f.runner.extractionInputs {
+		assert.NotContains(t, input, "Thanks for carrying my boxes upstairs!")
+	}
 	profile, err := f.config.Profile()
 	require.NoError(t, err)
 	projection, err := st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
@@ -412,6 +418,14 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	require.NotNil(t, states[key].ThanksBriefID)
 	assert.Equal(t, projection.Brief.ID, *states[key].ThanksBriefID)
 	proofID := projection.Brief.ID
+	var laterBoundary peoplesweep.BriefBoundary
+	require.NoError(t, json.Unmarshal(projection.Brief.Boundary, &laterBoundary))
+	require.Len(t, laterBoundary.AppreciationMemory, 1)
+	later := &laterBoundary.AppreciationMemory[0]
+	later.Suggestion.State, later.Suggestion.PriorThanks = "suggested", "unknown"
+	later.Suggestion.Thanked, later.OwnerRef, later.OwnerRawSHA256 = nil, nil, ""
+	laterJSON, err := json.Marshal(laterBoundary)
+	require.NoError(t, err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'superseded' WHERE id = ?`), proofID)
 	require.NoError(t, err)
 	for version := 2; version <= 202; version++ {
@@ -424,8 +438,8 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
  provider, provider_version, model, model_version, provider_policy_fingerprint, boundary_json,
  structured_json, rendered_text, renderer_policy, dropped_item_count, generated_at)
  SELECT person_id, ?, generation_id, ?, program_id, program_version, program_fingerprint,
- provider, provider_version, model, model_version, provider_policy_fingerprint, boundary_json,
- structured_json, rendered_text, renderer_policy, dropped_item_count, generated_at FROM person_briefs WHERE id = ?`), version, status, proofID)
+ provider, provider_version, model, model_version, provider_policy_fingerprint, ?,
+ structured_json, rendered_text, renderer_policy, dropped_item_count, generated_at FROM person_briefs WHERE id = ?`), version, status, string(laterJSON), proofID)
 		require.NoError(t, err)
 	}
 	projection, err = st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
@@ -1176,4 +1190,49 @@ func TestPersonAppreciationDismissalSerializesWithSourceIDMigration(t *testing.T
 			}
 		})
 	}
+}
+
+func TestAppreciationDismissalDoesNotAuthorizeRetryAfterPersonSplit(t *testing.T) {
+	f := newBriefWorkerEndToEndFixture(t, "appreciation-merge-split")
+	st, journal := f.journal.store, f.journal
+	alice, err := st.GetPersonContext(t.Context(), journal.alicePersonID)
+	require.NoError(t, err)
+	bob, err := st.GetPersonContext(t.Context(), journal.bobPersonID)
+	require.NoError(t, err)
+	merged, err := st.MergePersonsContext(t.Context(), store.PersonMergeRequest{SurvivorID: alice.ID, AbsorbedID: bob.ID,
+		ExpectedSurvivorRevision: alice.Revision, ExpectedAbsorbedRevision: bob.Revision, IdempotencyKey: "appreciation-scope-merge", Actor: "owner"})
+	require.NoError(t, err)
+	peerID := journal.insertMessage(t, "split-peer-help", "chat", journal.bobID, f.now.Add(-time.Hour))
+	addSweepBody(t, journal, peerID, "I carried your boxes upstairs.")
+	key, err := peoplesweep.AppreciationContributionKey("slack", "person-sweep-journal", "split-peer-help")
+	require.NoError(t, err)
+	f.runner.candidate = func(packet map[string]any) json.RawMessage {
+		var anchor string
+		for _, value := range packet["appreciation_peers"].([]any) {
+			peer := value.(map[string]any)
+			if peer["contribution_key"] == key {
+				anchor = peer["anchor_id"].(string)
+			}
+		}
+		require.NotEmpty(t, anchor)
+		return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":{"evidence_id":%q,"summary":"they helped with the move"},"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"carrying boxes","anchor_id":%q,"quote":"carried your boxes","thanked":null}],"uncertainties":[],"possible_attributes":[]}`, anchor, anchor))
+	}
+	run, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+		PersonID: merged.Person.ID, Limit: 1, Brief: peoplesweep.BriefModeForce})
+	require.NoError(t, err)
+	require.Equal(t, 1, run.PeopleSucceeded)
+	profile, err := f.config.Profile()
+	require.NoError(t, err)
+	first, err := st.DismissPersonAppreciationContext(t.Context(), merged.Person.ID, key, "owner", f.now, profile)
+	require.NoError(t, err)
+	current, err := st.GetPersonContext(t.Context(), merged.Person.ID)
+	require.NoError(t, err)
+	_, err = st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs: []int64{journal.bobID}, ExpectedSourceRevision: current.Revision, IdempotencyKey: "appreciation-scope-split", Actor: "owner"})
+	require.NoError(t, err)
+	_, err = st.DismissPersonAppreciationContext(t.Context(), merged.Person.ID, key, "owner", f.now.Add(time.Hour), profile)
+	assert.True(t, errors.Is(err, store.ErrPersonAppreciationNotFound) || errors.Is(err, store.ErrPersonBriefNotFound))
+	states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{key})
+	require.NoError(t, err)
+	assert.Equal(t, first, states[key])
 }

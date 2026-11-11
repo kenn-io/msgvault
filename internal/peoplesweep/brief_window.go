@@ -334,26 +334,33 @@ func BuildBriefWindow(
 		request.AsOf = selected[0].EventTime.UTC()
 	}
 	window := BriefWindow{Request: request, LastContact: lastContact}
-	for {
-		request.appreciationPeers, err = archive.PersonSweepAppreciationPeers(ctx, request.PersonID, selected, request.ThroughSequence)
-		if err != nil {
-			return BriefWindow{}, fmt.Errorf("load exact appreciation peer context: %w", err)
-		}
-		for index := range request.appreciationPeers {
-			peer := &request.appreciationPeers[index]
-			for _, item := range selected {
-				if item.Ref == peer.Ref {
-					peer.AnchorID = packetEvidenceID(item)
-					break
-				}
+	peers, err := archive.PersonSweepAppreciationPeers(ctx, request.PersonID, selected, request.ThroughSequence)
+	if err != nil {
+		return BriefWindow{}, fmt.Errorf("load exact appreciation peer context: %w", err)
+	}
+	for index := range peers {
+		for _, item := range selected {
+			if item.Ref == peers[index].Ref {
+				peers[index].AnchorID = packetEvidenceID(item)
+				break
 			}
 		}
-		request.appreciationPeers = slices.DeleteFunc(request.appreciationPeers, func(peer BriefAppreciationPeer) bool { return peer.AnchorID == "" })
-		request.appreciationOwners, err = archive.PersonSweepAppreciationOwners(ctx, request.PersonID,
-			request.appreciationPeers, request.Profile, request.ThroughSequence, request.MaxItems-len(selected))
-		if err != nil {
-			return BriefWindow{}, fmt.Errorf("load appreciation owner context: %w", err)
-		}
+	}
+	peers = slices.DeleteFunc(peers, func(peer BriefAppreciationPeer) bool { return peer.AnchorID == "" })
+	owners, err := archive.PersonSweepAppreciationOwners(ctx, request.PersonID, peers, request.Profile, request.ThroughSequence, request.MaxItems)
+	if err != nil {
+		return BriefWindow{}, fmt.Errorf("load appreciation owner context: %w", err)
+	}
+	for {
+		request.appreciationPeers = slices.DeleteFunc(slices.Clone(peers), func(peer BriefAppreciationPeer) bool {
+			return !slices.ContainsFunc(selected, func(item EvidenceItem) bool { return item.Ref == peer.Ref })
+		})
+		request.appreciationOwners = slices.DeleteFunc(slices.Clone(owners), func(owner BriefAppreciationOwner) bool {
+			return !slices.ContainsFunc(request.appreciationPeers, func(peer BriefAppreciationPeer) bool {
+				return peer.ConversationID == owner.ConversationID && peer.Ref.SourceID == owner.Ref.SourceID
+			})
+		})
+		request.appreciationOwners = request.appreciationOwners[:min(len(request.appreciationOwners), request.MaxItems-len(selected))]
 		for {
 			batch, boundary, buildErr := briefBatch(request, lanes, selected)
 			if buildErr != nil {

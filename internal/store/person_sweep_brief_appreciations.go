@@ -31,20 +31,26 @@ func (s *Store) PersonSweepAppreciationPeers(
 	ctx context.Context, personID int64, items []peoplesweep.EvidenceItem, throughSequence int64,
 ) ([]peoplesweep.BriefAppreciationPeer, error) {
 	peers := make([]peoplesweep.BriefAppreciationPeer, 0, len(items))
+	ids := make([]int64, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.Ref.MessageID)
+	}
+	current, _, err := s.hydratePersonSweepMessageSet(ctx, personID, peoplesweep.SourceConversationText, ids, throughSequence)
+	if err != nil {
+		return nil, fmt.Errorf("rehydrate appreciation peers: %w", err)
+	}
+	byID := make(map[int64]peoplesweep.EvidenceItem, len(current))
+	for _, item := range current {
+		byID[item.Ref.MessageID] = item
+	}
 	for _, candidate := range items {
 		if candidate.SourceClass != peoplesweep.SourceConversationText || candidate.PersonID != personID ||
 			candidate.SubjectPersonID == nil || *candidate.SubjectPersonID != personID || candidate.Directness != personfacts.DirectSelf {
 			continue
 		}
-		current, err := s.HydratePersonSweepMessages(ctx, personID, []int64{candidate.Ref.MessageID}, throughSequence)
-		if errors.Is(err, peoplesweep.ErrPersonSweepMessageUnavailable) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("rehydrate appreciation peer: %w", err)
-		}
-		if len(current) != 1 || current[0].Ref != candidate.Ref || current[0].ContentSHA256 != candidate.ContentSHA256 ||
-			current[0].SubjectPersonID == nil || *current[0].SubjectPersonID != personID || current[0].Directness != personfacts.DirectSelf {
+		current, ok := byID[candidate.Ref.MessageID]
+		if !ok || current.Ref != candidate.Ref || current.ContentSHA256 != candidate.ContentSHA256 ||
+			current.SubjectPersonID == nil || *current.SubjectPersonID != personID || current.Directness != personfacts.DirectSelf {
 			continue
 		}
 		var peer peoplesweep.BriefAppreciationPeer
@@ -116,54 +122,9 @@ func (s *Store) PersonSweepAppreciationOwners(
 		}
 		seen[peer.ConversationID] = true
 		err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-			var sourceID int64
-			var sourceType, conversationType, metadata string
-			var participantCount int
-			err := tx.QueryRowContext(ctx, `SELECT c.source_id, s.source_type,
- COALESCE(c.conversation_type,''), COALESCE(c.participant_count,0), COALESCE(CAST(c.metadata AS TEXT),'')
- FROM conversations c JOIN sources s ON s.id = c.source_id WHERE c.id = ?`, peer.ConversationID).
-				Scan(&sourceID, &sourceType, &conversationType, &participantCount, &metadata)
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil
-			}
-			if err != nil {
+			sourceID, ownerParticipantID, ok, err := s.appreciationDirectOwnerTx(ctx, tx, personID, peer.ConversationID, false)
+			if err != nil || !ok || sourceID != peer.Ref.SourceID {
 				return err
-			}
-			if sourceID != peer.Ref.SourceID || conversationType != "direct_chat" || !personSweepSourceAuthenticatesSender(sourceType) {
-				return nil
-			}
-			record := decodeMembershipRecord(metadata)
-			if !record.counted || record.unknown || record.repairPending {
-				return nil
-			}
-			rows, err := tx.QueryContext(ctx, `SELECT cp.participant_id,
- EXISTS(SELECT 1 FROM person_participants pp WHERE pp.person_id = ? AND pp.participant_id = cp.participant_id)
- FROM conversation_participants cp WHERE cp.conversation_id = ? ORDER BY cp.participant_id LIMIT 3`, personID, peer.ConversationID)
-			if err != nil {
-				return err
-			}
-			var rosterCount, boundCount int
-			var ownerParticipantID int64
-			for rows.Next() {
-				var participantID int64
-				var belongs bool
-				if err := rows.Scan(&participantID, &belongs); err != nil {
-					_ = rows.Close()
-					return err
-				}
-				rosterCount++
-				if belongs {
-					boundCount++
-				} else {
-					ownerParticipantID = participantID
-				}
-			}
-			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-				return err
-			}
-			if rosterCount != 2 || boundCount != 1 || ownerParticipantID == 0 ||
-				attachmentPolicyParticipantCount(sourceType, max(participantCount, rosterCount), metadata) != 2 {
-				return nil
 			}
 			boundSQL, boundArgs := personSweepJournalBoundPredicate(personID, throughSequence)
 			args := []any{peer.ConversationID, sourceID, ownerParticipantID}
@@ -178,10 +139,9 @@ func (s *Store) PersonSweepAppreciationOwners(
 			}
 			args = append(args, boundArgs...)
 			args = append(args, limit-len(owners))
-			rows, err = tx.QueryContext(ctx, `SELECT m.id, COALESCE(m.source_message_id,''), m.sent_at
+			rows, err := tx.QueryContext(ctx, `SELECT m.id, COALESCE(m.source_message_id,''), m.sent_at
  FROM messages m WHERE m.conversation_id = ? AND m.source_id = ? AND m.sender_id = ? AND `+LiveMessagesWhere("m", true)+`
- AND m.source_is_from_me = TRUE AND COALESCE(m.is_sent, FALSE) = TRUE AND m.draft_authored = FALSE
- AND m.sent_at IS NOT NULL`+where+boundSQL+` ORDER BY m.sent_at DESC, m.id DESC LIMIT ?`, args...)
+ AND `+appreciationOwnerMessagePredicate+where+boundSQL+` ORDER BY m.sent_at DESC, m.id DESC LIMIT ?`, args...)
 			if err != nil {
 				return err
 			}

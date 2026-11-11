@@ -10,12 +10,13 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/peoplesweep"
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 // revalidateAppreciationMemoryTx runs after the source and sweep locks. A
 // dismissal seen here wins over the in-flight model result; missing owner
 // proof downgrades the surviving contribution to unknown.
-func (s *Store) revalidateAppreciationMemoryTx(ctx context.Context, tx *loggedTx, personID int64, brief *peoplesweep.BriefResult, includeDismissed bool) (map[string]peoplesweep.BriefAppreciationMemory, error) {
+func (s *Store) revalidateAppreciationMemoryTx(ctx context.Context, tx *loggedTx, personID int64, brief *peoplesweep.BriefResult, includeDismissed, validateOwner, lock bool) (map[string]peoplesweep.BriefAppreciationMemory, error) {
 	var messageIDs []int64
 	for _, memory := range brief.Boundary.AppreciationMemory {
 		messageIDs = append(messageIDs, memory.PeerRef.MessageID)
@@ -26,8 +27,10 @@ func (s *Store) revalidateAppreciationMemoryTx(ctx context.Context, tx *loggedTx
 	slices.Sort(messageIDs)
 	for _, id := range slices.Compact(messageIDs) {
 		// Body upserts take this same message lock before reading or writing.
-		if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
-			return nil, fmt.Errorf("lock appreciation evidence: %w", err)
+		if lock {
+			if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
+				return nil, fmt.Errorf("lock appreciation evidence: %w", err)
+			}
 		}
 	}
 	current := make(map[string]peoplesweep.BriefAppreciationMemory, len(brief.Boundary.AppreciationMemory))
@@ -47,16 +50,19 @@ func (s *Store) revalidateAppreciationMemoryTx(ctx context.Context, tx *loggedTx
 		if dismissed.Valid && !includeDismissed {
 			continue
 		}
-		peerTime, valid, err := appreciationPeerCurrentTx(ctx, tx, personID, memory, brief.ValidationProfile)
+		peerTime, valid, err := s.appreciationPeerCurrentTx(ctx, tx, personID, memory, brief.ValidationProfile)
 		if err != nil {
 			return nil, err
 		}
 		if !valid {
 			continue
 		}
-		ownerValid, err := s.appreciationOwnerCurrentTx(ctx, tx, personID, memory, brief.ValidationProfile, peerTime)
-		if err != nil {
-			return nil, err
+		ownerValid := false
+		if validateOwner {
+			ownerValid, err = s.appreciationOwnerCurrentTx(ctx, tx, personID, memory, brief.ValidationProfile, peerTime, lock)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if ownerValid {
 			memory.Suggestion.State, memory.Suggestion.PriorThanks = "already_thanked", "evidenced"
@@ -89,7 +95,7 @@ func recordAppreciationProofsTx(ctx context.Context, tx *loggedTx, briefID int64
 // appreciationPeerCurrentTx checks the exact native message again at the point
 // at which a result is committed or projected. It deliberately fetches the
 // body by primary key, separately from the metadata query.
-func appreciationPeerCurrentTx(ctx context.Context, tx *loggedTx, personID int64, memory peoplesweep.BriefAppreciationMemory, profile peoplesweep.ProviderProfile) (time.Time, bool, error) {
+func (s *Store) appreciationPeerCurrentTx(ctx context.Context, tx *loggedTx, personID int64, memory peoplesweep.BriefAppreciationMemory, profile peoplesweep.ProviderProfile) (time.Time, bool, error) {
 	if !profile.AllowSensitive || !sweepSourceAllowed(profile.AllowedSources, peoplesweep.SourceConversationText) || memory.PeerRef.SourceLane != peoplesweep.SourceConversationText {
 		return time.Time{}, false, nil
 	}
@@ -97,27 +103,32 @@ func appreciationPeerCurrentTx(ctx context.Context, tx *loggedTx, personID int64
 	if err != nil {
 		return time.Time{}, false, err
 	}
-	var sourceID, conversationID int64
-	var sourceType, sourceMessageID string
-	var event requiredTimestamp
-	err = tx.QueryRowContext(ctx, `SELECT m.source_id, m.conversation_id, s.source_type,
- COALESCE(m.source_message_id,''), COALESCE(m.sent_at,m.received_at,m.internal_date,m.archived_at)
- FROM messages m JOIN sources s ON s.id = m.source_id
- WHERE m.id = ? AND `+LiveMessagesWhere("m", true)+`
- AND m.message_type <> 'meeting_transcript' AND COALESCE(m.source_is_from_me,FALSE) = FALSE
- AND (EXISTS (SELECT 1 FROM person_participants pp WHERE pp.person_id = ? AND pp.participant_id = m.sender_id)
- OR EXISTS (SELECT 1 FROM message_recipients mr JOIN person_participants pp ON pp.participant_id = mr.participant_id
- WHERE mr.message_id = m.id AND LOWER(mr.recipient_type) = 'from' AND pp.person_id = ?))`,
-		memory.PeerRef.MessageID, personID, personID).Scan(&sourceID, &conversationID, &sourceType, &sourceMessageID, &event)
-	if errors.Is(err, sql.ErrNoRows) {
+	person, err := s.getPersonTx(ctx, tx, personID)
+	if errors.Is(err, ErrPersonNotFound) || err == nil && len(person.ParticipantIDs) == 0 {
 		return time.Time{}, false, nil
 	}
 	if err != nil {
-		return time.Time{}, false, fmt.Errorf("read appreciation peer: %w", err)
+		return time.Time{}, false, fmt.Errorf("read appreciation scope: %w", err)
 	}
-	if sourceID != memory.PeerRef.SourceID || conversationID != memory.ConversationID ||
-		sourceMessageID != memory.PeerRef.SourceMessageID || !personSweepSourceAuthenticatesSender(sourceType) ||
-		after != nil && event.Time.Before(*after) || before != nil && !event.Time.Before(*before) {
+	// Route the existing scope/provenance loader through the transaction that
+	// holds the evidence locks, never through a second database connection.
+	readCtx := WithReadSnapshotContext(ctx, s.db.DB, tx.Tx)
+	items, _, err := s.hydratePersonSweepMessageSet(readCtx, personID, peoplesweep.SourceConversationText, []int64{memory.PeerRef.MessageID}, 0)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("rehydrate appreciation peer: %w", err)
+	}
+	if len(items) != 1 || items[0].Ref != memory.PeerRef || items[0].SubjectPersonID == nil ||
+		*items[0].SubjectPersonID != personID || items[0].Directness != personfacts.DirectSelf ||
+		after != nil && items[0].EventTime.Before(*after) || before != nil && !items[0].EventTime.Before(*before) {
+		return time.Time{}, false, nil
+	}
+	var conversationID int64
+	if err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM messages WHERE id = ?`, memory.PeerRef.MessageID).Scan(&conversationID); errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	} else if err != nil {
+		return time.Time{}, false, fmt.Errorf("read appreciation conversation: %w", err)
+	}
+	if conversationID != memory.ConversationID {
 		return time.Time{}, false, nil
 	}
 	key, err := appreciationMessageKeyTx(ctx, tx, memory.PeerRef.MessageID)
@@ -132,61 +143,52 @@ func appreciationPeerCurrentTx(ctx context.Context, tx *loggedTx, personID int64
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("read appreciation peer body: %w", err)
 	}
-	return event.Time.UTC(), body.Valid && memory.Suggestion.Quote != "" &&
+	return items[0].EventTime.UTC(), body.Valid && memory.Suggestion.Quote != "" &&
 		sweepSHA256(body.String) == memory.PeerRawSHA256 && strings.Contains(body.String, memory.Suggestion.Quote), nil
 }
 
-// appreciationOwnerCurrentTx admits owner text only if the source's complete
-// roster still proves the same two-person conversation and the exact native
-// owner message remains later than the peer contribution.
-func (s *Store) appreciationOwnerCurrentTx(ctx context.Context, tx *loggedTx, personID int64, memory peoplesweep.BriefAppreciationMemory, profile peoplesweep.ProviderProfile, peerTime time.Time) (bool, error) {
-	if memory.OwnerRef == nil || memory.Suggestion.Thanked == nil || memory.Suggestion.Thanked.Quote == "" ||
-		memory.OwnerRef.SourceLane != peoplesweep.SourceConversationText || memory.OwnerRef.SourceID != memory.PeerRef.SourceID {
-		return false, nil
-	}
-	after, before, err := sweepDateBounds(profile.SourceSince, profile.SourceUntil)
-	if err != nil {
-		return false, err
-	}
-	if s.dialect.DriverName() == postgresDriverName {
+// appreciationDirectOwnerTx resolves a provider-complete direct roster. Writers
+// lock its conversation and participant rows; snapshot readers do not.
+func (s *Store) appreciationDirectOwnerTx(ctx context.Context, tx *loggedTx, personID, conversationID int64, lock bool) (int64, int64, bool, error) {
+	if lock && s.dialect.DriverName() == postgresDriverName {
 		// The parent lock excludes new roster rows via their foreign key;
 		// locking the existing rows below also excludes removal or replacement.
 		var id int64
-		err := tx.QueryRowContext(ctx, `SELECT id FROM conversations WHERE id = ? FOR UPDATE`, memory.ConversationID).Scan(&id)
+		err := tx.QueryRowContext(ctx, `SELECT id FROM conversations WHERE id = ? FOR UPDATE`, conversationID).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
+			return 0, 0, false, nil
 		}
 		if err != nil {
-			return false, err
+			return 0, 0, false, err
 		}
 	}
 	var sourceID int64
 	var sourceType, kind, metadata string
 	var observed int
-	err = tx.QueryRowContext(ctx, `SELECT c.source_id, s.source_type, COALESCE(c.conversation_type,''),
+	err := tx.QueryRowContext(ctx, `SELECT c.source_id, s.source_type, COALESCE(c.conversation_type,''),
  COALESCE(c.participant_count,0), COALESCE(CAST(c.metadata AS TEXT),'') FROM conversations c
- JOIN sources s ON s.id = c.source_id WHERE c.id = ?`, memory.ConversationID).
+ JOIN sources s ON s.id = c.source_id WHERE c.id = ?`, conversationID).
 		Scan(&sourceID, &sourceType, &kind, &observed, &metadata)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return 0, 0, false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("read appreciation conversation: %w", err)
+		return 0, 0, false, fmt.Errorf("read appreciation conversation: %w", err)
 	}
 	record := decodeMembershipRecord(metadata)
-	if sourceID != memory.OwnerRef.SourceID || kind != "direct_chat" || !personSweepSourceAuthenticatesSender(sourceType) ||
+	if kind != "direct_chat" || !personSweepSourceAuthenticatesSender(sourceType) ||
 		!record.counted || record.unknown || record.repairPending {
-		return false, nil
+		return 0, 0, false, nil
 	}
 	rosterQuery := `SELECT cp.participant_id,
  EXISTS(SELECT 1 FROM person_participants pp WHERE pp.person_id = ? AND pp.participant_id = cp.participant_id)
  FROM conversation_participants cp WHERE cp.conversation_id = ? ORDER BY cp.participant_id LIMIT 3`
-	if s.dialect.DriverName() == postgresDriverName {
+	if lock && s.dialect.DriverName() == postgresDriverName {
 		rosterQuery += ` FOR UPDATE OF cp`
 	}
-	rows, err := tx.QueryContext(ctx, rosterQuery, personID, memory.ConversationID)
+	rows, err := tx.QueryContext(ctx, rosterQuery, personID, conversationID)
 	if err != nil {
-		return false, err
+		return 0, 0, false, err
 	}
 	var total, peers int
 	var ownerID int64
@@ -195,7 +197,7 @@ func (s *Store) appreciationOwnerCurrentTx(ctx context.Context, tx *loggedTx, pe
 		var belongs bool
 		if err := rows.Scan(&participantID, &belongs); err != nil {
 			_ = rows.Close()
-			return false, err
+			return 0, 0, false, err
 		}
 		total++
 		if belongs {
@@ -205,16 +207,37 @@ func (s *Store) appreciationOwnerCurrentTx(ctx context.Context, tx *loggedTx, pe
 		}
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return false, err
+		return 0, 0, false, err
 	}
 	if total != 2 || peers != 1 || ownerID == 0 || attachmentPolicyParticipantCount(sourceType, max(observed, total), metadata) != 2 {
+		return 0, 0, false, nil
+	}
+	return sourceID, ownerID, true, nil
+}
+
+const appreciationOwnerMessagePredicate = `m.source_is_from_me = TRUE AND COALESCE(m.is_sent,FALSE) = TRUE AND m.draft_authored = FALSE AND m.sent_at IS NOT NULL`
+
+// appreciationOwnerCurrentTx admits owner text only if the source's complete
+// roster still proves the same two-person conversation and the exact native
+// owner message remains later than the peer contribution.
+func (s *Store) appreciationOwnerCurrentTx(ctx context.Context, tx *loggedTx, personID int64, memory peoplesweep.BriefAppreciationMemory, profile peoplesweep.ProviderProfile, peerTime time.Time, lock bool) (bool, error) {
+	if memory.OwnerRef == nil || memory.Suggestion.Thanked == nil || memory.Suggestion.Thanked.Quote == "" ||
+		memory.OwnerRef.SourceLane != peoplesweep.SourceConversationText || memory.OwnerRef.SourceID != memory.PeerRef.SourceID {
 		return false, nil
+	}
+	after, before, err := sweepDateBounds(profile.SourceSince, profile.SourceUntil)
+	if err != nil {
+		return false, err
+	}
+	sourceID, ownerID, ok, err := s.appreciationDirectOwnerTx(ctx, tx, personID, memory.ConversationID, lock)
+	if err != nil || !ok || sourceID != memory.OwnerRef.SourceID {
+		return false, err
 	}
 	var nativeID string
 	var sent requiredTimestamp
 	err = tx.QueryRowContext(ctx, `SELECT COALESCE(m.source_message_id,''), m.sent_at FROM messages m
  WHERE m.id = ? AND m.source_id = ? AND m.conversation_id = ? AND m.sender_id = ? AND `+LiveMessagesWhere("m", true)+`
- AND m.source_is_from_me = TRUE AND COALESCE(m.is_sent,FALSE) = TRUE AND m.draft_authored = FALSE AND m.sent_at IS NOT NULL`,
+ AND `+appreciationOwnerMessagePredicate,
 		memory.OwnerRef.MessageID, sourceID, memory.ConversationID, ownerID).Scan(&nativeID, &sent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil

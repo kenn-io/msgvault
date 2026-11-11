@@ -32,16 +32,20 @@ type briefFakeArchive struct {
 	candidateCalls         []HistoricalCandidateRequest
 	searchCalls            []ContextRequest
 	hydrateCalls           []int64
+	peerCalls              int
+	ownerCalls             int
 	appreciationPeers      []BriefAppreciationPeer
 	appreciationOwners     []BriefAppreciationOwner
 	dismissedAppreciations map[string]bool
 }
 
 func (a *briefFakeArchive) PersonSweepAppreciationPeers(_ context.Context, _ int64, _ []EvidenceItem, _ int64) ([]BriefAppreciationPeer, error) {
+	a.peerCalls++
 	return a.appreciationPeers, nil
 }
 
 func (a *briefFakeArchive) PersonSweepAppreciationOwners(_ context.Context, _ int64, _ []BriefAppreciationPeer, _ ProviderProfile, _ int64, _ int) ([]BriefAppreciationOwner, error) {
+	a.ownerCalls++
 	return a.appreciationOwners, nil
 }
 
@@ -80,6 +84,59 @@ func TestBriefAppreciationReplayProtectsActiveEvidence(t *testing.T) {
 	parsed, err = ParseBrief(briefOutputJSON{}.raw(), window, request.Profile)
 	require.NoError(t, err)
 	assert.Empty(t, parsed.Output.ThanksSuggestions)
+}
+
+func TestResolvedAppreciationsFreeSlotsForLaterContributions(t *testing.T) {
+	request := briefWindowRequest(t)
+	request.MaxItems = 4
+	var previous *BriefBoundary
+	for index := 0; index < 5; index++ {
+		item := briefWindowItem(int64(20+index), SourceConversationText, 10+index, "I carried your boxes upstairs.")
+		key := fmt.Sprintf("%064x", index+1)
+		archive := &briefFakeArchive{items: []EvidenceItem{item}, appreciationPeers: []BriefAppreciationPeer{{
+			Ref: item.Ref, ConversationID: 42, ContributionKey: key, RawSHA256: strings.Repeat("b", 64),
+			ExactExcerpt: item.Excerpt, EventTime: item.EventTime,
+		}}}
+		request.Previous = previous
+		window, err := BuildBriefWindow(t.Context(), archive, request)
+		require.NoError(t, err)
+		anchor := briefEvidenceID(t, window, item.Ref.MessageID)
+		candidate := fmt.Sprintf(`{"text":"carrying boxes","anchor_id":%q,"quote":"carried your boxes","thanked":null}`, anchor)
+		parsed, err := ParseBrief(briefOutputJSON{ThanksSuggestions: []string{candidate}}.raw(), window, request.Profile)
+		require.NoError(t, err)
+		require.Len(t, parsed.Output.ThanksSuggestions, 1)
+		assert.Equal(t, key, parsed.Output.ThanksSuggestions[0].Key)
+		// The next regeneration starts after this contribution became evidenced.
+		memory := freezeAppreciationMemory(parsed, window)
+		require.Len(t, memory, 1)
+		memory[0].Suggestion.State = "already_thanked"
+		previous = &BriefBoundary{AppreciationMemory: memory}
+	}
+}
+
+func TestBriefWindowLoadsSidecarsOnceWhenTrimming(t *testing.T) {
+	peer := briefWindowItem(10, SourceConversationText, 10, "I carried your boxes upstairs.")
+	archive := &briefFakeArchive{items: []EvidenceItem{peer}, appreciationPeers: []BriefAppreciationPeer{{
+		Ref: peer.Ref, ConversationID: 42, ContributionKey: strings.Repeat("a", 64), RawSHA256: strings.Repeat("b", 64),
+		ExactExcerpt: peer.Excerpt, EventTime: peer.EventTime,
+	}}, appreciationOwners: []BriefAppreciationOwner{{
+		EvidenceID: "owner:test", Ref: EvidenceRef{SourceLane: SourceConversationText, SourceID: peer.Ref.SourceID, MessageID: 99},
+		ConversationID: 42, RawSHA256: strings.Repeat("c", 64), ExactExcerpt: strings.Repeat("thanks ", 100), EventTime: peer.EventTime.Add(time.Hour),
+	}}}
+	request := briefWindowRequest(t)
+	request.MaxItems = 3
+	full, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	require.Len(t, full.Batch.Packet.BriefOwners, 1)
+	archive.peerCalls, archive.ownerCalls = 0, 0
+	request.MaxBytes = full.Boundary.InputBytes - 1
+	trimmed, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	assert.Empty(t, trimmed.Batch.Packet.BriefOwners)
+	assert.Len(t, trimmed.Items, 1)
+	assert.LessOrEqual(t, trimmed.Boundary.InputBytes, request.MaxBytes)
+	assert.Equal(t, 1, archive.peerCalls)
+	assert.Equal(t, 1, archive.ownerCalls)
 }
 
 // visibleAt mirrors the store's journal bound: a positive sequence hides a

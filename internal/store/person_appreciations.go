@@ -21,7 +21,7 @@ type PersonAppreciationProjection struct {
 	Appreciations []peoplesweep.BriefAppreciationMemory
 }
 
-func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, personID int64, profile peoplesweep.ProviderProfile, includeDismissed bool) (PersonAppreciationProjection, error) {
+func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, personID int64, profile peoplesweep.ProviderProfile, includeDismissed, lock bool) (PersonAppreciationProjection, error) {
 	brief, err := scanPersonBrief(tx.QueryRowContext(ctx, `SELECT `+personBriefColumns+` FROM person_briefs WHERE person_id = ? AND status = ?`, personID, PersonBriefStatusCurrent))
 	if errors.Is(err, sql.ErrNoRows) {
 		return PersonAppreciationProjection{}, ErrPersonBriefNotFound
@@ -38,7 +38,7 @@ func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, person
 		return PersonAppreciationProjection{}, errors.New("invalid appreciation brief boundary")
 	}
 	result := peoplesweep.BriefResult{Boundary: boundary, ValidationProfile: profile}
-	_, err = s.revalidateAppreciationMemoryTx(ctx, tx, personID, &result, includeDismissed)
+	_, err = s.revalidateAppreciationMemoryTx(ctx, tx, personID, &result, includeDismissed, false, lock)
 	if err != nil {
 		return PersonAppreciationProjection{}, err
 	}
@@ -70,7 +70,7 @@ func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, person
 						continue
 					}
 					proofResult := peoplesweep.BriefResult{Boundary: peoplesweep.BriefBoundary{AppreciationMemory: []peoplesweep.BriefAppreciationMemory{proof}}, ValidationProfile: profile}
-					validated, err := s.revalidateAppreciationMemoryTx(ctx, tx, personID, &proofResult, true)
+					validated, err := s.revalidateAppreciationMemoryTx(ctx, tx, personID, &proofResult, true, true, lock)
 					if err != nil {
 						return PersonAppreciationProjection{}, err
 					}
@@ -89,9 +89,9 @@ func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, person
 
 func (s *Store) ProjectPersonAppreciationsContext(ctx context.Context, personID int64, profile peoplesweep.ProviderProfile) (PersonAppreciationProjection, error) {
 	var projection PersonAppreciationProjection
-	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
-		projection, err = s.currentAppreciationsTx(ctx, tx, personID, profile, false)
+		projection, err = s.currentAppreciationsTx(ctx, tx, personID, profile, false, false)
 		return err
 	})
 	if err != nil {
@@ -109,7 +109,7 @@ func (s *Store) DismissPersonAppreciationContext(ctx context.Context, personID i
 	}
 	var state PersonAppreciationState
 	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
-		projection, err := s.currentAppreciationsTx(ctx, tx, personID, profile, true)
+		projection, err := s.currentAppreciationsTx(ctx, tx, personID, profile, true, true)
 		if err != nil {
 			return err
 		}

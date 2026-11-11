@@ -359,7 +359,7 @@ func (s *Store) applyPersonSweepWithAligner(
 			}
 		}
 		if request.Brief != nil && len(request.Brief.Boundary.AppreciationMemory) > 0 {
-			current, validateErr := s.revalidateAppreciationMemoryTx(ctx, tx, request.Lease.PersonID, request.Brief, false)
+			current, validateErr := s.revalidateAppreciationMemoryTx(ctx, tx, request.Lease.PersonID, request.Brief, false, true, true)
 			if validateErr != nil {
 				return validateErr
 			}

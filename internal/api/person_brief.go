@@ -427,7 +427,7 @@ func (s *Server) personBriefDTO(
 		Sentences:        sentences,
 		Structured:       s.sanitizedPersonBriefStructure(brief),
 		Evidence:         pointers,
-		Boundary:         sanitizedPersonBriefBoundary(brief.Boundary),
+		Boundary:         sanitizedPersonBriefBoundary(brief.Boundary, brief.ProgramVersion),
 		DroppedItemCount: brief.DroppedItemCount,
 		ProgramID:        brief.ProgramID,
 		ProgramVersion:   brief.ProgramVersion,
@@ -484,6 +484,9 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext
 	if err != nil {
 		s.logger.Error("person brief structure could not be re-encoded",
 			"person_id", brief.PersonID, "version", brief.Version)
+		if brief.ProgramVersion == "v3" {
+			return jsontext.Value(`{}`)
+		}
 		return personBriefJSON(brief.Structured)
 	}
 	return encoded
@@ -502,13 +505,16 @@ func sanitizeBriefHighlight(highlight *peoplesweep.BriefHighlight) {
 }
 
 // sanitizedPersonBriefBoundary sanitizes event prose in the response only.
-func sanitizedPersonBriefBoundary(raw jsontext.Value) jsontext.Value {
+func sanitizedPersonBriefBoundary(raw jsontext.Value, programVersion string) jsontext.Value {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		return personBriefJSON(raw)
 	}
 	var boundary peoplesweep.BriefBoundary
 	if err := json.Unmarshal(raw, &boundary); err != nil {
-		return jsontext.Value(`{}`)
+		if programVersion == "v3" {
+			return jsontext.Value(`{}`)
+		}
+		return personBriefJSON(raw)
 	}
 	for index := range boundary.EventMemory {
 		sanitizeBriefHighlight(&boundary.EventMemory[index].Highlight)
@@ -517,7 +523,10 @@ func sanitizedPersonBriefBoundary(raw jsontext.Value) jsontext.Value {
 	boundary.AppreciationMemory = nil
 	encoded, err := json.Marshal(boundary, json.Deterministic(true))
 	if err != nil {
-		return jsontext.Value(`{}`)
+		if programVersion == "v3" {
+			return jsontext.Value(`{}`)
+		}
+		return personBriefJSON(raw)
 	}
 	return encoded
 }

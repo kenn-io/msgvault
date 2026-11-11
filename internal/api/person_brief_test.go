@@ -842,3 +842,13 @@ func TestPersonBriefIsReachableOnlyThroughItsOwnRoutes(t *testing.T) {
 		assert.Contains(paths, path)
 	}
 }
+
+func TestPersonBriefBoundaryMalformedLegacyFallback(t *testing.T) {
+	raw := []byte(`{"event_memory":"not an array"}`)
+	for _, version := range []string{"v1", "v2"} {
+		t.Run(version, func(t *testing.T) {
+			assert.JSONEq(t, string(raw), string(sanitizedPersonBriefBoundary(raw, version)))
+		})
+	}
+	assert.JSONEq(t, `{}`, string(sanitizedPersonBriefBoundary(raw, "v3")))
+}

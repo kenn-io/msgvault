@@ -44,6 +44,9 @@ func TestAppreciationHTTPProjectsDismissalAndPreservesHistory(t *testing.T) {
 	key, err := peoplesweep.AppreciationContributionKey("slack", "api-appreciation", "peer-help")
 	require.NoError(t, err)
 	hash := sha256.Sum256([]byte(body))
+	peerItems, err := f.store.HydratePersonSweepMessages(t.Context(), f.personID, []int64{messageID}, 0)
+	require.NoError(t, err)
+	require.Len(t, peerItems, 1)
 	suggestion := peoplesweep.BriefThanksSuggestion{Text: "carrying the boxes", AnchorID: personBriefAPIEvidenceID,
 		Quote: "carried the boxes", Key: key, State: "suggested", PriorThanks: "unknown"}
 	output := personBriefAPIStructure()
@@ -53,8 +56,7 @@ func TestAppreciationHTTPProjectsDismissalAndPreservesHistory(t *testing.T) {
 	require.NoError(t, err)
 	seed.rendered = rendered.Text
 	boundary, err := json.Marshal(peoplesweep.BriefBoundary{AppreciationMemory: []peoplesweep.BriefAppreciationMemory{{
-		Suggestion: suggestion, PeerRef: peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceConversationText,
-			SourceID: source.ID, MessageID: messageID, SourceMessageID: "peer-help"},
+		Suggestion: suggestion, PeerRef: peerItems[0].Ref,
 		PeerRawSHA256: hex.EncodeToString(hash[:]), ConversationID: conversationID,
 	}}})
 	require.NoError(t, err)

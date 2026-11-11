@@ -11,15 +11,18 @@ import (
 )
 
 func TestTeamsMigrationTransfersAppreciationDismissal(t *testing.T) {
-	for _, duplicate := range []bool{false, true} {
-		t.Run(map[bool]string{false: "rename", true: "duplicate"}[duplicate], func(t *testing.T) {
+	for _, tc := range []struct {
+		name                            string
+		duplicate, destinationDismissed bool
+	}{{name: "rename"}, {name: "duplicate-copy", duplicate: true}, {name: "duplicate-preserves-first", duplicate: true, destinationDismissed: true}} {
+		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			source, err := st.GetOrCreateSource("teams", "owner@example.test")
 			require.NoError(t, err)
 			conversation, err := st.EnsureConversationWithType(source.ID, "direct", "direct_chat", "Direct")
 			require.NoError(t, err)
 			insertStoreTestMessage(t, st, source.ID, conversation, "legacy")
-			if duplicate {
+			if tc.duplicate {
 				insertStoreTestMessage(t, st, source.ID, conversation, "scoped")
 			}
 			oldKey, err := peoplesweep.AppreciationContributionKey("teams", source.Identifier, "legacy")
@@ -29,7 +32,7 @@ func TestTeamsMigrationTransfersAppreciationDismissal(t *testing.T) {
 			at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 			_, err = st.RecordPersonAppreciationDismissalContext(t.Context(), oldKey, "person-test", "owner", at)
 			require.NoError(t, err)
-			if duplicate {
+			if tc.destinationDismissed {
 				_, err = st.RecordPersonAppreciationDismissalContext(t.Context(), newKey, "other-person", "first-owner", at.Add(-time.Hour))
 				require.NoError(t, err)
 			}
@@ -39,7 +42,7 @@ func TestTeamsMigrationTransfersAppreciationDismissal(t *testing.T) {
 			require.Len(t, states, 2)
 			require.NotNil(t, states[newKey].DismissedBy)
 			wantActor := "owner"
-			if duplicate {
+			if tc.destinationDismissed {
 				wantActor = "first-owner"
 			}
 			assert.Equal(t, wantActor, *states[newKey].DismissedBy)
