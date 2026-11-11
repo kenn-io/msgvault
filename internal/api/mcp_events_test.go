@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/mcpevents"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	pkgclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -70,15 +71,34 @@ func TestEventsRouterSerialGate(t *testing.T) {
 	gate := NewSerialOperationGate()
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, OperationGate: gate, Logger: testLogger()})
 	body := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
+	unsubscribeBody := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"url":"https://example.com/hook"}}`
+	var subscribed mcpevents.MCPEventsSubscribeResult
 	for _, path := range []string{"/api/v1/mcp-events/subscribe", "/api/v1/mcp-events/unsubscribe"} {
-		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+		requestBody := body
+		if strings.HasSuffix(path, "/unsubscribe") {
+			requestBody = unsubscribeBody
+		}
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(requestBody))
 		r.RemoteAddr = "127.0.0.1:12345"
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
 		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+		if strings.HasSuffix(path, "/subscribe") {
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &subscribed))
+			requirements.NotEmpty(subscribed.ID)
+			_, position, loadErr := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(subscribed.ID))
+			requirements.NoError(loadErr)
+			requirements.NotNil(position)
+		}
 	}
 	assertions := assert.New(t)
+	catalog, err := st.LoadMCPEventsCatalog(t.Context())
+	requirements.NoError(err)
+	assertions.JSONEq(`[]`, string(catalog))
+	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(subscribed.ID))
+	requirements.NoError(err)
+	assertions.Nil(position)
 	requirements.NoError(gate.Drain(t.Context()))
 	before, err := st.LoadMCPEventsCatalog(t.Context())
 	requirements.NoError(err)

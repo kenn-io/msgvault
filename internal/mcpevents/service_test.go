@@ -223,6 +223,11 @@ func TestDecodeSubscribeRejectsInvalidArgumentsAndNulls(t *testing.T) {
 			assertions.Equal("invalid_arguments", eventErr.Reason)
 		}
 	}
+	raw := []byte(`{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"url":"https://example.com/hook"}}`)
+	unsubscribe, err := DecodeUnsubscribe(raw)
+	requirements.NoError(err)
+	assertions.Equal("https://example.com/hook", unsubscribe.Delivery.URL)
+	assertions.Equal(int64(1), unsubscribe.Arguments.SourceID)
 }
 
 func TestTTLClampAndDefaults(t *testing.T) {
