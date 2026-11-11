@@ -122,7 +122,7 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 		if record, ok := instagramArchivedRecord(archived[id]); ok {
 			key := instagramEvidence(record)
 			evidence[id] = key
-			exact[key] = append(exact[key], id)
+			instagramAddExact(exact, key, id, archived[id])
 		} else {
 			unreadable = true
 		}
@@ -160,7 +160,19 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 		}
 	}
 	summary.Errors += len(uncertain)
-	reconcileInstagramCopies(remaining, unused, used, summary, repairs)
+	reconcileInstagramCopies(remaining, unused, used, summary, repairs, archived)
+}
+
+// A shared reaction set on a surplus row is not evidence of its identity.
+func instagramIsSurplus(stored store.StoredMessage) bool {
+	var wrapper instagramRaw
+	return json.Unmarshal(stored.Raw, &wrapper) == nil && wrapper.DerivedReactions != nil
+}
+
+func instagramAddExact(exact map[instagramOccurrence][]string, key instagramOccurrence, id string, stored store.StoredMessage) {
+	if !instagramIsSurplus(stored) {
+		exact[key] = append(exact[key], id)
+	}
 }
 
 // reconcileInstagramCopies settles changed copies that share content with
@@ -168,12 +180,12 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 // can't prove any copy is new, the copies are skipped. Surplus copies are
 // added with only the reactions every copy has. Either way the run is
 // incomplete, since which copy is which can't be told.
-func reconcileInstagramCopies(remaining map[string][]*instagramPending, unused map[string][]string, used map[string]bool, summary *ImportSummary, repairs *[]string) {
+func reconcileInstagramCopies(remaining map[string][]*instagramPending, unused map[string][]string, used map[string]bool, summary *ImportSummary, repairs *[]string, archived map[string]store.StoredMessage) {
 	for content, items := range remaining {
 		old := unused[content]
 		switch {
 		case len(old) == 0:
-		case len(items) == 1 && len(old) == 1:
+		case len(items) == 1 && len(old) == 1 && !instagramIsSurplus(archived[old[0]]):
 			items[0].id = old[0]
 			used[old[0]] = true
 		default:

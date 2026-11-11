@@ -491,6 +491,51 @@ func TestInstagramAddsOnlySurplusCopiesWithSharedReactions(t *testing.T) {
 	}
 }
 
+func TestInstagramSurplusSharedReactionDoesNotIdentifyCopy(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	copyOf := func(reactions ...string) map[string]any {
+		record := instagramTestRecord("same")
+		var list []map[string]string
+		for _, reaction := range reactions {
+			list = append(list, map[string]string{"actor": reaction, "reaction": reaction})
+		}
+		record["reactions"] = list
+		return record
+	}
+	instagramTestShard(t, root, "circle", "message_1.json", copyOf("A"))
+	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	id := instagramIDs(t, st)[0]
+	instagramTestShard(t, root, "circle", "message_1.json", copyOf("B"), copyOf("B", "C"))
+	for i := range 2 {
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		assert.True(summary.Incomplete)
+		if i == 0 {
+			assert.Equal(int64(1), summary.MessagesAdded)
+		} else {
+			assert.Zero(summary.MessagesAdded)
+		}
+		assert.Equal(2, countMessages(t, st, ""))
+		var reaction string
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT r.reaction_value FROM reactions r JOIN messages m ON m.id = r.message_id WHERE m.source_message_id = ?`), id).Scan(&reaction))
+		assert.Equal("A", reaction)
+	}
+	instagramTestShard(t, root, "circle", "message_1.json", copyOf("A"), copyOf("B", "C"))
+	summary, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	assert.True(summary.Incomplete)
+	assert.Zero(summary.MessagesAdded)
+	assert.Equal(2, countMessages(t, st, ""))
+	var extra int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reactions WHERE reaction_value = 'C'`).Scan(&extra))
+	assert.Zero(extra)
+}
+
 func TestInstagramEmptyFirstShardUpdatesConversationType(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
