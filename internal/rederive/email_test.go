@@ -287,6 +287,7 @@ func TestEmailRederivationExtractsMissingInvites(t *testing.T) {
 	// Represent retained MIME written before invitation extraction existed.
 	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data=?, compression=NULL WHERE message_id=?`), raw, id)
 	requirements.NoError(err)
+	requirements.NoError(st.MarkMigrationApplied(LedgerKey(src.SourceType, src.Identifier, "email-v2")))
 	sum, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	requirements.NoError(err)
 	assertions.Zero(sum.Errors)
