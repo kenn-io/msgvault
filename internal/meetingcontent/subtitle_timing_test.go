@@ -60,6 +60,11 @@ func TestSubtitleTextAndParser(t *testing.T) {
 	assert.Equal(t, int64(1200), parsed.Segments[0].StartMS)
 	assert.Equal(t, int64(2100), parsed.Segments[0].EndMS)
 	assert.Equal(t, "R&D: Hello --> 世界\nnext & done", parsed.Segments[0].Text)
+	_, err = RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: len(result.Content) - 1})
+	require.ErrorIs(t, err, ErrBudgetTooSmall)
+	exact, err := RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: len(result.Content)})
+	require.NoError(t, err)
+	assert.Equal(t, result.Content, exact.Content)
 	raw = []byte(`{"started_at":"2026-01-01T00:00:00Z","structured":{},"transcript_segments":[{"text":"<hello>","start":0,"end":2}]}`)
 	result, err = RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatVTT, MaxBytes: 4096})
 	require.NoError(t, err)
@@ -84,7 +89,7 @@ func TestSubtitleRejectsInvalidOrigins(t *testing.T) {
 }
 
 func TestSubtitleSRTComparisonText(t *testing.T) {
-	for _, value := range []string{"2 < 3", "2 < 3 > 1", "x<y", `Open C:\tmp {x}`, `Use \ slash`} {
+	for _, value := range []string{"2 < 3", "2 < 3 > 1", "x<y"} {
 		t.Run(value, func(t *testing.T) {
 			raw, err := json.Marshal(map[string]any{"started_at": "2026-01-01T00:00:00Z", "transcript_segments": []any{map[string]any{"text": value, "start": 1, "end": 2}}})
 			require.NoError(t, err)
@@ -107,7 +112,7 @@ func TestSubtitleSRTComparisonText(t *testing.T) {
 			assert.Contains(t, string(out), ","+value+"\n")
 		})
 	}
-	for _, value := range []string{"<hello>", "<3>", "<i>world</i>", `line\Nbreak`, `{\i1}styled`} {
+	for _, value := range []string{"<hello>", "<3>", "<i>world</i>"} {
 		t.Run(value, func(t *testing.T) {
 			raw, err := json.Marshal(map[string]any{"started_at": "2026-01-01T00:00:00Z", "transcript_segments": []any{map[string]any{"text": value, "start": 1, "end": 2}}})
 			require.NoError(t, err)
@@ -173,6 +178,38 @@ func TestTwilioSubtitleRecordingOrigins(t *testing.T) {
 	different := strings.Replace(raw, `"sid":"RE2","start_time":"2026-10-03T10:00:00Z"`, `"sid":"RE2","start_time":"2026-10-03T10:00:01Z"`, 1)
 	_, err = RenderSubtitles("twilio_call_json", []byte(different), PacketOptions{Format: FormatVTT, MaxBytes: 4096})
 	require.ErrorIs(t, err, ErrInvalidSubtitles)
+}
+
+func TestSubtitleSRTLiteralFormattingCharacters(t *testing.T) {
+	for _, value := range []string{`Open C:\tmp {x}`, `Use \ slash`} {
+		t.Run(value, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]any{"started_at": "2026-01-01T00:00:00Z", "transcript_segments": []any{map[string]any{"text": value, "start": 1, "end": 2}}})
+			require.NoError(t, err)
+			result, err := RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+			require.NoError(t, err)
+			parsed, err := mediatranscript.ParseSubRip([]byte(result.Content), "msgvault", "und")
+			require.NoError(t, err)
+			require.Len(t, parsed.Segments, 1)
+			assert.Equal(t, value, parsed.Segments[0].Text)
+			ffmpeg, err := exec.LookPath("ffmpeg")
+			if err != nil {
+				return
+			}
+			command := exec.CommandContext(t.Context(), ffmpeg, "-v", "error", "-f", "srt", "-i", "pipe:0", "-f", "ass", "pipe:1")
+			command.Stdin = strings.NewReader(result.Content)
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, string(output))
+			assert.Contains(t, string(output), ","+value+"\n")
+		})
+	}
+	for _, value := range []string{`line\Nbreak`, `{\i1}styled`} {
+		t.Run(value, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]any{"started_at": "2026-01-01T00:00:00Z", "transcript_segments": []any{map[string]any{"text": value, "start": 1, "end": 2}}})
+			require.NoError(t, err)
+			_, err = RenderSubtitles("omi_json", raw, PacketOptions{Format: FormatSRT, MaxBytes: 4096})
+			require.ErrorIs(t, err, ErrInvalidSubtitles)
+		})
+	}
 }
 
 func TestSubtitleBlankLinesStayWithinCue(t *testing.T) {

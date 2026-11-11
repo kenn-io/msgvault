@@ -19,6 +19,28 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+func TestMeetingSubtitleUnknownOriginPreservesFile(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("granola", "owner@example.test")
+	require.NoError(t, err)
+	snapshot := meetingarchive.Snapshot{SourceID: source.ID, AccountEmail: "owner@example.test", SourceMessageID: "one", SourceConversationID: "one", Title: "Meeting", StartedAt: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC), Raw: []byte(`{"transcript":[{"speaker":{"name":"A"},"text":"Hello","start_time":"2026-01-01T10:00:02Z","end_time":"2026-01-01T10:00:04Z"}]}`), RawFormat: "granola_json", Organizer: &meetingarchive.Person{Name: "Owner", Email: "owner@example.test"}}
+	archived, err := meetingarchive.New(st).Upsert(t.Context(), snapshot, meetingarchive.UpsertOptions{})
+	require.NoError(t, err)
+	server := httptest.NewServer(api.NewServer(&config.Config{}, st, nil, slog.New(slog.DiscardHandler)).Router())
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, client.Close()) })
+	output := filepath.Join(t.TempDir(), "meeting.srt")
+	require.NoError(t, os.WriteFile(output, []byte("keep"), 0600))
+	stdout, _, err := executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--format", "srt", "-o", output)
+	require.ErrorContains(t, err, "recording start")
+	assert.Empty(t, stdout)
+	saved, err := os.ReadFile(output)
+	require.NoError(t, err)
+	assert.Equal(t, "keep", string(saved))
+}
+
 func TestMeetingSubtitleTwentyCLIAndHTTP(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("twenty", "owner@example.test")
@@ -34,10 +56,13 @@ func TestMeetingSubtitleTwentyCLIAndHTTP(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	want := "WEBVTT\n\n1\n00:00:10.000 --> 00:00:12.000\nA: Hello\n\n"
 	format := generated.MeetingContextRequestFormat("vtt")
-	result, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{archived.MessageID}), Format: &format})
+	result, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: new([]int64{archived.MessageID, archived.MessageID}), Format: &format})
 	require.NoError(t, err)
 	assert.Equal(t, want, result.Content)
 	stdout, _, err := executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--format", "vtt")
+	require.NoError(t, err)
+	assert.Equal(t, want, stdout)
+	stdout, _, err = executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--id", meetingTestInt64(archived.MessageID), "--format", "vtt")
 	require.NoError(t, err)
 	assert.Equal(t, want, stdout)
 	stdout, _, err = executeMeetingsCommand(t, client, "context", "--id", meetingTestInt64(archived.MessageID), "--id", "999999", "--format", "vtt")
@@ -53,7 +78,6 @@ func TestMeetingSubtitleTwentyCLIAndHTTP(t *testing.T) {
 
 func TestMeetingSubtitleRelativeUnknownOriginPreservesFile(t *testing.T) {
 	cases := []struct{ name, raw string }{
-		{"granola", `{"transcript":[{"speaker":{"name":"A"},"text":"Hello","start_time":"2026-01-01T10:00:02Z","end_time":"2026-01-01T10:00:04Z"}]}`},
 		{"omi", `{"structured":{},"transcript_segments":[{"text":"Hello","start":0,"end":2}]}`},
 		{"pocket", `{"schema_version":1,"started_at":"2026-01-01T00:00:00Z","content":{"summary":{"state":"empty"},"notes":{"state":"unsupported"},"transcript":{"state":"available","segments":[{"text":"Hello","offset_seconds":0}]},"action_coverage":"unsupported"},"recording":{"transcript":{"segments":[{"text":"Hello","start":0,"end":2}]}}}`},
 		{"twenty", `{"schema_version":1,"calendar_event":{"startsAt":"2026-01-01T00:00:00Z"},"recording":{"transcript":[{"words":[{"text":"Hello","start_timestamp":{"relative":0},"end_timestamp":{"relative":2}}]}]}}`},
