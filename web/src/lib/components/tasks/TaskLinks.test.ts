@@ -82,6 +82,8 @@ describe('TaskLinks', () => {
     });
     render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Follow up' });
     await fireEvent.input(await screen.findByLabelText('Task title'), { target: { value: 'Draft title' } });
+    expect(screen.getByRole('radiogroup', { name: 'Task' })).toBeTruthy();
+    expect(screen.queryByText('Task')).toBeNull();
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await fireEvent.click(screen.getByRole('radio', { name: 'New' }));

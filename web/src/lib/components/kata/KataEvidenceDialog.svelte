@@ -8,13 +8,14 @@
   import { errorMessage } from '../../api/session.svelte';
   import { EVIDENCE_STEP, EVIDENCE_WINDOW, retryKey, type EvidenceSelector, type PreparedEvidence } from '../../kata/evidence';
 
-  let { client, selector, defaultTitle = '', defaultBrief = '', onclose = () => undefined, busy = $bindable(false), receipt = $bindable(undefined) }: {
+  let { client, selector, defaultTitle = '', defaultBrief = '', showIssueLabel = true, onclose = () => undefined, busy = $bindable(false), receipt = $bindable(undefined) }: {
     client: APIClient;
     busy?: boolean;
     receipt?: KataIssueReceipt;
     selector: EvidenceSelector;
     defaultTitle?: string;
     defaultBrief?: string;
+    showIssueLabel?: boolean;
     onclose?: () => void;
   } = $props();
 
@@ -151,7 +152,7 @@
       {#if error}<p role="alert">{error}</p>{/if}
     {:else}
       <form onsubmit={(event) => { event.preventDefault(); void submit(); }} aria-busy={busy}>
-        <div class="issue-mode"><span>Issue</span><SegmentedControl ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} /></div>
+        <div class="issue-mode">{#if showIssueLabel}<span>Issue</span>{/if}<SegmentedControl ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} /></div>
         {#if mode === 'create'}
           <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
           <label>Brief<textarea aria-label="Brief" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
@@ -176,7 +177,7 @@
         </section>
         {#if error}<p role="alert">{error}</p>{/if}
         {#if deletedKey}<Button label="File as a new issue" disabled={busy} onclick={() => void fileAgain()} />{/if}
-        <p class="disclosure">The quote above is saved in Kata. Attachments aren't sent.</p>
+        <p class="disclosure">Attachments aren't sent.</p>
         <div class="actions"><Button label="Cancel" surface="soft" disabled={busy} onclick={onclose} />
         <Button type="submit" tone={canSubmit ? 'info' : 'neutral'} surface={canSubmit ? 'solid' : 'soft'} label={mode === 'create' ? 'Create issue' : 'Add quote'} disabled={!canSubmit} /></div>
       </form>

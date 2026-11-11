@@ -36,6 +36,10 @@ describe('Add to task', () => {
         await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
       }
       expect(screen.getByRole('dialog', { name: email ? 'Add to task' : 'Kata issue' })).toBeTruthy();
+      expect(screen.getByRole('radiogroup', { name: 'Issue' })).toBeTruthy();
+      expect(screen.queryByText('Issue')).toEqual(email ? expect.anything() : null);
+      expect(screen.getByText("Attachments aren't sent.")).toBeTruthy();
+      expect(screen.getByText('Quote saved in Kata')).toBeTruthy();
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
       expect(screen.getByLabelText('Brief')).toHaveProperty('value', `${location.origin}/messages/42`);
       if (email) {
