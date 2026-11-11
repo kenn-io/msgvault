@@ -8,7 +8,7 @@
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
     patchSettings as generatedPatchSettings,
   } from '../../api/generated/api/api';
-  import { Disclosure, Notice, PageHeader, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
+  import { Disclosure, PageHeader, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
   import { getContext, onMount, onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -27,6 +27,7 @@
   import { runOperationAction } from '../../operations/actions';
   import type { OperationsController } from '../../operations/controller.svelte';
   import { pendingSecret } from '../../settings/secrets';
+  import { provideUnsavedForms } from '../../settings/unsaved-forms.svelte';
   import type { SearchCoverageValue } from '../../search/modes';
   import {
     isChange,
@@ -58,6 +59,7 @@
   import SettingField from './SettingField.svelte';
   import type { OperationStatusAuthority } from '../../explore/models';
   import SettingsOverview from './SettingsOverview.svelte';
+  import InlineNotice from '../common/InlineNotice.svelte';
 
   type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
   type SettingUpdate = GeneratedSettingUpdate;
@@ -79,6 +81,7 @@
     onAppearanceSaved = () => undefined,
     onStatusChange = () => undefined,
     onDirectoryChange,
+    onOpenPerson,
   }: {
     client: APIClient;
     operationsController: OperationsController;
@@ -93,6 +96,7 @@
     onAppearanceSaved?: (saved: SavedAppearance) => void;
     onStatusChange?: () => void;
     onDirectoryChange?: () => void | Promise<void>;
+    onOpenPerson?: (personID: number) => void;
   } = $props();
 
   let settings = $state<SettingState[]>([]);
@@ -172,10 +176,13 @@
   const layout = $derived(layoutCategory(activeCategory as CategoryID, settings, groups));
   const dirtyCount = $derived(Object.keys(drafts).length + Object.keys(secretUpdates).length);
   const draftNeedsRestart = $derived(settings.some(setting => setting.restart_required && isDirty(setting.key)));
+  const unsavedForms = provideUnsavedForms();
+  const unsaved = $derived(dirtyCount > 0 || unsavedForms.any);
   let pendingLeave = $state<{ leave: () => void; stay?: () => void }>();
   const registerLeave = getContext<((hold?: (leave: () => void, stay?: () => void) => boolean, cancel?: () => void) => void) | undefined>('msgvault:hold-settings-leave');
   registerLeave?.(
-    (leave, stay) => dirtyCount > 0 && !saving && (pendingLeave = { leave, stay }, true),
+    // A pending save carries the bar's drafts, but never a self-saving form's edits.
+    (leave, stay) => ((dirtyCount > 0 && !saving) || unsavedForms.any) && (pendingLeave = { leave, stay }, true),
     () => { pendingLeave = undefined; }
   );
   onDestroy(() => registerLeave?.(undefined));
@@ -190,6 +197,7 @@
     const leave = pendingLeave?.leave;
     pendingLeave = undefined;
     discardChanges();
+    unsavedForms.discard();
     leave?.();
   }
   // An emptied number field is a draft in progress, not a value: it keeps the
@@ -490,11 +498,11 @@
   }
 </script>
 
-<svelte:window onbeforeunload={(event) => { if (dirtyCount > 0) event.preventDefault(); }} />
+<svelte:window onbeforeunload={(event) => { if (unsaved) event.preventDefault(); }} />
 
 {#snippet settingsFooter()}
   {#if pendingLeave}
-    <span class="unsaved" role="status">Leave Settings and discard {dirtyCount} unsaved {dirtyCount === 1 ? 'change' : 'changes'}?</span>
+    <span class="unsaved" role="status">Leave Settings and discard unsaved changes?</span>
     <span use:focusStay>
       <Button label="Stay" tone="neutral" surface="outline" onclick={stay} />
     </span>
@@ -631,7 +639,7 @@
       {#snippet panel(activeId)}
         <div class="notices">
           {#if plainHTTPWarning && activeId === 'server'}
-            <Notice tone="warning" message="This connection uses plain HTTP. Use HTTPS for remote access." />
+            <InlineNotice tone="warning" message="This connection uses plain HTTP. Use HTTPS for remote access." />
           {/if}
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
           {#if buildError && activeId === 'overview'}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
@@ -656,7 +664,7 @@
               onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
         {:else if activeId === 'people_catalog'}
-          <PeopleCatalogSettings {client} {onDirectoryChange} />
+          <PeopleCatalogSettings {client} {onDirectoryChange} {onOpenPerson} />
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
             {onStatusChange}

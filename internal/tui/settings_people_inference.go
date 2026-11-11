@@ -202,8 +202,8 @@ func (m Model) handleCodexSettingsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		switch msg.String() {
 		case "1", "2", "3", "4", "5":
 			return m.beginCodexPolicyEdit(msg.String())
-		case "c", "m", "d":
-			source := map[string]string{"c": "conversation_text", "m": "meeting_text", "d": "document_text"}[msg.String()]
+		case "c", "m":
+			source := map[string]string{"c": "conversation_text", "m": "meeting_text"}[msg.String()]
 			if slices.Contains(s.policy.AllowedSources, source) {
 				s.policy.AllowedSources = slices.DeleteFunc(s.policy.AllowedSources, func(v string) bool { return v == source })
 			} else {
@@ -557,7 +557,7 @@ func (m Model) renderCodexSettings() string {
 		lines = append(lines,
 			"Codex profile setup",
 			"[1] Profile name: "+textutil.SanitizeTerminal(s.policy.Name),
-			"Sources: [c] conversation  [m] meetings  [d] documents",
+			"Sources: [c] conversation  [m] meetings",
 			"Selected: "+textutil.SanitizeTerminal(strings.Join(s.policy.AllowedSources, ", ")),
 			"[2] Since: "+textutil.SanitizeTerminal(s.policy.SourceSince),
 			"[3] Until (optional): "+textutil.SanitizeTerminal(s.policy.SourceUntil),

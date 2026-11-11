@@ -449,11 +449,14 @@ func registerScheduledBeeperJob(
 	run func(context.Context) error,
 ) error {
 	// Every beeper store source (one per beeper AccountID) maps to this
-	// singleton job name via api.SchedulerJobNameForSource.
+	// singleton job name via api.SchedulerJobNameForSource. A yield request
+	// stops imports at their next chat or page boundary (ShouldStop) instead
+	// of cancelling them mid-account, so a large account keeps its progress.
 	return sched.AddJob(scheduler.Job{
-		Name:        api.BeeperJobName,
-		Schedule:    schedule,
-		Preemptible: true,
+		Name:                  api.BeeperJobName,
+		Schedule:              schedule,
+		Preemptible:           true,
+		CooperativePreemption: true,
 		Run: func(ctx context.Context) error {
 			return runScheduledSource(ctx, maintenance, true, run)
 		},
@@ -485,12 +488,14 @@ func attachmentProducingCommand(args []string) bool {
 		"import-pst",
 		"import-slackdump",
 		"import-telegram",
+		"import-x",
 		"import-synctech-sms",
 		"import-whatsapp",
 		"sync-beeper",
 		"sync-chatwoot",
 		"sync-discord",
 		"sync-inline",
+		"sync-matrix",
 		"sync-slack",
 		"sync-synctech-sms",
 		"sync-teams",

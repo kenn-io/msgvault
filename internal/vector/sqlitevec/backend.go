@@ -16,6 +16,7 @@ import (
 	"time"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
@@ -1514,15 +1515,15 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		}
 		clauses = append(clauses, "("+strings.Join(messageTypeClauses, " OR ")+")")
 	}
-	// Sender filters: one EXISTS per group, AND'd across groups so
-	// repeated `from:` operators each become an independent
-	// message-level requirement. Each group matches solely against
-	// the message's `from` recipient rows — the same source the
-	// SQLite FTS path uses (internal/store/api.go:327-336). Using a
-	// single source keeps repeated `from:` tokens coherent: mixed
-	// satisfaction (one token via sender_id, another via recipient
-	// row) cannot create matches the SQLite path would not also
-	// produce.
+	for _, term := range f.SenderTerms {
+		predicate, _, senderArgs := search.SenderLookup(term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		clauses = append(clauses, predicate)
+		args = append(args, senderArgs...)
+	}
+	if f.SenderDomain != "" {
+		clauses = append(clauses, search.SenderDomainCondition("?"))
+		args = append(args, f.SenderDomain)
+	}
 	for _, group := range f.SenderGroups {
 		if len(group) == 0 {
 			continue
@@ -1546,12 +1547,13 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		direct := inClause("m.sender_id", group)
 		from := inClause("mr.participant_id", group)
 		clauses = append(clauses, fmt.Sprintf(
-			`(%s OR EXISTS (
+			`((%s AND %s) OR EXISTS (
 				SELECT 1 FROM message_recipients mr
 				 WHERE mr.message_id = m.id
 				   AND mr.recipient_type = 'from'
+				   AND NOT mr.is_relayed
 				   AND %s
-			))`, direct, from))
+			))`, direct, identityindex.RelayAbsentExpr("m.id", "message_recipients"), from))
 		for _, id := range group {
 			args = append(args, id)
 		}

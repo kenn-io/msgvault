@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -2273,6 +2274,21 @@ func printPersonProviderDisclosure(w io.Writer, profile peoplesweep.ProviderProf
 	}
 }
 
+func consentEndpoint(endpoint string, local bool) string {
+	if local {
+		return "shared local embedding server"
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "[configured endpoint omitted: invalid URL]"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
 func printPersonSemanticProviderDisclosure(
 	w io.Writer,
 	profile vector.SemanticPersonEmbeddingProfile,
@@ -2284,7 +2300,7 @@ func printPersonSemanticProviderDisclosure(
 	_, _ = fmt.Fprintln(w, "Semantic person embedding provider disclosure:")
 	_, _ = fmt.Fprintf(w, "Purpose: %s\n", profile.Purpose)
 	_, _ = fmt.Fprintf(w, "Fingerprint: %s\n", profile.Fingerprint)
-	_, _ = fmt.Fprintf(w, "Destination: %s\n", documentVectorConsentEndpoint(profile.Destination, profile.LocalOnly))
+	_, _ = fmt.Fprintf(w, "Destination: %s\n", consentEndpoint(profile.Destination, profile.LocalOnly))
 	_, _ = fmt.Fprintf(w, "API format: %s\n", profile.APIFormat)
 	_, _ = fmt.Fprintf(w, "Model: %s\n", profile.Model)
 	_, _ = fmt.Fprintf(w, "Authentication: %s\n", authentication)

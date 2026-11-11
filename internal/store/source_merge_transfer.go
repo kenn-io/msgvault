@@ -186,7 +186,6 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	// and Beeper media endpoint records remain on the retired source for audit.
 	for _, statement := range []string{
 		`INSERT INTO collection_sources(collection_id, source_id) SELECT collection_id, ? FROM collection_sources WHERE source_id = ? ON CONFLICT (collection_id, source_id) DO NOTHING`,
-		`UPDATE document_occurrences SET source_id = ? WHERE source_id = ?`,
 		`UPDATE activity_events SET source_id = ? WHERE source_id = ?`,
 		`UPDATE activity_events SET owner_source_id = ? WHERE owner_source_id = ?`,
 		`UPDATE person_contact_state SET last_contact_source_id = ? WHERE last_contact_source_id = ?`,
@@ -235,9 +234,6 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 				return err
 			}
 		}
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE document_index_state SET revision = revision + 1, updated_at = `+s.dialect.Now()+` WHERE singleton = 1`); err != nil {
-		return err
 	}
 	if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
 		return err
@@ -311,7 +307,7 @@ const missingMergedAttachmentPredicate = `(
 func copyMergedMessageEvidence(ctx context.Context, tx *loggedTx, from, into, originalSource int64) error {
 	for _, statement := range []string{
 		`INSERT INTO message_labels(message_id, label_id) SELECT ?, label_id FROM message_labels WHERE message_id = ? ON CONFLICT (message_id, label_id) DO NOTHING`,
-		`INSERT INTO message_recipients(message_id, participant_id, recipient_type, display_name, email_address) SELECT ?, participant_id, recipient_type, display_name, email_address FROM message_recipients WHERE message_id = ? ON CONFLICT DO NOTHING`,
+		`INSERT INTO message_recipients(message_id, participant_id, recipient_type, display_name, email_address, is_relayed) SELECT ?, participant_id, recipient_type, display_name, email_address, is_relayed FROM message_recipients WHERE message_id = ? ON CONFLICT DO NOTHING`,
 		`INSERT INTO reactions(message_id, participant_id, reaction_type, reaction_value, created_at, removed_at) SELECT ?, participant_id, reaction_type, reaction_value, created_at, removed_at FROM reactions WHERE message_id = ? ON CONFLICT (message_id, participant_id, reaction_type, reaction_value) DO NOTHING`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement, into, from); err != nil {

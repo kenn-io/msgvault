@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-08"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -21,6 +21,7 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Use a generated Go client | `pkg/client` in the repository |
 | Build a client in another language | `/openapi.json` from the daemon or `msgvault openapi` |
 | Submit a background backfill | [Historical import jobs](#historical-import-jobs) |
+| Archive messages from a source without a connector | [Import a message](#post-apiv1importmessage) |
 | Follow background work | `/api/v1/operations/runs` and `/api/v1/operations/status` |
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
 
@@ -64,8 +65,13 @@ The response contains `suggestions`, `candidate_limit_reached`, and
 `occurred_at` (always present, possibly `null`), the current `filename`,
 `mime_type` (possibly empty), `mime_family`, `filename_match`
 (`exact`, `prefix`, `typo`), `size_bytes`, `content_state`, and
-`content_available`. Content states are `metadata_only`, `url_only`,
-`missing_blob`, and `local_content`. Rows contain no storage paths, download
+`content_available`. File search and suggestion rows derive their content
+states from metadata: `metadata_only`, `url_only`, or `unverified`. An
+`unverified` row records a hash without checking storage and has a null
+`content_available`; the other two states have a false value. File details
+check whether storage can be opened and can return `local_content`,
+`missing_blob`, or an error. Opening storage does not verify the bytes; a read
+or integrity check can still fail. Rows contain no storage paths, download
 URLs or content hashes. Person rows also contain `person_provenance` with the
 matching participant IDs, roles and directions.
 
@@ -160,7 +166,21 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.48.0**.
+it is separate from the binary release version. The current schema is **5.0.0**.
+
+Schema 5.0.0 changes `content_available` in file lists and suggestions from a
+boolean to a nullable boolean. A null value means storage has not been checked;
+older clients can interpret it as false. Upgrade clients and the daemon together.
+
+Schema 4.1.0 adds `labels` on merge-list and merge-detail responses: recorded names and saved contact points from the merge snapshot, reconciled current participant addresses, known participant IDs, and the count of distinct addresses added to the surviving profile. Addresses and current or recorded contact points carry an opaque `identity_key` for comparison across representations, services, and scopes. Current contact points include `service_label`, the registered name of their `service_slug`. History and Split use those labels. Summary labels are decoded from the stored snapshot during list and detail reads; opening the disclosure makes a separate request for its raw snapshot.
+
+Schema 4.2.0 adds semantic/hybrid attachment retrieval and per-list mode, coverage and degradation fields to [media search](#media-transcript-search).
+
+Schema 3.51.0 adds attachment processing outcomes and worker errors.
+
+Schema 3.50.0 adds [`POST /api/v1/import/message`](#post-apiv1importmessage), which archives one message from a source msgvault has no connector for.
+
+Schema 3.49.0 adds the `verification.read` modifier for delegated archive reads.
 
 Schema 3.48.0 adds owner-only local embedding setup and progress through `GET` and `POST /api/v1/embeddings/local`.
 
@@ -183,8 +203,6 @@ Schema 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity: `q
 Schema 3.29.0 adds the optional `address` filter to `GET /api/v1/people/directory`. It matches literal case-insensitive fragments on a saved person's currently bound identities or current curated contact points without semantic search. CLI and MCP address lookups require a daemon supporting this schema.
 
 Schema 3.33.0 adds the read-only [person tier preview](#get-apiv1peopletiers) and [explanation](#get-apiv1peopleidtier) routes. The `preview_person_tiers` and `explain_person_tier` MCP tools require a daemon supporting this schema.
-
-Schema 3.36.0 adds `stored_plaintext_ranges` to document indexing status.
 
 Schema 3.34.0 adds `calls_short` and `calls_long`, the answered-call counts, to person tier signals.
 
@@ -219,6 +237,8 @@ Schema 3.26.0 adds `max_results` to `GET /messages/gmail-ids` for bounded query 
 Schema 3.44.0 adds the [open-loop](#open-loops) routes, including
 `POST /api/v1/loops/{message_id}/reopen` to clear a done or snooze decision on
 one exact question.
+
+Schema 4.0.0 moves document processing and attachment text search to Docbank. Local document commands, search, status, and operation lanes are removed. Use [media search](https://msgvault.io/docs/api-server/#media-transcript-search) for mirrored attachment text. It also adds attachment processing outcomes, worker errors, and authenticated streamed Muesli recording imports.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -517,14 +537,13 @@ daemon or printed by `msgvault openapi`. See
 The API uses the same archive database and attachment store as other clients.
 SQLite is the default; PostgreSQL has [documented feature limits](architecture/postgresql.md).
 Keyword search and ordinary reads use stored data. Semantic and hybrid search
-also call the configured embedding endpoint. Profile, document, and enrichment
-operations have their own provider and consent contracts.
+also call the configured embedding endpoint. Profile and enrichment operations
+have their own provider and consent contracts. Docbank owns attachment text
+processing and its consent.
 
 Operation history includes durable worker runs, date filters, filter-bound
-pagination, error codes, and supported actions. `GET
-/api/v1/documents/status/current` reports the selected document extraction
-profile without requiring its identifier. The OpenAPI document defines exact
-request and response fields.
+pagination, error codes, and supported actions. The OpenAPI document defines
+exact request and response fields.
 
 Go integrations can use the generated client in `pkg/client`. The wrapper
 handles msgvault-specific response details such as deletion staging dry-runs
@@ -1032,6 +1051,15 @@ no earlier snapshot to serve, so the request fails with `503 query_timeout`.
 Send the header `X-Msgvault-Allow-Pending-Counts: true` to get the accounts
 anyway: the response sets `"counts_pending": true`, and every account's
 `message_count` and `source_deleted_count` is a placeholder `0`.
+
+Once a count snapshot exists, fresh counts get 500 ms. If they don't finish,
+the response carries the previous counts with `"stale": true` and their
+original `as_of`, while the refresh continues. The CLI shows such counts with
+their age, such as `1,234 (counted 3 minutes ago)`.
+
+Virtual-account counts retain their two-second cold wait. Once a matching catalog
+exists, callers with the pending-counts header reuse it immediately after
+expiry while it refreshes. Strict callers retain the two-second refresh wait.
 
 **Response (vector search disabled):**
 
@@ -1817,7 +1845,9 @@ The response includes the SHA-256 `content_hash` used by the content endpoint:
 
 `GET /api/v1/integrations/docbank/attachments` returns `state`, `upload_consent`, `folder`, and `counts` with `delivered`, `sending`, `remaining`, `failed`, and `reasons`. Delivered, sending and failed counts are unique files per destination. `remaining` counts all distinct eligible files with no delivery record for this destination. These files have stored local bytes, including files retained after source deletion and deduplication. Files whose only messages were deleted in msgvault are excluded. `state` is `running`, `docbank_disabled`, `consent_off`, or `worker_unavailable`. Off and unavailable workers omit counts. An unavailable mirror reader returns 503. File search and list rows omit receipts. `GET /api/v1/files/{id}` includes `docbank` receipts for the file's content hash, including recovered local alias hashes.
 
-`POST /api/v1/integrations/docbank/attachments/backfill` resets discovery and requeues failed deliveries as sending intents with attempts reset in one transaction. It returns 202 with `{"status":"scheduled"}`, including when the job is already running. It requires attachment upload consent and a scheduled mirror job. Missing consent returns 409; an unavailable store or scheduler returns 503. Both routes require the API key.
+With a configured `document_profile` and a running worker, status also includes `processing` with `profile`, `waiting`, `requested`, `extracted`, and `outcomes` counts keyed by Docbank failure or refusal code. Counts use the profile fingerprint last read by the worker. `waiting` counts files attachment search covers. For a running worker, `last_error` reports its latest blocking error including missing consent or a missing profile. Status reads saved job outcomes from the archive, so it makes no live Docbank request.
+
+`POST /api/v1/integrations/docbank/attachments/backfill` resets discovery and requeues failed deliveries as sending intents with attempts reset in one transaction. Backfill requests processing again for files that failed for missing consent, stale authority, a missing PDF password, an unreadable password file, a quarantined job, or a malformed Docbank answer. Backfill clears only settled recoverable failures. A job that fails after backfill needs another backfill. Other outcomes wait for a profile change. It returns 202 with `{"status":"scheduled"}`, including when the job is already running. It requires attachment upload consent and a scheduled mirror job. Missing consent returns 409; an unavailable store or scheduler returns 503. Both routes require the API key.
 
 Attachment metadata and message details include an optional `docbank` array of receipts with `endpoint`, `folder`, `node_id`, `version_id`, `blob_hash`. Duplicate stored content hashes share receipts. For hashless Slack or Discord rows, discovery and details recover the hash from a local storage path in the `<hash[:2]>/<hash>` format with lowercase SHA-256 hex and a matching prefix. The mirror uploads these aliases from loose files or retained pack entries, verifies their SHA-256, and uploads under `<first 12 hex of hash>-<sanitized basename>`. See [configuration](configuration.md#mirror-stored-attachments-to-docbank) for consent and failure recovery.
 
@@ -1825,43 +1855,46 @@ Attachment metadata and message details include an optional `docbank` array of r
 
 ### Open loops
 
-`GET /api/v1/loops` lists conversations that wait on a reply, oldest first.
-Query parameters are `person_id` and `limit` (1 to 200, default 50). It reads conversations of any age from the archive when you ask. It returns `items` and `truncated`. Each
-item has `kind`, `anchor_message_id`, `question_message_ids` (the questions
-the item covers, oldest first), `conversation_id`, `source_id`, `channel` (`email` or `chat`), `counterparty`
-(`participant_id`, optional `person_id`, `display_name`, `address`), `summary`,
-`owed_since_at`, and `last_activity_at`. `truncated` is true when more loops are
-open than `limit`. `skipped_unparseable` counts stored messages the list could
-not read, because their original failed to parse. A reply in one of them may
-have settled a loop that still lists. The scan computes evidence for at most 1,000 uncached messages per request. It retains body classifications and MIME facts, so another request continues farther through history. If the budget runs out, or the request reaches its time limit, it returns only
-completed conversations and sets `coverage_incomplete`. A smaller `limit` does
-not shorten the scan. While a backup or other archive work holds the daemon, a
-list still answers but saves no new evidence. A bad parameter returns 400.
+These owner-only routes back `msgvault loops`, the Open loops section in
+People Details, and the MCP loop tools. See [Open loops](usage/open-loops.md)
+for what counts as a loop.
 
-`POST /api/v1/loops/{message_id}/done` and
+`GET /api/v1/loops` lists loops, oldest first. Optional query parameters are
+`person_id` and `limit` (1 to 200, default 50). The response has these fields:
+
+| Field | Meaning |
+|---|---|
+| `items` | The loops. Each has `kind` (`reply_owed` or `awaiting_reply`), `anchor_message_id` (the message that started the wait), `question_message_ids` (the questions it covers, oldest first), `conversation_id`, `source_id`, `channel` (`email` or `chat`), `counterparty` (`participant_id`, optional `person_id`, `display_name`, `address`), `summary`, `owed_since_at`, and `last_activity_at`. |
+| `truncated` | More loops are open than `limit` returned. |
+| `coverage_incomplete` | The request stopped before checking all history, because it read 1,000 new messages or ran out of time. Items come only from conversations checked in full. Call again to continue; saved results carry over. |
+| `skipped_unparseable` | Stored emails that couldn't be parsed. A reply in one of them may have answered a listed loop. |
+
+A list doesn't wait for backups or syncs. While one is running, the list still
+answers, but saves nothing new for the next request. A smaller `limit` doesn't
+shorten the scan. A bad parameter returns 400.
+
+`POST /api/v1/loops/{message_id}/done` marks a loop done.
 `POST /api/v1/loops/{message_id}/snooze` with `{"until": "<RFC3339 time>"}`
-record your decision on this person's open questions. Pass the item's
-`question_message_ids` as a query parameter, repeated or comma-separated, to
-mark only the questions you listed; a question that appeared later stays open,
-whatever its date. The list must include `message_id`, or the request returns
-400. Without it, the decision covers every question visible when you act. A distinct question
-imported later can list again, whatever its message date. These
-routes return `anchor_message_id`, `state` (`done` or `snoozed`), and
-`snoozed_until`. They re-read the conversation first and return 404
-`loop_not_found` when the message is not a loop that list would show now: it
-anchors no current loop, the loop has not waited out its 24 or 72 hours, or
-a listed question is no longer open in it. A
-snooze time in the past returns 400. When re-reading the conversation reaches
-the evidence budget, they save nothing and return 503 `loop_scan_incomplete`
-with `Retry-After: 1`; retry to continue. Like other writes, done, snooze, and
-reopen can return 503 `operation_in_progress` while other archive work holds
-the daemon.
+hides it until that time. Use the item's `anchor_message_id` as `message_id`.
+To mark only the questions you listed, pass `question_message_ids` as a query
+parameter, repeated or comma-separated. It must include `message_id`. Without
+it, the decision covers every question open now. Both routes re-read the
+conversation first and return `anchor_message_id`, `state` (`done` or
+`snoozed`), and `snoozed_until`.
 
-`POST /api/v1/loops/{message_id}/reopen` clears the done or snooze decision on
-that exact question. It returns `anchor_message_id` and `state: "open"`, or
-404 `loop_decision_not_found` when the message has no decision. Responses are
-not cacheable. These routes are owner-only: delegated agent tokens receive 401.
-See [Open loops](usage/open-loops.md) for the rules.
+`POST /api/v1/loops/{message_id}/reopen` clears the decision on that one
+question and returns `state: "open"`.
+
+| Status | Error | When |
+|---|---|---|
+| 400 | `invalid_request` | A bad ID or parameter, a snooze time in the past, or `question_message_ids` that leaves out `message_id`. |
+| 404 | `loop_not_found` | The message doesn't start an open loop now. It was answered, it is still inside its 24- or 72-hour wait, or a listed question is no longer open. |
+| 404 | `loop_decision_not_found` | Reopen found no decision on that question. |
+| 503 | `loop_scan_incomplete` | Re-reading the conversation reached the 1,000-message limit. Nothing was saved. Retry after `Retry-After` (1 second). |
+| 503 | `operation_in_progress` | Other archive work holds the daemon. Retry later. |
+
+Responses are not cacheable. Delegated agent tokens receive 401, and remote
+clients receive 403.
 
 ---
 
@@ -1918,7 +1951,7 @@ Successful responses set:
 
 `GET /api/v1/media/search?q=quarterly%20numbers&mode=lexical&limit=20` finds spoken words and returns every matching live message occurrence. Results include message, conversation and attachment IDs, optional `filename`, `containing_title` and `occurred_at`, supplied or generated origin, an excerpt, and timing when Docbank recorded it. Optional `person_id` selects durable person bindings; `participant_id` selects the current identity cluster used by Explore's Person filter. They can't be combined. Repeated `direction` values select `from_person`, `to_person` or `group` relations and require either ID.
 
-The recording search covers the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` or `participant_id` to narrow the scope. A recording with more than 64 distinct current supplied transcript input IDs is left out of the search. Its message occurrences count in `unavailable_occurrences`, and `partial=true`. Repeated occurrences of the same input count once. Semantic and hybrid modes return `media_search_mode_unavailable`. An unconfigured or unreachable integration returns `media_search_unavailable`.
+The recording search covers the complete allowed population, with a ceiling of 4,096 distinct versions and source selectors. Oversized scopes return `media_search_scope_limit` before contacting Docbank; set `person_id` or `participant_id` to narrow the scope. A recording with more than 64 distinct current supplied transcript input IDs is left out of the search. Its message occurrences count in `unavailable_occurrences`, and `partial=true`. Repeated occurrences of the same input count once. Recordings support lexical mode only; semantic and hybrid return `recordings_error=media_search_mode_unavailable` when attachment search succeeds. An unconfigured or unreachable integration returns `media_search_unavailable`.
 
 The response has Docbank `coverage`, local `pending_occurrences` and `unavailable_occurrences`, `attribution_unavailable`, `partial`, and `truncated`. Pending counts require durable worker work; unmapped audio counts as unavailable. Coverage state `unknown` stays unknown. `partial` also reports local gaps and withheld excerpts. An empty result with complete coverage and `partial=false` means the query found no transcript match. The output limit applies after shared recordings expand into messages; `truncated` reports remaining occurrences or Docbank's retrieval limit.
 
@@ -1926,7 +1959,22 @@ Selected transcript completeness must be `complete`, `partial`, or `degraded_pro
 
 Recording search requires Docbank's source-selected search contract: `media_sources` selectors, a `media_source_selection` report marker and query-independent `media_selections`, including empty results. The daemon sends each source's current supplied-input set; generated transcripts stay eligible while supplied work is queued. Docbank selects each source's current transcript before ranking and returns build and exact source associations with each plain excerpt; source selections carry origin and supplied-input identity. Pending or missing transcripts leave coverage partial while ready matches remain searchable. Older servers and remote lookup failures report `media_search_unavailable` for recordings. Supplied text requires `supplied_input_id` to match the occurrence's saved delivery; mismatches count as unavailable attribution even when the query has no hits. The daemon validates supplied transcript revisions before search and rechecks visibility, recording identity, supplied text and person scope afterward.
 
-Schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted, ordered by Docbank rank. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`. Add a Person filter to narrow the version scope. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
+Schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
+
+Schema 4.2.0 (newer `main`, after v0.23.0) accepts `mode=semantic` and
+`mode=hybrid` for attachment text. `attachments` adds `requested_mode`,
+`actual_mode`, `coverage`, `partial`, and `degradations`. `actual_mode` is
+`unavailable` when no search ran or remote retrieval failed. Coverage describes
+mirrored versions delivered to Docbank and is present even without hits.
+The configured `attachment_search_profile` names an existing Docbank processing
+profile for semantic/hybrid; lexical keeps the built-in `supplied-transcript` profile. Retrieval never schedules processing. Without it, hybrid uses lexical
+with `semantic_unconfigured` degradation, and semantic fails with
+`media_search_mode_unavailable`. Fenced searches submit configured profiles and
+report configuration, consent and runtime failures. Empty scopes contact no service.
+Docbank-reported hybrid downgrade is preserved. Downgrade, degradations,
+or nonlexical coverage other than `complete` set attachment `partial=true`.
+Lexical `unknown` coverage alone does not. Each list reports its own partial
+status; `truncated` remains separate. Nonlexical requests skip recording retrieval. Files are searched in batches of 4,096.
 
 The attachment field is omitted when attachment mirroring is off. Attachment failures leave recording results intact and set `attachments.error`. Docbank-rejected recording queries return HTTP 400 with `invalid_media_search`. Other recording failures, including oversized scopes and remote timeouts, leave attachment results intact and set `recordings_error` with `error` and `message`. The request fails when both searches fail or its context ends. Recording-only responses retain their existing error behavior.
 
@@ -2028,7 +2076,7 @@ query in `q`. The response includes the page in `messages` and the full match
 count in `total_count`; no separate count request is needed. If the count is
 unavailable, `total_count` is `-1`.
 
-An empty first page on SQLite can include `hints` with code `sender_name_requires_address` and a corrected `retry_with.query` for an incomplete sender name or address. CLI search returns the same shape.
+`from:` accepts a sender name, address, or domain. See [sender matching](https://msgvault.io/docs/usage/searching/#domain-search) for the matching rules.
 
 Use `limit` and `offset` to page through results. `limit=0` returns the count
 without fetching a page. Aggregate `stats` are omitted by default. Supply
@@ -2529,6 +2577,68 @@ msgvault links the person's email and phone through it, including across
 meetings. See [how meetings connect to people](usage/meetings.md#how-meetings-connect-to-people).
 Validation errors name the failing field without echoing its value.
 
+### Import a message {#post-apiv1importmessage}
+
+**Endpoint:** `POST /api/v1/import/message`
+
+Import one message from a source msgvault has no connector for, such as a feed
+item. The authenticated, on-demand endpoint accepts at most 16 MiB of JSON and
+is idempotent on `source.identifier` plus `message.external_id`. The first call
+returns `201` / `created`; retries and replacements return `200` / `updated`
+for the same archived message. An unchanged retry writes nothing.
+
+```bash
+curl http://localhost:8080/api/v1/import/message \
+  -H "Authorization: Bearer your-secret-key" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "source": {
+      "identifier": "feeds",
+      "display_name": "Feeds",
+      "account_email": "you@example.com"
+    },
+    "message": {
+      "external_id": "entry-12345",
+      "message_type": "feed_item",
+      "conversation": {"external_id": "feed-42", "title": "Example Project releases"},
+      "sender": {"name": "Example Project", "url": "https://example.com"},
+      "title": "Example Project 1.2.0",
+      "url": "https://example.com/releases/1.2.0",
+      "sent_at": "2026-11-07T10:00:00-05:00",
+      "body_markdown": "## Changes\n\n- Faster sync."
+    }
+  }'
+```
+
+```json
+{
+  "status": "created",
+  "source_id": 14,
+  "message_id": 902,
+  "source_message_id": "entry-12345"
+}
+```
+
+| Field | Rule |
+|---|---|
+| `source.identifier` | Required, up to 128 characters |
+| `source.account_email` | Required; becomes a confirmed identity for the source |
+| `message.external_id` | Required, up to 256 characters |
+| `message.message_type` | Required, up to 64 lowercase letters, digits, and underscores, starting with a letter |
+| `message.conversation.external_id` | Required, up to 256 characters; groups messages within the source |
+| `message.sender` | Requires at least one of `name`, `url`, `email`, `phone`, or `id` |
+| `message.title` | Up to 4096 characters |
+| `message.url`, `message.sender.url` | Absolute URLs, up to 4096 characters |
+| `message.sent_at` | Required RFC 3339 timestamp with an explicit offset |
+| `body_markdown`, `body_html`, `body_text` | At most one; the message needs a title or a body |
+| `message.metadata` | Any JSON object, stored with the message |
+
+Imported conversations have the conversation type `channel`. The
+[usage guide](usage/message-import.md) explains how a sender becomes a
+participant and how bodies are stored. Unknown fields are rejected except
+within `message.metadata`. Validation errors name the failing field without
+echoing its value.
+
 ---
 
 ### OAuth token exchange {#post-apiv1authtokenemail}
@@ -2678,6 +2788,12 @@ to detect a source that is waiting too long. Health's `operation.label` names
 the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
 ---
+
+### Messages during cache rebuilds
+
+In auto mode on SQLite, `POST /api/v1/explore` serves live archive rows while the analytical cache rebuilds and after a failed build. Date, source, account, identity, domain, mailing-list, kind, and full-text filters remain available. Responses include a warning about operations that need the cache, with recovery instructions after a failed build.
+
+Grouping, person filters, semantic and hybrid search, per-row exact-match counts, bulk actions, Files, People, and the reader’s Open person action still require the cache. A live cursor expires when the archive changes or the replacement cache publishes; restart pagination after `409 archive_revision_changed`.
 
 ### Participant and domain timelines
 
@@ -3238,13 +3354,13 @@ All server settings go in the `[server]` section of `config.toml`. Account sched
 | `cors_credentials` | `false` | Allow credentials in CORS requests |
 | `cors_max_age` | `0` | CORS preflight cache duration in seconds (defaults to `86400` when `cors_origins` is set) |
 | `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS and host headers |
-| `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
+| `daemon_idle_timeout` | `20m` | Idle timeout for automatically started daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
 | `daemon_auto_start` | `true` | Let CLI, TUI, and MCP commands start a local background daemon when none is running; set `false` when a supervisor runs `msgvault serve` |
 
-`daemon_idle_timeout` only affects daemons started by `msgvault daemon start` or auto-started by a CLI command. A foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the configured timeout for lifecycle-managed background daemons.
+`daemon_idle_timeout` applies to automatically started daemons. `msgvault daemon start` and `msgvault daemon restart` launch daemons that stay running until stopped; foreground `msgvault serve` runs until interrupted. `MSGVAULT_DAEMON_IDLE_TIMEOUT` overrides the configured timeout for automatic starts.
 
-`daemon_auto_restart` only affects local lifecycle-managed daemons. The default `newer` replaces older compatible daemons with the current CLI binary, `never` leaves restarts to an external supervisor, and `always` restarts on any safe version mismatch. Remote servers are never restarted by CLI clients.
+`daemon_auto_restart` only affects local lifecycle-managed daemons. The default `newer` replaces older compatible daemons with the current CLI binary. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. `never` leaves restarts to an external supervisor, and `always` restarts on any safe version mismatch. Remote servers are never restarted by CLI clients. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
 
 ### `[analytics]`
 
@@ -3314,3 +3430,21 @@ It never sends message content to a provider.
 See the [CLI field semantics](cli-reference.md#embeddings-status) and the
 [published OpenAPI schema](https://github.com/kenn-io/msgvault/blob/main/api/openapi.yaml).
 MCP exposes the same response through `get_embeddings_status` on API 3.21.0 or newer when vector search is enabled.
+
+## Verification content
+
+Delegated HTTP, CLI, and MCP message reads without `verification.read` replace detected verification messages' subjects, snippets, excerpts, bodies, conversation titles, and attachment filenames with `[verification content masked]`, and clear their HTML. Sender, date, labels, and IDs remain available. The modifier requires the operation's existing read permission and source grant. Owner reads and stored messages stay unchanged.
+
+Detection considers subject, snippet, conversation title, attachment filenames, and both body formats together. It folds fullwidth digits to ASCII and looks for 4–10 digits, including spaced digits, or 6–10-character codes containing at least three digits tied to a code cue. Codes of 5–10 characters mixing ASCII letters and digits, or 6–10 uppercase letters only except `INVALID` and `DISABLED`, also count directly after a verification, security, login, sign-in, authentication, or one-time code, PIN, or password cue, or an OTP, passcode, or 2FA cue. Confirmation cues keep the three-digit rule. A cue in one field can describe a value in another. Years from 1900 through 2099 count only after a cue in the same field. Sign-in links need an opaque token or UUID and a sign-in cue or credential query key, such as `token` or `oobCode`. Unsubscribe and preferences paths are excluded. A sign-in cue anywhere in the message applies to every link with an opaque token, including click-tracked links, so newsletters that mention signing in and carry tracked links are withheld. Fields of 1 MiB or more are withheld.
+
+Without `verification.read`, downloads declared `message/*` or named `.eml` on any authorized record of the hash return 403 `verification_masked`. Other text-class downloads, declared `text/*` or sniffed as text, check their bytes and every authorized parent message of the hash. They return 403 if any parent is withheld, the bytes contain a NUL, invalid UTF-8, or a `Content-Transfer-Encoding:` header line in any letter case, or the detector withholds the text or filenames. Text of 1 MiB or more is withheld. Allowed text and binary files download unchanged. Withheld parents mask filenames in metadata and download headers. Parent bodies and attachment metadata are loaded in batches, so a shared hash can be checked across more than 32,766 messages.
+
+Agent grants are held in daemon memory, so tokens issued before an upgrade stop working when the daemon restarts. Replacement tokens with the same permissions see masked verification messages and the attachment refusals above unless the grant includes `verification.read`.
+
+A cue can precede its value by up to 60 runes, including blank lines. A period may end the cue line or separate the cue from a code ending the same line. Up to six words, with one short parenthetical, can separate a cue from its value when the value follows `is`, `:` or `=`; ordinary phrases such as `Error code from the processor: 50213` are withheld as a result.
+
+These heuristics can miss unfamiliar wording and layouts, lowercase letter-only codes, short link tokens, credentials inside binary files, or text stored under a binary type that sniffing misses. Non-English text such as `Tu código es 482913` is not detected. Lists and threads classify a message whose body exists only in its original MIME by subject, snippet, title, and filenames.
+
+Search rows are masked in place, with membership and counts unchanged.
+
+Search can confirm a withheld value through exact or prefix queries, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Add `verification.read` only when the delegated reader should receive verification content.

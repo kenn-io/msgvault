@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-19"
+last_edited: "2026-11-07"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -14,8 +14,7 @@ to read a message. On newer `main` builds, `show` is an alias; use
 |---|---|
 | Words in a message or its subject | `msgvault search "quarterly report"` |
 | A topic, even with different wording | [Vector or hybrid message search](/docs/usage/vector-search/) |
-| Text Docbank extracted from a mirrored attachment | `msgvault media search "quartz"` |
-| Words or topics inside an attached document | [Document attachment search](/docs/usage/document-indexing/#search-and-inspect-status) |
+| Text Docbank extracted from a mirrored attachment | [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) |
 | An image or video by its visual content | [Visual attachment search](/docs/usage/vector-search/#visual-attachment-search) |
 | A person by their curated profile | [Semantic person search](/docs/usage/people/#find-a-person-by-what-you-remember) |
 | An attachment with a misspelled filename | [Opt-in filename suggestions](#filename-suggestions) |
@@ -103,7 +102,7 @@ msgvault supports a local subset of Gmail-like search syntax.
 
 | Operator | Description | Example |
 |---|---|---|
-| `from:` | Sender address | `from:alice@example.com` |
+| `from:` | Sender name, address, or domain | `from:alice@example.com` |
 | `to:` | Recipient address | `to:bob@example.com` |
 | `cc:` | CC recipient | `cc:team@example.com` |
 | `bcc:` | BCC recipient | `bcc:admin@example.com` |
@@ -175,13 +174,9 @@ attribution never lets msgvault send from it. The
 [design record](https://github.com/kenn-io/msgvault/blob/main/docs/internal/received-as-identity-design.md) lists the headers
 and the order msgvault trusts them in.
 
-### Sender hints
-
-When an incomplete sender name or address such as `from:alex` or `from:alex@exam` finds no messages, SQLite and PostgreSQL searches suggest up to three matching addresses. Each count describes the corrected query within your current filters and account scope. The CLI prints the hint on stderr after its normal output, including with `--json`, whose stdout stays a bare array. MCP metadata search returns the same suggestion in `hints` with `retry_with.query`. DuckDB metadata search already matches sender names.
-
-When retrying in the CLI, keep options such as `--account`, `--collection`, and `--deletion-scope` from your original command.
-
 ### Domain Search
+
+`from:` matches full email addresses exactly, domains by suffix, and other values as literal substrings of the sender's name, address, or phone number. Each repeated `from:` value must match.
 
 The `from:`, `to:`, `cc:`, and `bcc:` operators recognize bare domain names with common TLDs. For example, `from:example.com` automatically matches all messages from the `example.com` domain. For uncommon TLDs, use the explicit `@` prefix: `from:@brand.pizza`.
 
@@ -328,6 +323,9 @@ Valid values are `email`, `google_chat`, `calendar_event`, `meeting_transcript`,
 `google_voice_voicemail`. `message_type:email` also includes legacy rows whose
 type is empty because older msgvault versions created them before the column
 existed.
+Messages from the [message import API](/docs/usage/message-import/) carry the
+type their sender chose, such as `feed_item`, so `--message-type` accepts any
+type of lowercase letters, digits, and underscores and rejects other values.
 
 The same message-type scoping is available in HTTP search via the
 `message_type` query parameter. In MCP, include a `message_type:` operator in
@@ -347,13 +345,22 @@ msgvault search from:alice@example.com --json
 
 `msgvault media search "quarterly numbers"` finds matching recording transcripts as their visible messages. A shared recording returns each live message occurrence. Add `--person 7 --direction from_person` to search recordings from one person, or `--json` for IDs, origin, plain excerpts, timing, coverage and optional `filename`, `containing_title` and `occurred_at` fields.
 
-Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Semantic and hybrid modes are unavailable. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Messages search](../web-ui.md#recording-matches).
+Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Recording retrieval supports lexical mode. On newer `main` builds, semantic and hybrid modes search attachments and return `recordings_error=media_search_mode_unavailable`. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Messages search](../web-ui.md#recording-matches).
 
 ## Search mirrored attachment text
 
-Media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope includes mirrored files except those declared as images, audio, or video. Docbank searches the text it can extract from those files. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` for attachments; recording results still return. Add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list. Truncation means more may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
+Media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Docbank detects document formats from file contents, so PDFs with a generic or empty MIME type and text formats such as JSONL count toward the search scope. The scope includes mirrored files except those declared as audio or video. Docbank searches the text it can extract from those files, including image OCR and generated image-understanding renditions. Generated descriptions and possible meme meaning remain model interpretations; they do not establish the sender's beliefs, endorsement, or intent. Configure and consent to the appropriate image processing profile in Docbank first. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. More than 4096 mirrored files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. Set `document_profile` in the [attachment mirror configuration](../configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Add a Person filter to narrow the scope. Attachment errors and truncation appear beside that list. Truncation means more may match, including when Docbank limits filename-only candidates. `--limit` applies to each list independently.
 
-Use `documents search` for msgvault's local document index and `media search` for text Docbank has extracted from mirrored attachments.
+On newer `main` builds, use `msgvault media search "project approval" --mode semantic`
+for meaning or `--mode hybrid` for meaning and keywords. Set
+[`attachment_search_profile`](../configuration.md#mirror-stored-attachments-to-docbank)
+to an existing Docbank profile with processed and embedded files. Docbank owns
+conversion, embeddings, ranking, and query-provider consent. v0.23.0 supports only lexical retrieval.
+Matches found only by semantic retrieval can have an empty excerpt; their message and file IDs still identify the carrying attachment.
+
+See the [API contract](../api-server.md#media-transcript-search) for attachment mode, delivered-version coverage, fallback, errors and batching.
+
+Use `media search` for text Docbank has extracted from mirrored attachments.
 
 ## Read matches and conversations
 

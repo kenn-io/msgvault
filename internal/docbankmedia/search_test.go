@@ -240,3 +240,49 @@ func TestSearchDocumentsContract(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchDocumentsModesAndReports(t *testing.T) {
+	for _, mode := range []string{"semantic", "hybrid", "downgrade", "wrong mode"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			requested, actual := "hybrid", mode
+			excerpt := ""
+			if mode == "semantic" {
+				requested = mode
+			}
+			if mode == "downgrade" {
+				actual, excerpt = "lexical", "meaning"
+			}
+			if mode == "wrong mode" {
+				requested, actual, excerpt = "semantic", "lexical", "meaning"
+			}
+			evidence := "embedding"
+			if actual == "lexical" {
+				evidence = "content_blob"
+			}
+			report := SearchReport{RequestedMode: requested, ActualMode: actual, Coverage: SearchCoverage{State: "complete"}, Results: []SearchHit{{VaultUID: "vault", NodeID: 1, ContentVersionID: "version", Rank: 1, Excerpt: excerpt, Evidence: []SearchEvidence{{Kind: evidence}}}}}
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request map[string]any
+				if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
+					return
+				}
+				assert.Equal("existing-profile", request["profile"])
+				assert.NotContains(request, "binding_id")
+				_ = json.NewEncoder(w).Encode(report)
+			}))
+			t.Cleanup(remote.Close)
+			client, err := NewClient(remote.URL, nil)
+			require.NoError(err)
+			got, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "concept", Mode: requested, Profile: "existing-profile", ContentFirst: true, Limit: 1, Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"version"}}})
+			if mode == "wrong mode" {
+				require.ErrorIs(err, ErrInvalidReceipt)
+				return
+			}
+			require.NoError(err)
+			require.Len(got.Results, 1)
+			assert.Equal(actual, got.ActualMode)
+			assert.Equal(excerpt, got.Results[0].Excerpt)
+		})
+	}
+}

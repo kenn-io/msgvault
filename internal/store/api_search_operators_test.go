@@ -17,6 +17,8 @@ func TestSearchOperatorsPreserveResults(t *testing.T) {
 	carol := f.EnsureParticipant("carol@example.com", "Carol", "example.com")
 	literal := f.EnsureParticipant("a_lice%tag@example.com", "Literal", "example.com")
 	decoy := f.EnsureParticipant("axliceZtag@example.com", "Decoy", "example.com")
+	alex := f.EnsureParticipant("alex@example.com", "Alex Kim", "example.com")
+	header := f.EnsureParticipant("quinn@example.net", "Quinn", "example.net")
 	ids := f.CreateMessages(40)
 	for i, sender := range []int64{alice, bob, literal, decoy} {
 		requirements.NoError(f.Store.ReplaceMessageRecipients(ids[i], "from", []int64{sender}, nil))
@@ -29,10 +31,18 @@ func TestSearchOperatorsPreserveResults(t *testing.T) {
 	requirements.NoError(f.Store.AddMessageLabels(t.Context(), ids[0], []int64{labels["work"], labels["literal"]}))
 	requirements.NoError(f.Store.AddMessageLabels(t.Context(), ids[1], []int64{labels["decoy"]}))
 
+	requirements.NoError(f.Store.ReplaceMessageRecipients(ids[4], "from", []int64{alex}, nil))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(ids[10], "from", []int64{header}, []string{`Álvaro Header_%\name`}))
+	chat, err := f.Store.EnsurePhoneParticipantContext(t.Context(), "+12025550999", "Alex Chat")
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), chat, ids[11])
+	requirements.NoError(err)
 	for _, tc := range []struct {
 		input string
 		want  []int64
 	}{
+		{"from:alex", []int64{ids[4], ids[11]}},
+		{"from:álvaro", []int64{ids[10]}},
 		{"from:alice", []int64{ids[0]}},
 		{"from:ALICE@EXAMPLE.COM", []int64{ids[0]}},
 		{"to:bob", []int64{ids[0]}},

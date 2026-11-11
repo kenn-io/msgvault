@@ -45,6 +45,9 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
 	}
+	if err := dropRetiredDocumentVectors(ctx, db); err != nil {
+		return err
+	}
 	if _, err := db.ExecContext(ctx, acceleratorMaintenanceSQL); err != nil {
 		return fmt.Errorf("install accelerator maintenance triggers: %w", err)
 	}
@@ -92,6 +95,43 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 		return err
 	}
 	return EnsurePersonVectorTable(ctx, db, defaultDim)
+}
+
+func dropRetiredDocumentVectors(ctx context.Context, db *sql.DB) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin retired document vector cleanup: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, `SELECT name FROM sqlite_master
+		WHERE type = 'table' AND name GLOB 'document_vectors_vec_d*' AND sql LIKE '%USING vec0%'`)
+	if err != nil {
+		return fmt.Errorf("list retired document vector tables: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	names := []string{"document_vector_embeddings"}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("scan retired document vector table: %w", err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read retired document vector tables: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close retired document vector tables: %w", err)
+	}
+	for _, name := range names {
+		if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS "`+strings.ReplaceAll(name, `"`, `""`)+`"`); err != nil {
+			return fmt.Errorf("drop retired document vector table %s: %w", name, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit retired document vector cleanup: %w", err)
+	}
+	return nil
 }
 
 // migrateAcceleratorMetadata adds and initializes the source counters before
@@ -686,27 +726,4 @@ func EnsureVectorTable(ctx context.Context, db *sql.DB, dim int) error {
 // VectorTableName returns the dimension-specific vec0 table name.
 func VectorTableName(dim int) string {
 	return fmt.Sprintf("vectors_vec_d%d", dim)
-}
-
-// EnsureDocumentVectorTable lazily creates the dedicated cosine vec0 table
-// for one document-vector dimension. Its row IDs join only to
-// document_vector_embeddings and never to message embeddings.
-func EnsureDocumentVectorTable(ctx context.Context, db *sql.DB, dim int) error {
-	if dim <= 0 {
-		return fmt.Errorf("invalid document vector dimension %d", dim)
-	}
-	q := fmt.Sprintf(`CREATE VIRTUAL TABLE IF NOT EXISTS %s USING vec0(
-		generation_id     INTEGER PARTITION KEY,
-		document_vector_id INTEGER PRIMARY KEY,
-		embedding          FLOAT[%d] distance_metric=cosine
-	)`, DocumentVectorTableName(dim), dim)
-	if _, err := db.ExecContext(ctx, q); err != nil {
-		return fmt.Errorf("create %s: %w", DocumentVectorTableName(dim), err)
-	}
-	return nil
-}
-
-// DocumentVectorTableName returns the dedicated dimension-specific vec0 name.
-func DocumentVectorTableName(dim int) string {
-	return fmt.Sprintf("document_vectors_vec_d%d", dim)
 }

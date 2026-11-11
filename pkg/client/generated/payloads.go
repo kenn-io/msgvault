@@ -126,6 +126,8 @@ type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ImportMeetingBody = MeetingImportRequest
 
+type ImportMessageBody = MessageImportRequest
+
 type ImportMuesliBody = MuesliRemoteRequest
 
 type ImportMuesliRecordingBody = runtime.File

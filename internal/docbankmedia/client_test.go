@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/docbankmedia"
+	"go.kenn.io/msgvault/internal/testutil/docbanktest"
 )
 
 const testKey = "synthetic-api-key"
@@ -155,8 +156,7 @@ func TestClientMediaWire(t *testing.T) {
 			writeJSON(w, docbankmedia.Receipt{VaultUID: "vault", SourceID: "source", OperationID: retry.OperationID,
 				JobID: strings.Repeat("d", 64), OperationState: "queued", CoverageState: "pending"})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/processing/jobs/"+strings.Repeat("d", 64):
-			writeJSON(w, map[string]any{"job_id": strings.Repeat("d", 64), "state": "completed", "phase": "done",
-				"embedding_job_ids": []string{}, "completed_bindings": 1})
+			docbanktest.WriteJobStatus(w, strings.Repeat("d", 64), "completed", "done", "")
 		default:
 			http.NotFound(w, r)
 		}
@@ -243,6 +243,10 @@ func TestClientMediaTrust(t *testing.T) {
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte(`{"title":"Service Unavailable","status":503,"code":"content_missing","detail":"echoed input"}`))
+		case "/api/v1/nodes/11":
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"code":"` + strings.Repeat("a", 65) + `"}`))
 		case "/api/v1/media/sources/huge":
 			_, _ = w.Write(bytes.Repeat([]byte(" "), (1<<20)+1))
 		default:
@@ -270,6 +274,10 @@ func TestClientMediaTrust(t *testing.T) {
 	httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err)
 	require.True(ok, "%v", err)
 	assert.Equal(docbankmedia.HTTPError{Status: http.StatusServiceUnavailable, Code: "server_error", Reason: "content_missing"}, *httpErr)
+	_, err = client.CurrentVersion(t.Context(), 11)
+	httpErr, ok = errors.AsType[*docbankmedia.HTTPError](err)
+	require.True(ok, "%v", err)
+	assert.Equal(docbankmedia.HTTPError{Status: http.StatusServiceUnavailable, Code: "server_error"}, *httpErr)
 
 	missing, err := docbankmedia.NewClient(server.URL, func() (string, error) {
 		return "", errors.New("environment variable holds " + testKey)

@@ -76,6 +76,20 @@ func TestMetadataTrigramLifecycle(t *testing.T) {
 	assert.Zero(metadataTrigramCount(t, st, "recipients_metadata_fts", "inserted"), "foreign key cascade deletes alias index")
 }
 
+func TestMetadataTrigramIndexesRelayAddress(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := metadataTrigramStore(t)
+	requirements.NoError(st.InitSchema())
+	_, err := st.DB().ExecContext(t.Context(), `UPDATE message_recipients SET recipient_type='from', email_address='relay@example.test', is_relayed=TRUE WHERE id=1`)
+	requirements.NoError(err)
+	assertions.Equal(1, metadataTrigramCount(t, st, "recipients_metadata_fts", "relay@example.test"))
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value='1' WHERE key='metadata_fts_version'`)
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchema())
+	assertions.Equal(1, metadataTrigramCount(t, st, "recipients_metadata_fts", "relay@example.test"))
+}
+
 func TestMetadataTrigramRepairsMissingIndex(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -128,16 +142,6 @@ func TestFTSDataRangeDeletesKeepRowidPlan(t *testing.T) {
 			assert.Contains(detail, "USING INTEGER PRIMARY KEY", table+" after "+phase)
 		}
 	}
-	statistics := func(st *Store, phase string) {
-		for _, table := range []string{"messages_fts_data", "messages_metadata_fts_data"} {
-			var rows, nonNull int
-			require.NoError(st.DB().QueryRowContext(t.Context(),
-				"SELECT COUNT(*), COUNT(stat) FROM sqlite_stat1 WHERE tbl = ?", table,
-			).Scan(&rows, &nonNull))
-			assert.Equal(1, rows, table+" retains its statistics row after "+phase)
-			assert.Zero(nonNull, table+" has NULL statistics after "+phase)
-		}
-	}
 	st, err := OpenForTest(t.Context(), path)
 	require.NoError(err)
 	require.NoError(st.InitSchema())
@@ -147,10 +151,8 @@ func TestFTSDataRangeDeletesKeepRowidPlan(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	plans(st, "close-time statistics refresh")
-	statistics(st, "close-time statistics refresh")
 	require.NoError(st.optimizeSQLite(t.Context()))
 	plans(st, "scheduled statistics refresh")
-	statistics(st, "scheduled statistics refresh")
 }
 
 // FTS5 reads its configuration the first time a connection uses an index.

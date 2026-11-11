@@ -33,6 +33,7 @@ const (
 	FileContentURLOnly      FileContentState = "url_only"
 	FileContentMissingBlob  FileContentState = "missing_blob"
 	FileContentLocal        FileContentState = "local_content"
+	FileContentUnverified   FileContentState = "unverified"
 )
 
 type FileSearchSort struct {
@@ -84,8 +85,8 @@ type FileSearchRow struct {
 	ParticipantIDs     []int64              `json:"participant_ids,omitempty"`
 	ParticipantLabels  []string             `json:"participant_labels,omitempty"`
 	ParticipantDomains []string             `json:"participant_domains,omitempty"`
-	ContentState       FileContentState     `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content"`
-	ContentAvailable   bool                 `json:"content_available"`
+	ContentState       FileContentState     `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content,unverified" doc:"List availability is based on metadata; file details check whether storage can be opened."`
+	ContentAvailable   *bool                `json:"content_available" nullable:"true" doc:"Null means availability has not been checked."`
 	SearchExplain      *FileSearchExplain   `json:"search_explain,omitzero" nullable:"false"`
 }
 
@@ -149,7 +150,7 @@ type FileMetadataResponse struct {
 	Size             int64                        `json:"size_bytes"`
 	ContentHash      string                       `json:"content_hash,omitempty"`
 	URL              string                       `json:"url,omitempty"`
-	ContentState     FileContentState             `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content"`
+	ContentState     FileContentState             `json:"content_state" enum:"metadata_only,url_only,missing_blob,local_content" doc:"File details check whether content can be opened; read or integrity errors can still occur."`
 	ContentAvailable bool                         `json:"content_available"`
 }
 
@@ -547,7 +548,7 @@ func (s *Server) handleSearchFilesRequest(
 			writeError(w, http.StatusConflict, "file_metadata_changed", "The authoritative file metadata changed; refresh the Files workspace")
 			return
 		}
-		state, available := s.fileContentState(r.Context(), authority)
+		state, available := fileContentState(authority)
 		response.Files = append(response.Files, FileSearchRow{
 			ID: file.ID, Key: file.Key, EntryKey: file.EntryKey, MessageID: file.MessageID,
 			SenderLabel:    file.SenderLabel,
@@ -859,7 +860,20 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "file_not_found", "File not found")
 		return
 	}
-	state, available := s.fileContentState(r.Context(), *file)
+	state, _ := fileContentState(*file)
+	available := false
+	if state == FileContentUnverified {
+		content, _, err := s.openFileContent(r.Context(), *file)
+		if errors.Is(err, os.ErrNotExist) {
+			state, available = FileContentMissingBlob, false
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open file content")
+			return
+		} else {
+			_ = content.Close()
+			state, available = FileContentLocal, true
+		}
+	}
 	writeJSON(w, http.StatusOK, FileMetadataResponse{
 		ID: file.ID, MessageID: file.MessageID, ConversationID: file.ConversationID,
 		EntryKey: fileEntryKey(*file),
@@ -946,30 +960,13 @@ func (s *Server) openFileContent(ctx context.Context, file store.FileMetadata) (
 	return content, length, err
 }
 
-// fileContentState classifies one authoritative attachment row. Packed
-// attachments legitimately carry only a content hash, so availability of a
-// row without a recorded storage path is determined through the blob
-// resolver — the packed CAS store first, then the loose content-addressed
-// fallback. Rows with a recorded storage path are reported as local without
-// probing, matching the legacy loose-file contract.
-func (s *Server) fileContentState(ctx context.Context, file store.FileMetadata) (FileContentState, bool) {
+// fileContentState classifies list rows from their metadata. Details check whether storage can be opened.
+func fileContentState(file store.FileMetadata) (FileContentState, *bool) {
 	if file.URL != "" {
-		return FileContentURLOnly, false
+		return FileContentURLOnly, new(false)
 	}
 	if file.ContentHash == "" {
-		return FileContentMetadataOnly, false
+		return FileContentMetadataOnly, new(false)
 	}
-	if file.StoragePath == "" && !s.fileContentResolvable(ctx, file) {
-		return FileContentMissingBlob, false
-	}
-	return FileContentLocal, true
-}
-
-func (s *Server) fileContentResolvable(ctx context.Context, file store.FileMetadata) bool {
-	content, _, err := s.openFileContent(ctx, file)
-	if err != nil {
-		return false
-	}
-	_ = content.Close()
-	return true
+	return FileContentUnverified, nil
 }

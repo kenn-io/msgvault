@@ -37,6 +37,7 @@
         <button
           type="button"
           class="media-card"
+          data-file-id={row.id}
           aria-label={`Open ${row.filename || `attachment ${row.id}`}`}
           onclick={(event) => onOpen?.(row, event.currentTarget)}
         >
