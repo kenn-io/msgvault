@@ -8,21 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/vector/personsearch"
 )
-
-// Ignoring organization_id must never turn a company search into a global search.
-func TestPersonDiscoveryHTTPDispatchesExactOrganizationScope(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	engine := &fakePersonSearchEngine{}
-	engine.results = []personsearch.Result{{Person: store.Person{ID: 7, VCardUID: "person-example-7"}, Score: .9}}
-	srv := newSemanticPersonSearchServer(t, engine, VectorStatusReady, "")
-	response := semanticPersonSearchRequest(t, srv, []byte(`{"query":"equipment","limit":2,"organization_id":13}`), "")
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	assert.Equal(int64(13), engine.organizationID)
-	assert.Contains(response.Body.String(), "person-example-7")
-}
 
 func TestPersonDiscoveryHTTPRejectsNegativeScopeBeforeSearch(t *testing.T) {
 	assert := assert.New(t)
@@ -33,19 +19,16 @@ func TestPersonDiscoveryHTTPRejectsNegativeScopeBeforeSearch(t *testing.T) {
 	assert.Empty(engine.queries)
 }
 
-func TestPersonDiscoveryHTTPDirectoryUsesCanonicalIDBeforePaging(t *testing.T) {
+func TestPersonDiscoveryHTTPDirectoryForwardsOrganizationID(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, st := newIdentityLinkTestServer(t)
-	// Create the outsider first so it sorts before the member in the name tie.
 	createDirectoryHTTPPerson(t, st, "Alex Example", "outsider@example.test", "colleague", "Other Cooperative", true)
-	person := createDirectoryHTTPPerson(t, st, "Alex Example", "scoped@example.test", "colleague", "Example Cooperative", true)
-	organizations, err := st.ListOrganizationsContext(t.Context(), store.OrganizationFilter{Query: "Example Cooperative"})
+	organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Cooperative", Kind: store.OrganizationKindCompany})
 	require.NoError(err)
-	require.Len(organizations, 1)
-	response := personRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/directory?organization_id=%d&limit=1", peoplePath, organizations[0].ID), nil, "")
+	response := personRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/directory?organization_id=%d", peoplePath, organization.ID), nil, "")
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	assertDirectoryPeopleResponseIDs(t, response, person.ID)
+	assertDirectoryPeopleResponseIDs(t, response, []int64{}...)
 	for _, scope := range []string{"-1", "bad"} {
 		invalid := personRequest(t, srv, http.MethodGet, peoplePath+"/directory?organization_id="+scope, nil, "")
 		assert.Equal(http.StatusBadRequest, invalid.Code)

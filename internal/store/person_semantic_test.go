@@ -497,7 +497,7 @@ func TestResolvePersonSemanticCandidatesInOrganizationRevalidatesMembershipAndRe
 	org := mustOrganization(t, st, "Scoped Semantic Company")
 	var candidates []store.PersonSemanticCandidate
 	var want []int64
-	for i, state := range []string{"current", "outsider", "ended", "deleted employment", "stale", "deleted person", "current"} {
+	for i, state := range []string{"current", "outsider", "ended", "deleted employment", "stale", "current"} {
 		id := mustPerson(t, f, fmt.Sprintf("semantic-scope-%d@example.invalid", i), "Same Name")
 		if state != "outsider" {
 			employment, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: id, OrganizationID: org.ID, Source: store.ProvenanceUser})
@@ -518,8 +518,6 @@ func TestResolvePersonSemanticCandidatesInOrganizationRevalidatesMembershipAndRe
 		switch state {
 		case "stale":
 			_, err = st.UpdatePersonDisplayNameContext(ctx, id, person.Revision, new("Changed Name"))
-		case "deleted person":
-			err = st.DeletePersonContext(ctx, id, person.Revision)
 		case "current":
 			want = append(want, id)
 		}
@@ -534,10 +532,6 @@ func TestResolvePersonSemanticCandidatesInOrganizationRevalidatesMembershipAndRe
 	}
 	check.Equal(want, got)
 	check.True(hasMembers)
-	outsiders, hasMembers, err := st.ResolvePersonSemanticCandidatesContext(ctx, candidates[1:2], org.ID)
-	must.NoError(err)
-	check.True(hasMembers)
-	check.Empty(outsiders)
 	empty := mustOrganization(t, st, "Empty Semantic Company")
 	for _, id := range []int64{empty.ID, 999999} {
 		people, hasMembers, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, id)

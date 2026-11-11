@@ -10,8 +10,8 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestPersonDiscoveryClientRejectsUnsupportedScopeBeforeRequests(t *testing.T) {
-	for _, version := range []string{"", "3.48.0", "3.49.0", "4.2.0", "5.0.0"} {
+func TestPersonDiscoveryClientRequiresSupportedScope(t *testing.T) {
+	for _, version := range []string{"5.0.0", "5.1.0"} {
 		t.Run(version, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -24,13 +24,20 @@ func TestPersonDiscoveryClientRejectsUnsupportedScopeBeforeRequests(t *testing.T
 				requests++
 				writePeopleBrowserJSON(t, w, http.StatusOK, `{"results":[],"people":[],"organizations":[]}`)
 			}))
-			_, err := people.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{OrganizationID: 13})
-			require.ErrorContains(err, "5.1.0")
-			_, err = people.SearchSemanticPeople(t.Context(), peoplebrowser.SemanticPeopleRequest{Query: "equipment", OrganizationID: 13})
-			require.ErrorContains(err, "5.1.0")
-			_, err = people.ListOrganizations(t.Context(), "Example", 2, 0)
-			require.ErrorContains(err, "5.1.0")
-			assert.Zero(requests, "an old daemon must never receive a possibly ignored organization scope")
+			_, directoryErr := people.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{OrganizationID: 13})
+			_, searchErr := people.SearchSemanticPeople(t.Context(), peoplebrowser.SemanticPeopleRequest{Query: "equipment", OrganizationID: 13})
+			_, organizationErr := people.ListOrganizations(t.Context(), "Example", 2, 0)
+			if version == "5.0.0" {
+				require.ErrorContains(directoryErr, "5.1.0")
+				require.ErrorContains(searchErr, "5.1.0")
+				require.ErrorContains(organizationErr, "5.1.0")
+				assert.Zero(requests)
+			} else {
+				require.NoError(directoryErr)
+				require.NoError(searchErr)
+				require.NoError(organizationErr)
+				assert.Equal(3, requests)
+			}
 		})
 	}
 }

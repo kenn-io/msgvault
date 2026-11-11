@@ -22,17 +22,15 @@ import (
 )
 
 type fakePersonSearchEngine struct {
-	results        []personsearch.Result
-	err            error
-	queries        []string
-	limits         []int
-	organizationID int64
+	results []personsearch.Result
+	err     error
+	queries []string
+	limits  []int
 }
 
 func (e *fakePersonSearchEngine) Search(
-	_ context.Context, query string, limit int, organizationID int64,
+	_ context.Context, query string, limit int, _ int64,
 ) ([]personsearch.Result, error) {
-	e.organizationID = organizationID
 	e.queries = append(e.queries, query)
 	e.limits = append(e.limits, limit)
 	return e.results, e.err

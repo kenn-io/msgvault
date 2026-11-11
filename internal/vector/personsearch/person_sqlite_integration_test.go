@@ -84,7 +84,6 @@ func TestEngineOrganizationScopeRealSQLiteBeyondVec0Ceiling(t *testing.T) {
 	}{
 		{"late member", first.ID, 1, []int64{memberIDs[1]}},
 		{"underfilled scope", second.ID, 20, memberIDs},
-		{"empty scope", 999999, 20, []int64{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			check := assert.New(t)

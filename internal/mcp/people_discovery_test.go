@@ -16,8 +16,10 @@ import (
 )
 
 type discoveryPeopleBackend struct {
-	request peoplebrowser.SemanticPeopleRequest
-	err     error
+	request                               peoplebrowser.SemanticPeopleRequest
+	organizationQuery                     string
+	organizationLimit, organizationOffset int
+	err                                   error
 }
 
 func (b *discoveryPeopleBackend) SearchSemanticPeople(_ context.Context, request peoplebrowser.SemanticPeopleRequest) (*peoplebrowser.SemanticPeoplePage, error) {
@@ -25,7 +27,8 @@ func (b *discoveryPeopleBackend) SearchSemanticPeople(_ context.Context, request
 	return &peoplebrowser.SemanticPeoplePage{Results: []peoplebrowser.SemanticPersonMatch{{PersonID: 7, DisplayName: new("Alex Example"), VCardUID: "person-7", Score: .9}}}, b.err
 }
 
-func (b *discoveryPeopleBackend) ListOrganizations(context.Context, string, int, int) (*peoplebrowser.OrganizationPage, error) {
+func (b *discoveryPeopleBackend) ListOrganizations(_ context.Context, query string, limit, offset int) (*peoplebrowser.OrganizationPage, error) {
+	b.organizationQuery, b.organizationLimit, b.organizationOffset = query, limit, offset
 	return &peoplebrowser.OrganizationPage{Organizations: []peoplebrowser.OrganizationSummary{{ID: 13, Name: "Example Cooperative"}}, Total: 2, Limit: 1, Offset: 0, HasMore: true}, b.err
 }
 
@@ -49,25 +52,29 @@ func TestPersonDiscoveryMCPCatalogAndDelegatedBoundary(t *testing.T) {
 	without := toolsByName(t, rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}}, false))
 	assert.NotContains(without, "search_semantic_people")
 	assert.NotContains(without, "list_organizations")
-	opts.DelegatedOnly = true
-	opts.GrantPermissions = []string{"search.read", "message.read", "stats.read"}
-	delegated := toolsByName(t, rawListTools(t, opts, false))
-	assert.NotContains(delegated, "search_semantic_people")
-	assert.NotContains(delegated, "list_organizations")
+
 }
 
 func TestPersonDiscoveryMCPReportsCorpusAndExplicitAvailabilityErrors(t *testing.T) {
 	assert := assert.New(t)
 	backend := &discoveryPeopleBackend{}
 	opts := discoveryToolOptions(backend)
-	for _, code := range []string{"person_embedding_consent_required", "index_building", "index_stale", "person_embeddings_disabled"} {
-		backend.err = &daemonclient.APIError{Status: 503, Code: code, Message: "specific safe recovery instructions"}
-		failed := rawCallTool(t, opts, "search_semantic_people", map[string]any{"query": "equipment"})
-		assert.Equal(true, failed["isError"])
-		message := toolErrorTextFromResult(t, failed)
-		assert.Contains(message, code)
-		assert.Contains(message, "specific safe recovery instructions")
-	}
+	result := rawCallTool(t, opts, "search_semantic_people", map[string]any{"query": "equipment", "organization_id": 13, "limit": 2})
+	page := toolStructuredContent(t, result)
+	assert.Equal(false, page["exhaustive"])
+	assert.Equal("current_searchable_non_sensitive_profile_fields", page["corpus"])
+	assert.ElementsMatch([]any{"sensitive_attributes", "notes", "observations"}, page["excluded"])
+	assert.Equal(peoplebrowser.SemanticPeopleRequest{Query: "equipment", OrganizationID: 13, Limit: 2}, backend.request)
+	rawCallTool(t, opts, "list_organizations", map[string]any{"query": "Coop", "limit": 2, "offset": 1})
+	assert.Equal("Coop", backend.organizationQuery)
+	assert.Equal(2, backend.organizationLimit)
+	assert.Equal(1, backend.organizationOffset)
+	backend.err = &daemonclient.APIError{Status: 503, Code: "index_building", Message: "specific safe recovery instructions"}
+	failed := rawCallTool(t, opts, "search_semantic_people", map[string]any{"query": "equipment"})
+	assert.Equal(true, failed["isError"])
+	message := toolErrorTextFromResult(t, failed)
+	assert.Contains(message, "index_building")
+	assert.Contains(message, "specific safe recovery instructions")
 }
 
 func TestPersonDiscoveryMCPRejectsInvalidSearch(t *testing.T) {

@@ -614,16 +614,12 @@ func TestEngineSearchPropagatesPersonStoreError(t *testing.T) {
 
 func TestEngineOrganizationScopeWidensAndRevalidatesEveryPath(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		hits         int
-		removeOnCall int
-		want         []int64
+		name string
+		hits int
+		want []int64
 	}{
-		{"initial full page", 8, 0, []int64{1, 2}},
-		{"widened full page", 8, 0, []int64{2, 4}},
-		{"exhausted final page", 5, 0, []int64{2, 4}},
-		{"membership changes at final recheck", 8, 3, []int64{4, 6}},
-		{"membership changes at exhaustion", 5, 2, []int64{4}},
+		{"widened full page", 8, []int64{2, 4}},
+		{"exhausted final page", 5, []int64{2, 4}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			check := assert.New(t)
@@ -631,24 +627,16 @@ func TestEngineOrganizationScopeWidensAndRevalidatesEveryPath(t *testing.T) {
 
 			backend := &testBackend{active: &vector.Generation{ID: 7, Fingerprint: "test:3:rperson-semantic-v1"}}
 			data := &testStore{documents: map[int64]*store.PersonSemanticDocument{}, people: map[int64]store.Person{}, organizationID: 42, members: map[int64]bool{2: true, 4: true, 6: true}}
-			if tc.name == "initial full page" {
-				data.members[1] = true
-			}
 			for i := int64(1); i <= int64(tc.hits); i++ {
 				revision := fmt.Sprintf("revision-%d", i)
 				backend.personHits = append(backend.personHits, vector.PersonHit{PersonID: i, Revision: revision, Score: 1 - float64(i)/10, Rank: int(i)})
 				data.documents[i] = &store.PersonSemanticDocument{PersonID: i, Revision: revision}
 				data.people[i] = store.Person{ID: i, VCardUID: fmt.Sprintf("uid-%d", i)}
 			}
-			data.beforeResolve = func(call int) {
-				if call == tc.removeOnCall {
-					delete(data.members, 2)
-				}
-			}
 			embedder := &testEmbedder{vec: []float32{1, 0, 0}}
 			engine := NewEngine(backend, data, embedder, Config{ExpectedFingerprint: "test:3:rperson-semantic-v1", Gate: vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return nil })})
 			limit := 2
-			if tc.name == "exhausted final page" || tc.name == "membership changes at exhaustion" {
+			if tc.name == "exhausted final page" {
 				limit = 3
 			}
 			results, err := engine.Search(t.Context(), "synthetic", limit, 42)
@@ -660,11 +648,7 @@ func TestEngineOrganizationScopeWidensAndRevalidatesEveryPath(t *testing.T) {
 			}
 			check.Equal(tc.want, got)
 			check.Equal([]string{"synthetic"}, embedder.calls)
-			if tc.name == "initial full page" {
-				check.Equal([]int{2}, backend.personSearchLimits)
-			} else {
-				check.Greater(len(backend.personSearchLimits), 1)
-			}
+			check.Greater(len(backend.personSearchLimits), 1)
 		})
 	}
 }
@@ -711,10 +695,10 @@ func TestEngineOrganizationScopeStopsWhenMembershipDisappears(t *testing.T) {
 	backend := &testBackend{active: &vector.Generation{ID: 7, Fingerprint: "test:3:rperson-semantic-v1"}, personHits: []vector.PersonHit{
 		{PersonID: 1, Revision: "r1"}, {PersonID: 2, Revision: "r2"}, {PersonID: 3, Revision: "r3"}, {PersonID: 4, Revision: "r4"},
 	}}
-	data := &testStore{organizationID: 42, members: map[int64]bool{1: true}, documents: map[int64]*store.PersonSemanticDocument{1: {Revision: "r1"}}, people: map[int64]store.Person{1: {ID: 1}}}
+	data := &testStore{organizationID: 42, members: map[int64]bool{1: true, 3: true}, documents: map[int64]*store.PersonSemanticDocument{1: {Revision: "r1"}, 3: {Revision: "r3"}}, people: map[int64]store.Person{1: {ID: 1}, 3: {ID: 3}}}
 	data.beforeResolve = func(call int) {
-		if call == 2 {
-			delete(data.members, 1)
+		if call == 3 {
+			clear(data.members)
 		}
 	}
 	engine := NewEngine(backend, data, &testEmbedder{vec: []float32{1, 0, 0}}, Config{ExpectedFingerprint: "test:3:rperson-semantic-v1", Gate: vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return nil })})

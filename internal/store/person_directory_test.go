@@ -414,6 +414,9 @@ func TestDirectoryOrganizationScopeIntersectsAndBindsCursor(t *testing.T) {
 	ctx := t.Context()
 	org := mustOrganization(t, st, "Scoped Company")
 	other := mustOrganization(t, st, "Other Company")
+	outsider := createDirectoryPerson(t, st, "Same Name", "outsider@example.invalid", "friend", "active", "Scoped Company")
+	_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: outsider.ID, OrganizationID: other.ID, Source: store.ProvenanceUser})
+	must.NoError(err)
 	var members []*store.Person
 	for i := range 3 {
 		person := createDirectoryPerson(t, st, "Same Name", fmt.Sprintf("scoped-%d@example.invalid", i), "friend", "active", "Independent Company")
@@ -421,11 +424,9 @@ func TestDirectoryOrganizationScopeIntersectsAndBindsCursor(t *testing.T) {
 		_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: org.ID, Source: store.ProvenanceUser})
 		must.NoError(err)
 	}
-	// A second current role must not duplicate the person.
-	_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: members[0].ID, OrganizationID: org.ID, Title: new("Advisor"), Source: store.ProvenanceUser})
+	_, err = st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: members[1].ID, OrganizationID: other.ID, Source: store.ProvenanceUser})
 	must.NoError(err)
-	createDirectoryPerson(t, st, "Same Name", "outsider@example.invalid", "friend", "active", "Scoped Company")
-	query := store.DirectoryPeopleQuery{OrganizationID: org.ID, Query: "same", Category: "friend", ContactState: "active", Organization: "Scoped Company", Limit: 1}
+	query := store.DirectoryPeopleQuery{OrganizationID: org.ID, Query: "same", Category: "friend", ContactState: "active", Limit: 1}
 	first, err := st.DirectoryPeoplePageContext(ctx, query)
 	must.NoError(err)
 	must.Len(first.People, 1)
@@ -438,7 +439,8 @@ func TestDirectoryOrganizationScopeIntersectsAndBindsCursor(t *testing.T) {
 	query.Cursor, query.OrganizationID, query.Organization = "", org.ID, "Other Company"
 	page, err := st.DirectoryPeoplePageContext(ctx, query)
 	must.NoError(err)
-	check.Empty(page.People)
+	must.Len(page.People, 1)
+	check.Equal(members[1].ID, page.People[0].ID)
 	_, err = st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{OrganizationID: -1})
 	must.ErrorIs(err, store.ErrInvalidDirectoryQuery)
 	// A cursor's anchor must still qualify for this exact organization.
@@ -447,7 +449,7 @@ func TestDirectoryOrganizationScopeIntersectsAndBindsCursor(t *testing.T) {
 	for _, employment := range employments {
 		must.NoError(st.DeleteEmploymentContext(ctx, employment.ID, employment.Revision))
 	}
-	query.Cursor, query.Organization = first.NextCursor, "Scoped Company"
+	query.Cursor, query.Organization = first.NextCursor, ""
 	_, err = st.DirectoryPeoplePageContext(ctx, query)
 	must.ErrorIs(err, store.ErrInvalidDirectoryCursor)
 }

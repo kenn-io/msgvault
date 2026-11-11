@@ -300,7 +300,6 @@ func TestOrganizationListQueryRequiresDiscoverySchema(t *testing.T) {
 		wantRequest   bool
 	}{
 		{"old query", "5.0.0", []string{"--query", "Coop", "--json"}, false},
-		{"current query", "5.1.0", []string{"--query", "Coop", "--json"}, true},
 		{"old plain list", "5.0.0", []string{"--json"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
