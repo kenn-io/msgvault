@@ -24,7 +24,7 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "diagnose-acquisition --source-id ID",
 		Short: "List Gmail acquisition failures",
-		Long:  "List Gmail acquisition failures that sync still retries in the local archive. Use --all to include fixed, retired, and unknown failures, and --local when a remote is configured.",
+		Long:  "List Gmail acquisition failures that sync still retries in the local archive. Use --local when a remote is configured.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
