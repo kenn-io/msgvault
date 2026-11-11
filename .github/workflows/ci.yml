@@ -53,7 +53,7 @@ jobs:
       matrix:
         # The merge queue builds one release binary. `include` cannot drop an
         # entry, so per-architecture settings are expressions below.
-        goarch: ${{ fromJSON(github.event_name == 'merge_group' && '["amd64"]' || '["amd64", "arm64"]') }}
+        goarch: &linux-smoke-architectures ${{ fromJSON(github.event_name == 'merge_group' && '["amd64"]' || '["amd64", "arm64"]') }}
     runs-on: ${{ matrix.goarch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: ${{ matrix.goarch == 'arm64' && 13 || 27 }}
     container:
@@ -159,12 +159,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - goarch: amd64
-            runner: ubuntu-24.04
-          - goarch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
+        goarch: *linux-smoke-architectures
+    runs-on: ${{ matrix.goarch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 5
     container:
       image: debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3

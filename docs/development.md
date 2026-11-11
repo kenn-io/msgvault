@@ -335,7 +335,7 @@ looks for breakage between separately green pull requests:
 - `checks`: Linux lint, API contract, generated artifact, and vulnerability checks.
 - The Linux SQLite test suite: `test` and the three `test-sharded` jobs.
 - `frontend` and `web-e2e`.
-- `release-linux-smoke` for amd64 only.
+- `release-linux-smoke` and `standalone-linux-runtime` for amd64 only.
 - `test-postgres-sharded (store)`, which runs the PostgreSQL schema, migration,
   and upgrade tests. The SQLite suite covers the same tests on SQLite, including
   `TestSchemaVersionContract`.
