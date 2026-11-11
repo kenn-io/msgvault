@@ -108,6 +108,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	savedAllowCardDAVWrites := mcpAllowCardDAVWrites
 	savedAllowCalendarWrites := mcpAllowCalendarWrites
 	savedAllowLoops, savedAllowSources := mcpAllowLoopWrites, mcpAllowSourceWrites
+	savedAllowPersonFactWrites := mcpAllowPersonFactWrites
 	savedConfirmSensitiveDrafts := mcpConfirmSensitiveDrafts
 	savedServeHTTP := serveMCPHTTPWithOptions
 	allowWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
@@ -122,6 +123,9 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	loopWritesFlag := mcpCmd.Flags().Lookup("allow-loop-writes")
 	require.NotNil(loopWritesFlag)
 	require.NoError(loopWritesFlag.Value.Set("true"))
+	personFactWritesFlag := mcpCmd.Flags().Lookup("allow-person-fact-writes")
+	require.NotNil(personFactWritesFlag)
+	require.NoError(personFactWritesFlag.Value.Set("true"))
 	mcpAllowSourceWrites = false
 	mcpAllowProfileWrites = true
 	mcpAllowIdentityDecisions = true
@@ -140,6 +144,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 		mcpAllowCardDAVWrites = savedAllowCardDAVWrites
 		mcpAllowCalendarWrites = savedAllowCalendarWrites
 		mcpAllowLoopWrites, mcpAllowSourceWrites = savedAllowLoops, savedAllowSources
+		mcpAllowPersonFactWrites = savedAllowPersonFactWrites
 		mcpConfirmSensitiveDrafts = savedConfirmSensitiveDrafts
 		serveMCPHTTPWithOptions = savedServeHTTP
 	})
@@ -157,7 +162,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	err := mcpCmd.RunE(mcpCmd, nil)
 
 	require.ErrorIs(err, wantErr)
-	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops}, gotServeOpts.OperationWriteFamilies)
+	assert.ElementsMatch([]mcpserver.OperationFamily{mcpserver.OperationFamilyRecords, mcpserver.OperationFamilyLoops, mcpserver.OperationFamilyPersonFacts}, gotServeOpts.OperationWriteFamilies)
 	assert.True(gotServeOpts.AllowProfileWrites)
 	assert.True(gotServeOpts.AllowIdentityDecisions)
 	assert.True(gotServeOpts.AllowIdentityScoring)

@@ -249,8 +249,10 @@ func TestPersonFactSDKConfirmsEachTrackingWrite(t *testing.T) {
 		approvals++
 		if approvals == 1 {
 			assertions.Contains(request.Params.Message, "removes queued sweep work")
+			assertions.Contains(request.Params.Message, "pending enrichment")
 		} else {
 			assertions.Contains(request.Params.Message, "configured sweep model")
+			assertions.Contains(request.Params.Message, "external enrichment")
 		}
 		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
 	}})

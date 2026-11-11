@@ -151,9 +151,9 @@ func (b *daemonMCPOperations) personFactOperationDisclosure(name string, args ma
 			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}
 		if *a.Tracked {
-			effect = "Enrolls the person in people sweeps, which send limited archived text to the configured sweep model when enabled and may update profile facts. The native operation has no revision guard."
+			effect = "Enrolls the person in people sweeps, which send limited archived text to the configured sweep model when enabled and may update profile facts; with enrichment consent it also queues external enrichment lookups. The native operation has no revision guard."
 		} else {
-			effect = "Stops automatic fact maintenance and removes queued sweep work. The native operation has no revision guard."
+			effect = "Stops automatic fact maintenance and removes queued sweep work and pending enrichment. The native operation has no revision guard."
 		}
 	default:
 		return "", false, nil
