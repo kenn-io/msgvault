@@ -85,7 +85,14 @@ func (imp *Importer) Refresh(ctx context.Context, opts RefreshOptions) (summary 
 			retErr = imp.store.CompleteSyncContext(final, run, "")
 		}
 	}()
-	return imp.refreshScoped(ctx, opts, nil)
+	if err := resolveXParents(ctx, imp.store, source.ID); err != nil {
+		return summary, err
+	}
+	summary, err = imp.refreshScoped(ctx, opts, nil)
+	if err != nil {
+		return summary, err
+	}
+	return summary, resolveXParents(ctx, imp.store, source.ID)
 }
 
 func (imp *Importer) refreshScoped(ctx context.Context, opts RefreshOptions, api API) (summary RefreshSummary, retErr error) {
@@ -163,7 +170,7 @@ func (imp *Importer) applyRefreshPage(ctx context.Context, sourceID int64, owner
 	if err := imp.queueProtectedAuthors(ctx, sourceID, page.Users, page.FetchedAt); err != nil {
 		return err
 	}
-	if err := WritePage(ctx, imp.store, sourceID, owner, page, page.FetchedAt); err != nil {
+	if _, err := writePageWithSummary(ctx, imp.store, sourceID, owner, page, page.FetchedAt); err != nil {
 		return err
 	}
 	if err := imp.queueUnavailableResults(ctx, sourceID, page); err != nil {

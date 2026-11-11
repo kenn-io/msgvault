@@ -2,6 +2,7 @@ package x
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"math"
@@ -125,7 +126,8 @@ func TestXInterruptedWindowDoesNotPublishNewestID(t *testing.T) {
 		mu.Unlock()
 		switch r.URL.Query().Get("pagination_token") {
 		case "":
-			wireImportPage(w, []string{wireOwnPost("110", now.Add(-time.Minute))}, "page-two")
+			child := fmt.Sprintf(`{"id":"110","author_id":"1001","conversation_id":"109","text":"Synthetic child","created_at":%q,"edit_history_tweet_ids":["110"],"referenced_tweets":[{"type":"replied_to","id":"109"}]}`, now.Add(-time.Minute).Format(time.RFC3339Nano))
+			wireImportPage(w, []string{child}, "page-two")
 		case "page-two":
 			assert.Equal(t, "page-two", control.Own.Token)
 			assert.Empty(t, control.Own.Watermark)
@@ -171,6 +173,14 @@ func TestXInterruptedWindowDoesNotPublishNewestID(t *testing.T) {
 	_testAssert.True(summary.MentionsComplete)
 	_testAssert.Equal(int64(2), summary.MessagesAdded)
 	_testAssert.Equal([]string{"108", "109", "110"}, archivedXIDs(t, st, source.ID))
+	root, err := st.ResolveXPostContext(t.Context(), source.ID, "109")
+	_testRequire.NoError(err)
+	child, err := st.ResolveXPostContext(t.Context(), source.ID, "110")
+	_testRequire.NoError(err)
+	var parent sql.NullInt64
+	_testRequire.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child.MessageID).Scan(&parent))
+	_testAssert.True(parent.Valid)
+	_testAssert.Equal(root.MessageID, parent.Int64)
 	control, err = st.LoadXControlContext(t.Context(), source.ID)
 	_testRequire.NoError(err)
 	_testAssert.Equal("110", control.Own.Watermark)
@@ -181,6 +191,45 @@ func TestXInterruptedWindowDoesNotPublishNewestID(t *testing.T) {
 	}
 	mu.Unlock()
 	_testAssert.GreaterOrEqual(ownCalls.Load(), int64(4))
+}
+
+func TestXImportRepairsParentsAfterInterruptedRun(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source := importTestSource(t, st)
+	now := time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC)
+	user := User{ID: "1001", Name: "Example Owner", Username: "example_owner", ProtectedKnown: true}
+	posts := []Post{
+		{ID: "110", AuthorID: "1001", ConversationID: "109", Text: "child", CreatedAt: now, EditHistory: []string{"110"}, References: []Reference{{Type: "replied_to", ID: "109"}}},
+		{ID: "109", AuthorID: "1001", ConversationID: "109", Text: "parent", CreatedAt: now, EditHistory: []string{"109"}},
+	}
+	// Simulate interruption after both pages were persisted but before the final scan.
+	for _, post := range posts {
+		_, err := writePageWithSummary(t.Context(), st, source.ID, "1001", Page{Posts: []Post{post}, Users: []User{user}, FetchedAt: now}, now)
+		require.NoError(t, err)
+	}
+	root, err := st.ResolveXPostContext(t.Context(), source.ID, "109")
+	require.NoError(t, err)
+	child, err := st.ResolveXPostContext(t.Context(), source.ID, "110")
+	require.NoError(t, err)
+	readParent := func() sql.NullInt64 {
+		t.Helper()
+		var parent sql.NullInt64
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child.MessageID).Scan(&parent))
+		return parent
+	}
+	assert.False(t, readParent().Valid)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+	credentials := &importCredentials{snapshot: CredentialSnapshot{OwnerID: "1001", Generation: 1, GrantedScopes: []string{"tweet.read", "users.read"}}}
+	imp := NewImporter(st, NewClient(server.URL, server.Client()), importTestPolicy(t), credentials)
+	imp.now = func() time.Time { return now }
+	_, err = imp.Import(t.Context(), ImportOptions{SourceID: source.ID, OwnerID: "1001"})
+	require.Error(t, err)
+	parent := readParent()
+	assert.True(t, parent.Valid)
+	assert.Equal(t, root.MessageID, parent.Int64)
 }
 
 func TestXDelayedCrossSourceImportCannotOutrankProtectedObservation(t *testing.T) {

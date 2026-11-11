@@ -191,6 +191,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	if err := imp.finishPendingContent(ctx, source.ID); err != nil {
 		return summary, err
 	}
+	if err := resolveXParents(ctx, imp.store, source.ID); err != nil {
+		return summary, err
+	}
 	for _, entry := range walks {
 		if err := imp.saveWalk(ctx, summary, opts.OwnerID, entry.segment, entry.walk); err != nil {
 			return summary, err
@@ -251,6 +254,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 				return summary, err
 			}
 		}
+	}
+	if err := resolveXParents(ctx, imp.store, source.ID); err != nil {
+		return summary, err
 	}
 	current, err := imp.store.LoadXControlContext(ctx, source.ID)
 	if err != nil {
@@ -354,7 +360,7 @@ func (imp *Importer) persistPage(ctx context.Context, summary *ImportSummary, ow
 			filtered.Users = append(filtered.Users, user)
 		}
 	}
-	effects, err := WritePageWithSummary(ctx, imp.store, summary.SourceID, owner, filtered, page.FetchedAt)
+	effects, err := writePageWithSummary(ctx, imp.store, summary.SourceID, owner, filtered, page.FetchedAt)
 	summary.MessagesAdded += effects.Added
 	summary.MessagesUpdated += effects.Updated
 	if err != nil {

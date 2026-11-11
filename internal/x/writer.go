@@ -24,6 +24,15 @@ func WritePage(ctx context.Context, st *store.Store, sourceID int64, ownerID str
 // WritePageWithSummary shares the only page-writing algorithm with WritePage.
 // FetchedAt on the original admitted page wins over a local replay timestamp.
 func WritePageWithSummary(ctx context.Context, st *store.Store, sourceID int64, ownerID string, page Page, fetchedAt time.Time) (WriteSummary, error) {
+	summary, err := writePageWithSummary(ctx, st, sourceID, ownerID, page, fetchedAt)
+	if err != nil {
+		return summary, err
+	}
+	return summary, resolveXParents(ctx, st, sourceID)
+}
+
+// writePageWithSummary persists a page; run owners resolve parents at boundaries.
+func writePageWithSummary(ctx context.Context, st *store.Store, sourceID int64, ownerID string, page Page, fetchedAt time.Time) (WriteSummary, error) {
 	var summary WriteSummary
 	if st == nil || sourceID <= 0 || ValidateID(ownerID) != nil {
 		return summary, errors.New("invalid X writer source")
@@ -119,22 +128,25 @@ func WritePageWithSummary(ctx context.Context, st *store.Store, sourceID int64, 
 			summary.Updated++
 		}
 	}
-	// Bounded indexed resolution also revisits children from older runs. No
-	// checkpoint or spend authority is written by this local pass.
+	return summary, nil
+}
+
+// resolveXParents revisits unresolved children after a completed or interrupted run.
+func resolveXParents(ctx context.Context, st *store.Store, sourceID int64) error {
 	for cursor := int64(0); ; {
 		next, err := st.ResolveXParentsContext(ctx, sourceID, cursor, 100)
 		if err != nil {
-			return summary, err
+			return err
 		}
 		if next == 0 {
 			break
 		}
 		if next <= cursor {
-			return summary, errors.New("x parent resolution did not advance")
+			return errors.New("x parent resolution did not advance")
 		}
 		cursor = next
 	}
-	return summary, nil
+	return nil
 }
 
 func xPostRaw(post Post, user User, expanded bool) ([]byte, error) {
