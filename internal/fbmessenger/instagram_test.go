@@ -382,6 +382,34 @@ func TestInstagramSharedLinkDecoded(t *testing.T) {
 	assert.Equal(t, "[shared link] https://example.com/café", body)
 }
 
+func TestInstagramReplayChangedUnknownMetadata(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	a, b := instagramTestRecord("first"), instagramTestRecord("second")
+	instagramTestShard(t, root, "circle", "message_1.json", a, b)
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(t, err)
+	ids := instagramIDs(t, st)
+	for _, value := range []bool{false, true, true} {
+		a["is_geoblocked_for_viewer"], b["is_geoblocked_for_viewer"] = value, value
+		instagramTestShard(t, root, "circle", "message_1.json", b, a)
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(t, err)
+		assert.Zero(t, summary.MessagesAdded)
+		assert.False(t, summary.Incomplete)
+		assert.Equal(t, ids, instagramIDs(t, st))
+		raws, _ := instagramSnapshot(t, st)
+		for _, raw := range raws {
+			if value {
+				assert.Contains(t, raw, `"is_geoblocked_for_viewer":true`)
+			} else {
+				assert.Contains(t, raw, `"is_geoblocked_for_viewer":false`)
+			}
+		}
+	}
+}
+
 func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 	t.Run("header and raw provenance", func(t *testing.T) {
 		require := require.New(t)
@@ -389,7 +417,7 @@ func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 		st := testutil.NewTestStore(t)
 		root := t.TempDir()
 		first := instagramTestShard(t, root, "circle", "message_1.json")
-		require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","title":"New title","participants":[{"name":"Nova Example"},{"name":"Mira Example"},{"name":"Lumen Example"}],"messages":[{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"new"}]}`), 0600))
+		require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","title":"Initial title","participants":[{"name":"Nova Example"},{"name":"Mira Example"},{"name":"Lumen Example"}],"messages":[{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"new"}]}`), 0600))
 		second := instagramTestShard(t, root, "circle", "message_2.json")
 		require.NoError(os.WriteFile(second, []byte(`{"thread_path":"inbox/circle","title":"Old title","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"old"}]}`), 0600))
 		opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
@@ -398,9 +426,9 @@ func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 			require.NoError(err)
 			var title, kind string
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title, conversation_type FROM conversations`).Scan(&title, &kind))
-			assert.Equal("New title", title)
+			assert.Equal("Initial title", title)
 			assert.Equal("group_chat", kind)
-			_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"New"}}, 0, 10)
+			_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Initial"}}, 0, 10)
 			require.NoError(err)
 			assert.Equal(int64(2), total)
 			var recipients int
@@ -423,7 +451,16 @@ func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 		assert.Equal("direct_chat", kind)
 		_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Latest"}}, 0, 10)
 		require.NoError(err)
-		assert.GreaterOrEqual(total, int64(1))
+		assert.Equal(int64(2), total)
+		_, total, err = st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Initial"}}, 0, 10)
+		require.NoError(err)
+		assert.Zero(total)
+		require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"}],"messages":[]}`), 0600))
+		_, err = ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		_, total, err = st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Latest"}}, 0, 10)
+		require.NoError(err)
+		assert.Equal(int64(2), total)
 	})
 	t.Run("empty first shard type change", func(t *testing.T) {
 		require := require.New(t)

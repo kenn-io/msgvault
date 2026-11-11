@@ -220,6 +220,34 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 	}
 	summary.Errors += len(uncertain)
 	reconcileInstagramCopies(remaining, unused, used, summary, repairs, archived)
+	matchInstagramExtraChanges(remaining, unused, used, archived)
+}
+
+// A single unmatched copy can reuse a single row when only unknown fields changed.
+func matchInstagramExtraChanges(remaining map[instagramContent][]*instagramPending, unused map[instagramContent][]string, used map[string]bool, archived map[string]store.StoredMessage) {
+	loose := func(c instagramContent) instagramContent { c.extra = ""; return c }
+	items, rows := map[instagramContent][]*instagramPending{}, map[instagramContent][]string{}
+	for content, list := range remaining {
+		if len(unused[content]) == 0 {
+			items[loose(content)] = append(items[loose(content)], list...)
+		}
+	}
+	for content, ids := range unused {
+		if len(remaining[content]) != 0 {
+			continue
+		}
+		for _, id := range ids {
+			if !used[id] && !instagramIsSurplus(archived[id]) {
+				rows[loose(content)] = append(rows[loose(content)], id)
+			}
+		}
+	}
+	for key, list := range items {
+		if len(list) == 1 && len(rows[key]) == 1 {
+			list[0].id = rows[key][0]
+			used[list[0].id] = true
+		}
+	}
 }
 
 // A shared reaction set on a surplus row is not evidence of its identity.
