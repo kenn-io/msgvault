@@ -405,17 +405,6 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 			last := end.UTC()
 			e.End = &last
 		}
-	} else if !end.IsZero() {
-		if endAllDay {
-			e.AllDay = true
-			e.EndDate = end.Format(time.DateOnly)
-			if end, _, err = calrecur.CivilDateBoundary(e.EndDate, loc); err != nil {
-				return ICSComponent{}, fmt.Errorf("DTEND: %w", err)
-			}
-		}
-		e.EventTimeZone = end.Location().String()
-		last := end.UTC()
-		e.End = &last
 	}
 	recurrenceID := ""
 	if rid := p.Get("RECURRENCE-ID"); rid != nil {
