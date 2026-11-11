@@ -27,6 +27,9 @@ provide different ways to use the same archive.
   from the task, including formatting and generated output.
 - Pull requests must have a user-facing benefit or improve the developer
   experience, and the body must say which one.
+- A pull request must be useful if nothing after it merges. Put groundwork in
+  the first PR that uses it, and open a stack's PRs one at a time, each after
+  the one below has been reviewed.
 - Write issues and pull requests in English.
 - End every commit message with a `Co-authored-by:` trailer naming the agent
   that wrote the change.
