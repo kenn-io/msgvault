@@ -892,12 +892,29 @@ retries a write by itself. If a write reports
 
 ## Write controls
 
+On unreleased `main`, owner sessions can read a structured person record with
+`get_person_record`, including its exact ETag, and inspect its history with
+`get_person_record_history`. The adapter refuses profile or history JSON
+responses over 1 MiB. `get_person_record_media` returns stored inline
+media in base64 chunks with its content type and whole-object SHA-256. Start
+at offset zero and pass the hash with each subsequent offset; URI-only values
+have no stored content. These tools require native daemon support. With curated
+writes enabled, `patch_person_record` applies the requested adds and supersedes
+as one atomic patch using that exact ETag. Each call requires explicit client
+confirmation; the client is responsible for obtaining user approval. The
+disclosure supplies media byte size and SHA-256 in place of the submitted base64
+data. The returned patch profile is also subject to the 1 MiB JSON limit; if
+the patch committed but its response exceeds the limit, completion is uncertain.
+If its result says the operation may have completed, read the record again
+before retrying.
+
 Enable only the writes intended for the assistant's session:
 
 | Writes | Stdio | HTTP |
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
+| Structured person profile patches | `--allow-curated-writes` | `--http-allow-writes --allow-curated-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
@@ -986,6 +1003,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-curated-writes` | `false` | On unreleased `main`, expose atomic structured person profile patches. Each call requires explicit client confirmation; the client is responsible for obtaining user approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
