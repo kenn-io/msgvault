@@ -50,6 +50,16 @@ func TestMCPCapabilitiesRequiresOwner(t *testing.T) {
 	assertions.Equal("/api/v1/sources/status", routes["listSourceStatus"].Path)
 	assertions.Equal(http.MethodGet, routes["listSourceStatus"].Method)
 	assertions.Contains(routes["listSourceStatus"].QueryParameters, "source_type")
+	for _, tc := range []struct{ id, path string }{
+		{"getOperationStatus", "/api/v1/operations/status"},
+		{"listOperationRuns", "/api/v1/operations/runs"},
+		{"getOperationRun", "/api/v1/operations/runs/{id}"},
+	} {
+		requirements.Contains(routes, tc.id)
+		assertions.Equal(http.MethodGet, routes[tc.id].Method)
+		assertions.Equal(tc.path, routes[tc.id].Path)
+	}
+	assertions.ElementsMatch([]string{"kind", "lane", "state", "started_from", "started_before", "limit", "cursor"}, routes["listOperationRuns"].QueryParameters)
 	assertions.NotContains(routes, "issueAgentToken")
 	assertions.NotContains(routes, "savePeopleProviderAPIKey")
 	delegated := read(false, true)
