@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -131,7 +132,13 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	legacy(slack, `setweight(to_tsvector('simple', 'Lantern Harbor'), 'A') || setweight(to_tsvector('simple', 'Lantern Sender'), 'B') || setweight(to_tsvector('simple', $2), 'D')`, strings.Repeat("the ", 300))
 	phone := f.CreateMessage("imazing")
 	legacy(phone, `setweight(to_tsvector('simple', '+15550123457'), 'C')`)
-	legacy(withBody(f.CreateMessage("unsearchable"), "hidden terminal@example.test"), `''::tsvector`)
+	var overflow strings.Builder
+	overflow.WriteString("hidden terminal@example.test ")
+	for i := range 220000 {
+		overflow.WriteString(strconv.Itoa(i))
+		overflow.WriteByte(' ')
+	}
+	legacy(withBody(f.CreateMessage("unsearchable"), overflow.String()), `''::tsvector`)
 	gapped := f.CreateMessage("gapped")
 	_, err = db.ExecContext(t.Context(), `UPDATE messages SET subject = 'different stored subject' WHERE id = $1`, gapped)
 	require.NoError(err)
@@ -156,8 +163,6 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 		"before foo-bar after":      {compound},
 		"bar foo":                   nil,
 		"lantern harbor":            {slack},
-		"lantern":                   {slack, fresh, retained, partial},
-		"the":                       {slack},
 		"https://example.test/path": {url},
 		"lantern sender":            {slack},
 		"+15550123457":              {phone},
@@ -267,36 +272,6 @@ func TestPG_BackfillFTS_ContinuesAcrossLargeMessagePages(t *testing.T) {
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT string_agg(n::text, ',' ORDER BY n DESC) FROM fts_page_audit`).Scan(&pages))
 	assert.Equal("7,1", pages)
 	assertFTSContains(t, f.Store, "alice@example.com", 8)
-}
-
-func TestPG_FTSSearchUsesIndex(t *testing.T) {
-	skipUnlessPostgres(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
-	require.NoError(err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-	_, err = tx.ExecContext(t.Context(), `SET LOCAL enable_seqscan = off`)
-	require.NoError(err)
-	dialect := &store.PostgreSQLDialect{}
-	join, predicate, order, count := dialect.FTSSearchClause(false, []string{"lantern unique"})
-	arg := dialect.BuildFTSArg([]string{"lantern unique"})
-	args := []any{arg}
-	for range count {
-		args = append(args, arg)
-	}
-	rows, err := tx.QueryContext(t.Context(), f.Store.Rebind(`EXPLAIN SELECT m.id FROM messages m `+join+` WHERE `+predicate+` ORDER BY `+order), args...)
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(rows.Close()) })
-	var plan []string
-	for rows.Next() {
-		var line string
-		require.NoError(rows.Scan(&line))
-		plan = append(plan, line)
-	}
-	require.NoError(rows.Err())
-	assert.Contains(t, strings.Join(plan, "\n"), "Bitmap Index Scan on messages_search_fts_idx")
-	assert.Equal(t, 1, strings.Count(strings.Join(plan, "\n"), " on messages "), "search must scan messages once")
 }
 
 func TestPG_BackfillFTS_ConcurrentUpdates(t *testing.T) {

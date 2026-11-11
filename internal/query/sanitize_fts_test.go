@@ -6,10 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestPostgreSQLSanitizeFTSQuery_NoMetacharacters verifies that the PostgreSQL
-// SanitizeFTSQuery tokenizer is allowlist-based: no tsquery metacharacter (such
-// as `<`, `>`, `=`, `#`, `$`) ever survives into the to_tsquery argument. A
-// stray `<` would open tsquery's phrase operator and raise SQLSTATE 42601.
+// TestPostgreSQLSanitizeFTSQuery_NoMetacharacters checks the prefix suffix
+// after punctuation is removed from a search term.
 func TestPostgreSQLSanitizeFTSQuery_NoMetacharacters(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
