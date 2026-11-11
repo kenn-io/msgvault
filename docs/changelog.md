@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Let owner MCP clients read person attributes and definitions, and confirm attribute edits with `--allow-attribute-writes`.
+- Let owner MCP clients read person attributes and definitions, and enable attribute edits with `--allow-attribute-writes`.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
