@@ -368,6 +368,7 @@ describe('PersonBindingConflictModal', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry profile reload' }));
     await vi.advanceTimersByTimeAsync(0);
     expect(retrySettlers).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Retry profile reload' })).toBeNull();
 
     for (const settle of retrySettlers) {
       settle(Response.json({ error: 'unavailable', message: 'Reload unavailable' }, { status: 503 }));
