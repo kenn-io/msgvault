@@ -120,6 +120,11 @@ func (s *Store) ApplyPersonProfilePatchContext(
 		if err := s.applyPersonProfilePatchTx(ctx, tx, personID, patch); err != nil {
 			return err
 		}
+		if personProfilePatchChangesContactPoints(patch) {
+			if err := s.invalidatePersonContactPointParticipantsTx(ctx, tx, personID); err != nil {
+				return err
+			}
+		}
 		if personProfilePatchChangesEnrichmentIdentity(patch) {
 			if err := s.invalidatePersonEnrichmentIdentitiesAfterRevisionTx(
 				ctx, tx, personID); err != nil {
@@ -130,6 +135,11 @@ func (s *Store) ApplyPersonProfilePatchContext(
 		return err
 	})
 	return profile, err
+}
+
+func personProfilePatchChangesContactPoints(patch PersonProfilePatch) bool {
+	return patch.ContactPoints != nil &&
+		(len(patch.ContactPoints.Add) > 0 || len(patch.ContactPoints.Supersede) > 0)
 }
 
 func personProfilePatchChangesEnrichmentIdentity(patch PersonProfilePatch) bool {

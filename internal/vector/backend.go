@@ -611,6 +611,12 @@ func ScopePublicationMessageIDs(scopes []DocumentScopePublication) []int64 {
 	return ids
 }
 
+// IneligiblePersonPruner reconciles all generations against current semantic
+// input versions. The backend owns and releases W for each bounded batch.
+type IneligiblePersonPruner interface {
+	PruneIneligiblePersons(ctx context.Context) (int64, error)
+}
+
 // IneligibleVisualPruner reconciles current and pending visual tokens in every
 // generation, retaining current eligible publications and releasing W per batch.
 type IneligibleVisualPruner interface {

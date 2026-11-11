@@ -137,6 +137,7 @@ func (s *Store) loadPersonSweepUnresolvedClaimsTx(
 	if len(claims) > limit {
 		return nil, errors.New("person sweep unresolved claims exceed the state limit")
 	}
+	eligibleClaims := make([]personfacts.Claim, 0, len(claims))
 	for index := range claims {
 		claim := &claims[index]
 		generation, err := s.loadPersonFactGenerationByIDTx(ctx, tx, claim.GenerationID)
@@ -167,6 +168,36 @@ func (s *Store) loadPersonSweepUnresolvedClaimsTx(
 		if scopedEvidence != len(claim.EvidenceIDs) {
 			return nil, errors.New("unresolved person sweep claim evidence failed identity validation")
 		}
+
+		rows, err := tx.QueryContext(ctx, `SELECT `+personFactEvidenceColumns+` FROM person_fact_evidence e WHERE EXISTS(SELECT 1 FROM person_fact_claim_evidence ce WHERE ce.evidence_id=e.id AND ce.claim_id=?)`, claim.ID)
+		if err != nil {
+			return nil, err
+		}
+		var evidence []personfacts.Evidence
+		for rows.Next() {
+			e, scanErr := scanPersonFactEvidence(rows)
+			if scanErr != nil {
+				err = scanErr
+				break
+			}
+			evidence = append(evidence, e)
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		if err = s.hydratePersonFactEvidenceStatusTx(ctx, tx, evidence); err != nil {
+			return nil, err
+		}
+		for _, e := range evidence {
+			if e.Supported {
+				eligibleClaims = append(eligibleClaims, *claim)
+				break
+			}
+		}
 	}
-	return claims, nil
+	return eligibleClaims, nil
 }

@@ -7,8 +7,13 @@ import (
 )
 
 // SenderDomainCondition matches the recorded domain on an explicit From row.
-func SenderDomainCondition(placeholder string) string {
-	return `EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND LOWER(` + identityindex.SenderDomainExpr("mr", "p") + `) = LOWER(` + placeholder + `))`
+// A relayed author's envelope domain needs no participant eligibility.
+func SenderDomainCondition(placeholder string, eligible SenderEligibility) string {
+	support := ""
+	if eligible != nil {
+		support = ` AND ((mr.is_relayed AND COALESCE(mr.email_address, '') <> '') OR ` + eligible("p", "p.email_address", "email") + `)`
+	}
+	return `EXISTS (SELECT 1 FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = 'from' AND LOWER(` + identityindex.SenderDomainExpr("mr", "p") + `) = LOWER(` + placeholder + `)` + support + `)`
 }
 
 // escapeLike makes SQL LIKE wildcards literal with ESCAPE '\'.
@@ -28,20 +33,33 @@ func senderMatch(value string) (operator, pattern string, metadata bool) {
 	return "LIKE", "%" + escapeLike(value) + "%", true
 }
 
-func senderCondition(operator, pattern string, metadata bool, lower func(string) string) (string, []any) {
+// SenderEligibility returns a predicate that permits matching one participant
+// value. kind is "email", "phone" or "name". A nil function permits every
+// value; callers reading a store that has already filtered values pass nil.
+type SenderEligibility func(participant, value, kind string) string
+
+func (eligible SenderEligibility) wrap(condition, participant, value, kind string) string {
+	if eligible == nil {
+		return condition
+	}
+	return "(" + condition + " AND " + eligible(participant, value, kind) + ")"
+}
+
+func senderCondition(operator, pattern string, metadata bool, lower func(string) string, eligible SenderEligibility) (string, []any) {
 	if operator == "=" {
 		// Match the existing case-insensitive email index for exact mailboxes.
-		return "(LOWER(p2.email_address) = ?)", []any{pattern}
+		return "(" + eligible.wrap("LOWER(p2.email_address) = ?", "p2", "p2.email_address", "email") + ")", []any{pattern}
 	}
-	columns := []string{"p2.email_address"}
+	columns := []struct{ column, kind string }{{"p2.email_address", "email"}}
 	if metadata {
-		columns = append(columns, "p2.phone_number", "p2.display_name")
+		columns = append(columns, struct{ column, kind string }{"p2.phone_number", "phone"},
+			struct{ column, kind string }{"p2.display_name", "name"})
 	}
 	var parts []string
 	var args []any
 	for _, column := range columns {
-		condition := lower("COALESCE("+column+", '')") + ` LIKE ? ESCAPE '\'`
-		parts = append(parts, condition)
+		condition := lower("COALESCE("+column.column+", '')") + ` LIKE ? ESCAPE '\'`
+		parts = append(parts, eligible.wrap(condition, "p2", column.column, column.kind))
 		args = append(args, pattern)
 	}
 	return "(" + strings.Join(parts, " OR ") + ")", args
@@ -50,9 +68,9 @@ func senderCondition(operator, pattern string, metadata bool, lower func(string)
 // SenderLookup matches one from: value through From rows and direct senders.
 // Both forms bind identical arguments so adaptive search can switch between them.
 // Callers supply trusted table references and the outer message alias.
-func SenderLookup(value string, lower func(string) string, messages, recipients, participants, alias string) (condition, matching string, args []any) {
+func SenderLookup(value string, lower func(string) string, messages, recipients, participants, alias string, eligible SenderEligibility) (condition, matching string, args []any) {
 	operator, pattern, metadata := senderMatch(value)
-	participant, participantArgs := senderCondition(operator, pattern, metadata, lower)
+	participant, participantArgs := senderCondition(operator, pattern, metadata, lower, eligible)
 	args = append(args, participantArgs...)
 	address := "mr2.email_address"
 	envelope := lower("COALESCE(("+address+"), '')") + ` LIKE ? ESCAPE '\'`
@@ -65,7 +83,8 @@ func SenderLookup(value string, lower func(string) string, messages, recipients,
 	matching = `SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from' AND mr2.is_relayed AND ` + envelope + ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from'
   AND mr2.participant_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `) AND NOT mr2.is_relayed`
 	if metadata {
-		header := `(` + lower("COALESCE(mr2.display_name, '')") + ` LIKE ? ESCAPE '\' OR ` + lower("COALESCE(p2.display_name, '')") + ` LIKE ? ESCAPE '\')`
+		header := `(` + eligible.wrap(lower("COALESCE(mr2.display_name, '')")+` LIKE ? ESCAPE '\'`, "p2", "mr2.display_name", "name") + ` OR ` +
+			eligible.wrap(lower("COALESCE(p2.display_name, '')")+` LIKE ? ESCAPE '\'`, "p2", "p2.display_name", "name") + `)`
 		from += ` OR EXISTS (SELECT 1 FROM ` + recipients + ` mr2 JOIN ` + participants + ` p2 ON p2.id = mr2.participant_id WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + header + `)`
 		matching += ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 JOIN ` + participants + ` p2 ON p2.id = mr2.participant_id WHERE mr2.recipient_type = 'from' AND ` + header
 		args = append(args, pattern, pattern)

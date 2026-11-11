@@ -584,6 +584,11 @@ func (w *Worker) runPerson(
 	catalog personfacts.Catalog,
 	resolvedAt time.Time,
 ) (PersonRunResult, error) {
+	workCtx, err := w.capturePolicyWork(ctx, lease.PersonID)
+	if err != nil {
+		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
+	}
+	ctx = workCtx
 	plan, err := w.planPersonBrief(ctx, lease.PersonID, briefMode, profile, resolvedAt)
 	if err != nil {
 		return PersonRunResult{}, w.failClaim(ctx, lease, "", err)
@@ -814,6 +819,10 @@ func (w *Worker) runPerson(
 			attemptEnvelopeHash = selectedHash
 		}
 	}
+	ctx, err = w.bindPolicyInputs(ctx, assembly.Batches)
+	if err != nil {
+		return PersonRunResult{}, failAttemptOrClaim(err)
+	}
 	if len(assembly.CursorEnvelope) == 0 {
 		if !plan.run {
 			// A queued brief can become ineligible while waiting to retry. With
@@ -958,6 +967,9 @@ func (w *Worker) runPerson(
 			marked := false
 			lease, response, runErr = w.runPreparedWithLeaseHeartbeat(ctx, lease,
 				func(markCtx context.Context) error {
+					if err := w.checkPolicyWork(markCtx); err != nil {
+						return err
+					}
 					if markErr := w.Store.MarkPersonSweepBudgetStarted(markCtx, call.reservation, lease); markErr != nil {
 						return markErr
 					}
@@ -1052,7 +1064,7 @@ func (w *Worker) runPerson(
 	var briefFailure FailureClass
 	if plan.run {
 		var fatal error
-		brief, briefFailure, lease, fatal = w.runBriefCall(ctx, briefCall{
+		ctx, brief, briefFailure, lease, fatal = w.runBriefCall(ctx, briefCall{
 			runID: runID, attemptID: attemptID, lease: lease, profile: profile,
 			catalog: catalog, resolvedAt: resolvedAt, plan: plan,
 			batchOrdinal: len(assembly.Batches),

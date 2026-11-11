@@ -169,6 +169,8 @@ const (
 	ReasonAppliedProjection          DecisionReason       = "applied-projection"
 	ReasonEvidenceUnsupported        DecisionReason       = "evidence-unsupported"
 	ReasonOutsideValidity            DecisionReason       = "outside-validity"
+	EvidenceStatusConversationCold   EvidenceStatusReason = "conversation-cold"
+	EvidenceStatusConversationFull   EvidenceStatusReason = "conversation-full"
 	EvidenceStatusSourceDeleted      EvidenceStatusReason = "source-deleted"
 	EvidenceStatusSourceEdited       EvidenceStatusReason = "source-edited"
 	EvidenceStatusScopeUnlinked      EvidenceStatusReason = "scope-unlinked"
@@ -323,13 +325,15 @@ type PreparedGeneration struct {
 }
 
 type Evidence struct {
-	ID           int64                `json:"ID"`
-	PersonID     int64                `json:"PersonID"`
-	Key          string               `json:"Key"`
-	CreatedAt    time.Time            `json:"CreatedAt"`
-	Input        EvidenceInput        `json:"Input"`
-	Supported    bool                 `json:"Supported"`
-	LatestStatus *EvidenceStatusEvent `json:"LatestStatus"`
+	ID        int64         `json:"ID"`
+	PersonID  int64         `json:"PersonID"`
+	Key       string        `json:"Key"`
+	CreatedAt time.Time     `json:"CreatedAt"`
+	Input     EvidenceInput `json:"Input"`
+	Supported bool          `json:"Supported"`
+	// PolicyExcluded is live archive eligibility, independent of source status history.
+	PolicyExcluded bool                 `json:"PolicyExcluded,omitempty,omitzero"`
+	LatestStatus   *EvidenceStatusEvent `json:"LatestStatus"`
 }
 
 type EvidenceStatusEvent struct {

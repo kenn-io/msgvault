@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -143,6 +144,20 @@ func (b *Backend) UpsertPersons(ctx context.Context, gen vector.GenerationID, pe
 	if len(persons) == 0 {
 		return nil
 	}
+	versions := make([]store.ConversationPolicyPersonVersion, len(persons))
+	for i, person := range persons {
+		versions[i] = store.ConversationPolicyPersonVersion{PersonID: person.PersonID, Revision: person.Revision}
+	}
+	release, err := b.acquirePolicyPublication(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if b.policyStore != nil {
+		if err := b.policyStore.CheckSQLiteConversationPolicyPeople(ctx, versions); err != nil {
+			return err
+		}
+	}
 	dim, err := personGeneration(ctx, b.db, gen)
 	if err != nil {
 		return err
@@ -271,6 +286,11 @@ func (b *Backend) CountRejectedPersons(ctx context.Context, gen vector.Generatio
 
 // DeletePersonsNotIn reconciles gen to the exact current source person IDs.
 func (b *Backend) DeletePersonsNotIn(ctx context.Context, gen vector.GenerationID, currentPersonIDs []int64) error {
+	release, err := b.acquirePolicyPublication(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer release()
 	dim, err := personGeneration(ctx, b.db, gen)
 	if err != nil {
 		return err

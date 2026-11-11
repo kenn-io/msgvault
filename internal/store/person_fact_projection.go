@@ -86,7 +86,8 @@ func (s *Store) ApplyPersonFactGenerationContext(
 	return retryContendedWrite(ctx, s, "apply person fact generation",
 		func() (*personfacts.GenerationResult, error) {
 			var result *personfacts.GenerationResult
-			err := s.withTxContext(ctx, func(tx *loggedTx) error {
+			err := s.withConversationPolicyPublication(ctx, func(raw *sql.Tx) error {
+				tx := &loggedTx{Tx: raw, rebind: s.Rebind}
 				var applyErr error
 				result, applyErr = s.applyPreparedPersonFactGenerationTx(ctx, tx, prepared)
 				return applyErr
@@ -129,6 +130,14 @@ func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
 	ctx context.Context, tx *loggedTx, prepared personfacts.PreparedGeneration,
 	afterStage func(string) error,
 ) (*personfacts.GenerationResult, personFactApplyMetadata, error) {
+	return s.applyPreparedPersonFactGenerationTrackingTx(ctx, tx, prepared, afterStage, true)
+}
+
+// Policy withdrawals apply even after automatic tracking has been disabled.
+func (s *Store) applyPreparedPersonFactGenerationTrackingTx(
+	ctx context.Context, tx *loggedTx, prepared personfacts.PreparedGeneration,
+	afterStage func(string) error, requireTracked bool,
+) (*personfacts.GenerationResult, personFactApplyMetadata, error) {
 	input, claims, statuses, err := verifyPreparedPersonFactGeneration(prepared)
 	if err != nil {
 		return nil, personFactApplyMetadata{}, err
@@ -137,8 +146,10 @@ func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
 		ctx, tx, "person-fact-generation", input.PersonID); err != nil {
 		return nil, personFactApplyMetadata{}, err
 	}
-	if err := verifyTrackedPersonFactPersonTx(ctx, tx, input.PersonID); err != nil {
-		return nil, personFactApplyMetadata{}, err
+	if requireTracked {
+		if err := verifyTrackedPersonFactPersonTx(ctx, tx, input.PersonID); err != nil {
+			return nil, personFactApplyMetadata{}, err
+		}
 	}
 	var revisionBefore int64
 	if err := tx.QueryRowContext(ctx,
@@ -180,6 +191,12 @@ func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
 	}
 
 	if err := s.lockEmploymentPeopleTx(ctx, tx, input.PersonID); err != nil {
+		return nil, personFactApplyMetadata{}, err
+	}
+	// Sweep work keeps its original semantic version through the existing
+	// generation/target/catalog/organization -> person lock order. Recheck
+	// after the person lock, before this generation changes its own inputs.
+	if err := s.checkPersonSweepPolicyInputsTx(ctx, tx); err != nil {
 		return nil, personFactApplyMetadata{}, err
 	}
 	inferenceProjectionBefore, err := s.loadPersonInferenceExportProjectionTx(ctx, tx, input.PersonID)
@@ -308,6 +325,17 @@ func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
 		return nil, personFactApplyMetadata{}, fmt.Errorf("read person projection revision after fact generation: %w", err)
 	}
 	metadata.vcardRevisionBumped = revisionAfter != revisionBefore
+	// A supported source status published while cold must keep a durable policy
+	// withdrawal too, so a later promotion can validate and restore that version.
+	if input.ProgramID != "conversation-policy" {
+		var revision int64
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(value AS BIGINT)),0) FROM archive_metadata WHERE key='conversation_policy_revision'`).Scan(&revision); err != nil {
+			return nil, metadata, err
+		}
+		if err := s.reconcileConversationPolicyFactsTx(ctx, tx, input.PersonID, revision); err != nil {
+			return nil, metadata, err
+		}
+	}
 	return result, metadata, nil
 }
 
@@ -917,6 +945,12 @@ func (s *Store) loadPersonFactResolvedClaimsTx(
 			}
 		}
 		for _, evidence := range evidenceByClaim[claim.ID] {
+			eligible, err := s.personFactConversationEligibleTx(ctx, tx, evidence.Input)
+			if err != nil {
+				return nil, nil, err
+			}
+			evidence.PolicyExcluded = !eligible
+
 			if status, exists := statusByEvidence[evidence.ID]; exists {
 				evidence.Supported = status.Supported
 				evidence.LatestStatus = &status

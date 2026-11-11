@@ -456,6 +456,9 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		if _, err := tx.ExecContext(ctx, `UPDATE carddav_resources SET owns_display_name = FALSE WHERE person_id = ?`, id); err != nil {
 			return fmt.Errorf("clear deleted person's display-name ownership: %w", err)
 		}
+		if err := s.invalidatePersonContactPointParticipantsTx(ctx, tx, id); err != nil {
+			return fmt.Errorf("invalidate participant projections before deleting person %d: %w", id, err)
+		}
 
 		var deletedUID string
 		err = tx.QueryRowContext(ctx,

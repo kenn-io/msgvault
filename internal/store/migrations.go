@@ -23,6 +23,9 @@ import (
 // startup on a large archive).
 const (
 	migrationCalendarEventProjectionV1        = "calendar_event_projection_v1"
+	migrationAppleWhatsAppNameProvenance      = "apple_whatsapp_name_provenance_v1"
+	migrationNativeEmailObservationProvenance = "native_email_observation_provenance_v1"
+	migrationParticipantObservationIdentity   = "participant_contact_observation_identity_v2"
 	migrationMeetingProjectionV1              = "meeting_projection_v1"
 	migrationAttachmentsContentHashUnique     = "attachments_content_hash_unique_index"
 	migrationAttachmentOccurrenceUnique       = "attachment_occurrence_unique_indexes_v1"
@@ -101,12 +104,13 @@ const (
 	migrationPersonSweepBatchPurposeV2 = "person_sweep_batch_purpose_v2"
 	// The fact ledger records a claim the person brief proposed with its own
 	// origin, and an attempt records why a brief call produced no version.
-	migrationPersonFactClaimOriginBrief     = "person_fact_claim_origin_brief_v1"
-	migrationPersonSweepAttemptBriefFailure = "person_sweep_attempt_brief_failure_v1"
-	migrationCardDAVMultipleAccounts        = "carddav_multiple_accounts_v1"
-	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
-	migrationChatMembers                    = "chat_members_v1"
-	migrationConversationPolicyBootstrap    = "conversation_policy_bootstrap_v1"
+	migrationPersonFactClaimOriginBrief         = "person_fact_claim_origin_brief_v1"
+	migrationPersonSweepAttemptBriefFailure     = "person_sweep_attempt_brief_failure_v1"
+	migrationCardDAVMultipleAccounts            = "carddav_multiple_accounts_v1"
+	migrationCardDAVInferenceExportState        = "carddav_inference_export_state_v1"
+	migrationChatMembers                        = "chat_members_v1"
+	migrationConversationPolicyBootstrap        = "conversation_policy_bootstrap_v1"
+	migrationPersonFactConversationPolicyStatus = "person_fact_conversation_policy_status_v1"
 )
 
 // hiddenTextBackfillCursorKey is the archive_metadata key holding the last

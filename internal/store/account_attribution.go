@@ -113,6 +113,10 @@ func (st *attributionLockState) holds(sourceID int64) bool {
 func (s *Store) withAttributionTxContext(
 	ctx context.Context, lock attributionLock, fn func(*loggedTx) error,
 ) error {
+	return s.withAttributionPreFenceTxContext(ctx, lock, nil, fn)
+}
+
+func (s *Store) withAttributionPreFenceTxContext(ctx context.Context, lock attributionLock, preFence func(*loggedTx) error, fn func(*loggedTx) error) error {
 	sources := slices.Clone(lock.Sources)
 	slices.Sort(sources)
 	sources = slices.Compact(sources)
@@ -120,6 +124,11 @@ func (s *Store) withAttributionTxContext(
 		sources = nil
 	}
 	return s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error {
+		if preFence != nil {
+			if err := preFence(tx); err != nil {
+				return err
+			}
+		}
 		if lock.Exclusive {
 			if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 				return err

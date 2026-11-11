@@ -70,6 +70,7 @@ var routeProbeTimeout = 15 * time.Second
 // PendingReplies buffer persistMessage appends to, keeping checkpoints
 // consistent with the cursor by construction).
 type chatScope struct {
+	chat               *Chat
 	chatID             string
 	convID             int64
 	sourceID           int64
@@ -847,9 +848,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 				policyCtx, cancelPolicy = opts.finalizeContext(ctx)
 				defer cancelPolicy()
 			}
-			if _, policyErr := imp.store.RefreshConversationPolicy(policyCtx, []int64{convID}, time.Now()); policyErr != nil {
-				statsErr = errors.Join(statsErr, policyErr)
-			}
+			statsErr = errors.Join(statsErr, imp.refreshConversationPolicyAndRoster(policyCtx, convID, sourceID, membership.roster, membershipComplete, opts, sum))
 		}
 		err = errors.Join(err, statsErr)
 	}()
@@ -858,7 +857,7 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 		cs.RosterRetryAfter = ""
 	}
 	cc := &chatScope{
-		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID,
+		chatID: ch.ID, convID: convID, sourceID: sourceID, syncID: syncID, chat: membership.roster,
 		opts: opts, state: state, cs: cs, membershipComplete: membershipComplete,
 		tailScan: tailScan,
 	}
@@ -920,8 +919,10 @@ func (imp *Importer) syncChat(ctx context.Context, syncID, sourceID int64, ch *C
 // total is reported. Neither is known when a truncated listing reports no
 // total and the detail fetch failed; that roster stays unresolved.
 type chatMembership struct {
-	count int
-	known bool
+	roster        *Chat
+	routeEvidence store.MessagingRouteEvidence
+	count         int
+	known         bool
 }
 
 // chatMembershipOf resolves the roster from the freshest payload this run has
@@ -1012,6 +1013,79 @@ func (imp *Importer) ensureConversation(
 	if err != nil {
 		return 0, false, chatMembership{}, err
 	}
+	// Provider self proof is independent of rich phone/email identity. Publish
+	// the account-scoped anchors before evaluating historical own activity.
+	imp.res.accountID = opts.AccountID
+	for i := range detail.Participants.Items {
+		user := &detail.Participants.Items[i].User
+		if !user.IsSelf {
+			continue
+		}
+		pid, err := imp.res.resolveID(ctx, user.ID, "")
+		if err != nil {
+			return 0, false, chatMembership{}, err
+		}
+		if pid != 0 {
+			routeEvidence.ParticipantIDs = append(routeEvidence.ParticipantIDs, pid)
+			routeEvidence.SelfParticipantIDs = append(routeEvidence.SelfParticipantIDs, pid)
+		}
+	}
+	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
+		return 0, false, chatMembership{}, err
+	}
+	if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
+		return 0, false, chatMembership{}, err
+	}
+	if err := imp.replayConversationRoster(ctx, convID, sourceID, detail, membershipComplete, routeEvidence, opts, sum); err != nil {
+		return 0, false, chatMembership{}, err
+	}
+	membership.roster = detail
+	membership.routeEvidence = routeEvidence
+	return convID, membershipComplete, membership, nil
+}
+
+// refreshConversationPolicyAndRoster runs after a completed normalization phase.
+// Promotion reuses fetched detail and the current stored proof, so a late fetch
+// failure cannot be replaced by the successful proof captured before paging.
+func (imp *Importer) refreshConversationPolicyAndRoster(ctx context.Context, convID, sourceID int64, detail *Chat, membershipComplete bool, opts ImportOptions, sum *ImportSummary) error {
+	refreshed, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now())
+	if err != nil || len(refreshed.ChangedConversationIDs) == 0 {
+		return err
+	}
+	full, err := imp.store.ConversationFullEligibleContext(ctx, convID)
+	if err != nil || !full {
+		return err
+	}
+	metadata, err := imp.store.GetConversationMetadataContext(ctx, convID)
+	if err != nil {
+		return err
+	}
+	var current struct {
+		Route store.MessagingRouteEvidence `json:"messaging_route"`
+	}
+	if err := json.Unmarshal([]byte(metadata.String), &current); err != nil {
+		return fmt.Errorf("read current roster route proof: %w", err)
+	}
+	return imp.replayConversationRoster(ctx, convID, sourceID, detail, membershipComplete && current.Route.MembershipComplete, current.Route, opts, sum)
+}
+
+// replayConversationRoster resolves and captures the already fetched roster. It
+// performs no provider requests and is also used after same-sync promotion.
+func (imp *Importer) replayConversationRoster(ctx context.Context, convID, sourceID int64, detail *Chat, membershipComplete bool, routeEvidence store.MessagingRouteEvidence, opts ImportOptions, sum *ImportSummary) error {
+	full, err := imp.store.ConversationFullEligibleContext(ctx, convID)
+	if err != nil {
+		return err
+	}
+	membership := chatMembershipOf(detail, membershipComplete)
+	if full {
+		imp.obs.mu.Lock()
+		for key := range imp.obs.seen {
+			if key.conversationID == convID {
+				delete(imp.obs.seen, key)
+			}
+		}
+		imp.obs.mu.Unlock()
+	}
 	members := make([]store.ConversationParticipantRef, 0, len(detail.Participants.Items))
 	type resolvedMember struct {
 		participantID int64
@@ -1028,12 +1102,12 @@ func (imp *Importer) ensureConversation(
 	imp.res.accountID = opts.AccountID
 	for i := range detail.Participants.Items {
 		if err := ctx.Err(); err != nil {
-			return 0, false, chatMembership{}, err
+			return err
 		}
 		p := &detail.Participants.Items[i]
-		pid, rerr := imp.res.resolveUser(ctx, &p.User)
+		pid, rerr := imp.res.resolveUserForPolicy(ctx, &p.User, convID)
 		if rerr != nil {
-			return 0, false, chatMembership{}, rerr
+			return rerr
 		}
 		if pid == 0 {
 			continue
@@ -1046,16 +1120,16 @@ func (imp *Importer) ensureConversation(
 		resolvedMembers = append(resolvedMembers, resolvedMember{participantID: pid, user: &p.User})
 	}
 	if err := ctx.Err(); err != nil {
-		return 0, false, chatMembership{}, err
+		return err
 	}
 	if membershipComplete {
 		if err := imp.store.ReplaceConversationParticipantsContext(ctx, convID, members); err != nil {
-			return 0, false, chatMembership{}, err
+			return err
 		}
 	} else {
 		for _, member := range members {
 			if err := ctx.Err(); err != nil {
-				return 0, false, chatMembership{}, err
+				return err
 			}
 			cerr := imp.store.EnsureConversationParticipantContext(
 				ctx, convID, member.ParticipantID, member.Role,
@@ -1065,6 +1139,8 @@ func (imp *Importer) ensureConversation(
 			}
 		}
 	}
+	routeEvidence.ParticipantIDs = nil
+	routeEvidence.SelfParticipantIDs = nil
 	routeEvidence.MembershipComplete = membershipComplete && membership.known && len(resolvedMembers) == membership.count
 	for _, member := range resolvedMembers {
 		routeEvidence.ParticipantIDs = append(routeEvidence.ParticipantIDs, member.participantID)
@@ -1073,7 +1149,7 @@ func (imp *Importer) ensureConversation(
 		}
 	}
 	if err := imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence); err != nil {
-		return 0, false, chatMembership{}, err
+		return err
 	}
 
 	// Membership must be visible before matching. The chat participant list is
@@ -1083,20 +1159,17 @@ func (imp *Importer) ensureConversation(
 	// from every candidate created on its first import.
 	for _, member := range resolvedMembers {
 		if err := ctx.Err(); err != nil {
-			return 0, false, chatMembership{}, err
+			return err
 		}
 		imp.captureObservations(
 			ctx, member.participantID, member.user, detail,
-			sourceID, opts.AccountID, bridgePrefix, sum,
+			sourceID, convID, opts.AccountID, bridgePrefix, sum,
 		)
 	}
 	if err := ctx.Err(); err != nil {
-		return 0, false, chatMembership{}, err
+		return err
 	}
-	if _, err := imp.store.RefreshConversationPolicy(ctx, []int64{convID}, time.Now()); err != nil {
-		return 0, false, chatMembership{}, err
-	}
-	return convID, membershipComplete, membership, nil
+	return nil
 }
 
 // recordChatFetchError records a failed message-page read for one chat. Route
@@ -1244,12 +1317,13 @@ func (imp *Importer) captureObservations(
 	u *User,
 	ch *Chat,
 	sourceID int64,
+	conversationID int64,
 	accountID string,
 	bridgePrefix string,
 	sum *ImportSummary,
 ) {
 	results, err := imp.obs.capture(ctx, participantID, u, captureContext{
-		SourceID: sourceID, AccountID: accountID, Network: ch.Network,
+		SourceID: sourceID, ConversationID: conversationID, AccountID: accountID, Network: ch.Network,
 		BridgePrefix: bridgePrefix,
 	})
 	if err != nil && ctx.Err() == nil {
@@ -1736,7 +1810,7 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	// Failed downloads are excluded: their typed markers already drive retries.
 	errorsBefore := sum.Errors
 	msg, text := mapMessage(m, cc.convID, cc.sourceID)
-	senderPID, err := imp.res.resolveID(ctx, m.SenderID, m.SenderName)
+	senderPID, err := imp.res.resolveUserForPolicy(ctx, &User{ID: m.SenderID, FullName: m.SenderName}, cc.convID)
 	if err != nil {
 		return err
 	}
@@ -1786,6 +1860,19 @@ func (imp *Importer) persistMessage(ctx context.Context, cc *chatScope, m *Messa
 	}
 	attachmentErrors := sum.Errors - attachmentErrorsBefore
 
+	if cc.chat != nil {
+		imp.captureObservations(ctx, senderPID, observationUser(cc.chat, m.SenderID, m.SenderName), cc.chat, cc.sourceID, cc.convID, cc.opts.AccountID, "", sum)
+		for _, uid := range m.Mentions {
+			if uid == "" || uid == "@room" {
+				continue
+			}
+			pid, err := imp.res.resolveID(ctx, uid, "")
+			if err != nil {
+				return err
+			}
+			imp.captureObservations(ctx, pid, observationUser(cc.chat, uid, ""), cc.chat, cc.sourceID, cc.convID, cc.opts.AccountID, "", sum)
+		}
+	}
 	if err := imp.persistMentions(ctx, messageID, m, sum); err != nil {
 		return err
 	}
@@ -2004,4 +2091,15 @@ func parseWatermark(s string) time.Time {
 // order-comparable as strings (see SyncState.Merge).
 func formatWatermark(t time.Time) string {
 	return t.UTC().Truncate(time.Second).Format(time.RFC3339)
+}
+
+// Prefer the already fetched member payload so sender/mention sightings attach
+// room support to the same logical addresses instead of adding another anchor.
+func observationUser(chat *Chat, id, name string) *User {
+	for i := range chat.Participants.Items {
+		if chat.Participants.Items[i].ID == id {
+			return &chat.Participants.Items[i].User
+		}
+	}
+	return &User{ID: id, FullName: name}
 }

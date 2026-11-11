@@ -341,7 +341,7 @@ type briefCall struct {
 func (w *Worker) runBriefCall(
 	ctx context.Context, call briefCall, accounting *sweepCallAccounting,
 	reservations *[]BudgetReservation,
-) (*BriefResult, FailureClass, Lease, error) {
+) (context.Context, *BriefResult, FailureClass, Lease, error) {
 	lease := call.lease
 	window, err := BuildBriefWindow(ctx, w.Archive, w.briefWindowRequest(
 		lease.PersonID, call.catalog, call.profile, call.plan, call.batchOrdinal))
@@ -349,31 +349,35 @@ func (w *Worker) runBriefCall(
 		if errors.Is(err, ErrNoBriefEvidence) {
 			// Nothing to summarize is not a failure: the person is enrolled but
 			// has no eligible evidence in the profile's lanes and dates.
-			return nil, "", lease, nil
+			return ctx, nil, "", lease, nil
 		}
-		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
+		return ctx, nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 	}
 
+	ctx, err = w.bindPolicyInputs(ctx, []PacketBatch{window.Batch})
+	if err != nil {
+		return ctx, nil, briefFailureClass(err), lease, err
+	}
 	prepared, err := w.Runner.PrepareStructured(ctx, window.Batch.Request)
 	if err != nil {
-		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
+		return ctx, nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 	}
 	estimate, err := EstimateWireTokenReservation(
 		prepared.WireRequest(), window.Batch.Request.MaxOutputTokens)
 	if err != nil {
-		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
+		return ctx, nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 	}
 	estimatedCost, err := EstimateCostMicroUSD(estimate, w.Config.Budgets)
 	if err != nil {
-		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
+		return ctx, nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 	}
 	execution, err := w.Runner.BeginStructuredExecution(ctx, prepared)
 	if err != nil {
-		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
+		return ctx, nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 	}
 	preparedCall, err := execution.PrimaryCall(prepared)
 	if err != nil {
-		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
+		return ctx, nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 	}
 
 	reservation, err := w.Store.ReservePersonSweepBudget(ctx, BudgetReservationRequest{
@@ -390,7 +394,7 @@ func (w *Worker) runBriefCall(
 	if err != nil {
 		// Budget exhaustion defers the brief to the next run; the reservation
 		// rolled back, so there is nothing to reconcile.
-		return nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
+		return ctx, nil, briefFailureClass(err), lease, briefFatalError(ctx, err)
 	}
 	*reservations = append(*reservations, reservation)
 
@@ -400,16 +404,19 @@ func (w *Worker) runBriefCall(
 	for {
 		renewed, renewErr := w.Store.RenewPersonSweep(ctx, lease, w.Config.LeaseDuration)
 		if renewErr != nil {
-			return nil, "", lease, renewErr
+			return ctx, nil, "", lease, renewErr
 		}
 		if renewed == nil {
-			return nil, "", lease, ErrLeaseLost
+			return ctx, nil, "", lease, ErrLeaseLost
 		}
 		lease = *renewed
 		started := w.now()
 		marked := false
 		updated, response, runErr := w.runPreparedWithLeaseHeartbeat(ctx, lease,
 			func(markCtx context.Context) error {
+				if err := w.checkPolicyWork(markCtx); err != nil {
+					return err
+				}
 				if markErr := w.Store.MarkPersonSweepBudgetStarted(
 					markCtx, current.reservation, lease); markErr != nil {
 					return markErr
@@ -422,19 +429,19 @@ func (w *Worker) runBriefCall(
 			// The store never recorded the call as started, so the reservation
 			// is still refundable and the attempt cannot be trusted to finish.
 			_ = w.Store.ReleasePersonSweepBudget(ctx, current.reservation)
-			return nil, "", lease, briefMarkFailure(runErr)
+			return ctx, nil, "", lease, briefMarkFailure(runErr)
 		}
 		latency := max(time.Duration(0), w.now().Sub(started))
 		if structuredResponseCompleted(response) {
 			if recordErr := accounting.record(current, response, latency); recordErr != nil {
-				return nil, briefFailureClass(recordErr), lease, briefFatalError(ctx, recordErr)
+				return ctx, nil, briefFailureClass(recordErr), lease, briefFatalError(ctx, recordErr)
 			}
 		}
 
 		var failure *ValidationFailure
 		if runErr != nil {
 			if !errors.As(runErr, &failure) || current.callOrdinal != 0 || failure.repair {
-				return nil, briefFailureClass(runErr), lease, briefFatalError(ctx, runErr)
+				return ctx, nil, briefFailureClass(runErr), lease, briefFatalError(ctx, runErr)
 			}
 		} else {
 			parsed, parseErr := ParseBrief(response.Output, window, call.profile)
@@ -444,38 +451,38 @@ func (w *Worker) runBriefCall(
 				// invalid_output so the empty result is visible in history.
 				result, buildErr := renderBriefResult(parsed, window, w.now())
 				if buildErr != nil {
-					return nil, FailureInvalidOutput, lease, nil //nolint:nilerr // An empty brief is a recorded outcome, not an attempt failure.
+					return ctx, nil, FailureInvalidOutput, lease, nil //nolint:nilerr // An empty brief is a recorded outcome, not an attempt failure.
 				}
 				// Brief text and citations do not independently establish a profile
 				// fact. Keep possible attributes in the saved structure as suggestions.
-				return &result, "", lease, nil
+				return ctx, &result, "", lease, nil
 			}
 			if current.callOrdinal != 0 {
-				return nil, FailureInvalidOutput, lease, nil
+				return ctx, nil, FailureInvalidOutput, lease, nil
 			}
 			semanticFailure, semanticErr := execution.SemanticValidationFailure(response)
 			if semanticErr != nil {
-				return nil, briefFailureClass(semanticErr), lease, briefFatalError(ctx, semanticErr)
+				return ctx, nil, briefFailureClass(semanticErr), lease, briefFatalError(ctx, semanticErr)
 			}
 			failure = &semanticFailure
 		}
 
 		repair, repairErr := execution.PrepareRepair(*failure)
 		if repairErr != nil {
-			return nil, briefFailureClass(repairErr), lease, briefFatalError(ctx, repairErr)
+			return ctx, nil, briefFailureClass(repairErr), lease, briefFatalError(ctx, repairErr)
 		}
 		repairCall, repairErr := execution.RepairCall(repair)
 		if repairErr != nil {
-			return nil, briefFailureClass(repairErr), lease, briefFatalError(ctx, repairErr)
+			return ctx, nil, briefFailureClass(repairErr), lease, briefFatalError(ctx, repairErr)
 		}
 		repairEstimate, estimateErr := EstimateWireTokenReservation(
 			repair.WireRequest(), window.Batch.Request.MaxOutputTokens)
 		if estimateErr != nil {
-			return nil, briefFailureClass(estimateErr), lease, briefFatalError(ctx, estimateErr)
+			return ctx, nil, briefFailureClass(estimateErr), lease, briefFatalError(ctx, estimateErr)
 		}
 		repairCost, estimateErr := EstimateCostMicroUSD(repairEstimate, w.Config.Budgets)
 		if estimateErr != nil {
-			return nil, briefFailureClass(estimateErr), lease, briefFatalError(ctx, estimateErr)
+			return ctx, nil, briefFailureClass(estimateErr), lease, briefFatalError(ctx, estimateErr)
 		}
 		repairReservation, reserveErr := w.Store.ReservePersonSweepBudget(ctx, BudgetReservationRequest{
 			RunID: call.runID, AttemptID: call.attemptID, BatchOrdinal: call.batchOrdinal,
@@ -489,7 +496,7 @@ func (w *Worker) runBriefCall(
 			EstimatedCostMicroUSD: repairCost, Budget: w.Config.Budgets,
 		})
 		if reserveErr != nil {
-			return nil, briefFailureClass(reserveErr), lease, briefFatalError(ctx, reserveErr)
+			return ctx, nil, briefFailureClass(reserveErr), lease, briefFatalError(ctx, reserveErr)
 		}
 		*reservations = append(*reservations, repairReservation)
 		current = sweepProviderCall{batch: window.Batch, prepared: repair, estimate: repairEstimate,
