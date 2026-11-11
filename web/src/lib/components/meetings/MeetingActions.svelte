@@ -118,7 +118,7 @@
         </div>
       </div>
       {#if displayedPage.rows.length === 0}
-        <EmptyState title={emptyState(displayedPage.coverage)} description="Source evidence is shown without local completion state." />
+        <EmptyState title={emptyState(displayedPage.coverage)} description="MsgVault doesn't track whether action items are done." />
       {:else}
         <ol>
           {#each displayedPage.rows as row (`${row.meeting.message_id}:${row.action.locator}`)}

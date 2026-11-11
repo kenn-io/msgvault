@@ -535,7 +535,7 @@ describe('EverythingWorkspace', () => {
     state.replaceSearchDraft('', 'semantic');
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    await screen.findByText('Semantic index is stale.');
+    await screen.findByText('Semantic search results may be out of date.');
     await fireEvent.click(screen.getByRole('button', { name: 'Build index' }));
     expect(requests.some((request) => new URL(request.url).pathname.endsWith('/cli/run'))).toBe(false);
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -575,7 +575,7 @@ describe('EverythingWorkspace', () => {
     state.replaceSearchDraft('', 'hybrid');
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    await screen.findByText('Semantic index is stale.');
+    await screen.findByText('Semantic search results may be out of date.');
     await fireEvent.click(screen.getByRole('button', { name: 'Build index' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
 

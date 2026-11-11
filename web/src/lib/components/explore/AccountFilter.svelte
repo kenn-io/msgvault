@@ -173,7 +173,7 @@
     </label>
     {#if error}<span role="alert">{error}</span>{/if}
     {#if unavailable}<span role="status">{retrying ? 'Loading accounts…' : 'Accounts unavailable'}</span>
-    {:else if pending > 0}<span role="status">Attribution repair pending for {pending} messages.</span>{/if}
+    {:else if pending > 0}<span role="status">Account matching is pending for {pending} messages.</span>{/if}
   </div>
 {/if}
 
