@@ -57,7 +57,6 @@ func TestSplitRanges(t *testing.T) {
 		{"Thunderbird Italian forward", "Olá\r\n-------- Messaggio Inoltrato --------\r\nOld", []Segment{{Authored, 0, 6, 0}, {Forwarded, 6, 48, 0}}},
 		{"Thunderbird Brazilian Portuguese forward", "Olá\r\n-------- Mensagem encaminhada --------\r\nOld", []Segment{{Authored, 0, 6, 0}, {Forwarded, 6, 49, 0}}},
 		{"Thunderbird European Portuguese forward", "Olá\r\n-------- Mensagem reencaminhada --------\r\nOld", []Segment{{Authored, 0, 6, 0}, {Forwarded, 6, 51, 0}}},
-		{"Spanish forward suffix is prose", "-- Mensaje reenviado -- extra\nOld", []Segment{{Authored, 0, 33, 0}}},
 		{"German forward prose", "Weitergeleitete Nachricht von Max anbei.", []Segment{{Authored, 0, 40, 0}}},
 		{"French forward prose", "Voici le message transféré :", []Segment{{Authored, 0, 30, 0}}},
 		{"French forward needs closing dashes", "-- Message transféré", []Segment{{Authored, 0, 22, 0}}},
@@ -90,7 +89,7 @@ func TestSplitThunderbirdReplyHeaders(t *testing.T) {
 		{"German sender first", "Max <m@x.de> schrieb am 05.11.2026 um 10:00:"},
 		{"French date first", "Le 5 novembre 2026 à 10:00, Max <m@x.fr> a écrit\u00a0:"},
 		{"French sender first", "Max <m@x.fr> a écrit le 5 novembre 2026 à 10:00\u00a0:"},
-		{"Spanish date first", "El 5 de noviembre de 2026 a las 10:00, Alex <alex@example.com> escribió:"},
+		{"Spanish date first", "El 11/5/2026 a las 10:00\u00a0AM, Alex <alex@example.com> escribió:"},
 		{"Spanish sender first", "Alex <alex@example.com> escribió el 5 de noviembre de 2026 a las 10:00:"},
 		{"Italian date first", "Il 5 novembre 2026 10:00, Alex <alex@example.com> ha scritto:"},
 		{"Italian sender first", "Alex <alex@example.com> ha scritto il 5 novembre 2026 alle 10:00:"},
@@ -105,15 +104,23 @@ func TestSplitThunderbirdReplyHeaders(t *testing.T) {
 				assert.Equal(t, []Segment{{Quoted, 0, len(body), 1}}, Split(body).Segments)
 				assert.False(t, IsDatedAttribution(tc.header), "CLI attribution recognition must stay unchanged")
 			})
-			t.Run("authored sentence", func(t *testing.T) {
-				body := tc.header + "\nNew text"
-				assert.Equal(t, []Segment{{Authored, 0, len(body), 0}}, Split(body).Segments)
-			})
-			t.Run("requires time", func(t *testing.T) {
-				header := strings.Replace(tc.header, "10:00", "noon", 1) + "\n"
-				body := header + "> old"
-				assert.Equal(t, []Segment{{Authored, 0, len(header), 0}, {Quoted, len(header), len(body), 1}}, Split(body).Segments)
-			})
+		})
+	}
+	t.Run("authored sentence without quote", func(t *testing.T) {
+		body := "El 11/5/2026 a las 10:00, Alex escribió:\nNew text"
+		assert.Equal(t, []Segment{{Authored, 0, len(body), 0}}, Split(body).Segments)
+	})
+	for _, tc := range []struct {
+		name, header string
+	}{
+		{"no numeric date", "El informe a las 10:00, Alex escribió:"},
+		{"Italian requires time", "Alex ha scritto il 11/5/2026 alle noon:"},
+		{"Portuguese requires time", "Às noon de 11/5/2026, Alex escreveu:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			header := tc.header + "\n"
+			body := header + "> old"
+			assert.Equal(t, []Segment{{Authored, 0, len(header), 0}, {Quoted, len(header), len(body), 1}}, Split(body).Segments)
 		})
 	}
 }

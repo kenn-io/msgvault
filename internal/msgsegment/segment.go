@@ -39,23 +39,28 @@ var wroteSuffix = regexp.MustCompile(`(?i)\bwrote:\s*$`)
 // Thunderbird's dated reply forms, used only by Split.
 // https://github.com/thunderbird/thunderbird-l10n/blob/main/de/mail/chrome/messenger/messengercompose/composeMsgs.properties#L174-L178
 // https://github.com/thunderbird/thunderbird-l10n/blob/main/fr/mail/chrome/messenger/messengercompose/composeMsgs.properties#L174-L178
-// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/es-ES/mail/chrome/messenger/messengercompose/composeMsgs.properties#L175-L184
-// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/it/mail/chrome/messenger/messengercompose/composeMsgs.properties#L175-L184
-// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/pt-BR/mail/chrome/messenger/messengercompose/composeMsgs.properties#L175-L184
-// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/pt-PT/mail/chrome/messenger/messengercompose/composeMsgs.properties#L175-L184
+// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/es-ES/mail/chrome/messenger/messengercompose/composeMsgs.properties#L174-L184
+// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/it/mail/chrome/messenger/messengercompose/composeMsgs.properties#L174-L184
+// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/pt-BR/mail/chrome/messenger/messengercompose/composeMsgs.properties#L174-L184
+// https://github.com/thunderbird/thunderbird-l10n/blob/86b8c23e4e72ad2f8c7663afed8e0ac308f9213c/pt-PT/mail/chrome/messenger/messengercompose/composeMsgs.properties#L174-L184
+const (
+	thunderbirdDate = `.*\p{Nd}.*`
+	thunderbirdTime = `\d{1,2}:\d{2}(?:[\s\p{Z}]*(?:AM|PM))?`
+)
+
 var thunderbirdDatedAttribution = regexp.MustCompile(`(?i)^(?:` +
 	`Am\s+.+\s+um\s+\d{1,2}:\d{2}\s+schrieb\s+.+:` +
 	`|.+\s+schrieb\s+am\s+.+\s+um\s+\d{1,2}:\d{2}:` +
 	`|Le\s+.+\s+à\s+\d{1,2}:\d{2},\s+.+\s+a\s+écrit[\s\x{A0}]+:` +
 	`|.+\s+a\s+écrit\s+le\s+.+\s+à\s+\d{1,2}:\d{2}[\s\x{A0}]+:` +
-	`|El\s+.+\s+a\s+las\s+\d{1,2}:\d{2},\s+.+\s+escribió:` +
-	`|.+\s+escribió\s+el\s+.+\s+a\s+las\s+\d{1,2}:\d{2}:` +
-	`|Il\s+.+\s+\d{1,2}:\d{2},\s+.+\s+ha\s+scritto:` +
-	`|.+\s+ha\s+scritto\s+il\s+.+\s+alle\s+\d{1,2}:\d{2}:` +
-	`|Em\s+.+\s+\d{1,2}:\d{2},\s+.+\s+escreveu:` +
-	`|.+\s+escreveu\s+em\s+.+\s+\d{1,2}:\d{2}:` +
-	`|Às\s+\d{1,2}:\d{2}\s+de\s+.+,\s+.+\s+escreveu:` +
-	`|.+\s+escreveu\s+às\s+\d{1,2}:\d{2}\s+de\s+.+:` +
+	`|El\s+` + thunderbirdDate + `\s+a\s+las\s+` + thunderbirdTime + `,\s+.+\s+escribió:` +
+	`|.+\s+escribió\s+el\s+` + thunderbirdDate + `\s+a\s+las\s+` + thunderbirdTime + `:` +
+	`|Il\s+` + thunderbirdDate + `\s+` + thunderbirdTime + `,\s+.+\s+ha\s+scritto:` +
+	`|.+\s+ha\s+scritto\s+il\s+` + thunderbirdDate + `\s+alle\s+` + thunderbirdTime + `:` +
+	`|Em\s+` + thunderbirdDate + `\s+` + thunderbirdTime + `,\s+.+\s+escreveu:` +
+	`|.+\s+escreveu\s+em\s+` + thunderbirdDate + `\s+` + thunderbirdTime + `:` +
+	`|Às\s+` + thunderbirdTime + `\s+de\s+` + thunderbirdDate + `,\s+.+\s+escreveu:` +
+	`|.+\s+escreveu\s+às\s+` + thunderbirdTime + `\s+de\s+` + thunderbirdDate + `:` +
 	`)\s*$`)
 
 var relaySeparator = regexp.MustCompile(`(?i)^-{2,}\s*(?:(original message|original-nachricht|message original|mensaje original|messaggio originale|mensagem original)|forwarded message|weitergeleitete nachricht|message transféré|mensaje reenviado|messaggio inoltrato|mensagem encaminhada|mensagem reencaminhada)\s*-{2,}$`)
