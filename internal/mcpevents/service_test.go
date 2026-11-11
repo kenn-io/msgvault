@@ -294,18 +294,34 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 				requirements.NoError(err)
 				requirements.True(ok)
 			}
-			now = now.Add(25 * time.Hour)
+			now = now.Add(23 * time.Hour)
+			in.Delivery.URL = "https://example.com/live"
+			live, err := service.Subscribe(t.Context(), in)
+			requirements.NoError(err)
+			now = now.Add(2 * time.Hour)
+			service.Enabled = false
 			targets, err := service.Native(t.Context())
 			requirements.NoError(err)
 			assertions.Empty(targets)
 			entries, _, err := service.catalog(t.Context())
 			requirements.NoError(err)
-			assertions.Empty(entries)
+			requirements.Len(entries, 1)
+			assertions.Equal(live.ID, entries[0].ID)
+			credentials, err := providercredentials.ReadEvents(service.TokensDir)
+			requirements.NoError(err)
+			assertions.False(credentials.Stored(providercredentials.EventsID(result.ID)))
+			assertions.True(credentials.Stored(providercredentials.EventsID(live.ID)))
 			_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
 			requirements.NoError(err)
 			assertions.Nil(position)
+			_, livePosition, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(live.ID))
+			requirements.NoError(err)
+			assertions.NotNil(livePosition)
 		})
 	}
+	targets, err := (&Service{}).Native(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, targets)
 }
 
 func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {

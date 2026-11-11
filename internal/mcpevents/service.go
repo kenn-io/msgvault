@@ -268,11 +268,14 @@ func (s *Service) purgeExpired(ctx context.Context) error {
 
 // Native loads live subscriptions and removes expired definitions before delivery.
 func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
-	if !s.Enabled {
+	if !s.Enabled && s.Store == nil {
 		return nil, nil
 	}
 	if err := s.purgeExpired(ctx); err != nil {
 		return nil, err
+	}
+	if !s.Enabled {
+		return nil, nil
 	}
 	entries, _, err := s.catalog(ctx)
 	if err != nil || len(entries) == 0 {
