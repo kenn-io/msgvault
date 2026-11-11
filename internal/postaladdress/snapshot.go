@@ -54,10 +54,10 @@ func DecodeOriginalInput(value string) (Input, bool, error) {
 // unreadable version has no recoverable source, so it reads as an empty
 // snapshot: its text is never exposed and it cannot hide other addresses.
 // Writes keep using DecodeOriginalInput, which rejects it.
-func DecodeStoredOriginalInput(value string) (Input, bool, error) {
+func DecodeStoredOriginalInput(value string) (Input, bool) {
 	input, snapshot, err := DecodeOriginalInput(value)
 	if err != nil {
-		return Input{}, true, nil
+		return Input{}, true
 	}
-	return input, snapshot, err
+	return input, snapshot
 }
