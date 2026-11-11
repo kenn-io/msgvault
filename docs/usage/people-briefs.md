@@ -96,13 +96,16 @@ retained unresolved events before the usual seven-day interval, so an outcome th
 A failed refresh uses the normal retry delay.
 
 Event memory holds at most eight events, with one event per source message.
+A new event is not saved while all eight retained events are unresolved; a
+resolved slot can be reused.
 The sweep re-reads their sources even after they leave the ordinary overlap
 window. Supported prior events survive a provider omission, and a supported
 resolution cannot be reopened by omitting its outcome. Unresolved events remain
-eligible for refresh until an outcome, source loss, or eviction. When capacity is
-needed, the oldest unresolved event may be retired; retirement does not mean it
-resolved. The paragraph limit is soft when needed to keep retained event
-summaries and questions visible; ordinary items are still trimmed. All retained event sentences keep their source links.
+eligible for refresh until an outcome, source loss, or eviction. When evidence
+window capacity is needed, the oldest unresolved event may be retired; retirement
+does not mean it resolved. The paragraph limit is soft when needed to keep
+retained event summaries and questions visible; ordinary items are still trimmed.
+All retained event sentences keep their source links.
 
 The evidence window is bounded, so this is not a complete event ledger. A burst
 of newer messages or the byte limit can hide an outcome. After the first event-
