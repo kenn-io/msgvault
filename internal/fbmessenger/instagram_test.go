@@ -811,6 +811,40 @@ func TestInstagramSenderChangesRetainMessages(t *testing.T) {
 	}
 }
 
+func TestInstagramReorderedMessageTypes(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	a, b := instagramTestRecord("same"), instagramTestRecord("same")
+	a["type"], b["type"] = "Generic", "Subscribe"
+	c, d := instagramTestRecord("same"), instagramTestRecord("same")
+	c["type"], d["type"], c["missed"], d["missed"] = "Call", "Call", true, true
+	c["call_duration"], d["call_duration"] = 10, 20
+	instagramTestShard(t, root, "circle", "message_1.json", a, b, c, d)
+	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	ids := instagramIDs(t, st)
+	rawByID := func() map[string]string {
+		t.Helper()
+		out := map[string]string{}
+		for _, sourceID := range ids {
+			var id int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), sourceID).Scan(&id))
+			raw, err := st.GetMessageRawContext(t.Context(), id)
+			require.NoError(err)
+			out[sourceID] = string(raw)
+		}
+		return out
+	}
+	before := rawByID()
+	instagramTestShard(t, root, "circle", "message_1.json", d, c, b, a)
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	assert.Equal(before, rawByID())
+}
+
 func TestInstagramDuplicateOccurrences(t *testing.T) {
 	t.Run("reordered", func(t *testing.T) {
 		assert := assert.New(t)

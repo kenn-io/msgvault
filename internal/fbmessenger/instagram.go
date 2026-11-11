@@ -25,7 +25,15 @@ type instagramPending struct {
 	skip    bool
 }
 
-type instagramOccurrence struct{ content, reactions string }
+type instagramContent struct {
+	body, kind          string
+	duration            int64
+	hasDuration, missed bool
+}
+type instagramOccurrence struct {
+	content   instagramContent
+	reactions string
+}
 
 func instagramEvidence(record rawJSONMessage) instagramOccurrence {
 	message := instagramJSONMessage(record)
@@ -37,7 +45,11 @@ func instagramEvidence(record rawJSONMessage) instagramOccurrence {
 	})
 	reactions, _ := json.Marshal(message.Reactions)
 	record.Reactions = nil
-	return instagramOccurrence{instagramJSONMessage(record).Body, string(reactions)}
+	content := instagramContent{body: instagramJSONMessage(record).Body, kind: record.Type, missed: record.Missed}
+	if record.CallDuration != nil {
+		content.duration, content.hasDuration = *record.CallDuration, true
+	}
+	return instagramOccurrence{content, string(reactions)}
 }
 
 func parseInstagramThread(ctx context.Context, st *store.Store, sourceID int64, root string, td ThreadDir, summary *ImportSummary, keys map[string]string, archivedGroups map[string][]string) (*Thread, map[string]store.StoredMessage, error) {
@@ -136,9 +148,9 @@ func matchInstagramGroup(group []*instagramPending, old []string, archived map[s
 			exact[key] = candidates[1:]
 		}
 	}
-	remaining := map[string][]*instagramPending{}
-	unused := map[string][]string{}
-	uncertain := map[string]bool{}
+	remaining := map[instagramContent][]*instagramPending{}
+	unused := map[instagramContent][]string{}
+	uncertain := map[instagramContent]bool{}
 	for _, p := range group {
 		if p.id == "" {
 			if unreadable {
@@ -175,7 +187,7 @@ func instagramIsSurplus(stored store.StoredMessage) bool {
 // can't prove any copy is new, the copies are skipped. Surplus copies are
 // added with only the reactions every copy has. Either way the run is
 // incomplete, since which copy is which can't be told.
-func reconcileInstagramCopies(remaining map[string][]*instagramPending, unused map[string][]string, used map[string]bool, summary *ImportSummary, repairs *[]string, archived map[string]store.StoredMessage) {
+func reconcileInstagramCopies(remaining map[instagramContent][]*instagramPending, unused map[instagramContent][]string, used map[string]bool, summary *ImportSummary, repairs *[]string, archived map[string]store.StoredMessage) {
 	for content, items := range remaining {
 		old := unused[content]
 		switch {

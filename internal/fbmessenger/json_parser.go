@@ -199,16 +199,18 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 					return nil, err
 				}
 				instagram.summary.MessagesProcessed++
-				var record rawJSONMessage
-				var stamp struct {
+				var item struct {
+					rawJSONMessage
 					Timestamp *int64 `json:"timestamp_ms"`
 				}
-				if json.Unmarshal(raw, &record) != nil || json.Unmarshal(raw, &stamp) != nil || stamp.Timestamp == nil {
+				if json.Unmarshal(raw, &item) != nil || item.Timestamp == nil {
 					instagram.summary.MessagesSkipped++
 					instagram.summary.RecordsUnsupported++
 					instagram.summary.Incomplete = true
 					continue
 				}
+				record := item.rawJSONMessage
+				record.TimestampMs = *item.Timestamp
 				message := instagramJSONMessage(record)
 				// Media entries without a URI are the only ones resolveAttachments drops.
 				media := len(record.Photos) + len(record.Videos) + len(record.Audio) + len(record.Files) + len(record.Media) + len(record.Gifs)
@@ -219,7 +221,7 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 					instagram.summary.MediaRejected += rejected
 					instagram.summary.Incomplete = true
 				}
-				message.SentAt = time.UnixMilli(*stamp.Timestamp).UTC()
+				message.SentAt = time.UnixMilli(record.TimestampMs).UTC()
 				if message.Body == "" && len(message.Attachments) == 0 {
 					instagram.summary.MessagesSkipped++
 					instagram.summary.RecordsUnsupported++
