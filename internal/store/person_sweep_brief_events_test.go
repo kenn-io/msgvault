@@ -282,7 +282,7 @@ func TestPersonSweepEventPolicyRefusalRetiresCurrentOnceWithoutInference(t *test
 			if policy == "no_sensitive" {
 				provider.AllowSensitive = false
 			} else {
-				provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceDocumentText}
+				provider.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}
 			}
 			f.worker.Config.Providers["default"] = provider
 			profile, err := f.worker.Config.Profile()
