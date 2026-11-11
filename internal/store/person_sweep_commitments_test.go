@@ -484,6 +484,8 @@ func TestCommitmentAgendaReceiptLifecycle(t *testing.T) {
 	freshMessage := persist("fresh-agenda-promise", "I will book the venue.", -30*time.Minute)
 	f = nextCommitmentTestAttempt(t, f, "-fresh-agenda")
 	applyCommitmentTestSources(t, f, cfg.Commitments)
+	f = nextCommitmentTestAttempt(t, f, "-fresh-agenda-replay")
+	applyCommitmentTestSources(t, f, cfg.Commitments)
 	candidates, err = st.ListCommitmentAgendaCandidatesContext(ctx, now, 1)
 	r.NoError(err)
 	r.Len(candidates, 1)
