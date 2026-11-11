@@ -151,4 +151,16 @@ func TestWakeupJobWithOnlyEvents(t *testing.T) {
 	withoutEvents := scheduler.New(nil)
 	require.NoError(configureWakeupJob(t.Context(), withoutEvents, nil, st, &config.Config{}, nil, nil))
 	assert.False(withoutEvents.IsJobScheduled("wakeups"))
+	emptyEvents := scheduler.New(nil)
+	require.NoError(configureWakeupJob(t.Context(), emptyEvents, nil, st, &config.Config{}, nil, service))
+	assert.False(emptyEvents.IsJobScheduled("wakeups"))
+	service.Enabled = true
+	enabledEvents := scheduler.New(nil)
+	require.NoError(configureWakeupJob(t.Context(), enabledEvents, nil, st, &config.Config{}, nil, service))
+	assert.True(enabledEvents.IsJobScheduled("wakeups"))
+	broken := testutil.NewTestStore(t)
+	require.NoError(broken.Close())
+	unreadable := scheduler.New(nil)
+	require.NoError(configureWakeupJob(t.Context(), unreadable, nil, broken, &config.Config{}, nil, &mcpevents.Service{Store: broken}))
+	assert.True(unreadable.IsJobScheduled("wakeups"))
 }

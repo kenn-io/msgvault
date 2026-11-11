@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -16,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/mcpevents"
+	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	pkgclient "go.kenn.io/msgvault/pkg/client"
@@ -35,6 +38,41 @@ func TestEventsListDoesNotUseOperationGate(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir()}, MCPEvents: &mcpevents.Service{}, OperationGate: gate, Logger: testLogger()})
 	srv.handleMCPEventsList(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
 	assert.Zero(t, gate.calls)
+}
+
+func TestEventsRouterRejectsUnverifiedCallback(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource("imap", "events@example.test")
+	requirements.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir()}
+	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	body := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://callback.invalid/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
+	r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
+	r.RemoteAddr = "127.0.0.1:12345"
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	requirements.Equal(http.StatusBadGateway, w.Code, w.Body.String())
+	var response struct {
+		Code   int    `json:"code"`
+		Reason string `json:"reason"`
+	}
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	assertions.Equal(-32027, response.Code)
+	assertions.Contains([]string{"challenge_failed", "dns_error", "timeout", "invalid_callback", "connection_refused", "tls_error", "http_3xx", "http_4xx", "http_5xx"}, response.Reason)
+	catalog, err := st.LoadMCPEventsCatalog(t.Context())
+	requirements.NoError(err)
+	assertions.Empty(catalog)
+	var positions int
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM archive_metadata WHERE key LIKE ?`), "mcpevents:v1:pos:%").Scan(&positions))
+	assertions.Zero(positions)
+	_, err = os.Stat(filepath.Join(cfg.TokensDir(), providercredentials.EventsFilename))
+	assertions.ErrorIs(err, os.ErrNotExist)
 }
 
 func TestMCPEventsRejectsDelegatedGrant(t *testing.T) {

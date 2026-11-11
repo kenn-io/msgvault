@@ -550,22 +550,75 @@ func TestOwnerServiceRejectsOtherCatalogOwners(t *testing.T) {
 	}
 }
 
-func TestUnsubscribeCredentialCleanupFailureRetainsEntry(t *testing.T) {
+func TestUnsubscribeCredentialCleanupFailureRemovesEntry(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := newEventsTestStore(t)
 	now := time.Now().UTC()
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
+	var logs bytes.Buffer
+	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }, Logger: slog.New(slog.NewTextHandler(&logs, nil))}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	result, err := service.Subscribe(t.Context(), in)
 	require.NoError(err)
 	require.NoError(os.WriteFile(filepath.Join(service.TokensDir, providercredentials.EventsFilename), []byte("invalid"), 0600))
 	err = service.Unsubscribe(t.Context(), MCPEventsUnsubscribeRequest{Name: in.Name, Arguments: in.Arguments, Delivery: in.Delivery})
-	require.Error(err)
+	require.NoError(err)
 	entries, _, err := service.catalog(t.Context())
 	require.NoError(err)
-	require.Len(entries, 1)
-	assert.Equal(result.ID, entries[0].ID)
+	assert.Empty(entries)
+	_, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+	require.NoError(err)
+	assert.Nil(raw)
+	assert.Contains(logs.String(), "credential_unavailable")
+	assert.NotContains(logs.String(), service.TokensDir)
+	assert.NotContains(logs.String(), in.Delivery.URL)
+}
+
+func TestRefreshRejectsMissingOrCorruptPositionBeforePublication(t *testing.T) {
+	for _, corrupted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("corrupt=%t", corrupted), func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := newEventsTestStore(t)
+			now := time.Now().UTC()
+			service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			first, err := service.Subscribe(t.Context(), in)
+			requirements.NoError(err)
+			key := store.MCPEventsPositionKey(first.ID)
+			if corrupted {
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE archive_metadata SET value=? WHERE key=?`), `{`, key)
+			} else {
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM archive_metadata WHERE key=?`), key)
+			}
+			requirements.NoError(err)
+			before, err := st.LoadMCPEventsCatalog(t.Context())
+			requirements.NoError(err)
+			credentialPath := filepath.Join(service.TokensDir, providercredentials.EventsFilename)
+			credential, err := os.ReadFile(credentialPath)
+			requirements.NoError(err)
+			now = now.Add(time.Hour)
+			_, err = service.Subscribe(t.Context(), in)
+			var eventErr *Error
+			requirements.ErrorAs(err, &eventErr)
+			assertions.Equal("store_unavailable", eventErr.Reason)
+			after, err := st.LoadMCPEventsCatalog(t.Context())
+			requirements.NoError(err)
+			assertions.Equal(before, after)
+			afterCredential, err := os.ReadFile(credentialPath)
+			requirements.NoError(err)
+			assertions.Equal(credential, afterCredential)
+			if corrupted {
+				var raw string
+				requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT value FROM archive_metadata WHERE key=?`), key).Scan(&raw))
+				assertions.Equal("{", raw)
+			} else {
+				_, raw, loadErr := st.LoadWakeupStateKey(t.Context(), key)
+				requirements.NoError(loadErr)
+				assertions.Nil(raw)
+			}
+		})
+	}
 }
 
 func TestNativeContinuesAfterExpiredCredentialCleanupFails(t *testing.T) {
