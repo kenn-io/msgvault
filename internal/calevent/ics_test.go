@@ -264,7 +264,7 @@ func TestICSRejectMalformed(t *testing.T) {
 		{"timed start and zero date end", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DTEND;VALUE=DATE:00010101", 1), "DTEND value type differs from DTSTART"},
 		{"malformed property", "BEGIN:VCALENDAR\r\nSUMMARY;CN=x\r\nEND:VCALENDAR\r\n", "malformed iCalendar parameters"},
 		{"second calendar", icsExample + icsExample, "calendar has trailing content"},
-		{"ranged recurrence", strings.Replace(icsExample, "SUMMARY:", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270314T140000Z\r\nSUMMARY:", 1), "RECURRENCE-ID: RANGE is unsupported"},
+		{"invalid range", strings.Replace(icsExample, "SUMMARY:", "RECURRENCE-ID;RANGE=INVALID:20270314T140000Z\r\nSUMMARY:", 1), "RECURRENCE-ID: invalid RANGE"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := Decode("ics", []byte(tc.raw), []byte(`{}`), "")

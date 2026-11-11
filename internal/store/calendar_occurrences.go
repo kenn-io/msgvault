@@ -112,6 +112,16 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			return page, err
 		}
 		e := row.Event
+		if e.Kind == "exception" && slices.Contains(e.Recurrence, calevent.ICSRangeRecurrence) && !masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
+			report(row.MessageID, "unsupported recurrence range")
+			continue
+		}
+		if e.Kind != "exception" && slices.ContainsFunc(exceptions[seriesKey{row.SourceID, e.ProviderEventID}], func(exception CalendarEventRow) bool {
+			return slices.Contains(exception.Event.Recurrence, calevent.ICSRangeRecurrence)
+		}) {
+			report(row.MessageID, "unsupported recurrence range")
+			continue
+		}
 		if e.Kind == "exception" && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
