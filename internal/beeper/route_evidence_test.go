@@ -860,7 +860,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 					{ID: "@avery:example.test", FullName: "Avery Example"},
 				}
 				ch.Participants.Total = 2
-				_, _, _, err = imp.ensureRosterWork(t.Context(), 0, source.ID, ch, opts, &ImportSummary{}) //nolint:dogsled // Only the error matters; the member is read by identifier below.
+				_, _, _, err = imp.ensureRosterWork(t.Context(), 0, source.ID, ch, opts, &ImportSummary{})
 				requirements.NoError(err)
 				participantID := participantForBeeperUser(t, st, "@avery:example.test")
 				person, _, err := st.CreatePersonFromParticipant(participantID)
@@ -886,7 +886,7 @@ func TestUnfinishedChatRosterFetchInterruptionInvalidatesMessagingRoute(t *testi
 				} else {
 					opts.StopAt = time.Now().Add(500 * time.Millisecond)
 				}
-				_, _, _, err = imp.ensureRosterWork(ctx, 0, source.ID, ch, opts, &ImportSummary{}) //nolint:dogsled // Only the interruption error matters.
+				_, _, _, err = imp.ensureRosterWork(ctx, 0, source.ID, ch, opts, &ImportSummary{})
 				if test.cancelContext {
 					requirements.ErrorIs(err, context.Canceled)
 				} else {
