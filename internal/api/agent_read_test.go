@@ -1057,14 +1057,6 @@ func TestChangeFeedGrantBindsStableSourceReferences(t *testing.T) {
 	a.ID = 99
 	a.SenderKeys = []string{"new"}
 	same := filter(b, a)
-	assertions.NotEmpty(original.Digest())
-	assertions.Equal(original.Digest(), same.Digest())
-	assertions.NotEqual(original.Digest(), filter(a).Digest())
-	assertions.NotEqual(original.Digest(), (changefeed.Filter{}).Digest())
-	emptyGrant := filter()
-	assertions.NotEmpty(emptyGrant.Digest())
-	assertions.NotEqual(emptyGrant.Digest(), (changefeed.Filter{}).Digest())
-	assertions.NotEqual(emptyGrant.Digest(), original.Digest())
 	assertions.Equal([]changefeed.GrantRef{{Type: "gmail", Identifier: "a@example.com"}, {Type: "gmail", Identifier: "b@example.com"}}, original.GrantRefs)
 	assertions.Equal(original.GrantRefs, same.GrantRefs)
 	assertions.NotNil(filter().GrantRefs)

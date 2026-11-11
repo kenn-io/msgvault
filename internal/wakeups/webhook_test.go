@@ -20,7 +20,7 @@ import (
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep constructors available in nested test scopes.
 )
 
-func TestWebhookSignsAndDoesNotFollowRedirect(t *testing.T) {
+func TestWebhookSigns(t *testing.T) {
 	secret := []byte("12345678901234567890123456789012")
 	body := []byte(`{"hello":"world"}`)
 	t.Run("signature", func(t *testing.T) {
@@ -39,17 +39,6 @@ func TestWebhookSignsAndDoesNotFollowRedirect(t *testing.T) {
 		_, err := fmt.Fprintf(mac, "%s.%s.%s", id, stamp, body)
 		Require.NoError(t, err)
 		assert.Equal("v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)), signature)
-	})
-	t.Run("redirect", func(t *testing.T) {
-		hits := 0
-		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			hits++
-			w.Header().Set("Location", "https://example.com/redirect")
-			w.WriteHeader(http.StatusFound)
-		}))
-		defer server.Close()
-		Assert.Equal(t, "http_3xx", testWebhookClient(t, server).send(t.Context(), "https://example.com/hook", "wk_test", secret, body))
-		Assert.Equal(t, 1, hits)
 	})
 }
 func TestDecodeSecretCanonical(t *testing.T) {
@@ -79,10 +68,6 @@ func testWebhookClient(t *testing.T, server *httptest.Server) webhookClient {
 		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
 	}}
 }
-func TestWebhookMapsUnsafeTarget(t *testing.T) {
-	client := webhookClient{timeout: time.Second, resolver: staticResolver{netip.MustParseAddr("203.0.113.1"), netip.MustParseAddr("127.0.0.1")}}
-	Assert.Equal(t, "invalid_callback", client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
-}
 
 func TestWebhookUsesOnlyTrustedPin(t *testing.T) {
 	assert := Assert.New(t)
@@ -106,12 +91,6 @@ func TestWebhookUsesOnlyTrustedPin(t *testing.T) {
 	assert.Empty(client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 	assert.Equal([]string{"10.0.0.5:443"}, dialed)
 }
-func TestWebhookTimeout(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		timeout := webhookClient{timeout: 50 * time.Millisecond, resolver: staticResolver{netip.MustParseAddr("203.0.113.1")}, dial: func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }}
-		Assert.Equal(t, "timeout", timeout.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
-	})
-}
 
 type failingResolver struct{}
 
@@ -119,7 +98,42 @@ func (failingResolver) LookupNetIP(_ context.Context, _, _ string) ([]netip.Addr
 	return nil, &net.DNSError{Err: "lookup failed", Name: "example.com"}
 }
 
-func TestWebhookDNSFailure(t *testing.T) {
-	client := webhookClient{timeout: time.Second, resolver: failingResolver{}}
-	Assert.Equal(t, "dns_error", client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
+func TestWebhookFailureCategories(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		client     func(*testing.T) webhookClient
+		timeout    bool
+	}{
+		{"unsafe target", "invalid_callback", func(t *testing.T) webhookClient {
+			return webhookClient{timeout: time.Second, resolver: staticResolver{netip.MustParseAddr("203.0.113.1"), netip.MustParseAddr("127.0.0.1")}}
+		}, false},
+		{"dns", "dns_error", func(t *testing.T) webhookClient {
+			return webhookClient{timeout: time.Second, resolver: failingResolver{}}
+		}, false},
+		{"timeout", "timeout", func(t *testing.T) webhookClient {
+			return webhookClient{timeout: 50 * time.Millisecond, resolver: staticResolver{netip.MustParseAddr("203.0.113.1")}, dial: func(ctx context.Context, _, _ string) (net.Conn, error) { <-ctx.Done(); return nil, ctx.Err() }}
+		}, true},
+		{"redirect", "http_3xx", func(t *testing.T) webhookClient {
+			hits := 0
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				hits++
+				w.Header().Set("Location", "https://example.com/redirect")
+				w.WriteHeader(http.StatusFound)
+			}))
+			t.Cleanup(func() { server.Close(); Assert.Equal(t, 1, hits) })
+			return testWebhookClient(t, server)
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run := func(t *testing.T) {
+				client := tc.client(t)
+				Assert.Equal(t, tc.want, client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
+			}
+			if tc.timeout {
+				synctest.Test(t, run)
+			} else {
+				run(t)
+			}
+		})
+	}
 }

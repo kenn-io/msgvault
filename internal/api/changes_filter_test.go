@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
@@ -15,6 +16,11 @@ import (
 func TestChangesFilteredCursorPagination(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
+	r := httptest.NewRequest(http.MethodGet, "/?person_id=4&source_id=2&source_id=1&source_id=2&conversation_id=8&incoming_only=true", nil)
+	filter, err := parseChangesFilter(r)
+	requirements.NoError(err)
+	assertions.Equal([]int64{1, 2}, filter.SourceIDs)
+	assertions.Equal("7725ea5be9477647", filter.Digest())
 	srv, st := newChangesServer(t)
 	ids := seedChangedMessages(t, st, 3)
 	setChangesWatermark(t, st, "2020-01-01 00:00:00.000", ids...)

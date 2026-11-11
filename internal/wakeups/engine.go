@@ -144,6 +144,11 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		logStoreError := func(err error) {
+			if category := StoreErrorCategory(err); category != "" {
+				logger.Warn("wakeup store step failed", "name", sub.Name, "category", category)
+			}
+		}
 		var state store.WakeupState
 		var raw []byte
 		var next, since store.ChangedMessagesCursor
@@ -251,9 +256,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if category := StoreErrorCategory(err); category != "" {
-				logger.Warn("wakeup store step failed", "name", sub.Name, "category", category)
-			}
+			logStoreError(err)
 			continue
 		}
 		if !ready {
@@ -286,9 +289,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		state.NextAttemptAt = time.Time{}
 		err = e.gated(ctx, func() error { _, err := advance(raw); return err })
 		if err != nil {
-			if category := StoreErrorCategory(err); category != "" {
-				logger.Warn("wakeup store step failed", "name", sub.Name, "category", category)
-			}
+			logStoreError(err)
 		}
 	}
 	return ctx.Err()

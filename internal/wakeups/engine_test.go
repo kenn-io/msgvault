@@ -11,6 +11,7 @@ import (
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep constructors available in nested test scopes.
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep constructors available in nested test scopes.
 	"go.kenn.io/msgvault/internal/changefeed"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -87,6 +88,51 @@ func TestEngineRetriesFailedDeliveryAndAdvancesAfterSuccess(t *testing.T) {
 		require.NoError(err)
 		assert.True(state.At.After(start))
 		assert.Zero(state.Failures)
+	})
+	t.Run("range changed", func(t *testing.T) {
+		assert := Assert.New(t)
+		require := Require.New(t)
+
+		st := testutil.NewTestStore(t)
+		now := time.Now().UTC()
+		first, err := st.EnsureParticipant("first@example.com", "First", "example.com")
+		require.NoError(err)
+		second, err := st.EnsureParticipant("second@example.com", "Second", "example.com")
+		require.NoError(err)
+		person, _, err := st.CreatePersonFromParticipant(first)
+		require.NoError(err)
+		incoming := true
+		filter := FilterFromConfig(config.WakeupConfig{PersonID: &person.ID, IncomingOnly: &incoming})
+		initializedWakeup(t, st, "person", now.Add(-time.Hour))
+		firstID := seedWakeup(t, st, "first-source@example.com", first, 1, now)
+		var deliveries []payload
+		status := http.StatusInternalServerError
+		var decodeErr error
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var p payload
+			decodeErr = json.NewDecoder(r.Body).Decode(&p)
+			deliveries = append(deliveries, p)
+			w.WriteHeader(status)
+		}))
+		defer server.Close()
+		observed := &observedStore{Store: st, fixedBound: now.Add(-30 * time.Second)}
+		engine := Engine{Store: observed, Subscriptions: []Subscription{testSubscription(t, "person", server, filter)}, Now: func() time.Time { return now }}
+		require.NoError(engine.RunPass(t.Context()))
+		require.NoError(decodeErr)
+		require.Len(deliveries, 1)
+		assert.Equal([]int64{firstID}, deliveries[0].Matched.MessageIDs)
+		_, err = st.LinkParticipants(first, second)
+		require.NoError(err)
+		secondID := seedWakeup(t, st, "second-source@example.com", second, 2, now)
+		status = http.StatusNoContent
+		observed.fixedBound = now.Add(-time.Second)
+		now = now.Add(31 * time.Second)
+		require.NoError(engine.RunPass(t.Context()))
+		require.NoError(decodeErr)
+		require.Len(deliveries, 2)
+		assert.ElementsMatch([]int64{firstID, secondID}, deliveries[1].Matched.MessageIDs)
+		assert.NotEqual(deliveries[0].CursorTo, deliveries[1].CursorTo)
+		assert.NotEqual(deliveries[0].DeliveryID, deliveries[1].DeliveryID)
 	})
 }
 

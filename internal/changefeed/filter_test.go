@@ -31,7 +31,7 @@ func TestResolveFilterTracksNewPersonLinks(t *testing.T) {
 	require.NoError(err)
 	assert.True(filter.Matches(store.ChangedMessage{SenderID: second}))
 	_, err = ResolveFilter(t.Context(), st, Filter{PersonID: 99999999})
-	require.Error(err)
+	require.ErrorIs(err, store.ErrPersonNotFound)
 }
 func TestChangesFilterMatchesAllDimensions(t *testing.T) {
 	f := Filter{PersonID: 4, Participants: []int64{10, 11}, SourceIDs: []int64{1, 2}, ConversationIDs: []int64{8}, IncomingOnly: true}
@@ -99,4 +99,8 @@ func TestGrantDigestUsesStableReferences(t *testing.T) {
 	assert.Equal(original.Digest(), same.Digest())
 	assert.NotEqual(original.Digest(), (Filter{GrantRefs: same.GrantRefs[:1]}).Digest())
 	assert.NotEqual(original.Digest(), (Filter{}).Digest())
+	empty := Filter{GrantRefs: []GrantRef{}}
+	assert.NotEmpty(empty.Digest())
+	assert.NotEqual(empty.Digest(), (Filter{}).Digest())
+	assert.NotEqual(empty.Digest(), original.Digest())
 }

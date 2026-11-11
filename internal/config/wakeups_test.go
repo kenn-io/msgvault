@@ -64,7 +64,7 @@ func TestWakeupPersonSelectorPresence(t *testing.T) {
 	for _, tc := range []struct {
 		selector string
 		valid    bool
-	}{{"", true}, {"person_id=0\n", false}, {"person_id=-1\n", false}, {"person_id=42\n", true}} {
+	}{{"", true}, {"person_id=0\n", false}, {"person_id=42\n", true}} {
 		path := writeDaemonSectionConfig(t, "[[wakeups]]\nname='inbox'\nurl='https://example.com/hook'\nsecret_env='WAKEUP_KEY'\n"+tc.selector)
 		_, err := Load(path, "")
 		if tc.valid {

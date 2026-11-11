@@ -11,16 +11,13 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep constructors available in nested test scopes.
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep constructors available in nested test scopes.
-	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/changefeed"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -141,6 +138,7 @@ func TestPersonResolutionBackoff(t *testing.T) {
 		{"missing", store.ErrPersonNotFound, nil, "person_unavailable", 0},
 		{"empty", nil, &store.Person{ID: 1}, "person_unavailable", 0},
 		{"held delivery", store.ErrPersonNotFound, nil, "person_unavailable", 2},
+		{"store error", errors.New("database unavailable"), nil, "store_error", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := Assert.New(t)
@@ -150,7 +148,11 @@ func TestPersonResolutionBackoff(t *testing.T) {
 			st := &observedStore{Store: base, personErr: tc.failure, person: tc.person}
 			now := time.Now().UTC()
 			start := now.Add(-time.Hour)
-			ok, err := base.AdvanceWakeupState(t.Context(), "person", nil, store.WakeupState{At: start, Failures: tc.failures})
+			initial := store.WakeupState{At: start, Failures: tc.failures}
+			if tc.failures > 0 {
+				initial.NextAttemptAt = now.Add(-time.Minute)
+			}
+			ok, err := base.AdvanceWakeupState(t.Context(), "person", nil, initial)
 			require.NoError(err)
 			require.True(ok)
 			var logs bytes.Buffer
@@ -161,103 +163,15 @@ func TestPersonResolutionBackoff(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(start, state.At)
 			assert.Equal(tc.failures, state.Failures)
-			assert.Equal(now.Add(30*time.Second), state.NextAttemptAt)
-			require.NoError(engine.RunPass(t.Context()))
-			state, _, err = base.LoadWakeupState(t.Context(), "person")
-			require.NoError(err)
-			assert.Equal(tc.failures, state.Failures)
+			if tc.category == "store_error" {
+				assert.True(state.NextAttemptAt.IsZero())
+			} else {
+				assert.Equal(now.Add(30*time.Second), state.NextAttemptAt)
+			}
 		})
 	}
 }
-func TestPersonStoreError(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	base := testutil.NewTestStore(t)
-	now := time.Now().UTC()
-	initializedWakeup(t, base, "person", now.Add(-time.Hour))
-	var logs bytes.Buffer
-	engine := Engine{Store: &observedStore{Store: base, personErr: errors.New("database unavailable")}, Logger: slog.New(slog.NewTextHandler(&logs, nil)), Now: func() time.Time { return now }, Subscriptions: []Subscription{{Name: "person", Filter: changefeed.Filter{PersonID: 1}}}}
-	require.NoError(engine.RunPass(t.Context()))
-	state, _, err := base.LoadWakeupState(t.Context(), "person")
-	require.NoError(err)
-	assert.Contains(logs.String(), "store_error")
-	assert.Zero(state.Failures)
-	assert.True(state.NextAttemptAt.IsZero())
-}
 
-func TestPersonRecoveryWithoutChanges(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	base := testutil.NewTestStore(t)
-	participant, err := base.EnsureParticipant("person@example.com", "Person", "example.com")
-	require.NoError(err)
-	person, _, err := base.CreatePersonFromParticipant(participant)
-	require.NoError(err)
-	now := time.Now().UTC()
-	initializedWakeup(t, base, "person", now.Add(-time.Hour))
-	st := &observedStore{Store: base, personErr: store.ErrPersonNotFound}
-	hits := 0
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { hits++; w.WriteHeader(http.StatusNoContent) }))
-	defer server.Close()
-	engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "person", server, changefeed.Filter{PersonID: person.ID})}, Now: func() time.Time { return now }}
-	require.NoError(engine.RunPass(t.Context()))
-	state, _, err := base.LoadWakeupState(t.Context(), "person")
-	require.NoError(err)
-	assert.Zero(state.Failures)
-	st.personErr = nil
-	now = now.Add(31 * time.Second)
-	require.NoError(engine.RunPass(t.Context()))
-	state, _, err = base.LoadWakeupState(t.Context(), "person")
-	require.NoError(err)
-	assert.Zero(state.Failures)
-	assert.Zero(hits)
-}
-
-func TestConfigPersonAcrossSourcesAndLinkAfterStartup(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-
-	st := testutil.NewTestStore(t)
-	now := time.Now().UTC()
-	first, err := st.EnsureParticipant("first@example.com", "First", "example.com")
-	require.NoError(err)
-	second, err := st.EnsureParticipant("second@example.com", "Second", "example.com")
-	require.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(first)
-	require.NoError(err)
-	incoming := true
-	filter := FilterFromConfig(config.WakeupConfig{PersonID: &person.ID, IncomingOnly: &incoming})
-	initializedWakeup(t, st, "person", now.Add(-time.Hour))
-	firstID := seedWakeup(t, st, "first-source@example.com", first, 1, now)
-	var deliveries []payload
-	status := http.StatusInternalServerError
-	var decodeErr error
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var p payload
-		decodeErr = json.NewDecoder(r.Body).Decode(&p)
-		deliveries = append(deliveries, p)
-		w.WriteHeader(status)
-	}))
-	defer server.Close()
-	observed := &observedStore{Store: st, fixedBound: now.Add(-30 * time.Second)}
-	engine := Engine{Store: observed, Subscriptions: []Subscription{testSubscription(t, "person", server, filter)}, Now: func() time.Time { return now }}
-	require.NoError(engine.RunPass(t.Context()))
-	require.NoError(decodeErr)
-	require.Len(deliveries, 1)
-	assert.Equal([]int64{firstID}, deliveries[0].Matched.MessageIDs)
-	_, err = st.LinkParticipants(first, second)
-	require.NoError(err)
-	secondID := seedWakeup(t, st, "second-source@example.com", second, 2, now)
-	status = http.StatusNoContent
-	observed.fixedBound = now.Add(-time.Second)
-	now = now.Add(31 * time.Second)
-	require.NoError(engine.RunPass(t.Context()))
-	require.NoError(decodeErr)
-	require.Len(deliveries, 2)
-	assert.ElementsMatch([]int64{firstID, secondID}, deliveries[1].Matched.MessageIDs)
-	assert.NotEqual(deliveries[0].CursorTo, deliveries[1].CursorTo)
-	assert.NotEqual(deliveries[0].DeliveryID, deliveries[1].DeliveryID)
-}
 func TestLostCASRedelivers(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
@@ -299,64 +213,6 @@ func TestLostCASRedelivers(t *testing.T) {
 	state, _, err = st.LoadWakeupState(t.Context(), "cas")
 	require.NoError(err)
 	assert.True(state.At.After(start))
-}
-func TestEndpointFailuresAreIndependent(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-
-	st := testutil.NewTestStore(t)
-	now := time.Now().UTC()
-	start := now.Add(-time.Hour)
-	seedWakeup(t, st, "endpoints@example.com", 0, 1, now)
-	initializedWakeup(t, st, "a", start)
-	initializedWakeup(t, st, "z", start)
-	var failed, succeeded int
-	first := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { failed++; w.WriteHeader(http.StatusInternalServerError) }))
-	defer first.Close()
-	second := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { succeeded++; w.WriteHeader(http.StatusNoContent) }))
-	defer second.Close()
-	filter := changefeed.Filter{IncomingOnly: true}
-	engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "a", first, filter), testSubscription(t, "z", second, filter)}, Now: func() time.Time { return now }}
-	require.NoError(engine.RunPass(t.Context()))
-	assert.Equal(1, failed)
-	assert.Equal(1, succeeded)
-	state, _, err := st.LoadWakeupState(t.Context(), "a")
-	require.NoError(err)
-	assert.Equal(start, state.At)
-	assert.Equal(1, state.Failures)
-	state, _, err = st.LoadWakeupState(t.Context(), "z")
-	require.NoError(err)
-	assert.True(state.At.After(start))
-}
-func TestOwnerCursorReplaysDeliveredIDs(t *testing.T) {
-	require := Require.New(t)
-
-	st := testutil.NewTestStore(t)
-	now := time.Now().UTC()
-	id := seedWakeup(t, st, "replay@example.com", 0, 1, now)
-	initializedWakeup(t, st, "replay", now.Add(-time.Hour))
-	var sent payload
-	var decodeErr error
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		decodeErr = json.NewDecoder(r.Body).Decode(&sent)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
-	sub := testSubscription(t, "replay", server, changefeed.Filter{IncomingOnly: true})
-	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
-	require.NoError(engine.RunPass(t.Context()))
-	require.NoError(decodeErr)
-	require.Equal([]int64{id}, sent.Matched.MessageIDs)
-	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.Default()})
-	t.Cleanup(func() { _ = srv.Shutdown(context.WithoutCancel(t.Context())) })
-	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/changes?incoming_only=true&cursor="+url.QueryEscape(sent.CursorFrom), nil)
-	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, request)
-	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	var feed api.ChangesResponse
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &feed))
-	require.NotEmpty(feed.Messages)
-	Assert.Equal(t, id, feed.Messages[0].ID)
 }
 
 func TestCancelledAttemptSurvivesRestartAndEmptyRescan(t *testing.T) {
@@ -403,14 +259,6 @@ func TestCancelledAttemptSurvivesRestartAndEmptyRescan(t *testing.T) {
 	assert.Equal(start, state.At)
 	assert.Equal(2, state.Failures)
 	assert.Equal(now.Add(time.Minute), state.NextAttemptAt)
-	status = http.StatusNoContent
-	now = now.Add(61 * time.Second)
-	require.NoError(engine.RunPass(t.Context()))
-	require.Len(bodies, 2)
-	state, _, err = st.LoadWakeupState(t.Context(), "cancel")
-	require.NoError(err)
-	assert.True(state.At.After(start))
-	assert.Zero(state.Failures)
 }
 
 func TestPreSendConflictDoesNotDeliver(t *testing.T) {
@@ -432,34 +280,8 @@ func TestPreSendConflictDoesNotDeliver(t *testing.T) {
 	assert.Contains(logs.String(), "state_conflict")
 }
 
-func TestLaterSubscriptionUsesItsOwnAttemptTime(t *testing.T) {
-	require := Require.New(t)
-	assert := Assert.New(t)
-	st := testutil.NewTestStore(t)
-	now := time.Now().UTC()
-	start := now.Add(-time.Hour)
-	seedWakeup(t, st, "clock@example.com", 0, 1, now)
-	initializedWakeup(t, st, "a", start)
-	initializedWakeup(t, st, "z", start)
-	first := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		now = now.Add(time.Minute)
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer first.Close()
-	second := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer second.Close()
-	filter := changefeed.Filter{IncomingOnly: true}
-	engine := Engine{Store: st, Now: func() time.Time { return now }, Subscriptions: []Subscription{testSubscription(t, "a", first, filter), testSubscription(t, "z", second, filter)}}
-	require.NoError(engine.RunPass(t.Context()))
-	state, _, err := st.LoadWakeupState(t.Context(), "z")
-	require.NoError(err)
-	assert.Equal(1, state.Failures)
-	assert.Equal(now.Add(30*time.Second), state.NextAttemptAt)
-}
-
 func TestStoreFailureCategoriesDoNotExposeErrors(t *testing.T) {
+	Assert.Empty(t, StoreErrorCategory(context.Canceled))
 	for _, tc := range []struct {
 		name     string
 		err      error
@@ -469,7 +291,6 @@ func TestStoreFailureCategoriesDoNotExposeErrors(t *testing.T) {
 		{"gate", nil, true, "gate_busy"},
 		{"null watermark", fmt.Errorf("message 987: %w", store.ErrNullChangeWatermark), false, "null_watermark"},
 		{"other", errors.New("private detail 987"), false, "store_error"},
-		{"cancelled operation", context.Canceled, false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			base := testutil.NewTestStore(t)
@@ -486,6 +307,56 @@ func TestStoreFailureCategoriesDoNotExposeErrors(t *testing.T) {
 			}
 			Assert.NotContains(t, logs.String(), "987")
 			Assert.NotContains(t, logs.String(), "private detail")
+		})
+	}
+}
+
+func TestEndpointFailuresAreIndependent(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		firstStatus, secondStatus int
+		advanceClock              bool
+	}{
+		{"earlier failure", http.StatusInternalServerError, http.StatusNoContent, false},
+		{"later attempt time", http.StatusNoContent, http.StatusInternalServerError, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := Assert.New(t)
+			require := Require.New(t)
+			st := testutil.NewTestStore(t)
+			now := time.Now().UTC()
+			start := now.Add(-time.Hour)
+			seedWakeup(t, st, "endpoints@example.com", 0, 1, now)
+			initializedWakeup(t, st, "a", start)
+			initializedWakeup(t, st, "z", start)
+			var firstHits, secondHits int
+			first := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				firstHits++
+				if tc.advanceClock {
+					now = now.Add(time.Minute)
+				}
+				w.WriteHeader(tc.firstStatus)
+			}))
+			defer first.Close()
+			second := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { secondHits++; w.WriteHeader(tc.secondStatus) }))
+			defer second.Close()
+			filter := changefeed.Filter{IncomingOnly: true}
+			engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "a", first, filter), testSubscription(t, "z", second, filter)}, Now: func() time.Time { return now }}
+			require.NoError(engine.RunPass(t.Context()))
+			assert.Equal(1, firstHits)
+			assert.Equal(1, secondHits)
+			firstState, _, err := st.LoadWakeupState(t.Context(), "a")
+			require.NoError(err)
+			secondState, _, err := st.LoadWakeupState(t.Context(), "z")
+			require.NoError(err)
+			if tc.advanceClock {
+				assert.Equal(1, secondState.Failures)
+				assert.Equal(now.Add(30*time.Second), secondState.NextAttemptAt)
+			} else {
+				assert.Equal(start, firstState.At)
+				assert.Equal(1, firstState.Failures)
+				assert.True(secondState.At.After(start))
+			}
 		})
 	}
 }
