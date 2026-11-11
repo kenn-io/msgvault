@@ -591,7 +591,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := configureRecordingReferenceJob(ctx, mediaSched, operationGate, s, cfg.Integrations.Docbank, logger); err != nil {
 		logger.Warn("Recording reference submission unavailable", "error", err)
 	}
-	if err := configureWakeupJob(ctx, mediaSched, operationGate, s, cfg, logger, &mcpevents.Service{Store: s, Home: cfg.HomeDir, Enabled: cfg.MCPEvents.Enabled, ConfigTargets: len(cfg.Wakeups)}); err != nil {
+	eventsService := &mcpevents.Service{Store: s, Home: cfg.HomeDir, Enabled: cfg.MCPEvents.Enabled, ConfigTargets: len(cfg.Wakeups)}
+	if err := configureWakeupJob(ctx, mediaSched, operationGate, s, cfg, logger, eventsService); err != nil {
 		logger.Warn("Wakeup scheduling unavailable", "category", "scheduler_error")
 	}
 	if err := registerActivityProjectionJob(
@@ -1016,6 +1017,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	apiOpts := api.ServerOptions{
 		Config:         cfg,
 		Store:          storeAdapter,
+		MCPEvents:      eventsService,
 		SavedViewStore: s,
 		Engine:         engine,
 		SQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {

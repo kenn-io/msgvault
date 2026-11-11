@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/providercredentials"
@@ -270,6 +271,7 @@ type Server struct {
 	senderAuthPins         map[int64][]string
 	cfg                    *config.Config
 	store                  MessageStore
+	mcpEvents              *mcpevents.Service
 	analyticsState         atomic.Pointer[analyticsEngineState]
 	savedViewStore         SavedViewStore
 	sqlQueryRunner         SQLQueryRunner
@@ -539,6 +541,8 @@ const (
 type ServerOptions struct {
 	Config *config.Config
 	Store  MessageStore
+	// MCPEvents is shared with the daemon's wakeup engine. Nil disables Events.
+	MCPEvents *mcpevents.Service
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
@@ -630,6 +634,9 @@ func NewServer(cfg *config.Config, store MessageStore, sched SyncScheduler, logg
 
 // NewServerWithOptions creates a new API server with full options including query engine.
 func NewServerWithOptions(opts ServerOptions) *Server {
+	if opts.MCPEvents == nil {
+		opts.MCPEvents = &mcpevents.Service{}
+	}
 	// Before vector initialization, configuration still describes which lanes
 	// are enabled. A supplied runtime keeps its resolved configuration.
 	if opts.Backend == nil && !opts.VectorCfg.AnyLaneEnabled() {
@@ -652,6 +659,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		cfg:                    opts.Config,
 		senderAuthPins:         opts.Config.SenderAuth.Pins(),
 		store:                  opts.Store,
+		mcpEvents:              opts.MCPEvents,
 		savedViewStore:         opts.SavedViewStore,
 		sqlQueryRunner:         opts.SQLQueryRunner,
 		archiveSQLQueryRunner:  opts.ArchiveSQLQueryRunner,

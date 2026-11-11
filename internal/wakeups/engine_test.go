@@ -213,3 +213,42 @@ func TestNativeDeliveryDropsPermanentAndEventuallyAdvances(t *testing.T) {
 		})
 	}
 }
+
+func TestNativePositionSurvivesDowntimeAndPrune(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	start := now.Add(-time.Hour)
+	src, err := st.GetOrCreateSource("gmail", "downtime@example.com")
+	require.NoError(t, err)
+	conv, err := st.EnsureConversationWithType(src.ID, "downtime", "email_thread", "Fixture")
+	require.NoError(t, err)
+	key := store.MCPEventsPositionKey("restart")
+	ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, store.WakeupState{At: start})
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, err = st.PruneWakeupStates(ctx, nil)
+	require.NoError(t, err)
+	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, SourceMessageID: "while-down", ConversationID: conv, MessageType: "email", SentAt: sql.NullTime{Time: now, Valid: true}})
+	require.NoError(t, err)
+	stamp := now.Add(-time.Minute)
+	var value any = stamp
+	if !st.IsPostgreSQL() {
+		value = stamp.Format(store.SQLiteTimestampLayout)
+	}
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), value, id)
+	require.NoError(t, err)
+	var bodies []map[string]any
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		bodies = append(bodies, b)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	sub := Subscription{Name: "restart", Native: true, StateKey: key, URL: "https://example.com/hook", Secret: []byte(strings.Repeat("a", 32)), Filter: changefeed.Filter{SourceIDs: []int64{src.ID}, IncomingOnly: true}, MaxMessageAge: 72 * time.Hour, Client: testWebhookClient(server)}
+	engine := Engine{Store: st, Subscriptions: []Subscription{sub}, Now: func() time.Time { return now }}
+	require.NoError(t, engine.RunPass(ctx))
+	require.Len(t, bodies, 1)
+	assert.Equal(t, "msgvault.messages.changed", bodies[0]["name"])
+}

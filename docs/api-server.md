@@ -27,6 +27,15 @@ browser login, secure remote deployment, search states, and keyboard controls.
 
 Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
 
+### Owner MCP Events
+
+API schema 5.3 adds owner-only `GET /api/v1/mcp-events/list`,
+`POST /api/v1/mcp-events/subscribe` and `POST /api/v1/mcp-events/unsubscribe`.
+The list reports whether Events are enabled. The POST routes use the MCP
+Events subscription shape; they accept one person or source and a public HTTPS
+webhook. Agent-grant and remote-client credentials cannot use these routes.
+See [MCP Events](usage/chat.md#mcp-events) for leases and delivery semantics.
+
 ### Filename suggestions
 
 Newer than the latest release, API schema 3.15 adds

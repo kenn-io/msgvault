@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"net/url"
+	"slices"
 	"time"
 
 	"go.kenn.io/msgvault/internal/changefeed"
@@ -355,7 +356,20 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			state.AfterID, state.AfterRow = next.AfterID()
 			state.Failures = 0
 			state.NextAttemptAt = time.Time{}
+			if sub.Native {
+				state.LastError = ""
+				state.FailedSince = nil
+				if category == "" {
+					stamp := e.now()
+					state.LastDeliveryAt = &stamp
+				}
+			}
 		} else {
+			state.LastError = category
+			if state.FailedSince == nil {
+				stamp := e.now()
+				state.FailedSince = &stamp
+			}
 			delays := []time.Duration{30 * time.Second, time.Minute, 3 * time.Minute, 8 * time.Minute}
 			state.NextAttemptAt = e.now().Add(delays[min(state.Failures-1, len(delays)-1)])
 		}

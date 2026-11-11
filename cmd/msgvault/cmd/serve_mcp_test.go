@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -470,4 +471,25 @@ func TestNativeMCPStartup(t *testing.T) {
 			assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 		})
 	})
+}
+
+func TestNativeDaemonMCPEventsOverModernHTTP(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", BindAddr: "127.0.0.1"}, MCPEvents: config.MCPEventsConfig{Enabled: true}}
+	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, MCPEvents: &mcpevents.Service{Store: st, Home: cfg.HomeDir, Enabled: true}, Logger: slog.New(slog.DiscardHandler)})
+	t.Cleanup(func() { _ = server.Shutdown(context.WithoutCancel(t.Context())) })
+	cmd := &cobra.Command{Use: "serve"}
+	addServeConfigFlags(cmd)
+	require.NoError(t, installServeMCP(t.Context(), cmd, server, &invocation{cfg: cfg}))
+	body := `{"jsonrpc":"2.0","id":1,"method":"events/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"test","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}}}`
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer owner")
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "application/json, text/event-stream")
+	r.Header.Set("Mcp-Protocol-Version", "2026-07-28")
+	r.Header.Set("Mcp-Method", "events/list")
+	w := httptest.NewRecorder()
+	server.Router().ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "msgvault.messages.changed")
 }

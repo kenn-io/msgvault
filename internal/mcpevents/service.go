@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/changefeed"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/wakeups"
 )
 
 type entry struct {
 	ID        string    `json:"id"`
+	Owner     string    `json:"owner"`
+	Name      string    `json:"name"`
 	Arguments Arguments `json:"arguments"`
 	URL       string    `json:"url"`
 	Secret    []byte    `json:"sealed_secret"`
@@ -68,7 +69,7 @@ func (s *Service) Available(ctx context.Context) bool {
 	return err == nil
 }
 func same(a, b Arguments) bool {
-	return a.PersonID == b.PersonID && a.SourceID == b.SourceID && *a.IncomingOnly == *b.IncomingOnly
+	return a.IncomingOnly != nil && b.IncomingOnly != nil && a.PersonID == b.PersonID && a.SourceID == b.SourceID && *a.IncomingOnly == *b.IncomingOnly
 }
 func (s *Service) Subscribe(ctx context.Context, in SubscribeRequest) (SubscribeResult, error) {
 	var out SubscribeResult
@@ -78,12 +79,12 @@ func (s *Service) Subscribe(ctx context.Context, in SubscribeRequest) (Subscribe
 	if err := validate(in.Name, &in.Arguments, in.Delivery, true); err != nil {
 		return out, err
 	}
-	if config.ValidateWakeupDestination(in.Delivery.URL, nil) != nil {
-		return out, failure(InvalidParams, "invalid_callback")
-	}
 	secret, err := wakeups.DecodeSecret(in.Delivery.Secret)
 	if err != nil {
 		return out, failure(InvalidParams, "invalid_secret")
+	}
+	if _, err := s.Native(ctx); err != nil {
+		return out, failure(Unavailable, "store_unavailable")
 	}
 	filter := changefeed.Filter{PersonID: in.Arguments.PersonID, IncomingOnly: *in.Arguments.IncomingOnly}
 	if in.Arguments.SourceID != 0 {
@@ -103,7 +104,7 @@ func (s *Service) Subscribe(ctx context.Context, in SubscribeRequest) (Subscribe
 		}
 		index := -1
 		for i, e := range entries {
-			if same(e.Arguments, in.Arguments) && e.URL == in.Delivery.URL {
+			if e.Owner == "owner" && e.Name == Name && same(e.Arguments, in.Arguments) && e.URL == in.Delivery.URL {
 				index = i
 				break
 			}
@@ -132,7 +133,7 @@ func (s *Service) Subscribe(ctx context.Context, in SubscribeRequest) (Subscribe
 			return out, failure(Unavailable, "key_unavailable")
 		}
 		expires := s.now().Add(in.TTL.Duration())
-		item := entry{ID: id, Arguments: in.Arguments, URL: in.Delivery.URL, Secret: sealed, Expires: expires}
+		item := entry{ID: id, Owner: "owner", Name: Name, Arguments: in.Arguments, URL: in.Delivery.URL, Secret: sealed, Expires: expires}
 		if index >= 0 {
 			entries[index] = item
 		} else {
@@ -153,7 +154,15 @@ func (s *Service) Subscribe(ctx context.Context, in SubscribeRequest) (Subscribe
 		if !ok {
 			continue
 		}
-		return SubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: DeliveryStatus{Active: true}}, nil
+		status := DeliveryStatus{Active: true}
+		state, _, loadErr := s.Store.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey(id))
+		if loadErr != nil {
+			return out, failure(Unavailable, "store_unavailable")
+		}
+		status.LastDeliveryAt = state.LastDeliveryAt
+		status.LastError = state.LastError
+		status.FailedSince = state.FailedSince
+		return SubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: status}, nil
 	}
 }
 func (s *Service) Unsubscribe(ctx context.Context, in UnsubscribeRequest) error {
@@ -170,7 +179,7 @@ func (s *Service) Unsubscribe(ctx context.Context, in UnsubscribeRequest) error 
 		}
 		idx := -1
 		for i, e := range entries {
-			if same(e.Arguments, in.Arguments) && e.URL == in.Delivery.URL {
+			if e.Owner == "owner" && e.Name == Name && same(e.Arguments, in.Arguments) && e.URL == in.Delivery.URL {
 				idx = i
 				break
 			}
@@ -211,6 +220,9 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		var out []wakeups.Subscription
 		removed := false
 		for i, e := range entries {
+			if e.Owner != "owner" || e.Name != Name {
+				continue
+			}
 			if !s.now().Before(e.Expires) {
 				next := append(entries[:i:i], entries[i+1:]...)
 				data, err := json.Marshal(next)
@@ -229,11 +241,14 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 			if err != nil {
 				return nil, errors.New("events secret unavailable")
 			}
+			if e.Arguments.IncomingOnly == nil {
+				return nil, errors.New("invalid events catalog")
+			}
 			f := changefeed.Filter{PersonID: e.Arguments.PersonID, IncomingOnly: *e.Arguments.IncomingOnly}
 			if e.Arguments.SourceID != 0 {
 				f.SourceIDs = []int64{e.Arguments.SourceID}
 			}
-			sub := wakeups.NewSubscription(e.ID, e.URL, secret, f, 72*time.Hour, 10*time.Second, nil, nil)
+			sub := wakeups.NewSubscription(e.ID, e.URL, secret, f, 72*time.Hour, 15*time.Second, nil, nil)
 			sub.Native = true
 			sub.StateKey = store.MCPEventsPositionKey(e.ID)
 			out = append(out, sub)

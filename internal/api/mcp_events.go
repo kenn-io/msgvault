@@ -8,12 +8,10 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/mcpevents"
-	"go.kenn.io/msgvault/internal/store"
 )
 
 func (s *Server) eventsService() *mcpevents.Service {
-	st, _ := s.store.(*store.Store)
-	return &mcpevents.Service{Store: st, Home: s.cfg.HomeDir, Enabled: s.cfg.MCPEvents.Enabled, ConfigTargets: len(s.cfg.Wakeups)}
+	return s.mcpEvents
 }
 func (s *Server) registerMCPEventsRoutes(api huma.API) {
 	registerAPIV1RawHumaJSONRoute[mcpevents.ListResult](api, "mcpEventsList", http.MethodGet, "/mcp-events/list", "List owner MCP Events", s.handleMCPEventsList)
@@ -43,6 +41,12 @@ func eventsError(w http.ResponseWriter, err error) {
 	_ = json.MarshalWrite(w, e)
 }
 func (s *Server) handleMCPEventsList(w http.ResponseWriter, r *http.Request) {
+	release, err := s.beginMutation("MCP Events")(r.Context())
+	if err != nil {
+		eventsError(w, err)
+		return
+	}
+	defer release()
 	service := s.eventsService()
 	enabled := service.Available(r.Context())
 	events := []mcpevents.Definition{}

@@ -35,6 +35,29 @@ instructions or authorization to make a change. See [write controls](#write-cont
 Saved View management changes only reusable definitions; deleting a Saved
 View never deletes archive messages.
 
+## MCP Events
+
+On unreleased `main`, owner clients can subscribe to
+`msgvault.messages.changed` over stdio or protocol `2026-07-28` HTTP, including
+`/mcp` and `msgvault mcp --http`. Enable `[mcp_events]` in the daemon first.
+Delegated agent tokens cannot subscribe. HTTP clients send `Mcp-Method` and,
+for subscribe and unsubscribe, `Mcp-Name` equal to the event name.
+
+Call `events/subscribe` with exactly one positive `person_id` or `source_id` in
+`arguments`. `incoming_only` defaults to true. Set `delivery` to webhook mode,
+a public HTTPS URL on port 443 or 8443, and a Standard Webhooks `whsec_` secret
+containing 24–64 bytes. The subscription lasts 24 hours by default; `ttlMs`
+is clamped to one minute through 30 days, and null selects 30 days. Refreshing
+with the same event, arguments and URL replaces the secret and lease while
+keeping the saved position. `events/unsubscribe` uses the same identity.
+
+After subscribing, read `list_changes` once from your own cursor to catch up.
+Each signed ping contains only a subscription ID and a null cursor. Verify the
+Standard Webhooks signature and deduplicate by `webhook-id`, then read
+`list_changes` through its cursor. Pings may coalesce and are not replayed;
+the daemon retries temporary failures up to five attempts, and drops a range
+on HTTP 410 or 413. A lost ping costs latency, so retain your own feed cursor.
+
 ## Calendar control
 
 Daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,

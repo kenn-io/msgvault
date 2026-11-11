@@ -5,6 +5,11 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/wakeups"
 )
 
 const Name = "msgvault.messages.changed"
@@ -26,8 +31,8 @@ func (e *Error) Error() string              { return "MCP Events: " + e.Reason }
 func failure(code int, reason string) error { return &Error{code, reason} }
 
 type Arguments struct {
-	PersonID     int64 `json:"person_id,omitzero"`
-	SourceID     int64 `json:"source_id,omitzero"`
+	PersonID     int64 `json:"person_id,omitzero" required:"false"`
+	SourceID     int64 `json:"source_id,omitzero" required:"false"`
 	IncomingOnly *bool `json:"incoming_only,omitempty"`
 }
 type Delivery struct {
@@ -38,6 +43,10 @@ type Delivery struct {
 type TTL struct {
 	set, null bool
 	ms        int64
+}
+
+func (*TTL) Schema(_ huma.Registry) *huma.Schema {
+	return &huma.Schema{Type: huma.TypeInteger, Nullable: true}
 }
 
 func (t *TTL) UnmarshalJSON(b []byte) error {
@@ -69,7 +78,7 @@ type SubscribeRequest struct {
 	Name      string    `json:"name"`
 	Arguments Arguments `json:"arguments"`
 	Delivery  Delivery  `json:"delivery"`
-	TTL       TTL       `json:"ttlMs,omitzero"`
+	TTL       TTL       `json:"ttlMs,omitzero" required:"false"`
 	Cursor    *string   `json:"cursor,omitempty"`
 	MaxAgeMS  *int64    `json:"maxAgeMs,omitempty"`
 }
@@ -104,7 +113,7 @@ type ListResult struct {
 }
 
 func Definitions() []Definition {
-	return []Definition{{Name: Name, Description: "Messages for this person or source may have changed. Read list_changes to catch up.", Delivery: []string{"webhook"}, InputSchema: map[string]any{"type": "object", "properties": map[string]any{"person_id": map[string]any{"type": "integer", "minimum": 1}, "source_id": map[string]any{"type": "integer", "minimum": 1}, "incoming_only": map[string]any{"type": "boolean", "default": true}}, "additionalProperties": false}, PayloadSchema: map[string]any{"type": "object", "properties": map[string]any{"subscription_id": map[string]any{"type": "string"}}, "required": []string{"subscription_id"}}}}
+	return []Definition{{Name: Name, Description: "Messages for this person or source may have changed. Read list_changes to catch up.", Delivery: []string{"webhook"}, InputSchema: map[string]any{"type": "object", "properties": map[string]any{"person_id": map[string]any{"type": "integer", "minimum": 1}, "source_id": map[string]any{"type": "integer", "minimum": 1}, "incoming_only": map[string]any{"type": "boolean", "default": true}}, "oneOf": []any{map[string]any{"required": []string{"person_id"}}, map[string]any{"required": []string{"source_id"}}}, "additionalProperties": false}, PayloadSchema: map[string]any{"type": "object", "properties": map[string]any{"subscription_id": map[string]any{"type": "string"}}, "required": []string{"subscription_id"}}}}
 }
 func decode(raw []byte, out any) error {
 	if len(raw) > 64<<10 {
@@ -112,6 +121,9 @@ func decode(raw []byte, out any) error {
 	}
 	var obj map[string]jsontext.Value
 	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return failure(InvalidParams, "invalid_params")
+	}
+	if string(obj["name"]) == "null" {
 		return failure(InvalidParams, "invalid_params")
 	}
 	for _, key := range []string{"arguments", "delivery"} {
@@ -148,6 +160,14 @@ func validate(name string, args *Arguments, delivery Delivery, secret bool) erro
 	}
 	if delivery.URL == "" || (secret && delivery.Secret == "") {
 		return failure(InvalidParams, "invalid_delivery")
+	}
+	if config.ValidateWakeupDestination(delivery.URL, nil) != nil {
+		return failure(InvalidParams, "invalid_callback")
+	}
+	if secret {
+		if _, err := wakeups.DecodeSecret(delivery.Secret); err != nil {
+			return failure(InvalidParams, "invalid_secret")
+		}
 	}
 	return nil
 }

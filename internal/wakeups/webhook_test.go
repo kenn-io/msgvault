@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -134,4 +135,29 @@ func TestWebhookFailureCategories(t *testing.T) {
 			Assert.Equal(t, "timeout", client.send(t.Context(), "https://example.com/hook", "wk_1", []byte(strings.Repeat("a", 32)), []byte("{}")))
 		})
 	})
+}
+
+func TestNativeWebhookSignatureAndSubscriptionHeader(t *testing.T) {
+	secret := []byte(strings.Repeat("s", 32))
+	body := []byte(`{"eventId":"evt_0011223344556677","name":"msgvault.messages.changed","timestamp":"2026-01-01T00:00:00Z","data":{"subscription_id":"sub-1"},"cursor":null}`)
+	var id, stamp, signature, subscription string
+	var received []byte
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id = r.Header.Get("webhook-id")
+		stamp = r.Header.Get("webhook-timestamp")
+		signature = r.Header.Get("webhook-signature")
+		subscription = r.Header.Get("X-MCP-Subscription-Id")
+		received, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	category, status := testWebhookClient(server).sendEvent(t.Context(), "https://example.com/hook", "evt_0011223344556677", "sub-1", secret, body)
+	assert.Empty(t, category)
+	assert.Equal(t, http.StatusNoContent, status)
+	assert.Equal(t, "sub-1", subscription)
+	assert.Equal(t, body, received)
+	mac := hmac.New(sha256.New, secret)
+	_, err := fmt.Fprintf(mac, "%s.%s.%s", id, stamp, received)
+	require.NoError(t, err)
+	assert.Equal(t, "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)), signature)
 }

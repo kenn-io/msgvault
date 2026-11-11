@@ -312,6 +312,8 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	path = <-requests
 	assert.Equal("/api/v1/health", path, "startup reads the daemon schema")
 	path = <-requests
+	assert.Equal("/api/v1/mcp-events/list", path, "startup checks Events availability")
+	path = <-requests
 	assert.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
 	path = <-requests
 	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
@@ -647,4 +649,33 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	assert.False(opts.KataDocbank)
 	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
 	assert.Contains(logs.String(), "503")
+}
+
+func TestDaemonMCPEventsRequireEnabledCurrentDaemon(t *testing.T) {
+	for _, tc := range []struct {
+		name, version string
+		enabled, want bool
+	}{{"old", "5.2.0", true, false}, {"disabled", api.APISchemaVersion, false, false}, {"enabled", api.APISchemaVersion, true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			eventsCalls := 0
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version})
+				case "/api/v1/mcp-events/list":
+					eventsCalls++
+					_ = json.NewEncoder(w).Encode(map[string]any{"enabled": tc.enabled, "events": []any{}})
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			opts := daemonMCPServeOptions(t.Context(), client, nil)
+			assert.Equal(t, tc.want, opts.Events != nil)
+			if tc.version == "5.2.0" {
+				assert.Zero(t, eventsCalls)
+			} else {
+				assert.Equal(t, 1, eventsCalls)
+			}
+		})
+	}
 }

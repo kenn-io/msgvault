@@ -2792,6 +2792,21 @@ identifier_type = "example"
 
 Each rule requires one mailbox address, a header name, and an identifier type. A missing, repeated, or empty header leaves the message attributed to its From address. Rules apply to new Gmail, IMAP, and Microsoft mail, and mbox, eml, emlx, and PST imports. GitHub bot handles are supported. The recorded From address stays visible on messages. Attribution for already archived messages will be handled separately.
 
+### MCP Events
+
+On unreleased `main`, enable owner subscriptions by adding:
+
+```toml
+[mcp_events]
+enabled = true
+```
+
+The default is false. The daemon delivers Events while it is running, and
+resumes from each subscription's saved position after a restart. The private
+`mcp-events.key` in the msgvault home encrypts callback secrets; backups omit
+it. Configured wake-ups and Events subscriptions share a limit of 32 targets.
+See [MCP Events](usage/chat.md#mcp-events) for subscription and verification.
+
 ### Wake-up webhooks
 
 Wake-up configuration changes take effect after restarting the daemon.

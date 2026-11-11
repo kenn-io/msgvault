@@ -14,11 +14,14 @@ import (
 const wakeupStatePrefix = "wakeup:v1:"
 
 type WakeupState struct {
-	At            time.Time `json:"at"`
-	AfterID       int64     `json:"after_id"`
-	AfterRow      bool      `json:"after_row"`
-	Failures      int       `json:"failures"`
-	NextAttemptAt time.Time `json:"next_attempt_at"`
+	At             time.Time  `json:"at"`
+	AfterID        int64      `json:"after_id"`
+	AfterRow       bool       `json:"after_row"`
+	Failures       int        `json:"failures"`
+	NextAttemptAt  time.Time  `json:"next_attempt_at"`
+	LastError      string     `json:"last_error,omitempty"`
+	FailedSince    *time.Time `json:"failed_since,omitempty"`
+	LastDeliveryAt *time.Time `json:"last_delivery_at,omitempty"`
 }
 
 func (s *Store) LoadWakeupState(ctx context.Context, name string) (WakeupState, []byte, error) {
