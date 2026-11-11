@@ -18,7 +18,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -190,12 +189,35 @@ func TestSyncFullHintCancellationPhases(t *testing.T) {
 	}
 }
 
-func TestSyncResumeCommandSanitizesControlCharacters(t *testing.T) {
+func TestSyncResumeCommandPreservesControlCharacters(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell fixture")
+	}
+	fixture := testutil.SecretCommand(t, "argv")[0]
+	oldResolver := daemonCLIExecutableResolver
+	daemonCLIExecutableResolver = func() (string, error) { return fixture, nil }
+	t.Cleanup(func() { daemonCLIExecutableResolver = oldResolver })
+	root := &cobra.Command{Use: "root"}
+	mode := &cobra.Command{Use: "argv"}
+	command := &cobra.Command{Use: "sync-full"}
+	root.AddCommand(mode)
+	mode.AddCommand(command)
+	command.Flags().String("query", "", "")
+	query := "subject:one\ntwo\x1b[31m\tend\n"
+	require.NoError(t, command.ParseFlags([]string{"--query", query}))
+	line, err := syncResumeCommand(command, nil)
+	require.NoError(t, err)
 	var out bytes.Buffer
-	require.NoError(t, printSyncResumeCommand(&out, "msgvault sync-full 'a\x1b[31mb\nc'", "linux"))
-	assert.Contains(t, out.String(), "Control characters were removed")
+	require.NoError(t, printSyncResumeCommand(&out, line, "linux"))
 	assert.NotContains(t, out.String(), "\x1b")
+	assert.NotContains(t, out.String(), "\t")
 	assert.Equal(t, 2, strings.Count(out.String(), "\n"))
+	line = strings.TrimSpace(strings.SplitN(out.String(), "\n", 2)[1])
+	data, err := exec.CommandContext(t.Context(), "sh", "-c", line).CombinedOutput()
+	require.NoError(t, err, "%s", data)
+	var got []string
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, []string{"sync-full", "--query=" + query}, got)
 }
 
 func TestSyncFullHintWriteFailurePreservesInterruption(t *testing.T) {
@@ -213,18 +235,23 @@ func TestSyncResumeCommandPowerShell(t *testing.T) {
 		t.Skip("PowerShell unavailable")
 	}
 	fixture := testutil.SecretCommand(t, "argv")[0]
-	want := []string{"argv", "sync-full", `--query=from:'a b' $HOME;echo`, "--folder=A B", "--folder=C", "--", "reader@example.test"}
-	commands, err := agenthook.BuildCommand(fixture, want...)
-	require.NoError(t, err)
-	var out bytes.Buffer
-	require.NoError(t, printSyncResumeCommand(&out, commands.PowerShell, "windows"))
-	assert.Contains(t, out.String(), "In PowerShell 7.3+, run:")
-	line := strings.TrimSpace(strings.SplitN(out.String(), "\n", 2)[1])
-	data, err := exec.CommandContext(t.Context(), pwsh, "-NoProfile", "-NonInteractive", "-Command", line).CombinedOutput()
-	require.NoError(t, err, "%s", data)
-	var got []string
-	require.NoError(t, json.Unmarshal(data, &got))
-	assert.Equal(t, want[1:], got)
+	for _, query := range []string{`--query=from:'a b' $HOME;echo`, "--query=😀\n\x1b[31m\tend\n"} {
+		want := []string{"argv", "sync-full", query, "--folder=A B", "--folder=C", "--", "reader@example.test"}
+		line, err := formatSyncResumeCommand(fixture, want, "windows")
+		require.NoError(t, err)
+		var out bytes.Buffer
+		require.NoError(t, printSyncResumeCommand(&out, line, "windows"))
+		assert.Contains(t, out.String(), "In PowerShell 7.3+, run:")
+		assert.NotContains(t, out.String(), "\x1b")
+		assert.NotContains(t, out.String(), "\t")
+		assert.Equal(t, 2, strings.Count(out.String(), "\n"))
+		line = strings.TrimSpace(strings.SplitN(out.String(), "\n", 2)[1])
+		data, err := exec.CommandContext(t.Context(), pwsh, "-NoProfile", "-NonInteractive", "-Command", line).CombinedOutput()
+		require.NoError(t, err, "%s", data)
+		var got []string
+		require.NoError(t, json.Unmarshal(data, &got))
+		assert.Equal(t, want[1:], got)
+	}
 }
 
 func TestSyncSourceIDUsesConfiguredRemoteHTTP(t *testing.T) {

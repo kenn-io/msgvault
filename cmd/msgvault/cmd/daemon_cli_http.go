@@ -165,10 +165,20 @@ func daemonCLIRunCwd(info HTTPStoreInfo, requiresLocalFiles bool) (string, error
 }
 
 func daemonCLIArgsFromCobra(cmd *cobra.Command, args []string) ([]string, error) {
+	return cobraCommandArgs(cmd, args, false)
+}
+
+func cobraCommandArgs(cmd *cobra.Command, args []string, includeRoot bool) ([]string, error) {
 	if cmd == nil {
 		return nil, errors.New("missing command")
 	}
-	runArgs := daemonCLICommandPath(cmd)
+	var runArgs []string
+	if includeRoot {
+		cmd.Root().PersistentFlags().Visit(func(flag *pflag.Flag) {
+			runArgs = appendDaemonCLIFlag(runArgs, flag)
+		})
+	}
+	runArgs = append(runArgs, daemonCLICommandPath(cmd)...)
 
 	flags := make([]*pflag.Flag, 0)
 	cmd.Flags().Visit(func(flag *pflag.Flag) {
@@ -178,12 +188,15 @@ func daemonCLIArgsFromCobra(cmd *cobra.Command, args []string) ([]string, error)
 		if flag.Name == addAccountGrantDecidedFlag {
 			return
 		}
-		// Every root persistent flag except the logging flags is stripped,
+		if includeRoot && (isRootPersistentFlag(cmd, flag) || flag.Name == "sync-operation-id") {
+			return
+		}
+		// Forwarding strips root persistent flags except the logging flags,
 		// because the daemon re-resolves configuration from its own
 		// environment. The logging flags express per-invocation intent, so
 		// an explicit `msgvault --log-level debug <cmd>` reaches the
 		// daemon-spawned CLI subprocess.
-		if isRootPersistentFlag(cmd, flag) && !clirun.IsLoggingFlag(flag.Name) {
+		if !includeRoot && isRootPersistentFlag(cmd, flag) && !clirun.IsLoggingFlag(flag.Name) {
 			return
 		}
 		flags = append(flags, flag)
