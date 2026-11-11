@@ -259,7 +259,7 @@
       }}
     />
 
-    {#if reloadRequired && pending}<p class="loading" role="status"><span aria-hidden="true"><Spinner size={12} /></span> Reloading profiles…</p>{/if}
+    {#if reloadRequired && pending}<p class="loading" role="status"><span aria-hidden="true"><Spinner size={16} /></span> Reloading profiles…</p>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#if completed}<p role="status">People merged.</p>{/if}
   </div>
@@ -316,7 +316,7 @@
   .loading {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-4);
     color: var(--text-muted);
   }
   .error {
