@@ -159,6 +159,9 @@ func TestCommitmentAgendaReattachesExactPersonMergeCitation(t *testing.T) {
 			r.NoError(err)
 			_, err = st.MergePersonsContext(ctx, PersonMergeRequest{SurvivorID: person.ID, AbsorbedID: absorbed.ID, ExpectedSurvivorRevision: person.Revision, ExpectedAbsorbedRevision: absorbed.Revision, IdempotencyKey: "reattach", Actor: "test"})
 			r.NoError(err)
+			var survivorID int64
+			r.NoError(st.db.QueryRowContext(ctx, st.Rebind(`SELECT commitment_id FROM person_commitment_agenda WHERE idempotency_key = ?`), frozen.IdempotencyKey).Scan(&survivorID))
+			a.NotEqual(id, survivorID, "the copied survivor receives the existing frozen receipt")
 			r.NoError(st.RetireCommitmentAgendaContext(ctx, frozen.IdempotencyKey))
 			cfg := peoplesweep.Config{}
 			cfg.ApplyDefaults()
@@ -172,7 +175,7 @@ func TestCommitmentAgendaReattachesExactPersonMergeCitation(t *testing.T) {
 			}
 			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{Promises: []peoplesweep.CommitmentPromise{{SourceID: window.Sources[0].ID, Direction: peoplesweep.CommitmentOwedTo, Quote: quote, Summary: "Send report", End: int64(len(quote))}}, Fulfilments: []peoplesweep.CommitmentFulfilment{}}))
 			r.NoError(err)
-			current, err := st.GetCommitmentAgendaContext(ctx, id)
+			current, err := st.GetCommitmentAgendaContext(ctx, survivorID)
 			r.NoError(err)
 			a.Equal(frozen.IdempotencyKey, current.IdempotencyKey)
 			a.Equal(frozen.Request, current.Request)
