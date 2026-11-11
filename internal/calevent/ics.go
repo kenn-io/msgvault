@@ -32,15 +32,21 @@ func EmailInviteSQL(messageType, sourceType, archiveOnly string) string {
 
 // ICSMetadata records the accepted revision independently of the retained raw.
 type ICSMetadata struct {
-	Status    string    `json:"status,omitempty"`
-	AllDay    bool      `json:"all_day"`
-	Sequence  int64     `json:"sequence"`
-	Start     string    `json:"start,omitempty"`
-	End       string    `json:"end,omitempty"`
-	TimeZone  string    `json:"time_zone,omitempty"`
-	ICalUID   string    `json:"ical_uid,omitempty"`
-	Stamp     time.Time `json:"ics_stamp"`
-	Organizer string    `json:"organizer,omitempty"`
+	Status    string       `json:"status,omitempty"`
+	AllDay    bool         `json:"all_day"`
+	Sequence  int64        `json:"sequence"`
+	Start     string       `json:"start,omitempty"`
+	End       string       `json:"end,omitempty"`
+	TimeZone  string       `json:"time_zone,omitempty"`
+	ICalUID   string       `json:"ical_uid,omitempty"`
+	Stamp     time.Time    `json:"ics_stamp"`
+	Organizer string       `json:"organizer,omitempty"`
+	Details   *ICSRevision `json:"ics_details,omitempty"`
+}
+
+type ICSRevision struct {
+	Sequence int64     `json:"sequence"`
+	Stamp    time.Time `json:"stamp"`
 }
 
 type ICSComponent struct {

@@ -208,12 +208,12 @@ func TestICalendarCancellationArrivalOrder(t *testing.T) {
 		requirements.Len(ids, 1)
 		row := calendarRows(t, st, ids...)[0]
 		assertions.Equal("cancelled", row.Event.Status)
-		assertions.Equal("Cancelled meeting", row.Subject)
+		assertions.Equal("Older", row.Subject)
 		requirements.NotNil(row.Event.Start)
-		assertions.Equal("2027-03-02T14:00:00Z", row.Event.Start.Format(time.RFC3339))
+		assertions.Equal("2027-03-02T13:00:00Z", row.Event.Start.Format(time.RFC3339))
 		stored, err := st.GetMessageRaw(ids[0])
 		requirements.NoError(err)
-		assertions.Equal(cancel, stored)
+		assertions.Equal(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Older"), stored)
 	})
 
 }

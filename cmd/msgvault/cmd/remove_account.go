@@ -216,7 +216,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 				"Use --yes to force removal", email,
 		)
 	}
-	msgCount, err := s.CountNativeMessagesForSource(source.ID)
+	msgCount, err := s.CountAllMessagesForSourceContext(cmd.Context(), source.ID)
 	if err != nil {
 		return fmt.Errorf("count messages: %w", err)
 	}

@@ -6275,7 +6275,7 @@ func (s *Store) UpsertMessageRawWithFormat(messageID int64, rawData []byte, form
 // UpsertMessageRawWithFormatContext honors cancellation during UpsertMessageRawWithFormat.
 func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID int64, rawData []byte, format string) error {
 	write := func(tx *loggedTx) error {
-		calendarCandidate := len(rawData) > 0 && (format == "" || format == rawFormatMIME) && hasCalendarToken(rawData)
+		calendarCandidate := len(rawData) > 0 && format == rawFormatMIME && hasCalendarToken(rawData)
 		if calendarCandidate {
 			if err := s.lockEmailCalendarParticipantsWith(ctx, tx); err != nil {
 				return err

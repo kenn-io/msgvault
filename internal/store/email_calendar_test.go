@@ -37,6 +37,35 @@ func TestEmailCalendarGmailAuditExcludesDerivedEvents(t *testing.T) {
 	}
 }
 
+func TestEmailCalendarEncodedFilename(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	calendar := calendarDocument("REQUEST", "DTSTART:20270302T120000Z")
+	raw := "From: organizer@example.com\r\nMIME-Version: 1.0\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment;\r\n filename*=UTF-8''invite%2Eics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar)
+	_, source := persistInviteEmail(t, st, "encoded-invite", []byte(raw))
+	require.Len(t, emailEvents(t, st, source), 1)
+}
+
+func TestEmailCalendarEmptyRawFormatDoesNotLockDirectory(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL participant directory locks")
+	}
+	source, err := st.GetOrCreateSource("mbox", "owner@example.com")
+	require.NoError(t, err)
+	id, err := st.PersistMessageContext(t.Context(), &MessagePersistData{
+		Message:      &Message{SourceID: source.ID, SourceMessageID: "raw", MessageType: "email"},
+		Conversation: &ConversationPersistData{SourceConversationID: "raw"},
+	})
+	require.NoError(t, err)
+	blocker, err := st.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = blocker.Rollback() }()
+	require.NoError(t, st.lockParticipantDirectoryMutationTxContext(t.Context(), blocker))
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, st.UpsertMessageRawWithFormatContext(ctx, id, []byte("Content-Type: text/calendar\r\n\r\n"), ""))
+}
+
 func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -138,10 +167,20 @@ func TestEmailCalendarSourceCountsExcludeDerivedEvents(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, source := persistInviteEmail(t, st, "count-invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
+	email, source := persistInviteEmail(t, st, "count-invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
 	requirements.Len(emailEvents(t, st, source), 1)
+	countAll, err := st.CountAllMessagesForSourceContext(t.Context(), source)
+	requirements.NoError(err)
+	assertions.Equal(int64(2), countAll)
+	_, err = st.db.Exec(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`, email)
+	requirements.NoError(err)
+	countAll, err = st.CountAllMessagesForSourceContext(t.Context(), source)
+	requirements.NoError(err)
+	assertions.Equal(int64(2), countAll)
+	_, err = st.db.Exec(`UPDATE messages SET deleted_from_source_at=NULL WHERE id=?`, email)
+	requirements.NoError(err)
 	gcalData, _ := calendarFixture(t, st, "count-gcal", calendarRaw)
-	_, err := st.PersistMessageContext(t.Context(), gcalData)
+	_, err = st.PersistMessageContext(t.Context(), gcalData)
 	requirements.NoError(err)
 	icsSourceID := icsSource(t, st)
 	_, err = st.PersistICalendarContext(t.Context(), icsSourceID, calendarDocument("REQUEST", "DTSTART:20270302T120000Z"))
