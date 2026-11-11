@@ -279,6 +279,65 @@ func testNinthCommitmentPage(t *testing.T, deleted bool) {
 	_, err = st.DecidePersonCommitmentContext(ctx, items[8].ID, LoopStateDone, nil, items[8].ExpiresAt)
 	a.ErrorIs(err, sql.ErrNoRows)
 }
+
+func TestCommitmentMicrosecondPromiseTimesConvergeAcrossAnchorPages(t *testing.T) {
+	r, a, ctx := require.New(t), assert.New(t), t.Context()
+	f := newPersonSweepApplyFixture(t, "commitment-microsecond-pages", false)
+	st := f.store
+	_, persist := newCommitmentTestConversation(t, f)
+	cfg := peoplesweep.Config{}
+	cfg.ApplyDefaults()
+	cfg.Commitments.Enabled = true
+	cfg.Commitments.MaxOpenAnchors = 2
+	profile := peoplesweep.ProviderProfile{AllowSensitive: true, SourceSince: "2026-01-01",
+		AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText}}
+	var body strings.Builder
+	var promises []peoplesweep.CommitmentPromise
+	for i := range 9 {
+		quote := fmt.Sprintf("I will send report %d.", i+1)
+		start := int64(body.Len())
+		body.WriteString(quote)
+		promises = append(promises, peoplesweep.CommitmentPromise{Direction: peoplesweep.CommitmentOwedTo,
+			Quote: quote, Summary: quote, Start: start, End: int64(body.Len())})
+		body.WriteByte(' ')
+	}
+	const offset = -time.Hour + 123456*time.Microsecond
+	persist("precise-promises", strings.TrimSpace(body.String()), offset)
+	window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+	r.NoError(err)
+	r.Len(window.Sources, 1)
+	for page := range 8 {
+		if len(window.Sources) == 0 {
+			break
+		}
+		r.Len(window.Sources, 1)
+		for i := range promises {
+			promises[i].SourceID = window.Sources[0].ID
+		}
+		if page > 0 {
+			f = nextCommitmentTestAttempt(t, f, fmt.Sprintf("-page-%d", page))
+		}
+		_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+			Promises: promises, Fulfilments: []peoplesweep.CommitmentFulfilment{},
+		}))
+		r.NoError(err)
+		window, err = st.LoadPersonCommitmentWindow(ctx, f.personID, profile, cfg.Commitments, personFactLedgerNow, "UTC")
+		r.NoError(err)
+	}
+	a.Empty(window.Sources, "identical extraction must finish its bounded anchor replay")
+	first, err := st.loadCommitmentCandidates(ctx, f.personID, personFactLedgerNow, false, false, PersonCommitment{}, false, 8)
+	r.NoError(err)
+	r.Len(first, 8)
+	wantTime := personFactLedgerNow.Add(offset).UTC().Truncate(time.Microsecond)
+	a.True(first[0].commitment.PromisedAt.Equal(wantTime), "promise time must retain portable microsecond precision")
+	second, err := st.loadCommitmentCandidates(ctx, f.personID, personFactLedgerNow, false, false, first[7].commitment, false, 8)
+	r.NoError(err)
+	r.Len(second, 1, "chronological resume must not repeat promises at a precise timestamp")
+	for _, item := range first {
+		a.NotEqual(item.commitment.ID, second[0].commitment.ID)
+	}
+}
+
 func TestCommitmentWindowReplaysSameBatchReplyForNewSnoozedPromise(t *testing.T) {
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "new-snoozed-anchor", false)
