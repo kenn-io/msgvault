@@ -902,6 +902,89 @@ func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T
 	})
 }
 
+func TestCommitmentAutomaticOwnerEmailFulfilmentRequiresSentProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		email, sent bool
+		wantState   string
+	}{
+		{"inbox_owner_from", true, false, LoopStateOpen},
+		{"sent_owner_from", true, true, CommitmentStateFulfilled},
+		{"owner_chat", false, false, CommitmentStateFulfilled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, a, ctx := require.New(t), assert.New(t), t.Context()
+			f := newPersonSweepApplyFixture(t, "owner-completion-provenance", false)
+			st := f.store
+			sourceID, _ := newCommitmentTestConversation(t, f)
+			messageType, conversationType := "whatsapp", "direct_chat"
+			if tc.email {
+				source, err := st.GetOrCreateSource("imap", "owner@example.test")
+				r.NoError(err)
+				sourceID = source.ID
+				r.NoError(st.AddAccountIdentity(sourceID, "owner@example.test", "manual"))
+				messageType, conversationType = "email", "email_thread"
+			}
+			owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
+			r.NoError(err)
+			alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+			r.NoError(err)
+			conversation, err := st.EnsureConversationWithType(sourceID, "owner-promise", conversationType, "Report")
+			r.NoError(err)
+			r.NoError(st.EnsureConversationParticipant(conversation, owner, "member"))
+			r.NoError(st.EnsureConversationParticipant(conversation, alice, "member"))
+			persist := func(key, body string, offset time.Duration) int64 {
+				t.Helper()
+				id, err := st.PersistMessageContext(ctx, &MessagePersistData{
+					Message: &Message{SourceID: sourceID, ConversationID: conversation, MessageType: messageType, SourceMessageID: key,
+						SenderID: sql.NullInt64{Int64: owner, Valid: true}, SentAt: sql.NullTime{Time: personFactLedgerNow.Add(offset), Valid: true}},
+					BodyText: sql.NullString{String: body, Valid: true},
+				})
+				r.NoError(err)
+				r.NoError(st.ReplaceMessageRecipientsContext(ctx, id, "to", []int64{alice}, nil))
+				return id
+			}
+			const promise, reply = "I will send the report.", "I sent the report."
+			persist("promise", promise, -2*time.Hour)
+			cfg := peoplesweep.Config{}
+			cfg.ApplyDefaults()
+			cfg.Commitments.Enabled, cfg.Commitments.AutoFulfil = true, true
+			applyCommitmentTestSources(t, f, cfg.Commitments)
+			f = nextCommitmentTestAttempt(t, f, "-finish-initial")
+			applyCommitmentTestSources(t, f, cfg.Commitments)
+			completion := persist("completion", reply, -time.Hour)
+			if tc.sent {
+				labels, err := st.EnsureLabelsBatch(ctx, sourceID, map[string]LabelInfo{
+					"Sent": {Name: "Sent", Type: "system", SystemRole: LabelSystemRoleSent},
+				})
+				r.NoError(err)
+				r.NoError(st.LinkMessageLabel(ctx, completion, labels["Sent"]))
+			}
+			f = nextCommitmentTestAttempt(t, f, "-complete")
+			window, err := st.LoadPersonCommitmentWindow(ctx, f.personID, peoplesweep.ProviderProfile{
+				AllowSensitive: true, SourceSince: "2026-01-01", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
+			}, cfg.Commitments, f.request.Generation.ResolvedAt, "UTC")
+			r.NoError(err)
+			r.Len(window.Anchors, 1)
+			r.NotEmpty(commitmentSourceID(window, completion), "participant-verified owner email remains admitted")
+			_, err = st.ApplyPersonSweep(ctx, commitmentApplyRequest(t, f, window, cfg.Commitments, peoplesweep.ParsedCommitments{
+				Promises: []peoplesweep.CommitmentPromise{}, Fulfilments: []peoplesweep.CommitmentFulfilment{{
+					CommitmentID: window.Anchors[0].ID, SourceID: commitmentSourceID(window, completion), Quote: reply, End: int64(len(reply)), Confirmed: true,
+				}},
+			}))
+			r.NoError(err)
+			items, err := st.ListPersonCommitmentsContext(ctx, f.personID, f.request.CompletedAt, 10, true)
+			r.NoError(err)
+			r.Len(items, 1)
+			a.Equal(peoplesweep.CommitmentOwedBy, items[0].Direction)
+			a.Equal(tc.wantState, items[0].State)
+			r.NotNil(items[0].Fulfilment, "unverified completion remains a proposed exact citation")
+			a.Equal(completion, items[0].Fulfilment.MessageID)
+			a.Equal(tc.wantState == CommitmentStateFulfilled, items[0].FulfilmentConfirmed)
+		})
+	}
+}
+
 func TestCommitmentReopenSuppressesExistingFutureDatedFulfilment(t *testing.T) {
 	r, a, ctx := require.New(t), assert.New(t), t.Context()
 	f := newPersonSweepApplyFixture(t, "future-fulfilment-reopen", false)
