@@ -133,8 +133,9 @@ it('preserves a September drill end when midnight is skipped', async () => {
     const filters = filtersForGroup([], 'month', '2023-09')!;
     expect(filters).toEqual([
       { dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] },
-      { dimension: 'before', values: ['2023-10-01T01:00:00-03:00'] }
+      { dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }
     ]);
+    expect(Date.parse(filters[1]!.values[0]!)).toBe(Date.parse('2023-10-01T01:00:00-03:00'));
     const onChange = vi.fn();
     const props = { client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })), onChange, onClear: vi.fn() };
     const view = render(FilterMenu, { ...props, filters });
@@ -144,10 +145,11 @@ it('preserves a September drill end when midnight is skipped', async () => {
     await fireEvent.change(to, { target: { value: to.value } });
     expect(onChange).toHaveBeenLastCalledWith([
       { dimension: 'after', values: ['2023-09-01T00:00:00-04:00'] },
-      { dimension: 'before', values: ['2023-10-01T01:00:00-03:00'] }
+      { dimension: 'before', values: ['2023-10-01T00:00:00-04:00'] }
     ]);
     await view.rerender({ ...props, filters: onChange.mock.lastCall![0] });
     await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    vi.stubEnv('TZ', 'UTC');
     await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
     expect((screen.getByLabelText('To') as HTMLInputElement).value).toBe('2023-09-30');
   } finally { vi.unstubAllEnvs(); }
