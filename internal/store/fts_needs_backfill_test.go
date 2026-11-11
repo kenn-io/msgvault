@@ -174,6 +174,42 @@ func TestPG_BackfillFTSPreservesIndexedFields(t *testing.T) {
 	require.True(empty)
 }
 
+func TestPG_BackfillFTSPreservesCompoundWordPhrase(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.CreateMessage("compound")
+	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'before foo-bar after'), 'D'), indexing_version = 2 WHERE id = $1`, id)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"before foo-bar after"}}, 10)
+	require.NoError(err)
+	require.Equal([]int64{id}, ids)
+	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"bar foo"}}, 10)
+	require.NoError(err)
+	require.Empty(ids)
+}
+
+func TestPG_BackfillFTSSaturatedMessengerTitle(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	conversation, err := f.Store.EnsureConversation(t.Context(), f.Source.ID, "messenger-thread", "Lantern Harbor")
+	require.NoError(err)
+	id, err := f.Store.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: f.Source.ID, SourceMessageID: "messenger-saturated", MessageType: "fbmessenger"})
+	require.NoError(err)
+	body := strings.Repeat("filler ", 300)
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = setweight(to_tsvector('simple', 'Lantern Harbor'), 'A') || setweight(to_tsvector('simple', $1), 'D'), indexing_version = 2 WHERE id = $2`, body, id)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"lantern harbor"}}, 10)
+	require.NoError(err)
+	require.Equal([]int64{id}, ids)
+}
+
 func TestBackfillFTSPreservesSenderSearches(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

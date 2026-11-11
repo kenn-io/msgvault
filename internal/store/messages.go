@@ -7006,7 +7006,13 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	if !useLegacy {
 		terminal = "FALSE"
 	}
-	selectSQL := `SELECT m.id, ` + field("subject", env.subject) + `, ` + field("body", `COALESCE(b.body_text, '')`) + `, ` + field("sender", env.fromAddr) + `, ` + field("recipient", env.toAddrs) + `, ` + field("cc", env.ccAddrs) + `, COALESCE(` + terminal + `, FALSE)
+	subject := env.subject
+	if useLegacy {
+		subject = `CASE WHEN m.indexing_version = 2 AND m.search_fts IS NOT NULL AND m.message_type = 'fbmessenger' THEN COALESCE((SELECT c.title FROM conversations c WHERE c.id = m.conversation_id), '') ELSE ` + subject + ` END`
+	}
+	// PostgreSQL indexes both a compound word and its parts at successive
+	// positions. Keep the parts so normalization does not repeat the phrase.
+	selectSQL := `SELECT m.id, ` + field("subject", subject) + `, ` + field("body", `COALESCE(b.body_text, '')`) + `, ` + field("sender", env.fromAddr) + `, ` + field("recipient", env.toAddrs) + `, ` + field("cc", env.ccAddrs) + `, COALESCE(` + terminal + `, FALSE)
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id
 		LEFT JOIN LATERAL (SELECT
 			string_agg(e.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'A') AS subject,
@@ -7014,7 +7020,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 			string_agg(e.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'C') AS recipient,
 			string_agg(e.lexeme, ' ' ORDER BY p.pos) FILTER (WHERE p.weight = 'D') AS body,
 			'' AS cc FROM unnest(m.search_fts) e CROSS JOIN LATERAL unnest(e.positions, e.weights) p(pos, weight)
-			WHERE ` + legacy + `) old ON TRUE WHERE m.id = ANY(?::bigint[]) ORDER BY m.id`
+			WHERE ` + legacy + ` AND (strpos(e.lexeme, '-') = 0 OR NOT EXISTS (SELECT 1 FROM ts_debug('simple', e.lexeme) d WHERE d.token = e.lexeme AND d.alias IN ('asciihword', 'hword', 'numhword')))) old ON TRUE WHERE m.id = ANY(?::bigint[]) ORDER BY m.id`
 	vector, _ := pgFTSVector(FTSDoc{})
 	replace := strings.NewReplacer("$2", "u.subject", "$3", "u.body", "$4", "u.sender", "$5", "u.to_addrs", "$6", "u.cc_addrs")
 	vector = replace.Replace(vector)
