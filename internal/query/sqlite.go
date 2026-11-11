@@ -152,7 +152,8 @@ func eligibleParticipantNameExpr(alias string) string {
 		` THEN NULLIF(` + alias + `.phone_number, '') END`
 	email := `CASE WHEN ` + store.FullParticipantValueWhere(alias+`.id`, `'email'`, alias+`.email_address`) +
 		` THEN NULLIF(` + alias + `.email_address, '') END`
-	return `COALESCE(` + displayName + `, ` + phone + `, ` + email + `, '')`
+	// A numeric X ID is a display fallback, never an observed name.
+	return `COALESCE(` + displayName + `, ` + phone + `, ` + email + `, ` + xUserIDExpr(alias, "") + `, '')`
 }
 
 // eligibleSenderAddressSQL admits a From row whose sender address may be
@@ -166,12 +167,6 @@ func eligibleSenderAddressSQL(mrAlias, participantAlias string) string {
 // identityindex.RelayAddressSubquery does, and otherwise an eligible email.
 func eligibleSenderEmailExpr(alias string) string {
 	return `COALESCE(` + identityindex.RelayAddressSubquery("m.id", "message_recipients") + `, NULLIF(` + eligibleParticipantEmailExpr(alias) + `, ''), '')`
-}
-
-// eligibleDirectSenderNameExpr labels a direct sender by an eligible value,
-// falling back to a numeric X ID, which is never an observed name.
-func eligibleDirectSenderNameExpr(alias string) string {
-	return `COALESCE(NULLIF(` + eligibleParticipantNameExpr(alias) + `, ''), ` + xUserIDExpr(alias, "") + `, '')`
 }
 
 // eligibleRecipientNameExpr keeps per-message names first while checking the
@@ -1031,14 +1026,14 @@ func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 	}
 	if limit != 0 {
 		direct := `SELECT m_direct.id FROM messages m_direct WHERE m_direct.sender_id IN (
-            SELECT p_direct_sender.id FROM participants p_direct_sender WHERE (p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)` + directName + `)
+            SELECT p_direct_sender.id FROM participants p_direct_sender WHERE ` + eligibleParticipantAddressMatchSQL("p_direct_sender") + directName + `)
             AND ` + identityindex.RelayAbsentExpr("m_direct.id", "message_recipients")
 		from := `SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
             JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
             WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.is_relayed AND LOWER(mr_filter_from.email_address) = ?` + fromName + `
             UNION ALL SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
             JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
-            WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.participant_id IN (SELECT id FROM participants WHERE email_address = ? OR phone_number = ?)
+            WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.participant_id IN (SELECT p_eligible.id FROM participants p_eligible WHERE ` + eligibleParticipantAddressMatchSQL("p_eligible") + `)
             AND NOT mr_filter_from.is_relayed` + fromName
 		fromArgs = []any{strings.ToLower(filter.Sender)}
 		if filter.SenderName != "" {

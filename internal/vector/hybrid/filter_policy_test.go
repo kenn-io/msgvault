@@ -42,12 +42,11 @@ func TestParticipantFiltersRequireFullValueSupport(t *testing.T) {
 	check := func(want int64) {
 		fuzzy, err := BuildFilter(t.Context(), st.DB(), st.Rebind, search.Parse("from:hidden.test to:cold-only cc:hidden.test bcc:cold-only"))
 		require.NoError(err)
-		for _, groups := range [][][]int64{fuzzy.SenderGroups, fuzzy.ToGroups, fuzzy.CcGroups, fuzzy.BccGroups} {
+		for _, groups := range [][][]int64{fuzzy.ToGroups, fuzzy.CcGroups, fuzzy.BccGroups} {
 			assert.Equal([][]int64{{want}}, groups)
 		}
-		for _, filter := range []query.MessageFilter{
-			{Sender: "cold-only@hidden.test"}, {Sender: "+15555550101"}, {Recipient: "cold-only@hidden.test"}, {Domain: "hidden.test"},
-		} {
+		assert.Equal([]string{"hidden.test"}, fuzzy.SenderTerms)
+		for _, filter := range []query.MessageFilter{{Sender: "+15555550101"}, {Recipient: "cold-only@hidden.test"}} {
 			exact, err := BuildFilter(t.Context(), st.DB(), st.Rebind, nil)
 			require.NoError(err)
 			require.NoError(ApplyMessageFilter(t.Context(), st.DB(), st.Rebind, &exact, filter))
@@ -55,11 +54,15 @@ func TestParticipantFiltersRequireFullValueSupport(t *testing.T) {
 			if filter.Recipient != "" {
 				groups = exact.RecipientAnyGroups
 			}
-			if filter.Domain != "" {
-				groups = exact.SenderGroups
-			}
 			assert.Equal([][]int64{{want}}, groups, "%+v", filter)
 		}
+		// Exact sender addresses and domains reach the vector backends, which
+		// apply value eligibility in their own SQL.
+		exact, err := BuildFilter(t.Context(), st.DB(), st.Rebind, nil)
+		require.NoError(err)
+		require.NoError(ApplyMessageFilter(t.Context(), st.DB(), st.Rebind, &exact, query.MessageFilter{Sender: "cold-only@hidden.test", Domain: "hidden.test"}))
+		assert.Equal([]string{"cold-only@hidden.test"}, exact.SenderTerms)
+		assert.Equal("hidden.test", exact.SenderDomain)
 	}
 	require.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "support", "cold"))
 	check(noMatchSentinel)

@@ -1532,6 +1532,15 @@ func (b *Backend) filteredMessageIDs(ctx context.Context, f vector.Filter) ([]in
 // filteredMessageIDsLimit runs the authoritative filter query and optionally
 // stops after limit rows. A positive limit supports bounded cardinality probes
 // without materializing a large filtered population.
+// senderEligibility applies archive value eligibility to sender filters when
+// the backend reads a policy-aware archive.
+func (b *Backend) senderEligibility() search.SenderEligibility {
+	if b.policyStore == nil {
+		return nil
+	}
+	return store.SenderEligibility
+}
+
 func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, limit int) ([]int64, error) {
 	if len(f.ListIDSubstrings) > 0 || len(f.ListIDExactGroups) > 0 || f.ListID != "" {
 		hasListID, err := sqliteColumnExists(ctx, b.mainDB, "messages", "list_id")
@@ -1590,12 +1599,12 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		clauses = append(clauses, "("+strings.Join(messageTypeClauses, " OR ")+")")
 	}
 	for _, term := range f.SenderTerms {
-		predicate, _, senderArgs := search.SenderLookup(term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m", store.SenderEligibility)
+		predicate, _, senderArgs := search.SenderLookup(term, (&store.SQLiteDialect{}).UnicodeLowerExpression, "messages", "message_recipients", "participants", "m", b.senderEligibility())
 		clauses = append(clauses, predicate)
 		args = append(args, senderArgs...)
 	}
 	if f.SenderDomain != "" {
-		clauses = append(clauses, search.SenderDomainCondition("?", store.SenderEligibility))
+		clauses = append(clauses, search.SenderDomainCondition("?", b.senderEligibility()))
 		args = append(args, f.SenderDomain)
 	}
 	for _, group := range f.SenderGroups {
