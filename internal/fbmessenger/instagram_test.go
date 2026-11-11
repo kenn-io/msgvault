@@ -211,6 +211,32 @@ func TestInstagramMediaRecoveryAndContainment(t *testing.T) {
 	assert.Equal(5, n)
 }
 
+func TestInstagramSymlinkMediaDoesNotStopImport(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	root := t.TempDir()
+	target := filepath.Join(root, "target.jpg")
+	require.NoError(os.WriteFile(target, []byte("invented image"), 0600))
+	if err := os.Symlink(target, filepath.Join(root, "linked.jpg")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	record := instagramTestRecord("linked media")
+	record["photos"] = []map[string]string{{"uri": "linked.jpg"}}
+	instagramTestShard(t, root, "circle", "message_1.json", record, instagramTestRecord("later"))
+	opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example", AttachmentsDir: t.TempDir()}
+	for i := range 2 {
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		assert.Equal(1, summary.MediaRejected)
+		assert.Zero(summary.AttachmentsStored)
+		assert.Equal(2, countMessages(t, st, ""))
+		if i == 1 {
+			assert.Zero(summary.MessagesAdded)
+		}
+	}
+}
+
 func TestInstagramConflictingThreadPaths(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

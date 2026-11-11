@@ -892,7 +892,7 @@ func writeThreadToStore(
 				if filename == "" {
 					summary.MediaRejected++
 					summary.Incomplete = true
-				} else if info, err := os.Stat(filename); errors.Is(err, os.ErrNotExist) {
+				} else if info, err := os.Lstat(filename); errors.Is(err, os.ErrNotExist) {
 					summary.MediaMissing++
 					summary.Incomplete = true
 				} else if err != nil || !info.Mode().IsRegular() {
