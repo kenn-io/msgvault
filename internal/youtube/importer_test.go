@@ -149,9 +149,28 @@ func TestRegisterCompletesWhenChannelTitleConflictsWithSourceSelector(t *testing
 	}
 }
 
+func TestArchivePreservesNewerCheckpoint(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	client := archiveFixture(t, false, nil, nil)
+	imp := NewImporter(st, client)
+	source, err := imp.Register(t.Context(), "UCfixture")
+	require.NoError(err)
+	const saved = `{"version":2,"ownership_cursor":"future-owner","queue":[{"kind":"uploads","token":"future-page"}],"future_field":"preserve"}`
+	run, err := st.StartSyncContext(t.Context(), source.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.PauseSyncWithCheckpoint(t.Context(), run, &store.Checkpoint{PageToken: saved}))
+	for range 2 {
+		_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 2})
+		require.ErrorContains(err, "unsupported")
+		checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), source.ID, SourceType)
+		require.NoError(err)
+		require.Equal(saved, checkpoint.CursorBefore.String)
+	}
+}
+
 func TestArchiveRestartsInvalidCheckpoint(t *testing.T) {
 	for _, tc := range []struct{ name, checkpoint string }{
-		{"unsupported version", `{"version":2,"ownership_cursor":"stale-owner","queue":[{"kind":"uploads","token":"stale-page"}]}`},
 		{"invalid version type", `{"ownership_cursor":"stale-owner","queue":[{"kind":"uploads","token":"stale-page"}],"version":"invalid"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

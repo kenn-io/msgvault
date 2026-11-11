@@ -109,7 +109,11 @@ func (imp *Importer) resume(ctx context.Context, sourceID int64) (*syncState, er
 		blob = checkpoint.CursorBefore.String
 	}
 	if blob != "" {
-		if json.Unmarshal([]byte(blob), state) != nil || state.Version != 1 {
+		err := json.Unmarshal([]byte(blob), state)
+		if err == nil && state.Version > 1 {
+			return nil, errors.New("unsupported YouTube saved progress version")
+		}
+		if err != nil || state.Version != 1 {
 			slog.WarnContext(ctx, "YouTube saved progress is invalid; restarting discovery", "source_id", sourceID)
 			state = &syncState{Version: 1, Queue: []work{{Kind: "uploads"}}}
 		}
