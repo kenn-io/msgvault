@@ -61,9 +61,9 @@ type mergeSplitArgs struct {
 	Key            string  `json:"idempotency_key"`
 }
 
-func validMergeDecision(a mergeDecisionArgs) bool {
-	return a.ETag != ""
-}
+const mergeInvalidArguments = "invalid_arguments"
+const mergeInvalidResponse = "invalid_operation_response"
+
 func validMergeSplit(a mergeSplitArgs) bool {
 	if a.ETag == "" || strings.TrimSpace(a.Key) == "" || len(strings.TrimSpace(a.Key)) > 128 {
 		return false
@@ -87,7 +87,7 @@ func mergeRefusal(code string) bool {
 
 func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure(mergeInvalidArguments, false), true, nil
 	}
 	var result *mcpserver.OperationResult
 	var err error
@@ -109,7 +109,7 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		}
 		var detail generated.PersonMergeDetail
 		if e := json.Unmarshal(data, &detail); e != nil {
-			return operationFailure("invalid_operation_response", false), true, e
+			return operationFailure(mergeInvalidResponse, false), true, e
 		}
 		result = &mcpserver.OperationResult{Output: mcpserver.MergeDetail{Labels: detail.Labels, Merge: detail.Merge, Participants: detail.Participants, ReviewCandidates: detail.ReviewCandidates, Splits: detail.Splits, RowCount: len(detail.Rows)}}
 	case "get_person_merge_snapshot":
@@ -123,14 +123,20 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		}
 		var raw generated.PersonMergeSnapshotResponse
 		if e := json.Unmarshal(data, &raw); e != nil {
-			return operationFailure("invalid_operation_response", false), true, e
+			return operationFailure(mergeInvalidResponse, false), true, e
 		}
 		var snapshot struct {
 			Persons []mcpserver.MergeSnapshotPerson `json:"persons"`
 			Rows    []struct{}                      `json:"rows"`
 		}
-		if raw.Version != 1 || json.Unmarshal(raw.Snapshot, &snapshot) != nil || len(snapshot.Persons) > 2 {
-			return operationFailure("invalid_operation_response", false), true, nil
+		if raw.Version != 1 {
+			return operationFailure(mergeInvalidResponse, false), true, nil
+		}
+		if e := json.Unmarshal(raw.Snapshot, &snapshot); e != nil {
+			return operationFailure(mergeInvalidResponse, false), true, e
+		}
+		if len(snapshot.Persons) > 2 {
+			return operationFailure(mergeInvalidResponse, false), true, nil
 		}
 		result = &mcpserver.OperationResult{Output: mcpserver.MergeSnapshot{Version: raw.Version, SHA256: raw.Sha256, Persons: snapshot.Persons, RowCount: len(snapshot.Rows)}}
 	case "decide_person_merge_candidate":
@@ -142,7 +148,7 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		if result != nil && !result.IsError {
 			candidate, ok := result.Output.(generated.PersonMergeReviewCandidate)
 			if !ok || result.ETag == "" {
-				return operationFailure("invalid_operation_response", true), true, nil
+				return operationFailure(mergeInvalidResponse, true), true, nil
 			}
 			result.Output = mcpserver.MergeCandidateReceipt{Candidate: candidate, ETag: result.ETag}
 		}
@@ -151,7 +157,15 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 		if e != nil {
 			return invalid()
 		}
-		result, err = readMCPOperationJSONWithClassifier[generated.PersonSplitResult](ctx, b.client, http.MethodPost, "/api/v1/people/{id}/split", &generated.SplitPersonMergeRequestOptions{PathParams: &generated.SplitPersonMergePath{ID: a.PersonID}, Header: &generated.SplitPersonMergeHeaders{IfMatch: a.ETag, IdempotencyKey: strings.TrimSpace(a.Key)}, Body: &generated.SplitPersonMergeBody{MergeID: a.MergeID, ParticipantIds: a.ParticipantIDs}}, mergeRefusal, http.StatusOK)
+		data, _, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodPost, "/api/v1/people/{id}/split", &generated.SplitPersonMergeRequestOptions{PathParams: &generated.SplitPersonMergePath{ID: a.PersonID}, Header: &generated.SplitPersonMergeHeaders{IfMatch: a.ETag, IdempotencyKey: strings.TrimSpace(a.Key)}, Body: &generated.SplitPersonMergeBody{MergeID: a.MergeID, ParticipantIds: a.ParticipantIDs}}, 16<<20, mergeRefusal, http.StatusOK)
+		if failure != nil {
+			return failure, true, readErr
+		}
+		var split generated.PersonSplitResult
+		if e := json.Unmarshal(data, &split); e != nil {
+			return operationFailure(mergeInvalidResponse, true), true, e
+		}
+		result = &mcpserver.OperationResult{Output: mcpserver.MergeSplitReceipt{Split: split.Split, SourcePerson: split.SourcePerson, NewPerson: split.NewPerson, ExactReversal: split.ExactReversal, UIDAliasDisposition: split.UIDAliasDisposition, IdentityRevision: split.IdentityRevision, CacheState: split.CacheState, AmbiguousRowCount: len(split.AmbiguousRows), UnrestoredRowCount: len(split.UnrestoredRows)}}
 	default:
 		return nil, false, nil
 	}
@@ -164,14 +178,14 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 	switch name {
 	case "decide_person_merge_candidate":
 		a, err := decodeMCPOperationArguments[mergeDecisionArgs](args)
-		if err != nil || !validMergeDecision(a) {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+		if err != nil || a.ETag == "" {
+			return "", true, &mcpserver.OperationRefusalError{Code: mergeInvalidArguments}
 		}
 		personID, mergeID, etag = a.PersonID, a.MergeID, a.ETag
 	case "split_person_merge":
 		a, err := decodeMCPOperationArguments[mergeSplitArgs](args)
 		if err != nil || !validMergeSplit(a) {
-			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+			return "", true, &mcpserver.OperationRefusalError{Code: mergeInvalidArguments}
 		}
 		personID, mergeID, etag = a.PersonID, a.MergeID, a.ETag
 		effect = "Split the selected absorbed participant lineage into a new person. Lineage labels are historical. The daemon checks the supplied revision, lineage and review restrictions for a new split. An identical completed request returns its saved result."

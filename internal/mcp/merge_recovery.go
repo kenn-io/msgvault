@@ -29,6 +29,17 @@ type MergeCandidateReceipt struct {
 	Candidate generated.PersonMergeReviewCandidate `json:"candidate"`
 	ETag      string                               `json:"etag"`
 }
+type MergeSplitReceipt struct {
+	Split               generated.PersonSplit                 `json:"split"`
+	SourcePerson        generated.Person                      `json:"source_person"`
+	NewPerson           generated.Person                      `json:"new_person"`
+	ExactReversal       bool                                  `json:"exact_reversal"`
+	UIDAliasDisposition string                                `json:"uid_alias_disposition"`
+	IdentityRevision    int64                                 `json:"identity_revision"`
+	CacheState          generated.PersonSplitResultCacheState `json:"cache_state"`
+	AmbiguousRowCount   int                                   `json:"ambiguous_row_count"`
+	UnrestoredRowCount  int                                   `json:"unrestored_row_count"`
+}
 
 func mergeRecoveryDefinitions() []operationalDefinition {
 	id := func() *jsonschema.Schema { return safeIDSchema("Durable merge ID") }
@@ -37,10 +48,10 @@ func mergeRecoveryDefinitions() []operationalDefinition {
 		return stringSchema("Person ETag from get_person_edit_context")
 	}
 	return []operationalDefinition{
-		newOperationalDefinition("list_person_merges", "List one person's durable merge lineage, with bounded pagination.", OperationFamilyMergeRecovery, closedObject(map[string]*jsonschema.Schema{"person_id": person(), "limit": boundedIntegerSchema("Maximum results (default 100)", 1, 500), "offset": nonNegativeIntegerSchema("Results to skip", 0)}, "person_id"), outputSchemaFor[generated.PersonMergesResponse](), false),
+		newOperationalDefinition("list_person_merges", "List one person's durable merge lineage, with bounded pagination.", OperationFamilyMergeRecovery, closedObject(map[string]*jsonschema.Schema{toolArgPersonID: person(), "limit": boundedIntegerSchema("Maximum results (default 100)", 1, 500), "offset": nonNegativeIntegerSchema("Results to skip", 0)}, toolArgPersonID), outputSchemaFor[generated.PersonMergesResponse](), false),
 		newOperationalDefinition("get_person_merge", "Read one durable merge, its participants, review candidates, row count and splits.", OperationFamilyMergeRecovery, closedObject(map[string]*jsonschema.Schema{"merge_id": id()}, "merge_id"), outputSchemaFor[MergeDetail](), false),
-		newOperationalDefinition("get_person_merge_snapshot", "Verify a merge snapshot and read bounded person lineage and row count; stored row values are omitted.", OperationFamilyMergeRecovery, closedObject(map[string]*jsonschema.Schema{"merge_id": id()}, "merge_id"), outputSchemaFor[MergeSnapshot](), false),
-		newOperationalDefinition("decide_person_merge_candidate", "Accept or reject one merge review candidate using the person's ETag. Native revision checks apply; replay can precede comparison. Candidate records identify values by ID. Requires client confirmation.", OperationFamilyMergeRecovery, closedObject(map[string]*jsonschema.Schema{"person_id": person(), "candidate_id": safeIDSchema("Review candidate ID"), "merge_id": id(), "etag": etag(), "decision": stringSchema("Candidate decision", "accept", "reject")}, "person_id", "merge_id", "candidate_id", "etag", "decision"), outputSchemaFor[MergeCandidateReceipt](), true),
-		newOperationalDefinition("split_person_merge", "Split selected absorbed participant lineage into a new person using the person's ETag and a stable idempotency key. Native revision, lineage and review checks apply; idempotent replay can precede revision comparison. Requires client confirmation.", OperationFamilyMergeRecovery, closedObject(map[string]*jsonschema.Schema{"person_id": person(), "merge_id": id(), "participant_ids": {Type: schemaTypeArray, Items: safeIDSchema("Absorbed participant ID")}, "etag": etag(), "idempotency_key": stringSchema("Stable 1–128 byte retry key")}, "person_id", "merge_id", "participant_ids", "etag", "idempotency_key"), outputSchemaFor[generated.PersonSplitResult](), true),
+		newOperationalDefinition("get_person_merge_snapshot", "Verify a merge snapshot and read person lineage and row count; stored row values are omitted.", OperationFamilyMergeRecovery, closedObject(map[string]*jsonschema.Schema{"merge_id": id()}, "merge_id"), outputSchemaFor[MergeSnapshot](), false),
+		newOperationalDefinition("decide_person_merge_candidate", "Accept or reject one merge review candidate using the person's ETag. Native revision checks apply; replay can precede comparison. Candidate records identify values by ID. Requires client confirmation.", OperationFamilyMergeRecovery, closedObject(map[string]*jsonschema.Schema{toolArgPersonID: person(), "candidate_id": safeIDSchema("Review candidate ID"), "merge_id": id(), "etag": etag(), "decision": stringSchema("Candidate decision", "accept", "reject")}, toolArgPersonID, "merge_id", "candidate_id", "etag", "decision"), outputSchemaFor[MergeCandidateReceipt](), true),
+		newOperationalDefinition("split_person_merge", "Split selected absorbed participant lineage into a new person using the person's ETag and a stable idempotency key. Native revision, lineage and review checks apply; idempotent replay can precede revision comparison. Requires client confirmation.", OperationFamilyMergeRecovery, closedObject(map[string]*jsonschema.Schema{toolArgPersonID: person(), "merge_id": id(), "participant_ids": {Type: schemaTypeArray, Items: safeIDSchema("Absorbed participant ID")}, "etag": etag(), "idempotency_key": stringSchema("Stable 1–128 byte retry key")}, toolArgPersonID, "merge_id", "participant_ids", "etag", "idempotency_key"), outputSchemaFor[MergeSplitReceipt](), true),
 	}
 }
