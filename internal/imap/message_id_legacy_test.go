@@ -1,12 +1,16 @@
 package imap
 
 import (
+	"fmt"
 	"testing"
 
 	imapapi "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"hegel.dev/go/hegel"
+
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 func TestLegacyMessageIDPreservedAcrossIMAPFetchPaths(t *testing.T) {
@@ -97,4 +101,38 @@ func TestLegacyMessageIDSourceValidation(t *testing.T) {
 			assert.Equal(t, test.wantMatch, matches)
 		})
 	}
+}
+
+func TestHegelMessageIDContract(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		id := fmt.Sprintf("Token%d@example.test", hegel.Draw(ht, hegel.Integers(0, 999999)))
+		bare := fmt.Sprintf("%d", hegel.Draw(ht, hegel.Integers(0, 999999)))
+		legacy := "[" + id + "]"
+		fold := hegel.Draw(ht, hegel.SampledFrom([]string{" ", "\r\n\t"}))
+		cases := []struct{ name, header, imap, stored string }{
+			{"dot atom", "<" + id + ">", id, id},
+			{"bare", bare, bare, bare},
+			{"legacy", "<" + legacy + ">", legacy, legacy},
+			{"nested", "<<" + id + ">>", "", ""},
+			{"missing opening", id + ">", "", ""},
+			{"empty", "<>", "", ""},
+			{"missing closing", "<" + id, id, ""},
+			{"parameters", "<" + id + "> type=\"text/plain\"", id, ""},
+			{"comment", "<" + id + "> (comment)", id, ""},
+		}
+		for _, tc := range cases {
+			raw := []byte("Message-ID:" + fold + tc.header + "\r\n\r\nMessage-ID: decoy@example.test\r\n")
+			ht.Logf("%s: %q", tc.name, raw)
+			parsed, err := mime.Parse(raw)
+			require.NoError(ht, err)
+			assert.Equal(ht, tc.imap, rawMIMEMessageID(raw), tc.name)
+			assert.Equal(ht, tc.stored, mime.NormalizeMessageID(parsed.MessageID), tc.name)
+		}
+		raw := []byte("Subject: no identifier\r\n\r\nMessage-ID: " + id + "\r\n")
+		ht.Logf("body only: %q", raw)
+		parsed, err := mime.Parse(raw)
+		require.NoError(ht, err)
+		assert.Empty(ht, rawMIMEMessageID(raw))
+		assert.Empty(ht, mime.NormalizeMessageID(parsed.MessageID))
+	})
 }
