@@ -53,6 +53,7 @@ Search and read:
   chat        Find archived chats
   domain      List message domains
   label       List archive labels
+  loops       List conversations waiting on a reply
   media       Search transcripts and mirrored document text
   meetings    Read archived meeting context, actions, and metrics
   query       Run a SQL query against the analytics cache
@@ -67,6 +68,7 @@ Export:
   export      Export archived messages and attachments
 
 People, organizations, and identity:
+  address              Find address suggestions with Google Places
   attribute-definition Manage portable attribute definitions
   carddav              Manage CardDAV connections, books, and conflicts
   collection           Manage named groups of accounts
@@ -87,7 +89,7 @@ Import local exports:
   import      Import messages from local exports
 
 Drafts, calendar, and Kata (write to providers):
-  calendar    Control live calendar events and query availability
+  calendar    Read archived events and control live calendars
   draft       Create and manage provider drafts
   kata        Create Kata issues that quote archived evidence
   message     Manage archived messages
@@ -100,18 +102,18 @@ Review and delete:
 Indexes, embeddings, and analytics cache:
   activity    Build the derived activity spine
   cache       Build and inspect the analytics cache
-  documents   Manage document attachment indexing
   embeddings  Manage message vector embeddings
   eval        Score search quality against relevance judgments (qrels)
   fts         Maintain full-text search
   multimodal  Manage and search visual attachment embeddings
 
 Maintenance and repair:
-  attachment  Pack, restore, and maintain archived attachments
-  backup      Back up the archive to a snapshot repository
-  database    Initialize, migrate, and inspect the archive schema
-  policy      Show room tiers and overrides
-  repair      Repair archived messages and metadata
+  attachment              Pack, restore, and maintain archived attachments
+  backup                  Back up the archive to a snapshot repository
+  database                Initialize, migrate, and inspect the archive schema
+  policy                  Show room tiers and overrides
+  repair                  Repair archived messages and metadata
+  repair-attachment-roles Classify older email attachments
 
 Setup, daemon, and integrations:
   agent-token Manage restricted agent grant tokens

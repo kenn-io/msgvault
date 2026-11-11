@@ -102,7 +102,7 @@ permanent deletion still requires typing `delete`.
 
 ## Command grammar and compatibility
 
-The grouped command names below are unreleased changes on `main`; v0.22.0
+The grouped command names below are unreleased changes on `main`; v0.23.0
 and earlier use the previous names. Use `msgvault --help` to check your installed binary.
 
 Use direct verbs to search, show, import, export and repair archive messages.
