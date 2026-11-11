@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/shirou/gopsutil/v4/process"
 	"go.kenn.io/kit/agenthook"
@@ -695,15 +699,54 @@ func daemonRestartCommand(ctx context.Context) string {
 }
 
 func formatNativeCommand(args []string) (string, error) {
-	commands, err := agenthook.BuildCommand(nativeCommandExecutable(), args...)
-	if err != nil {
-		return "", err
+	return formatCommand(nativeCommandExecutable(), args, runtime.GOOS)
+}
+
+func formatCommand(executable string, args []string, goos string) (string, error) {
+	if executable == "" {
+		return "", errors.New("executable is empty")
 	}
-	restart := commands.POSIX
-	if runtime.GOOS == "windows" {
-		restart = commands.PowerShell
+	values := append([]string{executable}, args...)
+
+	var parts, assignments []string
+	for i, value := range values {
+		if !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+			if goos == "windows" {
+				var chars []string
+				for _, char := range utf16.Encode([]rune(value)) {
+					chars = append(chars, fmt.Sprintf("0x%04x", char))
+				}
+				parts = append(parts, "([string]::new([char[]]@("+strings.Join(chars, ",")+")))")
+			} else {
+				var encoded strings.Builder
+				for _, b := range []byte(value) {
+					fmt.Fprintf(&encoded, "\\0%03o", b)
+				}
+				name := fmt.Sprintf("_msgvault_arg_%d", i)
+				// The suffix keeps command substitution from dropping trailing newlines.
+				assignments = append(assignments, fmt.Sprintf("%s=$(printf '%%b_' '%s')", name, encoded.String()))
+				parts = append(parts, "\"${"+name+"%_}\"")
+			}
+			continue
+		}
+		quoted, err := agenthook.BuildCommand("x", value)
+		if err != nil {
+			return "", err
+		}
+		if goos == "windows" {
+			parts = append(parts, strings.TrimPrefix(quoted.PowerShell, "& 'x' "))
+		} else {
+			parts = append(parts, strings.TrimPrefix(quoted.POSIX, "x "))
+		}
 	}
-	return restart, nil
+	line := strings.Join(parts, " ")
+	if goos == "windows" {
+		return "& " + line, nil
+	}
+	if len(assignments) != 0 {
+		return "( " + strings.Join(assignments, "; ") + "; " + line + " )", nil
+	}
+	return line, nil
 }
 
 func nativeCommandExecutable() string {

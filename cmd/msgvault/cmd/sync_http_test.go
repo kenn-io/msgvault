@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -69,22 +70,27 @@ func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestSyncFullInterruptionHint(t *testing.T) {
-	for _, mode := range []string{"client", "child", "error"} {
+	for _, mode := range []string{"client", "child", "child-extra", "error"} {
 		t.Run(mode, func(t *testing.T) {
 			var cancel context.CancelFunc
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if mode == "client" {
 					cancel()
+					<-r.Context().Done()
 					return
 				}
 				w.Header().Set("Content-Type", "application/x-ndjson")
-				if mode == "child" {
+				if mode == "child" || mode == "child-extra" {
 					waitErr := helperProcessCommand(r.Context(), "interrupted").Run()
 					err := classifyDaemonCLIWaitErr(waitErr, []string{"sync-full"}, func(stream, data string) error {
 						return json.NewEncoder(w).Encode(map[string]string{"type": stream, "data": data})
 					})
 					assert.EqualError(t, err, cliSubprocessExitSentinel)
-					_ = json.NewEncoder(w).Encode(map[string]string{"type": "error", "error": err.Error()})
+					message := err.Error()
+					if mode == "child-extra" {
+						message += "\ncache refresh failed"
+					}
+					_ = json.NewEncoder(w).Encode(map[string]string{"type": "error", "error": message})
 				} else {
 					_, _ = w.Write([]byte("{\"type\":\"error\",\"error\":\"provider failed\"}\n"))
 				}
@@ -103,7 +109,7 @@ func TestSyncFullInterruptionHint(t *testing.T) {
 			switch mode {
 			case "client":
 				require.ErrorIs(t, err, context.Canceled)
-			case "child":
+			case "child", "child-extra":
 				require.ErrorIs(t, err, ErrSyncInterrupted)
 			default:
 				require.Error(t, err)
@@ -113,9 +119,31 @@ func TestSyncFullInterruptionHint(t *testing.T) {
 			} else {
 				assert.Equal(t, 1, strings.Count(stderr.String(), "Sync interrupted."))
 				assert.Contains(t, stderr.String(), "reader@example.test")
+				assert.NotContains(t, stderr.String(), cliSubprocessExitSentinel)
+				if mode == "child-extra" {
+					assert.Equal(t, 1, strings.Count(stderr.String(), "cache refresh failed"))
+				}
 			}
 		})
 	}
+}
+
+func TestSyncResumeCommandPreservesExecutableWhitespace(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable fixture")
+	}
+	fixture := testutil.SecretCommand(t, "argv")[0]
+	data, err := os.ReadFile(fixture)
+	require.NoError(t, err)
+	executable := filepath.Join(t.TempDir(), "sync executable ")
+	require.NoError(t, os.WriteFile(executable, data, 0o700))
+	line, err := formatCommand(executable, []string{"argv", "--query=subject:'a b' $HOME;echo"}, "linux")
+	require.NoError(t, err)
+	output, err := exec.CommandContext(t.Context(), "sh", "-c", line).CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	var got []string
+	require.NoError(t, json.Unmarshal(output, &got))
+	assert.Equal(t, []string{"--query=subject:'a b' $HOME;echo"}, got)
 }
 
 func TestSyncResumeCommandNativeArguments(t *testing.T) {
@@ -131,16 +159,13 @@ func TestSyncResumeCommandNativeArguments(t *testing.T) {
 	root.PersistentFlags().Bool("verbose", true, "")
 	command := &cobra.Command{Use: "sync-full"}
 	root.AddCommand(command)
-	for name, value := range map[string]string{"config": "config file", "home": "home dir", "local": "false", "log-file": "", "verbose": "false"} {
-		require.NoError(t, root.PersistentFlags().Set(name, value))
-	}
 	command.Flags().String("query", "", "")
 	command.Flags().StringArray("folder", nil, "")
 	command.Flags().Bool("noresume", false, "")
 	command.Flags().Bool("build-cache", true, "")
 	command.Flags().String("sync-operation-id", "", "")
 	query := `from:"a b" $HOME;echo`
-	require.NoError(t, command.ParseFlags([]string{"--query", query, "--folder", "A B", "--folder", "C", "--noresume", "--build-cache=false", "--sync-operation-id", "internal", "--", "reader@example.test"}))
+	require.NoError(t, command.ParseFlags([]string{"--config", "config file", "--home", "home dir", "--local=false", "--log-file=", "--verbose=false", "--query", query, "--folder", "A B", "--folder", "C", "--noresume", "--build-cache=false", "--sync-operation-id", "internal", "--", "reader@example.test"}))
 	line, err := syncResumeCommand(command, command.Flags().Args())
 	require.NoError(t, err)
 	shell := "sh"
@@ -235,9 +260,15 @@ func TestSyncResumeCommandPowerShell(t *testing.T) {
 		t.Skip("PowerShell unavailable")
 	}
 	fixture := testutil.SecretCommand(t, "argv")[0]
+	if runtime.GOOS != "windows" {
+		data, err := os.ReadFile(fixture)
+		require.NoError(t, err)
+		fixture = filepath.Join(t.TempDir(), "sync executable ")
+		require.NoError(t, os.WriteFile(fixture, data, 0o700))
+	}
 	for _, query := range []string{`--query=from:'a b' $HOME;echo`, "--query=😀\n\x1b[31m\tend\n"} {
 		want := []string{"argv", "sync-full", query, "--folder=A B", "--folder=C", "--", "reader@example.test"}
-		line, err := formatSyncResumeCommand(fixture, want, "windows")
+		line, err := formatCommand(fixture, want, "windows")
 		require.NoError(t, err)
 		var out bytes.Buffer
 		require.NoError(t, printSyncResumeCommand(&out, line, "windows"))

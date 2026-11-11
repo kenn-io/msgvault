@@ -8,13 +8,9 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"unicode"
-	"unicode/utf16"
-	"unicode/utf8"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
-	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"golang.org/x/oauth2"
@@ -83,14 +79,46 @@ func runSyncFullWithHint(cmd *cobra.Command, resume string, run func() (bool, er
 	if !interrupted && !errors.Is(err, context.Canceled) {
 		return err
 	}
+	var writeErr error
+	if detail := syncInterruptionDetails(err); detail != "" {
+		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), detail); err != nil {
+			writeErr = fmt.Errorf("write sync error: %w", err)
+		}
+	}
 	if interrupted {
 		err = errors.Join(ErrSyncInterrupted, err)
 	}
 	cmd.SilenceErrors = true
-	if writeErr := printSyncResumeCommand(cmd.ErrOrStderr(), resume, runtime.GOOS); writeErr != nil {
-		return errors.Join(err, writeErr)
+	return errors.Join(err, writeErr, printSyncResumeCommand(cmd.ErrOrStderr(), resume, runtime.GOOS))
+}
+
+func syncInterruptionDetails(err error) string {
+	if err == nil {
+		return ""
 	}
-	return err
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var details []string
+		for _, part := range joined.Unwrap() {
+			if detail := syncInterruptionDetails(part); detail != "" {
+				details = append(details, detail)
+			}
+		}
+		return strings.Join(details, "\n")
+	}
+	var streamErr *daemonclient.CLIRunError
+	if errors.As(err, &streamErr) {
+		var details []string
+		for _, line := range strings.Split(streamErr.Error(), "\n") {
+			if line != cliSubprocessExitSentinel {
+				details = append(details, line)
+			}
+		}
+		return strings.Join(details, "\n")
+	}
+	if errors.Is(err, context.Canceled) {
+		return ""
+	}
+	return err.Error()
 }
 
 func syncResumeCommand(cmd *cobra.Command, args []string) (string, error) {
@@ -98,62 +126,7 @@ func syncResumeCommand(cmd *cobra.Command, args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return formatSyncResumeCommand(nativeCommandExecutable(), runArgs, runtime.GOOS)
-}
-
-func formatSyncResumeCommand(executable string, args []string, goos string) (string, error) {
-	commands, err := agenthook.BuildCommand(executable, args...)
-	if err != nil {
-		return "", err
-	}
-	values := append([]string{executable}, args...)
-	unsafe := false
-	for _, value := range values {
-		unsafe = unsafe || !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0
-	}
-	if !unsafe {
-		if goos == "windows" {
-			return commands.PowerShell, nil
-		}
-		return commands.POSIX, nil
-	}
-
-	var parts, assignments []string
-	for i, value := range values {
-		if !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 {
-			if goos == "windows" {
-				var chars []string
-				for _, char := range utf16.Encode([]rune(value)) {
-					chars = append(chars, fmt.Sprintf("0x%04x", char))
-				}
-				parts = append(parts, "([string]::new([char[]]@("+strings.Join(chars, ",")+")))")
-			} else {
-				var encoded strings.Builder
-				for _, b := range []byte(value) {
-					fmt.Fprintf(&encoded, "\\0%03o", b)
-				}
-				name := fmt.Sprintf("_msgvault_arg_%d", i)
-				// The suffix keeps command substitution from dropping trailing newlines.
-				assignments = append(assignments, fmt.Sprintf("%s=$(printf '%%b_' '%s')", name, encoded.String()))
-				parts = append(parts, "\"${"+name+"%_}\"")
-			}
-			continue
-		}
-		quoted, err := agenthook.BuildCommand("x", value)
-		if err != nil {
-			return "", err
-		}
-		if goos == "windows" {
-			parts = append(parts, strings.TrimPrefix(quoted.PowerShell, "& 'x' "))
-		} else {
-			parts = append(parts, strings.TrimPrefix(quoted.POSIX, "x "))
-		}
-	}
-	line := strings.Join(parts, " ")
-	if goos == "windows" {
-		return "& " + line, nil
-	}
-	return "( " + strings.Join(assignments, "; ") + "; " + line + " )", nil
+	return formatNativeCommand(runArgs)
 }
 
 func printSyncResumeCommand(w io.Writer, command, goos string) error {
