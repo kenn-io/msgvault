@@ -215,6 +215,31 @@ func TestInstagramReplayKeepsEditedParticipant(t *testing.T) {
 	assert.Zero(selfRecipients)
 }
 
+func TestInstagramReplayParticipantNameCollision(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	filename := instagramTestShard(t, root, "circle", "message_1.json")
+	require.NoError(os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","participants":[{"name":"Nova Example"}],"messages":[{"sender_name":"Nova Example","timestamp_ms":1730500000123,"content":"outgoing"},{"sender_name":"Mira Example","timestamp_ms":1730500000124,"content":"incoming"}]}`), 0600))
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	_, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	var sender, recipient int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sender_id FROM messages WHERE snippet = 'outgoing'`).Scan(&sender))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sender_id FROM messages WHERE snippet = 'incoming'`).Scan(&recipient))
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE participants SET display_name = 'Nova Example' WHERE display_name = 'Mira Example'`)
+	require.NoError(err)
+	require.NoError(os.WriteFile(filename, []byte(`{"thread_path":"inbox/circle","participants":[{"name":"Nova Example"}],"messages":[{"sender_name":"Nova Example","timestamp_ms":1730500000123,"content":"outgoing"}]}`), 0600))
+	_, err = ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	var after int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sender_id FROM messages WHERE snippet = 'outgoing'`).Scan(&after))
+	assert.Equal(sender, after)
+	var recipients int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM message_recipients r JOIN messages m ON m.id = r.message_id WHERE m.snippet = 'outgoing' AND r.recipient_type = 'to' AND r.participant_id = ?`), recipient).Scan(&recipients))
+	assert.Equal(1, recipients)
+}
+
 func TestInstagramLimitReplay(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
@@ -812,6 +837,11 @@ func TestInstagramReplaySurplusPreservesDistinctMetadata(t *testing.T) {
 			assert.Equal(raw, after[id])
 		}
 	}
+	instagramTestShard(t, root, "circle", "message_1.json", a, b)
+	summary, err := ImportDYI(t.Context(), st, opts)
+	require.NoError(err)
+	assert.Zero(summary.MessagesAdded)
+	assert.Equal(3, countMessages(t, st, ""))
 }
 
 func TestInstagramReplayChangedMetadataPreservesDistinctReactionEvidence(t *testing.T) {

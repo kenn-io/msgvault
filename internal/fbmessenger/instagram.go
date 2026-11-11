@@ -280,7 +280,7 @@ func reconcileInstagramExtraSurplus(remaining map[instagramContent][]*instagramP
 	}
 	handled := map[instagramContent]bool{}
 	for key, list := range items {
-		if !crosses[key] || len(rows[key]) == 0 || len(list) < len(rows[key]) || (len(list) == len(rows[key]) && !hasSurplus[key]) {
+		if !crosses[key] || len(rows[key]) == 0 || (len(list) <= len(rows[key]) && !hasSurplus[key]) {
 			continue
 		}
 		reconcileInstagramCopies(map[instagramContent][]*instagramPending{key: list}, map[instagramContent][]string{key: rows[key]}, used, summary, repairs, archived)
@@ -533,55 +533,53 @@ func instagramThreadNames(thread *Thread) []string {
 	return names
 }
 
-// instagramThreadParticipants maps each participant name to its ID and address.
-// Archived participants keep their stored identity even when the display name
-// was edited, so a replay that omits or renames one never hashes a new identity.
-func instagramThreadParticipants(ctx context.Context, st *store.Store, sourceID int64, account string, thread *Thread) (map[string]int64, map[string]string, error) {
+type instagramParticipant struct {
+	id          int64
+	name, email string
+}
+
+// instagramThreadParticipants keeps retained participants separate from export names.
+func instagramThreadParticipants(ctx context.Context, st *store.Store, sourceID int64, account string, thread *Thread) (map[string]int64, map[string]string, []instagramParticipant, error) {
 	rows, err := st.DB().QueryContext(ctx, st.Rebind(`SELECT p.id, COALESCE(p.display_name, ''), COALESCE(p.email_address, '') FROM conversation_participants cp
 		JOIN conversations c ON c.id = cp.conversation_id JOIN participants p ON p.id = cp.participant_id
-		WHERE c.source_id = ? AND c.source_conversation_id = ?`), sourceID, thread.instagramKey)
+		WHERE c.source_id = ? AND c.source_conversation_id = ? ORDER BY p.id`), sourceID, thread.instagramKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load archived Instagram participants: %w", err)
+		return nil, nil, nil, fmt.Errorf("load archived Instagram participants: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	type archivedParticipant struct {
-		id          int64
-		name, email string
-	}
-	archived := map[string]archivedParticipant{}
+	var archived []instagramParticipant
 	for rows.Next() {
-		var p archivedParticipant
+		var p instagramParticipant
 		if err := rows.Scan(&p.id, &p.name, &p.email); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		archived[p.email] = p
+		archived = append(archived, p)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	// Export names win over edited display names so direction and recipients
-	// follow the export; archived participants the replay omits keep their own.
 	nameToID, nameToEmail := map[string]int64{}, map[string]string{}
 	var addrs []mime.Address
 	for _, name := range instagramThreadNames(thread) {
 		addr := instagramAddress(account, name)
-		if p, ok := archived[addr.Email]; ok {
-			nameToID[name], nameToEmail[name] = p.id, p.email
-			delete(archived, addr.Email)
-		} else {
-			addrs = append(addrs, addr)
-		}
-	}
-	for _, p := range archived {
-		if p.name != "" {
-			nameToID[p.name], nameToEmail[p.name] = p.id, p.email
-		}
+		addrs = append(addrs, addr)
 	}
 	ids, err := st.EnsureParticipantsBatch(ctx, addrs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	used := map[int64]bool{}
 	for _, addr := range addrs {
 		nameToID[addr.Name], nameToEmail[addr.Name] = ids[addr.Email], addr.Email
+		used[ids[addr.Email]] = true
 	}
-	return nameToID, nameToEmail, err
+	var retained []instagramParticipant
+	for _, p := range archived {
+		if !used[p.id] {
+			retained = append(retained, p)
+		}
+	}
+	return nameToID, nameToEmail, retained, nil
 }
 
 func instagramAddress(account, name string) mime.Address {

@@ -572,6 +572,7 @@ func writeThreadToStore(
 	var convID, meID, parentLabelID, sectionLabelID int64
 	var nameToID map[string]int64
 	var nameToEmail map[string]string
+	var retained []instagramParticipant
 	var err error
 	if !instagram {
 		// Ensure conversation. Use section-qualified name so threads with
@@ -613,7 +614,7 @@ func writeThreadToStore(
 		parentLabelID = labelIDs["Messenger"]
 		sectionLabelID = labelIDs[sectionLabelName(td.Section)]
 	} else {
-		nameToID, nameToEmail, err = instagramThreadParticipants(ctx, st, sourceID, opts.Account, thread)
+		nameToID, nameToEmail, retained, err = instagramThreadParticipants(ctx, st, sourceID, opts.Account, thread)
 		if err == nil {
 			err = keepInstagramTitle(ctx, st, sourceID, thread)
 		}
@@ -761,6 +762,12 @@ func writeThreadToStore(
 				members = append(members, store.ConversationParticipantRef{ParticipantID: nameToID[name], Role: "member"})
 				if name != senderName {
 					toIDs, toNames, toAddresses = append(toIDs, nameToID[name]), append(toNames, name), append(toAddresses, nameToEmail[name])
+				}
+			}
+			for _, p := range retained {
+				members = append(members, store.ConversationParticipantRef{ParticipantID: p.id, Role: "member"})
+				if !senderID.Valid || p.id != senderID.Int64 {
+					toIDs, toNames, toAddresses = append(toIDs, p.id), append(toNames, p.name), append(toAddresses, p.email)
 				}
 			}
 			recipients := []store.RecipientSet{{Type: "to", ParticipantIDs: toIDs, DisplayNames: toNames}}
