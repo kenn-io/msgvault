@@ -63,6 +63,16 @@ func TestAgentVerificationReads(t *testing.T) {
 			assertions.NotContains(w.Body.String(), "482913")
 			assertions.NotContains(w.Body.String(), "4829")
 			assertions.Contains(w.Body.String(), "[verification content masked]")
+			ownerReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1"+path, nil)
+			ownerReq.RemoteAddr = "127.0.0.1:1234"
+			ownerReq.Header.Set("X-Api-Key", "owner")
+			ownerReq.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+			ownerResponse := httptest.NewRecorder()
+			srv.Router().ServeHTTP(ownerResponse, ownerReq)
+			assertions.Equal(http.StatusOK, ownerResponse.Code, ownerResponse.Body.String())
+			assertions.Equal(apiprotocol.VerificationWithhold, ownerResponse.Header().Get(apiprotocol.VerificationHeader))
+			assertions.NotContains(ownerResponse.Body.String(), "4829")
+			assertions.Contains(ownerResponse.Body.String(), verification.Masked)
 			var masked map[string]json.RawMessage
 			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &masked))
 			for _, credential := range []string{"owner", revealToken} {
@@ -151,12 +161,15 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 				}
 				for _, path := range paths {
 					responses := make(map[string]string)
-					for _, mode := range []string{"owner", "masked", "reveal"} {
+					for _, mode := range []string{"owner", "owner-masked", "masked", "reveal"} {
 						req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1"+path, nil)
 						requestCount++
 						req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", requestCount)
-						if mode == "owner" {
+						if mode == "owner" || mode == "owner-masked" {
 							req.Header.Set("X-Api-Key", "owner")
+							if mode == "owner-masked" {
+								req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+							}
 						} else {
 							req.Header.Set(apiprotocol.AgentTokenHeader, tokens[mode])
 						}
@@ -167,7 +180,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 						if strings.HasPrefix(path, "/attachments/") {
 							var attachment AttachmentInfo
 							requirements.NoError(json.Unmarshal(w.Body.Bytes(), &attachment))
-							if mode == "masked" && tc.name != "ordinary" {
+							if (mode == "masked" || mode == "owner-masked") && tc.name != "ordinary" {
 								assertions.Equal(verification.Masked, attachment.Filename)
 								assertions.Empty(attachment.URL, "%s %s", mode, path)
 							} else {
@@ -182,7 +195,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 							Attachments []AttachmentInfo `json:"attachments"`
 						}
 						requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-						if mode == "masked" && tc.name != "ordinary" {
+						if (mode == "masked" || mode == "owner-masked") && tc.name != "ordinary" {
 							assertions.Equal("[verification content masked]", body.BodyText)
 							assertions.Empty(body.BodyHTML)
 							assertions.NotContains(w.Body.String(), "4829")
@@ -204,6 +217,7 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 						}
 					}
 					assertions.Equal(responses["owner"], responses["reveal"])
+					assertions.Equal(responses["masked"], responses["owner-masked"])
 					if tc.name == "ordinary" {
 						assertions.Equal(responses["owner"], responses["masked"])
 					}
@@ -373,7 +387,7 @@ func TestAgentVerificationAttachments(t *testing.T) {
 			}
 			backends := []bool{false}
 			endpoints := []string{"/attachments/" + hash + "/content"}
-			callers := []string{"masked"}
+			callers := []string{"masked", "owner-masked"}
 			if tc.name == "code.txt" || tc.name == "ordinary.txt" || strings.HasSuffix(tc.name, ".png") {
 				backends = append(backends, true)
 				endpoints = append(endpoints, "/cli/attachment?content_hash="+hash)
@@ -400,8 +414,11 @@ func TestAgentVerificationAttachments(t *testing.T) {
 						req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1"+endpoint, nil)
 						requestCount++
 						req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", requestCount)
-						if mode == "owner" {
-							req.Header.Set("X-Api-Key", tokens[mode])
+						if mode == "owner" || mode == "owner-masked" {
+							req.Header.Set("X-Api-Key", tokens["owner"])
+							if mode == "owner-masked" {
+								req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+							}
 						} else {
 							req.Header.Set(apiprotocol.AgentTokenHeader, tokens[mode])
 						}
@@ -410,12 +427,12 @@ func TestAgentVerificationAttachments(t *testing.T) {
 						srv.Router().ServeHTTP(w, req)
 						if strings.HasSuffix(tc.name, ".png") || tc.name == "ordinary.txt" {
 							loads := 0
-							if mode == "masked" || mode == "attachment-only" {
+							if mode == "masked" || mode == "owner-masked" || mode == "attachment-only" {
 								loads = 1
 							}
 							assertions.Equal(loads, counter.calls, "blob=%t endpoint=%s caller=%s", blob, endpoint, mode)
 						}
-						if mode == "masked" && tc.blocked {
+						if (mode == "masked" || mode == "owner-masked") && tc.blocked {
 							requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
 						} else {
 							assertions.Equal(http.StatusOK, w.Code, w.Body.String())
@@ -426,7 +443,7 @@ func TestAgentVerificationAttachments(t *testing.T) {
 								_, params, err := mime.ParseMediaType(w.Header().Get("Content-Disposition"))
 								requirements.NoError(err)
 								filename := tc.name
-								if (mode == "masked" || mode == "attachment-only") && (tc.parent || tc.shared || tc.name == "code-482913.png") {
+								if (mode == "masked" || mode == "owner-masked" || mode == "attachment-only") && (tc.parent || tc.shared || tc.name == "code-482913.png") {
 									filename = verification.Masked
 								}
 								assertions.Equal(filename, params["filename"], "blob=%t endpoint=%s caller=%s", blob, endpoint, mode)
@@ -486,4 +503,23 @@ func TestAgentVerificationSharedAttachmentBatches(t *testing.T) {
 	srv.Router().ServeHTTP(w, req)
 	requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
 	assertions.Equal((total+maxPageSize-1)/maxPageSize, counter.calls, "bodies load one page of parents at a time")
+}
+
+func TestOwnerVerificationRefusesOriginalAndSQL(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner"}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodGet, "/api/v1/cli/message/original?id=1", ""},
+		{http.MethodPost, "/api/v1/query/archive", `{"sql":"SELECT 1"}`},
+	} {
+		req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, strings.NewReader(tc.body))
+		req.Header.Set("X-Api-Key", "owner")
+		req.Header.Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
+	}
 }

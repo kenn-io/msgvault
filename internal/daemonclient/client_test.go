@@ -1008,3 +1008,35 @@ func (r *boundaryErrorReader) Read(p []byte) (int, error) {
 }
 
 func (r *boundaryErrorReader) Close() error { return nil }
+
+func TestVerificationWithholdingAcknowledgement(t *testing.T) {
+	var acknowledge atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if acknowledge.Load() && r.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold {
+			w.Header().Set(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"ok"}`)
+	}))
+	t.Cleanup(server.Close)
+	ordinary, err := New(Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	protected, err := ordinary.WithVerificationWithheld()
+	require.NoError(t, err)
+	_, err = protected.Health(t.Context())
+	require.ErrorContains(t, err, "upgrade the daemon")
+	response, err := protected.DoGeneratedRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
+	require.Nil(t, response)
+	require.ErrorContains(t, err, "upgrade the daemon")
+	_, err = ordinary.Health(t.Context())
+	require.NoError(t, err)
+	acknowledge.Store(true)
+	_, err = protected.Health(t.Context())
+	require.NoError(t, err)
+	response, err = protected.DoGeneratedRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	acknowledge.Store(false)
+	_, err = protected.Health(t.Context())
+	require.ErrorContains(t, err, "upgrade the daemon")
+}

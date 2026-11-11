@@ -3566,7 +3566,7 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var attachments []query.AttachmentInfo
-	if s.requestAuthentication(r).Grant != nil {
+	if s.requestAuthentication(r).Grant != nil || s.withholdsVerification(r) {
 		var apiErr *apiHTTPError
 		attachments, apiErr = s.attachmentCandidatesForRequest(r, contentHash)
 		if apiErr != nil {

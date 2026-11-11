@@ -526,6 +526,10 @@ func translateDaemonRequestError(err error) *toolResult {
 
 	var message string
 	switch coded.APIErrorCode() {
+	case "verification_unavailable":
+		message = "verification_unavailable: daemon did not acknowledge withholding; upgrade the daemon or restart MCP with the reveal flag"
+	case "verification_masked":
+		message = "verification_masked: verification content is withheld; ask the owner to allow verification access or start MCP with the reveal flag"
 	case "permission_denied", "unsupported_agent_scope":
 		// The daemon's message names the missing permission or the supported scope.
 		message = coded.APIErrorCode() + ": " + daemonErrorMessage(err)

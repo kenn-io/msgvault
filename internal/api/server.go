@@ -1019,7 +1019,7 @@ func (s *Server) analyticsEngineMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := s.analyticsState.Load()
 		ctx := context.WithValue(r.Context(), analyticsEngineContextKey{}, state)
-		if r.Header.Get(apiprotocol.AgentTokenHeader) != "" {
+		if r.Header.Get(apiprotocol.AgentTokenHeader) != "" || r.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold {
 			boundary := &readResponseWriter{ResponseWriter: w}
 			ctx = context.WithValue(ctx, readResponseKey{}, boundary)
 			w = boundary

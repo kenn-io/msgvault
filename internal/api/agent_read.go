@@ -104,9 +104,11 @@ func (s *Server) beginAgentRead(req *http.Request, operation string, grant *agen
 		readContext = context.WithValue(readContext, analyticsEngineContextKey{}, &analyticsEngineState{engine: engine, mode: AnalyticsModeSQL})
 	}
 	*req = *req.WithContext(readContext)
-	if apiErr := s.authorizeAgentRead(req, operation, grant, permission, indexGeneration, indexComplete); apiErr != nil {
-		release()
-		return nil, apiErr
+	if grant != nil {
+		if apiErr := s.authorizeAgentRead(req, operation, grant, permission, indexGeneration, indexComplete); apiErr != nil {
+			release()
+			return nil, apiErr
+		}
 	}
 	return release, nil
 }

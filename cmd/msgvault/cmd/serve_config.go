@@ -10,6 +10,7 @@ import (
 )
 
 func addServeConfigFlags(cmd *cobra.Command) {
+	cmd.Flags().Bool("mcp-reveal-verification", false, "Allow verification content in owner MCP reads")
 	cmd.Flags().Bool("mcp-allow-writes", false, "Expose the independent /mcp/writes catalog for trusted owner bearer clients")
 	addMCPWriteFlags(cmd, "mcp-")
 	cmd.Flags().String("bind", "", "Bind address or iface:NAME (overrides environment and config)")

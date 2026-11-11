@@ -14,6 +14,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -253,6 +254,22 @@ func withAPIKeySecurity(op huma.Operation) huma.Operation {
 func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
 	auth := s.requestAuthentication(req)
+	if auth.Mode != AuthModeRequired && s.withholdsVerification(req) {
+		ctx.SetHeader(apiprotocol.VerificationHeader, apiprotocol.VerificationWithhold)
+		if auth.Grant == nil {
+			if op := ctx.Operation(); op != nil {
+				_, snapshot := agentReadPermissions[op.OperationID]
+				if snapshot || op.OperationID == "findSimilarMessages" {
+					release, err := s.beginAgentRead(req, op.OperationID, nil, "")
+					if err != nil {
+						writeHumaError(ctx, err.status, err.ErrorResponse.Error, err.Message)
+						return
+					}
+					defer release()
+				}
+			}
+		}
+	}
 	if auth.Mode == AuthModeDelegated {
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
 			permission, err := agentReadPermission(op.OperationID, auth.Grant)

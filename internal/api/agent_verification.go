@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/verification"
@@ -67,7 +68,7 @@ func messageVerificationContent(subject, snippet, title, text, html string, atta
 
 func (s *Server) withholdsVerification(r *http.Request) bool {
 	grant := s.requestAuthentication(r).Grant
-	return grant != nil && !grant.HasPermission(agentgrant.PermissionVerificationRead)
+	return r.Header.Get(apiprotocol.VerificationHeader) == apiprotocol.VerificationWithhold || grant != nil && !grant.HasPermission(agentgrant.PermissionVerificationRead)
 }
 
 func withholdRows[T any](s *Server, w http.ResponseWriter, r *http.Request, rows []T, id func(*T) int64, mask func(*T)) (map[int64]bool, bool) {

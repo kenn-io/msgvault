@@ -1268,6 +1268,18 @@ func (s *Server) handleHybridSearch(
 	if includeMatches {
 		s.enrichHybridMatches(ctx, backend, vectorCfg, meta.Generation.ID, meta.QueryVector, items, minScore)
 	}
+	_, ok := withholdRows(s, w, r, items, func(row *hybridSearchItem) int64 { return row.ID }, func(row *hybridSearchItem) {
+		row.Subject, row.Snippet = verification.Masked, verification.Masked
+		for i := range row.AttachmentNames {
+			row.AttachmentNames[i] = verification.Masked
+		}
+		for i := range row.Matches {
+			row.Matches[i].Snippet = verification.Masked
+		}
+	})
+	if !ok {
+		return
+	}
 	hydrationDuration := time.Since(hydrationStarted)
 
 	writeJSON(w, http.StatusOK, hybridSearchResponse{
@@ -1442,6 +1454,9 @@ func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, toMessageSummary(msg))
 	}
 
+	if !s.maskMessageSummaries(w, r, messages, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, similarSearchResponse{
 		SeedMessageID: seedID,
 		Returned:      len(messages),
@@ -2128,6 +2143,10 @@ func (s *Server) handleArchiveQuery(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSQLQuery(w http.ResponseWriter, r *http.Request, archiveOnly bool) {
+	if s.withholdsVerification(r) {
+		writeError(w, http.StatusForbidden, "verification_masked", "Archive SQL requires verification access")
+		return
+	}
 	var req QueryRequest
 	dec := jsontext.NewDecoder(r.Body)
 	if err := json.UnmarshalDecode(dec, &req); err != nil {
