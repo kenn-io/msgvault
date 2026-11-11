@@ -42,12 +42,18 @@ type personSweepCommandDeps struct {
 	proxy              func(*cobra.Command, []string, map[string]string) error
 }
 
+type personSweepCommitmentFailure struct {
+	PersonID int64                    `json:"person_id"`
+	Class    peoplesweep.FailureClass `json:"commitment_failure_class"`
+}
+
 type personSweepRunOutput struct {
-	RunID           string                 `json:"run_id"`
-	PeopleAttempted int                    `json:"people_attempted"`
-	PeopleSucceeded int                    `json:"people_succeeded"`
-	ProjectedWrites int                    `json:"projected_writes"`
-	Usage           personSweepUsageOutput `json:"usage"`
+	CommitmentFailures []personSweepCommitmentFailure `json:"commitment_failures,omitempty"`
+	RunID              string                         `json:"run_id"`
+	PeopleAttempted    int                            `json:"people_attempted"`
+	PeopleSucceeded    int                            `json:"people_succeeded"`
+	ProjectedWrites    int                            `json:"projected_writes"`
+	Usage              personSweepUsageOutput         `json:"usage"`
 }
 
 type personSweepUsageOutput struct {
@@ -84,16 +90,17 @@ type personSweepHistoryRunOutput struct {
 }
 
 type personSweepHistoryAttemptOutput struct {
-	PersonID        int64                     `json:"person_id"`
-	Status          peoplesweep.AttemptStatus `json:"status"`
-	FailureClass    peoplesweep.FailureClass  `json:"failure_class,omitempty"`
-	SeedCount       int                       `json:"seed_count"`
-	ContextCount    int                       `json:"context_count"`
-	ClaimCount      int                       `json:"claim_count"`
-	DecisionCount   int                       `json:"decision_count"`
-	ProjectedWrites int                       `json:"projected_writes"`
-	Usage           personSweepUsageOutput    `json:"usage"`
-	LatencyMS       int64                     `json:"latency_ms"`
+	CommitmentFailureClass peoplesweep.FailureClass  `json:"commitment_failure_class,omitempty"`
+	PersonID               int64                     `json:"person_id"`
+	Status                 peoplesweep.AttemptStatus `json:"status"`
+	FailureClass           peoplesweep.FailureClass  `json:"failure_class,omitempty"`
+	SeedCount              int                       `json:"seed_count"`
+	ContextCount           int                       `json:"context_count"`
+	ClaimCount             int                       `json:"claim_count"`
+	DecisionCount          int                       `json:"decision_count"`
+	ProjectedWrites        int                       `json:"projected_writes"`
+	Usage                  personSweepUsageOutput    `json:"usage"`
+	LatencyMS              int64                     `json:"latency_ms"`
 }
 
 type personSweepHistoryOutput struct {
@@ -330,6 +337,13 @@ func writePersonSweepRun(w io.Writer, result peoplesweep.RunResult, jsonOutput b
 	output := personSweepRunOutput{RunID: result.RunID, PeopleAttempted: result.PeopleAttempted,
 		PeopleSucceeded: result.PeopleSucceeded, ProjectedWrites: result.ProjectedWrites,
 		Usage: personSweepUsage(result.Usage)}
+	for _, person := range result.People {
+		if person.CommitmentFailureClass != "" {
+			output.CommitmentFailures = append(output.CommitmentFailures, personSweepCommitmentFailure{
+				PersonID: person.PersonID, Class: person.CommitmentFailureClass,
+			})
+		}
+	}
 	if jsonOutput {
 		return json.MarshalEncode(jsontext.NewEncoder(w), output, json.Deterministic(true))
 	}
@@ -337,6 +351,11 @@ func writePersonSweepRun(w io.Writer, result peoplesweep.RunResult, jsonOutput b
 		output.RunID, output.PeopleAttempted, output.PeopleSucceeded, output.ProjectedWrites)
 	if err != nil {
 		return fmt.Errorf("write person sweep run: %w", err)
+	}
+	for _, failure := range output.CommitmentFailures {
+		if _, err := fmt.Fprintf(w, "Person %d commitment failure: %s\n", failure.PersonID, failure.Class); err != nil {
+			return fmt.Errorf("write person sweep run: %w", err)
+		}
 	}
 	return nil
 }
@@ -379,7 +398,8 @@ func safePersonSweepHistory(
 		output.Attempts = append(output.Attempts, personSweepHistoryAttemptOutput{
 			PersonID: attempt.PersonID, Status: attempt.Status,
 			FailureClass: attempt.FailureClass, SeedCount: attempt.SeedCount,
-			ContextCount: attempt.ContextCount, ClaimCount: attempt.ClaimCount,
+			CommitmentFailureClass: attempt.CommitmentFailureClass,
+			ContextCount:           attempt.ContextCount, ClaimCount: attempt.ClaimCount,
 			DecisionCount: attempt.DecisionCount, ProjectedWrites: attempt.ProjectedWrites,
 			Usage: personSweepUsage(attempt.Usage), LatencyMS: attempt.Latency.Milliseconds(),
 		})
@@ -400,14 +420,14 @@ func writePersonSweepHistory(w io.Writer, output personSweepHistoryOutput, jsonO
 		return json.MarshalEncode(jsontext.NewEncoder(w), output, json.Deterministic(true))
 	}
 	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "TYPE\tSTATUS\tMODE\tPERSON\tFAILURE\tATTEMPTS\tWRITES")
+	_, _ = fmt.Fprintln(table, "TYPE\tSTATUS\tMODE\tPERSON\tFAILURE\tCOMMITMENT FAILURE\tATTEMPTS\tWRITES")
 	for _, run := range output.Runs {
-		_, _ = fmt.Fprintf(table, "run\t%s\t%s\t-\t-\t%d\t%d\n",
+		_, _ = fmt.Fprintf(table, "run\t%s\t%s\t-\t-\t-\t%d\t%d\n",
 			run.Status, run.Mode, run.Attempts, run.ProjectedWrites)
 	}
 	for _, attempt := range output.Attempts {
-		_, _ = fmt.Fprintf(table, "attempt\t%s\t-\t%d\t%s\t-\t%d\n",
-			attempt.Status, attempt.PersonID, attempt.FailureClass, attempt.ProjectedWrites)
+		_, _ = fmt.Fprintf(table, "attempt\t%s\t-\t%d\t%s\t%s\t-\t%d\n",
+			attempt.Status, attempt.PersonID, attempt.FailureClass, attempt.CommitmentFailureClass, attempt.ProjectedWrites)
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write person sweep history: %w", err)

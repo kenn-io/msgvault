@@ -56,6 +56,8 @@ type CommitmentWindow struct {
 	Now               time.Time          `json:"now"`
 	Timezone          string             `json:"timezone"`
 	BackfillMessageID int64              `json:"-"`
+	AnchorAfterID     int64              `json:"-"`
+	AnchorBackfillID  int64              `json:"-"`
 	SnapshotSequence  int64              `json:"-"`
 	ThroughSequence   int64              `json:"through_sequence"`
 }

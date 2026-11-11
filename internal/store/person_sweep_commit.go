@@ -450,6 +450,7 @@ func (s *Store) applyPersonSweepWithAligner(
 			return peoplesweep.ErrLeaseLost
 		}
 		result.Mutations.AttemptRowsSucceeded = int(changed)
+		result.CommitmentFailureClass = request.CommitmentFailureClass
 		if err := tx.QueryRowContext(ctx, `SELECT projected_write_count FROM person_sweep_attempts
 			WHERE id = ?`, request.AttemptID).Scan(&result.AttemptProjectedWrites); err != nil {
 			return fmt.Errorf("load person sweep attempt writes: %w", err)
