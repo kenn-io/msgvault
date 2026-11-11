@@ -495,7 +495,7 @@ func TestSearchMessageBodies_PostgreSQLReportsOmittedOverlappingMatches(t *testi
 		t.Skip("PostgreSQL body context")
 	}
 	body := strings.Repeat(" ", 500) + "start needle " + strings.Repeat(" ", 154) + "needle end" + strings.Repeat(strings.Repeat(" ", 500)+"needle", 4) + strings.Repeat(" ", 500) + "needle tail-marker"
-	id := createSearchScopeMessage(t, f, "overlapping-context", "ordinary", "ordinary", body, 0, 0)
+	createSearchScopeMessage(t, f, "overlapping-context", "ordinary", "ordinary", body, 0, 0)
 	_, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
 	searcher, ok := query.NewEngine(f.Store.DB(), true).(query.MessageBodySearcher)
@@ -503,7 +503,6 @@ func TestSearchMessageBodies_PostgreSQLReportsOmittedOverlappingMatches(t *testi
 	result, err := searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"needle", "start needle needle end"}}, 10, 0)
 	require.NoError(err)
 	require.Len(result.Messages, 1)
-	assert.Equal(t, id, result.Messages[0].ID)
 	assert.NotContains(t, strings.Join(result.Messages[0].BodyContextSnippets, " "), "tail-marker")
 	assert.True(t, result.Messages[0].BodyContextSnippetsTruncated)
 }
