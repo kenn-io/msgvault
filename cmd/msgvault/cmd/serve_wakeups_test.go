@@ -63,6 +63,7 @@ func TestWakeupJobOnlyForUsableEntries(t *testing.T) {
 // wakeupSetupGate refuses setup once, then admits the scheduled retry.
 type wakeupSetupGate struct {
 	*api.SerialOperationGate
+
 	refuse bool
 }
 
