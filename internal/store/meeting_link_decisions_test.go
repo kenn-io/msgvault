@@ -893,6 +893,72 @@ func TestMeetingLinkDecisionClearHiddenEndpoint(t *testing.T) {
 	requirements.Equal([]int64{first}, record.MessageIDs)
 }
 
+func TestMeetingLinkDecisionSurvivesPermanentDuplicateDeletion(t *testing.T) {
+	for _, purge := range []string{"first", "second", "all", "gc", "source", "source-serialized"} {
+		t.Run(purge, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			var ids []int64
+			for _, name := range []string{"purge-original", "purge-intermediate", "purge-survivor", "purge-other"} {
+				_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
+				ids = append(ids, id)
+			}
+			var sourceID int64
+			if purge == "source" || purge == "source-serialized" {
+				source, err := st.GetOrCreateSource("meeting_import", "purge@example.com")
+				r.NoError(err)
+				sourceID = source.ID
+				_, err = st.db.ExecContext(t.Context(), `UPDATE messages SET source_id=? WHERE id=?`, sourceID, ids[0])
+				r.NoError(err)
+			}
+			ref := func(id int64) MeetingLinkRef {
+				return MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}}
+			}
+			_, err := st.DecideMeetingLinkContext(t.Context(), ref(ids[0]), ref(ids[3]), "link")
+			r.NoError(err)
+			_, err = st.MergeDuplicates(t.Context(), ids[1], []int64{ids[0]}, "first")
+			r.NoError(err)
+			_, err = st.MergeDuplicates(t.Context(), ids[2], []int64{ids[1]}, "second")
+			r.NoError(err)
+			if purge == "source" {
+				err = st.RemoveSource(sourceID)
+			} else if purge == "source-serialized" {
+				_, _, err = st.RemoveSourceSerialized(t.Context(), sourceID)
+			} else if purge == "gc" {
+				if st.IsPostgreSQL() {
+					t.Skip("archive garbage collection is SQLite-only")
+				}
+				_, err = st.db.ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`, ids[0])
+				r.NoError(err)
+				plan, err := st.PlanGCContext(t.Context())
+				r.NoError(err)
+				_, err = st.ExecuteGCContext(t.Context(), plan)
+			} else if purge == "all" {
+				_, _, err = st.DeleteAllDedupedContext(t.Context())
+			} else {
+				_, err = st.DeleteDedupedBatchContext(t.Context(), purge)
+			}
+			r.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), ref(ids[3]))
+			r.NoError(err)
+			r.Equal([]int64{ids[2], ids[3]}, record.MessageIDs)
+			if purge == "first" || purge == "gc" || purge == "source" || purge == "source-serialized" {
+				_, err = st.UndoDedup(t.Context(), "second")
+				r.NoError(err)
+				record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
+				r.NoError(err)
+				r.Equal([]int64{ids[1], ids[3]}, record.MessageIDs)
+			} else if purge == "second" {
+				_, err = st.UndoDedup(t.Context(), "first")
+				r.NoError(err)
+				record, err = st.MeetingRecordContext(t.Context(), ref(ids[3]))
+				r.NoError(err)
+				r.Equal([]int64{ids[0], ids[2], ids[3]}, record.MessageIDs)
+			}
+		})
+	}
+}
+
 func TestMeetingLinkDecisionConcurrentClearAndDedup(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

@@ -336,6 +336,17 @@ func undoMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, batchID strin
 	return err
 }
 
+// preserveMeetingDecisionCopies detaches surviving copies from history being deleted.
+func (s *Store) preserveMeetingDecisionCopies(ctx context.Context, tx contextStatementQuerier, filter string, args ...any) error {
+	_, err := tx.ExecContext(ctx, s.Rebind(`WITH removed AS (SELECT id FROM messages WHERE `+filter+`)
+		UPDATE meeting_link_decisions SET parent_decision_id=NULL,
+		via_message_id=CASE WHEN via_message_id IN (SELECT id FROM removed) THEN NULL ELSE via_message_id END
+		WHERE via_message_id IN (SELECT id FROM removed) OR parent_decision_id IN (
+			SELECT id FROM meeting_link_decisions WHERE left_message_id IN (SELECT id FROM removed) OR right_message_id IN (SELECT id FROM removed)
+		)`), args...)
+	return err
+}
+
 // deleteMeetingDecisionTx clears source choices or replaces a direct choice.
 func deleteMeetingDecisionTx(ctx context.Context, tx *loggedTx, d meetingDecisionEdge, clear bool) error {
 	if clear {
