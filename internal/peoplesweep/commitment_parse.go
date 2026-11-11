@@ -50,6 +50,8 @@ type CommitmentAnchor struct {
 }
 
 type CommitmentWindow struct {
+	ScopeFingerprint  string             `json:"-"`
+	SelectionAt       time.Time          `json:"-"`
 	PersonID          int64              `json:"-"`
 	Sources           []CommitmentSource `json:"sources"`
 	Anchors           []CommitmentAnchor `json:"open_anchors"`

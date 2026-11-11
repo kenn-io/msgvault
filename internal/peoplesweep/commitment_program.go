@@ -7,9 +7,14 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"math"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
+
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 const CommitmentProgramID = "msgvault-person-commitments"
@@ -46,7 +51,7 @@ func validateCommitmentOutput(output jsontext.Value) error {
 }
 
 func commitmentRequest(window CommitmentWindow, maxOutputTokens int64) (StructuredRequest, error) {
-	body, err := json.Marshal(window, json.Deterministic(true))
+	input, err := commitmentInput(window)
 	if err != nil {
 		return StructuredRequest{}, err
 	}
@@ -55,9 +60,39 @@ func commitmentRequest(window CommitmentWindow, maxOutputTokens int64) (Structur
 		sources[i] = SourceDescriptor{Class: SourceConversationText, ObservedOn: source.EventTime.UTC().Format(time.DateOnly)}
 	}
 	return StructuredRequest{ProgramID: CommitmentProgramID, ProgramVersion: CommitmentProgramVersion,
-		InputText: commitmentProgramText + "\n" + string(body), SchemaName: CommitmentSchemaName,
+		InputText: input, SchemaName: CommitmentSchemaName,
 		JSONSchema: append(jsontext.Value(nil), commitmentSchema...), ContainsSensitive: true,
 		Sources: sources, MaxOutputTokens: int(maxOutputTokens)}, nil
+}
+
+func commitmentInput(window CommitmentWindow) (string, error) {
+	body, err := json.Marshal(window, json.Deterministic(true))
+	if err != nil {
+		return "", fmt.Errorf("encode commitment input: %w", err)
+	}
+	return commitmentProgramText + "\n" + string(body), nil
+}
+
+// CommitmentInputFits measures the actual input encoder, including JSON escaping
+// and the prompt. Source selection reserves one maximum-sized anchor so every
+// later anchor page can progress without discarding a selected source for size.
+func CommitmentInputFits(window CommitmentWindow, reserveAnchor bool) (bool, error) {
+	if reserveAnchor {
+		latest := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+		window.Anchors = []CommitmentAnchor{{ID: math.MaxInt64, Direction: CommitmentOwedBy,
+			Quote: strings.Repeat("\x00", personfacts.MaxEvidenceExcerptRunes), PromisedAt: latest, ReopenedAt: &latest}}
+	}
+	input, err := commitmentInput(window)
+	return len(input) <= maxStructuredInputBytes, err
+}
+
+// CommitmentScopeFingerprint binds frontier progress to source eligibility and
+// batch sizing. Changing these inputs restarts bounded discovery and paging.
+func CommitmentScopeFingerprint(profile ProviderProfile, cfg CommitmentConfig) string {
+	encoded := fmt.Sprintf("%s|%s|%t|%t|%d|%d|%d|%d", profile.SourceSince, profile.SourceUntil,
+		profile.AllowSensitive, slices.Contains(profile.AllowedSources, SourceConversationText), cfg.Window, cfg.MaxItems, cfg.MaxBytes, cfg.MaxOpenAnchors)
+	digest := sha256.Sum256([]byte(encoded))
+	return hex.EncodeToString(digest[:])
 }
 
 // CommitmentConfig is a separately consented, default-off lane.

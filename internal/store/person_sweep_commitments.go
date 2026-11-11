@@ -17,6 +17,7 @@ var errCommitmentWindowChanged = errors.New("commitment sources changed before a
 
 type preparedCommitmentPromise struct {
 	existingID int64
+	replay     bool
 	promise    peoplesweep.CommitmentPromise
 	source     peoplesweep.CommitmentSource
 	expires    time.Time
@@ -40,6 +41,8 @@ type preparedCommitmentSweep struct {
 	backfillMessageID int64
 	anchorAfterID     int64
 	anchorBackfillID  int64
+	scope             string
+	selectionAt       time.Time
 }
 
 func commitmentEvidence(personID int64, source peoplesweep.CommitmentSource, role, quote string, start, end int64) personfacts.EvidenceInput {
@@ -101,7 +104,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 	result := request.Commitment
 	window := result.Window
 	if len(window.Sources) == 0 {
-		return &preparedCommitmentSweep{through: window.ThroughSequence, snapshot: window.SnapshotSequence, observedOnly: true, backfillMessageID: window.BackfillMessageID}, nil
+		return &preparedCommitmentSweep{through: window.ThroughSequence, snapshot: window.SnapshotSequence, observedOnly: true, backfillMessageID: window.BackfillMessageID, scope: window.ScopeFingerprint, selectionAt: window.SelectionAt}, nil
 	}
 	output, err := json.Marshal(result.Output)
 	if err != nil {
@@ -135,7 +138,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 		}
 		return source, nil
 	}
-	prepared := &preparedCommitmentSweep{through: window.ThroughSequence, snapshot: window.SnapshotSequence, backfillMessageID: window.BackfillMessageID, anchorAfterID: window.AnchorAfterID, anchorBackfillID: window.AnchorBackfillID, autoFulfil: result.Config.AutoFulfil}
+	prepared := &preparedCommitmentSweep{through: window.ThroughSequence, snapshot: window.SnapshotSequence, backfillMessageID: window.BackfillMessageID, anchorAfterID: window.AnchorAfterID, anchorBackfillID: window.AnchorBackfillID, autoFulfil: result.Config.AutoFulfil, scope: window.ScopeFingerprint, selectionAt: window.SelectionAt}
 	generation := request.Generation
 	generation.ProgramID = peoplesweep.CommitmentProgramID
 	generation.ProgramVersion = peoplesweep.CommitmentProgramVersion
@@ -208,7 +211,7 @@ func (s *Store) prepareCommitmentSweep(ctx context.Context, request peoplesweep.
 			Target: descriptor, Relation: personfacts.RelationSupport, Origin: personfacts.OriginCommitment,
 			SubmittedValue: value, ValidUntil: &expires, Evidence: []personfacts.EvidenceInput{evidence},
 		})
-		prepared.promises = append(prepared.promises, preparedCommitmentPromise{existingID: match.existing.ID, promise: promise, source: source, expires: expires})
+		prepared.promises = append(prepared.promises, preparedCommitmentPromise{existingID: match.existing.ID, replay: match.existing.ID == 0 || match.existing.ClaimID == nil, promise: promise, source: source, expires: expires})
 	}
 	for _, fulfilment := range parsed.Fulfilments {
 		source, err := verify(fulfilment.SourceID)
@@ -272,16 +275,7 @@ func (s *Store) withdrawnCommitmentFulfilment(ctx context.Context, personID int6
 func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep) error {
 	personID := request.Lease.PersonID
 	if prepared.observedOnly {
-		// A no-source inspection informs scheduling without consuming the
-		// commitment frontier or recording a model result.
-		_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers
-			(person_id, through_sequence, processed_at, observed_sequence, backfill_message_id) VALUES (?, 0, ?, ?, ?)
-			ON CONFLICT (person_id) DO UPDATE SET
-			processed_at = excluded.processed_at, observed_sequence = excluded.observed_sequence,
-			backfill_message_id = excluded.backfill_message_id, anchor_after_id = 0, anchor_through_sequence = 0, anchor_backfill_id = 0
-			WHERE COALESCE(person_commitment_frontiers.observed_sequence, person_commitment_frontiers.through_sequence)
-				<= excluded.observed_sequence`, personID, s.dialect.TimestampParam(request.CompletedAt), prepared.through, prepared.backfillMessageID)
-		return err
+		return s.saveCommitmentFrontierTx(ctx, tx, request, prepared, false)
 	}
 	newAnchorNeedsReplay := false
 	if len(prepared.promises) > 0 {
@@ -290,6 +284,7 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			return err
 		}
 		for _, p := range prepared.promises {
+			newAnchorNeedsReplay = newAnchorNeedsReplay || p.replay
 			var claimID int64
 			if err := tx.QueryRowContext(ctx, `SELECT id FROM person_fact_claims
 				WHERE generation_id = ? AND target_key = ? AND rejection_action IS NULL`,
@@ -325,9 +320,6 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			if err != nil {
 				return fmt.Errorf("persist commitment lifecycle: %w", err)
 			}
-			newAnchorNeedsReplay = newAnchorNeedsReplay || slices.ContainsFunc(request.Commitment.Window.Sources, func(source peoplesweep.CommitmentSource) bool {
-				return source.Direction == p.source.Direction && source.EventTime.After(p.source.EventTime)
-			})
 		}
 	}
 	for _, f := range prepared.fulfilments {
@@ -355,28 +347,52 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			return fmt.Errorf("persist commitment fulfilment: %w", err)
 		}
 	}
-	if prepared.anchorAfterID > 0 || newAnchorNeedsReplay {
-		anchorAfterID := prepared.anchorAfterID
-		anchors := request.Commitment.Window.Anchors
-		if anchorAfterID == 0 && len(anchors) > 0 {
-			anchorAfterID = anchors[len(anchors)-1].ID
+	return s.saveCommitmentFrontierTx(ctx, tx, request, prepared, newAnchorNeedsReplay)
+}
+
+// One frontier carries both recent-history discovery and fair anchor pages.
+// New or reattached promises restart recent-history discovery, which also
+// visits completion messages consumed before their earlier promise arrived.
+func (s *Store) saveCommitmentFrontierTx(ctx context.Context, tx *loggedTx, request peoplesweep.ApplyRequest, prepared *preparedCommitmentSweep, replay bool) error {
+	through, backfill := prepared.through, prepared.backfillMessageID
+	after, anchorThrough, anchorBackfill := int64(0), int64(0), int64(0)
+	var observed any
+	var previousThrough int64
+	var previousScope string
+	if prepared.observedOnly || prepared.anchorAfterID > 0 {
+		err := tx.QueryRowContext(ctx, `SELECT through_sequence, scope_fingerprint FROM person_commitment_frontiers WHERE person_id = ?`, request.Lease.PersonID).Scan(&previousThrough, &previousScope)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
 		}
-		// A new promise extracted from this batch could not be referenced by
-		// its provider response. Give it a chance to see the newer evidence.
-		_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers
-			(person_id, through_sequence, processed_at, backfill_message_id, anchor_after_id, anchor_through_sequence, anchor_backfill_id)
-			VALUES (?, 0, ?, 0, ?, ?, ?) ON CONFLICT (person_id) DO UPDATE SET
-			processed_at = excluded.processed_at, anchor_after_id = excluded.anchor_after_id,
-			anchor_through_sequence = excluded.anchor_through_sequence, anchor_backfill_id = excluded.anchor_backfill_id`,
-			personID, s.dialect.TimestampParam(request.CompletedAt), anchorAfterID, prepared.through, prepared.anchorBackfillID)
-		return err
+		if previousScope != prepared.scope {
+			previousThrough = 0
+		}
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id)
-		VALUES (?, ?, ?, ?) ON CONFLICT (person_id) DO UPDATE SET
-		through_sequence = excluded.through_sequence, processed_at = excluded.processed_at, observed_sequence = NULL,
-		backfill_message_id = excluded.backfill_message_id, anchor_after_id = 0, anchor_through_sequence = 0, anchor_backfill_id = 0
-		WHERE person_commitment_frontiers.through_sequence <= excluded.through_sequence`,
-		personID, prepared.through, s.dialect.TimestampParam(request.CompletedAt), prepared.backfillMessageID)
+	if prepared.observedOnly {
+		observed = through
+		// Observations do not consume the model's journal frontier.
+		through = previousThrough
+	} else if replay {
+		backfill = 0
+	} else if prepared.anchorAfterID > 0 {
+		after, anchorThrough, anchorBackfill = prepared.anchorAfterID, prepared.through, prepared.anchorBackfillID
+		// Keep the previously consumed journal prefix while paging anchors.
+		through = previousThrough
+	}
+	var selected any
+	if backfill >= 0 || anchorThrough > 0 || after > 0 {
+		selected = s.dialect.TimestampParam(prepared.selectionAt)
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers
+		(person_id, through_sequence, processed_at, observed_sequence, backfill_message_id,
+		 anchor_after_id, anchor_through_sequence, anchor_backfill_id, scope_fingerprint, selection_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (person_id) DO UPDATE SET
+		through_sequence = excluded.through_sequence, processed_at = excluded.processed_at,
+		observed_sequence = excluded.observed_sequence, backfill_message_id = excluded.backfill_message_id,
+		anchor_after_id = excluded.anchor_after_id, anchor_through_sequence = excluded.anchor_through_sequence,
+		anchor_backfill_id = excluded.anchor_backfill_id, scope_fingerprint = excluded.scope_fingerprint,
+		selection_at = excluded.selection_at`, request.Lease.PersonID, through, s.dialect.TimestampParam(request.CompletedAt), observed,
+		backfill, after, anchorThrough, anchorBackfill, prepared.scope, selected)
 	return err
 }
 
@@ -448,7 +464,14 @@ func validatePersonSweepApplyCommitment(request peoplesweep.ApplyRequest) error 
 		len(window.Sources) > result.Config.MaxItems || len(window.Anchors) > result.Config.MaxOpenAnchors {
 		return errors.New("commitment result does not match the attempt")
 	}
-	if window.AnchorAfterID > 0 && (len(window.Anchors) != result.Config.MaxOpenAnchors || len(window.Anchors) == 0 || window.Anchors[len(window.Anchors)-1].ID != window.AnchorAfterID) {
+	if window.SelectionAt.IsZero() || window.SelectionAt.After(window.Now) || len(window.ScopeFingerprint) != 64 {
+		return errors.New("invalid commitment selection bounds")
+	}
+	fits, err := peoplesweep.CommitmentInputFits(window, false)
+	if err != nil || !fits {
+		return errors.Join(errors.New("commitment input exceeds wire limit"), err)
+	}
+	if window.AnchorAfterID > 0 && (len(window.Anchors) == 0 || window.Anchors[len(window.Anchors)-1].ID != window.AnchorAfterID) {
 		return errors.New("commitment continuation must match the last open anchor")
 	}
 	if hasCall == (len(window.Sources) == 0) ||
@@ -505,6 +528,10 @@ func (s *Store) commitmentWindowCurrentTx(ctx context.Context, tx *loggedTx, req
 		return false, err
 	}
 	if !allowSensitive || !slices.Contains(lanes, peoplesweep.SourceConversationText) {
+		return false, nil
+	}
+	profile := peoplesweep.ProviderProfile{AllowSensitive: allowSensitive, SourceSince: sourceSince, SourceUntil: sourceUntil.String, AllowedSources: lanes}
+	if prepared.scope != peoplesweep.CommitmentScopeFingerprint(profile, request.Commitment.Config) {
 		return false, nil
 	}
 	for _, source := range request.Commitment.Window.Sources {
