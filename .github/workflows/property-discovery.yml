@@ -17,6 +17,9 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+      - name: Install SQLite development headers
+        run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
       - name: Run properties with a fresh seed
         shell: bash
         run: |
