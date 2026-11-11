@@ -170,20 +170,11 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		}, a.diagnoseJSON("--all"))
 	})
 
-	t.Run("retired", func(t *testing.T) {
+	t.Run("skipped downloads", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		a := newAcquisitionArchive(t, false)
-		pending := acquisitionOutcome("saved", "ingest", "error", "attachment_error")
-		pending.ErrorMessage = store.SyncRunItemFilesPendingMessage
-		a.record(a.source, false, pending)
-		a.record(a.source, false, acquisitionOutcome("saved", "fetch", "resolved", "acquired"))
-		_, err := a.st.DB().ExecContext(t.Context(), a.st.Rebind("UPDATE sync_run_items SET status = ? WHERE source_message_id = ? AND status = ?"), "skipped", "saved", "error")
-		require.NoError(err)
-		pending.SourceMessageID, pending.Status = "unfinished", "skipped"
-		a.record(a.source, false, pending)
 		a.record(a.source, false,
-			acquisitionOutcome("cleaned", "ingest", "skipped", "attachment_error"),
 			acquisitionOutcome("gone", "fetch", "error", "fetch_error"),
 			acquisitionOutcome("files", "ingest", "error", "attachment_error"),
 		)
@@ -194,12 +185,7 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		output, err := a.diagnose("")
 		require.NoError(err)
 		assert.Equal("No pending acquisition failures.\n", output)
-		output, err = a.diagnose("", "--all")
-		require.NoError(err)
-		assert.Equal("unfinished\tretired\tattachment saving failed\ncleaned\tretired\tattachment saving failed\ngone\tunknown\tmessage download failed\nfiles\tunknown\tattachment saving failed\n", output)
 		assert.Equal([]map[string]string{
-			acquisitionJSON("unfinished", "ingest", "attachment_error", "historical"),
-			acquisitionJSON("cleaned", "ingest", "attachment_error", "historical"),
 			acquisitionJSON("gone", "fetch", "fetch_error", "indeterminate"),
 			acquisitionJSON("files", "ingest", "attachment_error", "indeterminate"),
 		}, a.diagnoseJSON("--all"))
@@ -211,17 +197,44 @@ func TestDiagnoseAcquisition(t *testing.T) {
 		a := newAcquisitionArchive(t, true)
 		conversation, err := a.st.EnsureConversation(t.Context(), a.source, "thread", "Thread")
 		require.NoError(err)
-		_, err = a.st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: a.source, SourceMessageID: "cleaned", MessageType: "email"})
+		for _, id := range []string{"saved", "unfinished", "cleaned"} {
+			_, err = a.st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: a.source, SourceMessageID: id, MessageType: "email"})
+			require.NoError(err)
+		}
+		run, err := a.st.StartSync(a.source, "full")
 		require.NoError(err)
-		a.record(a.source, false, acquisitionOutcome("cleaned", "ingest", "error", "attachment_error"))
-		a.record(a.source, false, acquisitionOutcome("cleaned", "fetch", "resolved", "acquired"))
+		for _, id := range []string{"saved", "unfinished"} {
+			pending := acquisitionOutcome(id, "ingest", "error", "attachment_error")
+			pending.SyncRunID, pending.ErrorMessage = run, store.SyncRunItemFilesPendingMessage
+			require.NoError(a.st.RecordSyncRunItem(pending))
+		}
+		failure := acquisitionOutcome("cleaned", "ingest", "error", "attachment_error")
+		failure.SyncRunID = run
+		require.NoError(a.st.RecordSyncRunItem(failure))
+		require.NoError(a.st.FailSync(run, "interrupted"))
+		a.record(a.source, false, acquisitionOutcome("saved", "fetch", "resolved", "acquired"), acquisitionOutcome("cleaned", "fetch", "resolved", "acquired"))
 		a.record(a.source, false, acquisitionOutcome("cleaned", "fetch", "error", "fetch_error"))
-		require.NoError(a.st.MarkMessageDeleted(a.source, "cleaned"))
+		all, err := a.st.ListSyncRunItemsContext(t.Context(), run, "", 10)
+		require.NoError(err)
+		require.Len(all, 3)
+		assert.Equal("saved", all[2].SourceMessageID)
+		errors, err := a.st.ListSyncRunItemsContext(t.Context(), run, "error", 10)
+		require.NoError(err)
+		require.Len(errors, 2)
+		assert.Equal("cleaned", errors[0].SourceMessageID)
+		assert.Equal("unfinished", errors[1].SourceMessageID)
+		for _, id := range []string{"saved", "unfinished", "cleaned"} {
+			require.NoError(a.st.MarkMessageDeleted(a.source, id))
+		}
 		plan, err := a.st.PlanGCContext(t.Context())
 		require.NoError(err)
 		_, err = a.st.ExecuteGCContext(t.Context(), plan)
 		require.NoError(err)
+		output, err := a.diagnose("", "--all")
+		require.NoError(err)
+		assert.Equal("unfinished\tretired\tattachment saving failed\ncleaned\tfixed\tattachment saving failed\ncleaned\tretired\tmessage download failed\n", output)
 		assert.Equal([]map[string]string{
+			acquisitionJSON("unfinished", "ingest", "attachment_error", "historical"),
 			acquisitionJSON("cleaned", "ingest", "attachment_error", "resolved"),
 			acquisitionJSON("cleaned", "fetch", "fetch_error", "historical"),
 		}, a.diagnoseJSON("--all"))
@@ -292,12 +305,28 @@ func TestDiagnoseAcquisition(t *testing.T) {
 
 	t.Run("merged source", func(t *testing.T) {
 		require := require.New(t)
-		a := newAcquisitionArchive(t, true)
+		assert := assert.New(t)
+		a := newAcquisitionArchive(t, false)
+		a.record(a.source, false, acquisitionOutcome("fixed", "fetch", "error", "fetch_error"))
+		a.record(a.source, false, acquisitionOutcome("fixed", "fetch", "resolved", "acquired"))
+		a.record(a.source, false, acquisitionOutcome("pending", "ingest", "error", "attachment_error"))
 		into, err := a.st.GetOrCreateSource("gmail", "into@example.com")
+		require.NoError(err)
+		other, err := a.st.GetOrCreateSource("imap", "other@example.com")
 		require.NoError(err)
 		_, err = a.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: a.source, IntoSourceID: into.ID})
 		require.NoError(err)
+		output, err := a.diagnose("")
+		require.NoError(err)
+		assert.Equal("No pending acquisition failures.\n", output)
+		assert.Equal([]map[string]string{
+			acquisitionJSON("fixed", "fetch", "fetch_error", "resolved"),
+			acquisitionJSON("pending", "ingest", "attachment_error", "indeterminate"),
+		}, a.diagnoseJSON("--all"))
+		a.source = into.ID
+		assert.Equal([]map[string]string{}, a.diagnoseJSON("--all"))
+		a.source = other.ID
 		_, err = a.diagnose("")
-		require.ErrorContains(err, fmt.Sprintf("merged into source %d", into.ID))
+		require.ErrorContains(err, "requires a Gmail source")
 	})
 }

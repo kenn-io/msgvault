@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -53,6 +54,13 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 		return nil, err
 	}
 	defer release()
+	source, err := st.GetSourceByIDContext(ctx, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	if source.SourceType != "" && source.SourceType != sourceTypeGmail {
+		return nil, errors.New("acquisition diagnostic requires a Gmail source")
+	}
 	candidates, err := st.ListUnresolvedSyncItemErrors(ctx, sourceID)
 	if err != nil {
 		return nil, err
@@ -75,6 +83,8 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 		op := acquisitionOperationOf(outcome)
 		var state string
 		switch {
+		// ListSyncRunItemsContext filters these markers in SQL before its limit;
+		// this source-wide walk already has the later resolution in hand.
 		case outcome.ErrorMessage == store.SyncRunItemFilesPendingMessage && materializationFromKind(outcome.ErrorKind) != 0 && resolved:
 		case outcome.Status != store.SyncRunItemStatusError && outcome.Status != store.SyncRunItemStatusSkipped:
 		case outcome.Status == store.SyncRunItemStatusSkipped && op != acquisitionUnknown && !resolved:
@@ -82,7 +92,7 @@ func DiagnoseAcquisitionContext(ctx context.Context, st *store.Store, sourceID i
 		case op != acquisitionUnknown && resolved:
 			state = AcquisitionResolved
 		case outcome.Status == store.SyncRunItemStatusSkipped:
-		case op != acquisitionUnknown && covers(retries[outcome.SourceMessageID], outcome, op):
+		case source.MergedIntoSourceID == 0 && op != acquisitionUnknown && covers(retries[outcome.SourceMessageID], outcome, op):
 			state = AcquisitionActive
 		default:
 			state = AcquisitionIndeterminate

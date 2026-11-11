@@ -35,16 +35,6 @@ func newDiagnoseAcquisitionCmd() *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			source, err := st.GetSourceByIDContext(ctx, sourceID)
-			if err != nil {
-				return err
-			}
-			if source.SourceType != "" && source.SourceType != sourceTypeGmail {
-				return errors.New("acquisition diagnostic requires a Gmail source")
-			}
-			if source.MergedIntoSourceID != 0 {
-				return fmt.Errorf("source %d was merged into source %d and cannot sync", sourceID, source.MergedIntoSourceID)
-			}
 			items, err := msgsync.DiagnoseAcquisitionContext(ctx, st, sourceID)
 			if err != nil {
 				return err

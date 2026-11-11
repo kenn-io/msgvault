@@ -3128,7 +3128,7 @@ msgvault diagnose-acquisition --source-id 1
 msgvault diagnose-acquisition --source-id 1 --all
 ```
 
-The command reads the local database without starting the daemon or contacting Gmail. Use `--local` when a remote URL is configured. By default it lists failures that sync still retries, based on saved sync records. `--all` adds failures in the other states:
+The command reads the local database without starting the daemon or contacting Gmail. Use `--local` when a remote URL is configured. After a source is merged, use `--all` with the original source ID to inspect its history; unconfirmed work is unknown because sync no longer retries that source. By default it lists failures that sync still retries, based on saved sync records. `--all` adds failures in the other states:
 
 | Text | JSON `state` | Meaning |
 |---|---|---|
