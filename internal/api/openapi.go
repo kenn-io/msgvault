@@ -1566,6 +1566,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			schemaName + "AllowedResolutionsKeepRemote",
 		})
 	}
+	// Event schemas contain arbitrary JSON schema values, not empty objects.
+	if definition := schemas["MCPEventsDefinition"]; definition != nil {
+		for _, name := range []string{"inputSchema", "payloadSchema"} {
+			if property := definition.Properties[name]; property != nil {
+				if values, ok := property.AdditionalProperties.(*huma.Schema); ok {
+					setCodegenGoType(values, "any")
+				}
+			}
+		}
+	}
 	// Without the override, empty-schema map values generate struct{}, which cannot carry surface="web".
 	if telemetry := schemas["TelemetryEventRequest"]; telemetry != nil && telemetry.Properties["properties"] != nil {
 		if values, ok := telemetry.Properties["properties"].AdditionalProperties.(*huma.Schema); ok {

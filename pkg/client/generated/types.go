@@ -7275,11 +7275,11 @@ type MCPEventsArguments struct {
 }
 
 type MCPEventsDefinition struct {
-	Delivery      []string            `json:"delivery" validate:"required"`
-	Description   string              `json:"description" validate:"required"`
-	InputSchema   map[string]struct{} `json:"inputSchema"`
-	Name          string              `json:"name" validate:"required"`
-	PayloadSchema map[string]struct{} `json:"payloadSchema"`
+	Delivery      []string       `json:"delivery" validate:"required"`
+	Description   string         `json:"description" validate:"required"`
+	InputSchema   map[string]any `json:"inputSchema"`
+	Name          string         `json:"name" validate:"required"`
+	PayloadSchema map[string]any `json:"payloadSchema"`
 }
 
 func (m MCPEventsDefinition) Validate() error {

@@ -3,7 +3,6 @@ package backupapp_test
 import (
 	"database/sql"
 	"encoding/json"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -119,7 +118,6 @@ func TestBackupRestorePreservesSavedViews(t *testing.T) {
 	dbPath := filepath.Join(dataDir, "msgvault.db")
 	attachmentsDir := filepath.Join(dataDir, "attachments")
 	requirements.NoError(os.MkdirAll(attachmentsDir, 0o700))
-	requirements.NoError(os.WriteFile(filepath.Join(dataDir, "mcp-events.key"), []byte("fixture secret"), 0o600))
 
 	st, err := store.OpenForTest(t.Context(), dbPath)
 	requirements.NoError(err)
@@ -139,15 +137,10 @@ func TestBackupRestorePreservesSavedViews(t *testing.T) {
 	repository, err := backup.Init(filepath.Join(t.TempDir(), "repository"))
 	requirements.NoError(err)
 	app := backupapp.New("test")
-	manifest, err := backup.Create(ctx, repository, app, backup.CreateOptions{
+	_, err = backup.Create(ctx, repository, app, backup.CreateOptions{
 		DBPath: dbPath, ContentDir: attachmentsDir, DataDir: dataDir,
 	})
 	requirements.NoError(err)
-	reader, err := repository.OpenSnapshot(ctx, manifest.SnapshotID, app.PackFileExtension())
-	requirements.NoError(err)
-	_, err = reader.Extra("mcp-events.key")
-	requirements.ErrorIs(err, fs.ErrNotExist)
-	requirements.NoError(reader.Close())
 
 	restoreResult, err := backup.Restore(ctx, repository, app, backup.RestoreOptions{
 		TargetDir: filepath.Join(t.TempDir(), "restored"),

@@ -88,9 +88,9 @@ func TestDecodeSubscribeRejectsInvalidArgumentsAndNulls(t *testing.T) {
 	}{
 		{`{"name":null,"arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
 		{`{"name":"msgvault.messages.changed","arguments":{"person_id":1,"source_id":2},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
-		{`{"name":"msgvault.messages.changed","arguments":{"person_id":null},"delivery":{}}`, false},
-		{`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"source_id":2},"delivery":{}}`, false},
-		{`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"unknown":true},"delivery":{}}`, false},
+		{`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"incoming_only":null},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
+		{`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"source_id":2},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
+		{`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"unknown":true},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
 		{`{"name":"msgvault.messages.changed","arguments":{"person_id":1,"source_id":0},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, true},
 		{`{"name":"msgvault.messages.changed","arguments":{"person_id":0,"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, true},
 	} {
@@ -158,6 +158,20 @@ func TestSubscribeRefreshPreservesPosition(t *testing.T) {
 	assert.Equal("http_5xx", second.DeliveryStatus.LastError)
 	require.NotNil(second.DeliveryStatus.FailedSince)
 	assert.Equal(stamp, *second.DeliveryStatus.FailedSince)
+
+	// A restarted daemon with more configured targets must not claim delivery.
+	service.ConfigTargets = 32
+	_, err = service.Subscribe(t.Context(), input)
+	var eventErr *Error
+	require.ErrorAs(err, &eventErr)
+	assert.Equal(ResourceExhausted, eventErr.Code)
+	unchanged, _, err := st.LoadWakeupStateKey(t.Context(), key)
+	require.NoError(err)
+	assert.Equal(pos, unchanged)
+	entries, _, err := service.catalog(t.Context())
+	require.NoError(err)
+	require.Len(entries, 1)
+	assert.Equal(first.ID, entries[0].ID)
 }
 
 func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {

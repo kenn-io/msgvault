@@ -108,6 +108,9 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest) (
 		var id string
 		var initial *store.WakeupState
 		if index >= 0 {
+			if len(entries)+s.ConfigTargets > 32 {
+				return out, failure(ResourceExhausted, "subscriptions")
+			}
 			id = entries[index].ID
 		} else {
 			if len(entries)+s.ConfigTargets >= 32 {

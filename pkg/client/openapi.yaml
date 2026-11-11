@@ -7351,12 +7351,14 @@ components:
         description:
           type: string
         inputSchema:
-          additionalProperties: {}
+          additionalProperties:
+            x-go-type: any
           type: object
         name:
           type: string
         payloadSchema:
-          additionalProperties: {}
+          additionalProperties:
+            x-go-type: any
           type: object
       required:
         - name

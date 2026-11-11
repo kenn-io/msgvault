@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/testutil"
+	pkgclient "go.kenn.io/msgvault/pkg/client"
 )
 
 type countingEventsGate struct{ calls int }
@@ -77,4 +78,47 @@ func TestMCPEventsRejectsRemoteClient(t *testing.T) {
 		response := f.do(t, remoteClientTestReaderKey, route.method, route.path, "{}")
 		assert.Equal(t, http.StatusForbidden, response.Code, route.path)
 	}
+}
+
+func TestEventsRouterSerialGate(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{HomeDir: t.TempDir()}
+	events := &mcpevents.Service{Store: st, Home: cfg.HomeDir, Enabled: true}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, OperationGate: NewSerialOperationGate(), Logger: testLogger()})
+	body := `{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`
+	for _, path := range []string{"/api/v1/mcp-events/subscribe", "/api/v1/mcp-events/unsubscribe"} {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:12345"
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	}
+	assertions.True(events.Available(t.Context()))
+}
+
+func TestGeneratedEventsCatalogDecodes(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{HomeDir: t.TempDir()}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: &mcpevents.Service{Store: st, Home: cfg.HomeDir, Enabled: true}, Logger: testLogger()})
+	server := httptest.NewServer(srv.Router())
+	defer server.Close()
+	client, err := pkgclient.New(server.URL)
+	requirements.NoError(err)
+	catalog, err := client.McpEventsList(t.Context())
+	requirements.NoError(err)
+	requirements.Len(catalog.Events, 1)
+	assertions.True(catalog.Enabled)
+	assertions.Equal("object", catalog.Events[0].InputSchema["type"])
+	assertions.Equal("object", catalog.Events[0].PayloadSchema["type"])
+	response, err := client.McpEventsListWithResponse(t.Context())
+	requirements.NoError(err)
+	requirements.NotNil(response.JSON200)
+	requirements.Len(response.JSON200.Events, 1)
+	assertions.Equal("object", response.JSON200.Events[0].InputSchema["type"])
+	assertions.Equal("object", response.JSON200.Events[0].PayloadSchema["type"])
 }
