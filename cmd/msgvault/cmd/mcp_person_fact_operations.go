@@ -124,14 +124,14 @@ func (b *daemonMCPOperations) executePersonFactOperation(ctx context.Context, na
 		return r, true, e
 	case "set_person_fact_pin":
 		a, e := decodeMCPOperationArguments[factPinArgs](args)
-		if e != nil || !factPinValid(a) {
+		if e != nil {
 			return invalid()
 		}
 		r, e := readMCPOperationJSONWithClassifier[generated.PersonFactPinWrite](ctx, b.client, http.MethodPut, "/api/v1/people/{id}/fact-pins/{kind}/{key}", &generated.SetPersonFactPinRequestOptions{PathParams: &generated.SetPersonFactPinPath{ID: a.PersonID, Kind: generated.SetPersonFactPinPathKind(a.Kind), Key: url.PathEscape(a.Key)}, Body: &generated.SetPersonFactPinBody{Pinned: *a.Pinned}}, factClassify, http.StatusOK)
 		return r, true, e
 	case "set_person_tracking":
 		a, e := decodeMCPOperationArguments[factTrackingArgs](args)
-		if e != nil || !validLoopID(a.PersonID) || a.Tracked == nil {
+		if e != nil {
 			return invalid()
 		}
 		r, e := readMCPOperationJSONWithClassifier[generated.PersonTracking](ctx, b.client, http.MethodPut, "/api/v1/people/{id}/tracking", &generated.SetPersonTrackingRequestOptions{PathParams: &generated.SetPersonTrackingPath{ID: a.PersonID}, Body: &generated.SetPersonTrackingBody{Tracked: *a.Tracked}}, factClassify, http.StatusOK)
