@@ -26,7 +26,7 @@ func TestZoomRosterThroughDaemon(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	peer, err := st.EnsureParticipantByPhone("+12025550109", "Synthetic peer", "zoom")
+	peer, err := st.EnsureParticipantByPhone(t.Context(), "+12025550109", "Synthetic peer", "zoom")
 	require.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(peer)
 	require.NoError(err)
