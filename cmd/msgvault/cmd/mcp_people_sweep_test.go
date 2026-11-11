@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -49,7 +49,7 @@ func (f *sweepCLIFixture) RunCLICommand(ctx context.Context, req api.CLIRunReque
 }
 
 func TestPeopleSweepThroughDaemonRouterAndCobra(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
+	require, assert := requirepkg.New(t), assertpkg.New(t)
 	st, personID, cfg := newPersonSweepCommandStore(t, false)
 	profile, err := cfg.Profile()
 	require.NoError(err)
@@ -122,7 +122,7 @@ func TestPeopleSweepThroughDaemonRouterAndCobra(t *testing.T) {
 }
 
 func TestPeopleSweepFixedArgumentsAndSafeErrors(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
+	require, assert := requirepkg.New(t), assertpkg.New(t)
 	cmd, pos, _, err := sweepCommand("list_people_sweep_history", map[string]any{"provider": "example", "person_id": int64(2), "limit": 3})
 	require.NoError(err)
 	args, err := daemonCLIArgsFromCobra(cmd, pos)
@@ -162,7 +162,7 @@ func TestPeopleSweepFixedArgumentsAndSafeErrors(t *testing.T) {
 		{name: "proxy failure", status: 502, body: "proxy error", want: "operation_refused", uncertain: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require, assert := require.New(t), assert.New(t)
+			require, assert := requirepkg.New(t), assertpkg.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if tc.status != 0 {
 					w.WriteHeader(tc.status)
