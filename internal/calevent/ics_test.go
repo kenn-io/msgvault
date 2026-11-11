@@ -81,6 +81,57 @@ func TestICSWindowsZoneRecurrence(t *testing.T) {
 
 const icsExample = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:invite@example.com\r\nSEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART;TZID=America/New_York:20270314T090000\r\nDTEND;TZID=America/New_York:20270314T100000\r\nSUMMARY:Example\\, meeting\r\nDESCRIPTION:First line\\nSecond\r\n line\r\nORGANIZER:mailto:ORGANIZER@EXAMPLE.COM\r\nATTENDEE;CN=Guest;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nATTENDEE;CUTYPE=ROOM:mailto:room@example.com\r\nLOCATION:https://meet.google.com/abc-defg-hij\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 
+func TestICSCalendarTimeZone(t *testing.T) {
+	for _, tc := range []struct{ name, declared, context, start, want string }{
+		{"declared", "America/New_York", "", "DTSTART:20270115T090000", "2027-01-15T14:00:00Z"},
+		{"context wins", "America/New_York", "America/Chicago", "DTSTART:20270115T090000", "2027-01-15T15:00:00Z"},
+		{"event wins", "America/New_York", "America/Chicago", "DTSTART;TZID=Asia/Tokyo:20270115T090000", "2027-01-15T00:00:00Z"},
+		{"UTC wins", "America/New_York", "", "DTSTART:20270115T090000Z", "2027-01-15T09:00:00Z"},
+		{"fallback", "", "", "DTSTART:20270115T090000", "2027-01-15T09:00:00Z"},
+		{"invalid", "Unknown/Zone", "", "DTSTART:20270115T090000", ""},
+		{"local", "Local", "", "DTSTART:20270115T090000", ""},
+		{"context ignores invalid declaration", "Unknown/Zone", "America/New_York", "DTSTART:20270115T090000", "2027-01-15T14:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-TIMEZONE:" + tc.declared + "\r\nBEGIN:VEVENT\r\nUID:test@example.com\r\n" + tc.start + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+			components, err := ParseICS([]byte(raw), "", tc.context)
+			if tc.want == "" {
+				require.ErrorContains(t, err, "time zone")
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, components, 1)
+			require.Equal(t, tc.want, components[0].Event.Start.Format(time.RFC3339))
+		})
+	}
+}
+
+func TestICSCalendarTimeZoneRetained(t *testing.T) {
+	for _, tc := range []struct{ name, declared, context, want string }{
+		{"declared custom", "Customized Time Zone", "", "2026-07-15T04:30:00Z"},
+		{"explicit context", "America/New_York", "Asia/Tokyo", "2026-07-15T01:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := os.ReadFile("testdata/customized-no-dst.ics")
+			require.NoError(t, err)
+			text := strings.Replace(string(raw), "BEGIN:VTIMEZONE", "PRODID:-//Example//EN\nX-WR-TIMEZONE:"+tc.declared+"\nBEGIN:VTIMEZONE", 1)
+			text = strings.Replace(text, "BEGIN:VEVENT\n", "BEGIN:VEVENT\nDTSTAMP:20260101T000000Z\n", 1)
+			text = strings.Replace(text, "DTSTART;TZID=Customized Time Zone:20260715T100000", "DTSTART:20260715T100000", 1)
+			text = strings.Replace(text, "END:VCALENDAR", "BEGIN:VEVENT\nUID:second@example.com\nDTSTAMP:20260101T000000Z\nDTSTART:20260715T100000\nEND:VEVENT\nEND:VCALENDAR", 1)
+			components, err := ParseICS([]byte(text), "", tc.context)
+			require.NoError(t, err)
+			require.Len(t, components, 2)
+			for _, component := range components {
+				require.Equal(t, tc.want, component.Event.Start.Format(time.RFC3339))
+				replayed, err := ParseICS(component.Raw, "", "")
+				require.NoError(t, err)
+				require.Len(t, replayed, 1)
+				require.Equal(t, tc.want, replayed[0].Event.Start.Format(time.RFC3339))
+			}
+		})
+	}
+}
+
 func TestICSDecode(t *testing.T) {
 	t.Run("non UTF-8 text", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
