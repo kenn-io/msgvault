@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/query/querytest"
 )
 
-func searchToolsResponse(t *testing.T, opts ServeOptions, writes bool, query string, limit int) (toolDiscoveryResponse, map[string]any) {
+func searchToolsResponse(t *testing.T, opts ServeOptions, writes bool, query string, limit int) toolDiscoveryResponse {
 	t.Helper()
 	args := map[string]any{"query": query}
 	if limit != 0 {
@@ -29,7 +29,7 @@ func searchToolsResponse(t *testing.T, opts ServeOptions, writes bool, query str
 	require.NoError(t, err)
 	var result toolDiscoveryResponse
 	require.NoError(t, json.Unmarshal(encoded, &result))
-	return result, response.Result
+	return result
 }
 
 func TestToolDiscoveryColdStart(t *testing.T) {
@@ -41,7 +41,7 @@ func TestToolDiscoveryColdStart(t *testing.T) {
 	annotations, ok := tools[ToolSearchTools]["annotations"].(map[string]any)
 	must.True(ok)
 	assertions.Equal(true, annotations["readOnlyHint"])
-	response, _ := searchToolsResponse(t, ServeOptions{}, false, "read one message", 3)
+	response := searchToolsResponse(t, ServeOptions{}, false, "read one message", 3)
 	must.NotEmpty(response.Results)
 	assertions.Equal(ToolGetMessage, response.Results[0].Name)
 	var id *toolDiscoveryInput
@@ -71,7 +71,7 @@ func TestToolDiscoveryUsefulQueriesAndMetadataParity(t *testing.T) {
 			assertions := assert.New(t)
 			must := require.New(t)
 
-			response, _ := searchToolsResponse(t, opts, false, tc.query, 5)
+			response := searchToolsResponse(t, opts, false, tc.query, 5)
 			names := make([]string, 0, len(response.Results))
 			for _, result := range response.Results {
 				names = append(names, result.Name)
@@ -128,14 +128,14 @@ func TestToolDiscoveryVisibilityMatchesToolsList(t *testing.T) {
 			listed := toolsByName(t, rawListTools(t, mode.opts, mode.writes))
 			require.Contains(t, listed, ToolSearchTools)
 			for _, query := range []string{"calendar", "source scheduler sync", "draft compose delete", "sql query", "saved view delete", "get message", "directory people", "export attachment"} {
-				response, _ := searchToolsResponse(t, mode.opts, mode.writes, query, 20)
+				response := searchToolsResponse(t, mode.opts, mode.writes, query, 20)
 				for _, result := range response.Results {
 					assertions.Contains(listed, result.Name, "%s leaked %s", query, result.Name)
 				}
 			}
 			// Every advertised operation is discoverable by its exact tool name.
 			for name := range listed {
-				response, _ := searchToolsResponse(t, mode.opts, mode.writes, name, 0)
+				response := searchToolsResponse(t, mode.opts, mode.writes, name, 0)
 				names := make([]string, 0, len(response.Results))
 				for _, result := range response.Results {
 					names = append(names, result.Name)
@@ -160,7 +160,7 @@ func TestToolDiscoveryAppliesFreshArchiveFamilies(t *testing.T) {
 		listed := toolsByName(t, rawListTools(t, opts, true))
 		assertions.Equal(present, listed["calendar_create"] != nil)
 		before := probes
-		response, _ := searchToolsResponse(t, opts, true, "calendar", 20)
+		response := searchToolsResponse(t, opts, true, "calendar", 20)
 		assertions.Equal(before+1, probes)
 		found := false
 		for _, result := range response.Results {
@@ -171,7 +171,7 @@ func TestToolDiscoveryAppliesFreshArchiveFamilies(t *testing.T) {
 	// A broader dynamic snapshot cannot override the server's static family filter.
 	opts.Families = &ArchiveFamilies{}
 	families.Calendar = true
-	response, _ := searchToolsResponse(t, opts, true, "calendar", 20)
+	response := searchToolsResponse(t, opts, true, "calendar", 20)
 	for _, result := range response.Results {
 		assertions.NotContains(result.Name, "calendar_")
 	}
@@ -195,17 +195,17 @@ func TestToolDiscoveryInputLimits(t *testing.T) {
 	}
 	// Byte boundaries and Unicode survive the transport without truncating input.
 	for _, query := range []string{strings.Repeat("a", 512), strings.Repeat("界", 170) + "ab"} {
-		response, _ := searchToolsResponse(t, ServeOptions{}, false, query, 1)
+		response := searchToolsResponse(t, ServeOptions{}, false, query, 1)
 		assertions.Equal(query, response.Query)
 	}
-	response, _ := searchToolsResponse(t, ServeOptions{}, false, "zzzzzzunmatched", 0)
+	response := searchToolsResponse(t, ServeOptions{}, false, "zzzzzzunmatched", 0)
 	assertions.Empty(response.Results)
 	assertions.NotNil(response.Results)
 	assertions.False(response.Truncated)
-	response, _ = searchToolsResponse(t, ServeOptions{}, false, "message", 1)
+	response = searchToolsResponse(t, ServeOptions{}, false, "message", 1)
 	assertions.Len(response.Results, 1)
 	assertions.True(response.Truncated)
-	response, _ = searchToolsResponse(t, ServeOptions{}, false, "message", 0)
+	response = searchToolsResponse(t, ServeOptions{}, false, "message", 0)
 	assertions.Len(response.Results, 5)
 }
 
@@ -243,7 +243,7 @@ func TestToolDiscoveryFullMetadataAndStableOrdering(t *testing.T) {
 func TestToolDiscoveryUnionTypes(t *testing.T) {
 	assertions := assert.New(t)
 	backend := &namedPromotionTestBackend{recordingPeopleBackend: &recordingPeopleBackend{}}
-	response, _ := searchToolsResponse(t, peopleToolOptions(backend), true, ToolPromotePerson, 20)
+	response := searchToolsResponse(t, peopleToolOptions(backend), true, ToolPromotePerson, 20)
 	index := slices.IndexFunc(response.Results, func(result toolDiscoveryResult) bool { return result.Name == ToolPromotePerson })
 	require.NotEqual(t, -1, index)
 	inputs := make(map[string]toolDiscoveryInput)
@@ -348,7 +348,7 @@ func TestToolDiscoveryDirectNamesAtDefaultLimit(t *testing.T) {
 	listed := toolsByName(t, rawListTools(t, opts, true))
 	require.Contains(t, listed, ToolListSavedViews)
 	for _, query := range []string{"list saved views", ToolListSavedViews} {
-		response, _ := searchToolsResponse(t, opts, true, query, 0)
+		response := searchToolsResponse(t, opts, true, query, 0)
 		names := make([]string, 0, len(response.Results))
 		for _, result := range response.Results {
 			names = append(names, result.Name)
