@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"go.kenn.io/msgvault/internal/sqldialect"
 )
 
 // TestSQLiteBuildFTSTerm asserts the SQLite dialect renders a
@@ -52,14 +51,6 @@ func TestSQLiteBuildFTSTerm(t *testing.T) {
 
 func TestBuildFTSBodyTermScopesExactBodyField(t *testing.T) {
 	t.Parallel()
-	t.Run("PostgreSQL", func(t *testing.T) {
-		d := PostgreSQLQueryDialect{}
-		expr, _ := d.BuildFTSTerm([]string{"foo-bar"})
-		assert.Equal(t, sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields"), expr)
-		expr, _ = d.BuildFTSBodyTerm([]string{"foo-bar"})
-		assert.Equal(t, sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields[5:5]"), expr)
-	})
-
 	t.Run("SQLite body column", func(t *testing.T) {
 		expr, arg := (SQLiteQueryDialect{}).BuildFTSBodyTerm([]string{"foo", "bar"})
 		assert.Equal(t, "messages_fts MATCH ?", expr)

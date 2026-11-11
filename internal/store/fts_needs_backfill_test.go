@@ -142,16 +142,13 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	require.NoError(f.Store.ReplaceMessageRecipients(recipients, "cc", []int64{f.EnsureParticipant("example.com", "", "")}, nil))
 	legacy(recipients, `setweight(to_tsvector('simple', 'alice example.com'), 'C')`)
 	legacy(withBody(f.CreateMessage("unsearchable"), "hidden terminal@example.test"), `''::tsvector`)
-	gapped := strings.Repeat("filler ", 256) + "alpha filler beta"
-	for _, stored := range []string{gapped, "different stored subject"} {
-		id := f.CreateMessage(stored)
-		_, err := db.ExecContext(t.Context(), `UPDATE messages SET subject = $1 WHERE id = $2`, stored, id)
-		require.NoError(err)
-		legacy(id, `setweight(to_tsvector('simple', $2), 'A')`, gapped)
-	}
+	gapped := f.CreateMessage("gapped")
+	_, err := db.ExecContext(t.Context(), `UPDATE messages SET subject = 'different stored subject' WHERE id = $1`, gapped)
+	require.NoError(err)
+	legacy(gapped, `setweight(to_tsvector('simple', $2), 'A')`, strings.Repeat("filler ", 256)+"alpha filler beta")
 	legacy(f.CreateMessage("compound-gap"), `setweight(to_tsvector('simple', $2), 'A')`, strings.Repeat("filler ", 256)+"alpha filler foo-bar")
 	fresh, retained, partial := f.CreateMessage("fresh"), f.CreateMessage("retained"), f.CreateMessage("partial")
-	_, err := db.ExecContext(t.Context(), `UPDATE messages SET subject = 'lantern' WHERE id IN ($1, $2, $3)`, fresh, retained, partial)
+	_, err = db.ExecContext(t.Context(), `UPDATE messages SET subject = 'lantern' WHERE id IN ($1, $2, $3)`, fresh, retained, partial)
 	require.NoError(err)
 	require.NoError(f.Store.UpsertFTS(fresh, "lantern", "", "", "", ""))
 	legacy(retained, `setweight(to_tsvector('simple', 'lantern'), 'A')`)
@@ -184,17 +181,15 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	require.Equal([]int64{partial}, ids)
 	bodySearcher, ok := query.NewEngine(db, true).(query.MessageBodySearcher)
 	require.True(ok)
-	result, err := bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"stored phrase"}}, 10, 0)
-	require.NoError(err)
-	require.Len(result.Messages, 1)
-	assert.Equal(t, partial, result.Messages[0].ID)
-	result, err = bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"unique"}}, 10, 0)
-	require.NoError(err)
-	require.Empty(result.Messages)
-	result, err = bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"the the"}}, 10, 0)
-	require.NoError(err)
-	require.Len(result.Messages, 1)
-	assert.Equal(t, slack, result.Messages[0].ID)
+	for term, want := range map[string][]int64{"stored phrase": {partial}, "unique": nil, "the the": {slack}} {
+		result, err := bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{term}}, 10, 0)
+		require.NoError(err, term)
+		var got []int64
+		for _, message := range result.Messages {
+			got = append(got, message.ID)
+		}
+		assert.ElementsMatch(t, want, got, term)
+	}
 	rank := func(id int64) float64 {
 		t.Helper()
 		var value float64

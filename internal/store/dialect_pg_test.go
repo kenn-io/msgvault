@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"database/sql/driver"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -137,12 +136,12 @@ func TestPostgreSQLDialect_FTSLayoutVersioned(t *testing.T) {
 	assert.Contains(q.query, "), 'C')", "recipient weight")
 	assert.Contains(q.query, "setweight(to_tsvector('simple', LEFT(COALESCE($3, '')", "body vector")
 	assert.Contains(q.query, "), 'D')", "body weight")
-	assert.Contains(q.query, fmt.Sprintf("indexing_version = %d", CurrentFTSIndexingVersion), "layout version stamp")
+	assert.Contains(q.query, "indexing_version = 3", "layout version stamp")
 }
 
 func TestPostgreSQLDialect_FTSNeedsBackfillSQLUsesLiteralVersion(t *testing.T) {
 	sql := postgresFTSNeedsBackfillSQL()
-	assert.Contains(t, sql, fmt.Sprintf("indexing_version IS DISTINCT FROM %d", CurrentFTSIndexingVersion))
+	assert.Contains(t, sql, "indexing_version IS DISTINCT FROM 3")
 	assert.NotContains(t, sql, "$1", "partial-index predicate must remain plan-time provable")
 }
 
@@ -153,8 +152,8 @@ func TestPostgreSQLDialect_EnsureFTSIndexUsesVersionedStalePredicate(t *testing.
 	q := &recordingFTSQuerier{}
 	require.NoError(d.EnsureFTSIndex(q), "EnsureFTSIndex")
 	require.Len(q.all, 3, "GIN and stale-row indexes, then obsolete index removal")
-	assert.Contains(q.all[1], fmt.Sprintf("idx_messages_search_fts_stale_v%d", CurrentFTSIndexingVersion))
-	assert.Contains(q.all[1], fmt.Sprintf("search_fts IS NULL OR indexing_version IS DISTINCT FROM %d", CurrentFTSIndexingVersion))
+	assert.Contains(q.all[1], "idx_messages_search_fts_stale_v3")
+	assert.Contains(q.all[1], "search_fts IS NULL OR indexing_version IS DISTINCT FROM 3")
 	assert.Equal("DROP INDEX IF EXISTS idx_messages_search_fts_stale_v2", q.all[2])
 }
 

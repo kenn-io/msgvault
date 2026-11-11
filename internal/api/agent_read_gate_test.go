@@ -58,7 +58,6 @@ func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "old-index", MessageType: "email"})
 	require.NoError(err)
-	require.NoError(st.UpsertMessageBody(id, sql.NullString{String: "Write to both@example.com today", Valid: true}, sql.NullString{}))
 	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'old'), indexing_version = 2 WHERE id = $1`, id)
 	require.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(st.DB(), true), Logger: testLogger()})
