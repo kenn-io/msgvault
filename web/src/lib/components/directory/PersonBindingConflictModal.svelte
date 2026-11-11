@@ -13,6 +13,7 @@
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
   import { createBrowserRequestID } from '../../api/request-id';
+  import { isRetryableStatus } from '../../directory/controller.svelte';
   import type { APIClient } from '../../api/client';
   import {
     isMatchingPersonETag,
@@ -21,6 +22,8 @@
     type PersonMergeSuccess,
     type ValidatedPersonMergeRequired,
   } from '../../directory/person-merge';
+  const PROFILE_RELOAD_RETRY_DELAYS_MS = [500, 1000, 2000];
+  const PROFILE_RELOAD_TIMEOUT_MS = 10_000;
   type Profile = ValidatedPersonMergeRequired['profiles'][number];
   interface Props {
     client: APIClient;
@@ -38,6 +41,7 @@
   let error = $state<string | null>(null);
   let idempotencyKey = $state<string | null>(null);
   let reloadRequired = $state(false);
+  const busy = $derived(pending && !reloadRequired);
   let requestGeneration = 0;
   let disposed = false;
   let abortController: AbortController | undefined;
@@ -72,31 +76,39 @@
     error = null;
   }
   function requestClose(): void {
-    if (pending || completed) return;
+    if (busy || completed) return;
     onClose();
   }
-  async function reloadProfiles(generation: number, signal: AbortSignal): Promise<void> {
-    try {
-      const requestedProfiles = profiles;
-      const results = await Promise.all(
-        requestedProfiles.map((profile) =>
-          generatedGetPersonProfile(
-            { id: profile.person.id },
-            {
-              ...client,
-              signal,
-            },
-          ),
-        ),
-      );
-      if (disposed || generation !== requestGeneration) return;
-      const refreshed = results.map((result, index) => {
-        const expectedPersonID = requestedProfiles[index]!.person.id;
+  async function loadProfile(personID: number, signal: AbortSignal): Promise<Profile> {
+    for (let attempt = 0; ; attempt++) {
+      let result: Awaited<ReturnType<typeof generatedGetPersonProfile>> | undefined;
+      try {
+        result = await generatedGetPersonProfile({ id: personID }, {
+          ...client,
+          signal: AbortSignal.any([signal, AbortSignal.timeout(PROFILE_RELOAD_TIMEOUT_MS)]),
+        });
+      } catch (cause) {
+        if (signal.aborted) throw cause;
+      }
+      if (result && !isRetryableStatus(result.response.status)) {
         const etag = result.response.headers.get('ETag');
-        if (!result.data || result.data.id !== expectedPersonID || !isMatchingPersonETag(etag, expectedPersonID))
-          return null;
+        if (!result.response.ok || !result.data || result.data.id !== personID || !isMatchingPersonETag(etag, personID)) {
+          throw new Error('Invalid profile');
+        }
         return { person: result.data, etag };
-      });
+      }
+      const delay = PROFILE_RELOAD_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || signal.aborted) throw new Error('Profile reload failed');
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      if (signal.aborted) throw new Error('Profile reload aborted');
+    }
+  }
+  async function reloadProfiles(generation: number, signal: AbortSignal): Promise<void> {
+    const controller = new AbortController();
+    const reloadSignal = AbortSignal.any([signal, controller.signal]);
+    try {
+      const refreshed = await Promise.all(profiles.map((profile) => loadProfile(profile.person.id, reloadSignal)));
+      if (disposed || generation !== requestGeneration || signal.aborted) return;
       if (!refreshed[0] || !refreshed[1]) {
         error = "The profiles changed, but couldn't be reloaded. Retry profile reload.";
         return;
@@ -119,6 +131,8 @@
     } catch (cause) {
       if (disposed || generation !== requestGeneration || signal.aborted) return;
       error = "The profiles changed, but couldn't be reloaded. Retry profile reload.";
+    } finally {
+      controller.abort();
     }
   }
   async function retryProfileReload(): Promise<void> {
@@ -193,8 +207,8 @@
   title="Resolve person merge"
   ariaLabel="Resolve person merge"
   closeLabel="Close person merge"
-  closable={!pending && !completed}
-  closeOnOverlayClick={!pending && !completed}
+  closable={!busy && !completed}
+  closeOnOverlayClick={!busy && !completed}
   onclose={requestClose}
   maxWidth="min(680px, calc(100vw - 32px))"
 >
@@ -242,7 +256,7 @@
   </div>
 
   {#snippet footer()}
-    <Button surface="soft" label="Cancel" disabled={pending || completed} onclick={requestClose} />
+    <Button surface="soft" label="Cancel" disabled={busy || completed} onclick={requestClose} />
     {#if !completed}
       {#if reloadRequired}
         <Button
