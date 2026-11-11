@@ -882,7 +882,6 @@ func TestCommitmentCorrectedPromiseTimeInvalidatesEarlierFulfilment(t *testing.T
 		r.NotNil(items[0].Fulfilment)
 		a.Equal(completion, items[0].Fulfilment.MessageID)
 		a.Empty(load().Sources, "the identical corrected extraction must converge after matching")
-
 	})
 }
 
