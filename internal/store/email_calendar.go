@@ -112,7 +112,7 @@ func (s *Store) prepareEmailCalendarPartsWith(ctx context.Context, tx *loggedTx,
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		items, err := s.prepareICalendarWith(ctx, tx, sourceID, part.Content, part.Method, true)
+		items, skipped, err := s.prepareICalendarWith(ctx, tx, sourceID, part.Content, part.Method, true)
 		if err != nil {
 			// Interpretation failures preserve the email; database failures abort archival.
 			if ctx.Err() != nil {
@@ -124,6 +124,9 @@ func (s *Store) prepareEmailCalendarPartsWith(ctx context.Context, tx *loggedTx,
 			}
 			diagnostics = append(diagnostics, invalid.Error())
 			continue
+		}
+		for _, diagnostic := range skipped {
+			diagnostics = append(diagnostics, diagnostic.Error())
 		}
 		prepared = append(prepared, items...)
 	}
