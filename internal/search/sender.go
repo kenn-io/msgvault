@@ -38,17 +38,18 @@ func senderMatch(value string) (operator, pattern string, metadata bool) {
 // value; callers reading a store that has already filtered values pass nil.
 type SenderEligibility func(participant, value, kind string) string
 
-func (eligible SenderEligibility) wrap(condition, participant, value, kind string) string {
+// wrap requires eligibility of the sender participant p2's matched value.
+func (eligible SenderEligibility) wrap(condition, value, kind string) string {
 	if eligible == nil {
 		return condition
 	}
-	return "(" + condition + " AND " + eligible(participant, value, kind) + ")"
+	return "(" + condition + " AND " + eligible("p2", value, kind) + ")"
 }
 
 func senderCondition(operator, pattern string, metadata bool, lower func(string) string, eligible SenderEligibility) (string, []any) {
 	if operator == "=" {
 		// Match the existing case-insensitive email index for exact mailboxes.
-		return "(" + eligible.wrap("LOWER(p2.email_address) = ?", "p2", "p2.email_address", "email") + ")", []any{pattern}
+		return "(" + eligible.wrap("LOWER(p2.email_address) = ?", "p2.email_address", "email") + ")", []any{pattern}
 	}
 	columns := []struct{ column, kind string }{{"p2.email_address", "email"}}
 	if metadata {
@@ -59,7 +60,7 @@ func senderCondition(operator, pattern string, metadata bool, lower func(string)
 	var args []any
 	for _, column := range columns {
 		condition := lower("COALESCE("+column.column+", '')") + ` LIKE ? ESCAPE '\'`
-		parts = append(parts, eligible.wrap(condition, "p2", column.column, column.kind))
+		parts = append(parts, eligible.wrap(condition, column.column, column.kind))
 		args = append(args, pattern)
 	}
 	return "(" + strings.Join(parts, " OR ") + ")", args
@@ -83,8 +84,8 @@ func SenderLookup(value string, lower func(string) string, messages, recipients,
 	matching = `SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from' AND mr2.is_relayed AND ` + envelope + ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 WHERE mr2.recipient_type = 'from'
   AND mr2.participant_id IN (SELECT p2.id FROM ` + participants + ` p2 WHERE ` + participant + `) AND NOT mr2.is_relayed`
 	if metadata {
-		header := `(` + eligible.wrap(lower("COALESCE(mr2.display_name, '')")+` LIKE ? ESCAPE '\'`, "p2", "mr2.display_name", "name") + ` OR ` +
-			eligible.wrap(lower("COALESCE(p2.display_name, '')")+` LIKE ? ESCAPE '\'`, "p2", "p2.display_name", "name") + `)`
+		header := `(` + eligible.wrap(lower("COALESCE(mr2.display_name, '')")+` LIKE ? ESCAPE '\'`, "mr2.display_name", "name") + ` OR ` +
+			eligible.wrap(lower("COALESCE(p2.display_name, '')")+` LIKE ? ESCAPE '\'`, "p2.display_name", "name") + `)`
 		from += ` OR EXISTS (SELECT 1 FROM ` + recipients + ` mr2 JOIN ` + participants + ` p2 ON p2.id = mr2.participant_id WHERE mr2.message_id = ` + alias + `.id AND mr2.recipient_type = 'from' AND ` + header + `)`
 		matching += ` UNION SELECT mr2.message_id FROM ` + recipients + ` mr2 JOIN ` + participants + ` p2 ON p2.id = mr2.participant_id WHERE mr2.recipient_type = 'from' AND ` + header
 		args = append(args, pattern, pattern)

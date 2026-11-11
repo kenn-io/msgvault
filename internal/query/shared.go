@@ -123,8 +123,9 @@ func xUserIDExpr(alias, prefix string) string {
 	return "(SELECT pi.identifier_value FROM " + prefix + "participant_identifiers pi WHERE pi.participant_id = " + alias + ".id AND pi.identifier_type = 'x_user' ORDER BY pi.identifier_value LIMIT 1)"
 }
 
-func directSenderNameExpr(alias, prefix string) string {
-	return "COALESCE(NULLIF(" + alias + ".display_name, ''), " + xUserIDExpr(alias, prefix) + ", '')"
+// directSenderNameExpr labels the direct sender participant p of a cache view.
+func directSenderNameExpr() string {
+	return "COALESCE(NULLIF(p.display_name, ''), " + xUserIDExpr("p", "") + ", '')"
 }
 
 // participantNameExpr returns the SQL expression for a participant's display

@@ -371,7 +371,7 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 			LEFT JOIN conversations c ON c.id = m.conversation_id
 			WHERE %s
 			ORDER BY m.sent_at %s, m.id %s
-		`, eligibleParticipantEmailExpr("p_sender"), eligibleDirectSenderNameExpr("p_sender"), eligibleParticipantPhoneExpr("p_sender"), where, direction, direction), args
+		`, eligibleParticipantEmailExpr("p_sender"), eligibleParticipantNameExpr("p_sender"), eligibleParticipantPhoneExpr("p_sender"), where, direction, direction), args
 	}
 
 	var orderBy string
@@ -805,7 +805,7 @@ func (e *SQLiteEngine) sqliteConversationMessagesQuery(convID int64, filter Text
 		WHERE %s
 		ORDER BY m.sent_at %s, m.id %s
 		LIMIT ? OFFSET ?
-	`, eligibleParticipantEmailExpr("p_sender"), eligibleDirectSenderNameExpr("p_sender"), eligibleParticipantPhoneExpr("p_sender"), where, sqliteDirection(filter.SortDirection), sqliteDirection(filter.SortDirection))
+	`, eligibleParticipantEmailExpr("p_sender"), eligibleParticipantNameExpr("p_sender"), eligibleParticipantPhoneExpr("p_sender"), where, sqliteDirection(filter.SortDirection), sqliteDirection(filter.SortDirection))
 
 	args = append(args, limit, filter.Pagination.Offset)
 
@@ -863,7 +863,7 @@ func sqliteFTSTextSearch(
 		WHERE %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?
-	`, eligibleParticipantEmailExpr("p"), eligibleDirectSenderNameExpr("p"), eligibleParticipantPhoneExpr("p"), strings.Join(conditions, " AND "))
+	`, eligibleParticipantEmailExpr("p"), eligibleParticipantNameExpr("p"), eligibleParticipantPhoneExpr("p"), strings.Join(conditions, " AND "))
 
 	rows, err := db.QueryContext(ctx, sqlQuery, append(args, limit, offset)...)
 	if err != nil {

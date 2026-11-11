@@ -478,3 +478,48 @@ func TestPersonColdPolicyCleanupRetainsCurrentRevisionAfterPromotion(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, map[int64]string{person.ID: doc.Revision}, revisions)
 }
+
+// Exact sender addresses and domains reach the backend unresolved, so its own
+// SQL must admit only values with Full-room or independent support.
+func TestBackendSenderFiltersRequireFullValueSupport(t *testing.T) {
+	b, st, sourceID, _, gen := newPolicyBackend(t)
+	ctx := t.Context()
+	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
+	support, err := st.EnsureConversation(ctx, sourceID, "support", "Support")
+	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "support", conversationpolicy.Full))
+	var room int64
+	require.NoError(t, st.DB().QueryRowContext(ctx, `SELECT id FROM conversations WHERE source_conversation_id='room'`).Scan(&room))
+	sender, err := st.ResolveConversationParticipantContext(ctx, support, store.ConversationParticipantIdentity{
+		IdentifierType: "beeper", IdentifierValue: "synthetic:sender", Email: "cold-only@hidden.test", DisplayName: "Cold Only"})
+	require.NoError(t, err)
+	message, err := st.UpsertMessage(&store.Message{SourceID: sourceID, ConversationID: room, SourceMessageID: "from-sender",
+		MessageType: "beeper", SenderID: sql.NullInt64{Int64: sender.ParticipantID, Valid: true}})
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceMessageRecipientsContext(ctx, message, "from", []int64{sender.ParticipantID}, []string{""}))
+	admitted, err := st.CaptureConversationPolicyWork(ctx)
+	require.NoError(t, err)
+	require.NoError(t, b.Upsert(admitted, gen, []vector.Chunk{policyChunk(t, st, message, []float32{1, 0, 0, 0})}))
+	search := func(filter vector.Filter) []int64 {
+		hits, err := b.Search(ctx, gen, []float32{1, 0, 0, 0}, 10, filter)
+		require.NoError(t, err)
+		var ids []int64
+		for _, hit := range hits {
+			ids = append(ids, hit.MessageID)
+		}
+		return ids
+	}
+	filters := []vector.Filter{{SenderTerms: []string{"cold-only@hidden.test"}}, {SenderTerms: []string{"hidden.test"}}, {SenderDomain: "hidden.test"}}
+	for _, filter := range filters {
+		assert.Equal(t, []int64{message}, search(filter), "%+v", filter)
+	}
+	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "support", conversationpolicy.Cold))
+	// Re-embed under the new policy, so only value eligibility can hide the hit.
+	admitted, err = st.CaptureConversationPolicyWork(ctx)
+	require.NoError(t, err)
+	require.NoError(t, b.Upsert(admitted, gen, []vector.Chunk{policyChunk(t, st, message, []float32{1, 0, 0, 0})}))
+	assert.Equal(t, []int64{message}, search(vector.Filter{}), "the message itself stays in a Full room")
+	for _, filter := range filters {
+		assert.Empty(t, search(filter), "a Cold room cannot support the sender value: %+v", filter)
+	}
+}
