@@ -17,7 +17,7 @@ import (
 
 type photoCursor struct {
 	AssertionCursor string `json:"c,omitempty"`
-	VersionID       string `json:"v,omitempty"`
+	AssertionID     string `json:"i,omitempty"`
 	AttachmentID    int64  `json:"a,omitempty"`
 }
 
@@ -131,22 +131,20 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 		UID    string `query:"uid" required:"true" minLength:"1" maxLength:"256"`
 		Cursor string `query:"cursor" maxLength:"8192"`
 	}) (*struct{ Body PersonPhotosResponse }, error) {
-		position := store.DocumentOccurrencePage{}
 		var cursor photoCursor
 		if in.Cursor != "" {
 			if !strings.HasPrefix(in.Cursor, "1.") {
 				return nil, huma.Error400BadRequest("invalid photo cursor")
 			}
 			data, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(in.Cursor, "1."))
-			if err != nil || json.Unmarshal(data, &cursor) != nil || len(cursor.AssertionCursor) > 4096 || (cursor.VersionID == "") != (cursor.AttachmentID == 0) || cursor.AttachmentID < 0 || (cursor.AssertionCursor == "" && cursor.VersionID == "") {
+			if err != nil || json.Unmarshal(data, &cursor) != nil || len(cursor.AssertionCursor) > 4096 || (cursor.AssertionID == "") != (cursor.AttachmentID == 0) || cursor.AttachmentID < 0 || (cursor.AssertionCursor == "" && cursor.AssertionID == "") {
 				return nil, huma.Error400BadRequest("invalid photo cursor")
 			}
-			if cursor.VersionID != "" {
-				if _, err := uuid.Parse(cursor.VersionID); err != nil {
+			if cursor.AssertionID != "" {
+				if _, err := uuid.Parse(cursor.AssertionID); err != nil {
 					return nil, huma.Error400BadRequest("invalid photo cursor")
 				}
 			}
-			position = store.DocumentOccurrencePage{VersionID: cursor.VersionID, AttachmentID: cursor.AttachmentID}
 		}
 		r, err := s.photoReader()
 		if err != nil {
@@ -171,34 +169,34 @@ func (s *Server) registerPersonPhotoRoutes(api huma.API) {
 		if page.State != "curated" && page.State != "provisional" {
 			return nil, huma.Error409Conflict("Docbank person is not active")
 		}
-		ids := make([]string, 0, len(page.Assertions))
-		for _, a := range page.Assertions {
+		if len(page.Assertions) == 1 {
+			a := page.Assertions[0]
 			if a.Role == "depicted" && a.Action == "assert" {
-				ids = append(ids, a.ContentVersionID)
-			}
-		}
-		occurrences, err := r.Store.DocumentSearchOccurrences(ctx, r.Destination, nil, ids, 100, &position)
-		if err != nil {
-			return nil, photoError(err)
-		}
-		byVersion := map[string][]MediaAttachmentResult{}
-		truncated := map[string]bool{}
-		if len(occurrences) > 100 {
-			last := occurrences[99]
-			truncated[last.VersionID] = occurrences[100].VersionID == last.VersionID
-			token, err := json.Marshal(photoCursor{AssertionCursor: cursor.AssertionCursor, VersionID: last.VersionID, AttachmentID: last.AttachmentID})
-			if err != nil {
-				return nil, photoError(err)
-			}
-			response.NextCursor = "1." + base64.RawURLEncoding.EncodeToString(token)
-			occurrences = occurrences[:100]
-		}
-		for _, o := range occurrences {
-			byVersion[o.VersionID] = append(byVersion[o.VersionID], MediaAttachmentResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Filename: o.Filename, ContainingTitle: o.ContainingTitle, OccurredAt: o.OccurredAt})
-		}
-		for _, a := range page.Assertions {
-			if a.Role == "depicted" && a.Action == "assert" && len(byVersion[a.ContentVersionID]) > 0 {
-				response.Photos = append(response.Photos, PersonPhotoEvidence{AssertionID: a.AssertionID, ContentVersionID: a.ContentVersionID, Occurrences: byVersion[a.ContentVersionID], OccurrencesTruncated: truncated[a.ContentVersionID]})
+				position := store.DocumentOccurrencePage{}
+				if cursor.AssertionID == a.AssertionID {
+					position = store.DocumentOccurrencePage{VersionID: a.ContentVersionID, AttachmentID: cursor.AttachmentID}
+				}
+				occurrences, err := r.Store.DocumentSearchOccurrences(ctx, r.Destination, nil, []string{a.ContentVersionID}, 100, &position)
+				if err != nil {
+					return nil, photoError(err)
+				}
+				more := len(occurrences) > 100
+				if more {
+					last := occurrences[99]
+					token, err := json.Marshal(photoCursor{AssertionCursor: cursor.AssertionCursor, AssertionID: a.AssertionID, AttachmentID: last.AttachmentID})
+					if err != nil {
+						return nil, photoError(err)
+					}
+					response.NextCursor = "1." + base64.RawURLEncoding.EncodeToString(token)
+					occurrences = occurrences[:100]
+				}
+				if len(occurrences) > 0 {
+					photo := PersonPhotoEvidence{AssertionID: a.AssertionID, ContentVersionID: a.ContentVersionID, OccurrencesTruncated: more}
+					for _, o := range occurrences {
+						photo.Occurrences = append(photo.Occurrences, MediaAttachmentResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Filename: o.Filename, ContainingTitle: o.ContainingTitle, OccurredAt: o.OccurredAt})
+					}
+					response.Photos = append(response.Photos, photo)
+				}
 			}
 		}
 		response.LinkState = "linked"

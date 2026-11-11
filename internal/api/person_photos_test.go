@@ -127,12 +127,23 @@ func TestPersonPhotosOnlyVisibleConfirmedAttachments(t *testing.T) {
 	require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: withdrawnHash}, store.DocbankAttachmentRef{NodeID: 8, VersionID: withdrawn}, ""))
 	archive, err := f.Store.ArchiveUIDContext(t.Context())
 	require.NoError(err)
+	lastReached := false
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "resolve-external") {
-			_, _ = fmt.Fprintf(w, `{"person_id":"p","system":"msgvault","archive_id":%q,"requested_uid":"person","resolved_uid":"person","uid_state":"current"}`, archive)
+			_, _ = fmt.Fprintf(w, `{"person_id":"00000000-0000-4000-8000-000000000200","system":"msgvault","archive_id":%q,"requested_uid":"person","resolved_uid":"person","uid_state":"current"}`, archive)
 			return
 		}
-		_, _ = fmt.Fprintf(w, `{"person_id":"p","state":"curated","revision":1,"assertions":[{"person_id":"p","assertion_id":"a","content_version_id":%q,"role":"depicted","action":"assert"},{"person_id":"p","assertion_id":"b","content_version_id":%q,"role":"depicted","action":"withdrawn"},{"person_id":"p","assertion_id":"replacement","content_version_id":"00000000-0000-4000-8000-000000000002","role":"depicted","action":"assert"}]}`, version, withdrawn)
+		switch r.URL.Query().Get("assertion_cursor") {
+		case "":
+			_, _ = fmt.Fprintf(w, `{"person_id":"00000000-0000-4000-8000-000000000200","state":"curated","revision":1,"assertions_next_cursor":"00000000-0000-4000-8000-000000000101","assertions_truncated":true,"assertions":[{"person_id":"00000000-0000-4000-8000-000000000200","assertion_id":"00000000-0000-4000-8000-000000000101","content_version_id":%q,"role":"depicted","action":"assert"}]}`, version)
+		case "00000000-0000-4000-8000-000000000101":
+			_, _ = fmt.Fprintf(w, `{"person_id":"00000000-0000-4000-8000-000000000200","state":"curated","revision":1,"assertions_next_cursor":"00000000-0000-4000-8000-000000000102","assertions_truncated":true,"assertions":[{"person_id":"00000000-0000-4000-8000-000000000200","assertion_id":"00000000-0000-4000-8000-000000000102","content_version_id":%q,"role":"depicted","action":"withdrawn"}]}`, withdrawn)
+		case "00000000-0000-4000-8000-000000000102":
+			_, _ = fmt.Fprint(w, `{"person_id":"00000000-0000-4000-8000-000000000200","state":"curated","revision":1,"assertions_next_cursor":"00000000-0000-4000-8000-000000000103","assertions_truncated":true,"assertions":[{"person_id":"00000000-0000-4000-8000-000000000200","assertion_id":"00000000-0000-4000-8000-000000000103","content_version_id":"00000000-0000-4000-8000-000000000002","role":"depicted","action":"assert"}]}`)
+		default:
+			lastReached = true
+			_, _ = fmt.Fprint(w, `{"person_id":"00000000-0000-4000-8000-000000000200","state":"curated","revision":1,"assertions":[{"person_id":"00000000-0000-4000-8000-000000000200","assertion_id":"00000000-0000-4000-8000-000000000104","content_version_id":"00000000-0000-4000-8000-000000000004","role":"author","action":"assert"}]}`)
+		}
 	}))
 	defer remote.Close()
 	client, err := docbankmedia.NewClient(remote.URL, nil)
@@ -149,13 +160,121 @@ func TestPersonPhotosOnlyVisibleConfirmedAttachments(t *testing.T) {
 	var result PersonPhotosResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
 	require.Len(result.Photos, 1)
-	require.Equal("a", result.Photos[0].AssertionID)
+	require.Equal("00000000-0000-4000-8000-000000000101", result.Photos[0].AssertionID)
 	require.Len(result.Photos[0].Occurrences, 3)
 	var filenames []string
 	for _, occurrence := range result.Photos[0].Occurrences {
 		filenames = append(filenames, occurrence.Filename)
 	}
 	require.ElementsMatch([]string{"copy.pdf", "live.jpg", "generic.jpg"}, filenames)
+	for result.NextCursor != "" {
+		response = httptest.NewRecorder()
+		server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/by-uid/photos?uid=person&cursor="+result.NextCursor, nil))
+		require.Equal(http.StatusOK, response.Code)
+		result = PersonPhotosResponse{}
+		require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+		require.Empty(result.Photos)
+	}
+	require.True(lastReached)
+}
+
+func TestPersonPhotosAssertionDisappearsDuringPaging(t *testing.T) {
+	for _, mode := range []string{"hidden", "withdrawn"} {
+		t.Run(mode, func(t *testing.T) {
+			requirements := require.New(t)
+			f := storetest.New(t)
+			_, err := f.Store.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid) VALUES ('person')`)
+			requirements.NoError(err)
+			versions := []string{"00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000001"}
+			for i, version := range versions {
+				hash := strings.Repeat(string(rune('a'+i)), 64)
+				count := 1
+				if i == 0 {
+					count = 101
+				}
+				for n := range count {
+					mid := f.CreateMessage(fmt.Sprintf("photo-%d-%d", i, n))
+					requirements.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{Filename: "photo", ContentHash: hash, StoragePath: "aa/" + hash, State: "stored"}))
+				}
+				requirements.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: int64(i + 1), VersionID: version}, ""))
+			}
+			archive, err := f.Store.ArchiveUIDContext(t.Context())
+			requirements.NoError(err)
+			changed := false
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "resolve-external") {
+					_, _ = fmt.Fprintf(w, `{"person_id":"00000000-0000-4000-8000-000000000200","system":"msgvault","archive_id":%q,"requested_uid":"person","resolved_uid":"person","uid_state":"current"}`, archive)
+					return
+				}
+				assertions := []docbankmedia.PersonAssertion{}
+				if !changed || mode == "withdrawn" {
+					action := "assert"
+					if changed {
+						action = "withdrawn"
+					}
+					assertions = append(assertions, docbankmedia.PersonAssertion{PersonID: "00000000-0000-4000-8000-000000000200", AssertionID: "00000000-0000-4000-8000-000000000001", ContentVersionID: versions[0], Role: "depicted", Action: action})
+				}
+				for n := range 99 {
+					assertions = append(assertions, docbankmedia.PersonAssertion{PersonID: "00000000-0000-4000-8000-000000000200", AssertionID: fmt.Sprintf("00000000-0000-4000-8000-%012d", n+2), ContentVersionID: fmt.Sprintf("10000000-0000-4000-8000-%012d", n+1), Role: "author", Action: "assert"})
+				}
+				assertions = append(assertions, docbankmedia.PersonAssertion{PersonID: "00000000-0000-4000-8000-000000000200", AssertionID: "00000000-0000-4000-8000-000000000101", ContentVersionID: versions[1], Role: "depicted", Action: "assert"})
+				limit := 100
+				if r.URL.Query().Get("assertion_limit") == "1" {
+					limit = 1
+				}
+				cursor := r.URL.Query().Get("assertion_cursor")
+				page := []docbankmedia.PersonAssertion{}
+				for _, a := range assertions {
+					if a.AssertionID > cursor {
+						page = append(page, a)
+					}
+				}
+				next := ""
+				if len(page) > limit {
+					page = page[:limit]
+					next = page[len(page)-1].AssertionID
+				}
+				assert.NoError(t, json.NewEncoder(w).Encode(docbankmedia.PersonAssertions{PersonID: "00000000-0000-4000-8000-000000000200", State: "curated", Revision: 1, Assertions: page, NextCursor: next, Truncated: next != ""}))
+			}))
+			defer remote.Close()
+			client, err := docbankmedia.NewClient(remote.URL, nil)
+			requirements.NoError(err)
+			cfg := config.NewDefaultConfig()
+			cfg.Integrations.Docbank.Enabled = true
+			cfg.Integrations.Docbank.AttachmentUploadConsent = true
+			server := NewServerWithOptions(ServerOptions{Config: cfg, Logger: slog.New(slog.DiscardHandler)})
+			server.docbankAttachments = &DocbankAttachmentReader{Client: client, Store: f.Store, Destination: "attachments"}
+			server.rateLimiter.burst = 200
+			cursor := ""
+			found := false
+			for n := range 103 {
+				response := httptest.NewRecorder()
+				server.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/people/by-uid/photos?uid=person&cursor="+cursor, nil))
+				requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+				var result PersonPhotosResponse
+				requirements.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+				if n == 0 {
+					requirements.Len(result.Photos, 1)
+					requirements.Len(result.Photos[0].Occurrences, 100)
+					changed = true
+				}
+				for _, photo := range result.Photos {
+					if n > 0 && photo.ContentVersionID == versions[0] {
+						requirements.Fail("withdrawn or hidden photo returned again")
+					}
+					if photo.ContentVersionID == versions[1] {
+						found = true
+						requirements.Len(photo.Occurrences, 1)
+					}
+				}
+				cursor = result.NextCursor
+				if cursor == "" {
+					break
+				}
+			}
+			requirements.True(found, "the later assertion must survive the earlier assertion disappearing")
+		})
+	}
 }
 
 func TestPersonPhotosOccurrencePages(t *testing.T) {
@@ -179,16 +298,22 @@ func TestPersonPhotosOccurrencePages(t *testing.T) {
 	}
 	archive, err := f.Store.ArchiveUIDContext(t.Context())
 	requirements.NoError(err)
+	removedEarlier := false
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "resolve-external") {
-			_, _ = fmt.Fprintf(w, `{"person_id":"p","system":"msgvault","archive_id":%q,"requested_uid":"person","resolved_uid":"person","uid_state":"current"}`, archive)
+			_, _ = fmt.Fprintf(w, `{"person_id":"00000000-0000-4000-8000-000000000200","system":"msgvault","archive_id":%q,"requested_uid":"person","resolved_uid":"person","uid_state":"current"}`, archive)
 			return
 		}
-		if r.URL.Query().Get("assertion_cursor") == "next" {
-			_, _ = fmt.Fprint(w, `{"person_id":"p","state":"curated","revision":1,"assertions":[]}`)
+		cursor := r.URL.Query().Get("assertion_cursor")
+		if cursor == "" && !removedEarlier {
+			_, _ = fmt.Fprint(w, `{"person_id":"00000000-0000-4000-8000-000000000200","state":"curated","revision":1,"assertions_next_cursor":"00000000-0000-4000-8000-000000000100","assertions_truncated":true,"assertions":[{"person_id":"00000000-0000-4000-8000-000000000200","assertion_id":"00000000-0000-4000-8000-000000000100","content_version_id":"10000000-0000-4000-8000-000000000001","role":"author","action":"assert"}]}`)
 			return
 		}
-		_, _ = fmt.Fprintf(w, `{"person_id":"p","state":"curated","revision":1,"assertions_next_cursor":"next","assertions_truncated":true,"assertions":[{"person_id":"p","assertion_id":"a","content_version_id":%q,"role":"depicted","action":"assert"},{"person_id":"p","assertion_id":"b","content_version_id":%q,"role":"depicted","action":"assert"}]}`, versions[0], versions[1])
+		if cursor == "00000000-0000-4000-8000-000000000101" {
+			_, _ = fmt.Fprintf(w, `{"person_id":"00000000-0000-4000-8000-000000000200","state":"curated","revision":1,"assertions":[{"person_id":"00000000-0000-4000-8000-000000000200","assertion_id":"00000000-0000-4000-8000-000000000102","content_version_id":%q,"role":"depicted","action":"assert"}]}`, versions[1])
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"person_id":"00000000-0000-4000-8000-000000000200","state":"curated","revision":1,"assertions_next_cursor":"00000000-0000-4000-8000-000000000101","assertions_truncated":true,"assertions":[{"person_id":"00000000-0000-4000-8000-000000000200","assertion_id":"00000000-0000-4000-8000-000000000101","content_version_id":%q,"role":"depicted","action":"assert"}]}`, versions[0])
 	}))
 	defer remote.Close()
 	client, err := docbankmedia.NewClient(remote.URL, nil)
@@ -222,10 +347,6 @@ func TestPersonPhotosOccurrencePages(t *testing.T) {
 		requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 		var result PersonPhotosResponse
 		requirements.NoError(json.Unmarshal(response.Body.Bytes(), &result))
-		if !result.Truncated {
-			requirements.Empty(result.Photos)
-			break
-		}
 		for _, photo := range result.Photos {
 			for _, occurrence := range photo.Occurrences {
 				key := fmt.Sprintf("%s/%d", photo.ContentVersionID, occurrence.AttachmentID)
@@ -233,9 +354,10 @@ func TestPersonPhotosOccurrencePages(t *testing.T) {
 				seen[key] = true
 			}
 		}
-		if page == 0 {
+		if page == 1 {
 			requirements.NotEmpty(result.NextCursor)
 			requirements.True(result.Photos[0].OccurrencesTruncated)
+			removedEarlier = true
 			mid := result.Photos[0].Occurrences[0].MessageID
 			var otherID int64
 			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT id FROM attachments WHERE message_id=? AND content_hash=?`), mid, hashes[1]).Scan(&otherID))

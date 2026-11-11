@@ -74,10 +74,11 @@ func TestPersonAssertionsRejectsInvalidPage(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"mismatched person", `{"person_id":"p","state":"active","revision":1,"assertions":[{"person_id":"other","assertion_id":"a","content_version_id":"v","role":"depicted","action":"assert"}]}`},
 		{"missing assertions", `{"person_id":"p","state":"curated","revision":1}`},
+		{"too many assertions", `{"person_id":"p","state":"curated","revision":1,"assertions":[{"person_id":"p","assertion_id":"a","content_version_id":"v","role":"depicted","action":"assert"},{"person_id":"p","assertion_id":"b","content_version_id":"w","role":"depicted","action":"assert"}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "100", r.URL.Query().Get("assertion_limit"))
+				assert.Equal(t, "1", r.URL.Query().Get("assertion_limit"))
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()

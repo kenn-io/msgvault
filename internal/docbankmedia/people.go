@@ -92,14 +92,14 @@ func (c *Client) SetExternalPersonIdentity(ctx context.Context, personID string,
 
 func (c *Client) PersonAssertions(ctx context.Context, personID, cursor string) (PersonAssertions, error) {
 	var out PersonAssertions
-	query := url.Values{"assertion_limit": {"100"}}
+	query := url.Values{"assertion_limit": {"1"}}
 	if cursor != "" {
 		query.Set("assertion_cursor", cursor)
 	}
 	if err := c.jsonRequest(ctx, http.MethodGet, "/api/v1/people/by-id/"+url.PathEscape(personID)+"?"+query.Encode(), nil, &out); err != nil {
 		return out, err
 	}
-	if out.PersonID != personID || out.Revision < 1 || out.State == "" || out.Assertions == nil || len(out.Assertions) > 100 || len(out.NextCursor) > 4096 || out.Truncated != (out.NextCursor != "") || (out.NextCursor != "" && out.NextCursor == cursor) {
+	if out.PersonID != personID || out.Revision < 1 || out.State == "" || out.Assertions == nil || len(out.Assertions) > 1 || len(out.NextCursor) > 4096 || out.Truncated != (out.NextCursor != "") || (out.NextCursor != "" && out.NextCursor == cursor) {
 		return PersonAssertions{}, ErrInvalidReceipt
 	}
 	for _, a := range out.Assertions {
