@@ -42,13 +42,14 @@ func TestCommitmentScopeExpansionRevisitsJournaledHistory(t *testing.T) {
 			request.Commitment = &peoplesweep.CommitmentResult{Window: window, Config: cfg.Commitments}
 			_, err = st.ApplyPersonSweep(ctx, request)
 			r.NoError(err)
-			if expanded == "dates" {
+			switch expanded {
+			case "dates":
 				profile.SourceSince = "2026-01-01"
 				_, err = st.db.ExecContext(ctx, st.Rebind(`UPDATE person_inference_profiles SET source_since = ? WHERE fingerprint = ?`), profile.SourceSince, f.request.Generation.Policy.ProviderPolicyFingerprint)
 				r.NoError(err)
-			} else if expanded == "window" {
+			case "window":
 				cfg.Commitments.Window = 30 * 24 * time.Hour
-			} else {
+			default:
 				cfg.Commitments.MaxItems++
 			}
 			due, err := st.PersonCommitmentsDue(ctx, f.personID, request.CompletedAt, cfg.Commitments.MinInterval, cfg.Commitments.Window, peoplesweep.CommitmentScopeFingerprint(profile, cfg.Commitments))
