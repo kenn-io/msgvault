@@ -547,7 +547,7 @@ type GetKataIssueContextQuery struct {
 }
 
 type ListOpenKataIssuesQuery struct {
-	// Q Search open issue text by whole word or enter an exact qualified ref, up to 256 bytes
+	// Q Search open issue text by whole word or enter an exact qualified ref, including closed issues, up to 256 bytes
 	Q *string `json:"q,omitempty"`
 }
 

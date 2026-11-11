@@ -173,7 +173,7 @@ func (c *KataClient) OpenIssues(ctx context.Context, project string, limit int) 
 	return issues, truncated, err
 }
 
-// SearchOpenIssues searches all open issues in a project.
+// SearchOpenIssues searches open issue text and matches exact qualified refs.
 func (c *KataClient) SearchOpenIssues(ctx context.Context, project, query string, limit int) ([]KataTask, bool, error) {
 	var exact *KataTask
 	if name, ref, ok := strings.Cut(query, "#"); ok && name == project && ref != "" && !strings.ContainsAny(name+ref, " \t\r\n#") {
@@ -181,7 +181,7 @@ func (c *KataClient) SearchOpenIssues(ctx context.Context, project, query string
 		if err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrInvalidRef) {
 			return nil, false, err
 		}
-		if err == nil && issue.Status == "open" {
+		if err == nil {
 			exact = &issue
 		}
 	}

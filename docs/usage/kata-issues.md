@@ -77,7 +77,7 @@ preview is exactly what the issue quotes. To quote less, select part of the
 passage and choose **Quote selection**; **Whole passage** goes back.
 
 Choose **Existing** to list the 25 most recently updated open issues in the configured project.
-Search open issue text by whole word or enter an exact `project#ref`, pick an issue, and choose **Add quote**.
+Search open issue text by whole word or enter an exact `project#ref` to find an open or closed issue, pick an issue, and choose **Add quote**.
 The passage appears there as a comment that quotes it.
 
 ## From the CLI or an agent

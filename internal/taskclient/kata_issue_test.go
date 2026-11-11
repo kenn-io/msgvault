@@ -130,7 +130,9 @@ func TestSearchOpenIssuesRefAndText(t *testing.T) {
 	require.NoError(err)
 	assert.True(truncated)
 	require.Len(issues, 25)
-	for _, issue := range issues {
+	assert.Equal(exact.UID, issues[0].UID)
+	assert.Equal("closed", issues[0].Status)
+	for _, issue := range issues[1:] {
 		assert.NotEqual(exact.UID, issue.UID)
 	}
 }
@@ -255,12 +257,15 @@ func TestOpenIssues(t *testing.T) {
 	assert.False(refTruncated)
 	require.Len(byRef, 1)
 	assert.Equal(created.UID, byRef[0].UID)
-	for _, ref := range []string{closed.QualifiedRef, "other#" + created.Ref} {
-		matches, truncated, err := client.SearchOpenIssues(t.Context(), katatest.Project, ref, 25)
-		require.NoError(err)
-		assert.False(truncated)
-		assert.Empty(matches)
-	}
+	closedMatch, _, err := client.SearchOpenIssues(t.Context(), katatest.Project, closed.QualifiedRef, 25)
+	require.NoError(err)
+	require.Len(closedMatch, 1)
+	assert.Equal(closed.UID, closedMatch[0].UID)
+	assert.Equal("closed", closedMatch[0].Status)
+	matches, refTruncated, err := client.SearchOpenIssues(t.Context(), katatest.Project, "other#"+created.Ref, 25)
+	require.NoError(err)
+	assert.False(refTruncated)
+	assert.Empty(matches)
 	searched, searchTruncated, err := client.SearchOpenIssues(t.Context(), katatest.Project, "budget", 25)
 	require.NoError(err)
 	assert.False(searchTruncated)
