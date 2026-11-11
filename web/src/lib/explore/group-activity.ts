@@ -9,8 +9,8 @@ export function bucketSeries(activity: ExploreGroupOverview['activity']): Explor
   const result = [];
   for (;;) {
     const bucket = date.toISOString().slice(0, daily ? 10 : 7);
-    if (bucket > last) break;
     result.push({ bucket, count: counts.get(bucket) ?? 0 });
+    if (bucket >= last) break;
     if (daily) date.setUTCDate(date.getUTCDate() + 1);
     else date.setUTCMonth(date.getUTCMonth() + 1);
   }
