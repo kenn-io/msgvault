@@ -20,77 +20,33 @@ type meetingDecisionConflict struct {
 }
 
 func (s *Store) meetingDecisionsForMessage(ctx context.Context, id int64, budget *int) ([]meetingDecisionEdge, error) {
-	loader := meetingDecisionLoader{store: s}
-	return loader.edges(ctx, id, nil, budget)
-}
-
-// meetingDecisionLoader reads the choices of every waiting message in one query, so a
-// large group costs one lookup per batch instead of one per message.
-type meetingDecisionLoader struct {
-	store  *Store
-	loaded map[int64][]meetingDecisionEdge
-}
-
-const meetingDecisionBatch = 400
-
-// edges returns the choices touching id. Messages in waiting that are not loaded yet
-// are read in the same query, up to one batch.
-func (l *meetingDecisionLoader) edges(ctx context.Context, id int64, waiting []meetingDecisionEndpoint, budget *int) ([]meetingDecisionEdge, error) {
-	if edges, ok := l.loaded[id]; ok {
-		return edges, nil
-	}
-	ids := []int64{id}
-	for _, endpoint := range waiting {
-		_, done := l.loaded[endpoint.ID]
-		if len(ids) < meetingDecisionBatch && !done && !slices.Contains(ids, endpoint.ID) {
-			ids = append(ids, endpoint.ID)
-		}
-	}
-	if l.loaded == nil {
-		l.loaded = map[int64][]meetingDecisionEdge{}
-	}
-	if err := l.load(ctx, ids, budget); err != nil {
-		return nil, err
-	}
-	return l.loaded[id], nil
-}
-
-func (l *meetingDecisionLoader) load(ctx context.Context, ids []int64, budget *int) error {
 	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
 	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
-	in, idArgs := messageExportInClause("d.left_message_id", ids)
-	inRight, _ := messageExportInClause("d.right_message_id", ids)
-	args := append(slices.Clone(idArgs), idArgs...)
+	args := []any{id, id}
 	args = append(args, leftArgs...)
 	args = append(args, rightArgs...)
 	args = append(args, *budget+1)
-	rows, err := l.store.db.QueryContext(ctx, `SELECT d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (`+in+` OR `+inRight+`) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (d.left_message_id=? OR d.right_message_id=?) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	for _, id := range ids {
-		l.loaded[id] = nil
-	}
+	var out []meetingDecisionEdge
 	for rows.Next() {
 		var edge meetingDecisionEdge
 		if err := rows.Scan(&edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.a.Anchor, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.b.Anchor, &edge.decision); err != nil {
-			return err
+			return nil, err
 		}
-		for _, side := range []int64{edge.a.ID, edge.b.ID} {
-			if slices.Contains(ids, side) && (side == edge.a.ID || edge.a.ID != edge.b.ID) {
-				l.loaded[side] = append(l.loaded[side], edge)
-			}
-		}
+		out = append(out, edge)
 		*budget--
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return err
+		return nil, err
 	}
 	if *budget < 0 {
-		return calendarRecurrenceBudgetError()
+		return nil, calendarRecurrenceBudgetError()
 	}
-	return nil
+	return out, nil
 }
 
 // MeetingRecordContext follows automatic evidence and owner choices in one snapshot.
@@ -135,7 +91,7 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 	var explicit, splits []meetingDecisionEdge
 	seenDecisions := map[string]bool{}
 	resolved := map[string]bool{}
-	decisions := meetingDecisionLoader{store: s}
+	loadedDecisions := map[int64]bool{}
 	for len(queue) > 0 {
 		endpoint := queue[0]
 		queue = queue[1:]
@@ -195,13 +151,17 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, co
 			}
 			groups = append(groups, members)
 		}
-		choices, err := decisions.edges(ctx, endpoint.ID, queue, &budget)
+		if loadedDecisions[endpoint.ID] {
+			continue
+		}
+		loadedDecisions[endpoint.ID] = true
+		choices, err := s.meetingDecisionsForMessage(ctx, endpoint.ID, &budget)
 		if err != nil {
 			return result, err
 		}
 		for _, choice := range choices {
 			key := choice.a.ref() + "/" + choice.b.ref()
-			if seenDecisions[key] || !choice.readable() {
+			if seenDecisions[key] {
 				continue
 			}
 			seenDecisions[key] = true

@@ -391,10 +391,3 @@ func deleteMeetingDecisionTx(ctx context.Context, tx *loggedTx, d meetingDecisio
 	_, err = tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE left_message_id=? AND left_kind=? AND left_key=? AND right_message_id=? AND right_kind=? AND right_key=?`, keys...)
 	return err
 }
-
-// readable reports whether both endpoints still name a valid reference.
-func (e meetingDecisionEdge) readable() bool {
-	_, errA := e.a.meetingRef()
-	_, errB := e.b.meetingRef()
-	return errA == nil && errB == nil
-}

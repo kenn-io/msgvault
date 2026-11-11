@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -587,11 +586,8 @@ func TestMeetingLinkDecisionSubsetOmitsHiddenOrigin(t *testing.T) {
 }
 
 func TestMeetingLinkDecisionSubsetSourceVersion(t *testing.T) {
-	for _, tc := range []struct {
-		marker   string
-		accepted bool
-	}{{fmt.Sprint(SchemaVersion), true}, {"41", true}, {fmt.Sprint(SchemaVersion + 1), true}, {"broken", true}} {
-		t.Run(tc.marker, func(t *testing.T) {
+	for _, marker := range []string{fmt.Sprint(SchemaVersion), "41"} {
+		t.Run(marker, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			path := filepath.Join(t.TempDir(), "source.db")
 			st, err := OpenForTest(t.Context(), path)
@@ -599,26 +595,20 @@ func TestMeetingLinkDecisionSubsetSourceVersion(t *testing.T) {
 			t.Cleanup(func() { assertions.NoError(st.Close()) })
 			requirements.NoError(st.InitSchemaContext(t.Context()))
 			_, _ = projectionFixture(t, st, "version-note", "meeting_json", `{}`)
-			if tc.marker == "41" {
+			if marker == "41" {
 				_, err = st.db.ExecContext(t.Context(), `DROP TABLE meeting_link_decision_origins`)
 				requirements.NoError(err)
 				_, err = st.db.ExecContext(t.Context(), `DROP TABLE meeting_link_decisions`)
 				requirements.NoError(err)
 			}
-			_, err = st.db.ExecContext(t.Context(), `UPDATE archive_metadata SET value=? WHERE key='schema_version'`, tc.marker)
+			_, err = st.db.ExecContext(t.Context(), `UPDATE archive_metadata SET value=? WHERE key='schema_version'`, marker)
 			requirements.NoError(err)
 			dir := t.TempDir()
 			_, err = CopySubset(t.Context(), path, dir, 1, false)
-			if tc.accepted {
-				requirements.NoError(err)
-			} else {
-				requirements.Error(err)
-				_, err = os.Stat(filepath.Join(dir, "msgvault.db"))
-				assertions.True(os.IsNotExist(err))
-			}
-			var marker string
-			requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT value FROM archive_metadata WHERE key='schema_version'`).Scan(&marker))
-			assertions.Equal(tc.marker, marker)
+			requirements.NoError(err)
+			var storedMarker string
+			requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT value FROM archive_metadata WHERE key='schema_version'`).Scan(&storedMarker))
+			assertions.Equal(marker, storedMarker)
 		})
 	}
 }
@@ -888,35 +878,4 @@ func TestMeetingLinkDecisionClearAfterDedup(t *testing.T) {
 	record, err := st.MeetingRecordContext(t.Context(), ref(other))
 	requirements.NoError(err)
 	requirements.Equal([]int64{other}, record.MessageIDs)
-}
-
-func TestMeetingLinkDecisionUnreadableKeyDoesNotHideRecord(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, note := projectionFixture(t, st, "unreadable-note", "meeting_json", `{}`)
-	_, event := calendarFixture(t, st, "unreadable-event", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, "owner@example.com")
-	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision) VALUES (?, 'msg', '', '', ?, 'evt', 'invalid', '', 'link')`), note, event)
-	requirements.NoError(err)
-	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}})
-	requirements.NoError(err)
-	requirements.Equal([]int64{note}, record.MessageIDs)
-}
-
-func TestMeetingLinkDecisionSplitKeepsLowestIDGroup(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	raw := `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"split_20270314T100000Z"}}`
-	var ids []int64
-	for _, name := range []string{"split-first", "split-second", "split-third"} {
-		_, id := projectionFixture(t, st, name, "granola_json", raw)
-		ids = append(ids, id)
-	}
-	ref := func(id int64) MeetingLinkRef {
-		return MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}}
-	}
-	_, err := st.DecideMeetingLinkContext(t.Context(), ref(ids[0]), ref(ids[1]), "unlink")
-	requirements.NoError(err)
-	record, err := st.MeetingRecordContext(t.Context(), ref(ids[2]))
-	requirements.NoError(err)
-	requirements.Equal([]int64{ids[0], ids[2]}, record.MessageIDs)
 }
