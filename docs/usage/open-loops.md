@@ -189,8 +189,10 @@ msgvault loops reopen c12
 The list may show a proposed fulfilment with a quote from a newer message by
 the person who made the promise. Review the quote and mark it done if the
 promise was kept. With `auto_fulfil = true`, an explicit fulfilment supported
-by newer evidence can close it automatically. Reopen keeps older evidence
-from closing it again. If the supporting fulfilment is withdrawn, the
+by newer evidence can close it automatically. For promises you made, an email
+completion needs a saved Sent origin or a Sent label from its account. Without
+that provenance, it stays a proposal. Reopen keeps older evidence from closing
+it again. If the supporting fulfilment is withdrawn, the
 promise can appear again.
 
 ## File a commitment in Kata
