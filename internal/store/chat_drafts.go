@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 // ChatDraftIDPrefix marks draft IDs owned by the local chat draft table.
@@ -30,8 +32,8 @@ type ChatDraft struct {
 }
 
 // ChatDraftAuthorizer vets a conversation's source before its drafts are
-// written or listed.
-type ChatDraftAuthorizer func(sourceType, identifier string) error
+// written or listed and returns the incoming sender restriction for replies.
+type ChatDraftAuthorizer func(sourceType, identifier string) ([]string, error)
 
 var (
 	ErrChatDraftNotFound           = errors.New("chat draft not found")
@@ -53,6 +55,7 @@ type chatDraftDestination struct {
 	identifier       string
 	nativeID         sql.NullString
 	conversationType sql.NullString
+	incomingSenders  []string
 }
 
 func loadChatDraftDestination(
@@ -70,7 +73,8 @@ func loadChatDraftDestination(
 	if err != nil {
 		return dest, fmt.Errorf("read chat draft conversation: %w", err)
 	}
-	if err := authorize(dest.sourceType, dest.identifier); err != nil {
+	dest.incomingSenders, err = authorize(dest.sourceType, dest.identifier)
+	if err != nil {
 		return dest, err
 	}
 	switch dest.sourceType {
@@ -102,9 +106,16 @@ func (s *Store) CreateChatDraftContext(
 		}
 		var reply sql.NullString
 		if replyToMessageID != 0 {
+			var scope string
+			args := []any{replyToMessageID, conversationID}
+			if len(dest.incomingSenders) > 0 {
+				replyCtx := sourcescope.WithIncomingSenders(ctx, map[int64][]string{dest.sourceID: dest.incomingSenders})
+				clause, senderArgs := s.incomingScopeClause(replyCtx, "m.id", "m.source_id")
+				scope, args = clause, append(args, senderArgs...)
+			}
 			err := tx.QueryRowContext(ctx, `
-				SELECT source_message_id FROM messages WHERE id = ? AND conversation_id = ?
-			`, replyToMessageID, conversationID).Scan(&reply)
+				SELECT m.source_message_id FROM messages m WHERE m.id = ? AND m.conversation_id = ?
+			`+scope, args...).Scan(&reply)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("read chat draft reply target: %w", err)
 			}

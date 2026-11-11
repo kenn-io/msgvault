@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -111,7 +112,7 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 	var created chatDraftOutput
 	require.NoError(json.Unmarshal([]byte(createdJSON), &created))
 
-	owned, err := st.CreateChatDraftContext(t.Context(), otherConversation, 0, "private", func(string, string) error { return nil })
+	owned, err := st.CreateChatDraftContext(t.Context(), otherConversation, 0, "private", chatDraftAuthorizer(nil))
 	require.NoError(err)
 	for _, args := range [][]string{
 		{api.CLIRunDraftComposeCommand, "--conversation", strconv.FormatInt(otherConversation, 10), "--body", "x"},
@@ -127,9 +128,43 @@ func TestChatDraftDelegatedGrantIsSourceScoped(t *testing.T) {
 		assert.Equal("not_permitted", err.Error(), args)
 		assert.Empty(out, args)
 	}
-	unchanged, err := st.ListChatDraftsContext(t.Context(), otherConversation, func(string, string) error { return nil })
+	unchanged, err := st.ListChatDraftsContext(t.Context(), otherConversation, chatDraftAuthorizer(nil))
 	require.NoError(err)
 	assert.Len(unchanged, 1)
+
+	const allowedSender = "allowed@example.test"
+	seedParent := func(nativeID, sender string, conversation, source int64) int64 {
+		data := &store.MessagePersistData{Message: &store.Message{SourceID: source, ConversationID: conversation, SourceMessageID: nativeID, MessageType: "slack"}}
+		if sender != "" {
+			participant, err := st.EnsureParticipant(sender, "", "example.test")
+			require.NoError(err)
+			data.Recipients = []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{sender}}}
+		}
+		id, err := st.PersistMessageContext(t.Context(), data)
+		require.NoError(err)
+		return id
+	}
+	allowed := seedParent("allowed-parent", allowedSender, grantedConversation, granted.ID)
+	denied := seedParent("denied-parent", "denied@example.test", grantedConversation, granted.ID)
+	missingFrom := seedParent("no-from", "", grantedConversation, granted.ID)
+	wrongConversation := seedParent("wrong-conversation", allowedSender, otherConversation, other.ID)
+	grant.Sources[0].IncomingSenderKeys = []string{allowedSender}
+	reply := func(parent int64) (string, error) {
+		return run(api.CLIRunDraftComposeCommand, "--conversation", strconv.FormatInt(grantedConversation, 10), "--reply-to", strconv.FormatInt(parent, 10), "--body", "reply", "--json")
+	}
+	allowedJSON, err := reply(allowed)
+	require.NoError(err)
+	var allowedDraft chatDraftOutput
+	require.NoError(json.Unmarshal([]byte(allowedJSON), &allowedDraft))
+	assert.Equal("allowed-parent", allowedDraft.ReplyToSourceMessageID)
+	for _, parent := range []int64{denied, missingFrom, wrongConversation, wrongConversation + 1} {
+		out, err := reply(parent)
+		assert.EqualError(err, "not_permitted", "parent %d", parent)
+		assert.Empty(out, "parent %d", parent)
+	}
+	drafts, err := st.ListChatDraftsContext(t.Context(), grantedConversation, chatDraftAuthorizer(nil))
+	require.NoError(err)
+	assert.Len(drafts, 2, "only the top-level draft and allowed reply were saved")
 }
 
 func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
@@ -139,8 +174,11 @@ func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
 	requirements.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "C1", "channel", "General")
 	requirements.NoError(err)
+	const nativeParentID = "private-parent"
+	parentID, err := st.UpsertMessageContext(t.Context(), &store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: nativeParentID, MessageType: "slack"})
+	requirements.NoError(err)
 	body := "private chat reply"
-	draft, err := st.CreateChatDraftContext(t.Context(), conversationID, 0, body, func(string, string) error { return nil })
+	draft, err := st.CreateChatDraftContext(t.Context(), conversationID, parentID, body, chatDraftAuthorizer(nil))
 	requirements.NoError(err)
 	grantFor := func(permission agentgrant.Permission) *agentgrant.Grant {
 		return &agentgrant.Grant{
@@ -161,6 +199,17 @@ func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
 	withEdit, err := run(grantFor(agentgrant.PermissionDraftEdit), api.CLIRunDraftGetCommand, draft.DraftID, "--json")
 	requirements.NoError(err)
 	assertions.Contains(withEdit, body)
+	assertions.Contains(withEdit, nativeParentID)
+	scopedEdit := grantFor(agentgrant.PermissionDraftEdit)
+	scopedEdit.Permissions = append(scopedEdit.Permissions, agentgrant.PermissionDraftCreate)
+	scopedEdit.Sources[0].IncomingSenderKeys = []string{"allowed@example.test"}
+	for _, target := range [][]string{{draft.DraftID}, {"--conversation", strconv.FormatInt(conversationID, 10)}} {
+		out, err := run(scopedEdit, append([]string{api.CLIRunDraftGetCommand, "--json"}, target...)...)
+		requirements.NoError(err)
+		assertions.Contains(out, draft.DraftID)
+		assertions.Contains(out, body)
+		assertions.NotContains(out, nativeParentID)
+	}
 
 	for _, tc := range []struct {
 		name string
@@ -206,7 +255,7 @@ func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
 	_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
 	requirements.Error(err)
 
-	textDraft, err := st.CreateChatDraftContext(t.Context(), conversationID, 0, body, func(string, string) error { return nil })
+	textDraft, err := st.CreateChatDraftContext(t.Context(), conversationID, 0, body, chatDraftAuthorizer(nil))
 	requirements.NoError(err)
 	deletedText, err := run(grantFor(agentgrant.PermissionDraftDelete), api.CLIRunDraftDeleteCommand, textDraft.DraftID, "--revision", "1")
 	requirements.NoError(err)
