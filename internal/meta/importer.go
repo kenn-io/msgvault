@@ -27,6 +27,7 @@ type ImportSummary struct {
 	MessagesUpdated   int
 	Requests          int
 	Partial           bool
+	AdMediaSkipped    int
 }
 
 type Importer struct {

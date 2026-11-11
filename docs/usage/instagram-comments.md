@@ -87,15 +87,27 @@ new variable.
 Each sync then also reads the ad account's creatives with the ad token and
 looks up the Instagram media each creative uses with the Page token. msgvault
 archives that media and its comments only when the media's owner is the
-configured `instagram_account_id`. Media owned by another account, media with
-no owner, and media the Page token cannot read are skipped and logged by the
-daemon. Media that is also in the account's media list stays one conversation,
-and its comments are marked as ad comments in their metadata.
+configured `instagram_account_id`. Media that is also in the account's media
+list stays one conversation, and its comments are marked as ad comments in
+their metadata.
+
+msgvault skips media owned by another account, media with no owner, and media
+that Meta reports as missing or that the Page token cannot read. When a sync
+skips any, its summary line ends with the number of ad media skipped. The
+daemon log gives the reason for each item it could not read or that has no
+owner. Media owned by another account is logged only at debug level.
+
+Other failed media lookups are not skipped. If Meta rejects the lookup as a
+malformed request, or returns any other error, such as a server error, a rate
+limit, or an expired token, the sync fails with Meta's error code. The next
+sync tries that media again.
 
 If the ad token cannot read the ad account, or Meta rate limits the ad account,
-that sync fails and reports Meta's error code. Comments on media from the
-account's own media list are still archived in that run. The next sync
-continues reading creatives where it stopped.
+that sync fails and reports Meta's error code. The rest of the run still
+archives comments on the account's own media while it has requests left. With
+a small `--max-requests`, the failed creative read can use the run's last
+request; the account's own media then continues on a later sync. The next sync
+also continues reading creatives where it stopped.
 
 Creative pages and media lookups count toward the same request budget. Adding,
 changing, or removing `ad_account_id` restarts that profile's sync cycle from

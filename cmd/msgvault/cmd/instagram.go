@@ -41,7 +41,9 @@ func instagramProfileClient(identifier, env string) (*meta.Client, error) {
 	}
 	client, err := meta.NewClient(token)
 	if err != nil {
-		return nil, &sourceCommandError{err: err, code: 7, hint: "check the named credential in the daemon environment and restart the daemon"}
+		// A profile can hold two credentials and the client's error names
+		// neither, so name the variable that was read. Never its value.
+		return nil, &sourceCommandError{err: fmt.Errorf("instagram profile %q has an invalid token in %s", identifier, env), code: 7, hint: "check the named credential in the daemon environment and restart the daemon"}
 	}
 	return client, nil
 }
@@ -162,7 +164,11 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 				}
 				sum, err := importInstagramCommentsProfile(ctx, st, profile, options)
 				if sum != nil {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Instagram %s: %d messages processed (%d added, %d updated), %d requests\n", profile.Identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.MessagesUpdated, sum.Requests)
+					skipped := ""
+					if sum.AdMediaSkipped > 0 {
+						skipped = fmt.Sprintf(", %d ad media skipped", sum.AdMediaSkipped)
+					}
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Instagram %s: %d messages processed (%d added, %d updated), %d requests%s\n", profile.Identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.MessagesUpdated, sum.Requests, skipped)
 					if sum.Partial {
 						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Partial coverage; unfinished surfaces resume on the next sync.")
 					}

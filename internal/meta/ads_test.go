@@ -18,6 +18,7 @@ import (
 type adFixture struct {
 	mediaStatus                        int
 	mediaBody                          string
+	mediaLookupsNotFound               bool // every media-by-ID read returns a bare 404
 	creativeStatus                     int
 	creativeBody, creativeFailAfter    string
 	creativeReads, adReads, ownedReads atomic.Int32
@@ -36,6 +37,10 @@ func newAdFixture(t *testing.T) (*adFixture, *Client, *Client) {
 			token = "synthetic-ad-secret"
 		}
 		assert.Equal(t, "Bearer "+token, r.Header.Get("Authorization"), r.URL.Path)
+		if f.mediaLookupsNotFound && slices.Contains([]string{"/v26.0/300", "/v26.0/900", "/v26.0/901", "/v26.0/902", "/v26.0/903", "/v26.0/904"}, r.URL.Path) {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		switch r.URL.Path {
 		case "/v26.0/me":
 			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
@@ -130,17 +135,87 @@ func TestInstagramAdMediaArchivesOnlyOwnedMedia(t *testing.T) {
 	shared := flags("300")
 	assert.JSONEq("true", string(shared["organic"]))
 	assert.JSONEq("true", string(shared["ad"]), "media found both ways keeps both flags on one row")
+	sharedComment := flags("400")
+	assert.JSONEq("true", string(sharedComment["organic"]))
+	assert.JSONEq("true", string(sharedComment["ad"]), "a comment on media found both ways keeps both flags")
 }
 
-func TestInstagramAdMediaRetryableFailureFailsSync(t *testing.T) {
+func TestInstagramAdMediaSkippedCount(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		notFound    bool
+		wantSkipped int
+		archived    []string
+	}{
+		// 901 another account, 902 unreadable, 903 and 904 no owner.
+		{"default fixture", false, 4, []string{"300", "400", "900", "1000"}},
+		// Every media lookup, including 300 and 900, returns a bare 404.
+		{"every lookup not found", true, 6, []string{"300", "400"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			f, page, ads := newAdFixture(t)
+			f.mediaLookupsNotFound = tt.notFound
+			imp := NewImporter(st, page)
+			src, err := imp.RegisterInstagram(t.Context(), "9", "100", "200")
+			require.NoError(err)
+			sum, err := imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
+			require.NoError(err)
+			assert.False(sum.Partial)
+			assert.Equal(tt.wantSkipped, sum.AdMediaSkipped)
+			stored, err := st.StoredMessagesContext(t.Context(), src.ID, "instagram-comment-json", []string{"300", "400", "900", "901", "902", "903", "904", "1000"})
+			require.NoError(err)
+			assert.ElementsMatch(tt.archived, slices.Collect(maps.Keys(stored)))
+		})
+	}
+}
+
+func TestInstagramAdMediaMissingIsSkipped(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		status int
 		body   string
 	}{
-		{"server error", http.StatusServiceUnavailable, ""},
-		{"rate limit as HTTP 400", http.StatusBadRequest, `{"error":{"code":4}}`},
-		{"expired token", http.StatusBadRequest, `{"error":{"code":190}}`},
+		{"bare 403", http.StatusForbidden, ""},
+		{"bare 404", http.StatusNotFound, ""},
+		{"code 100 subcode 33", http.StatusBadRequest, `{"error":{"code":100,"error_subcode":33}}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			f, page, ads := newAdFixture(t)
+			f.mediaStatus, f.mediaBody = tt.status, tt.body
+			imp := NewImporter(st, page)
+			src, err := imp.RegisterInstagram(t.Context(), "9", "100", "200")
+			require.NoError(err)
+			sum, err := imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
+			require.NoError(err, "unreadable ad media is skipped, not fatal")
+			assert.False(sum.Partial)
+			assert.Equal(5, sum.AdMediaSkipped, "900 plus the default fixture's four skips")
+			exists, err := st.MessageExistsBatch(src.ID, []string{"900", "1000"})
+			require.NoError(err)
+			assert.Empty(exists)
+			saved, err := st.GetMessageMetadata(message(t, st, src.ID, "300").ID)
+			require.NoError(err)
+			var metadata map[string]jsontext.Value
+			require.NoError(json.Unmarshal([]byte(saved.String), &metadata))
+			assert.JSONEq("true", string(metadata["ad"]), "the run went on to 300, after 900 on the same creative page")
+		})
+	}
+}
+
+func TestInstagramAdMediaRetryableFailureFailsSync(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		status   int
+		body     string
+		wantCode string
+	}{
+		{"server error", http.StatusServiceUnavailable, "", "HTTP 503"},
+		{"rate limit as HTTP 400", http.StatusBadRequest, `{"error":{"code":4}}`, "code 4"},
+		{"expired token", http.StatusBadRequest, `{"error":{"code":190}}`, "code 190"},
+		{"invalid parameter without subcode", http.StatusBadRequest, `{"error":{"code":100}}`, "code 100"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -152,14 +227,16 @@ func TestInstagramAdMediaRetryableFailureFailsSync(t *testing.T) {
 			require.NoError(err)
 			sum, err := imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
 			require.Error(err, "a retryable media failure is not skipped")
+			assert.Contains(err.Error(), tt.wantCode)
 			assert.True(sum.Partial)
 			exists, err := st.MessageExistsBatch(src.ID, []string{"900"})
 			require.NoError(err)
 			assert.Empty(exists)
 
 			f.mediaStatus = 0
-			_, err = imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
+			sum, err = imp.ImportInstagramAds(t.Context(), "9", "100", "200", "700", ads, ImportOptions{})
 			require.NoError(err)
+			assert.Equal(4, sum.AdMediaSkipped, "only the default fixture's skips; 900 is archived")
 			exists, err = st.MessageExistsBatch(src.ID, []string{"900", "1000"})
 			require.NoError(err)
 			assert.Len(exists, 2, "the next run retries the failed media")

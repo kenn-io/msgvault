@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"testing/synctest"
 
@@ -48,9 +49,12 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 		case "/v26.0/300/comments":
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"400","text":"Example comment","parent_id":"300"}]}`)
 		case "/v26.0/act_700/adcreatives":
-			_, _ = fmt.Fprint(w, `{"data":[{"id":"600","effective_instagram_media_id":"900"}]}`)
+			// 901 comes first: the denied replies under 900 end the ad phase.
+			_, _ = fmt.Fprint(w, `{"data":[{"id":"601","effective_instagram_media_id":"901"},{"id":"600","effective_instagram_media_id":"900"}]}`)
 		case "/v26.0/900":
 			_, _ = fmt.Fprint(w, `{"id":"900","caption":"Ad-only media","owner":{"id":"200"}}`)
+		case "/v26.0/901":
+			_, _ = fmt.Fprint(w, `{"id":"901","caption":"Another account's media","owner":{"id":"201"}}`)
 		case "/v26.0/900/comments":
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"1000","text":"Ad comment"}]}`)
 		case "/v26.0/400/replies", "/v26.0/1000/replies":
@@ -96,6 +100,12 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	sum, err := importInstagramCommentsProfile(t.Context(), st, ads, meta.ImportOptions{})
 	require.ErrorContains(err, ads.AdTokenEnv, "the Page token is never used for ad reads")
 	assert.Nil(sum)
+	t.Setenv(ads.AdTokenEnv, "synthetic-broken\nad-token")
+	_, err = importInstagramCommentsProfile(t.Context(), st, ads, meta.ImportOptions{})
+	require.Error(err)
+	assert.Contains(err.Error(), ads.AdTokenEnv, "the error names the variable holding the bad token")
+	assert.NotContains(err.Error(), "synthetic-broken")
+	assert.NotContains(err.Error(), "ad-token")
 	t.Setenv(ads.AdTokenEnv, "synthetic-ad-token")
 	cmd := newSyncInstagramCommentsCmd()
 	var output bytes.Buffer
@@ -107,6 +117,7 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	assert.Contains(err.Error(), "instagram profile second")
 	assert.Contains(err.Error(), "instagram profile ads")
 	assert.Contains(output.String(), "Partial coverage")
+	assert.Equal(1, strings.Count(output.String(), ", 1 ad media skipped"), "only the ads profile skips another account's media")
 	for _, source := range cfg.InstagramComments {
 		row, err := st.GetSourceByTypeAndIdentifier(t.Context(), meta.InstagramSourceType, meta.InstagramSourceIdentifier(source.AppID, source.PageID, source.InstagramAccountID))
 		require.NoError(err)
