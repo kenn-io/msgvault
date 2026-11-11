@@ -386,6 +386,9 @@ func (s *Store) DecidePersonCommitmentContext(ctx context.Context, id int64, sta
 		}
 		var reopened any
 		if state == LoopStateOpen {
+			if candidate.fulfilment != nil && candidate.fulfilment.Input.EventTime.After(now) {
+				now = candidate.fulfilment.Input.EventTime
+			}
 			reopened = s.dialect.TimestampParam(now)
 		}
 		previous := candidate.commitment
