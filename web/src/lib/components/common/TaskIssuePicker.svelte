@@ -47,7 +47,7 @@
     {#if loading || query.trim() !== listedQuery}<p role="status">Loading…</p>
     {:else}
       {#if error}<p role="alert">{error}</p>{/if}
-      {#if items.length}{#if showCount}<p>{items.length} {items.length === 1 ? 'result' : 'results'}</p>{/if}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
+      {#if items.length}{#if showCount}<p class="result-count">{items.length} {items.length === 1 ? 'result' : 'results'}</p>{/if}<RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
       {:else if !error}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>{/if}
     {/if}
   </div>
@@ -61,4 +61,5 @@
   /* kit-ui-check-ignore: RadioGroup does not expose a legend class. */
   .results :global(.kit-radio-group__legend) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
   p { margin: 0; color: var(--text-secondary); font-size: 12px; }
+  .result-count { margin-bottom: var(--space-2); }
 </style>
