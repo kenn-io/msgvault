@@ -329,11 +329,9 @@ func TestPersonSweepEventCapacityEmptyRetiresCurrent(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		preflight bool
-		invalid   bool
 	}{
-		{"projection", false, false},
-		{"preflight", true, false},
-		{"preflight_invalid_output", true, true},
+		{"projection", false},
+		{"preflight", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checks := assert.New(t)
@@ -367,35 +365,23 @@ func TestPersonSweepEventCapacityEmptyRetiresCurrent(t *testing.T) {
 				required.True(present)
 				required.Equal(message, last.MessageID)
 			}
-			f.runner.candidate = func(map[string]any) json.RawMessage {
-				if tc.invalid {
-					return json.RawMessage(`{"last_meaningful_interaction":null,"highlights":[{"text":"unsupported","speaker":"person","evidence_ids":["missing"],"observed_at":null,"confidence_basis_points":900,"life_event":null}],"follow_ups":[],"appreciations":[],"uncertainties":[],"possible_attributes":[]}`)
-				}
-				return emptyEventBrief()
-			}
-			before := f.runner.briefRequests
+			f.runner.candidate = func(map[string]any) json.RawMessage { return emptyEventBrief() }
+			briefBefore, extractionBefore := f.runner.briefRequests, f.runner.extractionRequests
 			result := runStoreEvent(t, f, peoplesweep.BriefModeAuto)
 			required.Equal(1, result.PeopleSucceeded)
-			checks.Equal(before+1, f.runner.briefRequests)
-			current, err := st.GetPersonBriefContext(t.Context(), person, 0)
-			if tc.invalid {
-				required.NoError(err)
-				checks.Equal(prior.Version, current.Version, "ordinary invalid output must not retire the current brief")
-			} else {
-				checks.ErrorIs(err, store.ErrPersonBriefNotFound)
-			}
+			checks.Equal(briefBefore+1, f.runner.briefRequests)
+			_, err = st.GetPersonBriefContext(t.Context(), person, 0)
+			checks.ErrorIs(err, store.ErrPersonBriefNotFound)
 			history, err := st.ListPersonBriefVersionsContext(t.Context(), person, 10)
 			required.NoError(err)
 			required.Len(history, 1)
-			if tc.invalid {
-				checks.Equal(store.PersonBriefStatusCurrent, history[0].Status)
-			} else {
-				checks.Equal(store.PersonBriefStatusSuperseded, history[0].Status)
-				checks.NotNil(history[0].SupersededAt)
-			}
+			checks.Equal(store.PersonBriefStatusSuperseded, history[0].Status)
+			checks.NotNil(history[0].SupersededAt)
 			checks.Equal(prior.Boundary, history[0].Boundary)
 			required.Len(result.People, 1)
-			checks.GreaterOrEqual(result.People[0].Usage.Requests, 1, "paid inference remains accounted for")
+			checks.Equal(peoplesweep.FailureInternal, result.People[0].BriefFailureClass)
+			checks.Equal((f.runner.briefRequests-briefBefore)+(f.runner.extractionRequests-extractionBefore),
+				result.People[0].Usage.Requests, "paid inference remains accounted for")
 		})
 	}
 }

@@ -144,6 +144,7 @@ type workerFailureStore struct {
 
 	idleCompleted []Lease
 
+	renewExpiry     *time.Time
 	renewFailure    error
 	failNextRenewal atomic.Bool
 }
@@ -189,6 +190,9 @@ func (s *workerFailureStore) RenewPersonSweep(_ context.Context, lease Lease, _ 
 	s.renewCalls.Add(1)
 	if s.failNextRenewal.CompareAndSwap(true, false) {
 		return nil, s.renewFailure
+	}
+	if s.renewExpiry != nil {
+		lease.ExpiresAt = *s.renewExpiry
 	}
 	return &lease, nil
 }

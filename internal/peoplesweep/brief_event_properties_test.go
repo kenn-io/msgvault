@@ -169,7 +169,8 @@ func TestBriefEventCapacityOmitsUnretainedOutput(t *testing.T) {
 		run  func(*testing.T)
 	}{
 		{"undated byte limit", eventCapacityUndatedByte},
-		{"upcoming item limit", eventCapacityItem},
+		{"upcoming item limit", func(t *testing.T) { eventCapacityItem(t, true) }},
+		{"item limit, nothing else renderable", func(t *testing.T) { eventCapacityItem(t, false) }},
 		{"upcoming byte limit", eventCapacityUpcomingByte},
 		{"resolved byte limit", eventCapacityResolvedByte},
 	} {
@@ -310,7 +311,7 @@ func briefWindowRetiresResolvedEventUnderPressure(t *testing.T) {
 		"retiring resolved memory must keep the admission watermark")
 }
 
-func eventCapacityItem(t *testing.T) {
+func eventCapacityItem(t *testing.T, withInteraction bool) {
 	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
@@ -318,24 +319,21 @@ func eventCapacityItem(t *testing.T) {
 	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T00:00:00Z")
 	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)
 	require.NoError(err)
-	parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
+	if withInteraction {
+		parsed.Output.LastMeaningfulInteraction = &BriefInteraction{EvidenceID: packetEvidenceID(anchor), Summary: "they discussed a move"}
+	}
 	window.Request.MaxItems = 1
 	result, err := renderBriefResult(parsed, window, window.Request.AsOf)
+	if !withInteraction {
+		assert.ErrorIs(err, ErrEvidenceItemTooLarge)
+		assert.ErrorIs(err, errBriefCapacityEmpty)
+		return
+	}
 	require.NoError(err)
 	assert.Empty(result.Boundary.EventMemory)
 	assert.Nil(result.Boundary.NextEventAt)
 	assert.NotContains(result.Rendered.Text, "Upcoming:")
 	assert.NotContains(string(result.Structured), "life_event")
-}
-
-func TestBriefEventCapacityRejectsEmptyParagraph(t *testing.T) {
-	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
-	window := eventWindow(t, &briefFakeArchive{items: []EvidenceItem{anchor}}, nil, "2026-08-14T00:00:00Z")
-	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-08-15")), window, window.Request.Profile)
-	require.NoError(t, err)
-	window.Request.MaxItems = 1
-	_, err = renderBriefResult(parsed, window, window.Request.AsOf)
-	assert.ErrorIs(t, err, ErrEvidenceItemTooLarge)
 }
 
 func TestBriefEventResolutionFitsTheReservedPacketItem(t *testing.T) {
