@@ -7011,11 +7011,6 @@ func legacyFTSVector(field, stored string) string {
 		FROM (SELECT 'ftsbreak' || n AS marker FROM generate_series(1, length(` + field + `) + 1) n WHERE strpos(lower(` + field + `), 'ftsbreak' || n) = 0 LIMIT 1) gap)`
 }
 
-// Three fields hold legacy text alone; five or eight include overflow fields.
-func legacyFTSFieldsSQL(overflow, hasOld string) string {
-	return `CASE WHEN ` + hasOld + ` THEN COALESCE(` + overflow + `, ARRAY[]::text[]) || ARRAY[u.old_subject, u.old_sender, u.old_recipient] ELSE ` + overflow + ` END`
-}
-
 // legacyFTSOldJoinSQL recovers a version-2 row's subject, sender, and recipient
 // text from its stored positions, marking gaps and dropping compound-word
 // tokens that duplicate their parts.
@@ -7039,8 +7034,6 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	if !useLegacy {
 		legacy, terminal = "FALSE", "FALSE"
 	}
-	// PostgreSQL indexes both a compound word and its parts at successive
-	// positions. Keep the parts so normalization does not repeat the phrase.
 	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), COALESCE(` + terminal + `, FALSE),
 		LEFT(COALESCE(old.subject, ''), ` + charCap + `), LEFT(COALESCE(old.sender, ''), ` + charCap + `), LEFT(CASE WHEN EXISTS (SELECT 1 FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'cc') THEN '' ELSE COALESCE(old.recipient, '') END, ` + charCap + `)
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id
@@ -7050,7 +7043,8 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	vector = replace.Replace(vector)
 	hasOld := `u.old_subject <> '' OR u.old_sender <> '' OR u.old_recipient <> ''`
 	vector += ` || CASE WHEN ` + hasOld + ` THEN '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_subject", "u.subject") + `, 'A') || '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_sender", "u.sender") + `, 'B') || '''!'':1'::tsvector || setweight(` + legacyFTSVector("u.old_recipient", "u.to_addrs") + `, 'C') ELSE ''::tsvector END`
-	fields := legacyFTSFieldsSQL(replace.Replace(pgFTSOverflowFields("u.vector")), hasOld)
+	overflow := replace.Replace(pgFTSOverflowFields("u.vector"))
+	fields := `CASE WHEN ` + hasOld + ` THEN COALESCE(` + overflow + `, ARRAY[]::text[]) || ARRAY[u.old_subject, u.old_sender, u.old_recipient] ELSE ` + overflow + ` END`
 	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::boolean[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, terminal, old_subject, old_sender, old_recipient)), v AS (SELECT u.*, CASE WHEN u.terminal THEN ''::tsvector ELSE ` + vector + ` END AS vector FROM u) UPDATE messages m SET search_fts = u.vector, search_fts_fields = ` + fields + `, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM v u WHERE m.id = u.id`
 	var affected int64
 	for fromID < toID {

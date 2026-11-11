@@ -2622,6 +2622,7 @@ func TestHandleCLISearchPostgresBackfillAllowsOtherOperations(t *testing.T) {
 		require.True(ok, "operation must start while backfill is running")
 		done()
 		require.NoError(srv.Shutdown(ctx), "shutdown must cancel the running backfill")
+		idle.requireFiredWithin(t, 80*time.Millisecond, "idle did not fire after search repair")
 	})
 }
 

@@ -215,9 +215,8 @@ type Dialect interface {
 	// best-effort reindex from leaving an old body searchable as an exact hit.
 	InvalidateFTSForMessage(q querier, messageID int64) error
 
-	// FTSBackfillBatchSQL returns SQL for a batch of message IDs. SQLite
-	// updates the index; PostgreSQL selects IDs for Go-side indexing.
-	// Both use two placeholders for the half-open ID range.
+	// FTSBackfillBatchSQL indexes a half-open ID range (two placeholders) on
+	// SQLite and selects that range's IDs for Go-side indexing on PostgreSQL.
 	FTSBackfillBatchSQL() string
 
 	// FTSBackfillMissingBatchSQL populates missing search entries on SQLite.
@@ -440,8 +439,7 @@ type Dialect interface {
 	// arguments and drop terms that contain no usable tokens:
 	//   SQLite:     `"term"*` per term, space-joined (FTS5 reads space as
 	//               implicit AND).
-	//   PostgreSQL: JSON containing phrase and candidate tsqueries plus
-	//               patterns for fields whose positions have saturated.
+	//   PostgreSQL: JSON of phrase and candidate tsqueries and field patterns.
 	// Shapes match the query package's equivalent helpers so API search
 	// and engine deep-search return the same hits for the same input.
 	// Returns "" when every term reduces to nothing usable — the caller

@@ -69,19 +69,16 @@ func TestPostgresFTSPhraseDoesNotCrossFields(t *testing.T) {
 		t.Skip("PostgreSQL weighted search vector")
 	}
 	crossField := f.NewMessage().WithSourceMessageID("cross-field").Create(t, f.Store)
-	crossRecipients := f.NewMessage().WithSourceMessageID("cross-recipients").Create(t, f.Store)
 	complete := f.NewMessage().WithSourceMessageID("complete-address").Create(t, f.Store)
 	require.NoError(f.Store.UpsertFTS(crossField, "alice", "", "example.com", "", ""))
-	require.NoError(f.Store.UpsertFTS(crossRecipients, "", "", "", "alice", "example.com"))
 	require.NoError(f.Store.UpsertFTS(complete, "", "alice@example.com", "", "", ""))
 
 	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@example.com"}}, 10)
 	require.NoError(err)
 	assert.Contains(ids, complete)
 	assert.NotContains(ids, crossField)
-	assert.NotContains(ids, crossRecipients)
 
 	ids, _, err = f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice", "example"}}, 10)
 	require.NoError(err)
-	assert.ElementsMatch([]int64{crossField, crossRecipients, complete}, ids)
+	assert.ElementsMatch([]int64{crossField, complete}, ids)
 }

@@ -329,8 +329,7 @@ func (d *PostgreSQLDialect) JSONIsDistinctExpr(col string) string {
 	return col + " IS DISTINCT FROM ?::JSONB"
 }
 
-// BuildFTSArg builds ordered phrases from Unicode letter and digit runs.
-// The final piece of each term matches a prefix.
+// BuildFTSArg builds ordered phrases whose final pieces match prefixes.
 func (d *PostgreSQLDialect) BuildFTSArg(terms []string) string {
 	return sqldialect.PostgreSQLSearchArg(terms, "")
 }
@@ -468,8 +467,7 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 
 // FTSSearchClause returns SQL fragments for tsvector full-text search.
 // PostgreSQL stores the tsvector on the messages table — no JOIN needed.
-// BuildFTSArg supplies the phrase, candidate, and field patterns as JSON.
-// Rank uses the candidate query and binds the argument a second time.
+// Rank uses BuildFTSArg's candidate query, binding the argument a second time.
 func (d *PostgreSQLDialect) FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int) {
 	return "",
 		sqldialect.PostgreSQLSearchPredicate("?", "m.search_fts_fields"),

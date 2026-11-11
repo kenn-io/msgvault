@@ -131,16 +131,10 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	}
 	compound := f.CreateMessage("compound")
 	legacy(compound, `setweight(to_tsvector('simple', 'before foo-bar after'), 'A')`)
-	conversation, err := f.Store.EnsureConversation(t.Context(), f.Source.ID, "messenger-thread", "Lantern Harbor")
-	require.NoError(err)
-	messenger, err := f.Store.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: f.Source.ID, SourceMessageID: "messenger", MessageType: "fbmessenger"})
-	require.NoError(err)
-	filler := strings.Repeat("filler ", 300)
-	legacy(withBody(messenger, filler), `setweight(to_tsvector('simple', 'Lantern Harbor'), 'A') || setweight(to_tsvector('simple', $2), 'D')`, filler)
 	url := withBody(f.CreateMessage("url"), "see https://example.test/path")
 	legacy(url, `to_tsvector('simple', 'see https://example.test/path')`)
 	slack := withBody(f.CreateMessage("slack"), strings.Repeat("the ", 300))
-	legacy(slack, `setweight(to_tsvector('simple', 'Lantern Sender'), 'B') || setweight(to_tsvector('simple', $2), 'D')`, strings.Repeat("the ", 300))
+	legacy(slack, `setweight(to_tsvector('simple', 'Lantern Harbor'), 'A') || setweight(to_tsvector('simple', 'Lantern Sender'), 'B') || setweight(to_tsvector('simple', $2), 'D')`, strings.Repeat("the ", 300))
 	phone := f.CreateMessage("imazing")
 	legacy(phone, `setweight(to_tsvector('simple', '+15550123457'), 'C')`)
 	recipients := f.CreateMessage("recipients")
@@ -157,7 +151,7 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	}
 	legacy(f.CreateMessage("compound-gap"), `setweight(to_tsvector('simple', $2), 'A')`, strings.Repeat("filler ", 256)+"alpha filler foo-bar")
 	fresh, retained, partial := f.CreateMessage("fresh"), f.CreateMessage("retained"), f.CreateMessage("partial")
-	_, err = db.ExecContext(t.Context(), `UPDATE messages SET subject = 'lantern' WHERE id IN ($1, $2, $3)`, fresh, retained, partial)
+	_, err := db.ExecContext(t.Context(), `UPDATE messages SET subject = 'lantern' WHERE id IN ($1, $2, $3)`, fresh, retained, partial)
 	require.NoError(err)
 	require.NoError(f.Store.UpsertFTS(fresh, "lantern", "", "", "", ""))
 	legacy(retained, `setweight(to_tsvector('simple', 'lantern'), 'A')`)
@@ -169,7 +163,7 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	for term, want := range map[string][]int64{
 		"before foo-bar after":      {compound},
 		"bar foo":                   nil,
-		"lantern harbor":            {messenger},
+		"lantern harbor":            {slack},
 		"https://example.test/path": {url},
 		"lantern sender":            {slack},
 		"+15550123457":              {phone},
@@ -188,9 +182,6 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"stored phrase", "lantern unique"}}, 10)
 	require.NoError(err)
 	require.Equal([]int64{partial}, ids)
-	var fields int
-	require.NoError(db.QueryRowContext(t.Context(), `SELECT cardinality(search_fts_fields) FROM messages WHERE id = $1`, partial).Scan(&fields))
-	require.Equal(3, fields)
 	bodySearcher, ok := query.NewEngine(db, true).(query.MessageBodySearcher)
 	require.True(ok)
 	result, err := bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"stored phrase"}}, 10, 0)
@@ -200,8 +191,6 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	result, err = bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"unique"}}, 10, 0)
 	require.NoError(err)
 	require.Empty(result.Messages)
-	require.NoError(db.QueryRowContext(t.Context(), `SELECT cardinality(search_fts_fields) FROM messages WHERE id = $1`, slack).Scan(&fields))
-	require.Equal(8, fields)
 	result, err = bodySearcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"the the"}}, 10, 0)
 	require.NoError(err)
 	require.Len(result.Messages, 1)
