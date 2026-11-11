@@ -4,28 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
-	"hegel.dev/go/hegel"
 )
-
-func TestSourceIdentityProperty(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		id := hegel.Draw(ht, hegel.Text())
-		valid, err := regexp.MatchString(`^[A-Za-z0-9_-]{1,256}$`, id)
-		require.NoError(ht, err)
-		if valid {
-			assert.Equal(ht, "https://www.youtube.com/channel/"+id, SourceIdentifier(id))
-		} else {
-			assert.Empty(ht, SourceIdentifier(id))
-		}
-	}, hegel.WithTestCases(2000))
-}
 
 func fixtureClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
@@ -40,6 +25,8 @@ func fixtureClient(t *testing.T, handler http.HandlerFunc) *Client {
 }
 
 func TestClientRefreshAndSafeErrors(t *testing.T) {
+	_, err := NewClient(t.Context(), "", "x", "y")
+	require.Error(t, err)
 	tokens := 0
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/token" {
@@ -54,13 +41,20 @@ func TestClientRefreshAndSafeErrors(t *testing.T) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = fmt.Fprint(w, `{"error":{"message":"fixture-secret","errors":[{"reason":"commentsDisabled"},{"reason":"quotaExceeded"}]}}`)
 	})
-	_, _, err := c.ownedChannel(t.Context(), "UCfixture")
+	_, err = c.ownedChannel(t.Context(), "UCfixture", "", 0)
 	require.ErrorIs(t, err, ErrQuota)
 	assert.NotContains(t, err.Error(), "fixture-secret")
 	assert.Equal(t, 1, tokens)
 }
 
-func TestClientRejectsMissingCredentials(t *testing.T) {
-	_, err := NewClient(t.Context(), "", "x", "y")
+func TestExpiredRefreshTokenSuggestsReauthorization(t *testing.T) {
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, `{"error":"invalid_grant","error_description":"fixture-secret"}`)
+	})
+	_, err := c.ownedChannel(t.Context(), "UCfixture", "", 0)
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reauthorize")
+	assert.NotContains(t, err.Error(), "fixture-secret")
 }

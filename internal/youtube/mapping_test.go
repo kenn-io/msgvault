@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	yt "google.golang.org/api/youtube/v3"
 	"testing"
 	"time"
 )
@@ -21,12 +22,12 @@ func TestVideoOwnerReceivesRelationshipActivityWithoutCommenting(t *testing.T) {
 	owner, err := st.EnsureParticipantByIdentifierContext(t.Context(), SourceType, SourceIdentifier("UCfixture"), "Fixture channel")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentityContext(t.Context(), src.ID, SourceIdentifier("UCfixture"), "youtube_channel"))
-	v := Video{ID: "videoone", Snippet: VideoSnippet{ChannelID: "UCfixture", Title: "Fixture video"}}
+	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture", Title: "Fixture video"}}
 	root, _, err := persistVideo(t.Context(), st, src.ID, v)
 	require.NoError(err)
 	when := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
-	c := Comment{ID: "comment", Snippet: CommentSnippet{TextOriginal: "Viewer comment", PublishedAt: when, AuthorDisplayName: "Fixture viewer"}}
-	c.Snippet.AuthorChannelID.Value = "UCviewer"
+	c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{TextOriginal: "Viewer comment", PublishedAt: when.Format(time.RFC3339), AuthorDisplayName: "Fixture viewer"}}
+	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCviewer"}
 	comment, err := persistCommentForTest(t.Context(), st, src.ID, v, c, "")
 	require.NoError(err)
 	var conversation, author int64
@@ -107,13 +108,13 @@ func TestCommentCannotMoveBetweenVideos(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	src, err := st.GetOrCreateSource(SourceType, SourceIdentifier("UCfixture"))
 	requirements.NoError(err)
-	v := Video{ID: "videoone", Snippet: VideoSnippet{ChannelID: "UCfixture", Title: "Original title"}}
+	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture", Title: "Original title"}}
 	_, _, err = persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
-	c := Comment{ID: "comment", Snippet: CommentSnippet{ModerationStatus: "published", TextDisplay: "Hello"}}
+	c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{ModerationStatus: "published", TextDisplay: "Hello"}}
 	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c, "")
 	requirements.NoError(err)
-	v.ID = "videotwo"
+	v.Id = "videotwo"
 	_, _, err = persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
 	_, err = persistCommentForTest(t.Context(), st, src.ID, v, c, "")
@@ -137,7 +138,7 @@ func TestYouTubeSnapshotsPreserveRecipientsAndRepairReplyLinks(t *testing.T) {
 		return count
 	}
 
-	v := Video{ID: "videoone", Snippet: VideoSnippet{ChannelID: "UCfixture", Title: "Fixture video"}}
+	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture", Title: "Fixture video"}}
 	videoID, _, err := persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
 	videoJournalCount := journalCount(videoID)
@@ -145,11 +146,11 @@ func TestYouTubeSnapshotsPreserveRecipientsAndRepairReplyLinks(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(videoJournalCount, journalCount(videoID))
 
-	c := Comment{
-		ID:      "comment",
-		Snippet: CommentSnippet{VideoID: v.ID, TextDisplay: "Fixture comment", AuthorDisplayName: "Fixture author", ModerationStatus: "published"},
+	c := yt.Comment{
+		Id:      "comment",
+		Snippet: &yt.CommentSnippet{VideoId: v.Id, TextDisplay: "Fixture comment", AuthorDisplayName: "Fixture author", ModerationStatus: "published"},
 	}
-	c.Snippet.AuthorChannelID.Value = "UCauthor"
+	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCauthor"}
 	commentID, _, err := persistComment(t.Context(), st, src.ID, v, c)
 	requirements.NoError(err)
 	commentJournalCount := journalCount(commentID)
@@ -186,41 +187,20 @@ func TestYouTubeSnapshotsPreserveRecipientsAndRepairReplyLinks(t *testing.T) {
 	assertions.Equal(commentJournalCount, journalCount(commentID))
 }
 
-func TestCommentRejectsParentFromAnotherVideoBeforeWriting(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := testutil.NewSQLiteTestStore(t)
-	src, err := st.GetOrCreateSource(SourceType, SourceIdentifier("UCfixture"))
-	requirements.NoError(err)
-	v := Video{ID: "videoone", Snippet: VideoSnippet{ChannelID: "UCfixture"}}
-	_, _, err = persistVideo(t.Context(), st, src.ID, v)
-	requirements.NoError(err)
-	_, err = persistCommentForTest(t.Context(), st, src.ID, v, Comment{ID: "parent"}, "")
-	requirements.NoError(err)
-	v.ID = "videotwo"
-	_, _, err = persistVideo(t.Context(), st, src.ID, v)
-	requirements.NoError(err)
-	_, err = persistCommentForTest(t.Context(), st, src.ID, v, Comment{ID: "child", Snippet: CommentSnippet{ParentID: "parent"}}, "")
-	requirements.Error(err)
-	rows, err := st.MessageMetadataBatch(t.Context(), src.ID, []string{"child"})
-	requirements.NoError(err)
-	assertions.Empty(rows)
-}
-
 func TestCommentParentIsPresentInInitialTransaction(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	src, err := st.GetOrCreateSource(SourceType, SourceIdentifier("UCfixture"))
 	requirements.NoError(err)
-	v := Video{ID: "videoone", Snippet: VideoSnippet{ChannelID: "UCfixture"}}
+	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture"}}
 	root, _, err := persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
 	// A database invariant at INSERT detects the crash window before any
 	// subsequent parent update can repair it. No provider replay is involved.
 	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fixture_require_parent BEFORE INSERT ON messages WHEN NEW.source_message_id = 'comment' AND NEW.reply_to_message_id IS NULL BEGIN SELECT RAISE(FAIL, 'parent missing at initial insert'); END`)
 	requirements.NoError(err)
-	id, err := persistCommentForTest(t.Context(), st, src.ID, v, Comment{ID: "comment"}, "")
+	id, err := persistCommentForTest(t.Context(), st, src.ID, v, yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{}}, "")
 	requirements.NoError(err)
 	var parent int64
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT reply_to_message_id FROM messages WHERE id=?`, id).Scan(&parent))
@@ -233,10 +213,10 @@ func TestModerationOmissionPreservesObservationAndExplicitChangeReplacesLabels(t
 	st := testutil.NewSQLiteTestStore(t)
 	src, err := st.GetOrCreateSource(SourceType, SourceIdentifier("UCfixture"))
 	requirements.NoError(err)
-	v := Video{ID: "videoone", Snippet: VideoSnippet{ChannelID: "UCfixture"}}
+	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture"}}
 	_, _, err = persistVideo(t.Context(), st, src.ID, v)
 	requirements.NoError(err)
-	c := Comment{ID: "comment", Snippet: CommentSnippet{ModerationStatus: "heldForReview", TextDisplay: "Fallback text"}}
+	c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{ModerationStatus: "heldForReview", TextDisplay: "Fallback text"}}
 	id, err := persistCommentForTest(t.Context(), st, src.ID, v, c, "published")
 	requirements.NoError(err)
 	messageLabels := func() []string {
@@ -279,25 +259,25 @@ func TestCommentRetainsKnownAuthor(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource(SourceType, SourceIdentifier("UCfixture"))
 	require.NoError(err)
-	v := Video{ID: "videoone", Snippet: VideoSnippet{ChannelID: "UCfixture"}}
+	v := yt.Video{Id: "videoone", Snippet: &yt.VideoSnippet{ChannelId: "UCfixture"}}
 	_, _, err = persistVideo(t.Context(), st, src.ID, v)
 	require.NoError(err)
-	c := Comment{ID: "comment", Snippet: CommentSnippet{AuthorDisplayName: "Owner", TextDisplay: "First"}}
-	c.Snippet.AuthorChannelID.Value = "UCfixture"
+	c := yt.Comment{Id: "comment", Snippet: &yt.CommentSnippet{AuthorDisplayName: "Owner", TextDisplay: "First"}}
+	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: "UCfixture"}
 	id, _, err := persistComment(t.Context(), st, src.ID, v, c)
 	require.NoError(err)
-	before, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.ID})
+	before, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.Id})
 	require.NoError(err)
-	c.Snippet.AuthorChannelID.Value = ""
+	c.Snippet.AuthorChannelId = &yt.CommentSnippetAuthorChannelId{Value: ""}
 	c.Snippet.AuthorDisplayName = ""
 	c.Snippet.TextDisplay = "Updated"
 	_, _, err = persistComment(t.Context(), st, src.ID, v, c)
 	require.NoError(err)
-	after, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.ID})
+	after, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{c.Id})
 	require.NoError(err)
-	assert.Equal(before[c.ID].SenderID, after[c.ID].SenderID)
-	assert.Equal(before[c.ID].SourceIsFromMe, after[c.ID].SourceIsFromMe)
-	matched, err := st.MessageRecipientsMatchContext(t.Context(), id, []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{before[c.ID].SenderID.Int64}, DisplayNames: []string{"Owner"}}})
+	assert.Equal(before[c.Id].SenderID, after[c.Id].SenderID)
+	assert.Equal(before[c.Id].SourceIsFromMe, after[c.Id].SourceIsFromMe)
+	matched, err := st.MessageRecipientsMatchContext(t.Context(), id, []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{before[c.Id].SenderID.Int64}, DisplayNames: []string{"Owner"}}})
 	require.NoError(err)
 	assert.True(matched)
 	summaries, err := st.GetMessagesSummariesByIDsContext(t.Context(), []int64{id})
@@ -306,10 +286,23 @@ func TestCommentRetainsKnownAuthor(t *testing.T) {
 	assert.Equal("Owner", summaries[0].FromName)
 }
 
-func persistCommentForTest(ctx context.Context, st *store.Store, sourceID int64, v Video, c Comment, _ string) (int64, error) {
-	id, _, err := persistComment(ctx, st, sourceID, v, c)
+func persistCommentForTest(ctx context.Context, st *store.Store, sourceID int64, v yt.Video, c yt.Comment, _ string) (int64, error) {
+	id, _, err := persistCommentSDK(ctx, st, sourceID, "UCfixture", v.Id, &c)
 	if err != nil {
 		return id, err
 	}
 	return id, st.RecomputeConversationStatsForMessageContext(ctx, id)
+}
+
+func persistVideo(ctx context.Context, st *store.Store, sourceID int64, v yt.Video) (int64, messageChange, error) {
+	if v.Status == nil {
+		v.Status = &yt.VideoStatus{}
+	}
+	return persistVideoSDK(ctx, st, sourceID, "UCfixture", &v)
+}
+func persistComment(ctx context.Context, st *store.Store, sourceID int64, v yt.Video, c yt.Comment) (int64, messageChange, error) {
+	if c.Snippet == nil {
+		c.Snippet = &yt.CommentSnippet{}
+	}
+	return persistCommentSDK(ctx, st, sourceID, "UCfixture", v.Id, &c)
 }

@@ -64,13 +64,14 @@ type work struct {
 	Reset   bool   `json:"reset,omitempty"`
 }
 type syncState struct {
-	Version  int    `json:"version"`
-	Queue    []work `json:"queue"`
-	Deferred []work `json:"deferred,omitempty"`
+	Version         int    `json:"version"`
+	OwnershipCursor string `json:"ownership_cursor,omitempty"`
+	Queue           []work `json:"queue"`
+	Deferred        []work `json:"deferred,omitempty"`
 }
 
 func (imp *Importer) Register(ctx context.Context, channelID string) (*store.Source, error) {
-	_, name, err := imp.client.ownedChannel(ctx, channelID)
+	owner, err := imp.client.ownedChannel(ctx, channelID, "", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -78,15 +79,15 @@ func (imp *Importer) Register(ctx context.Context, channelID string) (*store.Sou
 	if err != nil {
 		return nil, err
 	}
-	if err = imp.store.UpdateSourceDisplayNameContext(ctx, src.ID, name); err != nil {
+	if err = imp.store.UpdateSourceDisplayNameContext(ctx, src.ID, owner.name); err != nil {
 		if !errors.Is(err, store.ErrSourceSettingsInvalid) {
 			return nil, err
 		}
 	} else {
-		src.DisplayName.String = name
-		src.DisplayName.Valid = name != ""
+		src.DisplayName.String = owner.name
+		src.DisplayName.Valid = owner.name != ""
 	}
-	_, err = imp.store.EnsureParticipantByIdentifierContext(ctx, SourceType, SourceIdentifier(channelID), name)
+	_, err = imp.store.EnsureParticipantByIdentifierContext(ctx, SourceType, SourceIdentifier(channelID), owner.name)
 	if err != nil {
 		return nil, err
 	}
@@ -199,18 +200,27 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		resultErr = imp.store.CompleteSyncAndUpdateSourceCursorContext(ctx, runID, src.ID, cp.PageToken)
 	}()
-	uploads, _, err := imp.client.ownedChannel(ctx, opts.ChannelID)
-	sum.Requests++
+	owner, err := imp.client.ownedChannel(ctx, opts.ChannelID, state.OwnershipCursor, budget)
+	sum.Requests += owner.requests
+	state.OwnershipCursor = owner.cursor
 	if err != nil {
+		var apiErr *APIError
+		if owner.cursor == "" || errors.As(err, &apiErr) && apiErr.Reason == "invalidPageToken" {
+			state.OwnershipCursor = ""
+		}
 		return sum, err
 	}
+	if owner.uploads == "" || sum.Requests == budget {
+		return sum, nil
+	}
+	state.OwnershipCursor = ""
 	scoped := imp.store.ScopedToSync(src.ID, runID)
 	for len(state.Queue) > 0 && sum.Requests < budget {
 		if err := ctx.Err(); err != nil {
 			return sum, err
 		}
 		job := state.Queue[0]
-		next, stepCounts, err := imp.step(ctx, scoped, src.ID, opts.ChannelID, uploads, job)
+		next, stepCounts, err := imp.step(ctx, scoped, src.ID, opts.ChannelID, owner.uploads, job)
 		sum.Requests++
 		counts.add(stepCounts)
 		sum.MessagesProcessed += stepCounts.processed
@@ -220,10 +230,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 				job.Token = ""
 				job.Reset = true
 				state.Queue = appendUniqueWork(state.Queue[1:], state.Deferred, job)
-			} else if errors.As(err, &apiErr) && (apiErr.Reason == "videoNotFound" || apiErr.Reason == "commentNotFound" || apiErr.Reason == "invalidPageToken") {
+			} else if errors.As(err, &apiErr) && apiErr.Reason == "invalidPageToken" {
 				state.Deferred = appendUniqueWork(state.Deferred, nil, job)
 				state.Queue = state.Queue[1:]
-			} else if errors.As(err, &apiErr) && (apiErr.Reason == "commentsDisabled" || apiErr.Reason == "forbidden" && apiErr.StatusCode == http.StatusForbidden && (job.Kind == "video" || job.Kind == "threads" || job.Kind == "replies")) {
+			} else if errors.As(err, &apiErr) && ((job.Kind == "video" || job.Kind == "threads" || job.Kind == "replies") && (apiErr.Reason == "videoNotFound" || apiErr.Reason == "commentNotFound" || apiErr.Reason == "commentsDisabled" || apiErr.Reason == "forbidden" && apiErr.StatusCode == http.StatusForbidden)) {
 				state.Queue = state.Queue[1:]
 			} else {
 				return sum, err

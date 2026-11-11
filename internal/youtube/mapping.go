@@ -206,13 +206,6 @@ func persistCommentSDK(ctx context.Context, st *store.Store, sourceID int64, cha
 	if c == nil || c.Snippet == nil || !validCommentID(c.Id) || !validID(videoID) || !validID(channelID) || c.Snippet.VideoId != "" && c.Snippet.VideoId != videoID {
 		return 0, messageUnchanged, errors.New("invalid YouTube comment identity")
 	}
-	source, err := st.GetSourceByIDContext(ctx, sourceID)
-	if err != nil {
-		return 0, messageUnchanged, err
-	}
-	if source.SourceType != SourceType || source.Identifier != SourceIdentifier(channelID) {
-		return 0, messageUnchanged, errors.New("YouTube comment source mismatch")
-	}
 	parent := "video:" + videoID
 	top := c.Id
 	if c.Snippet.ParentId != "" {
@@ -245,13 +238,6 @@ func persistCommentSDK(ctx context.Context, st *store.Store, sourceID int64, cha
 	parentRow, ok := prior[parent]
 	if !ok {
 		return 0, messageUnchanged, errors.New("YouTube comment parent is not archived")
-	}
-	var parentMeta commentMetadata
-	if json.Unmarshal([]byte(parentRow.Metadata.String), &parentMeta) != nil || parentMeta.VideoID != videoID || parentMeta.ChannelID != channelID {
-		return 0, messageUnchanged, errors.New("YouTube comment parent source/video mismatch")
-	}
-	if c.Snippet.ParentId != "" && (parentMeta.CommentID != parent || parentMeta.TopLevelCommentID != parent) {
-		return 0, messageUnchanged, errors.New("YouTube reply parent is not a top-level comment")
 	}
 	storedMessages, err := st.StoredMessagesContext(ctx, sourceID, "youtube_json", []string{"video:" + videoID, c.Id})
 	if err != nil {

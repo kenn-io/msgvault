@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil"
+	yt "google.golang.org/api/youtube/v3"
 )
 
 func TestArchiveCheckpointDoesNotRepeatVideoMetadata(t *testing.T) {
@@ -27,7 +28,7 @@ func TestArchiveCheckpointDoesNotRepeatVideoMetadata(t *testing.T) {
 		if err != nil || req.URL.Path != "/youtube/v3/videos" {
 			return resp, err
 		}
-		var videos page[Video]
+		var videos yt.VideoListResponse
 		decodeErr := json.UnmarshalRead(resp.Body, &videos)
 		closeErr := resp.Body.Close()
 		if decodeErr != nil {

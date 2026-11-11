@@ -84,24 +84,43 @@ func safeError(ctx context.Context, err error) error {
 		}
 		return &APIError{apiErr.Code, reason}
 	}
+	if oauthErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok && oauthErr.ErrorCode == "invalid_grant" {
+		return errors.New("YouTube authorization failed (invalid_grant); reauthorize the refresh token")
+	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("YouTube request: %w", ctx.Err())
 	}
 	return errors.New("YouTube request failed")
 }
 
-func (c *Client) ownedChannel(ctx context.Context, channelID string) (string, string, error) {
+type ownershipResult struct {
+	uploads, name, cursor string
+	requests              int
+}
+
+func (c *Client) ownedChannel(ctx context.Context, channelID, cursor string, budget int) (ownershipResult, error) {
+	var found ownershipResult
 	if !validID(channelID) {
-		return "", "", errors.New("invalid YouTube channel ID")
+		return found, errors.New("invalid YouTube channel ID")
 	}
-	result, err := c.service.Channels.List([]string{"id", "snippet", "contentDetails"}).Mine(true).Context(ctx).Do()
-	if err != nil {
-		return "", "", safeError(ctx, err)
-	}
-	for _, ch := range result.Items {
-		if ch != nil && ch.Id == channelID && ch.Snippet != nil && ch.ContentDetails != nil && ch.ContentDetails.RelatedPlaylists != nil && validID(ch.ContentDetails.RelatedPlaylists.Uploads) {
-			return ch.ContentDetails.RelatedPlaylists.Uploads, ch.Snippet.Title, nil
+	for budget == 0 || found.requests < budget {
+		result, err := c.service.Channels.List([]string{"id", "snippet", "contentDetails"}).Mine(true).MaxResults(50).PageToken(cursor).Context(ctx).Do()
+		found.requests++
+		found.cursor = cursor
+		if err != nil {
+			return found, safeError(ctx, err)
+		}
+		for _, ch := range result.Items {
+			if ch != nil && ch.Id == channelID && ch.Snippet != nil && ch.ContentDetails != nil && ch.ContentDetails.RelatedPlaylists != nil && validID(ch.ContentDetails.RelatedPlaylists.Uploads) {
+				found.uploads, found.name = ch.ContentDetails.RelatedPlaylists.Uploads, ch.Snippet.Title
+				return found, nil
+			}
+		}
+		cursor = result.NextPageToken
+		found.cursor = cursor
+		if cursor == "" {
+			return found, errors.New("YouTube credentials do not own the configured channel")
 		}
 	}
-	return "", "", errors.New("YouTube credentials do not own the configured channel")
+	return found, nil
 }

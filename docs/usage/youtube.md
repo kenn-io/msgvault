@@ -63,19 +63,18 @@ observation. Commenters with equal names remain separate people when their
 channel IDs differ. A previously known author is retained when a later response omits the channel ID or name. A comment first seen without a channel ID remains unidentified.
 
 The default request budget is 1,000 Data API calls, including channel
-verification. The minimum is 2. A partial run saves page-level progress and
+verification. Every ownership page counts toward the budget. The minimum is 2. A partial run saves page-level progress and
 continues on the next manual or scheduled run. Pending pages take turns, so a
 large thread cannot continually restart ahead of older work. A completed cycle
 starts another uploads walk on the next invocation, finding late comments on
 old videos.
 
 Quota, authentication and transient errors stop the run without declaring
-coverage complete. Unavailable videos or parents retain pending coverage for
-retry while other pages advance. Videos, threads, and replies that return forbidden are skipped until the next uploads cycle. Disabled comments on one video do not abort
+coverage complete. Deleted videos and comments leave their archived rows in place. Videos, threads, and replies that return forbidden are skipped until the next uploads cycle. Disabled comments on one video do not abort
 the channel. An invalid page token restarts only its affected listing; stable
 IDs make replay safe.
 
-A complete cycle needs at least `1 + ceil(videos/50) + 4*videos` requests, before extra thread or reply pages.
+A complete cycle needs one request per ownership page, one per uploads page, one per video, and three comment-thread requests per video, before extra thread or reply pages.
 
 The usual default Google project quota is 10,000 units per day. These list
 calls cost one unit each; a local request budget is not a quota grant. OAuth

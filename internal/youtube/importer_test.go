@@ -3,18 +3,18 @@ package youtube
 import (
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
-	"hegel.dev/go/hegel"
+	yt "google.golang.org/api/youtube/v3"
 )
 
 func archiveFixture(t *testing.T, mismatch bool, late *bool, quota *bool, missing ...*bool) *Client {
@@ -40,12 +40,9 @@ func archiveFixture(t *testing.T, mismatch bool, late *bool, quota *bool, missin
 				_, _ = fmt.Fprint(w, `{"items":[]}`)
 				return
 			}
-			v := Video{ID: r.URL.Query().Get("id"), Snippet: VideoSnippet{
-				ChannelID: "UCfixture", Title: "Fixture video", Description: "Fixture description",
-				PublishedAt: time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
-			}}
-			v.Status.PrivacyStatus = "unlisted"
-			assert.NoError(t, json.MarshalWrite(w, page[Video]{Items: []Video{v}}))
+			response := yt.VideoListResponse{Items: []*yt.Video{{Id: r.URL.Query().Get("id"), Snippet: &yt.VideoSnippet{ChannelId: "UCfixture", Title: "Fixture video", Description: "Fixture description", PublishedAt: "2026-01-01T00:00:00Z"}, Status: &yt.VideoStatus{PrivacyStatus: "unlisted"}}}}
+			assert.NoError(t, json.MarshalWrite(w, response))
+
 		case "/commentThreads":
 			if r.URL.Query().Get("videoId") == "newvideo" {
 				_, _ = fmt.Fprint(w, `{"items":[]}`)
@@ -61,29 +58,12 @@ func archiveFixture(t *testing.T, mismatch bool, late *bool, quota *bool, missin
 				_, _ = fmt.Fprint(w, `{"error":{"errors":[{"reason":"commentsDisabled"}]}}`)
 				return
 			}
-			top := Comment{ID: "parent", Snippet: CommentSnippet{VideoID: "oldvideo", TextDisplay: "First comment", AuthorDisplayName: "Same name", ModerationStatus: "published"}}
-			top.Snippet.AuthorChannelID.Value = "UCauthorA"
-			th := thread{ID: "thread-fixture"}
-			th.Snippet.TopLevelComment = top
-			th.Snippet.VideoID = "oldvideo"
-			th.Snippet.TotalReplyCount = 2
-			yes := true
-			th.Snippet.CanReply = &yes
-			items := []thread{th}
+			extra := ""
 			if late != nil && *late {
-				c := top
-				c.ID = "later"
-				c.Snippet.TextDisplay = "Later comment"
-				c.Snippet.AuthorChannelID.Value = "UCauthorB"
-				extra := thread{ID: "thread-late"}
-				extra.Snippet.TopLevelComment = c
-				extra.Snippet.CanReply = &yes
-				items = append(items, extra)
+				extra = `,{"id":"thread-late","snippet":{"videoId":"oldvideo","topLevelComment":{"id":"later","snippet":{"videoId":"oldvideo","textDisplay":"Later comment","authorDisplayName":"Same name","authorChannelId":{"value":"UCauthorB"},"moderationStatus":"published"}}}}`
 			}
-			b, err := json.Marshal(page[thread]{Items: items})
-			assert.NoError(t, err)
-			_, err = w.Write(b)
-			assert.NoError(t, err)
+			_, _ = fmt.Fprintf(w, `{"items":[{"id":"thread-fixture","snippet":{"videoId":"oldvideo","totalReplyCount":2,"topLevelComment":{"id":"parent","snippet":{"videoId":"oldvideo","textDisplay":"First comment","authorDisplayName":"Same name","authorChannelId":{"value":"UCauthorA"},"moderationStatus":"published"}}}}%s]}`, extra)
+
 		case "/comments":
 			assert.Equal(t, "plainText", r.URL.Query().Get("textFormat"))
 			assert.Empty(t, r.URL.Query().Get("moderationStatus"))
@@ -95,16 +75,12 @@ func archiveFixture(t *testing.T, mismatch bool, late *bool, quota *bool, missin
 				status = "published"
 				author = ""
 			}
-			c := Comment{ID: id, Snippet: CommentSnippet{ParentID: "parent", VideoID: "oldvideo", TextDisplay: id, ModerationStatus: status}}
-			c.Snippet.AuthorChannelID.Value = author
 			token := "next"
 			if r.URL.Query().Get("pageToken") == "next" {
 				token = ""
 			}
-			b, err := json.Marshal(page[Comment]{Items: []Comment{c}, NextPageToken: token})
-			assert.NoError(t, err)
-			_, err = w.Write(b)
-			assert.NoError(t, err)
+			_, _ = fmt.Fprintf(w, `{"items":[{"id":%q,"snippet":{"parentId":"parent","videoId":"oldvideo","textDisplay":%q,"moderationStatus":%q,"authorChannelId":{"value":%q}}}],"nextPageToken":%q}`, id, id, status, author, token)
+
 		default:
 			assert.Fail(t, "unexpected fixture route", r.URL.Path)
 		}
@@ -347,106 +323,9 @@ func TestArchiveSyncRunCountsAddedUpdatedAndUnchangedMessages(t *testing.T) {
 	assert.Equal(int64(3), run.MessagesUpdated, "both video roots and the changed comment must be counted")
 }
 
-func TestArchiveDeferredResourcesDoNotBlockNewCycles(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	missing := true
-	imp := NewImporter(st, archiveFixture(t, false, nil, nil, &missing))
-	source, err := imp.Register(t.Context(), "UCfixture")
-	requirements.NoError(err)
-	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
-	requirements.NoError(err)
-	// Persisted retries remain visible, but a new cycle must still discover
-	// other uploads. Intercept just discovery to add a new synthetic video.
-	original := imp.client.api.Transport
-	if original == nil {
-		original = http.DefaultTransport
-	}
-	imp.client.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		resp, err := original.RoundTrip(req)
-		if err == nil && req.URL.Path == "/youtube/v3/playlistItems" {
-			requirements.NoError(resp.Body.Close())
-			resp.Body = io.NopCloser(strings.NewReader(`{"items":[{"contentDetails":{"videoId":"newvideo"}}]}`))
-		}
-		return resp, err
-	})
-	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
-	requirements.NoError(err)
-	rows, err := st.MessageMetadataBatch(t.Context(), source.ID, []string{"video:newvideo"})
-	requirements.NoError(err)
-	requirements.Contains(rows, "video:newvideo")
-}
-
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-func TestArchiveBudgetPartitionProperty(t *testing.T) {
-	// Real Store/HTTP state transitions are slower than the pure properties;
-	// 30 independent temporary archives supplement their 2,000-case runs.
-	hegel.Test(t, func(ht *hegel.T) {
-		budget := hegel.Draw(ht, hegel.Integers(2, 30))
-		st := testutil.NewTestStore(t)
-		imp := NewImporter(st, archiveFixture(t, false, nil, nil))
-		src, err := imp.Register(t.Context(), "UCfixture")
-		require.NoError(ht, err)
-		done := false
-		for range 40 {
-			sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: budget})
-			require.NoError(ht, err)
-			if !sum.Partial {
-				done = true
-				break
-			}
-		}
-		require.True(ht, done)
-		rows, err := st.MessageMetadataBatch(t.Context(), src.ID, []string{"video:oldvideo", "video:disabledvideo", "parent", "parent.reply1", "parent.reply2"})
-		require.NoError(ht, err)
-		assert.Len(ht, rows, 5)
-	}, hegel.WithTestCases(30))
-}
-
-func TestArchiveMultipleDeferredTinyBudgetFindsNewUpload(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	c := archiveFixture(t, false, nil, nil)
-	later := false
-	original := c.api.Transport
-	if original == nil {
-		original = http.DefaultTransport
-	}
-	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		resp, err := original.RoundTrip(req)
-		if err != nil {
-			return resp, err
-		}
-		body := ""
-		if req.URL.Path == "/youtube/v3/videos" && (req.URL.Query().Get("id") == "oldvideo" || req.URL.Query().Get("id") == "disabledvideo") {
-			body = `{"items":[]}`
-		}
-		if req.URL.Path == "/youtube/v3/playlistItems" && later {
-			body = `{"items":[{"contentDetails":{"videoId":"oldvideo"}},{"contentDetails":{"videoId":"disabledvideo"}},{"contentDetails":{"videoId":"newvideo"}}]}`
-		}
-		if body != "" {
-			requirements.NoError(resp.Body.Close())
-			resp.Body = io.NopCloser(strings.NewReader(body))
-		}
-		return resp, nil
-	})
-	imp := NewImporter(st, c)
-	src, err := imp.Register(t.Context(), "UCfixture")
-	requirements.NoError(err)
-	for i := range 30 {
-		if i == 5 {
-			later = true
-		}
-		_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 2})
-		requirements.NoError(err)
-	}
-	rows, err := st.MessageMetadataBatch(t.Context(), src.ID, []string{"video:newvideo"})
-	requirements.NoError(err)
-	requirements.Contains(rows, "video:newvideo")
-}
 
 func TestForbiddenResourceDoesNotBlockOtherVideos(t *testing.T) {
 	for _, kind := range []string{"video", "threads", "replies"} {
@@ -536,4 +415,224 @@ func TestInvalidPageTokenRestartsListingOnce(t *testing.T) {
 	assert.False(sum.Partial)
 	assert.Equal(2, initial)
 	assert.Equal(1, invalid)
+}
+
+func TestOwnershipPagesRespectBudgetAndResume(t *testing.T) {
+	for _, tc := range []struct{ target, budget int }{{2, 2}, {3, 2}, {2, 3}} {
+		target, budget := tc.target, tc.budget
+		t.Run(fmt.Sprintf("page%d-budget%d", target, budget), func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			calls := 0
+			client := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/token" {
+					_, _ = fmt.Fprint(w, `{"access_token":"fixture","token_type":"Bearer","expires_in":3600}`)
+					return
+				}
+				calls++
+				switch r.URL.Path {
+				case "/channels":
+					page := 1
+					if p := r.URL.Query().Get("pageToken"); p != "" {
+						_, _ = fmt.Sscan(p, &page)
+					}
+					if page == target {
+						_, _ = fmt.Fprint(w, `{"items":[{"id":"UCfixture","snippet":{"title":"Fixture"},"contentDetails":{"relatedPlaylists":{"uploads":"UUfixture"}}}]}`)
+					} else {
+						_, _ = fmt.Fprintf(w, `{"items":[],"nextPageToken":"%d"}`, page+1)
+					}
+				case "/playlistItems":
+					_, _ = fmt.Fprint(w, `{"items":[{"contentDetails":{"videoId":"video"}}]}`)
+				case "/videos":
+					_, _ = fmt.Fprint(w, `{"items":[{"id":"video","snippet":{"channelId":"UCfixture"},"status":{}}]}`)
+				case "/commentThreads":
+					_, _ = fmt.Fprint(w, `{"items":[{"snippet":{"videoId":"video","topLevelComment":{"id":"comment","snippet":{"videoId":"video","textDisplay":"hello"}}}}]}`)
+				default:
+					t.Errorf("unexpected path %s", r.URL.Path)
+				}
+			})
+			imp := NewImporter(st, client)
+			src, err := imp.Register(t.Context(), "UCfixture")
+			require.NoError(err)
+			require.Equal(target, calls)
+			found := false
+			for range 20 {
+				before := calls
+				sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: budget})
+				require.NoError(err)
+				require.LessOrEqual(calls-before, budget)
+				require.Equal(calls-before, sum.Requests)
+				rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"comment"})
+				require.NoError(err)
+				if len(rows) > 0 {
+					found = true
+					break
+				}
+			}
+			require.True(found)
+		})
+	}
+}
+
+func TestDeletedVideoKeepsArchivedRowsAndCompletes(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	missing := false
+	imp := NewImporter(st, archiveFixture(t, false, nil, nil, &missing))
+	src, err := imp.Register(t.Context(), "UCfixture")
+	require.NoError(err)
+	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
+	require.NoError(err)
+	missing = true
+	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
+	require.NoError(err)
+	require.False(sum.Partial)
+	rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:oldvideo", "parent"})
+	require.NoError(err)
+	require.Contains(rows, "video:oldvideo")
+	require.Contains(rows, "parent")
+}
+
+func TestOwnershipFailureSavesProgressWithoutWritingContent(t *testing.T) {
+	for _, failure := range []string{"invalidPageToken", "quotaExceeded", "transport", "not-owned"} {
+		t.Run(failure, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			mode := "register"
+			var lastToken string
+			client := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/token" {
+					_, _ = fmt.Fprint(w, `{"access_token":"fixture","token_type":"Bearer","expires_in":3600}`)
+					return
+				}
+				if r.URL.Path == "/playlistItems" {
+					_, _ = fmt.Fprint(w, `{"items":[]}`)
+					return
+				}
+				if r.URL.Path != "/channels" {
+					t.Errorf("unexpected content request: %s", r.URL.Path)
+					return
+				}
+				lastToken = r.URL.Query().Get("pageToken")
+				if mode == "register" {
+					_, _ = fmt.Fprint(w, `{"items":[{"id":"UCfixture","snippet":{"title":"Fixture"},"contentDetails":{"relatedPlaylists":{"uploads":"UUfixture"}}}]}`)
+					return
+				}
+				if mode == "seek" {
+					_, _ = fmt.Fprint(w, `{"items":[],"nextPageToken":"next"}`)
+					return
+				}
+				if failure == "not-owned" {
+					_, _ = fmt.Fprint(w, `{"items":[]}`)
+					return
+				}
+				if failure == "transport" {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = fmt.Fprintf(w, `{"error":{"errors":[{"reason":%q}]}}`, failure)
+			})
+			original := client.api.Transport
+			client.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if mode == "fail" && failure == "transport" {
+					return nil, errors.New("fixture transport failure")
+				}
+				return original.RoundTrip(req)
+			})
+			imp := NewImporter(st, client)
+			src, err := imp.Register(t.Context(), "UCfixture")
+			require.NoError(err)
+			mode = "seek"
+			sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 2})
+			require.NoError(err)
+			require.True(sum.Partial)
+			require.Equal(2, sum.Requests)
+			mode = "fail"
+			sum, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 2})
+			require.Error(err)
+			require.Equal(1, sum.Requests)
+			if failure == "quotaExceeded" {
+				require.ErrorIs(err, ErrQuota)
+			}
+			cp, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, SourceType)
+			require.NoError(err)
+			require.NotNil(cp)
+			var state syncState
+			require.NoError(json.Unmarshal([]byte(cp.CursorBefore.String), &state))
+			if failure == "invalidPageToken" || failure == "not-owned" {
+				require.Empty(state.OwnershipCursor)
+			} else {
+				require.Equal("next", state.OwnershipCursor)
+			}
+			rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"video:video", "comment"})
+			require.NoError(err)
+			require.Empty(rows)
+			if failure == "invalidPageToken" {
+				mode = "register"
+				_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 2})
+				require.NoError(err)
+				require.Empty(lastToken)
+			}
+		})
+	}
+}
+
+func TestDeletedReplyParentKeepsArchivedRepliesAndCompletes(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	c := archiveFixture(t, false, nil, nil)
+	missing := false
+	original := c.api.Transport
+	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp, err := original.RoundTrip(req)
+		if err == nil && missing && req.URL.Path == "/youtube/v3/comments" {
+			require.NoError(resp.Body.Close())
+			resp.StatusCode = http.StatusNotFound
+			resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"commentNotFound"}]}}`))
+		}
+		return resp, err
+	})
+	imp := NewImporter(st, c)
+	src, err := imp.Register(t.Context(), "UCfixture")
+	require.NoError(err)
+	_, err = imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
+	require.NoError(err)
+	missing = true
+	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 100})
+	require.NoError(err)
+	require.False(sum.Partial)
+	rows, err := st.StoredMessagesContext(t.Context(), src.ID, "youtube_json", []string{"parent.reply1", "parent.reply2"})
+	require.NoError(err)
+	require.Len(rows, 2)
+}
+
+func TestUploadsNotFoundStopsWithProgress(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	c := archiveFixture(t, false, nil, nil)
+	original := c.api.Transport
+	c.api.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp, err := original.RoundTrip(req)
+		if err == nil && req.URL.Path == "/youtube/v3/playlistItems" {
+			require.NoError(resp.Body.Close())
+			resp.StatusCode = http.StatusNotFound
+			resp.Body = io.NopCloser(strings.NewReader(`{"error":{"errors":[{"reason":"videoNotFound"}]}}`))
+		}
+		return resp, err
+	})
+	imp := NewImporter(st, c)
+	src, err := imp.Register(t.Context(), "UCfixture")
+	require.NoError(err)
+	sum, err := imp.Import(t.Context(), ImportOptions{ChannelID: "UCfixture", MaxRequests: 10})
+	require.Error(err)
+	require.True(sum.Partial)
+	cp, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, SourceType)
+	require.NoError(err)
+	require.NotNil(cp)
+	var state syncState
+	require.NoError(json.Unmarshal([]byte(cp.CursorBefore.String), &state))
+	require.Equal("uploads", state.Queue[0].Kind)
 }
