@@ -6048,7 +6048,7 @@ func (s *Store) writeBeeperRosterReceipt(q querier, sourceID int64, provider, id
 
 // BeeperRosterReceiptChecksum binds the consumed inputs to their current owner.
 func BeeperRosterReceiptChecksum(inputs string, owner int64) string {
-	return fmt.Sprintf("v2:%x", sha256.Sum256([]byte(inputs+":"+strconv.FormatInt(owner, 10))))
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(inputs+":"+strconv.FormatInt(owner, 10))))
 }
 
 // BeeperRosterOwnersContext reads current identifier owners in bounded queries.

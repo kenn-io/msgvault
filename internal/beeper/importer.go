@@ -1076,6 +1076,8 @@ func (imp *Importer) ensureConversation(
 			if settled {
 				return convID, true, membership, nil
 			}
+		}
+		if opts.rosterState != nil && opts.rosterState.Verified {
 			opts.rosterState.Verified = false
 			opts.rosterState.Phase = "members"
 			opts.rosterState.Next = 0
@@ -1096,7 +1098,6 @@ func (imp *Importer) ensureConversation(
 	if work.Signature != signature {
 		work.Signature = signature
 		work.Phase = "members"
-		work.Next = 0
 		work.Verified = false
 	}
 	if !opts.rosterDetailFetched {
@@ -1107,7 +1108,6 @@ func (imp *Importer) ensureConversation(
 	}
 	if work.Phase == "done" && !membershipComplete {
 		work.Phase = "members"
-		work.Next = 0
 		work.Verified = false
 	}
 	if membership.known {
@@ -1122,15 +1122,14 @@ func (imp *Importer) ensureConversation(
 	items := slices.Clone(detail.Participants.Items)
 	slices.SortStableFunc(items, func(a, b Participant) int { return strings.Compare(a.ID, b.ID) })
 	keys := imp.rosterKeys(items)
-	if work.Phase == "done" && work.Verified && membershipComplete {
+	if work.Verified && work.Phase != "members" {
 		settled, err := imp.refreshRosterProof(ctx, sourceID, convID, provider, detail, items, keys, opts.AccountID, routeEvidence, membership)
 		if err != nil {
 			return convID, false, membership, err
 		}
 		if !settled {
-			work.Phase = "members"
-			work.Next = 0
 			work.Verified = false
+			work.Phase = "members"
 		}
 	}
 	// Invalidate earlier proof before any roster writes.
@@ -1143,26 +1142,11 @@ func (imp *Importer) ensureConversation(
 	if membershipComplete {
 		bridgePrefix = participantBridgePrefix(detail.Participants.Items)
 	}
-	if work.Verified && (work.Phase == "matching" || work.Phase == "matching_retry" || work.Phase == "cleanup") {
-		settled, err := imp.refreshRosterProof(ctx, sourceID, convID, provider, detail, items, keys, opts.AccountID, routeEvidence, membership)
-		if err != nil {
-			return convID, false, membership, err
-		}
-		if !settled {
-			work.Verified = false
-			work.Phase = "members"
-			work.Next = 0
-			err = imp.store.SetConversationMessagingRouteEvidence(ctx, convID, routeEvidence)
-		}
-		if err != nil {
-			return convID, false, membership, err
-		}
-	}
 	if work.Phase == "members" {
 		if err := imp.store.SetConversationRosterRepairPendingContext(ctx, convID, true); err != nil {
 			return convID, false, membership, err
 		}
-		if err := imp.resolveRosterMembers(ctx, sourceID, convID, provider, detail, items, keys, opts, bridgePrefix, work); err != nil {
+		if err := imp.resolveRosterMembers(ctx, sourceID, convID, provider, detail, items, keys, opts, bridgePrefix); err != nil {
 			return convID, false, membership, err
 		}
 		verified, verifyErr := imp.verifyRosterMembers(ctx, ch.ID, membershipComplete, opts)
@@ -1203,12 +1187,7 @@ func (imp *Importer) ensureConversation(
 			return convID, work.Verified, membership, err
 		}
 	}
-	if work.Phase == "cleanup" {
-		if err := imp.cleanRosterReceipts(ctx, sourceID, provider, items, opts); err != nil {
-			return convID, true, membership, err
-		}
-		work.Phase = "done"
-	}
+
 	return convID, work.Verified, membership, nil
 }
 

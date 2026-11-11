@@ -42,53 +42,6 @@ func TestRosterLaterChatUsesChangedPhone(t *testing.T) {
 	}
 }
 
-func TestRosterReceiptCleanupResumes(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := budgetTestChat("!cleanup:example.test", 2, time.Now().Add(-48*time.Hour))
-	chat.Type = "group"
-	for i := 2; i < 22; i++ {
-		chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@signal_cleanup%d:example.test", i), "username": fmt.Sprintf("cleanup%d", i)})
-	}
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	sourceID := newBeeperTestSource(t, st, "signal")
-	detail, err := imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	work := &rosterWork{}
-	count := func() int {
-		var n int
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sourceID, rosterProvider(chat.ID)).Scan(&n))
-		return n
-	}
-	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
-	require.NoError(err)
-	assert.True(complete)
-	assert.Equal(22, count())
-	f.mu.Lock()
-	chat.Participants = chat.Participants[:4]
-	f.mu.Unlock()
-	detail, err = imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	work = &rosterWork{}
-	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
-		return work.Phase == "cleanup" && count() <= 6
-	}}, &ImportSummary{})
-	require.ErrorIs(err, errBeeperBudgetExpired)
-	assert.True(complete)
-	assert.Equal(6, count())
-	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM participant_contact_observations`)
-	require.NoError(err)
-	imp = NewImporter(st, imp.client)
-	sum := &ImportSummary{}
-	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, sum)
-	require.NoError(err)
-	assert.True(complete)
-	assert.Equal(4, count())
-	assert.Zero(sum.ObservationsRecorded, "cleanup must not repeat settled matching")
-}
-
 func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
@@ -205,7 +158,7 @@ func TestRosterJoinRefreshesSettledMatchAfterStop(t *testing.T) {
 	work := &rosterWork{}
 	//nolint:dogsled // Only the stop matters here.
 	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work, ShouldStop: func() bool {
-		return (work.Phase == "matching" || work.Phase == "cleanup") && work.Next >= 1
+		return work.Phase == "matching" && work.Next >= 1
 	}}, &ImportSummary{})
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 100, 0)
@@ -350,76 +303,95 @@ func TestRosterRetainedReceiptFollowsIdentifier(t *testing.T) {
 	}
 }
 
-func TestRosterBudgetAlternatesMessagesAndKeepsCheckpointSmall(t *testing.T) {
-	for _, size := range []int{64, 10000} {
-		t.Run(fmt.Sprintf("members=%d", size), func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			f := newFakeBeeper(t)
-			chat := budgetTestChat("!roster-budget:example.test", 2, time.Now().Add(-48*time.Hour))
-			chat.Type = "group"
-			for i := 2; i < size; i++ {
-				chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@signal_member%05d:example.test", i)})
-			}
-			f.addChat(chat)
-			imp, st := newHandlerTestImporter(t, f)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			polls := 0
-			sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
-			require.NoError(err)
-			require.True(sum.Stopped)
-			var receipts int
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&receipts))
-			assert.Positive(receipts)
-			assert.Less(receipts, 25)
-			assert.Less(len(rosterMembers(t, st, sum.SourceID, chat.ID)), size)
-			if size == 10000 {
-				var runBytes int
-				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
-				assert.Less(runBytes, 4096)
-				imp = NewImporter(st, imp.client)
-				_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
-				require.NoError(err)
-				imp = NewImporter(st, imp.client)
-				_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool {
-					var current int
-					require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&current))
-					return current > receipts
-				}})
-				require.NoError(err)
-				var after int
-				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&after))
-				assert.Equal(receipts+1, after)
-				assert.Equal(2, countBeeperMessages(t, imp))
-				assert.Less(len(rosterMembers(t, st, sum.SourceID, chat.ID)), size, "messages arrive before the roster completes")
-				return
-			}
-			var messagesBeforeRosterComplete bool
-			for range 30 {
-				polls = 0
-				imp = NewImporter(st, imp.client)
-				next, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
-				require.NoError(err)
-				require.Zero(next.Errors)
-				state := latestBeeperState(t, imp).Chats[chat.ID]
-				members := len(rosterMembers(t, st, sum.SourceID, chat.ID))
-				if countBeeperMessages(t, imp) == 2 && members < size {
-					messagesBeforeRosterComplete = true
-				}
-				if countBeeperMessages(t, imp) == 2 && members == size && state != nil && state.RosterWork != nil && state.RosterWork.Phase == "done" {
-					break
-				}
-			}
-			assert.True(messagesBeforeRosterComplete, "messages arrive before the roster completes")
-			assert.Equal(2, countBeeperMessages(t, imp))
-			assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), size)
-			state := latestBeeperState(t, imp).Chats[chat.ID]
-			assert.True(state.Done)
-			assert.Equal("done", state.RosterWork.Phase, "matching and receipt cleanup must finish")
-			var runBytes int
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
-			assert.Less(runBytes, 4096, "completed roster proof remains compact")
-		})
+func TestLargeRosterCheckpointStaysCompact(t *testing.T) {
+	size := 10000
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!roster-budget:example.test", 2, time.Now().Add(-48*time.Hour))
+	chat.Type = "group"
+	for i := 2; i < size; i++ {
+		chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@signal_member%05d:example.test", i)})
 	}
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	polls := 0
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
+	require.NoError(err)
+	require.True(sum.Stopped)
+	var receipts int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&receipts))
+	assert.Positive(receipts)
+	assert.Less(receipts, 25)
+	assert.Less(len(rosterMembers(t, st, sum.SourceID, chat.ID)), size)
+
+	var runBytes int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
+	assert.Less(runBytes, 4096)
+	imp = NewImporter(st, imp.client)
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
+	require.NoError(err)
+	imp = NewImporter(st, imp.client)
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool {
+		var current int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&current))
+		return current > receipts
+	}})
+	require.NoError(err)
+	var after int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&after))
+	assert.Equal(receipts+1, after)
+	assert.Equal(2, countBeeperMessages(t, imp))
+	assert.Less(len(rosterMembers(t, st, sum.SourceID, chat.ID)), size, "messages arrive before the roster completes")
+}
+
+func TestRosterBudgetAlternatesMessagesUntilComplete(t *testing.T) {
+	size := 64
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!roster-budget:example.test", 2, time.Now().Add(-48*time.Hour))
+	chat.Type = "group"
+	for i := 2; i < size; i++ {
+		chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@signal_member%05d:example.test", i)})
+	}
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	polls := 0
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
+	require.NoError(err)
+	require.True(sum.Stopped)
+	var receipts int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&receipts))
+	assert.Positive(receipts)
+	assert.Less(receipts, 25)
+	assert.Less(len(rosterMembers(t, st, sum.SourceID, chat.ID)), size)
+
+	var messagesBeforeRosterComplete bool
+	for range 30 {
+		polls = 0
+		imp = NewImporter(st, imp.client)
+		next, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
+		require.NoError(err)
+		require.Zero(next.Errors)
+		state := latestBeeperState(t, imp).Chats[chat.ID]
+		members := len(rosterMembers(t, st, sum.SourceID, chat.ID))
+		if countBeeperMessages(t, imp) == 2 && members < size {
+			messagesBeforeRosterComplete = true
+		}
+		if countBeeperMessages(t, imp) == 2 && members == size && state != nil && state.RosterWork != nil && state.RosterWork.Phase == "done" {
+			break
+		}
+	}
+	assert.True(messagesBeforeRosterComplete, "messages arrive before the roster completes")
+	assert.Equal(2, countBeeperMessages(t, imp))
+	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), size)
+	state := latestBeeperState(t, imp).Chats[chat.ID]
+	assert.True(state.Done)
+	assert.Equal("done", state.RosterWork.Phase, "matching must finish")
+	var runBytes int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
+	assert.Less(runBytes, 4096, "completed roster proof remains compact")
 }
 
 func TestCompletedRosterProofStaysCompact(t *testing.T) {

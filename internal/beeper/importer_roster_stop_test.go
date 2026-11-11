@@ -57,171 +57,191 @@ func TestRosterAggregateInsertCostProgresses(t *testing.T) {
 	})
 }
 
-func TestRosterWorkStopLeavesChatResumable(t *testing.T) {
+func TestRosterRouteProofStopLeavesChatResumable(t *testing.T) {
 	testutil.SkipIfPostgres(t, "uses SQLite triggers to yield during roster work")
-	for _, tc := range []struct {
-		name            string
-		chatID          string
-		trigger         string
-		observationStop bool
-	}{
-		{
-			name: "route proof", chatID: "!review-count:beeper.local",
-			trigger: `AFTER UPDATE OF metadata ON conversations
-            WHEN json_extract(NEW.metadata, '$.messaging_route.membership_complete') = 1`,
-		},
-		{
-			name: "observation capture", chatID: "!observe-stop:beeper.local", observationStop: true,
-			trigger: `AFTER UPDATE OF service_id ON participant_identifiers`,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			f := newFakeBeeper(t)
-			chat := budgetTestChat(tc.chatID, 2, time.Now().Add(-48*time.Hour))
-			chat.ParticipantsTruncated = tc.observationStop
-			f.addChat(chat)
-			imp, st := newHandlerTestImporter(t, f)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			provider := f.handler()
-			imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/v1/accounts/signal" {
-					w.Header().Set("Content-Type", "application/json")
-					_, _ = w.Write([]byte(`{"accountID":"signal","bridge":{"type":"signal"},"status":"connected"}`))
-					return
-				}
-				provider(w, r)
-			}))
-			if tc.observationStop {
-				_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-				require.NoError(err)
-				f.mu.Lock()
-				chat.Participants[0]["username"] = "newname"
-				chat.LastActivity = time.Now().Add(time.Hour)
-				f.mu.Unlock()
-			}
-			st.DB().SetMaxOpenConns(1)
-			yield := false
-			registerSQLiteFunc(t, st, "yield_roster_work", func() int {
-				yield = true
-				return 0
-			})
-			_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_roster_work `+tc.trigger+`
+	chatID := "!review-count:beeper.local"
+	trigger := `AFTER UPDATE OF metadata ON conversations WHEN json_extract(NEW.metadata, '$.messaging_route.membership_complete') = 1`
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat(chatID, 2, time.Now().Add(-48*time.Hour))
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	provider := f.handler()
+	imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/accounts/signal" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"accountID":"signal","bridge":{"type":"signal"},"status":"connected"}`))
+			return
+		}
+		provider(w, r)
+	}))
+
+	st.DB().SetMaxOpenConns(1)
+	yield := false
+	registerSQLiteFunc(t, st, "yield_roster_work", func() int {
+		yield = true
+		return 0
+	})
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_roster_work `+trigger+`
             BEGIN SELECT yield_roster_work(); END`)
-			require.NoError(err)
-			sum, err := imp.Import(t.Context(), ImportOptions{
-				AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return yield },
-			})
-			require.NoError(err)
-			require.True(yield, "the selected roster stop point must be reached")
-			require.True(sum.Stopped)
-			assert.Zero(sum.Errors)
-			if tc.observationStop {
-				assert.Equal(2, countBeeperMessages(t, imp), "earlier archived messages remain available")
-				state := latestBeeperState(t, imp)
-				require.NotNil(state.Chats[chat.ID])
-				assert.True(state.Chats[chat.ID].Done)
-				assert.False(state.Chats[chat.ID].Visited, "matching stopped before this visit finished")
-				unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-				require.NoError(err)
-				assert.NotContains(unresolved, chat.ID, "completed membership stays resolved while enrichment waits")
-				var messageID int64
-				require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_id = ? LIMIT 1`, sum.SourceID).Scan(&messageID))
-				membership, err := st.AttachmentConversationMembershipContext(t.Context(), messageID)
-				require.NoError(err)
-				assert.True(membership.RosterArchived)
-				peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
-				person, _, err := st.CreatePersonFromParticipant(peer)
-				require.NoError(err)
-				routes, err := st.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID})
-				require.NoError(err)
-				require.Len(routes.Routes.Items, 1)
-				assert.Equal("archive_verified", routes.Routes.Items[0].Status)
-				require.NoError(st.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{SourceAttachmentID: "beeper:mxc://example.test/pending", MediaType: "image", State: attachmentpolicy.StatePending}))
-				pending, err := st.ListBeeperRetryableAttachmentMessages(t.Context(), sum.SourceID, attachmentpolicy.Policy{MaxParticipants: 2})
-				require.NoError(err)
-				assert.Len(pending, 1, "matching stops preserve media eligibility")
-				require.NotNil(state.Chats[chat.ID].RosterWork)
-				assert.Contains([]string{"matching", "matching_retry"}, state.Chats[chat.ID].RosterWork.Phase)
-				f.mu.Lock()
-				f.reqs = nil
-				chat.Msgs = append(chat.Msgs, fakeMsg{ID: "resume", SortKey: 99, Timestamp: time.Now(), Text: "new", SenderID: "@signal_ann:beeper.local"})
-				chat.LastActivity = time.Now()
-				f.mu.Unlock()
-				imp = NewImporter(st, imp.client)
-				_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
-				require.NoError(err)
-				assert.Equal(3, countBeeperMessages(t, imp))
-				routes, err = st.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID})
-				require.NoError(err)
-				require.Len(routes.Routes.Items, 1)
-				assert.Equal("archive_verified", routes.Routes.Items[0].Status)
-				f.mu.Lock()
-				for _, req := range f.reqs {
-					assert.False(strings.HasPrefix(req, "/v1/chats/"+chat.ID+"?"), "message turn must not fetch detail")
-				}
-				f.mu.Unlock()
-			} else {
-				require.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 2)
-				assert.Zero(countBeeperMessages(t, imp), "stop before message work must leave it resumable")
-				run, err := st.GetLastSuccessfulSync(sum.SourceID)
-				require.NoError(err)
-				assert.Equal("completed", run.Status)
-				var count int
-				require.NoError(st.DB().QueryRowContext(t.Context(),
-					`SELECT participant_count FROM conversations WHERE source_conversation_id=?`, chat.ID).Scan(&count))
-				assert.Equal(2, count, "a clean yield must expose the committed roster count")
-				unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-				require.NoError(err)
-				assert.NotContains(unresolved, chat.ID, "a stop after route proof leaves the committed roster resolved")
-			}
-			_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER yield_roster_work`)
-			require.NoError(err)
-			retries := 1
-			if tc.observationStop {
-				// Resume the stopped matching work and finish the discovery cycle.
-				retries = 2
-			}
-			for range retries {
-				_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-				require.NoError(err)
-			}
-			if tc.observationStop {
-				unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-				require.NoError(err)
-				assert.NotContains(unresolved, chat.ID)
-				state := latestBeeperState(t, imp)
-				assert.Equal("done", state.Chats[chat.ID].RosterWork.Phase, "quiet repair must finish deferred enrichment")
-			}
-			if !tc.observationStop {
-				state := latestBeeperState(t, imp)
-				detail, err := imp.client.GetChat(t.Context(), chat.ID)
-				require.NoError(err)
-				yield = false
-				_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_roster_work `+tc.trigger+` BEGIN SELECT yield_roster_work(); END`)
-				require.NoError(err)
-				_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", NoMedia: true, ShouldStop: func() bool { return yield }}, state, time.Now(), false, false, &ImportSummary{})
-				require.NoError(err)
-				require.True(yield)
-				unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-				require.NoError(err)
-				assert.NotContains(unresolved, chat.ID)
-				_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER yield_roster_work`)
-				require.NoError(err)
-				_, complete, err := imp.syncChat(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", NoMedia: true}, state, time.Now(), false, false, &ImportSummary{})
-				require.NoError(err)
-				assert.True(complete)
-				unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-				require.NoError(err)
-				assert.NotContains(unresolved, chat.ID)
-			}
-			if tc.observationStop {
-				assert.Equal(3, countBeeperMessages(t, imp))
-			} else {
-				assert.Equal(2, countBeeperMessages(t, imp))
-			}
-		})
+	require.NoError(err)
+	sum, err := imp.Import(t.Context(), ImportOptions{
+		AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return yield },
+	})
+	require.NoError(err)
+	require.True(yield, "the selected roster stop point must be reached")
+	require.True(sum.Stopped)
+	assert.Zero(sum.Errors)
+
+	require.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 2)
+	assert.Zero(countBeeperMessages(t, imp), "stop before message work must leave it resumable")
+	run, err := st.GetLastSuccessfulSync(sum.SourceID)
+	require.NoError(err)
+	assert.Equal("completed", run.Status)
+	var count int
+	require.NoError(st.DB().QueryRowContext(t.Context(),
+		`SELECT participant_count FROM conversations WHERE source_conversation_id=?`, chat.ID).Scan(&count))
+	assert.Equal(2, count, "a clean yield must expose the committed roster count")
+	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
+	assert.NotContains(unresolved, chat.ID, "a stop after route proof leaves the committed roster resolved")
+
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER yield_roster_work`)
+	require.NoError(err)
+
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+
+	state := latestBeeperState(t, imp)
+	detail, err := imp.client.GetChat(t.Context(), chat.ID)
+	require.NoError(err)
+	yield = false
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_roster_work `+trigger+` BEGIN SELECT yield_roster_work(); END`)
+	require.NoError(err)
+	_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", NoMedia: true, ShouldStop: func() bool { return yield }}, state, time.Now(), false, false, &ImportSummary{})
+	require.NoError(err)
+	require.True(yield)
+	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
+	assert.NotContains(unresolved, chat.ID)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER yield_roster_work`)
+	require.NoError(err)
+	_, complete, err := imp.syncChat(t.Context(), 0, sum.SourceID, detail, ImportOptions{AccountID: "signal", NoMedia: true}, state, time.Now(), false, false, &ImportSummary{})
+	require.NoError(err)
+	assert.True(complete)
+	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
+	assert.NotContains(unresolved, chat.ID)
+
+	assert.Equal(2, countBeeperMessages(t, imp))
+}
+
+func TestRosterMatchingStopLeavesChatResumable(t *testing.T) {
+	testutil.SkipIfPostgres(t, "uses SQLite triggers to yield during roster work")
+	chatID := "!observe-stop:beeper.local"
+	trigger := `AFTER UPDATE OF service_id ON participant_identifiers`
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat(chatID, 2, time.Now().Add(-48*time.Hour))
+	chat.ParticipantsTruncated = true
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	provider := f.handler()
+	imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/accounts/signal" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"accountID":"signal","bridge":{"type":"signal"},"status":"connected"}`))
+			return
+		}
+		provider(w, r)
+	}))
+
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	f.mu.Lock()
+	chat.Participants[0]["username"] = "newname"
+	chat.LastActivity = time.Now().Add(time.Hour)
+	f.mu.Unlock()
+
+	st.DB().SetMaxOpenConns(1)
+	yield := false
+	registerSQLiteFunc(t, st, "yield_roster_work", func() int {
+		yield = true
+		return 0
+	})
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER yield_roster_work `+trigger+`
+            BEGIN SELECT yield_roster_work(); END`)
+	require.NoError(err)
+	sum, err := imp.Import(t.Context(), ImportOptions{
+		AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return yield },
+	})
+	require.NoError(err)
+	require.True(yield, "the selected roster stop point must be reached")
+	require.True(sum.Stopped)
+	assert.Zero(sum.Errors)
+
+	assert.Equal(2, countBeeperMessages(t, imp), "earlier archived messages remain available")
+	state := latestBeeperState(t, imp)
+	require.NotNil(state.Chats[chat.ID])
+	assert.True(state.Chats[chat.ID].Done)
+	assert.False(state.Chats[chat.ID].Visited, "matching stopped before this visit finished")
+	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
+	assert.NotContains(unresolved, chat.ID, "completed membership stays resolved while enrichment waits")
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_id = ? LIMIT 1`, sum.SourceID).Scan(&messageID))
+	membership, err := st.AttachmentConversationMembershipContext(t.Context(), messageID)
+	require.NoError(err)
+	assert.True(membership.RosterArchived)
+	peer := participantForBeeperUser(t, st, "@signal_ann:beeper.local")
+	person, _, err := st.CreatePersonFromParticipant(peer)
+	require.NoError(err)
+	routes, err := st.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID})
+	require.NoError(err)
+	require.Len(routes.Routes.Items, 1)
+	assert.Equal("archive_verified", routes.Routes.Items[0].Status)
+	require.NoError(st.UpsertAttachmentRecord(t.Context(), messageID, store.AttachmentWrite{SourceAttachmentID: "beeper:mxc://example.test/pending", MediaType: "image", State: attachmentpolicy.StatePending}))
+	pending, err := st.ListBeeperRetryableAttachmentMessages(t.Context(), sum.SourceID, attachmentpolicy.Policy{MaxParticipants: 2})
+	require.NoError(err)
+	assert.Len(pending, 1, "matching stops preserve media eligibility")
+	require.NotNil(state.Chats[chat.ID].RosterWork)
+	assert.Contains([]string{"matching", "matching_retry"}, state.Chats[chat.ID].RosterWork.Phase)
+	f.mu.Lock()
+	f.reqs = nil
+	chat.Msgs = append(chat.Msgs, fakeMsg{ID: "resume", SortKey: 99, Timestamp: time.Now(), Text: "new", SenderID: "@signal_ann:beeper.local"})
+	chat.LastActivity = time.Now()
+	f.mu.Unlock()
+	imp = NewImporter(st, imp.client)
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
+	require.NoError(err)
+	assert.Equal(3, countBeeperMessages(t, imp))
+	routes, err = st.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID})
+	require.NoError(err)
+	require.Len(routes.Routes.Items, 1)
+	assert.Equal("archive_verified", routes.Routes.Items[0].Status)
+	f.mu.Lock()
+	for _, req := range f.reqs {
+		assert.False(strings.HasPrefix(req, "/v1/chats/"+chat.ID+"?"), "message turn must not fetch detail")
 	}
+	f.mu.Unlock()
+
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER yield_roster_work`)
+	require.NoError(err)
+
+	for range 2 {
+		_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+		require.NoError(err)
+	}
+
+	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
+	require.NoError(err)
+	assert.NotContains(unresolved, chat.ID)
+	state = latestBeeperState(t, imp)
+	assert.Equal("done", state.Chats[chat.ID].RosterWork.Phase, "quiet repair must finish deferred enrichment")
+
+	assert.Equal(3, countBeeperMessages(t, imp))
 }
 
 // a cooperative yield during a quiet-room roster repair must not

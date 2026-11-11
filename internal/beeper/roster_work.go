@@ -120,36 +120,8 @@ func (imp *Importer) matchRosterMembers(ctx context.Context, sourceID int64, pro
 	}
 	if !work.Verified {
 		work.Phase = "members"
-		work.Next = len(items)
 	} else {
-		work.Phase = "cleanup"
-	}
-	return nil
-}
-
-// cleanRosterReceipts discards departed members in bounded transactions.
-func (imp *Importer) cleanRosterReceipts(ctx context.Context, sourceID int64, provider string, items []Participant, opts ImportOptions) error {
-	receipts, err := imp.store.BeeperRosterReceiptsContext(ctx, sourceID, provider)
-	if err != nil {
-		return err
-	}
-	for i := range items {
-		delete(receipts, imp.res.identifierForUser(items[i].ID))
-	}
-	keys := make([]string, 0, len(receipts))
-	for key := range receipts {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	for len(keys) > 0 {
-		if opts.stopRequested() {
-			return errBeeperBudgetExpired
-		}
-		n := min(16, len(keys))
-		if err := imp.store.DeleteBeeperRosterReceiptsContext(ctx, sourceID, provider, keys[:n]); err != nil {
-			return err
-		}
-		keys = keys[n:]
+		work.Phase = "done"
 	}
 	return nil
 }
@@ -214,7 +186,7 @@ func (imp *Importer) replaceRosterMembership(ctx context.Context, sourceID, conv
 	return owners, nil
 }
 
-func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, keys []string, opts ImportOptions, bridgePrefix string, work *rosterWork) error {
+func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID int64, provider string, detail *Chat, items []Participant, keys []string, opts ImportOptions, bridgePrefix string) error {
 	receipts, err := imp.store.BeeperRosterReceiptsContext(ctx, sourceID, provider)
 	if err != nil {
 		return err
@@ -233,7 +205,6 @@ func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID 
 		checksum := rosterMemberInputs(p, detail, opts.AccountID, bridgePrefix)
 		if receipt, ok := receipts[key]; ok && owners[key] != 0 && receipt.Checksum == store.BeeperRosterReceiptChecksum(checksum, owners[key]) {
 			imp.res.rememberRosterOwner(p.ID, owners[key])
-			work.Next = i + 1
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -252,7 +223,6 @@ func (imp *Importer) resolveRosterMembers(ctx context.Context, sourceID, convID 
 				return err
 			}
 		}
-		work.Next = i + 1
 	}
 	return nil
 }
@@ -324,5 +294,5 @@ func rosterMemberInputs(p *Participant, detail *Chat, accountID, bridgePrefix st
 	if p.IsAdmin {
 		role = "admin"
 	}
-	return "v1:" + rosterMemberSignature(&p.User, detail, accountID, bridgePrefix) + ":" + role
+	return rosterMemberSignature(&p.User, detail, accountID, bridgePrefix) + ":" + role
 }

@@ -9,19 +9,19 @@ import (
 )
 
 func TestRosterEachChatKeepsItsOwnPhone(t *testing.T) {
-	testRosterEachChatKeepsItsOwnPhone(t, false, false, false)
-}
-
-func TestRosterEachChatKeepsItsOwnPhoneMessageFirst(t *testing.T) {
-	testRosterEachChatKeepsItsOwnPhone(t, true, false, false)
-}
-
-func TestRosterEachChatKeepsItsOwnPhoneInOneRun(t *testing.T) {
-	testRosterEachChatKeepsItsOwnPhone(t, false, true, false)
-}
-
-func TestRosterChangedOwnerInvalidatesResumedProof(t *testing.T) {
-	testRosterEachChatKeepsItsOwnPhone(t, true, false, true)
+	for _, tc := range []struct {
+		name                            string
+		messageFirst, sameRun, verified bool
+	}{
+		{"member first", false, false, false},
+		{"message first", true, false, false},
+		{"one run", false, true, false},
+		{"changed owner", true, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testRosterEachChatKeepsItsOwnPhone(t, tc.messageFirst, tc.sameRun, tc.verified)
+		})
+	}
 }
 
 func testRosterEachChatKeepsItsOwnPhone(t *testing.T, messageFirst, sameRun, verified bool) {
@@ -121,7 +121,11 @@ func TestRosterResumeRechecksOwnerOfSettledPrefix(t *testing.T) {
 	detail, err := imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
 	work := &rosterWork{}
-	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool { return work.Next >= 1 }}, &ImportSummary{}) //nolint:dogsled // Only the interruption matters.
+	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
+		var count int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sourceID, rosterProvider(chat.ID)).Scan(&count))
+		return count >= 1
+	}}, &ImportSummary{}) //nolint:dogsled // Only the interruption matters.
 	require.ErrorIs(err, errBeeperBudgetExpired)
 	_, err = newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_a:example.test", PhoneNumber: "+12025550124"})
 	require.NoError(err)

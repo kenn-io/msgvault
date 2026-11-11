@@ -131,7 +131,24 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	opts.rosterState = cs.RosterWork
 	opts.rosterDetailFetched = true
 	conversationID, complete, _, err := imp.ensureConversation(ctx, syncID, sourceID, detail, opts, &ImportSummary{})
-	err = imp.finishQuietRosterStep(ctx, opts, conversationID, complete, err)
+	if conversationID != 0 {
+		statsCtx, cancel := opts.conversationStatsContext(ctx)
+		statsErr := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, conversationID)
+		cancel()
+		if statsErr != nil {
+			err = fmt.Errorf("recompute conversation stats after roster repair: %w", statsErr)
+		} else if complete {
+			pendingCtx := ctx
+			if opts.stopRequested() {
+				var cancelPending context.CancelFunc
+				pendingCtx, cancelPending = opts.finalizeContext(ctx)
+				defer cancelPending()
+			}
+			if pendingErr := imp.store.SetConversationRosterRepairPendingContext(pendingCtx, conversationID, false); pendingErr != nil {
+				err = fmt.Errorf("clear roster repair pending marker: %w", pendingErr)
+			}
+		}
+	}
 	if errors.Is(err, errBeeperBudgetExpired) {
 		return true, nil
 	}
@@ -147,31 +164,4 @@ func (imp *Importer) repairQuietRoster(ctx context.Context, syncID, sourceID int
 	}
 	cs.RosterRetryAfter = ""
 	return opts.stopRequested(), nil
-}
-
-// finishQuietRosterStep refreshes the room's stats, then clears the pending
-// marker of a room whose membership is verified, and returns the roster step's
-// error. During a stop the write uses the finalize window.
-func (imp *Importer) finishQuietRosterStep(ctx context.Context, opts ImportOptions, conversationID int64, verified bool, rosterErr error) error {
-	if conversationID == 0 {
-		return rosterErr
-	}
-	statsCtx, cancel := opts.conversationStatsContext(ctx)
-	defer cancel()
-	if err := imp.store.RecomputeConversationStatsForConversationContext(statsCtx, conversationID); err != nil {
-		return fmt.Errorf("recompute conversation stats after roster repair: %w", err)
-	}
-	if !verified {
-		return rosterErr
-	}
-	pendingCtx := ctx
-	if opts.stopRequested() {
-		var cancelPending context.CancelFunc
-		pendingCtx, cancelPending = opts.finalizeContext(ctx)
-		defer cancelPending()
-	}
-	if err := imp.store.SetConversationRosterRepairPendingContext(pendingCtx, conversationID, false); err != nil {
-		return fmt.Errorf("clear roster repair pending marker: %w", err)
-	}
-	return rosterErr
 }
