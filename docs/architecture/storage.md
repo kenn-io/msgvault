@@ -243,6 +243,7 @@ string when checking already-imported source items.
 | `person_fact_*` | Evidence, claims, resolutions, decisions, and pins |
 | `person_tracking`, `person_sweep_*` | Enrollment and progress for profile maintenance |
 | `person_briefs`, `person_brief_evidence`, `person_brief_enrollments` | Saved conversation briefs, citations, and per-person enrollment |
+| `person_appreciation_state` | Source-keyed dismissal audits and optional brief proof references |
 | `person_inference_*`, `person_enrichment_*` | Provider profiles, checks, consent, external lookup state, and suppression |
 | `carddav_*` | Address books, retained resources, publication, conflicts, and sync runs |
 | `sync_runs` and worker run tables | Durable operation outcomes and progress behind Operations |
