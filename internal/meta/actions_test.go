@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/mattn/go-sqlite3"
@@ -303,7 +304,7 @@ func TestDropDeletedTraversalWithoutArchiveRow(t *testing.T) {
 	// An unmarked row stands in for gc purging it between the mark and the prune.
 	execution, err := st.AcquireSyncExecutionContext(t.Context(), src.ID)
 	require.NoError(err)
-	require.NoError(dropDeletedTraversal(t.Context(), st, execution, src, "100_201"))
+	require.NoError(dropDeletedTraversal(t.Context(), st, execution, src, []string{"100_201"}))
 	require.NoError(execution.Release())
 
 	f.denied["100_201/comments"] = true
@@ -339,6 +340,128 @@ func TestImportResumesPastDeletedPendingCommentAfterGC(t *testing.T) {
 	ids, err := st.MessageExistsBatch(src.ID, []string{"100_203"})
 	require.NoError(err)
 	assert.Zero(ids["100_203"], "the deleted comment is not archived again")
+}
+
+// savedFrames lists the parent of every saved traversal frame and the IDs
+// pending in it.
+func savedFrames(t *testing.T, st *store.Store, src *store.Source) []string {
+	t.Helper()
+	state, err := loadState(t.Context(), st, src, false)
+	require.NoError(t, err)
+	var frames []string
+	for _, edge := range state.edges() {
+		for _, f := range state.Phases[edge].Stack {
+			frame := []string{f.Parent + ":"}
+			for _, child := range f.Pending {
+				frame = append(frame, child.ID)
+			}
+			frames = append(frames, strings.Join(frame, " "))
+		}
+	}
+	return frames
+}
+
+// assertDeclaredThreadGone resumes the sync and checks the deleted comment
+// 100_201 and its declared child 100_202 are not read, and absent stays absent.
+func assertDeclaredThreadGone(t *testing.T, st *store.Store, f *graphFixture, imp *Importer, src *store.Source, absent ...string) {
+	t.Helper()
+	assert, require := assert.New(t), require.New(t)
+	f.denied["100_201/comments"] = true
+	f.denied["100_202/comments"] = true
+	before := len(f.paths)
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	assert.False(sum.Partial)
+	for _, path := range f.paths[before:] {
+		assert.NotContains(path, "100_201")
+		assert.NotContains(path, "100_202")
+	}
+	ids, err := st.MessageExistsBatchContext(t.Context(), src.ID, absent)
+	require.NoError(err)
+	assert.Empty(ids, "the deleted comments are not archived again")
+}
+
+func TestImportResumesPastDeclaredChildOfDeletedCommentAfterGC(t *testing.T) {
+	require := require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Parent comment"), *comment("100_202", "100_201", "Declared child")}
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 4})
+	require.NoError(err)
+	require.True(sum.Partial)
+	require.Equal([]string{"100_200:", "100_202:"}, savedFrames(t, st, src))
+	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
+	require.NoError(err)
+	client, _ := writeFixture(t, http.StatusOK, `{"success":true}`)
+	require.NoError(ModerateComment(t.Context(), st, client, target, ActionDelete))
+	purgeDeleted(t, st, 2)
+
+	assertDeclaredThreadGone(t, st, f, imp, src, "100_201", "100_202")
+}
+
+func TestImportDropsPendingDeclaredChildOfDeletedComment(t *testing.T) {
+	for _, mode := range []string{"moderated and purged", "marked in the archive"} {
+		t.Run(mode, func(t *testing.T) {
+			require := require.New(t)
+			st, f, imp, src := setupImport(t)
+			f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Parent comment"), *comment("100_202", "100_201", "Declared child")}
+			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 3})
+			require.NoError(err)
+			require.True(sum.Partial)
+			require.Equal([]string{"100_200: 100_202", "100_201:"}, savedFrames(t, st, src))
+			absent := []string{"100_202"}
+			if mode == "marked in the archive" {
+				marked, err := st.MarkMessageThreadDeletedContext(t.Context(), src.ID, "100_201")
+				require.NoError(err)
+				require.Equal([]string{"100_201"}, marked)
+			} else {
+				target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
+				require.NoError(err)
+				client, _ := writeFixture(t, http.StatusOK, `{"success":true}`)
+				require.NoError(ModerateComment(t.Context(), st, client, target, ActionDelete))
+				purgeDeleted(t, st, 1)
+				absent = append(absent, "100_201")
+			}
+
+			assertDeclaredThreadGone(t, st, f, imp, src, absent...)
+		})
+	}
+}
+
+func TestImportDropsPendingDeclaredDescendantsOfDeletedComment(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Parent comment")}
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	f.comments["100_200"] = []Object{
+		*comment("100_204", "100_200", "Unrelated comment"),
+		*comment("100_202", "100_201", "Declared child"),
+		*comment("100_206", "100_200", "Sibling comment"),
+	}
+	f.comments["100_204"] = []Object{*comment("100_205", "100_204", "Unrelated reply"), *comment("100_203", "100_202", "Declared grandchild")}
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{Full: true, MaxRequests: 4})
+	require.NoError(err)
+	require.True(sum.Partial)
+	require.Equal([]string{"100_200: 100_202", "100_204: 100_203", "100_205:"}, savedFrames(t, st, src))
+	target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "100_201").ID)
+	require.NoError(err)
+	client, _ := writeFixture(t, http.StatusOK, `{"success":true}`)
+	require.NoError(ModerateComment(t.Context(), st, client, target, ActionDelete))
+
+	for _, id := range []string{"100_201", "100_202", "100_203"} {
+		f.denied[id+"/comments"] = true
+	}
+	before := len(f.paths)
+	sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	assert.False(sum.Partial)
+	for _, path := range f.paths[before:] {
+		assert.NotRegexp(`100_20[123]`, path)
+	}
+	ids, err := st.MessageExistsBatchContext(t.Context(), src.ID, []string{"100_202", "100_203", "100_206"})
+	require.NoError(err)
+	assert.Contains(ids, "100_206", "the sibling is archived")
+	assert.Len(ids, 1, "the deleted comment's descendants are not archived")
 }
 
 func TestModerateCommentDeleteWithoutPausedSyncAddsNoRun(t *testing.T) {

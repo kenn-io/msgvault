@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -125,9 +126,10 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 	// so the archive does not disagree with Meta.
 	local := context.WithoutCancel(ctx)
 	if action == ActionDelete {
-		err = st.MarkMessageThreadDeletedContext(local, target.SourceID, target.CommentID)
+		var marked []string
+		marked, err = st.MarkMessageThreadDeletedContext(local, target.SourceID, target.CommentID)
 		if err == nil {
-			err = dropDeletedTraversal(local, st, execution, source, target.CommentID)
+			err = dropDeletedTraversal(local, st, execution, source, append(marked, target.CommentID))
 		}
 	} else {
 		err = setCommentHidden(local, st, target.MessageID, action == ActionHide)
@@ -141,14 +143,15 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 
 // dropDeletedTraversal republishes a paused sync's saved traversal without the
 // deleted comment and its replies. It prunes now, so a later `msgvault gc`
-// cannot matter, and by ID, so it does not depend on the archive row.
-func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store.SyncExecution, source *store.Source, commentID string) error {
+// cannot matter, and by the Meta IDs of the deleted comment and the archived
+// replies marked with it, so it does not depend on the archive rows.
+func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store.SyncExecution, source *store.Source, commentIDs []string) error {
 	state, err := loadState(ctx, st, source, false)
 	if err != nil {
 		return err
 	}
 	run := &importRun{state: state, sum: &ImportSummary{}}
-	changed, err := run.dropDeletedFrames(func(id string) (bool, error) { return id == commentID, nil })
+	changed, err := run.dropDeletedFrames(func(id string) (bool, error) { return slices.Contains(commentIDs, id), nil })
 	if err != nil || !changed {
 		return err
 	}
