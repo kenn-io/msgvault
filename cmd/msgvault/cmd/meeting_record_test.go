@@ -35,11 +35,13 @@ func (c *meetingRecordClient) MeetingRecord(_ context.Context, ref string) (stor
 func TestMeetingLinksCLIPartialRecord(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	at := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
+	start, end := &at, new(at.Add(time.Hour))
 	record := store.MeetingRecord{
 		Links: []store.MeetingLink{
-			{Ref: "evt:1", Start: at, End: at.Add(time.Hour), Status: "confirmed"},
-			{Ref: "evt:2", Start: at, End: at.Add(time.Hour), Status: "cancelled"},
-			{Ref: "evt:3", Start: at, End: at.Add(time.Hour), Status: "confirmed", DeletedFromSource: true},
+			{Ref: "evt:1", Start: start, End: end, Status: "confirmed"},
+			{Ref: "evt:2", Start: start, End: end, Status: "cancelled"},
+			{Ref: "evt:3", Start: start, End: end, Status: "confirmed", DeletedFromSource: true},
+			{Ref: "evt:4", Status: "cancelled"},
 		},
 		MessageIDs: []int64{42}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 7, Reason: "unsupported recurrence"}},
 	}
@@ -63,6 +65,7 @@ func TestMeetingLinksCLIPartialRecord(t *testing.T) {
 			assert.Contains(out.String(), "confirmed")
 			assert.Contains(out.String(), "cancelled")
 			assert.Contains(out.String(), "deleted")
+			assert.Regexp(`evt:4\s+unknown\s+unknown\s+cancelled`, out.String())
 			assert.Contains(out.String(), "Notes: 42\n")
 			assert.Contains(stderr.String(), "message 7 (unsupported recurrence)")
 		}
@@ -93,7 +96,7 @@ func TestMeetingLinksCLIEventRecord(t *testing.T) {
 }
 
 func TestMeetingLinksCLIWithoutNotes(t *testing.T) {
-	client := &meetingRecordClient{version: "5.1.0", record: &store.MeetingRecord{Links: []store.MeetingLink{{Ref: "evt:23", Start: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), End: time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC)}}}}
+	client := &meetingRecordClient{version: "5.1.0", record: &store.MeetingRecord{Links: []store.MeetingLink{{Ref: "evt:23", Start: new(time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)), End: new(time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC))}}}}
 	command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 	var out bytes.Buffer
 	command.SetOut(&out)

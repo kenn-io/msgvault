@@ -7864,12 +7864,16 @@ components:
           type: boolean
         end:
           format: date-time
-          type: string
+          type:
+            - string
+            - "null"
         ref:
           type: string
         start:
           format: date-time
-          type: string
+          type:
+            - string
+            - "null"
         status:
           type: string
         subject:
