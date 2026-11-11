@@ -68,13 +68,16 @@ func TestMeetingRecordPartialBoundsAndAliases(t *testing.T) {
 }
 
 func TestMeetingRecordOrphanAllDayDoesNotGuessOriginalZone(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "orphan", `{"id":"edit","recurringEventId":"series","iCalUID":"zone@example.org","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-15","timeZone":"Asia/Tokyo"},"end":{"date":"2027-03-16","timeZone":"Asia/Tokyo"}}`, "owner@example.com")
 	_, unrelated := projectionFixture(t, st, "unrelated", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"zone@example.org","startsAt":"2027-03-13T15:00:00Z"}}`)
+	_, matched := projectionFixture(t, st, "matching", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"edit"}}`)
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event})
-	require.NoError(t, err)
-	require.Len(t, record.Links, 1)
-	assert.NotContains(t, record.MessageIDs, unrelated)
+	require.NoError(err)
+	require.Len(record.Links, 1)
+	assert.Contains(record.MessageIDs, matched)
+	assert.NotContains(record.MessageIDs, unrelated)
 }
 
 func TestMeetingRecordCompleteAndPartialCopies(t *testing.T) {
