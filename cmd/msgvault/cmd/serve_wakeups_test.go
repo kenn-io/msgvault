@@ -47,6 +47,9 @@ func TestWakeupJobOnlyForUsableEntries(t *testing.T) {
 	assert.Nil(raw)
 	require.NoError(configureWakeupJob(t.Context(), sched, nil, st, cfg, nil))
 	assert.True(sched.IsJobScheduled("wakeups"))
+	_, raw, err = st.LoadWakeupState(t.Context(), "good")
+	require.NoError(err)
+	assert.NotNil(raw)
 }
 
 func TestWakeupJobLoadsRelativeSecret(t *testing.T) {

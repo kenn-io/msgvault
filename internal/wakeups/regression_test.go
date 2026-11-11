@@ -362,3 +362,71 @@ func TestEndpointFailuresAreIndependent(t *testing.T) {
 		})
 	}
 }
+
+func TestSetupInitializesBeforeFirstPass(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	base := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	seedWakeup(t, base, "old@example.com", 0, 1, now)
+	existing := store.WakeupState{At: now.Add(-time.Hour), Failures: 2, NextAttemptAt: now.Add(time.Hour)}
+	ok, err := base.AdvanceWakeupState(t.Context(), "existing", nil, existing)
+	require.NoError(err)
+	require.True(ok)
+	var deliveries []payload
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body payload
+		if json.NewDecoder(r.Body).Decode(&body) == nil {
+			deliveries = append(deliveries, body)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	st := &observedStore{Store: base, fixedBound: now.Add(-30 * time.Second)}
+	filter := changefeed.Filter{IncomingOnly: true}
+	engine := Engine{Store: st, Subscriptions: []Subscription{testSubscription(t, "new", server, filter), testSubscription(t, "existing", server, filter)}, Now: func() time.Time { return now }}
+	require.NoError(engine.GatedSetup(t.Context(), func() error { return engine.InitializeMissing(t.Context()) }))
+	assert.Empty(deliveries)
+	state, _, err := base.LoadWakeupState(t.Context(), "existing")
+	require.NoError(err)
+	assert.Equal(existing, state)
+	id := seedWakeup(t, base, "new@example.com", 0, 2, now.Add(45*time.Second))
+	st.fixedBound = now.Add(10 * time.Second)
+	require.NoError(engine.RunPass(t.Context()))
+	require.Len(deliveries, 1)
+	assert.Equal([]int64{id}, deliveries[0].Matched.MessageIDs)
+}
+
+func TestSetupInitializationFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		zero    bool
+		failure error
+	}{
+		{name: "zero bound", zero: true},
+		{name: "store error", failure: errors.New("private store detail")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := Assert.New(t)
+			require := Require.New(t)
+			base := testutil.NewTestStore(t)
+			st := &observedStore{Store: base, zeroBound: tc.zero, listErr: tc.failure}
+			engine := Engine{Store: st, Subscriptions: []Subscription{{Name: "new"}}}
+			err := engine.InitializeMissing(t.Context())
+			if tc.failure != nil {
+				require.ErrorIs(err, tc.failure)
+			} else {
+				require.NoError(err)
+			}
+			_, raw, err := base.LoadWakeupState(t.Context(), "new")
+			require.NoError(err)
+			assert.Nil(raw)
+			st.zeroBound, st.listErr = false, nil
+			st.fixedBound = time.Now().UTC()
+			require.NoError(engine.RunPass(t.Context()))
+			_, raw, err = base.LoadWakeupState(t.Context(), "new")
+			require.NoError(err)
+			assert.NotNil(raw)
+		})
+	}
+}

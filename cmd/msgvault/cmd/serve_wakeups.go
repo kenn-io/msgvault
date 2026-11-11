@@ -41,21 +41,29 @@ func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate ap
 		filter := wakeups.FilterFromConfig(entry)
 		subs = append(subs, wakeups.NewSubscription(entry.Name, entry.URL, key, filter, entry.MaxMessageAge, entry.Timeout, origin, addresses))
 	}
+	slices.SortFunc(subs, func(a, b wakeups.Subscription) int { return strings.Compare(a.Name, b.Name) })
+	engine := &wakeups.Engine{Store: st, Subscriptions: subs, Gate: beeperMediaGate(gate, "Wakeup state"), Logger: logger}
 	var pruned int
-	if err := (&wakeups.Engine{Gate: beeperMediaGate(gate, "Wakeup state")}).GatedSetup(ctx, func() error {
+	if err := engine.GatedSetup(ctx, func() error {
 		var err error
 		pruned, err = st.PruneWakeupStates(ctx, names)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := engine.InitializeMissing(ctx); err != nil {
+			if category := wakeups.StoreErrorCategory(err); category != "" {
+				logger.Warn("wakeup initialization unavailable", "category", category)
+			}
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
-	slices.SortFunc(subs, func(a, b wakeups.Subscription) int { return strings.Compare(a.Name, b.Name) })
 	if pruned > 0 {
 		logger.Info("wakeup states pruned", "count", pruned)
 	}
 	if len(subs) == 0 {
 		return nil
 	}
-	engine := &wakeups.Engine{Store: st, Subscriptions: subs, Gate: beeperMediaGate(gate, "Wakeup state"), Logger: logger}
 	return sched.AddJob(scheduler.Job{Name: "wakeups", Interval: 15 * time.Second, Background: true, Run: engine.RunPass})
 }

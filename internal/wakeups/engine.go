@@ -78,6 +78,51 @@ func (e *Engine) GatedSetup(ctx context.Context, fn func() error) error {
 	return e.gated(ctx, fn)
 }
 
+// initialHead shares one feed bound among missing subscriptions in a store step.
+type initialHead struct {
+	page store.ChangedMessagePage
+	read bool
+}
+
+func (e *Engine) initializeMissing(ctx context.Context, name string, head *initialHead) error {
+	if !head.read {
+		page, err := e.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
+		if err != nil {
+			return err
+		}
+		head.page, head.read = page, true
+	}
+	if head.page.CompleteThrough.IsZero() {
+		return nil
+	}
+	swapped, err := e.Store.AdvanceWakeupState(ctx, name, nil, store.WakeupState{At: head.page.CompleteThrough})
+	if err == nil && !swapped {
+		logger := e.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.Warn("wakeup state conflict", "name", name, "category", "state_conflict")
+	}
+	return err
+}
+
+// InitializeMissing initializes absent positions without delivering. The caller holds the setup gate.
+func (e *Engine) InitializeMissing(ctx context.Context) error {
+	var head initialHead
+	for _, sub := range e.Subscriptions {
+		_, raw, err := e.Store.LoadWakeupState(ctx, sub.Name)
+		if err != nil {
+			return err
+		}
+		if raw == nil {
+			if err := e.initializeMissing(ctx, sub.Name, &head); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func retryDelay(failures int) time.Duration {
 	d := 30 * time.Second
 	for i := 1; i < failures && d < time.Hour; i++ {
@@ -138,8 +183,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		logger = slog.Default()
 	}
 	pages := make(map[store.ChangedMessagesCursor]store.ChangedMessagePage)
-	var headPage store.ChangedMessagePage
-	headRead := false
+	var head initialHead
 	for _, sub := range e.Subscriptions {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -178,20 +222,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				since = store.ChangedMessagesAfter(state.At, state.AfterID)
 			}
 			if raw == nil {
-				if !headRead {
-					headPage, err = e.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
-					if err != nil {
-						return err
-					}
-					headRead = true
-				}
-				page = headPage
-				if page.CompleteThrough.IsZero() {
-					return nil
-				}
-				state.At = page.CompleteThrough
-				_, err = advance(nil)
-				return err
+				return e.initializeMissing(ctx, sub.Name, &head)
 			}
 			filter, err := changefeed.ResolveFilter(ctx, e.Store, sub.Filter)
 			if err != nil {
