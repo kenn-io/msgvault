@@ -10,12 +10,14 @@ const draftFromFlag = "from"
 
 func newDraftReplyCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "draft-reply <message-id>",
-		Short: "Create an IMAP or Gmail reply draft from an archived message",
-		Args:  cobra.ExactArgs(1),
+		Use:     "draft-reply <message-id>",
+		Short:   "Create a reply draft from an archived message",
+		Long:    "Create a managed reply draft from an archived message. The parent message determines the source; use --body for the text. This command prepares a draft and never sends it.",
+		Example: "  msgvault draft reply 55102 --body 'Thanks for the details.' --json",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !cmd.Flags().Changed("body") {
-				return usageErr(cmd, errDraftReplyBodyRequired)
+				return xCommandUsageErr(cmd, errDraftReplyBodyRequired, "run 'msgvault draft reply <message-id> --body <text>' to create a managed reply draft")
 			}
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		},

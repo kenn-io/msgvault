@@ -37,16 +37,13 @@ Start here:
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
-  msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
-  msgvault person --help
   msgvault daemon status
   msgvault setup status --json
 
 Output:
   --json: JSON stdout (export-messages: JSON Lines). Logs/progress: stderr.
   --log-level=warn quiets logs. Exit: 0 success, 1 error, 130 interrupted.
-  More: msgvault quickstart.`,
+`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)
 			if inv == nil {
@@ -318,6 +315,9 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // work without local configuration or a local daemon are permitted; all others
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
+	if isCanonicalDraftReplyCommand(cmd) {
+		return true
+	}
 	for ancestor := cmd; ancestor != nil; ancestor = ancestor.Parent() {
 		if ancestor.Name() == "calendar" {
 			return true
@@ -423,6 +423,7 @@ func executeRootContext(ctx context.Context, root *cobra.Command) error {
 	if root == nil {
 		return errors.New("nil root command")
 	}
+	ensureXCLICommandGroups(root)
 	ensureSilenceUsageWrapped(root)
 	inv := newInvocation()
 	root.SetContext(withInvocation(ctx, inv))

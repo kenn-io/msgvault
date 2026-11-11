@@ -1299,6 +1299,169 @@ func TestCopySubsetCopiesStoredSourceSyncTimeOnly(t *testing.T) {
 	}
 }
 
+func TestCopySubsetKeepsXSendAuthorityAndReceiptsTogether(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 1)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	sourceOpen := true
+	t.Cleanup(func() {
+		if sourceOpen {
+			require.NoError(source.Close())
+		}
+	})
+	_, err = source.DB().ExecContext(ctx, `UPDATE sources
+		SET source_type='x', identifier='1001' WHERE id=1`)
+	require.NoError(err)
+	postAt := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	selectedPost, err := source.PersistXPostContext(ctx, XPersistPostInput{
+		SourceID: 1, OwnerID: "1001", PostID: "101", AuthorID: "1002",
+		ConversationID: "100", EditHistory: []string{"100", "101"},
+		Text: "synthetic selected X post", CreatedAt: postAt,
+		FetchedAt: postAt.Add(time.Hour), Availability: "public",
+		Raw: []byte(`{"post":{"id":"101"}}`),
+		Author: &XAuthorInput{
+			SourceID: 1, UserID: "1002", Username: "example_author",
+			DisplayName: "Example Author", FetchedAt: postAt.Add(time.Hour),
+		},
+	})
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `INSERT INTO sources
+		(id, source_type, identifier) VALUES (2, 'x', '2002')`)
+	require.NoError(err)
+	_, err = source.PersistXPostContext(ctx, XPersistPostInput{
+		SourceID: 2, OwnerID: "2002", PostID: "900", AuthorID: "2003",
+		ConversationID: "900", EditHistory: []string{"900"},
+		Text: "synthetic omitted source post", CreatedAt: postAt.Add(-time.Hour),
+		FetchedAt: postAt, Availability: "public",
+		Raw: []byte(`{"post":{"id":"900"}}`),
+	})
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `INSERT INTO x_post_versions (
+		source_id, post_id, canonical_id, message_id, version_position,
+		availability, suppressed_at, suppression_reason
+	) VALUES (1, '102', '100', NULL, 2, 'protected', CURRENT_TIMESTAMP, 'protected')`)
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `INSERT INTO x_post_versions (
+		source_id, post_id, canonical_id, message_id, version_position,
+		availability, suppressed_at, suppression_reason
+	) VALUES (1, '103', '100', 1, 3, 'withheld', CURRENT_TIMESTAMP, 'withheld')`)
+	require.NoError(err)
+	// Source 1 also has an old alias whose message is outside the one-row
+	// subset and whose canonical chain is unrelated to the selected post.
+	_, err = source.DB().ExecContext(ctx, `INSERT INTO x_post_versions (
+		source_id, post_id, canonical_id, message_id, version_position,
+		availability, suppressed_at, suppression_reason
+	) VALUES (1, '901', '901', 1, 0, 'removed', CURRENT_TIMESTAMP, 'removed')`)
+	require.NoError(err)
+
+	state, err := source.LoadXControlContext(ctx, 1)
+	require.NoError(err)
+	generation := int64(2)
+	spend := []XSpendBucket{{Month: "2026-10", SpentMicros: 400_000, ReservedMicros: 200_000}}
+	reservations := []XReservation{{
+		ID: "reply-reservation", Kind: "create", Month: "2026-10",
+		AmountMicros: 200_000, State: "unknown",
+	}}
+	jobs := []XArchiveJob{{
+		ID: "archive-job", Fingerprint: "archive-job-fingerprint",
+		CapMicros: 900_000, SpentMicros: 300_000,
+	}}
+	state, err = source.UpdateXControlContext(ctx, 1, state.Revision, XControlPatch{
+		OwnerID: "1001", Generation: &generation, Jobs: &jobs,
+		SpendBuckets: &spend, Reservations: &reservations,
+	})
+	require.NoError(err)
+	require.NoError(validateXBudgetState(state))
+
+	bodyDigest := strings.Repeat("a", 64)
+	_, err = source.DB().ExecContext(ctx, `INSERT INTO x_reply_attempts (
+		draft_id, attempt_id, source_id, owner_id, credential_generation,
+		draft_revision, target_post_id, target_canonical_id,
+		source_conversation_id, body_digest, state, reservation_id,
+		reserved_micros
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"draft-uncertain", "attempt-uncertain", 1, "1001", generation,
+		3, "target-post", "target-canonical", "native-conversation", bodyDigest,
+		"remote_unknown", "reply-reservation", 200_000)
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `INSERT INTO x_reply_attempts (
+		draft_id, attempt_id, source_id, owner_id, credential_generation,
+		draft_revision, target_post_id, source_conversation_id, body_digest,
+		state, reservation_id
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"excluded-draft", "excluded-attempt", 2, "2002", 1,
+		1, "other-target", "other-conversation", bodyDigest,
+		"remote_unknown", "other-reservation")
+	require.NoError(err)
+	require.NoError(source.Close())
+	sourceOpen = false
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	copyResult, err := CopySubset(sourcePath, destinationDir, 1, false)
+	require.NoError(err)
+	assert.Equal(int64(1), copyResult.Messages)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+
+	copiedState, err := destination.LoadXControlContext(ctx, 1)
+	require.NoError(err)
+	assert.Equal(state, copiedState)
+	require.NoError(validateXBudgetState(copiedState))
+	copiedReceipt, err := destination.GetXReplyReceiptContext(ctx, "draft-uncertain")
+	require.NoError(err)
+	assert.Equal("remote_unknown", copiedReceipt.State)
+	assert.Equal("reply-reservation", copiedReceipt.ReservationID)
+	assert.Equal(int64(200_000), copiedReceipt.ReservedMicros)
+	var receiptCount int
+	require.NoError(destination.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM x_reply_attempts`).Scan(&receiptCount))
+	assert.Equal(1, receiptCount)
+	var copiedAliases int
+	require.NoError(destination.DB().QueryRowContext(ctx,
+		destination.Rebind(`SELECT COUNT(*) FROM x_post_versions
+		 WHERE source_id=1 AND post_id IN ('100','101') AND message_id=?`),
+		selectedPost.MessageID).Scan(&copiedAliases))
+	assert.Equal(2, copiedAliases, "both edit IDs must stay mapped to the selected message")
+	var idOnlySuppression int
+	require.NoError(destination.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM x_post_versions
+		 WHERE source_id=1 AND post_id='102' AND message_id IS NULL
+		   AND availability='protected' AND suppression_reason='protected'`).Scan(&idOnlySuppression))
+	assert.Equal(1, idOnlySuppression, "ID-only suppression in the selected canonical chain must survive")
+	var clearedOmittedReference int
+	require.NoError(destination.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM x_post_versions
+		 WHERE source_id=1 AND post_id='103' AND message_id IS NULL
+		   AND availability='withheld' AND suppression_reason='withheld'`).Scan(&clearedOmittedReference))
+	assert.Equal(1, clearedOmittedReference,
+		"selected-chain suppression survives without a reference to an omitted message")
+	var unrelatedAliases int
+	require.NoError(destination.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM x_post_versions WHERE post_id IN ('900','901')`).Scan(&unrelatedAliases))
+	assert.Zero(unrelatedAliases, "aliases outside selected sources or selected canonical chains must be omitted")
+
+	execution, err := destination.AcquireSyncExecutionContext(ctx, 1)
+	require.NoError(err)
+	work, err := destination.RemoveXPostContentContext(ctx, 1, "100", "removed")
+	require.NoError(err)
+	assert.Equal([]int64{selectedPost.MessageID}, work.MessageIDs,
+		"an older edit alias must find the copied message")
+	work.DerivedComplete = true
+	require.NoError(destination.FinishXRemovalContext(ctx, 1, work))
+	require.NoError(execution.Release())
+	body, err := destination.GetMessageBodyText(selectedPost.MessageID)
+	require.NoError(err)
+	assert.Empty(body)
+	var rawRows int
+	require.NoError(destination.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM message_raw WHERE message_id=?`, selectedPost.MessageID).Scan(&rawRows))
+	assert.Zero(rawRows, "removing through a copied edit alias must erase raw content too")
+}
+
 func TestCopySubsetPreservesSourceMessagingRouteFailure(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

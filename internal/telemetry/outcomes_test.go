@@ -108,11 +108,32 @@ func TestSyncFailureRegisteredSourceTypes(t *testing.T) {
 	stub := newWireStub(t)
 	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, testAPIKey, stub.server.URL, slog.Default())
 	defer func() { require.NoError(reporter.Close()) }()
-	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, pocket.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType, "facebook_comments", "instagram_comments"} {
+	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", "x", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, pocket.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType, "facebook_comments", "instagram_comments"} {
 		properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
 		assert.Equal(sourceType, properties["sync_source"], sourceType)
 	}
 	properties, err := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": "unregistered_synthetic_source"})
 	require.NoError(err)
 	assert.Equal("other", properties["sync_source"])
+}
+
+func TestXSyncFailureTelemetryKeepsOnlyBoundedProperties(t *testing.T) {
+	_testAssert := assert.New(t)
+
+	enableTelemetryEnv(t)
+	stub := newWireStub(t)
+	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, testAPIKey, stub.server.URL, slog.Default())
+	defer func() { require.NoError(t, reporter.Close()) }()
+	properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{
+		"sync_source": "x", "reason": "network", "owner_id": "1001",
+		"text": "Synthetic private content", "access_token": "synthetic-token",
+	})
+	_testAssert.Equal("x", properties["sync_source"])
+	_testAssert.Equal("network", properties["reason"])
+	for _, private := range []string{"owner_id", "text", "access_token"} {
+		_testAssert.NotContains(properties, private)
+	}
+	unknown, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": "x:1001", "reason": "provider text"})
+	_testAssert.Equal("other", unknown["sync_source"])
+	_testAssert.Equal("other", unknown["reason"])
 }

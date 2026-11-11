@@ -140,6 +140,9 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 		if from.SourceType != into.SourceType {
 			return invalidSourceMerge("source types must match")
 		}
+		if from.SourceType == "x" {
+			return invalidSourceMerge("X accounts cannot be merged; reconnect the same numeric owner to preserve history")
+		}
 		if from.MergedIntoSourceID != 0 || into.MergedIntoSourceID != 0 {
 			return ErrSourceRetired
 		}

@@ -121,6 +121,48 @@ func TestPostgresPersonMergeTableInventoryClassifiesEveryPersonReference(t *test
 	assertPersonMergeTableInventory(t, newPGStoreInternal(t))
 }
 
+const postgresPersonMergeReferenceQuery = `SELECT child.relname, columns.attname
+	FROM pg_catalog.pg_constraint constraints
+	JOIN pg_catalog.pg_namespace namespace ON namespace.oid = constraints.connamespace
+	JOIN pg_catalog.pg_class child ON child.oid = constraints.conrelid
+	JOIN pg_catalog.pg_class target ON target.oid = constraints.confrelid
+	CROSS JOIN LATERAL unnest(constraints.conkey) AS key(attnum)
+	JOIN pg_catalog.pg_attribute columns
+	  ON columns.attrelid = child.oid AND columns.attnum = key.attnum
+	WHERE constraints.contype = 'f'
+	  AND namespace.nspname = current_schema()
+	  AND target.relnamespace = namespace.oid
+	  AND target.relname = 'persons'
+	ORDER BY child.relname, columns.attname`
+
+func TestPostgresPersonMergeInventoryIncludesCompositeColumns(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	dbURL := skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t, dbURL)
+	_, err := st.db.Exec(`CREATE UNIQUE INDEX test_person_inventory_identity ON persons(id,vcard_uid)`)
+	require.NoError(err)
+	_, err = st.db.Exec(`CREATE TABLE test_person_inventory_composite (
+		person_id BIGINT,
+		person_uid TEXT,
+		FOREIGN KEY (person_id,person_uid) REFERENCES persons(id,vcard_uid)
+	)`)
+	require.NoError(err)
+	rows, err := st.db.Query(postgresPersonMergeReferenceQuery)
+	require.NoError(err)
+	defer func() { assert.NoError(rows.Close()) }()
+	var columns []string
+	for rows.Next() {
+		var table, column string
+		require.NoError(rows.Scan(&table, &column))
+		if table == "test_person_inventory_composite" {
+			columns = append(columns, column)
+		}
+	}
+	require.NoError(rows.Err())
+	assert.Equal([]string{"person_id", "person_uid"}, columns)
+}
+
 func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 	t.Helper()
 	require := require.New(t)
@@ -134,19 +176,7 @@ func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 		  AND foreign_key."table" = 'persons'
 		ORDER BY child.name, foreign_key."from"`
 	if st.IsPostgreSQL() {
-		query = `SELECT child.relname, columns.attname
-			FROM pg_catalog.pg_constraint constraints
-			JOIN pg_catalog.pg_namespace namespace ON namespace.oid = constraints.connamespace
-			JOIN pg_catalog.pg_class child ON child.oid = constraints.conrelid
-			JOIN pg_catalog.pg_class target ON target.oid = constraints.confrelid
-			CROSS JOIN LATERAL unnest(constraints.conkey) AS key(attnum)
-			JOIN pg_catalog.pg_attribute columns
-			  ON columns.attrelid = child.oid AND columns.attnum = key.attnum
-			WHERE constraints.contype = 'f'
-			  AND namespace.nspname = current_schema()
-			  AND target.relnamespace = namespace.oid
-			  AND target.relname = 'persons'
-			ORDER BY child.relname, columns.attname`
+		query = postgresPersonMergeReferenceQuery
 	}
 	rows, err := st.db.Query(query)
 	require.NoError(err)

@@ -485,8 +485,8 @@ func TestDaemonRestoreTargetCoordinatorPreservesVectorsWithoutPublication(t *tes
 	assert := assert.New(t)
 	target := t.TempDir()
 	databasePath := filepath.Join(target, "msgvault.db")
-	require.NoError(os.WriteFile(databasePath, []byte("current database"), 0o600),
-		"seed current database")
+	current := testutil.NewSQLiteTestStoreAt(t, databasePath)
+	require.NoError(current.Close(), "seed a readable existing archive")
 	customVectorPath := filepath.Join(t.TempDir(), "custom-vectors.db")
 	require.NoError(os.WriteFile(customVectorPath, []byte("current vectors"), 0o600),
 		"seed current vector backend")

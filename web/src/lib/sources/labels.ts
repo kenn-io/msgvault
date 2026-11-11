@@ -12,6 +12,7 @@ const SOURCE_TYPES: Readonly<Record<string, string>> = {
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
   eml: 'EML import', maildir: 'Maildir import', whatsapp: 'WhatsApp',
   apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger',
+  x: 'X',
   facebook_comments: 'Facebook Page comments',
   instagram_comments: 'Instagram comments',
   'google-groups': 'Google Groups'

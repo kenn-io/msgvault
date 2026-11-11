@@ -16,6 +16,7 @@ import (
 )
 
 type confirmationChallenge struct {
+	reply      *pendingReplyConfirmation
 	session    *sdkmcp.ServerSession
 	sessionKey string
 	digest     [32]byte
@@ -141,6 +142,7 @@ func (r toolRequest) confirmUserAction(ctx context.Context, message string) erro
 }
 
 type confirmationRequiredError struct {
+	reply  *pendingReplyConfirmation
 	params *sdkmcp.ElicitParams
 }
 

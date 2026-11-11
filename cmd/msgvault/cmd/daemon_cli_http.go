@@ -70,7 +70,7 @@ func runDaemonCLICommandHTTPWithEnv(
 	if err != nil {
 		return err
 	}
-	if api.IsCLIRunDraftCreate(args) || api.IsCLIRunDraftLifecycle(args) || api.IsCLIRunDraftSendAs(args) {
+	if api.IsCLIRunSendReply(args) || api.IsCLIRunDraftCreate(args) || api.IsCLIRunDraftLifecycle(args) || api.IsCLIRunDraftSendAs(args) {
 		cwd = ""
 	}
 
@@ -213,6 +213,16 @@ func daemonCLICommandPath(cmd *cobra.Command) []string {
 	}
 	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
 		parts[i], parts[j] = parts[j], parts[i]
+	}
+	switch strings.Join(parts, " ") {
+	case "source x add":
+		return []string{"add-x"}
+	case "source x sync":
+		return []string{"sync-x"}
+	case "draft reply":
+		return []string{"draft-reply"}
+	case "message reply":
+		return []string{"send-reply"}
 	}
 	return parts
 }

@@ -2287,6 +2287,8 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //     and cascade-reachable from sources — a real race before it was added here.
 //   - sync_checkpoints: written during authoritative IMAP apply and
 //     cascade-reachable from sources.
+//   - x_post_versions and x_reply_attempts: source-owned aliases and durable
+//     reply receipts whose writers are fenced during source removal.
 //   - imap_folder_state and imap_message_memberships: written after IMAP syncs
 //     and cascade-reachable from sources.
 //
@@ -2333,7 +2335,7 @@ var exclusiveLockTables = []string{
 	"source_merge_messages", "source_merge_archive_only_messages", "source_merge_conversations",
 	"source_merge_attachments", "source_merge_preserved_attachments",
 	"sync_operations",
-	"source_import_items", "sync_run_items", "sync_checkpoints",
+	"source_import_items", "sync_run_items", "sync_checkpoints", "x_post_versions", "x_reply_attempts",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
 	"loop_decisions", "loop_message_evidence",
 }

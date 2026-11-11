@@ -39,7 +39,7 @@ func (k RelatedValueKind) valid() bool {
 type RelationshipReviewStatus string
 
 const (
-	RelationshipReviewPending  RelationshipReviewStatus = "pending"
+	RelationshipReviewPending  RelationshipReviewStatus = statusPending
 	RelationshipReviewAccepted RelationshipReviewStatus = "accepted"
 	RelationshipReviewRejected RelationshipReviewStatus = "rejected"
 )

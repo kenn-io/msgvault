@@ -73,7 +73,7 @@ func (s *Store) PutEmlxLedgerItemsContext(ctx context.Context, items ...SourceIm
 	}
 	for _, item := range items {
 		if item.SourceID != items[0].SourceID || !isEmlxLedgerIdentity(item.Provider, item.ProviderID) ||
-			(item.Status != "pending" && item.Status != "imported") {
+			(item.Status != statusPending && item.Status != "imported") {
 			return errors.New("invalid EMLX ledger identity or status")
 		}
 	}

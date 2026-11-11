@@ -307,7 +307,7 @@ the daemon host.
 1. Find the parent email's local message ID with search, then create a reply:
 
     ```bash
-    msgvault draft-reply 123 --all --from you@example.com \
+    msgvault draft reply 123 --all --from you@example.com \
       --body 'Thanks for the update. I will review it tomorrow.' --json
     ```
 

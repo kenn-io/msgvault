@@ -186,9 +186,13 @@ var topLevelCommandGroups = map[string]string{
 	"update-account":          helpGroupSources,
 	"verify":                  helpGroupSources,
 	"version":                 helpGroupOperations,
+	"add-x":                   helpGroupSources,
+	"sync-x":                  helpGroupSources,
+	"send-reply":              helpGroupWrite,
 }
 
 func ensureHelpLayout(root *cobra.Command) {
+	ensureXCLICommandGroups(root)
 	if _, loaded := helpLayoutRoots.LoadOrStore(root, struct{}{}); loaded {
 		return
 	}
@@ -199,7 +203,7 @@ func ensureHelpLayout(root *cobra.Command) {
 		&cobra.Group{ID: helpGroupPeople, Title: "People, organizations, and identity:"},
 		&cobra.Group{ID: helpGroupSources, Title: "Add and sync sources:"},
 		&cobra.Group{ID: helpGroupImport, Title: "Import local exports:"},
-		&cobra.Group{ID: helpGroupWrite, Title: "Drafts, calendar, and Kata (write to providers):"},
+		&cobra.Group{ID: helpGroupWrite, Title: "Drafts, replies, calendar, and Kata:"},
 		&cobra.Group{ID: helpGroupDelete, Title: "Review and delete:"},
 		&cobra.Group{ID: helpGroupIndex, Title: "Indexes, embeddings, and analytics cache:"},
 		&cobra.Group{ID: helpGroupMaintenance, Title: "Maintenance and repair:"},

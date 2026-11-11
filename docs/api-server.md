@@ -166,7 +166,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.0.0**.
+it is separate from the binary release version. The current schema is **5.1.0**.
+
+Schema 5.1.0 adds X ingestion, source status, and owner-reviewed replies.
 
 Schema 5.0.0 changes `content_available` in file lists and suggestions from a
 boolean to a nullable boolean. A null value means storage has not been checked;
@@ -197,6 +199,8 @@ Schema 3.39.0 adds the optional `account` to staged deletion list summaries.
 Schema 3.38.0 adds exact sender and To participant identities to conversation windows and `kind` filters for canonical Email, Conversation, Event, Meeting, and Item entries. Conversation classification includes older chat messages whose stored message type is empty.
 
 Schema 3.35.0 adds `GET /api/v1/calendar/events`, which lists archived calendar occurrences in a window with repeating events expanded. `msgvault calendar events` requires a daemon supporting this schema.
+
+Schema 3.36.0 adds X ingestion and owner-only reply preparation and sending. X CLI dispatch and the `send_reply` MCP tool require this version or newer; older daemons return upgrade guidance before dispatch, and omit the tool.
 
 Schema 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity: `queued_at` in scheduler account and CardDAV status, `scheduler_queued_at` in Sources status, and CardDAV `scheduler_running`.
 

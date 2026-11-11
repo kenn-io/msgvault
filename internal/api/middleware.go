@@ -95,7 +95,7 @@ func CORSMiddleware(cfg CORSConfig) func(http.Handler) http.Handler {
 			case exact:
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				if cfg.AllowCredentials {
-					w.Header().Set("Access-Control-Allow-Credentials", "true")
+					w.Header().Set("Access-Control-Allow-Credentials", booleanTrueValue)
 				}
 			case allowAnyOrigin && origin != "":
 				w.Header().Set("Access-Control-Allow-Origin", "*")

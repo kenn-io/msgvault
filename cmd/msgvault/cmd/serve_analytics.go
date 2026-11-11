@@ -202,7 +202,10 @@ func startDaemonAnalyticsInitializer(
 	tracker scheduler.WorkTracker,
 ) *daemonAnalyticsInitHandle {
 	h := newDaemonAnalyticsInitHandle()
-	apiServer.SetAnalyticsInitializationActive(true)
+	// Begin and capture the content generation atomically with cleanup
+	// retirement, so either cleanup observes this initializer or it starts in
+	// the generation created by completed retirement.
+	generation := apiServer.BeginAnalyticsInitialization()
 	go func() {
 		logger := loggerFromContext(ctx)
 		defer close(h.done)
@@ -256,8 +259,11 @@ func startDaemonAnalyticsInitializer(
 				h.setError(err)
 				return
 			}
-			apiServer.SetAnalyticsEngine(engine, mode)
-			h.setSwapped()
+			if apiServer.SetAnalyticsEngineForGeneration(generation, engine, mode) {
+				h.setSwapped()
+			} else {
+				logger.Info("analytics initializer superseded by content cleanup")
+			}
 		} else if engine != nil {
 			// Auto mode returns a newly-created SQL fallback when maintenance
 			// fails or is disabled. Keep the original live engine installed so

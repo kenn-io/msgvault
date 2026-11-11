@@ -55,7 +55,7 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 		*r = *r.WithContext(context.WithValue(r.Context(), requestSecurityContextKey{}, security))
 		// Select timeout policy after admission. Keep Huma's request pointer in
 		// sync with the context and body passed through timeout and gate handling.
-		s.timeoutMiddleware(gate(http.HandlerFunc(func(_ http.ResponseWriter, timed *http.Request) {
+		s.timeoutMiddleware(gate(s.contentReadMiddleware(s.analyticsEngineMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, timed *http.Request) {
 			*r = *timed
 			if sourcescope.Restricted(r.Context()) {
 				release, apiErr := s.beginCallerRead(r)
@@ -66,7 +66,7 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 				defer release()
 			}
 			next(ctx)
-		}))).ServeHTTP(w, r)
+		}))))).ServeHTTP(w, r)
 	})
 	s.registerHumaRoutes(api, huma.NewGroup(api, "/api/v1"))
 	var h http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

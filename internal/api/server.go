@@ -256,6 +256,11 @@ type analyticsEngineContextKey struct{}
 type Server struct {
 	nativeMCP nativeMCPHandlers
 
+	contentReadGuard           func(context.Context) (func(), error)
+	contentAnalyticsMu         sync.Mutex
+	contentAnalyticsEngines    []*query.DuckDBEngine
+	contentAnalyticsRetired    bool
+	contentAnalyticsGeneration uint64
 	// statsSnapshots and accountCountSnapshots bound /stats and
 	// /cli/accounts latency under load (see snapshotCache). Background
 	// computations run on importContext, the server-lifetime context that
@@ -537,8 +542,12 @@ const (
 
 // ServerOptions configures the API server.
 type ServerOptions struct {
-	Config *config.Config
-	Store  MessageStore
+	// Clock supplies the existing handler clock; nil uses wall time.
+	Clock func() time.Time
+	// ContentReadGuard holds a read lease through the entire content response.
+	ContentReadGuard func(context.Context) (func(), error)
+	Config           *config.Config
+	Store            MessageStore
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
@@ -673,6 +682,8 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		daemonVersion:          opts.DaemonVersion,
 		idleTracker:            opts.IdleTracker,
 		operationGate:          opts.OperationGate,
+		contentReadGuard:       opts.ContentReadGuard,
+		clock:                  opts.Clock,
 		operationHistoryReader: opts.OperationHistoryReader,
 		importContext:          importContext,
 		cancelImports:          cancelImports,
@@ -712,6 +723,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		gmailProfileAddress:      opts.GmailProfileAddress,
 		started:                  make(chan struct{}),
 		readSnapshotSlots:        make(chan struct{}, readSnapshotConcurrency),
+	}
+	if duck, ok := opts.Engine.(*query.DuckDBEngine); ok {
+		s.contentAnalyticsEngines = append(s.contentAnalyticsEngines, duck)
 	}
 	s.analyticsState.Store(&analyticsEngineState{
 		engine: opts.Engine, mode: opts.AnalyticsMode,
@@ -796,6 +810,7 @@ func (s *Server) setupRouter() http.Handler {
 	// unauthenticated requests do not register as waiters.
 	var h http.Handler = mux
 	h = s.analyticsEngineMiddleware(h)
+	h = s.contentReadMiddleware(h)
 	h = operationGateMiddleware(s.operationGate, s.requestGateEligible)(h)
 	h = s.csrfMiddleware(h)
 	h = s.requestSecurityMiddleware(h)
@@ -1087,6 +1102,62 @@ func (s *Server) AnalyticsMode() string {
 // daemon-owned engines remain live until HTTP shutdown and background workers
 // have stopped.
 func (s *Server) SetAnalyticsEngine(engine query.Engine, mode string) {
+	s.contentAnalyticsMu.Lock()
+	defer s.contentAnalyticsMu.Unlock()
+	if s.contentAnalyticsRetired {
+		s.closeRejectedAnalyticsEngine(engine)
+		return
+	}
+	s.installAnalyticsEngineLocked(engine, mode)
+}
+
+// ContentAnalyticsGeneration identifies the current content-cleanup epoch.
+// An initializer captures it before opening an engine and may publish only if
+// cleanup has not advanced the generation in the meantime.
+func (s *Server) ContentAnalyticsGeneration() uint64 {
+	s.contentAnalyticsMu.Lock()
+	defer s.contentAnalyticsMu.Unlock()
+	return s.contentAnalyticsGeneration
+}
+
+// BeginAnalyticsInitialization publishes initialization activity and captures
+// its content generation as one transition. Cleanup retirement uses the same
+// mutex, so it either observes this worker as active or the worker captures the
+// generation after retirement.
+func (s *Server) BeginAnalyticsInitialization() uint64 {
+	s.contentAnalyticsMu.Lock()
+	defer s.contentAnalyticsMu.Unlock()
+	s.setAnalyticsInitializationActiveLocked(true)
+	return s.contentAnalyticsGeneration
+}
+
+// SetAnalyticsEngineForGeneration publishes an engine opened for the supplied
+// content epoch. Unlike the unversioned setter, it is also the only path that
+// may install a fresh engine after cleanup retired all earlier handles.
+func (s *Server) SetAnalyticsEngineForGeneration(generation uint64, engine query.Engine, mode string) bool {
+	s.contentAnalyticsMu.Lock()
+	defer s.contentAnalyticsMu.Unlock()
+	if generation != s.contentAnalyticsGeneration {
+		s.closeRejectedAnalyticsEngine(engine)
+		return false
+	}
+	s.installAnalyticsEngineLocked(engine, mode)
+	return true
+}
+
+func (s *Server) closeRejectedAnalyticsEngine(engine query.Engine) {
+	if duck, ok := engine.(*query.DuckDBEngine); ok {
+		if err := duck.Close(); err != nil {
+			s.logger.Error("close rejected content analytics", "error", err)
+		}
+	}
+}
+
+func (s *Server) installAnalyticsEngineLocked(engine query.Engine, mode string) {
+	if duck, ok := engine.(*query.DuckDBEngine); ok {
+		s.contentAnalyticsEngines = append(s.contentAnalyticsEngines, duck)
+	}
+
 	for {
 		current := s.currentAnalyticsState()
 		next := &analyticsEngineState{engine: engine, mode: mode}
@@ -1104,6 +1175,12 @@ func (s *Server) SetAnalyticsEngine(engine query.Engine, mode string) {
 // AnalyticsMode because auto mode keeps serving SQL-backed routes while that
 // work runs.
 func (s *Server) SetAnalyticsInitializationActive(active bool) {
+	s.contentAnalyticsMu.Lock()
+	defer s.contentAnalyticsMu.Unlock()
+	s.setAnalyticsInitializationActiveLocked(active)
+}
+
+func (s *Server) setAnalyticsInitializationActiveLocked(active bool) {
 	for {
 		current := s.currentAnalyticsState()
 		next := &analyticsEngineState{analyticsInitializationActive: active}
@@ -1128,15 +1205,25 @@ func (s *Server) AnalyticsInitializationActive() bool {
 // has shut down HTTP handling. If HTTP shutdown fails, the daemon skips this
 // call so a late request cannot use an engine while it is being closed.
 func (s *Server) CloseAnalyticsEngine() error {
+	s.contentAnalyticsMu.Lock()
+	defer s.contentAnalyticsMu.Unlock()
+	var closeErr error
+	for _, engine := range s.contentAnalyticsEngines {
+		closeErr = errors.Join(closeErr, engine.Close())
+	}
+	s.contentAnalyticsEngines = nil
 	state := s.analyticsState.Swap(&analyticsEngineState{})
 	var engine query.Engine
 	if state != nil {
 		engine = state.engine
 	}
 	if engine == nil {
-		return nil
+		return closeErr
 	}
-	return engine.Close()
+	if _, ok := engine.(*query.DuckDBEngine); ok {
+		return closeErr
+	}
+	return errors.Join(closeErr, engine.Close())
 }
 
 func (s *Server) requestUsesCLITimeoutPolicy(r *http.Request) bool {

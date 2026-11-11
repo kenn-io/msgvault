@@ -7,7 +7,7 @@ description: Common questions about msgvault, Gmail API safety, and what the too
 <p class="faq-question">Can msgvault send email or prepare a reply?</p>
 
 msgvault never sends email. For an IMAP source, an operator can grant access to
-one exact Drafts folder; `draft-reply` can then create a plain-text reply draft
+one exact Drafts folder; `draft reply` can then create a plain-text reply draft
 for review and sending in your usual mail application. The grant is disabled by
 default. See [IMAP drafts](usage/imap.md#drafts).
 

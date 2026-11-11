@@ -603,6 +603,7 @@ func (c SenderAuthConfig) Pins() map[int64][]string {
 }
 
 type Config struct {
+	X                  XConfig                   `toml:"x"`
 	RelayedSenders     []mime.RelayedSenderRule  `toml:"relayed_senders"`
 	SenderAuth         SenderAuthConfig          `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig  `toml:"conversation_policy"`
@@ -1159,6 +1160,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 				"forward slashes (C:/Games/msgvault) or single quotes ('C:\\Games\\msgvault')", err)
 		}
 		return nil, fmt.Errorf("decode config: %w", err)
+	}
+	cfg.X, err = decodeXConfig(content)
+	if err != nil {
+		return nil, err
 	}
 	if metadata.IsDefined("server", "bind_addr") {
 		cfg.bindSource = path
