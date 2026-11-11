@@ -286,6 +286,7 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 				<= excluded.observed_sequence`, personID, s.dialect.TimestampParam(request.CompletedAt), prepared.through, prepared.backfillMessageID)
 		return err
 	}
+	newAnchorNeedsReplay := false
 	if len(prepared.promises) > 0 {
 		generation, err := s.applyPreparedPersonFactGenerationTx(ctx, tx, prepared.generation)
 		if err != nil {
@@ -327,6 +328,9 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			if err != nil {
 				return fmt.Errorf("persist commitment lifecycle: %w", err)
 			}
+			newAnchorNeedsReplay = newAnchorNeedsReplay || slices.ContainsFunc(request.Commitment.Window.Sources, func(source peoplesweep.CommitmentSource) bool {
+				return source.Direction == p.source.Direction && source.EventTime.After(p.source.EventTime)
+			})
 		}
 	}
 	for _, f := range prepared.fulfilments {
@@ -354,13 +358,20 @@ func (s *Store) applyCommitmentSweepTx(ctx context.Context, tx *loggedTx, reques
 			return fmt.Errorf("persist commitment fulfilment: %w", err)
 		}
 	}
-	if prepared.anchorAfterID > 0 {
+	if prepared.anchorAfterID > 0 || newAnchorNeedsReplay {
+		anchorAfterID := prepared.anchorAfterID
+		anchors := request.Commitment.Window.Anchors
+		if anchorAfterID == 0 && len(anchors) > 0 {
+			anchorAfterID = anchors[len(anchors)-1].ID
+		}
+		// A new promise extracted from this batch could not be referenced by
+		// its provider response. Give it a chance to see the newer evidence.
 		_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers
 			(person_id, through_sequence, processed_at, backfill_message_id, anchor_after_id, anchor_through_sequence, anchor_backfill_id)
-			VALUES (?, 0, ?, ?, ?, ?, ?) ON CONFLICT (person_id) DO UPDATE SET
+			VALUES (?, 0, ?, 0, ?, ?, ?) ON CONFLICT (person_id) DO UPDATE SET
 			processed_at = excluded.processed_at, anchor_after_id = excluded.anchor_after_id,
 			anchor_through_sequence = excluded.anchor_through_sequence, anchor_backfill_id = excluded.anchor_backfill_id`,
-			personID, s.dialect.TimestampParam(request.CompletedAt), prepared.backfillMessageID, prepared.anchorAfterID, prepared.through, prepared.anchorBackfillID)
+			personID, s.dialect.TimestampParam(request.CompletedAt), anchorAfterID, prepared.through, prepared.anchorBackfillID)
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO person_commitment_frontiers (person_id, through_sequence, processed_at, backfill_message_id)
