@@ -149,45 +149,22 @@ func (s *Store) ListPersonSemanticDocumentsContext(
 // counterpart text. Editing either linked record therefore suppresses stale
 // hits for affected people until the scheduled person worker republishes them.
 // Organization membership and revision validation share the same snapshot.
-// The boolean reports whether the scope can contain any candidates.
 func (s *Store) ResolvePersonSemanticCandidatesContext(
 	ctx context.Context, candidates []PersonSemanticCandidate, organizationID int64,
-) ([]Person, bool, error) {
+) ([]Person, error) {
 	people := make([]Person, 0, len(candidates))
-	scopeHasMembers := organizationID == 0
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		var members map[int64]struct{}
-		if organizationID > 0 {
-			organization, err := getOrganizationTx(ctx, tx, organizationID)
-			if errors.Is(err, ErrOrganizationNotFound) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if organization.RetiredAt != nil || organization.MergedIntoID != nil {
-				return nil
-			}
-			employments, err := s.listAllEmploymentsContext(ctx, tx, EmploymentFilter{OrganizationID: organizationID, CurrentOnly: true})
-			if err != nil {
-				return fmt.Errorf("load organization employments: %w", err)
-			}
-			scopeHasMembers = len(employments) > 0
-			if !scopeHasMembers {
-				return nil
-			}
-			members = make(map[int64]struct{}, len(employments))
-			for _, employment := range employments {
-				members[employment.PersonID] = struct{}{}
-			}
-		}
 		allowed, err := s.loadPersonSemanticAttributeDefinitionsTx(ctx, tx)
 		if err != nil {
 			return err
 		}
 		for _, candidate := range candidates {
-			if members != nil {
-				if _, ok := members[candidate.PersonID]; !ok {
+			if organizationID > 0 {
+				var member bool
+				if err := tx.QueryRowContext(ctx, `SELECT `+s.currentOrganizationMembershipSQL("?"), candidate.PersonID, organizationID).Scan(&member); err != nil {
+					return fmt.Errorf("check organization membership: %w", err)
+				}
+				if !member {
 					continue
 				}
 			}
@@ -211,7 +188,29 @@ func (s *Store) ResolvePersonSemanticCandidatesContext(
 		}
 		return nil
 	})
-	return people, scopeHasMembers, err
+	return people, err
+}
+
+// CurrentOrganizationMemberIDsContext returns the saved people with current
+// employment at the active canonical organization.
+func (s *Store) CurrentOrganizationMemberIDsContext(ctx context.Context, organizationID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT person.id FROM persons person WHERE `+s.currentOrganizationMembershipSQL("person.id")+` ORDER BY person.id`, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("list organization members: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan organization member: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate organization members: %w", err)
+	}
+	return ids, nil
 }
 
 func (s *Store) loadPersonSemanticSnapshotTx(

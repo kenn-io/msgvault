@@ -174,7 +174,7 @@ func (b *Backend) DeletePersonsNotIn(ctx context.Context, gen vector.GenerationI
 
 // SearchPeople searches only person-owned vectors and returns their published
 // revisions for read-time source revalidation.
-func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, queryVec []float32, k int) ([]vector.PersonHit, error) {
+func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, queryVec []float32, k int, personIDs []int64) ([]vector.PersonHit, error) {
 	if len(queryVec) == 0 {
 		return nil, errors.New("person search: empty query vector")
 	}
@@ -192,20 +192,26 @@ func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, que
 	// Materialize the requested generation before ranking so the bounded
 	// curated corpus is ranked exactly. The person HNSW compatibility index is
 	// retained for a future ANN path, but correctness does not rely on it.
+	scope := ""
+	args := []any{vectorLiteral(queryVec), int64(gen), k}
+	if personIDs != nil {
+		scope = "AND person_id = ANY($4)"
+		args = append(args, personIDs)
+	}
 	q := fmt.Sprintf(`
 		WITH generation_candidates AS MATERIALIZED (
 			SELECT person_id, published_revision, embedding
 			  FROM person_embeddings
 			 WHERE generation_id = $2
 			   AND dimension = %[1]d
-			   AND embedding IS NOT NULL
+			   AND embedding IS NOT NULL %[2]s
 		)
 		SELECT person_id, published_revision,
 		       (embedding::vector(%[1]d)) <=> $1::vector AS distance
 		  FROM generation_candidates
 		 ORDER BY distance, person_id
-		 LIMIT $3`, dim)
-	rows, err := b.db.QueryContext(ctx, q, vectorLiteral(queryVec), int64(gen), k)
+		 LIMIT $3`, dim, scope)
+	rows, err := b.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search person vectors: %w", err)
 	}

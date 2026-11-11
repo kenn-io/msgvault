@@ -377,7 +377,7 @@ func TestResolvePersonSemanticCandidatesReturnsOnlyCurrentRootsInCandidateOrder(
 	require.NoError(err)
 	require.NoError(f.Store.DeletePersonContext(ctx, deletedID, deleted.Revision))
 
-	people, _, err := f.Store.ResolvePersonSemanticCandidatesContext(ctx, []store.PersonSemanticCandidate{
+	people, err := f.Store.ResolvePersonSemanticCandidatesContext(ctx, []store.PersonSemanticCandidate{
 		{PersonID: emptyPerson.ID, Revision: emptyDocument.Revision},
 		{PersonID: lastID, Revision: lastDocument.Revision},
 		{PersonID: secondID, Revision: secondDocument.Revision},
@@ -422,7 +422,7 @@ func TestPersonSemanticScanFailsButResolverSkipsOneUnrenderablePerson(t *testing
 	require.ErrorContains(err, "incomplete record reference")
 	assert.Empty(documents)
 
-	people, _, err := f.Store.ResolvePersonSemanticCandidatesContext(ctx, []store.PersonSemanticCandidate{
+	people, err := f.Store.ResolvePersonSemanticCandidatesContext(ctx, []store.PersonSemanticCandidate{
 		{PersonID: badID, Revision: "unrenderable"},
 		{PersonID: goodID, Revision: goodDocument.Revision},
 	}, 0)
@@ -523,7 +523,7 @@ func TestResolvePersonSemanticCandidatesInOrganizationRevalidatesMembershipAndRe
 		}
 		must.NoError(err)
 	}
-	people, hasMembers, err := st.ResolvePersonSemanticCandidatesContext(ctx, candidates, org.ID)
+	people, err := st.ResolvePersonSemanticCandidatesContext(ctx, candidates, org.ID)
 	must.NoError(err)
 	var got []int64
 	for _, person := range people {
@@ -531,12 +531,10 @@ func TestResolvePersonSemanticCandidatesInOrganizationRevalidatesMembershipAndRe
 		check.NotEmpty(person.VCardUID)
 	}
 	check.Equal(want, got)
-	check.True(hasMembers)
 	empty := mustOrganization(t, st, "Empty Semantic Company")
 	for _, id := range []int64{empty.ID, 999999} {
-		people, hasMembers, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, id)
+		people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, id)
 		must.NoError(err)
-		check.False(hasMembers)
 		check.Empty(people)
 	}
 	// Current revisions after retirement must still be rejected by membership.
@@ -552,9 +550,8 @@ func TestResolvePersonSemanticCandidatesInOrganizationRevalidatesMembershipAndRe
 		must.NoError(err)
 		candidates[i].Revision = doc.Revision
 	}
-	people, hasMembers, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, org.ID)
+	people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, org.ID)
 	must.NoError(err)
-	check.False(hasMembers)
 	check.Empty(people)
 }
 
@@ -580,10 +577,10 @@ func TestResolvePersonSemanticCandidatesInOrganizationIgnoresIdenticalRenderedCo
 	must.NoError(err)
 	must.Equal(doc.Revision, current.Revision, "membership changed without a text change")
 	candidates := []store.PersonSemanticCandidate{{PersonID: id, Revision: doc.Revision}}
-	people, _, err := st.ResolvePersonSemanticCandidatesContext(ctx, candidates, first.ID)
+	people, err := st.ResolvePersonSemanticCandidatesContext(ctx, candidates, first.ID)
 	must.NoError(err)
 	check.Empty(people)
-	people, _, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, second.ID)
+	people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, second.ID)
 	must.NoError(err)
 	must.Len(people, 1)
 	check.Equal(id, people[0].ID)
@@ -596,10 +593,10 @@ func TestResolvePersonSemanticCandidatesInOrganizationIgnoresIdenticalRenderedCo
 	current, err = st.LoadPersonSemanticDocumentContext(ctx, id)
 	must.NoError(err)
 	candidates[0].Revision = current.Revision
-	people, _, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, second.ID)
+	people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, second.ID)
 	must.NoError(err)
 	check.Empty(people, "a merged numeric scope must never redirect")
-	people, _, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, first.ID)
+	people, err = st.ResolvePersonSemanticCandidatesContext(ctx, candidates, first.ID)
 	must.NoError(err)
 	must.Len(people, 1)
 	check.Equal(id, people[0].ID)

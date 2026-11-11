@@ -301,6 +301,7 @@ func TestOrganizationListQueryRequiresDiscoverySchema(t *testing.T) {
 	}{
 		{"old query", "5.0.0", []string{"--query", "Coop", "--json"}, false},
 		{"old plain list", "5.0.0", []string{"--json"}, true},
+		{"old blank query", "5.0.0", []string{"--query", "  ", "--json"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)

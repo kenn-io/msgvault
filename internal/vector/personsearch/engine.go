@@ -68,7 +68,8 @@ type Backend interface {
 type Store interface {
 	ResolvePersonSemanticCandidatesContext(
 		ctx context.Context, candidates []store.PersonSemanticCandidate, organizationID int64,
-	) ([]store.Person, bool, error)
+	) ([]store.Person, error)
+	CurrentOrganizationMemberIDsContext(ctx context.Context, organizationID int64) ([]int64, error)
 }
 
 // QueryEmbedder embeds one free-text query.
@@ -146,6 +147,16 @@ func (e *Engine) Search(ctx context.Context, query string, limit int, organizati
 			}
 		}
 	}
+	var personIDs []int64
+	if organizationID > 0 {
+		personIDs, err = e.store.CurrentOrganizationMemberIDsContext(ctx, organizationID)
+		if err != nil {
+			return nil, fmt.Errorf("list organization members: %w", err)
+		}
+		if len(personIDs) == 0 {
+			return nil, nil
+		}
+	}
 	queryVector, err := e.embedder.EmbedQuery(ctx, query)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -157,7 +168,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit int, organizati
 	seen := make(map[store.PersonSemanticCandidate]struct{})
 	valid := make(map[store.PersonSemanticCandidate]struct{})
 	for {
-		hits, err := e.backend.SearchPeople(ctx, active.ID, queryVector, searchLimit)
+		hits, err := e.backend.SearchPeople(ctx, active.ID, queryVector, searchLimit, personIDs)
 		if err != nil {
 			return nil, fmt.Errorf("search person corpus: %w", err)
 		}
@@ -189,7 +200,7 @@ func (e *Engine) Search(ctx context.Context, query string, limit int, organizati
 					finalCandidates = append(finalCandidates, candidate)
 				}
 			}
-			people, _, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, finalCandidates, organizationID)
+			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, finalCandidates, organizationID)
 			if err != nil {
 				return nil, fmt.Errorf("resolve final person search hits: %w", err)
 			}
@@ -198,12 +209,9 @@ func (e *Engine) Search(ctx context.Context, query string, limit int, organizati
 		hadValidCandidates := len(valid) > 0
 		var newlyResolved []store.Person
 		if len(newCandidates) > 0 {
-			people, scopeHasMembers, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, newCandidates, organizationID)
+			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, newCandidates, organizationID)
 			if err != nil {
 				return nil, fmt.Errorf("resolve current person search hits: %w", err)
-			}
-			if !scopeHasMembers {
-				return nil, nil
 			}
 			candidateByID := make(map[int64]store.PersonSemanticCandidate, len(newCandidates))
 			for _, candidate := range newCandidates {
@@ -228,12 +236,9 @@ func (e *Engine) Search(ctx context.Context, query string, limit int, organizati
 			if !hadValidCandidates {
 				return personResultsInHitOrder(hits, newlyResolved, limit), nil
 			}
-			people, scopeHasMembers, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, currentCandidates, organizationID)
+			people, err := e.store.ResolvePersonSemanticCandidatesContext(ctx, currentCandidates, organizationID)
 			if err != nil {
 				return nil, fmt.Errorf("revalidate final person search hits: %w", err)
-			}
-			if !scopeHasMembers {
-				return nil, nil
 			}
 			results := personResultsInHitOrder(hits, people, limit)
 			if len(results) == limit {

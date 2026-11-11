@@ -33,11 +33,6 @@ var organizationListCmd = &cobra.Command{Use: cmdUseList, Short: "List curated o
 		return err
 	}
 	defer func() { _ = client.Close() }()
-	if strings.TrimSpace(organizationQuery) != "" && cmd.Flags().Changed("query") {
-		if err := client.RequirePersonDiscovery(cmd.Context()); err != nil {
-			return err
-		}
-	}
 	query := &generated.ListOrganizationsQuery{}
 	if cmd.Flags().Changed("limit") {
 		query.Limit = &organizationLimit
@@ -46,6 +41,11 @@ var organizationListCmd = &cobra.Command{Use: cmdUseList, Short: "List curated o
 		query.Offset = &organizationOffset
 	}
 	if cmd.Flags().Changed("query") {
+		if strings.TrimSpace(organizationQuery) != "" {
+			if err := client.RequirePersonDiscovery(cmd.Context()); err != nil {
+				return err
+			}
+		}
 		query.Q = &organizationQuery
 	}
 	if cmd.Flags().Changed("include-retired") {

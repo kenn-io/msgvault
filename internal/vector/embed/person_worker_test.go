@@ -161,7 +161,7 @@ func (b *personWorkerBackend) DeletePersonsNotIn(
 }
 
 func (b *personWorkerBackend) SearchPeople(
-	context.Context, vector.GenerationID, []float32, int,
+	context.Context, vector.GenerationID, []float32, int, []int64,
 ) ([]vector.PersonHit, error) {
 	return nil, errors.New("not implemented")
 }

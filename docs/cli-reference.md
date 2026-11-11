@@ -3762,6 +3762,7 @@ msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor
 | `--last-contact-before <date>` | absent | Inclusive upper bound, `YYYY-MM-DD` or RFC3339 |
 | `--sort <order>` | `last_contact_desc` | `name`, `last_contact_desc`, or `last_contact_asc` |
 | `--cursor <cursor>` | absent | Opaque `next_cursor` from the previous page |
+| `--limit <count>` | `50` | Maximum rows per page; the daemon caps it at 100 |
 | `--json` | `false` | Output the full Directory page envelope |
 
 Date-only bounds mean midnight UTC on that date. RFC3339 bounds accept offsets and fractional seconds. Both bounds include the specified instant, so `--last-contact-before 2026-07-01` includes midnight at the start of July 1. Use a timestamp when you need a different cutoff.

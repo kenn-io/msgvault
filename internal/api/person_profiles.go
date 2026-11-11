@@ -394,7 +394,7 @@ func directoryPeopleQuery(values url.Values) (store.DirectoryPeopleQuery, error)
 	}
 	if value := strings.TrimSpace(values.Get("organization_id")); value != "" {
 		id, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || id < 0 {
+		if err != nil {
 			return store.DirectoryPeopleQuery{}, fmt.Errorf("%w: organization_id must be a nonnegative integer", store.ErrInvalidDirectoryQuery)
 		}
 		query.OrganizationID = id

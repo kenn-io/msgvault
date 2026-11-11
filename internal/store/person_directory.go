@@ -301,6 +301,14 @@ func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query
 	return verified, nil
 }
 
+func (s *Store) currentOrganizationMembershipSQL(personID string) string {
+	return `EXISTS (SELECT 1 FROM employments employment
+		JOIN organizations organization ON organization.id = employment.organization_id
+		WHERE employment.person_id = ` + personID + ` AND employment.organization_id = ?
+		AND ` + s.dialect.BoolTrueExpr("employment.is_current") + `
+		AND organization.retired_at IS NULL AND organization.merged_into_id IS NULL)`
+}
+
 func (s *Store) directoryCandidateProjectionSQL(query normalizedDirectoryPeopleQuery) (string, []any) {
 	where, filterArgs := []string{}, []any{}
 	if query.contactState != "" {
@@ -322,11 +330,7 @@ func (s *Store) directoryCandidateProjectionSQL(query normalizedDirectoryPeopleQ
 		where, filterArgs = append(where, `EXISTS (SELECT 1 FROM directory_person_filters filter WHERE filter.person_id = dp.person_id AND filter.filter_kind = 'organization' AND filter.value_key = ?)`), append(filterArgs, directoryKey(query.organization))
 	}
 	if query.organizationID > 0 {
-		where = append(where, `EXISTS (SELECT 1 FROM employments employment
-			JOIN organizations organization ON organization.id = employment.organization_id
-			WHERE employment.person_id = dp.person_id AND employment.organization_id = ?
-			AND `+s.dialect.BoolTrueExpr("employment.is_current")+`
-			AND organization.retired_at IS NULL AND organization.merged_into_id IS NULL)`)
+		where = append(where, s.currentOrganizationMembershipSQL("dp.person_id"))
 		filterArgs = append(filterArgs, query.organizationID)
 	}
 	filterSQL := "1 = 1"

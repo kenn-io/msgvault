@@ -20,7 +20,7 @@ func newPersonDirectoryCommand() *cobra.Command {
 	var after, before, sort, cursor, queryText, address string
 	var jsonOutput bool
 	var organization, category, contactState string
-	var organizationID int64
+	var organizationID, limit int64
 	command := &cobra.Command{
 		Use:   "directory",
 		Short: "Find saved people by name, address, or last contact",
@@ -37,6 +37,9 @@ Filters combine to narrow the existing Directory page.`,
 			query, err := personDirectoryQuery(cmd, after, before, sort, cursor, queryText, address)
 			if err != nil {
 				return err
+			}
+			if cmd.Flags().Changed("limit") {
+				query.Limit = &limit
 			}
 			if organizationID != 0 {
 				query.OrganizationID = &organizationID
@@ -71,6 +74,7 @@ Filters combine to narrow the existing Directory page.`,
 			return writePersonDirectoryPage(cmd, response.JSON200, jsonOutput)
 		},
 	}
+	command.Flags().Int64Var(&limit, "limit", 50, "Maximum rows per page (daemon default 50, maximum 100)")
 	command.Flags().Int64Var(&organizationID, "organization-id", 0, "Exact canonical organization ID; current employment only")
 	command.Flags().StringVar(&organization, "organization", "", "Current canonical organization name")
 	command.Flags().StringVar(&category, "category", "", "Current person category")

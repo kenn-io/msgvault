@@ -69,7 +69,7 @@ func TestPersonBackend_CreateGenerationSupportsNonDefaultDimension(t *testing.T)
 	require.NoError(t, b.UpsertPersons(ctx, gen, []vector.PersonEmbedding{{
 		PersonID: 70, Revision: "rev-7", Vector: unitVec(7, 6),
 	}}))
-	hits, err := b.SearchPeople(ctx, gen, unitVec(7, 6), 1)
+	hits, err := b.SearchPeople(ctx, gen, unitVec(7, 6), 1, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, int64(70), hits[0].PersonID)
@@ -91,7 +91,7 @@ func TestPersonBackend_PublishSearchReplaceReconcile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[int64]string{10: "rev-a", 20: "rev-b"}, revisions)
 
-	hits, err := b.SearchPeople(ctx, gen, unitVec(4, 0), 2)
+	hits, err := b.SearchPeople(ctx, gen, unitVec(4, 0), 2, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 2)
 	assert.Equal(t, int64(10), hits[0].PersonID)
@@ -99,11 +99,16 @@ func TestPersonBackend_PublishSearchReplaceReconcile(t *testing.T) {
 	assert.Equal(t, 1, hits[0].Rank)
 	assert.Equal(t, int64(20), hits[1].PersonID)
 	assert.Equal(t, 2, hits[1].Rank)
+	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 0), 1, []int64{20})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, int64(20), hits[0].PersonID)
+	assert.Equal(t, "rev-b", hits[0].Revision)
 
 	require.NoError(t, b.UpsertPersons(ctx, gen, []vector.PersonEmbedding{
 		{PersonID: 10, Revision: "rev-c", Vector: unitVec(4, 2)},
 	}))
-	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 2)
+	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 2, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 2)
 	assert.Equal(t, int64(10), hits[0].PersonID)
@@ -113,7 +118,7 @@ func TestPersonBackend_PublishSearchReplaceReconcile(t *testing.T) {
 	revisions, err = b.ListPersonRevisions(ctx, gen)
 	require.NoError(t, err)
 	assert.Equal(t, map[int64]string{20: "rev-b"}, revisions)
-	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 10)
+	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 10, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, int64(20), hits[0].PersonID)
@@ -152,7 +157,7 @@ func TestPersonBackend_SearchCompletenessIsGenerationBounded(t *testing.T) {
 	}
 	require.NoError(t, b.UpsertPersons(ctx, building, buildingPeople))
 
-	hits, err := b.SearchPeople(ctx, serving, unitVec(4, 0), 5)
+	hits, err := b.SearchPeople(ctx, serving, unitVec(4, 0), 5, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 5)
 	assert.Equal(t, []int64{101, 102, 103, 104, 105}, []int64{
@@ -174,7 +179,7 @@ func TestPersonBackend_TerminalRevisionIsCoveredButNotSearchable(t *testing.T) {
 	rejected, err := b.CountRejectedPersons(ctx, gen)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), rejected)
-	hits, err := b.SearchPeople(ctx, gen, unitVec(4, 0), 10)
+	hits, err := b.SearchPeople(ctx, gen, unitVec(4, 0), 10, nil)
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	assert.Equal(t, int64(1), hits[0].PersonID)
@@ -187,7 +192,7 @@ func TestPersonBackend_TerminalRevisionIsCoveredButNotSearchable(t *testing.T) {
 	rejected, err = b.CountRejectedPersons(ctx, gen)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), rejected)
-	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 0), 10)
+	hits, err = b.SearchPeople(ctx, gen, unitVec(4, 0), 10, nil)
 	require.NoError(t, err)
 	assert.Empty(t, hits, "terminal replacement must remove the old searchable vector")
 }
@@ -208,7 +213,7 @@ func TestPersonBackend_ErrorsAndRetirement(t *testing.T) {
 		PersonID: 1, Revision: "rev", Vector: unitVec(3, 0),
 	}})
 	require.ErrorIs(t, err, vector.ErrDimensionMismatch)
-	_, err = b.SearchPeople(ctx, gen, unitVec(3, 0), 1)
+	_, err = b.SearchPeople(ctx, gen, unitVec(3, 0), 1, nil)
 	require.ErrorIs(t, err, vector.ErrDimensionMismatch)
 
 	require.NoError(t, b.UpsertPersons(ctx, gen, []vector.PersonEmbedding{{
@@ -219,7 +224,7 @@ func TestPersonBackend_ErrorsAndRetirement(t *testing.T) {
 		PersonID: 2, Revision: "rev", Vector: unitVec(4, 0),
 	}})
 	require.ErrorIs(t, err, vector.ErrGenerationRetired)
-	_, err = b.SearchPeople(ctx, gen, unitVec(4, 0), 1)
+	_, err = b.SearchPeople(ctx, gen, unitVec(4, 0), 1, nil)
 	require.ErrorIs(t, err, vector.ErrGenerationRetired)
 	_, err = b.ListPersonRevisions(ctx, gen)
 	require.ErrorIs(t, err, vector.ErrGenerationRetired)
@@ -269,7 +274,7 @@ func TestPersonBackend_MessageIDCollisionIsIsolated(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, messageHits, 1)
 	assert.Equal(t, int64(1), messageHits[0].MessageID)
-	personHits, err := b.SearchPeople(ctx, gen, unitVec(4, 1), 1)
+	personHits, err := b.SearchPeople(ctx, gen, unitVec(4, 1), 1, nil)
 	require.NoError(t, err)
 	require.Len(t, personHits, 1)
 	assert.Equal(t, int64(1), personHits[0].PersonID)
@@ -284,7 +289,7 @@ func TestPersonBackend_MessageIDCollisionIsIsolated(t *testing.T) {
 		PersonID: 1, Revision: "person-rev-2", Vector: unitVec(4, 2),
 	}}))
 	require.NoError(t, b.Delete(ctx, gen, []int64{1}))
-	personHits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 1)
+	personHits, err = b.SearchPeople(ctx, gen, unitVec(4, 2), 1, nil)
 	require.NoError(t, err)
 	require.Len(t, personHits, 1)
 	assert.Equal(t, "person-rev-2", personHits[0].Revision)

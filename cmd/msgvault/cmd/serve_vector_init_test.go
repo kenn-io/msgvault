@@ -59,7 +59,7 @@ type vectorInitPersonBackend struct {
 }
 
 func (b *vectorInitPersonBackend) SearchPeople(
-	context.Context, vector.GenerationID, []float32, int,
+	context.Context, vector.GenerationID, []float32, int, []int64,
 ) ([]vector.PersonHit, error) {
 	return nil, errors.New("synthetic installed person engine reached")
 }
@@ -68,8 +68,12 @@ type vectorInitPersonStore struct{}
 
 func (vectorInitPersonStore) ResolvePersonSemanticCandidatesContext(
 	context.Context, []store.PersonSemanticCandidate, int64,
-) ([]store.Person, bool, error) {
-	return nil, true, nil
+) ([]store.Person, error) {
+	return nil, nil
+}
+
+func (vectorInitPersonStore) CurrentOrganizationMemberIDsContext(context.Context, int64) ([]int64, error) {
+	return nil, nil
 }
 
 type vectorInitPersonEmbedder struct{}

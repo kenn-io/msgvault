@@ -300,7 +300,7 @@ func (b *Backend) DeletePersonsNotIn(ctx context.Context, gen vector.GenerationI
 
 // SearchPeople searches only person-owned vectors and returns their published
 // revisions for read-time source revalidation.
-func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, queryVec []float32, k int) ([]vector.PersonHit, error) {
+func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, queryVec []float32, k int, personIDs []int64) ([]vector.PersonHit, error) {
 	if len(queryVec) == 0 {
 		return nil, errors.New("person search: empty query vector")
 	}
@@ -334,19 +334,27 @@ func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, que
 	searchLimit := min(k, count)
 	queryBlob := float32SliceBlob(queryVec)
 	args := []any{int64(gen), queryBlob, searchLimit}
-	if searchLimit > personVec0KNNLimit {
-		// Scoped widening must reach every candidate, including people beyond
-		// vec0's KNN ceiling. Rank the existing generation's vectors directly
-		// with the same cosine distance and person-ID tie ordering.
+	if personIDs != nil || searchLimit > personVec0KNNLimit {
+		// Rank scoped members and searches beyond vec0's ceiling directly.
+		scope := ""
+		args = []any{queryBlob, int64(gen), int64(gen)}
+		if personIDs != nil {
+			encoded, err := json.Marshal(personIDs)
+			if err != nil {
+				return nil, fmt.Errorf("encode person ids: %w", err)
+			}
+			scope = "AND p.person_id IN (SELECT value FROM json_each(?))"
+			args = append(args, string(encoded))
+		}
 		q = fmt.Sprintf(`
 			SELECT p.person_id, p.published_revision,
 			       vec_distance_cosine(v.embedding, ?) AS distance
 			  FROM %s v
 			  JOIN person_embeddings p ON p.embedding_id = v.embedding_id
-			 WHERE v.generation_id = ? AND p.generation_id = ?
+			 WHERE v.generation_id = ? AND p.generation_id = ? %s
 			 ORDER BY distance, p.person_id
-			 LIMIT ?`, PersonVectorTableName(dim))
-		args = []any{queryBlob, int64(gen), int64(gen), searchLimit}
+			 LIMIT ?`, PersonVectorTableName(dim), scope)
+		args = append(args, searchLimit)
 	}
 	rows, err := b.db.QueryContext(ctx, q, args...)
 	if err != nil {

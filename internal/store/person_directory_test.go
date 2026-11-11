@@ -480,6 +480,9 @@ func TestDirectoryOrganizationScopeExcludesInactiveMembership(t *testing.T) {
 	page, err := st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{OrganizationID: org.ID})
 	must.NoError(err)
 	must.Len(page.People, 1)
+	ids, err := st.CurrentOrganizationMemberIDsContext(ctx, org.ID)
+	must.NoError(err)
+	check.Equal([]int64{page.People[0].ID}, ids)
 	// Retirement and merge IDs are not redirects to active membership.
 	org, err = st.GetOrganizationContext(ctx, org.ID)
 	must.NoError(err)
@@ -488,6 +491,9 @@ func TestDirectoryOrganizationScopeExcludesInactiveMembership(t *testing.T) {
 	page, err = st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{OrganizationID: org.ID})
 	must.NoError(err)
 	check.Empty(page.People)
+	ids, err = st.CurrentOrganizationMemberIDsContext(ctx, org.ID)
+	must.NoError(err)
+	check.Empty(ids)
 	org, err = st.ReplaceOrganizationContext(ctx, org.ID, org.Revision, store.OrganizationInput{Name: org.Name, Kind: org.Kind}, false)
 	must.NoError(err)
 	survivor := mustOrganization(t, st, "Surviving Company")
@@ -497,6 +503,9 @@ func TestDirectoryOrganizationScopeExcludesInactiveMembership(t *testing.T) {
 		page, err = st.DirectoryPeoplePageContext(ctx, store.DirectoryPeopleQuery{OrganizationID: id})
 		must.NoError(err)
 		check.Empty(page.People)
+		ids, err = st.CurrentOrganizationMemberIDsContext(ctx, id)
+		must.NoError(err)
+		check.Empty(ids)
 	}
 }
 
