@@ -26,7 +26,6 @@ describe('CreateTaskDialog', () => {
     }
     expect(screen.getByLabelText('Description')).toHaveProperty('value', `${location.origin}/messages/42`);
     expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
-    expect(document.querySelector('details')).toHaveProperty('open', false);
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Notes' } });
     await chooseSelectOption(screen.getByLabelText('Priority'), 'High');

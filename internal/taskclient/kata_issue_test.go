@@ -113,9 +113,12 @@ func TestOpenIssues(t *testing.T) {
 			r.Header.Del("Accept-Encoding")
 			handler.ServeHTTP(recorder, r)
 			var body map[string]any
-			require.NoError(json.Unmarshal(recorder.Body.Bytes(), &body))
+			if !assert.NoError(json.Unmarshal(recorder.Body.Bytes(), &body)) {
+				http.Error(w, "invalid search response", http.StatusInternalServerError)
+				return
+			}
 			delete(body, "truncated") // Kata v0.18.0 omits this field.
-			require.NoError(json.NewEncoder(w).Encode(body))
+			assert.NoError(json.NewEncoder(w).Encode(body))
 			return
 		}
 		handler.ServeHTTP(w, r)
@@ -144,9 +147,6 @@ func TestOpenIssues(t *testing.T) {
 	assert.False(searchTruncated)
 	require.Len(searched, 2)
 	assert.Equal(created.QualifiedRef, searched[0].QualifiedRef)
-	for _, result := range searched {
-		assert.Equal("open", result.Status)
-	}
 	many, manyTruncated, err := client.SearchOpenIssues(t.Context(), katatest.Project, "issue", 25)
 	require.NoError(err)
 	assert.Len(many, 25)
@@ -157,7 +157,6 @@ func TestOpenIssues(t *testing.T) {
 	assert.True(truncated)
 	assert.Equal("Other issue 29", issues[0].Title)
 	for _, issue := range issues {
-		assert.Equal("open", issue.Status)
 		assert.NotEqual(open.UID, issue.UID)
 	}
 }

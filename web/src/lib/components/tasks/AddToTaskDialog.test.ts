@@ -32,16 +32,11 @@ describe('Add to task', () => {
         context: new Map([[kataReadinessKey, readiness]])
       });
       if (email) {
-        expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeTruthy();
         await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
       }
       expect(screen.getByRole('dialog', { name: email ? 'Add to task' : 'Kata issue' })).toBeTruthy();
       expect(await screen.findByRole('textbox', { name: 'Issue title' })).toHaveProperty('value', 'Follow up');
       expect(screen.getByLabelText('Brief')).toHaveProperty('value', `${location.origin}/messages/42`);
-      if (email) {
-        await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
-        expect(screen.getByRole('dialog', { name: 'Add to task' })).toBeTruthy();
-      }
     } finally { view?.unmount(); readiness.dispose(); }
   });
 

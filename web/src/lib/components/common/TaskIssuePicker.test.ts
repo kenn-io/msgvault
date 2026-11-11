@@ -14,10 +14,13 @@ describe('TaskIssuePicker', () => {
       if (query === 'broken') return new Promise((_resolve, reject) => { fail = reject; });
       return Promise.resolve({ items: query ? [] : [item], truncated: !query });
     });
-    render(TaskIssuePicker, { load, noun: 'tasks', empty: 'No tasks yet.', moreNote: 'More tasks available.' });
+    const first = render(TaskIssuePicker, { load, noun: 'tasks', empty: 'No tasks yet.', moreNote: 'More tasks available.' });
     await fireEvent.click(await screen.findByRole('radio', { name: item.label }));
     expect(load.mock.calls[0][0]).toBe('');
     expect(screen.getByRole('radio', { name: item.label })).toHaveProperty('checked', true);
+    first.unmount();
+    render(TaskIssuePicker, { load, noun: 'tasks', empty: 'No tasks yet.', moreNote: 'More tasks available.', selected: item.id });
+    expect(await screen.findByRole('radio', { name: item.label })).toHaveProperty('checked', false);
     expect(screen.getByText('More tasks available.')).toBeDefined();
     const filter = screen.getByRole('searchbox', { name: 'Filter tasks' });
     await fireEvent.input(filter, { target: { value: 'old' } });

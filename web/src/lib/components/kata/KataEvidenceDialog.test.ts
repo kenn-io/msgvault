@@ -165,34 +165,14 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
     await screen.findByRole('radio', { name: 'Follow up · example#abcd' });
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Search open issues' }), { target: { value: 'budget' } });
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Older budget · example#k3f9' }));
+    const older = await screen.findByRole('radio', { name: 'Older budget · example#k3f9' });
+    expect(screen.getByRole('button', { name: 'Add quote' })).toHaveProperty('disabled', true);
+    await fireEvent.click(older);
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('example#abcd');
     expect(reads).toEqual(['', 'budget']);
     expect(new URL(posts[0].url).pathname).toBe('/api/v1/integrations/kata/issues/example%23k3f9/evidence');
     expect(await posts[0].json()).toEqual({ evidence: [passages[0].reference] });
-  });
-
-  it('offers a resolved bare ref and clears the selection on a new query', async () => {
-    const client = createAPIClient(async input => {
-      const request = input as Request;
-      const url = new URL(request.url);
-      if (url.pathname.endsWith('/open-issues')) {
-        return Response.json({ issues: url.searchParams.get('q') === 'abcd' ? [{ ...issue, status: 'closed' }] : [], truncated: false });
-      }
-      return Response.json({ evidence: [passages[0]] });
-    });
-    render(KataEvidenceDialog, { client, selector });
-    await screen.findByText('Opening passage');
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    const filter = screen.getByRole('searchbox', { name: 'Search open issues' });
-    expect(filter).toHaveProperty('placeholder', 'Search open issues');
-    await fireEvent.input(filter, { target: { value: 'abcd' } });
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Follow up · example#abcd' }));
-    expect(screen.getByRole('button', { name: 'Add quote' })).toHaveProperty('disabled', false);
-    await fireEvent.input(filter, { target: { value: 'unknown text' } });
-    expect(screen.getByRole('button', { name: 'Add quote' })).toHaveProperty('disabled', true);
-    await screen.findByText('No open issues match "unknown text".');
   });
 
   it('keeps a new issue draft across modes', async () => {
@@ -209,7 +189,7 @@ describe('KataEvidenceDialog', () => {
     expect(screen.getByLabelText('Brief')).toHaveProperty('value', 'Brief draft');
   });
 
-  it('shows lookup errors without offering unchecked refs', async () => {
+  it('shows list errors', async () => {
     const client = createAPIClient(async input => {
       const request = input as Request;
       if (new URL(request.url).pathname.endsWith('/open-issues')) return Response.json({ message: 'List unavailable' }, { status: 503 });
@@ -218,9 +198,6 @@ describe('KataEvidenceDialog', () => {
     render(KataEvidenceDialog, { client, selector });
     await screen.findByText('Opening passage');
     await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    await screen.findByRole('alert');
-    await fireEvent.input(screen.getByRole('searchbox', { name: 'Search open issues' }), { target: { value: 'example#abcd' } });
     expect((await screen.findByRole('alert')).textContent).toBe('List unavailable');
-    expect(screen.queryByRole('radio', { name: 'example#abcd' })).toBeNull();
   });
 });

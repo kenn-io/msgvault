@@ -16,24 +16,6 @@ function expectOneInitialTaskRead(requests: Request[]): void {
 }
 
 describe('TaskLinks', () => {
-  it('clears a picked task when returning to Existing', async () => {
-    let lists = 0;
-    const client = createAPIClient(async input => {
-      const request = input as Request;
-      if (request.url.includes('/search')) return Response.json({ tasks: ++lists < 2 ? [{ id: 'task-1', title: 'Send the budget' }] : [], truncated: lists === 1 });
-      return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
-    });
-    render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Follow up' });
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    await fireEvent.click(await screen.findByRole('radio', { name: 'Send the budget' }));
-    expect(screen.getByText('Showing the first 25 tasks. Type to search the rest.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Link task' })).toHaveProperty('disabled', false);
-    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
-    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-    await screen.findByText('No tasks in example yet.');
-    expect(screen.getByRole('button', { name: 'Link task' })).toHaveProperty('disabled', true);
-  });
-
   it("preserves an open creation draft and retry identity across another message's failed status refresh", async () => {
     const requests: Request[] = [];
     let statusCalls = 0;

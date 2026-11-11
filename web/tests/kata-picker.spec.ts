@@ -28,5 +28,7 @@ test('Kata search guidance sits below the issue results', async ({ page }) => {
   await expect(result).toBeVisible();
   const bounds = await result.locator('xpath=ancestor::div[contains(@class,"results")][1]').boundingBox();
   const hint = await page.getByText('Search by whole word or enter a ref.').boundingBox();
-  expect(hint!.y - (bounds!.y + bounds!.height)).toBeLessThanOrEqual(12);
+  const gap = hint!.y - (bounds!.y + bounds!.height);
+  expect(gap).toBeGreaterThanOrEqual(0);
+  expect(gap).toBeLessThanOrEqual(12);
 });

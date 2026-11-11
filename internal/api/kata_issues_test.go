@@ -38,6 +38,9 @@ type fakeKataIssueOperations struct {
 
 func (f *fakeKataIssueOperations) Open(_ context.Context, query string) ([]taskclient.KataTask, bool, error) {
 	f.query = query
+	if f.err != nil {
+		return nil, false, f.err
+	}
 	return []taskclient.KataTask{{UID: "01ISSUE", Ref: "abcd", QualifiedRef: "example#abcd", Project: "example", Title: "Send the budget", Status: "open", Revision: "3"}}, true, f.err
 }
 
@@ -296,6 +299,7 @@ func TestKataIssueBackendOpenCombinesRefAndTitle(t *testing.T) {
 	assert.Equal(t, exact.UID, issues[0].UID)
 	assert.Equal(t, matching.UID, issues[1].UID)
 
+	native.Endpoint(server).CloseIssue(t, exact.UID)
 	for i := range 24 {
 		_, err = client.CreateTask(t.Context(), katatest.Project, fmt.Sprintf("match-%d", i), taskclient.KataCreate{Title: "Review " + exact.Ref})
 		require.NoError(t, err)

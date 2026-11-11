@@ -3,7 +3,6 @@ package kataissues_test
 import (
 	"context"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -899,19 +898,14 @@ func TestLookupIssue(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, found)
 	}
+	f.service.Kata = failedLookup{f.service.Kata}
+	_, found, err := f.service.Lookup(t.Context(), "abcd")
+	assert.False(t, found)
+	assert.ErrorIs(t, err, taskclient.ErrUnreachable)
 }
 
 type failedLookup struct{ kataissues.Kata }
 
 func (f failedLookup) GetTask(context.Context, string, string) (taskclient.KataTask, error) {
 	return taskclient.KataTask{}, taskclient.ErrUnreachable
-}
-
-func TestLookupIssueError(t *testing.T) {
-	t.Parallel()
-	f := newFixture(t)
-	f.service.Kata = failedLookup{f.service.Kata}
-	_, found, err := f.service.Lookup(t.Context(), "abcd")
-	assert.False(t, found)
-	assert.True(t, errors.Is(err, taskclient.ErrUnreachable))
 }
