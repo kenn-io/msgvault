@@ -147,7 +147,7 @@ func parseAgentTokenSenders(values []string, flag string) (map[int64][]string, e
 		}
 		id, err := strconv.ParseInt(strings.TrimSpace(sourceID), 10, 64)
 		if err != nil || id <= 0 {
-			return nil, errors.New("invalid sender source ID " + strconv.Quote(sourceID))
+			return nil, fmt.Errorf("%s requires a positive source ID, got %q", flag, sourceID)
 		}
 		result[id] = append(result[id], strings.TrimSpace(address))
 	}

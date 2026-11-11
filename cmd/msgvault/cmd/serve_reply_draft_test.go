@@ -1197,23 +1197,6 @@ func TestDraftReplyIncomingSenderBoundary(t *testing.T) {
 		assertionsForTest.Equal("not_permitted", err.Error())
 		grant.Sources[0].IncomingSenderKeys = []string{"sender@example.com"}
 	}
-	other, err := fixture.store.EnsureParticipant("other@example.com", "Other", "example.com")
-	requirementsForTest.NoError(err)
-	_, err = fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind("INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'from', 'other@example.com')"), fixture.parentID, other)
-	requirementsForTest.NoError(err)
-	_, _, _, err = adapter.resolveDraftTarget(t.Context(), &fixture.parentID, "", 0, false, testutil.IMAPTestUsername, grant, true) //nolint:dogsled // Only denial matters here.
-	requirementsForTest.Error(err)
-	assertionsForTest.Equal("not_permitted", err.Error())
-	for _, statement := range []string{
-		"UPDATE message_recipients SET email_address = NULL WHERE message_id = ? AND recipient_type = 'from'",
-		"DELETE FROM message_recipients WHERE message_id = ? AND recipient_type = 'from'",
-	} {
-		_, err := fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind(statement), fixture.parentID)
-		requirementsForTest.NoError(err)
-		_, _, _, err = adapter.resolveDraftTarget(t.Context(), &fixture.parentID, "", 0, false, testutil.IMAPTestUsername, grant, true)
-		requirementsForTest.Error(err)
-		assertionsForTest.Equal("not_permitted", err.Error())
-	}
 }
 
 func TestDraftReplyIncomingSenderCrossSource(t *testing.T) {

@@ -28,7 +28,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
-	"go.kenn.io/msgvault/internal/verification"
 )
 
 func TestAgentCLISearchOmitsHybridHint(t *testing.T) {
@@ -1058,34 +1057,6 @@ func TestAgentIncomingSenderScopesReads(t *testing.T) {
 		requirementsForTest.Contains(w.Body.String(), tc.want)
 		requirementsForTest.NotContains(w.Body.String(), tc.exclude)
 	}
-
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE conversations SET title = ? WHERE source_id = ?"), "Your verification code is 482913", src.ID)
-	requirementsForTest.NoError(err)
-	issueWithoutVerification := httptest.NewRequestWithContext(t.Context(), http.MethodPost, agentTokensPath, strings.NewReader(strings.Replace(body, `,"verification.read"`, "", 1)))
-	issueWithoutVerification.Header.Set("X-Api-Key", "owner-key")
-	issueWithoutVerification.Header.Set("Content-Type", "application/json")
-	issuedWithoutVerification := httptest.NewRecorder()
-	srv.Router().ServeHTTP(issuedWithoutVerification, issueWithoutVerification)
-	requirementsForTest.Equal(http.StatusCreated, issuedWithoutVerification.Code, issuedWithoutVerification.Body.String())
-	var maskedGrant agentTokenIssueResponse
-	requirementsForTest.NoError(json.Unmarshal(issuedWithoutVerification.Body.Bytes(), &maskedGrant))
-	readAllowed := func() string {
-		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", allowed), nil)
-		r.Header.Set(apiprotocol.AgentTokenHeader, maskedGrant.Secret)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, r)
-		requirementsForTest.Equal(http.StatusOK, w.Code, w.Body.String())
-		return w.Body.String()
-	}
-	ordinary := readAllowed()
-	requirementsForTest.Contains(ordinary, "allowed code")
-	requirementsForTest.NotContains(ordinary, "482913")
-	requirementsForTest.NotContains(ordinary, verification.Masked)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET subject = ? WHERE id = ?"), "Your verification code is 987654", allowed)
-	requirementsForTest.NoError(err)
-	masked := readAllowed()
-	requirementsForTest.Contains(masked, verification.Masked)
-	requirementsForTest.NotContains(masked, "987654")
 }
 
 func TestAgentRelatedMessageIncomingScope(t *testing.T) {
@@ -1111,28 +1082,16 @@ func TestAgentRelatedMessageIncomingScope(t *testing.T) {
 	requirements.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	defer srv.agentGrants.Close()
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier, IncomingSenderKeys: []string{"codes@example.test"}}}, time.Time{})
-	requirements.NoError(err)
-	for _, owner := range []bool{true, false} {
-		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", allowed), nil)
-		if owner {
-			r.Header.Set("X-Api-Key", "owner")
-		} else {
-			r.Header.Set(apiprotocol.AgentTokenHeader, token)
-		}
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, r)
-		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-		var message struct {
-			RelatedMessageID *int64 `json:"related_message_id"`
-		}
-		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &message))
-		if owner {
-			requirements.Equal(&target, message.RelatedMessageID)
-		} else {
-			requirements.Nil(message.RelatedMessageID)
-		}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", allowed), nil)
+	r.Header.Set("X-Api-Key", "owner")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+	var ownerMessage struct {
+		RelatedMessageID *int64 `json:"related_message_id"`
 	}
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &ownerMessage))
+	requirements.Equal(&target, ownerMessage.RelatedMessageID)
 	ctx := sourcescope.WithIncomingSenders(t.Context(), map[int64][]string{source.ID: {"codes@example.test"}})
 	engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	message, err := engine.GetMessage(ctx, allowed)

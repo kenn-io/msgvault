@@ -300,7 +300,7 @@ func TestArchiveMessageUnsupportedProviderAndMissingScope(t *testing.T) {
 	}
 }
 
-func TestIncomingSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T) {
+func TestArchiveIncomingSenderPreservesLiteralFromAndRechecksUnderLock(t *testing.T) {
 	assertionsForTest := assert.New(t)
 	requirementsForTest := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -311,20 +311,10 @@ func TestIncomingSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T
 	conversation, err := st.EnsureConversation(t.Context(), source.ID, "envelope-thread", "Synthetic Envelope")
 	requirementsForTest.NoError(err)
 	archived := true
-	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageArchive}, Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier, IncomingSenderKeys: []string{"allowed@example.test"}}}}
+	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionMessageArchive}, Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier, IncomingSenderKeys: []string{"allowed@example.test", "first last@example.test"}}}}
 	adapter := &storeAPIAdapter{store: st}
-	// mail.Address.String encodes literal quote characters inside the addr-spec;
-	// this stored identity differs from the unquoted allowed@example.test.
-	bare := `"allowed"@example.test`
-	parsed, err := mime.Parse([]byte("From: " + (&mail.Address{Address: bare}).String() + "\r\n\r\nsynthetic\r\n"))
-	requirementsForTest.NoError(err)
-	requirementsForTest.Len(parsed.From, 1)
-	requirementsForTest.Equal(bare, parsed.From[0].Email)
-	quoted, err := mime.Parse([]byte("From: <\"first last\"@example.test>\r\nTo: owner@example.test\r\nSubject: code\r\n\r\nsynthetic\r\n"))
-	requirementsForTest.NoError(err)
-	requirementsForTest.Len(quoted.From, 1)
-	requirementsForTest.Equal("first last@example.test", quoted.From[0].Email)
-	grant.Sources[0].IncomingSenderKeys = append(grant.Sources[0].IncomingSenderKeys, "first last@example.test")
+	// Address.String encodes literal quotes inside the addr-spec.
+	literal := `"allowed"@example.test`
 	provider := newArchiveProviderFixture(t)
 	cfg := &config.Config{HomeDir: t.TempDir()}
 	cfg.Data.DataDir = cfg.HomeDir
@@ -334,22 +324,24 @@ func TestIncomingSenderRequiresEveryLiteralFromAndRechecksUnderLock(t *testing.T
 		return provider.client, nil
 	}
 	for _, tc := range []struct {
-		name      string
-		addresses []string
-		allowed   bool
+		name, header, literal string
+		allowed               bool
 	}{
-		{"literal quote characters are not the unquoted mailbox", []string{parsed.From[0].Email}, false},
-		{"stored quoted mailbox", []string{quoted.From[0].Email}, true},
+		{"literal quote characters", (&mail.Address{Address: literal}).String(), literal, false},
+		{"quoted local part", `<"first last"@example.test>`, "first last@example.test", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertionsForTest := assert.New(t)
 			requirementsForTest := require.New(t)
+			parsed, err := mime.Parse([]byte("From: " + tc.header + "\r\n\r\nsynthetic\r\n"))
+			requirementsForTest.NoError(err)
+			requirementsForTest.Len(parsed.From, 1)
+			requirementsForTest.Equal(tc.literal, parsed.From[0].Email)
 			provider.messageID = "gmail-archive-" + tc.name
-			ids := make([]int64, len(tc.addresses))
-			for i := range ids {
-				ids[i] = participant
-			}
-			id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "gmail-archive-" + tc.name, MessageType: "email"}, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: ids, EmailAddresses: tc.addresses}}})
+			id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+				Message:    &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: provider.messageID, MessageType: "email"},
+				Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{participant}, EmailAddresses: []string{parsed.From[0].Email}}},
+			})
 			requirementsForTest.NoError(err)
 			result, err := adapter.ArchiveMessage(t.Context(), id, emailtags.ArchiveChange{Archived: &archived, DryRun: true}, grant, nil)
 			if tc.allowed {

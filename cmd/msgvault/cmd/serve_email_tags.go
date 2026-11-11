@@ -58,7 +58,7 @@ func (a *storeAPIAdapter) messageTags(ctx context.Context, id int64, change *ema
 	}
 	if !write {
 		// Reads and previews change nothing, so they run alongside sync.
-		result, err := a.providerMessageTags(ctx, source, target, change, archive)
+		result, err := a.providerMessageTags(ctx, source, target, change, archive, write)
 		if result != nil {
 			result.MessageID, result.SourceID = id, target.SourceID
 		}
@@ -85,7 +85,7 @@ func (a *storeAPIAdapter) messageTags(ctx context.Context, id int64, change *ema
 	if locked != target {
 		return nil, emailtags.Failure("stale_identity", "Message identity changed; sync and retry", nil, nil)
 	}
-	result, err := a.providerMessageTags(ctx, source, target, change, archive)
+	result, err := a.providerMessageTags(ctx, source, target, change, archive, write)
 	if result != nil {
 		result.MessageID, result.SourceID = id, target.SourceID
 	}
@@ -103,8 +103,7 @@ func (a *storeAPIAdapter) messageTags(ctx context.Context, id int64, change *ema
 	return result, nil
 }
 
-func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store.Source, target store.EmailTagTarget, change *emailtags.MessageTagChange, archive *emailtags.ArchiveChange) (*emailtags.MessageTagResult, error) {
-	write := (change != nil && !change.DryRun) || (archive != nil && !archive.DryRun)
+func (a *storeAPIAdapter) providerMessageTags(ctx context.Context, source *store.Source, target store.EmailTagTarget, change *emailtags.MessageTagChange, archive *emailtags.ArchiveChange, write bool) (*emailtags.MessageTagResult, error) {
 	if target.Provider == sourceTypeMSMail {
 		state := invocationFromContext(ctx)
 		if write {

@@ -349,18 +349,12 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 			}
 			return draftReplyTarget{}, "", nil, draftReplyError("invalid_parent", fmt.Errorf("load parent source: %w", err))
 		}
-		if err := authorizeDelegatedDraftSource(grant, parentSource); err != nil {
+		selected, err := authorizeDelegatedDraftSource(grant, parentSource)
+		if err != nil {
 			return draftReplyTarget{}, "", nil, err
 		}
 		if grant != nil {
-			var senders []string
-			for _, source := range grant.Sources {
-				if source.Type == parentSource.SourceType && source.Identifier == parentSource.Identifier {
-					senders = source.IncomingSenderKeys
-					break
-				}
-			}
-			ctx = sourcescope.WithIncomingSenders(ctx, map[int64][]string{parentSource.ID: senders})
+			ctx = sourcescope.WithIncomingSenders(ctx, map[int64][]string{parentSource.ID: selected.IncomingSenderKeys})
 			allowed, err := a.store.IncomingMessageAllowed(ctx, *parentID)
 			if err != nil || !allowed {
 				return draftReplyTarget{}, "", nil, draftReplyNotPermitted(errors.New("parent source is not available"))
@@ -388,7 +382,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		return draftReplyTarget{}, "", nil, draftReplyError("invalid_source", errors.New("--account or --source-id is required"))
 	}
 
-	if err := authorizeDelegatedDraftSource(grant, source); err != nil {
+	if _, err := authorizeDelegatedDraftSource(grant, source); err != nil {
 		return draftReplyTarget{}, "", nil, err
 	}
 	identities, err := a.store.ListAccountIdentitiesContext(ctx, source.ID)
@@ -533,19 +527,17 @@ func (a *storeAPIAdapter) refreshDraftCache(ctx context.Context, source *store.S
 	}
 }
 
-// authorizeDelegatedDraftSource checks whether the grant (if any) permits
-// draft creation on the given source. Returns nil when grant is nil (owner
-// path). The check runs before authorizeIMAPDraft so an out-of-scope source
-// never discloses whether drafting is enabled.
-func authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source) error {
+// authorizeDelegatedDraftSource returns the granted source for a draft. The
+// owner path has no grant. Check source scope before disclosing draft policy.
+func authorizeDelegatedDraftSource(grant *agentgrant.Grant, source *store.Source) (agentgrant.SourceRef, error) {
 	if grant == nil {
-		return nil
+		return agentgrant.SourceRef{}, nil
 	}
-	ref := draftSourceRef(source)
-	if !grant.Allows(agentgrant.PermissionDraftCreate, ref) {
-		return draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
+	selected, ok := grant.MatchingSource(draftSourceRef(source))
+	if !ok || !grant.HasPermission(agentgrant.PermissionDraftCreate) {
+		return agentgrant.SourceRef{}, draftReplyNotPermitted(fmt.Errorf("source %d is not in grant %s", source.ID, grant.ID))
 	}
-	return nil
+	return selected, nil
 }
 
 func (a *storeAPIAdapter) createDraft(

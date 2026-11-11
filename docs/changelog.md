@@ -8,6 +8,9 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Move Gmail messages out of or back into the inbox with [`archive` and `unarchive`](cli-reference.md#archive-and-unarchive), or preview the change with `--dry-run`. The [HTTP API](api-server.md#message-archiving) supports the same operations.
+- Limit delegated access to messages from selected From addresses with [`agent-token issue --incoming-sender`](cli-reference.md#restrict-incoming-senders). Incoming sender scope applies to archive reads, Gmail archiving, and the parent of a reply draft.
+
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.

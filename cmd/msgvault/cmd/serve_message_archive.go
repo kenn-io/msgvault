@@ -23,17 +23,11 @@ func (a *storeAPIAdapter) ArchiveMessage(ctx context.Context, id int64, change e
 		}
 		if grant != nil {
 			ref := agentgrant.SourceRef{Type: source.SourceType, Identifier: source.Identifier}
-			if !grant.Allows(agentgrant.PermissionMessageArchive, ref) {
+			selected, ok := grant.MatchingSource(ref)
+			if !ok || !grant.HasPermission(agentgrant.PermissionMessageArchive) {
 				return emailtags.Failure("message_not_found", "Message not found", nil, nil)
 			}
-			var senders []string
-			for _, selected := range grant.Sources {
-				if selected.Type == ref.Type && selected.Identifier == ref.Identifier {
-					senders = selected.IncomingSenderKeys
-					break
-				}
-			}
-			ctx = sourcescope.WithIncomingSenders(ctx, map[int64][]string{source.ID: senders})
+			ctx = sourcescope.WithIncomingSenders(ctx, map[int64][]string{source.ID: selected.IncomingSenderKeys})
 			allowed, err := a.store.IncomingMessageAllowed(ctx, id)
 			if err != nil {
 				return err
