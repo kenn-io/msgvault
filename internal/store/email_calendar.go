@@ -25,15 +25,7 @@ func hasCalendarToken(raw []byte) bool {
 	return false
 }
 
-func (s *Store) lockEmailCalendarParticipantsWith(
-	ctx context.Context, tx *loggedTx, raw []byte, format string,
-) error {
-	if len(raw) == 0 || (format != "" && format != rawFormatMIME) {
-		return nil
-	}
-	if !hasCalendarToken(raw) {
-		return nil
-	}
+func (s *Store) lockEmailCalendarParticipantsWith(ctx context.Context, tx *loggedTx) error {
 	if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
 		return fmt.Errorf("lock email calendar participant directory: %w", err)
 	}
@@ -41,9 +33,6 @@ func (s *Store) lockEmailCalendarParticipantsWith(
 }
 
 func (s *Store) refreshEmailCalendarEventsWith(ctx context.Context, tx *loggedTx, id int64, raw []byte) error {
-	if !hasCalendarToken(raw) {
-		return nil
-	}
 	q := boundQuerier{ctx: ctx, q: tx}
 	var kind string
 	var sourceID int64
