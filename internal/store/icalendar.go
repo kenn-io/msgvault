@@ -119,18 +119,6 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if item.fromEmail && item.component.Method == "REPLY" {
-			changed, err := s.persistICSReply(ctx, tx, sourceID, item.component)
-			if err != nil {
-				return err
-			}
-			if changed {
-				summary.Changed++
-			} else {
-				summary.Unchanged++
-			}
-			continue
-		}
 		e := item.component.Event
 		sourceMessageID := e.ProviderEventID
 		var id int64
