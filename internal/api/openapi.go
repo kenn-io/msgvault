@@ -411,7 +411,7 @@ import (
 // registered service labels to current contact points, and identity keys to observations.
 // 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
 // 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
-// 5.1.0 adds keyed group overviews and time-group item totals.
+// 5.1.0 adds keyed group overviews, time-group item totals, and saved view schema 3.
 const APISchemaVersion = "5.1.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

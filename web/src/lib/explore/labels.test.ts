@@ -121,5 +121,22 @@ it.each([
 });
 
 it('uses the meeting icon for a Granola source group', () => {
-  expect(groupRowName('source', '7', 'fixture-granola', 'granola').icon).toBe(Mic);
+  expect(groupRowName('source', '7', 'fixture-granola', new Map([['7', { type: 'granola', identifier: 'fixture-granola' }]])).icon).toBe(Mic);
+});
+
+it('disambiguates source labels using the full inventory', () => {
+  const sources = new Map([
+    ['1', { type: 'imap', identifier: 'imaps://person@example.org@one.example' }],
+    ['2', { type: 'imap', identifier: 'imaps://person@example.org@two.example' }],
+    ['3', { type: 'mbox', identifier: 'archive.example' }],
+    ['4', { type: 'mbox', identifier: 'archive.example' }],
+    ['5', { type: 'gcal', identifier: 'work.example' }],
+    ['6', { type: 'gcal', identifier: 'home.example' }]
+  ]);
+  expect(groupRowName('source', '1', sources.get('1')!.identifier, sources).name).toBe('person@example.org (imaps://person@example.org@one.example)');
+  expect(groupRowName('source', '2', sources.get('2')!.identifier, sources).name).toBe('person@example.org (imaps://person@example.org@two.example)');
+  expect(groupRowName('source', '3', 'archive.example', sources).name).toBe('Mbox import (archive.example · 3)');
+  expect(groupRowName('source', '4', 'archive.example', sources).name).toBe('Mbox import (archive.example · 4)');
+  expect(groupRowName('source', '5', 'work.example', sources).name).toBe('Google Calendar (work.example)');
+  expect(groupRowName('source', '6', 'home.example', sources).name).toBe('Google Calendar (home.example)');
 });

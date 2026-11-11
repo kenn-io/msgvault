@@ -8,7 +8,7 @@ import {
   serializeExploreURLState
 } from '../explore/state.svelte';
 import type { ExploreURLState } from '../explore/models';
-import { canonicalSavedViewState, exploreStateFromSavedView, savedViewSummary, type CanonicalState } from './canonical';
+import { canonicalSavedViewState, exploreStateFromSavedView, savedViewSummary, supportsSavedViewSchema, savedViewSchemaVersion, type CanonicalState } from './canonical';
 
 const everything: ExploreURLState = {
   ...defaultExploreURLState,
@@ -131,4 +131,19 @@ describe('saved-view canonical state', () => {
     })).toEqual(['Hybrid: “budget”', 'Person: 42, 43', 'Grouped by Source, then Month', 'Files']);
     expect(savedViewSummary({})).toEqual(['Table']);
   });
+});
+
+it('preserves local dates in schema 3 and normalizes legacy offsets', () => {
+  const saved: CanonicalState = { filters: [{ field: 'after', operator: 'in', values: ['2026-07-01T00:00:00-04:00'] }] };
+  expect(savedViewSchemaVersion({ ...everything, filters: [{ dimension: 'after', values: ['2026-07-01T00:00:00+00:00'] }] })).toBe(3);
+  expect(savedViewSchemaVersion({ ...everything, filters: [{ dimension: 'after', values: ['2026-07-01T00:00:00Z'] }] })).toBe(2);
+  expect(supportsSavedViewSchema(3)).toBe(true);
+  expect(supportsSavedViewSchema(4)).toBe(false);
+  expect(exploreStateFromSavedView(saved, 3).filters?.[0]?.values).toEqual(['2026-07-01T00:00:00-04:00']);
+  expect(exploreStateFromSavedView(saved, 2).filters?.[0]?.values).toEqual(['2026-07-01T04:00:00.000Z']);
+  expect(exploreStateFromSavedView(saved, 1).filters?.[0]?.values).toEqual(['2026-07-01T04:00:00.000Z']);
+  const filters = [{ dimension: 'after' as const, values: ['2026-07-01T00:00:00-04:00'] }, { dimension: 'before' as const, values: ['2026-08-01T00:00:00+01:00'] }];
+  expect(parseExploreURLState(serializeExploreURLState({ ...everything, filters })).filters).toEqual(filters);
+  const definition = canonicalSavedViewState({ ...everything, filters });
+  expect(exploreStateFromSavedView(definition, 3).filters).toEqual(filters);
 });

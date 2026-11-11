@@ -1,6 +1,6 @@
 <script lang="ts">
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
-  import { groupRowName } from '../../explore/labels';
+  import { groupRowName, type SourceInventory } from '../../explore/labels';
   import { formatBytes, formatDate } from '../../util/format';
   import { Button, IconButton, MEDIA, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
@@ -15,7 +15,7 @@
   import { rebaseVirtualScroll, RowGeometry, scrollPositionAnchor, tableViewportHeight } from '../../theme/preferences.svelte';
 
   let {
-    sourceTypes = new Map(),
+    sources = new Map(),
     rows,
     dimension,
     loading = false,
@@ -40,7 +40,7 @@
     onScrollAnchor = undefined,
     onRetry = undefined
   }: {
-    sourceTypes?: ReadonlyMap<string, string>;
+    sources?: SourceInventory;
     rows: ExploreGroupRow[];
     dimension: ExploreGroupDimension;
     loading?: boolean;
@@ -342,7 +342,7 @@
         <div class="group-window" style:transform={`translateY(${slice.topPad}px)`}>
           {#each renderedRows as row, offset (row.key)}
             {@const index = slice.start + offset}
-            {@const display = groupRowName(dimension, row.key, row.label, sourceTypes.get(row.key))}
+            {@const display = groupRowName(dimension, row.key, row.label, dimension === 'source' ? sources : undefined)}
             <div
               class="group-row"
               class:group-row--active={index === activeIndex}

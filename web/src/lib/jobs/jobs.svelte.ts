@@ -21,7 +21,7 @@ export class JobsStore {
     const health = jobsHealth(this.items);
     return health !== 'ok' ? health : this.error || !this.loaded ? 'unavailable' : health;
   });
-  sourceTypes = $derived.by(() => new Map(this.#sources.map(source => [String(source.id), source.source_type])));
+  sources = $derived.by(() => new Map(this.#sources.map(source => [String(source.id), { type: source.source_type, identifier: source.identifier }])));
 
   #sources = $state<SourceStatus[]>([]);
   #kinds = $state<OperationLaneStatus[]>([]);

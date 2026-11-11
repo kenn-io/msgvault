@@ -1606,6 +1606,7 @@ describe('EverythingWorkspace', () => {
 
   it.each([
     ['participant', '42', 'Person Example'],
+    ['domain', 'example.com', 'example.com'],
   ])('keeps the %s file rail during an unchanged status poll', async (dimension, key, label) => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const initialState = {
@@ -2450,17 +2451,17 @@ describe('EverythingWorkspace', () => {
 
   it('restores an inspected drilled group across Back and Forward after grouped rows are cleared', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const detailRequests: unknown[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
       if (!path.endsWith('/groups')) return Response.json(exploreResponse());
       const body = await request.clone().json() as { filters?: Array<{ dimension: string; values: string[] }> };
-      const restoringDetail = body.filters?.some((filter) =>
-        filter.dimension === 'source' && filter.values.includes('7'));
+      if (body.filters?.some((filter) => filter.dimension === 'source' && filter.values.includes('7'))) detailRequests.push(body);
       return Response.json({
         rows: [{
           key: '7',
-          label: restoringDetail ? 'Restored source detail' : 'Example source group',
+          label: 'alpha.example',
           count: 12,
           estimated_bytes: 42,
           latest_at: '2026-07-18T12:00:00Z'
@@ -2472,11 +2473,21 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     state.commitNavigation({ groupingChain: ['source'] });
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    await screen.findByText('Example source group');
+    const baseClient = createAPIClient(fetchFn);
+    const client = { fetch: (async (input, init) => {
+      const url = input instanceof Request ? input.url : new URL(String(input), window.location.href);
+      if (new URL(url).pathname === '/api/v1/sources/status') return Response.json({ sources: [
+        { id: 7, source_type: 'slack', identifier: 'alpha.example' },
+        { id: 8, source_type: 'slack', identifier: 'beta.example' }
+      ] });
+      return baseClient.fetch(input, init);
+    }) satisfies typeof fetch };
+    const rendered = render(AppShell, { client, state });
+    await screen.findByRole('button', { name: 'Show items in Slack (alpha.example)' });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Example source group' }));
-    expect(await screen.findByRole('complementary', { name: 'Reading pane: Restored source detail' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Slack (alpha.example)' }));
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Slack (alpha.example)' })).toBeDefined();
+    expect(detailRequests.length).toBeGreaterThan(0);
     expect(screen.queryByRole('grid', { name: 'Messages grouped by source' })).toBeNull();
     expect(state.current.selectedRow).toBe('group:source:7');
 
@@ -2487,7 +2498,7 @@ describe('EverythingWorkspace', () => {
 
     window.history.forward();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByRole('complementary', { name: 'Reading pane: Restored source detail' })).toBeDefined();
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: Slack (alpha.example)' })).toBeDefined();
     expect(state.current.selectedRow).toBe('group:source:7');
     rendered.unmount();
     state.destroy();
@@ -2587,8 +2598,8 @@ describe('EverythingWorkspace', () => {
     ['message_type', 'email', 'Email', [{ dimension: 'message_type', values: ['email'] }]],
     ['kind', 'meeting', 'Meeting', [{ dimension: 'kind', values: ['meeting'] }]],
     ['month', '2026-07', 'Jul 2026', [
-      { dimension: 'after', values: ['2026-07-01T04:00:00.000Z'] },
-      { dimension: 'before', values: ['2026-08-01T04:00:00.000Z'] },
+      { dimension: 'after', values: ['2026-07-01T00:00:00-04:00'] },
+      { dimension: 'before', values: ['2026-08-01T00:00:00-04:00'] },
     ]],
   ] as const)('drills %s groups into a changed URL predicate', async (dimension, key, name, expectedFilters) => {
     if (dimension === 'month') vi.stubEnv('TZ', 'America/New_York');

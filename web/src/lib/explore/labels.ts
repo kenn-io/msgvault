@@ -205,12 +205,21 @@ export function entryKindPresentation(kind: string, messageType = ''): EntryKind
   return kindPresentation('◇', 'Archive item');
 }
 
-export function groupRowName(dimension: ExploreGroupDimension, key: string, label: string, sourceType?: string) {
+export type SourceInventory = ReadonlyMap<string, { type: string; identifier: string }>;
+
+export function groupRowName(dimension: ExploreGroupDimension, key: string, label: string, sources?: SourceInventory) {
   if (dimension === 'month' && /^\d{4}-\d{2}$/.test(key)) {
     const [year, month] = key.split('-').map(Number);
     return { name: new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric' }).format(new Date(year!, month! - 1, 1)) };
   }
-  if (dimension === 'source') return { name: sourceDisplayName(sourceType, label), icon: sourceType ? sourceIcon(sourceType) : undefined, title: label };
+  if (dimension === 'source') {
+    const source = sources?.get(key);
+    const base = sourceDisplayName(source?.type, source?.identifier ?? label);
+    const collisions = [...(sources ?? [])].filter(([, item]) => sourceDisplayName(item.type, item.identifier) === base);
+    const sameIdentifier = collisions.filter(([, item]) => item.identifier === source?.identifier).length > 1;
+    const name = source && collisions.length > 1 ? `${base} (${source.identifier}${sameIdentifier ? ` · ${key}` : ''})` : base;
+    return { name, icon: source?.type ? sourceIcon(source.type) : undefined, title: label };
+  }
   if (dimension === 'kind' || dimension === 'message_type') {
     const presentation = dimension === 'kind' ? entryKindPresentation(key) : entryKindPresentation('', key);
     return { name: dimension === 'kind' ? presentation.name : sentenceCase(key), icon: presentation.icon };

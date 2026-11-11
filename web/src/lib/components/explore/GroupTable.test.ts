@@ -318,9 +318,23 @@ describe('GroupTable', () => {
     const props = { rows: [{ key: '7', label: 'fixture-granola', count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }], dimension: 'source' as const, onDrill: vi.fn() };
     const view = render(GroupTable, props);
     expect(screen.getByText('fixture-granola')).toBeDefined();
-    await view.rerender({ ...props, sourceTypes: new Map([['7', 'granola']]) });
+    await view.rerender({ ...props, sources: new Map([['7', { type: 'granola', identifier: 'fixture-granola' }]]) });
     expect(screen.getByText('Granola')).toBeDefined();
     expect(screen.getByTitle('fixture-granola')).toBeDefined();
     view.unmount();
   });
+  it('distinguishes Slack workspaces across pages and leaves singletons unchanged', async () => {
+    const sources = new Map([['7', { type: 'slack', identifier: 'acme.example' }], ['8', { type: 'slack', identifier: 'engineering.example' }]]);
+    const rows = [{ key: '7', label: 'acme.example', count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }, { key: '8', label: 'engineering.example', count: 1, estimated_bytes: 1, latest_at: '2024-01-01T12:00:00Z' }];
+    const onDrill = vi.fn();
+    const view = render(GroupTable, { rows, dimension: 'source', sources, onDrill });
+    expect(screen.getByRole('button', { name: 'Show items in Slack (acme.example)' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Show items in Slack (engineering.example)' })).toBeDefined();
+    await view.rerender({ rows: [rows[0]!], dimension: 'source', sources, onDrill });
+    expect(screen.getByRole('button', { name: 'Show items in Slack (acme.example)' })).toBeDefined();
+    await view.rerender({ rows: [rows[0]!], dimension: 'source', sources: new Map([['7', sources.get('7')!]]), onDrill });
+    expect(screen.getByRole('button', { name: 'Show items in Slack' })).toBeDefined();
+    expect(screen.getByTitle('acme.example')).toBeDefined();
+  });
+
 });

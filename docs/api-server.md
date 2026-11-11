@@ -2919,7 +2919,7 @@ by an agent without rebuilding its query.
 | `DELETE` | `/api/v1/saved-views/{id}` | Delete a view definition. Requires `If-Match`. Never touches archive messages. |
 | `POST` | `/api/v1/saved-views/{id}/run` | Execute a view through its canonical Explore definition. |
 
-New definitions use `schema_version: 2`. The daemon reads schema 1 with pipes as literal text in full-text queries. `canonical_state` is a closed object. The daemon rejects a
+Definitions with local-calendar date bounds use `schema_version: 3`; UTC-only definitions use version 2. Numeric offsets in schema 3 preserve local calendar dates; offsets in older definitions retain their UTC meaning. The daemon reads schema 1 with pipes as literal text in full-text queries. `canonical_state` is a closed object. The daemon rejects a
 definition it could not execute, so every stored view can be opened by the
 Web UI and run by the API:
 

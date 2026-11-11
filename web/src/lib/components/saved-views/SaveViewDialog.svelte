@@ -5,7 +5,7 @@
   import type { APIClient } from '../../api/client';
   import type { SavedView } from '../../api/generated/models';
   import type { ExploreURLState } from '../../explore/models';
-  import { CURRENT_SCHEMA_VERSION, canonicalSavedViewState } from '../../saved-views/canonical';
+  import { savedViewSchemaVersion, canonicalSavedViewState } from '../../saved-views/canonical';
   let {
     client,
     state: exploreState,
@@ -39,7 +39,7 @@
           name: name.trim(),
           ...(description.trim() ? { description: description.trim() } : {}),
           canonical_state: canonicalSavedViewState(exploreState),
-          schema_version: CURRENT_SCHEMA_VERSION,
+          schema_version: savedViewSchemaVersion(exploreState),
         },
         client,
       );

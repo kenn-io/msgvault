@@ -92,6 +92,15 @@ func TestRunSavedViewExecutesEntriesWithTheExploreContract(t *testing.T) {
 	assertions.Empty(next.NextCursor)
 }
 
+func TestRunSavedViewUsesLocalOffsetInstant(t *testing.T) {
+	srv, st := newSavedViewRunTestServer(t)
+	view := createRunTestView(t, st, "Local boundary", `{"filters":[{"field":"after","operator":"in","values":["2026-07-18T06:30:00-04:00"]}]}`)
+	response, page := runSavedView(t, srv, view.ID, `{}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Len(t, page.Rows, 1)
+	assert.Equal(t, "Newest", page.Rows[0].Title)
+}
+
 func TestRunSavedViewPreservesVersionedPipeMeaning(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
@@ -184,7 +193,7 @@ func TestRunSavedViewRelaysSavedViewAndExploreErrors(t *testing.T) {
 	assertions.Contains(badCursor.Body.String(), "invalid_cursor", "Explore errors pass through unchanged")
 
 	srv.savedViewStore = &staleSavedViewStore{view: store.SavedView{
-		ID: 1, Name: "Stale", SchemaVersion: 3, CanonicalState: json.RawMessage(`{}`), Revision: 1,
+		ID: 1, Name: "Stale", SchemaVersion: 4, CanonicalState: json.RawMessage(`{}`), Revision: 1,
 	}}
 	stale, _ := runSavedView(t, srv, 1, `{}`)
 	assertions.Equal(http.StatusBadRequest, stale.Code, stale.Body.String())

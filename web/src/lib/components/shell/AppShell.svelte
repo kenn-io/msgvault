@@ -1444,7 +1444,7 @@
           {#if exploreState.current.groupingChain.length > 0}{@render filesToolbar(undefined, undefined, false)}{/if}
           <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
           {#if exploreState.current.groupingChain.length > 0}
-            <GroupTable sourceTypes={shellData.jobs.sourceTypes}
+            <GroupTable sources={shellData.jobs.sources}
               rows={loader.groupRows}
               dimension={exploreState.current.groupingChain[0]!}
               workspaceLabel="Files"
@@ -1524,7 +1524,7 @@
         </main>
       {:else}
         <EverythingWorkspace
-          sourceTypes={shellData.jobs.sourceTypes}
+          sources={shellData.jobs.sources}
           onAddSource={shellData.jobs.noSources ? addSource : undefined}
           bind:resultsWidth
           {client}

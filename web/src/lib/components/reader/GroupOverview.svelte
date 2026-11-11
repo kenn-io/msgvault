@@ -27,7 +27,7 @@
     <strong>{selection.count?.toLocaleString() ?? '—'} {selection.count === 1 ? 'item' : 'items'}</strong>
     {#if selection.estimatedBytes !== undefined}<span>{formatBytes(selection.estimatedBytes)}</span>{/if}
   </div>
-  {#if selection.overview?.first_at && selection.latestAt && !(series.length === 1 && daily && formatDate(selection.overview.first_at) === formatDate(selection.latestAt) && formatDate(selection.latestAt) === monthName(first!.bucket))}
+  {#if selection.overview?.first_at && selection.latestAt && !(daily && formatDate(selection.overview.first_at) === monthName(first!.bucket) && formatDate(selection.latestAt) === monthName(last!.bucket))}
     {@const firstDate = formatDate(selection.overview.first_at)}
     {@const lastDate = formatDate(selection.latestAt)}
     <p>{firstDate}{firstDate === lastDate ? '' : ` – ${lastDate}`}</p>

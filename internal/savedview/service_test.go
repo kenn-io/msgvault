@@ -46,9 +46,9 @@ func TestExecutableStateRejectsWhatTheStoreWouldNotPersist(t *testing.T) {
 	}{
 		{
 			name:    "unsupported schema version",
-			view:    store.SavedView{ID: 1, SchemaVersion: 3, CanonicalState: json.RawMessage(`{}`)},
+			view:    store.SavedView{ID: 1, SchemaVersion: 4, CanonicalState: json.RawMessage(`{}`)},
 			wantErr: store.ErrSavedViewUnsupportedSchemaVersion,
-			message: "schema version 3",
+			message: "schema version 4",
 		},
 		{
 			name:    "malformed state",
@@ -113,6 +113,22 @@ func TestExecutableStatePreservesLegacyPipes(t *testing.T) {
 			if tc.Version == 1 && (tc.Mode == "" || tc.Mode == "full_text") {
 				assertions.Equal(search.Parse(strings.TrimSpace(tc.Query)), search.ParseOR(state.Query))
 			}
+		})
+	}
+}
+
+func TestExecutableStateLocalDateSchema(t *testing.T) {
+	for _, tc := range []struct {
+		version int
+		want    string
+	}{
+		{1, "2026-07-01T04:00:00Z"}, {2, "2026-07-01T04:00:00Z"}, {3, "2026-07-01T00:00:00-04:00"},
+	} {
+		t.Run(strconv.Itoa(tc.version), func(t *testing.T) {
+			state, err := ExecutableState(store.SavedView{SchemaVersion: tc.version, CanonicalState: json.RawMessage(`{"filters":[{"field":"after","operator":"in","values":["2026-07-01T00:00:00-04:00"]}]}`)})
+			require.NoError(t, err)
+			require.Len(t, state.Filters, 1)
+			assert.Equal(t, []string{tc.want}, state.Filters[0].Values)
 		})
 	}
 }

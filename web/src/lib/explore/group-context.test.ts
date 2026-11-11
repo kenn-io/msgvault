@@ -59,12 +59,12 @@ describe('group context', () => {
         '2026'
       )).toEqual([
         { dimension: 'domain', values: ['example.com'] },
-        { dimension: 'after', values: ['2026-01-01T05:00:00.000Z'] },
-        { dimension: 'before', values: ['2027-01-01T05:00:00.000Z'] }
+        { dimension: 'after', values: ['2026-01-01T00:00:00-05:00'] },
+        { dimension: 'before', values: ['2027-01-01T00:00:00-05:00'] }
       ]);
       expect(filtersForGroup([], 'month', '2026-12')).toEqual([
-        { dimension: 'after', values: ['2026-12-01T05:00:00.000Z'] },
-        { dimension: 'before', values: ['2027-01-01T05:00:00.000Z'] }
+        { dimension: 'after', values: ['2026-12-01T00:00:00-05:00'] },
+        { dimension: 'before', values: ['2027-01-01T00:00:00-05:00'] }
       ]);
       expect(filtersForGroup([], 'year', '2026', true)).toEqual([
         { dimension: 'after', values: ['2026-01-01T00:00:00.000Z'] },
@@ -73,6 +73,16 @@ describe('group context', () => {
       expect(filtersForGroup([], 'month', '2026-12', true)).toEqual([
         { dimension: 'after', values: ['2026-12-01T00:00:00.000Z'] },
         { dimension: 'before', values: ['2027-01-01T00:00:00.000Z'] }
+      ]);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('marks local month bounds with their numeric offsets', () => {
+    vi.stubEnv('TZ', 'America/New_York');
+    try {
+      expect(filtersForGroup([], 'month', '2026-07')).toEqual([
+        { dimension: 'after', values: ['2026-07-01T00:00:00-04:00'] },
+        { dimension: 'before', values: ['2026-08-01T00:00:00-04:00'] }
       ]);
     } finally { vi.unstubAllEnvs(); }
   });
@@ -89,6 +99,17 @@ describe('group context', () => {
       { dimension: 'domain', values: ['example.com'] },
       { dimension: 'after', values: ['2026-07-03T00:00:00Z'] }
     ], 'month', '2026-06')).toBeUndefined();
+    vi.stubEnv('TZ', 'Europe/London');
+    try {
+      expect(filtersForGroup([{ dimension: 'after', values: ['2026-07-03T00:00:00Z'] }], 'month', '2026-07')).toEqual([
+        { dimension: 'after', values: ['2026-07-03T00:00:00Z'] },
+        { dimension: 'before', values: ['2026-08-01T00:00:00+01:00'] }
+      ]);
+      expect(filtersForGroup([], 'month', '2026-01')).toEqual([
+        { dimension: 'after', values: ['2026-01-01T00:00:00+00:00'] },
+        { dimension: 'before', values: ['2026-02-01T00:00:00+00:00'] }
+      ]);
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it('rejects malformed temporal keys and parses only requestable group selections', () => {

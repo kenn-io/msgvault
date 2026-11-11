@@ -3,6 +3,7 @@
   import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 
   import type { APIClient } from '../../api/client';
+  import { boundaryDate, editedBoundary, isLocalBound } from '../../explore/date-bound';
   import { createExploreAPI } from '../../explore/api';
   import { entryKindPresentation } from '../../explore/labels';
   import type { ExploreFilter } from '../../explore/models';
@@ -97,9 +98,7 @@
   function dateValue(dimension: 'after' | 'before'): string {
     const value = filters.find((filter) => filter.dimension === dimension)?.values[0];
     if (!value) return '';
-    const date = new Date(value);
-    if (dimension === 'before') date.setUTCMilliseconds(date.getUTCMilliseconds() - 1);
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+    return boundaryDate(value, dimension === 'before');
   }
 
   function changeDate(dimension: 'after' | 'before', input: HTMLInputElement): void {
@@ -114,8 +113,9 @@
     }
     const rest = filters.filter((filter) => filter.dimension !== dimension);
     if (!value) return onChange(rest);
-    const boundary = new Date(`${value}T00:00:00Z`).getTime() + (dimension === 'before' ? 86400000 : 0);
-    onChange([...rest, { dimension, values: [new Date(boundary).toISOString()] }]);
+    const current = filters.find((filter) => filter.dimension === dimension)?.values[0];
+    const peer = filters.find((filter) => filter.dimension === (dimension === 'after' ? 'before' : 'after'))?.values[0];
+    onChange([...rest, { dimension, values: [editedBoundary(value, dimension === 'before', isLocalBound(current ?? peer))] }]);
   }
 
   function clear(): void {
@@ -165,12 +165,12 @@
     <AccountFilter {client} {filters} {onChange} showSingleMailbox />
     {#if !lockedFilter}<IdentityFilter {client} {filters} {onChange} />{/if}
     <fieldset class="field">
-      <legend>Dates (UTC)</legend>
+      <legend>{filters.some((filter) => (filter.dimension === 'after' || filter.dimension === 'before') && isLocalBound(filter.values[0])) ? 'Dates' : 'Dates (UTC)'}</legend>
       <div class="dates">
       <!-- kit-ui-check-ignore: independent optional boundaries; DateRangePicker commits complete ranges. -->
-      <label>From<input type="date" aria-label="From" value={dateValue('after')} onchange={(event) => changeDate('after', event.currentTarget)} /></label>
+      <label>From<input type="date" aria-label={isLocalBound(filters.find((filter) => filter.dimension === 'before')?.values[0]) && !isLocalBound(filters.find((filter) => filter.dimension === 'after')?.values[0]) && filters.some((filter) => filter.dimension === 'after') ? 'From (UTC)' : 'From'} value={dateValue('after')} onchange={(event) => changeDate('after', event.currentTarget)} /></label>
       <!-- kit-ui-check-ignore: independent optional boundaries; DateRangePicker commits complete ranges. -->
-      <label>To<input type="date" aria-label="To" value={dateValue('before')} onchange={(event) => changeDate('before', event.currentTarget)} /></label>
+      <label>To<input type="date" aria-label={isLocalBound(filters.find((filter) => filter.dimension === 'after')?.values[0]) && !isLocalBound(filters.find((filter) => filter.dimension === 'before')?.values[0]) && filters.some((filter) => filter.dimension === 'before') ? 'To (UTC)' : 'To'} value={dateValue('before')} onchange={(event) => changeDate('before', event.currentTarget)} /></label>
       </div>
     </fieldset>
     {#if dateError}<p role="alert">{dateError}</p>{/if}

@@ -35,6 +35,15 @@ it('keeps a view with invalid state disabled and deletable', async () => {
   expect(onDeleteView).toHaveBeenCalledOnce();
 });
 
+it('disables a view from a newer schema', async () => {
+  const onOpen = vi.fn();
+  renderRow({ ...view(1, 'Future view'), schema_version: 4 }, { onOpen });
+  const button = screen.getByRole('button', { name: 'Future view' });
+  expect(button.getAttribute('aria-disabled')).toBe('true');
+  await fireEvent.click(button);
+  expect(onOpen).not.toHaveBeenCalled();
+});
+
 it.each(['save', 'move'])('locks a pending rename and preserves focus through %s', async ending => {
   let finish!: () => void;
   const pending = new Promise<undefined>(resolve => { finish = () => resolve(undefined); });

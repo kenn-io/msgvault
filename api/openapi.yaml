@@ -31682,7 +31682,7 @@ paths:
       tags:
         - API
     patch:
-      description: Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR.
+      description: Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR, or 3 for local date offsets.
       operationId: patchSavedView
       parameters:
         - description: Saved View ID

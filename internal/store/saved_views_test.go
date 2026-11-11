@@ -211,3 +211,19 @@ func TestSavedViewsPreserveLargeNumericFilterIDs(t *testing.T) {
 	assert.Contains(t, string(created.CanonicalState), "9223372036854775807",
 		"canonicalization must not round 64-bit identifiers")
 }
+
+func TestSavedViewLocalDateSchema(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	input := savedViewInput("Local dates")
+	input.SchemaVersion = 3
+	input.CanonicalState = json.RawMessage(`{"filters":[{"field":"after","operator":"in","values":["2026-07-01T00:00:00-04:00"]}]}`)
+	created, err := st.CreateSavedView(t.Context(), input)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(input.CanonicalState), string(created.CanonicalState))
+	loaded, err := st.GetSavedView(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(input.CanonicalState), string(loaded.CanonicalState))
+	input.SchemaVersion = 4
+	_, err = st.CreateSavedView(t.Context(), input)
+	assert.ErrorIs(t, err, store.ErrSavedViewUnsupportedSchemaVersion)
+}

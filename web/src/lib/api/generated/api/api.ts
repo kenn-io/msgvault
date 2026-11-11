@@ -3955,7 +3955,7 @@ export const getSavedView = (
   );
 };
 /**
- * Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR.
+ * Sending canonical_state without schema_version keeps the stored schema version, so schema 1 keeps pipes as literal text. Send schema_version 2 to adopt pipe OR, or 3 for local date offsets.
  * @summary Update a shared analytical Saved View
  */
 export const patchSavedView = (
