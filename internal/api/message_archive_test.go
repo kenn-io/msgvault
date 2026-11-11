@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/emailtags"
 )
@@ -53,6 +54,17 @@ func TestArchiveMessageRouteValidationAndGate(t *testing.T) {
 		assertionsForTest.Equal(http.StatusBadRequest, response.Code, response.Body.String())
 	}
 	assertionsForTest.Equal(http.StatusBadRequest, call("0", `{"archived":true}`).Code)
+	assertionsForTest.Zero(st.calls)
+	delegated := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
+	t.Cleanup(delegated.agentGrants.Close)
+	_, secret, _, err := delegated.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: 1, Type: "gmail", Identifier: "owner@example.test"}}, time.Time{})
+	require.NoError(t, err)
+	readOnly := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/messages/7/archive", strings.NewReader(`{"archived":true,"dry_run":true}`))
+	readOnly.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	readOnly.Header.Set("Content-Type", "application/json")
+	denied := httptest.NewRecorder()
+	delegated.Router().ServeHTTP(denied, readOnly)
+	assertionsForTest.Equal(http.StatusForbidden, denied.Code, denied.Body.String())
 	assertionsForTest.Zero(st.calls)
 	st.fail = emailtags.Failure("archive_unsupported", "synthetic failure", nil, nil)
 	response := call("7", `{"archived":false}`)
