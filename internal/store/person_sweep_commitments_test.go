@@ -937,7 +937,6 @@ func TestCommitmentAgendaAutomaticFilingWaitsForInitialMatchingReplay(t *testing
 	marked, err = st.MarkCommitmentAgendaAttemptContext(ctx, item, now, false)
 	r.NoError(err)
 	a.True(marked, "explicit manual filing remains available")
-
 }
 
 func TestCommitmentAgendaFinalMarkRechecksCurrentEvidence(t *testing.T) {
