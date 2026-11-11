@@ -1503,6 +1503,15 @@ func TestAppliedRosterRefreshesRouteAccountAndMerge(t *testing.T) {
 			requirements.NoError(err)
 			requirements.Len(after.Routes.Items, 1)
 			assertions.Equal("unresolved", after.Routes.Items[0].Status)
+			if truncated {
+				assertions.Contains(after.Routes.Items[0].Reasons, "membership_incomplete")
+				state.Chats[chat.ID].RosterWork.MemberFirst = true
+				_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
+				requirements.NoError(err)
+				after, err = st.GetPersonMessagingRoutesContext(t.Context(), query)
+				requirements.NoError(err)
+				requirements.Len(after.Routes.Items, 1)
+			}
 			assertions.Contains(after.Routes.Items[0].Reasons, "account_not_connected")
 			opts.routeAccount.Status = "connected"
 			state.Chats[chat.ID].RosterWork.MemberFirst = false
@@ -1512,6 +1521,15 @@ func TestAppliedRosterRefreshesRouteAccountAndMerge(t *testing.T) {
 			recovered, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
 			requirements.NoError(err)
 			requirements.Len(recovered.Routes.Items, 1)
+			if truncated {
+				assertions.Equal("unresolved", recovered.Routes.Items[0].Status)
+				state.Chats[chat.ID].RosterWork.MemberFirst = true
+				_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
+				requirements.NoError(err)
+				recovered, err = st.GetPersonMessagingRoutesContext(t.Context(), query)
+				requirements.NoError(err)
+				requirements.Len(recovered.Routes.Items, 1)
+			}
 			assertions.Equal("archive_verified", recovered.Routes.Items[0].Status)
 			state.Chats[chat.ID].RosterWork.MemberFirst = false
 			detail.MergedIntoChatID = "!destination:example.test"
@@ -1527,6 +1545,15 @@ func TestAppliedRosterRefreshesRouteAccountAndMerge(t *testing.T) {
 			merged, err := st.GetPersonMessagingRoutesContext(t.Context(), query)
 			requirements.NoError(err)
 			requirements.Len(merged.Routes.Items, 1)
+			if truncated {
+				assertions.Equal("unresolved", merged.Routes.Items[0].Status)
+				state.Chats[chat.ID].RosterWork.MemberFirst = true
+				_, _, err = imp.syncChat(t.Context(), 0, source.ID, detail, opts, state, time.Time{}, false, false, &ImportSummary{})
+				requirements.NoError(err)
+				merged, err = st.GetPersonMessagingRoutesContext(t.Context(), query)
+				requirements.NoError(err)
+				requirements.Len(merged.Routes.Items, 1)
+			}
 			assertions.Equal("merged_container", merged.Routes.Items[0].Status)
 			var raw string
 			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT metadata FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), source.ID, chat.ID).Scan(&raw))
