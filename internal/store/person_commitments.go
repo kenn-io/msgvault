@@ -133,6 +133,38 @@ func (s *Store) ListCommitmentAgendaCandidatesContext(ctx context.Context, now t
 	return append(items, retries...), err
 }
 
+// commitmentSourceCache serves one list. It shares raw source reads and each
+// conversation scope, but every cited message still finds its own live
+// conversation and message, and every citation validates its own version,
+// author, time and exact rune range. Nothing outlives the list.
+func (s *Store) commitmentSourceCache(owners loopOwners) func(context.Context, int64, int64) (peoplesweep.CommitmentSource, bool, error) {
+	sources := make(map[[2]int64]peoplesweep.CommitmentSource)
+	scopes := make(map[[2]int64][]LoopConversation)
+	read := s.commitmentConversations(owners)
+	conversations := func(ctx context.Context, personID, conversationID int64) ([]LoopConversation, error) {
+		key := [2]int64{personID, conversationID}
+		if scope, found := scopes[key]; found {
+			return scope, nil
+		}
+		scope, err := read(ctx, personID, conversationID)
+		if err == nil {
+			scopes[key] = scope
+		}
+		return scope, err
+	}
+	return func(ctx context.Context, personID, messageID int64) (peoplesweep.CommitmentSource, bool, error) {
+		key := [2]int64{personID, messageID}
+		if source, found := sources[key]; found {
+			return source, source.MessageID != 0, nil
+		}
+		source, live, err := s.currentCommitmentSourceWithOwners(ctx, personID, messageID, owners, conversations)
+		if err == nil {
+			sources[key] = source
+		}
+		return source, live, err
+	}
+}
+
 func (s *Store) listPersonCommitments(ctx context.Context, filter commitmentListFilter, now time.Time, limit int) ([]PersonCommitment, error) {
 	if filter.personID < 0 || limit < 1 || limit > 201 {
 		return nil, ErrInvalidActivityRequest
@@ -141,20 +173,7 @@ func (s *Store) listPersonCommitments(ctx context.Context, filter commitmentList
 	if err != nil {
 		return nil, err
 	}
-	// Share only raw source reads for this list; each citation still validates
-	// its own version, author, time and exact rune range.
-	sources := make(map[[2]int64]peoplesweep.CommitmentSource)
-	lookup := func(ctx context.Context, personID, messageID int64) (peoplesweep.CommitmentSource, bool, error) {
-		key := [2]int64{personID, messageID}
-		if source, found := sources[key]; found {
-			return source, source.MessageID != 0, nil
-		}
-		source, live, err := s.currentCommitmentSourceWithOwners(ctx, personID, messageID, owners)
-		if err == nil {
-			sources[key] = source
-		}
-		return source, live, err
-	}
+	lookup := s.commitmentSourceCache(owners)
 	result := make([]PersonCommitment, 0, limit)
 	var after PersonCommitment
 	if filter.afterID != nil {
