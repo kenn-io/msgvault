@@ -426,6 +426,8 @@ func testCommitmentAgendaReceipt(t *testing.T, st *Store, commitment PersonCommi
 	r.NoError(err)
 	a.Equal(key, reopened.IdempotencyKey)
 	a.Equal(CommitmentAgendaPending, reopened.State)
+	_, err = st.ReopenCommitmentAgendaContext(ctx, key)
+	r.NoError(err)
 	r.NoError(st.RetireCommitmentAgendaContext(ctx, key))
 	linked, err := st.LinkCommitmentAgendaContext(ctx, key, "issue-uid", "synthetic#7")
 	r.NoError(err)

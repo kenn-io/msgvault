@@ -212,6 +212,7 @@ func (s *Store) transferCommitmentAgendaTx(ctx context.Context, tx *loggedTx, fr
 }
 
 func (s *Store) ReopenCommitmentAgendaContext(ctx context.Context, key string) (CommitmentAgendaSuggestion, error) {
-	return scanCommitmentAgenda(s.db.QueryRowContext(ctx, s.Rebind(`UPDATE person_commitment_agenda SET state = 'pending'
-		WHERE idempotency_key = ? AND state = 'retired' RETURNING `+commitmentAgendaColumns), key))
+	return scanCommitmentAgenda(s.db.QueryRowContext(ctx, s.Rebind(`UPDATE person_commitment_agenda
+		SET state = CASE WHEN state = 'retired' THEN 'pending' ELSE state END
+		WHERE idempotency_key = ? RETURNING `+commitmentAgendaColumns), key))
 }
