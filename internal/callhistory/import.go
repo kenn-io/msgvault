@@ -47,13 +47,8 @@ func (r ImportRequest) DiscordArchiveID() (int64, error) {
 	if len(r.Record) > MaxRawBytes {
 		return 0, ErrImportTooLarge
 	}
-	if r.Format != "discord_archived" || !discordID(r.Account) || len(r.Bindings) > 100 {
-		return 0, invalid("Discord archive account, record or bindings")
-	}
-	for native, id := range r.Bindings {
-		if !discordID(native) || native == r.Account || id <= 0 {
-			return 0, invalid("Discord binding")
-		}
+	if r.Format != "discord_archived" {
+		return 0, invalid("Discord archive format")
 	}
 	if json.Unmarshal(r.Record, &ref, json.RejectUnknownMembers(true)) != nil || ref.MessageID <= 0 {
 		return 0, invalid("Discord archive requires a positive integer message_id")

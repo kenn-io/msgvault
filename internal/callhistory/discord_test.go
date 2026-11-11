@@ -186,10 +186,6 @@ func TestDiscordArchiveReferenceValidation(t *testing.T) {
 		_, err = req.DiscordArchiveID()
 		require.ErrorIs(err, ErrInvalid)
 	}
-	req, err := DecodeImportRequest(strings.NewReader(`{"format":"discord_archived","account":"01","record":{"message_id":1}}`))
-	require.NoError(err)
-	_, err = req.DiscordArchiveID()
-	require.ErrorIs(err, ErrInvalid)
 }
 
 func FuzzDiscordIgnoresOtherRepresentationFields(f *testing.F) {

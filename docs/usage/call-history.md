@@ -83,9 +83,11 @@ changes connected account bindings, or requests additional platform permissions.
 
 ## Import Discord call evidence
 
-These formats require a daemon with API schema 5.2.0 or newer. The existing guild-bot source does
-not retrieve private call history. This importer uses stored or supplied JSON
-and does not contact Discord or need a token, new scope or additional dependency.
+These formats require a daemon with API schema 5.2.0 or newer. The current
+Discord guild bot cannot archive private CALL messages. An archived lookup
+requires an archive that already holds the native Discord JSON. The importer
+uses stored or supplied JSON and does not contact Discord or need a token, new
+scope or additional dependency.
 
 To map an already archived CALL message, supply its **archive message ID**, the
 owner's native Discord user ID, and optional exact peer-to-participant bindings:
@@ -128,8 +130,9 @@ Exporter messages appear in `calls list`, but lack a participant roster and
 produce no per-person summary row. Native and exporter representations retain
 separate original evidence under stable representation IDs. Importing both
 representations of one call produces two observations in `calls list`.
-Reimporting an archived/native record replaces that native observation; it does
-not create another call. Later changes to the original archived message do not
+Reimporting an archived/native record replaces that native observation and its
+bindings; omitting bindings clears the previous bindings. It does not create
+another call. Later changes to the original archived message do not
 automatically update or withdraw its separately imported call evidence.
 
 The documented Discord data package's message transcript lacks structured call
