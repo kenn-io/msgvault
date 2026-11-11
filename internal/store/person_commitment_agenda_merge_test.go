@@ -75,6 +75,13 @@ func TestCommitmentAgendaReceiptPurgesWithPerson(t *testing.T) {
 	linked := insertAgendaMergeFixture(t, st, f.personID, persist("linked", "I will send the report.", -time.Hour), "linked", true, true)
 	retired := insertAgendaMergeFixture(t, st, f.personID, persist("retired", "I will send the report.", -time.Hour), "retired", false, false)
 	r.NoError(st.RetireCommitmentAgendaContext(ctx, "retired"))
+	// Exercise deletion after the owner has stopped the sweep enrollment.
+	_, err := st.SetPersonTrackingContext(ctx, f.personID, false)
+	r.NoError(err)
+	_, err = st.GetCommitmentAgendaContext(ctx, linked)
+	r.NoError(err)
+	_, err = st.GetCommitmentAgendaContext(ctx, retired)
+	r.NoError(err)
 	person, err := st.GetPersonContext(ctx, f.personID)
 	r.NoError(err)
 	r.NoError(st.DeletePersonContext(ctx, person.ID, person.Revision))
