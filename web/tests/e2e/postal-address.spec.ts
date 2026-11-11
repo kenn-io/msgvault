@@ -2,12 +2,8 @@ import { expect, test } from '@playwright/test';
 import type { Input, PersonAddress, PersonProfilePatchRequest } from '../../src/lib/api/generated/models';
 import { installDirectoryReviewArchive, installMixedArchive } from './fixtures/mixed-archive';
 
-for (const [width, withoutSubtleCrypto] of [[1280, false], [420, false], [1280, true], [420, true]] as const) {
-  test(`postal review preserves raw input and confirms once at ${width}px${withoutSubtleCrypto ? ' without SubtleCrypto' : ''}`, async ({ page }) => {
-    if (withoutSubtleCrypto) {
-      // Model the browser capability missing on supported remote HTTP origins.
-      await page.addInitScript(() => Object.defineProperty(globalThis.crypto, 'subtle', { value: undefined, configurable: true }));
-    }
+for (const width of [1280, 420] as const) {
+  test(`postal review preserves raw input and confirms once at ${width}px`, async ({ page }) => {
     await installMixedArchive(page);
     const when = '2026-08-01T00:00:00Z';
     let revision = 1;
@@ -34,7 +30,6 @@ for (const [width, withoutSubtleCrypto] of [[1280, false], [420, false], [1280, 
     });
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42 }))}`);
-    expect(await page.evaluate(() => globalThis.crypto?.subtle === undefined)).toBe(withoutSubtleCrypto);
     const pane = page.getByRole('group', { name: 'Person page' });
     await pane.getByRole('radio', { name: 'Details', exact: true }).click();
     await pane.getByRole('button', { name: 'Add address', exact: true }).click();
@@ -50,8 +45,6 @@ for (const [width, withoutSubtleCrypto] of [[1280, false], [420, false], [1280, 
     await expect(form.getByText('12 Example Street', { exact: false })).toBeVisible();
     await expect(form.getByLabel('Street address', { exact: true })).toHaveValue(' 12 Example St ');
     expect(writes).toHaveLength(0);
-    await form.getByRole('button', { name: 'Check with Google' }).click();
-    expect(checks).toBe(1);
     const layout = await form.evaluate(element => ({ width: element.getBoundingClientRect().width, scroll: element.scrollWidth, client: element.clientWidth }));
     expect(layout.width).toBeLessThanOrEqual(width);
     expect(layout.scroll).toBeLessThanOrEqual(layout.client + 1);

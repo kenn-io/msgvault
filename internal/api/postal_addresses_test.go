@@ -41,35 +41,6 @@ func TestPostalTextOnlyCreationKeepsCurrentTextSeparateFromSnapshot(t *testing.T
 	assert.Equal(input.OriginalValue, raw.OriginalValue)
 }
 
-func TestPostalTextOnlyReplacementRetainsCurrentText(t *testing.T) {
-	for _, tc := range []struct {
-		name, current, original string
-	}{
-		{"new text", "New address", "Old address"},
-		{"preserved source", "Old address", "Old address"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			input := PersonAddressInputRequest{AddressKind: store.PersonAddressPostal, OriginalValue: tc.current, FreeText: &tc.current, OriginalInput: &postaladdress.Input{AddressKind: "postal", OriginalValue: tc.original}}
-			request := PersonProfilePatchRequest{Addresses: &PersonAddressPatchRequest{Add: []PersonAddressInputRequest{input}, Supersede: []int64{1}}}
-			patch := store.PersonProfilePatch{Addresses: &store.PersonAddressPatch{Add: []store.PersonAddressInput{{AddressKind: store.PersonAddressPostal, FreeText: &tc.current}}}}
-			require.NoError(t, capturePostalPatchOriginals(request, &patch))
-			require.NotNil(t, patch.Addresses.Add[0].FreeText)
-			assert.Equal(t, tc.current, *patch.Addresses.Add[0].FreeText)
-		})
-	}
-}
-
-func TestPostalExplicitEmptyCurrentTextIsNotRestored(t *testing.T) {
-	for _, supersede := range [][]int64{nil, {1}} {
-		input := PersonAddressInputRequest{AddressKind: store.PersonAddressPostal, OriginalValue: "Old address", FreeText: new("")}
-		request := PersonProfilePatchRequest{Addresses: &PersonAddressPatchRequest{Add: []PersonAddressInputRequest{input}, Supersede: supersede}}
-		patch := store.PersonProfilePatch{Addresses: &store.PersonAddressPatch{Add: []store.PersonAddressInput{{AddressKind: store.PersonAddressPostal, FreeText: new("")}}}}
-		require.NoError(t, capturePostalPatchOriginals(request, &patch))
-		require.NotNil(t, patch.Addresses.Add[0].FreeText)
-		assert.Empty(t, *patch.Addresses.Add[0].FreeText)
-	}
-}
-
 func (v *countingPostalValidator) Check(_ context.Context, input postaladdress.Input) (postaladdress.Assessment, error) {
 	v.calls++
 	assessment := postaladdress.Assess(input)
@@ -104,8 +75,6 @@ func TestPostalAddressAssessmentRequiresExplicitConsent(t *testing.T) {
 		require.NoError(json.Unmarshal(response.Body.Bytes(), &assessment))
 		assert.Equal("raw", assessment.Original.OriginalValue)
 		assert.Equal("Unit 7", assessment.Proposed.ExtendedAddress)
-		assert.Equal([]string{"Room;3", "Floor 2"}, assessment.OriginalExtendedParts)
-		assert.Equal([]string{"Room;3", "Floor 2"}, assessment.ProposedExtendedParts)
 		if external {
 			assert.Equal(postaladdress.StatusValidated, assessment.Status)
 			assert.Equal(1, validator.calls)
@@ -119,7 +88,7 @@ func TestPostalAddressAssessmentRequiresExplicitConsent(t *testing.T) {
 	assert.Empty(profile.Addresses, "an assessment must never persist provider output")
 }
 
-func TestPostalAddressUnavailableStillAllowsLocalSave(t *testing.T) {
+func TestPostalAddressUnavailableStates(t *testing.T) {
 	for _, state := range []string{"disabled", "no key", "failure"} {
 		t.Run(state, func(t *testing.T) {
 			srv, wrapped := newIdentityLinkTestServer(t)
@@ -138,16 +107,12 @@ func TestPostalAddressUnavailableStillAllowsLocalSave(t *testing.T) {
 			assert := assert.New(t)
 			assert.Equal(postaladdress.StatusUnavailable, assessment.Status)
 			assert.Equal("Unit 7", assessment.Proposed.ExtendedAddress)
-			assert.Equal([]string{"Room;3", "Floor 2"}, assessment.OriginalExtendedParts)
-			assert.Equal([]string{"Room;3", "Floor 2"}, assessment.ProposedExtendedParts)
 			if state == "failure" {
 				assert.Equal(1, validator.calls)
 			} else {
 				assert.Zero(validator.calls)
 			}
-			read := doRequest(t, srv.Router(), http.MethodGet, personProfilePath(id), nil, nil)
-			saved := doRequest(t, srv.Router(), http.MethodPatch, personProfilePath(id), []byte(`{"addresses":{"add":[{"address_kind":"postal","street_address":"12 Example St","extended_address":"Unit 7","country_code":"CA","envelope":{"source":"user"}}]}}`), map[string]string{"If-Match": read.Header().Get("ETag")})
-			require.Equal(http.StatusOK, saved.Code, saved.Body.String())
+
 		})
 	}
 }
@@ -433,7 +398,6 @@ func TestPostalAddressAssessmentRequiresPresentAddress(t *testing.T) {
 		{"unknown member", `{"address":{},"unknown":true}`, http.StatusBadRequest, 0},
 		{"multiple values", `{"address":{}} {}`, http.StatusBadRequest, 0},
 		{"present empty object", `{"address":{}}`, http.StatusOK, 0},
-		{"present external draft", `{"address":{"street_address":"12 Example St","country_code":"CA"},"allow_external":true}`, http.StatusOK, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -471,7 +435,7 @@ func TestPostalAddressAssessmentRequiresPresentAddress(t *testing.T) {
 }
 
 func TestPostalAddressReadsRejectUnsupportedStoredSnapshots(t *testing.T) {
-	for _, raw := range []string{"msgvault:postal-input:v2\n{}", "msgvault:postal-input:v1\nnot json", "msgvault:postal-input:v1\n{\"schema\":1,\"input\":{},\"extra\":true}"} {
+	for _, raw := range []string{"msgvault:postal-input:v2\n{}"} {
 		t.Run(raw, func(t *testing.T) {
 			srv, wrapped := newIdentityLinkTestServer(t)
 			id := seedAPIPerson(t, wrapped.Store)

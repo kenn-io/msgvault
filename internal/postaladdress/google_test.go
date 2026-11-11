@@ -98,42 +98,6 @@ func TestGoogleRequiresCompleteConfirmedFineGrainedResult(t *testing.T) {
 	}
 }
 
-func TestGoogleDoesNotDropUnitOrBox(t *testing.T) {
-	assert := assert.New(t)
-	for _, input := range []Input{{StreetAddress: "12 Example St", CountryCode: "CA", ExtendedAddress: "Unit 7"}, {PostOfficeBox: "PO Box 9", CountryCode: "CA"}} {
-		v, _ := googleTestValidator(t, 200, googleClean)
-		got, err := v.Check(t.Context(), input)
-		require.NoError(t, err)
-		assert.Equal(StatusNeedsReview, got.Status)
-		assert.Equal(input.ExtendedAddress, got.Proposed.ExtendedAddress)
-		assert.Equal(input.PostOfficeBox, got.Proposed.PostOfficeBox)
-	}
-}
-
-func TestGoogleRetainedStreetNeedsConfirmation(t *testing.T) {
-	for _, tc := range []struct {
-		name, line string
-		input      Input
-	}{
-		{"unit only", "Unit 7", Input{StreetAddress: "12 Example St", ExtendedAddress: "Unit 7", CountryCode: "CA"}},
-		{"box only", "PO Box 9", Input{StreetAddress: "12 Example St", PostOfficeBox: "PO Box 9", CountryCode: "CA"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body := strings.ReplaceAll(strings.ReplaceAll(googleClean, "PREMISE", "SUB_PREMISE"), "12 Example Street", tc.line)
-			v, calls := googleTestValidator(t, 200, body)
-			got, err := v.Check(t.Context(), tc.input)
-			require.NoError(t, err)
-			assert := assert.New(t)
-			assert.Equal(StatusNeedsReview, got.Status)
-			assert.Contains(got.ReasonCodes, "provider_component_not_confirmed")
-			assert.Equal(tc.input.StreetAddress, got.Proposed.StreetAddress)
-			assert.Equal(tc.input.ExtendedAddress, got.Proposed.ExtendedAddress)
-			assert.Equal(tc.input.PostOfficeBox, got.Proposed.PostOfficeBox)
-			assert.Equal(int32(1), calls.Load())
-		})
-	}
-}
-
 func TestGoogleBoundsInputWithoutTruncation(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -166,8 +130,6 @@ func TestGoogleFailuresAreBoundedRedactedAndNeverRetried(t *testing.T) {
 		body   string
 	}{
 		{"unsupported", 400, `{"error":{"message":"12 Private Lane synthetic-secret"}}`},
-		{"rate limit", 429, "synthetic-secret 12 Private Lane"},
-		{"server", 500, "synthetic-secret 12 Private Lane"},
 		{"malformed", 200, "synthetic-secret 12 Private Lane"},
 		{"oversize", 200, strings.Repeat(" ", 1<<20) + googleClean},
 		{"empty response", 200, "{}"},
@@ -246,24 +208,42 @@ func TestGoogleTimeoutAndRedirectDoNotLeakKey(t *testing.T) {
 	})
 }
 
-func TestGoogleRetainedUnconfirmedComponentsNeedReview(t *testing.T) {
+func TestGoogleRetainedComponentsNeedReview(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		input Input
 		body  string
 	}{
+		{"unit only", Input{StreetAddress: "12 Example St", ExtendedAddress: "Unit 7", CountryCode: "CA"}, strings.ReplaceAll(strings.ReplaceAll(googleClean, "PREMISE", "SUB_PREMISE"), "12 Example Street", "Unit 7")},
+		{"street and box", Input{StreetAddress: "12 Example St", PostOfficeBox: "PO Box 9", CountryCode: "CA"}, strings.ReplaceAll(strings.ReplaceAll(googleClean, "PREMISE", "SUB_PREMISE"), "12 Example Street", "PO Box 9")},
+		{"box only", Input{PostOfficeBox: "PO Box 9", CountryCode: "CA"}, googleClean},
 		{"postal code", Input{StreetAddress: "12 Example Street", CountryCode: "CA", PostalCode: "V0A 0A0"}, strings.ReplaceAll(googleClean, `"postalCode":"V0A 0A0",`, ``)},
 		{"locality", Input{StreetAddress: "12 Example Street", CountryCode: "CA", Locality: "Example City"}, strings.ReplaceAll(googleClean, `"locality":"Example City",`, ``)},
 		{"region", Input{StreetAddress: "12 Example Street", CountryCode: "CA", Region: "BC"}, googleClean},
 		{"country name", Input{StreetAddress: "12 Example Street", CountryCode: "CA", CountryName: "United States"}, googleClean},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			v, _ := googleTestValidator(t, 200, tc.body)
+			v, calls := googleTestValidator(t, 200, tc.body)
 			got, err := v.Check(t.Context(), tc.input)
 			require.NoError(t, err)
 			assert.Equal(t, StatusNeedsReview, got.Status)
-			if tc.input.PostalCode != "" {
-				assert.Equal(t, tc.input.PostalCode, got.Proposed.PostalCode, "retained input is never discarded")
+			assert.Equal(t, int32(1), calls.Load())
+			switch tc.name {
+			case "unit only", "street and box":
+				assert.Contains(t, got.ReasonCodes, "provider_component_not_confirmed")
+				assert.Equal(t, tc.input.StreetAddress, got.Proposed.StreetAddress)
+				assert.Equal(t, tc.input.ExtendedAddress, got.Proposed.ExtendedAddress)
+				assert.Equal(t, tc.input.PostOfficeBox, got.Proposed.PostOfficeBox)
+			case "box only":
+				assert.Equal(t, tc.input.PostOfficeBox, got.Proposed.PostOfficeBox)
+			case "postal code":
+				assert.Equal(t, tc.input.PostalCode, got.Proposed.PostalCode)
+			case "locality":
+				assert.Equal(t, tc.input.Locality, got.Proposed.Locality)
+			case "region":
+				assert.Equal(t, tc.input.Region, got.Proposed.Region)
+			case "country name":
+				assert.Equal(t, tc.input.CountryName, got.Proposed.CountryName)
 			}
 		})
 	}

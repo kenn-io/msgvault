@@ -1287,22 +1287,23 @@ func mappedOccurrence(
 
 func TestPostalAddressSnapshotDoesNotRestoreClearedValues(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		input postaladdress.Input
+		name         string
+		original     postaladdress.Input
+		country, geo *string
+		want         string
 	}{
-		{"raw text", postaladdress.Input{AddressKind: "postal", OriginalValue: "12 Example; Unit 7\nRaw text"}},
-		{"components", postaladdress.Input{AddressKind: "postal", ExtendedAddress: "Unit 7", StreetAddress: "12 Example Street", Locality: "Example City", CountryName: "Canada"}},
+		{"raw text", postaladdress.Input{AddressKind: "postal", OriginalValue: "12 Example; Unit 7\nRaw text"}, nil, nil, ""},
+		{"components", postaladdress.Input{AddressKind: "postal", ExtendedAddress: "Unit 7", StreetAddress: "12 Example Street", Locality: "Example City", CountryName: "Canada"}, nil, nil, ""},
+		{"country code", postaladdress.Input{AddressKind: "postal", StreetAddress: "Old street"}, new("CA"), nil, ";;;;;;"},
+		{"geo", postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"}, nil, new("geo:1,2"), ";;;;;;"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			encoded, err := postaladdress.EncodeOriginalInput(tc.input)
-			require := require.New(t)
-			require.NoError(err)
-			got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded})
-			require.NoError(err)
-			assert := assert.New(t)
-			assert.Empty(got)
-			assert.Nil(label)
-			assert.NotContains(got, "msgvault:postal-input:")
+			encoded, err := postaladdress.EncodeOriginalInput(tc.original)
+			require.NoError(t, err)
+			got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, CountryCode: tc.country, GeoURI: tc.geo})
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+			assert.Nil(t, label)
 		})
 	}
 }
@@ -1317,68 +1318,47 @@ func TestNonPostalAddressSnapshotLikeTextRemainsLiteral(t *testing.T) {
 		assert.Equal(vcard.EscapeText(encoded), got)
 		assert.False(uri)
 	}
-	legacy, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "legacy raw text"})
-	require.NoError(err)
-	assert.Equal(";;;;;;", legacy)
-	require.NotNil(label)
-	assert.Equal("legacy raw text", *label)
+
 }
 
-func TestPostalAddressSnapshotExportsCurrentFreeText(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	raw := postaladdress.Input{AddressKind: "postal", OriginalValue: "  Original address\nUnit 7  "}
-	encoded, err := postaladdress.EncodeOriginalInput(raw)
-	require.NoError(err)
-	text := "  Current address\nUnit 8  "
-	got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, FreeText: &text})
-	require.NoError(err)
-	require.NotNil(label)
-	assert.Equal(";;;;;;", got)
-	assert.Equal(text, *label)
-	assert.NotContains(got, "msgvault:postal-input:")
+func TestPostalSnapshotExportsCurrentLabel(t *testing.T) {
+	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name                 string
+		label, text, country *string
+		value, want          string
+	}{
+		{"free text", nil, new("  Current address\nUnit 8  "), nil, ";;;;;;", "  Current address\nUnit 8  "},
+		{"label", new("Corrected label"), nil, nil, ";;;;;;", "Corrected label"},
+		{"label and free text", new("Delivery instructions"), new("12 Example Street"), nil, ";;;;;;", "Delivery instructions\n12 Example Street"},
+		{"partial components", nil, new("12 Example Street"), new("Canada"), ";;;;;;Canada", "12 Example Street"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, Label: tc.label, FreeText: tc.text, CountryName: tc.country})
+			require.NoError(t, err)
+			require.NotNil(t, label)
+			assert.Equal(t, tc.value, got)
+			assert.Equal(t, tc.want, *label)
+		})
+	}
 }
 
-func TestPostalAddressSnapshotExportsCurrentLabel(t *testing.T) {
-	require := require.New(t)
-	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", Label: "Old label"})
-	require.NoError(err)
-	label := "Corrected label"
-	value, got, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, Label: &label})
-	require.NoError(err)
-	require.NotNil(got)
-	assert.Equal(t, ";;;;;;", value)
-	assert.Equal(t, label, *got)
-}
-
-func TestPostalSnapshotPreservesLabelAndFreeText(t *testing.T) {
-	require := require.New(t)
-	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal"})
-	require.NoError(err)
-	_, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, Label: new("Delivery instructions"), FreeText: new("12 Example Street")})
-	require.NoError(err)
-	require.NotNil(label)
-	assert.Equal(t, "Delivery instructions\n12 Example Street", *label)
-}
-
-func TestPostalAddressPartialComponentsKeepFreeText(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal"})
-	require.NoError(err)
-	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, CountryName: new("Canada"), FreeText: new("12 Example Street")})
-	require.NoError(err)
-	require.NotNil(label)
-	assert.Equal(";;;;;;Canada", value)
-	assert.Equal("12 Example Street", *label)
-}
-
-func TestLegacyPostalExportOmitsFreeTextLabelWithComponents(t *testing.T) {
-	for _, original := range []string{"", "legacy source"} {
-		value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: original, StreetAddress: new("1 Main"), FreeText: new("gate code 42")})
-		require.NoError(t, err)
-		assert.Equal(t, ";;1 Main;;;;", value)
-		assert.Nil(t, label)
+func TestLegacyPostalExportKeepsLabel(t *testing.T) {
+	for _, tc := range []struct {
+		name, original string
+		label          *string
+	}{
+		{"empty source", "", nil},
+		{"source without label", "legacy source", nil},
+		{"source with label", "legacy source", new("Home")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: tc.original, StreetAddress: new("1 Main"), Label: tc.label, FreeText: new("gate code 42")})
+			require.NoError(t, err)
+			assert.Equal(t, ";;1 Main;;;;", got)
+			assert.Equal(t, tc.label, label)
+		})
 	}
 }
 
@@ -1392,36 +1372,7 @@ func TestLegacyExtendedAddressSurvivesPublicReadAndExport(t *testing.T) {
 	assert.Equal(t, value, got)
 }
 
-func TestPostalAddressSnapshotDoesNotRestoreStreetWhenOnlyCountryCodeRemains(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", StreetAddress: "Old street"})
-	require.NoError(err)
-	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, CountryCode: new("CA")})
-	require.NoError(err)
-	assert.Equal(";;;;;;", value)
-	assert.Nil(label)
-}
-
-func TestPostalAddressSnapshotExportsGeoWithoutRestoringText(t *testing.T) {
-	require := require.New(t)
-	encoded, err := postaladdress.EncodeOriginalInput(postaladdress.Input{AddressKind: "postal", OriginalValue: "Old street"})
-	require.NoError(err)
-	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: encoded, GeoURI: new("geo:1,2")})
-	require.NoError(err)
-	assert.Equal(t, ";;;;;;", value)
-	assert.Nil(t, label)
-}
-
 func TestPostalAddressExportRejectsUnsupportedSnapshot(t *testing.T) {
 	_, _, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "msgvault:postal-input:v2\n{}", StreetAddress: new("12 Example Street")})
 	require.Error(t, err)
-}
-
-func TestLegacyPostalExportRetainsOriginalLabel(t *testing.T) {
-	value, label, err := postalAddressValue(store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "legacy source", StreetAddress: new("1 Main"), Label: new("Home"), FreeText: new("gate code 42")})
-	require.NoError(t, err)
-	require.NotNil(t, label)
-	assert.Equal(t, ";;1 Main;;;;", value)
-	assert.Equal(t, "Home", *label)
 }

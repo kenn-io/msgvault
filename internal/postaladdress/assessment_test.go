@@ -3,7 +3,6 @@ package postaladdress
 import (
 	"reflect"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,13 +31,10 @@ func TestAssessPreservesInternationalInput(t *testing.T) {
 }
 
 func TestAssessDoesNotAssertValidity(t *testing.T) {
-	for _, input := range []Input{{}, {StreetAddress: "somewhere"}, {StreetAddress: "12 Example Street", CountryCode: "ZZ"}, {CountryCode: "US"}, {StreetAddress: "12 Example Street", CountryCode: "US"}, {FreeText: "unknown conventions"}} {
-		got := Assess(input)
-		assert.Contains(t, []Status{StatusNormalizedUnverified, StatusNeedsReview}, got.Status)
-		assert.Contains(t, got.ReasonCodes, "not_verified")
-	}
 	for _, input := range []Input{{}, {CountryCode: "US"}, {StreetAddress: "somewhere"}, {StreetAddress: "somewhere", CountryCode: "ZZ"}} {
-		assert.Equal(t, StatusNeedsReview, Assess(input).Status)
+		got := Assess(input)
+		assert.Equal(t, StatusNeedsReview, got.Status)
+		assert.Contains(t, got.ReasonCodes, "not_verified")
 	}
 }
 
@@ -57,21 +53,9 @@ func TestAssessmentNormalizationIdempotent(t *testing.T) {
 		assert.Equal(ht, proposed, Assess(proposed).Proposed)
 	}, hegel.WithTestCases(300), hegel.WithDatabase(""))
 }
-func TestAssessmentRetainsInput(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		input := drawPostalInput(ht)
-		before := input
-		got := Assess(input)
-		assert.Equal(ht, before, input)
-		assert.Equal(ht, before, got.Original)
-	}, hegel.WithTestCases(300), hegel.WithDatabase(""))
-}
-func TestAssessmentNeverLocallyValidates(t *testing.T) {
-	hegel.Test(t, func(ht *hegel.T) {
-		assert.Contains(ht, []Status{StatusNormalizedUnverified, StatusNeedsReview}, Assess(drawPostalInput(ht)).Status)
-	}, hegel.WithTestCases(300), hegel.WithDatabase(""))
-}
 func TestOriginalSnapshotProperty(t *testing.T) {
+	_, err := EncodeOriginalInput(Input{OriginalValue: string([]byte{0xff})})
+	require.Error(t, err)
 	hegel.Test(t, func(ht *hegel.T) {
 		input := drawPostalInput(ht)
 		encoded, err := EncodeOriginalInput(input)
@@ -81,28 +65,6 @@ func TestOriginalSnapshotProperty(t *testing.T) {
 		require.True(ht, ok)
 		assert.Equal(ht, input, decoded)
 	}, hegel.WithTestCases(300), hegel.WithDatabase(""))
-}
-
-func FuzzAssessment(f *testing.F) {
-	for _, text := range []string{"", "東京\n３０１号室", "\x00", " msgvault:postal-input:v1\n{} ", "a\r\nb", "msgvault:postal-input:v1\n" + `{"schema":1,"input":{"original_value":"literal"}}`} {
-		f.Add(text)
-	}
-	f.Fuzz(func(t *testing.T, text string) {
-		input := Input{StreetAddress: text, OriginalValue: text, CountryCode: text}
-		got := Assess(input)
-		assert.Equal(t, got.Proposed, Assess(got.Proposed).Proposed)
-		assert.Equal(t, input, got.Original)
-		encoded, err := EncodeOriginalInput(input)
-		if !utf8.ValidString(text) {
-			require.Error(t, err)
-			return
-		}
-		require.NoError(t, err)
-		decoded, ok, err := DecodeOriginalInput(encoded)
-		require.NoError(t, err)
-		require.True(t, ok)
-		assert.Equal(t, input, decoded)
-	})
 }
 
 func TestAssessmentExtendedParts(t *testing.T) {

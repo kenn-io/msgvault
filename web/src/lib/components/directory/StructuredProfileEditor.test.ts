@@ -62,8 +62,15 @@ describe('StructuredProfileEditor', () => {
     const controller = new DirectoryProfileController(client, 7, { structuredProfile: profile(), etags: { structuredProfile: '"person-7-r3"' }, errors: {} });
     render(StructuredProfileEditor, { controller, section: 'categories' });
     await fireEvent.input(screen.getByLabelText('Category'), { target: { value: 'Friends' } });
+    controller.structuredProfile = { ...profile(), person: { ...person(), id: 8 } };
+    await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
+    expect(requests).toHaveLength(0);
+    controller.structuredProfile = profile();
     await fireEvent.click(screen.getByRole('button', { name: 'Save category' }));
     await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]!.headers.get('If-Match')).toBe('\"person-7-r3\"');
+    expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/people/7/profile');
+    expect(await requests[0]!.clone().json()).toMatchObject({ categories: { add: [{ original_value: 'Friends' }] } });
   });
 
   it('supersedes a contact point with generated user provenance and no fabricated actor', async () => {
@@ -131,6 +138,7 @@ describe('StructuredProfileEditor', () => {
           add: [
             {
               address_kind: 'postal',
+              free_text: '',
               original_input: { address_kind: 'postal', street_address: '1 Test Street' },
               street_address: '1 Test Street',
               envelope: { source: 'user' },
@@ -213,6 +221,7 @@ describe('StructuredProfileEditor', () => {
             address_kind: 'postal',
             locality: 'Exampleville',
             country_name: 'Testland',
+            free_text: '',
             original_input: { address_kind: 'postal', locality: 'Exampleville', country_name: 'Testland' },
             envelope: { source: 'user' },
           },

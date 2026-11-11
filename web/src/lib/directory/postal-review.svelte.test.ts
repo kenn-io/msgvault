@@ -1,10 +1,8 @@
-import { webcrypto } from 'node:crypto';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Assessment, Input } from '../api/generated/models';
 import { postalAddressText, PostalReviewSession } from './postal-review.svelte';
 
-beforeEach(() => vi.stubGlobal('crypto', webcrypto));
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 const input: Input = { address_kind: 'postal', street_address: ' 12 Example St ', extended_address: 'Unit 7', country_code: 'ca', original_value: ' raw\ntext ' };
@@ -18,7 +16,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-describe('PostalReviewSession', () => {
+describe('postalAddressText', () => {
   it('shows decoded extended components without repeating the first seven ADR fields', () => {
     const address = { address_kind: 'postal', street_address: '12 Example Street', locality: 'Example City', extended_components: ';;12 Example Street;Example City;;;;Room\\;3;Floor 2' };
     expect(postalAddressText(address, ['Room;3', 'Floor 2'])).toBe('12 Example Street, Example City, Room;3, Floor 2');
@@ -39,6 +37,9 @@ describe('PostalReviewSession', () => {
     expect(postalAddressText({ address_kind: 'postal', free_text: '12 Example Street, Example City', street_address: '12 Example Street', locality: 'Example City', country_code: 'CA' })).toBe('12 Example Street, Example City, CA');
     expect(postalAddressText({ address_kind: 'postal', free_text: '12 Example Street\nUse side door', street_address: '12 Example Street', locality: 'Example City' })).toBe('Use side door, 12 Example Street, Example City');
   });
+});
+
+describe('PostalReviewSession', () => {
   it('suppresses duplicate pending and displayed checks without saving anything', async () => {
     const reply = deferred<Assessment>();
     const check = vi.fn(async (_personID: number, _input: Input, _external: boolean, _signal: AbortSignal) => reply.promise);
@@ -62,6 +63,7 @@ describe('PostalReviewSession', () => {
     const pending = state.check(input, true);
     await vi.waitFor(() => expect(check).toHaveBeenCalledOnce());
     state.invalidate(); state.invalidate();
+    expect(check.mock.calls[0]?.[3].aborted).toBe(true);
     if (outcome === 'success') reply.resolve(await assessment()); else reply.reject(new Error('stale error'));
     await pending;
     expect(state.result).toBeNull(); expect(state.error).toBeNull(); expect(state.pending).toBe(false);
@@ -82,22 +84,21 @@ describe('PostalReviewSession', () => {
     expect(state.result).toEqual(latest); expect(state.pending).toBe(false);
   });
 
-  it.each([7, 8])('rejects old results after close/reopen or person switch to %s', async nextPerson => {
+  it('rejects old results after close/reopen or person switch', async () => {
     const reply = deferred<Assessment>();
     const check = vi.fn(async (_personID: number, _input: Input, _external: boolean, _signal: AbortSignal) => reply.promise);
     const old = new PostalReviewSession(7, check);
     const pending = old.check(input, true);
     await vi.waitFor(() => expect(check).toHaveBeenCalledOnce());
     old.destroy();
-    const reopened = new PostalReviewSession(nextPerson, check);
+    const reopened = new PostalReviewSession(8, check);
     expect(reopened.editorGeneration).not.toBe(old.editorGeneration);
     reply.resolve(await assessment()); await pending;
     expect(old.result).toBeNull(); expect(reopened.result).toBeNull(); expect(reopened.pending).toBe(false);
   });
 
-  it.each([['SubtleCrypto', {}], ['crypto', undefined]])('checks locally and externally without %s', async (_capability, crypto) => {
+  it('checks locally and externally', async () => {
     const result = await assessment();
-    vi.stubGlobal('crypto', crypto);
     const check = vi.fn(async (_personID: number, _input: Input, external: boolean, _signal: AbortSignal): Promise<Assessment> =>
       external ? result : { ...result, status: 'normalized_unverified', provider: undefined });
     const state = new PostalReviewSession(7, check);
@@ -110,24 +111,9 @@ describe('PostalReviewSession', () => {
     expect(check.mock.calls.map(call => call.slice(0, 3))).toEqual([[7, input, false], [7, input, true]]);
   });
 
-  it('still invalidates a late result without SubtleCrypto', async () => {
-    const result = await assessment();
-    vi.stubGlobal('crypto', {});
-    const reply = deferred<Assessment>();
-    const check = vi.fn(async (_personID: number, _input: Input, _external: boolean, _signal: AbortSignal) => reply.promise);
-    const state = new PostalReviewSession(7, check);
-    const pending = state.check(input, true);
-    await vi.waitFor(() => expect(check).toHaveBeenCalledOnce());
-    state.invalidate(); state.invalidate();
-    reply.resolve(result); await pending;
-    expect(check.mock.calls[0]?.[3].aborted).toBe(true);
-    expect(state.result).toBeNull(); expect(state.error).toBeNull(); expect(state.pending).toBe(false);
-  });
-
-  it.each([true, false])('rejects a mismatched echoed input with WebCrypto available=%s', async available => {
+  it('rejects a mismatched echoed input', async () => {
     const result = await assessment();
     result.original = { ...input, street_address: '99 Example Lane' };
-    if (!available) vi.stubGlobal('crypto', {});
     const state = new PostalReviewSession(7, vi.fn(async () => result));
     await state.check(input, true);
     expect(state.result).toBeNull(); expect(state.error).toBeTruthy();

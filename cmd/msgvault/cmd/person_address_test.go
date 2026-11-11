@@ -38,7 +38,7 @@ func TestPostalAddressCLIAssessmentExplicitConsent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	for _, external := range []bool{false, true} {
-		daemon := newPersonBriefTestDaemon(t, `{"original":{"address_kind":"postal","street_address":" 12 Example St "},"proposed":{"address_kind":"postal","street_address":"12 Example St"},"status":"normalized_unverified","reason_codes":["not_verified"],"fingerprint":"current"}`)
+		daemon := newPersonBriefTestDaemon(t, `{"original":{"address_kind":"postal","street_address":" 12 Example St "},"proposed":{"address_kind":"postal","street_address":"12 Example St"},"status":"normalized_unverified","reason_codes":["not_verified"],"original_extended_parts":[],"proposed_extended_parts":[]}`)
 		args := []string{"assess", "7", "--input", postalCLIInput(t)}
 		if external {
 			args = append(args, "--external")
@@ -81,8 +81,7 @@ func TestPostalAddressCLIApplyRequiresExplicitRevisionAndTarget(t *testing.T) {
 		var body struct {
 			Addresses struct {
 				Add []struct {
-					CountryCode string `json:"country_code"`
-					Envelope    struct {
+					Envelope struct {
 						Source string `json:"source"`
 					} `json:"envelope"`
 				} `json:"add"`
@@ -101,7 +100,7 @@ func TestPostalAddressCLIApplyRequiresExplicitRevisionAndTarget(t *testing.T) {
 }
 
 func TestPostalAddressCLIListCarriesAssessment(t *testing.T) {
-	daemon := newPersonBriefTestDaemon(t, `{"person":{"id":7,"vcard_uid":"person-7","participant_ids":[],"revision":5},"addresses":[{"person_id":7,"address_kind":"postal","street_address":"12 Example Street","original_value":"raw","assessment":{"original":{"address_kind":"postal","original_value":"raw"},"proposed":{"address_kind":"postal","street_address":"12 Example Street"},"status":"needs_review","reason_codes":["not_verified","country_missing"],"fingerprint":"current"},"envelope":{"id":1,"source":"user","ordinal":0,"created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}}],"contact_points":[],"names":[],"dates":[],"categories":[],"media":[]}`)
+	daemon := newPersonBriefTestDaemon(t, `{"person":{"id":7,"vcard_uid":"person-7","participant_ids":[],"revision":5},"addresses":[{"person_id":7,"address_kind":"postal","street_address":"12 Example Street","original_value":"raw","assessment":{"original":{"address_kind":"postal","original_value":"raw"},"proposed":{"address_kind":"postal","street_address":"12 Example Street"},"status":"needs_review","reason_codes":["not_verified","country_missing"],"original_extended_parts":[],"proposed_extended_parts":[]},"envelope":{"id":1,"source":"user","ordinal":0,"created_at":"2026-08-20T12:30:00Z","updated_at":"2026-08-20T12:30:00Z"}}],"contact_points":[],"names":[],"dates":[],"categories":[],"media":[]}`)
 	output, err := runPostalCLI(daemon.ctx, t, "list", "7")
 	require.NoError(t, err, output)
 	assert := assert.New(t)

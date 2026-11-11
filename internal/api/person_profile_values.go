@@ -519,21 +519,7 @@ func capturePostalPatchOriginals(request PersonProfilePatchRequest, patch *store
 			output.CountryCode = new(proposed.CountryCode)
 		}
 		if input.OriginalInput == nil {
-			resolved := store.ResolvePostalInput(current, input.FreeText == nil)
-			assign := func(target **string, value string) {
-				if (*target == nil || strings.TrimSpace(**target) == "") && value != "" {
-					*target = new(value)
-				}
-			}
-			assign(&output.PostOfficeBox, resolved.PostOfficeBox)
-			assign(&output.ExtendedAddress, resolved.ExtendedAddress)
-			assign(&output.StreetAddress, resolved.StreetAddress)
-			assign(&output.Locality, resolved.Locality)
-			assign(&output.Region, resolved.Region)
-			assign(&output.PostalCode, resolved.PostalCode)
-			assign(&output.CountryName, resolved.CountryName)
-			assign(&output.ExtendedComponents, resolved.ExtendedComponents)
-			assign(&output.FreeText, resolved.FreeText)
+			store.SetPostalFields(store.ResolvePostalInput(current, input.FreeText == nil), [9]**string{&output.PostOfficeBox, &output.ExtendedAddress, &output.StreetAddress, &output.Locality, &output.Region, &output.PostalCode, &output.CountryName, &output.ExtendedComponents, &output.FreeText})
 		}
 		output.OriginalValue = encoded
 	}

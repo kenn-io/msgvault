@@ -300,7 +300,7 @@ func TestPeopleBrowserGetPersonProfileByUIDRequiresCurrentDaemonSchema(t *testin
 }
 
 func TestPeopleBrowserPostalAddressAssessmentPropagation(t *testing.T) {
-	assessment := postaladdress.Assessment{Original: postaladdress.Input{AddressKind: "postal", StreetAddress: " 12 Example St ", ExtendedAddress: " Unit 7 ", CountryCode: " ca ", OriginalValue: " raw text "}, Proposed: postaladdress.Input{AddressKind: "postal", StreetAddress: "12 Example St", ExtendedAddress: "Unit 7", CountryCode: "CA", OriginalValue: " raw text "}, Status: postaladdress.StatusNormalizedUnverified, ReasonCodes: []string{"not_verified"}, OriginalExtendedParts: []string{"Room;3"}, ProposedExtendedParts: []string{"Floor 2"}}
+	assessment := postaladdress.Assessment{Original: postaladdress.Input{AddressKind: "postal", StreetAddress: " 12 Example St ", ExtendedAddress: " Unit 7 ", ExtendedComponents: `;;;;;;;Room\;3;Floor 2`, CountryCode: " ca ", OriginalValue: " raw text "}, Proposed: postaladdress.Input{AddressKind: "postal", StreetAddress: "12 Example St", ExtendedAddress: "Unit 7", ExtendedComponents: `;;;;;;;Room\;3;Floor 2`, CountryCode: "CA", OriginalValue: " raw text "}, Status: postaladdress.StatusNormalizedUnverified, ReasonCodes: []string{"not_verified"}, OriginalExtendedParts: []string{"Room;3", "Floor 2"}, ProposedExtendedParts: []string{"Room;3", "Floor 2"}}
 	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !assert.Equal(t, http.MethodGet, r.Method) {
 			return

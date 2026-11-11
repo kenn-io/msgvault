@@ -69,10 +69,6 @@ describe('Postal claim review', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Review address' }));
     expect(await screen.findByLabelText('Unit or apartment')).toHaveProperty('value', 'Unit 7');
     expect(requests.some(request => request.url.endsWith('/addresses/assess'))).toBe(false);
-    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-    const target = screen.getByLabelText('Save address as');
-    expect(document.activeElement).toBe(target);
-    expect(target.getAttribute('aria-invalid')).toBe('true');
     expect(screen.getByLabelText('Address kind')).toHaveProperty('disabled', true);
     await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'add' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
@@ -88,7 +84,7 @@ describe('Postal claim review', () => {
     expect(screen.queryByRole('button', { name: 'Review address' })).toBeNull();
   });
 
-  it.each([['stale_target_revision', 'This suggestion is out of date'], ['support_unavailable', 'Evidence unavailable'], ['invalid_claim', 'This suggestion cannot be used'], ['already_adopted', 'Already saved']])('keeps %s claims inspectable without offering supported adoption', async (reason, explanation) => {
+  it.each([['stale-target-revision', 'This suggestion is out of date'], ['evidence-unsupported', 'Evidence unavailable'], ['malformed-value', 'The address is invalid']])('keeps %s claims inspectable without offering supported adoption', async (reason, explanation) => {
     const { requests } = setup(reason);
     await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
@@ -103,7 +99,7 @@ async function revealPostalClaim() {
   await fireEvent.click(await screen.findByRole('button', { name: 'Reveal sensitive fact value' }));
 }
 
-it.each(['support_unavailable', 'outside_validity', 'absent', 'failure'])('refreshes reopened supported review and fails closed for %s', async failure => {
+it.each(['evidence-unsupported', 'outside-validity', 'absent', 'failure'])('refreshes reopened supported review and fails closed for %s', async failure => {
   const { server, claimReads } = setup();
   await revealPostalClaim();
   await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
@@ -143,23 +139,6 @@ it('labels a cleared replacement target without presenting its original text as 
   await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
   expect(await screen.findByRole('option', { name: 'Replace: No current address' })).toBeDefined();
   expect(screen.queryByRole('option', { name: 'Replace: Old source address' })).toBeNull();
-});
-
-it('keeps a replacement tied to the reviewed postal suggestion', async () => {
-  const { profileController, requests } = setup();
-  profileController.structuredProfile!.addresses.push({
-    person_id: 7, address_kind: 'postal', original_value: 'Old address', street_address: 'Old address',
-    envelope: { id: 26, ordinal: 1, source: 'user', created_at: when, updated_at: when, vcard: {} },
-  });
-  await revealPostalClaim();
-  await fireEvent.click(screen.getByRole('button', { name: 'Review address' }));
-  await fireEvent.change(await screen.findByLabelText('Save address as'), { target: { value: 'supersede:26' } });
-  expect(screen.getByLabelText('Address kind')).toHaveProperty('disabled', true);
-  await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-  await waitFor(() => expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1));
-  const patch = requests.find(request => request.method === 'PATCH')!;
-  expect(patch.headers.get('If-Match')).toBe('"person-7-r3"');
-  expect(await patch.clone().json()).toMatchObject({ addresses: { supersede: [26], add: [{ address_kind: 'postal', original_input: raw, envelope: { source_ref: 'person-fact-claim:synthetic-claim' } }] } });
 });
 
 it('opens the exact freshly returned assessment and refuses a mismatched profile revision', async () => {

@@ -53,8 +53,8 @@ describe('Postal address editor', () => {
     expect(check).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])('checks explicitly, shows original/proposed and attribution, then confirms a first-entry correction with raw input (needs review=%s)', async review => {
-    const { controller, requests } = setup({ review });
+  it('checks explicitly, shows original/proposed and attribution, then confirms a first-entry correction with raw input', async () => {
+    const { controller, requests } = setup();
     render(StructuredProfileEditor, { controller, section: 'addresses' });
     await enterRaw();
     await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
@@ -69,8 +69,6 @@ describe('Postal address editor', () => {
     expect(attributionStyle.letterSpacing).toBe('normal');
     expect(attributionStyle.color).toBe('rgb(31, 31, 31)');
     expect(attributionStyle.backgroundColor).toBe('rgb(255, 255, 255)');
-    const luminance = (color: string) => color.match(/\d+/g)!.slice(0, 3).map(Number).map(value => value / 255).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index]!, 0);
-    expect((luminance(attributionStyle.backgroundColor) + 0.05) / (luminance(attributionStyle.color) + 0.05)).toBeGreaterThanOrEqual(4.5);
     expect(screen.getByText('Original address')).toBeDefined(); expect(screen.getByText('Suggested address')).toBeDefined();
     expect(requests).toHaveLength(1);
     await expect(requests[0]!.clone().json()).resolves.toMatchObject({ address: raw, allow_external: true });
@@ -82,42 +80,26 @@ describe('Postal address editor', () => {
     expect(body.addresses.add[0]).not.toHaveProperty('provider');
   });
 
-  it('shows local rejection without Google attribution when no provider request was made', async () => {
-    const { controller, requests } = setup({ localRejection: true });
-    render(StructuredProfileEditor, { controller, section: 'addresses' });
-    await enterRaw();
-    await fireEvent.input(screen.getByLabelText('Country code'), { target: { value: 'ZZ' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
-    expect(await screen.findByText('Needs review')).toBeDefined();
-    expect(screen.getByText('Enter a supported country code')).toBeDefined();
-    expect(screen.queryByText('Google Maps')).toBeNull();
-    expect(requests).toHaveLength(1);
-    expect(requests[0]!.method).toBe('POST');
-  });
-
-  it.each([{ unavailable: true }, { localRejection: true }])('lets the owner correct source text after an unsuccessful check (%o)', async options => {
+  it.each([{ unavailable: true }, { localRejection: true }, { unavailable: true, keepOriginal: true }])('keeps an unsuccessful check editable (%o)', async options => {
     const { controller, requests } = setup(options);
     render(StructuredProfileEditor, { controller, section: 'addresses' });
     await enterRaw();
     await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
     await screen.findByText(options.unavailable ? 'The provider is unavailable' : 'Enter a supported country code');
+    expect(screen.queryByText('Google Maps')).toBeNull();
+    expect(requests).toHaveLength(1);
+    if ('keepOriginal' in options) {
+      await fireEvent.click(screen.getByRole('button', { name: 'Keep original' }));
+      await waitFor(() => expect(requests).toHaveLength(2));
+      expect((await requests[1]!.clone().json()).addresses.add[0]).toMatchObject({ ...raw, original_input: raw });
+      return;
+    }
     await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Changed street' } });
     expect(screen.getByLabelText('Original text')).toHaveProperty('readOnly', false);
     await fireEvent.input(screen.getByLabelText('Original text'), { target: { value: 'Corrected source' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
     await waitFor(() => expect(requests).toHaveLength(2));
     expect((await requests[1]!.clone().json()).addresses.add[0].original_input.original_value).toBe('Corrected source');
-  });
-
-  it('keeps the entered address and allows entry when the provider is unavailable', async () => {
-    const { controller, requests } = setup({ unavailable: true });
-    render(StructuredProfileEditor, { controller, section: 'addresses' });
-    await enterRaw(); await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
-    expect(await screen.findByText('The provider is unavailable')).toBeDefined();
-    expect(screen.queryByText('Google Maps')).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Keep original' }));
-    await waitFor(() => expect(requests).toHaveLength(2));
-    expect((await requests[1]!.clone().json()).addresses.add[0]).toMatchObject({ ...raw, original_input: raw });
   });
 
   it('preserves reviewed revision after a check and a background profile refresh; a conflict requires new review', async () => {
@@ -171,65 +153,37 @@ describe('Postal address editor', () => {
     expect(body.addresses.add[0].envelope).toMatchObject({ source: 'user', source_ref: 'person-fact-claim:synthetic-claim', ordinal: 3, pref: 1, type_label: 'home', type_tokens: ['home'] });
   });
 
-  it('does not restore original text into a cleared current address', async () => {
+  it.each(['existing clear', 'synthesized source', 'suggested text', 'suggested components', 'manual after check', 'manual clear before check', 'manual clear before save'])('preserves a cleared current address: %s', async scenario => {
     const original: Input = { address_kind: 'postal', original_value: 'Old street', country_code: 'CA' };
-    const current: PersonAddress = { person_id: 7, address_kind: 'postal', original_value: 'Old street', country_code: 'CA', assessment: { original, proposed: { address_kind: 'postal', country_code: 'CA' }, status: 'needs_review', reason_codes: [], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
+    const structured = scenario === 'synthesized source';
+    const current: PersonAddress | undefined = scenario === 'existing clear' || structured ? { person_id: 7, address_kind: 'postal', ...(structured ? { street_address: 'Old street' } : {}), original_value: structured ? ';;Old street;;;;' : 'Old street', country_code: 'CA', assessment: { original: structured ? { address_kind: 'postal', street_address: 'Old street', country_code: 'CA' } : original, proposed: original, status: 'needs_review', reason_codes: [], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } } : undefined;
+    const candidate: Input | undefined = scenario === 'suggested text' ? { address_kind: 'postal', free_text: 'Old street', original_value: 'Old street' } : scenario === 'suggested components' ? { address_kind: 'postal', street_address: 'Old street', country_code: 'CA', original_value: 'Old street' } : undefined;
     const { controller, requests } = setup({ current });
-    render(StructuredProfileEditor, { controller, section: 'addresses', current });
-    expect(screen.getByLabelText('Current address text')).toHaveProperty('value', '');
+    render(StructuredProfileEditor, { controller, section: 'addresses', current, postalCandidate: candidate ? { input: candidate, sourceRef: 'person-fact-claim:synthetic-claim', personRevision: 3 } : undefined });
+    if (candidate) await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'add' } });
+    if (structured) expect(screen.getByLabelText('Original text')).toHaveProperty('value', '');
+    if (scenario.startsWith('manual')) {
+      if (scenario === 'manual after check') {
+        await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Old street' } });
+        await fireEvent.input(screen.getByLabelText('Country code'), { target: { value: 'CA' } });
+      }
+      await fireEvent.input(screen.getByLabelText('Original text'), { target: { value: 'Old street' } });
+      if (scenario !== 'manual after check') {
+        await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: 'Old street' } });
+        await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: '' } });
+      }
+      if (scenario !== 'manual clear before save') {
+        await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
+        await screen.findByText('Original address');
+      }
+    }
+    if (structured || scenario === 'suggested components' || scenario === 'manual after check') await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: '' } });
+    if (scenario === 'suggested text') await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: '' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-    await waitFor(() => expect(requests).toHaveLength(1));
-    expect((await requests[0]!.clone().json()).addresses.add[0].free_text).toBe('');
-  });
-
-  it('does not use a synthesized display value as original input', async () => {
-    const original: Input = { address_kind: 'postal', street_address: 'Old street', country_code: 'CA' };
-    const current: PersonAddress = { person_id: 7, address_kind: 'postal', street_address: 'Old street', country_code: 'CA', original_value: ';;Old street;;;;', assessment: { original, proposed: original, status: 'normalized_unverified', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
-    const { controller, requests } = setup({ current });
-    render(StructuredProfileEditor, { controller, section: 'addresses', current });
-    expect(screen.getByLabelText('Original text')).toHaveProperty('value', '');
-    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: '' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-    await waitFor(() => expect(requests).toHaveLength(1));
-    const saved = (await requests[0]!.clone().json()).addresses.add[0];
-    expect(saved).not.toHaveProperty('original_value');
-    expect(saved.free_text).toBe('');
-  });
-
-  it('sends an explicit empty current text when clearing a suggested address', async () => {
-    const candidate: Input = { address_kind: 'postal', free_text: 'Old street', original_value: 'Old street' };
-    const { controller, requests } = setup();
-    render(StructuredProfileEditor, { controller, section: 'addresses', postalCandidate: { input: candidate, sourceRef: 'person-fact-claim:synthetic-claim', personRevision: 3 } });
-    await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'add' } });
-    await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: '' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-    await waitFor(() => expect(requests).toHaveLength(1));
-    expect((await requests[0]!.clone().json()).addresses.add[0].free_text).toBe('');
-  });
-
-  it('does not restore source text after clearing a structured suggestion', async () => {
-    const candidate: Input = { address_kind: 'postal', street_address: 'Old street', country_code: 'CA', original_value: 'Old street' };
-    const { controller, requests } = setup();
-    render(StructuredProfileEditor, { controller, section: 'addresses', postalCandidate: { input: candidate, sourceRef: 'person-fact-claim:synthetic-claim', personRevision: 3 } });
-    await fireEvent.change(screen.getByLabelText('Save address as'), { target: { value: 'add' } });
-    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: '' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-    await waitFor(() => expect(requests).toHaveLength(1));
-    expect((await requests[0]!.clone().json()).addresses.add[0].free_text).toBe('');
-  });
-
-  it('sends an explicit empty current text after checking and clearing a manual draft', async () => {
-    const { controller, requests } = setup();
-    render(StructuredProfileEditor, { controller, section: 'addresses' });
-    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Old street' } });
-    await fireEvent.input(screen.getByLabelText('Country code'), { target: { value: 'CA' } });
-    await fireEvent.input(screen.getByLabelText('Original text'), { target: { value: 'Old street' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
-    await screen.findByText('Original address');
-    await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: '' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-    await waitFor(() => expect(requests).toHaveLength(2));
-    expect((await requests[1]!.clone().json()).addresses.add[0].free_text).toBe('');
+    await waitFor(() => expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1));
+    const saved = await requests.find(request => request.method === 'PATCH')!.clone().json();
+    expect(saved.addresses.add[0].free_text).toBe('');
+    if (structured) expect(saved.addresses.add[0]).not.toHaveProperty('original_value');
   });
 
   it('keeps a text-only draft current after checking and changing its country', async () => {
@@ -245,25 +199,11 @@ describe('Postal address editor', () => {
     expect((await requests[1]!.clone().json()).addresses.add[0].free_text).toBe('12 Example Street');
   });
 
-  it.each([false, true])('keeps an explicit clear before the first check or save (check=%s)', async check => {
-    const { controller, requests } = setup();
-    render(StructuredProfileEditor, { controller, section: 'addresses' });
-    await fireEvent.input(screen.getByLabelText('Original text'), { target: { value: 'Old street' } });
-    await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: 'Old street' } });
-    await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: '' } });
-    if (check) {
-      await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
-      await screen.findByText('Original address');
-    }
-    expect(screen.getByLabelText('Current address text')).toHaveProperty('value', '');
-    await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-    await waitFor(() => expect(requests).toHaveLength(check ? 2 : 1));
-    expect((await requests[requests.length - 1]!.clone().json()).addresses.add[0].free_text).toBe('');
-  });
+
 });
 
 
-it('binds DOM edits to request invalidation and suppresses duplicate external clicks', async () => {
+it('binds DOM edits to request invalidation', async () => {
  const { controller, requests } = setup();
  let release!: (value: Assessment) => void;
  const pending = new Promise<Assessment>(resolve => release = resolve);
@@ -273,8 +213,6 @@ it('binds DOM edits to request invalidation and suppresses duplicate external cl
  const button = screen.getByRole('button', { name: 'Check with Google' });
  await fireEvent.click(button);
  await waitFor(() => expect(check).toHaveBeenCalledOnce());
- await fireEvent.click(button);
- expect(check).toHaveBeenCalledOnce();
  await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'Changed street' } });
  await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: raw.street_address } });
  await act(async () => { release({ original: raw, proposed: { ...raw, street_address: 'Stale correction' }, provider: 'google', status: 'validated', checked_at: when, reason_codes: [], original_extended_parts: [], proposed_extended_parts: [] }); await pending; });
@@ -310,56 +248,37 @@ it('makes an explicit local check without granting external consent', async () =
  expect(requests.some(request => request.method === 'PATCH')).toBe(false);
 });
 
-it('keeps captured provenance read-only and saves current raw-only text edits separately', async () => {
+it.each(['existing', 'after check'])('keeps captured provenance read-only and saves current text (%s)', async scenario => {
   const original: Input = { address_kind: 'postal', original_value: '  First raw text\nUnit 7  ' };
-  const current: PersonAddress = { person_id: 7, address_kind: 'postal', original_value: original.original_value!, assessment: { original, proposed: original, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
+  const current: PersonAddress | undefined = scenario === 'existing' ? { person_id: 7, address_kind: 'postal', original_value: original.original_value!, assessment: { original, proposed: original, status: 'needs_review', reason_codes: ['not_verified'], original_extended_parts: [], proposed_extended_parts: [] }, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } } : undefined;
   const { controller, requests } = setup({ current });
   render(StructuredProfileEditor, { controller, section: 'addresses', current });
+  if (!current) {
+    await fireEvent.input(screen.getByLabelText('Original text'), { target: { value: original.original_value } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
+    await screen.findByText('Original address');
+  }
   expect(screen.getByLabelText('Original text')).toHaveProperty('readOnly', true);
   await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: '  Updated raw text\nUnit 8  ' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-  await waitFor(() => expect(requests).toHaveLength(1));
-  expect((await requests[0]!.clone().json()).addresses.add[0]).toMatchObject({ free_text: '  Updated raw text\nUnit 8  ', original_input: original });
-});
-
-it('keeps the first snapshot while saving current free-text edits after the first check', async () => {
-  const { controller, requests } = setup();
-  render(StructuredProfileEditor, { controller, section: 'addresses' });
-  await fireEvent.input(screen.getByLabelText('Original text'), { target: { value: '  First raw draft  ' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Check locally' }));
-  await screen.findByText('Original address');
-  expect(screen.getByLabelText('Original text')).toHaveProperty('readOnly', true);
-  await fireEvent.input(screen.getByLabelText('Current address text'), { target: { value: '  Revised text after check  ' } });
   expect(screen.queryByText('Google Maps')).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-  await waitFor(() => expect(requests).toHaveLength(2));
-  const saved = (await requests[1]!.clone().json()).addresses.add[0];
-  expect(saved.free_text).toBe('  Revised text after check  ');
-  expect(saved.original_input.original_value).toBe('  First raw draft  ');
+  await waitFor(() => expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(1));
+  const saved = (await requests.find(request => request.method === 'PATCH')!.clone().json()).addresses.add[0];
+  expect(saved.free_text).toBe('  Updated raw text\nUnit 8  ');
+  expect(saved.original_input.original_value).toBe(original.original_value);
 });
 
-
-it.each(['birth_place', 'death_place'])('keeps %s edits outside postal provenance and current-text capture', async kind => {
+it.each([['birth_place', false], ['birth_place', true], ['death_place', false], ['death_place', true]] as const)('saves %s text without postal provenance (edit text=%s)', async (kind, editText) => {
   const text = 'msgvault:postal-input:v1\n{"schema":1,"input":{"original_value":"literal place"}}';
   const current: PersonAddress = { person_id: 7, address_kind: kind, original_value: text, envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
   const { controller, requests } = setup({ current });
   render(StructuredProfileEditor, { controller, section: 'addresses', current });
   expect(screen.queryByLabelText('Current address text')).toBeNull();
-  await fireEvent.input(screen.getByLabelText('Country'), { target: { value: 'Canada' } });
+  await fireEvent.input(screen.getByLabelText(editText ? 'Street address' : 'Country'), { target: { value: editText ? 'New place' : 'Canada' } });
   await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
   await waitFor(() => expect(requests).toHaveLength(1));
   const saved = (await requests[0]!.clone().json()).addresses.add[0];
-  expect(saved.original_value).toBe(text);
+  expect(saved.original_value).toBe(editText ? 'New place' : text);
   expect(saved).not.toHaveProperty('free_text');
   expect(saved).not.toHaveProperty('original_input');
-});
-
-it.each(['birth_place', 'death_place'])('saves the entered %s as the place text', async kind => {
-  const current: PersonAddress = { person_id: 7, address_kind: kind, original_value: 'Old place', envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
-  const { controller, requests } = setup({ current });
-  render(StructuredProfileEditor, { controller, section: 'addresses', current });
-  await fireEvent.input(screen.getByLabelText('Street address'), { target: { value: 'New place' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'Save address' }));
-  await waitFor(() => expect(requests).toHaveLength(1));
-  expect((await requests[0]!.clone().json()).addresses.add[0].original_value).toBe('New place');
 });

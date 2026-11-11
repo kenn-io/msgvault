@@ -54,6 +54,15 @@ func ResolvePostalInput(input postaladdress.Input, useOriginal bool) postaladdre
 	return input
 }
 
+// SetPostalFields stores each non-empty component and free text of current.
+func SetPostalFields(current postaladdress.Input, fields [9]**string) {
+	for i, value := range [9]string{current.PostOfficeBox, current.ExtendedAddress, current.StreetAddress, current.Locality, current.Region, current.PostalCode, current.CountryName, current.ExtendedComponents, current.FreeText} {
+		if value != "" {
+			*fields[i] = new(value)
+		}
+	}
+}
+
 // ResolvedPostalInput separates current data from the captured source.
 func (a PersonAddress) ResolvedPostalInput() (postaladdress.Input, postaladdress.Input, error) {
 	current := a.PostalInput()
@@ -209,19 +218,6 @@ func (a PersonAddress) PublicAddress() (PersonAddress, error) {
 		return a, err
 	}
 	a.OriginalValue = original.OriginalValue
-	assign := func(target **string, value string) {
-		if (*target == nil || strings.TrimSpace(**target) == "") && value != "" {
-			*target = new(value)
-		}
-	}
-	assign(&a.PostOfficeBox, current.PostOfficeBox)
-	assign(&a.ExtendedAddress, current.ExtendedAddress)
-	assign(&a.StreetAddress, current.StreetAddress)
-	assign(&a.Locality, current.Locality)
-	assign(&a.Region, current.Region)
-	assign(&a.PostalCode, current.PostalCode)
-	assign(&a.CountryName, current.CountryName)
-	assign(&a.ExtendedComponents, current.ExtendedComponents)
-	assign(&a.FreeText, current.FreeText)
+	SetPostalFields(current, [9]**string{&a.PostOfficeBox, &a.ExtendedAddress, &a.StreetAddress, &a.Locality, &a.Region, &a.PostalCode, &a.CountryName, &a.ExtendedComponents, &a.FreeText})
 	return a, nil
 }

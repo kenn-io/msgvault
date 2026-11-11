@@ -1,35 +1,11 @@
 package postaladdress
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestOriginalSnapshotRoundTrip(t *testing.T) {
-	input := Input{AddressKind: "postal", StreetAddress: "  12 Example St\n  second line  ", ExtendedAddress: " Apt 42 ", PostOfficeBox: " Box 9 ", OriginalValue: " \tRaw\ntext\n ", ExtendedComponents: "[\"raw\"]", FreeText: "  自由  ", CountryCode: " ca "}
-	encoded, err := EncodeOriginalInput(input)
-	require := require.New(t)
-	require.NoError(err)
-	assert := assert.New(t)
-	assert.Equal(encoded, strings.TrimSpace(encoded))
-	got, ok, err := DecodeOriginalInput(encoded)
-	require.NoError(err)
-	require.True(ok)
-	assert.Equal(input, got)
-	// Callers editing known stored data decode before capturing the next raw draft.
-	input, ok, err = DecodeOriginalInput(encoded)
-	require.NoError(err)
-	require.True(ok)
-	encodedAgain, err := EncodeOriginalInput(input)
-	require.NoError(err)
-	got, ok, err = DecodeOriginalInput(encodedAgain)
-	require.NoError(err)
-	require.True(ok)
-	assert.Equal(" \tRaw\ntext\n ", got.OriginalValue)
-}
 
 func TestSnapshotRejectsMalformedAndUnknownVersions(t *testing.T) {
 	_, ok, err := DecodeOriginalInput("legacy original")
