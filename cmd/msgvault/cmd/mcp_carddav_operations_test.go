@@ -67,8 +67,10 @@ func TestCardDAVOperationsDiscoverNativeContracts(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "private diagnostic")
 	result, err = backend.ExecuteOperation(t.Context(), "get_carddav_conflict", map[string]any{"conflict_id": -1})
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
+	require := require.New(t)
+	require.NoError(err)
+	assert := assert.New(t)
+	assert.True(result.IsError)
 }
 
 func TestCardDAVRoleApprovalUsesRealStore(t *testing.T) {
@@ -95,8 +97,10 @@ func TestCardDAVRoleApprovalUsesRealStore(t *testing.T) {
 	require.Len(t, books.Books, 1)
 	assert.True(t, books.Books[0].LookupSource)
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "update_carddav_book_roles", Arguments: map[string]any{"book_id": id, "write_target": true, "subscribed": false, "lookup_source": false}})
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
+	require := require.New(t)
+	require.NoError(err)
+	assert := assert.New(t)
+	assert.True(result.IsError)
 }
 
 func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
@@ -117,7 +121,8 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 	// Both connections are disabled; aggregate sync is a no-op, while selecting
 	// work reaches its unavailable runtime instead of silently syncing all.
 	_, err = named.SyncCardDAVConnection(t.Context(), false, nil)
-	require.NoError(t, err)
+	require := require.New(t)
+	require.NoError(err)
 	_, err = named.SyncCardDAVConnection(t.Context(), false, new("work"))
 	assert.Error(t, err)
 	for i := range caps.Routes {
@@ -146,7 +151,8 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 	limited := newDaemonMCPOperations(backend.client, caps)
 	assert.NotContains(t, limited.capabilities(), "list_carddav_runs")
 	assert.NotContains(t, limited.capabilities(), "update_carddav_book_roles")
-	assert.Contains(t, limited.capabilities(), "list_carddav_books")
+	assert := assert.New(t)
+	assert.Contains(limited.capabilities(), "list_carddav_books")
 }
 
 func TestCardDAVApprovalRejectsChangedBook(t *testing.T) {
@@ -165,9 +171,11 @@ func TestCardDAVApprovalRejectsChangedBook(t *testing.T) {
 	listed, err := backend.ExecuteOperation(t.Context(), "list_carddav_books", map[string]any{"connection": "work"})
 	require.NoError(t, err)
 	books := operationOutput[generated.CardDAVBooksResponse](t, listed)
-	require.Len(t, books.Books, 1)
+	require := require.New(t)
+	require.Len(books.Books, 1)
 	assert.True(t, books.Books[0].Subscribed)
-	assert.False(t, books.Books[0].LookupSource)
+	assert := assert.New(t)
+	assert.False(books.Books[0].LookupSource)
 }
 
 func TestCardDAVConflictReadsKeepDurableIdentity(t *testing.T) {
@@ -206,9 +214,11 @@ func TestCardDAVConflictReadsKeepDurableIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.IsError)
 	encoded, err := json.Marshal(result.Output)
-	require.NoError(t, err)
+	require := require.New(t)
+	require.NoError(err)
 	assert.NotContains(t, string(encoded), "https://")
-	assert.NotContains(t, string(encoded), "Local Example")
+	assert := assert.New(t)
+	assert.NotContains(string(encoded), "Local Example")
 }
 
 func TestCardDAVUnpublishDisclosesOwnerAndKeepsPersonOnUnavailableConnection(t *testing.T) {
@@ -234,6 +244,8 @@ func TestCardDAVUnpublishDisclosesOwnerAndKeepsPersonOnUnavailableConnection(t *
 	assert.True(t, approved)
 	assert.True(t, result.IsError)
 	retained, err := st.GetPersonContext(t.Context(), person.ID)
-	require.NoError(t, err)
-	assert.Equal(t, person.ID, retained.ID)
+	require := require.New(t)
+	require.NoError(err)
+	assert := assert.New(t)
+	assert.Equal(person.ID, retained.ID)
 }

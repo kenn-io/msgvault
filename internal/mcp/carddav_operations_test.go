@@ -27,9 +27,10 @@ func TestCardDAVOperationalCatalogUsesExistingWriteGate(t *testing.T) {
 	assert.Equal(t, []string{"before_id", "connection", "limit"}, toolPropertyNames(t, write["list_carddav_runs"]))
 	assert.Equal(t, []string{"book_id", "lookup_source", "subscribed", "write_target"}, toolPropertyNames(t, write["update_carddav_book_roles"]))
 	for _, name := range names[5:] {
-		require.Contains(t, write, name)
+		require := require.New(t)
+		require.Contains(write, name)
 		readOnly, ok := toolReadOnlyHint(t, write[name]).(bool)
-		require.True(t, ok)
+		require.True(ok)
 		assert.False(t, readOnly)
 	}
 	for _, name := range names[5:] {
@@ -39,7 +40,8 @@ func TestCardDAVOperationalCatalogUsesExistingWriteGate(t *testing.T) {
 	assert.Empty(t, operationalCatalog(opts, true))
 	opts.DelegatedOnly = false
 	opts.Families = &ArchiveFamilies{}
-	assert.Empty(t, operationalCatalog(opts, true))
+	assert := assert.New(t)
+	assert.Empty(operationalCatalog(opts, true))
 }
 
 func TestCardDAVSelectorRefusesLegacyBackend(t *testing.T) {
@@ -51,6 +53,7 @@ func TestCardDAVSelectorRefusesLegacyBackend(t *testing.T) {
 	_, _, err = cardDAVSelector(map[string]any{"connection": "../bad"}, backend, true)
 	require.Error(t, err)
 	connection, _, err := cardDAVSelector(nil, backend, true)
-	require.NoError(t, err)
+	require := require.New(t)
+	require.NoError(err)
 	assert.Nil(t, connection)
 }
