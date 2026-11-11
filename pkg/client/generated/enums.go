@@ -1294,6 +1294,7 @@ func (m MeetingContextRequestFormat) Validate() error {
 type MeetingDecisionRequestDecision string
 
 const (
+	Clear  MeetingDecisionRequestDecision = "clear"
 	Link   MeetingDecisionRequestDecision = "link"
 	Unlink MeetingDecisionRequestDecision = "unlink"
 )
@@ -1301,7 +1302,7 @@ const (
 // Validate checks if the MeetingDecisionRequestDecision value is valid
 func (m MeetingDecisionRequestDecision) Validate() error {
 	switch m {
-	case Link, Unlink:
+	case Clear, Link, Unlink:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingDecisionRequestDecision value, got: %v", m))
@@ -2836,14 +2837,14 @@ func (s SecretSettingStateSource) Validate() error {
 type SecretSettingUpdateAction string
 
 const (
-	Clear SecretSettingUpdateAction = "clear"
-	Set   SecretSettingUpdateAction = "set"
+	SecretSettingUpdateActionClear SecretSettingUpdateAction = "clear"
+	Set                            SecretSettingUpdateAction = "set"
 )
 
 // Validate checks if the SecretSettingUpdateAction value is valid
 func (s SecretSettingUpdateAction) Validate() error {
 	switch s {
-	case Clear, Set:
+	case SecretSettingUpdateActionClear, Set:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SecretSettingUpdateAction value, got: %v", s))

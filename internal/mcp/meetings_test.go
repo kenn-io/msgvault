@@ -314,6 +314,7 @@ func TestMeetingDecisionMCPWritesAndDiscovery(t *testing.T) {
 	}
 	assertions.True(names["link_meeting"])
 	assertions.True(names["unlink_meeting"])
+	assertions.True(names["reset_meeting_link"])
 	left, right := fmt.Sprintf("msg:%d", imported[0].MessageID), fmt.Sprintf("msg:%d", imported[1].MessageID)
 	result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "link_meeting", Arguments: map[string]any{"left": left, "right": right}})
 	requirements.NoError(err)
@@ -322,8 +323,14 @@ func TestMeetingDecisionMCPWritesAndDiscovery(t *testing.T) {
 	record, err := backend.MeetingRecord(ctx, left)
 	requirements.NoError(err)
 	assertions.ElementsMatch([]int64{imported[0].MessageID, imported[1].MessageID}, record.MessageIDs)
+	for _, tc := range []struct{ name, state string }{{"unlink_meeting", "split"}, {"reset_meeting_link", "automatic"}} {
+		result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: tc.name, Arguments: map[string]any{"left": left, "right": right}})
+		requirements.NoError(err)
+		requirements.False(result.IsError)
+		assertions.Equal(tc.state, meetingStructuredContent(t, result)["state"])
+	}
 	without := operationCatalog(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend, MeetingRecords: true}, &handlers{})
 	for _, definition := range without {
-		assertions.NotContains([]string{"link_meeting", "unlink_meeting"}, definition.name)
+		assertions.NotContains([]string{"link_meeting", "unlink_meeting", "reset_meeting_link"}, definition.name)
 	}
 }

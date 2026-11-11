@@ -200,7 +200,7 @@ Use these read tools for [archived meeting context and follow-ups](meetings.md):
 |---|---|
 | `get_meeting_context` | Export selected meeting IDs as JSON or Markdown; transcript opt-in and byte budget |
 | `get_meeting_record` | Read linked notes and calendar copies from a meeting or occurrence |
-| `link_meeting`, `unlink_meeting` | Join or separate copies; the opposite action restores automatic matching |
+| `link_meeting`, `unlink_meeting`, `reset_meeting_link` | Join or separate copies, or clear a saved choice |
 | `list_meeting_action_items` | Read source action status, explicit assignees, coverage, and source links |
 | `get_meeting_metrics` | Count scoped meetings and inspect known/unknown duration and monthly activity |
 

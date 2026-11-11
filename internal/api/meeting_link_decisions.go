@@ -15,7 +15,7 @@ type MeetingDecisionStore interface {
 type MeetingDecisionRequest struct {
 	Left     string `json:"left"`
 	Right    string `json:"right"`
-	Decision string `json:"decision" enum:"link,unlink"`
+	Decision string `json:"decision" enum:"link,unlink,clear"`
 }
 
 func (s *Server) handleMeetingDecision(w http.ResponseWriter, r *http.Request) {
@@ -37,8 +37,8 @@ func (s *Server) handleMeetingDecision(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_argument", err.Error())
 		return
 	}
-	if request.Decision != "link" && request.Decision != "unlink" || left == right {
-		writeError(w, 400, "invalid_argument", "Choose two different references and link or unlink")
+	if request.Decision != "link" && request.Decision != "unlink" && request.Decision != "clear" || left == right {
+		writeError(w, 400, "invalid_argument", "Choose two different references and link, unlink, or clear")
 		return
 	}
 	backend, ok := s.store.(MeetingDecisionStore)

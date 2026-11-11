@@ -17,7 +17,7 @@ type MeetingLinkDecisionResult struct {
 	State string `json:"state"`
 }
 
-var ErrMeetingLinkConflict = errors.New("a saved split prevents this link")
+var ErrMeetingLinkConflict = errors.New("a saved choice conflicts with this request")
 var ErrMeetingLinkSameCopy = errors.New("meeting references name the same copy")
 
 type meetingDecisionEndpoint struct {
@@ -66,10 +66,10 @@ func compareMeetingEndpoints(a, b meetingDecisionEndpoint) int {
 	return strings.Compare(a.Key, b.Key)
 }
 
-// DecideMeetingLinkContext saves a choice; its opposite restores automatic matching.
+// DecideMeetingLinkContext saves or clears a choice between two copies.
 func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right MeetingLinkRef, decision string) (result MeetingLinkDecisionResult, err error) {
-	if decision != "link" && decision != "unlink" {
-		return result, errors.New("decision must be link or unlink")
+	if decision != "link" && decision != "unlink" && decision != "clear" {
+		return result, errors.New("decision must be link, unlink, or clear")
 	}
 	a, b := endpointFromRef(left), endpointFromRef(right)
 	if a.ID <= 0 || b.ID <= 0 || (a.Kind != "msg" && a.Kind != "evt") || (b.Kind != "msg" && b.Kind != "evt") || compareMeetingEndpoints(a, b) == 0 {
@@ -126,7 +126,6 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 		if compareMeetingEndpoints(canonicalA, canonicalB) > 0 {
 			canonicalA, canonicalB = canonicalB, canonicalA
 		}
-		var previous meetingDecisionEdge
 		seen := map[string]bool{}
 		for _, id := range append(aliasesA, aliasesB...) {
 			choices, err := s.meetingDecisionsForMessage(ctx, id, &budget)
@@ -157,33 +156,32 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 					left, right = right, left
 				}
 				if compareMeetingEndpoints(left, canonicalA) == 0 && compareMeetingEndpoints(right, canonicalB) == 0 {
-					previous = choice
-					break
+					_, err = tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE left_message_id=? AND left_kind=? AND left_key=? AND right_message_id=? AND right_kind=? AND right_key=?`, choice.a.ID, choice.a.Kind, choice.a.Key, choice.b.ID, choice.b.Kind, choice.b.Key)
+					if err != nil {
+						return err
+					}
 				}
-			}
-			if previous.decision != "" {
-				break
 			}
 		}
 		state := "link"
 		if decision == "unlink" {
 			state = "split"
 		}
-		if previous.decision != "" && previous.decision != state {
-			_, err = tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE left_message_id=? AND left_kind=? AND left_key=? AND right_message_id=? AND right_kind=? AND right_key=?`, previous.a.ID, previous.a.Kind, previous.a.Key, previous.b.ID, previous.b.Kind, previous.b.Key)
+		if decision == "clear" {
 			state = "automatic"
-		} else if previous.decision == "" {
+		} else {
 			_, err = tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision) VALUES (?,?,?,?,?,?,?,?,?)`, a.ID, a.Kind, a.Key, a.Anchor, b.ID, b.Kind, b.Key, b.Anchor, state)
 		}
 		if err != nil {
 			return err
 		}
-		if state == "link" && previous.decision == "" {
+		if state != "automatic" {
 			leftRef, err := a.meetingRef()
 			if err != nil {
 				return err
 			}
-			record, err := s.MeetingRecordContext(ctx, leftRef)
+			var conflict meetingDecisionConflict
+			record, err := s.meetingRecordContext(ctx, leftRef, &conflict)
 			if err != nil {
 				return err
 			}
@@ -194,8 +192,11 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			for _, link := range record.Links {
 				found = found || b.Kind == "evt" && (link.Ref == b.ref() || b.Key == "" && link.MessageID == b.ID)
 			}
-			if !found {
-				return ErrMeetingLinkConflict
+			if conflict.link.decision != "" {
+				return fmt.Errorf("%w: link %s %s conflicts with split %s %s", ErrMeetingLinkConflict, conflict.link.a.ref(), conflict.link.b.ref(), conflict.split.a.ref(), conflict.split.b.ref())
+			}
+			if (state == "link") != found {
+				return fmt.Errorf("%w: cannot save %s for %s %s", ErrMeetingLinkConflict, state, a.ref(), b.ref())
 			}
 		}
 		result = MeetingLinkDecisionResult{Left: canonicalA.ref(), Right: canonicalB.ref(), State: state}

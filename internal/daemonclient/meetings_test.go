@@ -223,5 +223,8 @@ func TestMeetingDecisionClientJoinsAndUndoes(t *testing.T) {
 	assertions.ElementsMatch([]int64{imported[0].MessageID, imported[1].MessageID}, record.MessageIDs)
 	result, err = client.DecideMeetingLink(t.Context(), left, right, "unlink")
 	requirements.NoError(err)
+	assertions.Equal("split", result.State)
+	result, err = client.DecideMeetingLink(t.Context(), left, right, "clear")
+	requirements.NoError(err)
 	assertions.Equal("automatic", result.State)
 }

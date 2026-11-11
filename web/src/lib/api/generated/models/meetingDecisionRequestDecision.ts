@@ -8,4 +8,5 @@ export type MeetingDecisionRequestDecision =
 export const MeetingDecisionRequestDecision = {
   link: "link",
   unlink: "unlink",
+  clear: "clear",
 } as const;

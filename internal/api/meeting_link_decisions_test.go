@@ -24,7 +24,7 @@ func TestMeetingDecisionOwnerAndDelegatedHTTP(t *testing.T) {
 	source, err := st.GetOrCreateSource("meeting_import", "notes@example.com")
 	requirements.NoError(err)
 	var ids []int64
-	for _, key := range []string{"first", "second"} {
+	for _, key := range []string{"first", "second", "third"} {
 		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
 		requirements.NoError(err)
 		ids = append(ids, id)
@@ -52,6 +52,31 @@ func TestMeetingDecisionOwnerAndDelegatedHTTP(t *testing.T) {
 		requirements.Equal(tc.want, w.Code, tc.name+": "+w.Body.String())
 		if tc.owner {
 			assertions.JSONEq(fmt.Sprintf(`{"left":"msg:%d","right":"msg:%d","state":"link"}`, ids[0], ids[1]), w.Body.String())
+		}
+	}
+	for _, tc := range []struct {
+		left, right int64
+		decision    string
+		status      int
+		state       string
+	}{
+		{ids[1], ids[2], "link", http.StatusOK, "link"},
+		{ids[0], ids[2], "unlink", http.StatusConflict, ""},
+		{ids[2], ids[1], "clear", http.StatusOK, "automatic"},
+		{ids[0], ids[2], "unlink", http.StatusOK, "split"},
+		{ids[2], ids[0], "link", http.StatusOK, "link"},
+	} {
+		body := fmt.Sprintf(`{"left":"msg:%d","right":"msg:%d","decision":%q}`, tc.left, tc.right, tc.decision)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/meetings/links/decisions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Api-Key", "owner")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		requirements.Equal(tc.status, w.Code, w.Body.String())
+		if tc.state != "" {
+			var result store.MeetingLinkDecisionResult
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &result))
+			assertions.Equal(tc.state, result.State)
 		}
 	}
 }

@@ -18,7 +18,10 @@ func TestMeetingLinkDecisionJoinsUnscheduledNotesAndUndoes(t *testing.T) {
 	_, second := projectionFixture(t, st, "unscheduled-second", "meeting_json", `{"summary_text":"Second"}`)
 	left := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: first}}
 	right := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: second}}
-	result, err := st.DecideMeetingLinkContext(t.Context(), left, right, "link")
+	result, err := st.DecideMeetingLinkContext(t.Context(), left, right, "unlink")
+	requirements.NoError(err)
+	assertions.Equal("split", result.State)
+	result, err = st.DecideMeetingLinkContext(t.Context(), left, right, "link")
 	requirements.NoError(err)
 	assertions.Equal("link", result.State)
 	for _, seed := range []MeetingLinkRef{left, right} {
@@ -28,12 +31,53 @@ func TestMeetingLinkDecisionJoinsUnscheduledNotesAndUndoes(t *testing.T) {
 	}
 	result, err = st.DecideMeetingLinkContext(t.Context(), right, left, "unlink")
 	requirements.NoError(err)
-	assertions.Equal("automatic", result.State)
+	assertions.Equal("split", result.State)
 	for _, seed := range []MeetingLinkRef{left, right} {
 		record, err := st.MeetingRecordContext(t.Context(), seed)
 		requirements.NoError(err)
 		assertions.Equal([]int64{seed.MessageID}, record.MessageIDs)
 	}
+	result, err = st.DecideMeetingLinkContext(t.Context(), left, right, "link")
+	requirements.NoError(err)
+	assertions.Equal("link", result.State)
+	for _, seed := range []MeetingLinkRef{left, right} {
+		record, err := st.MeetingRecordContext(t.Context(), seed)
+		requirements.NoError(err)
+		assertions.Equal([]int64{first, second}, record.MessageIDs)
+	}
+}
+
+func TestMeetingLinkDecisionConflictAndClear(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	var refs []MeetingLinkRef
+	for _, name := range []string{"conflict-a", "conflict-b", "conflict-c"} {
+		_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
+		refs = append(refs, MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}})
+	}
+	for _, pair := range [][2]int{{0, 1}, {1, 2}, {1, 2}} {
+		_, err := st.DecideMeetingLinkContext(t.Context(), refs[pair[0]], refs[pair[1]], "link")
+		requirements.NoError(err)
+	}
+	_, err := st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "unlink")
+	assertions.ErrorIs(err, ErrMeetingLinkConflict)
+	assertions.ErrorContains(err, fmt.Sprintf("link msg:%d msg:%d", refs[1].MessageID, refs[2].MessageID))
+	for _, ref := range refs {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		requirements.NoError(err)
+		assertions.Equal([]int64{refs[0].MessageID, refs[1].MessageID, refs[2].MessageID}, record.MessageIDs)
+	}
+	for i := 0; i < 2; i++ {
+		result, err := st.DecideMeetingLinkContext(t.Context(), refs[2], refs[1], "clear")
+		requirements.NoError(err)
+		assertions.Equal("automatic", result.State)
+	}
+	result, err := st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "unlink")
+	requirements.NoError(err)
+	assertions.Equal("split", result.State)
+	result, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "clear")
+	requirements.NoError(err)
+	assertions.Equal("automatic", result.State)
 }
 
 func TestMeetingLinkDecisionSplitAppliesToEveryEventCopy(t *testing.T) {
@@ -45,6 +89,8 @@ func TestMeetingLinkDecisionSplitAppliesToEveryEventCopy(t *testing.T) {
 	_, note := projectionFixture(t, st, "shared-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"shared@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	member := MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}
 	event := MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: first}}
+	_, err := st.DecideMeetingLinkContext(t.Context(), member, event, "link")
+	requirements.NoError(err)
 	result, err := st.DecideMeetingLinkContext(t.Context(), member, event, "unlink")
 	requirements.NoError(err)
 	assertions.Equal("split", result.State)
@@ -103,10 +149,13 @@ func TestMeetingLinkDecisionFollowsStandaloneIntoSeries(t *testing.T) {
 	first := MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: event, Identity: occurrenceIdentity(t, "20270314")}}
 	result, err := st.DecideMeetingLinkContext(t.Context(), noteRef, first, "unlink")
 	requirements.NoError(err)
-	assertions.Equal("automatic", result.State)
+	assertions.Equal("split", result.State)
 	record, err = st.MeetingRecordContext(t.Context(), noteRef)
 	requirements.NoError(err)
 	assertions.Empty(record.Links)
+	result, err = st.DecideMeetingLinkContext(t.Context(), noteRef, first, "clear")
+	requirements.NoError(err)
+	assertions.Equal("automatic", result.State)
 	second := MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: event, Identity: occurrenceIdentity(t, "20270321")}}
 	record, err = st.MeetingRecordContext(t.Context(), second)
 	requirements.NoError(err)
@@ -161,10 +210,13 @@ func TestMeetingLinkDecisionFollowsOrphanExceptionToMaster(t *testing.T) {
 	assertions.Equal([]int64{note}, record.MessageIDs)
 	result, err := st.DecideMeetingLinkContext(t.Context(), noteRef, current, "unlink")
 	requirements.NoError(err)
-	assertions.Equal("automatic", result.State)
+	assertions.Equal("split", result.State)
 	record, err = st.MeetingRecordContext(t.Context(), noteRef)
 	requirements.NoError(err)
 	assertions.Empty(record.Links)
+	result, err = st.DecideMeetingLinkContext(t.Context(), noteRef, current, "clear")
+	requirements.NoError(err)
+	assertions.Equal("automatic", result.State)
 }
 
 func TestMeetingLinkDecisionThreeCopiesAgreeFromEverySeed(t *testing.T) {
@@ -188,13 +240,57 @@ func TestMeetingLinkDecisionThreeCopiesAgreeFromEverySeed(t *testing.T) {
 			assertions.Equal([]int64{refs[2].MessageID}, record.MessageIDs)
 		}
 	}
-	result, err = st.DecideMeetingLinkContext(t.Context(), refs[2], refs[0], "link")
+	result, err = st.DecideMeetingLinkContext(t.Context(), refs[2], refs[0], "clear")
 	requirements.NoError(err)
 	assertions.Equal("automatic", result.State)
 	for _, ref := range refs {
 		record, err := st.MeetingRecordContext(t.Context(), ref)
 		requirements.NoError(err)
 		assertions.Equal([]int64{refs[0].MessageID, refs[1].MessageID, refs[2].MessageID}, record.MessageIDs)
+	}
+	_, err = st.DecideMeetingLinkContext(t.Context(), refs[0], refs[2], "unlink")
+	requirements.NoError(err)
+	result, err = st.DecideMeetingLinkContext(t.Context(), refs[2], refs[0], "link")
+	requirements.NoError(err)
+	assertions.Equal("link", result.State)
+	for _, ref := range refs {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		requirements.NoError(err)
+		assertions.Equal([]int64{refs[0].MessageID, refs[1].MessageID, refs[2].MessageID}, record.MessageIDs)
+	}
+}
+
+func TestMeetingLinkDecisionRemappedConflictRemainsReadable(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	var refs []MeetingLinkRef
+	for _, name := range []string{"remap-a", "remap-b", "remap-c", "remap-d"} {
+		_, id := projectionFixture(t, st, name, "meeting_json", `{}`)
+		refs = append(refs, MeetingLinkRef{Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: id}})
+	}
+	for _, pair := range [][2]int{{0, 1}, {2, 3}} {
+		_, err := st.DecideMeetingLinkContext(t.Context(), refs[pair[0]], refs[pair[1]], "link")
+		requirements.NoError(err)
+	}
+	_, err := st.DecideMeetingLinkContext(t.Context(), refs[1], refs[3], "unlink")
+	requirements.NoError(err)
+	_, err = st.MergeDuplicates(t.Context(), refs[2].MessageID, []int64{refs[0].MessageID}, "remap")
+	requirements.NoError(err)
+	for i, ref := range refs[1:] {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		requirements.NoError(err)
+		if i < 2 {
+			assertions.Equal([]int64{refs[1].MessageID, refs[2].MessageID}, record.MessageIDs)
+		} else {
+			assertions.Equal([]int64{refs[3].MessageID}, record.MessageIDs)
+		}
+	}
+	_, err = st.DecideMeetingLinkContext(t.Context(), refs[1], refs[3], "clear")
+	requirements.NoError(err)
+	for _, ref := range refs[1:] {
+		record, err := st.MeetingRecordContext(t.Context(), ref)
+		requirements.NoError(err)
+		assertions.Equal([]int64{refs[1].MessageID, refs[2].MessageID, refs[3].MessageID}, record.MessageIDs)
 	}
 }
 
@@ -240,7 +336,7 @@ func TestMeetingLinkDecisionJoinsEventsAndRestoresAutomatic(t *testing.T) {
 	}
 	result, err := st.DecideMeetingLinkContext(t.Context(), right, left, "unlink")
 	requirements.NoError(err)
-	assertions.Equal("automatic", result.State)
+	assertions.Equal("split", result.State)
 	for _, ref := range []MeetingLinkRef{left, right} {
 		record, err := st.MeetingRecordContext(t.Context(), ref)
 		requirements.NoError(err)

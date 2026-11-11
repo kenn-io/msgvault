@@ -166,7 +166,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.1.0**.
+it is separate from the binary release version. The current schema is **5.2.0**.
 
 Schema 5.0.0 changes `content_available` in file lists and suggestions from a
 boolean to a nullable boolean. A null value means storage has not been checked;
@@ -2446,9 +2446,9 @@ for a `msg:<id>` or `evt:<id>[@occurrence key]` reference. It requires API
 schema 5.1.0 and accepts a `message.read` grant.
 
 `POST /api/v1/meetings/links/decisions` accepts owner requests with `left`,
-`right`, and `decision` (`link` or `unlink`). It returns the canonical refs and
-`state` (`link`, `split`, or `automatic`). The opposite action clears a saved
-choice and restores automatic matching. A conflicting split returns 409. This
+`right`, and `decision` (`link`, `unlink`, or `clear`). It returns the canonical refs and
+`state` (`link`, `split`, or `automatic`). Link and unlink replace the saved
+choice; clear restores automatic matching. A conflicting choice returns 409. This
 operation requires API schema 5.2.0.
 
 Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,

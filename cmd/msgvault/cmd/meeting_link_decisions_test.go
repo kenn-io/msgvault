@@ -17,21 +17,26 @@ type meetingDecisionClient struct {
 
 func (c *meetingDecisionClient) DecideMeetingLink(_ context.Context, left, right, decision string) (store.MeetingLinkDecisionResult, error) {
 	c.args = []string{left, right, decision}
-	return store.MeetingLinkDecisionResult{Left: left, Right: right, State: decision}, nil
+	state := map[string]string{"link": "link", "unlink": "split", "clear": "automatic"}[decision]
+	return store.MeetingLinkDecisionResult{Left: left, Right: right, State: state}, nil
 }
 
-func TestMeetingDecisionCLIQuietAndVersioned(t *testing.T) {
+func TestMeetingDecisionCLIOutputAndVersioned(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	for _, action := range []string{"link", "unlink"} {
+	for _, tc := range []struct{ action, decision, output string }{
+		{"link", "link", "Saved link: msg:3 evt:7@20270314\n"},
+		{"unlink", "unlink", "Saved split: msg:3 evt:7@20270314\n"},
+		{"reset-link", "clear", "Cleared saved choice: msg:3 evt:7@20270314\n"},
+	} {
 		client := &meetingDecisionClient{meetingRecordClient: meetingRecordClient{version: "5.2.0"}}
 		command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 		var out bytes.Buffer
 		command.SetOut(&out)
-		command.SetArgs([]string{action, "msg:3", "evt:7@20270314"})
+		command.SetArgs([]string{tc.action, "msg:3", "evt:7@20270314"})
 		require.NoError(command.Execute())
-		assert.Empty(out.String())
-		assert.Equal([]string{"msg:3", "evt:7@20270314", action}, client.args)
+		assert.Equal(tc.output, out.String())
+		assert.Equal([]string{"msg:3", "evt:7@20270314", tc.decision}, client.args)
 	}
 	client := &meetingDecisionClient{meetingRecordClient: meetingRecordClient{version: "5.1.0"}}
 	command := newMeetingsCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})

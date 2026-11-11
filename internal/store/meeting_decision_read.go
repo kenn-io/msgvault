@@ -18,6 +18,10 @@ type meetingDecisionEdge struct {
 	decision string
 }
 
+type meetingDecisionConflict struct {
+	link, split meetingDecisionEdge
+}
+
 func parseStoredMeetingRef(value string) (meetingDecisionEndpoint, error) {
 	kind, rest, ok := strings.Cut(value, ":")
 	if !ok {
@@ -63,6 +67,10 @@ func (s *Store) meetingDecisionsForMessage(ctx context.Context, id int64, budget
 
 // MeetingRecordContext follows automatic evidence and owner choices in one snapshot.
 func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (MeetingRecord, error) {
+	return s.meetingRecordContext(ctx, ref, nil)
+}
+
+func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef, conflict *meetingDecisionConflict) (MeetingRecord, error) {
 	result := MeetingRecord{Links: []MeetingLink{}, MessageIDs: []int64{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
@@ -215,6 +223,9 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			x, y := root(split.a.ref()), root(split.b.ref())
 			if x == a && y == b || x == b && y == a {
 				blocked = true
+				if edge.decision == "link" && conflict != nil {
+					*conflict = meetingDecisionConflict{link: edge, split: split}
+				}
 				break
 			}
 		}

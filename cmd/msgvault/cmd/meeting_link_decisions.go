@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
@@ -15,10 +16,14 @@ type meetingDecisionClientBackend interface {
 }
 
 func newMeetingDecisionCommand(deps meetingCommandDeps, decision string) *cobra.Command {
+	name := decision
+	if decision == "clear" {
+		name = "reset-link"
+	}
 	return &cobra.Command{
-		Use:   decision + " <ref> <ref>",
-		Short: decision + " two archived meeting copies",
-		Long:  "Save a meeting choice. The opposite command clears a saved choice and restores automatic matching.",
+		Use:   name + " <ref> <ref>",
+		Short: name + " two archived meeting copies",
+		Long:  "Save a meeting choice or clear it to restore automatic matching.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			left, err := meetingLinksRef(args[0])
@@ -38,7 +43,15 @@ func newMeetingDecisionCommand(deps meetingCommandDeps, decision string) *cobra.
 			if !ok {
 				return errors.New("meeting decisions are unavailable")
 			}
-			_, err = backend.DecideMeetingLink(cmd.Context(), left, right, decision)
+			result, err := backend.DecideMeetingLink(cmd.Context(), left, right, decision)
+			if err != nil {
+				return err
+			}
+			label := "Saved " + result.State + ":"
+			if result.State == "automatic" {
+				label = "Cleared saved choice:"
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s\n", label, result.Left, result.Right)
 			return err
 		},
 	}

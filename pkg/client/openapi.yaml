@@ -7666,6 +7666,7 @@ components:
           enum:
             - link
             - unlink
+            - clear
           type: string
         left:
           type: string

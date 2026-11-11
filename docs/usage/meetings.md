@@ -64,8 +64,9 @@ including after a reschedule. Other note formats remain separate unless linked b
 
 Use `msgvault meetings link <ref> <ref>` to join copies, including notes from
 an unscheduled call. Use `msgvault meetings unlink <ref> <ref>` to separate an
-automatic match. Repeating the opposite command clears the saved choice and
-restores automatic matching. Choices survive sync and projection rebuilds;
+automatic match. Either command replaces the previous choice. Use
+`msgvault meetings reset-link <ref> <ref>` to clear the choice and restore
+automatic matching. Choices survive sync and projection rebuilds;
 permanently deleting either message removes its choices.
 
 Records show whether a calendar copy was cancelled or deleted at its source.

@@ -377,6 +377,9 @@ func (h *handlers) linkMeeting(ctx context.Context, req toolRequest) (*toolResul
 func (h *handlers) unlinkMeeting(ctx context.Context, req toolRequest) (*toolResult, error) {
 	return h.decideMeetingLink(ctx, req, "unlink")
 }
+func (h *handlers) resetMeetingLink(ctx context.Context, req toolRequest) (*toolResult, error) {
+	return h.decideMeetingLink(ctx, req, "clear")
+}
 
 func meetingDecisionDefinition(name, description string, handler catalogToolHandler) toolDefinition {
 	definition := writeDefinition(name, description, closedObject(map[string]*jsonschema.Schema{
