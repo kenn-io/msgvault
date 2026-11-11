@@ -101,6 +101,8 @@ func (imp *Importer) matchRosterMembers(ctx context.Context, sourceID int64, pro
 		status := "resolved"
 		if sum.Errors != before {
 			status = rosterMatchFailed
+		} else if !work.Verified {
+			status = "pending"
 		}
 		if receipt.Status != status {
 			receipt.Status = status

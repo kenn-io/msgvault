@@ -223,18 +223,55 @@ func TestRosterJoinRefreshesSettledMatchAfterStop(t *testing.T) {
 		assert.NotEqual(evidenceMembership, evidence.EvidenceKind)
 	}
 	f.mu.Lock()
-	chat.Participants = append(chat.Participants, map[string]any{"id": "@slack_other:beeper.local"})
+	chat.Participants = append(chat.Participants, map[string]any{"id": "@slack_other:beeper.local", "username": "joined"})
 	f.mu.Unlock()
 	detail, err = imp.client.GetChat(t.Context(), chat.ID)
 	require.NoError(err)
+	f.setChatGetFailure(chat.ID, true)
 	imp = NewImporter(st, imp.client)
-	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{}) //nolint:dogsled // Only matching evidence matters here.
+	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
 	require.NoError(err)
+	require.False(complete)
+	receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+	require.NoError(err)
+	key := imp.res.identifierForUser("@slack_other:beeper.local")
+	assert.Equal("pending", receipts[key].Status)
+	observations, err := st.ListParticipantObservationsContext(t.Context(), other, true)
+	require.NoError(err)
+	foundJoined := false
+	for _, observation := range observations {
+		foundJoined = foundJoined || observation.NormalizedValue == "joined"
+	}
+	assert.True(foundJoined, "matching captures independent observations before verification")
 	candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
 	require.NoError(err)
+	for _, evidence := range candidate.Evidence {
+		assert.NotEqual(evidenceMembership, evidence.EvidenceKind)
+	}
+	state := NewSyncState()
+	state.EnsureChat(chat.ID).RosterWork = work
+	blob, err := state.Marshal()
+	require.NoError(err)
+	state, err = LoadSyncState(blob)
+	require.NoError(err)
+	work = state.Chats[chat.ID].RosterWork
+	f.setChatGetFailure(chat.ID, false)
+	imp = NewImporter(st, imp.client)
+	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
+	require.NoError(err)
+	require.True(complete)
+	receipts, err = st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+	require.NoError(err)
+	assert.Equal("resolved", receipts[key].Status)
+	assert.Equal("done", work.Phase)
+	candidate, err = st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
+	require.NoError(err)
+	var conversationID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sourceID, chat.ID).Scan(&conversationID))
+	reference := fmt.Sprintf("conversation:%d", conversationID)
 	var found bool
 	for _, evidence := range candidate.Evidence {
-		found = found || evidence.EvidenceKind == evidenceMembership
+		found = found || evidence.EvidenceKind == evidenceMembership && evidence.EvidenceRef != nil && *evidence.EvidenceRef == reference
 	}
 	assert.True(found, "a settled candidate gains evidence when a member joins")
 }
