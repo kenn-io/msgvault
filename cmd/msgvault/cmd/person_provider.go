@@ -1192,7 +1192,7 @@ func runPersonCommitmentConsent(command *cobra.Command, deps personProviderComma
 		return err
 	}
 	if !profile.AllowSensitive || !slices.Contains(profile.AllowedSources, peoplesweep.SourceConversationText) {
-		return errors.New("commitment extraction requires sensitive content and the conversation_text source lane")
+		return errors.New("commitment extraction requires allowing sensitive conversation text in the provider profile")
 	}
 	if !confirmed || !jsonOutput {
 		until := profile.SourceUntil
@@ -1202,7 +1202,7 @@ func runPersonCommitmentConsent(command *cobra.Command, deps personProviderComma
 		w := command.OutOrStdout()
 		if _, err := fmt.Fprintf(w, "Commitment extraction sends exact text written by you and the other person in verified direct conversations to %s (%s).\n"+
 			"Profile %s, source dates %s through %s, retention=%s, training=%s.\n"+
-			"A request sends up to %d messages and %d open-promise anchors within the profile scope.\n",
+			"A request sends up to %d messages and %d open promises within the profile scope.\n",
 			profile.Endpoint, profile.Model, profile.Fingerprint, profile.SourceSince, until, profile.RetentionPosture, profile.TrainingPosture,
 			cfg.Commitments.MaxItems, cfg.Commitments.MaxOpenAnchors); err != nil {
 			return fmt.Errorf("write commitment policy disclosure: %w", err)
@@ -1231,7 +1231,7 @@ func runPersonCommitmentConsent(command *cobra.Command, deps personProviderComma
 	if jsonOutput {
 		return writeJSONOutput(command, map[string]any{"purpose": "people_commitments", "fingerprint": profile.Fingerprint, accountStateActive: true})
 	}
-	_, err = fmt.Fprintf(command.OutOrStdout(), "Commitment consent active (%s).\n", profile.Fingerprint)
+	_, err = fmt.Fprintln(command.OutOrStdout(), "Commitment consent active.")
 	if err != nil {
 		return fmt.Errorf("write commitment consent active: %w", err)
 	}
