@@ -55,7 +55,7 @@ func TestGCClosedInputDoesNotReportSuccess(t *testing.T) {
 	require.Error(t, err)
 	assert := assert.New(t)
 	assert.Equal(2, ExitCode(err))
-	assert.Contains(t, recoveryHint(err), "--yes")
+	assert.Contains(recoveryHint(err), "--yes")
 	assert.NotContains(out.String(), "Aborted.")
 }
 
