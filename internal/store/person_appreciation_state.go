@@ -111,7 +111,7 @@ func (s *Store) RecordPersonAppreciationDismissalContext(ctx context.Context, ke
 	if !validAppreciationKey(key) {
 		return PersonAppreciationState{}, fmt.Errorf("dismiss appreciation: %w", ErrInvalidPersonAppreciationKey)
 	}
-	if strings.TrimSpace(personUID) == "" || strings.TrimSpace(actor) == "" || !utf8.ValidString(personUID) || !utf8.ValidString(actor) || at.IsZero() {
+	if strings.TrimSpace(personUID) == "" || strings.TrimSpace(actor) == "" || !utf8.ValidString(personUID) || !utf8.ValidString(actor) || strings.ContainsRune(personUID, '\x00') || strings.ContainsRune(actor, '\x00') || at.IsZero() {
 		return PersonAppreciationState{}, fmt.Errorf("dismiss appreciation: %w", ErrInvalidPersonAppreciationAudit)
 	}
 	var state PersonAppreciationState
