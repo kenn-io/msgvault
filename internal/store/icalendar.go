@@ -34,24 +34,19 @@ type preparedICS struct {
 	fromEmail bool
 }
 
-// ValidateICalendar checks calendar syntax and retained event sizes.
-func ValidateICalendar(raw []byte) error {
-	_, err := prepareICalendar(raw, "", false)
-	return err
+// PrepareICalendar parses a calendar and checks retained event sizes.
+func PrepareICalendar(raw []byte) ([]preparedICS, error) {
+	return prepareICalendar(raw, "", false)
 }
 
-// PersistICalendarContext imports one complete file atomically under the same
-// source lock as email/calendar ingestion. Invalid files leave no event writes.
-func (s *Store) PersistICalendarContext(ctx context.Context, sourceID int64, raw []byte) (ICalendarImportSummary, error) {
+// PersistICalendarContext imports prepared events atomically under the same
+// source lock as email/calendar ingestion.
+func (s *Store) PersistICalendarContext(ctx context.Context, sourceID int64, prepared []preparedICS) (ICalendarImportSummary, error) {
 	var summary ICalendarImportSummary
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return summary, err
 	}
 	err := s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
-		prepared, err := prepareICalendar(raw, "", false)
-		if err != nil {
-			return err
-		}
 		if len(prepared) > 0 {
 			if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
 				return fmt.Errorf("lock ICS participant directory: %w", err)
