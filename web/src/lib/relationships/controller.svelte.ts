@@ -38,7 +38,7 @@ export type LinkOutcome =
     }
   | {
       ok: false;
-      code: 'already_linked' | 'invalid' | 'error' | 'cache_unsupported';
+      code: 'already_linked' | 'invalid' | 'error' | 'cache_unsupported' | 'cache_build_required';
       message: string;
     };
 export interface RelationshipsMergeContext {
@@ -702,7 +702,7 @@ export class RelationshipsController {
     if (res.status === 409 && isErrorCode(error, 'already_linked'))
       return { ok: false, code: 'already_linked', message };
     if (res.status === 400) return { ok: false, code: 'invalid', message };
-    return { ok: false, code: isErrorCode(error, 'identity_cache_unsupported') ? 'cache_unsupported' : 'error', message };
+    return { ok: false, code: isErrorCode(error, 'identity_cache_unsupported') ? 'cache_unsupported' : isErrorCode(error, 'identity_cache_build_required') ? 'cache_build_required' : 'error', message };
   }
   destroy(): void {
     this.clearCacheBuildRetry();
