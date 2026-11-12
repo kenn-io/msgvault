@@ -10,6 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestICSUTF8BOM(t *testing.T) {
+	raw := append([]byte{0xef, 0xbb, 0xbf}, []byte(icsExample)...)
+	components, err := ParseICS(raw, "", "")
+	require.NoError(t, err)
+	require.Len(t, components, 1)
+	assert.Equal(t, raw, components[0].Raw)
+}
+
 func TestICSFloatingRecurrenceUsesSourceZone(t *testing.T) {
 	for _, tc := range []struct{ zone, rdate, exdate, original string }{
 		{"", "RDATE:20270315T090000Z", "EXDATE:20270314T090000Z", "2027-03-15T09:00:00Z"},

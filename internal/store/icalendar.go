@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -78,7 +77,7 @@ func prepareICalendar(raw []byte, method string, fromEmail bool) ([]preparedICS,
 		if len(c.Raw) > maxMeetingRawBytes {
 			return nil, &icsInterpretationError{errMeetingRawTooLarge}
 		}
-		out = append(out, preparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, Organizer: c.OrganizerEmail, Range: slices.Contains(c.Event.Recurrence, calevent.ICSRangeRecurrence)}})
+		out = append(out, preparedICS{component: c, fromEmail: fromEmail, meta: calevent.ICSMetadata{Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, Range: slices.Contains(c.Event.Recurrence, calevent.ICSRangeRecurrence)}})
 	}
 	return out, nil
 }
@@ -120,27 +119,16 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				return fmt.Errorf("decode retained ICS metadata: %w", err)
 			}
 		}
-		familyKey, familyOrganizer, err := s.icsFamily(ctx, tx, sourceID, id, calevent.ICSMessageID(item.component.UID, ""), item.fromEmail && old.Organizer == "")
+		familyKey, err := s.icsFamily(ctx, tx, sourceID, id, calevent.ICSMessageID(item.component.UID, ""))
 		if err != nil {
 			return err
 		}
-		organizer := old.Organizer
-		if item.fromEmail && organizer == "" {
-			organizer = familyOrganizer
-		}
-		foreign := item.fromEmail && organizer != "" && item.component.OrganizerEmail != organizer
-		if foreign {
-			slog.Warn("calendar invite ignored: organizer differs", "event_message_id", id, "organizer", item.component.OrganizerEmail)
-		}
-		apply := !foreign && (!exists || icsRevisionNewer(item.component, old))
-		details := !foreign && e.Status != SyncStatusCancelled && (!exists || old.Details == nil || icsRevisionNewer(item.component, calevent.ICSMetadata{Sequence: old.Details.Sequence, Stamp: old.Details.Stamp}))
+		apply := !exists || icsRevisionNewer(item.component, old)
+		details := e.Status != SyncStatusCancelled && (!exists || old.Details == nil || icsRevisionNewer(item.component, calevent.ICSMetadata{Sequence: old.Details.Sequence, Stamp: old.Details.Stamp}))
 		if apply && exists && e.Status == SyncStatusCancelled {
 			// Like a provider cancellation, keep the accepted details.
 			old.Sequence, old.Stamp, old.Status = item.meta.Sequence, item.meta.Stamp, SyncStatusCancelled
 			old.Range = item.meta.Range
-			if item.fromEmail && old.Organizer == "" {
-				old.Organizer = item.meta.Organizer
-			}
 			if err := s.setICSMetadataWith(ctx, tx, id, old); err != nil {
 				return err
 			}
@@ -180,27 +168,12 @@ const icsFamilyQuery = `SELECT COALESCE(
    SELECT id FROM (SELECT e.message_id AS id FROM calendar_events e JOIN source_merge_archive_only_messages a ON a.message_id=e.message_id JOIN messages m ON m.id=e.message_id WHERE e.series_provider_id=? AND m.source_id=? ORDER BY e.message_id LIMIT 1) exception
   ) candidates ORDER BY id LIMIT 1)), ?)`
 
-func (s *Store) icsFamily(ctx context.Context, tx *loggedTx, sourceID, retainedID int64, familyKey string, needOrganizer bool) (string, string, error) {
+func (s *Store) icsFamily(ctx context.Context, tx *loggedTx, sourceID, retainedID int64, familyKey string) (string, error) {
 	q := boundQuerier{ctx: ctx, q: tx}
 	if err := q.QueryRow(icsFamilyQuery, retainedID, sourceID, sourceID, familyKey, familyKey, sourceID, familyKey, sourceID, familyKey).Scan(&familyKey); err != nil {
-		return "", "", fmt.Errorf("resolve ICS family conversation: %w", err)
+		return "", fmt.Errorf("resolve ICS family conversation: %w", err)
 	}
-	if !needOrganizer {
-		return familyKey, "", nil
-	}
-	field := "json_extract(m.metadata, '$.organizer')"
-	if s.IsPostgreSQL() {
-		field = "m.metadata ->> 'organizer'"
-	}
-	var organizer string
-	err := q.QueryRow(`SELECT `+field+` FROM messages m JOIN conversations c ON c.id=m.conversation_id JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND c.source_conversation_id=? AND r.raw_format=? AND `+field+` <> '' ORDER BY m.id LIMIT 1`, sourceID, familyKey, rawFormatICS).Scan(&organizer)
-	if errors.Is(err, sql.ErrNoRows) {
-		return familyKey, "", nil
-	}
-	if err != nil {
-		return "", "", fmt.Errorf("read ICS family organizer: %w", err)
-	}
-	return familyKey, organizer, nil
+	return familyKey, nil
 }
 
 func (s *Store) setICSMetadataWith(ctx context.Context, tx *loggedTx, id int64, meta calevent.ICSMetadata) error {

@@ -2160,8 +2160,6 @@ parts into event messages in the same source. Attached forwarded emails and iTIP
 REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored. ADD is unsupported; the email is kept and a warning is logged.
 Attendee RSVPs come from the invitation snapshot; Google Calendar sync supplies provider-reported RSVPs.
 
-Within a source, an event keeps the organizer stored with it, and a new occurrence takes its series' organizer. Once an organizer is stored, a later emailed invite for that UID with a different or missing ORGANIZER is ignored with a warning; the email itself is kept. Files imported with `import-ics` are not checked.
-
 An invitation, its updates, and its cancellation share one event. Every
 contributing email keeps its full MIME and attachments, and the event survives
 deletion of any of them.
