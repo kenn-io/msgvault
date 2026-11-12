@@ -1197,12 +1197,16 @@ func daemonRuntimeForHTTPServer(t *testing.T, server *httptest.Server, authFinge
 type openHTTPStoreDaemonVersionCase struct {
 	name, cli, daemon         string
 	disabled, replace, notice bool
+	persistent                bool
+	incompatible              bool
 	policy                    string
 }
 
 func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
 	for _, tt := range []openHTTPStoreDaemonVersionCase{
 		{name: "same base source stays", cli: "v0.23.0-45-gabc", daemon: "v0.23.0-46-gdef", notice: true, policy: config.DaemonAutoRestartNewer},
+		{name: "persistent source replacement", persistent: true, cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
+		{name: "persistent incompatible replacement", persistent: true, incompatible: true, cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
 		{name: "source replaces release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
 		{name: "never keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", notice: true, policy: config.DaemonAutoRestartNever},
 		{name: "disabled auto-start keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", disabled: true, notice: true, policy: config.DaemonAutoRestartAlways},
@@ -1253,6 +1257,14 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 	require.NoError(
 		err, "parse listener port")
 
+	apiVersion := daemonAPIVersion
+	if tt.incompatible {
+		apiVersion--
+	}
+	idleTimeout := "20m0s"
+	if tt.persistent {
+		idleTimeout = "0s"
+	}
 	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:     os.Getpid(),
 		Network: daemon.NetworkTCP,
@@ -1260,9 +1272,12 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 		Service: daemonService,
 		Version: tt.daemon,
 		Metadata: map[string]string{
+			runtimePersistent:       strconv.FormatBool(tt.persistent),
+			runtimeIdleTimeout:      idleTimeout,
+			runtimeBackground:       "true",
 			runtimeHost:             host,
 			runtimePort:             strconv.Itoa(port),
-			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPIVersion:       strconv.Itoa(apiVersion),
 			runtimeAPISchemaVersion: api.APISchemaVersion,
 			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
@@ -1279,7 +1294,8 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 		stopped = true
 		return nil
 	})
-	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+	stubStartServeBackgroundProcess(t, func(_ *config.Config, opts backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		assert.Equal(tt.persistent, opts.Persistent)
 		require.True(tt.replace, "retained daemon must not start")
 		started = true
 		return &backgroundServeProcess{PID: os.Getpid(), Wait: make(chan error)}, nil
@@ -1311,7 +1327,7 @@ func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVe
 	}
 	assert.Equal(wantURL, info.URL)
 	if tt.notice {
-		assert.Contains(stderr, "to use this version.")
+		assert.Contains(stderr, "to use this version")
 	} else if tt.replace {
 		assert.Contains(stderr, "Starting local msgvault daemon")
 	} else {

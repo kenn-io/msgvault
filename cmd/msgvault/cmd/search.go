@@ -55,7 +55,7 @@ stored snippet, available match_snippet, and attachment names/counts.
 Use show-thread <message-id> to read a conversation chronologically.
 
 Supported operators:
-  from:        Sender email address or domain
+  from:        Sender name, address, or domain
   to:          Recipient email address
   cc:          CC recipient
   bcc:         BCC recipient
@@ -264,7 +264,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 		if isAgentMode(state) {
 			fmt.Fprintln(os.Stderr, "Note: the search index could not be verified for this request; results may be incomplete. Ask the archive owner to search once or run rebuild-fts.")
 		} else {
-			fmt.Fprintln(os.Stderr, "Note: the search index could not be verified for this request; results may be incomplete. Search again to retry the check, or run rebuild-fts.")
+			fmt.Fprintln(os.Stderr, "Note: couldn't check the text-search index, so results may miss messages. Search again or run msgvault rebuild-fts.")
 		}
 	case "awaiting_owner":
 		fmt.Fprintln(os.Stderr, "Note: the search index is incomplete; run rebuild-fts with owner access. Results may be incomplete until it finishes.")
@@ -310,11 +310,6 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 		_, result = fmt.Println("No messages found.")
 	} else {
 		result = outputSearchResultsTable(resp.Results)
-	}
-	if result == nil {
-		for _, hint := range resp.Hints {
-			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Hint: "+hint.Message)
-		}
 	}
 	return result
 }

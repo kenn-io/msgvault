@@ -110,12 +110,10 @@ const FILE_MIME_FAMILIES = new Set<FileMIMEFamily>([
 ]);
 const PERSON_FILE_DIRECTIONS = new Set<PersonFileDirection>(['from_person', 'to_person', 'group']);
 const OPERATION_LANES = new Set<OperationLane>([
-  'messages', 'person_facts', 'contacts', 'documents', 'visual_attachments'
+  'messages', 'person_facts', 'contacts', 'visual_attachments'
 ]);
 const OPERATION_KINDS = new Set<OperationKind>([
   'carddav_sync',
-  'document_embedding',
-  'document_extraction',
   'message_embedding',
   'person_embedding',
   'person_enrichment',
@@ -127,13 +125,12 @@ const OPERATION_STATES = new Set<OperationState>([
   'cancelled', 'failed', 'partial', 'paused', 'queued', 'running', 'succeeded'
 ]);
 const OPERATION_STATUS_AUTHORITIES = new Set<OperationStatusAuthority>([
-  'getDocumentIndexStatus', 'getDocumentVectorStatus', 'getVisualAttachmentStatus'
+  'getVisualAttachmentStatus'
 ]);
 const OPERATION_KINDS_BY_LANE: Record<OperationLane, ReadonlySet<OperationKind>> = {
   messages: new Set(['source_sync', 'message_embedding']),
   person_facts: new Set(['person_sweep', 'person_embedding', 'person_enrichment']),
   contacts: new Set(['carddav_sync']),
-  documents: new Set(['document_extraction', 'document_embedding']),
   visual_attachments: new Set(['visual_embedding'])
 };
 const OPERATION_FILTER_FIELDS = [

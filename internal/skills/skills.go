@@ -1,6 +1,6 @@
 // Package skills renders and installs agent skill files (SKILL.md, per
 // the open agent-skills standard used by Claude Code and Codex) that
-// teach coding agents the msgvault read-only CLI workflows.
+// teach coding agents msgvault CLI workflows and authorized task handoffs.
 package skills
 
 import (

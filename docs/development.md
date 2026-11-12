@@ -5,7 +5,7 @@ description: Build, test, lint, and code conventions.
 
 ## Build
 
-The macOS and Linux builds require Go 1.27.3+, Bun 1.4.4+, Node.js (22.23.4+ on
+The macOS and Linux builds require Go 1.27.4+, Bun 1.4.4+, Node.js (22.23.4+ on
 22.x, 24.22.1+ on 24.x, or 26.12.1+), and a C/C++ compiler. The Make targets install
 the pinned browser dependencies when `web/package.json` or `web/bun.lock`
 changes, then embed the production UI in the Go binary; Node runs the embed
@@ -131,6 +131,42 @@ Repository-owned release-publishing workflows and the old release/tagging
 scripts have been removed. Pushing a tag no longer invokes those publishers. The
 Docker inputs, local build commands, installers, and ordinary CI remain
 available.
+
+### Check a standalone executable
+
+Run the standalone contract against an already built or extracted executable
+on macOS or Linux:
+
+```bash
+make smoke-standalone BINARY=/absolute/path/to/msgvault
+```
+
+The check copies only the executable to a temporary directory with spaces,
+clears its environment, and uses a new temporary home. It imports one
+synthetic email into SQLite, builds the Parquet cache, and requires the exact
+result of a DuckDB-specific query. It stops its daemon and removes the home
+on exit. It never reads a personal archive or rebuilds/installs the binary.
+
+A developer host can still supply shared libraries even with a cleared
+environment. For a clean Linux check, run the same script in a stock runtime
+with networking disabled; use an executable built for the container's native
+architecture:
+
+```bash
+docker run --rm --network none --read-only --tmpfs /tmp:rw,exec \
+  --mount type=bind,src=/absolute/path/to/msgvault,dst=/artifact/msgvault,readonly \
+  --mount type=bind,src="$PWD/scripts/smoke-standalone.sh",dst=/smoke.sh,readonly \
+  debian:bookworm-slim sh /smoke.sh /artifact/msgvault
+```
+
+The Linux CI build uses Debian bookworm as its compiler baseline and transfers
+its AMD64 and ARM64 executables to separate stock bookworm runtime jobs. Those
+jobs install no build tools or DuckDB. They complement the Docker-image smoke
+above, which checks a different build and its packaged runtime. They do not
+publish release assets.
+See [runtime requirements](setup.md#runtime-requirements) for the inspected
+v0.23.0 requirements; a passing check on one host does not certify other OS
+versions or architectures.
 
 ## Test
 
@@ -289,6 +325,26 @@ under `web/test-results/vitest/` and `web/test-results/playwright/`. CI uploads
 each report as a `vitest-<suite>-attempt-<n>` or
 `playwright-<suite>-attempt-<n>` artifact. `MSGVAULT_PLAYWRIGHT_SUITE` names a
 Playwright run's report.
+
+### CI and the merge queue
+
+Pull requests and `main` run the full CI suite. A pull request must pass it
+before it can join the merge queue. The merge queue runs a smaller suite that
+looks for breakage between separately green pull requests:
+
+- `checks`: Linux lint, API contract, generated artifact, and vulnerability checks.
+- The Linux SQLite test suite: `test` and the three `test-sharded` jobs.
+- `frontend` and `web-e2e`.
+- `release-linux-smoke` and `standalone-linux-runtime` for amd64 only.
+- `test-postgres-sharded (store)`, which runs the PostgreSQL schema, migration,
+  and upgrade tests. The SQLite suite covers the same tests on SQLite, including
+  `TestSchemaVersionContract`.
+
+Windows, arm64, pgvector, and the other PostgreSQL jobs skip merge groups. The
+PostgreSQL CLI and API shards, the follow-up checks for the PostgreSQL library
+without CGO, and the store concurrency repetitions skip them too. The skipped
+jobs still run on every push to `main`. Only `CI gate` is a required check, so
+this split needs no branch protection change.
 
 ## Lint & Format
 

@@ -68,6 +68,7 @@ func TestEnsureRecipientEnvelopeUniqueIndex_LegacyTableRebuild(t *testing.T) {
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
 			email_address TEXT,
+			is_relayed BOOLEAN NOT NULL DEFAULT FALSE,
 			UNIQUE(message_id, participant_id, recipient_type)
 		)`,
 		`INSERT INTO message_recipients (id, message_id, participant_id, recipient_type, display_name, email_address)
@@ -561,6 +562,19 @@ func TestIdentityRefreshSelectionsUseIndexes(t *testing.T) {
 		return strings.Join(steps, "\n")
 	}
 	assert.Contains(t, plan(fmt.Sprintf(identityEnvelopeSelection, "LOWER(?)"), int64(1), "alias@example.test"), "SEARCH mr USING INDEX idx_message_recipients_email_from")
+	normalizedPlan := plan(
+		`WITH requested(address) AS (VALUES (?),(?)),
+		envelope_matches(address, message_id) AS MATERIALIZED (
+			SELECT requested.address, mr.message_id
+			FROM requested JOIN message_recipients mr
+			ON `+senderRecipientAddress+`=requested.address
+			AND `+senderRecipientAddressPresent+`
+		)
+		SELECT * FROM envelope_matches`,
+		"first@example.test", "second@example.test",
+	)
+	assert.Contains(t, normalizedPlan, "SEARCH mr USING")
+	assert.Contains(t, normalizedPlan, "idx_message_recipients_normalized_email")
 	source, err := st.GetOrCreateSource("gmail", "plan@example.test")
 	require.NoError(err)
 	conv, err := st.EnsureConversation(t.Context(), source.ID, "plan", "Plan")

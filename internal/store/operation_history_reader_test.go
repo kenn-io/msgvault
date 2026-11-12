@@ -219,16 +219,6 @@ func TestOperationHistoryReaderBoundsEveryAdapterToLimitPlusOne(t *testing.T) {
 		},
 		func(fetchLimit int) error {
 			_, err := store.ListInvocationOperationRunsWithFetchLimitForTest(
-				st, t.Context(), operations.KindDocumentExtraction, query, fetchLimit)
-			return err
-		},
-		func(fetchLimit int) error {
-			_, err := store.ListInvocationOperationRunsWithFetchLimitForTest(
-				st, t.Context(), operations.KindDocumentEmbedding, query, fetchLimit)
-			return err
-		},
-		func(fetchLimit int) error {
-			_, err := store.ListInvocationOperationRunsWithFetchLimitForTest(
 				st, t.Context(), operations.KindVisualEmbedding, query, fetchLimit)
 			return err
 		},

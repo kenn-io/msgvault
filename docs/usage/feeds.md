@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-07"
+last_edited: "2026-11-12"
 title: RSS, Atom and JSON Feeds
 description: Follow feeds and keep every item msgvault has seen, searchable next to your mail and chats.
 ---
@@ -14,11 +14,11 @@ them.
 Pass each feed's URL, or the OPML file a feed reader exports:
 
 ```bash
-msgvault add-feed https://example.com/releases.atom
-msgvault add-feed --opml ~/Downloads/subscriptions.opml
+msgvault source feeds add https://example.com/releases.atom
+msgvault source feeds add --opml ~/Downloads/subscriptions.opml
 ```
 
-`add-feed` fetches each URL first. A URL that is not a reachable RSS 2.0, Atom,
+`source feeds add` fetches each URL first. A URL that is not a reachable RSS 2.0, Atom,
 or JSON feed is reported and not followed. The items a feed lists now are
 archived right away. `--opml` follows every feed in the file without fetching
 them; the next sync fetches them.
@@ -33,15 +33,15 @@ enabled = true
 schedule = "*/30 * * * *"
 ```
 
-Run `msgvault sync-feeds` to fetch them now. Once the schedule is set, the
+Run `msgvault source feeds sync` to fetch them now. Once the schedule is set, the
 Sources page offers **Sync now** for the Feeds source.
 
-- An unchanged feed isn't downloaded again. `sync-feeds --full` downloads
+- An unchanged feed isn't downloaded again. `source feeds sync --full` downloads
   every feed again.
 - Each sync fetches the least recently checked feeds first, so a scheduled
   sync that pauses for other work picks up the feeds it didn't reach.
 - A feed that fails is recorded on the sync run, and the other feeds still
-  sync. `msgvault list-feeds` shows each feed's last check and its last error.
+  sync. `msgvault source feeds list` shows each feed's last check and its last error.
   A sync counts as failed, and the Sources page keeps its last good sync,
   only when every feed fails.
 
@@ -87,10 +87,10 @@ address for every author.
 ## Stop following a feed
 
 ```bash
-msgvault remove-feed https://example.com/releases.atom
+msgvault source feeds remove https://example.com/releases.atom
 ```
 
-Archived items stay searchable. `add-feed` with the same URL follows it again.
+Archived items stay searchable. `source feeds add` with the same URL follows it again.
 To delete every feed item instead, run
 `msgvault remove-account --type feed feeds`, which cannot be undone.
 

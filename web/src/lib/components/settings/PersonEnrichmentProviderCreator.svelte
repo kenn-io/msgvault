@@ -2,6 +2,7 @@
   import { putSettingsPersonEnrichmentProvider as generatedPutSettingsPersonEnrichmentProvider } from '../../api/generated/api/api';
   import { Button, TextInput } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
+  import { trackUnsavedForm } from '../../settings/unsaved-forms.svelte';
   import type {
     PersonEnrichmentProviderUpdate as GeneratedPersonEnrichmentProviderUpdate,
     SettingsResponse as GeneratedSettingsResponse,
@@ -28,6 +29,7 @@
   let name = $state('');
   let saving = $state(false);
   let error = $state('');
+  trackUnsavedForm({ dirty: () => expanded && name.trim() !== '', discard: () => cancel() });
   const providerLabel = $derived(kind === 'exa' ? 'Exa' : 'SixtyFour');
   async function createProvider() {
     if (saving) return;

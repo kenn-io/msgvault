@@ -1066,7 +1066,7 @@ func newExploreDuckDBFixtureWithClusters(
 			where = " WHERE false"
 		}
 		path := filepath.ToSlash(filepath.Join(dir, table.file))
-		projection := "*"
+		projection := identityFixtureProjection(table.dir)
 		if strings.HasPrefix(table.dir, "messages/") {
 			projection += ", false AS archive_only"
 		}
@@ -1098,4 +1098,30 @@ func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	assert.Equal(t, "Pacific/Pago_Pago", engine.groupRequest.Timezone)
 	assert.True(t, engine.groupRequest.Explore.SentOnly)
+}
+
+func TestExploreGroupOverviewSerialization(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	now := time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC)
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, groupResult: &query.ExploreGroupResponse{
+		Rows: []query.ExploreGroupRow{{Key: "2024-05", TotalItems: 4, LatestAt: now}},
+		Overview: &query.ExploreGroupOverview{
+			FirstAt: now, Activity: []query.ExploreGroupActivity{{Bucket: "2024-05-01", Count: 2}},
+			CoParticipants: []query.ExploreGroupCoParticipant{},
+		},
+	}}
+	srv := newTestServerWithEngine(t, engine)
+	keyed := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["month"],"group_key":"2024-05"}`)
+	require.Equal(http.StatusOK, keyed.Code, keyed.Body.String())
+	var detail struct {
+		Rows     []map[string]any `json:"rows"`
+		Overview map[string]any   `json:"overview"`
+	}
+	require.NoError(json.Unmarshal(keyed.Body.Bytes(), &detail))
+	require.NotNil(detail.Overview)
+	assert.Equal("2024-05-01T12:00:00Z", detail.Overview["first_at"])
+	assert.Equal([]any{map[string]any{"bucket": "2024-05-01", "count": float64(2)}}, detail.Overview["activity"])
+	require.Len(detail.Rows, 1)
+	assert.InDelta(4, detail.Rows[0]["total_items"], 0)
 }

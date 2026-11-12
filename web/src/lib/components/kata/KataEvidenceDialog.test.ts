@@ -75,12 +75,11 @@ describe('KataEvidenceDialog', () => {
     expect(onclose).toHaveBeenCalledOnce();
   });
 
-  const chunk = { kind: 'document_chunk' as const, message_id: 42, attachment_id: 12, extraction_id: 'extract-8', chunk_key: 'chunk-1', start_rune: 0, max_chars: 1000 };
-  it.each([
-    { kind: 'message', text: 'Café 🙂 send the budget by Friday', quote: 'send the budget', initial: selector, earlier: false },
-    // A file chunk opens at a search hit late in the chunk and pages back before narrowing.
-    { kind: 'document_chunk', text: 'x'.repeat(600) + 'Café 🙂 ship the draft', quote: 'ship the draft', initial: { ...chunk, start_rune: 500 }, earlier: true },
-  ])('narrows a $kind citation to the selected text, counting runes', async ({ text, quote, initial, earlier }) => {
+  it.each([false, true])('narrows a message citation to the selected text, counting runes, earlier=%s', async (earlier) => {
+    const passage = 'Café 🙂 send the budget by Friday';
+    const text = earlier ? 'x'.repeat(500) + passage + 'y'.repeat(500) : passage;
+    const quote = 'send the budget';
+    const initial = { ...selector, start_rune: earlier ? 1000 : 0 };
     type Wanted = { kind: string; start_rune: number; end_rune?: number; max_chars?: number };
     const requests: Wanted[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -90,21 +89,21 @@ describe('KataEvidenceDialog', () => {
       const runes = [...text];
       const end = wanted.end_rune ?? Math.min(runes.length, wanted.start_rune + (wanted.max_chars ?? runes.length));
       const range = { start_rune: wanted.start_rune, end_rune: end };
-      const located = wanted.kind === 'message'
-        ? { message: { body_sha256: 'a'.repeat(64), ...range } }
-        : { attachment_id: 12, occurrence_key: 'occurrence', document_chunk: { canonical_blob_hash: 'a'.repeat(64), extraction_id: 'extract-8', manifest_checksum: 'b'.repeat(64), chunk_key: 'chunk-1', chunk_checksum: 'c'.repeat(64), ...range } };
+      const located = { message: { body_sha256: 'a'.repeat(64), ...range } };
       const reference = { version: 1, kind: wanted.kind, archive_uid: 'archive-example', message_id: 42, source_type: 'email', source_identifier: 'archive@example.com', source_message_id: 'message-example', ...located };
       const excerpt = runes.slice(wanted.start_rune, end).join('');
       return Response.json({ evidence: [{ id: `${wanted.start_rune}`.padStart(64, '0'), passage: `${wanted.start_rune}:${end}`.padStart(64, 'p'), reference, excerpt, display: { filename: 'transcript.txt' }, content_trust: 'untrusted', ...(end < runes.length ? { next_rune: end } : {}) }] });
     });
     render(KataEvidenceDialog, { client: createAPIClient(fetchFn), selector: initial, defaultTitle: 'Follow up' });
+    await screen.findByText([...text].slice(initial.start_rune).join(''));
     if (earlier) {
-      await screen.findByText([...text].slice(initial.start_rune).join(''));
-      expect(screen.getByRole('button', { name: 'Later passage' })).toHaveProperty('disabled', true);
       await fireEvent.click(screen.getByRole('button', { name: 'Earlier passage' }));
+      await screen.findByText(passage + 'y'.repeat(500));
+      expect(requests.at(-1)).toEqual({ ...initial, start_rune: 500 });
     }
-    const node = (await screen.findByText(text)).firstChild as Text;
-    const from = text.indexOf(quote);
+    const preview = earlier ? passage + 'y'.repeat(500) : passage;
+    const node = (await screen.findByText(preview)).firstChild as Text;
+    const from = preview.indexOf(quote);
     const selection = document.createRange();
     selection.setStart(node, from);
     selection.setEnd(node, from + quote.length);
@@ -114,9 +113,9 @@ describe('KataEvidenceDialog', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Quote selection' }));
     expect(await screen.findByText(quote)).toBeDefined();
     const { max_chars: _window, ...exact } = initial;
-    const start = [...text.slice(0, from)].length;
+    const start = (earlier ? 500 : 0) + [...preview.slice(0, from)].length;
     expect(requests.at(-1)).toEqual({ ...exact, start_rune: start, end_rune: start + [...quote].length });
-    // The selection ends the text, so a narrowed citation leaves nothing later to page to.
+    // The preview reaches the end of the text, so narrowing keeps later paging disabled.
     expect(screen.getByRole('button', { name: 'Later passage' })).toHaveProperty('disabled', true);
   });
 

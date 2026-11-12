@@ -20,9 +20,23 @@ import (
 type davRemote struct {
 	client *Client
 	google bool
+	icloud bool
 }
 
 func (r *davRemote) Discover(ctx context.Context, entered string) (Discovery, error) {
+	if r.icloud {
+		var discovery Discovery
+		var err error
+		if IsICloudDiscoveryURL(entered) {
+			discovery, err = discoverICloud(ctx, r.client, entered)
+		} else {
+			discovery, err = Discover(ctx, r.client, entered)
+		}
+		if err != nil {
+			err = &iCloudDiscoveryError{cause: err}
+		}
+		return discovery, err
+	}
 	if r.google {
 		return discoverGoogle(ctx, r.client, entered)
 	}

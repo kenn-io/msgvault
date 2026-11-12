@@ -1,7 +1,7 @@
 package config
 
 // FeedsConfig schedules fetching of the RSS, Atom and JSON feeds followed
-// with add-feed. The feeds themselves live in the archive, not here.
+// with source feeds add. The feeds themselves live in the archive, not here.
 type FeedsConfig struct {
 	// Enabled gates the daemon scheduler job.
 	Enabled bool `toml:"enabled"`

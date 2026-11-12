@@ -7,7 +7,6 @@ export type OperationUnavailableKindLane =
 
 export const OperationUnavailableKindLane = {
   contacts: "contacts",
-  documents: "documents",
   messages: "messages",
   person_facts: "person_facts",
   visual_attachments: "visual_attachments",

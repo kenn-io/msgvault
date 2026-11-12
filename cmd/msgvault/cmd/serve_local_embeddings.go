@@ -176,6 +176,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 			return err
 		}
 	}
+	releaseGate := func() {}
 	if c.gate != nil {
 		begin := c.gate.BeginWorkContext
 		if labeled, ok := c.gate.(api.LabeledOperationGate); ok {
@@ -187,8 +188,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 		if !ok {
 			return errors.New("the daemon is stopping")
 		}
-		defer release()
+		releaseGate = release
 	}
+	defer func() { releaseGate() }()
 	// Apply saved text settings together while preserving the live image lane.
 	runtimeConfig := *c.state.cfg
 	if live != nil {
@@ -238,12 +240,14 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, report func(api.
 		publishVisualVectorFeatures(c.store, c.server, c.scheduler, vf, &state)
 	}
 	defer func() { result = errors.Join(result, publicationErr) }()
+	releaseGate()
+	releaseGate = func() {}
 
 	report(api.LocalEmbeddingsStatus{Phase: "indexing"})
 	fingerprint := vf.Cfg.GenerationFingerprint()
 	run := func(args ...string) error {
 		stderr := &childStderr{w: io.Discard}
-		err := c.runner.RunCLICommand(workCtx, api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
+		err := c.runner.RunCLICommand(c.server.WithPublishedVectorConfig(workCtx), api.CLIRunRequest{Args: args}, func(event api.CLIRunEvent) error {
 			if event.Type == cliStreamStderr {
 				_, err := stderr.Write([]byte(event.Data))
 				return err

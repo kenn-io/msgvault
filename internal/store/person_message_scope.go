@@ -9,63 +9,6 @@ import (
 	"go.kenn.io/msgvault/internal/personscope"
 )
 
-func normalizeDocumentPersonScope(scope *personscope.Scope) (*personscope.Scope, error) {
-	if scope == nil {
-		return nil, nil //nolint:nilnil // An omitted optional scope has no value and no error.
-	}
-	normalized := *scope
-	normalized.ParticipantIDs = slices.Clone(scope.ParticipantIDs)
-	slices.Sort(normalized.ParticipantIDs)
-	normalized.ParticipantIDs = slices.Compact(normalized.ParticipantIDs)
-	if len(normalized.ParticipantIDs) > 0 && normalized.ParticipantIDs[0] <= 0 {
-		return nil, fmt.Errorf("%w: resolved person scope has invalid participants", ErrDocumentSearchInvalidRequest)
-	}
-	selected := make(map[personscope.Direction]bool, len(scope.Directions))
-	for _, direction := range scope.Directions {
-		switch direction {
-		case personscope.FromPerson, personscope.ToPerson, personscope.Group:
-			selected[direction] = true
-		default:
-			return nil, fmt.Errorf("%w: unknown person direction %q", ErrDocumentSearchInvalidRequest, direction)
-		}
-	}
-	normalized.Directions = normalized.Directions[:0]
-	for _, direction := range []personscope.Direction{personscope.FromPerson, personscope.ToPerson, personscope.Group} {
-		if selected[direction] {
-			normalized.Directions = append(normalized.Directions, direction)
-		}
-	}
-	if len(normalized.Directions) == 0 {
-		return nil, fmt.Errorf("%w: resolved person scope has no directions", ErrDocumentSearchInvalidRequest)
-	}
-	return &normalized, nil
-}
-
-func (s *Store) populateDocumentPersonProvenance(
-	ctx context.Context,
-	results []DocumentSearchResult,
-	scope personscope.Scope,
-) error {
-	if len(results) == 0 {
-		return nil
-	}
-	messageIDs := make([]int64, 0, len(results))
-	for _, result := range results {
-		messageIDs = append(messageIDs, result.MessageID)
-	}
-	provenance, err := s.PersonProvenanceForMessages(ctx, messageIDs, scope)
-	if err != nil {
-		return err
-	}
-	for i := range results {
-		results[i].PersonProvenance = provenance[results[i].MessageID]
-		if results[i].PersonProvenance == nil {
-			return fmt.Errorf("document person provenance missing for message %d", results[i].MessageID)
-		}
-	}
-	return nil
-}
-
 // PersonProvenanceForMessages hydrates the exact participant, role, and
 // direction edges for a resolved scope over a bounded set of messages.
 func (s *Store) PersonProvenanceForMessages(

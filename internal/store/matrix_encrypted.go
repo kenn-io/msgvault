@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 )
 
 const MatrixEncryptedPlaceholder = "[encrypted message — keys unavailable]"
@@ -38,8 +40,11 @@ func (s *Store) ListMatrixRoomIDsContext(ctx context.Context, sourceID int64) ([
 
 // MatrixPendingRoom is a room with encrypted events that are not yet recovered.
 type MatrixPendingRoom struct {
-	ConversationID int64
-	RoomID         string
+	ConversationID   int64
+	RoomID           string
+	ConversationType string
+	// ParticipantCount is the roster the media policy evaluates.
+	ParticipantCount int
 }
 
 // MatrixEncryptedEvent is an encrypted event that is due for a recovery attempt.
@@ -145,9 +150,9 @@ func matrixRoomFilter(include, exclude []string) (string, []any) {
 }
 
 // MatrixPendingRooms lists the selected rooms that still hold encrypted events.
-func (s *Store) MatrixPendingRooms(ctx context.Context, sourceID int64, include, exclude []string) ([]MatrixPendingRoom, error) {
+func (s *Store) MatrixPendingRooms(ctx context.Context, sourceID int64, include, exclude []string, policy attachmentpolicy.Policy) ([]MatrixPendingRoom, error) {
 	filter, filterArgs := matrixRoomFilter(include, exclude)
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id, c.source_conversation_id FROM conversations c
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id, c.source_conversation_id, c.conversation_type, COALESCE(c.participant_count, 0), COALESCE(CAST(c.metadata AS TEXT), '') FROM conversations c
 		WHERE c.source_id = ?`+filter+` AND EXISTS (SELECT 1 FROM matrix_encrypted_events e WHERE e.conversation_id = c.id AND NOT e.recovered)
 		ORDER BY c.id`, append([]any{sourceID}, filterArgs...)...)
 	if err != nil {
@@ -157,9 +162,11 @@ func (s *Store) MatrixPendingRooms(ctx context.Context, sourceID int64, include,
 	var rooms []MatrixPendingRoom
 	for rows.Next() {
 		var room MatrixPendingRoom
-		if err := rows.Scan(&room.ConversationID, &room.RoomID); err != nil {
+		var metadata string
+		if err := rows.Scan(&room.ConversationID, &room.RoomID, &room.ConversationType, &room.ParticipantCount, &metadata); err != nil {
 			return nil, err
 		}
+		room.ParticipantCount = policyParticipantCount(sourceTypeMatrix, room.ParticipantCount, metadata, policy)
 		rooms = append(rooms, room)
 	}
 	return rooms, rows.Err()
@@ -178,8 +185,19 @@ func (s *Store) CountMatrixPending(ctx context.Context, sourceID int64, include,
 func (s *Store) MatrixDueEncryptedEvents(ctx context.Context, conversationID, afterID int64, due MatrixRecoveryDue, limit int) ([]MatrixEncryptedEvent, error) {
 	dueWhere, dueArgs := due.where()
 	args := append(append([]any{conversationID, afterID}, dueArgs...), limit)
-	rows, err := s.db.QueryContext(ctx, `SELECT e.message_id, e.ciphertext FROM matrix_encrypted_events e
+	return s.matrixEncryptedEvents(ctx, `SELECT e.message_id, e.ciphertext FROM matrix_encrypted_events e
 		WHERE e.conversation_id = ? AND NOT e.recovered AND e.message_id > ?`+dueWhere+` ORDER BY e.message_id LIMIT ?`, args...)
+}
+
+// MatrixPendingEventsBySession returns the next page of pending events in a
+// room encrypted with sessionID, after afterID.
+func (s *Store) MatrixPendingEventsBySession(ctx context.Context, conversationID int64, sessionID string, afterID int64, limit int) ([]MatrixEncryptedEvent, error) {
+	return s.matrixEncryptedEvents(ctx, `SELECT message_id, ciphertext FROM matrix_encrypted_events
+		WHERE conversation_id = ? AND session_id = ? AND NOT recovered AND message_id > ? ORDER BY message_id LIMIT ?`, conversationID, sessionID, afterID, limit)
+}
+
+func (s *Store) matrixEncryptedEvents(ctx context.Context, query string, args ...any) ([]MatrixEncryptedEvent, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

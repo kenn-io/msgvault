@@ -10,6 +10,12 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+func TestFileSearchGeneratedUnknownAvailability(t *testing.T) {
+	var row generated.FileSearchRow
+	require.NoError(t, jsonv1.Unmarshal([]byte(`{"content_available":null}`), &row))
+	assert.Nil(t, row.ContentAvailable)
+}
+
 func TestFileSuggestionsGeneratedNullTimestamp(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

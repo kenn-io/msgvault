@@ -138,15 +138,15 @@ it('shows neutral Loading before the first job status fetch', () => {
 it('Sync status typeahead keeps page shortcuts suspended', async () => {
   const detachShortcuts = initShortcuts();
   const pageShortcut = vi.fn();
-  const unregister = appShortcuts.register('d', pageShortcut);
+  const unregister = appShortcuts.register('v', pageShortcut);
   const rendered = renderSidebar({ jobs: { ...jobs, health: 'running', items: [
-    { id: 'document', name: 'Document extraction', state: 'running', detail: '', target: { kind: 'status', authority: 'getDocumentIndexStatus' } },
+    { id: 'visual', name: 'Visual embedding', state: 'running', detail: '', target: { kind: 'status', authority: 'getVisualAttachmentStatus' } },
   ] } });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Sync status: Running' }));
     const first = (await screen.findAllByRole('menuitem'))[0]!;
     first.focus();
-    await fireEvent.keyDown(first, { key: 'd' });
+    await fireEvent.keyDown(first, { key: 'v' });
     expect(pageShortcut).not.toHaveBeenCalled();
     expect(screen.getByRole('menu').contains(document.activeElement)).toBe(true);
   } finally {

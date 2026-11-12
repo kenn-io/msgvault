@@ -26,18 +26,18 @@ func newFeedSyncer(s *store.Store, state *invocation) *feeds.Syncer {
 
 func newAddFeedCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "add-feed <url>... | add-feed --opml <file>",
+		Use:   "add <url>... | add --opml <file>",
 		Short: "Follow RSS, Atom or JSON feeds",
 		Long: `Follow feeds and archive their items. Each URL is fetched first: a URL that
 is not a reachable RSS 2.0, Atom or JSON feed is reported and not followed.
 The items it lists now are archived right away; later items arrive with
-msgvault sync-feeds or the [feeds] schedule.
+msgvault source feeds sync or the [feeds] schedule.
 
 --opml follows every feed in an OPML file, the subscription export of most
 feed readers, without fetching them; the next sync fetches them. Following a
 removed feed again resumes it.`,
-		Example: `  msgvault add-feed https://example.com/releases.atom
-  msgvault add-feed --opml ~/Downloads/subscriptions.opml`,
+		Example: `  msgvault source feeds add https://example.com/releases.atom
+  msgvault source feeds add --opml ~/Downloads/subscriptions.opml`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opml, err := cmd.Flags().GetString("opml")
 			if err != nil {
@@ -48,7 +48,7 @@ removed feed again resumes it.`,
 			}
 			if !isDaemonCLISubprocess() {
 				if opml != "" {
-					return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
+					return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 				}
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
@@ -103,13 +103,13 @@ func followOPML(ctx context.Context, s *store.Store, path string, out io.Writer)
 			already++
 		}
 	}
-	_, _ = fmt.Fprintf(out, "Following %d new feeds (%d already followed). Run msgvault sync-feeds to fetch them.\n", added, already)
+	_, _ = fmt.Fprintf(out, "Following %d new feeds (%d already followed). Run msgvault source feeds sync to fetch them.\n", added, already)
 	return errors.Join(invalid...)
 }
 
 func newListFeedsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "list-feeds",
+		Use:   "list",
 		Short: "List followed feeds and their status",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -185,7 +185,7 @@ func writeFeedsJSON(out io.Writer, list []feeds.Feed) error {
 
 func writeFeedsTable(out io.Writer, list []feeds.Feed) error {
 	if len(list) == 0 {
-		if _, err := fmt.Fprintln(out, "No feeds followed. Add one with msgvault add-feed <url>."); err != nil {
+		if _, err := fmt.Fprintln(out, "No feeds followed. Add one with msgvault source feeds add <url>."); err != nil {
 			return fmt.Errorf("write feeds: %w", err)
 		}
 		return nil
@@ -216,11 +216,11 @@ func writeFeedsTable(out io.Writer, list []feeds.Feed) error {
 
 func newRemoveFeedCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "remove-feed <url>...",
+		Use:   "remove <url>...",
 		Short: "Stop following feeds; keep their items",
 		Long: `Stop fetching feeds. Items already archived stay searchable; add the feed
 again to resume it.`,
-		Example: "  msgvault remove-feed https://example.com/releases.atom",
+		Example: "  msgvault source feeds remove https://example.com/releases.atom",
 		Args:    cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
@@ -252,13 +252,13 @@ again to resume it.`,
 
 func newSyncFeedsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sync-feeds [url]...",
+		Use:   "sync [url]...",
 		Short: "Archive new items from followed feeds",
 		Long: `Fetch every followed feed, or the given ones, and archive each item the
 archive does not hold yet. Unchanged feeds are not downloaded again. A feed
 that fails is reported and the others still sync.`,
-		Example: `  msgvault sync-feeds
-  msgvault sync-feeds https://example.com/releases.atom`,
+		Example: `  msgvault source feeds sync
+  msgvault source feeds sync https://example.com/releases.atom`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
@@ -339,5 +339,6 @@ func feedFailures(summary feeds.Summary) error {
 }
 
 func init() {
-	rootCmd.AddCommand(newAddFeedCmd(), newListFeedsCmd(), newRemoveFeedCmd(), newSyncFeedsCmd())
+	registerMetaSourceProvider("feeds", "Follow RSS, Atom and JSON feeds",
+		newAddFeedCmd(), newListFeedsCmd(), newRemoveFeedCmd(), newSyncFeedsCmd())
 }

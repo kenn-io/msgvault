@@ -389,7 +389,7 @@ func TestValidateEndpoint(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateEndpoint(tt.endpoint)
+			err := ValidateEndpoint(tt.endpoint, false)
 			if tt.valid {
 				assert.NoError(t, err)
 				return

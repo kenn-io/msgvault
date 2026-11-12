@@ -77,30 +77,30 @@ func TestFeedCommandsEndToEnd(t *testing.T) {
 	t.Cleanup(server.Close)
 	feedURL := server.URL + "/releases.atom"
 
-	out, err := runRootForTest(t, home, "add-feed", feedURL)
+	out, err := runRootForTest(t, home, "source", "feeds", "add", feedURL)
 	require.NoError(err)
 	assert.Contains(out, "Example Project releases: 1 new of 1 items")
 
-	out, err = runRootForTest(t, home, "list-feeds")
+	out, err = runRootForTest(t, home, "source", "feeds", "list")
 	require.NoError(err)
 	assert.Contains(out, "Example Project releases")
 	assert.Contains(out, feedURL)
 
-	out, err = runRootForTest(t, home, "sync-feeds")
+	out, err = runRootForTest(t, home, "source", "feeds", "sync")
 	require.NoError(err)
 	assert.Contains(out, "Example Project releases: unchanged")
 
-	out, err = runRootForTest(t, home, "add-feed", server.URL+"/missing.atom")
+	out, err = runRootForTest(t, home, "source", "feeds", "add", server.URL+"/missing.atom")
 	require.Error(err, "a URL that is not a feed fails the command")
 	assert.Contains(out, "failed")
 
-	out, err = runRootForTest(t, home, "remove-feed", feedURL)
+	out, err = runRootForTest(t, home, "source", "feeds", "remove", feedURL)
 	require.NoError(err)
 	assert.Contains(out, "Stopped following")
-	out, err = runRootForTest(t, home, "list-feeds")
+	out, err = runRootForTest(t, home, "source", "feeds", "list")
 	require.NoError(err)
 	assert.Contains(out, "No feeds followed")
-	out, err = runRootForTest(t, home, "list-feeds", "--all", "--json")
+	out, err = runRootForTest(t, home, "source", "feeds", "list", "--all", "--json")
 	require.NoError(err)
 	assert.Contains(out, `"followed":false`)
 
@@ -109,7 +109,7 @@ func TestFeedCommandsEndToEnd(t *testing.T) {
   <outline type="rss" text="Releases" xmlUrl="`+feedURL+`"/>
   <outline type="rss" text="Other" xmlUrl="https://other.example.com/feed.xml"/>
 </body></opml>`), 0o600))
-	out, err = runRootForTest(t, home, "add-feed", "--opml", opml)
+	out, err = runRootForTest(t, home, "source", "feeds", "add", "--opml", opml)
 	require.NoError(err)
 	assert.Contains(out, "Following 2 new feeds (0 already followed)")
 }

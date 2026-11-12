@@ -39,6 +39,7 @@ func openTextSearchDB(t *testing.T) (*sql.DB, int64) {
 			phone_number TEXT,
 			domain TEXT
 		);
+		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT);
 		CREATE TABLE messages (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER,
@@ -56,6 +57,7 @@ func openTextSearchDB(t *testing.T) (*sql.DB, int64) {
 			deleted_from_source_at DATETIME,
 			message_type TEXT NOT NULL DEFAULT 'imessage'
 		);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, email_address TEXT);
 		CREATE VIRTUAL TABLE messages_fts USING fts5(subject, body, content='', contentless_delete=1);
 	`)
 	if err != nil {

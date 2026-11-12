@@ -28,9 +28,11 @@ func TestRequestNormalizeCanonicalizesValues(t *testing.T) {
 	assert.Equal(MessageImportSender{Name: "Example Project", URL: "https://Example.com/blog"}, message.Sender)
 	assert.Equal("Example Project 1.2.0", message.Title)
 	assert.Equal("https://example.com/releases/1.2.0", message.URL)
-	assert.Equal(time.Date(2026, time.November, 7, 15, 0, 0, 0, time.UTC), message.SentAt)
-	assert.Equal(BodyFormatMarkdown, message.BodyFormat)
-	assert.Equal("## Changes\n\n- Faster widgetsync for everyone.", message.Body)
+	assert.Equal("2026-11-07T15:00:00Z", message.SentAt)
+	assert.Equal(time.Date(2026, time.November, 7, 15, 0, 0, 0, time.UTC), normalized.SentAt)
+	assert.Equal(BodyFormatMarkdown, normalized.BodyFormat)
+	assert.Equal("## Changes\n\n- Faster widgetsync for everyone.", normalized.Body)
+	assert.Equal(normalized.Body, message.BodyMarkdown)
 }
 
 func TestRequestNormalizeSenderAddresses(t *testing.T) {
@@ -110,8 +112,8 @@ func TestRequestNormalizeBodies(t *testing.T) {
 			tc.edit(&req.Message)
 			normalized, err := req.Normalize()
 			require.NoError(t, err)
-			assert.Equal(t, tc.wantFormat, normalized.Message.BodyFormat)
-			assert.Equal(t, tc.wantBody, normalized.Message.Body)
+			assert.Equal(t, tc.wantFormat, normalized.BodyFormat)
+			assert.Equal(t, tc.wantBody, normalized.Body)
 		})
 	}
 }

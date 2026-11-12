@@ -2018,16 +2018,24 @@ func TestSplitPersonMerge_ExactReversalThreeWayRestoresMergeOwnedFields(t *testi
 
 	// The merge demotes the absorbed primary. A later title edit belongs to
 	// the user and must survive while the merge-owned demotion is reversed.
-	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE employments SET title = ? WHERE id = ?`),
-		"Curated Advisor", absorbedEmployment.ID)
+	mergedEmployment, err := st.GetEmploymentContext(ctx, absorbedEmployment.ID)
+	require.NoError(err)
+	require.False(mergedEmployment.IsPrimary)
+	_, err = st.UpdateEmploymentContext(ctx, mergedEmployment.ID, mergedEmployment.Revision, store.EmploymentInput{
+		PersonID: merged.Person.ID, OrganizationID: absorbedOrg.ID, Title: new("Curated Advisor"),
+		IsPrimary: new(false), Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
+	current, err := st.GetPersonContext(ctx, merged.Person.ID)
 	require.NoError(err)
 	result, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
 		SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
 		ParticipantIDs:         absorbed.ParticipantIDs,
-		ExpectedSourceRevision: merged.Person.Revision,
+		ExpectedSourceRevision: current.Revision,
 		IdempotencyKey:         "split-fields-exact", Actor: "test",
 	})
 	require.NoError(err)
+	assert.True(result.ExactReversal)
 	employments, err := st.ListEmploymentsContext(ctx, store.EmploymentFilter{
 		PersonID: result.NewPerson.ID,
 	})
@@ -2038,6 +2046,13 @@ func TestSplitPersonMerge_ExactReversalThreeWayRestoresMergeOwnedFields(t *testi
 	require.NotNil(employments[0].Title)
 	assert.Equal("Curated Advisor", *employments[0].Title,
 		"split preserves a field edited after the merge")
+	// The edit travels with its row, so the remaining profile keeps only its own job.
+	employments, err = st.ListEmploymentsContext(ctx, store.EmploymentFilter{
+		PersonID: result.SourcePerson.ID,
+	})
+	require.NoError(err)
+	require.Len(employments, 1)
+	assert.Equal(survivorOrg.ID, employments[0].OrganizationID)
 }
 
 func TestSplitPersonMerge_ExactReversalPreservesPostMergePersonReassignment(t *testing.T) {
@@ -2977,4 +2992,150 @@ func TestSplitPersonMerge_ExactReversalPreservesReplacedBriefEnrollment(t *testi
 	assert.Equal("reviewer", sourceEnrollment.Actor)
 	assert.True(newEnrollment.Enrolled, "the snapshot enrollment is restored for the new person")
 	assert.Equal("owner", newEnrollment.Actor)
+}
+
+func TestSplitPersonMerge_SavedContactPlacement(t *testing.T) {
+	phone := store.PersonContactPointInput{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550144", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceVCardImport}}
+	for _, tc := range []struct {
+		name                  string
+		input                 store.PersonContactPointInput
+		subset, edited, exact bool
+		kept, restored        string
+	}{
+		{"all", phone, false, false, true, "", "+12025550144"},
+		{"subset", phone, true, false, false, "+12025550144", ""},
+		{"edited", phone, false, true, true, "+12025550199", ""},
+		{"scoped service", store.PersonContactPointInput{AddressKind: store.ContactAddressUsername, OriginalValue: "alex", ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: new("garden"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}}, false, false, true, "", "alex"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			ctx := t.Context()
+			var pointID int64
+			f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, absorbed *store.Person) {
+				point, err := st.AddPersonContactPointContext(ctx, absorbed.ID, tc.input)
+				require.NoError(err)
+				pointID = point.Envelope.ID
+			})
+			selected := f.absorbedParticipants
+			if tc.subset {
+				selected = selected[:1]
+			}
+			if tc.edited {
+				require.NoError(f.store.SupersedePersonContactPointContext(ctx, f.survivor.ID, pointID, nil))
+				_, err := f.store.AddPersonContactPointContext(ctx, f.survivor.ID, store.PersonContactPointInput{AddressKind: store.ContactAddressPhone, OriginalValue: "+12025550199", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+				require.NoError(err)
+			}
+			source, err := f.store.GetPersonContext(ctx, f.survivor.ID)
+			require.NoError(err)
+			result, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{SourcePersonID: source.ID, MergeID: f.merge.Merge.ID, ParticipantIDs: selected, ExpectedSourceRevision: source.Revision, IdempotencyKey: "saved-contact-" + tc.name, Actor: "test"})
+			require.NoError(err)
+			kept, err := f.store.GetPersonProfileContext(ctx, source.ID)
+			require.NoError(err)
+			restored, err := f.store.GetPersonProfileContext(ctx, result.NewPerson.ID)
+			require.NoError(err)
+			assert.Equal(tc.exact, result.ExactReversal)
+			if tc.kept == "" {
+				assert.Empty(kept.ContactPoints)
+			} else {
+				require.Len(kept.ContactPoints, 1)
+				assert.Equal(tc.kept, kept.ContactPoints[0].OriginalValue)
+			}
+			if tc.restored == "" {
+				assert.Empty(restored.ContactPoints)
+			} else {
+				require.Len(restored.ContactPoints, 1)
+				assert.Equal(tc.restored, restored.ContactPoints[0].OriginalValue)
+				assert.Equal(tc.input.ServiceSlug, restored.ContactPoints[0].ServiceSlug)
+				assert.Equal(tc.input.ScopeKind, restored.ContactPoints[0].ScopeKind)
+				assert.Equal(tc.input.ScopeValue, restored.ContactPoints[0].ScopeValue)
+			}
+		})
+	}
+}
+
+func TestSplitPersonMerge_HistoryKeepsEachAddressDestination(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	ctx := t.Context()
+	var unsplit int64
+	f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, absorbed *store.Person) {
+		var err error
+		unsplit, err = st.EnsureParticipant("pending@example.org", "Pending", "example.org")
+		require.NoError(err)
+		_, err = st.LinkParticipants(absorbed.ParticipantIDs[0], unsplit)
+		require.NoError(err)
+	})
+	first, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID, ParticipantIDs: []int64{f.absorbedParticipants[0]},
+		ExpectedSourceRevision: f.survivor.Revision, IdempotencyKey: "history-first-destination", Actor: "test",
+	})
+	require.NoError(err)
+	second, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: first.SourcePerson.ID, MergeID: f.merge.Merge.ID, ParticipantIDs: []int64{f.absorbedParticipants[1]},
+		ExpectedSourceRevision: first.SourcePerson.Revision, IdempotencyKey: "history-second-destination", Actor: "test",
+	})
+	require.NoError(err)
+	detail, err := f.store.GetPersonMergeContext(ctx, f.merge.Merge.ID)
+	require.NoError(err)
+	splitIDs := map[int64]*int64{}
+	for _, participant := range detail.Participants {
+		splitIDs[participant.ParticipantID] = participant.SplitID
+	}
+	assert.Equal(map[int64]*int64{f.survivorParticipant: nil, f.absorbedParticipants[0]: new(first.Split.ID), f.absorbedParticipants[1]: new(second.Split.ID), unsplit: nil}, splitIDs)
+	destinations := make(map[int64]int64)
+	for _, split := range detail.Splits {
+		destinations[split.ID] = split.NewPersonID
+	}
+	assert.Equal(map[int64]int64{first.Split.ID: first.NewPerson.ID, second.Split.ID: second.NewPerson.ID}, destinations)
+	require.NoError(f.store.DeletePersonContext(ctx, second.NewPerson.ID, second.NewPerson.Revision))
+	detail, err = f.store.GetPersonMergeContext(ctx, f.merge.Merge.ID)
+	require.NoError(err)
+	assert.Len(detail.Splits, 2)
+}
+
+func TestSplitPersonMerge_ChainedHistoryKeepsEarlierDestination(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	ctx := t.Context()
+	st := storetest.New(t).Store
+	people := make([]*store.Person, 0, 3)
+	for _, name := range []string{"a", "b", "c"} {
+		participant, err := st.EnsureParticipant(name+"@example.org", name, "example.org")
+		require.NoError(err)
+		person, _, err := st.CreatePersonFromParticipant(participant)
+		require.NoError(err)
+		people = append(people, person)
+	}
+	alias, err := st.EnsureParticipant("b-alias@example.org", "B alias", "example.org")
+	require.NoError(err)
+	_, err = st.LinkParticipants(people[1].ParticipantIDs[0], alias)
+	require.NoError(err)
+	people[1], err = st.GetPersonContext(ctx, people[1].ID)
+	require.NoError(err)
+	first, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: people[0].ID, AbsorbedID: people[1].ID, ExpectedSurvivorRevision: people[0].Revision, ExpectedAbsorbedRevision: people[1].Revision, IdempotencyKey: "chain-first", Actor: "test"})
+	require.NoError(err)
+	second, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: people[2].ID, AbsorbedID: first.Person.ID, ExpectedSurvivorRevision: people[2].Revision, ExpectedAbsorbedRevision: first.Person.Revision, IdempotencyKey: "chain-second", Actor: "test"})
+	require.NoError(err)
+	split, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{SourcePersonID: second.Person.ID, MergeID: second.Merge.ID, ParticipantIDs: []int64{people[1].ParticipantIDs[0], alias}, ExpectedSourceRevision: second.Person.Revision, IdempotencyKey: "chain-split", Actor: "test"})
+	require.NoError(err)
+	detail, err := st.GetPersonMergeContext(ctx, first.Merge.ID)
+	require.NoError(err)
+	var earlierSplitID *int64
+	for _, participant := range detail.Participants {
+		if participant.ParticipantID == people[1].ParticipantIDs[0] {
+			earlierSplitID = participant.SplitID
+		}
+	}
+	require.Equal(new(split.Split.ID), earlierSplitID)
+	assert.Contains(detail.Splits, split.Split, "the earlier merge must supply the referenced split's destination and explanation")
+	for _, personID := range []int64{second.Person.ID, split.NewPerson.ID} {
+		list, err := st.ListPersonMergesContext(ctx, personID)
+		require.NoError(err)
+		found := false
+		for _, summary := range list {
+			if summary.Merge.ID == first.Merge.ID {
+				found = true
+				assert.Equal(1, summary.SplitCount, "the earlier History row must count its cross-merge split")
+			}
+		}
+		assert.True(found, "the earlier merge remains in both profiles' history")
+	}
 }

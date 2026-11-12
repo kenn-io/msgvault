@@ -491,7 +491,7 @@
         <div role="row"><div class="empty" role="gridcell" aria-colspan={visibleColumns.length + 1}>
           {#if onAddSource}
             <EmptyState title="No mail yet" description="Add an account or import an export to start your archive.">
-              <Button size="sm" tone="info" surface="solid" label="Add source" onclick={onAddSource} />
+              <Button size="sm" tone="info" surface="solid" label="Add source…" onclick={onAddSource} />
             </EmptyState>
           {:else}
             <EmptyState title="No items match this view" description="Adjust the search or clear filters to widen the view." />

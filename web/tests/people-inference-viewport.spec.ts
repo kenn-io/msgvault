@@ -91,3 +91,30 @@ for (const width of [390, 320]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   });
 }
+
+test('Kept fields use the same text color after revealing sensitive fields', async ({ page }) => {
+  await installMixedArchive(page);
+  await page.route('**/api/v1/settings', route => route.fulfill({ json: {
+    groups: [{ id: 'enrichment', label: 'People lookups' }],
+    settings: [{ key: 'people.enrichment.enabled', label: 'Look people up', group: 'enrichment', kind: 'boolean', restart_required: false, value: { boolean: false } }], pending_restart: false,
+  } }));
+  await page.route('**/api/v1/settings/people-inference', route => route.fulfill({ headers: { ETag: '"config-1"' }, json: { profiles: [], configured_enabled: false, running_enabled: false, pending_restart: false } }));
+  await page.route('**/api/v1/attribute-definitions*', route => route.fulfill({ json: { definitions: [
+    { slug: 'favorite_plant', label: 'Favorite plant' }, { slug: 'private_note', label: 'Private note' },
+  ] } }));
+  await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { targets: [
+    { key: 'field:favorite_plant', kind: 'attribute', slug: 'favorite_plant', description: 'A plant', sensitive: false },
+    ...(new URL(route.request().url()).searchParams.get('include_sensitive') === 'true' ? [{ key: 'field:private_note', kind: 'attribute', slug: 'private_note', description: 'A note', sensitive: true }] : []),
+  ] } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'settings' }))}`);
+  await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'People lookups', exact: true }).click();
+  const ordinary = page.getByText('Favorite plant', { exact: true });
+  await expect(ordinary).toBeVisible();
+  await expect(page.getByText('A plant', { exact: true })).toBeVisible();
+  await page.getByText('Show sensitive fields', { exact: true }).click();
+  const sensitive = page.getByText('Private note', { exact: true });
+  await expect(sensitive).toBeVisible();
+  await expect(page.getByText('A note', { exact: true })).toBeVisible();
+  await expect(sensitive).toHaveCSS('color', await ordinary.evaluate(node => getComputedStyle(node).color));
+});

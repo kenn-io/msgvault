@@ -1,3 +1,4 @@
+import { sourceDisplayName } from './labels';
 import { describe, expect, it } from 'vitest';
 import { syncCommand, sourceDetails, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
@@ -16,6 +17,8 @@ describe('source labels', () => {
     ['beeper', 'Beeper'], ['slack', 'Slack'], ['matrix', 'Matrix'], ['eml', 'EML import'], ['maildir', 'Maildir import'],
     ['whatsapp', 'WhatsApp'], ['apple_messages', 'Apple Messages'],
     ['facebook_messenger', 'Facebook Messenger'], ['google-groups', 'Google Groups'],
+    ['facebook_comments', 'Facebook Page comments'],
+    ['instagram_comments', 'Instagram comments'],
     ['', ''], ['future_source', 'Future source'], ['constructor', 'Constructor']
   ])('names source type %j', (code, want) => {
     expect(sourceTypeLabel(code)).toBe(want);
@@ -62,6 +65,17 @@ it.each([
   ['msmail', 'sync_not_configured', null, 'msgvault sync --source-id 4'],
 ] as const)('offers a manual sync command for %s with reason %s and last successful sync %j', (source_type, sync_unavailable_reason, last_successful_sync, want) => {
   expect(syncCommand({ id: 4, source_type, sync_unavailable_reason, last_successful_sync })).toBe(want);
+});
+
+describe('sourceDisplayName', () => {
+  it.each([
+    ['granola', 'fixture-granola', 'Granola'],
+    ['gmail', 'person@example.com', 'person@example.com'],
+    ['imap', 'imap://person%40example.com@imap.example.com/INBOX', 'person@example.com'],
+    [undefined, 'fixture-source', 'fixture-source']
+  ])('formats a %s source', (type, identifier, name) => {
+    expect(sourceDisplayName(type, identifier!)).toBe(name);
+  });
 });
 
 it.each([

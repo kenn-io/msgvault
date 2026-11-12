@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -326,4 +327,55 @@ func TestPG_BackfillFTS_MultibyteOversizedBodyDoesNotWedge(t *testing.T) {
 		require.NoError(searchErr, "SearchMessages %q", tok)
 		assert.Equal(int64(1), hits, "token %q must be searchable after backfill", tok)
 	}
+}
+
+// denseShortTokenBody builds about 700 KB of distinct four-character tokens:
+// three ASCII letters and one two-byte Cyrillic letter. A distinct lexeme
+// costs more tsvector bytes than it takes as text, so this body overflows
+// PostgreSQL's limit even inside the byte and character caps.
+func denseShortTokenBody() string {
+	cyrillic := []rune("абвгдежзийклмнопрстуфхцчшщъыьэюя")
+	var b strings.Builder
+	for i := 0; b.Len() < 700_000; i++ {
+		n := i
+		for range 3 {
+			b.WriteByte(byte('a' + n%26))
+			n /= 26
+		}
+		b.WriteRune(cyrillic[n%len(cyrillic)])
+		b.WriteByte(' ')
+	}
+	return b.String()
+}
+
+// TestPG_PersistMessage_OverflowingIndexKeepsMessage verifies that a message
+// whose search entry overflows the tsvector limit is still archived, marked
+// unsearchable, and that a retry of the same write succeeds too.
+func TestPG_PersistMessage_OverflowingIndexKeepsMessage(t *testing.T) {
+	require := require.New(t)
+	skipUnlessPostgres(t)
+	f := storetest.New(t)
+	require.True(f.Store.FTS5Available(), "FTS must be available on PG")
+
+	body := denseShortTokenBody()
+	persist := func() int64 {
+		t.Helper()
+		id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: f.Source.ID, ConversationID: f.ConvID,
+				SourceMessageID: "dense-body", MessageType: store.MessageTypeEmail,
+			},
+			BodyText: sql.NullString{String: body, Valid: true},
+			FTS:      &store.FTSDoc{Subject: "dense", Body: body},
+		})
+		require.NoError(err, "an index overflow must not fail the message write")
+		return id
+	}
+	messageID := persist()
+	require.Equal(messageID, persist(), "a retry rewrites the same message")
+
+	var unsearchable bool
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(),
+		"SELECT search_fts = ''::tsvector FROM messages WHERE id = $1", messageID).Scan(&unsearchable))
+	assert.True(t, unsearchable, "the overflowing message is marked unsearchable")
 }

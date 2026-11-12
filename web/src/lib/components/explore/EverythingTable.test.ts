@@ -38,7 +38,7 @@ describe('EverythingTable', () => {
     render(EverythingTable, { rows: [], selection: new ExploreSelectionState(), onAddSource });
     expect(screen.getByText('No mail yet')).toBeDefined();
     expect(screen.getByText('Add an account or import an export to start your archive.')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source…' }));
     expect(onAddSource).toHaveBeenCalledOnce();
   });
 

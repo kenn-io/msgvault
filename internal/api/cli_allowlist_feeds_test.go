@@ -9,11 +9,11 @@ import (
 func TestFeedCommandsAllowedThroughDaemonCLIRunner(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{
-		{"add-feed", "https://example.com/feed.xml"},
-		{"add-feed", "--opml", "/subscriptions.opml"},
-		{"list-feeds", "--all", "--json"},
-		{"remove-feed", "https://example.com/feed.xml"},
-		{"sync-feeds", "--full"},
+		{"source", "feeds", "add", "https://example.com/feed.xml"},
+		{"source", "feeds", "add", "--opml", "/subscriptions.opml"},
+		{"source", "feeds", "list", "--all", "--json"},
+		{"source", "feeds", "remove", "https://example.com/feed.xml"},
+		{"source", "feeds", "sync", "--full"},
 	} {
 		assert.True(t, cliRunCommandAllowed(args), "%v", args)
 	}

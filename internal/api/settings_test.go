@@ -1181,6 +1181,69 @@ func TestPatchSettingsKataConfig(t *testing.T) {
 	}
 }
 
+func TestPrivateNetworkSettings(t *testing.T) {
+	for _, replacement := range []bool{false, true} {
+		t.Run(strconv.FormatBool(replacement), func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			srv, path := newSettingsTestServer(t, "[integrations.kata]\nendpoint = 'https://kata.example.test'\napi_key = 'old-key'\n")
+			get := performSettingsRequest(t, srv, http.MethodGet, settingsPath, nil, "", "")
+			var initial SettingsResponse
+			requirements.NoError(json.Unmarshal(get.Body.Bytes(), &initial))
+			setting, ok := settingsByKey(initial.Settings)["integrations.kata.trust_private_network"]
+			requirements.True(ok)
+			requirements.NotNil(setting.Value)
+			requirements.NotNil(setting.Value.Boolean)
+			assertions.False(*setting.Value.Boolean)
+			updates := `{"key":"integrations.kata.endpoint","value":{"string":"http://kata:7777"}},` +
+				`{"key":"integrations.kata.trust_private_network","value":{"boolean":true}}`
+			if replacement {
+				updates += `,{"key":"integrations.kata.api_key","secret":{"action":"set","value":"new-key"}}`
+			}
+			resp := patchSettings(t, srv, `{"updates":[`+updates+`]}`)
+			requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+			cfg, err := config.Load(path, "")
+			requirements.NoError(err)
+			assertions.True(cfg.Integrations.Kata.TrustPrivateNetwork)
+			assertions.Equal("http://kata:7777", cfg.Integrations.Kata.Endpoint)
+			if replacement {
+				assertions.Equal("new-key", cfg.Integrations.Kata.APIKey)
+			} else {
+				assertions.Empty(cfg.Integrations.Kata.APIKey)
+			}
+			assertions.False(cfg.Integrations.Docbank.TrustPrivateNetwork)
+			var saved SettingsResponse
+			requirements.NoError(json.Unmarshal(resp.Body.Bytes(), &saved))
+			assertions.True(saved.PendingRestart)
+		})
+	}
+}
+
+func TestPrivateNetworkSettingsDisableIsAtomic(t *testing.T) {
+	for _, endpoint := range []string{"http://kata:7777", "https://kata.example.test"} {
+		t.Run(endpoint, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			srv, path := newSettingsTestServer(t, fmt.Sprintf("[integrations.kata]\nendpoint = %q\ntrust_private_network = true\napi_key = 'saved-key'\n", endpoint))
+			before, err := os.ReadFile(path)
+			requirements.NoError(err)
+			resp := patchSettings(t, srv, `{"updates":[{"key":"integrations.kata.trust_private_network","value":{"boolean":false}}]}`)
+			if strings.HasPrefix(endpoint, "http:") {
+				requirements.Equal(http.StatusUnprocessableEntity, resp.Code, resp.Body.String())
+				after, err := os.ReadFile(path)
+				requirements.NoError(err)
+				assertions.Equal(string(before), string(after))
+			} else {
+				requirements.Equal(http.StatusOK, resp.Code, resp.Body.String())
+				cfg, err := config.Load(path, "")
+				requirements.NoError(err)
+				assertions.False(cfg.Integrations.Kata.TrustPrivateNetwork)
+				assertions.Equal("saved-key", cfg.Integrations.Kata.APIKey)
+			}
+		})
+	}
+}
+
 func TestPatchSettingsKeepsNewTaskAPIKeyProvidedWithEndpointChange(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

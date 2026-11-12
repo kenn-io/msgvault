@@ -208,6 +208,54 @@ func TestStore_GetLatestSync(t *testing.T) {
 	assert.Equal(store.SyncStatusCompleted, previous.Status, "Status")
 }
 
+func TestLastSuccessfulSyncLookupUsesCompletedIndex(t *testing.T) {
+	req := require.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("EXPLAIN QUERY PLAN is SQLite-only")
+	}
+	// Incremental syncs read the newest completed run before every pass, so
+	// the lookup must walk an index in order instead of sorting the history.
+	_, err := f.Store.DB().ExecContext(t.Context(), `
+		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+		INSERT INTO sync_runs (source_id, sync_type, started_at, completed_at, status)
+		SELECT ?, 'incremental', datetime(i, 'unixepoch'), datetime(i + 5, 'unixepoch'),
+		       CASE WHEN i % 10 = 0 THEN 'failed' ELSE 'completed' END
+		FROM n
+	`, f.Source.ID)
+	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), `ANALYZE`)
+	req.NoError(err)
+
+	for _, tc := range []struct {
+		name string
+		args []any
+	}{
+		{name: "any type", args: []any{f.Source.ID}},
+		{name: "by type", args: []any{f.Source.ID, "incremental"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			query := store.LastSuccessfulSyncQueryForTest(len(tc.args) > 1)
+			rows, err := f.Store.DB().QueryContext(t.Context(), `EXPLAIN QUERY PLAN `+query, tc.args...)
+			require.NoError(err)
+			defer func() { _ = rows.Close() }()
+			var plan []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(rows.Scan(&id, &parent, &unused, &detail))
+				plan = append(plan, detail)
+			}
+			require.NoError(rows.Err())
+			joined := strings.Join(plan, "\n")
+			assert.Contains(joined, "idx_sync_runs_completed")
+			assert.NotContains(joined, "TEMP B-TREE")
+		})
+	}
+}
+
 func TestStore_StartSyncRejectsConcurrentRun(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

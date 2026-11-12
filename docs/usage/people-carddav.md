@@ -69,6 +69,32 @@ account API cannot grant private network access. After changing this local
 policy, restart the daemon or test and save the account again. Keep the config
 file readable only by the daemon's operator.
 
+## iCloud Contacts
+
+Connect with your Apple Account email and an app-specific password:
+
+```bash
+msgvault add-carddav --icloud you@example.com --schedule "*/30 * * * *"
+```
+
+The command prompts for the app-specific password. In the Web UI, use
+`https://contacts.icloud.com/` as the server URL with the same email and password.
+Msgvault discovers Apple's contacts partition and saves that partition as the
+connection's credential origin. Only HTTPS Apple contacts partitions on port
+443 can be selected by this bootstrap; other servers keep same-origin discovery.
+
+Before syncing an iCloud connection, msgvault checks the saved partition. If
+that host is unavailable, it rediscovers through Apple's published URL.
+If Apple has moved the account, msgvault keeps the saved connection and asks
+you to reconnect with `add-carddav --icloud`. Review address-book choices,
+published contacts and conflicts first. Reconnecting replaces the previous
+connection and can retire imported contact identities. A failed preflight
+returns an error without starting a sync run, so the latest sync-history row
+can remain an earlier successful run.
+
+Reconnect connections previously configured with a partition URL using
+`--icloud` to enable partition rediscovery.
+
 ## Google Contacts
 
 Select **Google Contacts** under **Settings → Contacts → Provider**.

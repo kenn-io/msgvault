@@ -114,6 +114,7 @@ func TestPersonMergeHTTPMergeInspectDecideAndSplit(t *testing.T) {
 	require.NoError(json.Unmarshal(listResponse.Body.Bytes(), &listed))
 	require.Len(listed.Merges, 1)
 	assert.Equal(merged.Merge.ID, listed.Merges[0].Merge.ID)
+	require.NotEmpty(listed.Merges[0].Labels.Profiles)
 
 	detailResponse := personMergeAPIRequest(t, srv, http.MethodGet,
 		fmt.Sprintf("/api/v1/person-merges/%d", merged.Merge.ID), nil, nil)
@@ -122,6 +123,7 @@ func TestPersonMergeHTTPMergeInspectDecideAndSplit(t *testing.T) {
 	require.NoError(json.Unmarshal(detailResponse.Body.Bytes(), &detail))
 	assert.Equal(merged.Merge.ID, detail.Merge.ID)
 	assert.NotEmpty(detail.Rows)
+	require.NotEmpty(detail.Labels.Profiles)
 
 	snapshotResponse := personMergeAPIRequest(t, srv, http.MethodGet,
 		fmt.Sprintf("/api/v1/person-merges/%d/snapshot", merged.Merge.ID), nil, nil)

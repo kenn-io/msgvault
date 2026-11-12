@@ -71,8 +71,16 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 			if err := writer.Flush(); err != nil {
 				return fmt.Errorf("render attachment search results: %w", err)
 			}
-			if _, err := fmt.Fprintf(command.OutOrStdout(), "Attachments truncated %t\n", response.Attachments.Truncated); err != nil {
+			if _, err := fmt.Fprintf(command.OutOrStdout(), "Attachments mode %s; coverage %s; partial %t; truncated %t\n", textutil.SanitizeTerminal(response.Attachments.ActualMode), textutil.SanitizeTerminal(response.Attachments.Coverage.State), response.Attachments.Partial, response.Attachments.Truncated); err != nil {
 				return fmt.Errorf("render media search status: %w", err)
+			}
+			for _, degradation := range response.Attachments.Degradations {
+				if degradation == "semantic_unconfigured" {
+					degradation = "Semantic search is not configured."
+				}
+				if _, err := fmt.Fprintln(command.OutOrStdout(), textutil.SanitizeTerminal(degradation)); err != nil {
+					return fmt.Errorf("render attachment degradation: %w", err)
+				}
 			}
 			if response.Attachments.Truncated {
 				if _, err := fmt.Fprintln(command.OutOrStdout(), "More may match"); err != nil {
@@ -92,7 +100,7 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 		}
 		return nil
 	}}
-	search.Flags().StringVar(&request.Mode, "mode", "lexical", "Search mode: lexical")
+	search.Flags().StringVar(&request.Mode, "mode", "lexical", "Attachment mode: lexical, semantic, or hybrid; recordings support lexical only")
 	search.Flags().Int64Var(&request.PersonID, "person", 0, "Limit to one durable person")
 	search.Flags().StringSliceVar(&directions, "direction", nil, "Person relation: from_person, to_person, or group")
 	search.Flags().IntVarP(&request.Limit, "limit", "n", 20, "Maximum occurrences per list, 1 to 100")

@@ -51,7 +51,7 @@ func relaxChangeFeedRateLimit(t *testing.T, srv *Server) {
 	t.Cleanup(func() {
 		srv.rateLimiter.Close()
 		srv.changesRateLimiter.Close()
-		srv.documentSearchRateLimiter.Close()
+		srv.mediaSearchRateLimiter.Close()
 	})
 }
 

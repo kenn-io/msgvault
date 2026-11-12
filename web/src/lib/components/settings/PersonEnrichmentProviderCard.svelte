@@ -9,6 +9,7 @@
     SettingsResponse as SettingsDocument,
   } from '../../api/generated/models';
   import { providerUpdate } from '../../settings/catalog';
+  import { trackUnsavedForm } from '../../settings/unsaved-forms.svelte';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
   let {
     client,
@@ -34,6 +35,13 @@
   let dirty = $state(false);
   let saving = $state(false);
   let error = $state('');
+  trackUnsavedForm({
+    dirty: () => dirty,
+    discard: () => {
+      draft = cloneProvider(provider);
+      dirty = false;
+    },
+  });
   const endpointDirty = $derived(
     draft.endpoint !== provider.endpoint || draft.poll_endpoint !== provider.poll_endpoint,
   );

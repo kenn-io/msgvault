@@ -3,6 +3,7 @@ package carddav
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -40,6 +41,10 @@ type Client struct {
 	allowPrivateOrigin bool // test seam for local httptest servers
 	trustedOrigin      *url.URL
 	trustedAddresses   []netip.Addr
+	strictDiscovery    bool
+	redactResponseBody bool
+	respectRetryAfter  bool
+	tlsConfig          *tls.Config // test seam for synthetic local TLS certificates; production uses system roots
 }
 
 // NewClient creates a client with the task-wide default time and byte limits
@@ -129,6 +134,15 @@ func (c *Client) Do(ctx context.Context, request Request) (*Response, error) {
 				digestResponses++
 			}
 			response, status, err = c.doPinned(operationCtx, target, pinned, request, authorization, &operationBytes)
+			if err == nil && response != nil && c.respectRetryAfter && request.Method == "PROPFIND" {
+				delay, _ := httpretry.ParseRetryAfter(response.Header.Get("Retry-After"), time.Hour, time.Now())
+				if delay > 0 {
+					// iCloud discovery must stop before a redirect, Digest
+					// challenge or fallback can hide the server's pause.
+					response.transferredBytes = operationBytes
+					return response, &StatusError{StatusCode: status, RetryAfter: delay}
+				}
+			}
 			if err != nil || status != http.StatusUnauthorized || c.bearerToken != nil || (c.username == "" && c.password == "") {
 				break
 			}
@@ -164,7 +178,11 @@ func (c *Client) Do(ctx context.Context, request Request) (*Response, error) {
 			continue
 		}
 		if status >= http.StatusBadRequest {
-			logRequestFailure(operationCtx, request.Method, status, response.Body)
+			body := response.Body
+			if c.redactResponseBody {
+				body = nil
+			}
+			logRequestFailure(operationCtx, request.Method, status, body)
 			retryDelay, _ := httpretry.ParseRetryAfter(response.Header.Get("Retry-After"), time.Hour, time.Now())
 			return response, &StatusError{
 				StatusCode:   status,
@@ -279,6 +297,7 @@ func (c *Client) doPinned(ctx context.Context, target *url.URL, pinned []netip.A
 	requestCtx, cancelRequest := context.WithTimeout(ctx, c.requestTimeout)
 	defer cancelRequest()
 	transport := &http.Transport{
+		TLSClientConfig: c.tlsConfig,
 		DialContext: func(dialCtx context.Context, network, _ string) (net.Conn, error) {
 			var failures []error
 			for index, address := range pinned {

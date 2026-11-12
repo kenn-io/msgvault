@@ -26,6 +26,10 @@ import (
 // would quietly widen the embedded corpus beyond what the operator asked
 // for.
 func resolveEmbedScopeSourceIDs(ctx context.Context, s *store.Store, state *invocation) error {
+	return resolveEmbedScopeSourceIDsFor(ctx, s, state, embedAccounts, embedCollections)
+}
+
+func resolveEmbedScopeSourceIDsFor(ctx context.Context, s *store.Store, state *invocation, accounts, collections []string) error {
 	state = invocationState(ctx, state)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -33,8 +37,8 @@ func resolveEmbedScopeSourceIDs(ctx context.Context, s *store.Store, state *invo
 	cfg := state.cfg
 	var ids []int64
 	switch {
-	case len(embedAccounts) > 0 || len(embedCollections) > 0:
-		resolved, err := resolveEmbedScopeFlags(ctx, s)
+	case len(accounts) > 0 || len(collections) > 0:
+		resolved, err := resolveEmbedScopeFlags(ctx, s, accounts, collections)
 		if err != nil {
 			return err
 		}
@@ -56,16 +60,16 @@ func resolveEmbedScopeSourceIDs(ctx context.Context, s *store.Store, state *invo
 
 // resolveEmbedScopeFlags resolves the --account and --collection flag values
 // to their union of source IDs.
-func resolveEmbedScopeFlags(ctx context.Context, s *store.Store) ([]int64, error) {
+func resolveEmbedScopeFlags(ctx context.Context, s *store.Store, accounts, collections []string) ([]int64, error) {
 	var ids []int64
-	if len(embedAccounts) > 0 {
-		accountIDs, err := resolveEmbedAccountList(ctx, s, embedAccounts, false)
+	if len(accounts) > 0 {
+		accountIDs, err := resolveEmbedAccountList(ctx, s, accounts, false)
 		if err != nil {
 			return nil, fmt.Errorf("--account: %w", err)
 		}
 		ids = append(ids, accountIDs...)
 	}
-	for _, name := range embedCollections {
+	for _, name := range collections {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			return nil, errors.New("--collection: collection name is required")

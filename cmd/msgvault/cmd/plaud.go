@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -113,7 +114,7 @@ func preflightAddPlaudAuthorize(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	// The daemon owns the archive. Check its binding before replacing tokens.
-	runArgs = append(runArgs, "--"+plaudCheckOwnerOnlyFlag)
+	runArgs = slices.Insert(runArgs, 1, "--"+plaudCheckOwnerOnlyFlag)
 	if err := runDaemonCLICommandHTTPWithEnv(cmd, runArgs, nil, false, false); err != nil {
 		return err
 	}

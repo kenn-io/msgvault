@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-05"
 title: IMAP Sync and Repair
 description: Archive IMAP mail efficiently, choose folders, and repair stored labels.
 ---
@@ -25,7 +25,13 @@ msgvault chooses the sync method from the server's capabilities:
 |---|---|
 | Supports QRESYNC, the IMAP change-tracking extension | Uses saved mailbox state to fetch changes and track messages removed from folders |
 | Does not support QRESYNC | Compares mailbox counts and saved message-number boundaries; skips unchanged folders and fetches new messages where possible |
+| Does not support CONDSTORE either, so reports no mod-sequences | Also rereads the flags of the 5,000 newest archived messages in each folder, without downloading them, and saves only flags that changed |
 | State is missing, inconsistent, or no longer valid | Enumerates the affected folders again to establish current membership |
+
+Without mod-sequences, a flag change on an older message, such as marking it
+read or answered, reaches the archive only on a full scan with
+`msgvault sync-full you@example.com --noresume`. A failed flag read keeps the
+saved flags and does not fail the sync.
 
 A failed QRESYNC attempt reconnects and falls back to full enumeration. An
 incomplete server response is not accepted as a complete mailbox snapshot.

@@ -2,7 +2,6 @@ package hybrid
 
 import (
 	"database/sql"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -80,12 +79,15 @@ func TestApplyMessageFilterPreservesExactTUIScope(t *testing.T) {
 
 	assert.Equal([]int64{7}, filter.SourceIDs)
 	assert.Equal([]int64{42}, filter.ConversationIDs)
-	require.Len(filter.SenderExactGroups, 1)
-	assert.Equal([]int64{1}, filter.SenderExactGroups[0], "sender equality must not include substring matches")
+	assert.Equal([]string{"alice@example.com"}, filter.SenderTerms)
 	require.Len(filter.RecipientAnyGroups, 1)
 	assert.Equal([]int64{2}, filter.RecipientAnyGroups[0])
-	require.Len(filter.SenderGroups, 1)
-	assert.Equal([]int64{1, 2, 4}, filter.SenderGroups[0], "domain equality")
+	assert.Equal("example.com", filter.SenderDomain)
+	_, err = db.ExecContext(t.Context(), `UPDATE participants SET phone_number = '+12025550199' WHERE id = 1`)
+	require.NoError(err)
+	var phone vector.Filter
+	require.NoError(ApplyMessageFilter(t.Context(), db, nil, &phone, query.MessageFilter{Sender: "+12025550199"}))
+	assert.Equal([][]int64{{1}}, phone.SenderExactGroups)
 	require.Len(filter.LabelGroups, 1)
 	assert.Equal([]int64{2}, filter.LabelGroups[0], "label equality is case-insensitive")
 	assert.Equal([]string{"email"}, filter.MessageTypes)
@@ -149,31 +151,17 @@ func TestApplyMessageFilterRejectsInvalidTimePeriod(t *testing.T) {
 	require.ErrorContains(t, err, "YYYY, YYYY-MM, or YYYY-MM-DD")
 }
 
-func sortedIDs(ids []int64) []int64 {
-	out := append([]int64(nil), ids...)
-	slices.Sort(out)
-	return out
-}
-
-// TestBuildFilter_AddressesResolveViaSubstring confirms that
-// from:/to:/cc:/bcc: use the same substring-LIKE semantic as the
-// existing SQLite search path, so vector/hybrid and FTS agree on which
-// participants match a token.
-func TestBuildFilter_AddressesResolveViaSubstring(t *testing.T) {
+// Recipient terms resolve to matching participant IDs.
+func TestBuildFilter_RecipientAddressesResolveViaSubstring(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := t.Context()
 	db := newFilterTestDB(t)
 
-	q := search.Parse(`from:example.com to:alice cc:other.com`)
+	q := search.Parse(`to:alice cc:other.com`)
 	f, err := BuildFilter(ctx, db, nil, q)
 	require.NoError(err, "BuildFilter")
 
-	// from:example.com → alice, bob, dave.work (all @example.com).
-	// Single from: token, so SenderGroups has one group with the
-	// substring-match set.
-	require.Len(f.SenderGroups, 1, "SenderGroups should have one group")
-	assert.Lenf(f.SenderGroups[0], 3, "want 3 ids (all @example.com); got %v", f.SenderGroups)
 	// to:alice → one group with one id.
 	require.Len(f.ToGroups, 1, "ToGroups should have one group")
 	assert.Lenf(f.ToGroups[0], 1, "want one group with one id (alice); got %v", f.ToGroups)
@@ -289,27 +277,7 @@ func TestBuildFilter_EmptyQueryYieldsEmptyFilter(t *testing.T) {
 	assert.Truef(t, f.IsEmpty(), "filter not empty: %+v", f)
 }
 
-// TestBuildFilter_NonexistentSenderReturnsSentinel guards the
-// "operator was present but matched zero rows" path. Without a
-// sentinel, an unknown from: address would resolve to an empty
-// SenderGroups slice, which the backend treats as "no filter" —
-// broadening the search instead of returning zero hits.
-func TestBuildFilter_NonexistentSenderReturnsSentinel(t *testing.T) {
-	require := require.New(t)
-	ctx := t.Context()
-	db := newFilterTestDB(t)
-
-	q := search.Parse(`from:nobody@nowhere.invalid`)
-	f, err := BuildFilter(ctx, db, nil, q)
-	require.NoError(err, "BuildFilter")
-	require.Lenf(f.SenderGroups, 1, "want one group with sentinel; got %v", f.SenderGroups)
-	require.Len(f.SenderGroups[0], 1)
-	assert.Negative(t, f.SenderGroups[0][0], "want negative sentinel id")
-}
-
-// TestBuildFilter_NonexistentLabelReturnsSentinel: same as above but
-// for labels. Critical because the label path used to do exact-name
-// lookups with IN (...), and an unknown label silently became a no-op.
+// Unknown labels must still constrain the search to no results.
 func TestBuildFilter_NonexistentLabelReturnsSentinel(t *testing.T) {
 	require := require.New(t)
 	ctx := t.Context()
@@ -323,61 +291,11 @@ func TestBuildFilter_NonexistentLabelReturnsSentinel(t *testing.T) {
 	assert.Negative(t, f.LabelGroups[0][0], "want negative sentinel id")
 }
 
-// TestBuildFilter_RepeatedSenderTokens_PerTokenGroups asserts that
-// repeated `from:` operators each become their own group. The backend
-// AND-combines groups at the message level — `from:alice from:bob`
-// requires the message to have a `from` participant matching alice
-// AND a `from` participant matching bob. A message with two `from`
-// recipients (one alice, one bob) satisfies both tokens; a message
-// with only one `from` participant cannot. This mirrors the existing
-// SQLite search path (internal/store/api.go), which emits one EXISTS
-// per `from:` token at the message level.
-func TestBuildFilter_RepeatedSenderTokens_PerTokenGroups(t *testing.T) {
-	ctx := t.Context()
-	db := newFilterTestDB(t)
-
-	t.Run("two real tokens become two non-sentinel groups", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		q := search.Parse(`from:alice from:bob`)
-		f, err := BuildFilter(ctx, db, nil, q)
-		require.NoError(err, "BuildFilter")
-		require.Lenf(f.SenderGroups, 2, "want 2 groups (one per from: token); got %v", f.SenderGroups)
-		for i, g := range f.SenderGroups {
-			assert.Lenf(g, 1, "SenderGroups[%d]=%v, want exactly one positive id", i, g)
-			if len(g) == 1 {
-				assert.GreaterOrEqualf(g[0], int64(0), "SenderGroups[%d]=%v, want positive id", i, g)
-			}
-		}
-	})
-
-	t.Run("one missing token sentinels only that group", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		q := search.Parse(`from:alice from:nobody@nowhere.invalid`)
-		f, err := BuildFilter(ctx, db, nil, q)
-		require.NoError(err, "BuildFilter")
-		require.Lenf(f.SenderGroups, 2, "want 2 groups; got %v", f.SenderGroups)
-		require.Len(f.SenderGroups[0], 1)
-		assert.GreaterOrEqualf(f.SenderGroups[0][0], int64(0), "alice resolved")
-		require.Len(f.SenderGroups[1], 1)
-		assert.Negativef(f.SenderGroups[1][0], "want sentinel (nobody resolves empty)")
-	})
-
-	t.Run("substring tokens collect all matching participants per group", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		// from:example.com → alice, bob, dave.work all match @example.com.
-		// from:work → only dave.work. Two groups, IDs preserved per group.
-		q := search.Parse(`from:example.com from:work`)
-		f, err := BuildFilter(ctx, db, nil, q)
-		require.NoError(err, "BuildFilter")
-		require.Lenf(f.SenderGroups, 2, "want 2 groups; got %v", f.SenderGroups)
-		assert.Lenf(f.SenderGroups[0], 3,
-			"@example.com matches alice/bob/dave.work; got %v", sortedIDs(f.SenderGroups[0]))
-		assert.Lenf(f.SenderGroups[1], 1,
-			"only dave.work has 'work' substring; got %v", f.SenderGroups[1])
-	})
+func TestBuildFilter_RepeatedSenderTokens(t *testing.T) {
+	f, err := BuildFilter(t.Context(), newFilterTestDB(t), nil, search.Parse("from:alice from:bob"))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"alice", "bob"}, f.SenderTerms)
+	assert.False(t, f.IsEmpty())
 }
 
 // TestBuildFilter_RepeatedRecipientTokens_PerTokenGroups asserts that

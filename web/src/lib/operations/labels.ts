@@ -9,12 +9,10 @@ export type RelatedStatus = NonNullable<OperationLaneStatus['related_status']>;
 export const OPERATION_KIND_LABELS: Readonly<Record<OperationKind, string>> = {
   source_sync: 'Source sync', message_embedding: 'Message embedding', person_sweep: 'Person fact sweep',
   person_embedding: 'Person embedding', person_enrichment: 'Person enrichment', carddav_sync: 'CardDAV sync',
-  document_extraction: 'Document extraction', document_embedding: 'Document embedding',
   visual_embedding: 'Visual embedding'
 };
 export const RELATED_STATUS_LABELS: Readonly<Record<RelatedStatus, string>> = {
-  listSourceStatus: 'Sources status', getDocumentIndexStatus: 'Document index status',
-  getDocumentVectorStatus: 'Document vector status', getVisualAttachmentStatus: 'Visual attachment status',
+  listSourceStatus: 'Sources status', getVisualAttachmentStatus: 'Visual attachment status',
   getCardDAVStatus: 'CardDAV settings'
 };
 export const OPERATION_ACTION_LABELS: Readonly<Record<OperationAction, string>> = {
@@ -33,19 +31,6 @@ export interface OperationHostSetup {
 }
 export type OperationSetup = { kind: 'settings'; target: OperationSettingsTarget } | OperationHostSetup;
 
-export const DOCUMENT_INDEX_SETUP: OperationHostSetup = {
-  kind: 'host',
-  text: 'Configured in config.toml on the daemon host.',
-  guideLabel: 'Document indexing setup',
-  guideHref: 'https://msgvault.io/docs/usage/document-indexing/#configure-the-policy'
-};
-export const DOCUMENT_SEARCH_SETUP: OperationHostSetup = {
-  kind: 'host',
-  text: 'Configured in config.toml on the daemon host. Also needs semantic search.',
-  guideLabel: 'Document search setup',
-  guideHref: 'https://msgvault.io/docs/usage/document-indexing/#semantic-and-hybrid-document-search'
-};
-
 // Where an Off kind is turned on (spec "Set up targets"). source_sync and
 // carddav_sync have no entry: their related-status buttons already lead there.
 export const OPERATION_SETUP: Readonly<Partial<Record<OperationKind, OperationSetup>>> = {
@@ -59,9 +44,7 @@ export const OPERATION_SETUP: Readonly<Partial<Record<OperationKind, OperationSe
     kind: 'settings', target: { settingsCategory: 'search', settingsAuthority: 'visual_attachments' }
   },
   person_enrichment: { kind: 'settings', target: { settingsCategory: 'enrichment', settingsAuthority: '' } },
-  person_sweep: { kind: 'settings', target: { settingsCategory: 'enrichment', settingsAuthority: '' } },
-  document_extraction: DOCUMENT_INDEX_SETUP,
-  document_embedding: DOCUMENT_SEARCH_SETUP
+  person_sweep: { kind: 'settings', target: { settingsCategory: 'enrichment', settingsAuthority: '' } }
 };
 
 const STATE_CHIPS: Readonly<Record<string, { label: string; tone: ChipTone }>> = {
@@ -87,7 +70,7 @@ export function triggerLabel(trigger: string | undefined): string {
 // Units come from the closed counter registry in internal/operations/types.go.
 const UNIT_SINGULAR: Readonly<Record<string, string>> = {
   messages: 'message', people: 'person', writes: 'write', books: 'book', contacts: 'contact',
-  documents: 'document', chunks: 'chunk', attachments: 'attachment'
+  attachments: 'attachment'
 };
 
 function unitWord(unit: string, value: number): string {

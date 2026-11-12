@@ -55,7 +55,7 @@ func claimServeOwnership(
 	if err := cfg.PrepareServerKey(); err != nil {
 		return nil, errors.Join(err, lock.Close(), daemonLock.Close())
 	}
-	record, shutdownToken, err := writeDaemonRuntime(cfg.Data.DataDir, host, port, version, cfg.Server.AuthenticationKey())
+	record, shutdownToken, err := writeDaemonRuntime(cfg.Data.DataDir, host, port, version, cfg.Server.AuthenticationKey(), effectiveDaemonIdleTimeout(cfg, nil))
 	if err != nil {
 		_ = lock.Close()
 		_ = daemonLock.Close()

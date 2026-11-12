@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-08"
+last_edited: "2026-11-10"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -15,18 +15,19 @@ appear in full under Inherited Flags.
 
 | Task | Commands and guides |
 |---|---|
-| Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full), [add-feed](#add-feed) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
-| Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
+| Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full), [source feeds add](#source-feeds-add) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-discord-package](#import-discord-package), [import-x](#import-x), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [media search](#media-search), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
+| Find a partial address | [address](#address) |
 | Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
-| Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
+| Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-attachment-roles](#repair-attachment-roles), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
 
 ## loops
@@ -1577,6 +1578,69 @@ the source message has since been deleted. See
 
 ---
 
+## source facebook-comments add
+
+Register the Page selected by a configured `[[facebook_comments]]` profile
+(unreleased). The daemon reads its named token environment variable and checks
+Page identity before writing the source or confirmed owner identity.
+
+```bash
+msgvault source facebook-comments add [identifier]
+```
+
+No identifier selects all configured profiles. An unknown explicit label fails;
+it never selects another profile or falls back to an email sync. See
+[Facebook Page comments](usage/facebook-comments.md).
+
+---
+
+## source facebook-comments sync
+
+Archive returned organic, visitor, and ad-post comments and nested replies for
+registered Facebook Pages (unreleased). No identifier selects all configured
+profiles. Partial writes are retained and included in cache refreshes even
+when another surface fails. This command does not send replies.
+
+```bash
+msgvault source facebook-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-requests` | `1000` | Positive maximum API reads per Page, including identity validation; unfinished scans resume |
+| `--full` | `false` | Explicitly restart selected source scans from fresh cursors, preserving and updating existing rows |
+| `--build-cache` | `false` | Queue a cache refresh even when automatic builds are disabled or delayed |
+| `--no-build-cache` | `false` | Skip the post-sync cache refresh |
+
+See [coverage and resuming](usage/facebook-comments.md#understand-coverage-and-resuming)
+for independent surface progress, request costs, and expired-cursor recovery.
+
+---
+
+## source instagram-comments add
+
+Register the professional account linked to the selected Page, using a
+configured `[[instagram_comments]]` profile (unreleased). No identifier selects
+all configured profiles. Tokens are read on the daemon host.
+
+```bash
+msgvault source instagram-comments add [identifier]
+```
+
+## source instagram-comments sync
+
+Archive returned media captions, comments, and replies from registered linked
+professional accounts (unreleased). A positive request budget includes Page
+and account verification. Partial writes remain searchable, and `--full`
+restarts cursors without deleting rows. No identifier selects all profiles.
+
+```bash
+msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Instagram comments](usage/instagram-comments.md) for setup, identity,
+resuming, and coverage limits. These commands do not send replies.
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
@@ -1590,6 +1654,72 @@ msgvault add-chatwoot [identifier]
 With no identifier, register all configured profiles. Include/exclude inbox
 filters apply; no selected inboxes is an error. Re-run after adding inboxes.
 See [Chatwoot setup](guides/chatwoot.md).
+
+---
+
+## source feeds add
+
+Follow RSS 2.0, Atom, or JSON feeds and archive their items. See
+[Feeds](usage/feeds.md).
+
+```bash
+msgvault source feeds add https://example.com/releases.atom
+msgvault source feeds add --opml ~/Downloads/subscriptions.opml
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--opml` | — | Follow every feed in this OPML file without fetching them; mutually exclusive with URL arguments |
+
+Each URL is fetched first; a URL that is not a reachable feed is reported, not
+followed, and makes the command exit non-zero. The items a feed lists now are
+archived right away. Adding a removed feed follows it again.
+
+---
+
+## source feeds list
+
+List followed feeds with their title, URL, last check, and last error.
+
+```bash
+msgvault source feeds list
+msgvault source feeds list --all --json
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--all` | `false` | Include removed feeds |
+| `--json` | `false` | Output JSON |
+
+---
+
+## source feeds remove
+
+Stop fetching feeds. Their archived items stay searchable.
+
+```bash
+msgvault source feeds remove https://example.com/releases.atom
+```
+
+---
+
+## source feeds sync
+
+Fetch every followed feed, or the given ones, and archive each item the
+archive does not hold yet. A feed that fails is reported and the others still
+sync; the command then exits non-zero.
+
+```bash
+msgvault source feeds sync
+msgvault source feeds sync https://example.com/releases.atom
+msgvault source feeds sync --full
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--full` | `false` | Download every feed again, even when unchanged |
+
+Scheduled fetching is controlled by [`[feeds]`](configuration.md#feeds).
 
 ---
 
@@ -1692,9 +1822,14 @@ msgvault sync-matrix --full
 | Flag | Default | Description |
 |---|---|---|
 | `--account` | all registered | Sync only this exact Matrix user ID |
-| `--full` | `false` | Ignore stored cursors and re-fetch complete joined-room history |
+| `--full` | `false` | Re-fetch complete joined-room history, rescan archived messages for media, and retry media downloads immediately |
+| `--no-media` | `false` | Record media metadata without downloading bytes this run |
 
 Room selection and scheduled sync are controlled by `[matrix]`. The account's key backup decrypts encrypted history and retries earlier placeholders after a backup change, with the retry rules described in the [Matrix guide](usage/matrix.md). The recovered count includes messages replaced with decrypted content, excluding edits and reactions.
+
+The first sync after upgrading discovers media in previously archived messages and saves a per-account completion marker. Later syncs skip this scan; `--full` repeats it.
+
+Later syncs fetch pending media and retry temporary failures such as 408, 425, 429, 5xx, timeouts and connection errors. Transient failures stay pending and retry on normal syncs after a growing backoff of 1, 2, 4, 8, 16, then 24 hours. Later failures keep the 24-hour backoff. Access denied, missing files, hash mismatches and decryption errors stay failed and retry on normal syncs after one week. `--full` bypasses both waits. The summary counts outstanding pending and failed media for the selected account and rooms. Each media item is attempted once per run.
 
 ---
 
@@ -1853,72 +1988,6 @@ An unknown group participant count fails a positive participant cap. Message
 and attachment metadata remain archived when media is skipped. See
 [Inline media downloads](usage/inline.md#media-downloads) for the explicit
 policy choice and source-availability limits.
-
----
-
-## add-feed
-
-Follow RSS 2.0, Atom, or JSON feeds and archive their items. See
-[Feeds](usage/feeds.md).
-
-```bash
-msgvault add-feed https://example.com/releases.atom
-msgvault add-feed --opml ~/Downloads/subscriptions.opml
-```
-
-| Flag | Default | Description |
-|---|---|---|
-| `--opml` | — | Follow every feed in this OPML file without fetching them; mutually exclusive with URL arguments |
-
-Each URL is fetched first; a URL that is not a reachable feed is reported, not
-followed, and makes the command exit non-zero. The items a feed lists now are
-archived right away. Adding a removed feed follows it again.
-
----
-
-## list-feeds
-
-List followed feeds with their title, URL, last check, and last error.
-
-```bash
-msgvault list-feeds
-msgvault list-feeds --all --json
-```
-
-| Flag | Default | Description |
-|---|---|---|
-| `--all` | `false` | Include removed feeds |
-| `--json` | `false` | Output JSON |
-
----
-
-## remove-feed
-
-Stop fetching feeds. Their archived items stay searchable.
-
-```bash
-msgvault remove-feed https://example.com/releases.atom
-```
-
----
-
-## sync-feeds
-
-Fetch every followed feed, or the given ones, and archive each item the
-archive does not hold yet. A feed that fails is reported and the others still
-sync; the command then exits non-zero.
-
-```bash
-msgvault sync-feeds
-msgvault sync-feeds https://example.com/releases.atom
-msgvault sync-feeds --full
-```
-
-| Flag | Default | Description |
-|---|---|---|
-| `--full` | `false` | Download every feed again, even when unchanged |
-
-Scheduled fetching is controlled by [`[feeds]`](configuration.md#feeds).
 
 ---
 
@@ -2443,6 +2512,25 @@ See [Google Voice imports](usage/text-messages.md#import-gvoice) for voicemail a
 
 ---
 
+## import-discord-package
+
+Available on `main` (not yet released). Import an extracted official Discord
+sent-message data package on the daemon host:
+
+```bash
+msgvault import-discord-package <package-dir>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--no-default-identity` | Skip assigning the exporting account to the default identity |
+
+Imports only the exporting account's sent messages, including DMs. Legacy CSV
+transcripts are supported; JSON transcripts are experimental. Attachment URLs
+are stored as links. Re-running is safe and resumes an interrupted import. See
+[Discord packages](usage/discord.md#import-a-personal-data-package) for
+requirements and limits.
+
 ## import-telegram
 
 Import a Telegram Desktop Machine-readable JSON export, including available media.
@@ -2646,17 +2734,19 @@ msgvault pack-attachments
 
 The daemon serializes packing against sync and backup operations. Reads remain
 available from loose, packed, or mixed storage, and the command is safe to
-rerun as new loose content arrives. Bounded packing also runs after successful
-attachment-producing commands sent to the daemon. Scheduled syncs never pack
-inline: when one writes new loose blobs, the daemon's `attachment-pack` job
-(every 6 hours) packs them, and the daily `attachment-maintenance` job packs
-and repacks. Each automatic pack pass has a 256 MiB soft raw-byte budget and
-finishes its current blob before stopping for that byte limit. Scheduled packing
-and daily attachment maintenance also stop after one minute, which lets queued
+rerun as new loose content arrives. Attachment-producing commands sent to the
+daemon defer packing, including after a partial failure. Scheduled syncs also
+defer packing when they write new loose blobs. The daemon's `attachment-pack`
+job (every 6 hours) packs them, and the daily `attachment-maintenance` job
+packs and repacks. Automatic maintenance errors appear in scheduled job status.
+Each automatic pack pass has a 256 MiB soft raw-byte budget and finishes its
+current blob before stopping for that byte limit. Scheduled packing and daily
+attachment maintenance also stop after one minute, which lets queued
 scheduled work run. Each scheduled pack pass verifies at most 128
-existing packed blobs or 32 MiB of their raw content, allowing one oversized
+indexed blobs with canonical loose copies or missing packs, or 32 MiB of
+their raw content, allowing one oversized
 blob. Its durable hash cursor resumes verification after a restart, while new
-loose blobs are packed by sync-requested passes and the daily job when nothing
+loose blobs are packed by pending passes and the daily job when nothing
 is queued; verification-only follow-ups skip them. Manual unpacking reads the full
 catalog. Cancellation preserves committed packs. A pass with committed
 progress resumes behind waiting work; runtime expiry without a checkpoint
@@ -2910,64 +3000,11 @@ msgvault media search "quarterly numbers"
 msgvault media search "quarterly numbers" --person 7 --direction from_person --limit 20 --json
 ```
 
-`--mode lexical` is the default. Semantic and hybrid are unavailable. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
+`--mode lexical` is the default. On newer `main` builds, `--mode semantic` and `--mode hybrid` retrieve mirrored attachment content through Docbank; recordings return `recordings_error=media_search_mode_unavailable`. v0.23.0 supports lexical mode only. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
 
 The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty recording result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields and adds optional `filename`, `containing_title` and `occurred_at`. Recording search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A recording with more than 64 distinct current caption inputs is left out; its occurrences count in `unavailable_occurrences`, with `partial=true`. See [the API scope limits](api-server.md#media-transcript-search) for the version and source ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. See [browser recording search](web-ui.md#recording-matches) for transcript matches in Messages.
 
-Media search also prints a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by truncation and search errors. It searches text Docbank has extracted from mirrored document files. A scope with more than 4096 document files returns an attachment error; set `--person` to narrow the scope. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. See [attachment search formats](usage/searching.md#search-mirrored-attachment-text) for the files included in the scope.
-
-## documents
-
-Manage document extraction and local full-text indexing. Mistral operations
-require a private authenticated capability manifest and exact recorded consent.
-Self-hosted Docling uses `consent-docling` and needs no
-manifest. Local search and removal operations do not contact the extractor.
-
-```bash
-msgvault documents probe-mistral --fixtures <private-dir> [--validate-only]
-msgvault documents consent-mistral --capabilities <manifest> [--yes]
-msgvault documents consent-docling [--yes]
-msgvault documents build [--capabilities <manifest>] [--limit N] [--full-rebuild] [--yes]
-msgvault documents resume [--capabilities <manifest>] [--limit N] [--yes]
-msgvault documents search <query> [flags]
-msgvault documents status [--capabilities <manifest>] [--json]
-msgvault documents retry [--capabilities <manifest>] --hash <sha256>
-msgvault documents retire <profile-id> [--yes]
-msgvault documents purge-derived --hash <sha256> [--yes]
-```
-
-`--capabilities` is required for Mistral build, resume, status, and retry.
-Docling uses the endpoint and policy selected in configuration. Its build and
-resume commands still require `--yes`, and provider policy changes require
-fresh consent.
-
-`probe-mistral --validate-only` checks the complete synthetic fixture set
-without credentials or network access. An authenticated probe writes the
-manifest to stdout. Run consent and build commands once without `--yes` to
-review their disclosure and preflight.
-
-`documents search` accepts `--source-id`, `--message-type`, `--attachment-id`,
-`--message-id`, `-n`/`--limit`, `--cursor`, and `--json`. Its cursor is opaque
-and bound to a stable index revision; restart pagination after a stale-cursor
-error.
-
-Build failures include available local causes alongside
-the document hash and reason code. `documents status` lists up to 20 current
-failed documents, including failed replacements in an active rebuild. JSON
-output adds `status.failures` and `status.failures_exhausted`. Each failure has
-`canonical_blob_hash`, `reason_code`, `detail`, and `state`; detail is a bounded
-single line and may be empty for historical failures. Use `documents retry` and
-then build again to obtain fresh diagnostics for an older failure.
-
-To include inline documents, set
-`[attachments.documents.scope].include_inline = true` and record exact consent
-again. The default is false. See the
-[scope configuration](configuration.md#attachmentsdocuments) for the contract.
-
-See [Document Attachment Indexing](/docs/usage/document-indexing/) for fixture
-generation, configuration, privacy boundaries, scheduling, and recovery.
-
----
+Unreleased builds also print a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by actual attachment mode, coverage, partial status, degradations, truncation and search errors. It searches text Docbank has extracted from mirrored document files. More than 4096 such files are searched in batches of 4,096. Results from each batch are interleaved by their position within that batch, so order across batches is approximate. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. Semantic/hybrid retrieval uses the configured `attachment_search_profile`. See [attachment search formats](usage/searching.md#search-mirrored-attachment-text) for the files included in the scope.
 
 ## tui
 
@@ -3335,11 +3372,14 @@ how Notes interact with search, MCP, and CardDAV.
 Person search accepts `--limit` from 1–100. File lookup defaults to the
 `metadata` lane and 100 results. Its main filters are `--direction`,
 `--filename`, `--mime-family`, `--after`, and `--before`.
-`--lane documents`, `visual`, or `all` requires `--query`; a `--cursor` belongs
+`--lane visual` or `all` requires `--query`; a `--cursor` belongs
 to one lane and cannot be used with `all`. See
 [person search](/docs/usage/people/#find-a-person-by-what-you-remember) and
 [person files](/docs/usage/people/#find-files-related-to-a-person) for index
 requirements, supported filters, and pagination.
+
+File results show `unverified` when a content hash is recorded but storage
+has not been checked.
 
 #### Typo-tolerant filenames
 
@@ -3504,6 +3544,7 @@ book; see the [CardDAV guide](/docs/usage/people-carddav/).
 |---|---|
 | `add-carddav <base-url> <username> [--connection <name>] [--schedule <cron>] [--disabled]` | Discover and save an account; password is prompted or read from piped stdin |
 | `add-carddav --google <email> [--connection <name>] [--oauth-app <name>] [--schedule <cron>] [--disabled]` | Connect Google Contacts using an authorized account token |
+| `add-carddav --icloud <apple-id> [--connection <name>] [--schedule <cron>] [--disabled]` | Discover the iCloud contacts partition using an app-specific password |
 | `add-carddav --microsoft <email> [--headless] [--connection <name>] [--schedule <cron>] [--disabled]` | Sign in to Microsoft and connect Microsoft 365 or Outlook.com contacts through Microsoft Graph |
 | `carddav authorize-google <email> [--oauth-app <name>] [--no-browser]` | Authorize Google Contacts in the browser, preserving existing Google permissions |
 | `carddav authorize-microsoft <email> [--headless]` | Sign in to Microsoft for contacts without saving a connection |
@@ -3863,7 +3904,7 @@ profile unselected. Restart the daemon when the reported running profile differs
 | `--model` | prompt | Codex model ID available to the signed-in account |
 | `--reasoning-effort` | prompt | Supported effort for the chosen model |
 | `--retention-posture`, `--training-posture` | required | Explicit operator assertions |
-| `--source` | required | Repeatable: `conversation_text`, `meeting_text`, or `document_text` |
+| `--source` | required | Repeatable: `conversation_text` or `meeting_text` |
 | `--source-since` | required | Earliest disclosed date, `YYYY-MM-DD` |
 | `--source-until` | absent | Latest disclosed date, on or after `--source-since` |
 | `--allow-sensitive` | explicit decision required | `true` permits archive evidence; `false` permits only synthetic checks |
@@ -4202,6 +4243,8 @@ msgvault embeddings build [flags]
 | `--account <identifier>` | Limit embedding to this account, by identifier or display name — numeric source IDs are rejected (repeatable). Overrides `[vector.embed.scope] accounts` for this run; configured `message_types` still apply. After activating this one-off scope, add the equivalent accounts to config and restart the daemon before searching. |
 | `--collection <name>` | Limit embedding to this collection's accounts (repeatable). Can be combined with `--account`; the scope is the union. This is a one-run override; persist the resolved accounts in config before restarting the daemon. |
 
+Scheduled syncs can run during indexing. For daemon-wide SQL logging, set `[log].sql_trace` or `[log].sql_slow_ms` in the daemon configuration.
+
 Without `--full-rebuild`, the command is incremental: it resumes any in-flight rebuild that matches the configured embedding settings, otherwise scans for live messages still missing coverage in the active generation, then exits. Safe to schedule via cron (or let `msgvault serve` do it via `[vector.embed.schedule]`).
 
 The account scope is part of the generation fingerprint, so building with a
@@ -4216,6 +4259,8 @@ msgvault embeddings resume [flags]
 ```
 
 Continue embedding work and finish the current generation. If a generation matching the configured embedding settings is building, this embeds its remaining rows and activates it once coverage reaches zero; otherwise it tops up the active generation. Equivalent to `msgvault embeddings build` with no flags, but never starts a full rebuild. Accepts the same `--account`/`--collection` scope flags as `embeddings build`.
+
+Scheduled syncs can run during indexing. For daemon-wide SQL logging, set `[log].sql_trace` or `[log].sql_slow_ms` in the daemon configuration.
 
 Pass `--backstop` to scan for missing coverage below the per-generation watermark
 as well. This fills gaps in the selected generation without starting a full
@@ -4703,11 +4748,11 @@ msgvault daemon stop
 msgvault daemon restart
 ```
 
-`start` launches the daemon in the background, `status` reports its recorded URL/PID/version/API schema/uptime, `stop` shuts it down, and `restart` performs a stop followed by a start. Starting a newer compatible binary replaces an older recorded daemon when `[server].daemon_auto_restart = "newer"`. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. Incompatible running daemons are reported with a prompt to stop them first.
+`start` launches the daemon in the background, `status` reports its recorded URL/PID/version/API schema/uptime and lifetime, `stop` shuts it down, and `restart` performs a stop followed by a start. Starting a newer compatible binary replaces an older recorded daemon when `[server].daemon_auto_restart = "newer"`. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. Incompatible running daemons are reported with a prompt to stop them first.
 
 The lifecycle commands have no command-specific flags. Configuration comes from `config.toml` with the [runtime environment overrides](configuration.md#environment-variables). See [Web UI & API Server](/docs/api-server/) for endpoint documentation, run `msgvault openapi`, or fetch `/openapi.json` from a running server for the generated OpenAPI contract. See [Configuration](/docs/configuration/#server) for config options. When vector search is enabled, the daemon can also run the embed worker on a cron and/or after every successful sync, see [Configuration: vector.embed.schedule](/docs/configuration/#vectorembedschedule).
 
-Background daemons started by `daemon start` or auto-started by a CLI command shut down after `[server].daemon_idle_timeout` with no requests. The default is `20m`; set it to `"0s"` to disable idle shutdown. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the value for a lifecycle-managed background daemon.
+Daemons auto-started by a CLI command shut down after `[server].daemon_idle_timeout` with no requests. The default is `20m`; set it to `"0s"` to disable idle shutdown. `MSGVAULT_DAEMON_IDLE_TIMEOUT` can override the value for an automatically started daemon. `daemon start` and `daemon restart` launch daemons that stay running until stopped. If `daemon start` reuses an automatic daemon, it preserves its lifetime and prints `msgvault daemon restart` to keep it running.
 
 `[server].daemon_auto_restart` controls local daemon replacement when the CLI and recorded daemon versions differ. The default `newer` restarts older compatible daemons. A source-build CLI also replaces the release daemon it was built from, or one from an earlier release. A daemon from another source build of the same release keeps running, and the command prints the restart command. `never` leaves lifecycle to the operator or supervisor, and `always` restarts on any version mismatch that is safe for the current API schema. When automatic replacement is suppressed, a local command that keeps a daemon eligible for replacement prints both versions and `msgvault daemon restart` on stderr.
 
@@ -4777,8 +4822,7 @@ The wizard also stores remote URL/API key in `remote` config block so `export-to
 ### setup providers
 
 Configure optional search and people features from the available API keys. The
-command reads `VOYAGE_API_KEY`, `OPENAI_API_KEY`, and the document provider's
-configured key variable (default `MISTRAL_API_KEY`). For an unset text feature,
+command reads `VOYAGE_API_KEY` and `OPENAI_API_KEY`. For an unset text feature,
 it chooses Voyage contextual embeddings, then OpenAI embeddings, then an
 available Ollama `nomic-embed-text` model, then the shared local server. Hosted people inference
 requires an explicit `--provider` and `--model`; an OpenAI key alone does not
@@ -4790,7 +4834,7 @@ Setup prints a plan, asks once per hosted provider, writes `config.toml`, and
 prints the remaining commands. It onboards a new people-sweep provider through
 the same check and consent gates as `person provider`. Other feature-specific
 consents remain separate. Visual search needs a valid probe manifest before
-setup enables it; document extraction remains manual. See
+setup enables it. Docbank processes mirrored documents. See
 [Recommended Configuration](usage/recommended-configuration.md).
 
 Local people-sweep setup stays pending unless `--allow-sensitive` is supplied.
@@ -4805,10 +4849,7 @@ required by the configured database; setup prints rebuild guidance.
 
 Saved retention and training postures on disabled lanes are preserved unless
 their corresponding posture flags are explicitly supplied. Custom hosted text
-endpoints require explicit configuration of dependent lanes. Document semantic
-search requires both `documents vectors consent --yes` and
-`documents vectors consent --purpose queries --yes`; the latter authorizes
-query-text uploads. The status report tracks the two purposes separately.
+endpoints require explicit configuration of dependent lanes. Search mirrored document text with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or the Web Everything panel. `media search --person <id> --direction from_person` scopes document search to a person. See the [Docbank configuration](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased).
 
 `--local-embeddings` switches text search to the shared local server, even while Ollama is running. Setup asks once before downloading missing model and runtime files; `--yes` accepts that download. `--dry-run` leaves downloads and configuration untouched. A matching Nomic message recipe keeps its index; a different model requires `msgvault embeddings build --full-rebuild --yes`.
 
@@ -4822,7 +4863,7 @@ or set provider prices and monetary caps.
 msgvault setup providers --dry-run
 msgvault setup providers
 msgvault setup providers --allow-sensitive
-msgvault setup providers --yes --document-retention zdr --document-training opted-out
+msgvault setup providers --yes
 ```
 
 | Flag                   | Default             | Description                                                                                                                                                                                                       |
@@ -4834,8 +4875,6 @@ msgvault setup providers --yes --document-retention zdr --document-training opte
 | `--yes`                | `false`             | Accept every provider disclosure without prompting. Required to apply a plan with hosted-provider prompts when stdin is not a terminal or `--json` is used. It does not grant the separate sensitive-data opt-in. |
 | `--allow-sensitive`    | `false`             | Allow the people sweep to send sensitive archive excerpts and infer sensitive personal attributes                                                                                                                 |
 | `--dry-run`            | `false`             | Print the plan, the disclosures, and the current lane report without writing                                                                                                                                      |
-| `--document-retention` | `standard`          | Mistral retention posture to record: `standard` or `zdr`                                                                                                                                                          |
-| `--document-training`  | `default-opt-out`   | Mistral training posture to record: `default-opt-out` or `opted-out`                                                                                                                                              |
 | `--retention-posture`  | `provider-declared` | Retention assertion recorded for embedding and inference providers                                                                                                                                                |
 | `--training-posture`   | `provider-declared` | Training assertion recorded for embedding and inference providers                                                                                                                                                 |
 | `--json`               | `false`             | Output the plan, applied flag, follow-ups, and report as JSON                                                                                                                                                     |
@@ -4846,7 +4885,7 @@ configured remote daemon; run it on the daemon host or pass `--local`.
 ### setup status
 
 Report the setup state of each feature (text search, semantic people search,
-visual attachments, documents, document vectors, people sweep, activity
+visual attachments, people sweep, activity
 projection, media policy): state, provider, model, recorded consent, schedule,
 the reason a lane is off, and the command that turns it on. Reads `config.toml`,
 the environment, and the local archive's consent records; never contacts a
@@ -4874,9 +4913,9 @@ msgvault docbank attachments backfill
 ```
 
 `status` shows the mirror state and destination folder, delivered, sending and failed file counts, failure reasons, and all distinct eligible content hashes with no delivery record for this destination. Use
-`--json` for structured output. `backfill` restarts discovery and retries failed
-uploads. It requires attachment upload consent and a running attachment mirror
-job. Backfill resets discovery and requeues failed files with attempts reset in one transaction. The daemon drains the backlog at upload speed. The mirror includes files on dedup-hidden messages and excludes files whose attachment rows were removed. Upload names use `<first 12 hex of hash>-<sanitized basename>`. See [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank).
+`--json` for structured output. With `document_profile` set, a running mirror shows `Last error` when set, `Document profile`, `Text extracted`, `Processing`, `Waiting`, and `Without text (<code>): N` for each failure or refusal code. These are local job outcomes for the profile fingerprint last read by the worker.
+
+`backfill` restarts discovery and retries failed uploads. It requires attachment upload consent and a running attachment mirror job. Backfill resets discovery and requeues failed files with attempts reset in one transaction. Backfill requests processing again for files that failed for missing consent, stale authority, a missing PDF password, an unreadable password file, a quarantined job, or a malformed Docbank answer. Backfill clears only settled recoverable failures. A job that fails after backfill needs another backfill. Other outcomes wait for a profile change. The daemon drains the backlog at upload speed. The mirror includes files on dedup-hidden messages and excludes files whose attachment rows were removed. Upload names use `<first 12 hex of hash>-<sanitized basename>`. See [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) for processing behavior.
 
 ## show-message
 
@@ -5293,9 +5332,27 @@ internal message ID and provider-owned attachments.
 
 The audit parses stored raw MIME and compares it with the archived fields on
 every run. It does not contact Gmail, change the archive, or read saved mismatch
-flags. Coherent messages are omitted. After a successful repair, run the same
-audit again to confirm the message is omitted; no re-sync or cache rebuild is
-needed. When stored part keys are available, attachments are compared by
+flags. Messages are omitted only when every comparison is `match`. A demonstrated
+difference produces `status=mismatch`, even when other comparisons are
+`inconclusive`. With no mismatch, any inconclusive comparison produces
+`status=inconclusive`, even when other fields match. Inconclusive means the
+comparison could not establish consistency; it does not establish corruption.
+
+For optional headers and bodies, a stored SQL NULL matches an empty recalculated
+value. If the recalculated value is nonempty, NULL is `inconclusive`. A stored
+non-NULL value, including an empty string, is compared directly. Missing legacy
+recipient addresses or attachment part keys can also leave comparisons
+inconclusive. These results do not identify why evidence is missing.
+
+Both human output and `--json` use these rules. The JSON fields and status values
+are unchanged; consumers can now receive additional inconclusive rows. Count
+`mismatch` and `inconclusive` separately rather than treating every emitted row
+as corruption. Audit completion without an operational error is not a claim
+that all comparisons matched.
+
+After a successful repair, run the same audit again to inspect any remaining
+uncertainty; no re-sync or cache rebuild is needed. When stored part keys are
+available, attachments are compared by
 physical MIME occurrence, so separate parts with identical bytes still count
 separately. Older rows without part keys cannot prove how many times identical
 content occurred.
@@ -5335,6 +5392,48 @@ related-copy lookups read. Missing or unreadable payloads are recorded
 as incomplete and do not block later messages. Source syncs and imports run the
 same work first, so use this command for on-demand repair, file imports you will
 not run again, or retrying an interrupted pass.
+
+Restore the missing nonempty MIME attachments of one Gmail message with:
+
+```bash
+msgvault repair-derived --attachment-message <internal-id-or-gmail-id> --source-id <source-id>
+```
+
+This mode uses retained RAW without Gmail access. It preserves original payloads,
+message fields, existing attachment rows and valid loose or packed blobs. It adds
+missing MIME occurrences and reconstructs missing loose files. Empty MIME parts
+remain omitted, as in ordinary sync. Provider-owned attachments are preserved.
+The source selector disambiguates references; omit it only for a unique reference.
+Source filters cannot be combined with this mode.
+
+Missing, empty, undecodable or diagnostically incomplete RAW, conflicting metadata,
+corrupt files and missing packs return an error without replacing existing evidence.
+Correct the reported problem and repeat the same command. Ordinary Gmail syncs
+also retry recorded materialization failures locally; a successful full scan does
+not inspect every previously archived attachment. `repair-message --audit` compares
+MIME occurrences but does not check file contents. The normal `repair-derived` and
+automatic `Heal` text passes do not reconstruct files.
+
+## repair-attachment-roles
+
+Classify email attachments archived before msgvault recorded attachment roles,
+from the raw MIME stored with each message. The command does not contact a
+provider.
+
+```bash
+msgvault repair-attachment-roles
+```
+
+Older email attachments have the role `unknown`, so a filter cannot tell an
+image embedded in the message body, such as a signature logo, from a file
+attached to the message. The repair records `inline` or `standalone` for each
+attachment that matches exactly one MIME part. Attachments without retained MIME,
+or with ambiguous evidence, keep the role `unknown`.
+
+The command writes immediately and prints the number of messages scanned and
+attachments updated. It saves progress after each batch: an interrupted run
+resumes where it stopped, and a run after a completed pass returns at once.
+New email gets its role at import, so one completed pass is enough.
 
 ## gc
 
@@ -5593,6 +5692,9 @@ msgvault --agent-url https://archive.example.test \
 | `message.read` | Message bodies and metadata, and containing threads |
 | `attachment.read` | Attachment metadata and stored bytes; message access alone does not grant bytes |
 | `stats.read` | Statistics within the granted sources; global database size is omitted |
+| `verification.read` | Reveals detected verification content alongside an existing read permission; grants no reads alone |
+
+See [detection rules and limits](api-server.md#verification-content).
 
 Unscoped reads select the grant's live sources. Explicit accounts, collections,
 and source sets must fit entirely inside that grant. Collection membership is
@@ -5638,7 +5740,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read`, and the `verification.read` reveal modifier (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
@@ -5705,3 +5807,43 @@ msgvault policy reset SOURCE_ID CONVERSATION_ID
 `list` always prints JSON. Saved CLI overrides win over config. `reset` restores
 config or automatic selection. Effective tiers remain `full` in this release;
 `stub` and `skip` are rejected. No messages are removed.
+
+## import-x
+
+Available on `main`, unreleased. Import direct/group DMs and supplied local media
+from an extracted X account archive.
+
+```bash
+msgvault import-x <archive-dir>
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--me` | From `account.js` | Numeric X account ID; required without account metadata; conflicting overrides fail |
+| `--no-default-identity` | `false` | Skip recording the source account as a default identity |
+
+Re-imports skip stored messages and retry missing media. See [X DM imports](usage/text-messages.md#import-x)
+for supported layouts, evidence, limits and replay behavior. The source files must
+be on the daemon host; run with `--local` there when using a remote daemon.
+
+## address
+
+Use `msgvault address autocomplete "12 Example"` to request Google Places
+suggestions for a partial address. The command returns JSON with a session
+token, candidates, and attribution. Set `MSGVAULT_GOOGLE_PLACES_API_KEY` in the
+command's environment. This explicit command sends the entered text and any
+location hints to Google; it does not read or change the archive.
+
+Use `--session-token` to reuse the returned token while refining the same
+query. Optional `--language`, `--region`, `--limit` (1–5), and the combination
+`--lat`, `--lng`, `--radius` (metres) refine results. Choose a candidate before
+running `msgvault address select <place-id> --session-token <token>`. The select
+command returns address-only Place Details as JSON and ends the session. Start
+a new session for a new selection. Suggestions and selected details are not
+address validation or an archive write. Display Google Maps attribution with
+suggestions and follow Google's Places display and attribution policies.
+
+Google bills Places separately from the free GoPlaces software. Autocomplete
+and Details requests have separate free monthly usage caps; incomplete or
+abandoned sessions are charged per request. Check current [Google pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
+and [session pricing](https://developers.google.com/maps/documentation/places/web-service/session-pricing).

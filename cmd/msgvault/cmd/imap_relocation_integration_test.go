@@ -126,6 +126,81 @@ func (f relocationFixture) assertSent(t *testing.T, otherMemberships ...string) 
 	assert.Zero(total)
 }
 
+// TestIMAPFlagRefreshSurvivesCanonicalRelocation removes the canonical copy of
+// a message held in three mailboxes and changes the flags of the copy that does
+// not take over. The run relocates the archived row to the first surviving
+// copy, so the source message ID the flag refresh read from the archive no
+// longer names any row when the deltas commit. The flag change must still land
+// on the same archived message, and the run must keep its cursors.
+func TestIMAPFlagRefreshSurvivesCanonicalRelocation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	addr, user := testutil.StartIMAPMemServer(t, map[string]int{"Archive": 0, "INBOX": 0, "Work": 0})
+	raw := []byte("From: sender@example.test\r\nTo: recipient@example.test\r\n" +
+		"Date: Mon, 1 Jan 2024 00:00:00 +0000\r\nMessage-ID: <relocated-flags@example.test>\r\n" +
+		"Subject: Synthetic relocated flags\r\n\r\nSynthetic body.\r\n")
+	for _, mailbox := range []string{"Archive", "INBOX", "Work"} {
+		testutil.AppendIMAPRawMessage(t, user, mailbox, raw)
+	}
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(sourceTypeIMAP, "imap://relocated-flags@example.test")
+	require.NoError(err)
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+
+	runSync := func() {
+		t.Helper()
+		client := newScriptedRFC7162Client(t, addr,
+			imapFolderStateOptions(st, src, false, cfg, testDiscardLogger())...)
+		options := msgsync.DefaultOptions()
+		options.SourceType = sourceTypeIMAP
+		options.NoResume = true
+		summary, err := newMessageSyncer(client, st, options, testInvocationWithConfig(cfg)).
+			FullWithFinalizer(t.Context(), src, func(summary *gmail.SyncSummary) error {
+				return saveIMAPFolderStates(t.Context(), st, src, client, summary, 0)
+			})
+		require.NoError(err)
+		require.Zero(summary.Errors)
+		require.NoError(client.Close())
+	}
+	canonical := func() (int64, string) {
+		t.Helper()
+		var (
+			id  int64
+			key string
+		)
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+			`SELECT id, source_message_id FROM messages WHERE source_id = ?`,
+		), src.ID).Scan(&id, &key))
+		return id, key
+	}
+
+	runSync()
+	id, key := canonical()
+	require.Equal("Archive|1", key, "the first mailbox holds the canonical copy")
+	require.Equal(3, imapMembershipRowCount(t, st, src.ID))
+
+	// INBOX takes over by mailbox order; Work survives with a flag change.
+	testutil.ExpungeIMAPMessage(t, addr, "Archive", 1)
+	testutil.SetIMAPFlags(t, addr, "Work", 1, imapapi.FlagSeen)
+	runSync()
+
+	relocatedID, relocatedKey := canonical()
+	assert.Equal(id, relocatedID, "relocation keeps the archived row")
+	assert.Equal("INBOX|1", relocatedKey)
+	assert.JSONEq(`["\\Seen"]`, imapMembershipFlagsJSON(t, st, src.ID, "Work", 1))
+	assert.Equal(2, imapMembershipRowCount(t, st, src.ID))
+	var workMessageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT message_id FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ? AND uid = ?
+	`), src.ID, "Work", 1).Scan(&workMessageID))
+	assert.Equal(id, workMessageID)
+	states, err := loadIMAPFolderStates(st, src.ID)
+	require.NoError(err)
+	assert.Empty(states["Archive"].KnownUIDs, "the run must commit the expunge")
+}
+
 func TestIMAPRelocationHistoricalNULIdentity(t *testing.T) {
 	testutil.SkipIfPostgres(t, "historical NUL identity keys cannot exist in PostgreSQL TEXT")
 	assert := assert.New(t)

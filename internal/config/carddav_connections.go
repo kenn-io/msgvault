@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/icloudurl"
 )
 
 const DefaultCardDAVConnection = "default"
@@ -19,15 +21,21 @@ func ValidCardDAVProvider(provider string) bool {
 	return provider == "" || provider == "google" || provider == "microsoft"
 }
 
-// SameAccount compares configured identities. Google and Microsoft account
-// emails are case insensitive and independent of the OAuth app used to
-// authorize them.
+// SameAccount compares configured identities. Google, Microsoft and iCloud
+// account names are case insensitive; generic CardDAV names remain exact.
 func (c CardDAVConfig) SameAccount(other CardDAVConfig) bool {
 	if c.Username == "" || other.Username == "" {
 		return false
 	}
 	if c.Provider != "" && c.Provider == other.Provider {
 		return strings.EqualFold(strings.TrimSpace(c.Username), strings.TrimSpace(other.Username))
+	}
+	if c.Provider == "" && other.Provider == "" {
+		_, ok := icloudurl.PartitionRootOrigin(c.BaseURL)
+		_, otherOK := icloudurl.PartitionRootOrigin(other.BaseURL)
+		if ok && otherOK {
+			return strings.EqualFold(c.Username, other.Username)
+		}
 	}
 	return c.BaseURL != "" && c.BaseURL == other.BaseURL && c.Username == other.Username
 }

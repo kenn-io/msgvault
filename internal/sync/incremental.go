@@ -311,7 +311,9 @@ func (s *Syncer) incrementalWithRecovery(
 								return nil, recErr
 							}
 							checkpoint.ErrorsCount++
-							continue
+							if _, committed := errors.AsType[*committedMessageError](err); !committed {
+								continue
+							}
 						}
 						checkpoint.MessagesAdded++
 						summary.BytesDownloaded += int64(len(raw.Raw))
@@ -435,8 +437,14 @@ func (s *Syncer) replayAcquisitionFailures(
 		if _, ok := existing[messageID]; !ok {
 			fetchIDs = append(fetchIDs, messageID)
 		} else {
-			if err := s.resolveAcquisition(messageID); err != nil {
-				return nil, err
+			if err := s.repairPendingAttachments(ctx, sourceID, messageID); err != nil {
+				if ctx.Err() != nil || errors.Is(err, store.ErrSyncRunSuperseded) {
+					return nil, err
+				}
+				if recErr := s.recordAcquisitionFailure(syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
+					return nil, recErr
+				}
+				checkpoint.ErrorsCount++
 			}
 		}
 	}
@@ -501,7 +509,9 @@ func (s *Syncer) replayAcquisitionFailures(
 					return nil, recErr
 				}
 				checkpoint.ErrorsCount++
-				continue
+				if _, committed := errors.AsType[*committedMessageError](err); !committed {
+					continue
+				}
 			}
 			checkpoint.MessagesAdded++
 			summary.BytesDownloaded += int64(len(result.Message.Raw))
@@ -527,16 +537,17 @@ func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64
 				continue
 			}
 		}
+		_, existedBeforeChange := existingMap[item.Message.ID]
 		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap, checkpoint, summary)
+		if discoverable {
+			identityDiscoverySet[item.Message.ID] = struct{}{}
+		}
 		if err != nil {
-			if _, exists := existingMap[item.Message.ID]; exists || errors.Is(err, errAcquisitionFailureRecord) {
+			if existedBeforeChange || errors.Is(err, errAcquisitionFailureRecord) {
 				return fmt.Errorf("add labels for message %s: %w", item.Message.ID, err)
 			}
 			s.logLabelChangeError("add", item.Message.ID, err)
 			continue
-		}
-		if discoverable {
-			identityDiscoverySet[item.Message.ID] = struct{}{}
 		}
 		if updated {
 			updatedExisting[item.Message.ID] = struct{}{}
@@ -582,10 +593,19 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 			if _, err := s.ingestMessage(
 				ctx, sourceID, raw, threadID, labelMap,
 			); err != nil {
+				committed, saved := errors.AsType[*committedMessageError](err)
+				if saved {
+					existingMap[messageID] = committed.messageID
+				}
 				if recErr := s.recordAcquisitionFailure(syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
 					return false, false, recErr
 				}
 				checkpoint.ErrorsCount++
+				if saved {
+					checkpoint.MessagesAdded++
+					summary.BytesDownloaded += int64(len(raw.Raw))
+					return false, true, err
+				}
 				return false, false, err
 			}
 			// Later label events in this sync must take the existing-message

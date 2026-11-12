@@ -499,6 +499,7 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 		options = state.options
 	}
 	proc, err := startServeBackgroundProcessForRun(c, backgroundServeStartOptions{
+		Persistent:       prep.Persistent,
 		CacheBuildIntent: intent,
 		Invocation:       &options,
 	})

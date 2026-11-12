@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"go.kenn.io/msgvault/internal/apiimport"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -31,17 +32,17 @@ func NewWriter(st *store.Store, source *store.Source) *Writer {
 
 // Write validates and stores one message, keyed by message.external_id
 // within the source. Evidence identical to the stored copy writes nothing.
-func (w *Writer) Write(ctx context.Context, message ImportedMessage) (WriteResult, error) {
+func (w *Writer) Write(ctx context.Context, message ImportedMessage) (apiimport.Write, error) {
 	if w == nil || w.store == nil {
-		return WriteResult{}, errors.New("message writer is unavailable")
+		return apiimport.Write{}, errors.New("message writer is unavailable")
 	}
 	normalized, err := normalizeMessage(message)
 	if err != nil {
-		return WriteResult{}, err
+		return apiimport.Write{}, err
 	}
 	snapshot, err := buildMessageSnapshot(w.sourceType, w.sourceIdentifier, normalized)
 	if err != nil {
-		return WriteResult{}, err
+		return apiimport.Write{}, err
 	}
 	return persist(ctx, w.store, w.sourceID, snapshot)
 }

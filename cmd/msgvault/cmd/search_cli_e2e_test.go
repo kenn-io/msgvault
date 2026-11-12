@@ -61,6 +61,13 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		require.NoError(err)
 		ids = append(ids, id)
 	}
+	alex, err := st.EnsureParticipant("alex@example.com", "Alex Kim", "example.com")
+	require.NoError(err)
+	bob, err := st.EnsureParticipant("jimbob@example.com", "Jim Bob", "example.com")
+	require.NoError(err)
+	for i, sender := range []int64{alex, alex, bob} {
+		require.NoError(st.ReplaceMessageRecipients(ids[i], "from", []int64{sender}, nil))
+	}
 	backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: filepath.Join(root, "vectors.db"), MainPath: dbPath, MainDB: st.DB(), Dimension: 4})
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(backend.Close()) })
@@ -101,6 +108,22 @@ func TestSearchDiscoverabilityBuiltCLI(t *testing.T) {
 		decoder.UseNumber()
 		require.NoError(decoder.Decode(value))
 	}
+	var senderRows []query.MessageSummary
+	decode(run("search", "from:alex", "--json"), &senderRows)
+	var got []int64
+	for _, row := range senderRows {
+		got = append(got, row.ID)
+	}
+	assert.ElementsMatch([]int64{ids[0], ids[1]}, got)
+	var semantic struct {
+		Results []query.MessageSummary `json:"results"`
+	}
+	decode(run("search", "project from:alex", "--mode", "hybrid", "--json"), &semantic)
+	require.Len(semantic.Results, 2)
+	for _, row := range semantic.Results {
+		assert.NotEqual(ids[2], row.ID)
+	}
+
 	command := exec.CommandContext(t.Context(), binary, "--home", home, "search", "from:@a.example OR from:@b.example", "--json") //nolint:gosec // The binary path is supplied by the test operator.
 	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "TMPDIR=" + root, "NO_COLOR=1"}
 	var jsonOut, warningOut bytes.Buffer

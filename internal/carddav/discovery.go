@@ -221,6 +221,13 @@ func discoverHref(
 func discoverHrefs(
 	ctx context.Context, client *Client, target *url.URL, property PropertyName, budget *Budget,
 ) ([]*url.URL, error) {
+	return discoverHrefsUsingResolver(ctx, client, target, property, budget, resolveDiscoveryHref)
+}
+
+func discoverHrefsUsingResolver(
+	ctx context.Context, client *Client, target *url.URL, property PropertyName, budget *Budget,
+	resolve func(context.Context, *Client, *url.URL, string) (*url.URL, error),
+) ([]*url.URL, error) {
 	body, err := PropfindBody([]PropertyName{property})
 	if err != nil {
 		return nil, err
@@ -266,7 +273,7 @@ func discoverHrefs(
 	resolved := make([]*url.URL, 0, len(hrefs))
 	seen := map[string]bool{}
 	for _, href := range hrefs {
-		value, err := resolveDiscoveryHref(ctx, client, effectiveTarget, href)
+		value, err := resolve(ctx, client, effectiveTarget, href)
 		if err != nil {
 			return nil, err
 		}
@@ -324,7 +331,7 @@ func discoverBooks(
 		}
 		isHome := sameCollectionURL(resolved, effectiveHome)
 		if davResponse.StatusCode != 0 && (davResponse.StatusCode < 200 || davResponse.StatusCode >= 300) {
-			if isHome {
+			if isHome || client.strictDiscovery {
 				return nil, fmt.Errorf("CardDAV discovery response %d failed: %w", index+1, &StatusError{StatusCode: davResponse.StatusCode})
 			}
 			continue
@@ -341,6 +348,9 @@ func discoverBooks(
 			continue
 		}
 		if !properties.ResourceTypePresent {
+			if client.strictDiscovery {
+				return nil, errors.New("iCloud discovery returned an incomplete collection listing")
+			}
 			continue
 		}
 		if !properties.IsAddressBook {
@@ -362,7 +372,7 @@ func discoverBooks(
 		}
 		key := canonicalCollectionURL(resolved)
 		if seen[key] {
-			return nil, fmt.Errorf("CardDAV discovery returned duplicate book %s", key)
+			return nil, errors.New("CardDAV discovery returned a duplicate address book")
 		}
 		seen[key] = true
 		displayName := strings.TrimSpace(properties.DisplayName)
@@ -453,8 +463,11 @@ func resolveDiscoveryHref(ctx context.Context, client *Client, base *url.URL, hr
 		return nil, ErrUnsafeHref
 	}
 	resolved, err := base.Parse(href)
-	if err != nil || resolved.User != nil || resolved.Fragment != "" || !sameOrigin(client.origin, resolved) {
+	if err != nil || resolved.User != nil || resolved.Fragment != "" {
 		return nil, ErrUnsafeHref
+	}
+	if !sameOrigin(client.origin, resolved) {
+		return nil, discoveryOriginError(resolved)
 	}
 	if _, err := client.validateTarget(ctx, resolved); err != nil {
 		return nil, fmt.Errorf("discovery href: %w", ErrUnsafeHref)
@@ -468,6 +481,9 @@ func discoveryFallbackAllowed(err error) bool {
 	}
 	var status *StatusError
 	if !errors.As(err, &status) {
+		return false
+	}
+	if status.RetryAfter > 0 {
 		return false
 	}
 	switch status.StatusCode {

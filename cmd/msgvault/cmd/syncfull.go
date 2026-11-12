@@ -437,6 +437,21 @@ func imapFolderStateOptions(
 	opts = append(opts, imaplib.WithSourceMessageAliasLoader(
 		func(mailbox string, uids []uint32) (map[string]string, error) {
 			return s.GetIMAPSourceMessageAliases(src.ID, mailbox, uids)
+		}), imaplib.WithStoredMembershipLoader(
+		func(ctx context.Context, mailbox string, uidValidity uint32, uids []uint32) (map[uint32]imaplib.StoredMembership, error) {
+			stored, err := s.GetIMAPStoredMemberships(ctx, src.ID, mailbox, uidValidity, uids)
+			if err != nil {
+				return nil, err
+			}
+			result := make(map[uint32]imaplib.StoredMembership, len(stored))
+			for uid, membership := range stored {
+				result[uid] = imaplib.StoredMembership{
+					MessageID:       membership.MessageID,
+					SourceMessageID: membership.SourceMessageID,
+					Flags:           membership.Flags,
+				}
+			}
+			return result, nil
 		}), imaplib.WithRelocationCandidateLoader(
 		func(ctx context.Context, lost []string) ([]imaplib.RelocationCandidate, error) {
 			candidates, err := s.GetIMAPRelocationCandidatesContext(ctx, src.ID, lost)
@@ -487,6 +502,9 @@ func applyIMAPMailboxDeltas(
 			if existing.CanonicalSourceMessageID == "" {
 				existing.CanonicalSourceMessageID = observation.CanonicalSourceMessageID
 			}
+			if existing.ArchivedMessageID == 0 {
+				existing.ArchivedMessageID = observation.ArchivedMessageID
+			}
 			if existing.RFC822MessageID == "" {
 				existing.RFC822MessageID = observation.RFC822MessageID
 			}
@@ -509,6 +527,7 @@ func applyIMAPMailboxDeltas(
 			RawSHA256:                observation.RawSHA256,
 			RawSize:                  observation.RawSize,
 			Flags:                    append([]string(nil), observation.Flags...),
+			ArchivedMessageID:        observation.ArchivedMessageID,
 		})
 	}
 	byMailbox := make(map[string][]store.IMAPMembershipObservation)

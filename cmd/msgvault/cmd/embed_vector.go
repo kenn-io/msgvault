@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
@@ -24,21 +26,31 @@ import (
 )
 
 func runEmbed(cmd *cobra.Command) error {
+	return runEmbedWithOptions(cmd, managedEmbedOptions{fullRebuild: embedFullRebuild, yes: embedYes, backstop: embedBackstop, accounts: embedAccounts, collections: embedCollections})
+}
+
+func runEmbedWithOptions(cmd *cobra.Command, opts managedEmbedOptions) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
+	configCopy := *state.cfg
+	stateCopy := *state
+	stateCopy.cfg = &configCopy
+	state = &stateCopy
 	cfg := state.cfg
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
-	release, err := acquireDirectSQLiteWriteLock(ctx, cfg, state)
-	if err != nil {
-		return err
+	if opts.yield == nil {
+		release, err := acquireDirectSQLiteWriteLock(ctx, cfg, state)
+		if err != nil {
+			return err
+		}
+		defer release()
 	}
-	defer release()
 
-	s, err := store.Open(cfg.DatabaseDSN())
+	s, err := store.OpenContext(ctx, cfg.DatabaseDSN())
 	if err != nil {
 		return fmt.Errorf("open main db: %w", err)
 	}
@@ -49,7 +61,7 @@ func runEmbed(cmd *cobra.Command) error {
 	// column, InitSchema's LegacyColumnMigrations adds it; without this
 	// the backfill UPDATE and CoverageCounts below fail with "no such
 	// column: embed_gen". serve.go does the same before setupVectorFeatures.
-	if err := s.InitSchema(); err != nil {
+	if err := s.InitSchemaContext(ctx); err != nil {
 		return fmt.Errorf("init schema: %w", err)
 	}
 
@@ -58,12 +70,20 @@ func runEmbed(cmd *cobra.Command) error {
 	// --account/--collection flags (or [vector.embed.scope] accounts)
 	// become source IDs here, and unknown identifiers fail the run loudly
 	// rather than silently widening the embedded corpus.
-	if err := resolveEmbedScopeSourceIDs(ctx, s, state); err != nil {
+	if err := resolveEmbedScopeSourceIDsFor(ctx, s, state, opts.accounts, opts.collections); err != nil {
 		return err
 	}
+	var scopedSources []*store.Source
+	if opts.yield != nil {
+		for _, id := range cfg.Vector.Embed.Scope.SourceIDs {
+			source, err := s.GetSourceByIDContext(ctx, id)
+			if err != nil {
+				return fmt.Errorf("read embedding scope source: %w", err)
+			}
+			scopedSources = append(scopedSources, source)
+		}
+	}
 
-	configCopy := *cfg
-	cfg = &configCopy
 	cfg.Vector, err = resolveLocalVectorConfig(ctx, cfg.Vector)
 	if err != nil {
 		return err
@@ -127,12 +147,12 @@ func runEmbed(cmd *cobra.Command) error {
 	defer func() { _ = closeFn() }()
 
 	gen, rebuildInProgress, err := pickEmbedGeneration(ctx, backend, embedGenerationOpts{
-		FullRebuild: embedFullRebuild,
+		FullRebuild: opts.fullRebuild,
 		Model:       cfg.Vector.Embeddings.Model,
 		Dimension:   cfg.Vector.Embeddings.Dimension,
 		Fingerprint: cfg.Vector.GenerationFingerprint(),
 		Confirm: func() bool {
-			return embedYes ||
+			return opts.yes ||
 				confirmEmbed(cmd, "Start a full rebuild? This builds a new generation and atomically swaps it in when complete. ")
 		},
 		Stderr: errOut,
@@ -172,7 +192,11 @@ func runEmbed(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("load provider credentials: %w", err)
 	}
-	embeddingAPIKey, err := resolveTextEmbeddingCredential(credentialSnapshot, cfg.Vector)
+	lookup := opts.lookupEnv
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	embeddingAPIKey, err := resolveTextEmbeddingCredentialWithLookup(credentialSnapshot, cfg.Vector, lookup)
 	if err != nil {
 		return fmt.Errorf("resolve text embedding credential: %w", err)
 	}
@@ -184,15 +208,52 @@ func runEmbed(cmd *cobra.Command) error {
 		Progress:     newProgressPrinter(errOut, totalPending, cfg.Vector.Embeddings.ETAWindow),
 		PersonGate:   personGate,
 		APIKey:       embeddingAPIKey,
+		Log:          state.logger,
 	})
 	if err != nil {
 		return fmt.Errorf("configure embedding runtime: %w", err)
 	}
 
-	res, err := runEmbeddingPasses(ctx, runtime.Runner, gen, embedBackstop,
-		cfg.Vector.Embeddings.EffectiveAPIFormat(), errOut)
-	if err != nil {
-		return fmt.Errorf("embed run: %w", err)
+	var res embed.RunResult
+	yielded := false
+	for {
+		passCtx := ctx
+		stop := func() {}
+		if opts.passContext != nil {
+			passCtx, stop = opts.passContext(ctx)
+		}
+		pass, passErr := runEmbeddingPasses(passCtx, runtime.Runner, gen, opts.backstop,
+			cfg.Vector.Embeddings.EffectiveAPIFormat(), errOut)
+		preempted := jobctx.PreemptionRequested(passCtx)
+		stop()
+		res.Claimed += pass.Claimed
+		res.Succeeded += pass.Succeeded
+		res.Failed += pass.Failed
+		res.Truncated += pass.Truncated
+		if passErr != nil {
+			return fmt.Errorf("embed run: %w", passErr)
+		}
+		if !preempted {
+			break
+		}
+		if err := opts.yield(); err != nil {
+			return err
+		}
+		for _, original := range scopedSources {
+			current, err := s.GetSourceByIDContext(ctx, original.ID)
+			if errors.Is(err, store.ErrSourceNotFound) {
+				return fmt.Errorf("embedding scope changed while the build was paused: account %q was removed", original.Identifier)
+			}
+			if err != nil {
+				return fmt.Errorf("check embedding scope after pause: %w", err)
+			}
+			if current.SourceType != original.SourceType || current.Identifier != original.Identifier {
+				return fmt.Errorf("embedding scope changed while the build was paused: account %q was replaced", original.Identifier)
+			}
+		}
+		yielded = true
+		// A sync may have changed a message below the forward watermark.
+		opts.backstop = true
 	}
 	_, _ = fmt.Fprintf(out, "Scanned: %d, succeeded: %d, failed: %d, truncated: %d\n",
 		res.Claimed, res.Succeeded, res.Failed, res.Truncated)
@@ -202,12 +263,31 @@ func runEmbed(cmd *cobra.Command) error {
 	// worker later recovers from must not block activation, and an
 	// active generation must not be re-activated.
 	if rebuildInProgress {
-		activated, err := activateBuiltGeneration(ctx, backend, runtime.Convergence, gen,
-			cfg.Vector.Embeddings.EffectiveAPIFormat(), out, errOut)
-		if err != nil {
-			return err
+		activated := false
+		if yielded {
+			active, activeErr := backend.ActiveGeneration(ctx)
+			if activeErr == nil && active.ID == gen {
+				coverage, err := runtime.Convergence.CheckConvergence(ctx, gen)
+				if err != nil {
+					return fmt.Errorf("check generation convergence: %w", err)
+				}
+				if !coverage.Complete() {
+					return convergenceError(gen, coverage)
+				}
+				activated = true
+			}
+			if activeErr != nil && !errors.Is(activeErr, vector.ErrNoActiveGeneration) {
+				return fmt.Errorf("read active generation: %w", activeErr)
+			}
 		}
-		if activated && (len(embedAccounts) > 0 || len(embedCollections) > 0) {
+		if !activated {
+			activated, err = activateBuiltGeneration(ctx, backend, runtime.Convergence, gen,
+				cfg.Vector.Embeddings.EffectiveAPIFormat(), out, errOut)
+			if err != nil {
+				return err
+			}
+		}
+		if activated && (len(opts.accounts) > 0 || len(opts.collections) > 0) {
 			_, _ = fmt.Fprintln(errOut, "This active generation was scoped with --account/--collection. To keep it usable after a daemon restart, add equivalent accounts to [vector.embed.scope] in config.toml and restart the daemon; otherwise vector search reports index_stale.")
 		}
 	}
@@ -255,7 +335,7 @@ func runEmbeddingPasses(
 		total.Failed += pass.Failed
 		total.Truncated += pass.Truncated
 		total.Contextual = pass.Contextual
-		if apiFormat != vector.APIFormatVoyageContextual || pass.Contextual == nil || pass.Contextual.Converged {
+		if jobctx.PreemptionRequested(ctx) || apiFormat != vector.APIFormatVoyageContextual || pass.Contextual == nil || pass.Contextual.Converged {
 			return total, nil
 		}
 		if pass.Claimed == 0 && pass.Succeeded == 0 && pass.Failed == 0 && pass.Truncated == 0 {

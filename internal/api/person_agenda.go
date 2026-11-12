@@ -279,7 +279,8 @@ func writePersonAgendaError(w http.ResponseWriter, err error) {
 func (s *Server) handleKataIntegrationStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfg.Integrations.Kata
 	status := taskclient.EvaluateKata(r.Context(), taskclient.IntegrationConfig{
-		Enabled: cfg.Enabled, Endpoint: cfg.Endpoint, APIKey: cfg.APIKey, DefaultProject: cfg.DefaultProject,
+		TrustPrivateNetwork: cfg.TrustPrivateNetwork,
+		Enabled:             cfg.Enabled, Endpoint: cfg.Endpoint, APIKey: cfg.APIKey, DefaultProject: cfg.DefaultProject,
 	})
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, TaskIntegrationStatusResponse{State: status.State, Project: status.Project, Message: status.Message, SecurityNote: status.SecurityNote})

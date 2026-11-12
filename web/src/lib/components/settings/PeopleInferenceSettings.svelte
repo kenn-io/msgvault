@@ -3,6 +3,8 @@
   import type { APIClient } from '../../api/client';
   import type { PeopleInferencePresetCreateRequest } from '../../api/generated/models';
   import { credentialStatus, PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
+  import TrackedFieldsList from './TrackedFieldsList.svelte';
+  import { trackUnsavedForm } from '../../settings/unsaved-forms.svelte';
 
   let { client, controller }: { client: APIClient; controller: PeopleInferenceController } = $props();
   let provider = $state<PeopleInferencePresetCreateRequest['preset_id']>('openai');
@@ -17,6 +19,15 @@
   let retentionPosture = $state('');
   let trainingPosture = $state('');
   let removeConfirmationName = $state('');
+  trackUnsavedForm({
+    dirty: () => Boolean(name || model || key || replacementKey || allowedSources.length || sourceSince || sourceUntil ||
+      sensitiveChoice || retentionPosture || trainingPosture),
+    discard: () => {
+      name = model = key = replacementKey = sourceSince = sourceUntil = '';
+      sensitiveChoice = retentionPosture = trainingPosture = '';
+      allowedSources = [];
+    },
+  });
 
   async function createProfile(): Promise<void> {
     const stableName = name.trim();
@@ -94,7 +105,6 @@
         <legend>Archive source classes</legend>
         <Checkbox label="Conversation text" checked={allowedSources.includes('conversation_text')} onchange={(checked) => setSource('conversation_text', checked)} />
         <Checkbox label="Meeting text" checked={allowedSources.includes('meeting_text')} onchange={(checked) => setSource('meeting_text', checked)} />
-        <Checkbox label="Document text" checked={allowedSources.includes('document_text')} onchange={(checked) => setSource('document_text', checked)} />
       </fieldset>
       <label>Archive data since (YYYY-MM-DD)<TextInput bind:value={sourceSince} placeholder="YYYY-MM-DD" required block /></label>
       <label>Archive data until (optional, YYYY-MM-DD)<TextInput bind:value={sourceUntil} placeholder="YYYY-MM-DD" block /></label>
@@ -172,6 +182,7 @@
       </div>
     {/if}
   {/if}
+  <TrackedFieldsList {client} />
 </section>
 
 <style>

@@ -774,9 +774,7 @@ func TestImportSecondRunIncremental(t *testing.T) {
 	f.resetRequests()
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
-	// The reconcile pass may re-upsert recent messages, so MessagesAdded can
-	// exceed 3; the DB count is the duplicate-free ground truth.
-	assert.GreaterOrEqual(sum.MessagesAdded, int64(3))
+	assert.EqualValues(3, sum.MessagesAdded, "only new rows count as added")
 
 	var total int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
@@ -1073,6 +1071,361 @@ func TestImportReconcileVisitsRecentChatWithoutNewActivity(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT deleted_from_source_at FROM messages WHERE source_message_id = ?`), "ri0").Scan(&deletedAt))
 	assert.True(deletedAt.Valid, "recent inactive chat must be reconciled despite the newer global watermark")
+}
+
+// recentChat builds a chat whose messages all sit inside the reconcile window.
+func recentChat() *fakeChat {
+	base := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	ch := &fakeChat{
+		ID: "!steady:beeper.local", AccountID: "signal", Network: "Signal", Title: "Steady", Type: "single",
+		Participants: []map[string]any{
+			{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+		},
+	}
+	for i := range 5 {
+		ch.Msgs = append(ch.Msgs, fakeMsg{
+			ID: "s" + strconv.Itoa(i), SortKey: i,
+			Timestamp: base.Add(time.Duration(i) * time.Minute),
+			Text:      "steady " + strconv.Itoa(i),
+			SenderID:  "@signal_ann:beeper.local", SenderName: "Ann",
+		})
+	}
+	ch.LastActivity = ch.Msgs[len(ch.Msgs)-1].Timestamp
+	return ch
+}
+
+func TestImportReconcileSkipsUnchangedMessages(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(recentChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	first, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.EqualValues(5, first.MessagesAdded)
+	assert.Zero(first.MessagesUpdated)
+
+	// A scheduled run with nothing new rewrites nothing.
+	quiet, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.Zero(quiet.MessagesAdded)
+	assert.Zero(quiet.MessagesUpdated)
+	assert.Zero(quiet.MessagesProcessed)
+	assert.EqualValues(5, quiet.MessagesUnchanged, "the reconcile pass still checks every recent message")
+
+	// One message is edited, another gains a reaction, and one new message arrives.
+	ch := f.chat("!steady:beeper.local")
+	edited := time.Now().UTC().Truncate(time.Second)
+	ch.Msgs[1].Text = "steady 1, edited"
+	ch.Msgs[1].EditedTimestamp = &edited
+	ch.Msgs[3].Reactions = []map[string]any{
+		{"id": "@me:beeper.local", "reactionKey": "👍", "participantID": "@me:beeper.local", "emoji": true},
+	}
+	f.appendMsg("!steady:beeper.local", fakeMsg{
+		ID: "s5", SortKey: 5, Timestamp: edited,
+		Text: "newest", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+	})
+
+	changed, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.EqualValues(1, changed.MessagesAdded, "only the new message counts as added")
+	assert.EqualValues(2, changed.MessagesUpdated, "the edit and the reaction are rewritten")
+	assert.EqualValues(4, changed.MessagesUnchanged,
+		"three untouched messages and the one the incremental pass just archived are skipped")
+
+	var added, updated int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT messages_added, messages_updated FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`),
+		changed.SourceID).Scan(&added, &updated))
+	assert.EqualValues(1, added, "the sync run records only real inserts as added")
+	assert.EqualValues(2, updated)
+
+	var body string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT b.body_text FROM message_bodies b
+		JOIN messages m ON m.id = b.message_id
+		WHERE m.source_message_id = ?`), "s1").Scan(&body))
+	assert.Equal("steady 1, edited", body)
+	var reactions int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM reactions r
+		JOIN messages m ON m.id = r.message_id
+		WHERE m.source_message_id = ?`), "s3").Scan(&reactions))
+	assert.Equal(1, reactions)
+}
+
+func TestImportReconcileRewritesMessageWithoutCompleteArchive(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(recentChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	// An interrupted run leaves a message row without its raw archive, which
+	// persistMessage writes last. The next re-walk must finish that message.
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
+		DELETE FROM message_raw WHERE message_id = (
+			SELECT id FROM messages WHERE source_message_id = ?)`), "s2")
+	require.NoError(err)
+
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.EqualValues(1, sum.MessagesUpdated)
+	assert.EqualValues(4, sum.MessagesUnchanged)
+	var raws int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM message_raw r
+		JOIN messages m ON m.id = r.message_id
+		WHERE m.source_message_id = ?`), "s2").Scan(&raws))
+	assert.Equal(1, raws)
+}
+
+func TestImportReconcileRetriesFailedAuxiliaryWrite(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(recentChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	f.chat("!steady:beeper.local").Msgs[3].Reactions = []map[string]any{
+		{"id": "@me:beeper.local", "reactionKey": "👍", "participantID": "@me:beeper.local", "emoji": true},
+	}
+	release := failWrites(t, st, "reactions", "INSERT")
+	failed, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.Positive(failed.Errors, "the reaction write must fail")
+	release()
+	// The source JSON is archived even though a write beside it failed.
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), "s3").Scan(&messageID))
+	raw, err := st.GetMessageRawContext(t.Context(), messageID)
+	require.NoError(err)
+	assert.Contains(string(raw), "reactionKey")
+
+	// The incoming message has not changed since the failed run, but its
+	// reaction was never stored, so the next re-check must write it again.
+	retried, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.EqualValues(1, retried.MessagesUpdated)
+	var reactions int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM reactions r
+		JOIN messages m ON m.id = r.message_id
+		WHERE m.source_message_id = ?`), "s3").Scan(&reactions))
+	assert.Equal(1, reactions)
+}
+
+// failWrites makes every event (INSERT, UPDATE, or DELETE) on table fail
+// until the returned function runs.
+func failWrites(t *testing.T, st *store.Store, table, event string) func() {
+	t.Helper()
+	return failWritesWhen(t, st, table, event, "TRUE")
+}
+
+// failWritesWhen is failWrites limited to rows matching the SQL condition when.
+func failWritesWhen(t *testing.T, st *store.Store, table, event, when string) func() {
+	t.Helper()
+	require := require.New(t)
+	name := "fail_beeper_" + table + "_" + strings.ToLower(event)
+	if st.IsPostgreSQL() {
+		_, err := st.DB().ExecContext(t.Context(), `CREATE FUNCTION `+name+`()
+			RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN
+				RAISE EXCEPTION 'forced write failure';
+			END;
+			$$`)
+		require.NoError(err)
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER `+name+`
+			BEFORE `+event+` ON `+table+`
+			FOR EACH ROW WHEN (`+when+`) EXECUTE FUNCTION `+name+`()`)
+		require.NoError(err)
+		release := func() {
+			// Cleanup runs after t.Context() is canceled.
+			ctx := context.WithoutCancel(t.Context())
+			_, err := st.DB().ExecContext(ctx, `DROP TRIGGER IF EXISTS `+name+` ON `+table)
+			require.NoError(err)
+			_, err = st.DB().ExecContext(ctx, `DROP FUNCTION IF EXISTS `+name+`()`)
+			require.NoError(err)
+		}
+		t.Cleanup(release)
+		return release
+	}
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER `+name+`
+		BEFORE `+event+` ON `+table+`
+		FOR EACH ROW WHEN `+when+` BEGIN
+			SELECT RAISE(ABORT, 'forced write failure');
+		END`)
+	require.NoError(err)
+	release := func() {
+		_, err := st.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER IF EXISTS `+name)
+		require.NoError(err)
+	}
+	t.Cleanup(release)
+	return release
+}
+
+func TestImportReconcileRetriesFailedWriteAfterRunAborts(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(recentChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	// s3's reaction write fails, then the walk reaches s1, whose fatal store
+	// error aborts the run before its final checkpoint.
+	ch := f.chat("!steady:beeper.local")
+	ch.Msgs[3].Reactions = []map[string]any{
+		{"id": "@me:beeper.local", "reactionKey": "👍", "participantID": "@me:beeper.local", "emoji": true},
+	}
+	ch.Msgs[1].Text = "steady 1, edited"
+	releaseReactions := failWrites(t, st, "reactions", "INSERT")
+	releaseMessage := failWritesWhen(t, st, "messages", "UPDATE", "NEW.source_message_id = 's1'")
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.Error(err)
+	releaseReactions()
+	releaseMessage()
+
+	// A fresh importer resumes from the aborted run's checkpoint.
+	again := NewImporter(st, imp.client)
+	_, err = again.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var reactions int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM reactions r
+		JOIN messages m ON m.id = r.message_id
+		WHERE m.source_message_id = ?`), "s3").Scan(&reactions))
+	assert.Equal(1, reactions, "the unfinished mark must survive the aborted run")
+}
+
+func TestImportReconcileRepairsPartialRewriteAfterSourceReverts(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(recentChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var messageID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), "s1").Scan(&messageID))
+
+	// An edit rewrites s1's message row, then its body write fails and
+	// aborts the run, leaving the edited snippet beside the original JSON.
+	ch := f.chat("!steady:beeper.local")
+	ch.Msgs[1].Text = "steady 1, edited"
+	release := failWritesWhen(t, st, "message_bodies", "UPDATE", "NEW.message_id = "+strconv.FormatInt(messageID, 10))
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.Error(err)
+	release()
+
+	// The sender reverts the edit, so Beeper serves the archived JSON again.
+	ch.Msgs[1].Text = "steady 1"
+	again := NewImporter(st, imp.client)
+	_, err = again.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var snippet string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT snippet FROM messages WHERE id = ?`), messageID).Scan(&snippet))
+	assert.Equal("steady 1", snippet)
+}
+
+func TestImportReconcileLinksUnchangedReplyToLateParent(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	ch := recentChat()
+	for i := range ch.Msgs {
+		ch.Msgs[i].SortKey *= 10
+	}
+	ch.Msgs[4].LinkedMessageID = "late-parent"
+	f.addChat(ch)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	// Beeper later serves the parent behind the reply, which itself is unchanged.
+	ch = f.chat("!steady:beeper.local")
+	ch.Msgs = slices.Insert(ch.Msgs, 4, fakeMsg{
+		ID: "late-parent", SortKey: 35, Timestamp: ch.Msgs[3].Timestamp.Add(30 * time.Second),
+		Text: "parent", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+	})
+
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.EqualValues(1, sum.MessagesAdded)
+	var parent string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT p.source_message_id FROM messages m
+		JOIN messages p ON p.id = m.reply_to_message_id
+		WHERE m.source_message_id = ?`), "s4").Scan(&parent))
+	assert.Equal("late-parent", parent)
+}
+
+func TestImportReactionWithNewTargetOnSamePageCountsOneAdd(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(recentChat())
+	imp, _, done := newTestImporter(t, f)
+	defer done()
+
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+
+	// Pages arrive newest-first, so the REACTION event refreshes its target
+	// before the walk reaches the target itself.
+	now := time.Now().UTC().Truncate(time.Second)
+	f.appendMsg("!steady:beeper.local", fakeMsg{
+		ID: "target", SortKey: 10, Timestamp: now.Add(-time.Minute),
+		Text: "react to me", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		Reactions: []map[string]any{
+			{"id": "@me:beeper.local", "reactionKey": "👍", "participantID": "@me:beeper.local", "emoji": true},
+		},
+	})
+	f.appendMsg("!steady:beeper.local", fakeMsg{
+		ID: "react-target", SortKey: 11, Timestamp: now,
+		Type: "REACTION", IsHidden: true, LinkedMessageID: "target",
+		SenderID: "@me:beeper.local", SenderName: "Test User",
+	})
+
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	assert.EqualValues(1, sum.ReactionsRefreshed)
+	assert.EqualValues(1, sum.MessagesAdded, "one new row counts as one add")
 }
 
 func TestImportReactionTargetTransientErrorRetries(t *testing.T) {

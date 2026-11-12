@@ -32,7 +32,6 @@ func TestOperationCursorQueryParsesDefaultsAndNormalizedFilters(t *testing.T) {
 		{name: "kind", rawQuery: "kind=source_sync", wantKinds: []operations.Kind{operations.KindSourceSync}, wantLimit: 25},
 		{name: "lane", rawQuery: "lane=messages", wantKinds: []operations.Kind{operations.KindMessageEmbedding, operations.KindSourceSync}, wantLimit: 25},
 		{name: "mixed people lane", rawQuery: "lane=person_facts", wantKinds: []operations.Kind{operations.KindPersonEmbedding, operations.KindPersonEnrichment, operations.KindPersonSweep}, wantLimit: 25},
-		{name: "document lane", rawQuery: "lane=documents", wantKinds: []operations.Kind{operations.KindDocumentEmbedding, operations.KindDocumentExtraction}, wantLimit: 25},
 		{name: "matching kind and lane", rawQuery: "kind=carddav_sync&lane=contacts", wantKinds: []operations.Kind{operations.KindCardDAVSync}, wantLimit: 25},
 		{name: "state dates and limit", rawQuery: "state=partial&started_from=2026-08-01T00%3A00%3A00Z&started_before=2026-09-01T00%3A00%3A00Z&limit=100", wantStates: []operations.State{operations.StatePartial}, wantStartedFrom: &startedFrom, wantStartedBefore: &startedBefore, wantLimit: 100},
 		{name: "canonical fractional date", rawQuery: "started_from=2026-08-01T00%3A00%3A00.1Z", wantStartedFrom: &fractionalFrom, wantLimit: 25},

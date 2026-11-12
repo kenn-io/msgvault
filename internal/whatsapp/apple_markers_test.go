@@ -245,6 +245,25 @@ func TestImportAppleRerunInvalidatesMarkers(t *testing.T) {
 	}
 }
 
+// An attempt that failed before starting a run wrote nothing, so the next
+// import still skips the chats its markers cover.
+func TestImportAppleRerunKeepsMarkersAfterNotStartedAttempt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	chatDBPath := createAppleMarkerFixture(t)
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+	first, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
+	require.NoError(err)
+	require.NotZero(first.MessagesProcessed)
+	require.NoError(st.RecordNotStartedSync(t.Context(), first.SourceID, "open whatsapp db: permission denied"))
+
+	second, err := importer.Import(t.Context(), chatDBPath, appleTestOptions())
+	require.NoError(err)
+	assert.Zero(second.MessagesProcessed)
+}
+
 func TestImportAppleRerunReadsDifferentDatabase(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

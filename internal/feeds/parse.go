@@ -14,8 +14,8 @@ import (
 )
 
 // gofeed's common item keeps an item's content and summary but drops whether
-// each is HTML or plain text. The translators below record plain text in the
-// item's Custom map under these keys, so plain text isn't stripped as HTML.
+// each is HTML or plain text. parseFeed records plain text in the item's
+// Custom map under these keys, so plain text isn't stripped as HTML.
 const (
 	customContentIsText     = "msgvault.content_is_text"
 	customDescriptionIsText = "msgvault.description_is_text"
@@ -24,14 +24,17 @@ const (
 // parseFeed parses an RSS, Atom or JSON feed document.
 func parseFeed(body []byte) (*gofeed.Feed, error) {
 	parser := gofeed.NewParser()
-	parser.AtomTranslator = &atomTranslator{}
-	parser.JSONTranslator = &jsonTranslator{}
+	parser.KeepOriginalFeed = true
 	feed, err := parser.Parse(bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("parse feed: %w", err)
 	}
-	if feed.FeedType == "atom" {
+	switch original := feed.OriginalFeed().(type) {
+	case *atom.Feed:
+		markAtomTextContent(original, feed)
 		markAtomTextSummaries(body, feed)
+	case *gofeedjson.Feed:
+		markJSONText(original, feed)
 	}
 	dropNUL(feed)
 	return feed, nil
@@ -143,27 +146,17 @@ func markAtomTextSummaries(body []byte, feed *gofeed.Feed) {
 	}
 }
 
-// atomTranslator marks content whose type is text (RFC 4287 §4.1.3: the
-// type defaults to text).
-type atomTranslator struct {
-	gofeed.DefaultAtomTranslator
-}
-
-func (t *atomTranslator) Translate(raw any) (*gofeed.Feed, error) {
-	feed, err := t.DefaultAtomTranslator.Translate(raw)
-	if err != nil {
-		return nil, fmt.Errorf("translate atom feed: %w", err)
-	}
-	source, ok := raw.(*atom.Feed)
-	if !ok || len(source.Entries) != len(feed.Items) {
-		return feed, nil
+// markAtomTextContent marks content whose type is text (RFC 4287 §4.1.3:
+// the type defaults to text).
+func markAtomTextContent(source *atom.Feed, feed *gofeed.Feed) {
+	if len(source.Entries) != len(feed.Items) {
+		return
 	}
 	for i, entry := range source.Entries {
 		if entry != nil && entry.Content != nil && atomTextType(entry.Content.Type) {
 			markText(feed.Items[i], customContentIsText)
 		}
 	}
-	return feed, nil
 }
 
 func atomTextType(contentType string) bool {
@@ -175,20 +168,11 @@ func atomTextType(contentType string) bool {
 	}
 }
 
-// jsonTranslator marks content_text, which JSON Feed defines as plain text,
+// markJSONText marks content_text, which JSON Feed defines as plain text,
 // and summary, which it defines as a plain-text sentence or two.
-type jsonTranslator struct {
-	gofeed.DefaultJSONTranslator
-}
-
-func (t *jsonTranslator) Translate(raw any) (*gofeed.Feed, error) {
-	feed, err := t.DefaultJSONTranslator.Translate(raw)
-	if err != nil {
-		return nil, fmt.Errorf("translate JSON feed: %w", err)
-	}
-	source, ok := raw.(*gofeedjson.Feed)
-	if !ok || len(source.Items) != len(feed.Items) {
-		return feed, nil
+func markJSONText(source *gofeedjson.Feed, feed *gofeed.Feed) {
+	if len(source.Items) != len(feed.Items) {
+		return
 	}
 	for i, item := range source.Items {
 		if item == nil {
@@ -199,7 +183,6 @@ func (t *jsonTranslator) Translate(raw any) (*gofeed.Feed, error) {
 		}
 		markText(feed.Items[i], customDescriptionIsText)
 	}
-	return feed, nil
 }
 
 func markText(item *gofeed.Item, key string) {

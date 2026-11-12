@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -252,71 +251,6 @@ func TestImporterMakesMessagesSearchable(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(t, []int64{first.MessageID}, searchIDs(&search.Query{TextTerms: []string{"gizmocrash"}}))
 	assert.Empty(t, searchIDs(&search.Query{TextTerms: []string{"widgetsync"}}), "the replaced body leaves the index")
-}
-
-func TestImporterIndexesWhatARebuildIndexes(t *testing.T) {
-	require := require.New(t)
-
-	st := testutil.NewTestStore(t)
-	if !st.FTS5Available() {
-		t.Skip("FTS5 not available")
-	}
-	// A participant known by an email and, from another source, a phone. A
-	// rebuild indexes a non-email message's sender by phone, else email.
-	participant, err := st.EnsureParticipantContext(t.Context(), "both@example.com", "Both", "example.com")
-	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
-		UPDATE participants SET phone_number = ? WHERE id = ?
-	`), "+15550100777", participant)
-	require.NoError(err)
-
-	req := validRequest(t)
-	req.Message.Sender = MessageImportSender{Name: "Both", Email: "both@example.com"}
-	result, err := NewImporter(st, Hooks{}).Import(t.Context(), req)
-	require.NoError(err)
-
-	indexed := func() string {
-		t.Helper()
-		query := `SELECT subject || char(10) || body || char(10) || from_addr || char(10) ||
-			to_addr || char(10) || cc_addr FROM messages_fts WHERE rowid = ?`
-		if st.IsPostgreSQL() {
-			query = `SELECT search_fts::text FROM messages WHERE id = ?`
-		}
-		var entry string
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(query), result.MessageID).Scan(&entry))
-		return entry
-	}
-	afterImport := indexed()
-	assert.Contains(t, afterImport, "15550100777", "the sender is indexed by phone")
-	_, err = st.RebuildFTS(nil)
-	require.NoError(err)
-	assert.Equal(t, indexed(), afterImport, "a rebuild changes nothing")
-}
-
-func TestImporterArchivesABodyTooDenseToIndexWhole(t *testing.T) {
-	require := require.New(t)
-
-	st := testutil.NewTestStore(t)
-	if !st.FTS5Available() {
-		t.Skip("FTS5 not available")
-	}
-	// 300,000 distinct two-character CJK words, about 2 MB: inside the
-	// import's 16 MiB limit, but past PostgreSQL's 1 MB tsvector limit if
-	// indexed whole.
-	var body strings.Builder
-	for i := range 300_000 {
-		body.WriteRune(rune(0x4E00 + i/2000))
-		body.WriteRune(rune(0x4E00 + i%2000))
-		body.WriteByte(' ')
-	}
-	req := validRequest(t)
-	req.Message.BodyMarkdown = body.String()
-
-	result, err := NewImporter(st, Hooks{}).Import(t.Context(), req)
-	require.NoError(err, "the message is archived, its index bounded")
-	ids, _, err := st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"一丁"}}, 10)
-	require.NoError(err)
-	assert.Equal(t, []int64{result.MessageID}, ids, "the indexed part is searchable")
 }
 
 func TestImporterScopesExternalIDsBySource(t *testing.T) {

@@ -17,7 +17,7 @@ import (
 
 const (
 	syncType = "feed"
-	// maxStoredErrorChars bounds the fetch error a feed keeps for list-feeds.
+	// maxStoredErrorChars bounds the fetch error a feed keeps for source feeds list.
 	maxStoredErrorChars = 500
 )
 
@@ -182,7 +182,7 @@ func selectFeeds(feeds []Feed, urls []string) ([]Feed, error) {
 		}
 		feed, ok := byURL[feedURL]
 		if !ok || !feed.Followed() {
-			return nil, fmt.Errorf("%w: %s; add it with msgvault add-feed", ErrNotFollowed, feedURL)
+			return nil, fmt.Errorf("%w: %s; add it with msgvault source feeds add", ErrNotFollowed, feedURL)
 		}
 		selected = append(selected, feed)
 	}

@@ -75,20 +75,6 @@ func TestGeneratedCalendarEnumsRetainExistingExportedConstants(t *testing.T) {
 	assertions.Equal(generated.CalendarRequestScopeSingle, generated.CalendarRequestScope("single"))
 }
 
-func generatedSettingGroupForCompatibility(group generated.SettingGroup0) generated.SettingGroup0 {
-	return group
-}
-
-func TestGeneratedDocumentStatusRetainsSourceCompatibleQueryAndSettingsConstant(t *testing.T) {
-	query := generated.GetDocumentIndexStatusQuery{
-		ProfileID: "profile", InputKey: "original", MediaType: []string{"application/pdf"},
-	}
-	settingsGroup := generatedSettingGroupForCompatibility(generated.Attachments)
-
-	assert.Equal(t, "profile", query.ProfileID)
-	assert.Equal(t, generated.SettingGroup0("attachments"), settingsGroup)
-}
-
 func TestGeneratedPersonFileGalleryContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -766,10 +752,14 @@ func TestGeneratedMediaSearchAcceptsEmptyAttachmentMetadata(t *testing.T) {
 	requirements.NoError(json.Unmarshal([]byte(`{
 		"results":[],"coverage":{"state":"complete","binding_required":false,"complete_documents":1,"scoped_documents":1},"partial":false,"truncated":false,
 		"pending_occurrences":0,"unavailable_occurrences":0,"attribution_unavailable":0,
-		"attachments":{"results":[{"attachment_id":1,"message_id":2,"conversation_id":3,
+		"attachments":{"requested_mode":"lexical","actual_mode":"lexical","coverage":{"state":"unknown","binding_required":false,"complete_documents":0,"scoped_documents":1},"partial":false,"degradations":[],"results":[{"attachment_id":1,"message_id":2,"conversation_id":3,
 			"filename":"","containing_title":"","excerpt":"matching text"}],"truncated":false}
 	}`), &response))
 	requirements.NoError(response.Validate())
+	response.Attachments.RequestedMode = "semantic"
+	response.Attachments.ActualMode = "semantic"
+	response.Attachments.Results[0].Excerpt = ""
+	requirements.NoError(response.Validate(), "semantic-only attachment matches may have no excerpt")
 }
 
 func TestGeneratedPersonFactEvidenceRequiresPresenceButAcceptsEmptyStrings(t *testing.T) {

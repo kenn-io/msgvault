@@ -178,9 +178,13 @@ func buildExcludedMediaPlan(candidates []store.AttachmentPolicyCandidate, cfg *c
 			// rather than fail closed; scope, account, and size rules still apply.
 			policy.MaxParticipants = 0
 		}
-		reason := policy.Evaluate(attachmentpolicy.Conversation{
+		conversation := attachmentpolicy.Conversation{
 			Type: candidate.ConversationType, ParticipantCount: candidate.ParticipantCount,
-		}, candidate.Size)
+		}
+		if candidate.SourceType == sourceTypeMatrix {
+			conversation = store.MediaConversation(conversation)
+		}
+		reason := policy.Evaluate(conversation, candidate.Size)
 		if reason == "" {
 			if unresolvedLimit {
 				plan.UnresolvedRosters++
@@ -218,6 +222,8 @@ func mediaPolicyForAttachment(cfg *config.Config, candidate store.AttachmentPoli
 		return cfg.Beeper.MediaPolicy(identifier), true
 	case sourceTypeInline:
 		return cfg.Inline.MediaPolicy(identifier), true
+	case sourceTypeMatrix:
+		return cfg.Matrix.MediaPolicy(identifier), true
 	case sourceTypeSlack, sourceTypeSlackdump:
 		teamID, _, ok := splitSlackIdentifier(identifier)
 		if !ok {

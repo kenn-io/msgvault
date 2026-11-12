@@ -83,10 +83,9 @@ type Store struct {
 	lastSyncOptimize time.Time
 	// syncOptimizeNow and checkpointRetryBackoff are test seams, nil in
 	// production.
-	syncOptimizeNow           func() time.Time
-	syncOptimizeHook          func()
-	checkpointRetryBackoff    []time.Duration
-	documentVectorOperationMu sync.Mutex
+	syncOptimizeNow        func() time.Time
+	syncOptimizeHook       func()
+	checkpointRetryBackoff []time.Duration
 	// Test-only seams into migration, backfill, and transaction paths, nil in
 	// production and settable only from test files. They belong to the
 	// Store rather than the package because more than one Store can be
@@ -963,6 +962,20 @@ func (s *Store) withTxContext(ctx context.Context, fn func(tx *loggedTx) error) 
 	return s.withTxOptionsContext(ctx, nil, fn)
 }
 
+// withSourceMaintenanceGateContext fences writers that acquire cascade-child
+// locks before parent FK checks or touch several maintenance tables in a
+// different order. Take sync_runs in ROW EXCLUSIVE mode before any such locks so
+// BeginExclusive waits without holding tables the writer still needs. SQLite
+// needs no extra lock; its ordinary transaction already serializes writers.
+func (s *Store) withSourceMaintenanceGateContext(ctx context.Context, fn func(tx *loggedTx) error) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
+			return err
+		}
+		return fn(tx)
+	})
+}
+
 // withReadSnapshotContext gives a multi-statement aggregate read one stable,
 // read-only database snapshot. PostgreSQL needs REPEATABLE READ because its
 // default READ COMMITTED isolation takes a new snapshot for each statement.
@@ -1161,6 +1174,8 @@ const messagesAccountPendingIndexDefinition = "ON messages(source_id, id) WHERE 
 // it holds only emails whose email_link_keys are not derived yet.
 const messagesEmailLinkagePendingIndexDefinition = "ON messages(source_id, id) WHERE " + emailLinkagePendingPredicate
 
+const messageRecipientsNormalizedEmailIndexDefinition = "ON message_recipients(LOWER(TRIM(email_address)), message_id) WHERE email_address IS NOT NULL AND TRIM(email_address) <> ''"
+
 // The first SQLite index build can take minutes, so log its start and finish.
 func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
 	const name = "idx_message_recipients_email_from"
@@ -1175,6 +1190,30 @@ func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
 	slog.Info("building index", slog.String("index", name), slog.String("table", "message_recipients"))
 	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+name+` ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'`)
+		return err
+	}); err != nil {
+		return err
+	}
+	slog.Info("built index", slog.String("index", name), slog.Duration("elapsed", time.Since(started)))
+	return nil
+}
+
+// ensureMessageRecipientsNormalizedEmailIndex supports batched lookups by the
+// immutable recipient address snapshot. The address column is added by legacy
+// migrations, so this index is created after that migration loop.
+func (s *Store) ensureMessageRecipientsNormalizedEmailIndex(ctx context.Context) error {
+	const name = "idx_message_recipients_normalized_email"
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	started := time.Now()
+	slog.Info("building index", slog.String("index", name), slog.String("table", "message_recipients"))
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+name+` `+messageRecipientsNormalizedEmailIndexDefinition)
 		return err
 	}); err != nil {
 		return err
@@ -1256,6 +1295,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
 		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
 		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
+		{"idx_message_recipients_normalized_email", messageRecipientsNormalizedEmailIndexDefinition},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -1550,7 +1590,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 				return nil
 			}
 			fresh = true
-			return s.initSchemaContext(withWritableSnapshot(ctx, s.db.DB, tx), version)
+			return s.initSchemaContext(withWritableSnapshot(ctx, s.db.DB, tx))
 		})
 		if err != nil {
 			return err
@@ -1560,14 +1600,14 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return nil
 		}
 	}
-	if err := s.initSchemaContext(ctx, version); err != nil {
+	if err := s.initSchemaContext(ctx); err != nil {
 		return err
 	}
 	s.optimizeSQLiteBestEffort(ctx, "schema initialization", false)
 	return nil
 }
 
-func (s *Store) initSchemaContext(ctx context.Context, version int) error {
+func (s *Store) initSchemaContext(ctx context.Context) error {
 	// A missing messages table identifies a fresh PostgreSQL schema. Build the
 	// canonical Message-ID expression index inline after the schema files create
 	// the empty table: CREATE INDEX is cheap there, while making every fresh test
@@ -1779,12 +1819,6 @@ func (s *Store) initSchemaContext(ctx context.Context, version int) error {
 			lastModifiedColumnAdded = true
 		}
 	}
-	if version < 18 {
-		// Earlier versions submitted one provider job per extraction attempt.
-		if _, err := s.db.ExecContext(ctx, `UPDATE document_extractions SET upload_count = 1 WHERE request_count > 0`); err != nil {
-			return fmt.Errorf("backfill document upload counts: %w", err)
-		}
-	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in
@@ -1805,6 +1839,9 @@ func (s *Store) initSchemaContext(ctx context.Context, version int) error {
 		return fmt.Errorf("migrate CardDAV connections: %w", err)
 	}
 	if err := s.ensureCacheSourceAttribution(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureCacheSourceSizeAttribution(ctx); err != nil {
 		return err
 	}
 	// Older runs predate typed checkpoints. Restore types only when the source
@@ -2028,6 +2065,11 @@ func (s *Store) initSchemaContext(ctx context.Context, version int) error {
 	); err != nil {
 		return fmt.Errorf("ensure person sweep change triggers: %w", err)
 	}
+	// Replace callers before dropping the document helper they used. Each
+	// committed migration boundary must leave message writes usable.
+	if err := s.runOnceMigration(ctx, "drop_document_index_v1", 1, false, s.dropDocumentIndex); err != nil {
+		return err
+	}
 	if err := s.runOnceMigration(
 		ctx, migrationActivityProjectionTriggers, 1, false,
 		func(ctx context.Context) error {
@@ -2249,6 +2291,9 @@ func (s *Store) initSchemaContext(ctx context.Context, version int) error {
 
 		if err := s.ensureFromAddressIndex(ctx); err != nil {
 			return fmt.Errorf("create identity From-envelope index: %w", err)
+		}
+		if err := s.ensureMessageRecipientsNormalizedEmailIndex(ctx); err != nil {
+			return fmt.Errorf("create normalized recipient-envelope index: %w", err)
 		}
 	}
 

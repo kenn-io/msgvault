@@ -1,3 +1,8 @@
+import Mail from '@lucide/svelte/icons/mail';
+import MessageCircle from '@lucide/svelte/icons/message-circle';
+import Mic from '@lucide/svelte/icons/mic';
+import Calendar from '@lucide/svelte/icons/calendar';
+import Archive from '@lucide/svelte/icons/archive';
 import type { SourceStatus } from '../api/generated/models';
 import { sentenceCase } from '../explore/labels';
 
@@ -6,18 +11,23 @@ import { sentenceCase } from '../explore/labels';
 // the identifier stands alone.
 const SOURCE_TYPES: Readonly<Record<string, string>> = {
   '': '', gmail: 'Gmail', imap: 'IMAP', msmail: 'Microsoft mail', teams: 'Teams',
-  discord: 'Discord', feed: 'Feeds', meeting_import: 'Meeting import', message_import: 'Message import', synctech_sms: 'SMS backup',
+  discord: 'Discord', feed: 'Feeds', chatwoot: 'Chatwoot', meeting_import: 'Meeting import', message_import: 'Message import', synctech_sms: 'SMS backup',
   imazing_csv: 'iMazing CSV', circleback: 'Circleback', plaud: 'Plaud', pocket: 'Pocket', gcal: 'Google Calendar', muesli: 'Muesli',
   granola: 'Granola', notion_meetings: 'Notion meetings', twilio: 'Twilio', pst: 'PST import',
   'apple-mail': 'Apple Mail', mbox: 'Mbox import', beeper: 'Beeper', slack: 'Slack', inline: 'Inline', matrix: 'Matrix',
   eml: 'EML import', maildir: 'Maildir import', whatsapp: 'WhatsApp',
   apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger',
+  facebook_comments: 'Facebook Page comments',
+  instagram_comments: 'Instagram comments',
   'google-groups': 'Google Groups'
 };
 export function sourceTypeLabel(code: string): string {
   return Object.hasOwn(SOURCE_TYPES, code) ? SOURCE_TYPES[code]! : sentenceCase(code);
 }
 
+// API import sources receive data when a client posts it; they have nothing
+// to sync or schedule.
+const ON_DEMAND_SOURCE_TYPES: ReadonlySet<string> = new Set(['meeting_import', 'message_import']);
 /**
  * The parts that tell a source apart from its displayed name, in order: a
  * part that repeats the name, or an earlier part, exactly says nothing new.
@@ -34,9 +44,6 @@ export function sourceDetails(name: string, ...parts: (string | undefined)[]): s
   return details;
 }
 
-// API import sources receive data when a client posts it; they have nothing
-// to sync or schedule.
-const ON_DEMAND_SOURCE_TYPES: ReadonlySet<string> = new Set(['meeting_import', 'message_import']);
 export function isOnDemandSourceType(code: string): boolean {
   return ON_DEMAND_SOURCE_TYPES.has(code);
 }
@@ -109,4 +116,17 @@ export function sourceMailbox(identifier: string): string {
   } catch {
     return rest.slice(0, at).toLowerCase();
   }
+}
+
+export function sourceDisplayName(type: string | undefined, identifier: string): string {
+  if (type === 'gmail' || type === 'msmail') return identifier;
+  if (type === 'imap') return sourceMailbox(identifier);
+  return type && Object.hasOwn(SOURCE_TYPES, type) ? sourceTypeLabel(type) : identifier;
+}
+
+export function sourceIcon(type: string) {
+  if (['gmail', 'imap', 'msmail', 'pst', 'apple-mail', 'mbox', 'eml', 'maildir', 'google-groups'].includes(type)) return Mail;
+  if (['teams', 'discord', 'synctech_sms', 'imazing_csv', 'twilio', 'beeper', 'slack', 'inline', 'matrix', 'whatsapp', 'apple_messages', 'facebook_messenger', 'chatwoot'].includes(type)) return MessageCircle;
+  if (['meeting_import', 'circleback', 'plaud', 'pocket', 'muesli', 'granola', 'notion_meetings'].includes(type)) return Mic;
+  return type === 'gcal' ? Calendar : Archive;
 }

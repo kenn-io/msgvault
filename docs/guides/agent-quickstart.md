@@ -44,6 +44,7 @@ Choose the connection the owner has authorized:
   grant's permissions and source scope on every call. Scoped archive reads
   require daemon API schema 3.9.0 or newer. The owner can set an expiry and
   select permissions and sources when [issuing a grant](../cli-reference.md#agent-token-issue).
+  Withholding detected verification content from delegated reads requires daemon API schema 3.49.0 or newer. The `verification.read` modifier allows that content and grants no reads alone. See [detection rules and limits](../api-server.md#verification-content).
 
 Use the client's MCP `tools/list` capability to discover the tools and input
 schemas available in this session. Availability depends on the daemon version,
@@ -148,7 +149,12 @@ Continue with the same `id` and advance `offset` by `body_returned` while
   Semantic search sends search text to the configured embedding endpoint.
 - Use `search_media` for spoken words in recording transcripts and, when
   attachment mirroring is enabled, text inside mirrored PDFs and documents.
-  Attachment results link to the messages that hold them.
+  Attachment results link to the messages that hold them. On newer `main`
+  builds, `mode=semantic` or `mode=hybrid` searches files already embedded
+  using the profile selected by
+  `integrations.docbank.attachment_search_profile`. Check the
+  attachment list's actual mode, coverage, partial status and degradations.
+  Recordings support lexical mode only. See [attachment search](../usage/searching.md#search-mirrored-attachment-text).
 - Page search results with `offset` and `limit`; check `has_more`. See
   [search syntax](../usage/searching.md) and the tool schema for supported filters.
 - Use `aggregate` with `group_by`, such as `sender` or `time`, for grouped
@@ -274,7 +280,6 @@ backend checks for action permissions, source scope, and sender identity;
 | `query_sql` | read | — | owner-only |
 | `run_saved_view` | read | — | owner-only |
 | `search_by_domains` | read | — | search.read |
-| `search_document_attachments` | read | — | owner-only |
 | `search_in_message` | read | — | message.read |
 | `search_media` | read | — | owner-only |
 | `search_message_bodies` | read | — | search.read |

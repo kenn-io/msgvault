@@ -169,6 +169,7 @@ var KnownMessageTypes = []string{
 	"teams",
 	"discord",
 	"fbmessenger",
+	"facebook_comments", "instagram_comments",
 	"synctech_sms_call",
 	"google_voice_text",
 	"google_voice_call",
@@ -179,5 +180,6 @@ var KnownMessageTypes = []string{
 	"inline",
 	"matrix",
 	"telegram",
+	"x_dm",
 	"feed_item",
 }

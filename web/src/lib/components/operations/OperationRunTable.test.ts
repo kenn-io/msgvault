@@ -6,16 +6,16 @@ import OperationRunTable from './OperationRunTable.svelte';
 
 it('keeps cancelled run metadata with and without an error', () => {
   const run: OperationRunSummary = {
-    ...jobRun('document_extraction'), state: 'cancelled' as const,
+    ...jobRun('person_embedding'), state: 'cancelled' as const,
     started_at: '2026-10-12T12:00:00Z', finished_at: '2026-10-12T12:01:00Z',
-    counters: [{ name: 'attempted', value: 4, unit: 'documents' }, { name: 'succeeded', value: 4, unit: 'documents' }],
+    counters: [{ name: 'attempted', value: 4, unit: 'people' }, { name: 'succeeded', value: 4, unit: 'people' }],
   };
   render(OperationRunTable, { rows: [
     { ...run, trigger: 'manual', error: { code: 'invocation_cancelled', message: 'Operation was cancelled.' } },
     { ...jobRun('source_sync'), state: 'cancelled', started_at: run.started_at, finished_at: run.finished_at,
       counters: [{ name: 'processed', value: 4, unit: 'messages' }], error: undefined },
   ] });
-  expect(screen.getByText('Manual · 1 minute · 4 documents attempted · 4 succeeded · Operation was cancelled.')).toBeTruthy();
+  expect(screen.getByText('Manual · 1 minute · 4 people attempted · 4 succeeded · Operation was cancelled.')).toBeTruthy();
   expect(screen.getByText('— · 1 minute · 4 messages processed')).toBeTruthy();
 });
 

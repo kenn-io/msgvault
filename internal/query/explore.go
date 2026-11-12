@@ -329,7 +329,7 @@ func buildExploreConditionsWithDialect(request ExploreRequest, dialect exploreCo
 			parts[i] = `(` + dialect.unicodeLower("sender_domain") + ` = ` + dialect.unicodeLower("?") + ` OR message_id IN (
 				SELECT domain_recipient.message_id FROM message_recipients domain_recipient
 				JOIN participants domain_person ON domain_person.id = domain_recipient.participant_id
-				WHERE COALESCE(domain_person.domain, '') = ` + dialect.unicodeLower("?") + `
+				WHERE COALESCE(` + identityindex.SenderDomainExpr("domain_recipient", "domain_person") + `, '') = ` + dialect.unicodeLower("?") + `
 			) OR conversation_id IN (
 				SELECT domain_member.conversation_id FROM conversation_participants domain_member
 				JOIN participants domain_person ON domain_person.id = domain_member.participant_id
@@ -870,7 +870,7 @@ func buildExploreLogicalSQLWithCandidateRank(conditions, candidateRankExpression
 
 // These importers include attachment bytes in their message estimates.
 // Known attachment bytes still bound an incomplete estimate from below.
-const exploreEstimatedBytesSQL = `CASE WHEN lower(source_type) IN ('beeper', 'slack', 'teams', 'inline')
+const exploreEstimatedBytesSQL = `CASE WHEN lower(source_type) IN ('beeper', 'matrix', 'slack', 'teams', 'inline')
 	THEN GREATEST(size_estimate, attachment_size)
 	ELSE size_estimate + attachment_size END`
 

@@ -36,6 +36,31 @@ type ChatState struct {
 	// RosterRetryAfter backs off optional metadata repair after a failed read.
 	// It never certifies message-history coverage or changes message cursors.
 	RosterRetryAfter string `json:"roster_retry_after,omitempty"`
+	// Unfinished maps message IDs to their timestamps for messages whose
+	// archived JSON is current but one of whose other writes failed. The
+	// reconcile pass rewrites them instead of skipping them as unchanged, and
+	// drops entries once they fall outside its window.
+	Unfinished map[string]time.Time `json:"unfinished,omitempty"`
+}
+
+func (cs *ChatState) markUnfinished(messageID string, timestamp time.Time) {
+	if cs.Unfinished == nil {
+		cs.Unfinished = map[string]time.Time{}
+	}
+	cs.Unfinished[messageID] = timestamp
+}
+
+// pruneUnfinished forgets unfinished messages older than cutoff, which no
+// reconcile pass revisits.
+func (cs *ChatState) pruneUnfinished(cutoff time.Time) {
+	for id, ts := range cs.Unfinished {
+		if ts.Before(cutoff) {
+			delete(cs.Unfinished, id)
+		}
+	}
+	if len(cs.Unfinished) == 0 {
+		cs.Unfinished = nil
+	}
 }
 
 // AnchorProbe fingerprints the Beeper installation's message-ID space.
@@ -109,8 +134,8 @@ func (s *SyncState) EnsureChat(chatID string) *ChatState {
 // that cannot be compared by value; like the Teams deltaLink merge, we prefer
 // other's non-empty values wholesale on the assumption that other represents a
 // more recent (checkpoint) run whose cursors are at least as advanced. Tail
-// scan cursors are authoritative in a checkpoint because an empty value clears
-// a completed probe. Checkpoint Done values are authoritative so a reopened
+// scan cursors and unfinished messages are authoritative in a checkpoint
+// because an empty value clears a completed probe or a repaired message. Checkpoint Done values are authoritative so a reopened
 // chat can clear a previous completion. The later ListWatermark wins
 // (RFC3339 is order-comparable).
 func (s *SyncState) Merge(other *SyncState) {
@@ -136,6 +161,7 @@ func (s *SyncState) Merge(other *SyncState) {
 		cs.Done = ocs.Done
 		cs.Gone = ocs.Gone
 		cs.RosterRetryAfter = ocs.RosterRetryAfter
+		cs.Unfinished = ocs.Unfinished
 		if ocs.TailProbed > cs.TailProbed {
 			cs.TailProbed = ocs.TailProbed
 		}

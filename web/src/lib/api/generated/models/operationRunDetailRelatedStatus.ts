@@ -7,8 +7,6 @@ export type OperationRunDetailRelatedStatus =
 
 export const OperationRunDetailRelatedStatus = {
   listSourceStatus: "listSourceStatus",
-  getDocumentIndexStatus: "getDocumentIndexStatus",
-  getDocumentVectorStatus: "getDocumentVectorStatus",
   getVisualAttachmentStatus: "getVisualAttachmentStatus",
   getCardDAVStatus: "getCardDAVStatus",
 } as const;

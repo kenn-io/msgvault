@@ -52,6 +52,12 @@ imports. Use the backfill command above for messages already archived.
 Disabling the setting stops automatic downloads and keeps images already
 stored.
 
+Gmail sync keeps unfinished image archiving retryable after an interruption or
+download error. It saves the message first and reports pending work in its error
+count. The next sync retries from the local archive without downloading the
+message from Gmail again. While automatic downloads are disabled, that work
+stays pending and no image host is contacted.
+
 ## Read and export the archive
 
 The Web UI's message and conversation views use local copies when available.
@@ -85,6 +91,8 @@ backgrounds, `srcset` alternatives, external stylesheets, or linked pages.
 | Redirects per image | 3 |
 
 A message can be archived even when an image exceeds a limit, is unavailable,
-or fails to download. Review image errors separately from mail-import results.
+or fails to download. Gmail sync reports an error and retains the unfinished
+work for retry. Other imports report image errors separately from mail-import
+results.
 Old sender URLs may already have expired; msgvault cannot reconstruct an image
 that the host no longer serves.
