@@ -192,7 +192,8 @@ func TestMeetingOccurrenceCountsAllDayCivilDate(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, record.Links[0].Ref, rows[0].OccurrenceKey)
-	assert.Equal(t, time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC), rows[0].OccurredAt)
+	assert.Equal(t, time.Date(2027, 3, 13, 15, 0, 0, 0, time.UTC), rows[0].OccurredAt)
+	assert.Equal(t, "2027-03-14", rows[0].StartDate)
 	assert.True(t, rows[0].Counted)
 }
 

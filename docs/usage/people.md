@@ -34,7 +34,8 @@ even when it has several linked notes. A calendar event counts without notes;
 an available transcript can count when someone declined the calendar event.
 Cancelled occurrences and transcripts that aren't available do not count on
 their own. Changes appear after the next cache refresh, and a future meeting
-counts at the first cache check after it starts.
+counts at the first cache check after it starts. An all-day meeting starts at
+midnight in its own time zone and keeps its date on the heat calendar.
 
 ## Understand the records
 

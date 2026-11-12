@@ -330,3 +330,112 @@ func TestMeetingCountsAllDayCalendarUsesCivilDate(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingCountsAllDayRefresh(t *testing.T) {
+	year := 2024
+	for _, tc := range []struct {
+		name, zone          string
+		date, before, start time.Time
+		newYear             bool
+	}{
+		{"tokyo", "Asia/Tokyo", time.Date(year, 3, 5, 0, 0, 0, 0, time.UTC), time.Date(year, 3, 4, 14, 30, 0, 0, time.UTC), time.Date(year, 3, 4, 15, 0, 0, 0, time.UTC), false},
+		{"los_angeles", "America/Los_Angeles", time.Date(year, 3, 5, 0, 0, 0, 0, time.UTC), time.Date(year, 3, 5, 0, 30, 0, 0, time.UTC), time.Date(year, 3, 5, 8, 0, 0, 0, time.UTC), false},
+		{"tokyo_new_year", "Asia/Tokyo", time.Date(year+1, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(year, 12, 31, 9, 0, 0, 0, time.UTC), time.Date(year, 12, 31, 15, 0, 0, 0, time.UTC), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			dbPath, analytics := filepath.Join(dir, "archive.db"), filepath.Join(dir, "analytics")
+			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+			source, err := st.GetOrCreateSource("gcal", "owner@example.com")
+			require.NoError(t, err)
+			require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, fmt.Sprintf(`{"calendar_id":"owner@example.com","time_zone":%q}`, tc.zone)))
+			require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+			owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
+			require.NoError(t, err)
+			person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+			require.NoError(t, err)
+			raw := fmt.Sprintf(`{"id":"offsite","start":{"date":%q},"end":{"date":%q}}`, tc.date.Format(time.DateOnly), tc.date.AddDate(0, 0, 1).Format(time.DateOnly))
+			id, err := st.PersistMessage(&store.MessagePersistData{
+				Message:      &store.Message{SourceID: source.ID, SourceMessageID: "offsite", MessageType: "calendar_event", SentAt: sql.NullTime{Time: tc.date, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
+				Conversation: &store.ConversationPersistData{SourceConversationID: "offsite", ConversationType: "meeting"},
+				RawMIME:      []byte(raw), RawFormat: "gcal_json", Metadata: &sql.NullString{String: `{"calendar_id":"owner@example.com"}`, Valid: true},
+			})
+			require.NoError(t, err)
+			require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
+			require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
+			_, err = buildCache(t.Context(), dbPath, analytics, true)
+			require.NoError(t, err)
+			oldNow := derivedRefreshNow
+			t.Cleanup(func() { derivedRefreshNow = oldNow })
+			refresh := func(now time.Time) {
+				t.Helper()
+				derivedRefreshNow = func() time.Time { return now }
+				result, err := buildCache(t.Context(), dbPath, analytics, false)
+				require.NoError(t, err)
+				assert.True(t, result.IdentityOnly)
+			}
+			state := func() query.CacheSyncState {
+				t.Helper()
+				value, err := query.ReadCacheSyncState(analytics)
+				require.NoError(t, err)
+				return value
+			}
+			count := func() int64 {
+				t.Helper()
+				engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, engine.Close()) }()
+				detail, err := engine.GetPerson(t.Context(), person, query.Context{}, nil)
+				require.NoError(t, err)
+				require.NotNil(t, detail)
+				return detail.MeetingCount
+			}
+			_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET content_hash='refresh-fixture' WHERE message_id=?`, id)
+			require.NoError(t, err)
+			refresh(tc.before)
+			assert.Zero(t, count())
+			if tc.newYear {
+				assert.Equal(t, tc.before.Add(time.Hour), state().NextMeetingAt)
+				refresh(tc.before.Add(time.Hour))
+			}
+			assert.Equal(t, tc.start, state().NextMeetingAt)
+			derivedRefreshNow = func() time.Time { return tc.start.Add(30 * time.Minute) }
+			assert.True(t, cacheNeedsBuild(dbPath, analytics).HasMeetingTimeDrift)
+			refresh(tc.start.Add(30 * time.Minute))
+			assert.EqualValues(t, 1, count())
+			engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
+			require.NoError(t, err)
+			for _, zone := range []string{"UTC", "America/Los_Angeles"} {
+				calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: person, Year: tc.date.Year(), Timezone: zone})
+				require.NoError(t, err)
+				var dates []string
+				for _, day := range calendar.Days {
+					if day.Meetings > 0 {
+						dates = append(dates, day.Date)
+					}
+				}
+				assert.Equal(t, []string{tc.date.Format(time.DateOnly)}, dates)
+				assert.Positive(t, calendar.Current.Signals.MeetingSignal)
+				if tc.newYear {
+					previous, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: person, Year: tc.date.Year() - 1, Timezone: zone})
+					require.NoError(t, err)
+					for _, day := range previous.Days {
+						assert.Zero(t, day.Meetings)
+					}
+				}
+			}
+			require.NoError(t, engine.Close())
+			if tc.name == "tokyo" {
+				_, err := st.PersistMessage(&store.MessagePersistData{
+					Message:      &store.Message{SourceID: source.ID, SourceMessageID: "later", MessageType: "email", SentAt: sql.NullTime{Time: tc.date, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
+					Conversation: &store.ConversationPersistData{SourceConversationID: "later", ConversationType: "email"},
+				})
+				require.NoError(t, err)
+				result, err := buildCache(t.Context(), dbPath, analytics, false)
+				require.NoError(t, err)
+				assert.False(t, result.IdentityOnly)
+				assert.EqualValues(t, 1, count())
+			}
+		})
+	}
+}

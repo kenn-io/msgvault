@@ -55,6 +55,8 @@ calendar-only meetings and linked notes. An available transcript can count
 attendance despite a decline. Cancelled occurrences and transcripts that
 aren't available do not count on their own. Changes appear after the next cache
 refresh, and a future meeting counts at the first cache check after it starts.
+An all-day meeting starts at midnight in its own time zone and keeps its date
+on the heat calendar.
 
 Use `msgvault meetings links <note-id>` to see the calendar copies and notes
 that share an exact occurrence. You can also pass `msg:<id>` or an event `ref`

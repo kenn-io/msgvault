@@ -852,7 +852,7 @@ func writeRelationshipBaseFixture(tb testing.TB, empty bool) (string, *sql.DB) {
 	)
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, db.Close()) })
-	writeRelationshipParquet(tb, db, root, DatasetMeetingOccurrences, `SELECT NULL::BIGINT AS message_id, NULL::VARCHAR AS occurrence_key, NULL::TIMESTAMP AS occurred_at, false AS all_day, NULL::BOOLEAN AS counted, []::VARCHAR[] AS declined_emails, 0::DECIMAL(38,0) AS occurrence_id WHERE false`)
+	writeRelationshipParquet(tb, db, root, DatasetMeetingOccurrences, `SELECT NULL::BIGINT AS message_id, NULL::VARCHAR AS occurrence_key, NULL::TIMESTAMP AS occurred_at, NULL::DATE AS start_date, NULL::BOOLEAN AS counted, []::VARCHAR[] AS declined_emails, 0::DECIMAL(38,0) AS occurrence_id WHERE false`)
 
 	where := ""
 	if empty {

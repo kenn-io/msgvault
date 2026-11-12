@@ -19,7 +19,7 @@ type MeetingOccurrence struct {
 	MessageID      int64
 	OccurrenceKey  string
 	OccurredAt     time.Time
-	AllDay         bool
+	StartDate      string
 	Counted        bool
 	DeclinedEmails []string
 }
@@ -46,20 +46,21 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 	}
 	occurrences := map[string]CalendarOccurrence{}
 	var nextAt time.Time
+	lastYear := through.UTC().Add(14 * time.Hour).Year()
 	if err == nil {
-		nextAt = time.Date(through.Year()+1, 1, 1, 0, 0, 0, 0, time.UTC)
+		nextAt = time.Date(lastYear+1, 1, 1, 0, 0, 0, 0, time.UTC).Add(-14 * time.Hour)
 	} else {
 		var hasCalendar bool
 		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE m.deleted_at IS NULL)`).Scan(&hasCalendar); err != nil {
 			return nil, time.Time{}, fmt.Errorf("find calendar events: %w", err)
 		}
 		if hasCalendar {
-			nextAt = time.Date(through.Year()+1, 1, 1, 0, 0, 0, 0, time.UTC)
+			nextAt = time.Date(lastYear+1, 1, 1, 0, 0, 0, 0, time.UTC).Add(-14 * time.Hour)
 		}
 	}
 	unexpandable := map[int64]bool{}
 	if err == nil {
-		for year := earliest.Year(); year <= through.Year(); year++ {
+		for year := earliest.Year(); year <= lastYear; year++ {
 			from := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
 			page, err := s.ListCalendarOccurrencesContext(ctx, from, from.AddDate(1, 0, 0))
 			if errors.Is(err, ErrQueryTooBroad) {
@@ -172,40 +173,26 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 		graph.groups = append(graph.groups, group)
 	}
 
-	rows, err = s.db.QueryContext(ctx, `SELECT d.id,d.is_explicit,d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE l.deleted_at IS NULL AND r.deleted_at IS NULL`)
+	rows, err = s.db.QueryContext(ctx, `SELECT `+meetingDecisionColumns+` FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE l.deleted_at IS NULL AND r.deleted_at IS NULL`)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("read meeting decisions: %w", err)
 	}
-	var decisions []meetingDecisionEdge
-	for rows.Next() {
-		var edge meetingDecisionEdge
-		if err := rows.Scan(&edge.id, &edge.isExplicit, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.a.Anchor, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.b.Anchor, &edge.decision); err != nil {
-			_ = rows.Close()
-			return nil, time.Time{}, fmt.Errorf("scan meeting decision: %w", err)
-		}
-		decisions = append(decisions, edge)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	decisions, err := scanMeetingDecisionEdges(rows)
+	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("read meeting decisions: %w", err)
 	}
 	for _, edge := range decisions {
 		budget := calrecur.RequestReadBudget
-		valid := true
-		for _, endpoint := range []*meetingDecisionEndpoint{&edge.a, &edge.b} {
-			canonical, _, _, err := s.materializedMeetingEndpointRecord(ctx, *endpoint, &budget)
-			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) || errors.Is(err, ErrQueryTooBroad) {
-				valid = false
-				break
-			}
-			if err != nil {
-				return nil, time.Time{}, fmt.Errorf("resolve meeting decision: %w", err)
-			}
-			*endpoint = canonical
-			if _, ok := graph.nodes[canonical.ref()]; !ok {
-				valid = false
-			}
+		valid, _, err := s.resolveMeetingDecision(ctx, &edge, &budget)
+		if errors.Is(err, ErrQueryTooBroad) {
+			continue
 		}
-		if valid {
+		if err != nil {
+			return nil, time.Time{}, fmt.Errorf("resolve meeting decision: %w", err)
+		}
+		_, leftOK := graph.nodes[edge.a.ref()]
+		_, rightOK := graph.nodes[edge.b.ref()]
+		if valid && leftOK && rightOK {
 			graph.candidates = append(graph.candidates, edge)
 		}
 	}
@@ -262,7 +249,8 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 		})
 		var key string
 		var at time.Time
-		cancelled, eligible, allDay := false, false, false
+		cancelled, eligible := false, false
+		var startDate string
 		declined := map[string]bool{}
 		for _, event := range unit.events {
 			if key == "" || event.Ref < key {
@@ -282,12 +270,8 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 		}
 		if len(unit.events) > 0 && !unit.events[0].DeletedFromSource {
 			at = unit.events[0].Start
-			allDay = unit.events[0].AllDay
 			if unit.events[0].AllDay {
-				at, err = time.Parse(time.DateOnly, unit.events[0].StartDate)
-				if err != nil {
-					return nil, time.Time{}, fmt.Errorf("parse all-day meeting date: %w", err)
-				}
+				startDate = unit.events[0].StartDate
 			}
 		} else if len(unit.notes) > 0 {
 			at = unit.notes[0].at
@@ -310,7 +294,7 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 			}
 			for _, id := range []int64{event.MessageID, event.SeriesMessageID} {
 				if id != 0 {
-					result = append(result, MeetingOccurrence{id, key, at, allDay, !cancelled && !ownerDeclined, declinedEmails})
+					result = append(result, MeetingOccurrence{id, key, at, startDate, !cancelled && !ownerDeclined, declinedEmails})
 				}
 			}
 		}
@@ -319,7 +303,7 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 			if note.state == "available" {
 				ids = nil
 			}
-			result = append(result, MeetingOccurrence{note.id, key, at, allDay, !cancelled && (eligible || note.state == "available"), ids})
+			result = append(result, MeetingOccurrence{note.id, key, at, startDate, !cancelled && (eligible || note.state == "available"), ids})
 		}
 	}
 	seenMessages := map[int64]bool{}
