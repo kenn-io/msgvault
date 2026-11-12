@@ -127,8 +127,7 @@ func TestApplyFeedHiddenStateFollowsGraph(t *testing.T) {
 		require.NoError(err)
 		var meta objectMetadata
 		require.NoError(json.Unmarshal([]byte(saved.String), &meta))
-		require.NotNil(meta.Hidden, "hidden state is recorded")
-		return *meta.Hidden
+		return meta.Hidden
 	}
 
 	hide, unhide := change("hide"), change("unhide")
@@ -143,6 +142,60 @@ func TestApplyFeedHiddenStateFollowsGraph(t *testing.T) {
 	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(unhide)))
 	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(hide)))
 	assert.False(archivedHidden(), "a hide delivered again after the unhide leaves the comment visible")
+}
+
+// An archive invariant that the same change always breaks makes the change
+// invalid, so the webhook worker skips it instead of retrying it.
+func TestApplyFeedReportsArchiveInvariantsAsInvalidChanges(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/v26.0/")
+		switch {
+		case id == "me":
+			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+		case id == "100_200" || id == "100_900":
+			_, _ = fmt.Fprintf(w, `{"id":%q,"message":"Example post","from":{"id":"100","name":"Example Page"}}`, id) // #nosec G705 -- test fixture; id is a path segment matched above and is JSON-quoted.
+		case id == "100_201":
+			_, _ = fmt.Fprint(w, `{"id":"100_201","message":"first","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"}}`)
+		case id == "100_400":
+			// Graph answers with a different comment than the one asked for.
+			_, _ = fmt.Fprint(w, `{"id":"100_401","message":"other","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"}}`)
+		case strings.HasPrefix(id, "100_3"):
+			// Each reply in this chain answers the one after it, past the read limit.
+			n, err := strconv.Atoi(strings.TrimPrefix(id, "100_3"))
+			if !assert.NoError(err) {
+				http.Error(w, "unexpected", http.StatusNotFound)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"id":%q,"message":"reply","created_time":"2026-10-01T12:00:00+0000","from":{"id":"300","name":"Example Customer"},"parent":{"id":"100_3%02d"}}`, id, n+1) // #nosec G705 -- test fixture; id is a path segment matched above and is JSON-quoted.
+		default:
+			assert.Fail("unexpected Graph read", r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+	src, err := NewImporter(st, c).Register(t.Context(), "9", "100")
+	require.NoError(err)
+	require.NoError(ApplyFeed(t.Context(), st, c, "9", "100", feedValues(
+		`{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201"}`)))
+
+	err = ApplyFeed(t.Context(), st, c, "9", "100", feedValues(
+		`{"item":"comment","verb":"add","post_id":"100_900","comment_id":"100_201"}`))
+	require.ErrorIs(err, ErrInvalidChange, "a comment archived under another post")
+	assert.Contains(err.Error(), "comment object already belongs to a different root or parent")
+
+	err = ApplyFeed(t.Context(), st, c, "9", "100", feedValues(
+		`{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_300"}`))
+	require.ErrorIs(err, ErrInvalidChange, "a reply chain longer than the read limit")
+	assert.Contains(err.Error(), "comment ancestors exceed the read limit")
+
+	err = ApplyFeed(t.Context(), st, c, "9", "100", feedValues(
+		`{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_400"}`))
+	require.ErrorIs(err, ErrInvalidChange, "Graph answered with a different comment")
+	assert.Contains(err.Error(), "graph object identity mismatch")
+	ids, err := st.MessageExistsBatchContext(t.Context(), src.ID, []string{"100_400", "100_401"})
+	require.NoError(err)
+	assert.Empty(ids, "neither comment is archived")
 }
 
 func TestApplyFeedRefusesUnregisteredPage(t *testing.T) {
