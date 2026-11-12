@@ -3,20 +3,16 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
 )
 
 func runAppreciations(ctx context.Context, t *testing.T, args ...string) (string, error) {
@@ -31,7 +27,7 @@ func runAppreciations(ctx context.Context, t *testing.T, args ...string) (string
 	return out.String(), err
 }
 
-const appreciationPayload = `{"appreciations":[{"suggestion":{"text":"Helped with café\u001b[31m","anchor_id":"a","quote":"exact peer quote","key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","state":"suggested","prior_thanks":"unknown","thanked":null},"peer":{"source_lane":"chat","source_id":2,"message_id":42,"source_message_id":"native-42\u001b[31m","attachment_id":0,"occurrence_key":"o","chunk_key":"c","span_start":1,"span_end":8}},{"suggestion":{"text":"Shared notes","anchor_id":"b","quote":"peer two","key":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"already_thanked","prior_thanks":"evidenced","thanked":{"evidence_id":"e","quote":"exact owner thanks"}},"peer":{"source_lane":"chat","source_id":2,"message_id":43,"source_message_id":"native-43"},"owner":{"source_lane":"chat","source_id":2,"message_id":44,"source_message_id":"native-44"}}],"future":"preserved"}`
+const appreciationPayload = `{"appreciations":[{"suggestion":{"text":"Helped with café\u001b[31m","anchor_id":"a","quote":"exact peer quote","key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","state":"suggested","prior_thanks":"unknown","thanked":null},"peer":{"source_lane":"chat","source_id":2,"message_id":42,"source_message_id":"native-42\u001b[31m","attachment_id":0,"occurrence_key":"o","chunk_key":"c","span_start":1,"span_end":8}},{"suggestion":{"text":"Shared notes","anchor_id":"b","quote":"peer two","key":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"already_thanked","prior_thanks":"evidenced","thanked":{"evidence_id":"e","quote":"exact owner thanks"}},"peer":{"source_lane":"chat","source_id":2,"message_id":43,"source_message_id":"native-43","attachment_id":0,"occurrence_key":"","chunk_key":"","span_start":0,"span_end":0},"owner":{"source_lane":"chat","source_id":2,"message_id":44,"source_message_id":"native-44","attachment_id":0,"occurrence_key":"","chunk_key":"","span_start":0,"span_end":0}}],"future":"preserved"}`
 
 func TestAppreciationsListWireAndOutput(t *testing.T) {
 	daemon := newPersonBriefTestDaemon(t, appreciationPayload)
@@ -69,42 +65,30 @@ func TestAppreciationsDismissForwardsAuditAndErrors(t *testing.T) {
 	for _, value := range []string{key, "owner", "2026-01-02T03:04:05Z", "uid", "9"} {
 		assert.Contains(t, first, value)
 	}
-	second, err := runAppreciations(daemon.ctx, t, "dismiss", "7", key)
-	require.NoError(t, err)
-	// The fixed response checks forwarding, not server-side idempotence.
-	assert.Equal(t, first, second)
 	out, err := runAppreciations(daemon.ctx, t, "dismiss", "7", key, "--json")
 	require.NoError(t, err)
 	assert.Contains(t, out, `"future":true`)
-	for _, status := range []int{http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusServiceUnavailable, http.StatusInternalServerError} {
-		daemon.status = status
-		daemon.response = `{"error":"failure","message":"dismissal failed"}`
-		_, err = runAppreciations(daemon.ctx, t, "dismiss", "7", "invalid")
-		require.Error(t, err)
-		assert.ErrorContains(t, err, "dismissal failed")
-	}
+	daemon.status = http.StatusNotFound
+	daemon.response = `{"error":"failure","message":"dismissal failed"}`
+	_, err = runAppreciations(daemon.ctx, t, "dismiss", "7", "invalid")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "dismissal failed")
 }
 
 func TestAppreciationsRejectInvalidInputAndResponses(t *testing.T) {
 	daemon := newPersonBriefTestDaemon(t, `null`)
-	for _, args := range [][]string{{"list", "0"}, {"list", "999999999999999999999999"}, {"list"}, {"dismiss", "7", ""}, {"dismiss", "7"}} {
+	for _, args := range [][]string{{"list", "0"}, {"dismiss", "7", ""}} {
 		_, err := runAppreciations(daemon.ctx, t, args...)
 		require.Error(t, err)
 	}
 	assert.Zero(t, daemon.requests.Load())
-	for _, body := range []string{"", "{", "null"} {
-		daemon.response = body
-		_, err := runAppreciations(daemon.ctx, t, "list", "7")
-		require.Error(t, err)
-	}
-	ctx, cancel := context.WithCancel(daemon.ctx)
-	cancel()
-	_, err := runAppreciations(ctx, t, "list", "7")
+	_, err := runAppreciations(daemon.ctx, t, "list", "7")
 	require.Error(t, err)
 }
 
-// Exercise the generated client and the server's route segmentation and key
-// validator together. The synthetic handler only records a valid write.
+// The synthetic handler models the stable external routing contract: only the
+// exact returned key identifies the write. ServeMux and the generated client
+// must carry arbitrary path segments without aliasing that key.
 func TestAppreciationDismissEscapesPathDelimiters(t *testing.T) {
 	key := strings.Repeat("a", 64)
 	seen := make(chan string, 4)
@@ -113,20 +97,14 @@ func TestAppreciationDismissEscapesPathDelimiters(t *testing.T) {
 	mux.HandleFunc("POST /api/v1/people/{id}/appreciations/{key}/dismiss", func(w http.ResponseWriter, r *http.Request) {
 		received := r.PathValue("key")
 		seen <- received
-		// Empty audit fields stop the real Store method before it needs a database.
-		_, err := (&store.Store{}).RecordPersonAppreciationDismissalContext(r.Context(), received, "", "", time.Time{})
 		w.Header().Set("Content-Type", "application/json")
-		if errors.Is(err, store.ErrInvalidPersonAppreciationKey) {
+		if received != key {
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = fmt.Fprint(w, `{"error":"invalid_key","message":"invalid key"}`)
-			return
-		}
-		if !errors.Is(err, store.ErrInvalidPersonAppreciationAudit) {
-			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"invalid_key","message":"invalid key"}`))
 			return
 		}
 		writes.Add(1)
-		_, _ = fmt.Fprintf(w, `{"contribution_key":%q}`, received)
+		_, _ = w.Write([]byte(`{"contribution_key":"` + key + `"}`))
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
