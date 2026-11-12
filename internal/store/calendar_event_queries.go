@@ -29,6 +29,8 @@ type CalendarEventRow struct {
 const maxCalendarSeries = 2000
 const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
+const calendarSeriesWindow = `e.kind = 'series' AND e.status <> 'cancelled' AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`
+const calendarSingleWindow = `e.kind = 'single' AND ((e.start_at < ? AND e.end_at >= ?) OR (e.status <> 'cancelled' AND (e.start_at IS NULL OR e.end_at IS NULL)))`
 
 var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
  m.deleted_from_source_at IS NOT NULL,
@@ -179,14 +181,14 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 	// RDATE can precede DTSTART by any amount. Retain those masters for exact
 	// expansion rather than treating their stored start as the earliest instance.
 	// A cancelled master generates nothing; its archived exceptions load it below.
-	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND e.status <> 'cancelled' AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
+	masters, err := queryCalendarSeriesWithinBudget(ctx, r, calendarSeriesWindow, []any{upper, lower})
 	if err != nil {
 		return nil, err
 	}
 	// Standalones count toward the request budget; cap them before materializing
 	// more candidates than any occurrence reader could consider. Unknown bounds
 	// remain candidates so the reader can report them.
-	singles, err := queryCalendarEventRowsWithinBudget(ctx, r, `e.kind = 'single' AND ((e.start_at < ? AND e.end_at >= ?) OR (e.status <> 'cancelled' AND (e.start_at IS NULL OR e.end_at IS NULL)))`, []any{upper, lower}, calrecur.RequestReadBudget)
+	singles, err := queryCalendarEventRowsWithinBudget(ctx, r, calendarSingleWindow, []any{upper, lower}, calrecur.RequestReadBudget)
 	if err != nil {
 		return nil, err
 	}

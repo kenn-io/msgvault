@@ -44,6 +44,25 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, time.Time{}, fmt.Errorf("find first calendar event: %w", err)
 	}
+	masters, readErr := queryCalendarEventRows(ctx, s.db, `e.kind = 'series' AND e.status <> 'cancelled' AND e.recurrence_json LIKE '%RDATE%'`, nil, 0)
+	if readErr != nil {
+		return nil, time.Time{}, fmt.Errorf("read calendar RDATEs: %w", readErr)
+	}
+	for _, master := range masters {
+		set, _, _, parseErr := prepareCalendarRecurrence(master.Event)
+		if parseErr != nil {
+			continue
+		}
+		for _, date := range set.RDates {
+			start := date.Instant
+			if date.AllDay {
+				start, _ = time.Parse(time.DateOnly, date.Date)
+			}
+			if !start.IsZero() && start.Before(earliest) {
+				earliest = start
+			}
+		}
+	}
 	occurrences := map[string]CalendarOccurrence{}
 	var nextAt time.Time
 	lastYear := through.UTC().Add(14 * time.Hour).Year()
@@ -341,12 +360,9 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 
 func (s *Store) markBroadMeetingWindow(ctx context.Context, from, to time.Time, unexpandable map[int64]bool) error {
 	lower, upper := from.Add(-calendarCandidateMargin), to.Add(calendarCandidateMargin)
-	rows, err := s.db.QueryContext(ctx, `SELECT e.message_id FROM calendar_events e JOIN messages m ON m.id=e.message_id
-WHERE m.deleted_at IS NULL AND (
- (e.kind='series' AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)) OR
- (e.kind='single' AND ((e.start_at < ? AND e.end_at >= ?) OR e.start_at IS NULL OR e.end_at IS NULL)) OR
- (e.kind='exception' AND ((e.start_at < ? AND e.end_at >= ?) OR (e.original_start_at >= ? AND e.original_start_at < ?) OR (e.original_start_date >= ? AND e.original_start_date < ?)))
-)`, upper, lower, upper, lower, upper, lower, lower, upper, lower.Format(time.DateOnly), upper.Format(time.DateOnly))
+	exceptions, exceptionArgs := calendarExceptionWindow(s.dialect, lower, upper)
+	args := append([]any{upper, lower, upper, lower}, exceptionArgs...)
+	rows, err := s.db.QueryContext(ctx, `SELECT e.message_id `+calendarEventFrom+`((`+calendarSeriesWindow+`) OR (`+calendarSingleWindow+`) OR (`+exceptions+`))`, args...)
 	if err != nil {
 		return fmt.Errorf("read broad meeting window: %w", err)
 	}

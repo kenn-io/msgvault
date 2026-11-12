@@ -108,11 +108,12 @@ func TestMeetingOccurrenceCountsCancelledSeriesAndAvailableNote(t *testing.T) {
 func TestMeetingOccurrenceCountsYearBoundaryAndUnexpandable(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, series := calendarFixture(t, st, "boundary", `{"id":"boundary","start":{"dateTime":"2026-12-31T23:30:00Z"},"end":{"dateTime":"2027-01-01T00:30:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`)
+	_, earlier := calendarFixture(t, st, "earlier", `{"id":"earlier","start":{"dateTime":"2027-02-01T10:00:00Z"},"end":{"dateTime":"2027-02-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=1","RDATE:20250601T100000Z"]}`)
 	_, unsupported := calendarFixture(t, st, "unsupported", `{"id":"unsupported","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
 	_, future := calendarFixture(t, st, "future", `{"id":"future","start":{"dateTime":"2028-01-01T10:00:00Z"},"end":{"dateTime":"2028-01-01T11:00:00Z"}}`)
 	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
-	var dates []time.Time
+	var dates, earlierDates []time.Time
 	for _, row := range rows {
 		assert.NotEqual(t, unsupported, row.MessageID)
 		if row.MessageID == future {
@@ -122,8 +123,12 @@ func TestMeetingOccurrenceCountsYearBoundaryAndUnexpandable(t *testing.T) {
 			assert.True(t, row.Counted)
 			dates = append(dates, row.OccurredAt)
 		}
+		if row.MessageID == earlier && row.Counted {
+			earlierDates = append(earlierDates, row.OccurredAt)
+		}
 	}
 	assert.Equal(t, []time.Time{time.Date(2026, 12, 31, 23, 30, 0, 0, time.UTC), time.Date(2027, 1, 1, 23, 30, 0, 0, time.UTC)}, dates)
+	assert.Equal(t, []time.Time{time.Date(2025, 6, 1, 10, 0, 0, 0, time.UTC), time.Date(2027, 2, 1, 10, 0, 0, 0, time.UTC)}, earlierDates)
 	assert.Contains(t, rows, MeetingOccurrence{MessageID: future, OccurrenceKey: fmt.Sprintf("evt:%d", future)})
 	rows, _, err = st.MeetingOccurrencesContext(t.Context(), time.Date(2028, 1, 2, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
