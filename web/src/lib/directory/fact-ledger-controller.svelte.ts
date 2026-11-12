@@ -97,7 +97,6 @@ export interface FactDecisionRow {
   projectionKind: string | null;
   createdAt: string;
   readonly claimKey: string;
-  readonly competingClaimKey?: string;
 }
 export interface FactPinRow {
   pinned: boolean;
@@ -672,19 +671,10 @@ function projectDecision(row: RawDecision, index: number): FactDecisionRow {
     },
     projectionKind: row.projection?.kind ?? null,
     createdAt: row.created_at,
-    claimKey: row.claim_key, competingClaimKey: row.competing_claim_key,
+    claimKey: row.claim_key,
   };
 }
 
 function readableValue(value: unknown, kind: string): string {
-  let decoded = value;
-  if (kind === 'attribute' && decoded && typeof decoded === 'object' && !Array.isArray(decoded)) {
-    const attribute = decoded as Record<string, unknown>;
-    const type = attribute.type;
-    if (typeof type === 'string' && ['text', 'integer', 'real', 'boolean', 'date', 'timestamp'].includes(type)) {
-      const scalar = attribute[type];
-      if (typeof scalar === 'string' || typeof scalar === 'number' || typeof scalar === 'boolean') decoded = scalar;
-    }
-  }
-  return typeof decoded === 'string' ? decoded.trim() ? decoded : 'Blank submission' : displayClaimValue(decoded, kind);
+  return typeof value === 'string' ? value.trim() ? value : 'Blank submission' : displayClaimValue(value, kind);
 }

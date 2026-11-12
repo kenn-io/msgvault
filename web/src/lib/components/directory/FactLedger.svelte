@@ -18,13 +18,12 @@
   import ProvenanceDetails from './ProvenanceDetails.svelte';
   import FactEvidenceHistoryDialog from './FactEvidenceHistoryDialog.svelte';
   import type { FactClaimRow, FactDecisionRow, FactEvidenceRow } from '../../directory/fact-ledger-controller.svelte';
-  import { SCORE_PARTS, authorityWords, decisionSentence, evidenceSourceWords, originWords, partWords, projectionWords, relationWords, scoreWords } from '../../directory/fact-words';
+  import { SCORE_PARTS, authorityWords, decisionSentence, evidenceSourceWords, originWords, projectionWords, relationWords, scoreWords } from '../../directory/fact-words';
 
   interface Props { controller: FactLedgerController; profile?: DirectoryProfileController | null; entity?: DirectoryEntityController | null; onManageFields?: () => void }
   let { controller, profile, entity, onManageFields }: Props = $props();
   let root: HTMLElement;
   let destroyed = false;
-  let fieldQuery = $state('');
   const fields = $derived(joinDefinitions(profile?.definitions ?? [], profile?.attributes?.attributes ?? []));
   const definitions = $derived(fields.map(field => field.definition));
   const selectedTarget = $derived(controller.targets.find(target => target.optionID === controller.selectedTargetOption));
@@ -47,10 +46,6 @@
       ? [claimText(claim, definitions.find(field => field.universal_id === claim.targetKey)), claim.targetKind === 'employment' ? employmentClaimDetailItems(claim.parsedValue).join(' · ') : ''].filter(Boolean).join(' · ') : undefined;
     return decisionSentence(row.outcome, row.reason, value);
   }
-  function relatedDecision(row: FactClaimRow): string | undefined {
-    const decision = controller.decisions.rows.find(decision => decision.claimKey === row.claimKey);
-    return decision && decisionText(decision);
-  }
   function relatedSource(id: number, index: number): string {
     const evidence = controller.evidence.rows.find(evidence => evidence.evidenceID === id);
     return evidence ? evidenceSourceWords(evidence.sourceClass, evidence.directness) : `Source ${index + 1}`;
@@ -58,9 +53,7 @@
   function claimText(row: FactClaimRow, definition: import('../../api/generated/models').AttributeDefinition | undefined): string {
     if (!definition) return row.displayValue;
     const parsed = row.parsedValue;
-    const value = parsed && typeof parsed === 'object' && 'type' in parsed ? parsed as import('../../api/generated/models').AttributeValue :
-      typeof parsed === 'boolean' ? { type: 'boolean' as const, boolean: parsed } : { type: 'text' as const, text: row.displayValue };
-    return displayAttributeValue(definition, value);
+    return displayAttributeValue(definition, typeof parsed === 'boolean' ? { type: 'boolean', boolean: parsed } : { type: 'text', text: row.displayValue });
   }
   function emptyTitle(section: string): string { return selectedField ? `No ${section} for ${selectedField} yet` : `No ${section} yet`; }
   /** "Garden designer at Lumen Grove"; the role stands in when there's no title. */
@@ -77,7 +70,7 @@
   const targetOptions = $derived([
     { name: 'all', label: 'All fields', meta: undefined },
     ...controller.targets.map((target) => ({ name: target.optionID, label: controller.fieldName({ targetCanonical: target.canonical, targetKey: target.targetKey }, definitions), meta: target.sensitive ? 'Sensitive' : undefined }))
-  ].filter(option => [option.label, option.name, option.meta ?? ''].some(text => text.toLowerCase().includes(fieldQuery.trim().toLowerCase()))));
+  ]);
 
   $effect(() => {
     const request = controller.focusRequest;
@@ -104,8 +97,7 @@
   <div class="toolbar">
     <SegmentedControl options={sectionOptions} value={controller.selectedSection} onchange={(value) => void controller.selectSection(value as FactLedgerSection)} ariaLabel="Fact ledger section" />
     <div class="field"><FieldPicker placeholder="Search fields" fallbackLabel="All fields" value={controller.selectedTargetOption} options={targetOptions}
-      loading={controller.catalogLoading} onquery={query => fieldQuery = query}
-      onselect={(value) => controller.selectTarget(value)} onmanage={onManageFields} /></div>
+      loading={controller.catalogLoading} onselect={(value) => controller.selectTarget(value)} onmanage={onManageFields} /></div>
   </div>
 
 
@@ -122,9 +114,8 @@
         <div class="rows" aria-busy={controller.evidence.loading}>
           {#each controller.evidence.rows as row (row.rowToken)}
             {@const authority = authorityWords(row.authority)}
-            <div aria-label="Fact evidence" data-fact-focus={`evidence:${row.evidenceID}`}><DetailRow exception={row.lostSupport ?? undefined}
-              note={row.excerpt !== null && controller.revealedEvidence.has(row.rowToken) ? `“${row.excerpt}”` : undefined}>
-              <div class="value"><strong class="field-label">{evidenceLabel(row)}</strong><span>{evidenceSourceWords(row.sourceClass, row.directness)}</span></div>
+            <div aria-label="Fact evidence" data-fact-focus={`evidence:${row.evidenceID}`}><DetailRow exception={row.lostSupport ?? undefined}>
+              <div class="value"><strong class="field-label">{evidenceLabel(row)}</strong><span>{evidenceSourceWords(row.sourceClass, row.directness)}</span>{#if row.excerpt !== null && controller.revealedEvidence.has(row.rowToken)}<span class="meta">“{row.excerpt}”</span>{/if}</div>
               {#snippet actions()}{#if row.excerpt !== null && !controller.revealedEvidence.has(row.rowToken)}<Button label="Reveal excerpt" class="text-action" size="sm" onclick={() => controller.revealEvidence(row.rowToken)} />{/if}{/snippet}
               {#snippet details()}<dl>
                 {#if authority}<div><dt>Source</dt><dd>{authority}</dd></div>{/if}
@@ -164,10 +155,9 @@
                 {#if sensitivity === 'sensitive'}{#if shown}<Button label="Hide" ariaLabel="Hide sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealedClaims.delete(row.rowToken)} />{:else}<Button label="Reveal" ariaLabel="Reveal sensitive fact value" class="text-action" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />{/if}{/if}
               {/snippet}
               {#snippet details()}
-                {@const decision = relatedDecision(row)}
                 <dl>
                   <div><dt>Reported confidence</dt><dd>{scoreWords(row.reportedScore)}</dd></div>
-                  <div><dt>Decision</dt><dd><Button label={decision ?? 'Show decision'} ariaLabel={decision ? `Show decision: ${decision}` : 'Show decision'} class="text-action" size="sm" onclick={() => void controller.showDecision(row.claimKey, row.targetCanonical)} /></dd></div>
+                  <div><dt>Decision</dt><dd><Button label="Show decision" class="text-action" size="sm" onclick={() => void controller.showDecision(row.claimKey, row.targetCanonical)} /></dd></div>
                   {#if row.evidenceIDs.length === 1}
                     <div><dt>Source</dt><dd><Button label="Show evidence" class="text-action" size="sm" onclick={() => void controller.showEvidence(row.evidenceIDs[0]!, row.targetCanonical)} /></dd></div>
                   {:else if row.evidenceIDs.length > 1}
@@ -198,7 +188,7 @@
             <div aria-label="Historical fact decision" data-fact-focus={`decision:${row.claimKey}`}><DetailRow description={projectionWords(row.projectionKind) !== decisionLabel(row) ? projectionWords(row.projectionKind) ?? undefined : undefined}>
               <div class="value"><strong class="field-label">{decisionLabel(row)}</strong><span>{decisionText(row)}</span></div>
               {#snippet details()}
-                {#if row.scoreMaxima && row.score.total > 0}<ul class="score-parts">{#each SCORE_PARTS as [key, label] (key)}<li>{label}: {partWords(row.score[key], row.scoreMaxima[key])}</li>{/each}</ul>{/if}
+                {#if row.scoreMaxima && row.score.total > 0}<ul class="score-parts">{#each SCORE_PARTS as [key, label] (key)}<li>{label}: {row.score[key]} of {row.scoreMaxima[key]}</li>{/each}</ul>{/if}
                 <Disclosure variant="plain" title="Raw values"><dl><div><dt>Action</dt><dd><code>{row.action}</code></dd></div><div><dt>Reason</dt><dd><code>{row.reason}</code></dd></div>{#if row.projectionKind}<div><dt>Projection</dt><dd><code>{row.projectionKind}</code></dd></div>{/if}
                   {#each SCORE_PARTS as [key, label] (key)}<div><dt>{label}</dt><dd><code>{row.score[key]}</code></dd></div>{/each}<div><dt>Score</dt><dd><code>{row.score.total}</code></dd></div></dl></Disclosure>
               {/snippet}

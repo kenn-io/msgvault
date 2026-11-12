@@ -18,9 +18,8 @@
   const id = $props.id();
   const manageID = `${id}-manage`;
   const needle = $derived(query.trim().toLowerCase());
-  const matches = $derived(options);
+  const matches = $derived(onmanage && needle ? options.filter(option => option.label.toLowerCase().includes(needle)) : options);
   const listed = $derived(onmanage ? [...matches, { name: manageID, label: manageLabel }] : options);
-
 </script>
 
 {#snippet headerRow()}{#if error}<InlineNotice message={error} details={errorDetails} actionLabel={onretry ? 'Retry' : undefined} onaction={onretry} />{:else}<span class="no-matches">{emptyLabel}</span>{/if}{/snippet}
