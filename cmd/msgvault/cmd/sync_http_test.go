@@ -106,7 +106,7 @@ func TestSyncFullInterruptionHint(t *testing.T) {
 				require.Error(t, err)
 			}
 			if mode == "error" {
-				assert.NotContains(t, stderr.String(), "To run it again")
+				assert.NotContains(t, stderr.String(), "Sync interrupted.")
 			} else {
 				assert.Equal(t, 1, strings.Count(stderr.String(), "Sync interrupted."))
 				assert.Contains(t, stderr.String(), "reader@example.test")
@@ -129,15 +129,8 @@ func TestSyncFullInterruptionHint(t *testing.T) {
 
 func TestSyncResumeCommandNativeArguments(t *testing.T) {
 	resetSyncFullFlagsForTest(t)
-	oldResolver := daemonCLIExecutableResolver
-	daemonCLIExecutableResolver = func() (string, error) { return "msgvault", nil }
-	t.Cleanup(func() { daemonCLIExecutableResolver = oldResolver })
 	root := &cobra.Command{Use: "msgvault"}
-	root.PersistentFlags().String("config", "", "")
-	root.PersistentFlags().String("home", "", "")
-	root.PersistentFlags().Bool("local", false, "")
-	root.PersistentFlags().String("log-file", "", "")
-	root.PersistentFlags().Bool("verbose", false, "")
+	registerRootFlags(root)
 	command := &cobra.Command{Use: "sync-full"}
 	root.AddCommand(command)
 	command.Flags().String("query", "", "")
@@ -147,16 +140,10 @@ func TestSyncResumeCommandNativeArguments(t *testing.T) {
 	command.Flags().Bool("no-build-cache", false, "")
 	query := `from:"a b" $HOME;echo`
 	require.NoError(t, command.ParseFlags([]string{"--config", "config file", "--home", "home dir", "--local=false", "--log-file=", "--verbose=false", "--query", query, "--folder", "A B", "--folder", "C", "--noresume", "--build-cache=false", "--", "reader@example.test"}))
-	line, err := syncResumeCommand(command, command.Flags().Args())
+	got, err := cobraCommandArgs(command, command.Flags().Args(), true)
 	require.NoError(t, err)
-	shell := "sh"
-	if runtime.GOOS == "windows" {
-		shell = "pwsh"
-		line = strings.TrimPrefix(line, "& ")
-	}
-	fixture := testutil.SecretCommand(t, "argv")[0]
 	want := []string{"--config=config file", "--home=home dir", "--local=false", "--log-file=", "--verbose=false", "sync-full", "--build-cache=false", "--folder=A B", "--folder=C", "--noresume", "--query=" + query, "--", "reader@example.test"}
-	assert.Equal(t, want, headlessNativeArgs(t, shell, fixture, line))
+	assert.Equal(t, want, got)
 }
 
 func TestSyncFullHintCancellationPhases(t *testing.T) {
