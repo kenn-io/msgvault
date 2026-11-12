@@ -343,6 +343,7 @@ func TestLoopIgnoresAddressesLinkedToTheOwner(t *testing.T) {
 		setup func(*testing.T, *storetest.Fixture) int64
 	}{
 		{"linked owner addresses", func(t *testing.T, f *storetest.Fixture) int64 {
+			t.Helper()
 			owner := f.EnsureParticipant(loopOwner, "", "example.com")
 			linked := f.EnsureParticipant(alias, "", "old.example.test")
 			_, err := f.Store.LinkParticipants(owner, linked)
@@ -352,12 +353,14 @@ func TestLoopIgnoresAddressesLinkedToTheOwner(t *testing.T) {
 			return 0
 		}},
 		{"account identities", func(t *testing.T, f *storetest.Fixture) int64 {
+			t.Helper()
 			source, err := f.Store.GetOrCreateSource("gmail", alias)
 			require.NoError(t, err)
 			require.NoError(t, f.Store.AddAccountIdentity(source.ID, alias, "manual"))
 			return 0
 		}},
 		{"scoped beeper identity", func(t *testing.T, f *storetest.Fixture) int64 {
+			t.Helper()
 			source, err := f.Store.GetOrCreateSource("beeper", "loop-account")
 			require.NoError(t, err)
 			require.NoError(t, f.Store.AddAccountIdentity(source.ID, "opaque-self", "manual"))
