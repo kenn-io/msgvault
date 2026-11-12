@@ -380,7 +380,15 @@ func TestBriefEventAnnouncementDateCannotDriftDuringReextraction(t *testing.T) {
 	assert.Contains(t, result.Rendered.Text, "How did the move go?")
 }
 
-func revisedBriefEventFixture(t *testing.T) (EvidenceItem, EvidenceItem, BriefWindow, BriefHighlight, BriefResult, BriefResult) {
+type revisedEventFixture struct {
+	anchor, later EvidenceItem
+	window        BriefWindow
+	update        BriefHighlight
+	result        BriefResult
+	replayed      BriefResult
+}
+
+func revisedBriefEventFixture(t *testing.T) revisedEventFixture {
 	t.Helper()
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
 	later := briefWindowItem(11, SourceConversationText, 12, "I move on August 22 instead.")
@@ -394,12 +402,14 @@ func revisedBriefEventFixture(t *testing.T) (EvidenceItem, EvidenceItem, BriefWi
 	result := eventResult(t, window, eventCandidate(t, update))
 	window = eventWindow(t, archive, &result.Boundary, "2026-08-17T00:00:00Z")
 	replayed := eventResult(t, window, eventCandidate(t, eventHighlight(anchor, "2026-08-15")))
-	return anchor, later, window, update, result, replayed
+	return revisedEventFixture{anchor: anchor, later: later, window: window,
+		update: update, result: result, replayed: replayed}
 }
 
 func TestBriefEventDateRevisionRequiresNewPersonEvidence(t *testing.T) {
 	checks, required := assert.New(t), require.New(t)
-	anchor, later, window, update, result, _ := revisedBriefEventFixture(t)
+	fixture := revisedBriefEventFixture(t)
+	anchor, later, window, update, result := fixture.anchor, fixture.later, fixture.window, fixture.update, fixture.result
 	required.Len(result.Boundary.EventMemory, 1)
 	required.NotNil(result.Boundary.EventMemory[0].Highlight.LifeEvent.Date)
 	checks.Equal("2026-08-22", *result.Boundary.EventMemory[0].Highlight.LifeEvent.Date)
@@ -435,7 +445,8 @@ func TestBriefEventDateRevisionRequiresNewPersonEvidence(t *testing.T) {
 
 func TestBriefEventDateRevisionRetainsEvidenceOnReplay(t *testing.T) {
 	checks, required := assert.New(t), require.New(t)
-	anchor, later, _, _, _, replayed := revisedBriefEventFixture(t)
+	fixture := revisedBriefEventFixture(t)
+	anchor, later, replayed := fixture.anchor, fixture.later, fixture.replayed
 	required.Len(replayed.Boundary.EventMemory, 1)
 	memory := replayed.Boundary.EventMemory[0]
 	checks.Equal([]string{packetEvidenceID(anchor), packetEvidenceID(later)}, memory.Highlight.EvidenceIDs)
@@ -451,12 +462,13 @@ func TestBriefEventDateRevisionRetainsEvidenceOnReplay(t *testing.T) {
 }
 
 func TestBriefEventDateRevisionCitationCeilingRetainsPrevious(t *testing.T) {
-	anchor, later, window, update, _, _ := revisedBriefEventFixture(t)
+	fixture := revisedBriefEventFixture(t)
+	anchor, later, window, update := fixture.anchor, fixture.later, fixture.window, fixture.update
 
 	checks, required := assert.New(t), require.New(t)
 	old := eventHighlight(anchor, "2026-08-15")
 	evidence := map[string]EvidenceItem{packetEvidenceID(anchor): anchor}
-	for i := 0; i < 199; i++ {
+	for i := range 199 {
 		item := briefWindowItem(int64(100+i), SourceConversationText, 10, "Earlier supporting evidence.")
 		id := packetEvidenceID(item)
 		evidence[id] = item
