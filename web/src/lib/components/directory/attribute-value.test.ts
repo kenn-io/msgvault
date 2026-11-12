@@ -7,9 +7,8 @@ it('describes a null claim value', () => {
 
 it.each([
   [{ title: 'Engineer' }, 'Engineer'],
-  [{ organization: 'Acme' }, 'Acme'],
-  [{ organization: 'Acme', role: 'Engineer' }, 'Engineer at Acme'],
+  [{ organization: { name: 'Acme' } }, 'Acme'],
   [{ organization: { name: 'Acme' }, role: 'Engineer' }, 'Engineer at Acme'],
-])('formats employment claims with either organization shape', (value, expected) => {
+])('formats employment claims', (value, expected) => {
   expect(displayClaimValue(value, 'employment')).toBe(expected);
 });

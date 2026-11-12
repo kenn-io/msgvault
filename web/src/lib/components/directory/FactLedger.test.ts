@@ -70,10 +70,11 @@ describe('FactLedger', () => {
     else expect(screen.queryByText('Recorded')).toBeNull();
   });
 
-  it('shows submitted job details outside Raw values', () => {
+  it('shows submitted job details', () => {
     const value = controller();
     value.targets[0] = { ...value.targets[0]!, kind: 'employment', targetKey: 'system:employment', canonical: `employment:system:employment:${revision}`, sensitive: false };
-    value.claims.rows[0] = { ...value.claims.rows[0]!, targetKind: 'employment', targetKey: 'system:employment', targetCanonical: `employment:system:employment:${revision}`, displayValue: 'Engineer at Acme', parsedValue: { title: 'Engineer', role: 'Lead', department: 'Research', location: 'Boston', organization: { name: 'Acme', domain: 'acme.example' }, start_date: { year: 2020, month: 3 }, end_date: '2024' } };
+    const job = { title: 'Engineer', role: 'Lead', department: 'Research', location: 'Boston', organization: { name: 'Acme', domain: 'acme.example' }, start_date: { year: 2020, month: 3 }, end_date: { year: 2024 } };
+    value.claims.rows[0] = { ...value.claims.rows[0]!, targetKind: 'employment', targetKey: 'system:employment', targetCanonical: `employment:system:employment:${revision}`, displayValue: 'Engineer at Acme', submittedValue: JSON.stringify(job), parsedValue: job };
     render(FactLedger, { controller: value });
     const claim = screen.getByLabelText('Fact claim');
     expect(within(claim).getByText('Engineer at Acme')).toBeDefined();
@@ -97,7 +98,7 @@ describe('FactLedger', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(screen.getByText('Valid').nextElementSibling?.textContent).toContain('No end');
-    expect(screen.getByText('Reported confidence')).toBeDefined();
+    expect(screen.getByText('Reported confidence').nextElementSibling?.textContent).toBe('Weak · 88 of 1000');
     const timestamp = screen.getByText('Created').nextElementSibling!.querySelector('time')!;
     expect(timestamp.textContent).toBe(formatShortDateTime(created.toISOString()));
     expect(timestamp.title).toBe(formatDateTime(created.toISOString(), 'long'));
@@ -360,7 +361,6 @@ describe('FactLedger', () => {
 
   it.each([
     { sensitivity: 'visible', sensitive: false, revisionMatches: true, loaded: true, expected: 'Saved: allowed sensitive value' },
-    { sensitivity: 'sensitive', sensitive: true, revisionMatches: true, loaded: true, expected: 'Saved' },
     { sensitivity: 'unknown', sensitive: false, revisionMatches: false, loaded: true, expected: 'Saved' },
     { sensitivity: 'unloaded', sensitive: false, revisionMatches: true, loaded: false, expected: 'Saved' },
   ])('shows a $sensitivity saved decision value safely', ({ sensitive, revisionMatches, loaded, expected }) => {

@@ -722,7 +722,7 @@ export async function installDirectoryReviewArchive(page: Page) {
       if (path.endsWith('/fact-evidence'))
         return route.fulfill({
           json: {
-            evidence: new URL(request.url()).searchParams.has('evidence_id') && new URL(request.url()).searchParams.get('evidence_id') !== '51' ? [] : [
+            evidence: [
               {
                 id: 51,
                 evidence_key: 'forbidden-evidence-key',

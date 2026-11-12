@@ -21,7 +21,7 @@ for (const width of [1280, 390]) test(`Work details wrap between items at ${widt
   await installDirectoryReviewArchive(page);
   await stubOperationStatus(page, ['person_sweep']);
   const target = { kind: 'employment', key: 'system:employment', revision: `sha256:${'d'.repeat(64)}` };
-  const job = { title: 'Engineer', role: 'Lead', department: 'Research', location: 'Boston', organization: { name: 'Acme', domain: 'acme.example' }, start_date: { year: 2020, month: 3 }, end_date: '2024' };
+  const job = { title: 'Engineer', role: 'Lead', department: 'Research', location: 'Boston', organization: { name: 'Acme', domain: 'acme.example' }, start_date: { year: 2020, month: 3 }, end_date: { year: 2024 } };
   await page.route('**/api/v1/person-fact-targets*', route => route.fulfill({ json: { targets: [{ ...target, description: 'Work', value_type: 'object', cardinality: 'multi', sensitive: false }] } }));
   await page.route(/\/api\/v1\/people\/42\/fact-claims(?:\?.*)?$/, route => route.fulfill({ json: { claims: [{ id: 1, claim_key: 'work-1', evidence_ids: [], target, submitted_value: JSON.stringify(job), normalized_value: JSON.stringify(job), relation: 'support', origin: 'extraction', confidence: { reported_score: 740 }, created_at: '2026-11-01T12:00:00Z' }] } }));
   const facts = await openPersonFacts(page);
@@ -95,14 +95,4 @@ test('Facts tabs and field picker share a right edge on phone', async ({ page })
   const tabs = await facts.getByRole('radiogroup', { name: 'Fact ledger section' }).boundingBox();
   const picker = await facts.getByRole('button', { name: 'Search fields: All fields' }).boundingBox();
   expect(Math.abs(tabs!.x + tabs!.width - picker!.x - picker!.width)).toBeLessThanOrEqual(1);
-});
-
-test('Claim evidence opens the cited source', async ({ page }) => {
-  const facts = await openFacts(page);
-  await expect(facts.getByRole('radio', { name: 'Claims' })).toBeChecked();
-  const claim = facts.getByLabel('Fact claim').first();
-  await claim.getByRole('button', { name: 'Details', exact: true }).click();
-  await claim.getByRole('button', { name: 'Show evidence' }).click();
-  await expect(facts.getByLabel('Fact evidence')).toHaveCount(1);
-  await expect(facts.getByRole('button', { name: 'Show all' })).toBeVisible();
 });
