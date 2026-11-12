@@ -1,13 +1,16 @@
 package fbmessenger
 
 import (
+	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -15,7 +18,7 @@ import (
 // rawJSONExport is the shape of a single message_*.json DYI file.
 type rawJSONExport struct {
 	Participants []rawJSONParticipant `json:"participants"`
-	Messages     []rawJSONMessage     `json:"messages"`
+	Messages     []jsontext.Value     `json:"messages"`
 	Title        string               `json:"title"`
 	ThreadType   string               `json:"thread_type"`
 	ThreadPath   string               `json:"thread_path"`
@@ -25,23 +28,44 @@ type rawJSONParticipant struct {
 	Name string `json:"name"`
 }
 
+type instagramRaw struct {
+	Shard      string `json:"shard"`
+	ThreadPath string `json:"thread_path"`
+	Header     struct {
+		Title        string               `json:"title"`
+		Participants []rawJSONParticipant `json:"participants"`
+	} `json:"header"`
+	Record           jsontext.Value     `json:"record"`
+	Candidates       []jsontext.Value   `json:"candidates,omitempty"`
+	DerivedReactions *[]rawJSONReaction `json:"derived_reactions,omitzero"`
+}
+
 type rawJSONPhoto struct {
 	URI               string `json:"uri"`
 	CreationTimestamp int64  `json:"creation_timestamp"`
+
+	Extra jsontext.Value `json:",embed"`
 }
 
 type rawJSONSticker struct {
 	URI string `json:"uri"`
+
+	Extra jsontext.Value `json:",embed"`
 }
 
 type rawJSONShare struct {
-	Link      string `json:"link"`
-	ShareText string `json:"share_text"`
+	Link                 string `json:"link"`
+	ShareText            string `json:"share_text"`
+	OriginalContentOwner string `json:"original_content_owner"`
+
+	Extra jsontext.Value `json:",embed"`
 }
 
 type rawJSONReaction struct {
 	Reaction string `json:"reaction"`
 	Actor    string `json:"actor"`
+
+	Extra jsontext.Value `json:",embed"`
 }
 
 type rawJSONMessage struct {
@@ -53,12 +77,14 @@ type rawJSONMessage struct {
 	Videos       []rawJSONPhoto    `json:"videos"`
 	Audio        []rawJSONPhoto    `json:"audio_files"`
 	Files        []rawJSONPhoto    `json:"files"`
+	Media        []rawJSONPhoto    `json:"media"`
 	Gifs         []rawJSONPhoto    `json:"gifs"`
 	Sticker      *rawJSONSticker   `json:"sticker"`
 	Share        *rawJSONShare     `json:"share"`
 	CallDuration *int64            `json:"call_duration"`
 	Missed       bool              `json:"missed"`
 	Reactions    []rawJSONReaction `json:"reactions"`
+	Extra        jsontext.Value    `json:",embed"`
 }
 
 var reMessageFile = regexp.MustCompile(`^message_(\d+)\.json$`)
@@ -67,6 +93,18 @@ var reMessageFile = regexp.MustCompile(`^message_(\d+)\.json$`)
 // directory and returns a populated Thread. rootDir is the DYI export
 // root; threadDir is the thread path returned by Discover.
 func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
+	return parseJSONThread(context.Background(), rootDir, threadDir, nil)
+}
+
+type instagramJSONOptions struct {
+	td      ThreadDir
+	summary *ImportSummary
+	keys    map[string]string
+}
+
+// parseJSONThread with an Instagram summary keeps each supported record's raw
+// bytes and shard, counting unreadable shards and records instead of failing.
+func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *instagramJSONOptions) (*Thread, error) {
 	entries, err := os.ReadDir(threadDir)
 	if err != nil {
 		return nil, fmt.Errorf("fbmessenger: read thread dir: %w", err)
@@ -86,18 +124,11 @@ func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
 		if !strings.HasPrefix(name, "message_") || !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		m := reMessageFile.FindStringSubmatch(name)
-		if m == nil {
+		n, ok := messageFileNumber(name)
+		if !ok {
 			// Unrecognized sibling (e.g. message_final.json). Skip it and
 			// record the bad name so the importer can log + count it
 			// without aborting the entire thread.
-			badSiblings = append(badSiblings, name)
-			continue
-		}
-		n, err := strconv.Atoi(m[1])
-		if err != nil {
-			// Regex guarantees \d+, so this is effectively unreachable;
-			// treat it the same as an unrecognized sibling.
 			badSiblings = append(badSiblings, name)
 			continue
 		}
@@ -118,42 +149,123 @@ func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
 	var rawConcat []rawJSONMessage
 	var title string
 	var participants []Participant
+	var shards []string
+	var headerRead bool
 
-	for i, f := range files {
+	for _, f := range files {
+		if instagram != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		full := filepath.Join(threadDir, f.name)
 		data, err := os.ReadFile(full)
-		if err != nil {
-			return nil, fmt.Errorf("fbmessenger: read %s: %w", f.name, err)
-		}
 		var decoded rawJSONExport
-		if err := json.Unmarshal(data, &decoded); err != nil {
-			return nil, fmt.Errorf("%w: %s: %w", ErrCorruptJSON, f.name, err)
+		if err != nil {
+			err = fmt.Errorf("fbmessenger: read %s: %w", f.name, err)
+		} else if decodeErr := json.Unmarshal(data, &decoded); decodeErr != nil {
+			err = fmt.Errorf("%w: %s: %w", ErrCorruptJSON, f.name, decodeErr)
 		}
-		if i == 0 {
+		if instagram != nil && (err != nil || decoded.Messages == nil) {
+			instagram.summary.FilesSkipped++
+			instagram.summary.Incomplete = true
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !headerRead {
+			headerRead = true
 			title = DecodeMojibake(decoded.Title)
 			for _, p := range decoded.Participants {
 				participants = append(participants, Participant{Name: DecodeMojibake(p.Name)})
 			}
 		}
-		rawConcat = append(rawConcat, decoded.Messages...)
+		if instagram != nil {
+			threadPath := filepath.ToSlash(filepath.Join(instagramInbox, instagram.td.Name))
+			key := DecodeMojibake(decoded.ThreadPath)
+			if key == "" {
+				key = strings.TrimPrefix(threadPath, path.Dir(instagramInbox)+"/")
+			}
+			if thread.instagramKey != "" && thread.instagramKey != key {
+				return nil, errors.New("conversation paths conflict between message files")
+			}
+			thread.instagramKey = key
+			if previous, ok := instagram.keys[key]; ok && previous != threadPath {
+				return nil, errors.New("conflicting thread_path across directories")
+			}
+			instagram.keys[key] = threadPath
+			for _, raw := range decoded.Messages {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				instagram.summary.MessagesProcessed++
+				var item struct {
+					rawJSONMessage
+
+					Timestamp *int64 `json:"timestamp_ms"`
+				}
+				if json.Unmarshal(raw, &item) != nil || item.Timestamp == nil {
+					instagram.summary.MessagesSkipped++
+					instagram.summary.RecordsUnsupported++
+					instagram.summary.Incomplete = true
+					continue
+				}
+				record := item.rawJSONMessage
+				record.TimestampMs = *item.Timestamp
+				message := instagramJSONMessage(record)
+				// Media entries without a URI are the only ones resolveAttachments drops.
+				media := len(record.Photos) + len(record.Videos) + len(record.Audio) + len(record.Files) + len(record.Media) + len(record.Gifs)
+				if record.Sticker != nil {
+					media++
+				}
+				if rejected := media - len(message.Attachments); rejected > 0 {
+					instagram.summary.MediaRejected += rejected
+					instagram.summary.Incomplete = true
+				}
+				message.SentAt = time.UnixMilli(record.TimestampMs).UTC()
+				if message.Body == "" && len(message.Attachments) == 0 {
+					instagram.summary.MessagesSkipped++
+					instagram.summary.RecordsUnsupported++
+					instagram.summary.Incomplete = true
+					continue
+				}
+				relative, err := filepath.Rel(rootDir, full)
+				if err != nil {
+					return nil, err
+				}
+				envelope := instagramRaw{Shard: filepath.ToSlash(relative), ThreadPath: decoded.ThreadPath, Record: raw}
+				envelope.Header.Title, envelope.Header.Participants = decoded.Title, decoded.Participants
+				message.rawData, err = json.Marshal(envelope, jsontext.PreserveRawStrings(true))
+				if err != nil {
+					return nil, err
+				}
+				message.jsonRecord = &record
+				thread.Messages = append(thread.Messages, message)
+			}
+			continue
+		}
+		for _, raw := range decoded.Messages {
+			var record rawJSONMessage
+			if err := json.Unmarshal(raw, &record); err != nil {
+				return nil, fmt.Errorf("%w: %s: %w", ErrCorruptJSON, f.name, err)
+			}
+			rawConcat = append(rawConcat, record)
+		}
+		shards = append(shards, string(data))
 	}
 
 	// Deduplicate participants (Facebook sometimes repeats).
 	seen := make(map[string]bool, len(participants))
 	uniq := participants[:0]
 	for _, p := range participants {
-		if seen[p.Name] {
+		if seen[p.Name] || (instagram != nil && p.Name == "") {
 			continue
 		}
 		seen[p.Name] = true
 		uniq = append(uniq, p)
 	}
 	participants = uniq
-
-	// Sort concatenated messages chronologically.
-	sort.SliceStable(rawConcat, func(i, j int) bool {
-		return rawConcat[i].TimestampMs < rawConcat[j].TimestampMs
-	})
 
 	thread.Title = title
 	thread.Participants = participants
@@ -162,25 +274,22 @@ func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
 	} else {
 		thread.ConvType = "group_chat"
 	}
+	if instagram != nil {
+		instagram.summary.FilesSkipped += int64(len(badSiblings))
+		instagram.summary.Incomplete = instagram.summary.Incomplete || len(badSiblings) > 0
+		return &thread, nil
+	}
+
+	// Sort concatenated messages chronologically.
+	sort.SliceStable(rawConcat, func(i, j int) bool {
+		return rawConcat[i].TimestampMs < rawConcat[j].TimestampMs
+	})
 
 	// Store raw bytes: we concatenate the original JSON files into a
 	// JSON array so the stored raw is a self-contained round-trippable
 	// payload. Callers that want the exact per-file text can still read
 	// from disk.
-	var rawBuf strings.Builder
-	rawBuf.WriteByte('[')
-	for i, f := range files {
-		if i > 0 {
-			rawBuf.WriteByte(',')
-		}
-		data, err := os.ReadFile(filepath.Join(threadDir, f.name))
-		if err != nil {
-			return nil, err
-		}
-		rawBuf.Write(data)
-	}
-	rawBuf.WriteByte(']')
-	thread.RawBytes = []byte(rawBuf.String())
+	thread.RawBytes = []byte("[" + strings.Join(shards, ",") + "]")
 
 	// Render each message.
 	absRoot, err := filepath.Abs(rootDir)
@@ -189,25 +298,7 @@ func ParseJSONThread(rootDir, threadDir string) (*Thread, error) {
 	}
 	thread.Messages = make([]Message, 0, len(rawConcat))
 	for idx, m := range rawConcat {
-		msg := Message{
-			Index:      idx,
-			SenderName: DecodeMojibake(m.SenderName),
-			Type:       m.Type,
-		}
-		if m.TimestampMs > 0 {
-			msg.SentAt = time.UnixMilli(m.TimestampMs).UTC()
-		}
-		msg.Body = renderJSONBody(m)
-		msg.Attachments = resolveAttachments(absRoot, m)
-		for _, r := range m.Reactions {
-			msg.Reactions = append(msg.Reactions, Reaction{
-				Actor:    DecodeMojibake(r.Actor),
-				Reaction: DecodeMojibake(r.Reaction),
-			})
-		}
-		if len(msg.Reactions) > 0 {
-			msg.Body = appendReactionSummary(msg.Body, msg.Reactions)
-		}
+		msg := metaJSONMessage(m, idx, absRoot)
 		thread.Messages = append(thread.Messages, msg)
 	}
 	return &thread, nil
@@ -246,7 +337,7 @@ func renderJSONBody(m rawJSONMessage) string {
 	if len(m.Gifs) > 0 {
 		return "[gif]"
 	}
-	if len(m.Files) > 0 {
+	if len(m.Files) > 0 || len(m.Media) > 0 {
 		return "[file]"
 	}
 	return ""
@@ -336,6 +427,7 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 	add("audio", m.Audio)
 	add("file", m.Files)
 	add("gif", m.Gifs)
+	add("file", m.Media)
 	if m.Sticker != nil && m.Sticker.URI != "" {
 		abs := resolveAttachmentURI(absRoot, m.Sticker.URI)
 		out = append(out, Attachment{
@@ -354,10 +446,10 @@ func resolveAttachments(absRoot string, m rawJSONMessage) []Attachment {
 // parent, which in the post-2024 layout lives at
 // absRoot/your_activity_across_facebook. We try both candidates and
 // return the first that stays inside absRoot and refers to an existing
-// file. Empty string if the path escapes the root or nothing matches.
+// file. Empty string without a root, or if the path escapes it or nothing matches.
 func resolveAttachmentURI(absRoot, uri string) string {
 	cleaned := filepath.Clean(uri)
-	if filepath.IsAbs(cleaned) {
+	if absRoot == "" || path.IsAbs(uri) || filepath.IsAbs(cleaned) {
 		return ""
 	}
 	// Reject early if the cleaned path tries to escape.
@@ -405,10 +497,38 @@ func guessMime(uri string) string {
 		return "audio/mpeg"
 	case ".wav":
 		return "audio/wav"
+	case ".ogg":
+		return "audio/ogg"
+	case ".m4a":
+		return "audio/mp4"
 	case ".pdf":
 		return "application/pdf"
 	case ".webp":
 		return "image/webp"
 	}
 	return ""
+}
+
+// metaJSONMessage converts the record fields common to Meta JSON exports.
+func metaJSONMessage(m rawJSONMessage, idx int, absRoot string) Message {
+	msg := Message{
+		Index:      idx,
+		SenderName: DecodeMojibake(m.SenderName),
+		Type:       m.Type,
+	}
+	if m.TimestampMs > 0 {
+		msg.SentAt = time.UnixMilli(m.TimestampMs).UTC()
+	}
+	msg.Body = renderJSONBody(m)
+	msg.Attachments = resolveAttachments(absRoot, m)
+	for _, r := range m.Reactions {
+		msg.Reactions = append(msg.Reactions, Reaction{
+			Actor:    DecodeMojibake(r.Actor),
+			Reaction: DecodeMojibake(r.Reaction),
+		})
+	}
+	if len(msg.Reactions) > 0 {
+		msg.Body = appendReactionSummary(msg.Body, msg.Reactions)
+	}
+	return msg
 }

@@ -1,0 +1,22 @@
+{
+  "participants": [
+    {
+      "name": "Nova Example"
+    },
+    {
+      "name": "Mira Example"
+    },
+    {
+      "name": "Lumen Example"
+    }
+  ],
+  "title": "Observatory circle",
+  "thread_path": "inbox/circle_202",
+  "messages": [
+    {
+      "sender_name": "Lumen Example",
+      "timestamp_ms": 1730500010123,
+      "content": "Meet by the moon map \ud83c\udf19"
+    }
+  ]
+}

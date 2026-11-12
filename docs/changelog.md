@@ -11,6 +11,11 @@ All notable changes to msgvault, grouped by release.
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
+- Import retained Instagram inbox JSON messages and available media with
+  `msgvault import-messenger --source instagram --account <handle> --self-name "<export display name>" <export-dir>`.
+  Replays add missing messages and repair available media. See
+  [Instagram imports](usage/text-messages.md#instagram-inbox-import) for the supported
+  layout, display-name identity limits and unavailable-history coverage.
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional

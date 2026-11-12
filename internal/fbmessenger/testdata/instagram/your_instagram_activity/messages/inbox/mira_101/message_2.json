@@ -1,0 +1,32 @@
+{
+  "participants": [
+    {
+      "name": "Nova Example"
+    },
+    {
+      "name": "Mira Example"
+    }
+  ],
+  "title": "Mira Example",
+  "thread_path": "inbox/mira_101",
+  "messages": [
+    {
+      "sender_name": "Mira Example",
+      "timestamp_ms": 1730500003126,
+      "share": {
+        "link": "https://example.org/observatory",
+        "share_text": "Night sky guide",
+        "original_content_owner": "Fictional Observatory"
+      }
+    },
+    {
+      "sender_name": "Mira Example",
+      "timestamp_ms": 1730500004127,
+      "audio_files": [
+        {
+          "uri": "your_instagram_activity/messages/inbox/mira_101/audio/absent.ogg"
+        }
+      ]
+    }
+  ]
+}

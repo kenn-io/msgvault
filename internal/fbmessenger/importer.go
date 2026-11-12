@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -41,6 +42,10 @@ type fbmessengerCheckpoint struct {
 
 // ImportOptions configures ImportDYI.
 type ImportOptions struct {
+	// Source selects "instagram"; empty selects Messenger.
+	Source string
+	// Account and SelfName identify an Instagram download and its sender.
+	Account, SelfName string
 	// Me is the importer's own identifier, required to be of the form
 	// "<slug>@facebook.messenger". It is stored as the source identifier
 	// and used to compute is_from_me.
@@ -68,8 +73,13 @@ type ImportOptions struct {
 
 // ImportSummary describes the outcome of a run.
 type ImportSummary struct {
-	Duration         time.Duration
-	ThreadsProcessed int
+	SourceID                    int64
+	MediaMissing, MediaRejected int
+	RecordsUnsupported          int64
+	PossibleDuplicates          int
+	Incomplete, LimitReached    bool
+	Duration                    time.Duration
+	ThreadsProcessed            int
 	// ThreadsSkipped counts whole-thread skips for unparseable
 	// message JSON/HTML files that caused the thread to be dropped.
 	ThreadsSkipped int64
@@ -90,10 +100,11 @@ type ImportSummary struct {
 	WasResumed           bool
 }
 
-// ImportDYI imports a Facebook Messenger DYI export into the store.
-func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSummary, error) {
+// ImportDYI imports a Meta account download into the store.
+func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (summary *ImportSummary, retErr error) {
 	start := time.Now()
-	summary := &ImportSummary{}
+	summary = &ImportSummary{}
+	defer func() { summary.Duration = time.Since(start) }()
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
@@ -105,40 +116,84 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 	if format == "" {
 		format = formatAuto
 	}
+	// Instagram exports are JSON only, so html and both would silently import JSON.
+	instagram := opts.Source == "instagram"
+	if instagram && format != formatAuto && format != formatJSON {
+		return summary, fmt.Errorf("instagram: --format %q is unsupported (valid: auto, json)", format)
+	}
 	switch format {
 	case formatAuto, formatJSON, "html", "both":
 		// valid
 	default:
-		return nil, fmt.Errorf("fbmessenger: unknown --format %q (valid: auto, json, html, both)", format)
+		return summary, fmt.Errorf("fbmessenger: unknown --format %q (valid: auto, json, html, both)", format)
 	}
 
-	// Validate --me.
-	if opts.Me == "" {
-		return nil, errors.New("fbmessenger: --me is required")
-	}
-	if !strings.HasSuffix(opts.Me, "@"+Domain) {
-		return nil, fmt.Errorf("fbmessenger: --me must be a <slug>@%s address, got %q", Domain, opts.Me)
+	if instagram {
+		if opts.Limit < 0 {
+			return summary, errors.New("--limit must be non-negative")
+		}
+		account, err := store.NormalizeServiceValue(&store.CommunicationService{Normalization: store.NormalizationStripAtLower}, store.ContactAddressUsername, opts.Account)
+		if err != nil || account == "" || strings.HasPrefix(account, "@") {
+			return summary, errors.New("instagram: --account must identify an account")
+		}
+		if strings.TrimSpace(opts.SelfName) == "" {
+			return summary, errors.New("instagram: --self-name must be the exact export display name")
+		}
+		opts.Account, opts.NoResume = account, true
+	} else {
+		if opts.Me == "" {
+			return summary, errors.New("fbmessenger: --me is required")
+		}
+		if !strings.HasSuffix(opts.Me, "@"+Domain) {
+			return summary, fmt.Errorf("fbmessenger: --me must be a <slug>@%s address, got %q", Domain, opts.Me)
+		}
 	}
 
 	// Check root dir exists early.
 	if info, err := os.Stat(opts.RootDir); err != nil {
-		return nil, fmt.Errorf("fbmessenger: root dir: %w", err)
+		return summary, fmt.Errorf("fbmessenger: root dir: %w", err)
 	} else if !info.IsDir() {
-		return nil, fmt.Errorf("fbmessenger: root is not a directory: %s", opts.RootDir)
+		return summary, fmt.Errorf("fbmessenger: root is not a directory: %s", opts.RootDir)
 	}
 
 	// Resolve absolute root so the checkpoint is comparable across
 	// relative invocations.
 	absRoot, err := filepath.Abs(opts.RootDir)
 	if err != nil {
-		return nil, fmt.Errorf("fbmessenger: abs root: %w", err)
+		return summary, fmt.Errorf("fbmessenger: abs root: %w", err)
 	}
 
-	// Create source and start sync run.
-	source, err := st.GetOrCreateSource("facebook_messenger", opts.Me)
-	if err != nil {
-		return nil, fmt.Errorf("fbmessenger: source: %w", err)
+	var threads []ThreadDir
+	if instagram {
+		var skipped int
+		threads, skipped, err = discover(filepath.Join(absRoot, "your_instagram_activity"), true)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return summary, err
+		}
+		summary.FilesSkipped += int64(skipped)
+		filtered := threads[:0]
+		for _, td := range threads {
+			if td.Section != "inbox" || (td.Format != "json" && td.Format != "both") {
+				summary.FilesSkipped++
+				continue
+			}
+			filtered = append(filtered, td)
+		}
+		threads = filtered
+		summary.Incomplete = summary.FilesSkipped > 0
+		if len(threads) == 0 {
+			return summary, errors.New("instagram: no supported inbox message_<N>.json files; HTML, ZIP and other layouts are unsupported")
+		}
 	}
+	sourceType, sourceName, command := "facebook_messenger", opts.Me, "import-messenger"
+	if instagram {
+		sourceType, sourceName = "instagram_messages", opts.Account
+	}
+	source, err := st.GetOrCreateSourceContext(ctx, sourceType, sourceName)
+	if err != nil {
+		return summary, fmt.Errorf("fbmessenger: source: %w", err)
+	}
+	summary.SourceID = source.ID
 
 	// Resume only a checkpoint whose worker has stopped. StartSync rejects a
 	// running sync, so a live worker cannot be replaced by this import.
@@ -149,13 +204,13 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 	if !opts.NoResume {
 		prev, err := st.GetLatestCheckpointedSync(source.ID)
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
-			return nil, fmt.Errorf("fbmessenger: check checkpointed sync: %w", err)
+			return summary, fmt.Errorf("fbmessenger: check checkpointed sync: %w", err)
 		}
 		if prev != nil && prev.CursorBefore.Valid && prev.CursorBefore.String != "" {
 			var prior fbmessengerCheckpoint
 			if err := json.Unmarshal([]byte(prev.CursorBefore.String), &prior); err == nil {
 				if prior.RootDir != "" && prior.RootDir != absRoot {
-					return nil, fmt.Errorf(
+					return summary, fmt.Errorf(
 						"fbmessenger: checkpointed import is for a different root (%q), not %q; rerun with --no-resume to start fresh",
 						prior.RootDir, absRoot,
 					)
@@ -184,50 +239,81 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		}
 	}
 
-	syncID, err := st.StartSync(source.ID, "import-messenger")
+	syncID, err := st.StartSyncContext(ctx, source.ID, command)
 	if err != nil {
-		return nil, fmt.Errorf("fbmessenger: start sync: %w", err)
+		return summary, fmt.Errorf("fbmessenger: start sync: %w", err)
 	}
 	st = st.ScopedToSync(source.ID, syncID)
 	var syncErr error
 	defer func() {
-		if syncErr != nil {
+		if instagram {
+			cleanup := context.WithoutCancel(ctx) // Record partial work even after cancellation.
+			checkpoint := &store.Checkpoint{MessagesProcessed: summary.MessagesProcessed, MessagesAdded: summary.MessagesAdded, ErrorsCount: summary.FilesSkipped + summary.RecordsUnsupported + int64(summary.Errors+summary.MediaRejected+summary.MediaMissing)}
+			retErr = errors.Join(retErr, st.UpdateSyncCheckpointContext(cleanup, syncID, checkpoint))
+			if retErr != nil {
+				retErr = errors.Join(retErr, st.FailSyncContext(cleanup, syncID, retErr.Error()))
+			} else if summary.LimitReached {
+				retErr = errors.Join(retErr, st.PauseSyncWithCheckpoint(cleanup, syncID, checkpoint))
+			} else {
+				retErr = errors.Join(retErr, st.CompleteSyncContext(cleanup, syncID, ""))
+			}
+		} else if syncErr != nil {
 			_ = st.FailSync(syncID, syncErr.Error())
 		} else {
 			_ = st.CompleteSync(syncID, "")
 		}
 	}()
 
+	var archivedGroups map[string][]string
+	if instagram {
+		metadata, err := st.SourceMessageMetadata(ctx, source.ID)
+		if err != nil {
+			return summary, err
+		}
+		archivedGroups = make(map[string][]string)
+		for id := range metadata {
+			if strings.HasPrefix(id, "ig:v") && !strings.HasPrefix(id, "ig:v1:") {
+				return summary, errors.New("instagram: this archive uses an unsupported import format; upgrade msgvault")
+			}
+			if i := strings.LastIndexByte(id, ':'); i >= 0 {
+				archivedGroups[id[:i+1]] = append(archivedGroups[id[:i+1]], id)
+			}
+		}
+	}
+
 	// Pre-create label taxonomy.
 	labelIDs := make(map[string]int64)
-	parentLabelID, err := st.EnsureLabel(ctx, source.ID, "messenger", "Messenger", "folder")
-	if err != nil {
-		syncErr = err
-		return nil, fmt.Errorf("fbmessenger: ensure parent label: %w", err)
-	}
-	labelIDs["Messenger"] = parentLabelID
-	for _, pair := range sectionLabelNames() {
-		lid, err := st.EnsureLabel(ctx, source.ID, pair.id, pair.name, "folder")
+	meLocal := ""
+	if !instagram {
+		parentLabelID, err := st.EnsureLabel(ctx, source.ID, "messenger", "Messenger", "folder")
 		if err != nil {
 			syncErr = err
-			return nil, fmt.Errorf("fbmessenger: ensure label %s: %w", pair.name, err)
+			return summary, fmt.Errorf("fbmessenger: ensure parent label: %w", err)
 		}
-		labelIDs[pair.name] = lid
-	}
+		labelIDs["Messenger"] = parentLabelID
+		for _, pair := range sectionLabelNames() {
+			lid, err := st.EnsureLabel(ctx, source.ID, pair.id, pair.name, "folder")
+			if err != nil {
+				syncErr = err
+				return summary, fmt.Errorf("fbmessenger: ensure label %s: %w", pair.name, err)
+			}
+			labelIDs[pair.name] = lid
+		}
 
-	// Seed the self participant so even an empty import leaves a trace.
-	meAddr := mime.Address{Name: "", Email: opts.Me, Domain: Domain}
-	if _, err := st.EnsureParticipantsBatch(ctx, []mime.Address{meAddr}); err != nil {
-		syncErr = err
-		return nil, fmt.Errorf("fbmessenger: seed self participant: %w", err)
-	}
-	meLocal := StripDomain(opts.Me)
+		// Seed the self participant so even an empty import leaves a trace.
+		meAddr := mime.Address{Name: "", Email: opts.Me, Domain: Domain}
+		if _, err := st.EnsureParticipantsBatch(ctx, []mime.Address{meAddr}); err != nil {
+			syncErr = err
+			return summary, fmt.Errorf("fbmessenger: seed self participant: %w", err)
+		}
+		meLocal = StripDomain(opts.Me)
 
-	// Discover threads.
-	threads, err := Discover(absRoot)
-	if err != nil {
-		syncErr = err
-		return nil, fmt.Errorf("fbmessenger: discover: %w", err)
+		// Discover threads.
+		threads, err = Discover(absRoot)
+		if err != nil {
+			syncErr = err
+			return summary, fmt.Errorf("fbmessenger: discover: %w", err)
+		}
 	}
 
 	// Guard against a checkpoint that points past the current list
@@ -245,10 +331,11 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 	// import is stopping. This runs before the sync run is finalized.
 	defer func() {
 		if err := st.RecomputeConversationStatsContext(context.WithoutCancel(ctx), source.ID); err != nil {
-			logger.Warn("fbmessenger: recompute stats", "err", err)
+			syncErr, retErr = errors.Join(syncErr, err), errors.Join(retErr, err)
 		}
 	}()
 
+	keys := map[string]string{}
 	for threadIdx, td := range threads {
 		if threadIdx < startThreadIdx {
 			continue
@@ -257,7 +344,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 			syncErr = ctx.Err()
 			return summary, ctx.Err()
 		}
-		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) {
+		if !instagram && opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) {
 			break
 		}
 		effective := td.Format
@@ -284,18 +371,32 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		}
 
 		summary.ThreadsProcessed++
-		err := importThread(ctx, st, source.ID, td, effective, format, opts, labelIDs, meLocal, logger, summary, syncID, absRoot, threadIdx, &cp)
+		var err error
+		if instagram {
+			var parsed *Thread
+			var archived map[string]store.StoredMessage
+			parsed, archived, err = parseInstagramThread(ctx, st, source.ID, absRoot, td, summary, keys, archivedGroups)
+			if err == nil {
+				err = writeThreadToStore(ctx, st, source.ID, td, parsed, "", opts, labelIDs, meLocal, logger, summary, syncID, absRoot, threadIdx, &cp, archived)
+			}
+		} else {
+			err = importThread(ctx, st, source.ID, td, effective, format, opts, labelIDs, meLocal, logger, summary, syncID, absRoot, threadIdx, &cp)
+		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				syncErr = err
 				return summary, err
 			}
 			if errors.Is(err, errLimitReached) {
+				summary.LimitReached = true
 				// Limit tripped mid-thread: do not advance the
 				// checkpoint past this thread, so a subsequent
 				// non-limited run re-scans it and picks up the
 				// remaining messages via source_message_id dedup.
 				break
+			}
+			if instagram {
+				return summary, fmt.Errorf("instagram: thread %s: %w", td.Name, err)
 			}
 			summary.Errors++
 			summary.HardErrors = true
@@ -315,7 +416,6 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		}
 	}
 
-	summary.Duration = time.Since(start)
 	return summary, nil
 }
 
@@ -439,7 +539,7 @@ func importThread(
 	}
 
 	for _, pair := range toImport {
-		if err := writeThreadToStore(ctx, st, sourceID, td, pair.thread, pair.prefix, opts, labelIDs, meLocal, logger, summary, syncID, absRoot, threadIdx, cp); err != nil {
+		if err := writeThreadToStore(ctx, st, sourceID, td, pair.thread, pair.prefix, opts, labelIDs, meLocal, logger, summary, syncID, absRoot, threadIdx, cp, nil); err != nil {
 			return err
 		}
 	}
@@ -462,48 +562,67 @@ func writeThreadToStore(
 	absRoot string,
 	threadIdx int,
 	cp *store.Checkpoint,
+	archived map[string]store.StoredMessage,
 ) error {
-	// Ensure conversation. Use section-qualified name so threads with
-	// the same basename in different sections (e.g. inbox vs archived)
-	// don't collide.
 	threadKey := td.Section + "/" + td.Name
-	convID, err := st.EnsureConversationWithTypeContext(ctx, sourceID, threadKey, thread.ConvType, thread.Title)
-	if err != nil {
-		return fmt.Errorf("ensure conversation: %w", err)
+	instagram := opts.Source == "instagram"
+	address := Address
+	if instagram {
+		address = func(name string) mime.Address { return instagramAddress(opts.Account, name) }
 	}
+	var convID, meID, parentLabelID, sectionLabelID int64
+	var nameToID map[string]int64
+	var nameToEmail map[string]string
+	var retained []instagramParticipant
+	var err error
+	if !instagram {
+		// Ensure conversation. Use section-qualified name so threads with
+		// the same basename in different sections (e.g. inbox vs archived)
+		// don't collide.
+		convID, err = st.EnsureConversationWithTypeContext(ctx, sourceID, threadKey, thread.ConvType, thread.Title)
+		if err != nil {
+			return fmt.Errorf("ensure conversation: %w", err)
+		}
 
-	// Build participant address map for this thread.
-	addrs := make([]mime.Address, 0, len(thread.Participants)+1)
-	addrs = append(addrs, mime.Address{Name: "", Email: opts.Me, Domain: Domain})
-	for _, p := range thread.Participants {
-		addrs = append(addrs, Address(p.Name))
-	}
-	partIDs, err := st.EnsureParticipantsBatch(ctx, addrs)
-	if err != nil {
-		return fmt.Errorf("ensure participants: %w", err)
-	}
-	summary.ParticipantsResolved += len(partIDs)
+		// Build participant address map for this thread.
+		addrs := make([]mime.Address, 0, len(thread.Participants)+1)
+		addrs = append(addrs, mime.Address{Name: "", Email: opts.Me, Domain: Domain})
+		for _, p := range thread.Participants {
+			addrs = append(addrs, Address(p.Name))
+		}
+		partIDs, err := st.EnsureParticipantsBatch(ctx, addrs)
+		if err != nil {
+			return fmt.Errorf("ensure participants: %w", err)
+		}
+		summary.ParticipantsResolved += len(partIDs)
 
-	// Map display name → participant ID and email for this thread.
-	nameToID := make(map[string]int64)
-	nameToEmail := make(map[string]string)
-	for _, p := range thread.Participants {
-		addr := Address(p.Name)
-		nameToID[p.Name] = partIDs[addr.Email]
-		nameToEmail[p.Name] = addr.Email
-	}
-	meID := partIDs[opts.Me]
-	// Ensure all participants (incl. self) are linked to the conversation.
-	_ = st.EnsureConversationParticipantContext(ctx, convID, meID, "member")
-	for _, pid := range nameToID {
-		_ = st.EnsureConversationParticipantContext(ctx, convID, pid, "member")
-	}
+		// Map display name → participant ID and email for this thread.
+		nameToID = make(map[string]int64)
+		nameToEmail = make(map[string]string)
+		for _, p := range thread.Participants {
+			addr := Address(p.Name)
+			nameToID[p.Name] = partIDs[addr.Email]
+			nameToEmail[p.Name] = addr.Email
+		}
+		meID = partIDs[opts.Me]
+		// Ensure all participants (incl. self) are linked to the conversation.
+		_ = st.EnsureConversationParticipantContext(ctx, convID, meID, "member")
+		for _, pid := range nameToID {
+			_ = st.EnsureConversationParticipantContext(ctx, convID, pid, "member")
+		}
 
-	// Determine label IDs for this thread.
-	parentLabelID := labelIDs["Messenger"]
-	sectionLabelID := labelIDs[sectionLabelName(td.Section)]
-
-	// Raw bytes format tag.
+		// Determine label IDs for this thread.
+		parentLabelID = labelIDs["Messenger"]
+		sectionLabelID = labelIDs[sectionLabelName(td.Section)]
+	} else {
+		nameToID, nameToEmail, retained, err = instagramThreadParticipants(ctx, st, sourceID, opts.Account, thread)
+		if err == nil {
+			err = keepInstagramTitle(ctx, st, sourceID, thread)
+		}
+		if err != nil {
+			return err
+		}
+	}
 	rawFormat := "fbmessenger_" + thread.Format
 
 	// Iterate messages.
@@ -511,10 +630,16 @@ func writeThreadToStore(
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) {
+		stored := archived[m.sourceID]
+		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) && (!instagram || stored.ID == 0) {
 			return errLimitReached
 		}
-		summary.MessagesProcessed++
+		if m.possibleDuplicate {
+			summary.PossibleDuplicates++
+		}
+		if !instagram {
+			summary.MessagesProcessed++
+		}
 
 		// Resolve sender.
 		senderName := m.SenderName
@@ -526,7 +651,7 @@ func writeThreadToStore(
 			} else {
 				// Participant not in the thread's participants list;
 				// synthesize.
-				addr := Address(senderName)
+				addr := address(senderName)
 				m2, err := st.EnsureParticipantsBatch(ctx, []mime.Address{addr})
 				if err == nil {
 					if id, ok := m2[addr.Email]; ok {
@@ -539,9 +664,11 @@ func writeThreadToStore(
 			}
 		}
 		if senderName != "" {
-			if Slug(senderName) == meLocal {
+			if (!instagram && Slug(senderName) == meLocal) || (instagram && senderName == opts.SelfName) {
 				isFromMe = true
-				senderID = sql.NullInt64{Int64: meID, Valid: true}
+				if !instagram {
+					senderID = sql.NullInt64{Int64: meID, Valid: true}
+				}
 				summary.FromMeCount++
 			}
 		}
@@ -549,6 +676,9 @@ func writeThreadToStore(
 		// Build the source_message_id. Section-qualified to avoid
 		// collisions across sections with the same thread basename.
 		srcMsgID := fmt.Sprintf("%s__%s%d", threadKey, prefix, m.Index)
+		if instagram {
+			srcMsgID = m.sourceID
+		}
 
 		// If we couldn't resolve a sender this run but a previous import
 		// of the same message already recorded one, preserve it — the
@@ -558,7 +688,7 @@ func writeThreadToStore(
 		// downstream writes to message_recipients("from") and FTS don't
 		// clobber the prior display-name / from-address with empty
 		// strings derived from an unresolved current-run senderName.
-		if !senderID.Valid {
+		if !instagram && !senderID.Valid {
 			var priorID sql.NullInt64
 			var priorName, priorEmail sql.NullString
 			var priorIsFromMe bool
@@ -617,81 +747,182 @@ func writeThreadToStore(
 			HasAttachments:  len(m.Attachments) > 0,
 			AttachmentCount: len(m.Attachments),
 		}
-		messageID, err := st.UpsertMessageContext(ctx, msgRow)
-		if err != nil {
-			summary.Errors++
-			summary.MessagesSkipped++
-			logger.Warn("fbmessenger: upsert message", "err", err)
-			continue
-		}
-		summary.MessagesAdded++
-
-		// Body.
-		bodyText := sql.NullString{String: m.Body, Valid: m.Body != ""}
-		if err := st.UpsertMessageBodyContext(ctx, messageID, bodyText, sql.NullString{}); err != nil {
-			summary.Errors++
-			logger.Warn("fbmessenger: upsert body", "err", err)
-		}
-
-		// Raw bytes — store once per thread (first message only) to avoid bloat.
-		if mi == 0 && len(thread.RawBytes) > 0 {
-			if err := st.UpsertMessageRawWithFormatContext(ctx, messageID, thread.RawBytes, rawFormat); err != nil {
-				logger.Warn("fbmessenger: upsert raw", "err", err)
+		var messageID int64
+		if instagram {
+			msgRow.ConversationID, msgRow.MessageType = stored.ConversationID, "instagram"
+			msgRow.SentAt.Valid, msgRow.ReceivedAt.Valid = true, true
+			msgRow.Subject = sql.NullString{String: thread.Title, Valid: thread.Title != ""}
+			msgRow.PreserveAttachmentStats = true
+			rawData := m.rawData
+			var names []string
+			for name := range nameToID {
+				names = append(names, name)
 			}
-		}
-
-		// Recipients: from = sender, to = other participants.
-		// Only rewrite "from" when we have a valid sender — otherwise on
-		// re-import we would clobber a previously-recorded sender with an
-		// empty row.
-		if senderID.Valid {
-			fromIDs := []int64{senderID.Int64}
-			fromNames := []string{senderName}
-			if err := st.ReplaceMessageRecipientsContext(ctx, messageID, "from", fromIDs, fromNames); err != nil {
-				logger.Warn("fbmessenger: replace from recipients", "err", err)
+			sort.Strings(names)
+			var members []store.ConversationParticipantRef
+			var toIDs []int64
+			var toNames, toAddresses []string
+			for _, name := range names {
+				members = append(members, store.ConversationParticipantRef{ParticipantID: nameToID[name], Role: "member"})
+				if name != senderName {
+					toIDs, toNames, toAddresses = append(toIDs, nameToID[name]), append(toNames, name), append(toAddresses, nameToEmail[name])
+				}
 			}
-		}
-
-		var toIDs []int64
-		var toNames []string
-		seenPID := make(map[int64]bool)
-		if senderID.Valid {
-			seenPID[senderID.Int64] = true
-		}
-		sortedNames := make([]string, 0, len(nameToID))
-		for name := range nameToID {
-			sortedNames = append(sortedNames, name)
-		}
-		sort.Strings(sortedNames)
-		for _, name := range sortedNames {
-			pid := nameToID[name]
-			if seenPID[pid] {
+			for _, p := range retained {
+				members = append(members, store.ConversationParticipantRef{ParticipantID: p.id, Role: "member"})
+				if !senderID.Valid || p.id != senderID.Int64 {
+					toIDs, toNames, toAddresses = append(toIDs, p.id), append(toNames, p.name), append(toAddresses, p.email)
+				}
+			}
+			recipients := []store.RecipientSet{{Type: "to", ParticipantIDs: toIDs, DisplayNames: toNames}}
+			if senderID.Valid {
+				recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{senderID.Int64}, DisplayNames: []string{senderName}})
+			}
+			data := &store.MessagePersistData{
+				Message: msgRow, Conversation: &store.ConversationPersistData{SourceConversationID: thread.instagramKey, ConversationType: thread.ConvType, Title: thread.Title, Participants: members, PreserveExistingParticipants: true},
+				BodyText: sql.NullString{String: m.Body, Valid: m.Body != ""}, RawMIME: rawData, RawFormat: "instagram_json", Recipients: recipients, PreserveLabels: true,
+				FTS: &store.FTSDoc{Subject: thread.Title, Body: m.Body, FromAddr: nameToEmail[senderName], ToAddrs: strings.Join(toAddresses, " ")},
+			}
+			messageID = stored.ID
+			matches := stored.ID != 0 && stored.Matches(msgRow, rawData)
+			if matches {
+				matches, err = st.MessageContentMatchesContext(ctx, stored.ID, data.BodyText, *data.FTS)
+				if err != nil {
+					return err
+				}
+			}
+			if !matches {
+				messageID, err = st.PersistMessageContext(ctx, data)
+				if err != nil {
+					return err
+				}
+			}
+			if stored.ID == 0 {
+				summary.MessagesAdded++
+			} else {
+				summary.MessagesSkipped++
+			}
+		} else {
+			messageID, err = st.UpsertMessageContext(ctx, msgRow)
+			if err != nil {
+				summary.Errors++
+				summary.MessagesSkipped++
+				logger.Warn("fbmessenger: upsert message", "err", err)
 				continue
 			}
-			seenPID[pid] = true
-			toIDs = append(toIDs, pid)
-			toNames = append(toNames, name)
-		}
-		// If message is from someone else, ensure self is in "to".
-		if !isFromMe && !seenPID[meID] {
-			toIDs = append(toIDs, meID)
-			toNames = append(toNames, "")
-			seenPID[meID] = true
-		}
-		_ = st.ReplaceMessageRecipientsContext(ctx, messageID, "to", toIDs, toNames)
+			summary.MessagesAdded++
 
-		// Labels.
-		if parentLabelID != 0 {
-			_ = st.LinkMessageLabel(ctx, messageID, parentLabelID)
-		}
-		if sectionLabelID != 0 {
-			_ = st.LinkMessageLabel(ctx, messageID, sectionLabelID)
+			// Body.
+			bodyText := sql.NullString{String: m.Body, Valid: m.Body != ""}
+			if err := st.UpsertMessageBodyContext(ctx, messageID, bodyText, sql.NullString{}); err != nil {
+				summary.Errors++
+				logger.Warn("fbmessenger: upsert body", "err", err)
+			}
+
+			// Raw bytes — store once per thread (first message only) to avoid bloat.
+			if mi == 0 && len(thread.RawBytes) > 0 {
+				if err := st.UpsertMessageRawWithFormatContext(ctx, messageID, thread.RawBytes, rawFormat); err != nil {
+					logger.Warn("fbmessenger: upsert raw", "err", err)
+				}
+			}
+
+			// Recipients: from = sender, to = other participants.
+			// Only rewrite "from" when we have a valid sender — otherwise on
+			// re-import we would clobber a previously-recorded sender with an
+			// empty row.
+			if senderID.Valid {
+				fromIDs := []int64{senderID.Int64}
+				fromNames := []string{senderName}
+				if err := st.ReplaceMessageRecipientsContext(ctx, messageID, "from", fromIDs, fromNames); err != nil {
+					logger.Warn("fbmessenger: replace from recipients", "err", err)
+				}
+			}
+
+			var toIDs []int64
+			var toNames []string
+			seenPID := make(map[int64]bool)
+			if senderID.Valid {
+				seenPID[senderID.Int64] = true
+			}
+			sortedNames := make([]string, 0, len(nameToID))
+			for name := range nameToID {
+				sortedNames = append(sortedNames, name)
+			}
+			sort.Strings(sortedNames)
+			for _, name := range sortedNames {
+				pid := nameToID[name]
+				if seenPID[pid] {
+					continue
+				}
+				seenPID[pid] = true
+				toIDs = append(toIDs, pid)
+				toNames = append(toNames, name)
+			}
+			// If message is from someone else, ensure self is in "to".
+			if !isFromMe && !seenPID[meID] {
+				toIDs = append(toIDs, meID)
+				toNames = append(toNames, "")
+				seenPID[meID] = true
+			}
+			_ = st.ReplaceMessageRecipientsContext(ctx, messageID, "to", toIDs, toNames)
+
+			// Labels.
+			if parentLabelID != 0 {
+				_ = st.LinkMessageLabel(ctx, messageID, parentLabelID)
+			}
+			if sectionLabelID != 0 {
+				_ = st.LinkMessageLabel(ctx, messageID, sectionLabelID)
+			}
 		}
 
 		// Attachments.
+		var existing map[string]store.AttachmentRef
 		for ai := range m.Attachments {
 			att := m.Attachments[ai]
 			summary.AttachmentsFound++
+			role := store.AttachmentRoleStandalone
+			roleSource := store.AttachmentRoleSourceImporterSemantics
+			if att.Kind == "sticker" {
+				role = store.AttachmentRoleSticker
+				roleSource = store.AttachmentRoleSourceProviderExplicit
+			}
+			if instagram {
+				slot := "instagram:media:" + instagramHash(att.Kind+":"+path.Clean(att.URI))
+				write := store.AttachmentWrite{Filename: path.Base(att.URI), MIMEType: att.MimeType, SourcePartKey: slot, SourceAttachmentID: slot, MediaType: att.Kind, Role: role, RoleSource: roleSource}
+				if existing == nil {
+					existing, err = st.MessageProviderAttachments(ctx, messageID, "instagram:media:")
+					if err != nil {
+						return err
+					}
+				}
+				prev, found := existing[slot]
+				if found && prev.StoragePath != "" {
+					continue
+				}
+				filename := resolveAttachmentURI(absRoot, att.URI)
+				if filename == "" {
+					summary.MediaRejected, summary.Incomplete = summary.MediaRejected+1, true
+				} else if info, err := os.Lstat(filename); errors.Is(err, os.ErrNotExist) {
+					summary.MediaMissing, summary.Incomplete = summary.MediaMissing+1, true
+				} else if err != nil || !info.Mode().IsRegular() {
+					summary.MediaRejected, summary.Incomplete = summary.MediaRejected+1, true
+				} else if opts.AttachmentsDir != "" {
+					var err error
+					write.StoragePath, write.ContentHash, write.Size, err = export.StoreAttachmentFromPath(ctx, opts.AttachmentsDir, filename, 0)
+					if err != nil {
+						return fmt.Errorf("store Instagram media: %w", err)
+					}
+					summary.AttachmentsStored++
+				}
+				if found && write.StoragePath == "" {
+					continue
+				}
+				if err := st.UpsertAttachmentRecordWithStats(ctx, messageID, write, true); err != nil {
+					return err
+				}
+				existing[slot] = store.AttachmentRef{StoragePath: write.StoragePath}
+				continue
+			}
 			storagePath, contentHash, size := handleAttachment(ctx, att, opts.AttachmentsDir)
 			if storagePath != "" {
 				summary.AttachmentsStored++
@@ -722,12 +953,6 @@ func writeThreadToStore(
 			} else if err := deleteFailedStoredAttachment(ctx, st, messageID, contentHash); err != nil {
 				logger.Warn("fbmessenger: delete failed stored attachment", "err", err)
 			}
-			role := store.AttachmentRoleStandalone
-			roleSource := store.AttachmentRoleSourceImporterSemantics
-			if att.Kind == "sticker" {
-				role = store.AttachmentRoleSticker
-				roleSource = store.AttachmentRoleSourceProviderExplicit
-			}
 			if err := st.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
 				Filename: att.Filename, MIMEType: att.MimeType, StoragePath: storagePath,
 				ContentHash: hash, Size: int64(size), SourceAttachmentID: att.URI,
@@ -754,19 +979,35 @@ func writeThreadToStore(
 		}
 
 		// Reactions: first-class rows and body-append already done.
+		var reactions []store.ReactionRef
 		for _, r := range m.Reactions {
-			actorAddr := Address(r.Actor)
+			if instagram && r.Actor == "" {
+				continue
+			}
+			actorAddr := address(r.Actor)
 			m2, err := st.EnsureParticipantsBatch(ctx, []mime.Address{actorAddr})
 			if err != nil {
+				if instagram {
+					return err
+				}
 				continue
 			}
 			pid := m2[actorAddr.Email]
 			if pid == 0 {
 				continue
 			}
-			if err := st.UpsertReaction(ctx, messageID, pid, "emoji", r.Reaction, m.SentAt); err == nil {
+			if instagram {
+				reactions = append(reactions, store.ReactionRef{ParticipantID: pid, Type: "emoji", Value: r.Reaction})
+			} else if err := st.UpsertReaction(ctx, messageID, pid, "emoji", r.Reaction, m.SentAt); err == nil {
 				summary.ReactionsAdded++
 			}
+		}
+		if instagram {
+			if err := st.ReplaceReactionsContext(ctx, messageID, reactions); err != nil {
+				return err
+			}
+			summary.ReactionsAdded += len(reactions)
+			continue
 		}
 
 		// FTS indexing.
@@ -793,7 +1034,33 @@ func writeThreadToStore(
 	}
 	// The writes above log and skip failures, so a cancellation may have
 	// skipped one; report it so ImportDYI does not checkpoint past this thread.
-	return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if instagram && len(thread.Messages) > 0 {
+		_, err := st.EnsureConversationWithTypeContext(ctx, sourceID, thread.instagramKey, thread.ConvType, thread.Title)
+		return err
+	}
+	return nil
+}
+
+// keepInstagramTitle fills an omitted thread title from the stored conversation.
+// A changed title is stored with the retained messages' subjects and search
+// entries in one transaction, so a partial exit leaves the old title everywhere.
+func keepInstagramTitle(ctx context.Context, st *store.Store, sourceID int64, thread *Thread) error {
+	titles, err := st.ConversationTitlesBatchContext(ctx, sourceID, []string{thread.instagramKey})
+	if err != nil {
+		return err
+	}
+	stored, exists := titles[thread.instagramKey]
+	if thread.Title == "" {
+		thread.Title = stored
+		return nil
+	}
+	if !exists || stored == thread.Title {
+		return nil
+	}
+	return st.RetitleArchivedConversationContext(ctx, sourceID, thread.instagramKey, thread.ConvType, thread.Title, "instagram_json")
 }
 
 // saveFbmessengerCheckpoint marshals a fbmessengerCheckpoint JSON blob

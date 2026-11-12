@@ -616,6 +616,25 @@ func (s *Store) StoredMessagesContext(
 	return result, nil
 }
 
+// SourceConversationMessageIDsAtTimesContext finds archived messages at the
+// supplied timestamps within one source conversation.
+func (s *Store) SourceConversationMessageIDsAtTimesContext(ctx context.Context, sourceID int64, conversationID string, times []time.Time) ([]string, error) {
+	var ids []string
+	err := queryInChunksContext(ctx, s.db, times, []any{sourceID, conversationID}, `
+		SELECT m.source_message_id FROM conversations c
+		JOIN messages m ON m.conversation_id = c.id
+		WHERE c.source_id = ? AND c.source_conversation_id = ? AND m.sent_at IN (%s)`,
+		func(rows *loggedRows) error {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+			return nil
+		})
+	return ids, err
+}
+
 // MessageContentMatchesContext reports whether one message's stored body and
 // search document are what PersistMessage would write for bodyText, a NULL
 // HTML body and doc. The search check is skipped when FTS is unavailable,
@@ -3993,23 +4012,77 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 // rows. Unchanged entries are left alone, and unavailable FTS is a no-op.
 func (s *Store) IndexStoredMessageContext(ctx context.Context, messageID int64) error {
 	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
-		if !s.fts5Available {
-			return nil
-		}
-		row, err := s.loadDerivedEmailText(q, messageID)
-		if err != nil {
-			return fmt.Errorf("load stored message for search: %w", err)
-		}
-		row.fts.Body = row.body
-		matches, err := s.dialect.FTSMatches(q, row.fts)
-		if err != nil {
-			return fmt.Errorf("compare stored search entry: %w", err)
-		}
-		if matches {
-			return nil
-		}
-		return s.dialect.FTSUpsert(q, row.fts)
+		return s.indexStoredMessage(q, messageID)
 	})
+}
+
+func (s *Store) indexStoredMessage(q querier, messageID int64) error {
+	if !s.fts5Available {
+		return nil
+	}
+	row, err := s.loadDerivedEmailText(q, messageID)
+	if err != nil {
+		return fmt.Errorf("load stored message for search: %w", err)
+	}
+	row.fts.Body = row.body
+	matches, err := s.dialect.FTSMatches(q, row.fts)
+	if err != nil {
+		return fmt.Errorf("compare stored search entry: %w", err)
+	}
+	if matches {
+		return nil
+	}
+	return s.dialect.FTSUpsert(q, row.fts)
+}
+
+// RetitleArchivedConversationContext stores a conversation's title together
+// with the subject and search entry of each of its messages with the given raw
+// format, and advances the derived-data revision, in one transaction.
+// Cancellation leaves the old title and subjects.
+func (s *Store) RetitleArchivedConversationContext(ctx context.Context, sourceID int64, sourceConversationID, conversationType, title, rawFormat string) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return err
+	}
+	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		id, err := ensureConversationWithType(q, s.dialect, sourceID, sourceConversationID, conversationType, title)
+		if err != nil {
+			return err
+		}
+		// The search entry, including one rebuilt by RebuildFTS, derives from messages.subject.
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET subject = NULLIF(?, ''), embed_gen = NULL WHERE conversation_id = ?
+			AND id IN (SELECT message_id FROM message_raw WHERE raw_format = ?) AND COALESCE(subject, '') <> ?`, title, id, rawFormat, title); err != nil {
+			return fmt.Errorf("store message subjects: %w", err)
+		}
+		ids, err := archivedRawMessageIDs(ctx, tx, id, rawFormat)
+		if err != nil {
+			return err
+		}
+		for _, messageID := range ids {
+			if err := s.indexStoredMessage(q, messageID); err != nil {
+				return err
+			}
+		}
+		return s.bumpDerivedDataRevisionContext(ctx, tx)
+	})
+}
+
+func archivedRawMessageIDs(ctx context.Context, tx *loggedTx, conversationID int64, rawFormat string) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT m.id FROM messages m JOIN message_raw r ON r.message_id = m.id
+		WHERE m.conversation_id = ? AND r.raw_format = ? ORDER BY m.id`, conversationID, rawFormat)
+	if err != nil {
+		return nil, fmt.Errorf("list archived raw messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // BackfillFTS fills missing search entries from existing message data on SQLite.

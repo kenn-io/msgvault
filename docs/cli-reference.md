@@ -2484,9 +2484,36 @@ Re-imports add new messages and fill missing media. Archived text and edit flags
 
 ---
 
+## Instagram inbox import
+
+Import retained personal Instagram inbox JSON and available media from an
+extracted account download.
+
+```bash
+msgvault import-messenger --source instagram --account <handle> --self-name "<export display name>" <export-dir>
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--source` | `messenger` | Set to `instagram` for this import |
+| `--account` | (required) | Account handle; lowercased with a leading `@` removed |
+| `--self-name` | (required) | Exact decoded export display name used to mark sent messages; does not confirm identity |
+| `--limit` | `0` | Maximum new messages per run; zero imports all; negatives rejected |
+
+Runs replay from the beginning with stable fingerprint occurrence IDs and
+retry missing media. Only numbered JSON inbox shards in the observed account
+layout are supported. HTML, ZIP and other layouts are rejected. See
+[Instagram imports](usage/text-messages.md#instagram-inbox-import) for coverage and
+identity limits. Run local file imports on the daemon host.
+The command can exit successfully with incomplete coverage; scripts should check the summary for `Incomplete coverage`.
+Instagram accepts `--format auto` or `--format json` and ignores `--me`, `--no-resume`, and `--checkpoint-interval`.
+
+---
+
 ## import-messenger
 
 Import Facebook Messenger conversations from a Download Your Information export.
+Messenger ignores `--account` and `--self-name`.
 
 ```bash
 msgvault import-messenger --me <you@facebook.messenger> <dyi-export-dir>
@@ -2494,7 +2521,8 @@ msgvault import-messenger --me <you@facebook.messenger> <dyi-export-dir>
 
 | Flag | Default | Description |
 |---|---|---|
-| `--me` | (required) | Your synthetic Messenger identifier, e.g. `test.user@facebook.messenger` |
+| `--source` | `messenger` | Select `messenger` or `instagram` |
+| `--me` | (required for Messenger) | Your synthetic Messenger identifier, e.g. `test.user@facebook.messenger` |
 | `--format` | `auto` | Export format: `auto`, `json`, `html`, or `both` |
 | `--limit` | `0` | Limit number of messages (for testing) |
 | `--no-resume` | `false` | Start fresh, ignoring interrupted progress |

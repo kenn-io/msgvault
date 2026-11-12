@@ -21,6 +21,7 @@ open a conversation to read its messages. In the [TUI](/docs/usage/tui/), press
 | [Google Voice](#import-gvoice) | Google Takeout Voice directory |
 | [Telegram](#import-telegram) | Telegram Desktop Machine-readable JSON export |
 | [X DMs](#import-x) | Extracted X account archive (unreleased on `main`) |
+| [Instagram](#instagram-inbox-import) | Extracted account inbox JSON download |
 | [Facebook Messenger](#import-messenger) | Download Your Information export |
 | [SMS Backup & Restore](#import-synctech-sms) | XML backup |
 | [Slackdump](/docs/usage/slack/#import-a-slackdump-export) | Export directory or ZIP |
@@ -348,9 +349,49 @@ msgvault import-gvoice ~/Downloads/Takeout/Voice \
 3. Export and download the archive
 4. Extract the zip. The `Voice` folder inside the `Takeout` directory is what you pass to the command.
 
+## Instagram inbox import
+
+Import retained Instagram chats and available media from an extracted account
+JSON download. This personal account import is separate from
+[professional account comment sync](instagram-comments.md).
+
+```bash
+msgvault import-messenger --source instagram --account orbit.example --self-name "Nova Example" ./export
+```
+
+Only `your_instagram_activity/messages/inbox/<thread>/message_<N>.json` is
+supported. HTML, ZIP files and other message sections/layouts are unsupported.
+The summary reports sent records, skipped records/files, and missing or rejected media.
+The command can exit successfully with incomplete coverage; scripts should check
+the summary for `Incomplete coverage`.
+If no sender matches `--self-name`, re-import affected messages with the exact
+exported sender name to update direction where records can be matched. Omitted
+records keep their previous direction. Deleted, unsent, encrypted and unexported history cannot
+be recovered. No official versioned message schema or exhaustive real-account
+sent/received coverage has been verified.
+
+`--account` and `--self-name` are required. Handles are lowercased and a leading
+`@` is removed,
+so refreshed downloads for the same account share one source. `--self-name`
+marks sent messages only on an exact decoded display-name match. It does not
+confirm a contact identity or authenticate a handle. Within one account,
+identical display names merge, including
+across direct and group chats; distinct names remain distinct.
+
+Each run starts from the beginning. Messages use content fingerprints and occurrence counts within a thread. Reordered copies keep their IDs when their rendered content and reactions match, and a single changed copy keeps its ID when it is the only unmatched copy. Changed copies that cannot be told apart are skipped, their originals keep their reactions, and the run reports incomplete coverage. When an export has more changed copies than the archive holds, the surplus is added with only the reactions every copy shares. Missing media and interrupted ancillary writes retry on replay. Later exports never delete archived messages or stored media. If a later export changes a message’s sender name, the importer keeps the original and adds another message. Edited content or renamed thread keys cannot be reconciled without native message IDs.
+On replay, the summary reports possible duplicates when an imported message and an archived message in the same thread share a timestamp and content but have different sender names. Different people can send matching messages, so the importer keeps both.
+Instagram accepts `--format auto` or `--format json` and ignores `--me`, `--no-resume`, and `--checkpoint-interval`.
+Original records and shard provenance are retained with the title and members; timestamps preserve integer
+milliseconds, and missing sender evidence remains unknown. Records with missing
+or unsupported timestamps are skipped. Reaction times remain unknown.
+
+`--limit N` caps new messages per run (`0` imports all; negatives are rejected).
+Successive runs with the same limit progress through the export.
+
 ## import-messenger
 
 Import Facebook Messenger conversations from a Download Your Information export.
+Messenger ignores `--account` and `--self-name`.
 
 ```bash
 msgvault import-messenger --me <you@facebook.messenger> <dyi-export-dir>

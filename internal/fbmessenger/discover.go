@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -52,30 +54,57 @@ func messagesRootCandidates(root string) []string {
 // directory found, sorted by (Section, Name). Absolute and relative root
 // inputs yield the same logical result (paths are converted to absolute).
 func Discover(root string) ([]ThreadDir, error) {
+	threads, _, err := discover(root, false)
+	return threads, err
+}
+
+// discover also counts message candidates excluded from supported threads.
+func discover(root string, reportUnsupported bool) ([]ThreadDir, int, error) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return nil, fmt.Errorf("fbmessenger: abs root: %w", err)
+		return nil, 0, fmt.Errorf("fbmessenger: abs root: %w", err)
 	}
 	info, err := os.Stat(absRoot)
 	if err != nil {
-		return nil, fmt.Errorf("fbmessenger: stat root: %w", err)
+		return nil, 0, fmt.Errorf("fbmessenger: stat root: %w", err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("fbmessenger: root is not a directory: %s", absRoot)
+		return nil, 0, fmt.Errorf("fbmessenger: root is not a directory: %s", absRoot)
 	}
 
 	var out []ThreadDir
+	skipped := 0
 	scannedE2EE := make(map[string]bool)
 	for _, candidate := range messagesRootCandidates(absRoot) {
 		info, err := os.Stat(candidate)
 		if err != nil || !info.IsDir() {
+			if err != nil && !os.IsNotExist(err) {
+				skipped++
+			}
 			continue
 		}
 		// Check for DYI section subdirectories.
-		for _, section := range knownSections {
+		sections := slices.Clone(knownSections)
+		if reportUnsupported {
+			entries, err := os.ReadDir(candidate)
+			if err != nil {
+				skipped++
+				continue
+			}
+			sections = nil
+			for _, entry := range entries {
+				if !strings.HasPrefix(entry.Name(), ".") && (entry.IsDir() || slices.Contains(knownSections, entry.Name())) {
+					sections = append(sections, entry.Name())
+				}
+			}
+		}
+		for _, section := range sections {
 			sectionDir := filepath.Join(candidate, section)
 			entries, err := os.ReadDir(sectionDir)
 			if err != nil {
+				if !os.IsNotExist(err) {
+					skipped++
+				}
 				continue
 			}
 			for _, entry := range entries {
@@ -87,7 +116,21 @@ func Discover(root string) ([]ThreadDir, error) {
 					continue
 				}
 				threadPath := filepath.Join(sectionDir, name)
-				format, ok := detectFormat(threadPath)
+				if !slices.Contains(knownSections, section) {
+					files, err := os.ReadDir(threadPath)
+					if err != nil {
+						skipped++
+						continue
+					}
+					for _, file := range files {
+						if !file.IsDir() && strings.HasPrefix(file.Name(), "message_") {
+							skipped++
+						}
+					}
+					continue
+				}
+				format, ok, unsupported := detectFormat(threadPath, reportUnsupported)
+				skipped += unsupported
 				if !ok {
 					continue
 				}
@@ -119,7 +162,7 @@ func Discover(root string) ([]ThreadDir, error) {
 		}
 		return out[i].Name < out[j].Name
 	})
-	return out, nil
+	return out, skipped, nil
 }
 
 // discoverE2EEFlat scans a directory for E2EE flat export files: JSON
@@ -264,18 +307,29 @@ func isKnownMetadataFile(name string) bool {
 	return false
 }
 
+// messageFileNumber parses a numbered message filename that fits an int.
+func messageFileNumber(name string) (int, bool) {
+	m := reMessageFile.FindStringSubmatch(name)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	return n, err == nil
+}
+
 // detectFormat inspects a thread directory and reports whether it has a
 // numbered message_<N>.json, a message_*.html, or both. Directories with
 // neither are ignored (returns ok=false). The JSON match mirrors
 // ParseJSONThread's regex so a thread with only an unnumbered JSON
 // sibling (e.g. message_final.json) is not misclassified as JSON and
 // does not crowd out a sibling HTML file.
-func detectFormat(threadPath string) (string, bool) {
+func detectFormat(threadPath string, reportUnsupported bool) (string, bool, int) {
 	entries, err := os.ReadDir(threadPath)
 	if err != nil {
-		return "", false
+		return "", false, 1
 	}
-	hasJSON, hasHTML := false, false
+	hasJSON := false
+	html, badJSON, other := 0, 0, 0
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -284,19 +338,31 @@ func detectFormat(threadPath string) (string, bool) {
 		if strings.HasPrefix(name, ".") || name == "autofill_information.json" {
 			continue
 		}
-		if reMessageFile.MatchString(name) {
+		var numbered bool
+		if reportUnsupported {
+			_, numbered = messageFileNumber(name)
+		} else {
+			numbered = reMessageFile.MatchString(name)
+		}
+		switch {
+		case numbered:
 			hasJSON = true
-		} else if strings.HasPrefix(name, "message_") && strings.HasSuffix(name, ".html") {
-			hasHTML = true
+		case strings.HasPrefix(name, "message_") && strings.HasSuffix(name, ".html"):
+			html++
+		case strings.HasPrefix(name, "message_") && strings.HasSuffix(name, ".json"):
+			badJSON++
+		case strings.HasPrefix(name, "message_"):
+			other++
 		}
 	}
-	switch {
-	case hasJSON && hasHTML:
-		return "both", true
-	case hasJSON:
-		return formatJSON, true
-	case hasHTML:
-		return "html", true
+	if hasJSON && html > 0 {
+		return "both", true, html + other
 	}
-	return "", false
+	if hasJSON {
+		return formatJSON, true, other
+	}
+	if html > 0 {
+		return "html", true, badJSON + other
+	}
+	return "", false, badJSON + other
 }

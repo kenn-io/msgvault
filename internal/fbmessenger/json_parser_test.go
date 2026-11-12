@@ -1,6 +1,7 @@
 package fbmessenger
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -73,19 +74,54 @@ func TestParseJSONThread_Corrupt(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCorruptJSON)
 }
 
-func TestParseJSONThread_Attachments(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	root := "testdata/json_with_media"
-	th, err := ParseJSONThread(root, threadDir(t, root, "bob_XYZ789"))
-	require.NoError(err, "parse")
-	require.Len(th.Messages, 1)
-	m := th.Messages[0]
-	require.Len(m.Attachments, 1)
-	assert.Equal("photo", m.Attachments[0].Kind)
-	_, err = os.Stat(m.Attachments[0].AbsPath)
-	require.NoError(err, "attachment file should exist on disk")
-	assert.Equal("image/png", m.Attachments[0].MimeType)
+func TestParseJSONThread_AttachmentsAndUnresolvedMedia(t *testing.T) {
+	for _, test := range []struct{ name, field, extension, kind, mime string }{
+		{"photo", "photos", ".png", "photo", "image/png"},
+		{"generic media", "media", ".png", "file", "image/png"},
+		{"ogg audio", "audio_files", ".ogg", "audio", "audio/ogg"},
+		{"m4a audio", "audio_files", ".m4a", "audio", "audio/mp4"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			root := "testdata/json_with_media"
+			if test.field != "photos" {
+				root = t.TempDir()
+				require.NoError(os.CopyFS(root, os.DirFS("testdata/json_with_media")))
+				filename := filepath.Join(threadDir(t, root, "bob_XYZ789"), "message_1.json")
+				data, err := os.ReadFile(filename)
+				require.NoError(err)
+				data = bytes.Replace(data, []byte(`"photos"`), []byte(`"`+test.field+`"`), 1)
+				data = bytes.ReplaceAll(data, []byte("tiny.png"), []byte("tiny"+test.extension))
+				require.NoError(os.WriteFile(filename, data, 0600))
+			}
+			th, err := ParseJSONThread(root, threadDir(t, root, "bob_XYZ789"))
+			require.NoError(err, "parse")
+			require.Len(th.Messages, 1)
+			m := th.Messages[0]
+			require.Len(m.Attachments, 1)
+			assert.Equal(test.kind, m.Attachments[0].Kind)
+			if test.kind != "audio" {
+				_, err = os.Stat(m.Attachments[0].AbsPath)
+				require.NoError(err, "attachment file should exist on disk")
+			} else {
+				assert.Equal("tiny"+test.extension, filepath.Base(m.Attachments[0].AbsPath))
+				_, err = os.Stat(m.Attachments[0].AbsPath)
+				require.ErrorIs(err, os.ErrNotExist)
+			}
+			assert.Equal(test.mime, m.Attachments[0].MimeType)
+		})
+	}
+	t.Run("no media root", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		uri := filepath.Join("testdata", "json_with_media", "your_activity_across_facebook", "messages", "inbox", "bob_XYZ789", "photos", "tiny.png")
+		require.FileExists(uri)
+		attachments := resolveAttachments("", rawJSONMessage{Photos: []rawJSONPhoto{{URI: uri}}})
+		require.Len(attachments, 1)
+		assert.Empty(attachments[0].AbsPath)
+		assert.Equal(uri, attachments[0].URI)
+	})
 }
 
 func TestParseJSONThread_Attachments_AltLayout(t *testing.T) {
@@ -112,7 +148,7 @@ func TestParseJSONThread_NonTextBodies(t *testing.T) {
 	// Ordered chronologically ascending: unsubscribe, share, missed call, call, photo, sticker.
 	wantBodies := []string{
 		"[system] Sam left the chat",
-		"[shared link] https://example.com/article\nExample share text",
+		"[shared link] https://example.com/cafÃ©\nExample share text",
 		"[call: missed, 0s]",
 		"[call: 3m 12s]",
 		"[photo]",

@@ -101,33 +101,74 @@ func TestDiscover_AlternateLayouts(t *testing.T) {
 	}
 }
 
-// TestDiscover_UnnumberedJSONSiblingNotMisclassified guards against a thread
-// directory that contains valid HTML plus only an unnumbered JSON sibling
-// (e.g. message_final.json) being classified as JSON or "both". ParseJSONThread
-// only accepts numbered message_<N>.json files, so misclassifying as JSON
-// would cause the thread to fail in auto/json mode and the valid HTML to
-// be skipped.
-func TestDiscover_UnnumberedJSONSiblingNotMisclassified(t *testing.T) {
-	require := require.New(t)
-	tmp := t.TempDir()
-	threadDir := filepath.Join(tmp, "your_activity_across_facebook", "messages", "inbox", "foo_1")
-	require.NoError(os.MkdirAll(threadDir, 0755))
-	require.NoError(os.WriteFile(
-		filepath.Join(threadDir, "message_1.html"),
-		[]byte(`<html><body>hi</body></html>`),
-		0644,
-	))
-	require.NoError(os.WriteFile(
-		filepath.Join(threadDir, "message_final.json"),
-		[]byte(`{"unrelated":true}`),
-		0644,
-	))
-
-	dirs, err := Discover(tmp)
-	require.NoError(err, "Discover")
-	require.Len(dirs, 1, "discovered: %+v", dirs)
-	assert.Equal(t, "html", dirs[0].Format,
-		"unnumbered JSON sibling must not promote thread to json/both")
+func TestDiscover_SkippedCountsAndFormat(t *testing.T) {
+	for _, test := range []struct {
+		name, format string
+		files        []string
+		skipped      int
+	}{
+		{"html with unnumbered JSON", "html", []string{"message_1.html", "message_final.json"}, 1},
+		{"unnumbered JSON only", "", []string{"message_final.json", "message_other.json"}, 2},
+		{"HTML and numbered JSON", "both", []string{"message_1.html", "message_1.json"}, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			root := t.TempDir()
+			thread := filepath.Join(root, "your_activity_across_facebook", "messages", "inbox", "thread")
+			require.NoError(os.MkdirAll(thread, 0755))
+			for _, name := range test.files {
+				require.NoError(os.WriteFile(filepath.Join(thread, name), []byte(`{}`), 0644))
+			}
+			dirs, skipped, err := discover(root, true)
+			require.NoError(err)
+			assert.Equal(test.skipped, skipped)
+			if test.format == "" {
+				assert.Empty(dirs)
+			} else {
+				require.Len(dirs, 1)
+				assert.Equal(test.format, dirs[0].Format)
+			}
+		})
+	}
+	t.Run("unknown section", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		root := t.TempDir()
+		messages := filepath.Join(root, "your_activity_across_facebook", "messages")
+		thread := filepath.Join(messages, "spam", "thread")
+		require.NoError(os.MkdirAll(thread, 0700))
+		for _, name := range []string{"message_1.json", "message_2.json", "message_1.html", "notes.txt"} {
+			require.NoError(os.WriteFile(filepath.Join(thread, name), []byte(`{}`), 0600))
+		}
+		media := filepath.Join(messages, "media", "photos")
+		require.NoError(os.MkdirAll(media, 0700))
+		require.NoError(os.WriteFile(filepath.Join(media, "photo.jpg"), []byte("photo"), 0600))
+		dirs, skipped, err := discover(root, true)
+		require.NoError(err)
+		assert.Empty(dirs)
+		assert.Equal(3, skipped)
+		dirs, err = Discover(root)
+		require.NoError(err)
+		assert.Empty(dirs)
+	})
+	t.Run("unreadable thread", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		root := t.TempDir()
+		thread := filepath.Join(root, "your_activity_across_facebook", "messages", "inbox", "unreadable")
+		require.NoError(os.MkdirAll(thread, 0700))
+		require.NoError(os.WriteFile(filepath.Join(thread, "message_1.json"), []byte(`{}`), 0600))
+		require.NoError(os.Chmod(thread, 0))
+		t.Cleanup(func() { require.NoError(os.Chmod(thread, 0700)) })
+		if _, err := os.ReadDir(thread); err == nil {
+			t.Skip("process can read a directory without permissions")
+		}
+		dirs, skipped, err := discover(root, true)
+		require.NoError(err)
+		assert.Empty(dirs)
+		assert.Equal(1, skipped)
+	})
 }
 
 func TestDiscover_IgnoresDSStore(t *testing.T) {
@@ -147,4 +188,17 @@ func TestDiscover_IgnoresDSStore(t *testing.T) {
 	require.NoError(err, "Discover")
 	require.Len(dirs, 1, "discovered: %+v", dirs)
 	assert.Equal(t, "foo_1", dirs[0].Name)
+}
+
+func TestDiscoverMessengerKeepsOverflowingNumberedThread(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	root := t.TempDir()
+	thread := filepath.Join(root, "your_activity_across_facebook", "messages", "inbox", "thread")
+	require.NoError(os.MkdirAll(thread, 0700))
+	require.NoError(os.WriteFile(filepath.Join(thread, "message_999999999999999999999.json"), []byte(`{}`), 0600))
+	dirs, err := Discover(root)
+	require.NoError(err)
+	require.Len(dirs, 1)
+	assert.Equal("json", dirs[0].Format)
 }
