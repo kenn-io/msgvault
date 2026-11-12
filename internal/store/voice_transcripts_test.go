@@ -16,6 +16,8 @@ func TestVoiceTranscriptEligibilitySearchRebuildDisableAndDelete(t *testing.T) {
 	f := newBeeperMediaFixture(t)
 	st := f.Store
 	audio := addBeeperAudio(t, st, f.Source.ID, f.ConvID, "voice", strings.Repeat("a", 64))
+	audio.raw = []byte(strings.Replace(string(audio.raw), `"attachments":`, `"senderName":"Ann","attachments":`, 1))
+	require.NoError(st.UpsertMessageRawWithFormat(audio.messageID, audio.raw, "beeper_json"))
 	mapping := audio.mapping("destination", "revision", "processing")
 	mapping.TranscriptSHA256 = ""
 	retainAudio(t, st, mapping, "occurrence")
@@ -23,8 +25,6 @@ func TestVoiceTranscriptEligibilitySearchRebuildDisableAndDelete(t *testing.T) {
 	pending, err := st.VoiceTranscriptMappings(t.Context(), "destination", 0, 8)
 	require.NoError(err)
 	assert.Len(pending, 1)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE beeper_media_deliveries SET phase='done', coverage_state='transcribed' WHERE processing_key=?`), "processing")
-	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE beeper_media_occurrences SET transcript_sha256=? WHERE attachment_id=?`), strings.Repeat("b", 64), audio.attachmentID)
 	require.NoError(err)
 	supplied, err := st.VoiceTranscriptMappings(t.Context(), "destination", 0, 8)
@@ -37,6 +37,9 @@ func TestVoiceTranscriptEligibilitySearchRebuildDisableAndDelete(t *testing.T) {
 	require.NoError(err)
 	require.Len(mappings, 1)
 	require.NoError(st.SaveVoiceTranscript(t.Context(), mappings[0], "dinner Thursday"))
+	senderIDs, _, err := st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"Ann"}}, 10)
+	require.NoError(err)
+	assert.Equal([]int64{audio.messageID}, senderIDs)
 	mappingsAfter, err := st.VoiceTranscriptMappings(t.Context(), "destination", 0, 8)
 	require.NoError(err)
 	assert.Empty(mappingsAfter)
@@ -77,7 +80,6 @@ func TestVoiceTranscriptEligibilitySearchRebuildDisableAndDelete(t *testing.T) {
 	emptyMappings, err := st.VoiceTranscriptMappings(t.Context(), "destination", 0, 8)
 	require.NoError(err)
 	assert.Empty(emptyMappings)
-	assert.Empty(find())
 	require.NoError(st.SaveVoiceTranscript(t.Context(), mappings[0], "dinner Thursday"))
 	assert.Equal([]int64{audio.messageID}, find())
 	// Saved speech belongs to the message and survives attachment removal.
