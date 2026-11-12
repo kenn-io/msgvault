@@ -85,7 +85,7 @@
   <div class="open-loops">
   {#if loading}<p class="muted" role="status">Loading…</p>
   {:else if failed}<InlineNotice message="Couldn't load open loops." />
-  {:else if items.length === 0 && coverageIncomplete}<p class="muted">No loops found in the messages checked.</p>
+  {:else if items.length === 0 && coverageIncomplete}<p class="muted">No open loops found. Some messages haven't been checked yet.</p>
   {:else if items.length === 0}<p class="muted">Nothing open with this person.</p>
   {:else}
     {#each groups as group (group.kind)}

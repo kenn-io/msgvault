@@ -270,7 +270,7 @@ describe('PersonBindingConflictModal', () => {
     await selectSurvivor();
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('could not load both current profile revisions');
+    expect((await screen.findByRole('alert')).textContent).toContain("couldn't be reloaded");
     expect(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' })).toBeDefined();
     expect(screen.getByRole('radio', { name: 'Synthetic Two (Person 9)' })).toBeDefined();
     expect(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i })).toHaveProperty(
@@ -298,7 +298,7 @@ describe('PersonBindingConflictModal', () => {
     await selectSurvivor();
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('could not load both current profile revisions');
+    expect((await screen.findByRole('alert')).textContent).toContain("couldn't be reloaded");
     expect(screen.getByText('Synthetic One (Person 7)')).toBeDefined();
     expect(screen.getByText('Synthetic Two (Person 9)')).toBeDefined();
     expect(screen.queryByText('Synthetic One Updated (Person 7)')).toBeNull();
@@ -323,7 +323,7 @@ describe('PersonBindingConflictModal', () => {
     await selectSurvivor();
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('could not load both current profile revisions');
+    expect((await screen.findByRole('alert')).textContent).toContain("couldn't be reloaded");
     const survivor = screen.getByRole('radio', { name: 'Synthetic One (Person 7)' });
     const confirmation = screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i });
     const submit = screen.getByRole('button', { name: 'Merge into selected survivor' });
@@ -377,7 +377,7 @@ describe('PersonBindingConflictModal', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Retry profile reload' })).toHaveProperty('disabled', false),
     );
-    expect((await screen.findByRole('alert')).textContent).toContain('could not load both current profile revisions');
+    expect((await screen.findByRole('alert')).textContent).toContain("couldn't be reloaded");
     expect(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' })).toHaveProperty('disabled', true);
     expect(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/i })).toHaveProperty(
       'disabled',

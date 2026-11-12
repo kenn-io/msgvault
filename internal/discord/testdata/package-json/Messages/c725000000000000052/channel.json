@@ -1,0 +1,9 @@
+{
+  "id": "725000000000000052",
+  "type": "GUILD_TEXT",
+  "name": "sketchbook",
+  "guild": {
+    "id": "725000000000000071",
+    "name": "Paper Observatory"
+  }
+}
