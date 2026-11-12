@@ -336,6 +336,11 @@ func (c *localEmbeddingsController) enable(ctx context.Context, report func(api.
 		publishVisualVectorFeatures(c.store, c.server, c.scheduler, vf, &state)
 	}
 	defer func() { result = errors.Join(result, publicationErr) }()
+	if publicationErr == nil && !startup && lane.local && c.recordChoice != nil {
+		if choiceErr := c.recordChoice(); choiceErr != nil {
+			loggerFromContext(ctx).Warn("Could not record local search choice", "error", choiceErr)
+		}
+	}
 	releaseGate()
 	releaseGate = func() {}
 
@@ -360,13 +365,7 @@ func (c *localEmbeddingsController) enable(ctx context.Context, report func(api.
 	if (startup && !activeExists && !buildingExists) || (!startup && (errors.Is(err, vector.ErrNoActiveGeneration) || active.Fingerprint != fingerprint)) {
 		args = append(args, "--full-rebuild")
 	}
-	err = run(args...)
-	if err == nil && publicationErr == nil && !startup && lane.local && c.recordChoice != nil {
-		if choiceErr := c.recordChoice(); choiceErr != nil {
-			loggerFromContext(ctx).Warn("Could not record local search choice", "error", choiceErr)
-		}
-	}
-	return err
+	return run(args...)
 }
 
 // Log the full command output, then surface only its final error line.

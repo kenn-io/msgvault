@@ -45,6 +45,7 @@ type localBuildTestRunner struct {
 	calls       [][]string
 	contexts    []context.Context
 	beforeBuild func()
+	buildErr    error
 }
 
 func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
@@ -69,6 +70,9 @@ func (r *localBuildTestRunner) RunCLICommand(ctx context.Context, req api.CLIRun
 	}
 	if r.beforeBuild != nil {
 		r.beforeBuild()
+	}
+	if r.buildErr != nil {
+		return r.buildErr
 	}
 	state := *invocationFromContext(ctx)
 	state.cfg = cfg
@@ -934,4 +938,26 @@ func TestManagedBuiltinBuildHonorsSavedScope(t *testing.T) {
 	stripQuotes := false
 	expected.Preprocess.StripQuotes = &stripQuotes
 	assert.Equal(t, expected.GenerationFingerprint(), active.Fingerprint)
+}
+
+func TestLocalEmbeddingsRecordsChoiceBeforeFailedBuild(t *testing.T) {
+	checks, must := assert.New(t), require.New(t)
+	f := newLocalActivationFixture(t, "")
+	f.start(t)
+	recorded := 0
+	f.controller.recordChoice = func() error { recorded++; return nil }
+	f.runner.buildErr = errors.New("indexing failed")
+	f.runner.beforeBuild = func() { checks.Equal(1, recorded) }
+	err := f.controller.Enable(f.ctx, func(api.LocalEmbeddingsStatus) {})
+	must.ErrorContains(err, "indexing failed")
+	checks.Equal(1, recorded)
+	snapshot, err := config.ReadConfigFile(f.cfg.ConfigFilePath())
+	must.NoError(err)
+	saved, err := f.cfg.ReloadConfigFile(snapshot)
+	must.NoError(err)
+	checks.True(saved.Vector.Enabled)
+	checks.True(saved.Vector.Embeddings.LocalOnly)
+	status, err := f.controller.Inspect(f.ctx)
+	must.NoError(err)
+	checks.True(status.Enabled)
 }
