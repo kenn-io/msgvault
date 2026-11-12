@@ -129,11 +129,30 @@ func settleEmailRepair(q querier, messageID int64) error {
 // derive to the pass recorded under ledger key base, whether or not the
 // reopened versions were raised since.
 func (s *Store) EmailRepairHeldContext(ctx context.Context, base string) (bool, error) {
+	return emailRepairHeld(ctx, s.db, base)
+}
+
+func emailRepairHeld(ctx context.Context, q contextStatementQuerier, base string) (bool, error) {
 	var held bool
 	prefix := base + emailHoldSuffix
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM applied_migrations
+	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM applied_migrations
 		WHERE SUBSTR(name, 1, LENGTH(?)) = ?)`, prefix, prefix).Scan(&held)
 	return held, err
+}
+
+// markMigrationCompleteContext records a finished pass unless a message still
+// owes an invitation derive. It locks the pass's ledger row first, so a writer
+// that reopens the pass either committed its marker before the check below or
+// reopens the pass after this transaction; either way the pass is not recorded
+// over an owed derive, and the next sync retries it.
+func (s *Store) markMigrationCompleteContext(ctx context.Context, tx contextStatementQuerier, name string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE applied_migrations SET version = version WHERE name = ?`, name); err != nil {
+		return err
+	}
+	if held, err := emailRepairHeld(ctx, tx, name); err != nil || held {
+		return err
+	}
+	return s.markMigrationAppliedContext(ctx, tx, name, 1)
 }
 
 // reopenEmailRepair marks the message's source's email repair pass incomplete

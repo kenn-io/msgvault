@@ -68,7 +68,7 @@ func (s *Store) MarkMigrationAppliedWithPendingDerivedRevisionContext(ctx contex
 		if err := s.publishPendingDerivedEmailRevisionContext(ctx, tx); err != nil {
 			return err
 		}
-		return s.markMigrationAppliedContext(ctx, tx, name, 1)
+		return s.markMigrationCompleteContext(ctx, tx, name)
 	})
 }
 
@@ -133,6 +133,6 @@ func (s *Store) MarkMigrationAppliedWithDerivedDataRevisionContext(ctx context.C
 		if err := s.advanceDerivedRevisionWithEmailReceiptContext(ctx, tx); err != nil {
 			return err
 		}
-		return s.markMigrationAppliedContext(ctx, tx, name, 1)
+		return s.markMigrationCompleteContext(ctx, tx, name)
 	})
 }
