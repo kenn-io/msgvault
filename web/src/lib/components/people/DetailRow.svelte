@@ -8,7 +8,6 @@
     /** The row's actions, in a ⋯ menu named for the row. */
     menu?: { label: string; onselect: () => void; danger?: boolean; disabled?: boolean }[];
     exception?: string;
-    note?: string;
     meta?: Snippet;
     details?: Snippet;
     /** A muted second line under the value: dates or a role, or a provenance line with its timestamps as the tooltip. */
@@ -21,7 +20,7 @@
     actionLabel?: string;
   }
 
-  let { label = undefined, description = undefined, children, actions = undefined, onclick = undefined, actionLabel = 'Open', menu = [], exception = undefined, note, meta, details }: Props = $props();
+  let { label = undefined, description = undefined, children, actions = undefined, onclick = undefined, actionLabel = 'Open', menu = [], exception = undefined, meta, details }: Props = $props();
   let detailsOpen = $state(false);
   const line = $derived(typeof description === 'string' ? { text: description, title: undefined } : description);
 </script>
@@ -30,7 +29,7 @@
 <div class="detail-row" class:own-actions={menu.length > 0} class:clickable={!!onclick}>
   {#if onclick}<button class="row-hit" type="button" aria-label={actionLabel} title={line?.title} {onclick}></button>{/if}
   {#if label !== undefined}<span class="label">{label}</span>{/if}
-  <div class="value">{@render children()}{#if line?.text || exception}<span class="description" title={line?.title}>{line?.text}{#if line?.text && exception}{' · '}{/if}{#if exception}<span class="exception">{exception}</span>{/if}</span>{/if}{#if note}<span class="description">{note}</span>{/if}</div>
+  <div class="value">{@render children()}{#if line?.text || exception}<span class="description" title={line?.title}>{line?.text}{#if line?.text && exception}{' · '}{/if}{#if exception}<span class="exception">{exception}</span>{/if}</span>{/if}</div>
   {#if meta}<div class="meta">{@render meta()}</div>{/if}
   {#if actions || menu.length || details}<div class="actions">{@render actions?.()}
     {#if details}<Button label={detailsOpen ? 'Hide details' : 'Details'} class="text-action" size="sm" ariaExpanded={detailsOpen} onclick={() => detailsOpen = !detailsOpen} />{/if}

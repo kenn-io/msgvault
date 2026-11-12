@@ -39,11 +39,10 @@ it('keeps Retry inside the failed lookup and sends queries to its loader', async
 
 it('offers Manage fields', async () => {
   const onmanage = vi.fn();
-  const view = render(FieldPicker, { placeholder: 'Field', options, value: '', onselect: vi.fn(), onmanage });
+  render(FieldPicker, { placeholder: 'Field', options, value: '', onselect: vi.fn(), onmanage });
   await fireEvent.click(screen.getByRole('button', { name: 'Field' }));
   expect(screen.getAllByRole('option').at(-1)?.textContent?.trim()).toBe('Manage fields…');
   await fireEvent.input(screen.getByRole('combobox'), { target: { value: 'missing' } });
-  await view.rerender({ options: [] });
   expect(screen.getByText('No matches')).toBeDefined();
   expect(screen.queryByRole('option', { name: 'Example Garden' })).toBeNull();
   expect(screen.getByRole('option', { name: 'Manage fields…' })).toBeDefined();

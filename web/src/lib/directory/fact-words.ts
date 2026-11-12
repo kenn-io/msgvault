@@ -1,14 +1,10 @@
-/** Evidence source classes. */
-const SOURCE_CLASSES = ['archive', 'public', 'system', 'provider_assertion'] as const;
-/** How directly evidence speaks about the person. */
-const DIRECTNESS = ['direct-self', 'direct-other', 'indirect'] as const;
-
-const ARCHIVE_SOURCE: Record<(typeof DIRECTNESS)[number], string> = {
+/** Archive evidence by how directly it speaks about the person. */
+const ARCHIVE_SOURCE: Record<string, string> = {
   'direct-self': 'From a message they sent',
   'direct-other': 'From a message about them',
   indirect: 'Inferred from your messages',
 };
-const OTHER_SOURCE: Record<Exclude<(typeof SOURCE_CLASSES)[number], 'archive'>, string> = {
+const OTHER_SOURCE: Record<string, string> = {
   public: 'From a public page',
   provider_assertion: 'From a lookup',
   system: 'Recorded automatically',
@@ -16,8 +12,7 @@ const OTHER_SOURCE: Record<Exclude<(typeof SOURCE_CLASSES)[number], 'archive'>, 
 
 /** Where a piece of evidence came from, in words: "From a message they sent". */
 export function evidenceSourceWords(sourceClass: string, directness: string): string {
-  if (sourceClass === 'archive') return ARCHIVE_SOURCE[directness as keyof typeof ARCHIVE_SOURCE] ?? '';
-  return OTHER_SOURCE[sourceClass as keyof typeof OTHER_SOURCE] ?? '';
+  return (sourceClass === 'archive' ? ARCHIVE_SOURCE[directness] : OTHER_SOURCE[sourceClass]) ?? '';
 }
 
 /** Evidence authority; ordinary says nothing. */
@@ -78,7 +73,6 @@ export const SCORE_PARTS = [
   ['sourceClass', 'Source'], ['directness', 'Directness'], ['authority', 'Authority'],
   ['corroboration', 'Corroboration'], ['freshness', 'Freshness'], ['confidence', 'Confidence'],
 ] as const;
-export function partWords(value: number, max: number): string { return `${value} of ${max}`; }
 
 /** Where a saved decision put its value: a person's field, or their work. */
 export function projectionWords(kind: string | null): string | null {
@@ -91,10 +85,7 @@ export function projectionWords(kind: string | null): string | null {
  * Why a source's standing changed. A lost source is its own status ("Source deleted");
  * a source that came back is the row's change, capitalized ("Imported again").
  */
-const STATUS_REASON_WORDS: Record<
-  'source-deleted' | 'source-edited' | 'scope-unlinked' | 'identity-reassigned' | 'source-reimported' | 'scope-relinked',
-  string
-> = {
+const STATUS_REASON_WORDS: Record<string, string> = {
   'source-deleted': 'Source deleted',
   'source-edited': 'Source edited',
   'scope-unlinked': 'Unlinked from this person',
@@ -103,7 +94,7 @@ const STATUS_REASON_WORDS: Record<
   'scope-relinked': 'linked again',
 };
 function statusReasonWords(reason: string): string {
-  return STATUS_REASON_WORDS[reason as keyof typeof STATUS_REASON_WORDS] ?? 'changed';
+  return STATUS_REASON_WORDS[reason] ?? 'changed';
 }
 /**
  * One source history row's words before its date: the change, "Imported again" or
