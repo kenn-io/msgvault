@@ -35,7 +35,6 @@ func cardDAVOperationalDefinitions() []operationalDefinition {
 	for i := range definitions {
 		if definitions[i].definition.name == "update_carddav_book_roles" {
 			definitions[i].definition.annotations.DestructiveHint = new(true)
-			definitions[i].definition.annotations.OpenWorldHint = new(false)
 		}
 		if definitions[i].definition.name == "unpublish_carddav_person" || definitions[i].definition.name == "resolve_carddav_conflict" {
 			definitions[i].definition.annotations.DestructiveHint = new(true)

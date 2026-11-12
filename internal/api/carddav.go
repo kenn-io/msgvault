@@ -246,6 +246,17 @@ func (c *CardDAVController) loadStartupService(logger *slog.Logger) error {
 }
 
 func newCardDAVService(st *store.Store, configured config.CardDAVConfig, password string) (cardDAVCandidate, error) {
+	return newCardDAVServiceWithOptions(st, configured, password, nil)
+}
+
+// AdjustCardDAVClientOptions lets tests reach an in-process upstream; production never calls it.
+func (c *CardDAVController) AdjustCardDAVClientOptions(adjust func(*carddav.ClientOptions)) {
+	c.factory = func(st *store.Store, configured config.CardDAVConfig, password string) (cardDAVCandidate, error) {
+		return newCardDAVServiceWithOptions(st, configured, password, adjust)
+	}
+}
+
+func newCardDAVServiceWithOptions(st *store.Store, configured config.CardDAVConfig, password string, adjust func(*carddav.ClientOptions)) (cardDAVCandidate, error) {
 	origin, err := url.Parse(strings.TrimSpace(configured.BaseURL))
 	if err != nil || origin.Scheme == "" || origin.Host == "" {
 		return nil, errors.New("CardDAV base URL must be an absolute HTTP(S) URL")
@@ -254,6 +265,9 @@ func newCardDAVService(st *store.Store, configured config.CardDAVConfig, passwor
 	options.TrustedOrigin, options.TrustedAddresses, err = configured.TrustedDestination()
 	if err != nil {
 		return nil, err
+	}
+	if adjust != nil {
+		adjust(&options)
 	}
 	client, err := carddav.NewClient(options)
 	if err != nil {
