@@ -53,7 +53,7 @@ func TestWakeupStateCompareAndSwapAndPrune(t *testing.T) {
 	assert.NotNil(raw)
 }
 
-func TestEventsPositionSurvivesWakeupPruneAndNameCollision(t *testing.T) {
+func TestEventsPositionIsolationAndUnknownFields(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	st := testutil.NewTestStore(t)

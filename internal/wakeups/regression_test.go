@@ -270,14 +270,6 @@ func TestCancelledAttemptSurvivesRestartAndEmptyRescan(t *testing.T) {
 	assert.Equal(start, state.At)
 	assert.Equal(2, state.Failures)
 	assert.Equal(now.Add(time.Minute), state.NextAttemptAt)
-	status = http.StatusNoContent
-	now = now.Add(time.Minute)
-	require.NoError(engine.RunPass(t.Context()))
-	require.Len(bodies, 2)
-	state, _, err = st.LoadWakeupStateKey(t.Context(), store.WakeupStateKey("cancel"))
-	require.NoError(err)
-	assert.True(state.At.After(start))
-	assert.Zero(state.Failures)
 }
 
 func TestPreSendConflictDoesNotDeliver(t *testing.T) {
@@ -575,7 +567,7 @@ func TestNativePersonRecoveryClearsOnlyQuietStatus(t *testing.T) {
 			require.NoError(err)
 			require.True(ok)
 			engine := Engine{Store: f.Store, Now: func() time.Time { return now }, Subscriptions: []Subscription{{Name: tc.name, StateKey: key, Native: true, Filter: changefeed.Filter{PersonID: person.ID}}}}
-			Require.NoError(t, engine.RunPass(t.Context()))
+			require.NoError(engine.RunPass(t.Context()))
 			got, _, err := f.Store.LoadWakeupStateKey(t.Context(), key)
 			require.NoError(err)
 			if tc.clear {

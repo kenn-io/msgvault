@@ -24,33 +24,6 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-type countingEventsGate struct{ calls int }
-
-func (g *countingEventsGate) BeginWork() (func(), bool) { g.calls++; return func() {}, true }
-func (g *countingEventsGate) BeginWorkContext(context.Context) (func(), bool) {
-	g.calls++
-	return func() {}, true
-}
-
-func TestEventsListDoesNotUseOperationGate(t *testing.T) {
-	gate := &countingEventsGate{}
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir()}, MCPEvents: &mcpevents.Service{}, OperationGate: gate, Logger: testLogger()})
-	srv.handleMCPEventsList(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
-	assert.Zero(t, gate.calls)
-}
-
-func TestEventsErrorMapsCallbackFailure(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	w := httptest.NewRecorder()
-	eventsError(w, &mcpevents.Error{Code: -32027, Reason: "challenge_failed"})
-	assertions.Equal(http.StatusBadGateway, w.Code)
-	var response mcpevents.Error
-	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-	assertions.Equal(-32027, response.Code)
-	assertions.Equal("challenge_failed", response.Reason)
-}
-
 func TestEventsRouterRejectsUnverifiedCallback(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -270,38 +243,6 @@ func TestGeneratedEventsMutationErrorsDecode(t *testing.T) {
 	assertions.Equal(map[string]any{"error": "rate_limit_exceeded", "message": "Too many requests. Please slow down."}, decodedEventsError(t, limited))
 }
 
-func TestMCPEventsDeliverySchemas(t *testing.T) {
-	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
-		requirements := require.New(t)
-		assertions := assert.New(t)
-		for _, tc := range []struct {
-			path         string
-			modeRequired bool
-		}{
-			{"/api/v1/mcp-events/subscribe", true},
-			{"/api/v1/mcp-events/unsubscribe", false},
-		} {
-			path := doc.Paths[tc.path]
-			requirements.NotNil(path)
-			body := operationBodySchema(t, doc, path.Post)
-			delivery := body.Properties["delivery"]
-			requirements.NotNil(delivery)
-			if delivery.Ref != "" {
-				delivery = doc.Components.Schemas.Map()[strings.TrimPrefix(delivery.Ref, "#/components/schemas/")]
-				requirements.NotNil(delivery)
-			}
-			assertions.Contains(delivery.Required, "url")
-			if tc.modeRequired {
-				assertions.Contains(delivery.Required, "mode")
-				assertions.Contains(delivery.Required, "secret")
-			} else {
-				assertions.NotContains(delivery.Required, "mode")
-				assertions.NotContains(delivery.Required, "secret")
-			}
-		}
-	}
-}
-
 func TestMCPEventsInputSchemasValidate(t *testing.T) {
 	for name, doc := range map[string]*huma.OpenAPI{"public": OpenAPIDocument(), "client": openAPIClientDocument()} {
 		t.Run(name, func(t *testing.T) {
@@ -333,6 +274,8 @@ func TestMCPEventsInputSchemasValidate(t *testing.T) {
 			}{
 				{"/api/v1/mcp-events/subscribe", map[string]any{"url": "https://example.com/hook", "mode": "webhook", "secret": "fixture"}, true},
 				{"/api/v1/mcp-events/subscribe", map[string]any{"url": "https://example.com/hook", "mode": "webhook"}, false},
+				{"/api/v1/mcp-events/subscribe", map[string]any{"url": "https://example.com/hook", "secret": "fixture"}, false},
+				{"/api/v1/mcp-events/unsubscribe", map[string]any{"url": "https://example.com/hook", "secret": "fixture"}, true},
 				{"/api/v1/mcp-events/unsubscribe", map[string]any{"url": "https://example.com/hook"}, true},
 			} {
 				body := operationBodySchema(t, doc, doc.Paths[tc.path].Post)

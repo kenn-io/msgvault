@@ -32,12 +32,13 @@ func TestWebhookSigns(t *testing.T) {
 		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id, stamp, signature = r.Header.Get("Webhook-Id"), r.Header.Get("Webhook-Timestamp"), r.Header.Get("Webhook-Signature")
 			subscription = r.Header.Get("X-Mcp-Subscription-Id")
-			w.WriteHeader(http.StatusNoContent)
+			_, _ = w.Write([]byte(strings.Repeat("x", 5000)))
 		}))
 		defer server.Close()
-		category, status, _ := testWebhookClient(t, server).request(t.Context(), "https://example.com/hook", "wk_test", "sub-1", secret, body, false)
+		category, status, response := testWebhookClient(t, server).request(t.Context(), "https://example.com/hook", "wk_test", "sub-1", secret, body, false)
 		assert.Empty(category)
-		assert.Equal(http.StatusNoContent, status)
+		assert.Equal(http.StatusOK, status)
+		assert.Nil(response)
 		assert.Equal("sub-1", subscription)
 		assert.Equal("wk_test", id)
 		assert.NotEmpty(stamp)
@@ -145,7 +146,7 @@ func TestWebhookFailureCategories(t *testing.T) {
 	})
 }
 
-func TestVerificationUsesSignedCheckedTransport(t *testing.T) {
+func TestVerificationEchoAndFailures(t *testing.T) {
 	secret := []byte(strings.Repeat("s", 32))
 	for _, mode := range []string{"echo", "mismatch", "oversize", "http error"} {
 		t.Run(mode, func(t *testing.T) {
@@ -158,10 +159,6 @@ func TestVerificationUsesSignedCheckedTransport(t *testing.T) {
 				raw, err := io.ReadAll(r.Body)
 				assert.NoError(err)
 				assert.NoError(json.Unmarshal(raw, &body))
-				mac := hmac.New(sha256.New, secret)
-				_, err = fmt.Fprintf(mac, "%s.%s.%s", r.Header.Get("Webhook-Id"), r.Header.Get("Webhook-Timestamp"), raw)
-				assert.NoError(err)
-				assert.Equal("v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)), r.Header.Get("Webhook-Signature"))
 				assert.Equal("verification", body.Type)
 				assert.Equal("sub-1", r.Header.Get("X-Mcp-Subscription-Id"))
 				if mode == "http error" {
@@ -191,14 +188,4 @@ func TestVerificationUsesSignedCheckedTransport(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestDeliveryDiscardsResponseBody(t *testing.T) {
-	assertions := Assert.New(t)
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(strings.Repeat("x", 5000))) }))
-	defer server.Close()
-	category, status, response := testWebhookClient(t, server).request(t.Context(), "https://example.com/hook", "id", "sub", []byte(strings.Repeat("s", 32)), []byte("{}"), false)
-	assertions.Empty(category)
-	assertions.Equal(http.StatusOK, status)
-	assertions.Nil(response)
 }

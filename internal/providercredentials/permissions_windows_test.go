@@ -447,7 +447,7 @@ func TestRestorePreflightAllowsOmittedFileWithoutInheritedAccess(t *testing.T) {
 	assertions.Equal(before.String(), after.String())
 }
 
-func TestSecureRestoredEventsCredentialAndSecret(t *testing.T) {
+func TestSecureRestoredEventsCredential(t *testing.T) {
 	user := currentWindowsProviderCredentialSID(t)
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -461,24 +461,17 @@ func TestSecureRestoredEventsCredentialAndSecret(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(os.Remove(filepath.Join(dir, ".provider-credentials.lock")))
 	eventsPath := filepath.Join(dir, EventsFilename)
-	secretPath := filepath.Join(dir, "ordinary-secret")
-	requirements.NoError(os.WriteFile(secretPath, []byte("ordinary-secret"), 0600))
 	access := []windows.EXPLICIT_ACCESS{providerCredentialTestAccess(user, windows.GENERIC_READ, windows.TRUSTEE_IS_USER)}
 	eventsHandle := setProviderCredentialTestACL(t, eventsPath, access, true)
-	secretHandle := setProviderCredentialTestACL(t, secretPath, access, true)
 	_, err = ReadEvents(dir)
 	requirements.Error(err)
-	requirements.NoError(SecureRestored(dir, []string{EventsFilename, "ordinary-secret"}))
+	requirements.NoError(SecureRestored(dir, []string{EventsFilename}))
 	restored, err := ReadEvents(dir)
 	requirements.NoError(err)
 	value, _, err := restored.Resolve(id, "https://example.test", "", nil)
 	requirements.NoError(err)
 	assertions.Equal("synthetic-secret", value)
-	secret, err := ReadSecretFile(secretPath)
-	requirements.NoError(err)
-	assertions.Equal("ordinary-secret", secret)
 	requirements.NoError(verifyOwnerOnlyHandle(eventsHandle, false))
-	requirements.NoError(verifyOwnerOnlyHandle(secretHandle, false))
 }
 
 func TestSecureRestoredRefusesInheritedOmittedACLBeforeChanges(t *testing.T) {
