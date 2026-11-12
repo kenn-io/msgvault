@@ -93,9 +93,6 @@ func TestMeetingSuggestionsScheduledStartWithProviderDuration(t *testing.T) {
 	for _, tc := range []struct{ name, format, raw string }{
 		{"twenty recording", "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2027-03-15T10:00:00Z","endedAt":"2027-03-15T10:30:00Z"},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z","endsAt":"2027-03-14T10:30:00Z"}}`},
 		{"twenty start only", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z"}}`},
-		{"circleback duration", "circleback_json", `{"meeting":{"startTime":"2027-03-14T10:00:00Z","durationSeconds":1800}}`},
-		{"notion recording", "notion_meeting_json", `{"schema_version":1,"discovery":{"meeting_notes":{"recording":{"start_time":"2027-03-15T10:00:00Z","end_time":"2027-03-15T10:30:00Z"},"calendar_event":{"start_time":"2027-03-14T10:00:00Z"}}},"canonical":{"summary":"Summary"}}`},
-		{"granola start only", "granola_json", `{"calendar_event":{"scheduled_start_time":"2027-03-14T10:00:00Z"}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := require.New(t)

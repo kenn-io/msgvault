@@ -27,12 +27,6 @@ func decodeCircleback(fields map[string]jsontext.Value) Content {
 	content.SourceParticipants = providerParticipants(meeting)
 	content.Transcript = decodeCirclebackTranscript(fields["transcript"])
 
-	for _, key := range []string{"startTime", "date"} {
-		if start, ok := rawTime(meeting[key], true); ok {
-			content.LinkEvidence.ScheduledAt = &start
-			break
-		}
-	}
 	for _, key := range []string{"durationSeconds", "duration"} {
 		if value, valid := rawPositiveFloat(meeting[key]); valid {
 			setDuration(&content, value, DurationProvider)
