@@ -571,6 +571,26 @@ func TestICalendarCancelledExceptionOccurrenceAndConversationStats(t *testing.T)
 	assertions.Equal(time.Date(2027, 3, 3, 14, 0, 0, 0, time.UTC), last.UTC())
 }
 
+func TestICalendarAllDayRangeCancellationMovesLaterOccurrence(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	for _, event := range [][]byte{
+		calendarDocument("REQUEST", "DTSTART;VALUE=DATE:20270301\r\nRRULE:FREQ=DAILY;COUNT=31"),
+		calendarDocument("CANCEL", "SEQUENCE:1\r\nRECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20270310\r\nDTSTART;VALUE=DATE:20270303"),
+	} {
+		_, err := st.PersistICalendarContext(t.Context(), source, event)
+		requirements.NoError(err)
+	}
+	from := time.Date(2027, 3, 20, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Empty(page.Unexpandable)
+	requirements.Len(page.Occurrences, 1)
+	requirements.Equal("2027-03-20", page.Occurrences[0].StartDate)
+	requirements.Equal("cancelled", page.Occurrences[0].Status)
+}
+
 func TestICalendarRangeChangesDetails(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
