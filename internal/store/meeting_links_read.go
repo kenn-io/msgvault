@@ -101,6 +101,21 @@ func meetingKeyMatch(key meetingLinkKey, matches []CalendarOccurrence) (ambiguou
 	return len(identities) > 1, key[0] != "google_event_id" || instance || len(identities) == 1 || len(identities) == 0 && len(matches) > 0
 }
 
+// meetingMatchGroup selects the copies and notes proved by one matching key.
+func meetingMatchGroup(key meetingLinkKey, matches []CalendarOccurrence, notes []int64, ambiguousNotes bool) ([]CalendarOccurrence, []int64) {
+	ambiguous, allowNotes := meetingKeyMatch(key, matches)
+	if ambiguous {
+		if allowNotes && ambiguousNotes {
+			return nil, notes
+		}
+		return nil, nil
+	}
+	if !allowNotes {
+		notes = nil
+	}
+	return matches, notes
+}
+
 // meetingBound reports an unavailable time as nil.
 func meetingBound(at time.Time) *time.Time {
 	if at.IsZero() {
@@ -446,18 +461,8 @@ func (s *Store) meetingAutomaticRecordContext(ctx context.Context, ref MeetingLi
 			return record, err
 		}
 		for _, key := range pending {
-			matched := matches[key]
-			ambiguous, allowNotes := meetingKeyMatch(key, matched)
-			if ambiguous {
-				// Notes with exact keys remain peers even if calendar matches are ambiguous.
-				if allowNotes && ref.Kind == meetingRefMessage && len(copies) == 0 {
-					record.MessageIDs = append(record.MessageIDs, notes[key.text()]...)
-				}
-				continue
-			}
-			if allowNotes {
-				record.MessageIDs = append(record.MessageIDs, notes[key.text()]...)
-			}
+			matched, members := meetingMatchGroup(key, matches[key], notes[key.text()], ref.Kind == meetingRefMessage && len(copies) == 0)
+			record.MessageIDs = append(record.MessageIDs, members...)
 			copies = append(copies, matched...)
 			for _, occurrence := range matched {
 				keys = append(keys, occurrenceKeys(occurrence)...)

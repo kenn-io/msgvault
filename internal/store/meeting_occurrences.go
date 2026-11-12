@@ -246,22 +246,23 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 			eventsByKey[key] = append(eventsByKey[key], occurrence)
 		}
 	}
-	notesByKey := map[meetingLinkKey][]meetingDecisionEndpoint{}
+	notesByKey := map[meetingLinkKey][]int64{}
 	for _, note := range notes {
 		endpoint := meetingDecisionEndpoint{ID: note.id, Kind: meetingRefMessage}
 		graph.nodes[endpoint.ref()] = meetingDecisionNode{endpoint: endpoint}
 		if note.key != (meetingLinkKey{}) {
-			notesByKey[note.key] = append(notesByKey[note.key], endpoint)
+			notesByKey[note.key] = append(notesByKey[note.key], note.id)
 		}
 	}
 	for _, matchingNotes := range notesByKey {
-		graph.groups = append(graph.groups, matchingNotes)
+		var group []meetingDecisionEndpoint
+		for _, id := range matchingNotes {
+			group = append(group, meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage})
+		}
+		graph.groups = append(graph.groups, group)
 	}
 	for key, matches := range eventsByKey {
-		ambiguous, allowNotes := meetingKeyMatch(key, matches)
-		if ambiguous {
-			continue
-		}
+		matches, notes := meetingMatchGroup(key, matches, notesByKey[key], false)
 		var group []meetingDecisionEndpoint
 		for _, occurrence := range matches {
 			ref, err := ParseMeetingLinkRef(occurrence.Ref)
@@ -270,8 +271,8 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 			}
 			group = append(group, endpointFromRef(ref))
 		}
-		if allowNotes {
-			group = append(group, notesByKey[key]...)
+		for _, id := range notes {
+			group = append(group, meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage})
 		}
 		graph.groups = append(graph.groups, group)
 	}
