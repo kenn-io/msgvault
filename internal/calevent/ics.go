@@ -95,11 +95,11 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 }
 
 // icsEventZoneComponents keeps only the VTIMEZONE definitions an event references.
-func icsEventZoneComponents(cal *ical.Calendar, event *ical.Component, calendarZone string) []*ical.Component {
+func icsEventZoneComponents(zones []*ical.Component, event *ical.Component, calendarZone string) []*ical.Component {
 	used := icsEventZones(event)
 	used[calendarZone] = true
-	return slices.DeleteFunc(slices.Clone(cal.Children), func(comp *ical.Component) bool {
-		return comp.Name != ical.CompTimezone || !used[normalizeICSZone(comp.Props.Get("TZID").Value)]
+	return slices.DeleteFunc(slices.Clone(zones), func(comp *ical.Component) bool {
+		return !used[normalizeICSZone(comp.Props.Get("TZID").Value)]
 	})
 }
 
@@ -155,9 +155,15 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	if len(events) == 0 {
 		return nil, errors.New("calendar has no VEVENT")
 	}
+	var zoneComponents []*ical.Component
+	for _, comp := range cal.Children {
+		if comp.Name == ical.CompTimezone {
+			zoneComponents = append(zoneComponents, comp)
+		}
+	}
 	for index, event := range events {
 		comp := event.Component
-		zones, err := eventICSZones(cal, comp, calendarZone)
+		zones, err := eventICSZones(zoneComponents, comp, calendarZone)
 		if err != nil {
 			return nil, fmt.Errorf("VEVENT %d: %w", index+1, err)
 		}
@@ -168,7 +174,7 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 		}
 		retained := raw
 		if len(events) > 1 {
-			retained, err = encodeICSEvent(cal, icsEventZoneComponents(cal, comp, calendarZone), comp, calendarZone)
+			retained, err = encodeICSEvent(cal, icsEventZoneComponents(zoneComponents, comp, calendarZone), comp, calendarZone)
 			if err != nil {
 				return nil, fmt.Errorf("retain VEVENT %d: %w", index+1, err)
 			}
