@@ -68,7 +68,7 @@ func TestRewriteGeneratedValidatorsAllowsEmptyAndNullableFields(t *testing.T) {
 	assertions.NotContains(string(got), `typesValidator.Var(l.Summary, "required")`)
 }
 
-func TestRewriteNullableMeetingLinkBoundsDropsRequiredTags(t *testing.T) {
+func TestRewriteNullableMeetingLinkBoundsRejectsMissingStart(t *testing.T) {
 	requirements := require.New(t)
 	missing := strings.Replace(generatedValidatorFixture(), "\tStart *time.Time `json:\"start\" validate:\"required\"`\n", "", 1) + "\ntype Other struct { Start *time.Time }\n"
 	_, err := RewriteGeneratedValidators([]byte(missing))

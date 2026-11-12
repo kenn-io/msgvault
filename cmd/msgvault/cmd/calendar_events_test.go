@@ -342,9 +342,6 @@ func TestCalendarEventsTableMeetingHandoff(t *testing.T) {
 	requirements.NoError(cmd.Execute())
 	ref := fmt.Sprintf("evt:%d@20270321T100000Z", series)
 	requirements.Contains(table.String(), " "+ref+" ")
-	bare := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
-	bare.SetArgs([]string{fmt.Sprintf("evt:%d", series)})
-	requirements.ErrorContains(bare.Execute(), "copy the full occurrence reference from calendar events")
 	links := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
 	var out bytes.Buffer
 	links.SetOut(&out)

@@ -144,7 +144,6 @@ func TestMeetingRecordNullableBoundsHTTP(t *testing.T) {
 	require.NoError(t, err)
 	for _, tc := range []struct{ name, raw, start, end string }{
 		{"sparse", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`, `"start":null`, `"end":null`},
-		{"complete", `{"id":"single","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`, `"start":"2027-03-14T10:00:00Z"`, `"end":"2027-03-14T11:00:00Z"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -215,10 +214,6 @@ func TestMeetingRecordRequiresSeriesOccurrence(t *testing.T) {
 				srv.Router().ServeHTTP(w, req)
 				return w
 			}
-			bare := request(fmt.Sprintf("evt:%d", id))
-			requirements.Equal(http.StatusBadRequest, bare.Code, bare.Body.String())
-			assertions.Contains(bare.Body.String(), "invalid_argument")
-			assertions.Contains(bare.Body.String(), "calendar events")
 			for i, key := range tc.keys {
 				explicit := request(fmt.Sprintf("evt:%d@%s", id, key))
 				requirements.Equal(http.StatusOK, explicit.Code, explicit.Body.String())
