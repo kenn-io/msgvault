@@ -13,15 +13,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type viewportControlActions interface {
-	DisablePeopleInference(ctx context.Context, fingerprint string) (PeopleInferenceStatus, error)
-	RevokePeopleInferenceConsent(ctx context.Context, profile, fingerprint string) (PeopleInferenceStatus, error)
-	RemovePeopleInferenceProfile(ctx context.Context, profile, fingerprint string) (PeopleInferenceStatus, error)
-}
-
 type viewportFullBackend struct {
 	*fakePeopleInferenceBackend
-	viewportControlActions
+	PeopleInferenceControlBackend
+}
+
+func (b *viewportFullBackend) LoadPeopleInferenceStatus(ctx context.Context) (PeopleInferenceStatus, error) {
+	return b.fakePeopleInferenceBackend.LoadPeopleInferenceStatus(ctx)
 }
 
 func TestSettingsViewportShortScreenPeopleDisable(t *testing.T) {
@@ -72,7 +70,7 @@ func TestSettingsViewportSaveShowsNoticeAndSelectedField(t *testing.T) {
 	snapshot.Fields = append(snapshot.Fields, SettingField{Key: "server.daemon_auto_start", Group: "server", Label: "Automatic start", Kind: SettingKindBoolean, Value: boolSettingValue(true), RestartRequired: true})
 	saved := snapshot
 	saved.PendingRestart = true
-	backend := &viewportFullBackend{fakePeopleInferenceBackend: &fakePeopleInferenceBackend{loads: []SettingsSnapshot{snapshot}, save: saved}, viewportControlActions: &fakePeopleInferenceControlBackend{}}
+	backend := &viewportFullBackend{fakePeopleInferenceBackend: &fakePeopleInferenceBackend{loads: []SettingsSnapshot{snapshot}, save: saved}, PeopleInferenceControlBackend: &fakePeopleInferenceControlBackend{}}
 	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 12)
 	model.settingsBackend = backend
 	model, _ = sendKey(t, model, keyEnter())
@@ -160,7 +158,7 @@ func TestSettingsViewportStalePeopleLoadKeepsPage(t *testing.T) {
 func TestSettingsViewportTinyScreenKeepsPagingAndBack(t *testing.T) {
 	snapshot := settingsFixture()
 	snapshot.PendingRestart = true
-	backend := &viewportFullBackend{fakePeopleInferenceBackend: &fakePeopleInferenceBackend{loads: []SettingsSnapshot{snapshot}}, viewportControlActions: &fakePeopleInferenceControlBackend{}}
+	backend := &viewportFullBackend{fakePeopleInferenceBackend: &fakePeopleInferenceBackend{loads: []SettingsSnapshot{snapshot}}, PeopleInferenceControlBackend: &fakePeopleInferenceControlBackend{}}
 	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 20, 6)
 	model.settingsBackend = backend
 	screen := uv.NewScreenBuffer(20, 6)
