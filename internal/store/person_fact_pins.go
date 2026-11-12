@@ -72,7 +72,9 @@ func (s *Store) setPersonFactPinOnce(
 		if err != nil {
 			return err
 		}
-		if state.Pinned == pinned {
+		// An implicit pin protects a projection, but an explicit pin must also
+		// survive writers that consult only the recorded manual pin state.
+		if state.Pinned == pinned && (!pinned || state.EventID != nil) {
 			write.State = state
 			return nil
 		}

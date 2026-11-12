@@ -64,20 +64,12 @@ func ClassifyActivityCandidate(
 
 	ownerLinked := activityOwnerLinked(counterparts)
 
-	type audienceKey struct {
-		person bool
-		id     int64
-	}
 	nonOwnerIDs := make(map[audienceKey]struct{}, len(counterparts))
 	for _, counterpart := range counterparts {
 		if ownerLinked(counterpart) {
 			continue
 		}
-		key := audienceKey{id: counterpart.ParticipantID}
-		if counterpart.PersonID != nil {
-			key = audienceKey{person: true, id: *counterpart.PersonID}
-		}
-		nonOwnerIDs[key] = struct{}{}
+		nonOwnerIDs[activityAudienceKey(counterpart)] = struct{}{}
 	}
 	broadcast := len(nonOwnerIDs) > maxDirectCounterparts
 	result.Broadcast = broadcast
@@ -94,6 +86,18 @@ func ClassifyActivityCandidate(
 	}
 	result.Persons = strongestClassifiedActivityLinks(result.Persons)
 	return result
+}
+
+type audienceKey struct {
+	person bool
+	id     int64
+}
+
+func activityAudienceKey(counterpart ActivityCounterpart) audienceKey {
+	if counterpart.PersonID != nil {
+		return audienceKey{person: true, id: *counterpart.PersonID}
+	}
+	return audienceKey{id: counterpart.ParticipantID}
 }
 
 // activityOwnerLinked reports whether a counterpart of the message is the

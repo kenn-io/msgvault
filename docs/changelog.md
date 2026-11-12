@@ -8,6 +8,10 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- People Sweep can fill an empty “how we met” field from the first archived appearance while preserving edits and history. See [profile automation](usage/people-automation.md#fill-how-you-met).
+
+- Person JSON and contact state can show a first archived appearance, including copied recipients, and the sender when envelope evidence indicates an introduction. See [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance).
+
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).

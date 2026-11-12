@@ -103,7 +103,7 @@ func newProductionPersonSweepWorker(
 	return &peoplesweep.Worker{
 		Config: sweepConfig, Store: st, Source: st,
 		Context: peoplesweep.NewContextRetriever(st), Sink: st,
-		Runner: runner, Catalog: st, Brief: st, Archive: st,
+		Runner: runner, Catalog: st, Brief: st, Archive: st, HowWeMet: st,
 		Clock: time.Now, NewID: uuid.NewString,
 		WorkerID: peopleSweepJobName + "-" + uuid.NewString(),
 	}, nil

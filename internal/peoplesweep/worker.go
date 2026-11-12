@@ -359,6 +359,17 @@ type CatalogSource interface {
 	BuildPersonFactCatalogContext(ctx context.Context, includeSensitive bool) (personfacts.Catalog, error)
 }
 
+// HowWeMetRequest carries the validated source policy for one tracked page.
+type HowWeMetRequest struct {
+	PersonIDs                []int64
+	ProviderFingerprint      string
+	AllowedSources           []SourceClass
+	SourceSince, SourceUntil string
+}
+type HowWeMetStore interface {
+	FillPersonHowWeMetContext(ctx context.Context, request HowWeMetRequest) error
+}
+
 type RunRequest struct {
 	Kind     RunKind
 	Mode     RunMode
@@ -404,6 +415,7 @@ type Worker struct {
 	// off entirely, which is what a caller that predates the brief gets.
 	Brief    BriefStore
 	Archive  BriefArchive
+	HowWeMet HowWeMetStore
 	Clock    func() time.Time
 	NewID    func() string
 	WorkerID string
@@ -1213,6 +1225,21 @@ func (w *Worker) reconcile(ctx context.Context, profile ProviderProfile,
 		}
 		if page.PeopleScanned == 0 || page.NextPersonID <= after {
 			return nil
+		}
+		if w.HowWeMet != nil {
+			ids := make([]int64, 0, len(page.PersonIDs))
+			for _, id := range page.PersonIDs {
+				if request.PersonID == 0 || request.PersonID == id {
+					ids = append(ids, id)
+				}
+			}
+			if len(ids) > 0 {
+				if err := w.HowWeMet.FillPersonHowWeMetContext(ctx, HowWeMetRequest{PersonIDs: ids,
+					ProviderFingerprint: profile.Fingerprint, AllowedSources: profile.AllowedSources,
+					SourceSince: profile.SourceSince, SourceUntil: profile.SourceUntil}); err != nil {
+					return fmt.Errorf("fill how we met: %w", err)
+				}
+			}
 		}
 		// Brief cadence and enrollment can become due without an extraction
 		// cursor gap. Reuse this tracked-person page to publish eligible work,

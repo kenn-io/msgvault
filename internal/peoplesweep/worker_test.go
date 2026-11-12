@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1286,4 +1287,76 @@ func TestPersonSweepWorkerNoChangedSeedAdvancesCursorWithoutProvider(t *testing.
 	requirements.Len(request.CursorAdvances, 1)
 	checks.Equal(int64(1), request.CursorAdvances[0].NextSequence)
 	checks.Equal(request.CursorAdvances, result.CursorAdvances)
+}
+
+type howWeMetRecorder struct {
+	requests []HowWeMetRequest
+	err      error
+}
+
+func (r *howWeMetRecorder) FillPersonHowWeMetContext(_ context.Context, request HowWeMetRequest) error {
+	r.requests = append(r.requests, request)
+	return r.err
+}
+
+func TestHowWeMetReconcilePagesAndPersonFilter(t *testing.T) {
+	config, catalog := workerTestConfig(t)
+	profile, err := config.Profile()
+	require.NoError(t, err)
+	for _, personID := range []int64{0, 3} {
+		t.Run(strconv.FormatInt(personID, 10), func(t *testing.T) {
+			st := &workerFailureStore{gapResults: []GapResult{
+				{PeopleScanned: 2, NextPersonID: 2, PersonIDs: []int64{1, 2}},
+				{PeopleScanned: 1, NextPersonID: 3, PersonIDs: []int64{3}}, {},
+			}}
+			recorder := &howWeMetRecorder{}
+			worker := Worker{Config: config, Store: st, HowWeMet: recorder}
+			require.NoError(t, worker.reconcile(t.Context(), profile, catalog, time.Now(), RunRequest{PersonID: personID}))
+			if personID == 0 {
+				require.Len(t, recorder.requests, 2)
+				assert.Equal(t, []int64{1, 2}, recorder.requests[0].PersonIDs)
+			} else {
+				require.Len(t, recorder.requests, 1)
+			}
+			last := recorder.requests[len(recorder.requests)-1]
+			assert.Equal(t, []int64{3}, last.PersonIDs)
+			assert.Equal(t, profile.Fingerprint, last.ProviderFingerprint)
+			assert.Equal(t, profile.AllowedSources, last.AllowedSources)
+			assert.Equal(t, profile.SourceSince, last.SourceSince)
+			assert.Equal(t, profile.SourceUntil, last.SourceUntil)
+		})
+	}
+}
+
+func TestHowWeMetWorkerGatesAndStoreErrors(t *testing.T) {
+	config, catalog := workerTestConfig(t)
+	profile, err := config.Profile()
+	require.NoError(t, err)
+	page := GapResult{PeopleScanned: 1, NextPersonID: 7, PersonIDs: []int64{7}}
+	t.Run("nil dependency", func(t *testing.T) {
+		st := &workerFailureStore{gapResults: []GapResult{page, {}}}
+		worker := Worker{Config: config, Store: st}
+		require.NoError(t, worker.reconcile(t.Context(), profile, catalog, time.Now(), RunRequest{}))
+	})
+	t.Run("store error", func(t *testing.T) {
+		st := &workerFailureStore{gapResults: []GapResult{page}}
+		sentinel := errors.New("synthetic fill failure")
+		recorder := &howWeMetRecorder{err: sentinel}
+		worker := Worker{Config: config, Store: st, HowWeMet: recorder}
+		require.ErrorIs(t, worker.reconcile(t.Context(), profile, catalog, time.Now(), RunRequest{}), sentinel)
+	})
+	t.Run("disabled gate precedes how-we-met hook", func(t *testing.T) {
+		disabled := config
+		disabled.Enabled = false
+		st := &workerFailureStore{gapResults: []GapResult{page}}
+		recorder := &howWeMetRecorder{}
+		source := workerFailureSource{}
+		worker := Worker{Config: disabled, Store: st, Source: source, Context: NewContextRetriever(source),
+			Sink: workerFailureSink{}, Runner: workerFailureRunner{}, Catalog: workerFailureCatalog{catalog: catalog},
+			Clock: time.Now, NewID: func() string { return "disabled" }, WorkerID: "test", HowWeMet: recorder}
+		_, err := worker.Run(t.Context(), RunRequest{Kind: RunManual, Mode: RunIncremental})
+		require.Error(t, err)
+		assert.Empty(t, recorder.requests)
+		assert.Empty(t, st.gaps)
+	})
 }
