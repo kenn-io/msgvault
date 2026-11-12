@@ -304,7 +304,7 @@ func TestDropDeletedTraversalWithoutArchiveRow(t *testing.T) {
 	// An unmarked row stands in for gc purging it between the mark and the prune.
 	execution, err := st.AcquireSyncExecutionContext(t.Context(), src.ID)
 	require.NoError(err)
-	require.NoError(dropDeletedTraversal(t.Context(), st, execution, src, []string{"100_201"}))
+	require.NoError(dropDeletedTraversal(t.Context(), st, src, []string{"100_201"}))
 	require.NoError(execution.Release())
 
 	f.denied["100_201/comments"] = true
