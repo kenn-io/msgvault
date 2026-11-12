@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -27,13 +26,11 @@ func mergeRecoveryCapabilities(has mcpRouteCheck, caps *apiprotocol.MCPCapabilit
 			names = append(names, r.name)
 		}
 	}
-	if has("getPersonProfile", http.MethodGet, "/api/v1/people/{id}") {
-		if slices.Contains(names, "get_person_merge") && has("decidePersonMergeCandidate", http.MethodPost, "/api/v1/person-merge-candidates/{candidate_id}/decision") && mcpRequestPropertiesPresent(caps, "decidePersonMergeCandidate", "person_id", "decision") {
-			names = append(names, "decide_person_merge_candidate")
-		}
-		if slices.Contains(names, "get_person_merge") && has("splitPersonMerge", http.MethodPost, "/api/v1/people/{id}/split") && mcpRequestPropertiesPresent(caps, "splitPersonMerge", "merge_id", "participant_ids") {
-			names = append(names, "split_person_merge")
-		}
+	if slices.Contains(names, "get_person_merge") && has("decidePersonMergeCandidate", http.MethodPost, "/api/v1/person-merge-candidates/{candidate_id}/decision") && mcpRequestPropertiesPresent(caps, "decidePersonMergeCandidate", "person_id", "decision") {
+		names = append(names, "decide_person_merge_candidate")
+	}
+	if slices.Contains(names, "get_person_merge") && has("splitPersonMerge", http.MethodPost, "/api/v1/people/{id}/split") && mcpRequestPropertiesPresent(caps, "splitPersonMerge", "merge_id", "participant_ids") {
+		names = append(names, "split_person_merge")
 	}
 	return names
 }
@@ -61,10 +58,7 @@ type mergeSplitArgs struct {
 	Key            string  `json:"idempotency_key"`
 }
 
-const (
-	mergeInvalidArguments      = "invalid_arguments"
-	mergeRecoveryResponseLimit = 16 << 20
-)
+const mergeRecoveryResponseLimit = 16 << 20
 
 func mergeRefusal(code string) bool {
 	switch code {
@@ -93,13 +87,13 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 	case "list_person_merges":
 		a, e := decodeMCPOperationArguments[mergeListArgs](args)
 		if e != nil {
-			return operationFailure(mergeInvalidArguments, false), true, nil
+			return operationFailure("invalid_arguments", false), true, nil
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonMergesResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/merges", &generated.ListPersonMergesRequestOptions{PathParams: &generated.ListPersonMergesPath{ID: a.PersonID}, Query: &generated.ListPersonMergesQuery{Limit: a.Limit, Offset: a.Offset}}, mergeRefusal, http.StatusOK)
 	case "get_person_merge":
 		a, e := decodeMCPOperationArguments[mergeIDArgs](args)
 		if e != nil {
-			return operationFailure(mergeInvalidArguments, false), true, nil
+			return operationFailure("invalid_arguments", false), true, nil
 		}
 		data, _, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/person-merges/{merge_id}", &generated.GetPersonMergeRequestOptions{PathParams: &generated.GetPersonMergePath{MergeID: a.MergeID}}, mergeRecoveryResponseLimit, mergeRefusal, http.StatusOK)
 		if failure != nil {
@@ -120,7 +114,7 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 	case "get_person_merge_snapshot":
 		a, e := decodeMCPOperationArguments[mergeIDArgs](args)
 		if e != nil {
-			return operationFailure(mergeInvalidArguments, false), true, nil
+			return operationFailure("invalid_arguments", false), true, nil
 		}
 		data, _, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/person-merges/{merge_id}/snapshot", &generated.GetPersonMergeSnapshotRequestOptions{PathParams: &generated.GetPersonMergeSnapshotPath{MergeID: a.MergeID}}, mergeRecoveryResponseLimit, mergeRefusal, http.StatusOK)
 		if failure != nil {
@@ -144,7 +138,7 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 	case "decide_person_merge_candidate":
 		a, e := decodeMCPOperationArguments[mergeDecisionArgs](args)
 		if e != nil {
-			return operationFailure(mergeInvalidArguments, false), true, nil
+			return operationFailure("invalid_arguments", false), true, nil
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonMergeReviewCandidate](ctx, b.client, http.MethodPost, "/api/v1/person-merge-candidates/{candidate_id}/decision", &generated.DecidePersonMergeCandidateRequestOptions{PathParams: &generated.DecidePersonMergeCandidatePath{CandidateID: a.CandidateID}, Header: &generated.DecidePersonMergeCandidateHeaders{IfMatch: a.ETag}, Body: &generated.DecidePersonMergeCandidateBody{PersonID: a.PersonID, Decision: generated.DecidePersonMergeCandidateRequestDecision(a.Decision)}}, mergeRefusal, http.StatusOK)
 		if result != nil && !result.IsError {
@@ -157,9 +151,9 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 	case "split_person_merge":
 		a, e := decodeMCPOperationArguments[mergeSplitArgs](args)
 		if e != nil {
-			return operationFailure(mergeInvalidArguments, false), true, nil
+			return operationFailure("invalid_arguments", false), true, nil
 		}
-		data, _, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodPost, "/api/v1/people/{id}/split", &generated.SplitPersonMergeRequestOptions{PathParams: &generated.SplitPersonMergePath{ID: a.PersonID}, Header: &generated.SplitPersonMergeHeaders{IfMatch: a.ETag, IdempotencyKey: strings.TrimSpace(a.Key)}, Body: &generated.SplitPersonMergeBody{MergeID: a.MergeID, ParticipantIds: a.ParticipantIDs}}, mergeRecoveryResponseLimit, mergeRefusal, http.StatusOK)
+		data, _, failure, readErr := readMCPOperationBytes(ctx, b.client, http.MethodPost, "/api/v1/people/{id}/split", &generated.SplitPersonMergeRequestOptions{PathParams: &generated.SplitPersonMergePath{ID: a.PersonID}, Header: &generated.SplitPersonMergeHeaders{IfMatch: a.ETag, IdempotencyKey: a.Key}, Body: &generated.SplitPersonMergeBody{MergeID: a.MergeID, ParticipantIds: a.ParticipantIDs}}, mergeRecoveryResponseLimit, mergeRefusal, http.StatusOK)
 		if failure != nil {
 			return failure, true, readErr
 		}
@@ -182,14 +176,14 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 	case "decide_person_merge_candidate":
 		a, err := decodeMCPOperationArguments[mergeDecisionArgs](args)
 		if err != nil {
-			return "", true, &mcpserver.OperationRefusalError{Code: mergeInvalidArguments}
+			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}
 		decision = a
 		mergeID = a.MergeID
 	case "split_person_merge":
 		a, err := decodeMCPOperationArguments[mergeSplitArgs](args)
 		if err != nil {
-			return "", true, &mcpserver.OperationRefusalError{Code: mergeInvalidArguments}
+			return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 		}
 		mergeID = a.MergeID
 		effect = "Split the selected absorbed participant lineage into a new person. Lineage labels are historical. The daemon checks the supplied revision, lineage and review restrictions for a new split. An identical completed request returns its saved result."

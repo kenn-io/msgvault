@@ -347,7 +347,6 @@ func TestMCPMergeRecoveryCapabilityRequiresEachContract(t *testing.T) {
 	require.NoError(t, err)
 	for _, tc := range []struct{ operation, missing, name string }{
 		{"getPersonMerge", "route", "decide_person_merge_candidate"}, {"getPersonMerge", "route", "split_person_merge"},
-		{"getPersonProfile", "route", "decide_person_merge_candidate"}, {"getPersonProfile", "route", "split_person_merge"},
 		{"decidePersonMergeCandidate", "route", "decide_person_merge_candidate"}, {"decidePersonMergeCandidate", "decision", "decide_person_merge_candidate"}, {"decidePersonMergeCandidate", "person_id", "decide_person_merge_candidate"},
 		{"splitPersonMerge", "merge_id", "split_person_merge"}, {"splitPersonMerge", "participant_ids", "split_person_merge"},
 		{"listPersonMerges", "limit", "list_person_merges"}, {"listPersonMerges", "offset", "list_person_merges"},
