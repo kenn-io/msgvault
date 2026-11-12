@@ -47,6 +47,11 @@ func (s *Store) PersistICalendarContext(ctx context.Context, sourceID int64, raw
 		if err != nil {
 			return err
 		}
+		if len(prepared) > 0 {
+			if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
+				return fmt.Errorf("lock ICS participant directory: %w", err)
+			}
+		}
 		return s.persistICalendarWith(ctx, tx, sourceID, prepared, &summary)
 	})
 	if err != nil {
@@ -89,13 +94,9 @@ func icsRevisionNewer(c calevent.ICSComponent, old calevent.ICSMetadata) bool {
 	return c.Event.Status == SyncStatusCancelled && old.Status != SyncStatusCancelled
 }
 
+// The caller holds the participant directory lock before writing calendar events.
 func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID int64, items []preparedICS, summary *ICalendarImportSummary) error {
 	q := boundQuerier{ctx: ctx, q: tx}
-	if len(items) > 0 {
-		if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
-			return fmt.Errorf("lock ICS participant directory: %w", err)
-		}
-	}
 	for _, item := range items {
 		if err := ctx.Err(); err != nil {
 			return err

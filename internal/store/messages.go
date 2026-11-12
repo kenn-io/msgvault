@@ -2208,7 +2208,7 @@ func (s *Store) PersistMessageWithParticipantsContext(
 	if build == nil {
 		return 0, errors.New("persist message requires a participant builder")
 	}
-	// The source is known only after build runs, so this entry requests no source lock.
+	// The source is known only after build runs, so this entry locks none.
 	// Meeting archives are the only caller and meeting rows are not derived.
 	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{}, nil, participants, build, nil, nil)
 }
