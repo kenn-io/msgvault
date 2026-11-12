@@ -31,7 +31,8 @@ func SecureRestored(dir string, restored []string) error {
 		if err := verifyHandleOwner(directory); err != nil {
 			return fmt.Errorf("inspect restored token directory: %w", err)
 		}
-		directories, err := restorePreflight(dir, selected, ancestors)
+		rootAffected := verifyOwnerOnlyHandle(directory, false) != nil
+		directories, err := restorePreflight(dir, selected, ancestors, rootAffected)
 		if err != nil {
 			return err
 		}
@@ -45,13 +46,16 @@ func SecureRestored(dir string, restored []string) error {
 				return fmt.Errorf("secure restored token %q: %w", name, err)
 			}
 		}
-		return secureOwnerOnlyHandle(directory)
+		if rootAffected {
+			return secureOwnerOnlyHandle(directory)
+		}
+		return nil
 	})
 }
 
-func restorePreflight(dir string, selected, ancestors map[string]struct{}) ([]string, error) {
+func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootAffected bool) ([]string, error) {
 	var directories []string
-	affected := map[string]bool{".": true}
+	affected := map[string]bool{".": rootAffected}
 	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("%w: inspect tokens: %w", ErrRestorePermissionsConflict, walkErr)
@@ -85,7 +89,7 @@ func restorePreflight(dir string, selected, ancestors map[string]struct{}) ([]st
 				}
 				return nil
 			}
-			if selectedAncestor {
+			if selectedAncestor && parentAffected {
 				directories = append(directories, rel)
 				affected[rel] = true
 				return nil

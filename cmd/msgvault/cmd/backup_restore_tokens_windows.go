@@ -27,9 +27,6 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	if err != nil {
 		return fmt.Errorf("inspect restored token directory: %w", err)
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("restored token path %s is not a directory", dir)
-	}
 	snapshot, err := repo.OpenSnapshot(ctx, snapshotID, backupapp.New(Version).PackFileExtension())
 	if err != nil {
 		return fmt.Errorf("open restored snapshot: %w", err)
@@ -48,6 +45,9 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	}
 	if !strict {
 		return nil
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("restored token path %s is not a directory", dir)
 	}
 	var selected []string
 	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
