@@ -166,28 +166,54 @@ func (d operationalDefinition) bind(backend OperationBackend, downloads *downloa
 		}
 
 		if d.writes {
-			disclosure, err := backend.OperationDisclosure(ctx, d.definition.name, request.arguments)
-			if err != nil {
-				if refusal, ok := errors.AsType[*OperationRefusalError](err); ok {
-					result, jsonErr := jsonResult(map[string]any{"error": refusal.Code})
-					if jsonErr != nil {
-						return nil, jsonErr
-					}
-					result.isError = true
-					return result, nil
-				}
-				return nil, newInternalError("read operation disclosure", err)
-			}
-			if disclosure == "" {
-				return nil, newInternalError("read operation disclosure", errors.New("empty disclosure"))
+			disclosure, refused, err := readOperationDisclosure(ctx, backend, d.definition.name, request.arguments)
+			if refused != nil || err != nil {
+				return refused, err
 			}
 			if err := request.confirmUserAction(ctx, disclosure); err != nil {
 				return confirmationToolError(err)
+			}
+			// Without a response the client approved synchronously, so the
+			// owner may have approved a disclosure that is no longer current.
+			if _, resumed := request.inputResponses["confirm"]; !resumed {
+				current, refused, err := readOperationDisclosure(ctx, backend, d.definition.name, request.arguments)
+				if refused != nil || err != nil {
+					return refused, err
+				}
+				if current != disclosure {
+					return operationRefusalResult("operation_context_changed")
+				}
 			}
 		}
 		result, err := backend.ExecuteOperation(ctx, d.definition.name, request.arguments)
 		return operationalToolResponse(d.definition.name, result, err)
 	}
+}
+
+// readOperationDisclosure returns the disclosure to confirm. A declared refusal
+// comes back as a tool error result, which ends the call.
+func readOperationDisclosure(ctx context.Context, backend OperationBackend, name string, arguments map[string]any) (string, *toolResult, error) {
+	disclosure, err := backend.OperationDisclosure(ctx, name, arguments)
+	if err != nil {
+		if refusal, ok := errors.AsType[*OperationRefusalError](err); ok {
+			result, resultErr := operationRefusalResult(refusal.Code)
+			return "", result, resultErr
+		}
+		return "", nil, newInternalError("read operation disclosure", err)
+	}
+	if disclosure == "" {
+		return "", nil, newInternalError("read operation disclosure", errors.New("empty disclosure"))
+	}
+	return disclosure, nil, nil
+}
+
+func operationRefusalResult(code string) (*toolResult, error) {
+	result, err := jsonResult(map[string]any{"error": code})
+	if err != nil {
+		return nil, err
+	}
+	result.isError = true
+	return result, nil
 }
 
 func operationalToolResponse(name string, result *OperationResult, err error) (*toolResult, error) {
