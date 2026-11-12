@@ -183,6 +183,8 @@ func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLin
 				at = *row.Event.Start
 			} else if row.Event.Original != nil {
 				at, err = meetingIdentityTime(*row.Event.Original)
+			} else if row.Event.End != nil {
+				at = *row.Event.End
 			}
 			if err != nil {
 				return nil, fmt.Errorf("parse meeting occurrence time: %w", err)
@@ -327,6 +329,8 @@ func (s *Store) MeetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 			at, err = meetingIdentityTime(*row.Event.Original)
 		} else if row.Event.Start != nil {
 			at = *row.Event.Start
+		} else if row.Event.End != nil {
+			at = *row.Event.End
 		}
 		if err != nil {
 			return record, fmt.Errorf("parse meeting occurrence reference: %w", err)
