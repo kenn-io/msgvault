@@ -129,7 +129,11 @@ func TestRefreshIdentityCache(t *testing.T) {
 		server.Router().ServeHTTP(w, req)
 		return w
 	}
-	assert.Equal(t, http.StatusInternalServerError, refresh(srv).Code)
+	failed := refresh(srv)
+	assert.Equal(t, http.StatusInternalServerError, failed.Code)
+	var failure ErrorResponse
+	require.NoError(t, json.Unmarshal(failed.Body.Bytes(), &failure))
+	assert.Equal(t, "Couldn't refresh related views.", failure.Message)
 	wrapped.refreshErr = nil
 	w := refresh(srv)
 	require.Equal(t, http.StatusOK, w.Code)

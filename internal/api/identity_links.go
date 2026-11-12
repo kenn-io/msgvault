@@ -97,7 +97,7 @@ func (s *Server) handleRefreshIdentityCache(w http.ResponseWriter, r *http.Reque
 	}
 	if err != nil {
 		s.logger.Error("identity cache refresh failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to refresh identity cache")
+		writeError(w, http.StatusInternalServerError, "internal_error", "Couldn't refresh related views.")
 		return
 	}
 	writeJSON(w, http.StatusOK, IdentityLinkResponse{IdentityRevision: revision, CacheState: identityCacheStateReady})
