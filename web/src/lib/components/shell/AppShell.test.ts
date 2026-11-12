@@ -3290,8 +3290,9 @@ it('refreshes cached duplicate cards after explicit reentry', async () => {
   } finally { rendered.unmount(); state.destroy(); }
 });
 
-it.each(['everything', 'files'] as const)('reloads grouped %s after identity recovery', async workspace => {
+it.each(['everything', 'files', 'ungrouped files'] as const)('reloads %s after identity recovery', async workspace => {
   let recovered = false;
+  const fileRequests: unknown[] = [];
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
@@ -3300,6 +3301,7 @@ it.each(['everything', 'files'] as const)('reloads grouped %s after identity rec
     if (path.endsWith('/identity/links')) return Response.json({ identity_revision: 2, cache_state: 'stale' });
     if (path.endsWith('/identity/cache-refresh')) { recovered = true; return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
     if (path.endsWith('/groups')) return Response.json(exploreResponse({ rows: [{ ...sourceGroup, label: recovered ? 'Updated group' : 'Original group' }], total_count: 1 }));
+    if (path.endsWith('/files/search')) { fileRequests.push(await request.json()); return Response.json({ files: [{ id: 7, key: 'file:7', entry_key: 'message:11', message_id: 11, conversation_id: 21, occurred_at: '2026-07-18T12:00:00Z', source_id: 1, source_type: 'synthetic', source_identifier: 'archive@example.com', containing_title: 'Containing item', filename: recovered ? 'updated.pdf' : 'original.pdf', mime_type: 'application/pdf', mime_family: 'pdf', size_bytes: 2048, participant_labels: [], participant_domains: [], content_state: 'unverified', content_available: null }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} }); }
     return meetingFixtureResponse(path) ?? Response.json(exploreResponse());
   });
   const state = new ExploreState(null);
@@ -3311,10 +3313,12 @@ it.each(['everything', 'files'] as const)('reloads grouped %s after identity rec
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer Example/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     const notice = await screen.findByText('Changes saved, but related views may be out of date.');
-    state.commitNavigation({ workspace, groupingChain: ['source'] });
-    await screen.findByText('Original group');
+    const ungrouped = workspace === 'ungrouped files';
+    state.commitNavigation({ workspace: ungrouped ? 'files' : workspace, groupingChain: ungrouped ? [] : ['source'], filters: ungrouped ? [{ dimension: 'participant', values: ['1'] }] : [] });
+    await screen.findByText(ungrouped ? 'original.pdf' : 'Original group');
     await fireEvent.click(within(notice.closest('.inline-notice') as HTMLElement).getByRole('button', { name: 'Retry' }));
-    await screen.findByText('Updated group');
+    await screen.findByText(ungrouped ? 'updated.pdf' : 'Updated group');
+    if (ungrouped) expect(fileRequests).toEqual([expect.objectContaining({ predicate: expect.objectContaining({ filters: [{ dimension: 'participant', values: ['1'] }] }) }), expect.objectContaining({ predicate: expect.objectContaining({ filters: [{ dimension: 'participant', values: ['1'] }] }) })]);
   } finally { rendered.unmount(); state.destroy(); }
 });
 

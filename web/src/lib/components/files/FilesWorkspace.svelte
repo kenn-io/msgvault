@@ -432,7 +432,7 @@
     loading = true;
     return { generation: currentGeneration, signal: nextController.signal };
   }
-  function reloadListing(): void {
+  export function reloadListing(): void {
     // Reload restarts from page one; when a restoration epoch is still
     // unacknowledged the deep restoration restarts against the fresh listing.
     const epoch = unacknowledgedRestorationEpoch;

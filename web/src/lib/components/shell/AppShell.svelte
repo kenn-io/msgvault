@@ -266,6 +266,7 @@
   }
   let historyDialog = $state<{ restoreFocus: () => Promise<void> }>();
   let sourcesPage = $state<{ refresh: () => void; openAddSource: () => void }>();
+  let filesPage = $state<{ reloadListing: () => void }>();
 
   async function addSource(): Promise<void> {
     commitWorkspace('sources');
@@ -400,6 +401,7 @@
     const result = await relationshipsController.refreshIdentityCache();
     if (result.ok && result.cacheState === 'ready') {
       if (exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' && exploreState.current.groupingChain.length > 0) loader.retry();
+      else if (exploreState.current.workspace === 'files') filesPage?.reloadListing();
       directoryReviewController.refreshSummaries(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates);
       await refreshIdentityProfiles();
     }
@@ -1489,6 +1491,7 @@
             />
           {:else}
             <FilesWorkspace
+              bind:this={filesPage}
               onConfigureVisualSearch={openVisualAttachmentSettings}
               bind:submitted={loader.submitted}
               {client}
