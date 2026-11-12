@@ -38,7 +38,7 @@ func runImportInstagram(cmd *cobra.Command, exportDir string, opts instagramCLIO
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "Instagram: %d threads processed; %d records supported, %d skipped; %d new messages; %d sent records.\n", summary.ThreadsProcessed, summary.MessagesProcessed-summary.RecordsUnsupported, summary.RecordsUnsupported, summary.MessagesAdded, summary.FromMeCount)
 	_, _ = fmt.Fprintf(out, "Media: %d stored, %d missing, %d rejected. Files skipped: %d.\n", summary.AttachmentsStored, summary.MediaMissing, summary.MediaRejected, summary.FilesSkipped)
-	if summary.MessagesProcessed > summary.RecordsUnsupported && summary.FromMeCount == 0 {
+	if importErr == nil && !summary.LimitReached && !summary.Incomplete && summary.MessagesProcessed > summary.RecordsUnsupported && summary.FromMeCount == 0 {
 		_, _ = fmt.Fprintln(out, "No sender exactly matched --self-name. Re-run with the exact exported display name to repair sent/received direction.")
 	}
 	if summary.LimitReached {
