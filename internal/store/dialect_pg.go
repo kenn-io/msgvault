@@ -518,7 +518,7 @@ func (d *PostgreSQLDialect) FTSBackfillMissingBatchSQL(_ context.Context, _ *sql
 }
 
 func postgresFTSStalePredicate(prefix string) string {
-	return fmt.Sprintf("(%sindexing_version IS NULL OR %sindexing_version < %d OR (%sindexing_version = %d AND %ssearch_fts IS NULL))", prefix, prefix, CurrentFTSIndexingVersion, prefix, CurrentFTSIndexingVersion, prefix)
+	return fmt.Sprintf("(%ssearch_fts IS NULL OR %sindexing_version IS DISTINCT FROM %d)", prefix, prefix, CurrentFTSIndexingVersion)
 }
 
 // FTSAvailable reports whether tsvector search is available.
@@ -537,8 +537,8 @@ func postgresFTSNeedsBackfillSQL() string {
 }
 
 // FTSNeedsBackfill reports whether the tsvector column needs population or
-// uses an obsolete field-weight layout. It finds older versions and current
-// versions with a NULL search_fts, so interrupted backfills remain visible.
+// uses a different field-weight layout. It finds missing vectors and differing
+// versions, so interrupted backfills remain visible.
 //
 // Uses EXISTS rather than COUNT(*): a GIN index on search_fts cannot serve an
 // `IS NULL` predicate, so COUNT(*) was a full sequential scan of every message

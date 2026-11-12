@@ -116,33 +116,6 @@ func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	}
 }
 
-func TestPG_BackfillFTSPreservesFutureEntries(t *testing.T) {
-	skipUnlessPostgres(t)
-	f := storetest.New(t)
-	ids := f.CreateMessages(3)
-	_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 4, search_fts = to_tsvector('simple', 'futuremarker') WHERE id = $1`, ids[0])
-	require.NoError(t, err)
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 4, search_fts = NULL WHERE id = $1`, ids[1])
-	require.NoError(t, err)
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2, subject = 'legacy marker' WHERE id = $1`, ids[2])
-	require.NoError(t, err)
-	count, err := f.Store.BackfillFTS(nil)
-	require.NoError(t, err)
-	assert.EqualValues(t, 1, count)
-	var version int
-	var vector sql.NullString
-	for _, id := range ids[:2] {
-		require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT indexing_version, search_fts::text FROM messages WHERE id = $1`, id).Scan(&version, &vector))
-		assert.Equal(t, 4, version)
-		if id == ids[0] {
-			assert.Contains(t, vector.String, "futuremarker")
-		} else {
-			assert.False(t, vector.Valid)
-		}
-	}
-	assert.False(t, f.Store.NeedsFTSBackfill())
-}
-
 func TestBackfillFTSUsesSavedChatSender(t *testing.T) {
 	f := storetest.New(t)
 	id := f.CreateMessage("chat-sender")
