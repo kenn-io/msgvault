@@ -39,6 +39,11 @@ type IdentityCacheRefresher interface {
 	RefreshIdentityDatasets(ctx context.Context) (int64, error)
 }
 
+var (
+	ErrIdentityCacheBuildRequired = errors.New("identity cache requires a build")
+	ErrIdentityCacheUnsupported   = errors.New("identity cache is unavailable on PostgreSQL")
+)
+
 const (
 	identityCacheStateReady = "ready"
 	identityCacheStateStale = "stale"
@@ -61,6 +66,8 @@ type IdentityLinkResponse struct {
 }
 
 func (s *Server) registerIdentityLinkRoutes(api huma.API) {
+	registerAPIV1RawHumaJSONRouteWithErrors[IdentityLinkResponse](api, "refreshIdentityCache", http.MethodPost,
+		"/identity/cache-refresh", "Refresh identity datasets", s.handleRefreshIdentityCache, http.StatusServiceUnavailable)
 	link := rawAPIV1Operation("linkIdentityParticipants", http.MethodPost,
 		"/identity/links", "Assert two participants are the same person")
 	link.RequestBody = jsonRequestBodyFor[IdentityLinkRequest](api)
@@ -71,6 +78,29 @@ func (s *Server) registerIdentityLinkRoutes(api huma.API) {
 		api, "unlinkIdentityParticipants", http.MethodPost, "/identity/unlinks",
 		"Remove a link edge between two participants", s.handleUnlinkIdentity,
 	)
+}
+
+func (s *Server) handleRefreshIdentityCache(w http.ResponseWriter, r *http.Request) {
+	refresher, ok := s.store.(IdentityCacheRefresher)
+	if !ok {
+		writeAPIHTTPError(w, cliStoreUnavailableError())
+		return
+	}
+	revision, err := refresher.RefreshIdentityDatasets(r.Context())
+	if errors.Is(err, ErrIdentityCacheBuildRequired) {
+		writeError(w, http.StatusServiceUnavailable, "identity_cache_build_required", "Run msgvault build-cache to refresh related views.")
+		return
+	}
+	if errors.Is(err, ErrIdentityCacheUnsupported) {
+		writeError(w, http.StatusServiceUnavailable, "identity_cache_unsupported", "People and relationship analytics are unavailable with PostgreSQL.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("identity cache refresh failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to refresh identity cache")
+		return
+	}
+	writeJSON(w, http.StatusOK, IdentityLinkResponse{IdentityRevision: revision, CacheState: identityCacheStateReady})
 }
 
 func (s *Server) handleLinkIdentity(w http.ResponseWriter, r *http.Request) {

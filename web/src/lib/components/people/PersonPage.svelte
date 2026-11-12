@@ -62,17 +62,7 @@
   const name = $derived(domain ?? savedProfile?.person?.display_name ?? person?.display_label ?? 'Person');
   let saving = $state(false);
   let mergeOpen = $state(false);
-  let staleLink = $state<{ a: number; b: number }>();
-  $effect(() => { void target; staleLink = undefined; mergeOpen = false; });
-  function linked(a: number, b: number, result: import('../../relationships/controller.svelte').LinkOutcome): void {
-    if (result.ok) staleLink = result.cacheState === 'stale' ? { a, b } : undefined;
-  }
-  async function retryLink(): Promise<void> {
-    if (!staleLink) return;
-    const receipt = staleLink, { a, b } = receipt;
-    const result = await controller.linkParticipants(a, b);
-    if (result.ok && staleLink === receipt) linked(a, b, result);
-  }
+  $effect(() => { void target; mergeOpen = false; });
   async function savePerson(): Promise<void> {
     if (!person || saving) return;
     saving = true;
@@ -114,7 +104,6 @@
 {/snippet}
 
 <section class="person-page" class:details-open={details} role="group" aria-label="Person page">
-  {#if staleLink}<div class="summary-error" role="alert">Identity saved, but related views may be out of date.<Button label="Retry" onclick={() => void retryLink()} /></div>{/if}
   {#if durablePersonID !== null || (detail && !controller.detailMissing)}
     <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true}>
       {#snippet actions()}
@@ -183,7 +172,7 @@
       {/if}
     {/if}
   </div>
-  {#if mergeOpen}<MergePeopleDialog {client} {controller} personID={profileID} participantID={person?.id ?? null} {name} onReconcile={onReconcilePersonMerge} onLinked={linked} onOpenPerson={onOpenDirectoryPerson} onClose={() => mergeOpen = false} />{/if}
+  {#if mergeOpen}<MergePeopleDialog {client} {controller} personID={profileID} participantID={person?.id ?? null} {name} onReconcile={onReconcilePersonMerge} onOpenPerson={onOpenDirectoryPerson} onClose={() => mergeOpen = false} />{/if}
 </section>
 
 <style>

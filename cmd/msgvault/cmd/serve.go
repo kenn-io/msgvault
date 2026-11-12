@@ -130,7 +130,10 @@ var runDerivedCacheSubprocess = func(ctx context.Context, analyticsDir string) e
 		// auto_build_cache=false, PostgreSQL) deliberately leaves absent;
 		// the caller reports the cache stale instead.
 		readiness, inspectErr := query.InspectCacheReadiness(analyticsDir)
-		if inspectErr != nil || readiness == query.CacheAbsent {
+		if inspectErr == nil && readiness == query.CacheAbsent {
+			return api.ErrIdentityCacheBuildRequired
+		}
+		if inspectErr != nil {
 			return err
 		}
 		return executeBuildCacheSubprocessMode(ctx, buildCacheModeFull)
@@ -3916,6 +3919,9 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 // allocator exits with the process; the long-lived daemon does neither.
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
 	ctx = a.invocationContext(ctx)
+	if a.store.IsPostgreSQL() {
+		return 0, api.ErrIdentityCacheUnsupported
+	}
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
 		return 0, err
 	}

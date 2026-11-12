@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,6 +116,77 @@ func TestLinkIdentity_CreatesEdgeAndReportsReadyCache(t *testing.T) {
 	assert.Equal(int64(1), resp.IdentityRevision)
 	assert.Equal(identityCacheStateReady, resp.CacheState)
 	assert.Equal(1, wrapped.refreshCalls)
+}
+
+func TestRefreshIdentityCache(t *testing.T) {
+	t.Parallel()
+	srv, wrapped := newIdentityLinkTestServer(t)
+	a := wrapped.mustParticipant(t, "a@example.com", "A", "example.com")
+	b := wrapped.mustParticipant(t, "b@example.com", "B", "example.com")
+	wrapped.refreshErr = errors.New("build failed")
+	linked := postIdentityLink(t, srv, "/api/v1/identity/links", IdentityLinkRequest{ParticipantA: a, ParticipantB: b})
+	require.Equal(t, http.StatusOK, linked.Code)
+	assert.Equal(t, identityCacheStateStale, decodeIdentityLinkResponse(t, linked).CacheState)
+	before, err := wrapped.IdentityRevision()
+	require.NoError(t, err)
+	edges, err := wrapped.ClusterEdges(a)
+	require.NoError(t, err)
+	refresh := func(server *Server) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/identity/cache-refresh", nil)
+		w := httptest.NewRecorder()
+		server.Router().ServeHTTP(w, req)
+		return w
+	}
+	assert.Equal(t, http.StatusInternalServerError, refresh(srv).Code)
+	wrapped.refreshErr = nil
+	w := refresh(srv)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, IdentityLinkResponse{IdentityRevision: 1, CacheState: identityCacheStateReady}, decodeIdentityLinkResponse(t, w))
+	after, err := wrapped.IdentityRevision()
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	afterEdges, err := wrapped.ClusterEdges(a)
+	require.NoError(t, err)
+	assert.Equal(t, edges, afterEdges)
+	assert.Equal(t, 3, wrapped.refreshCalls)
+	for _, tc := range []struct {
+		err     error
+		code    string
+		message string
+	}{
+		{ErrIdentityCacheBuildRequired, "identity_cache_build_required", "Run msgvault build-cache to refresh related views."},
+		{ErrIdentityCacheUnsupported, "identity_cache_unsupported", "People and relationship analytics are unavailable with PostgreSQL."},
+	} {
+		wrapped.refreshErr = tc.err
+		response := refresh(srv)
+		assert.Equal(t, http.StatusServiceUnavailable, response.Code)
+		assert.Contains(t, response.Body.String(), tc.code)
+		assert.Contains(t, response.Body.String(), tc.message)
+	}
+	missing := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, wrapped.Store, nil, testLogger())
+	assert.Equal(t, http.StatusServiceUnavailable, refresh(missing).Code)
+}
+
+type delayedIdentityCacheStore struct{ *store.Store }
+
+func (s *delayedIdentityCacheStore) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
+	select {
+	case <-time.After(100 * time.Millisecond):
+		return 1, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+func TestRefreshIdentityCacheOutlastsOrdinaryRequestDeadline(t *testing.T) {
+	t.Parallel()
+	wrapped := &delayedIdentityCacheStore{Store: testutil.NewTestStore(t)}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: wrapped, Logger: testLogger(), RequestTimeout: 10 * time.Millisecond})
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/identity/cache-refresh", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	assert.Equal(t, identityCacheStateReady, decodeIdentityLinkResponse(t, w).CacheState)
 }
 
 func TestLinkIdentity_RepeatedExactEdgeIsIdempotent(t *testing.T) {

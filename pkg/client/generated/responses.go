@@ -1505,6 +1505,12 @@ type GetHealthResponse = HealthResponse
 
 type GetHealthErrorResponse = ErrorResponse
 
+type RefreshIdentityCacheResponse = IdentityLinkResponse
+
+type RefreshIdentityCacheErrorResponse = ErrorResponse
+
+type RefreshIdentityCacheErrorResponseJSON = ErrorResponse
+
 type LinkIdentityParticipantsResponse = IdentityLinkResponse
 
 type LinkIdentityParticipantsErrorResponse struct {
@@ -5456,6 +5462,15 @@ type GetHealthResp struct {
 	StatusCode   int
 	JSON200      *GetHealthResponse
 	JSONDefault  *GetHealthErrorResponse
+}
+
+type RefreshIdentityCacheResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RefreshIdentityCacheResponse
+	JSON503      *RefreshIdentityCacheErrorResponse
+	JSONDefault  *RefreshIdentityCacheErrorResponseJSON
 }
 
 type LinkIdentityParticipantsResp struct {

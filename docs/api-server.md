@@ -492,6 +492,15 @@ Unsupported providers or persistent keyword support return
 
 ### Identity match review and scoring
 
+`POST /api/v1/identity/cache-refresh` rebuilds identity-derived datasets without
+changing links or profiles. It returns `identity_revision` and
+`cache_state: "ready"` on success. It requires API authentication and the
+mutation gate. When a SQLite cache is absent, it returns HTTP 503 with
+`identity_cache_build_required`; run `msgvault build-cache` before retrying.
+PostgreSQL returns HTTP 503 with `identity_cache_unsupported` because it has
+no Parquet cache. Other build failures return HTTP 500; a missing refresh
+capability returns HTTP 503.
+
 Review identity suggestions through `GET /api/v1/identity/match-candidates`
 and `GET /api/v1/identity/match-candidates/{id}`. Responses include the
 evidence, blockers, and a `review_token` for that exact snapshot. Accept or

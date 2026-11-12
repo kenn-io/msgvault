@@ -244,54 +244,6 @@ it.each([
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
 });
 
-it('keeps the current person retry pair when an earlier Retry finishes late', async () => {
-  const writes: Array<{ participant_a: number; participant_b: number }> = [];
-  let release!: (response: Response) => void;
-  const client = createAPIClient(async input => {
-    const request = input instanceof Request ? input : new Request(input);
-    const path = new URL(request.url).pathname;
-    if (/\/participants\/[13]$/.test(path)) {
-      const id = Number(path.split('/').at(-1));
-      return Response.json({ id, display_label: `Observed ${id}`, identifiers: [], first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
-    }
-    if (path.endsWith('/people/directory')) return Response.json({ people: [] });
-    if (path.endsWith('/participants/search')) return Response.json({ rows: [2, 4].map(id => ({ id, display_label: `Peer ${id}`, identifiers: [], activity_count: 1 })) });
-    if (path.endsWith('/identity/links')) {
-      writes.push(await request.json());
-      if (writes.length === 2) return new Promise<Response>(resolve => { release = resolve; });
-      return Response.json({ identity_revision: writes.at(-1)!.participant_a === 3 ? 3 : 2, cache_state: 'stale' });
-    }
-    return meetingFixtureResponse(path) ?? Response.json({ rows: [] });
-  });
-  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client);
-  const link = vi.spyOn(controller, 'linkParticipants');
-  await controller.openTarget('cluster:1', {});
-  const props = { client, directory, controller, target: 'cluster:1', filesOpen: false, predicate: {}, onFilesToggle: vi.fn(), onFiltersChange: vi.fn(), onReconcilePersonMerge: vi.fn(async () => undefined) };
-  const view = render(PersonPage, { props });
-  try {
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
-    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer 2/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await screen.findByText('Identity saved, but related views may be out of date.');
-    await fireEvent.click(within(screen.getByText('Identity saved, but related views may be out of date.')).getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(writes).toHaveLength(2));
-    await controller.openTarget('cluster:3', {});
-    await view.rerender({ ...props, target: 'cluster:3' });
-    await screen.findByRole('heading', { name: 'Observed 3' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
-    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
-    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer 4/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await screen.findByText('Identity saved, but related views may be out of date.');
-    await act(async () => { release(Response.json({ identity_revision: 2, cache_state: 'ready' })); await link.mock.results[1]!.value; });
-    expect(screen.queryByText('Identity saved, but related views may be out of date.')).not.toBeNull();
-    await fireEvent.click(within(screen.getByText('Identity saved, but related views may be out of date.')).getByRole('button', { name: 'Retry' }));
-    await waitFor(() => expect(writes).toHaveLength(4));
-    expect(writes.at(-1)).toEqual({ participant_a: 3, participant_b: 4 });
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); }
-});
-
 it.each([
   { activity: 50, bindings: [1] },
   { activity: 0, bindings: [1] },
