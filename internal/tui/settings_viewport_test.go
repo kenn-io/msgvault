@@ -104,7 +104,8 @@ func TestSettingsViewportSettingsRestartNotice(t *testing.T) {
 				return
 			}
 			assert.Equal(t, 1, strings.Count(view, "msgvault daemon restart"))
-			assert.Contains(t, view, "On the daemon host, run msgvault daemon restart with the same custom --home and --config values, or restart its service")
+			assert.Contains(t, view, "On the daemon host, restart its service, or stop and rerun your foreground msgvault serve with the same flags")
+			assert.Contains(t, view, "Otherwise, run msgvault daemon restart with the same options: --home and --config")
 		})
 	}
 }
@@ -117,7 +118,8 @@ func TestSettingsViewportCodexRestartNotice(t *testing.T) {
 	screen := uv.NewScreenBuffer(80, 24)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	view := strings.Join(strings.Fields(screen.String()), " ")
-	assert.Contains(t, view, "On the daemon host, run msgvault daemon restart with the same custom --home and --config values, or restart its service")
+	assert.Contains(t, view, "On the daemon host, restart its service, or stop and rerun your foreground msgvault serve with the same flags")
+	assert.Contains(t, view, "Otherwise, run msgvault daemon restart with the same options: --home and --config")
 	assert.Contains(t, view, "[Esc] Cancel and return")
 }
 

@@ -204,6 +204,7 @@ it.each([
   expect(notice.textContent).toContain('--home');
   expect(notice.textContent).toContain('--config');
   expect(notice.textContent).toContain('restart its service');
+  expect(notice.textContent).toContain('stop and rerun your foreground msgvault serve with the same flags.');
 });
 
 it('omits restart guidance when neither settings nor inference needs a restart', async () => {

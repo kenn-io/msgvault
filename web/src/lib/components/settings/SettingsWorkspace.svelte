@@ -644,7 +644,7 @@
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
           {#if buildError && activeId === 'overview'}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
           {#if pendingRestart || inference.status?.pending_restart}
-            <InlineNotice tone="warning" message="Restart pending."><span class="restart-guidance">On the computer running msgvault, run <code>msgvault daemon restart</code> with the same custom <code>--home</code> and <code>--config</code> options, or restart its service.</span></InlineNotice>
+            <InlineNotice tone="warning" message="Restart pending."><span class="restart-guidance">On the computer running msgvault, restart its service, or stop and rerun your foreground <code>msgvault serve</code> with the same flags. Otherwise, run <code>msgvault daemon restart</code> with the same custom <code>--home</code> and <code>--config</code> options.</span></InlineNotice>
           {/if}
         </div>
 

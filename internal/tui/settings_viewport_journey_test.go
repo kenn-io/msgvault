@@ -35,8 +35,7 @@ func TestSettingsViewportShortScreenPeopleDisable(t *testing.T) {
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "[Esc]")
 	assert.Contains(t, screen.String(), "People inference disabled.")
-	assert.Contains(t, screen.String(), "--home")
-	assert.Contains(t, screen.String(), "service.")
+	assert.Contains(t, screen.String(), "restart its service")
 	model, _ = sendKey(t, model, key('v'))
 	screen = uv.NewScreenBuffer(40, 12)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
@@ -87,7 +86,7 @@ func TestSettingsViewportSaveShowsNoticeAndSelectedField(t *testing.T) {
 	assert.Contains(t, screen.String(), "[j/k]")
 	assert.Contains(t, screen.String(), "[Esc]")
 	assert.Regexp(t, `\[Ctrl\+S\] +Save`, screen.String())
-	assert.Regexp(t, `(?s)daemon host.*msgvault daemon restart.*--home.*--config.*service`, screen.String())
+	assert.Regexp(t, `(?s)daemon host.*service.*foreground.*msgvault serve`, screen.String())
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "▶   Automatic start")
@@ -115,7 +114,7 @@ func TestSettingsViewportShortScreenSaveErrorAfterDisable(t *testing.T) {
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, strings.Join(strings.Fields(screen.String()), " "), "disk full")
 	assert.Contains(t, screen.String(), "[Esc]")
-	assert.Contains(t, screen.String(), "--home")
+	assert.Contains(t, screen.String(), "restart its service")
 }
 
 func TestSettingsViewportStalePeopleLoadKeepsPage(t *testing.T) {
@@ -175,7 +174,7 @@ func TestSettingsViewportTinyScreenKeepsPagingAndBack(t *testing.T) {
 			break
 		}
 	}
-	for _, text := range []string{"msgvault", "daemon", "restart", "--home", "--config", "service", "[p]", "[i]"} {
+	for _, text := range []string{"msgvault", "daemon", "restart", "--home", "--config", "service", "foreground", "flags.", "[p]", "[i]"} {
 		assert.Contains(t, pages.String(), text)
 	}
 	model, _ = sendKey(t, model, keyEnter())

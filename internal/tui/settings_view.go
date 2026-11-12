@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-const settingsRestartNotice = "Restart pending. On the daemon host, run msgvault daemon restart with the same custom --home and --config values, or restart its service."
+const settingsRestartNotice = "Restart pending. On the daemon host, restart its service, or stop and rerun your foreground msgvault serve with the same flags. Otherwise, run msgvault daemon restart with the same options:\n--home and --config."
 
 func (m Model) renderSettingsView() string {
 	if m.settings.confirmDiscard {
