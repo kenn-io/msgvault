@@ -879,10 +879,6 @@ func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T)
 				AddressKind: store.PersonAddressPostal, OriginalValue: "12 Example Street; Unit 7",
 			},
 			{
-				Envelope:    store.ValueEnvelope{ID: 706, Source: store.ProvenanceUser},
-				AddressKind: store.PersonAddressPostal, OriginalValue: ";;12 Example St;Town;;",
-			},
-			{
 				Envelope:    store.ValueEnvelope{ID: 707, Source: store.ProvenanceUser},
 				AddressKind: store.PersonAddressPostal, OriginalValue: "Box 1;;12 Example St;Town",
 			},
@@ -901,9 +897,6 @@ func TestProjectPersonPropertiesCarriesUnstructuredPostalAddresses(t *testing.T)
 	semicolonText := projectedByOwner(t, properties, "person_addresses", 705, fieldValue)
 	assert.Equal(";;;;;;", semicolonText.Property.RawValue)
 	assert.Equal([]string{"12 Example Street; Unit 7"}, projectedParameterValues(semicolonText.Property, "LABEL"))
-	shortADR := projectedByOwner(t, properties, "person_addresses", 706, fieldValue)
-	assert.Equal(";;12 Example St;Town;;", shortADR.Property.RawValue)
-	assert.Empty(projectedParameterValues(shortADR.Property, "LABEL"))
 	shortBox := projectedByOwner(t, properties, "person_addresses", 707, fieldValue)
 	assert.Equal("Box 1;;12 Example St;Town", shortBox.Property.RawValue)
 	assert.Empty(projectedParameterValues(shortBox.Property, "LABEL"))

@@ -1,9 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { Assessment, Input } from '../api/generated/models';
 import { postalAddressText, PostalReviewSession } from './postal-review.svelte';
-
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 const input: Input = { address_kind: 'postal', street_address: ' 12 Example St ', extended_address: 'Unit 7', country_code: 'ca', original_value: ' raw\ntext ' };
 async function assessment(value = input): Promise<Assessment> {

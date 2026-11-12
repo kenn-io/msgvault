@@ -108,6 +108,7 @@ describe('Postal address editor', () => {
     const { controller, requests } = setup(options);
     render(StructuredProfileEditor, { controller, section: 'addresses' });
     await enterRaw();
+    if (options.localRejection) await fireEvent.input(screen.getByLabelText('Country code'), { target: { value: ' zz ' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Check with Google' }));
     await screen.findByText(options.unavailable ? 'The provider request failed' : 'Enter a supported country code');
     expect(screen.queryByText('Google Maps')).toBeNull();

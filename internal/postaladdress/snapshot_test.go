@@ -1,12 +1,21 @@
 package postaladdress
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"hegel.dev/go/hegel"
 )
+
+func drawPostalInput(ht *hegel.T) Input {
+	var input Input
+	for i := range reflect.TypeFor[Input]().NumField() {
+		reflect.ValueOf(&input).Elem().Field(i).SetString(hegel.Draw(ht, hegel.Text()))
+	}
+	return input
+}
 
 func TestSnapshotRejectsMalformedAndUnknownVersions(t *testing.T) {
 	req := require.New(t)

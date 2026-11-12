@@ -1,11 +1,9 @@
 package postaladdress
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"hegel.dev/go/hegel"
 )
 
 func TestAssessPreservesInternationalInput(t *testing.T) {
@@ -42,14 +40,6 @@ func TestAssessDoesNotAssertValidity(t *testing.T) {
 		assert.Equal(t, StatusNeedsReview, got.Status)
 		assert.ElementsMatch(t, tc.reasons, got.ReasonCodes)
 	}
-}
-
-func drawPostalInput(ht *hegel.T) Input {
-	var input Input
-	for i := range reflect.TypeFor[Input]().NumField() {
-		reflect.ValueOf(&input).Elem().Field(i).SetString(hegel.Draw(ht, hegel.Text()))
-	}
-	return input
 }
 
 func TestAssessmentExtendedParts(t *testing.T) {
