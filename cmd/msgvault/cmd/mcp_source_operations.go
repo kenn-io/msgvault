@@ -126,6 +126,16 @@ func decodeMCPOperationArguments[T any](args map[string]any) (T, error) {
 // operationContext checks a disclosure's pre-read. A failed read refuses as
 // operation_context_unavailable unless forward recognizes its fixed code.
 func operationContext(current *mcpserver.OperationResult, expected, conflict string, forward func(string) bool) error {
+	if err := operationReadFailure(current, forward); err != nil {
+		return err
+	}
+	if current.ETag != expected {
+		return &mcpserver.OperationRefusalError{Code: conflict}
+	}
+	return nil
+}
+
+func operationReadFailure(current *mcpserver.OperationResult, forward func(string) bool) error {
 	if current == nil || current.IsError {
 		code := "operation_context_unavailable"
 		var failure struct {
@@ -137,9 +147,6 @@ func operationContext(current *mcpserver.OperationResult, expected, conflict str
 			}
 		}
 		return &mcpserver.OperationRefusalError{Code: code}
-	}
-	if current.ETag != expected {
-		return &mcpserver.OperationRefusalError{Code: conflict}
 	}
 	return nil
 }

@@ -199,7 +199,7 @@ func (b *daemonMCPOperations) employmentDisclosureContext(ctx context.Context, n
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := operationContext(result, result.ETag, "employment_revision_conflict", employmentDefiniteRefusal); err != nil {
+	if err := operationReadFailure(result, employmentDefiniteRefusal); err != nil {
 		return nil, nil, err
 	}
 	current, ok := result.Output.(mcpserver.EmploymentRecord)
@@ -214,7 +214,7 @@ func (b *daemonMCPOperations) employmentDisclosureContext(ctx context.Context, n
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := operationContext(listed, listed.ETag, "employment_revision_conflict", employmentDefiniteRefusal); err != nil {
+	if err := operationReadFailure(listed, employmentDefiniteRefusal); err != nil {
 		return nil, nil, err
 	}
 	rows, ok := listed.Output.(generated.EmploymentsResponse)
