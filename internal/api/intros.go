@@ -14,8 +14,8 @@ import (
 
 // IntroductionOperations provides the shared introduction read projection.
 type IntroductionOperations interface {
-	ListIntroductionsContext(context.Context, *agentgrant.Grant, store.PersonIntroductionQuery) (introops.Page, error)
-	GetIntroductionContext(context.Context, *agentgrant.Grant, string) (introops.Record, error)
+	ListIntroductionsContext(ctx context.Context, grant *agentgrant.Grant, query store.PersonIntroductionQuery) (introops.Page, error)
+	GetIntroductionContext(ctx context.Context, grant *agentgrant.Grant, id string) (introops.Record, error)
 }
 
 func (s *Server) registerIntroductionRoutes(api huma.API) {

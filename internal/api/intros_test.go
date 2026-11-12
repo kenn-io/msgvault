@@ -27,6 +27,7 @@ func TestIntroductionReadsWithoutCapability(t *testing.T) {
 
 type introductionTestStore struct {
 	stubSourceStore
+
 	err error
 }
 
