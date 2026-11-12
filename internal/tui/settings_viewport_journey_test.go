@@ -191,6 +191,23 @@ func TestSettingsViewportTinyScreenKeepsPagingAndBack(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(screen.String(), "[Esc] Back"))
 }
 
+func TestSettingsViewportLoadingBackAppearsOnce(t *testing.T) {
+	model := NewBuilder().WithSize(20, 3).Build()
+	model.settingsBackend = &fakeSettingsBackend{loads: []SettingsSnapshot{settingsFixture()}}
+	model, _ = sendKey(t, model, key(','))
+	screen := uv.NewScreenBuffer(20, 3)
+	for range 10 {
+		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+		assert.Equal(t, 1, strings.Count(screen.String(), "[Esc] Back"))
+		before := screen.String()
+		model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+		if screen.String() == before {
+			break
+		}
+	}
+}
+
 func TestSettingsViewportTinyScreenEscapeCancels(t *testing.T) {
 	snapshot := settingsFixture()
 	snapshot.Fields[0].Options = []string{"auto", "manual"}

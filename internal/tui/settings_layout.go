@@ -27,7 +27,7 @@ func (m Model) settingsViewportContent(title, body, actions string) (int, int, s
 	titleRows := lipgloss.Height(ansi.Wrap(title, width, ""))
 	wrapped := ansi.Wrap(body, width, "")
 	if !m.settings.confirmDiscard && len(footer) > m.height-titleRows-2 {
-		bodyActions := strings.TrimSuffix(actions, "  [Esc] Back")
+		bodyActions := strings.TrimSpace(strings.TrimSuffix(actions, "[Esc] Back"))
 		if i := strings.LastIndex(bodyActions, "  [Esc] Cancel"); i >= 0 {
 			bodyActions = bodyActions[:i]
 		}
