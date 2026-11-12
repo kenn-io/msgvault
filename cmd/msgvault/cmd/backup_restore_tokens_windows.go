@@ -37,7 +37,6 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	}
 	defer snapshot.Close() //nolint:errcheck // membership lookup is authoritative
 	strict := false
-	var nonRegular string
 	var selected []string
 	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -57,9 +56,6 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 		if err != nil {
 			return fmt.Errorf("inspect restored token membership: %w", err)
 		}
-		if !entry.Type().IsRegular() && nonRegular == "" {
-			nonRegular = rel
-		}
 		if strings.EqualFold(rel, providercredentials.Filename) || strings.EqualFold(rel, providercredentials.ServerKeyFilename) {
 			strict = true
 		}
@@ -72,12 +68,9 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	if !strict {
 		return nil
 	}
-	if nonRegular != "" {
-		return fmt.Errorf("inspect restored tokens: restored token %q is not a regular file", nonRegular)
-	}
 	err = providercredentials.SecureRestored(dir, selected)
 	if errors.Is(err, providercredentials.ErrRestorePermissionsConflict) {
-		return fmt.Errorf("%w; credential permissions were not changed", err)
+		return fmt.Errorf("%w; credential permissions were not changed; resolve the conflict or move the omitted entry aside, then retry with --overwrite", err)
 	}
 	if err != nil {
 		return fmt.Errorf("%w; credentials may be unreadable and permissions may have changed", err)

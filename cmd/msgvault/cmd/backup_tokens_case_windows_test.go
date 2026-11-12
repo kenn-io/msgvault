@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,12 +27,7 @@ func TestBackupRestoreCaseVariantProviderCredential(t *testing.T) {
 	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
 	prepareBackupTokenRestore(t)
 	target := filepath.Join(t.TempDir(), "restored")
-	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
-	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
-	rootCmd.SetOut(io.Discard)
-	rootCmd.SetErr(io.Discard)
-	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", target, "--jobs", "1"})
-	require.NoError(t, executeRootContext(t.Context(), rootCmd))
+	require.NoError(t, runBackupTokenRestore(t, cfg, repo, target, false))
 	restored, err := providercredentials.Read(filepath.Join(target, "tokens"))
 	require.NoError(t, err)
 	value, _, err := restored.Resolve(providercredentials.VectorEmbeddingsID, endpoint, "", nil)

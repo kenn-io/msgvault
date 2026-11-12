@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -96,12 +95,7 @@ func backupRestoreOmittedOAuthLock(t *testing.T, compliant bool) {
 		rootBefore, err = windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 		require.NoError(err)
 	}
-	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
-	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
-	rootCmd.SetOut(io.Discard)
-	rootCmd.SetErr(io.Discard)
-	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", target, "--jobs", "1", "--overwrite"})
-	err = executeRootContext(t.Context(), rootCmd)
+	err = runBackupTokenRestore(t, cfg, repo, target, true)
 	if compliant {
 		require.NoError(err)
 		snapshot, readErr := providercredentials.Read(tokens)
