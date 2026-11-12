@@ -66,7 +66,7 @@ func (m *Model) revealSettingsFocus() {
 
 func (m Model) settingsScreen() (string, string, string, int) {
 	if m.settings.confirmDiscard {
-		return m.styles.titleBar.Render("Settings *"), m.styles.modalTitle.Render("Discard unsaved changes?") + "\n\nYour settings drafts have not been saved.", "[Y] Discard  [N/Esc] Keep editing", 0
+		return m.styles.titleBar.Render("Settings *"), m.styles.modalTitle.Render("Discard unsaved changes?") + "\n\nYour settings drafts have not been saved.", "[Y] Yes [N/Esc] No", 0
 	}
 	if m.settings.peopleControls.active {
 		return m.peopleControlsParts()

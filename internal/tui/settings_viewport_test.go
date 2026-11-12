@@ -128,13 +128,38 @@ func TestSettingsViewportDiscardConfirmationPaging(t *testing.T) {
 	model, _ = sendKey(t, model, keyEsc())
 	screen := uv.NewScreenBuffer(20, 6)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "[Y] Discard")
-	assert.Contains(t, screen.String(), "[N/Esc] Keep")
+	assert.Contains(t, screen.String(), "[Y] Yes")
+	assert.Contains(t, screen.String(), "[N/Esc] No")
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "not been saved")
-	assert.Contains(t, screen.String(), "[Y] Discard")
+	assert.Contains(t, screen.String(), "[Y] Yes")
+}
+
+func TestSettingsViewportDiscardConfirmationFourRows(t *testing.T) {
+	model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 20, 4)
+	model, _ = sendKey(t, model, keyEnter())
+	model, _ = sendKey(t, model, keyEnter())
+	model, _ = sendKey(t, model, key('x'))
+	model, _ = sendKey(t, model, keyEnter())
+	model, _ = sendKey(t, model, keyEsc())
+	screen := uv.NewScreenBuffer(20, 4)
+	var pages strings.Builder
+	for range 10 {
+		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+		assert.Contains(t, screen.String(), "[Y] Yes")
+		assert.Contains(t, screen.String(), "[N/Esc] No")
+		assert.Contains(t, screen.String(), "[PgUp/PgDn] Scroll")
+		pages.WriteString(screen.String())
+		before := screen.String()
+		model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+		if screen.String() == before {
+			break
+		}
+	}
+	assert.Contains(t, pages.String(), "not been saved")
 }
 
 func TestSettingsViewportFingerprint(t *testing.T) {
