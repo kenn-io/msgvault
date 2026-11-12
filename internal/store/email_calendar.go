@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
-	"strconv"
 
 	"go.kenn.io/msgvault/internal/mime"
 )
@@ -51,160 +50,80 @@ func (s *Store) refreshCommittedEmailCalendar(ctx context.Context, id int64, raw
 	if !bytes.Equal(item.RawData, raw) {
 		return nil
 	}
-	return s.refreshAndSettleEmailCalendar(ctx, sourceID, item, parsed)
+	_, err = s.RefreshArchivedEmailCalendarContext(ctx, sourceID, item, parsed)
+	return err
 }
 
-// refreshAndSettleEmailCalendar derives the invitation and then releases the
-// repair hold the message's write took.
-func (s *Store) refreshAndSettleEmailCalendar(ctx context.Context, sourceID int64, item *ArchivedRawMessage, parsed *mime.Message) error {
-	if _, err := s.RefreshArchivedEmailCalendarContext(ctx, sourceID, item, parsed); err != nil {
-		return err
-	}
-	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
-		if err := s.lockArchivedEmailTextContext(ctx, tx, item); err != nil {
-			return err
-		}
-		return settleEmailRepair(boundQuerier{ctx: ctx, q: tx}, item.MessageID)
-	})
-}
-
-// upsertEmailRaw stores raw data and, for MIME that may hold an invitation,
-// reopens the email repair pass in the same transaction.
-func upsertEmailRaw(q querier, postgres bool, messageID int64, rawData []byte, format string) error {
+// upsertEmailRaw records an invitation derive in the raw write transaction.
+func upsertEmailRaw(q querier, messageID int64, rawData []byte, format string) error {
 	if err := upsertMessageRawWithFormat(q, messageID, rawData, format); err != nil || format != emailLinkageRawFormat || !hasCalendarToken(rawData) {
 		return err
 	}
-	return holdEmailRepair(q, postgres, messageID)
-}
-
-// EmailRepairVersion is the ledger version suffix of the email repair pass
-// (rederive.LedgerKey), which the store's reopen markers extend.
-const EmailRepairVersion = "email-v3"
-
-// emailHoldSuffix extends the pass key to name one message's hold marker.
-const emailHoldSuffix = "#o"
-
-// emailRepairSourceSQL yields the source's ledger prefix, up to the version,
-// of the message bound to its single placeholder.
-const emailRepairSourceSQL = `SELECT 'rederive:' || source_type || ':' || identifier || ':' AS prefix
-	FROM sources WHERE id = (SELECT source_id FROM messages WHERE id = ?)`
-
-// holdEmailRepair reopens the repair pass and records, in the same transaction,
-// one marker per message whose invitation derive is still owed. The markers
-// extend the pass key with a colon-free suffix, so a restarted walk (which
-// covers every message) and a source merge or removal clear them with its rows.
-func holdEmailRepair(q querier, postgres bool, messageID int64) error {
-	if err := serializeEmailRepairHold(q, postgres, messageID); err != nil {
-		return err
-	}
-	_, err := q.Exec(`INSERT INTO applied_migrations (name) SELECT prefix || '`+EmailRepairVersion+emailHoldSuffix+`' || ?
-		FROM (`+emailRepairSourceSQL+`) repair_source WHERE true ON CONFLICT (name) DO NOTHING`,
-		strconv.FormatInt(messageID, 16), messageID)
+	_, err := q.Exec(`INSERT INTO email_calendar_pending (message_id) VALUES (?) ON CONFLICT (message_id) DO NOTHING`, messageID)
 	return err
 }
 
-// serializeEmailRepairHold reopens the pass, then on PostgreSQL takes the
-// pass's advisory lock, which the pass's completion also takes after recording
-// itself, and reopens it again. A completion that committed while the lock was
-// awaited is then visible to the second reopen, though its ledger row was not
-// when the hold began. The lock follows the first reopen so the two never wait
-// on each other's row and lock.
-func serializeEmailRepairHold(q querier, postgres bool, messageID int64) error {
-	if err := reopenEmailRepair(q, messageID); err != nil || !postgres {
-		return err
-	}
-	if _, err := q.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(prefix || '`+EmailRepairVersion+`', 0))
-		FROM (`+emailRepairSourceSQL+`) repair_source`, messageID); err != nil {
-		return err
-	}
-	return reopenEmailRepair(q, messageID)
-}
-
-// settleEmailRepair drops the message's marker after its invitation derive
-// succeeded and, when no other message still owes one, raises the versions
-// reopenEmailRepair lowered. Callers hold the source's attribution lock, which
-// serializes it with every writer that reopens the pass, so a marker another
-// writer committed is always seen; a failed or unfinished derive keeps its
-// marker and with it the reopened pass.
-func settleEmailRepair(q querier, messageID int64) error {
-	const markerPrefix = `prefix || '` + EmailRepairVersion + emailHoldSuffix + `'`
-	if _, err := q.Exec(`DELETE FROM applied_migrations WHERE name IN (
-		SELECT `+markerPrefix+` || ? FROM (`+emailRepairSourceSQL+`) repair_source)`,
-		strconv.FormatInt(messageID, 16), messageID); err != nil {
-		return err
-	}
-	_, err := q.Exec(`UPDATE applied_migrations SET version = 1 WHERE version = 0 AND EXISTS (
-		SELECT 1 FROM (`+emailRepairSourceSQL+`) repair_source
-		WHERE SUBSTR(name, 1, LENGTH(prefix) + 7) = prefix || 'email-v'
-		  AND SUBSTR(name, LENGTH(prefix) + 8) NOT LIKE '%:%'
-		  AND NOT EXISTS (SELECT 1 FROM applied_migrations marker
-			WHERE SUBSTR(marker.name, 1, LENGTH(`+markerPrefix+`)) = `+markerPrefix+`))`, messageID)
-	return err
-}
-
-// EmailRepairHeldContext reports whether any message still owes an invitation
-// derive to the pass recorded under ledger key base, whether or not the
-// reopened versions were raised since.
-func (s *Store) EmailRepairHeldContext(ctx context.Context, base string) (bool, error) {
-	return emailRepairHeld(ctx, s.db, base)
-}
-
-func emailRepairHeld(ctx context.Context, q contextStatementQuerier, base string) (bool, error) {
-	var held bool
-	prefix := base + emailHoldSuffix
-	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM applied_migrations
-		WHERE SUBSTR(name, 1, LENGTH(?)) = ?)`, prefix, prefix).Scan(&held)
-	return held, err
-}
-
-// markMigrationCompleteContext records a finished pass and then takes it back
-// when a message still owes an invitation derive. The hold check follows the
-// record and the pass's advisory lock, which holdEmailRepair also takes, so a
-// writer that reopens the pass either committed its marker before the check or
-// reopens the pass after this transaction, even when the pass had no ledger row;
-// either way the pass is not left recorded over an owed derive.
-func (s *Store) markMigrationCompleteContext(ctx context.Context, tx contextStatementQuerier, name string) error {
-	if err := s.markMigrationAppliedContext(ctx, tx, name, 1); err != nil {
-		return err
-	}
-	return s.reopenHeldEmailRepair(ctx, tx, name)
-}
-
-func (s *Store) reopenHeldEmailRepair(ctx context.Context, tx contextStatementQuerier, name string) error {
-	if s.IsPostgreSQL() {
-		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, name); err != nil {
+// RetryPendingEmailCalendarsContext retries invitation derives left by raw writes.
+func (s *Store) RetryPendingEmailCalendarsContext(ctx context.Context, sourceID int64) error {
+	var after int64
+	for {
+		var id int64
+		err := s.db.QueryRowContext(ctx, `SELECT p.message_id FROM email_calendar_pending p
+			JOIN messages m ON m.id = p.message_id WHERE m.source_id = ? AND p.message_id > ?
+			ORDER BY p.message_id LIMIT 1`, sourceID, after).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			break
+		}
+		if err != nil {
 			return err
 		}
+		after = id
+		item, err := s.ScanArchivedEmailContext(ctx, sourceID, id-1, id)
+		if err != nil {
+			return err
+		}
+		if item == nil {
+			// A concurrent MIME write must not lose its pending flag.
+			err = s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
+				if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(ctx, `DELETE FROM email_calendar_pending WHERE message_id = ?
+					AND EXISTS (SELECT 1 FROM messages m JOIN message_raw r ON r.message_id = m.id
+					WHERE m.id = ? AND m.source_id = ? AND r.raw_format <> 'mime')`, id, id, sourceID)
+				return err
+			})
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		parsed, parseErr := mime.Parse(item.RawData)
+		if item.RawDecodeError != nil {
+			parseErr = item.RawDecodeError
+		}
+		if parseErr != nil {
+			slog.Warn("cannot parse pending email calendar", "message_id", id, "error", parseErr)
+			parsed = &mime.Message{}
+		}
+		if _, err := s.RefreshArchivedEmailCalendarContext(ctx, sourceID, item, parsed); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			slog.Warn("retry email calendar failed", "message_id", id, "error", err)
+		}
 	}
-	if held, err := emailRepairHeld(ctx, tx, name); err != nil || !held {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `UPDATE applied_migrations SET version = 0 WHERE name = ?`, name)
-	return err
-}
-
-// reopenEmailRepair marks the message's source's email repair pass incomplete
-// in the transaction that stores the message, so a failed invitation write
-// after the commit still leaves the pass stale for the next sync. It lowers the
-// ledger version of the pass and its walk state, which restart the walk from
-// the first message, instead of deleting rows. The pass raises them on completion.
-func reopenEmailRepair(q querier, messageID int64) error {
-	_, err := q.Exec(`UPDATE applied_migrations SET version = 0 WHERE EXISTS (
-		SELECT 1 FROM (
-			SELECT 'rederive:' || source_type || ':' || identifier || ':email-v' AS prefix
-			FROM sources WHERE id = (SELECT source_id FROM messages WHERE id = ?)
-		) repair_source
-		WHERE SUBSTR(name, 1, LENGTH(prefix)) = prefix
-		  AND SUBSTR(name, LENGTH(prefix) + 1) NOT LIKE '%:%'
-	)`, messageID)
-	return err
+	return s.PublishPendingDerivedEmailRevisionContext(ctx)
 }
 
 // RefreshArchivedEmailCalendarContext derives invites from the MIME already
 // parsed by email re-derivation, rejecting evidence changed since its scan.
 func (s *Store) RefreshArchivedEmailCalendarContext(ctx context.Context, sourceID int64, item *ArchivedRawMessage, parsed *mime.Message) (bool, error) {
 	if len(parsed.CalendarParts) == 0 {
-		return false, nil
+		var pending bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM email_calendar_pending WHERE message_id = ?)`, item.MessageID).Scan(&pending); err != nil || !pending {
+			return false, err
+		}
 	}
 	var summary ICalendarImportSummary
 	err := s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
@@ -225,14 +144,19 @@ func (s *Store) RefreshArchivedEmailCalendarContext(ctx context.Context, sourceI
 			}
 			return err
 		}
-		if !IsEmailMessageType(kind) {
-			return nil
+		if IsEmailMessageType(kind) && len(parsed.CalendarParts) > 0 {
+			var err error
+			summary, err = s.persistEmailCalendarPartsWith(ctx, tx, item.MessageID, sourceID, parsed)
+			if err != nil {
+				return err
+			}
+			if summary.Changed > 0 {
+				if err := setArchiveMetadataValueTx(ctx, tx, pendingDerivedEmailRevisionKey, "1"); err != nil {
+					return err
+				}
+			}
 		}
-		var err error
-		summary, err = s.persistEmailCalendarPartsWith(ctx, tx, item.MessageID, sourceID, parsed)
-		if err == nil && summary.Changed > 0 {
-			err = setArchiveMetadataValueTx(ctx, tx, pendingDerivedEmailRevisionKey, "1")
-		}
+		_, err := q.Exec(`DELETE FROM email_calendar_pending WHERE message_id = ?`, item.MessageID)
 		return err
 	})
 	return summary.Changed > 0, err

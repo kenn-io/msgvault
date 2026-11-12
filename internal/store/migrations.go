@@ -792,7 +792,7 @@ const colonFreeSuffixSQL = `SUBSTR(name, 1, LENGTH(?)) = ? AND SUBSTR(name, LENG
 func (s *Store) NextMigrationKeyContext(ctx context.Context, prefix, after string) (string, error) {
 	var name string
 	err := s.db.QueryRowContext(ctx, `SELECT name FROM applied_migrations
-		WHERE `+colonFreeSuffixSQL+` AND name > ? AND version >= 1 ORDER BY name LIMIT 1`, prefix, prefix, prefix, after).Scan(&name)
+		WHERE `+colonFreeSuffixSQL+` AND name > ? ORDER BY name LIMIT 1`, prefix, prefix, prefix, after).Scan(&name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

@@ -285,67 +285,6 @@ func calendarInviteEmail(uid, summary string) []byte {
 	return []byte("From: organizer@example.com\r\nContent-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:" + uid + "\r\nDTSTART:20270302T120000Z\r\nSUMMARY:" + summary + "\r\nORGANIZER:mailto:organizer@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
 }
 
-func TestEmailRederivationRetriesInviteDuringFirstCompletion(t *testing.T) {
-	requirements := require.New(t)
-	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
-	if !st.IsPostgreSQL() {
-		t.Skip("requires PostgreSQL concurrent transactions")
-	}
-	base := LedgerKey(src.SourceType, src.Identifier, emailVersion)
-	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO archive_metadata (key, value) VALUES ('derived_data_revision', '0'), ('pending_derived_email_revision', '1') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`)
-	requirements.NoError(err)
-	applied, err := st.IsMigrationApplied(base)
-	requirements.NoError(err)
-	requirements.False(applied)
-	_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION block_email_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.name LIKE '%:email-v3' THEN PERFORM pg_advisory_xact_lock(746120307); END IF; RETURN NEW; END $$`)
-	requirements.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER block_email_completion BEFORE INSERT ON applied_migrations FOR EACH ROW EXECUTE FUNCTION block_email_completion()`)
-	requirements.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_calendar_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.message_type = 'calendar_event' THEN RAISE EXCEPTION 'database unavailable'; END IF; RETURN NEW; END $$`)
-	requirements.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_calendar_insert BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION fail_calendar_insert()`)
-	requirements.NoError(err)
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancel()
-	blocker, err := st.DB().BeginTx(ctx, nil)
-	requirements.NoError(err)
-	defer func() { _ = blocker.Rollback() }()
-	_, err = blocker.ExecContext(ctx, `SELECT pg_advisory_xact_lock(746120307)`)
-	requirements.NoError(err)
-	var pid int
-	requirements.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
-	done := make(chan error, 1)
-	go func() { done <- st.MarkMigrationAppliedWithPendingDerivedRevisionContext(ctx, base) }()
-	joined := false
-	defer func() {
-		_ = blocker.Rollback()
-		cancel()
-		if !joined {
-			<-done
-		}
-	}()
-	requirements.Eventually(func() bool {
-		var waiting bool
-		return st.DB().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting) == nil && waiting
-	}, 5*time.Second, 10*time.Millisecond)
-	_, err = blocker.ExecContext(ctx, `UPDATE archive_metadata SET value = '1' WHERE key = 'derived_data_revision'`)
-	requirements.NoError(err, "a writer holding the pass lock must be able to update the revision")
-	raw := calendarInviteEmail("retry@example.org", "Retry invite")
-	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, raw, "mime"))
-	requirements.NoError(blocker.Rollback())
-	err = <-done
-	joined = true
-	requirements.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_calendar_insert ON messages`)
-	requirements.NoError(err)
-	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
-	requirements.NoError(err)
-	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1, "first completion must preserve a concurrent failed invitation")
-}
-
 func TestEmailRederivationRetriesInviteWrittenDuringScan(t *testing.T) {
 	requirements := require.New(t)
 	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
@@ -374,6 +313,30 @@ func TestEmailRederivationRetriesInviteWrittenDuringScan(t *testing.T) {
 	requirements.Len(page.Occurrences, 1, "a write during repair must remain eligible for retry")
 }
 
+func TestEmailRederivationSweepsPendingAfterCompletion(t *testing.T) {
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	if st.IsPostgreSQL() {
+		t.Skip("uses a SQLite trigger to interrupt calendar writes")
+	}
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertMessageRawWithFormatContext(t.Context(), id, calendarInviteEmail("pending@example.org", "Pending invite"), "mime"))
+	var pending bool
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT EXISTS (SELECT 1 FROM email_calendar_pending WHERE message_id=?)`), id).Scan(&pending))
+	assert.True(t, pending)
+	require.NoError(t, st.MarkMigrationApplied(LedgerKey(src.SourceType, src.Identifier, emailVersion)))
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_invite_write`)
+	require.NoError(t, err)
+	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
+	require.NoError(t, err)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	require.NoError(t, err)
+	assert.Len(t, page.Occurrences, 1)
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT EXISTS (SELECT 1 FROM email_calendar_pending WHERE message_id=?)`), id).Scan(&pending))
+	assert.False(t, pending)
+}
+
 func TestEmailRederivationDoesNotRescanAfterSuccessfulInvite(t *testing.T) {
 	requirements := require.New(t)
 	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
@@ -389,35 +352,6 @@ func TestEmailRederivationDoesNotRescanAfterSuccessfulInvite(t *testing.T) {
 	sum, ran, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	requirements.NoError(err)
 	requirements.False(ran, "a successful invitation must not force a full email rescan: %+v", sum)
-}
-
-func TestEmailRederivationRetriesInviteBeforeCompletedCursor(t *testing.T) {
-	for _, recomplete := range []bool{false, true} {
-		t.Run(strconv.FormatBool(recomplete), func(t *testing.T) {
-			requirements := require.New(t)
-			st, src, id := archiveEmailSource(t, "gmail", "Invitation")
-			if st.IsPostgreSQL() {
-				t.Skip("uses a SQLite trigger to interrupt calendar writes")
-			}
-			_, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
-			requirements.NoError(err)
-			_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
-			requirements.NoError(err)
-			raw := calendarInviteEmail("retry@example.org", "Retry invite")
-			requirements.NoError(st.UpsertMessageRawWithFormatContext(t.Context(), id, raw, "mime"))
-			if recomplete {
-				requirements.NoError(st.MarkMigrationAppliedWithPendingDerivedRevisionContext(t.Context(), LedgerKey(src.SourceType, src.Identifier, emailVersion)))
-			}
-			_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_invite_write`)
-			requirements.NoError(err)
-			_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
-			requirements.NoError(err)
-			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-			requirements.NoError(err)
-			requirements.Len(page.Occurrences, 1, "the next sync must revisit the older invitation")
-		})
-	}
 }
 
 func TestEmailRederivationRetriesPostCommitInvite(t *testing.T) {
