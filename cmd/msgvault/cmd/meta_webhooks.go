@@ -147,9 +147,23 @@ func metaFeedHandler(cfg *config.Config, st *store.Store, work scheduler.WorkTra
 	}
 }
 
-// graphRateLimitCodes are Meta error codes for throttling, which Graph can
-// return with a 400 or 403 status.
-var graphRateLimitCodes = []int{4, 17, 32, 613}
+// graphRetryable reports whether retrying a Graph request can succeed. A
+// nonzero Code decides, since Meta can refuse with any status, including 200.
+func graphRetryable(e *meta.APIError) bool {
+	switch code := e.Code; {
+	case code == 190 || code == 102:
+		return true // credential failures, from Meta's "Handle errors" page
+	case code == 1 || code == 2 || code == 341 || code == 368:
+		return true // temporary failures, from Meta's "Handle errors" page
+	case code == 4 || code == 17 || code == 32 || code == 613 || code >= 80000 && code <= 80014:
+		return true // throttling, including business use cases, from Meta's "Rate limits" page
+	case code != 0:
+		return e.Status >= 500
+	default:
+		return e.Status == http.StatusUnauthorized || e.Status == http.StatusTooManyRequests ||
+			e.Status < 400 || e.Status >= 500
+	}
+}
 
 // metaWebhookError marks errors that retrying a delivery cannot fix.
 func metaWebhookError(err error) error {
@@ -158,7 +172,7 @@ func metaWebhookError(err error) error {
 	case err == nil:
 		return nil
 	case errors.Is(err, meta.ErrInvalidChange), errors.Is(err, store.ErrSourceNotFound), errors.Is(err, store.ErrSourceRetired),
-		isAPI && apiErr.Status >= 400 && apiErr.Status < 500 && apiErr.Status != http.StatusTooManyRequests && !slices.Contains(graphRateLimitCodes, apiErr.Code):
+		isAPI && !graphRetryable(apiErr):
 		return fmt.Errorf("%w: %w", metawebhook.ErrUnrecoverable, err)
 	default:
 		return err
