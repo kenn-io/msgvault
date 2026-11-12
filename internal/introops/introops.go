@@ -150,7 +150,7 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 }
 
 // Walk the existing cursor one row at a time so invisible rows cannot consume
-// a page or change its continuation point.
+// a page. Bound the scan and return its cursor even for an empty page.
 func (s Service) listDelegated(ctx context.Context, g *agentgrant.Grant, q store.PersonIntroductionQuery, ids []int64) (Page, error) {
 	limit := q.Limit
 	if limit == 0 {
@@ -162,7 +162,7 @@ func (s Service) listDelegated(ctx context.Context, g *agentgrant.Grant, q store
 	q.Limit = 1
 	out := Page{Items: []Record{}}
 	var afterVisible string
-	for {
+	for scanned := 0; ; scanned++ {
 		rows, err := s.Store.ListPersonIntroductionsContext(ctx, q, ids)
 		if err != nil {
 			return Page{}, err
@@ -176,6 +176,10 @@ func (s Service) listDelegated(ctx context.Context, g *agentgrant.Grant, q store
 		}
 		if row.SourceType != "beeper" {
 			if !rows.HasMore {
+				return out, nil
+			}
+			if scanned == 99 {
+				out.HasMore, out.NextAfterID = true, rows.NextAfterID
 				return out, nil
 			}
 			q.AfterID = rows.NextAfterID
@@ -198,6 +202,10 @@ func (s Service) listDelegated(ctx context.Context, g *agentgrant.Grant, q store
 			afterVisible = rows.NextAfterID
 		}
 		if !rows.HasMore {
+			return out, nil
+		}
+		if scanned == 99 {
+			out.HasMore, out.NextAfterID = true, rows.NextAfterID
 			return out, nil
 		}
 		q.AfterID = rows.NextAfterID

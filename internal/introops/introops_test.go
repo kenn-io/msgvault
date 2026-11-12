@@ -2,6 +2,7 @@ package introops_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,6 +46,48 @@ func TestGrantBodyAndEdit(t *testing.T) {
 	req.ErrorIs(err, introops.ErrForbidden)
 	_, err = svc.Get(ctx, grant, "missing")
 	req.ErrorIs(err, introops.ErrForbidden)
+}
+
+func TestDelegatedListContinuesPastScanLimit(t *testing.T) {
+	req := require.New(t)
+	check := assert.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	src, err := f.Store.GetOrCreateSource("beeper", "account")
+	req.NoError(err)
+	pa := f.EnsureParticipant("scan-a@example.test", "A", "example.test")
+	pb := f.EnsureParticipant("scan-b@example.test", "B", "example.test")
+	pc := f.EnsureParticipant("scan-hidden@example.test", "C", "example.test")
+	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
+	req.NoError(err)
+	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
+	req.NoError(err)
+	c, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pc)
+	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("account", "a"), pb, beeperidentity.Fallback("account", "b"))
+	req.NoError(err)
+	svc := introops.Service{Store: f.Store}
+	in := store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}
+	visible, err := svc.Prepare(ctx, nil, in)
+	req.NoError(err)
+	in.PersonBID = c.ID
+	for range 101 {
+		_, err = svc.Prepare(ctx, nil, in)
+		req.NoError(err)
+	}
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_introductions SET created_at = ? WHERE intro_id = ?`), time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), visible.IntroID)
+	req.NoError(err)
+	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "account"}}}
+	page, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
+	req.NoError(err)
+	check.Empty(page.Items)
+	check.True(page.HasMore)
+	req.NotEmpty(page.NextAfterID)
+	page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1, AfterID: page.NextAfterID})
+	req.NoError(err)
+	req.Len(page.Items, 1)
+	check.Equal(visible.IntroID, page.Items[0].IntroID)
+	check.False(page.HasMore)
 }
 
 func TestListFiltersSourcesBeforePagination(t *testing.T) {
