@@ -254,7 +254,7 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				}
 			}
 			if len(matches) == 0 && state.Failures == 0 {
-				if len(page.Messages) > 0 {
+				if len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime)) {
 					state.At = next.At()
 					state.AfterID, state.AfterRow = next.AfterID()
 					state.NextAttemptAt = time.Time{}
