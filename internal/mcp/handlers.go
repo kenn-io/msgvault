@@ -2396,7 +2396,9 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		}
 		skipped = matched - len(targets)
 		description = "query: " + queryStr
-		description = capDeletionDescription(description)
+		if len(description) > 50 {
+			description = description[:50]
+		}
 	} else {
 		// Structured filter
 		filter := query.MessageFilter{
@@ -2444,7 +2446,9 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 			parts = append(parts, "before:"+beforeDate.Format("2006-01-02"))
 		}
 		description = "filter: " + strings.Join(parts, " ")
-		description = capDeletionDescription(description)
+		if len(description) > 50 {
+			description = description[:50]
+		}
 	}
 
 	if len(targets) == 0 {

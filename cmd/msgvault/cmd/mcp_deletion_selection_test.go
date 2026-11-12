@@ -23,10 +23,22 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+// saturatedDeletionSearch controls the candidate-total boundary while retaining
+// the native lexical resolver and its real search results.
+type saturatedDeletionSearch struct {
+	*storeAPIAdapter
+}
+
+func (s *saturatedDeletionSearch) SearchMessageIDsQueryContext(ctx context.Context, q *search.Query, limit int) ([]int64, int64, error) {
+	ids, _, err := s.storeAPIAdapter.SearchMessageIDsQueryContext(ctx, q, limit)
+	return ids, int64(len(ids)) + 1, err
+}
 
 type partialDeletionSaver struct {
 	*storeAPIAdapter
@@ -185,6 +197,24 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	assert.Equal(t, "invalid_filter", invalid["error"])
 	assert.Equal(t, false, invalid["operation_may_have_completed"])
 
+	saturated := &saturatedDeletionSearch{storeAPIAdapter: adapter}
+	saturatedBackend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: saturated, Engine: engine, Logger: slog.New(slog.DiscardHandler)}))
+	saturatedSession := loopOperationMCPSession(t, saturatedBackend, nil, nil)
+	saturatedCall := func(name string, args map[string]any) *sdkmcp.CallToolResult {
+		t.Helper()
+		result, err := saturatedSession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: args})
+		require.NoError(t, err)
+		return result
+	}
+	saturatedExplore := loopToolOutput[exploredResponse](t, saturatedCall("explore_deletion_selection", map[string]any{"collection": "selected", "query": longQuery, "search_mode": "full_text"}))
+	require.NotEmpty(t, saturatedExplore.Rows)
+	require.NotNil(t, saturatedExplore.CandidatePoolSaturated)
+	assert.True(t, *saturatedExplore.CandidatePoolSaturated)
+	saturatedSelection := map[string]any{"mode": "all_matching", "predicate": saturatedExplore.Predicate, "cache_revision": saturatedExplore.CacheRevision, "search_provenance": saturatedExplore.SearchProvenance}
+	saturatedFailure := loopToolFailure(t, saturatedCall("preflight_deletion_selection", map[string]any{"selection": saturatedSelection}))
+	assert.Equal(t, "candidate_pool_saturated", saturatedFailure["error"])
+	assert.Equal(t, false, saturatedFailure["operation_may_have_completed"])
+
 	partial := &partialDeletionSaver{storeAPIAdapter: adapter}
 	partialBackend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: partial, Engine: engine, Logger: slog.New(slog.DiscardHandler)}))
 	partialSession := loopOperationMCPSession(t, partialBackend, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
@@ -207,8 +237,7 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 }
 
 // These native failures and an oversized response are supplied by a transport
-// fixture because expiry and a saturated candidate pool are not controllable
-// through the daemon's public interface.
+// fixture because expiry is not controllable through the daemon's public interface.
 func TestMCPDeletionSelectionRefusalsAndResponseBound(t *testing.T) {
 	code := "search_revision_changed"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
