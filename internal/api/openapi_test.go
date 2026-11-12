@@ -563,6 +563,9 @@ func TestPersonFactOpenAPIOperationsContainNoReviewMutation(t *testing.T) {
 		"/api/v1/people/{id}/fact-decisions": {
 			http.MethodGet: "listPersonFactDecisions",
 		},
+		"/api/v1/people/{id}/fact-summary": {
+			http.MethodGet: "getPersonFactSummary",
+		},
 		"/api/v1/people/{id}/fact-pins": {
 			http.MethodGet: "listPersonFactPins",
 		},
@@ -2367,5 +2370,16 @@ func TestSearchAttachmentMetadataSchemaScope(t *testing.T) {
 		}
 		assert.Contains(schemas["HybridSearchItem"].Properties, "attachment_count")
 		assert.Contains(schemas["CLIQueryMessageSummary"].Properties, "attachment_count")
+	}
+}
+
+func TestPersonFactDecisionOutcomeOpenAPIEnum(t *testing.T) {
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		schema := document.Components.Schemas.Map()["PersonFactDecision"]
+		require.NotNil(t, schema)
+		outcome := schema.Properties["outcome"]
+		require.NotNil(t, outcome)
+		assert.ElementsMatch(t, []any{"saved", "value-retired", "current-value-kept", "pinned-value-kept", "too-close-to-choose", "not-used", nil}, outcome.Enum)
+		assert.True(t, outcome.Nullable)
 	}
 }
