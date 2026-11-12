@@ -173,6 +173,34 @@ func TestInstagramSenderMissingFromHeader(t *testing.T) {
 	assert.Equal(1, recipients)
 }
 
+func TestInstagramConversationTypeIncludesRetainedSenders(t *testing.T) {
+	for _, tc := range []struct{ name, header string }{
+		{"sender missing from header", `[{"name":"Nova Example"},{"name":"Mira Example"}]`},
+		{"full header", `[{"name":"Nova Example"},{"name":"Mira Example"},{"name":"Lumen Example"}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st, root := testutil.NewTestStore(t), t.TempDir()
+			filename := instagramTestShard(t, root, "circle", "message_1.json")
+			initial := `{"thread_path":"inbox/circle","participants":` + tc.header + `,"messages":[{"sender_name":"Nova Example","timestamp_ms":1730500000123,"content":"outgoing"},{"sender_name":"Lumen Example","timestamp_ms":1730500000124,"content":"incoming"}]}`
+			require.NoError(os.WriteFile(filename, []byte(initial), 0600))
+			opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+			_, err := ImportDYI(t.Context(), st, opts)
+			require.NoError(err)
+			var kind string
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
+			assert.Equal("group_chat", kind)
+			partial := `{"thread_path":"inbox/circle","participants":[{"name":"Nova Example"}],"messages":[{"sender_name":"Nova Example","timestamp_ms":1730500000123,"content":"outgoing"}]}`
+			require.NoError(os.WriteFile(filename, []byte(partial), 0600))
+			_, err = ImportDYI(t.Context(), st, opts)
+			require.NoError(err)
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_type FROM conversations`).Scan(&kind))
+			assert.Equal("group_chat", kind)
+		})
+	}
+}
+
 func TestInstagramReplayDiscoversSenderMissingFromHeader(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -944,7 +972,7 @@ func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 		var title, kind string
 		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT title, conversation_type FROM conversations`).Scan(&title, &kind))
 		assert.Equal("Latest title", title)
-		assert.Equal("direct_chat", kind)
+		assert.Equal("group_chat", kind)
 		_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"Latest"}}, 0, 10)
 		require.NoError(err)
 		assert.Equal(int64(2), total)
@@ -970,7 +998,7 @@ func TestInstagramConversationUsesFirstShardHeader(t *testing.T) {
 		first := instagramTestShard(t, root, "circle", "message_1.json")
 		require.NoError(os.WriteFile(first, []byte(`{"thread_path":"inbox/circle","title":"Fictional circle","participants":[{"name":"Nova Example"},{"name":"Mira Example"},{"name":""}],"messages":[]}`), 0600))
 		record := instagramTestRecord("old")
-		record["sender_name"] = "Lumen Example"
+		record["sender_name"] = "Mira Example"
 		instagramTestShard(t, root, "circle", "message_2.json", record)
 		opts := ImportOptions{Source: "instagram", RootDir: root, SelfName: "Nova Example", Account: "example"}
 		_, err := ImportDYI(t.Context(), st, opts)

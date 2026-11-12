@@ -649,6 +649,9 @@ func instagramThreadParticipants(ctx context.Context, st *store.Store, sourceID 
 			retained = append(retained, p)
 		}
 	}
+	if len(used)+len(retained) > 2 {
+		thread.ConvType = "group_chat"
+	}
 	return nameToID, nameToEmail, retained, nil
 }
 
