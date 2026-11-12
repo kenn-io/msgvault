@@ -18,7 +18,7 @@
     : groupRowName('month', bucket, bucket).name;
   const stripLabel = $derived(first && last
     ? series.length === 1
-      ? `Activity by ${daily ? 'day' : 'month'}: ${monthName(first.bucket)}${selection.count === undefined ? `, ${first.count.toLocaleString()} ${first.count === 1 ? 'item' : 'items'}` : ''}`
+      ? `Activity by ${daily ? 'day' : 'month'}: ${monthName(first.bucket)}`
       : `Activity by ${daily ? 'day' : 'month'}, ${monthName(first.bucket)} to ${monthName(last.bucket)}, busiest ${monthName(busiest.bucket)} with ${busiest.count.toLocaleString()} ${busiest.count === 1 ? 'item' : 'items'}`
     : 'Activity');
 </script>

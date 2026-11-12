@@ -59,12 +59,4 @@ describe('GroupOverview', () => {
     expect(screen.getByRole('img', { name: `Activity by ${unit}: ${label}` })).toBeDefined();
     for (const text of visibleText) expect(screen.getAllByText(text)).toHaveLength(1);
   });
-
-  it('includes the activity count when the group count is unavailable', () => {
-    render(GroupOverview, { selection: {
-      kind: 'group', dimension: 'month', key: '2024-05', label: 'May 2024',
-      overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05-03', count: 3 }], co_participants: [] }
-    } });
-    expect(screen.getByRole('img', { name: 'Activity by day: May 3, 2024, 3 items' })).toBeDefined();
-  });
 });
