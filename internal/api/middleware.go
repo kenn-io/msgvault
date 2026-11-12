@@ -272,7 +272,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 			}
 		}
 		if claim {
-			if len(auths) == 1 && len(instances) == 1 && instances[0] != "" && len(r.Header.Values("X-Api-Key")) == 0 && len(r.Header.Values(apiprotocol.AgentTokenHeader)) == 0 && len(r.Header.Values(apiprotocol.DaemonRuntimeTokenHeader)) == 0 && s.federationStore != nil {
+			if len(auths) == 1 && len(instances) == 1 && instances[0] != "" && len(r.Header.Values("X-Api-Key")) == 0 && len(r.Header.Values(apiprotocol.DaemonRuntimeTokenHeader)) == 0 && s.federationStore != nil {
 				_, cookieErr := r.Cookie(sessionCookieName)
 				parts := strings.Fields(auths[0])
 				if cookieErr != nil && len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
@@ -391,9 +391,6 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 // reach the API auth layer without touching gate state.
 func (s *Server) requestGateEligible(r *http.Request) bool {
 	auth := s.requestAuthentication(r)
-	if auth.Mode == AuthModeFederation {
-		return false
-	}
 	if s.cfg.Federation.Role != "hub" && (r.Method == http.MethodPost && r.URL.Path == "/api/v1/federation/enrollments" || r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v1/federation/enrollments/")) {
 		return false
 	}

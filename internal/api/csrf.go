@@ -52,7 +52,7 @@ func (s *Server) requestSecurityMiddleware(next http.Handler) http.Handler {
 				"Keyless loopback mutations must be same-origin; configure an API key for cross-origin access")
 			return
 		}
-		if auth.Mode == AuthModeFederation && r.URL.Path != "/api/v1/federation/handshake" {
+		if auth.Mode == AuthModeFederation && (r.URL.Path != "/api/v1/federation/handshake" || !isSafeMethod(r.Method)) {
 			writeError(w, http.StatusForbidden, "forbidden", "Operation is not available to federation credentials")
 			return
 		}

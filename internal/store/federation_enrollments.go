@@ -35,9 +35,7 @@ type FederationEnrollment struct {
 
 const federationColumns = `enrollment_uid, spoke_archive_uid, member_handle, spoke_name, created_at, last_seen_at, revoked_at`
 
-type federationScanner interface{ Scan(...any) error }
-
-func scanFederation(row federationScanner) (*FederationEnrollment, error) {
+func scanFederation(row scanner) (*FederationEnrollment, error) {
 	var e FederationEnrollment
 	var seen, revoked sql.NullTime
 	err := row.Scan(&e.EnrollmentUID, &e.SpokeArchiveUID, &e.Member, &e.SpokeName, &e.CreatedAt, &seen, &revoked)
@@ -47,12 +45,7 @@ func scanFederation(row federationScanner) (*FederationEnrollment, error) {
 	if err != nil {
 		return nil, err
 	}
-	if seen.Valid {
-		e.LastSeenAt = &seen.Time
-	}
-	if revoked.Valid {
-		e.RevokedAt = &revoked.Time
-	}
+	e.LastSeenAt, e.RevokedAt = activityTimePointer(seen), activityTimePointer(revoked)
 	return &e, nil
 }
 func (s *Store) CreateFederationEnrollmentContext(ctx context.Context, spokeUID, member, name string) (*FederationEnrollment, string, error) {

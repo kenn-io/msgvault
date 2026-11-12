@@ -231,6 +231,12 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 	}
 	assert.True(t, seen)
 	assert.Greater(t, requests, 10)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/federation/handshake", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("X-Msgvault-Spoke-Instance", uid)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 	for _, path := range []string{"/", "/health", "/mcp", "/debug/pprof/"} {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 		r.Header.Set("Authorization", "Bearer "+token)
