@@ -49,8 +49,8 @@ func TestCardDAVOperationalCatalogWriteGate(t *testing.T) {
 	require.NoError(json.Unmarshal(encoded, &inputSchema))
 	resolved, err := inputSchema.Resolve(nil)
 	require.NoError(err)
-	assert.Error(resolved.Validate(map[string]any{"conflict_id": float64(1), "choice": "keep_both"}))
-	assert.NoError(resolved.Validate(map[string]any{"conflict_id": float64(1), "choice": "keep_local"}))
+	require.Error(resolved.Validate(map[string]any{"conflict_id": float64(1), "choice": "keep_both"}))
+	require.NoError(resolved.Validate(map[string]any{"conflict_id": float64(1), "choice": "keep_local"}))
 	for _, name := range names[5:] {
 		require.Contains(write, name)
 		readOnly, ok := toolReadOnlyHint(t, write[name]).(bool)

@@ -28,7 +28,7 @@ type PersonCardDAVBackend interface {
 func cardDAVSelector(args map[string]any, backend PersonCardDAVBackend) (*string, error) {
 	value, present := args["connection"]
 	if !present {
-		return nil, nil
+		return nil, nil //nolint:nilnil // An absent optional connection means all configured connections.
 	}
 	connection, ok := value.(string)
 	if !ok || connection == "" {
