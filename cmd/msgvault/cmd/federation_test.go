@@ -27,29 +27,6 @@ type federationFailWriter struct{}
 
 func (federationFailWriter) Write([]byte) (int, error) { return 0, errors.New("output failed") }
 
-func TestFederationHubOrigin(t *testing.T) {
-	for _, tc := range []struct {
-		input, want string
-		valid       bool
-	}{
-		{"https://hub.example.test/", "https://hub.example.test", true},
-		{"http://127.0.0.1:8080", "http://127.0.0.1:8080", true},
-		{"http://hub.example.test", "", false}, {"https://hub.example.test/path", "", false},
-		{"https://hub.example.test:0", "", false}, {"https://hub.example.test:99999", "", false},
-		{"https://hub.example.test/?query=1", "", false}, {"https://user@hub.example.test", "", false}, {"https://hub.example.test/#", "", false},
-	} {
-		t.Run(tc.input, func(t *testing.T) {
-			got, err := federationHubOrigin(tc.input)
-			if tc.valid {
-				require.NoError(t, err)
-				assert.Equal(t, tc.want, got)
-			} else {
-				assert.ErrorContains(t, err, "--hub-url")
-			}
-		})
-	}
-}
-
 func TestFederationEnrollOutput(t *testing.T) {
 	setup := func(t *testing.T) (*store.Store, *cobra.Command, context.Context, *bytes.Buffer, *bytes.Buffer, string) {
 		t.Helper()
@@ -80,15 +57,6 @@ func TestFederationEnrollOutput(t *testing.T) {
 		command.SetErr(stderr)
 		return st, command, ctx, stdout, stderr, srv.URL
 	}
-	t.Run("invalid port does not enroll", func(t *testing.T) {
-		st, command, ctx, stdout, _, _ := setup(t)
-		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://hub.example.test:99999"})
-		require.ErrorContains(t, command.ExecuteContext(ctx), "--hub-url")
-		entries, err := st.ListFederationEnrollmentsContext(t.Context())
-		require.NoError(t, err)
-		assert.Empty(t, entries)
-		assert.Empty(t, stdout.String())
-	})
 	t.Run("token and join hint", func(t *testing.T) {
 		_, command, ctx, stdout, stderr, url := setup(t)
 		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice"})
@@ -115,15 +83,9 @@ func TestFederationEnrollOutput(t *testing.T) {
 		list.SetOut(federationFailWriter{})
 		assert.ErrorContains(t, list.ExecuteContext(ctx), "write federation enrollments: output failed")
 	})
-	t.Run("quoted join origin", func(t *testing.T) {
-		_, command, ctx, _, stderr, _ := setup(t)
-		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://hub.example.test;false"})
-		require.NoError(t, command.ExecuteContext(ctx))
-		assert.Contains(t, stderr.String(), "msgvault federation join 'https://hub.example.test;false'")
-	})
 	t.Run("JSON output", func(t *testing.T) {
 		_, command, ctx, stdout, stderr, _ := setup(t)
-		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://hub.example.test", "--json"})
+		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--json"})
 		require.NoError(t, command.ExecuteContext(ctx))
 		var output struct {
 			Token string `json:"token"`
