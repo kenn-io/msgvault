@@ -258,7 +258,11 @@ func TestMeetingCountsExcludeFutureEventWithPastMessageDate(t *testing.T) {
 	require.NoError(t, err)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
 	require.NoError(t, err)
-	start := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	oldNow := derivedRefreshNow
+	derivedRefreshNow = func() time.Time { return now }
+	t.Cleanup(func() { derivedRefreshNow = oldNow })
+	start := now.Add(2 * time.Hour)
 	raw := fmt.Sprintf(`{"id":"future","start":{"dateTime":%q},"end":{"dateTime":%q},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, start.Format(time.RFC3339), start.Add(time.Hour).Format(time.RFC3339))
 	id, err := st.PersistMessage(&store.MessagePersistData{
 		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "future", MessageType: "calendar_event", SentAt: sql.NullTime{Time: start.Add(-48 * time.Hour), Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
@@ -269,6 +273,10 @@ func TestMeetingCountsExcludeFutureEventWithPastMessageDate(t *testing.T) {
 	require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
 	require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
 	_, err = buildCache(t.Context(), dbPath, analytics, true)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET content_hash='refresh-fixture' WHERE message_id=?`, id)
+	require.NoError(t, err)
+	_, err = buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
 	count := func() int64 {
 		t.Helper()
@@ -282,15 +290,9 @@ func TestMeetingCountsExcludeFutureEventWithPastMessageDate(t *testing.T) {
 	}
 	assert.Zero(t, count())
 	assert.False(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
-	oldNow := derivedRefreshNow
-	deadline := start
-	if nextYear := time.Date(time.Now().UTC().Year()+1, 1, 1, 0, 0, 0, 0, time.UTC); nextYear.Before(deadline) {
-		deadline = nextYear
-	}
-	derivedRefreshNow = func() time.Time { return deadline.Add(-time.Second) }
+	derivedRefreshNow = func() time.Time { return start.Add(-time.Second) }
 	assert.False(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
 	derivedRefreshNow = func() time.Time { return start.Add(time.Hour) }
-	t.Cleanup(func() { derivedRefreshNow = oldNow })
 	assert.True(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
 	result, err := buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
