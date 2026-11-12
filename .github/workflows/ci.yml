@@ -11,6 +11,7 @@ env:
   GOFLAGS: -trimpath
   PG_MOVED_PKGS: ./internal/matrix ./internal/beeper ./internal/rederive ./internal/chatwoot
   API_CONTRACT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.before) || '' }}
+  API_CONTRACT_MERGE_MAIN: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
 
 on:
   workflow_call:
@@ -376,9 +377,12 @@ jobs:
         run: &set-api-contract-base |
           if [ -z "$API_CONTRACT_BASE_REF" ]; then
             kit-retry 3 5 git fetch --no-tags --unshallow origin +refs/heads/main:refs/remotes/origin/main
-            BASE_SHA=$(git merge-base HEAD refs/remotes/origin/main)
-          elif [ "$API_CONTRACT_BASE_REF" = "$(git rev-parse HEAD)" ]; then
-            BASE_SHA=$API_CONTRACT_BASE_REF
+            if [ "$API_CONTRACT_MERGE_MAIN" = true ]; then
+              git -c user.name='CI' -c user.email='ci@example.com' merge --no-commit --no-ff refs/remotes/origin/main
+              BASE_SHA=$(git rev-parse refs/remotes/origin/main)
+            else
+              BASE_SHA=$(git merge-base HEAD refs/remotes/origin/main)
+            fi
           else
             kit-retry 3 5 git fetch --no-tags --depth=1 origin "$API_CONTRACT_BASE_REF"
             BASE_SHA=$(git rev-parse FETCH_HEAD)
