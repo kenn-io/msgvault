@@ -18,9 +18,9 @@ import (
 )
 
 func (s *Server) registerMCPEventsRoutes(api huma.API) {
-	registerAPIV1RawHumaJSONRoute[mcpevents.MCPEventsListResult](api, "mcpEventsList", http.MethodGet, "/mcp-events/list", "List owner MCP Events", s.handleMCPEventsList)
-	registerMCPEventsMutation[mcpevents.MCPEventsSubscribeRequest, mcpevents.MCPEventsSubscribeResult](api, "mcpEventsSubscribe", http.MethodPost, "/mcp-events/subscribe", "Subscribe to owner MCP Events", s.handleMCPEventsSubscribe)
-	registerMCPEventsMutation[mcpEventsUnsubscribeBody, mcpevents.MCPEventsUnsubscribeResult](api, "mcpEventsUnsubscribe", http.MethodPost, "/mcp-events/unsubscribe", "Unsubscribe from owner MCP Events", s.handleMCPEventsUnsubscribe)
+	registerAPIV1RawHumaJSONRoute[mcpevents.MCPEventsListResult](api, "mcpEventsList", http.MethodGet, "/mcp-events/list", "List MCP Events", s.handleMCPEventsList)
+	registerMCPEventsMutation[mcpevents.MCPEventsSubscribeRequest, mcpevents.MCPEventsSubscribeResult](api, "mcpEventsSubscribe", http.MethodPost, "/mcp-events/subscribe", "Subscribe to MCP Events", s.handleMCPEventsSubscribe)
+	registerMCPEventsMutation[mcpEventsUnsubscribeBody, mcpevents.MCPEventsUnsubscribeResult](api, "mcpEventsUnsubscribe", http.MethodPost, "/mcp-events/unsubscribe", "Unsubscribe from MCP Events", s.handleMCPEventsUnsubscribe)
 }
 
 // mcpEventsUnsubscribeBody describes the URL-only unsubscribe wire contract.
