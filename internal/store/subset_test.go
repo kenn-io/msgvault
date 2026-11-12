@@ -737,7 +737,7 @@ func TestSubsetPersonMergePacketWithRemappedServiceIsOmitted(t *testing.T) {
 }
 
 func TestSubsetIncompletePersonMergePacketIsOmitted(t *testing.T) {
-	require := require.New(t)
+	req := require.New(t)
 	sourceDir := t.TempDir()
 	destinationDir := filepath.Join(t.TempDir(), "subset")
 	sourcePath := createTestSourceDB(t, sourceDir, 4)
@@ -746,18 +746,18 @@ func TestSubsetIncompletePersonMergePacketIsOmitted(t *testing.T) {
 		IncludeIdentity: true, IncludeProfiles: true,
 		IncludeAttributes: true, IncludeVCardResources: true,
 	})
-	require.NoError(err)
+	req.NoError(err)
 	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(destination.Close()) })
+	req.NoError(err)
+	t.Cleanup(func() { req.NoError(destination.Close()) })
 	_, err = destination.GetPersonContext(t.Context(), fixture.sourcePersonID)
-	require.NoError(err)
+	req.NoError(err)
 	for _, table := range []string{
 		"person_merges", "person_merge_participants", "person_merge_rows",
 		"person_merge_review_candidates", "person_splits",
 	} {
 		var count int
-		require.NoError(destination.DB().QueryRowContext(
+		req.NoError(destination.DB().QueryRowContext(
 			t.Context(),
 			`SELECT COUNT(*) FROM `+table).Scan(&count))
 		assert.Zero(t, count, table)
@@ -765,6 +765,40 @@ func TestSubsetIncompletePersonMergePacketIsOmitted(t *testing.T) {
 	_, err = destination.ResolveRetiredPersonUIDContext(
 		t.Context(), fixture.absorbedUID)
 	assert.ErrorIs(t, err, ErrPersonUIDAliasNotFound)
+	t.Run("introduction draft stays in source", func(t *testing.T) {
+		ctx := t.Context()
+		path := createTestSourceDB(t, t.TempDir(), 4)
+		source, err := Open(path)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, source.Close()) })
+		src, err := source.GetOrCreateSource("beeper", "subset-intro")
+		require.NoError(t, err)
+		a, _, err := source.CreatePersonFromParticipantContext(ctx, 1)
+		require.NoError(t, err)
+		b, _, err := source.CreatePersonFromParticipantContext(ctx, 2)
+		require.NoError(t, err)
+		intro, err := source.PreparePersonIntroductionContext(ctx, PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "private draft"}, "owner")
+		require.NoError(t, err)
+		merged, err := source.MergePersonsContext(ctx, PersonMergeRequest{SurvivorID: a.ID, AbsorbedID: b.ID, ExpectedSurvivorRevision: a.Revision, ExpectedAbsorbedRevision: b.Revision, IdempotencyKey: "subset-intro", Actor: "test"})
+		require.NoError(t, err)
+		dir := filepath.Join(t.TempDir(), "subset")
+		result, err := CopySubsetWithOptions(ctx, path, dir, 4, CopySubsetOptions{IncludeIdentity: true, IncludeProfiles: true, IncludeAttributes: true, IncludeVCardResources: true})
+		require.NoError(t, err)
+		assert.Zero(t, result.PersonMergePackets)
+		assert.Equal(t, int64(1), result.OmittedPersonMergePackets)
+		dest, err := Open(filepath.Join(dir, "msgvault.db"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, dest.Close()) })
+		_, err = dest.GetPersonIntroductionContext(ctx, intro.IntroID)
+		assert.ErrorIs(t, err, ErrIntroductionNotFound)
+		_, err = dest.GetPersonMergeContext(ctx, merged.Merge.ID)
+		assert.ErrorIs(t, err, ErrPersonMergeNotFound)
+		original, err := source.GetPersonIntroductionContext(ctx, intro.IntroID)
+		require.NoError(t, err)
+		assert.Equal(t, "private draft", original.Body)
+		_, err = source.GetPersonMergeContext(ctx, merged.Merge.ID)
+		assert.NoError(t, err)
+	})
 }
 
 func TestSubsetMergeAliasIsOmittedWithoutAttributes(t *testing.T) {
