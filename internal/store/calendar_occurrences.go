@@ -290,11 +290,20 @@ func calendarRangeShift(master calevent.Event, edits []CalendarEventRow) calenda
 	return calendarShift{pad: pad, move: func(o *calrecur.Occurrence) {
 		for i, edit := range slices.Backward(edits) {
 			if edit.Event.Original.Key() <= o.Original.Key() {
-				shifts[i].move(o)
+				calendarApplyEdit(shifts[i], edit, o)
 				return
 			}
 		}
 	}}
+}
+
+// calendarApplyEdit applies a RANGE edit to a later occurrence: its shift, and its details unless the
+// occurrence has an exception of its own.
+func calendarApplyEdit(shift calendarShift, edit CalendarEventRow, o *calrecur.Occurrence) {
+	shift.move(o)
+	if !o.HasException {
+		o.HasException, o.ExceptionRef = true, edit.MessageID
+	}
 }
 
 // calendarEditShift follows one RANGE edit: a new start moves the later occurrences by its change in the
