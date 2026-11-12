@@ -75,17 +75,11 @@ func apiBaseMarkers(t *testing.T, base string) []string {
 	t.Helper()
 	if base == "" {
 		out, err := exec.CommandContext(t.Context(), "git", "merge-base", "HEAD", "origin/main").Output()
-		if err != nil && os.Getenv("CI") == "" {
-			t.Skip("API contract base unavailable; fetch origin/main or set MSGVAULT_API_CONTRACT_BASE")
-		}
 		require.NoError(t, err, "find API contract base; fetch origin/main and its history or set MSGVAULT_API_CONTRACT_BASE to a base SHA")
 		base = strings.TrimSpace(string(out))
 	}
 	cmd := exec.CommandContext(t.Context(), "git", "ls-tree", "-z", "--name-only", "--full-tree", base, "--", "internal/api/"+apiContractsDir+"/") // #nosec G702 -- base is a Git ref supplied by the test runner.
 	out, err := cmd.Output()
-	if err != nil && os.Getenv("CI") == "" {
-		t.Skipf("API contract base %q unavailable; fetch it or set MSGVAULT_API_CONTRACT_BASE", base)
-	}
 	require.NoError(t, err, "read API contract markers at %q", base)
 	markers := []string{}
 	for path := range strings.SplitSeq(string(out), "\x00") {
@@ -108,10 +102,8 @@ func parseAPIMarker(name string) (string, string, bool) {
 }
 
 func checkAPIMarkerSummary(name string, content []byte) error {
-	summary := string(content)
-	if strings.HasSuffix(summary, "\r\n") {
-		summary = strings.TrimSuffix(summary, "\r\n")
-	} else {
+	summary, crlf := strings.CutSuffix(string(content), "\r\n")
+	if !crlf {
 		summary = strings.TrimSuffix(summary, "\n")
 	}
 	if strings.TrimSpace(summary) == "" || strings.ContainsAny(summary, "\r\n") {
@@ -202,7 +194,7 @@ func TestCheckAPIContract(t *testing.T) {
 		{"collision with next minor taken", "5.1.0", b, "use 5.3.0", []string{m("5.0.0", a), m("5.1.0", a), m("5.1.0", b), m("5.2.0", a)}, []string{m("5.0.0", a), m("5.1.0", a), m("5.2.0", a)}},
 		{"collision repaired", "5.2.0", b, "", []string{m("5.0.0", a), m("5.1.0", a), m("5.2.0", b)}, []string{m("5.0.0", a), m("5.1.0", a)}},
 		{"rollback", "5.0.0", a, "use 5.2.0", []string{m("5.0.0", a), m("5.1.0", b)}, []string{m("5.0.0", a), m("5.1.0", b)}},
-		{"edited marker", "5.1.0", b, "replace your marker with testdata/api-version-contracts/5.1.0_" + b + "_<summary-sha256>; otherwise compare with MSGVAULT_API_CONTRACT_BASE or use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a)}, []string{m("5.0.0", a)}},
+		{"changed base contract", "5.1.0", b, "replace your marker with testdata/api-version-contracts/5.1.0_" + b + "_<summary-sha256>; otherwise compare with MSGVAULT_API_CONTRACT_BASE or use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a)}, []string{m("5.0.0", a), m("5.1.0", a)}},
 		{"superseded", "5.2.0", b, "remove the superseded", []string{m("5.1.0", a), m("5.1.0", b), m("5.2.0", b)}, []string{m("5.1.0", a)}},
 		{"unrecorded", "5.1.0", b, "marker at testdata/api-version-contracts/5.1.0_" + b + "_<summary-sha256>", []string{m("5.0.0", a)}, []string{m("5.0.0", a)}},
 		{"malformed", "5.0.0", a, "<version>_<sha256>", []string{"bad"}, nil},
@@ -236,25 +228,17 @@ func TestAPIBaseMarkers(t *testing.T) {
 	dir := "internal/api/" + apiContractsDir + "/"
 	marker := "5.0.0_" + strings.Repeat("f", 64) + "_" + strings.Repeat("a", 64)
 	require.NoError(os.MkdirAll(dir, 0o755))
-	require.NoError(os.WriteFile(dir+marker, nil, 0o644))
+	require.NoError(os.WriteFile(dir+marker, []byte("Initial contract\n"), 0o644))
 	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"commit", "-qm", "fixture"}} {
 		git(args...)
 	}
 	git("update-ref", "refs/remotes/upstream/main", "HEAD")
-	t.Setenv("MSGVAULT_API_CONTRACT_BASE", "refs/remotes/upstream/main")
 	require.NoError(os.Remove(dir + marker))
-	assert.Equal(t, []string{marker}, apiBaseMarkers(t, os.Getenv("MSGVAULT_API_CONTRACT_BASE")))
-	t.Setenv("CI", "")
-	run := false
-	assert.True(t, t.Run("missing base", func(t *testing.T) {
-		apiBaseMarkers(t, "")
-		run = true
-	}))
-	assert.False(t, run)
+	assert.Equal(t, []string{marker}, apiBaseMarkers(t, "refs/remotes/upstream/main"))
 }
 
 func TestAPIMarkerSummary(t *testing.T) {
-	name := "5.0.0_digest_12ea12eace7d655f471ce55e34f89b1b77a3d9d05a445ca82877dd2235beaa51"
+	name := "5.0.0_" + strings.Repeat("a", 64) + "_" + strings.Repeat("b", 64)
 	for _, tc := range []struct {
 		name, content string
 		valid         bool
@@ -262,7 +246,6 @@ func TestAPIMarkerSummary(t *testing.T) {
 		{"valid", "change\n", true},
 		{"empty", "", false},
 		{"multiline", "change\nanother\n", false},
-		{"different summary", "different\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.valid, checkAPIMarkerSummary(name, []byte(tc.content)) == nil)
