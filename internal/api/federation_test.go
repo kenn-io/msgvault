@@ -175,7 +175,7 @@ func TestFederationOperationGate(t *testing.T) {
 			r.Header.Set("X-Api-Key", "owner-fixture")
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
-			assertions.NoError(ctx.Err(), "%s %s waited on the gate", tc.method, tc.path)
+			requirements.NoError(ctx.Err(), "%s %s waited on the gate", tc.method, tc.path)
 			assertions.Equal(http.StatusNotFound, w.Code)
 			cancel()
 			assertions.False(gate.HasRequestWaiters())
