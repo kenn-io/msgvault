@@ -369,6 +369,15 @@ jobs:
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
+      - name: Set API contract base
+        if: ${{ matrix.name == 'api' }}
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+        run: |
+          [ "$BASE_SHA" = "$(git rev-parse HEAD)" ] || kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
+
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
@@ -405,6 +414,22 @@ jobs:
         with:
           group: macos
           trim: "true"
+
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+
+      - name: Set API contract base
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$EVENT_NAME" = workflow_dispatch ] && [ "$REF" != refs/heads/main ]; then
+            kit-retry 3 5 git fetch --no-tags --depth=1 origin main
+            BASE_SHA=$(git rev-parse FETCH_HEAD)
+          else
+            BASE_SHA=$(git rev-parse HEAD)
+          fi
+          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
 
       - name: Test
         run: make test TEST_TIMEOUT=39m
@@ -838,6 +863,14 @@ jobs:
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
+      - name: Set API contract base
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+        run: |
+          [ "$BASE_SHA" = "$(git rev-parse HEAD)" ] || kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
+
       - name: Install SQLite development headers
         shell: bash
         run: kit-retry 3 5 C:/msys64/usr/bin/pacman.exe -S --noconfirm --needed mingw-w64-x86_64-sqlite3
@@ -1230,6 +1263,15 @@ jobs:
           group: linux-postgres
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+
+      - name: Set API contract base
+        if: ${{ matrix.name == 'api' }}
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
+        run: |
+          [ "$BASE_SHA" = "$(git rev-parse HEAD)" ] || kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
