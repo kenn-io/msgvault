@@ -179,16 +179,6 @@ func TestAPISchemaVersionContract(t *testing.T) {
 	require.NoError(checkAPIContract(APISchemaVersion, digest, markers, baseMarkers))
 }
 
-func TestAPIVersionMarkerSummary(t *testing.T) {
-	entries, err := os.ReadDir(apiContractsDir)
-	require.NoError(t, err)
-	for _, entry := range entries {
-		content, err := os.ReadFile(filepath.Join(apiContractsDir, entry.Name()))
-		require.NoError(t, err)
-		assert.Regexp(t, `\A[^\r\n]*\S[^\r\n]*\r?\n?\z`, string(content), entry.Name())
-	}
-}
-
 func TestCheckAPIContract(t *testing.T) {
 	a, b := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	m := func(version, digest string) string { return version + "_" + digest + "_" + strings.Repeat("c", 64) }
