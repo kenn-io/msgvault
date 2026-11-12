@@ -858,21 +858,19 @@ returns `404` / `person_brief_not_found`.
   "version": 2,
   "status": "current",
   "generated_at": "2026-08-29T18:44:02Z",
-  "rendered_text": "Last time you talked (Aug 29, chat): they were preparing for a role change. They said they were learning to cook on weekends. You may want to ask how the transition went.",
-  "renderer_policy": "person-brief-render-v1",
+  "rendered_text": "Last time you talked (Aug 29, chat): they were preparing for a role change. Upcoming: their interview.",
+  "renderer_policy": "person-brief-render-v2",
   "sentences": [
     {"kind": "last_interaction", "index": 0, "text": "Last time you talked (Aug 29, chat): they were preparing for a role change.", "evidence_ordinals": [0]},
-    {"kind": "highlight", "index": 0, "text": "They said they were learning to cook on weekends.", "evidence_ordinals": [0]},
-    {"kind": "follow_up", "index": 0, "text": "You may want to ask how the transition went.", "evidence_ordinals": [0]}
+    {"kind": "highlight", "index": 0, "text": "Upcoming: their interview.", "evidence_ordinals": [0]}
   ],
   "structured": {
     "last_meaningful_interaction": {"evidence_id": "evidence:...", "summary": "they were preparing for a role change"},
     "highlights": [
-      {"text": "they were learning to cook on weekends", "speaker": "person", "evidence_ids": ["evidence:..."], "observed_at": "2026-08-29", "confidence_basis_points": 700}
+      {"text": "their interview", "speaker": "person", "evidence_ids": ["evidence:..."], "observed_at": "2026-08-29", "confidence_basis_points": 700,
+       "life_event": {"date": "2026-09-02", "anchor_id": "evidence:...", "quote": "I have an interview on September 2.", "question": "How did the interview go?", "resolution": null, "state": "upcoming"}}
     ],
-    "follow_ups": [
-      {"question": "how the transition went", "why": "the change was still pending", "highlight_index": 0, "evidence_ids": ["evidence:..."]}
-    ],
+    "follow_ups": [],
     "appreciations": [],
     "uncertainties": [],
     "possible_attributes": []
@@ -890,6 +888,14 @@ returns `404` / `person_brief_not_found`.
     }
   ],
   "boundary": {
+    "event_memory_version": 1,
+    "event_memory": [
+      {"highlight": {"text": "their interview", "speaker": "person", "evidence_ids": ["evidence:..."], "observed_at": "2026-08-29", "confidence_basis_points": 700,
+        "life_event": {"date": "2026-09-02", "anchor_id": "evidence:...", "quote": "I have an interview on September 2.", "question": "How did the interview go?", "resolution": null, "state": "upcoming"}},
+       "sources": [{"source_lane": "conversation_text", "source_id": 21, "message_id": 4411, "attachment_id": 0, "source_message_id": "example-message", "occurrence_key": "", "chunk_key": "", "span_start": 0, "span_end": 0}]}
+    ],
+    "admission_through_event_time": "2026-08-29T18:41:55Z",
+    "next_event_at": "2026-09-03T00:00:00Z",
     "lanes": ["conversation_text"],
     "from_event_time": "2026-07-01T00:00:00Z",
     "through_event_time": "2026-08-29T18:41:55Z",
@@ -900,7 +906,7 @@ returns `404` / `person_brief_not_found`.
   },
   "dropped_item_count": 1,
   "program_id": "msgvault-person-brief",
-  "program_version": "v1",
+  "program_version": "v2",
   "provider": "glm",
   "model": "glm-5.3",
   "rejected_at": null,
@@ -921,7 +927,10 @@ rather than attributing a citation it is not sure of. `evidence` cites the
 archive items the brief as a whole used, with `evidence_supported: false` once a
 later status event invalidated an item's source. `dropped_item_count` counts
 structured items msgvault refused. Responses are `Cache-Control: no-store`. The
-brief never contains an excerpt of the archive text it was derived from.
+brief can include short evidence-backed event and outcome quotes. The boundary
+contains retained event memory, its source references, the admission watermark,
+and the next scheduled event transition when present. See [People briefs](usage/people-briefs.md)
+for event states and retention limits.
 
 ---
 

@@ -554,9 +554,9 @@ in `docs/usage/people.md`.
 - Sensitive attribute keys stay excluded from `possible_attributes` unless the
   profile already allows them, by reusing the catalog the extraction program
   receives.
-- Logs, attempt rows, and history carry counts, hashes, and identifiers, never
-  excerpts or rendered text. The read surfaces return source references and
-  dates for cited items, never the archive text the brief was derived from.
+- Logs and attempt rows carry counts, hashes, and identifiers, not excerpts or
+  rendered text. Saved brief versions and their history contain the rendered text
+  and event quotes, along with source references and dates for cited items.
 
 ## Failure and retry
 

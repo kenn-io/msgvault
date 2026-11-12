@@ -171,6 +171,32 @@ describe('PersonBriefController', () => {
     controller.destroy();
   });
 
+  it.each([
+    ['follow_up', { state: 'follow_up', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'You may want to ask: How did it go?', 'You may want to ask: How did it go?'],
+    ['upcoming', { state: 'upcoming', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'Upcoming: moving soon.', 'Upcoming: moving soon.'],
+    ['resolved', { state: 'resolved', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, 'Resolved: the move.', 'Resolved: the move.'],
+    ['v1', undefined, 'Old sentence.', 'They were preparing for a role change.'],
+    ['null', null, 'Old sentence.', 'They were preparing for a role change.'],
+    ['malformed', { state: 'follow_up' }, 'Old sentence.', 'They were preparing for a role change.'],
+    ['empty sentence', { state: 'follow_up', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, '', 'They were preparing for a role change.'],
+  ] as const)('uses saved event sentence for %s with the same citations', async (_name, event, sentenceText, expected) => {
+    const data = structured();
+    const highlights = data.highlights.map((item, index) => index === 0 ? { ...item, life_event: event } : item);
+    const values = sentences();
+    values[1] = { ...values[1], text: sentenceText };
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(requestOf(input).url);
+      if (url.pathname.endsWith('/brief-enrollment')) return Response.json(enrollment(true));
+      return Response.json(brief({ structured: { ...data, highlights }, sentences: values }));
+    });
+    const controller = new PersonBriefController(createAPIClient(fetchFn));
+    await controller.setPerson(7);
+    expect(controller.brief?.sentences[1]?.detail).toBe(expected);
+    expect(controller.brief?.sentences[1]?.text).toBe(sentenceText);
+    expect(controller.brief?.sentences[1]?.evidence).toEqual([citedEvidence.first]);
+    controller.destroy();
+  });
+
   it('does not read the brief for a person who is not enrolled', async () => {
     const paths: string[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

@@ -213,8 +213,12 @@ func personBriefItems(brief generated.PersonBrief) []peoplebrowser.PersonBriefIt
 		})
 	}
 	for index, highlight := range output.Highlights {
+		text := highlight.Text
+		if highlight.LifeEvent != nil {
+			text = personBriefEventText(brief, index, highlight)
+		}
 		items = append(items, peoplebrowser.PersonBriefItem{
-			Kind: peoplebrowser.PersonBriefHighlight, Index: index, Text: highlight.Text,
+			Kind: peoplebrowser.PersonBriefHighlight, Index: index, Text: text,
 			Speaker:  string(highlight.Speaker),
 			Evidence: evidence(peoplebrowser.PersonBriefHighlight, index),
 		})
@@ -241,6 +245,23 @@ func personBriefItems(brief generated.PersonBrief) []peoplebrowser.PersonBriefIt
 		})
 	}
 	return items
+}
+
+// Event details show the same saved state and question as the paragraph. The
+// renderer fallback uses stored state too, without consulting the clock.
+func personBriefEventText(brief generated.PersonBrief, index int, highlight peoplesweep.BriefHighlight) string {
+	for _, sentence := range brief.Sentences {
+		if sentence.Kind == string(peoplesweep.BriefSentenceHighlight) && int(sentence.Index) == index && sentence.Text != "" {
+			return sentence.Text
+		}
+	}
+	rendered, err := peoplesweep.RenderBrief(peoplesweep.ParsedBrief{
+		Output: peoplesweep.BriefOutput{Highlights: []peoplesweep.BriefHighlight{highlight}},
+	}, peoplesweep.BriefWindow{})
+	if err == nil {
+		return rendered.Text
+	}
+	return highlight.Text
 }
 
 // briefEvidenceByOrdinals resolves one structured item's citations from the
