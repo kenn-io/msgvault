@@ -193,3 +193,27 @@ func TestSettingsViewportTinyScreenKeepsPagingAndBack(t *testing.T) {
 	assert.Regexp(t, `\[Ctrl\+S\] +Save`, screen.String())
 	assert.Equal(t, 1, strings.Count(screen.String(), "[Esc] Back"))
 }
+
+func TestSettingsViewportTinyScreenEscapeCancels(t *testing.T) {
+	snapshot := settingsFixture()
+	snapshot.Fields[0].Options = []string{"auto", "manual"}
+	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{snapshot}}
+	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 20, 6)
+	model.settingsBackend = backend
+	model, _ = sendKey(t, model, keyEnter())
+	model, _ = sendKey(t, model, keyEnter())
+	require.True(t, model.settings.editing)
+	screen := uv.NewScreenBuffer(20, 6)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "[Esc] Cancel")
+	assert.NotContains(t, screen.String(), "[Esc] Back")
+	model, _ = sendKey(t, model, keyEsc())
+	assert.False(t, model.settings.editing)
+	model, _ = sendKey(t, model, key('p'))
+	require.True(t, model.settings.codex.active)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "[Esc] Cancel")
+	assert.NotContains(t, screen.String(), "[Esc] Back")
+	model, _ = sendKey(t, model, keyEsc())
+	assert.False(t, model.settings.codex.active)
+}
