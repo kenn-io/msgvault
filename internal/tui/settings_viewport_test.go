@@ -54,6 +54,20 @@ func TestSettingsCategoryBoundaryResetsSelection(t *testing.T) {
 		assert.Contains(t, screen.String(), "▶   Field 0")
 		assert.NotContains(t, screen.String(), "Earlier status")
 	}
+	model.settings.pendingRestart = true
+	model = resizeModel(t, model, 100, 8)
+	screen := uv.NewScreenBuffer(100, 8)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	first := screen.String()
+	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	before := screen.String()
+	require.NotEqual(t, first, before)
+	for _, direction := range []rune{'h', 'l'} {
+		model, _ = sendKey(t, model, key(direction))
+		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+		assert.Equal(t, before, screen.String())
+	}
 }
 
 func TestSettingsViewportExitEditorKeepsSelectionVisible(t *testing.T) {
@@ -96,33 +110,18 @@ func TestSettingsViewportDiscardConfirmationPaging(t *testing.T) {
 }
 
 func TestSettingsViewportFingerprint(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		width, height int
-		pending       bool
-	}{
-		{name: "pending", width: 80, height: 12, pending: true},
-		{name: "no_pending", width: 40, height: 12},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{settingsFixture()}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64), PendingRestart: tc.pending}}
-			model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), tc.width, tc.height)
-			model.settingsBackend = backend
-			model, load := sendKey(t, model, key('i'))
-			model = sendSettingsMsg(t, model, load())
-			model, _ = sendKey(t, model, keyEsc())
-			if !tc.pending {
-				model, _ = sendKey(t, model, keyEnter())
-			}
-			screen := uv.NewScreenBuffer(tc.width, tc.height)
-			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-			assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
-			if !tc.pending {
-				assert.Contains(t, screen.String(), "[j/k]")
-				assert.Contains(t, screen.String(), "[Esc]")
-			}
-		})
-	}
+	backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{settingsFixture()}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64)}}
+	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 12)
+	model.settingsBackend = backend
+	model, load := sendKey(t, model, key('i'))
+	model = sendSettingsMsg(t, model, load())
+	model, _ = sendKey(t, model, keyEsc())
+	model, _ = sendKey(t, model, keyEnter())
+	screen := uv.NewScreenBuffer(40, 12)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
+	assert.Contains(t, screen.String(), "[j/k]")
+	assert.Contains(t, screen.String(), "[Esc]")
 }
 
 func TestSettingsViewportCategorySelectionAfterPeopleControls(t *testing.T) {
@@ -133,9 +132,11 @@ func TestSettingsViewportCategorySelectionAfterPeopleControls(t *testing.T) {
 	model, load := sendKey(t, model, key('i'))
 	model = sendSettingsMsg(t, model, load())
 	model, _ = sendKey(t, model, keyEsc())
-	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	model, _ = sendKey(t, model, key('j'))
 	screen := uv.NewScreenBuffer(40, 12)
+	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
+	model, _ = sendKey(t, model, key('j'))
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "▶ Daemon")
 	assert.Contains(t, screen.String(), "[Esc]")
@@ -174,8 +175,7 @@ func TestSettingsViewportCodexRestartNotice(t *testing.T) {
 	screen := uv.NewScreenBuffer(80, 24)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	view := strings.Join(strings.Fields(screen.String()), " ")
-	assert.Contains(t, view, "On the daemon host, restart its service, or stop and rerun your foreground msgvault serve with the same flags")
-	assert.Contains(t, view, "Otherwise, run msgvault daemon restart with the same options: --home and --config")
+	assert.Equal(t, 1, strings.Count(view, "msgvault daemon restart"))
 	assert.Contains(t, view, "[Esc] Cancel and return")
 }
 

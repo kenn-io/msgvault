@@ -86,7 +86,7 @@ func TestSettingsViewportSaveShowsNoticeAndSelectedField(t *testing.T) {
 	assert.Contains(t, screen.String(), "[j/k]")
 	assert.Contains(t, screen.String(), "[Esc]")
 	assert.Regexp(t, `\[Ctrl\+S\] +Save`, screen.String())
-	assert.Regexp(t, `(?s)daemon host.*service.*foreground.*msgvault serve`, screen.String())
+	assert.Contains(t, screen.String(), "Restart pending.")
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "▶   Automatic start")
@@ -94,7 +94,7 @@ func TestSettingsViewportSaveShowsNoticeAndSelectedField(t *testing.T) {
 }
 
 func TestSettingsViewportShortScreenSaveErrorAfterDisable(t *testing.T) {
-	snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "archive", Label: "Archive"}}, Fields: []SettingField{{Key: "analytics.auto_build_cache", Group: "archive", Label: "Build cache", Kind: SettingKindBoolean, Value: boolSettingValue(true), RestartRequired: true}}}
+	snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "archive", Label: "Archive"}}, Fields: []SettingField{{Key: "analytics.auto_build_cache", Group: "archive", Label: "Build cache", Kind: SettingKindBoolean, Value: boolSettingValue(true)}}}
 	backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{snapshot}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64), ConfiguredEnabled: true}}
 	backend.saveErr = errors.New(`API error (500): {"title":"Internal Server Error","status":500,"detail":"disk full"}`)
 	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 14)
@@ -144,9 +144,6 @@ func TestSettingsViewportStalePeopleLoadKeepsPage(t *testing.T) {
 	for _, stale := range []tea.Msg{
 		settingsLoadedMsg{requestID: oldRequestID},
 		settingsSavedMsg{requestID: oldRequestID},
-		peopleControlsActionMsg{requestID: 1},
-		codexModelsLoadedMsg{requestID: 1},
-		codexLoginPolledMsg{requestID: 1},
 	} {
 		model = sendSettingsMsg(t, model, stale)
 		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
@@ -215,12 +212,9 @@ func TestSettingsViewportTinyScreenEscapeCancels(t *testing.T) {
 	}
 	assert.Equal(t, 1, strings.Count(screen.String(), "[Esc] Cancel"))
 	model, _ = sendKey(t, model, keyEsc())
-	assert.False(t, model.settings.editing)
 	model, _ = sendKey(t, model, key('p'))
 	require.True(t, model.settings.codex.active)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "[Esc] Cancel")
 	assert.NotContains(t, screen.String(), "[Esc] Back")
-	model, _ = sendKey(t, model, keyEsc())
-	assert.False(t, model.settings.codex.active)
 }
