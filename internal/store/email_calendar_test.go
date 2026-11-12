@@ -574,7 +574,7 @@ func TestEmailCalendarFamilyOrganizer(t *testing.T) {
 			stored, err := st.GetMessageRaw(ids[0])
 			requirements.NoError(err)
 			assertions.Equal(master, stored)
-			assertions.Contains(logs.String(), "level=WARN")
+			assertions.Contains(logs.String(), "organizer differs")
 			cancel := calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nORGANIZER:mailto:other@example.com")
 			persistInviteEmailForSource(t, st, source, "foreign-cancel", inviteEmail(cancel))
 			move := calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T150000Z\r\nORGANIZER:mailto:other@example.com")
