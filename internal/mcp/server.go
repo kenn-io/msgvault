@@ -115,8 +115,9 @@ type ServeOptions struct {
 	Families         *ArchiveFamilies
 	EmbeddingStatus  EmbeddingStatusReader
 	// Operations exposes only fixed, actually supported daemon workflows.
-	Operations            OperationBackend
-	OperationCapabilities []string
+	Operations                OperationBackend
+	OperationCapabilities     []string
+	CollectionScopesAvailable bool
 	// OperationWriteFamilies is empty unless the operator opts into a family.
 	OperationWriteFamilies []OperationFamily
 	legacyHTTP             bool
