@@ -1054,8 +1054,8 @@ func (b *parquetBuilder) ensureMeetingOccurrencesTable() {
 		}
 	}
 	b.addEmptyTable(identityindex.DatasetMeetingOccurrences, identityindex.DatasetMeetingOccurrences,
-		"meeting_occurrences.parquet", "message_id, occurrence_key, occurred_at, counted, declined_emails, occurrence_id",
-		"(0::BIGINT, ''::VARCHAR, TIMESTAMP '2000-01-01', false, []::VARCHAR[], 0::DECIMAL(38,0))")
+		"meeting_occurrences.parquet", "message_id, occurrence_key, occurred_at, all_day, counted, declined_emails, occurrence_id",
+		"(0::BIGINT, ''::VARCHAR, TIMESTAMP '2000-01-01', false, false, []::VARCHAR[], 0::DECIMAL(38,0))")
 }
 
 func (b *parquetBuilder) ensureConversationParticipantsTable() {

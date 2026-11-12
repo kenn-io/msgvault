@@ -234,6 +234,14 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 	endLocal := startLocal.AddDate(1, 0, 0)
 	startUTC := startLocal.UTC()
 	endUTC := endLocal.UTC()
+	// All-day occurrences use UTC midnight to preserve their civil date.
+	// Include both local-year and UTC-year boundaries before assigning days.
+	if civilStart := time.Date(request.Year, 1, 1, 0, 0, 0, 0, time.UTC); civilStart.Before(startUTC) {
+		startUTC = civilStart
+	}
+	if civilEnd := time.Date(request.Year+1, 1, 1, 0, 0, 0, 0, time.UTC); civilEnd.After(endUTC) {
+		endUTC = civilEnd
+	}
 	var years []string
 	for year := startUTC.Year(); year <= endUTC.Add(-time.Nanosecond).Year(); year++ {
 		years = append(years, strconv.Itoa(year))
@@ -270,8 +278,16 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 	rows, err := e.db.QueryContext(ctx, `
 		WITH relationship_facts AS (
 		`+facts+`
+		), dated_facts AS (
+		  SELECT f.*, CASE WHEN o.all_day THEN strftime(f.occurred_at, '%Y-%m-%d')
+		    ELSE strftime(timezone(?, timezone('UTC', f.occurred_at)), '%Y-%m-%d') END AS local_date
+		  FROM relationship_facts f
+		  LEFT JOIN (
+		    SELECT DISTINCT 'meeting:' || occurrence_key AS entry_key, true AS all_day
+		    FROM read_parquet('`+quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetMeetingOccurrences))+`') WHERE all_day
+		  ) o ON o.entry_key=f.entry_key
 		)
-		SELECT strftime(timezone(?, timezone('UTC', occurred_at)), '%Y-%m-%d') AS local_date,
+		SELECT local_date,
 		       count(*) FILTER (WHERE sent)::BIGINT AS sent_count,
 		       count(*) FILTER (WHERE received)::BIGINT AS received_count,
 		       count(*) FILTER (WHERE email)::BIGINT AS email_count,
@@ -279,11 +295,11 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		       count(*) FILTER (WHERE meeting)::BIGINT AS meeting_count,
 		       count(*)::BIGINT AS total_count,
 		       bit_or(modality_mask)::UTINYINT AS modality_mask
-		FROM relationship_facts
-		WHERE canonical_id = ?
+		FROM dated_facts
+		WHERE canonical_id = ? AND local_date >= ? AND local_date < ?
 		GROUP BY local_date
 		ORDER BY local_date
-	`, request.TimezoneOrUTC(), request.CanonicalID)
+	`, request.TimezoneOrUTC(), request.CanonicalID, fmt.Sprintf("%04d-01-01", request.Year), fmt.Sprintf("%04d-01-01", request.Year+1))
 	if err != nil {
 		return nil, fmt.Errorf("query relationship calendar: %w", err)
 	}

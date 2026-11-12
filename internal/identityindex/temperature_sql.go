@@ -25,7 +25,7 @@ WITH message_owner AS (
 	FROM %[1]s
 	GROUP BY entry_key
 ), person_messages AS (
-	SELECT min(f.message_id) AS message_id, f.canonical_id,
+	SELECT f.entry_key, min(f.message_id) AS message_id, f.canonical_id,
 	       min(f.occurred_at)::TIMESTAMP AS occurred_at,
 	       bool_or(f.is_chat) AS is_chat,
 	       arg_min(f.entry_kind, f.occurred_at)::VARCHAR AS entry_kind,
@@ -85,7 +85,7 @@ WITH message_owner AS (
 	FROM classified
 	WHERE qualifies
 )
-SELECT message_id, canonical_id, occurred_at,
+SELECT entry_key, message_id, canonical_id, occurred_at,
 	   sent, received,
 	   (NOT is_meeting AND NOT is_chat) AS email,
 	   (NOT is_meeting AND is_chat) AS chat,

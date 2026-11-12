@@ -19,6 +19,7 @@ type MeetingOccurrence struct {
 	MessageID      int64
 	OccurrenceKey  string
 	OccurredAt     time.Time
+	AllDay         bool
 	Counted        bool
 	DeclinedEmails []string
 }
@@ -261,7 +262,7 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 		})
 		var key string
 		var at time.Time
-		cancelled, eligible := false, false
+		cancelled, eligible, allDay := false, false, false
 		declined := map[string]bool{}
 		for _, event := range unit.events {
 			if key == "" || event.Ref < key {
@@ -281,6 +282,7 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 		}
 		if len(unit.events) > 0 && !unit.events[0].DeletedFromSource {
 			at = unit.events[0].Start
+			allDay = unit.events[0].AllDay
 			if unit.events[0].AllDay {
 				at, err = time.Parse(time.DateOnly, unit.events[0].StartDate)
 				if err != nil {
@@ -308,7 +310,7 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 			}
 			for _, id := range []int64{event.MessageID, event.SeriesMessageID} {
 				if id != 0 {
-					result = append(result, MeetingOccurrence{id, key, at, !cancelled && !ownerDeclined, declinedEmails})
+					result = append(result, MeetingOccurrence{id, key, at, allDay, !cancelled && !ownerDeclined, declinedEmails})
 				}
 			}
 		}
@@ -317,7 +319,7 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 			if note.state == "available" {
 				ids = nil
 			}
-			result = append(result, MeetingOccurrence{note.id, key, at, !cancelled && (eligible || note.state == "available"), ids})
+			result = append(result, MeetingOccurrence{note.id, key, at, allDay, !cancelled && (eligible || note.state == "available"), ids})
 		}
 	}
 	seenMessages := map[int64]bool{}
