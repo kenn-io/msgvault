@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/sys/windows"
 )
@@ -182,11 +181,5 @@ func secureRestoredFile(path string) error {
 		return err
 	}
 	defer windows.CloseHandle(h) //nolint:errcheck // security result is authoritative
-	if err := verifyHandleOwner(h); err != nil {
-		return err
-	}
-	if verifyOwnerOnlyHandle(h, !strings.EqualFold(filepath.Base(path), Filename)) == nil {
-		return nil
-	}
 	return secureOwnerOnlyHandle(h)
 }
