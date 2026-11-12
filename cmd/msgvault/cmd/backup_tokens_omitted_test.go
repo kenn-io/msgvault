@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,24 +9,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/backup"
-	"go.kenn.io/msgvault/internal/backupapp"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/providercredentials"
-	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestBackupRestoreOmittedTokensRemainReadable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	dataDir := t.TempDir()
-	cfg := &config.Config{HomeDir: t.TempDir()}
-	cfg.Data.DataDir = dataDir
-	dbPath := filepath.Join(dataDir, "msgvault.db")
-	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	require.NoError(st.Close())
-	attachments := filepath.Join(dataDir, "attachments")
-	require.NoError(os.MkdirAll(attachments, 0o700))
+	cfg, dbPath, attachments := backupTokenFixture(t)
 
 	const endpoint = "https://provider.example.test/v1"
 	const providerKey = "synthetic-provider-key"
@@ -41,41 +29,10 @@ func TestBackupRestoreOmittedTokensRemainReadable(t *testing.T) {
 	require.NoError(os.MkdirAll(filepath.Dir(nested), 0o700))
 	require.NoError(os.WriteFile(nested, []byte("synthetic-carddav"), 0o600))
 
-	oldInclude, oldConfig, oldPlain := backupCreateIncludeTokens, backupCreateIncludeConfig, backupCreateAllowPlaintextSecrets
-	backupCreateIncludeTokens, backupCreateIncludeConfig, backupCreateAllowPlaintextSecrets = true, false, true
-	t.Cleanup(func() {
-		backupCreateIncludeTokens, backupCreateIncludeConfig, backupCreateAllowPlaintextSecrets = oldInclude, oldConfig, oldPlain
-	})
-	extras, err := backupExtrasSpec(cfg)
-	require.NoError(err)
-	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
-	require.NoError(err)
-	_, err = backup.Create(t.Context(), repo, backupapp.New("test"), backup.CreateOptions{
-		DBPath: dbPath, ContentDir: attachments, DataDir: dataDir,
-		Extras: extras, IncludeTokens: true, AllowPlaintextSecrets: true,
-	})
-	require.NoError(err)
+	repo := createBackupTokenSnapshot(t, cfg, dbPath, attachments)
 
-	oldRepo, oldTarget, oldOverwrite := backupRestoreRepo, backupRestoreTarget, backupRestoreOverwrite
-	oldForce, oldJobs := backupRestoreForceUnlock, backupRestoreJobs
-	oldLoose, oldIntegrity := backupRestoreLooseAttachments, backupRestoreIntegrityCheck
-	oldOut, oldErr, oldLogger := rootCmd.OutOrStdout(), rootCmd.ErrOrStderr(), slog.Default()
-	changed := make(map[string]bool)
-	for _, name := range []string{"repo", "target", "jobs", "overwrite"} {
-		changed[name] = backupRestoreCmd.Flags().Lookup(name).Changed
-	}
-	t.Cleanup(func() {
-		backupRestoreRepo, backupRestoreTarget, backupRestoreOverwrite = oldRepo, oldTarget, oldOverwrite
-		backupRestoreForceUnlock, backupRestoreJobs = oldForce, oldJobs
-		backupRestoreLooseAttachments, backupRestoreIntegrityCheck = oldLoose, oldIntegrity
-		for name, wasChanged := range changed {
-			backupRestoreCmd.Flags().Lookup(name).Changed = wasChanged
-		}
-		rootCmd.SetOut(oldOut)
-		rootCmd.SetErr(oldErr)
-		rootCmd.SetArgs(nil)
-		slog.SetDefault(oldLogger)
-	})
+	prepareBackupTokenRestore(t)
+
 	fresh := filepath.Join(t.TempDir(), "fresh")
 	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
 	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
@@ -89,6 +46,11 @@ func TestBackupRestoreOmittedTokensRemainReadable(t *testing.T) {
 	freshNested, err := os.ReadFile(filepath.Join(freshTokens, "carddav-connections", "example", "carddav.json"))
 	require.NoError(err)
 	assert.Equal("synthetic-carddav", string(freshNested))
+	for _, dir := range []string{filepath.Join(freshTokens, "carddav-connections"), filepath.Join(freshTokens, "carddav-connections", "example")} {
+		_, err := os.ReadDir(dir)
+		require.NoError(err)
+		require.NoError(os.Mkdir(filepath.Join(dir, "new-directory"), 0o700))
+	}
 
 	target := filepath.Join(t.TempDir(), "restored")
 	tokens := filepath.Join(target, "tokens")

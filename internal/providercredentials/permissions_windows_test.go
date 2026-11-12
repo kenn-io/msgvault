@@ -503,11 +503,11 @@ func TestRestorePreflightRejectsReparseEntry(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(dir, "link")); err != nil {
 		t.Skipf("creating a symlink requires Windows privileges: %v", err)
 	}
-	err := restorePreflight(dir, map[string]struct{}{}, map[string]struct{}{})
+	_, err := restorePreflight(dir, map[string]struct{}{}, map[string]struct{}{})
 	requirements.ErrorIs(err, ErrRestorePermissionsConflict)
 }
 
-func TestSecureRestoredPreservesOmittedLockAndRejectsMixedInheritedTree(t *testing.T) {
+func TestSecureRestoredPreservesOmittedLockAndProtectedMixedTree(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	dir := filepath.Join(t.TempDir(), "tokens")
@@ -543,13 +543,28 @@ func TestSecureRestoredPreservesOmittedLockAndRejectsMixedInheritedTree(t *testi
 	before, err = windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	requirements.NoError(err)
 	err = SecureRestored(dir, []string{"selected", filepath.Join("nested", "selected")})
-	requirements.ErrorIs(err, ErrRestorePermissionsConflict)
+	requirements.NoError(err)
+	affected, err := inheritedAccess(handle)
+	requirements.NoError(err)
+	assertions.True(affected)
 	after, err = windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	requirements.NoError(err)
 	assertions.Equal(before.String(), after.String())
 	data, err = os.ReadFile(omitted)
 	requirements.NoError(err)
 	assertions.Equal("omitted nested", string(data))
+
+	changedAncestor := filepath.Join(nested, "changed")
+	requirements.NoError(os.Mkdir(changedAncestor, 0700))
+	selectedBelow := filepath.Join(changedAncestor, "selected")
+	omittedBelow := filepath.Join(changedAncestor, "omitted")
+	requirements.NoError(os.WriteFile(selectedBelow, []byte("selected"), 0600))
+	requirements.NoError(os.WriteFile(omittedBelow, []byte("omitted"), 0600))
+	err = SecureRestored(dir, []string{filepath.Join("nested", "changed", "selected")})
+	requirements.ErrorIs(err, ErrRestorePermissionsConflict)
+	data, err = os.ReadFile(omittedBelow)
+	requirements.NoError(err)
+	assertions.Equal("omitted", string(data))
 }
 
 func TestWindowsDirectorySecurityRemovesInheritedChildAccess(t *testing.T) {

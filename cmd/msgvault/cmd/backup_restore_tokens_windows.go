@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 
 	"go.kenn.io/kit/backup"
@@ -14,7 +15,21 @@ import (
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
 
-func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string) error {
+func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, target string, extrasFiles int) error {
+	if extrasFiles == 0 {
+		return nil
+	}
+	dir := filepath.Join(target, "tokens")
+	info, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect restored token directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("restored token path %s is not a directory", dir)
+	}
 	snapshot, err := repo.OpenSnapshot(ctx, snapshotID, backupapp.New(Version).PackFileExtension())
 	if err != nil {
 		return fmt.Errorf("open restored snapshot: %w", err)
@@ -34,7 +49,6 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	if !strict {
 		return nil
 	}
-	dir := filepath.Join(target, "tokens")
 	var selected []string
 	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -63,5 +77,12 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	if err != nil {
 		return fmt.Errorf("inspect restored tokens: %w", err)
 	}
-	return providercredentials.SecureRestored(dir, selected)
+	err = providercredentials.SecureRestored(dir, selected)
+	if errors.Is(err, providercredentials.ErrRestorePermissionsConflict) {
+		return fmt.Errorf("%w; credential permissions were not changed", err)
+	}
+	if err != nil {
+		return fmt.Errorf("%w; credentials may be unreadable and permissions may have changed", err)
+	}
+	return nil
 }
