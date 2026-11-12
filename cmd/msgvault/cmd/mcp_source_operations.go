@@ -123,6 +123,27 @@ func decodeMCPOperationArguments[T any](args map[string]any) (T, error) {
 	return value, err
 }
 
+// operationContext checks a disclosure's pre-read. A failed read refuses as
+// operation_context_unavailable unless forward recognizes its fixed code.
+func operationContext(current *mcpserver.OperationResult, expected, conflict string, forward func(string) bool) error {
+	if current == nil || current.IsError {
+		code := "operation_context_unavailable"
+		var failure struct {
+			Error string `json:"error"`
+		}
+		if current != nil && forward != nil {
+			if data, err := json.Marshal(current.Output); err == nil && json.Unmarshal(data, &failure) == nil && forward(failure.Error) {
+				code = failure.Error
+			}
+		}
+		return &mcpserver.OperationRefusalError{Code: code}
+	}
+	if current.ETag != expected {
+		return &mcpserver.OperationRefusalError{Code: conflict}
+	}
+	return nil
+}
+
 func (b *daemonMCPOperations) executeSourceOperation(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
 		return operationFailure(invalidArguments, false), true, nil
@@ -293,11 +314,8 @@ func (b *daemonMCPOperations) sourceOperationDisclosure(ctx context.Context, nam
 	if err != nil {
 		return "", true, err
 	}
-	if current == nil || current.IsError {
-		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
-	}
-	if current.ETag != expected {
-		return "", true, &mcpserver.OperationRefusalError{Code: conflictCode}
+	if err := operationContext(current, expected, conflictCode, nil); err != nil {
+		return "", true, err
 	}
 	effect := "persist the explicit display name; an empty name clears the saved override"
 	if name == "update_slack_sync_policy" {

@@ -54,6 +54,17 @@ func personRecordRefusal(code string) bool {
 	}
 	return false
 }
+func etagProjection[T, R any](result *mcpserver.OperationResult, writes bool, wrap func(string, T) R) *mcpserver.OperationResult {
+	if result == nil || result.IsError {
+		return result
+	}
+	value, ok := result.Output.(T)
+	if !ok || result.ETag == "" {
+		return operationFailure("invalid_operation_response", writes)
+	}
+	result.Output = wrap(result.ETag, value)
+	return result
+}
 func (b *daemonMCPOperations) executePersonRecord(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	invalid := func() (*mcpserver.OperationResult, bool, error) {
 		return operationFailure(invalidArguments, false), true, nil

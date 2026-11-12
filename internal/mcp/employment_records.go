@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"slices"
+
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -24,7 +26,10 @@ func employmentOperationalDefinitions() []operationalDefinition {
 		"source_ref": stringSchema("Provenance reference"), "confidence": {Type: "number"},
 	}, "person_id", "organization_id", "source")
 	// Native nullable fields use omission and null equivalently for replacement.
-	for _, key := range []string{"title", "role", "department", "location", "address_id", "description", "start_date", "end_date", "is_current", "is_primary", "source_ref", "confidence"} {
+	for key := range body.Properties {
+		if slices.Contains(body.Required, key) {
+			continue
+		}
 		body.Properties[key] = &jsonschema.Schema{AnyOf: []*jsonschema.Schema{body.Properties[key], {Type: "null"}}}
 	}
 	record := outputSchemaFor[EmploymentRecord]()

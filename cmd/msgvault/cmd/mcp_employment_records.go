@@ -13,6 +13,7 @@ import (
 
 func employmentMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCapabilities) []string {
 	var names []string
+	body := []string{"person_id", "organization_id", "source", "title", "role", "department", "location", "address_id", "description", "start_date", "end_date", "is_current", "is_primary", "source_ref", "confidence"}
 	for _, r := range []struct {
 		name, id, method, path string
 		query                  []string
@@ -30,8 +31,8 @@ func employmentMCPCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol
 		properties             []string
 		needsGet               bool
 	}{
-		{"create_employment", "createEmployment", http.MethodPost, "/api/v1/employments", []string{"person_id", "organization_id", "source", "title", "role", "department", "location", "address_id", "description", "start_date", "end_date", "is_current", "is_primary", "source_ref", "confidence"}, false},
-		{"replace_employment", "patchEmployment", http.MethodPatch, "/api/v1/employments/{id}", []string{"person_id", "organization_id", "source", "title", "role", "department", "location", "address_id", "description", "start_date", "end_date", "is_current", "is_primary", "source_ref", "confidence"}, true},
+		{"create_employment", "createEmployment", http.MethodPost, "/api/v1/employments", body, false},
+		{"replace_employment", "patchEmployment", http.MethodPatch, "/api/v1/employments/{id}", body, true},
 		{"end_employment", "endEmployment", http.MethodPost, "/api/v1/employments/{id}/end", []string{"end_date"}, true},
 		{"set_primary_employment", "setPrimaryEmployment", http.MethodPost, "/api/v1/employments/{id}/primary", nil, true},
 		{"delete_employment", "deleteEmployment", http.MethodDelete, "/api/v1/employments/{id}", nil, true},
@@ -67,7 +68,7 @@ type employmentListArgs struct {
 
 func employmentDefiniteRefusal(code string) bool {
 	switch code {
-	case "employment_not_found", "employment_revision_conflict", "employment_primary_conflict", "employment_duplicate_active", "invalid_employment", "invalid_partial_date", "invalid_source", "invalid_person_id", "invalid_organization_id", "invalid_organization", "organization_not_found", "organizations_unavailable", "invalid_if_match", "if_match_required", "employments_unavailable", "bad_request", "operation_in_progress":
+	case "employment_not_found", "employment_revision_conflict", "employment_primary_conflict", "employment_duplicate_active", "invalid_employment", "invalid_partial_date", "invalid_source", "invalid_person_id", "invalid_organization_id", "invalid_organization", "organization_not_found", "organizations_unavailable", "invalid_if_match", "employments_unavailable", "server_busy":
 		return true
 	}
 	return false
@@ -118,10 +119,6 @@ func (b *daemonMCPOperations) executeEmploymentOperation(ctx context.Context, na
 		if e != nil {
 			return invalid()
 		}
-		if a.Limit == nil || *a.Limit == 0 {
-			limit := int64(200)
-			a.Limit = &limit
-		}
 		if name == "list_person_employments" {
 			result, err = readMCPOperationJSONWithClassifier[generated.EmploymentsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/employments", &generated.ListPersonEmploymentsRequestOptions{PathParams: &generated.ListPersonEmploymentsPath{ID: a.PersonID}, Query: &generated.ListPersonEmploymentsQuery{CurrentOnly: a.CurrentOnly, Limit: a.Limit, Offset: a.Offset}}, employmentDefiniteRefusal, http.StatusOK)
 		} else {
@@ -130,12 +127,10 @@ func (b *daemonMCPOperations) executeEmploymentOperation(ctx context.Context, na
 	default:
 		return nil, false, nil
 	}
-	if result != nil && !result.IsError && name != "delete_employment" && name != "list_person_employments" && name != "list_organization_employments" {
-		employment, ok := result.Output.(generated.Employment)
-		if !ok || result.ETag == "" {
-			return operationFailure("invalid_operation_response", name != "get_employment"), true, err
-		}
-		result.Output = mcpserver.EmploymentRecord{ETag: result.ETag, Employment: employment}
+	if name != "delete_employment" && name != "list_person_employments" && name != "list_organization_employments" {
+		result = etagProjection(result, name != "get_employment", func(etag string, employment generated.Employment) mcpserver.EmploymentRecord {
+			return mcpserver.EmploymentRecord{ETag: etag, Employment: employment}
+		})
 	}
 	return result, true, err
 }
@@ -177,11 +172,8 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 		if err != nil {
 			return "", true, err
 		}
-		if result == nil || result.IsError {
-			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
-		}
-		if result.ETag != etag {
-			return "", true, &mcpserver.OperationRefusalError{Code: "employment_revision_conflict"}
+		if err := operationContext(result, etag, "employment_revision_conflict", employmentDefiniteRefusal); err != nil {
+			return "", true, err
 		}
 		current = result.Output
 	}

@@ -124,6 +124,15 @@ func TestMCPEmploymentSDKApprovalAndReadOnly(t *testing.T) {
 	assert.Equal(t, person, record.Employment.PersonID)
 	assert.False(t, record.Employment.IsPrimary)
 	assert.NotEmpty(t, record.ETag)
+	listed, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_person_employments", Arguments: map[string]any{"person_id": person}})
+	require.NoError(t, err)
+	require.False(t, listed.IsError)
+	data, err = json.Marshal(listed.StructuredContent)
+	require.NoError(t, err)
+	var list generated.EmploymentsResponse
+	require.NoError(t, json.Unmarshal(data, &list))
+	require.Len(t, list.Employments, 1)
+	assert.Equal(t, record.Employment.ID, list.Employments[0].ID)
 }
 
 func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
@@ -144,6 +153,10 @@ func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
 	_, err = b.OperationDisclosure(t.Context(), "delete_employment", map[string]any{"employment_id": record.Employment.ID, "etag": "stale"})
 	require.Error(t, err)
 	assert.Equal(t, "employment_revision_conflict", err.Error())
+	_, err = b.OperationDisclosure(t.Context(), "set_primary_employment", map[string]any{"employment_id": int64(999999), "etag": `"employment-999999-r1"`})
+	var refusal *mcpserver.OperationRefusalError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "employment_not_found", refusal.Code)
 }
 
 func TestMCPEmploymentCapabilityRequiresNativeRoute(t *testing.T) {
@@ -197,6 +210,12 @@ func TestMCPEmploymentUncertainAndBoundedResponse(t *testing.T) {
 			assert.NotContains(t, string(data), "private details")
 		})
 	}
+	gate := api.NewSerialOperationGate()
+	gate.StartDrain()
+	busy := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: testutil.NewTestStore(t), OperationGate: gate, Logger: slog.New(slog.DiscardHandler)}))
+	result, err := busy.ExecuteOperation(t.Context(), "create_employment", map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user"}})
+	require.NoError(t, err)
+	assertLoopRefusal(t, result, "server_busy", false)
 }
 
 func TestMCPEmploymentWriteFlagsAreIndependent(t *testing.T) {
