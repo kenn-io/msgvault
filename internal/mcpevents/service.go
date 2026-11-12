@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -115,20 +114,17 @@ func find(entries []entry, owner string, args MCPEventsArguments, url string) in
 		if owner == "owner" && e.ID == id {
 			return i
 		}
-		if isGrantOwner(owner) && len(e.ID) == 64 && strings.HasPrefix(e.ID, id) {
-			generation := e.ID[len(id):]
-			if _, err := hex.DecodeString(generation); err == nil && generation == strings.ToLower(generation) {
-				return i
-			}
+		if isGrantOwner(owner) && len(e.ID) == 64 && e.ID[:32] == id {
+			return i
 		}
 	}
 	return -1
 }
 
 // Subscribe requires a request returned by DecodeSubscribe.
-func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, owner string, verify func(context.Context, string, string, []byte) error, creationCheck func(context.Context) error) (MCPEventsSubscribeResult, error) {
+func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, owner string, verify func(context.Context, string, string, []byte) error, authorize func(context.Context, bool) error) (MCPEventsSubscribeResult, error) {
 	var out MCPEventsSubscribeResult
-	if !s.Enabled || s.Store == nil || owner == "" {
+	if !s.Enabled || s.Store == nil {
 		return out, failure(Unavailable, "disabled")
 	}
 	if err := s.purgeExpired(ctx); err != nil {
@@ -151,98 +147,95 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 			}
 		}
 	}
-	entries, _, err := s.catalog(ctx)
-	if err != nil {
-		return out, failure(Unavailable, "store_unavailable")
-	}
-	index := find(entries, owner, in.Arguments, in.Delivery.URL)
-	refresh := index >= 0
-	var id string
-	if refresh {
-		if len(entries)+s.ConfigTargets > 32 {
-			return out, failure(ResourceExhausted, "subscriptions")
-		}
-		id = entries[index].ID
-		_, position, err := s.Store.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey(id))
-		if err != nil || position == nil {
-			return out, failure(Unavailable, "store_unavailable")
-		}
-	} else {
-		id = subscriptionID(owner, in.Arguments, in.Delivery.URL)
-		if owner != "owner" {
-			var b [16]byte
-			if _, err = rand.Read(b[:]); err != nil {
-				return out, failure(Unavailable, "random_unavailable")
-			}
-			id += hex.EncodeToString(b[:])
-		}
-	}
-	if !refresh && s.subscriptionLimit(entries, owner) {
-		return out, failure(ResourceExhausted, "subscriptions")
-	}
-	if !refresh && owner == "owner" {
-		page, err := s.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
-		if err != nil || page.CompleteThrough.IsZero() {
-			return out, failure(Unavailable, "head_unavailable")
-		}
-	}
-	if verify == nil {
-		return out, failure(Unavailable, "unavailable")
-	}
-	if err := verify(ctx, in.Delivery.URL, id, in.secret); err != nil {
-		var callbackErr *Error
-		if errors.As(err, &callbackErr) && (callbackErr.Code == Unavailable || callbackErr.Code == Forbidden) {
-			return out, callbackErr
-		}
-		reason := "challenge_failed"
-		if errors.As(err, &callbackErr) {
-			reason = CallbackReason(callbackErr.Reason)
-		}
-		return out, failure(CallbackEndpoint, reason)
-	}
-
-	challengedID, challengedRefresh := id, refresh
+	var challengedID string
+	var challengedRefresh bool
 	for {
-		if err := s.purgeExpired(ctx); err != nil {
-			return out, failure(Unavailable, "store_unavailable")
+		if challengedID != "" {
+			if err := s.purgeExpired(ctx); err != nil {
+				return out, failure(Unavailable, "store_unavailable")
+			}
 		}
 		entries, raw, err := s.catalog(ctx)
 		if err != nil {
 			return out, failure(Unavailable, "store_unavailable")
 		}
 		index := find(entries, owner, in.Arguments, in.Delivery.URL)
-		if isGrantOwner(owner) && !s.liveGrant(owner) {
-			return out, failure(Forbidden, "permission_denied")
+		refresh := index >= 0
+		id := challengedID
+		expires := s.now().Add(in.TTL.Duration())
+		if challengedID != "" {
+			if grantID, ok := agentgrant.OwnerID(owner); ok {
+				grant, live := s.Grants.LookupID(grantID, agentgrant.PermissionSearchRead)
+				if !live {
+					return out, failure(Forbidden, "permission_denied")
+				}
+				if !grant.ExpiresAt.IsZero() && grant.ExpiresAt.Before(expires) {
+					expires = grant.ExpiresAt
+				}
+			}
+			if owner != "owner" && ((challengedRefresh && !refresh) || (refresh && entries[index].ID != challengedID)) {
+				return out, failure(Unavailable, "verification_changed")
+			}
 		}
-		refresh = index >= 0
-		if owner != "owner" && ((challengedRefresh && !refresh) || (refresh && entries[index].ID != challengedID)) {
-			return out, failure(Unavailable, "verification_changed")
-		}
+		var state store.WakeupState
 		if refresh {
 			if len(entries)+s.ConfigTargets > 32 {
 				return out, failure(ResourceExhausted, "subscriptions")
 			}
 			id = entries[index].ID
-			_, position, err := s.Store.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey(id))
+			var position []byte
+			state, position, err = s.Store.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey(id))
 			if err != nil || position == nil {
 				return out, failure(Unavailable, "store_unavailable")
 			}
+		} else if challengedID == "" {
+			id = subscriptionID(owner, in.Arguments, in.Delivery.URL)
+			if owner != "owner" {
+				var b [16]byte
+				if _, err = rand.Read(b[:]); err != nil {
+					return out, failure(Unavailable, "random_unavailable")
+				}
+				id += hex.EncodeToString(b[:])
+			}
 		}
-		if !refresh && creationCheck != nil {
-			if err := creationCheck(ctx); err != nil {
+		if challengedID != "" && authorize != nil {
+			if err := authorize(ctx, !refresh); err != nil {
 				return out, err
 			}
 		}
 		var initial *store.WakeupState
 		if !refresh {
-			if s.subscriptionLimit(entries, owner) {
+			owned := 0
+			for _, e := range entries {
+				if e.Owner == owner {
+					owned++
+				}
+			}
+			if len(entries)+s.ConfigTargets >= 32 || (owner != "owner" && owned >= 4) {
 				return out, failure(ResourceExhausted, "subscriptions")
 			}
-			page, err := s.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
-			if err != nil || page.CompleteThrough.IsZero() {
-				return out, failure(Unavailable, "head_unavailable")
+			if challengedID != "" || owner == "owner" {
+				page, err := s.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
+				if err != nil || page.CompleteThrough.IsZero() {
+					return out, failure(Unavailable, "head_unavailable")
+				}
+				initial = &store.WakeupState{At: page.CompleteThrough}
 			}
-			initial = &store.WakeupState{At: page.CompleteThrough}
+		}
+		if challengedID == "" {
+			if err := verify(ctx, in.Delivery.URL, id, in.secret); err != nil {
+				var callbackErr *Error
+				if errors.As(err, &callbackErr) && (callbackErr.Code == Unavailable || callbackErr.Code == Forbidden) {
+					return out, callbackErr
+				}
+				reason := "challenge_failed"
+				if errors.As(err, &callbackErr) {
+					reason = CallbackReason(callbackErr.Reason)
+				}
+				return out, failure(CallbackEndpoint, reason)
+			}
+			challengedID, challengedRefresh = id, refresh
+			continue
 		}
 		origin, err := callbackOrigin(in.Delivery.URL)
 		if err != nil {
@@ -251,16 +244,6 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 		previous, revision, credentialErr := s.credentialSnapshot(id)
 		if credentialErr != nil {
 			return out, failure(Unavailable, "credential_unavailable")
-		}
-		expires := s.now().Add(in.TTL.Duration())
-		if grantID, ok := agentgrant.OwnerID(owner); ok {
-			grant, live := s.Grants.LookupID(grantID, agentgrant.PermissionSearchRead)
-			if !live {
-				return out, failure(Forbidden, "permission_denied")
-			}
-			if !grant.ExpiresAt.IsZero() && grant.ExpiresAt.Before(expires) {
-				expires = grant.ExpiresAt
-			}
 		}
 		if refresh && !s.now().Before(entries[index].Expires) {
 			continue
@@ -298,10 +281,6 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 			return out, failure(Unavailable, "credential_unavailable")
 		}
 		status := MCPEventsDeliveryStatus{Active: true}
-		state, _, loadErr := s.Store.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey(id))
-		if loadErr != nil {
-			return out, failure(Unavailable, "store_unavailable")
-		}
 		status.LastDeliveryAt = state.LastDeliveryAt
 		status.LastError = state.LastError
 		status.FailedSince = state.FailedSince
@@ -311,18 +290,6 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 		}
 		return MCPEventsSubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: status}, nil
 	}
-}
-
-func (s *Service) subscriptionLimit(entries []entry, owner string) bool {
-	active, owned := len(entries)+s.ConfigTargets, 0
-	for _, e := range entries {
-		if s.now().Before(e.Expires) {
-			if e.Owner == owner {
-				owned++
-			}
-		}
-	}
-	return active >= 32 || (owner != "owner" && owned >= 4)
 }
 
 // rollbackSubscribe undoes the catalog write after the credential write failed:
@@ -342,26 +309,22 @@ func (s *Service) rollbackSubscribe(ctx context.Context, entries []entry, raw, n
 
 // Unsubscribe requires a request returned by DecodeUnsubscribe.
 func (s *Service) Unsubscribe(ctx context.Context, in MCPEventsUnsubscribeRequest, owner string) error {
-	if s.Store == nil || owner == "" {
+	if s.Store == nil {
 		return failure(Unavailable, "store_unavailable")
 	}
-	for {
-		entries, raw, err := s.catalog(ctx)
-		if err != nil {
-			return failure(Unavailable, "store_unavailable")
-		}
-		idx := find(entries, owner, in.Arguments, in.Delivery.URL)
-		if idx < 0 {
-			return failure(NotFound, "subscription")
-		}
-		ok, err := s.removeEntryAndCredential(ctx, entries, raw, idx)
-		if err != nil {
-			return failure(Unavailable, "store_unavailable")
-		}
-		if ok {
-			return nil
-		}
+	entries, raw, err := s.catalog(ctx)
+	if err != nil {
+		return failure(Unavailable, "store_unavailable")
 	}
+	idx := find(entries, owner, in.Arguments, in.Delivery.URL)
+	if idx < 0 {
+		return failure(NotFound, "subscription")
+	}
+	ok, err := s.removeEntryAndCredential(ctx, entries, raw, idx)
+	if err != nil || !ok {
+		return failure(Unavailable, "store_unavailable")
+	}
+	return nil
 }
 
 func (s *Service) removeEntry(ctx context.Context, entries []entry, raw []byte, index int) (bool, error) {
@@ -381,8 +344,7 @@ func (s *Service) removeEntryAndCredential(ctx context.Context, entries []entry,
 		return ok, err
 	}
 	if credentialErr := s.deleteCredential(id); credentialErr != nil {
-		logger := s.logger()
-		logger.Warn("wakeup credential cleanup failed", "id", id, "category", "credential_unavailable")
+		s.logger().Warn("wakeup credential cleanup failed", "id", id, "category", "credential_unavailable")
 	}
 	return ok, err
 }

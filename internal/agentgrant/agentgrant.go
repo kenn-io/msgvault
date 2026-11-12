@@ -85,17 +85,6 @@ func (g Grant) MatchesSource(src SourceRef) bool {
 	return false
 }
 
-// SourceIDs resolves the grant against the current source identities.
-func (g Grant) SourceIDs(sources []SourceRef) []int64 {
-	ids := make([]int64, 0)
-	for _, source := range sources {
-		if g.MatchesSource(source) {
-			ids = append(ids, source.ID)
-		}
-	}
-	return ids
-}
-
 // AllowsSender reports whether the grant permits one canonical sender on a
 // source. An empty SenderKeys set grants no sender authority.
 func (g Grant) AllowsSender(p Permission, src SourceRef, senderKey string) bool {

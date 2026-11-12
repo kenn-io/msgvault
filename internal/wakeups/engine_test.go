@@ -298,6 +298,16 @@ func TestNativeSuccessfulDeliveryClearsFailureStatus(t *testing.T) {
 	assert.Nil(state.FailedSince)
 }
 
+func stampGrantMessage(t *testing.T, st *store.Store, id int64, stamp time.Time) {
+	t.Helper()
+	var value any = stamp
+	if !st.IsPostgreSQL() {
+		value = stamp.Format(store.SQLiteTimestampLayout)
+	}
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), value, id)
+	Require.NoError(t, err)
+}
+
 // An empty scoped page advances before a later permitted message arrives.
 func TestGrantEmptyPageAdvancesBeforeNewSourceMessage(t *testing.T) {
 	require := Require.New(t)
@@ -317,13 +327,7 @@ func TestGrantEmptyPageAdvancesBeforeNewSourceMessage(t *testing.T) {
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: outside.ID, SourceMessageID: "outside", ConversationID: conv, MessageType: "email", SenderID: sql.NullInt64{Int64: participant, Valid: true}, SentAt: sql.NullTime{Time: now, Valid: true}})
 	require.NoError(err)
-	stamp := now.Add(-time.Minute)
-	var value any = stamp
-	if !st.IsPostgreSQL() {
-		value = stamp.Format(store.SQLiteTimestampLayout)
-	}
-	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), value, id)
-	require.NoError(err)
+	stampGrantMessage(t, st, id, now.Add(-time.Minute))
 	start := now.Add(-time.Hour)
 	for _, name := range []string{"owner", "grant"} {
 		ok, err := st.AdvanceWakeupStateKey(ctx, store.MCPEventsPositionKey(name), nil, store.WakeupState{At: start})
@@ -370,13 +374,7 @@ func TestGrantRevokedAfterScanDoesNotSend(t *testing.T) {
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, SourceMessageID: "message", ConversationID: conv, MessageType: "email", SentAt: sql.NullTime{Time: now, Valid: true}})
 	require.NoError(err)
-	stamp := now.Add(-time.Minute)
-	var value any = stamp
-	if !st.IsPostgreSQL() {
-		value = stamp.Format(store.SQLiteTimestampLayout)
-	}
-	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET content_changed_at=? WHERE id=?`), value, id)
-	require.NoError(err)
+	stampGrantMessage(t, st, id, now.Add(-time.Minute))
 	key := store.MCPEventsPositionKey("grant")
 	ok, err := st.AdvanceWakeupStateKey(ctx, key, nil, store.WakeupState{At: now.Add(-time.Hour)})
 	require.NoError(err)

@@ -285,11 +285,13 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				if err != nil {
 					return err
 				}
-				refs := make([]agentgrant.SourceRef, 0, len(sources))
+				ids := make([]int64, 0)
 				for _, source := range sources {
-					refs = append(refs, agentgrant.SourceRef{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier})
+					if grant.MatchesSource(agentgrant.SourceRef{Type: source.SourceType, Identifier: source.Identifier}) {
+						ids = append(ids, source.ID)
+					}
 				}
-				readCtx = sourcescope.WithSourceIDs(readCtx, grant.SourceIDs(refs))
+				readCtx = sourcescope.WithSourceIDs(readCtx, ids)
 			}
 			uid, err = e.Store.ArchiveUIDContext(ctx)
 			if err != nil {

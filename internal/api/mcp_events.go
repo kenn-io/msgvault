@@ -71,7 +71,7 @@ func (s *Server) handleMCPEventsSubscribe(w http.ResponseWriter, r *http.Request
 	serveEventsMutation(w, r, s, mcpevents.DecodeSubscribe, func(ctx context.Context, in mcpevents.MCPEventsSubscribeRequest, release *func()) (mcpevents.MCPEventsSubscribeResult, error) {
 		service := s.mcpEvents
 		owner := "owner"
-		var creationCheck func(context.Context) error
+		var authorize func(context.Context, bool) error
 		grant := s.requestAuthentication(r).Grant
 		if grant != nil {
 			release, apiErr := s.beginAgentRead(r, "listChangedMessages", grant, agentgrant.PermissionSearchRead)
@@ -83,33 +83,37 @@ func (s *Server) handleMCPEventsSubscribe(w http.ResponseWriter, r *http.Request
 				release()
 				return mcpevents.MCPEventsSubscribeResult{}, &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "permission_denied"}
 			}
-			if in.Arguments.PersonID != 0 {
-				creationCheck = func(ctx context.Context) error {
-					request := r.Clone(ctx)
-					done, apiErr := s.beginAgentRead(request, "listChangedMessages", grant, agentgrant.PermissionSearchRead)
-					if apiErr != nil {
-						return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "source_scope_unavailable"}
-					}
-					defer done()
-					ids := agentReadSourceIDs(request)
-					filter, resolveErr := changefeed.ResolveFilter(request.Context(), s.store, changefeed.Filter{PersonID: in.Arguments.PersonID})
-					switch {
-					case errors.Is(resolveErr, store.ErrPersonNotFound), errors.Is(resolveErr, resolver.ErrEmptyPopulation):
-						return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "permission_denied"}
-					case resolveErr != nil || service.Store == nil:
-						return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "source_scope_unavailable"}
-					}
-					inside, outside, err := service.Store.PersonSourceEvidence(request.Context(), filter.Participants, ids)
-					switch {
-					case err != nil:
-						return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "source_scope_unavailable"}
-					case !inside:
-						return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "permission_denied"}
-					case outside:
-						return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "person_scope_exceeds_grant"}
-					}
+			authorize = func(ctx context.Context, creating bool) error {
+				request := r.Clone(ctx)
+				done, apiErr := s.beginAgentRead(request, "listChangedMessages", grant, agentgrant.PermissionSearchRead)
+				if apiErr != nil {
+					return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "source_scope_unavailable"}
+				}
+				defer done()
+				ids := agentReadSourceIDs(request)
+				if in.Arguments.SourceID != 0 && !slices.Contains(ids, in.Arguments.SourceID) {
+					return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "permission_denied"}
+				}
+				if !creating || in.Arguments.PersonID == 0 {
 					return nil
 				}
+				filter, resolveErr := changefeed.ResolveFilter(request.Context(), s.store, changefeed.Filter{PersonID: in.Arguments.PersonID})
+				switch {
+				case errors.Is(resolveErr, store.ErrPersonNotFound), errors.Is(resolveErr, resolver.ErrEmptyPopulation):
+					return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "permission_denied"}
+				case resolveErr != nil || service.Store == nil:
+					return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "source_scope_unavailable"}
+				}
+				inside, outside, err := service.Store.PersonSourceEvidence(request.Context(), filter.Participants, ids)
+				switch {
+				case err != nil:
+					return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "source_scope_unavailable"}
+				case !inside:
+					return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "permission_denied"}
+				case outside:
+					return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "person_scope_exceeds_grant"}
+				}
+				return nil
 			}
 			release()
 			owner = agentgrant.Owner(grant.ID)
@@ -126,18 +130,6 @@ func (s *Server) handleMCPEventsSubscribe(w http.ResponseWriter, r *http.Request
 			if verifyErr != nil {
 				return verifyErr
 			}
-			if grant != nil && in.Arguments.SourceID != 0 {
-				request := r.Clone(ctx)
-				done, apiErr := s.beginAgentRead(request, "listChangedMessages", grant, agentgrant.PermissionSearchRead)
-				if apiErr != nil {
-					return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "source_scope_unavailable"}
-				}
-				allowed := slices.Contains(agentReadSourceIDs(request), in.Arguments.SourceID)
-				done()
-				if !allowed {
-					return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "permission_denied"}
-				}
-			}
 			var err error
 			*release, err = s.beginMutation("MCP Events")(ctx)
 			if err != nil {
@@ -145,7 +137,7 @@ func (s *Server) handleMCPEventsSubscribe(w http.ResponseWriter, r *http.Request
 			}
 			return nil
 		}
-		return service.Subscribe(ctx, in, owner, verify, creationCheck)
+		return service.Subscribe(ctx, in, owner, verify, authorize)
 	})
 }
 func (s *Server) handleMCPEventsUnsubscribe(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +160,7 @@ func serveEventsMutation[Req, Resp any](w http.ResponseWriter, r *http.Request, 
 		eventsError(w, err)
 		return
 	}
-	ctx := store.WithoutReadSnapshotContext(r.Context())
+	ctx := r.Context()
 	release, err := s.beginMutation("MCP Events")(ctx)
 	if err != nil {
 		writeOperationGateBusy(w, r, s.operationGate)

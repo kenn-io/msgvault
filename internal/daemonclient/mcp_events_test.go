@@ -29,39 +29,6 @@ func TestMCPEventsListReadsDaemonEnabledState(t *testing.T) {
 
 func TestMCPEventsPreservesUnavailableReasons(t *testing.T) {
 	for _, tc := range []struct {
-		reason       string
-		status, code int
-	}{{"disabled", 503, -32010}, {"head_unavailable", 503, -32010}, {"store_unavailable", 503, -32010}, {"verification_changed", 503, -32010}, {"source_scope_unavailable", 503, -32010}, {"invalid_scope", 400, -32602}, {"subscriptions", http.StatusTooManyRequests, mcpevents.ResourceExhausted}, {"subscription", http.StatusNotFound, mcpevents.NotFound}, {"credential_unavailable", http.StatusServiceUnavailable, mcpevents.Unavailable}, {"challenge_failed", http.StatusBadGateway, -32027}, {"private_callback_detail", http.StatusBadGateway, -32027}, {"unknown_private_detail", http.StatusBadRequest, mcpevents.InvalidParams}} {
-		reason := tc.reason
-		t.Run(reason, func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(tc.status)
-				_, _ = fmt.Fprintf(w, `{"code":%d,"reason":%q}`, tc.code, reason)
-			}))
-			defer server.Close()
-			c, err := New(Config{URL: server.URL, AllowInsecure: true})
-			requirements.NoError(err)
-			defer func() { requirements.NoError(c.Close()) }()
-			_, err = c.MCPEventsSubscribe(t.Context(), mcpevents.MCPEventsSubscribeRequest{})
-			var eventErr *mcpevents.Error
-			requirements.ErrorAs(err, &eventErr)
-			assertions.Equal(tc.code, eventErr.Code)
-			want := reason
-			if reason == "private_callback_detail" {
-				want = "challenge_failed"
-			}
-			if reason == "unknown_private_detail" {
-				want = "request_rejected"
-			}
-			assertions.Equal(want, eventErr.Reason)
-		})
-	}
-}
-
-func TestMCPEventsErrorReasonsAreWhitelisted(t *testing.T) {
-	for _, tc := range []struct {
 		reason, want string
 		code, status int
 	}{
@@ -73,11 +40,13 @@ func TestMCPEventsErrorReasonsAreWhitelisted(t *testing.T) {
 		{"source_scope_unavailable", "source_scope_unavailable", mcpevents.Unavailable, http.StatusServiceUnavailable},
 		{"invalid_scope", "invalid_scope", mcpevents.InvalidParams, http.StatusBadRequest},
 		{"subscriptions", "subscriptions", mcpevents.ResourceExhausted, http.StatusTooManyRequests},
-		{"verification_failed", "verification_failed", mcpevents.Forbidden, http.StatusForbidden},
 		{"permission_denied", "permission_denied", mcpevents.Forbidden, http.StatusForbidden},
 		{"person_scope_exceeds_grant", "person_scope_exceeds_grant", mcpevents.Forbidden, http.StatusForbidden},
 		{"private_daemon_detail", "request_rejected", mcpevents.Forbidden, http.StatusForbidden},
 		{"dns_error", "dns_error", mcpevents.CallbackEndpoint, http.StatusBadGateway},
+		{"subscription", "subscription", mcpevents.NotFound, http.StatusNotFound},
+		{"challenge_failed", "challenge_failed", mcpevents.CallbackEndpoint, http.StatusBadGateway},
+		{"unknown_private_detail", "request_rejected", mcpevents.InvalidParams, http.StatusBadRequest},
 		{"private_callback_detail", "challenge_failed", mcpevents.CallbackEndpoint, http.StatusBadGateway},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {

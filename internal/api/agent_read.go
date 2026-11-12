@@ -157,15 +157,12 @@ func (s *Server) authorizeAgentRead(r *http.Request, operation string, grant *ag
 	if err != nil {
 		return newAPIHTTPError(503, "source_scope_unavailable", "Source authorization is unavailable")
 	}
-	refs := make([]agentgrant.SourceRef, 0, len(sources))
-	for _, src := range sources {
-		refs = append(refs, agentgrant.SourceRef{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier})
-	}
-	allowed := grant.SourceIDs(refs)
+	allowed := make([]int64, 0)
 	account := r.URL.Query().Get("account")
 	accountGranted := false
-	for _, src := range refs {
-		if slices.Contains(allowed, src.ID) {
+	for _, src := range sources {
+		if grant.MatchesSource(agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}) {
+			allowed = append(allowed, src.ID)
 			accountGranted = accountGranted || src.Identifier == account
 		}
 	}

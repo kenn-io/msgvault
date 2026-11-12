@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +16,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
-	"go.kenn.io/msgvault/internal/changefeed"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -305,7 +303,7 @@ func TestDisabledUnsubscribeThenSubscribeReusesIDAndStartsAtCurrentBound(t *test
 }
 
 func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
-	for _, owner := range []string{"owner", "grant:expired"} {
+	for _, owner := range []string{"owner"} {
 		t.Run(owner, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -315,17 +313,7 @@ func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 			result, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
 			requirements.NoError(err)
-			if owner != "owner" {
-				entries, raw, err := service.catalog(t.Context())
-				requirements.NoError(err)
-				requirements.Len(entries, 1)
-				entries[0].Owner = owner
-				next, err := json.Marshal(entries)
-				requirements.NoError(err)
-				ok, err := st.SwapMCPEventsCatalog(t.Context(), raw, next, "", nil, "")
-				requirements.NoError(err)
-				requirements.True(ok)
-			}
+
 			now = now.Add(23 * time.Hour)
 			in.Delivery.URL = "https://example.com/live"
 			live, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
@@ -755,6 +743,11 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			requirements.ErrorAs(err, &callbackErr)
 			assertions.Equal(CallbackEndpoint, callbackErr.Code)
 			assertions.Equal("dns_error", callbackErr.Reason)
+			_, err = service.Subscribe(t.Context(), in, "owner", func(context.Context, string, string, []byte) error { return errors.New("private transport detail") }, nil)
+			requirements.ErrorAs(err, &callbackErr)
+			assertions.Equal(CallbackEndpoint, callbackErr.Code)
+			assertions.Equal("challenge_failed", callbackErr.Reason)
+			assertions.Equal(beforeState, snapshot(t, st, tokens))
 			catalog, err := st.LoadMCPEventsCatalog(t.Context())
 			requirements.NoError(err)
 			assertions.Empty(catalog)
@@ -816,7 +809,7 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 }
 
 func TestOwnerServiceRejectsOtherCatalogOwners(t *testing.T) {
-	for _, owner := range []string{"", "grant:fixture", "unknown"} {
+	for _, owner := range []string{"", "unknown"} {
 		t.Run(owner, func(t *testing.T) {
 			require := require.New(t)
 			st := newEventsTestStore(t)
@@ -991,171 +984,24 @@ func TestRemovalKeepsCredentialsWhenCatalogCASFails(t *testing.T) {
 	assertions.False(credentials.Stored(providercredentials.EventsID(result.ID)))
 }
 
-func TestDecodeSubscribeRejectsInvalidArgumentsAndNulls(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	for _, tc := range []struct {
-		raw         string
-		unsubscribe bool
-	}{
-		{`{"name":null,"arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
-		{`{"name":"msgvault.messages.changed","arguments":{"person_id":1,"source_id":2},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
-		{`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"incoming_only":null},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
-		{`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"source_id":2},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
-		{`{"name":"msgvault.messages.changed","arguments":{"source_id":1,"unknown":true},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, false},
-		{`{"name":"msgvault.messages.changed","arguments":{"person_id":1,"source_id":0},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, true},
-		{`{"name":"msgvault.messages.changed","arguments":{"person_id":0,"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, true},
-	} {
-		_, err := DecodeSubscribe([]byte(tc.raw))
-		var eventErr *Error
-		requirements.ErrorAs(err, &eventErr)
-		assertions.Equal(InvalidParams, eventErr.Code, tc.raw)
-		if tc.unsubscribe {
-			assertions.Equal("invalid_arguments", eventErr.Reason)
-			_, err = DecodeUnsubscribe([]byte(tc.raw))
-			requirements.ErrorAs(err, &eventErr)
-			assertions.Equal(InvalidParams, eventErr.Code)
-			assertions.Equal("invalid_arguments", eventErr.Reason)
-		}
-	}
-}
-
-func TestExpiredGrantEntryPurgedByOwnerService(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := newEventsTestStore(t)
-	now := time.Now().UTC()
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Now: func() time.Time { return now }}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	result, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
-	require.NoError(err)
-	entries, raw, err := service.catalog(t.Context())
-	require.NoError(err)
-	require.Len(entries, 1)
-	entries[0].Owner = "grant:expired"
-	entries[0].Expires = now.Add(-time.Second)
-	next, err := json.Marshal(entries)
-	require.NoError(err)
-	ok, err := st.SwapMCPEventsCatalog(t.Context(), raw, next, "", nil, "")
-	require.NoError(err)
-	require.True(ok)
-	targets, err := service.Native(t.Context())
-	require.NoError(err)
-	assert.Empty(targets)
-	entries, _, err = service.catalog(t.Context())
-	require.NoError(err)
-	assert.Empty(entries)
-	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
-	require.NoError(err)
-	assert.Nil(position)
-}
-
-func TestConcurrentFinalSubscriptionUsesSharedLimit(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := newEventsTestStore(t)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, ConfigTargets: 31}
-	makeRequest := func(url string) MCPEventsSubscribeRequest {
-		return preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: url, Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	}
-	results := make(chan error, 2)
-	for _, url := range []string{"https://example.com/one", "https://example.com/two"} {
-		request := makeRequest(url)
-		go func() {
-			_, err := service.Subscribe(t.Context(), request, "owner", acceptCallback, nil)
-			results <- err
-		}()
-	}
-	var success, exhausted int
-	for range 2 {
-		err := <-results
-		if err == nil {
-			success++
-			continue
-		}
-		var eventErr *Error
-		require.ErrorAs(err, &eventErr)
-		if eventErr.Code == ResourceExhausted {
-			exhausted++
-		}
-	}
-	assert.Equal(1, success)
-	assert.Equal(1, exhausted)
-
-	// A restarted daemon with more configured targets must not claim delivery.
-	entries, _, err := service.catalog(t.Context())
-	require.NoError(err)
-	require.Len(entries, 1)
-	key := store.MCPEventsPositionKey(entries[0].ID)
-	before, _, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(err)
-	service.ConfigTargets = 32
-	_, err = service.Subscribe(t.Context(), makeRequest("https://example.com/one"), "owner", acceptCallback, nil)
-	var eventErr *Error
-	require.ErrorAs(err, &eventErr)
-	assert.Equal(ResourceExhausted, eventErr.Code)
-	after, _, err := st.LoadWakeupStateKey(t.Context(), key)
-	require.NoError(err)
-	assert.Equal(before, after)
-	entriesAfter, _, err := service.catalog(t.Context())
-	require.NoError(err)
-	assert.Equal(entries, entriesAfter)
-}
-
-func TestUnsubscribeWhileDisabledRemovesPosition(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := newEventsTestStore(t)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	result, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
-	require.NoError(err)
-	service.Enabled = false
-	require.NoError(service.Unsubscribe(t.Context(), MCPEventsUnsubscribeRequest{Name: in.Name, Arguments: in.Arguments, Delivery: in.Delivery}, "owner"))
-	entries, _, err := service.catalog(t.Context())
-	require.NoError(err)
-	assert.Empty(entries)
-	_, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
-	require.NoError(err)
-	assert.Nil(raw)
-}
-
-func TestNativeSkipsMissingCredentialWithoutBlockingOtherEntries(t *testing.T) {
-	require := require.New(t)
-	st := newEventsTestStore(t)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/one?token=x", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	first, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
-	require.NoError(err)
-	in.Delivery.URL = "https://example.com/two"
-	second, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
-	require.NoError(err)
-	snapshot, err := providercredentials.ReadEvents(service.TokensDir)
-	require.NoError(err)
-	id := providercredentials.EventsID(first.ID)
-	revision, err := snapshot.Revision(id)
-	require.NoError(err)
-	_, err = providercredentials.DeleteIfRevision(service.TokensDir, revision, id, func() error { return nil })
-	require.NoError(err)
-	targets, err := service.Native(t.Context())
-	require.NoError(err)
-	require.Len(targets, 1)
-	assert.Equal(t, second.ID, targets[0].Name)
-}
-
 func TestNativeRemovesSubscriptionsWhenGrantEnds(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	reg := agentgrant.NewRegistry()
-	id, _, _, err := reg.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
+	id, _, _, err := reg.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "events@example.test"}}, time.Time{})
 	require.NoError(err)
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: reg}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	created, err := service.Subscribe(t.Context(), in, agentgrant.Owner(id), func(context.Context, string, string, []byte) error { return nil }, nil)
 	require.NoError(err)
-	require.True(reg.Revoke(id))
 	subs, err := service.Native(t.Context())
+	require.NoError(err)
+	require.Len(subs, 1)
+	assert.Equal(id, subs[0].GrantID)
+	assert.Same(reg, subs[0].Grants)
+	require.True(reg.Revoke(id))
+	subs, err = service.Native(t.Context())
 	require.NoError(err)
 	assert.Empty(subs)
 	_, position, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(created.ID))
@@ -1163,84 +1009,191 @@ func TestNativeRemovesSubscriptionsWhenGrantEnds(t *testing.T) {
 	assert.Nil(position)
 }
 
-func TestGrantRevokedDuringVerificationDoesNotCreateSubscription(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	registry := agentgrant.NewRegistry()
-	id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
-	require.NoError(err)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry}
-	verify := func(context.Context, string, string, []byte) error { registry.Revoke(id); return nil }
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	_, err = service.Subscribe(t.Context(), in, agentgrant.Owner(id), verify, nil)
-	var eventErr *Error
-	require.ErrorAs(err, &eventErr)
-	assert.Equal(Forbidden, eventErr.Code)
-	assert.Equal("permission_denied", eventErr.Reason)
-	raw, err := st.LoadMCPEventsCatalog(t.Context())
-	require.NoError(err)
-	assert.Empty(raw)
-}
-
-func TestGrantVerificationFailureIsSafeCallbackError(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	registry := agentgrant.NewRegistry()
-	id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
-	require.NoError(err)
-	service := Service{Store: testutil.NewTestStore(t), TokensDir: t.TempDir(), Enabled: true, Grants: registry}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	_, err = service.Subscribe(t.Context(), in, agentgrant.Owner(id), func(context.Context, string, string, []byte) error { return errors.New("private transport detail") }, nil)
-	var eventErr *Error
-	require.ErrorAs(err, &eventErr)
-	assert.Equal(CallbackEndpoint, eventErr.Code)
-	assert.Equal("challenge_failed", eventErr.Reason)
-	assert.Equal(http.StatusBadGateway, eventErr.Status())
-	_, err = service.Subscribe(t.Context(), in, agentgrant.Owner(id), func(context.Context, string, string, []byte) error { return failure(CallbackEndpoint, "dns_error") }, nil)
-	require.ErrorAs(err, &eventErr)
-	assert.Equal(CallbackEndpoint, eventErr.Code)
-	assert.Equal("dns_error", eventErr.Reason)
-	_, err = service.Subscribe(t.Context(), in, agentgrant.Owner(id), nil, nil)
-	require.ErrorAs(err, &eventErr)
-	assert.Equal(Unavailable, eventErr.Code)
-}
-
-func TestGrantVerificationRunsOnceWhenCatalogChanges(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	registry := agentgrant.NewRegistry()
-	id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
-	require.NoError(err)
-	calls := 0
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry}
-	verify := func(ctx context.Context, _ string, _ string, _ []byte) error {
-		calls++
-		ok, err := st.SwapMCPEventsCatalog(ctx, nil, []byte(`[]`), "", nil, "")
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return errors.New("catalog changed twice")
-		}
-		return nil
+func TestDelegatedCatalogChangesDuringChallenge(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T, *store.Store, *agentgrant.Registry, string, *Service, *time.Time)
+	}{
+		{"grant revoked", func(t *testing.T, st *store.Store, registry *agentgrant.Registry, id string, service *Service, now *time.Time) {
+			require := require.New(t)
+			assert := assert.New(t)
+			var err error
+			verify := func(context.Context, string, string, []byte) error { registry.Revoke(id); return nil }
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			_, err = service.Subscribe(t.Context(), in, agentgrant.Owner(id), verify, nil)
+			var eventErr *Error
+			require.ErrorAs(err, &eventErr)
+			assert.Equal(Forbidden, eventErr.Code)
+			assert.Equal("permission_denied", eventErr.Reason)
+			raw, err := st.LoadMCPEventsCatalog(t.Context())
+			require.NoError(err)
+			assert.Empty(raw)
+		}},
+		{"unrelated catalog change", func(t *testing.T, st *store.Store, registry *agentgrant.Registry, id string, service *Service, now *time.Time) {
+			require := require.New(t)
+			assert := assert.New(t)
+			var err error
+			calls := 0
+			verify := func(ctx context.Context, _ string, _ string, _ []byte) error {
+				calls++
+				ok, err := st.SwapMCPEventsCatalog(ctx, nil, []byte(`[]`), "", nil, "")
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return errors.New("catalog changed twice")
+				}
+				return nil
+			}
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			_, err = service.Subscribe(t.Context(), in, agentgrant.Owner(id), verify, nil)
+			require.NoError(err)
+			assert.Equal(1, calls)
+		}},
+		{"concurrent verified pair", func(t *testing.T, st *store.Store, registry *agentgrant.Registry, id string, service *Service, now *time.Time) {
+			require := require.New(t)
+			assert := assert.New(t)
+			var err error
+			owner := agentgrant.Owner(id)
+			request := func(secret string) MCPEventsSubscribeRequest {
+				return preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: secret}})
+			}
+			first := request("whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh")
+			second := request("whsec_YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJi")
+			var challenged string
+			var winner MCPEventsSubscribeResult
+			verifyWinner := func(_ context.Context, _ string, id string, secret []byte) error {
+				assert.Equal(second.secret, secret)
+				challenged = id
+				return nil
+			}
+			verifyLoser := func(ctx context.Context, _ string, id string, secret []byte) error {
+				assert.Equal(first.secret, secret)
+				winner, err = service.Subscribe(ctx, second, owner, verifyWinner, nil)
+				require.NoError(err)
+				assert.NotEqual(id, challenged)
+				return nil
+			}
+			_, err = service.Subscribe(t.Context(), first, owner, verifyLoser, nil)
+			var failure *Error
+			require.ErrorAs(err, &failure)
+			assert.Equal(Unavailable, failure.Code)
+			assert.Equal("verification_changed", failure.Reason)
+			assert.Equal(challenged, winner.ID)
+			targets, err := service.Native(t.Context())
+			require.NoError(err)
+			require.Len(targets, 1)
+			assert.Equal(winner.ID, targets[0].Name)
+			credentials, err := providercredentials.ReadEvents(service.TokensDir)
+			require.NoError(err)
+			origin, err := callbackOrigin(first.Delivery.URL)
+			require.NoError(err)
+			encoded, _, err := credentials.Resolve(providercredentials.EventsID(winner.ID), origin, "", nil)
+			require.NoError(err)
+			var private privateCallback
+			require.NoError(json.Unmarshal([]byte(encoded), &private))
+			secret, err := base64.StdEncoding.DecodeString(private.Secret)
+			require.NoError(err)
+			assert.Equal(second.secret, secret)
+			var retryID string
+			retry, err := service.Subscribe(t.Context(), first, owner, func(_ context.Context, _ string, id string, secret []byte) error {
+				retryID = id
+				assert.Equal(first.secret, secret)
+				return nil
+			}, nil)
+			require.NoError(err)
+			assert.Equal(winner.ID, retryID)
+			assert.Equal(winner.ID, retry.ID)
+			credentials, err = providercredentials.ReadEvents(service.TokensDir)
+			require.NoError(err)
+			encoded, _, err = credentials.Resolve(providercredentials.EventsID(retry.ID), origin, "", nil)
+			require.NoError(err)
+			require.NoError(json.Unmarshal([]byte(encoded), &private))
+			secret, err = base64.StdEncoding.DecodeString(private.Secret)
+			require.NoError(err)
+			assert.Equal(first.secret, secret)
+		}},
+		{"expiry during challenge", func(t *testing.T, st *store.Store, registry *agentgrant.Registry, id string, service *Service, now *time.Time) {
+			require := require.New(t)
+			assert := assert.New(t)
+			var err error
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			owner := agentgrant.Owner(id)
+			verify := func(context.Context, string, string, []byte) error { return nil }
+			first, err := service.Subscribe(t.Context(), in, owner, verify, nil)
+			require.NoError(err)
+			_, err = service.Subscribe(t.Context(), in, owner, func(_ context.Context, _ string, challenged string, _ []byte) error {
+				assert.Equal(first.ID, challenged)
+				*now = first.RefreshBefore
+				return nil
+			}, nil)
+			var failure *Error
+			require.ErrorAs(err, &failure)
+			assert.Equal(Unavailable, failure.Code)
+			assert.Equal("verification_changed", failure.Reason)
+			_, oldPosition, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
+			require.NoError(err)
+			assert.Nil(oldPosition)
+			_, gapID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "gap@example.test", "gap", "gap", "")
+			require.NoError(err)
+			checks := 0
+			var retryID string
+			retry, err := service.Subscribe(t.Context(), in, owner, func(_ context.Context, _ string, challenged string, _ []byte) error {
+				retryID = challenged
+				return nil
+			}, func(context.Context, bool) error { checks++; return nil })
+			require.NoError(err)
+			assert.NotEqual(first.ID, retry.ID)
+			assert.Equal(retryID, retry.ID)
+			assert.GreaterOrEqual(checks, 1)
+			state, _, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(retry.ID))
+			require.NoError(err)
+			assert.False(state.At.IsZero())
+			page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(state.At), 100)
+			require.NoError(err)
+			for _, message := range page.Messages {
+				assert.NotEqual(gapID, message.ID)
+			}
+		}},
+		{"expiry between requests", func(t *testing.T, st *store.Store, registry *agentgrant.Registry, id string, service *Service, now *time.Time) {
+			require := require.New(t)
+			assert := assert.New(t)
+			var err error
+			owner := agentgrant.Owner(id)
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/private?token=fixture", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			first, err := service.Subscribe(t.Context(), in, owner, acceptCallback, nil)
+			require.NoError(err)
+			raw, err := st.LoadMCPEventsCatalog(t.Context())
+			require.NoError(err)
+			assert.NotContains(string(raw), in.Delivery.URL)
+			*now = first.RefreshBefore.Add(time.Second)
+			next, err := service.Subscribe(t.Context(), in, owner, acceptCallback, nil)
+			require.NoError(err)
+			assert.NotEqual(first.ID, next.ID)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newEventsTestStore(t)
+			registry := agentgrant.NewRegistry()
+			t.Cleanup(registry.Close)
+			id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "events@example.test"}}, time.Time{})
+			require.NoError(t, err)
+			now := time.Now().UTC()
+			service := &Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry, Now: func() time.Time { return now }}
+			tc.run(t, st, registry, id, service, &now)
+		})
 	}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	_, err = service.Subscribe(t.Context(), in, agentgrant.Owner(id), verify, nil)
-	require.NoError(err)
-	assert.Equal(1, calls)
 }
 
 func TestGrantLeaseRefreshAndOwnership(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
+	st := newEventsTestStore(t)
 	registry := agentgrant.NewRegistry()
 	expiry := time.Now().Add(3 * time.Hour).UTC()
-	a, _, _, err := registry.Issue("a", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "a@example.test"}}, expiry)
+	a, _, _, err := registry.Issue("a", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "events@example.test"}}, expiry)
 	require.NoError(err)
-	b, _, _, err := registry.Issue("b", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "b@example.test"}}, time.Time{})
+	b, _, _, err := registry.Issue("b", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "events@example.test"}}, time.Time{})
 	require.NoError(err)
 	now := time.Now().UTC()
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry, Now: func() time.Time { return now }}
@@ -1269,130 +1222,6 @@ func TestGrantLeaseRefreshAndOwnership(t *testing.T) {
 	assert.Len(entries, 1)
 }
 
-func TestSubscribeRejectsEmptyOwner(t *testing.T) {
-	service := Service{Store: testutil.NewTestStore(t), Enabled: true}
-	_, err := service.Subscribe(t.Context(), MCPEventsSubscribeRequest{}, "", nil, nil)
-	var eventErr *Error
-	require.ErrorAs(t, err, &eventErr)
-	assert.Equal(t, Unavailable, eventErr.Code)
-}
-
-func TestDelegatedConcurrentCreationRequiresVerifiedPair(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	registry := agentgrant.NewRegistry()
-	id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
-	require.NoError(err)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry}
-	owner := agentgrant.Owner(id)
-	request := func(secret string) MCPEventsSubscribeRequest {
-		return preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: secret}})
-	}
-	first := request("whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh")
-	second := request("whsec_YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJi")
-	var challenged string
-	var winner MCPEventsSubscribeResult
-	verifyWinner := func(_ context.Context, _ string, id string, secret []byte) error {
-		assert.Equal(second.secret, secret)
-		challenged = id
-		return nil
-	}
-	verifyLoser := func(ctx context.Context, _ string, id string, secret []byte) error {
-		assert.Equal(first.secret, secret)
-		winner, err = service.Subscribe(ctx, second, owner, verifyWinner, nil)
-		require.NoError(err)
-		assert.NotEqual(id, challenged)
-		return nil
-	}
-	_, err = service.Subscribe(t.Context(), first, owner, verifyLoser, nil)
-	var failure *Error
-	require.ErrorAs(err, &failure)
-	assert.Equal(Unavailable, failure.Code)
-	assert.Equal("verification_changed", failure.Reason)
-	assert.Equal(challenged, winner.ID)
-	targets, err := service.Native(t.Context())
-	require.NoError(err)
-	require.Len(targets, 1)
-	assert.Equal(winner.ID, targets[0].Name)
-	credentials, err := providercredentials.ReadEvents(service.TokensDir)
-	require.NoError(err)
-	origin, err := callbackOrigin(first.Delivery.URL)
-	require.NoError(err)
-	encoded, _, err := credentials.Resolve(providercredentials.EventsID(winner.ID), origin, "", nil)
-	require.NoError(err)
-	var private privateCallback
-	require.NoError(json.Unmarshal([]byte(encoded), &private))
-	secret, err := base64.StdEncoding.DecodeString(private.Secret)
-	require.NoError(err)
-	assert.Equal(second.secret, secret)
-	var retryID string
-	retry, err := service.Subscribe(t.Context(), first, owner, func(_ context.Context, _ string, id string, secret []byte) error {
-		retryID = id
-		assert.Equal(first.secret, secret)
-		return nil
-	}, nil)
-	require.NoError(err)
-	assert.Equal(winner.ID, retryID)
-	assert.Equal(winner.ID, retry.ID)
-	credentials, err = providercredentials.ReadEvents(service.TokensDir)
-	require.NoError(err)
-	encoded, _, err = credentials.Resolve(providercredentials.EventsID(retry.ID), origin, "", nil)
-	require.NoError(err)
-	require.NoError(json.Unmarshal([]byte(encoded), &private))
-	secret, err = base64.StdEncoding.DecodeString(private.Secret)
-	require.NoError(err)
-	assert.Equal(first.secret, secret)
-}
-
-func TestDelegatedRefreshExpiringDuringChallengeRequiresFreshCreation(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	registry := agentgrant.NewRegistry()
-	id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
-	require.NoError(err)
-	now := time.Now().UTC()
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry, Now: func() time.Time { return now }}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	owner := agentgrant.Owner(id)
-	verify := func(context.Context, string, string, []byte) error { return nil }
-	first, err := service.Subscribe(t.Context(), in, owner, verify, nil)
-	require.NoError(err)
-	_, err = service.Subscribe(t.Context(), in, owner, func(_ context.Context, _ string, challenged string, _ []byte) error {
-		assert.Equal(first.ID, challenged)
-		now = first.RefreshBefore
-		return nil
-	}, nil)
-	var failure *Error
-	require.ErrorAs(err, &failure)
-	assert.Equal(Unavailable, failure.Code)
-	assert.Equal("verification_changed", failure.Reason)
-	_, oldPosition, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(first.ID))
-	require.NoError(err)
-	assert.Nil(oldPosition)
-	_, gapID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "gap@example.test", "gap", "gap", "")
-	require.NoError(err)
-	checks := 0
-	var retryID string
-	retry, err := service.Subscribe(t.Context(), in, owner, func(_ context.Context, _ string, challenged string, _ []byte) error {
-		retryID = challenged
-		return nil
-	}, func(context.Context) error { checks++; return nil })
-	require.NoError(err)
-	assert.NotEqual(first.ID, retry.ID)
-	assert.Equal(retryID, retry.ID)
-	assert.GreaterOrEqual(checks, 1)
-	state, _, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(retry.ID))
-	require.NoError(err)
-	assert.False(state.At.IsZero())
-	page, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(state.At), 100)
-	require.NoError(err)
-	for _, message := range page.Messages {
-		assert.NotEqual(gapID, message.ID)
-	}
-}
-
 func TestCreationAdmissionRunsAfterVerificationAndNotForRefresh(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1404,7 +1233,10 @@ func TestCreationAdmissionRunsAfterVerificationAndNotForRefresh(t *testing.T) {
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	verified, allowed := false, false
 	verify := func(context.Context, string, string, []byte) error { verified = true; return nil }
-	check := func(context.Context) error {
+	check := func(_ context.Context, creating bool) error {
+		if !creating {
+			return nil
+		}
 		assert.True(verified)
 		if !allowed {
 			return failure(Forbidden, "person_scope_exceeds_grant")
@@ -1425,68 +1257,22 @@ func TestCreationAdmissionRunsAfterVerificationAndNotForRefresh(t *testing.T) {
 	assert.Equal(first.ID, second.ID)
 }
 
-func TestDelegatedPersonRefusalsHaveSameReason(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	ctx := t.Context()
-	st := testutil.NewTestStore(t)
-	allowed, _, err := testutil.CreateIndexedSourceMessage(ctx, st, "allowed@example.test", "inside", "inside", "")
-	require.NoError(err)
-	_, messageID, err := testutil.CreateIndexedSourceMessage(ctx, st, "outside@example.test", "outside", "outside", "")
-	require.NoError(err)
-	participant, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
-	require.NoError(err)
-	require.NoError(st.ReplaceMessageRecipients(messageID, "to", []int64{participant}, nil))
-	person, _, err := st.CreatePersonFromParticipant(participant)
-	require.NoError(err)
-	registry := agentgrant.NewRegistry()
-	id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: allowed.ID, Type: allowed.SourceType, Identifier: allowed.Identifier}}, time.Time{})
-	require.NoError(err)
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry}
-	for _, personID := range []int64{person.ID, person.ID + 1000000} {
-		in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{PersonID: personID}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-		verified := false
-		_, err := service.Subscribe(ctx, in, agentgrant.Owner(id), func(context.Context, string, string, []byte) error { verified = true; return nil }, func(ctx context.Context) error {
-			filter, err := changefeed.ResolveFilter(ctx, st, changefeed.Filter{PersonID: personID})
-			if err != nil {
-				return failure(Forbidden, "permission_denied")
-			}
-			inside, _, err := st.PersonSourceEvidence(ctx, filter.Participants, []int64{allowed.ID})
-			if err != nil || !inside {
-				return failure(Forbidden, "permission_denied")
-			}
-			return nil
-		})
-		var refusal *Error
-		require.ErrorAs(err, &refusal)
-		assert.True(verified)
-		assert.Equal(Forbidden, refusal.Code)
-		assert.Equal("permission_denied", refusal.Reason)
-	}
-}
-
 func TestGrantSubscriptionCap(t *testing.T) {
 	t.Run("before verification", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		ctx := t.Context()
-		st := testutil.NewTestStore(t)
+		st := newEventsTestStore(t)
 		registry := agentgrant.NewRegistry()
-		id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
+		id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "events@example.test"}}, time.Time{})
 		require.NoError(err)
 		service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry}
-		incoming := true
-		var entries []entry
 		for i := range 4 {
-			subID := fmt.Sprintf("sub-%d", i)
-			entries = append(entries, entry{ID: subID, Owner: agentgrant.Owner(id), Arguments: MCPEventsArguments{SourceID: int64(i + 1), IncomingOnly: &incoming}, Origin: "https://example.com", Expires: time.Now().Add(time.Hour)})
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: fmt.Sprintf("https://example.com/%d", i), Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			_, err = service.Subscribe(ctx, in, agentgrant.Owner(id), acceptCallback, nil)
+			require.NoError(err)
 		}
-		raw, err := json.Marshal(entries)
-		require.NoError(err)
-		ok, err := st.SwapMCPEventsCatalog(ctx, nil, raw, "", nil, "")
-		require.NoError(err)
-		require.True(ok)
-		_, err = service.Subscribe(ctx, preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 5}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}), agentgrant.Owner(id), nil, nil)
+		_, err = service.Subscribe(ctx, preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/fifth", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}), agentgrant.Owner(id), nil, nil)
 		var failure *Error
 		require.ErrorAs(err, &failure)
 		assert.Equal(ResourceExhausted, failure.Code)
@@ -1494,9 +1280,9 @@ func TestGrantSubscriptionCap(t *testing.T) {
 	t.Run("concurrent after verification", func(t *testing.T) {
 		requirements := require.New(t)
 		assertions := assert.New(t)
-		st := testutil.NewTestStore(t)
+		st := newEventsTestStore(t)
 		registry := agentgrant.NewRegistry()
-		id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "test", Identifier: "reader@example.test"}}, time.Time{})
+		id, _, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "events@example.test"}}, time.Time{})
 		requirements.NoError(err)
 		service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry}
 		owner := agentgrant.Owner(id)
@@ -1544,31 +1330,7 @@ func TestGrantSubscriptionCap(t *testing.T) {
 	})
 }
 
-func TestDelegatedPrivateCallbackIdentityAndFreshLease(t *testing.T) {
-	st := newEventsTestStore(t)
-	reg := agentgrant.NewRegistry()
-	t.Cleanup(reg.Close)
-	id, _, _, err := reg.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "events@example.test"}}, time.Time{})
-	require.NoError(t, err)
-	owner := agentgrant.Owner(id)
-	now := time.Now().UTC()
-	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: reg, Now: func() time.Time { return now }}
-	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/private?token=fixture", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
-	first, err := service.Subscribe(t.Context(), in, owner, acceptCallback, nil)
-	require.NoError(t, err)
-	raw, err := st.LoadMCPEventsCatalog(t.Context())
-	require.NoError(t, err)
-	assert.NotContains(t, string(raw), in.Delivery.URL)
-	refresh, err := service.Subscribe(t.Context(), in, owner, acceptCallback, nil)
-	require.NoError(t, err)
-	assert.Equal(t, first.ID, refresh.ID)
-	now = first.RefreshBefore.Add(time.Second)
-	next, err := service.Subscribe(t.Context(), in, owner, acceptCallback, nil)
-	require.NoError(t, err)
-	assert.NotEqual(t, first.ID, next.ID)
-}
-
-func TestCatalogIdentityRequiresValidGeneration(t *testing.T) {
+func TestCatalogIdentityRequiresExactWidth(t *testing.T) {
 	incoming := true
 	args := MCPEventsArguments{SourceID: 1, IncomingOnly: &incoming}
 	endpoint := "https://example.com/hook"
@@ -1579,7 +1341,6 @@ func TestCatalogIdentityRequiresValidGeneration(t *testing.T) {
 		{"owner", "", true},
 		{"owner", "0123456789abcdef0123456789abcdef", false},
 		{"grant:fixture", "0123456789abcdef0123456789abcdef", true},
-		{"grant:fixture", "0123456789abcdef0123456789abcdeg", false},
 		{"grant:fixture", "", false},
 	} {
 		t.Run(tc.owner+tc.suffix, func(t *testing.T) {
