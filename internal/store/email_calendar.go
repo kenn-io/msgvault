@@ -70,11 +70,11 @@ func (s *Store) refreshAndSettleEmailCalendar(ctx context.Context, sourceID int6
 
 // upsertEmailRaw stores raw data and, for MIME that may hold an invitation,
 // reopens the email repair pass in the same transaction.
-func upsertEmailRaw(q querier, messageID int64, rawData []byte, format string) error {
+func upsertEmailRaw(q querier, postgres bool, messageID int64, rawData []byte, format string) error {
 	if err := upsertMessageRawWithFormat(q, messageID, rawData, format); err != nil || format != emailLinkageRawFormat || !hasCalendarToken(rawData) {
 		return err
 	}
-	return holdEmailRepair(q, messageID)
+	return holdEmailRepair(q, postgres, messageID)
 }
 
 // EmailRepairVersion is the ledger version suffix of the email repair pass
@@ -93,14 +93,31 @@ const emailRepairSourceSQL = `SELECT 'rederive:' || source_type || ':' || identi
 // one marker per message whose invitation derive is still owed. The markers
 // extend the pass key with a colon-free suffix, so a restarted walk (which
 // covers every message) and a source merge or removal clear them with its rows.
-func holdEmailRepair(q querier, messageID int64) error {
-	if err := reopenEmailRepair(q, messageID); err != nil {
+func holdEmailRepair(q querier, postgres bool, messageID int64) error {
+	if err := serializeEmailRepairHold(q, postgres, messageID); err != nil {
 		return err
 	}
 	_, err := q.Exec(`INSERT INTO applied_migrations (name) SELECT prefix || '`+EmailRepairVersion+emailHoldSuffix+`' || ?
 		FROM (`+emailRepairSourceSQL+`) repair_source WHERE true ON CONFLICT (name) DO NOTHING`,
 		strconv.FormatInt(messageID, 16), messageID)
 	return err
+}
+
+// serializeEmailRepairHold reopens the pass, then on PostgreSQL takes the
+// pass's advisory lock, which the pass's completion also takes after recording
+// itself, and reopens it again. A completion that committed while the lock was
+// awaited is then visible to the second reopen, though its ledger row was not
+// when the hold began. The lock follows the first reopen so the two never wait
+// on each other's row and lock.
+func serializeEmailRepairHold(q querier, postgres bool, messageID int64) error {
+	if err := reopenEmailRepair(q, messageID); err != nil || !postgres {
+		return err
+	}
+	if _, err := q.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(prefix || '`+EmailRepairVersion+`', 0))
+		FROM (`+emailRepairSourceSQL+`) repair_source`, messageID); err != nil {
+		return err
+	}
+	return reopenEmailRepair(q, messageID)
 }
 
 // settleEmailRepair drops the message's marker after its invitation derive
@@ -140,19 +157,30 @@ func emailRepairHeld(ctx context.Context, q contextStatementQuerier, base string
 	return held, err
 }
 
-// markMigrationCompleteContext records a finished pass unless a message still
-// owes an invitation derive. It locks the pass's ledger row first, so a writer
-// that reopens the pass either committed its marker before the check below or
-// reopens the pass after this transaction; either way the pass is not recorded
-// over an owed derive, and the next sync retries it.
+// markMigrationCompleteContext records a finished pass and then takes it back
+// when a message still owes an invitation derive. The hold check follows the
+// record and the pass's advisory lock, which holdEmailRepair also takes, so a
+// writer that reopens the pass either committed its marker before the check or
+// reopens the pass after this transaction, even when the pass had no ledger row;
+// either way the pass is not left recorded over an owed derive.
 func (s *Store) markMigrationCompleteContext(ctx context.Context, tx contextStatementQuerier, name string) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE applied_migrations SET version = version WHERE name = ?`, name); err != nil {
+	if err := s.markMigrationAppliedContext(ctx, tx, name, 1); err != nil {
 		return err
 	}
-	if held, err := emailRepairHeld(ctx, tx, name); err != nil || held {
+	return s.reopenHeldEmailRepair(ctx, tx, name)
+}
+
+func (s *Store) reopenHeldEmailRepair(ctx context.Context, tx contextStatementQuerier, name string) error {
+	if s.IsPostgreSQL() {
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(?, 0))`, name); err != nil {
+			return err
+		}
+	}
+	if held, err := emailRepairHeld(ctx, tx, name); err != nil || !held {
 		return err
 	}
-	return s.markMigrationAppliedContext(ctx, tx, name, 1)
+	_, err := tx.ExecContext(ctx, `UPDATE applied_migrations SET version = 0 WHERE name = ?`, name)
+	return err
 }
 
 // reopenEmailRepair marks the message's source's email repair pass incomplete
