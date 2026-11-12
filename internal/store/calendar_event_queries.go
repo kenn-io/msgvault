@@ -240,10 +240,8 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 	}
 	rangeEdits := make(map[seriesKey][]CalendarEventRow)
 	for _, exception := range exceptions {
-		if slices.Contains(exception.Event.Recurrence, calevent.ICSRangeRecurrence) {
-			key := seriesKey{exception.SourceID, exception.Event.SeriesProviderID}
-			rangeEdits[key] = append(rangeEdits[key], exception)
-		}
+		key := seriesKey{exception.SourceID, exception.Event.SeriesProviderID}
+		rangeEdits[key] = append(rangeEdits[key], exception)
 	}
 	for _, master := range byID {
 		if master.Event.Kind != "series" && master.Event.Kind != "single" {
@@ -251,7 +249,7 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 		}
 		edits := rangeEdits[seriesKey{master.SourceID, master.Event.ProviderEventID}]
 		_, shift, _ := calendarRangeBoundary(master.Event, edits)
-		if len(edits) == 0 || shift.pad == 0 {
+		if shift.pad == 0 {
 			continue
 		}
 		more, err := queryCalendarExceptionsInWindow(ctx, r, dialect, lower.Add(-shift.pad), upper.Add(shift.pad), " AND e.series_provider_id = ? AND m.source_id = ?", []any{master.Event.ProviderEventID, master.SourceID})

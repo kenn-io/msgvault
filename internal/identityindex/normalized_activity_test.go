@@ -304,7 +304,7 @@ func TestSparseNormalizedActivityRetainsEmailInviteEdges(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	root, db := writeRelationshipBaseFixture(t, true)
 	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
-		firstMessageID: 1, messageCount: 4, memberCount: 2,
+		firstMessageID: 1, messageCount: 4, memberCount: 2, conversationCount: 4,
 		startDate: "2026-01-01", messageType: "calendar_event", conversationType: "calendar",
 	})
 	replaceRelationshipParquet(t, db, root, "sources", `SELECT i::BIGINT AS id, 'owner@example.test' AS account_email,
@@ -331,18 +331,20 @@ func TestSparseNormalizedActivityRetainsEmailInviteEdges(t *testing.T) {
 	assertions.Equal([]int64{1, 2, 3, 4}, got)
 	assertions.Equal([]int64{1}, invitations)
 	expanded := ExpandedActivityRelation("("+sql+")", readParquetRelation([]string{path("conversation_participants")}, false), readParquetRelation([]string{path("participants")}, false), readParquetRelation([]string{path("participant_clusters")}, false), readParquetRelation([]string{path("owner_participants")}, false))
-	var logicalCount int
-	requirements.NoError(db.QueryRowContext(t.Context(), logicalActivitySQL(expanded, "true")+" SELECT count(*) FROM logical_units").Scan(&logicalCount))
-	facts, err := db.QueryContext(t.Context(), "SELECT DISTINCT message_id FROM ("+RelationshipTemperatureFactsSQL(expanded, time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC))+") ORDER BY message_id")
+	roster, err := db.QueryContext(t.Context(), "SELECT message_id, email_invite FROM "+expanded+" WHERE canonical_id=2 AND is_conversation_member ORDER BY message_id")
 	requirements.NoError(err)
-	defer func() { requirements.NoError(facts.Close()) }()
-	var factIDs []int64
-	for facts.Next() {
+	defer func() { requirements.NoError(roster.Close()) }()
+	var rosterIDs, rosterInvites []int64
+	for roster.Next() {
 		var id int64
-		requirements.NoError(facts.Scan(&id))
-		factIDs = append(factIDs, id)
+		var invite bool
+		requirements.NoError(roster.Scan(&id, &invite))
+		rosterIDs = append(rosterIDs, id)
+		if invite {
+			rosterInvites = append(rosterInvites, id)
+		}
 	}
-	requirements.NoError(facts.Err())
-	assertions.Equal(3, logicalCount)
-	assertions.Equal([]int64{2, 3, 4}, factIDs)
+	requirements.NoError(roster.Err())
+	assertions.Equal([]int64{1, 2, 3, 4}, rosterIDs)
+	assertions.Equal([]int64{1}, rosterInvites)
 }

@@ -174,14 +174,13 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 	for _, tc := range []struct {
 		name, master, boundary string
 		want                   []string
-		extra, expectReport    bool
+		extra                  bool
 		windowOffset           int
 	}{
-		{"timed", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z", "2027-03-04T12:00:00Z", "2027-03-04T14:00:00Z", "2027-03-05T13:00:00Z", "2027-03-07T13:00:00Z", "2027-03-08T12:00:00Z", "2027-03-08T13:00:00Z"}, true, false, 0},
-		{"all day", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20270305\r\nDTSTART;VALUE=DATE:20270305\r\nSUMMARY:Updated", []string{"2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z", "2027-03-04T00:00:00Z", "2027-03-05T00:00:00Z", "2027-03-06T00:00:00Z", "2027-03-07T00:00:00Z", "2027-03-08T00:00:00Z"}, false, false, 0},
-		{"mismatched", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", nil, false, true, 0},
-		{"single", "DTSTART:20270302T120000Z\r\nDURATION:PT1H", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z", "2027-03-05T13:00:00Z"}, false, false, 0},
-		{"long occurrence", "DTSTART:20270302T120000Z\r\nDURATION:P7D\r\nRRULE:FREQ=WEEKLY", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T130000Z", []string{"2027-03-02T12:00:00Z"}, false, false, 5},
+		{"timed", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z", "2027-03-04T12:00:00Z", "2027-03-04T14:00:00Z", "2027-03-05T13:00:00Z", "2027-03-07T13:00:00Z", "2027-03-08T12:00:00Z", "2027-03-08T13:00:00Z"}, true, 0},
+		{"all day", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20270305\r\nDTSTART;VALUE=DATE:20270305\r\nSUMMARY:Updated", []string{"2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z", "2027-03-04T00:00:00Z", "2027-03-05T00:00:00Z", "2027-03-06T00:00:00Z", "2027-03-07T00:00:00Z", "2027-03-08T00:00:00Z"}, false, 0},
+		{"single", "DTSTART:20270302T120000Z\r\nDURATION:PT1H", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z", "2027-03-05T13:00:00Z"}, false, 0},
+		{"long occurrence", "DTSTART:20270302T120000Z\r\nDURATION:P7D\r\nRRULE:FREQ=WEEKLY", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T130000Z", []string{"2027-03-02T12:00:00Z"}, false, 5},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -211,11 +210,7 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 				starts = append(starts, occurrence.Start.Format(time.RFC3339))
 			}
 			requirements.Equal(tc.want, starts)
-			if tc.expectReport {
-				requirements.NotEmpty(page.Unexpandable)
-			} else {
-				requirements.Empty(page.Unexpandable)
-			}
+			requirements.Empty(page.Unexpandable)
 			if tc.extra {
 				requirements.Equal("cancelled", page.Occurrences[1].Status)
 				page, err = st.ListCalendarOccurrencesContext(t.Context(), from.AddDate(0, 0, 2), from.AddDate(0, 0, 3))
@@ -428,6 +423,7 @@ func TestICalendarRangeReportsIncompletePrefix(t *testing.T) {
 	for _, tc := range []struct{ name, master, exception, want, occurrence string }{
 		{"budget", "DTSTART:18000101T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY", "", "recurrence generation budget exceeded", ""},
 		{"unidentified", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;VALUE=DATE:20270303\r\nDTSTART:20270304T140000Z\r\nDURATION:PT1H", "exception original start cannot be compared", "2027-03-04T12:00:00Z"},
+		{"mismatched", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "", "unsupported recurrence range", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -456,6 +452,8 @@ func TestICalendarRangeReportsIncompletePrefix(t *testing.T) {
 			if tc.occurrence != "" {
 				requirements.Len(page.Occurrences, 1)
 				requirements.Equal(tc.occurrence, page.Occurrences[0].Start.Format(time.RFC3339))
+			} else {
+				requirements.Empty(page.Occurrences)
 			}
 		})
 	}

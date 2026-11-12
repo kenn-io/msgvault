@@ -214,19 +214,21 @@ func TestCalendarExceptionsShortenedSeriesDuration(t *testing.T) {
 func TestCalendarEventRowsEndedSeriesOutsideWindow(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	data, event := calendarFixture(t, st, "current", `{"id":"current","start":{"dateTime":"2027-03-12T09:00:00Z"},"end":{"dateTime":"2027-03-12T10:00:00Z"}}`)
-	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", 2001)
-	_, err := st.db.Exec(`UPDATE calendar_events SET start_at = '2027-03-01 00:00:00+00:00', end_at = '2027-03-02 00:00:00+00:00', start_date = '2027-03-01', end_date = '2027-03-02', recurrence_end_at = '2027-03-02 00:00:00+00:00', recurrence_json = '["RRULE:FREQ=DAILY;COUNT=1"]' WHERE kind = 'series'`)
-	require.NoError(err)
-	override := ""
-	if st.IsPostgreSQL() {
-		override = " OVERRIDING SYSTEM VALUE"
+	_, event := calendarFixture(t, st, "current", `{"id":"current","start":{"dateTime":"2027-03-12T09:00:00Z"},"end":{"dateTime":"2027-03-12T10:00:00Z"}}`)
+	source := icsSource(t, st)
+	var document strings.Builder
+	document.WriteString("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:REQUEST\r\n")
+	for i := range 2001 {
+		fmt.Fprintf(&document, "BEGIN:VEVENT\r\nUID:series-%d@example.com\r\nDTSTAMP:20270101T000000Z\r\nDTSTART:20270301T000000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=1\r\nEND:VEVENT\r\n", i)
+		fmt.Fprintf(&document, "BEGIN:VEVENT\r\nUID:series-%d@example.com\r\nDTSTAMP:20270101T000000Z\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270301T000000Z\r\nDTSTART:20270301T010000Z\r\nDURATION:PT1H\r\nEND:VEVENT\r\n", i)
 	}
-	_, err = st.db.Exec(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type)` + override + ` SELECT id+200000,source_id,conversation_id,source_message_id || '-edit',message_type FROM messages WHERE id >= 100000 AND id < 102001`)
+	document.WriteString("END:VCALENDAR\r\n")
+	_, err := st.PersistICalendarContext(t.Context(), source, []byte(document.String()))
 	require.NoError(err)
-	_, err = st.db.Exec(`INSERT INTO calendar_events (message_id,projection_version,content_hash,provider_event_id,series_provider_id,kind,original_start_at,start_at,end_at,status,all_day,calendar_time_zone,recurrence_json)
-		SELECT message_id+200000,1,'fixture',provider_event_id || '-edit',provider_event_id,'exception','2027-03-01 00:00:00+00:00','2027-03-01 01:00:00+00:00','2027-03-01 02:00:00+00:00','confirmed',false,'UTC','["RECURRENCE-ID;RANGE=THISANDFUTURE"]' FROM calendar_events WHERE kind='series'`)
-	require.NoError(err)
+	var series, edits int
+	require.NoError(st.db.QueryRow(`SELECT COUNT(*) FILTER (WHERE e.kind='series'), COUNT(*) FILTER (WHERE e.kind='exception') FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE m.source_id=?`, source).Scan(&series, &edits))
+	require.Equal(2001, series)
+	require.Equal(2001, edits)
 	from := time.Date(2027, 3, 12, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 	require.NoError(err)

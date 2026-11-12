@@ -365,39 +365,33 @@ func TestEmailCalendarMaterializesOnRawMIMEUpsert(t *testing.T) {
 }
 
 func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
-	t.Run("unsupported method", func(t *testing.T) {
-		assertions := assert.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		var logs bytes.Buffer
-		previous := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-		t.Cleanup(func() { slog.SetDefault(previous) })
-		raw := inviteEmail(calendarDocument("ADD", "DTSTART:20270302T120000Z"))
-		id, source := persistInviteEmail(t, st, "ignored-method", raw)
-		assertions.Empty(emailEvents(t, st, source))
-		stored, err := st.GetMessageRaw(id)
-		require.NoError(t, err)
-		assertions.Equal(raw, stored)
-		assertions.Contains(logs.String(), "calendar invite ignored")
-		assertions.Contains(logs.String(), "error=")
-		assertions.NotContains(logs.String(), `error=""`)
-	})
-	t.Run("invalid calendar", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		var logs bytes.Buffer
-		previous := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-		t.Cleanup(func() { slog.SetDefault(previous) })
-		raw := inviteEmail([]byte("invalid calendar"))
-		id, source := persistInviteEmail(t, st, "bad-calendar", raw)
-		assertions.Empty(emailEvents(t, st, source))
-		stored, err := st.GetMessageRaw(id)
-		requirements.NoError(err)
-		assertions.Equal(raw, stored)
-		assertions.Contains(logs.String(), "level=WARN")
-		assertions.Contains(logs.String(), fmt.Sprintf("message_id=%d", id))
-	})
+	for _, tc := range []struct {
+		name string
+		part []byte
+	}{
+		{"unsupported method", calendarDocument("ADD", "DTSTART:20270302T120000Z")},
+		{"invalid calendar", []byte("invalid calendar")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			raw := inviteEmail(tc.part)
+			id, source := persistInviteEmail(t, st, "invalid-part", raw)
+			assertions.Empty(emailEvents(t, st, source))
+			stored, err := st.GetMessageRaw(id)
+			requirements.NoError(err)
+			assertions.Equal(raw, stored)
+			assertions.Contains(logs.String(), "calendar invite ignored")
+			assertions.Contains(logs.String(), "error=")
+			assertions.NotContains(logs.String(), `error=""`)
+			assertions.Contains(logs.String(), "level=WARN")
+			assertions.Contains(logs.String(), fmt.Sprintf("message_id=%d", id))
+		})
+	}
 }
 
 func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {

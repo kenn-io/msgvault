@@ -343,11 +343,11 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 	})
 	requirements.NoError(err)
 
-	query := logicalActivitySQL(
-		testExpandedActivity(root, root),
-		"f.source_id = ?",
-	) + `
+	activity := testExpandedActivity(root, root)
+	activity = "(SELECT * FROM " + activity + " UNION ALL SELECT * REPLACE (102::BIGINT AS message_id, false AS is_chat, true AS email_invite) FROM " + activity + ")"
+	query := logicalActivitySQL(activity, "f.source_id = ?") + `
 		SELECT
+			(SELECT count(*) FROM logical_units),
 			(SELECT count(*) FROM logical_people),
 			(SELECT canonical_id FROM logical_people),
 			(SELECT anchor_message_id FROM logical_people),
@@ -361,10 +361,11 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 			 FROM logical_person_domains),
 			(SELECT CAST(to_json(list(domain ORDER BY domain)) AS VARCHAR)
 			 FROM logical_domain_keys)`
-	var peopleCount, canonicalID, anchorMessageID int64
+	var unitCount, peopleCount, canonicalID, anchorMessageID int64
 	var isAuthor, isOwner, withOwner bool
 	var personDomainsJSON, domainKeysJSON string
 	requirements.NoError(db.QueryRowContext(t.Context(), query, int64(1)).Scan(
+		&unitCount,
 		&peopleCount,
 		&canonicalID,
 		&anchorMessageID,
@@ -375,6 +376,7 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 		&domainKeysJSON,
 	))
 
+	assertions.Equal(int64(1), unitCount)
 	assertions.Equal(int64(1), peopleCount)
 	assertions.Equal(int64(1), canonicalID)
 	assertions.Equal(int64(101), anchorMessageID)
