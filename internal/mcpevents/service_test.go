@@ -425,8 +425,8 @@ func TestConcurrentFinalSubscriptionUsesCAS(t *testing.T) {
 		}
 		var eventErr *Error
 		require.ErrorAs(got.err, &eventErr)
-		assert.Equal(Unavailable, eventErr.Code)
-		assert.Equal("store_unavailable", eventErr.Reason)
+		assert.Equal(ResourceExhausted, eventErr.Code)
+		assert.Equal("subscriptions", eventErr.Reason)
 		refused++
 	}
 	require.Equal(1, success)
