@@ -19,6 +19,9 @@ func federationHubOrigin(raw string) (string, error) {
 	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || (u.Fragment != "" || strings.Contains(raw, "#")) || (u.Scheme != "https" && (u.Scheme != "http" || !netguard.IsLoopbackHost(u.Hostname()))) {
 		return "", errors.New("--hub-url must be an HTTPS origin (HTTP only for loopback)")
 	}
+	if _, err := netguard.TargetPort(u); err != nil {
+		return "", errors.New("--hub-url must be an HTTPS origin (HTTP only for loopback)")
+	}
 	u.Path = ""
 	return u.String(), nil
 }

@@ -35,6 +35,11 @@ type FederationEnrollment struct {
 
 const federationColumns = `enrollment_uid, spoke_archive_uid, member_handle, spoke_name, created_at, last_seen_at, revoked_at`
 
+func federationTokenDigest(token string) string {
+	digest := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(digest[:])
+}
+
 func scanFederation(row scanner) (*FederationEnrollment, error) {
 	var e FederationEnrollment
 	var seen, revoked sql.NullTime
@@ -70,8 +75,7 @@ func (s *Store) CreateFederationEnrollmentContext(ctx context.Context, spokeUID,
 		return nil, "", fmt.Errorf("generate enrollment token: %w", err)
 	}
 	token := "mvf1_" + base64.RawURLEncoding.EncodeToString(secret)
-	digest := sha256.Sum256([]byte(token))
-	e, err := scanFederation(s.db.QueryRowContext(ctx, `INSERT INTO federation_enrollments (enrollment_uid, spoke_archive_uid, member_handle, spoke_name, token_sha256) VALUES (?, ?, ?, ?, ?) RETURNING `+federationColumns, hex.EncodeToString(id), spokeUID, member, name, hex.EncodeToString(digest[:])))
+	e, err := scanFederation(s.db.QueryRowContext(ctx, `INSERT INTO federation_enrollments (enrollment_uid, spoke_archive_uid, member_handle, spoke_name, token_sha256) VALUES (?, ?, ?, ?, ?) RETURNING `+federationColumns, hex.EncodeToString(id), spokeUID, member, name, federationTokenDigest(token)))
 	if err != nil {
 		return nil, "", fmt.Errorf("create federation enrollment: %w", err)
 	}
@@ -93,8 +97,8 @@ func (s *Store) ListFederationEnrollmentsContext(ctx context.Context) ([]Federat
 	}
 	return list, rows.Err()
 }
-func (s *Store) AuthenticateFederationEnrollmentContext(ctx context.Context, digest, spokeUID string) (*FederationEnrollment, error) {
-	return scanFederation(s.db.QueryRowContext(ctx, `SELECT `+federationColumns+` FROM federation_enrollments WHERE token_sha256 = ? AND spoke_archive_uid = ? AND revoked_at IS NULL`, digest, spokeUID))
+func (s *Store) AuthenticateFederationEnrollmentContext(ctx context.Context, token, spokeUID string) (*FederationEnrollment, error) {
+	return scanFederation(s.db.QueryRowContext(ctx, `SELECT `+federationColumns+` FROM federation_enrollments WHERE token_sha256 = ? AND spoke_archive_uid = ? AND revoked_at IS NULL`, federationTokenDigest(token), spokeUID))
 }
 func (s *Store) RevokeFederationEnrollmentContext(ctx context.Context, uid string) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE federation_enrollments SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP) WHERE enrollment_uid = ?`, uid)

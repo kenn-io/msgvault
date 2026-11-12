@@ -1,8 +1,6 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"net"
 	"net/http"
@@ -276,8 +274,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 				_, cookieErr := r.Cookie(sessionCookieName)
 				parts := strings.Fields(auths[0])
 				if cookieErr != nil && len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
-					digest := sha256.Sum256([]byte(parts[1]))
-					enrollment, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), hex.EncodeToString(digest[:]), instances[0])
+					enrollment, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), parts[1], instances[0])
 					if err == nil {
 						return requestAuthentication{Mode: AuthModeFederation, Federation: enrollment}
 					}

@@ -214,6 +214,52 @@ func TestFederationOperationGate(t *testing.T) {
 	assertions.False(gate.HasRequestWaiters())
 }
 
+func TestFederationHandshakeDuringOperation(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginWorkContext(t.Context())
+	requirements.True(ok)
+	t.Cleanup(func() {
+		if release != nil {
+			release()
+		}
+	})
+	previousLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = previousLimit })
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Server.APIKey = "owner-fixture"
+	cfg.Federation.Role = "hub"
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, OperationGate: gate, Logger: testLogger()})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	uid := strings.Repeat("a", 64)
+	_, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
+	requirements.NoError(err)
+	handshake := func() {
+		t.Helper()
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/federation/handshake", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-Msgvault-Spoke-Instance", uid)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, r)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+	handshake()
+	entries, err := st.ListFederationEnrollmentsContext(t.Context())
+	requirements.NoError(err)
+	requirements.Len(entries, 1)
+	assert.Nil(t, entries[0].LastSeenAt)
+	release()
+	release = nil
+	handshake()
+	entries, err = st.ListFederationEnrollmentsContext(t.Context())
+	requirements.NoError(err)
+	requirements.Len(entries, 1)
+	assert.NotNil(t, entries[0].LastSeenAt)
+}
+
 func TestFederationCredentialOnlyHandshake(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
