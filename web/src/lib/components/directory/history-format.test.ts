@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { provenance, valueProvenance } from './history-format';
+import { provenance, provenanceDetails, valueProvenance } from './history-format';
+import { formatDateTime } from '../../util/format';
 
 const year = new Date().getFullYear();
 const at = `${year}-11-05T22:04:00`;
@@ -27,13 +28,27 @@ describe('provenance', () => {
   });
 
   it.each([
-    [{}, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 0.8`],
-    [{ active_until: `${year}-11-06T09:00:00` }, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nValid until Nov 6, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 0.8`],
-    [{ superseded_at: `${year}-11-07T09:00:00` }, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nReplaced Nov 7, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 0.8`],
-    [{ active_until: `${year}-11-06T09:00:00`, superseded_at: `${year}-11-07T09:00:00` }, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nValid until Nov 6, ${year}, 9:00 AM\nReplaced Nov 7, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 0.8`],
+    [{}, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 80%`],
+    [{ active_until: `${year}-11-06T09:00:00` }, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nValid until Nov 6, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 80%`],
+    [{ superseded_at: `${year}-11-07T09:00:00` }, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nReplaced Nov 7, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 80%`],
+    [{ active_until: `${year}-11-06T09:00:00`, superseded_at: `${year}-11-07T09:00:00` }, `Recorded Nov 5, ${year}, 10:04 PM\nValid from Nov 1, ${year}, 9:00 AM\nValid until Nov 6, ${year}, 9:00 AM\nReplaced Nov 7, ${year}, 9:00 AM\nActor: you\nReference: ref-1\nConfidence: 80%`],
   ])('keeps audit details in the tooltip while the line stays short: %j', (interval, title) => {
     const line = valueProvenance({ source: 'user', created_at: at, active_from: `${year}-11-01T09:00:00`, source_ref: 'ref-1', actor: 'user', confidence: 0.8, ...interval });
     expect(line.text).toBe('You · since Nov 1');
     expect(line.title).toBe(title);
   });
+});
+
+it('lists the recorded provenance details', () => {
+  expect(provenanceDetails({ source: 'enrichment', actor: 'mcp', source_ref: 'lookup-7', confidence: 0, created_at: '2026-11-01T12:00:00' })).toEqual([
+    ['Source', 'From a lookup'], ['Actor', 'an assistant'], ['Reference', 'lookup-7'], ['Confidence', '0%'], ['Recorded', formatDateTime('2026-11-01T12:00:00')]
+  ]);
+});
+
+it('names generated decision references in details and History tooltips', () => {
+  const generated = { source: 'enrichment', source_ref: 'person-fact-decision:123', created_at: at };
+  expect(provenanceDetails(generated)).toContainEqual(['Reference', 'Fact decision']);
+  const title = valueProvenance(generated).title;
+  expect(title).toContain('Reference: Fact decision');
+  expect(title).not.toContain('person-fact-decision:123');
 });
