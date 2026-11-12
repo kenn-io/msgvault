@@ -52,6 +52,10 @@ func TestMCPRelationshipTypeMutationPreservesEmptyAndRevision(t *testing.T) {
 	deleted, err := backend.ExecuteOperation(t.Context(), "delete_relationship_type", map[string]any{"id": record.RelationshipType.ID, "etag": changed.ETag})
 	require.NoError(t, err)
 	assert.False(t, deleted.IsError)
+	_, err = backend.OperationDisclosure(t.Context(), "delete_relationship_type", map[string]any{"id": record.RelationshipType.ID, "etag": changed.ETag})
+	var refusal *mcpserver.OperationRefusalError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "relationship_type_not_found", refusal.Code)
 }
 
 func TestMCPRelationshipRecordPresenceAndDirection(t *testing.T) {
@@ -86,12 +90,28 @@ func TestMCPRelationshipRecordPresenceAndDirection(t *testing.T) {
 	require.NoError(t, err)
 	current := operationOutput[mcpserver.PersonRelationshipRecord](t, cleared)
 	assert.Nil(t, current.Relationship.Notes)
+	_, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", map[string]any{"id": current.Relationship.ID, "etag": created.ETag})
+	var refusal *mcpserver.OperationRefusalError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "relationship_revision_conflict", refusal.Code)
+	disclosure, err := backend.OperationDisclosure(t.Context(), "delete_person_relationship", map[string]any{"id": current.Relationship.ID, "etag": current.ETag})
+	require.NoError(t, err)
+	var disclosed struct {
+		Current mcpserver.PersonRelationshipRecord `json:"current"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(disclosure), &disclosed))
+	assert.Equal(t, current, disclosed.Current)
+	assert.NotContains(t, disclosure, "source_ref")
+	assert.NotContains(t, disclosure, "source_resource_uid")
 	stale, err := backend.ExecuteOperation(t.Context(), "delete_person_relationship", map[string]any{"id": current.Relationship.ID, "etag": created.ETag})
 	require.NoError(t, err)
 	assert.True(t, stale.IsError)
 	deleted, err := backend.ExecuteOperation(t.Context(), "delete_person_relationship", map[string]any{"id": current.Relationship.ID, "etag": current.ETag})
 	require.NoError(t, err)
 	assert.False(t, deleted.IsError)
+	_, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", map[string]any{"id": current.Relationship.ID, "etag": current.ETag})
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, "person_relationship_not_found", refusal.Code)
 }
 
 func TestMCPRelationshipCapabilitiesRequireRouteAndProperties(t *testing.T) {
@@ -147,13 +167,24 @@ func TestMCPRelationshipReadNetworkReviewsAndSeedGuard(t *testing.T) {
 	graph := operationOutput[generated.PersonNetwork](t, graphResult)
 	assert.Equal(t, a.ID, graph.RootPersonID)
 	assert.NotEmpty(t, graph.Edges)
-	_, err = st.ResolveRelatedValueContext(t.Context(), store.RelatedImport{PersonID: a.ID, RawValue: "Unknown Example", RawType: "friend", ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, VCardIdentity: store.VCardIdentity{Property: "RELATED"}, Actor: "system"})
+	sourceRef, sourceUID := "example-ref", "example-uid"
+	_, err = st.ResolveRelatedValueContext(t.Context(), store.RelatedImport{PersonID: a.ID, RawValue: "Unknown Example", RawType: "friend", ValueKind: store.RelatedValueKindText, Source: store.ProvenanceVCardImport, SourceRef: &sourceRef, SourceResourceUID: &sourceUID, VCardIdentity: store.VCardIdentity{Property: "RELATED"}, Actor: "system"})
 	require.NoError(t, err)
 	reviewsResult, err := backend.ExecuteOperation(t.Context(), "list_person_relationship_reviews", map[string]any{"person_id": a.ID, "status": "pending"})
 	require.NoError(t, err)
 	reviews := operationOutput[generated.RelationshipReviewsResponse](t, reviewsResult)
 	require.Len(t, reviews.Reviews, 1)
 	assert.Equal(t, "Unknown Example", reviews.Reviews[0].RawRelatedValue)
+	assert.Nil(t, reviews.Reviews[0].SourceRef)
+	assert.Nil(t, reviews.Reviews[0].SourceResourceUID)
+	invalidStatus, err := backend.ExecuteOperation(t.Context(), "list_person_relationship_reviews", map[string]any{"status": "pendng"})
+	require.NoError(t, err)
+	require.True(t, invalidStatus.IsError)
+	assert.Equal(t, "invalid_status", operationOutputError(t, invalidStatus))
+	absentType, err := backend.ExecuteOperation(t.Context(), "get_relationship_type", map[string]any{"id": int64(999999)})
+	require.NoError(t, err)
+	require.True(t, absentType.IsError)
+	assert.Equal(t, "relationship_type_not_found", operationOutputError(t, absentType))
 	typesResult, err := backend.ExecuteOperation(t.Context(), "list_relationship_types", nil)
 	require.NoError(t, err)
 	types := operationOutput[generated.RelationshipTypesResponse](t, typesResult)

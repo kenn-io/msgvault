@@ -71,12 +71,12 @@ func (b *daemonMCPOperations) executeRelationshipRead(ctx context.Context, name 
 	var result *mcpserver.OperationResult
 	switch name {
 	case "list_relationship_types":
-		result, err = readMCPOperationJSON[generated.RelationshipTypesResponse](ctx, b.client, http.MethodGet, "/api/v1/relationship-types", nil, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.RelationshipTypesResponse](ctx, b.client, http.MethodGet, "/api/v1/relationship-types", nil, relationshipRefusal, http.StatusOK)
 	case "get_relationship_type":
 		if !validLoopID(input.ID) {
 			return operationFailure("invalid_arguments", false), true, nil
 		}
-		result, err = readMCPOperationJSON[generated.RelationshipType](ctx, b.client, http.MethodGet, "/api/v1/relationship-types/{id}", &generated.GetRelationshipTypeRequestOptions{PathParams: &generated.GetRelationshipTypePath{ID: input.ID}}, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.RelationshipType](ctx, b.client, http.MethodGet, "/api/v1/relationship-types/{id}", &generated.GetRelationshipTypeRequestOptions{PathParams: &generated.GetRelationshipTypePath{ID: input.ID}}, relationshipRefusal, http.StatusOK)
 		if result != nil && !result.IsError {
 			if value, ok := result.Output.(generated.RelationshipType); ok && result.ETag != "" {
 				result.Output = mcpserver.RelationshipTypeRecord{ETag: result.ETag, RelationshipType: value}
@@ -88,7 +88,7 @@ func (b *daemonMCPOperations) executeRelationshipRead(ctx context.Context, name 
 		if !validLoopID(input.ID) {
 			return operationFailure("invalid_arguments", false), true, nil
 		}
-		result, err = readMCPOperationJSON[generated.PersonRelationship](ctx, b.client, http.MethodGet, "/api/v1/person-relationships/{id}", &generated.GetPersonRelationshipRequestOptions{PathParams: &generated.GetPersonRelationshipPath{ID: input.ID}}, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.PersonRelationship](ctx, b.client, http.MethodGet, "/api/v1/person-relationships/{id}", &generated.GetPersonRelationshipRequestOptions{PathParams: &generated.GetPersonRelationshipPath{ID: input.ID}}, relationshipRefusal, http.StatusOK)
 		if result != nil && !result.IsError {
 			if value, ok := result.Output.(generated.PersonRelationship); ok && result.ETag != "" {
 				value.SourceRef = nil
@@ -102,7 +102,7 @@ func (b *daemonMCPOperations) executeRelationshipRead(ctx context.Context, name 
 		if !validLoopID(input.PersonID) {
 			return operationFailure("invalid_arguments", false), true, nil
 		}
-		result, err = readMCPOperationJSON[generated.PersonRelationshipsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/relationships", &generated.ListPersonRelationshipsRequestOptions{PathParams: &generated.ListPersonRelationshipsPath{ID: input.PersonID}, Query: &generated.ListPersonRelationshipsQuery{IncludeEnded: input.IncludeEnded}}, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.PersonRelationshipsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/relationships", &generated.ListPersonRelationshipsRequestOptions{PathParams: &generated.ListPersonRelationshipsPath{ID: input.PersonID}, Query: &generated.ListPersonRelationshipsQuery{IncludeEnded: input.IncludeEnded}}, relationshipRefusal, http.StatusOK)
 	case "list_person_relationship_reviews":
 		var personID *int64
 		if input.PersonID != 0 {
@@ -111,12 +111,12 @@ func (b *daemonMCPOperations) executeRelationshipRead(ctx context.Context, name 
 			}
 			personID = &input.PersonID
 		}
-		result, err = readMCPOperationJSON[generated.RelationshipReviewsResponse](ctx, b.client, http.MethodGet, "/api/v1/person-relationship-reviews", &generated.ListPersonRelationshipReviewsRequestOptions{Query: &generated.ListPersonRelationshipReviewsQuery{PersonID: personID, Status: input.Status}}, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.RelationshipReviewsResponse](ctx, b.client, http.MethodGet, "/api/v1/person-relationship-reviews", &generated.ListPersonRelationshipReviewsRequestOptions{Query: &generated.ListPersonRelationshipReviewsQuery{PersonID: personID, Status: input.Status}}, relationshipRefusal, http.StatusOK)
 	case "get_person_network":
 		if !validLoopID(input.PersonID) || input.Depth != nil && (*input.Depth < 1 || *input.Depth > 3) {
 			return operationFailure("invalid_arguments", false), true, nil
 		}
-		result, err = readMCPOperationJSON[generated.PersonNetwork](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/network", &generated.GetPersonNetworkRequestOptions{PathParams: &generated.GetPersonNetworkPath{ID: input.PersonID}, Query: &generated.GetPersonNetworkQuery{Depth: input.Depth, IncludeEnded: input.IncludeEnded}}, http.StatusOK)
+		result, err = readMCPOperationJSONWithClassifier[generated.PersonNetwork](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/network", &generated.GetPersonNetworkRequestOptions{PathParams: &generated.GetPersonNetworkPath{ID: input.PersonID}, Query: &generated.GetPersonNetworkQuery{Depth: input.Depth, IncludeEnded: input.IncludeEnded}}, relationshipRefusal, http.StatusOK)
 	default:
 		return nil, false, nil
 	}
@@ -231,7 +231,7 @@ func relationshipWriteInput(name string, args map[string]any) (relationshipWrite
 
 func relationshipRefusal(code string) bool {
 	switch code {
-	case "invalid_relationship", "invalid_relationship_type", "invalid_partial_date", "invalid_id", "invalid_if_match", "if_match_required", "relationship_revision_conflict", "relationship_type_not_found", "person_relationship_not_found", "person_not_found", "relationship_type_slug_conflict", "relationship_type_related_type_conflict", "relationship_type_not_deletable", "relationship_type_in_use", "person_relationship_duplicate", "person_relationships_unavailable":
+	case "invalid_relationship", "invalid_relationship_type", "invalid_partial_date", "invalid_status", "invalid_if_match", "if_match_required", "relationship_revision_conflict", "relationship_type_not_found", "person_relationship_not_found", "person_not_found", "relationship_type_slug_conflict", "relationship_type_related_type_conflict", "relationship_type_not_deletable", "relationship_type_in_use", "person_relationship_duplicate", "person_relationships_unavailable":
 		return true
 	}
 	return false
@@ -321,6 +321,11 @@ func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name s
 			return "", true, err
 		}
 		if result == nil || result.IsError {
+			if result != nil {
+				if failure, ok := result.Output.(operationFailureOutput); ok {
+					return "", true, &mcpserver.OperationRefusalError{Code: failure.Error}
+				}
+			}
 			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 		}
 		if result.ETag != input.ETag {
