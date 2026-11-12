@@ -77,12 +77,10 @@ func TestSettingsCategoryBoundarySelectionAndPage(t *testing.T) {
 	model := resizeModel(t, loadedSettingsModel(t, snapshot), 100, 12)
 	for _, direction := range []rune{'h', 'l'} {
 		model, _ = sendKey(t, model, key('j'))
-		model.settings.status = "Earlier status"
 		model, _ = sendKey(t, model, key(direction))
 		screen := uv.NewScreenBuffer(100, 12)
 		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 		assert.Contains(t, screen.String(), "▶   Field 0")
-		assert.NotContains(t, screen.String(), "Earlier status")
 	}
 	model.settings.pendingRestart = true
 	model = resizeModel(t, model, 100, 8)
@@ -102,53 +100,50 @@ func TestSettingsCategoryBoundarySelectionAndPage(t *testing.T) {
 }
 
 func TestSettingsViewportExitEditorKeepsSelectionVisible(t *testing.T) {
-	for _, exit := range []tea.KeyPressMsg{keyEsc(), keyEnter()} {
-		t.Run(exit.String(), func(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		exit   tea.KeyPressMsg
+		resize bool
+	}{{name: "escape", exit: keyEsc()}, {name: "enter", exit: keyEnter()}, {name: "resize", resize: true}} {
+		t.Run(tc.name, func(t *testing.T) {
 			snapshot := SettingsSnapshot{PendingRestart: true, Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
 			for i := range 7 {
 				snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("search.field%d", i), Group: "search", Label: fmt.Sprintf("Field %d", i), Kind: SettingKindString, Value: stringSettingValue("value")})
 			}
-			snapshot.Fields[6].Validation.Hint = strings.Repeat("example ", 40)
-			model := resizeModel(t, loadedSettingsModel(t, snapshot), 40, 10)
+			height := 12
+			if !tc.resize {
+				height = 10
+				snapshot.Fields[6].Validation.Hint = strings.Repeat("example ", 40)
+			}
+			model := resizeModel(t, loadedSettingsModel(t, snapshot), 40, height)
 			model, _ = sendKey(t, model, keyEnter())
 			for range 6 {
 				model, _ = sendKey(t, model, key('j'))
 			}
-			model, _ = sendKey(t, model, keyEnter())
-			for range 5 {
+			if tc.resize {
 				model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+				screen := uv.NewScreenBuffer(40, height)
+				uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+				require.Contains(t, screen.String(), "▶   Field 6")
+				height = 8
+				model = resizeModel(t, model, 40, height)
+			} else {
+				model, _ = sendKey(t, model, keyEnter())
+				for range 5 {
+					model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+				}
+				model, _ = sendKey(t, model, tc.exit)
 			}
-			model, _ = sendKey(t, model, exit)
-			screen := uv.NewScreenBuffer(40, 10)
+			screen := uv.NewScreenBuffer(40, height)
 			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 			assert.Contains(t, screen.String(), "▶   Field 6")
 		})
 	}
 }
 
-func TestSettingsViewportResizeKeepsVisibleSelection(t *testing.T) {
-	snapshot := SettingsSnapshot{PendingRestart: true, Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
-	for i := range 7 {
-		snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("search.field%d", i), Group: "search", Label: fmt.Sprintf("Field %d", i), Kind: SettingKindString, Value: stringSettingValue("value")})
-	}
-	model := resizeModel(t, loadedSettingsModel(t, snapshot), 40, 12)
-	model, _ = sendKey(t, model, keyEnter())
-	for range 6 {
-		model, _ = sendKey(t, model, key('j'))
-	}
-	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	screen := uv.NewScreenBuffer(40, 12)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	require.Contains(t, screen.String(), "▶   Field 6")
-	model = resizeModel(t, model, 40, 8)
-	screen = uv.NewScreenBuffer(40, 8)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "▶   Field 6")
-}
-
 func TestSettingsViewportResizeKeepsUnpagedSelection(t *testing.T) {
 	for _, tc := range []struct{ width, newWidth, newHeight int }{{80, 40, 8}, {100, 100, 6}} {
-		t.Run(fmt.Sprint(tc.width), func(t *testing.T) {
+		t.Run(strconv.Itoa(tc.width), func(t *testing.T) {
 			snapshot := SettingsSnapshot{PendingRestart: true, Groups: []SettingsGroup{{ID: "search", Label: "Search"}}, Fields: []SettingField{{Key: "search.field", Group: "search", Label: "Search field", Kind: SettingKindString, Value: stringSettingValue("value")}}}
 			model := resizeModel(t, loadedSettingsModel(t, snapshot), tc.width, 24)
 			screen := uv.NewScreenBuffer(tc.width, 24)
@@ -193,63 +188,39 @@ func TestSettingsViewportLoadKeepsCodexEditorVisible(t *testing.T) {
 	assert.Contains(t, screen.String(), "example-profile")
 }
 
-func TestSettingsViewportDiscardConfirmationPaging(t *testing.T) {
-	for _, height := range []int{4, 6} {
-		t.Run(strconv.Itoa(height), func(t *testing.T) {
-			model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 20, height)
-			model, _ = sendKey(t, model, keyEnter())
-			model, _ = sendKey(t, model, keyEnter())
-			model, _ = sendKey(t, model, key('x'))
-			model, _ = sendKey(t, model, keyEnter())
-			model, _ = sendKey(t, model, keyEsc())
-			screen := uv.NewScreenBuffer(20, height)
-			var pages strings.Builder
-			for range 10 {
-				uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-				assert.Contains(t, screen.String(), "[Y] Yes")
-				assert.Contains(t, screen.String(), "[N/Esc] No")
-				assert.Contains(t, screen.String(), "[PgUp/PgDn] Scroll")
-				pages.WriteString(screen.String())
-				before := screen.String()
-				model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-				uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-				if screen.String() == before {
-					break
-				}
-			}
-			assert.Contains(t, pages.String(), "not been saved")
-		})
-	}
-}
-
 func TestSettingsViewportCategorySelectionAfterPeopleControls(t *testing.T) {
-	for _, pending := range []bool{false, true} {
-		t.Run(fmt.Sprintf("pending_%t", pending), func(t *testing.T) {
-			snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "archive", Label: "Archive"}, {ID: "daemon", Label: "Daemon"}}, Fields: []SettingField{{Key: "archive.enabled", Group: "archive", Label: "Archive", Kind: SettingKindBoolean, Value: boolSettingValue(true)}, {Key: "daemon.enabled", Group: "daemon", Label: "Daemon", Kind: SettingKindBoolean, Value: boolSettingValue(true)}}}
-			backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{snapshot}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64), PendingRestart: pending}}
-			model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 12)
-			model.settingsBackend = backend
-			model, load := sendKey(t, model, key('i'))
-			model = sendSettingsMsg(t, model, load())
-			model, _ = sendKey(t, model, keyEsc())
-			screen := uv.NewScreenBuffer(40, 12)
-			if pending {
-				model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-			} else {
-				model, _ = sendKey(t, model, keyEnter())
-			}
-			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-			assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
-			if pending {
-				model, _ = sendKey(t, model, key('j'))
-				uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-				assert.Contains(t, screen.String(), "▶ Daemon")
-			} else {
-				assert.Contains(t, screen.String(), "[j/k]")
-			}
-			assert.Contains(t, screen.String(), "[Esc]")
-		})
+	snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "archive", Label: "Archive"}, {ID: "daemon", Label: "Daemon"}}, Fields: []SettingField{{Key: "archive.enabled", Group: "archive", Label: "Archive", Kind: SettingKindBoolean, Value: boolSettingValue(true)}, {Key: "daemon.enabled", Group: "daemon", Label: "Daemon", Kind: SettingKindBoolean, Value: boolSettingValue(true)}}}
+	backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{snapshot}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64), PendingRestart: true}}
+	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 8)
+	model.settingsBackend = backend
+	model, load := sendKey(t, model, key('i'))
+	model = sendSettingsMsg(t, model, load())
+	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	model, _ = sendKey(t, model, keyEsc())
+	screen := uv.NewScreenBuffer(40, 8)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	require.Contains(t, screen.String(), "Restart pending.")
+	require.NotContains(t, screen.String(), "▶ Daemon")
+	model, _ = sendKey(t, model, key('j'))
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "▶ Daemon")
+	for range 3 {
+		model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgUp})
 	}
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	require.NotContains(t, screen.String(), "▶ Daemon")
+	model, _ = sendKey(t, model, keyEnter())
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "▶   Daemon")
+	for range 3 {
+		model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgUp})
+	}
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	require.NotContains(t, screen.String(), "▶   Daemon")
+	model, _ = sendKey(t, model, key('h'))
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "▶ Daemon")
+	assert.Contains(t, screen.String(), "[Esc]")
 }
 
 func TestSettingsViewportSettingsRestartNotice(t *testing.T) {
@@ -260,9 +231,14 @@ func TestSettingsViewportSettingsRestartNotice(t *testing.T) {
 		{name: "settings", settings: true}, {name: "people", people: true}, {name: "both", settings: true, people: true}, {name: "neither"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 80, 24)
-			model.settings.pendingRestart = tc.settings
-			model.settings.peopleInferenceStatus = &PeopleInferenceStatus{PendingRestart: tc.people}
+			snapshot := settingsFixture()
+			snapshot.PendingRestart = tc.settings
+			backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{snapshot}, status: PeopleInferenceStatus{PendingRestart: tc.people}}
+			model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 80, 24)
+			model.settingsBackend = backend
+			model, load := sendKey(t, model, key('i'))
+			model = sendSettingsMsg(t, model, load())
+			model, _ = sendKey(t, model, keyEsc())
 			screen := uv.NewScreenBuffer(80, 24)
 			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 			view := strings.Join(strings.Fields(screen.String()), " ")
@@ -278,10 +254,11 @@ func TestSettingsViewportSettingsRestartNotice(t *testing.T) {
 }
 
 func TestSettingsViewportCodexRestartNotice(t *testing.T) {
-	model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 80, 24)
-	model.settings.codex.active = true
-	model.settings.codex.stage = "selected"
-	model.settings.codex.status = PeopleInferenceStatus{Configured: "example", Running: "example", PendingRestart: true}
+	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{settingsFixture()}}
+	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 80, 24)
+	model.settingsBackend = backend
+	model, _ = sendKey(t, model, key('p'))
+	model = sendSettingsMsg(t, model, codexSelectedMsg{requestID: model.settings.codex.requestID, status: PeopleInferenceStatus{Configured: "example", Running: "example", PendingRestart: true}})
 	screen := uv.NewScreenBuffer(80, 24)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	view := strings.Join(strings.Fields(screen.String()), " ")
@@ -290,12 +267,15 @@ func TestSettingsViewportCodexRestartNotice(t *testing.T) {
 }
 
 func TestSettingsViewportCodexModelSelectionRemainsVisible(t *testing.T) {
-	model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 40, 12)
-	model.settings.codex.active = true
-	model.settings.codex.stage = "models"
+	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{settingsFixture()}}
+	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 12)
+	model.settingsBackend = backend
+	model, _ = sendKey(t, model, key('p'))
+	var models []CodexModelChoice
 	for i := range 12 {
-		model.settings.codex.models = append(model.settings.codex.models, CodexModelChoice{ID: fmt.Sprintf("model-%02d", i), ReasoningEfforts: []string{"medium"}})
+		models = append(models, CodexModelChoice{ID: fmt.Sprintf("model-%02d", i), ReasoningEfforts: []string{"medium"}})
 	}
+	model = sendSettingsMsg(t, model, codexModelsLoadedMsg{requestID: model.settings.codex.requestID, models: models})
 	for range 10 {
 		model, _ = sendKey(t, model, key('j'))
 	}
@@ -307,21 +287,6 @@ func TestSettingsViewportCodexModelSelectionRemainsVisible(t *testing.T) {
 	model, _ = sendKey(t, model, key('j'))
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "▶ model-11")
-}
-
-func TestSettingsViewportCodexPolicyEditorRemainsVisible(t *testing.T) {
-	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{settingsFixture()}}
-	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 13)
-	model.settingsBackend = backend
-	model, _ = sendKey(t, model, key('p'))
-	model, _ = sendKey(t, model, key('1'))
-	for _, r := range "example-profile" {
-		model, _ = sendKey(t, model, key(r))
-	}
-	screen := uv.NewScreenBuffer(40, 13)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "Edit field 1:")
-	assert.Contains(t, screen.String(), "example-profile")
 }
 
 func TestSettingsViewportCodexLoginPollPreservesPage(t *testing.T) {

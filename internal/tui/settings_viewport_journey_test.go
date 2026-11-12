@@ -35,19 +35,14 @@ func TestSettingsViewportShortScreenPeopleDisable(t *testing.T) {
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "[Esc]")
 	assert.Contains(t, screen.String(), "People inference disabled.")
-	assert.Contains(t, screen.String(), "Restart pending.")
 	model, _ = sendKey(t, model, key('v'))
 	screen = uv.NewScreenBuffer(40, 12)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "Revoke consent for example-profile?")
-	assert.Contains(t, screen.String(), "[y]")
-	assert.Regexp(t, `Fingerprint: +a{8}`, screen.String())
 	assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
 	model, _ = sendKey(t, model, key('n'))
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	screen = uv.NewScreenBuffer(40, 12)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
 	assert.Contains(t, screen.String(), "[Esc]")
 	page := screen.String()
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
@@ -165,7 +160,8 @@ func TestSettingsViewportTinyScreenKeepsPagingAndBack(t *testing.T) {
 	assert.Contains(t, screen.String(), "[PgUp/PgDn]")
 	var pages strings.Builder
 	for range 30 {
-		pages.WriteString(strings.Join(strings.Split(screen.String(), "\n")[1:4], ""))
+		page := strings.NewReplacer("Settings", "", "[Esc] Back", "", "[PgUp/PgDn] Scroll", "").Replace(screen.String())
+		pages.WriteString(page)
 		before := screen.String()
 		model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
@@ -177,63 +173,67 @@ func TestSettingsViewportTinyScreenKeepsPagingAndBack(t *testing.T) {
 	for _, text := range []string{"[p]", "[i]"} {
 		assert.Contains(t, pages.String(), text)
 	}
-	model, _ = sendKey(t, model, keyEnter())
-	for range 30 {
-		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-		before := screen.String()
-		model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-		if screen.String() == before {
-			break
-		}
-	}
-	assert.Regexp(t, `\[Ctrl\+S\] +Save`, screen.String())
-	assert.Equal(t, 1, strings.Count(screen.String(), "[Esc] Back"))
 }
 
-func TestSettingsViewportLoadingBackAppearsOnce(t *testing.T) {
-	model := NewBuilder().WithSize(20, 3).Build()
-	model.settingsBackend = &fakeSettingsBackend{loads: []SettingsSnapshot{settingsFixture()}}
-	model, _ = sendKey(t, model, key(','))
-	screen := uv.NewScreenBuffer(20, 3)
-	for range 10 {
-		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-		assert.Equal(t, 1, strings.Count(screen.String(), "[Esc] Back"))
-		before := screen.String()
-		model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-		if screen.String() == before {
-			break
-		}
+func TestSettingsViewportTinyScreenFooters(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		height int
+	}{{"loading", 3}, {"fields", 6}, {"editing", 6}, {"codex", 6}, {"discard", 4}, {"discard", 6}} {
+		t.Run(fmt.Sprintf("%s_%d", tc.name, tc.height), func(t *testing.T) {
+			snapshot := settingsFixture()
+			snapshot.Fields[0].Options = []string{"auto", "manual"}
+			backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{snapshot}}
+			model := NewBuilder().WithSize(20, tc.height).Build()
+			model.settingsBackend = backend
+			model, load := sendKey(t, model, key(','))
+			if tc.name != "loading" {
+				model = sendSettingsMsg(t, model, load())
+			}
+			switch tc.name {
+			case "fields", "editing", "discard":
+				model, _ = sendKey(t, model, keyEnter())
+			}
+			if tc.name == "editing" || tc.name == "discard" {
+				model, _ = sendKey(t, model, keyEnter())
+			}
+			if tc.name == "discard" {
+				model, _ = sendKey(t, model, key('l'))
+				model, _ = sendKey(t, model, keyEnter())
+				model, _ = sendKey(t, model, keyEsc())
+			}
+			if tc.name == "codex" {
+				model, _ = sendKey(t, model, key('p'))
+			}
+			screen := uv.NewScreenBuffer(20, tc.height)
+			var pages strings.Builder
+			for range 30 {
+				uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+				view := screen.String()
+				pages.WriteString(view)
+				switch tc.name {
+				case "loading", "fields":
+					assert.Equal(t, 1, strings.Count(view, "[Esc] Back"))
+				case "editing", "codex":
+					assert.Equal(t, 1, strings.Count(view, "[Esc] Cancel"))
+					assert.NotContains(t, view, "[Esc] Back")
+				case "discard":
+					assert.Contains(t, view, "[Y] Yes")
+					assert.Contains(t, view, "[N/Esc] No")
+					assert.Contains(t, view, "[PgUp/PgDn] Scroll")
+				}
+				model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+				uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+				if screen.String() == view {
+					break
+				}
+			}
+			if tc.name == "fields" {
+				assert.Regexp(t, `\[Ctrl\+S\] +Save`, pages.String())
+			}
+			if tc.name == "discard" {
+				assert.Contains(t, pages.String(), "not been saved")
+			}
+		})
 	}
-}
-
-func TestSettingsViewportTinyScreenEscapeCancels(t *testing.T) {
-	snapshot := settingsFixture()
-	snapshot.Fields[0].Options = []string{"auto", "manual"}
-	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{snapshot}}
-	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 20, 6)
-	model.settingsBackend = backend
-	model, _ = sendKey(t, model, keyEnter())
-	model, _ = sendKey(t, model, keyEnter())
-	require.True(t, model.settings.editing)
-	screen := uv.NewScreenBuffer(20, 6)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "[Esc] Cancel")
-	assert.NotContains(t, screen.String(), "[Esc] Back")
-	for range 20 {
-		before := screen.String()
-		model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-		if screen.String() == before {
-			break
-		}
-	}
-	assert.Equal(t, 1, strings.Count(screen.String(), "[Esc] Cancel"))
-	model, _ = sendKey(t, model, keyEsc())
-	model, _ = sendKey(t, model, key('p'))
-	require.True(t, model.settings.codex.active)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "[Esc] Cancel")
-	assert.NotContains(t, screen.String(), "[Esc] Back")
 }

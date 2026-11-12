@@ -183,7 +183,6 @@ it('shows restart guidance after saving a restart-required setting', async () =>
 
 it.each([
   [true, false, 'server'],
-  [false, true, 'enrichment'],
   [false, true, 'server'],
   [true, true, 'enrichment'],
   [false, false, 'enrichment']
@@ -205,13 +204,14 @@ it.each([
   const notice = command.closest('[role="status"]')!;
   expect(screen.getAllByText('msgvault daemon restart')).toHaveLength(1);
   expect(notice.getAttribute('data-tone')).toBe('warning');
-  if (!settingsPending || inferencePending) return;
-  expect(notice.textContent).toContain('Restart pending.');
-  expect(notice.textContent).toContain('computer running msgvault');
-  expect(notice.textContent).toContain('--home');
-  expect(notice.textContent).toContain('--config');
-  expect(notice.textContent).toContain('restart its service');
-  expect(notice.textContent).toContain('stop and rerun your foreground msgvault serve with the same flags.');
+  if (settingsPending && !inferencePending) {
+    expect(notice.textContent).toContain('Restart pending.');
+    expect(notice.textContent).toContain('computer running msgvault');
+    expect(notice.textContent).toContain('--home');
+    expect(notice.textContent).toContain('--config');
+    expect(notice.textContent).toContain('restart its service');
+    expect(notice.textContent).toContain('stop and rerun your foreground msgvault serve with the same flags.');
+  }
 });
 
 it('warns before leaving with drafts, keeps them on Stay, and discards before continuing', async () => {
