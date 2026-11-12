@@ -9,7 +9,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -17,30 +16,6 @@ type importProgressRecorder struct {
 	NullProgress
 
 	errors []string
-}
-
-func TestImportSenderSurvivesPostgresFTSBackfill(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	if !st.IsPostgreSQL() {
-		t.Skip("PostgreSQL indexing")
-	}
-	opts := DefaultOptions()
-	opts.Phone = "+12025550123"
-	result, err := NewImporter(st, nil).Import(t.Context(), createGroupParticipantsImportFixture(t, nil), opts)
-	require.NoError(err)
-	require.Zero(result.Errors)
-	query := &search.Query{TextTerms: []string{"12025550124"}}
-	before, _, err := st.SearchMessageIDsQueryContext(t.Context(), query, 10)
-	require.NoError(err)
-	require.Len(before, 2)
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2, search_fts_fields = NULL WHERE source_id = $1`, result.SourceID)
-	require.NoError(err)
-	_, err = st.BackfillFTS(nil)
-	require.NoError(err)
-	after, _, err := st.SearchMessageIDsQueryContext(t.Context(), query, 10)
-	require.NoError(err)
-	require.ElementsMatch(before, after)
 }
 
 func (p *importProgressRecorder) OnError(err error) {

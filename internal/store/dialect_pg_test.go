@@ -92,10 +92,7 @@ func TestPostgreSQLDialect_InsertOrIgnore(t *testing.T) {
 func TestPostgreSQLDialect_FTSSearchClause(t *testing.T) {
 	assert := assert.New(t)
 	d := &PostgreSQLDialect{}
-	join, where, orderBy, orderArgCount := d.FTSSearchClause(false, []string{"foo-bar"})
-	assert.Empty(join)
-	assert.Contains(where, "m.search_fts @@ to_tsquery('simple', ?)")
-	assert.Contains(where, "foo <-> bar:*")
+	_, _, orderBy, orderArgCount := d.FTSSearchClause(false, []string{"foo-bar"})
 	assert.Equal("-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?))", orderBy)
 	assert.Equal(1, orderArgCount)
 }

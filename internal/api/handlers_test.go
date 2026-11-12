@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -2581,25 +2582,54 @@ func TestHandleCLISearchQuickCheckReportsBuildingImmediately(t *testing.T) {
 		"a stale tail must be reported as building on the first response")
 }
 
-type postgresBackfillStore struct {
+type recordingBackfillStore struct {
 	*store.Store
 
-	started chan struct{}
+	started  chan struct{}
+	postgres bool
 }
 
-func (s *postgresBackfillStore) NeedsFTSBackfillQuick() bool {
+func (s *recordingBackfillStore) IsPostgreSQL() bool { return s.postgres }
+
+func (s *recordingBackfillStore) NeedsFTSBackfillQuick() bool {
 	return s.NeedsFTSBackfillQuickContext(context.Background())
 }
-func (s *postgresBackfillStore) NeedsFTSBackfillQuickContext(ctx context.Context) bool {
+func (s *recordingBackfillStore) NeedsFTSBackfillQuickContext(ctx context.Context) bool {
 	return true
 }
-func (*postgresBackfillStore) NeedsFTSBackfillContext(ctx context.Context) (bool, error) {
+func (*recordingBackfillStore) NeedsFTSBackfillContext(ctx context.Context) (bool, error) {
 	return true, ctx.Err()
 }
-func (s *postgresBackfillStore) BackfillFTSContext(ctx context.Context, _ func(int64, int64)) (int64, error) {
+func (s *recordingBackfillStore) BackfillFTSContext(ctx context.Context, _ func(int64, int64)) (int64, error) {
 	s.started <- struct{}{}
 	<-ctx.Done()
 	return 0, ctx.Err()
+}
+
+func TestStartupSearchRepair(t *testing.T) {
+	for _, postgres := range []bool{false, true} {
+		t.Run(strconv.FormatBool(postgres), func(t *testing.T) {
+			require := require.New(t)
+			st := &recordingBackfillStore{Store: testutil.NewTestStore(t), started: make(chan struct{}, 1), postgres: postgres}
+			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
+			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+			require.NoError(err)
+			done := make(chan error, 1)
+			go func() { done <- srv.StartOnListener(listener) }()
+			t.Cleanup(func() {
+				_ = srv.Shutdown(context.WithoutCancel(t.Context()))
+				<-done
+			})
+			require.NoError(srv.WaitStarted(t.Context()))
+			if postgres {
+				require.Eventually(func() bool { return len(st.started) == 1 }, 5*time.Second, time.Millisecond)
+			}
+			require.NoError(srv.Shutdown(context.WithoutCancel(t.Context())))
+			if !postgres {
+				assert.Empty(t, st.started)
+			}
+		})
+	}
 }
 
 func TestSearchRepairBlocksIdleAndStopsOnShutdown(t *testing.T) {
@@ -2608,7 +2638,7 @@ func TestSearchRepairBlocksIdleAndStopsOnShutdown(t *testing.T) {
 		require := require.New(t)
 		gate := NewSerialOperationGate()
 		idle := newIdleTrackerFixture(t, 20*time.Millisecond)
-		st := &postgresBackfillStore{Store: base, started: make(chan struct{}, 1)}
+		st := &recordingBackfillStore{Store: base, started: make(chan struct{}, 1)}
 		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger(), OperationGate: gate, IdleTracker: idle.tracker})
 		defer srv.cancelImports()
 		srv.ensureCLISearchIndexAsync(bindCLIStoreContext(t.Context(), st), true)

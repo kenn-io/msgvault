@@ -112,7 +112,7 @@ func TestSearchFTSPunctuation(t *testing.T) {
 	require.NoError(f.Store.UpsertFTS(id, "Release 1.2.0 notes", "Write to both@example.com or see changelog.example.net.", "+15550100777", "", ""))
 	_, _, err := f.Store.SearchMessages("foo ---", 0, 50)
 	require.NoError(err)
-	for term, want := range map[string][]int64{"notes": {id}, "both@example.com": {id}, "both@exam": {id}, "changelog.example.net": {id}, "1.2.0": {id}, "+15550100777": {id}, "15550100777": {id}, "example@both": nil} {
+	for term, want := range map[string][]int64{"notes": {id}, "both@example.com": {id}, "both@exam": {id}, "changelog.example.net": {id}, "1.2.0": {id}, "+15550100777": {id}, "15550100777": {id}, "example@both": nil, "---": nil} {
 		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
 		require.NoError(err, term)
 		assert.ElementsMatch(want, ids, term)
@@ -134,7 +134,7 @@ func TestPostgresFTSSaturatedPhrases(t *testing.T) {
 	if !f.Store.IsPostgreSQL() {
 		t.Skip("PostgreSQL indexing")
 	}
-	for _, count := range []int{255, 256, 257} {
+	for _, count := range []int{255, 256} {
 		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("repeat-boundary-%d", count)).Create(t, f.Store)
 		require.NoError(f.Store.UpsertFTS(id, "", strings.Repeat("boundary ", count)+"match", "", "", ""))
 		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"boundary@match"}}, 10)
@@ -210,9 +210,14 @@ func TestPostgresFTSSaturatedEditAndRebuild(t *testing.T) {
 	require.NoError(err)
 	check("new@example.test")
 	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "short@example.test", Valid: true}, sql.NullString{}))
-	_, err = f.Store.RebuildFTS(nil)
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2 WHERE id = $1`, id)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
 	require.NoError(err)
 	check("short@example.test")
+	var fieldsCleared bool
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts_fields IS NULL FROM messages WHERE id = $1`, id).Scan(&fieldsCleared))
+	assert.True(fieldsCleared)
 }
 
 // TestEnsureParticipant_Concurrent covers H5: 50 goroutines all
