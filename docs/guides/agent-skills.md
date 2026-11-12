@@ -17,9 +17,13 @@ session.
 | `msgvault-search` | Query syntax, search modes (fts/vector/hybrid), reading messages, exporting raw email |
 | `msgvault-attachments` | Finding attachments, filtering by type/size, exporting by content hash or message |
 | `msgvault-analytics` | Built-in aggregates, raw SQL over the analytics views, time-series queries |
+| `msgvault-appreciations` | Review supported appreciation suggestions and owner-chosen dismissals |
 | `msgvault-feedback` | Record heard, accepted or declined feedback, link accepted actions, and keep change evidence and report-back reminders in Kata |
 
-Search, attachments and analytics cover read-only workflows. Feedback also
+Search, attachments and analytics cover read-only workflows. The appreciation skill
+reads saved suggestions, dismisses only at your direction, and refreshes only
+on explicit request using provider budget. It is newer than the latest release;
+rerun `msgvault skills install` after upgrading. Feedback also
 guides task writes within your explicit request. All skills require your
 direction before archive mutations such as sync, import, dedup or deletion.
 

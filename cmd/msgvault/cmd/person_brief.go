@@ -43,6 +43,7 @@ func newPersonBriefCommand() *cobra.Command {
 	command.AddCommand(
 		newPersonBriefShowCommand(),
 		newPersonBriefHistoryCommand(),
+		newPersonBriefEnrollmentsCommand(),
 		newPersonBriefGenerateCommand(),
 		newPersonBriefRejectCommand(),
 		newPersonBriefEnrollmentCommand("enroll", true),
@@ -388,4 +389,49 @@ func personBriefReasonOrDash(reason string) string {
 		return "-"
 	}
 	return textutil.SanitizeTerminal(reason)
+}
+
+// newPersonBriefEnrollmentsCommand reads one bounded page of enrollments.
+func newPersonBriefEnrollmentsCommand() *cobra.Command {
+	var afterID, limit int64
+	var jsonOutput bool
+	command := &cobra.Command{Use: "enrollments", Short: "List one page of enrolled people", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		if afterID < 0 {
+			return usageErr(cmd, errors.New("--after-id must be nonnegative"))
+		}
+		if limit < 1 || limit > 1000 {
+			return usageErr(cmd, errors.New("--limit must be between 1 and 1000"))
+		}
+		client, _, err := OpenHTTPStore(cmd.Context())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = client.Close() }()
+		response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.ListPersonBriefEnrollmentsResp, error) {
+			return api.ListPersonBriefEnrollmentsWithResponse(cmd.Context(), &generated.ListPersonBriefEnrollmentsRequestOptions{Query: &generated.ListPersonBriefEnrollmentsQuery{AfterID: &afterID, Limit: &limit}})
+		})
+		if err != nil {
+			return err
+		}
+		if response.JSON200 == nil || response.JSON200.Enrollments == nil {
+			return errors.New("person brief enrollments response was empty")
+		}
+		if jsonOutput {
+			return writePersonBriefRawJSON(cmd, response.Body)
+		}
+		for _, row := range response.JSON200.Enrollments {
+			enabled := "-"
+			if row.EnabledAt != nil {
+				enabled = row.EnabledAt.Format("2006-01-02T15:04:05Z07:00")
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Person %d: enrolled=%t enabled_at=%s\n", row.PersonID, row.Enrolled, enabled); err != nil {
+				return fmt.Errorf("write person brief enrollments: %w", err)
+			}
+		}
+		return nil
+	}}
+	command.Flags().Int64Var(&afterID, "after-id", 0, "List people after this ID")
+	command.Flags().Int64Var(&limit, "limit", 20, "Maximum enrollments to list (1-1000)")
+	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
+	return command
 }

@@ -3890,6 +3890,7 @@ msgvault person brief enroll <person-id> [--track] [--json]
 msgvault person brief generate <person-id> [--json]
 msgvault person brief show <person-id> [--json]
 msgvault person brief history <person-id> [--limit 20] [--json]
+msgvault person brief enrollments [--after-id <id>] [--limit <n>] [--json]
 msgvault person brief reject <person-id> [--reason "..."] [--json]
 msgvault person brief unenroll <person-id> [--json]
 ```
@@ -3899,8 +3900,28 @@ consented provider and its budget. History accepts limits from 1 to 200;
 rejection hides the current version but preserves it in history. Unenrolling
 stops future generation without deleting saved versions.
 
+Enrollment pages contain enrolled people, who may no longer be tracked. The default
+limit is 20 (maximum 1000); after a full page, pass its last person ID as
+`--after-id`. A short or empty page ends enumeration. JSON retains the daemon response.
+
 See [person briefs](usage/people-briefs.md)
 for provider setup, supported sources, and a first-run example.
+
+---
+
+## person appreciations
+
+```bash
+msgvault person appreciations list <person-id> [--json]
+msgvault person appreciations dismiss <person-id> <key> [--json]
+```
+
+List reads supported, undismissed suggestions and exact citations without inference.
+Pass a returned opaque key unchanged to dismiss it durably. JSON retains the daemon
+response, including dismissal audit fields. A missing current brief or retired key
+returns 404; unavailable policy returns 503. Other operational failures are errors.
+See [person briefs](usage/people-briefs.md#review-reasons-to-say-thanks) and the
+[API reference](api-server.md#person-appreciation-suggestions) for details.
 
 ---
 

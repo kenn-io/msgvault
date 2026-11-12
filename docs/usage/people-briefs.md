@@ -90,6 +90,24 @@ contribution, the suggestion can appear as already thanked.
 Dismissal persists across later briefs. The current brief hides dismissed or
 unsupported suggestions, while its history remains an immutable snapshot.
 
+Read saved suggestions and their selected citations without a provider call:
+
+```bash
+msgvault person appreciations list 7 --json
+msgvault person appreciations dismiss 7 "<returned-key>" --json
+```
+
+Use the returned key unchanged. Dismissal is durable and cannot be undone here;
+the response carries the daemon's audit values. An empty list means no supported,
+undismissed suggestions, not that no help occurred. A missing current brief and a
+retired key return errors. See the [API contract](/docs/api-server/#person-appreciation-suggestions).
+
+For a weekly review, page enrolled people with `msgvault person brief enrollments
+--limit 20 --json`, using the last person ID as `--after-id` after a full page.
+Check current tracking with `msgvault person tiers explain 7 --json`; enrollment
+may outlive tracking. Do not refresh just because a list is empty or old. Generate
+only when you explicitly want a refresh; it spends provider budget.
+
 ## Follow up on temporary events
 
 Briefs can remember an explicit temporary event the person mentioned, such as a
