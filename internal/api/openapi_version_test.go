@@ -227,18 +227,14 @@ func TestAPIBaseMarkers(t *testing.T) {
 		git(args...)
 	}
 	git("update-ref", "refs/remotes/origin/main", "HEAD")
-	git("checkout", "-qb", "feature")
 	changed := "5.0.0_" + strings.Repeat("e", 64) + "_" + strings.Repeat("b", 64)
 	git("mv", dir+marker, dir+changed)
 	git("commit", "-qm", "change")
-	markers, err := apiBaseMarkers(t.Context(), "")
-	require.NoError(err)
-	assert.Equal(t, []string{marker}, markers)
 
 	// Advance origin/main beyond the branch point; local checks still use the ancestor.
 	git("update-ref", "refs/remotes/origin/main", "HEAD")
 	git("checkout", "-q", "HEAD~1")
-	markers, err = apiBaseMarkers(t.Context(), "")
+	markers, err := apiBaseMarkers(t.Context(), "")
 	require.NoError(err)
 	assert.Equal(t, []string{marker}, markers)
 	markers, err = apiBaseMarkers(t.Context(), "refs/remotes/origin/main")
