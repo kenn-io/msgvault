@@ -61,6 +61,7 @@ var moves = []Move{
 	{"export-messages", "export messages"},
 	{"export-token", "account export-token"},
 	{"find-chat", "chat find"},
+	{"import-discord-package", "import discord-package"},
 	{"import-eml", "import eml"},
 	{"import-emlx", "import emlx"},
 	{"import-gvoice", "import gvoice"},

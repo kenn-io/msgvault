@@ -99,7 +99,7 @@ func runWhatsAppImport(cmd *cobra.Command, sourcePath string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		fmt.Println("\nInterrupted. Saving checkpoint...")
+		fmt.Println("\nInterrupted. Saving progress...")
 		cancel()
 	}()
 

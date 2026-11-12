@@ -79,7 +79,7 @@ func TestRepairDerivedSourceReportsEmptyRaw(t *testing.T) {
 	r.NoError(st.UpsertMessageBody(id, sql.NullString{String: "retained body", Valid: true}, sql.NullString{}))
 	var out bytes.Buffer
 	r.NoError(repairDerivedSource(t.Context(), &out, st, src))
-	a.Contains(out.String(), "1 archived payloads could not be decoded — left unchanged")
+	a.Contains(out.String(), "Couldn't read archived records: 1 left unchanged")
 	a.Contains(out.String(), "0 bodies rewritten")
 	body, err := st.GetMessageBodyText(t.Context(), id)
 	r.NoError(err)

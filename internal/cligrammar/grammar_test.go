@@ -11,6 +11,7 @@ import (
 func TestGrammarKnownPaths(t *testing.T) {
 	for _, tc := range []struct{ old, canonical string }{
 		{"draft-reply", "draft reply"},
+		{"import-discord-package", "import discord-package"},
 		{"add-account", "source gmail add"},
 		{"add-slack", "source slack add"},
 		{"list-folders", "source imap folders"},

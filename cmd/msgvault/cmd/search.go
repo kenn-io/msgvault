@@ -265,7 +265,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 		if isAgentMode(state) {
 			fmt.Fprintln(os.Stderr, "Note: the search index could not be verified for this request; results may be incomplete. Ask the archive owner to search once or run fts rebuild.")
 		} else {
-			fmt.Fprintln(os.Stderr, "Note: the search index could not be verified for this request; results may be incomplete. Search again to retry the check, or run fts rebuild.")
+			fmt.Fprintln(os.Stderr, "Note: couldn't check the text-search index, so results may miss messages. Search again or run msgvault fts rebuild.")
 		}
 	case "awaiting_owner":
 		fmt.Fprintln(os.Stderr, "Note: the search index is incomplete; run fts rebuild with owner access. Results may be incomplete until it finishes.")

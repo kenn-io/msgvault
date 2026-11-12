@@ -139,7 +139,7 @@ func repairDerivedSource(ctx context.Context, out io.Writer, s *store.Store, src
 		_, _ = fmt.Fprint(out, formatRepairDerivedSummary(label, textSum))
 	}
 	if textSum.Undecodable > 0 {
-		_, _ = fmt.Fprintf(out, "  %d archived payloads could not be decoded — left unchanged\n", textSum.Undecodable)
+		_, _ = fmt.Fprintf(out, "  Couldn't read archived records: %d left unchanged\n", textSum.Undecodable)
 	}
 	if textSum.Errors > 0 {
 		_, _ = fmt.Fprintf(out, "  %d errors — re-run to retry\n", textSum.Errors)
