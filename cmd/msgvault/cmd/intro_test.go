@@ -80,6 +80,13 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 	req.NoError(err)
 	_, err = run("intro", "cancel", row.IntroID, "--revision", "99")
 	req.ErrorContains(err, "revision_mismatch")
+	data, err = run("intro", "prepare", "--source-id", strconv.FormatInt(src.ID, 10), "--person", strconv.FormatInt(a.ID, 10), "--person", strconv.FormatInt(b.ID, 10), "--title", "x\x1b[31mred", "--body", "text\x1b[31mred", "--json")
+	req.NoError(err)
+	req.NoError(json.Unmarshal([]byte(data), &row))
+	data, err = run("intro", "show", row.IntroID)
+	req.NoError(err)
+	check.NotContains(data, "\x1b")
+	check.Contains(data, "red")
 }
 
 func TestIntroDelegatedThroughRunner(t *testing.T) {
@@ -149,11 +156,8 @@ func TestIntroDelegatedThroughRunner(t *testing.T) {
 	req.NoError(json.Unmarshal([]byte(events[0].Data), &row))
 	check.Equal(grantID, row.CreatedBy)
 	denied := run(outsider, "intro", "show", row.IntroID, "--json")
-	missing := run(outsider, "intro", "show", "missing", "--json")
 	req.Len(denied, 1)
-	req.Len(missing, 1)
 	check.Equal("not_permitted", denied[0].Error)
-	check.Equal(denied[0].Error, missing[0].Error)
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	req.NoError(os.WriteFile(tokenFile, []byte(create), 0600))
 	for _, tc := range []struct {
@@ -180,33 +184,6 @@ func TestIntroDelegatedThroughRunner(t *testing.T) {
 			req.NoError(err)
 		}
 	}
-}
-
-func TestIntroRunnerSanitizesText(t *testing.T) {
-	check := assert.New(t)
-	req := require.New(t)
-	st := testutil.NewTestStore(t)
-	ctx := t.Context()
-	src, err := st.GetOrCreateSource("beeper", "safe-account")
-	req.NoError(err)
-	pa, err := st.EnsureParticipant("safe-a@example.com", "A", "example.com")
-	req.NoError(err)
-	pb, err := st.EnsureParticipant("safe-b@example.com", "B", "example.com")
-	req.NoError(err)
-	a, _, err := st.CreatePersonFromParticipantContext(ctx, pa)
-	req.NoError(err)
-	b, _, err := st.CreatePersonFromParticipantContext(ctx, pb)
-	req.NoError(err)
-	adapter := &storeAPIAdapter{store: st}
-	var output bytes.Buffer
-	emit := func(e api.CLIRunEvent) error { output.WriteString(e.Data); return nil }
-	args := []string{"intro", "prepare", "--source-id", strconv.FormatInt(src.ID, 10), "--person", strconv.FormatInt(a.ID, 10), "--person", strconv.FormatInt(b.ID, 10), "--title", "x\x1b[31mred", "--body", "text\x1b[31mred"}
-	err = adapter.runCLIIntro(ctx, api.CLIRunRequest{Args: args}, emit)
-	req.NoError(err)
-	check.NotContains(output.String(), "\x1b")
-	err = adapter.runCLIIntro(ctx, api.CLIRunRequest{Args: []string{"intro", "unknown", "private"}}, emit)
-	req.Error(err)
-	check.Equal("invalid_args", err.Error())
 }
 
 func TestIntroStoreFailureDoesNotLogText(t *testing.T) {

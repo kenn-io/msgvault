@@ -323,7 +323,7 @@ func TestDelegatedDraftLifecycleCommandsSkipBusyOperationGate(t *testing.T) { //
 	}
 }
 
-func TestDelegatedDraftGetSkipsBusyOperationGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+func TestDelegatedReadsSkipBusyOperationGate(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	gate := NewSerialOperationGate()

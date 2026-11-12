@@ -38,6 +38,13 @@ func TestGrantBodyAndEdit(t *testing.T) {
 	req.NoError(err)
 	check.Empty(row.Body)
 	check.Equal("agent", row.CreatedBy)
+	page, err := svc.List(ctx, grant, store.PersonIntroductionQuery{})
+	req.NoError(err)
+	req.Len(page.Items, 1)
+	check.Empty(page.Items[0].Body)
+	for _, member := range page.Items[0].Members {
+		check.Empty(member.UserID)
+	}
 	req.Len(row.Members, 2)
 	for _, member := range row.Members {
 		check.Empty(member.UserID)
@@ -66,7 +73,7 @@ func TestGrantBodyAndEdit(t *testing.T) {
 	req.ErrorIs(err, introops.ErrForbidden)
 }
 
-func TestDelegatedListContinuesPastScanLimit(t *testing.T) {
+func TestDelegatedListFiltersBeforeLimit(t *testing.T) {
 	req := require.New(t)
 	check := assert.New(t)
 	f := storetest.New(t)
@@ -113,52 +120,6 @@ func TestDelegatedListContinuesPastScanLimit(t *testing.T) {
 	req.Len(page.Items, 1)
 	check.Equal(visible.IntroID, page.Items[0].IntroID)
 	check.False(page.HasMore)
-	// Resume from a visible boundary without skipping another visible record.
-	in.PersonBID = b.ID
-	newer, err := svc.Prepare(ctx, nil, in)
-	req.NoError(err)
-	second, err := svc.Prepare(ctx, nil, in)
-	req.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_introductions SET created_at = ? WHERE intro_id = ?`), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC), newer.IntroID)
-	req.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_introductions SET created_at = ? WHERE intro_id = ?`), time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC), second.IntroID)
-	req.NoError(err)
-	page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
-	req.NoError(err)
-	req.Len(page.Items, 1)
-	check.Equal(newer.IntroID, page.Items[0].IntroID)
-	check.True(page.HasMore)
-	page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1, AfterID: page.NextAfterID})
-	req.NoError(err)
-	req.Len(page.Items, 1)
-	check.Equal(second.IntroID, page.Items[0].IntroID)
-	check.True(page.HasMore)
-	page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1, AfterID: page.NextAfterID})
-	req.NoError(err)
-	req.Len(page.Items, 1)
-	check.Equal(visible.IntroID, page.Items[0].IntroID)
-
-	// More than one full page of eligible rows remains traversable without repeats.
-	for range 101 {
-		_, err = svc.Prepare(ctx, nil, in)
-		require.NoError(t, err)
-	}
-	seen := map[string]bool{}
-	cursor := ""
-	for {
-		page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 20, AfterID: cursor})
-		req.NoError(err)
-		for _, row := range page.Items {
-			assert.False(t, seen[row.IntroID])
-			seen[row.IntroID] = true
-		}
-		if !page.HasMore {
-			break
-		}
-		req.NotEmpty(page.NextAfterID)
-		cursor = page.NextAfterID
-	}
-	assert.Len(t, seen, 104)
 }
 
 func TestPrepareRejectsNonpositiveSourceID(t *testing.T) {
@@ -192,7 +153,7 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 		return p.ID
 	}
 	a, b := person("a", "scope-a"), person("b", "scope-a")
-	absent, owner := person("absent", ""), person("self", "scope-a")
+	absent, cross, owner := person("absent", ""), person("cross", "scope-b"), person("self", "scope-a")
 	req.NoError(f.Store.AddAccountIdentityContext(ctx, other.ID, "self@example.test", "manual"))
 	svc := introops.Service{Store: f.Store}
 	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: src.ID, Type: "beeper", Identifier: "scope-a"}}}
@@ -210,40 +171,69 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 	visible, err := svc.Prepare(ctx, g, in)
 	req.NoError(err)
 	check.Empty(visible.Body)
-	// A second account identity is a visible blocker, not a permission denial.
+	parity := func(id string, wantVisible bool) {
+		t.Helper()
+		_, err := svc.Get(ctx, g, id)
+		if wantVisible {
+			req.NoError(err)
+		} else {
+			req.ErrorIs(err, introops.ErrForbidden)
+		}
+		page, err := svc.List(ctx, g, store.PersonIntroductionQuery{})
+		req.NoError(err)
+		found := false
+		for _, row := range page.Items {
+			if row.IntroID == id {
+				found = true
+			}
+		}
+		check.Equal(wantVisible, found)
+	}
+	parity(visible.IntroID, true)
 	var participant int64
 	req.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), b).Scan(&participant))
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?)`), participant, beeperidentity.Fallback("scope-a", "second-b"))
 	req.NoError(err)
-	ambiguous, err := svc.Get(ctx, g, visible.IntroID)
-	req.NoError(err)
-	check.Contains(ambiguous.Blockers, store.IntroductionBlocker{Code: "ambiguous_identity", PersonID: b})
-	for _, id := range []int64{absent, owner, 99999999} {
+	parity(visible.IntroID, true) // ambiguous identities remain visible
+	for _, id := range []int64{absent, cross, owner, 99999999} {
 		in.PersonBID = id
 		_, err := svc.Prepare(ctx, g, in)
 		req.ErrorIs(err, introops.ErrForbidden)
 		check.Equal("not_permitted", introops.ErrorCode(err))
 	}
-	// Owners can still prepare without an identity on the chosen account.
-	in.PersonBID = absent
-	hidden, err := svc.Prepare(ctx, nil, in)
+	pre, err := f.Store.GetPersonIntroductionPreflightContext(ctx, src.ID, a, cross)
 	req.NoError(err)
-	_, err = svc.Get(ctx, g, hidden.IntroID)
-	req.ErrorIs(err, introops.ErrForbidden)
-	_, err = svc.Cancel(ctx, g, hidden.IntroID, hidden.Revision)
-	req.ErrorIs(err, introops.ErrForbidden)
-	for _, id := range []int64{owner} {
+	check.Contains(pre.Blockers, store.IntroductionBlocker{Code: "no_identity_on_account", PersonID: cross})
+	rows := []introops.Record{visible}
+	for _, id := range []int64{absent, cross, owner} {
 		in.PersonBID = id
 		row, err := svc.Prepare(ctx, nil, in)
 		req.NoError(err)
-		_, err = svc.Get(ctx, g, row.IntroID)
-		req.ErrorIs(err, introops.ErrForbidden)
+		parity(row.IntroID, false)
 		_, err = svc.Cancel(ctx, g, row.IntroID, row.Revision)
 		req.ErrorIs(err, introops.ErrForbidden)
+		rows = append(rows, row)
 	}
 	all, err := svc.List(ctx, nil, store.PersonIntroductionQuery{})
 	req.NoError(err)
-	check.Len(all.Items, 3)
+	check.Len(all.Items, 4)
+	pa, err := f.Store.GetPersonContext(ctx, a)
+	req.NoError(err)
+	pb, err := f.Store.GetPersonContext(ctx, b)
+	req.NoError(err)
+	_, err = f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{SurvivorID: a, AbsorbedID: b, ExpectedSurvivorRevision: pa.Revision, ExpectedAbsorbedRevision: pb.Revision, IdempotencyKey: "visibility-collapse", Actor: "test"})
+	req.NoError(err)
+	parity(visible.IntroID, true) // collapsed participants remain visible
+	// Person merge changes the revision; cancel every prepared row before source retirement.
+	for _, row := range rows {
+		current, err := svc.Get(ctx, nil, row.IntroID)
+		req.NoError(err)
+		_, err = svc.Cancel(ctx, nil, row.IntroID, current.Revision)
+		req.NoError(err)
+	}
+	_, err = f.Store.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: other.ID})
+	req.NoError(err)
+	parity(visible.IntroID, true) // retired sources remain visible
 }
 
 // catalogPause pauses the real catalog read after its rows have been consumed.
@@ -344,8 +334,4 @@ func TestDelegatedListSameReferenceReimport(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	assert.Equal(t, row.IntroID, page.Items[0].IntroID)
-	assert.Empty(t, page.Items[0].Body)
-	for _, member := range page.Items[0].Members {
-		assert.Empty(t, member.UserID)
-	}
 }

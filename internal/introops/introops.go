@@ -35,9 +35,6 @@ func (s Service) project(ctx context.Context, g *agentgrant.Grant, row store.Per
 	}
 	p, err := s.Store.GetPersonIntroductionPreflightContext(ctx, row.SourceID, row.PersonAID, row.PersonBID)
 	if err != nil {
-		if g != nil && (errors.Is(err, store.ErrSourceNotFound) || errors.Is(err, store.ErrIntroductionSource)) {
-			return Record{}, ErrForbidden
-		}
 		return Record{}, err
 	}
 	if g != nil && !visible(p) {

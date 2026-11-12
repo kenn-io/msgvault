@@ -273,11 +273,7 @@ func TestNormalizePersonMergeSnapshotJSONPreservesLargeIntegers(t *testing.T) {
 }
 
 func TestIntroductionMergeSnapshotsOmitBody(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "intro-snapshot.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(t, st.InitSchema())
-	checkIntroductionMergeSnapshotsOmitBody(t, st)
+	checkIntroductionMergeSnapshotsOmitBody(t, openTestStore(t))
 }
 
 func TestPostgresIntroductionMergeSnapshotsOmitBody(t *testing.T) {
@@ -327,11 +323,7 @@ func checkIntroductionMergeSnapshotsOmitBody(t *testing.T, st *Store) {
 }
 
 func TestIntroductionProtectsUserOwnedPerson(t *testing.T) {
-	st, err := Open(filepath.Join(t.TempDir(), "intro-protection.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(t, st.InitSchema())
-	checkIntroductionProtectsUserOwnedPerson(t, st)
+	checkIntroductionProtectsUserOwnedPerson(t, openTestStore(t))
 }
 
 func TestPostgresIntroductionProtectsUserOwnedPerson(t *testing.T) {

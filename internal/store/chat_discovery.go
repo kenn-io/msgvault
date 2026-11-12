@@ -336,7 +336,7 @@ func (s *Store) SearchChatsMetadataContext(ctx context.Context, q ChatDiscoveryQ
 }
 
 func chatNetworkLabel(sourceType, displayName, sourceIdentifier string) string {
-	if sourceType != sourceTypeBeeper {
+	if sourceType != "beeper" {
 		return sourceType
 	}
 	if label, ok := strings.CutPrefix(displayName, "Beeper "); ok {
