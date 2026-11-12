@@ -316,4 +316,26 @@ describe('FactLedgerController', () => {
     expect(controller.exactFilter).toBeNull();
     controller.destroy();
   });
+
+  it('retries an exact source request and focuses the result', async () => {
+    let fail = false;
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const request = requestOf(input); requests.push(request);
+      const url = new URL(request.url);
+      if (url.searchParams.has('evidence_id') && fail) return new Response(null, { status: 503 });
+      return Response.json(payload(url.pathname));
+    });
+    const controller = new FactLedgerController(createAPIClient(fetchFn));
+    controller.applyContext(true, 42);
+    await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+    fail = true;
+    await controller.showEvidence(1, `attribute:work:email:${revision}`);
+    expect(controller.evidence.error).toBe("Couldn't load evidence.");
+    fail = false;
+    await controller.retrySection('evidence');
+    expect(new URL(requests.at(-1)!.url).searchParams.get('evidence_id')).toBe('1');
+    expect(controller.focusRequest?.key).toBe('evidence:1');
+    controller.destroy();
+  });
 });

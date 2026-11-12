@@ -16,6 +16,24 @@ it('shows the exact summary even when there are more than 50 claims', async () =
   await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Facts' }).closest('summary')?.textContent).toContain('73 fields · last found Nov 1'));
 });
 
+it('cancels the old summary when the person changes', async () => {
+  let oldRequest: Request | undefined;
+  let resolveOld!: (response: Response) => void;
+  const oldResponse = new Promise<Response>(resolve => { resolveOld = resolve; });
+  const fetchFn = vi.fn<typeof fetch>(async input => {
+    const request = requestOf(input);
+    if (new URL(request.url).pathname.includes('/42/')) { oldRequest = request; return oldResponse; }
+    return Response.json({ claimed_fields: 2, latest_claim_at: '2026-11-03T12:00:00Z', has_stored_facts: true });
+  });
+  const client = createAPIClient(fetchFn);
+  const view = render(PersonFacts, { client, personID: 42 });
+  await vi.waitFor(() => expect(oldRequest).toBeDefined());
+  await view.rerender({ client, personID: 43 });
+  expect(oldRequest!.signal.aborted).toBe(true);
+  resolveOld(Response.json({ claimed_fields: 9, latest_claim_at: '2026-11-01T12:00:00Z', has_stored_facts: true }));
+  await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Facts' }).closest('summary')?.textContent).toContain('2 fields'));
+});
+
 it('opens Facts after the first saved job with lookups off', async () => {
   let hasStored = false;
   const fetchFn = vi.fn<typeof fetch>(async input => {
