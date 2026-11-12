@@ -10,6 +10,8 @@ All notable changes to msgvault, grouped by release.
 
 - Let owner MCP clients read relationship types, declared relationships, imported reviews and curated networks. Confirmed relationship writes require `--allow-relationship-writes`.
 
+- Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
+
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.

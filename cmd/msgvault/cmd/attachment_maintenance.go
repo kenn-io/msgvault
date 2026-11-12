@@ -44,8 +44,8 @@ type attachmentMaintenance struct {
 	logger              *slog.Logger
 	packCreationEnabled bool
 	attachmentsDir      string
-	// packPending records that a scheduled sync wrote loose blobs that no
-	// pack pass has drained yet. Startup requests one scan of existing blobs.
+	// packPending requests a loose-blob scan after ingestion, an unfinished or
+	// failed pack pass, or startup.
 	packPending atomic.Bool
 	// verifyPending records that the indexed-blob verification window has
 	// more slices to walk. It is deliberately separate from packPending: a
@@ -131,10 +131,8 @@ func (m *attachmentMaintenance) unpack(ctx context.Context) (packstore.UnpackSta
 	return stats, nil
 }
 
-// runAutomaticPack performs one bounded maintenance pass. Errors remain
-// visible to schedulers, while callers following a successful ingest can log
-// or stream the warning and deliberately preserve the ingest result.
-func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarning func(string) error) error {
+// runAutomaticPack performs one bounded maintenance pass and reports errors to the scheduler.
+func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context) error {
 	if !m.packCreationEnabled {
 		m.log().Debug("automatic attachment packing disabled")
 		return nil
@@ -161,18 +159,16 @@ func (m *attachmentMaintenance) runAutomaticPack(ctx context.Context, emitWarnin
 		m.log().Warn("automatic attachment maintenance failed",
 			"error", err,
 			"retry", retry)
-		if emitWarning != nil {
-			warning := fmt.Sprintf("Automatic attachment maintenance failed: %v; %s.\n", err, retry)
-			if emitErr := emitWarning(warning); emitErr != nil {
-				m.log().Warn("failed to emit automatic attachment maintenance warning",
-					"error", emitErr)
-			}
-		}
 		return err
 	}
 
 	m.logAutomaticPackSummary("automatic attachment maintenance complete", stats, duration)
-	if stats.BudgetExhausted {
+	// Pruning a mapping whose pack is missing leaves its loose copy unpacked,
+	// and a verification-only pass skipped loose enumeration. Kit counts
+	// unreferenced pruning in the same field, so a deletion can also queue one
+	// extra enumerating pass.
+	if stats.BudgetExhausted || (store.PackVerificationSkipsLooseEnumeration(ctx) &&
+		(stats.MappingsPruned > 0 || stats.RecordsDropped > 0)) {
 		m.markPackPending()
 	}
 	return nil
@@ -261,7 +257,7 @@ func (m *attachmentMaintenance) runScheduledPack(ctx context.Context, enumerateL
 	if !enumerateLoose {
 		pass.SkipLooseEnumeration()
 	}
-	if err := m.runAutomaticPack(packCtx, nil); err != nil {
+	if err := m.runAutomaticPack(packCtx); err != nil {
 		return err
 	}
 	more, err := m.store.FinishPackVerification(ctx, pass)
@@ -303,8 +299,8 @@ func (m *attachmentMaintenance) markPackPending() {
 	}
 }
 
-// runPendingPack runs one automatic pack pass when a sync or unfinished
-// verification queued it. A failed pass leaves the request pending;
+// runPendingPack runs one automatic pack pass when ingestion, startup, or an
+// unfinished pack or verification pass queued it. A failed pass leaves the request pending;
 // an exhausted byte budget queues another pass behind waiting work.
 func (m *attachmentMaintenance) runPendingPack(ctx context.Context) error {
 	if m == nil {
@@ -341,22 +337,15 @@ func (m *attachmentMaintenance) log() *slog.Logger {
 	return slog.Default()
 }
 
-// runAfterSuccessfulAttachmentIngest runs bounded maintenance only after a
-// successful ingest. Maintenance and warning-stream failures are best-effort:
-// neither may replace the successful ingest result.
-func runAfterSuccessfulAttachmentIngest(
+// runAttachmentIngest defers packing even when an import partially fails.
+func runAttachmentIngest(
 	ctx context.Context,
 	maintenance *attachmentMaintenance,
 	ingest func(context.Context) error,
-	emitWarning func(string) error,
 ) error {
-	if err := runWithAttachmentMutation(ctx, maintenance, ingest); err != nil {
-		return err
-	}
-	if maintenance != nil {
-		_ = maintenance.runAutomaticPack(ctx, emitWarning)
-	}
-	return nil
+	err := runWithAttachmentMutation(ctx, maintenance, ingest)
+	maintenance.markPackPending()
+	return err
 }
 
 // runAfterSuccessfulAttachmentRemoval runs bounded physical GC only after a
