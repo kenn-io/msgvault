@@ -13,7 +13,6 @@ import (
 
 type meetingDecisionEdge struct {
 	id         int64
-	choiceKey  string
 	isExplicit bool
 	a, b       meetingDecisionEndpoint
 	decision   string
@@ -84,7 +83,7 @@ func (l *meetingDecisionLoader) load(ctx context.Context, endpoints []meetingDec
 	args = append(args, leftArgs...)
 	args = append(args, rightArgs...)
 	args = append(args, *budget+1)
-	rows, err := l.store.db.QueryContext(ctx, `SELECT d.id,d.choice_key,d.is_explicit,d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (`+where+`) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
+	rows, err := l.store.db.QueryContext(ctx, `SELECT d.id,d.is_explicit,d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (`+where+`) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
 	if err != nil {
 		return err
 	}
@@ -94,7 +93,7 @@ func (l *meetingDecisionLoader) load(ctx context.Context, endpoints []meetingDec
 	}
 	for rows.Next() {
 		var edge meetingDecisionEdge
-		if err := rows.Scan(&edge.id, &edge.choiceKey, &edge.isExplicit, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.a.Anchor, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.b.Anchor, &edge.decision); err != nil {
+		if err := rows.Scan(&edge.id, &edge.isExplicit, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.a.Anchor, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.b.Anchor, &edge.decision); err != nil {
 			return err
 		}
 		for _, endpoint := range endpoints {

@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/calrecur"
@@ -150,10 +149,9 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			canonicalA, canonicalB = canonicalB, canonicalA
 			recordA, recordB = recordB, recordA
 		}
-		var graph *meetingDecisionGraph
-		var active []meetingDecisionEdge
+		active := []meetingDecisionEdge{{a: canonicalA, b: canonicalB}}
 		if decision == "link" {
-			graph, err = s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
+			graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
 			if err != nil {
 				return err
 			}
@@ -164,7 +162,6 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 				}
 			}
 		}
-		removedIDs, removedKeys := map[int64]bool{}, map[string]bool{}
 		seen := map[int64]bool{}
 		decisions := meetingDecisionLoader{store: s}
 		for _, id := range append(aliasesA, aliasesB...) {
@@ -213,12 +210,8 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 				if matches {
 					if equivalent && decision == "link" && choice.decision == "split" && !choice.isExplicit {
 						_, err = tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, choice.id)
-						removedIDs[choice.id] = true
 					} else {
 						err = deleteMeetingDecisionTx(ctx, tx, choice, decision == "clear")
-						if decision == "clear" || choice.isExplicit {
-							removedKeys[choice.choiceKey] = true
-						}
 					}
 					if err != nil {
 						return err
@@ -239,14 +232,12 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 			return err
 		}
 		if state == "link" {
-			graph.candidates = slices.DeleteFunc(graph.candidates, func(choice meetingDecisionEdge) bool {
-				return removedIDs[choice.id] || removedKeys[choice.choiceKey]
-			})
-			graph.candidates = append(graph.candidates, meetingDecisionEdge{a: canonicalA, b: canonicalB, decision: "link", isExplicit: true})
-			root, _ := graph.reduce()
-			if root(canonicalA.ref()) != root(canonicalB.ref()) {
-				return fmt.Errorf("%w: cannot save link for %s %s", ErrMeetingLinkConflict, a.ref(), b.ref())
+			budget = calrecur.RequestReadBudget
+			graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
+			if err != nil {
+				return err
 			}
+			root, _ := graph.reduce()
 			for _, link := range active {
 				if root(link.a.ref()) != root(link.b.ref()) {
 					return fmt.Errorf("%w: cannot save link for %s %s", ErrMeetingLinkConflict, a.ref(), b.ref())
