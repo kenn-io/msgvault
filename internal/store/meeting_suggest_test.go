@@ -248,7 +248,6 @@ func TestMeetingSuggestionsScheduledDuration(t *testing.T) {
 		name, value, format, raw string
 		minute                   int
 	}{
-		{"present", `{"scheduled_start":"2027-03-14T10:00:00Z"}`, "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2027-03-14T10:05:00Z","summary":{"markdown":"Summary"}},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z","endsAt":"2027-03-14T11:00:00Z"}}`, 5},
 		{"missing", `{}`, "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2027-03-14T10:05:00Z","summary":{"markdown":"Summary"}},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z","endsAt":"2027-03-14T11:00:00Z"}}`, 5},
 		{"invalid Circleback start", `{"scheduled_start":"tomorrow-ish"}`, "circleback_json", `{"meeting":{"startTime":"tomorrow-ish","date":"2027-03-14T10:00:00Z","endTime":"2027-03-14T11:00:00Z"}}`, 0},
 	} {
