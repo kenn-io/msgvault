@@ -99,7 +99,9 @@ func TestCollectionsThroughDaemonAndSDK(t *testing.T) {
 			require.Len(t, rows, 1)
 			row, ok := rows[0].(map[string]any)
 			require.True(t, ok)
-			assert.Equal(t, tc.count, row["Count"])
+			count, ok := row["Count"].(float64)
+			require.True(t, ok)
+			assert.InDelta(t, tc.count, count, 0)
 		}
 	}
 	bad, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolListMessageCollections, Arguments: map[string]any{"unexpected": true}})
