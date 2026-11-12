@@ -195,7 +195,7 @@ func (s *Store) meetingExpand(ctx context.Context, rows []CalendarEventRow, at t
 	if err != nil {
 		return CalendarOccurrencePage{}, err
 	}
-	return s.expandCalendarRows(ctx, rows, at, at.Add(time.Second), false, budget)
+	return s.expandCalendarRows(ctx, rows, at, at.Add(time.Second), false, budget, nil)
 }
 
 func (s *Store) meetingOccurrencesForKeys(ctx context.Context, keys []meetingLinkKey, budget *int, unexpandable *[]CalendarUnexpandable) (map[meetingLinkKey][]CalendarOccurrence, error) {
@@ -414,7 +414,7 @@ func (s *Store) meetingAutomaticRecordContext(ctx context.Context, ref MeetingLi
 				if edit.Event.Original == nil || edit.Event.Original.Key() != ref.Identity.Key() {
 					continue
 				}
-				page, err := s.expandCalendarRows(ctx, []CalendarEventRow{edit}, at, at.Add(time.Second), false, budget)
+				page, err := s.expandCalendarRows(ctx, []CalendarEventRow{edit}, at, at.Add(time.Second), false, budget, nil)
 				if err != nil {
 					return record, err
 				}

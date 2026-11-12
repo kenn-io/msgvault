@@ -21,6 +21,10 @@ type stream struct {
 }
 
 func iter(ctx context.Context, s Set, until time.Time, budgetCounter *candidateBudget, yield func(instance) bool) error {
+	return iterWithSources(ctx, s, until, budgetCounter, nil, yield)
+}
+
+func iterWithSources(ctx context.Context, s Set, until time.Time, budgetCounter *candidateBudget, sources []*ruleSource, yield func(instance) bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -61,11 +65,15 @@ func iter(ctx context.Context, s Set, until time.Time, budgetCounter *candidateB
 		return d, true
 	}
 	streams := []stream{{next: func() (time.Time, bool, error) { return budgetCounter.pull(dateNext) }}}
-	for _, opt := range s.rules {
+	for index, opt := range s.rules {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		rule, err := s.ruleIterator(opt, ruleUntil, budgetCounter)
+		var source *ruleSource
+		if sources != nil {
+			source = sources[index]
+		}
+		rule, err := s.ruleIterator(opt, ruleUntil, budgetCounter, source)
 		if err != nil {
 			return err
 		}

@@ -163,7 +163,94 @@ func Expand(ctx context.Context, s Set, duration time.Duration, durationDays int
 	return out, counter.used, err
 }
 
+// Window carries an independent request budget and exception exclusions.
+type Window struct {
+	From, To time.Time
+	Budget   int
+	ExDates  []Identity
+}
+
+// WindowResult records the logical work and output for one window.
+type WindowResult struct {
+	Occurrences []Occurrence
+	Candidates  int
+	Err         error
+}
+
+// WindowExpander shares one series' raw rule candidates across windows.
+type WindowExpander struct {
+	set          Set
+	duration     time.Duration
+	durationDays int
+	sources      []*ruleSource
+	pulls        int
+	nominal      map[string]Occurrence
+}
+
+// NewWindowExpander bounds the shared traversal at the latest eligible window end.
+func NewWindowExpander(ctx context.Context, s Set, duration time.Duration, durationDays int, to time.Time) (*WindowExpander, error) {
+	e := &WindowExpander{set: s, duration: duration, durationDays: durationDays, sources: make([]*ruleSource, len(s.rules)), nominal: map[string]Occurrence{}}
+	horizon := to.Add(-time.Nanosecond)
+	if s.AllDay {
+		date := civilHorizon(horizon, s.location()).Format(dateLayout)
+		var err error
+		horizon, err = time.Parse(dateLayout, date)
+		if err != nil {
+			return nil, err
+		}
+	}
+	for i, opt := range s.rules {
+		rule, err := s.ruleIterator(opt, horizon, &candidateBudget{ctx: ctx}, nil)
+		if err != nil {
+			return nil, err
+		}
+		e.sources[i] = &ruleSource{next: rule.nextRaw, pulls: &e.pulls}
+	}
+	return e, nil
+}
+
+// Expand computes a window using its own budget and exclusions.
+func (e *WindowExpander) Expand(ctx context.Context, w Window) WindowResult {
+	counter := &candidateBudget{ctx: ctx, limit: w.Budget}
+	local := e.set
+	local.ExDates = append(append([]Identity(nil), e.set.ExDates...), w.ExDates...)
+	occurrences, err := expandWithSources(ctx, local, e.duration, e.durationDays, w.From, w.To, counter, e.sources, e.nominal)
+	return WindowResult{Occurrences: occurrences, Candidates: counter.used, Err: err}
+}
+
+// ExpandWindows shares raw rule traversal while retaining each window's limits.
+func ExpandWindows(ctx context.Context, s Set, duration time.Duration, durationDays int, windows []Window) ([]WindowResult, int) {
+	results := make([]WindowResult, len(windows))
+	if len(windows) == 0 {
+		return results, 0
+	}
+	var horizon time.Time
+	for _, w := range windows {
+		if w.Budget > 0 && w.To.After(w.From) && w.To.After(horizon) {
+			horizon = w.To
+		}
+	}
+	if horizon.IsZero() {
+		horizon = windows[0].To
+	}
+	e, err := NewWindowExpander(ctx, s, duration, durationDays, horizon)
+	if err != nil {
+		for j := range results {
+			results[j].Err = err
+		}
+		return results, 0
+	}
+	for i, w := range windows {
+		results[i] = e.Expand(ctx, w)
+	}
+	return results, e.pulls
+}
+
 func expand(ctx context.Context, s Set, duration time.Duration, durationDays int, from, to time.Time, counter *candidateBudget) ([]Occurrence, error) {
+	return expandWithSources(ctx, s, duration, durationDays, from, to, counter, nil, nil)
+}
+
+func expandWithSources(ctx context.Context, s Set, duration time.Duration, durationDays int, from, to time.Time, counter *candidateBudget, sources []*ruleSource, cache map[string]Occurrence) ([]Occurrence, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -181,11 +268,19 @@ func expand(ctx context.Context, s Set, duration time.Duration, durationDays int
 	}
 	var boundsErr error
 	// Iter's horizon is inclusive; step back one nanosecond to preserve Expand's half-open window.
-	err := iter(ctx, s, to.Add(-time.Nanosecond), counter, func(i instance) bool {
-		o, err := nominal(s, i.Identity, duration, durationDays)
-		if err != nil {
-			boundsErr = err
-			return false
+	err := iterWithSources(ctx, s, to.Add(-time.Nanosecond), counter, sources, func(i instance) bool {
+		key := i.Identity.Key()
+		o, ok := cache[key]
+		if !ok {
+			var err error
+			o, err = nominal(s, i.Identity, duration, durationDays)
+			if err != nil {
+				boundsErr = err
+				return false
+			}
+			if cache != nil {
+				cache[key] = o
+			}
 		}
 		add(o)
 		return true
@@ -268,7 +363,7 @@ func conservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 		if until.IsZero() {
 			until = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 		}
-		iterator, err := s.ruleIterator(opt, until, budgetCounter)
+		iterator, err := s.ruleIterator(opt, until, budgetCounter, nil)
 		if err != nil {
 			return time.Time{}, false
 		}

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +81,28 @@ func TestMeetingOccurrenceEvidence(t *testing.T) {
 		}
 		assert.True(t, found)
 	})
+}
+
+func TestMeetingOccurrenceBatchSuppressesSeriesAfterLaterLimit(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"frequent","start":{"dateTime":"2024-01-01T00:00:00Z"},"end":{"dateTime":"2024-01-01T01:00:00Z"},"recurrence":[` + strings.Repeat(`"RRULE:FREQ=DAILY",`, 99) + `"RRULE:FREQ=DAILY"]}`
+	_, series := calendarFixture(t, st, "frequent", raw)
+	_, _ = calendarFixture(t, st, "future", `{"id":"future","start":{"dateTime":"2025-01-01T00:00:00Z"},"end":{"dateTime":"2025-01-01T01:00:00Z"}}`)
+	through := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	evidence, err := st.loadMeetingEvidence(t.Context(), through)
+	require.NoError(t, err)
+	assert.True(t, evidence.unexpandable[series])
+	rows, next, err := evidence.Reduce(t.Context(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, through.Add(24*time.Hour), next)
+	found := false
+	for _, row := range rows {
+		if row.MessageID == series {
+			found = true
+			assert.Equal(t, fmt.Sprintf("fallback:%d", series), row.OccurrenceKey)
+		}
+	}
+	assert.True(t, found)
 }
 
 func TestMeetingMetricsLinkedNotes(t *testing.T) {

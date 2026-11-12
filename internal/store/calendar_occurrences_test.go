@@ -15,6 +15,61 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+func TestCalendarExpansionBatchRetainsYearBudgets(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, id := calendarFixture(t, st, "daily", `{"id":"daily","start":{"dateTime":"2020-01-01T00:00:00Z"},"end":{"dateTime":"2020-01-01T01:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`)
+	rows, err := queryCalendarEventRows(t.Context(), st.meetingSQLReader(t.Context()), `e.message_id = ?`, []any{id}, 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	batch := &calendarExpansionBatch{through: time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC), series: map[int64]*calrecur.WindowExpander{}}
+	for _, tc := range []struct{ year, budget, candidates int }{{2020, 400, 369}, {2021, 499999, 734}} {
+		from := time.Date(tc.year, 1, 1, 0, 0, 0, 0, time.UTC)
+		occurrences, candidates, warning, err := expandCalendarSeries(t.Context(), rows[0], nil, from, from.AddDate(1, 0, 0), tc.budget, batch)
+		require.NoError(t, err)
+		assert.Empty(t, warning)
+		assert.NotEmpty(t, occurrences)
+		assert.Equal(t, tc.candidates, candidates)
+	}
+}
+
+func TestCalendarExpansionBatchChargesEachSeries(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"%s","start":{"dateTime":"2020-01-01T00:00:00Z"},"end":{"dateTime":"2020-01-01T01:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`
+	_, _ = calendarFixture(t, st, "first", fmt.Sprintf(raw, "first"))
+	_, second := calendarFixture(t, st, "second", fmt.Sprintf(raw, "second"))
+	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	rows, err := calendarEventRowsInWindow(t.Context(), st.meetingSQLReader(t.Context()), st.dialect, from, from.AddDate(1, 0, 0))
+	require.NoError(t, err)
+	batch := &calendarExpansionBatch{through: from.AddDate(2, 0, 0), series: map[int64]*calrecur.WindowExpander{}}
+	budget := 400
+	page, err := st.expandCalendarRows(t.Context(), rows, from, from.AddDate(1, 0, 0), true, &budget, batch)
+	require.NoError(t, err)
+	require.Len(t, page.Unexpandable, 1)
+	assert.Equal(t, second, page.Unexpandable[0].MessageID)
+	assert.Contains(t, page.Unexpandable[0].Reason, "request work limit")
+	assert.Equal(t, -1, budget)
+}
+
+func TestCalendarExpansionBatchRetainsWindowExceptions(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, _ = calendarFixture(t, st, "series", `{"id":"series","start":{"dateTime":"2024-12-17T10:00:00Z"},"end":{"dateTime":"2024-12-17T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=5"]}`)
+	_, _ = calendarFixture(t, st, "moved", `{"id":"moved","recurringEventId":"series","originalStartTime":{"dateTime":"2024-12-24T10:00:00Z"},"start":{"dateTime":"2025-01-03T10:00:00Z"},"end":{"dateTime":"2025-01-03T11:00:00Z"}}`)
+	_, _ = calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2025-01-07T10:00:00Z"},"status":"cancelled"}`)
+	batch := &calendarExpansionBatch{through: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), series: map[int64]*calrecur.WindowExpander{}}
+	for _, year := range []int{2024, 2025} {
+		from := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
+		rows, err := calendarEventRowsInWindow(t.Context(), st.meetingSQLReader(t.Context()), st.dialect, from, from.AddDate(1, 0, 0))
+		require.NoError(t, err)
+		budget, independentBudget := calrecur.RequestReadBudget-len(rows), calrecur.RequestReadBudget-len(rows)
+		got, err := st.expandCalendarRows(t.Context(), rows, from, from.AddDate(1, 0, 0), true, &budget, batch)
+		require.NoError(t, err)
+		want, err := st.expandCalendarRows(t.Context(), rows, from, from.AddDate(1, 0, 0), true, &independentBudget, nil)
+		require.NoError(t, err)
+		assert.Equal(t, independentBudget, budget)
+		assert.Equal(t, want, got)
+	}
+}
+
 func TestListCalendarOccurrences(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

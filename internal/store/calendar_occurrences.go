@@ -44,6 +44,11 @@ type CalendarOccurrencePage struct {
 	Unexpandable []CalendarUnexpandable `json:"unexpandable"`
 }
 
+type calendarExpansionBatch struct {
+	through time.Time
+	series  map[int64]*calrecur.WindowExpander
+}
+
 // ListCalendarOccurrencesContext expands archived series in a half-open window.
 func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to time.Time) (CalendarOccurrencePage, error) {
 	page := CalendarOccurrencePage{Occurrences: []CalendarOccurrence{}, Unexpandable: []CalendarUnexpandable{}}
@@ -57,11 +62,26 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return page, err
 	}
 	remaining := calrecur.RequestReadBudget - len(rows)
-	return s.expandCalendarRows(ctx, rows, from, to, true, &remaining)
+	return s.expandCalendarRows(ctx, rows, from, to, true, &remaining, nil)
 }
 
 // expandCalendarRows supplies the same effective occurrences to listing and record reads.
-func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow, from, to time.Time, filterOverlap bool, budget *int) (CalendarOccurrencePage, error) {
+func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow, from, to time.Time, filterOverlap bool, budget *int, batch *calendarExpansionBatch) (CalendarOccurrencePage, error) {
+	step, finish, _, err := s.calendarRowsCursor(ctx, rows, from, to, filterOverlap, *budget, batch)
+	if err != nil {
+		return CalendarOccurrencePage{}, err
+	}
+	for _, row := range rows {
+		if err := step(row); err != nil {
+			return CalendarOccurrencePage{}, err
+		}
+	}
+	page, remaining := finish()
+	*budget = remaining
+	return page, nil
+}
+
+func (s *Store) calendarRowsCursor(ctx context.Context, rows []CalendarEventRow, from, to time.Time, filterOverlap bool, budget int, batch *calendarExpansionBatch) (func(CalendarEventRow) error, func() (CalendarOccurrencePage, int), func() int, error) {
 	page := CalendarOccurrencePage{Occurrences: []CalendarOccurrence{}, Unexpandable: []CalendarUnexpandable{}}
 	type seriesKey struct {
 		source int64
@@ -80,9 +100,9 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			exceptions[key] = append(exceptions[key], row)
 		}
 	}
-	remaining := *budget
+	remaining := budget
 	if remaining < 0 {
-		return page, calendarRecurrenceBudgetError()
+		return nil, nil, nil, calendarRecurrenceBudgetError()
 	}
 	add := func(row CalendarEventRow, seriesID int64, o calrecur.Occurrence, originalStart time.Time) {
 		e := row.Event
@@ -144,9 +164,9 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 			reported[id] = true
 		}
 	}
-	for _, row := range rows {
+	step := func(row CalendarEventRow) error {
 		if err := ctx.Err(); err != nil {
-			return page, err
+			return err
 		}
 		e := row.Event
 		if e.Kind == calendarExceptionKind && e.Original == nil {
@@ -155,7 +175,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 		switch e.Kind {
 		case calendarExceptionKind, "single":
 			if e.Kind == calendarExceptionKind && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
-				continue
+				return nil
 			}
 			if e.Start == nil || e.End == nil {
 				report(row.MessageID, calendarMissingBoundsReason(e))
@@ -165,7 +185,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 				add(row, 0, calendarEventOccurrence(e, row.MessageID), time.Time{})
 			}
 			if e.Kind == calendarExceptionKind || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
-				continue
+				return nil
 			}
 			fallthrough
 		case calendarSeriesKind:
@@ -175,29 +195,32 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 					report(exception.MessageID, "exception original type differs from series and event bounds are missing")
 				}
 			}
-			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
+			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining, batch)
 			remaining -= count
 			if err != nil {
-				return page, err
+				return err
 			}
 			if reason != "" {
 				report(row.MessageID, reason)
 			}
 			for _, o := range occurrences {
 				if err := addSeriesOccurrence(row, o); err != nil {
-					return page, err
+					return err
 				}
 			}
 		}
+		return nil
 	}
-	slices.SortFunc(page.Occurrences, func(a, b CalendarOccurrence) int {
-		if c := a.Start.Compare(b.Start); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.MessageID, b.MessageID)
-	})
-	*budget = remaining
-	return page, nil
+	finish := func() (CalendarOccurrencePage, int) {
+		slices.SortFunc(page.Occurrences, func(a, b CalendarOccurrence) int {
+			if c := a.Start.Compare(b.Start); c != 0 {
+				return c
+			}
+			return cmp.Compare(a.MessageID, b.MessageID)
+		})
+		return page, remaining
+	}
+	return step, finish, func() int { return remaining }, nil
 }
 
 // calendarEventOccurrence keeps each known bound and leaves unavailable ones zero.
@@ -235,7 +258,7 @@ func calendarMissingBoundsReason(event calevent.Event) string {
 }
 
 // Resolve archived exceptions once, then suppress their original generated instances.
-func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
+func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int, batch *calendarExpansionBatch) ([]calrecur.Occurrence, int, string, error) {
 	set, duration, days, prepareErr := prepareCalendarRecurrence(row.Event)
 	var prepared *calrecur.Set
 	if prepareErr == nil {
@@ -256,7 +279,27 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 	if remaining <= 0 {
 		return resolved, 0, requestLimit, nil
 	}
-	occurrences, count, err := calrecur.Expand(ctx, set, duration, days, from.Add(-calendarCandidateMargin), to.Add(calendarCandidateMargin), min(remaining, calrecur.SeriesReadBudget))
+	var occurrences []calrecur.Occurrence
+	var count int
+	if batch == nil {
+		occurrences, count, err = calrecur.Expand(ctx, set, duration, days, from.Add(-calendarCandidateMargin), to.Add(calendarCandidateMargin), min(remaining, calrecur.SeriesReadBudget))
+	} else {
+		expander := batch.series[row.MessageID]
+		if expander == nil {
+			base := set
+			base.ExDates = nil
+			expander, err = calrecur.NewWindowExpander(ctx, base, duration, days, batch.through.Add(calendarCandidateMargin))
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, 0, "", ctx.Err()
+				}
+				return bounded, 0, "unsupported recurrence", nil
+			}
+			batch.series[row.MessageID] = expander
+		}
+		result := expander.Expand(ctx, calrecur.Window{From: from.Add(-calendarCandidateMargin), To: to.Add(calendarCandidateMargin), Budget: min(remaining, calrecur.SeriesReadBudget), ExDates: set.ExDates})
+		occurrences, count, err = result.Occurrences, result.Candidates, result.Err
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, count, "", ctx.Err()

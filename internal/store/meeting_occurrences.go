@@ -143,24 +143,65 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 		orderedYears = append(orderedYears, year)
 	}
 	slices.Sort(orderedYears)
+	batch := &calendarExpansionBatch{series: map[int64]*calrecur.WindowExpander{}}
+	type meetingWindow struct {
+		year      int
+		from      time.Time
+		rows      map[int64]CalendarEventRow
+		step      func(CalendarEventRow) error
+		finish    func() (CalendarOccurrencePage, int)
+		remaining func() int
+		err       error
+	}
+	var windows []meetingWindow
+	candidateIDs := map[int64]bool{}
 	for _, year := range orderedYears {
 		from := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
 		candidateRows, err := calendarEventRowsInWindow(ctx, s.meetingSQLReader(ctx), s.dialect, from, from.AddDate(1, 0, 0))
-		var page CalendarOccurrencePage
+		window := meetingWindow{year: year, from: from, err: err}
 		if err == nil {
-			budget := calrecur.RequestReadBudget - len(candidateRows)
-			page, err = s.expandCalendarRows(ctx, candidateRows, from, from.AddDate(1, 0, 0), true, &budget)
+			window.step, window.finish, window.remaining, window.err = s.calendarRowsCursor(ctx, candidateRows, from, from.AddDate(1, 0, 0), true, calrecur.RequestReadBudget-len(candidateRows), batch)
+			window.rows = make(map[int64]CalendarEventRow, len(candidateRows))
+			for _, row := range candidateRows {
+				window.rows[row.MessageID] = row
+				candidateIDs[row.MessageID] = true
+			}
 		}
-		if errors.Is(err, ErrQueryTooBroad) {
-			tooBroadYears = append(tooBroadYears, year)
-			if err := s.markBroadMeetingWindow(ctx, from, from.AddDate(1, 0, 0), unexpandable); err != nil {
+		windows = append(windows, window)
+	}
+	orderedIDs := make([]int64, 0, len(candidateIDs))
+	for id := range candidateIDs {
+		orderedIDs = append(orderedIDs, id)
+	}
+	slices.Sort(orderedIDs)
+	for _, id := range orderedIDs {
+		batch.through = time.Time{}
+		for i := range windows {
+			w := &windows[i]
+			if _, ok := w.rows[id]; ok && w.err == nil && w.remaining() > 0 && w.from.AddDate(1, 0, 0).After(batch.through) {
+				batch.through = w.from.AddDate(1, 0, 0)
+			}
+		}
+		for i := range windows {
+			w := &windows[i]
+			if row, ok := w.rows[id]; ok && w.err == nil {
+				w.err = w.step(row)
+			}
+		}
+		delete(batch.series, id)
+	}
+	for _, w := range windows {
+		if errors.Is(w.err, ErrQueryTooBroad) {
+			tooBroadYears = append(tooBroadYears, w.year)
+			if err := s.markBroadMeetingWindow(ctx, w.from, w.from.AddDate(1, 0, 0), unexpandable); err != nil {
 				return nil, err
 			}
 			continue
 		}
-		if err != nil {
-			return nil, fmt.Errorf("list meeting occurrences for %d: %w", year, err)
+		if w.err != nil {
+			return nil, fmt.Errorf("list meeting occurrences for %d: %w", w.year, w.err)
 		}
+		page, _ := w.finish()
 		for _, warning := range page.Unexpandable {
 			unexpandable[warning.MessageID] = true
 		}
