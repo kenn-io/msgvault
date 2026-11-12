@@ -225,7 +225,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, v
 // rollbackSubscribe undoes the catalog write after the credential write failed:
 // a new entry is removed, and a refresh gets the catalog bytes it replaced. Both
 // are one compare-and-swap on the bytes this call published, so a catalog changed
-// meanwhile is left alone. It reports whether the swap took effect; positions stay.
+// meanwhile is left alone. It reports whether the swap took effect.
 func (s *Service) rollbackSubscribe(ctx context.Context, entries []entry, raw, next []byte, created bool) bool {
 	var ok bool
 	var err error
