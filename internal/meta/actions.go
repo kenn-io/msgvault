@@ -129,7 +129,7 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 		var marked []string
 		marked, err = st.MarkMessageThreadDeletedContext(local, target.SourceID, target.CommentID)
 		if err == nil {
-			err = dropDeletedTraversal(local, st, execution, source, append(marked, target.CommentID))
+			err = dropDeletedTraversal(local, st, source, append(marked, target.CommentID))
 		}
 	} else {
 		err = setCommentHidden(local, st, target.MessageID, action == ActionHide)
@@ -141,11 +141,24 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 	return nil
 }
 
-// dropDeletedTraversal republishes a paused sync's saved traversal without the
-// deleted comments and posts and the replies below them. It prunes by the Meta
-// IDs of the deleted objects and their archived replies, so a later `msgvault
-// gc` cannot matter. It also drops rows the archive already marks deleted.
-func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store.SyncExecution, source *store.Source, ids []string) error {
+// dropDeletedTraversal removes the deleted comments and posts, and the replies
+// below them, from the saved traversal of the polling run that a resumed sync
+// would continue. It rewrites that run's checkpoint in place and keeps its
+// status, error and counters, so a failed run still shows as failed. It prunes
+// by the Meta IDs of the deleted objects and their archived replies, so a later
+// `msgvault gc` cannot matter. It also drops rows the archive already marks
+// deleted. The caller holds the source's sync lock.
+func dropDeletedTraversal(ctx context.Context, st *store.Store, source *store.Source, ids []string) error {
+	// Saved progress that can hold traversal comes from this run. Progress
+	// from a completed run is a finished scan, which loadState replaces with
+	// a fresh state that has nothing to prune.
+	saved, err := st.GetLatestCheckpointedSyncByType(ctx, source.ID, source.SourceType)
+	if errors.Is(err, store.ErrSyncRunNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	state, err := loadState(ctx, st, source, false)
 	if err != nil {
 		return err
@@ -164,11 +177,13 @@ func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store
 	if err != nil {
 		return err
 	}
-	syncID, err := execution.StartSyncContext(ctx, source.SourceType, "")
-	if err != nil {
-		return err
-	}
-	return st.PauseSyncWithCheckpoint(ctx, syncID, checkpoint)
+	return st.UpdateSyncCheckpointContext(ctx, saved.ID, &store.Checkpoint{
+		PageToken:         checkpoint.PageToken,
+		MessagesProcessed: saved.MessagesProcessed,
+		MessagesAdded:     saved.MessagesAdded,
+		MessagesUpdated:   saved.MessagesUpdated,
+		ErrorsCount:       saved.ErrorsCount,
+	})
 }
 
 // lockActiveSource takes the source's sync lock so a running sync cannot

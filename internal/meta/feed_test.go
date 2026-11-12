@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -258,9 +259,9 @@ func TestPollingResumeAdvancesWithSmallBudget(t *testing.T) {
 }
 
 // A paused run can hold a saved posts page beyond page one without the cursor
-// that read it, as checkpoints saved by earlier releases do. Re-reading lands
-// on the wrong page, so the run starts the phase over instead of skipping the
-// saved posts. With the cursor, the run resumes in place.
+// that read it, as checkpoints saved by an earlier build from `main` do.
+// Re-reading lands on the wrong page, so the run starts the phase over instead
+// of skipping the saved posts. With the cursor, the run resumes in place.
 func TestPollingResumeFindsSavedPostsPage(t *testing.T) {
 	for _, withCursor := range []bool{true, false} {
 		name := "checkpoint without posts_after"
@@ -307,6 +308,95 @@ func TestPollingResumeFindsSavedPostsPage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// pauseOnSavedPostsPage lists posts 100_200 to 100_800 three a page and
+// pauses a run after it archives 100_500, so posts 100_600 and 100_700 wait
+// on the saved page read at cursor 3, and the page at cursor 6 is unread.
+func pauseOnSavedPostsPage(t *testing.T) (*store.Store, *graphFixture, *Importer, *store.Source) {
+	t.Helper()
+	st, f, imp, src := setupImport(t)
+	f.pageSize = 3
+	for _, id := range []string{"100_300", "100_400", "100_500", "100_600", "100_700", "100_800"} {
+		f.posts = append(f.posts, Object{ID: id, Message: "Example post", From: &Actor{ID: "100", Name: "Example Page"}})
+	}
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 6})
+	require.NoError(t, err)
+	require.True(t, sum.Partial)
+	var postsAfter sql.NullString
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT json_extract(cursor_before, '$.phases.posts.posts_after')
+		FROM sync_runs WHERE source_id = ? AND sync_type = ? ORDER BY id DESC LIMIT 1`, src.ID, SourceType).Scan(&postsAfter))
+	require.Equal(t, "3", postsAfter.String)
+	queued, err := st.MessageExistsBatchContext(t.Context(), src.ID, []string{"100_500", "100_600", "100_700"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"100_500"}, slices.Sorted(maps.Keys(queued)), "100_600 and 100_700 are queued")
+	return st, f, imp, src
+}
+
+// archivedCount reports how many archive rows hold the Meta object id.
+func archivedCount(t *testing.T, st *store.Store, src *store.Source, id string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`, src.ID, id).Scan(&n))
+	return n
+}
+
+// With the cursor that read it, the saved page is found again, so a saved
+// post it no longer lists was deleted on Meta. The run drops that post and
+// continues from the cursor instead of scanning from the first page.
+func TestPollingResumeDropsSavedPostNoLongerListed(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := pauseOnSavedPostsPage(t)
+	f.postPages = map[string][]Object{"3": {f.posts[3], f.posts[5]}}
+
+	before, fresh := len(f.paths), f.freshPostReads
+	sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	assert.False(sum.Partial)
+	assert.Equal(fresh, f.freshPostReads, "the run does not read the first posts page again")
+	// The saved page at cursor 3, then the last page at cursor 6.
+	assert.Equal(2, countPaths(f.paths[before:], "/v26.0/100/posts"))
+	assert.NotContains(f.paths[before:], "/v26.0/100_600/comments")
+	assert.Zero(archivedCount(t, st, src, "100_600"), "the deleted post is dropped")
+	for _, id := range []string{"100_700", "100_800"} {
+		assert.Equal(1, archivedCount(t, st, src, id), id)
+	}
+}
+
+// The saved posts are matched by ID, so a re-read that lists one saved post
+// twice cannot stand in for another saved post it omits.
+func TestPollingResumeMatchesSavedPostsByID(t *testing.T) {
+	ids := []string{"100_200", "100_300", "100_400", "100_500", "100_600", "100_700", "100_800"}
+	t.Run("checkpoint without posts_after", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		st, f, imp, src := pauseOnSavedPostsPage(t)
+		_, err := st.DB().ExecContext(t.Context(), `UPDATE sync_runs SET cursor_before = json_remove(cursor_before, '$.phases.posts.posts_after')
+			WHERE source_id = ? AND sync_type = ?`, src.ID, SourceType)
+		require.NoError(err)
+		// Without the cursor the re-read lands on the first page.
+		f.postPages = map[string][]Object{"": {f.posts[4], f.posts[4], f.posts[0]}}
+
+		sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+		require.NoError(err)
+		assert.False(sum.Partial)
+		for _, id := range ids {
+			assert.Equal(1, archivedCount(t, st, src, id), id)
+		}
+	})
+	t.Run("checkpoint with posts_after", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		st, f, imp, src := pauseOnSavedPostsPage(t)
+		f.postPages = map[string][]Object{"3": {f.posts[3], f.posts[4], f.posts[4]}}
+
+		before := len(f.paths)
+		sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+		require.NoError(err)
+		assert.False(sum.Partial)
+		assert.Equal(1, countPaths(f.paths[before:], "/v26.0/100_600/comments"), "the listed post is traversed once")
+		assert.Equal(1, archivedCount(t, st, src, "100_600"))
+		assert.Zero(archivedCount(t, st, src, "100_700"), "the omitted post is dropped")
+		assert.Equal(1, archivedCount(t, st, src, "100_800"))
+	})
 }
 
 func countPaths(paths []string, want string) int {

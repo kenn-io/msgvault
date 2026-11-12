@@ -2,6 +2,7 @@ package meta
 
 import (
 	"database/sql"
+	"net/http"
 	"slices"
 	"strconv"
 	"testing"
@@ -199,7 +200,7 @@ func syncRuns(t *testing.T, st *store.Store, src *store.Source) []string {
 }
 
 // Webhook runs never hide or replace a paused polling run's progress, and a
-// removal saves the pruned progress as a new paused polling run.
+// removal prunes that run's saved progress without adding a polling run.
 func TestWebhookRunsKeepPausedPollingProgress(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, f, imp, src := setupImport(t)
@@ -219,12 +220,12 @@ func TestWebhookRunsKeepPausedPollingProgress(t *testing.T) {
 	require.NoError(ApplyFeed(t.Context(), st, client, "9", "100", feedValues(
 		`{"item":"comment","verb":"edited","post_id":"100_200","comment_id":"402"}`)))
 
-	// The removal saves the pruned progress before its webhook run starts.
+	// The removal prunes the paused run's own progress and adds no polling run.
 	assert.Equal([]string{
-		src.SourceType + " paused", src.SourceType + " paused",
+		src.SourceType + " paused",
 		WebhookSyncType + " completed", WebhookSyncType + " completed",
 	}, syncRuns(t, st, src))
-	assert.Equal([]string{"100_200: 402"}, savedFrames(t, st, src), "the latest paused run holds the pruned progress")
+	assert.Equal([]string{"100_200: 402"}, savedFrames(t, st, src), "the paused run holds the pruned progress")
 
 	paths := resumeWithout(t, f, imp, "401")
 	assert.False(slices.Contains(paths, "/v26.0/100/posts"), "the resumed run continues inside the saved post")
@@ -303,7 +304,7 @@ func collectGarbage(t *testing.T, st *store.Store) {
 // archive links 100_202 to the removed comment until the prune is published.
 func TestWebhookRemovalFailureThenGCThenRetry(t *testing.T) {
 	for _, tt := range []struct{ name, trigger string }{
-		{"the checkpoint write fails", `CREATE TRIGGER fail_removal BEFORE INSERT ON sync_runs
+		{"the checkpoint write fails", `CREATE TRIGGER fail_removal BEFORE UPDATE OF cursor_before ON sync_runs
 			WHEN NEW.sync_type = '` + SourceType + `'
 			BEGIN SELECT RAISE(ABORT, 'injected checkpoint failure'); END`},
 		{"the mark fails", `CREATE TRIGGER fail_removal BEFORE UPDATE OF deleted_from_source_at ON messages
@@ -331,6 +332,70 @@ func TestWebhookRemovalFailureThenGCThenRetry(t *testing.T) {
 			applyRemoval(t, st, imp, "comment", "100_201")
 			collectGarbage(t, st)
 			assertDeclaredThreadGone(t, st, f, imp, src, "100_201", "100_202")
+		})
+	}
+}
+
+// A removal prunes saved progress inside the polling run that holds it, so a
+// failed polling run stays the source's latest run with its error, nothing
+// new counts as a success, and the next sync resumes from the pruned progress.
+func TestRemovalPrunesProgressInItsOwnRun(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		failed   bool
+		moderate bool
+	}{
+		{"failed run, webhook removal", true, false},
+		{"failed run, moderation delete", true, true},
+		{"paused run, webhook removal", false, false},
+		{"paused run, moderation delete", false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, f, imp, src := setupImport(t)
+			f.comments["100_200"] = []Object{*comment("401", "100_200", "Example comment"), *comment("402", "100_200", "Example comment"), *comment("403", "100_200", "Example comment")}
+			opts := ImportOptions{MaxRequests: 3}
+			if tt.failed {
+				// The reply read of 401 fails, leaving its frame saved.
+				f.denied["401/comments"] = true
+				opts = ImportOptions{}
+			}
+			_, err := imp.Import(t.Context(), "9", "100", opts)
+			require.Equal(tt.failed, err != nil, "import error: %v", err)
+			require.Equal([]string{"100_200: 402", "401:"}, savedFrames(t, st, src))
+			before, err := st.GetLatestSyncExcludingTypeContext(t.Context(), src.ID, WebhookSyncType)
+			require.NoError(err)
+			if tt.failed {
+				require.Equal(store.SyncStatusFailed, before.Status)
+				require.True(before.ErrorMessage.Valid)
+			}
+
+			if tt.moderate {
+				target, err := ResolveCommentTarget(t.Context(), st, message(t, st, src.ID, "401").ID)
+				require.NoError(err)
+				client, _ := writeFixture(t, http.StatusOK, `{"success":true}`)
+				require.NoError(ModerateComment(t.Context(), st, client, target, ActionDelete))
+			} else {
+				applyRemoval(t, st, imp, "comment", "401")
+			}
+
+			after, err := st.GetLatestSyncExcludingTypeContext(t.Context(), src.ID, WebhookSyncType)
+			require.NoError(err)
+			assert.Equal(before.ID, after.ID, "the pruned run is still the latest polling run")
+			assert.Equal(before.Status, after.Status)
+			assert.Equal(before.ErrorMessage, after.ErrorMessage)
+			assert.Equal(before.ErrorsCount, after.ErrorsCount)
+			assert.Equal(before.MessagesProcessed, after.MessagesProcessed)
+			assert.Equal(before.CompletedAt, after.CompletedAt)
+			assert.Equal([]string{"100_200: 402"}, savedFrames(t, st, src), "the run holds the pruned progress")
+			_, err = st.GetLastSuccessfulSyncByType(t.Context(), src.ID, src.SourceType)
+			require.ErrorIs(err, store.ErrSyncRunNotFound, "no completed polling run appears")
+			_, err = st.GetLastSuccessfulSyncExcludingTypeContext(t.Context(), src.ID, WebhookSyncType)
+			require.ErrorIs(err, store.ErrSyncRunNotFound, "no completed polling run appears")
+
+			paths := resumeWithout(t, f, imp, "401")
+			assert.NotContains(paths, "/v26.0/100/posts", "the resumed run continues inside the saved post")
+			message(t, st, src.ID, "403")
 		})
 	}
 }
