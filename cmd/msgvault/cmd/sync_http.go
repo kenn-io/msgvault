@@ -90,7 +90,7 @@ func runSyncFullWithHint(cmd *cobra.Command, resume string, noResume bool, run f
 	}
 	cmd.SilenceErrors = true
 	if noResume {
-		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "The --noresume flag restarts enumeration; already-imported messages are skipped."); err != nil {
+		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "With --noresume, the sync starts over and skips already-imported messages."); err != nil {
 			writeErr = errors.Join(writeErr, fmt.Errorf("write sync restart explanation: %w", err))
 		}
 	}
