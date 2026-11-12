@@ -264,4 +264,9 @@ func TestMCPRelationshipReadRefusesOversizedAndRawErrors(t *testing.T) {
 	require.True(t, handled)
 	require.True(t, result.IsError)
 	assert.Equal(t, "operation_response_limit_exceeded", operationOutputError(t, result))
+	result, handled, err = backend.executeRelationshipRead(t.Context(), "get_relationship_type", map[string]any{"id": 1})
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.True(t, result.IsError)
+	assert.Equal(t, "operation_refused", operationOutputError(t, result))
 }
