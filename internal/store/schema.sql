@@ -4399,22 +4399,15 @@ CREATE TABLE IF NOT EXISTS meeting_link_decisions (
     left_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     left_kind TEXT NOT NULL CHECK (left_kind IN ('msg', 'evt')),
     left_key TEXT NOT NULL,
-    left_anchor TEXT NOT NULL,
     right_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     right_kind TEXT NOT NULL CHECK (right_kind IN ('msg', 'evt')),
     right_key TEXT NOT NULL,
-    right_anchor TEXT NOT NULL,
-    decision TEXT NOT NULL CHECK (decision IN ('link', 'split')),
-    choice_key TEXT NOT NULL,
-    is_explicit BOOLEAN NOT NULL DEFAULT TRUE
+    decision TEXT NOT NULL CHECK (decision IN ('link', 'split'))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_explicit ON meeting_link_decisions(left_message_id, left_kind, left_key, right_message_id, right_kind, right_key) WHERE is_explicit;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_pair ON meeting_link_decisions(left_message_id, left_kind, left_key, right_message_id, right_kind, right_key);
 CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_left ON meeting_link_decisions(left_message_id);
 CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_right ON meeting_link_decisions(right_message_id);
-CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_choice ON meeting_link_decisions(choice_key);
-CREATE TABLE IF NOT EXISTS meeting_link_decision_dependencies (
-    decision_id INTEGER NOT NULL REFERENCES meeting_link_decisions(id) ON DELETE CASCADE,
-    origin_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    PRIMARY KEY (decision_id, origin_message_id)
+CREATE TABLE IF NOT EXISTS meeting_copy_survivors (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    survivor_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_meeting_link_decision_dependencies_origin ON meeting_link_decision_dependencies(origin_message_id);

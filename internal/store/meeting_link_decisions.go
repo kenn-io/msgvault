@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -24,8 +23,8 @@ var ErrMeetingLinkSameCopy = errors.New("meeting references name the same copy")
 var ErrInvalidMeetingLinkDecision = errors.New("invalid meeting decision")
 
 type meetingDecisionEndpoint struct {
-	ID                int64
-	Kind, Key, Anchor string
+	ID        int64
+	Kind, Key string
 }
 
 func (e meetingDecisionEndpoint) ref() string {
@@ -74,6 +73,113 @@ func validateMeetingLinkDecision(decision string) error {
 	return nil
 }
 
+// resolveMeetingMessage follows the survivor of each hidden message.
+func (s *Store) resolveMeetingMessage(ctx context.Context, id int64) (int64, bool, error) {
+	for range 100 {
+		var hidden bool
+		var next sql.NullInt64
+		scope, args := sourceScopeClause(ctx, "m.source_id")
+		err := s.db.QueryRowContext(ctx, `SELECT m.deleted_at IS NOT NULL, COALESCE((SELECT survivor_message_id FROM meeting_copy_survivors WHERE message_id=m.id AND m.delete_batch_id IS NOT NULL), (SELECT survivor_message_id FROM source_merge_messages WHERE message_id=m.id)) FROM messages m WHERE m.id=?`+scope, append([]any{id}, args...)...).Scan(&hidden, &next)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, false, nil
+		}
+		if err != nil {
+			return 0, false, err
+		}
+		if !hidden {
+			return id, true, nil
+		}
+		if !next.Valid || next.Int64 == id {
+			return 0, false, nil
+		}
+		id = next.Int64
+	}
+	return 0, false, errors.New("meeting survivor chain exceeds limit")
+}
+
+// meetingCopies finds the hidden copies that will return when dedup is undone.
+func (s *Store) meetingCopies(ctx context.Context, id int64) ([]int64, error) {
+	scope, args := sourceScopeClause(ctx, "m.source_id")
+	args = append([]any{id}, args...)
+	rows, err := s.db.QueryContext(ctx, `WITH RECURSIVE copies(id) AS (
+ SELECT CAST(? AS BIGINT) UNION SELECT m.id FROM messages m JOIN copies c ON c.id=COALESCE((SELECT survivor_message_id FROM meeting_copy_survivors WHERE message_id=m.id AND m.delete_batch_id IS NOT NULL),(SELECT survivor_message_id FROM source_merge_messages WHERE message_id=m.id)) WHERE m.deleted_at IS NOT NULL`+scope+`
+ ) SELECT id FROM copies`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, errors.Join(rows.Err(), rows.Close())
+}
+
+// meetingOccurrenceKey identifies an occurrence from its own calendar row.
+func (s *Store) meetingOccurrenceKey(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (meetingDecisionEndpoint, error) {
+	id, ok, err := s.resolveMeetingMessage(ctx, endpoint.ID)
+	if err != nil {
+		return endpoint, err
+	}
+	if !ok {
+		return endpoint, sql.ErrNoRows
+	}
+	endpoint.ID = id
+	if endpoint.Kind == meetingRefMessage {
+		var exists bool
+		err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM messages WHERE id=? AND message_type='meeting_transcript')`, id).Scan(&exists)
+		if err != nil {
+			return endpoint, err
+		}
+		if !exists {
+			return endpoint, sql.ErrNoRows
+		}
+		endpoint.Key = ""
+		return endpoint, nil
+	}
+	rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{id}, budget)
+	if err != nil {
+		return endpoint, err
+	}
+	if len(rows) == 0 {
+		return endpoint, sql.ErrNoRows
+	}
+	row := rows[0]
+	switch row.Event.Kind {
+	case calendarSeriesKind:
+		if endpoint.Key == "" {
+			return endpoint, ErrMeetingOccurrenceRequired
+		}
+	case calendarExceptionKind:
+		endpoint.Key = ""
+		if row.Event.Original != nil && row.Event.SeriesProviderID != "" {
+			series, err := s.meetingEventRows(ctx, `m.source_id = ? AND e.provider_event_id = ? AND e.kind = 'series'`, []any{row.SourceID, row.Event.SeriesProviderID}, budget)
+			if err != nil {
+				return endpoint, err
+			}
+			if len(series) > 0 {
+				endpoint.ID = series[0].MessageID
+				endpoint.Key = row.Event.Original.Key()
+			}
+		}
+	default:
+		endpoint.Key = ""
+	}
+	return endpoint, nil
+}
+
+func (s *Store) meetingAutomaticRecordForEndpoint(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (MeetingRecord, error) {
+	ref, err := endpoint.meetingRef()
+	if err != nil {
+		return MeetingRecord{}, err
+	}
+	return s.meetingAutomaticRecordContext(ctx, ref, budget)
+}
+
 // DecideMeetingLinkContext saves or clears a choice between two copies.
 func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right MeetingLinkRef, decision string) (result MeetingLinkDecisionResult, err error) {
 	if err := validateMeetingLinkDecision(decision); err != nil {
@@ -83,91 +189,100 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 	if compareMeetingEndpoints(a, b) > 0 {
 		a, b = b, a
 	}
-	err = s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error {
-		return s.lockIdentityMutationTxContext(ctx, tx)
-	}, func(tx *loggedTx) error {
+	err = s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error { return s.lockIdentityMutationTxContext(ctx, tx) }, func(tx *loggedTx) error {
 		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
 			return err
 		}
-		for _, endpoint := range []meetingDecisionEndpoint{a, b} {
-			if err := s.lockMeetingEvidenceWith(ctx, tx, endpoint.ID); err != nil {
+		for _, e := range []meetingDecisionEndpoint{a, b} {
+			if err := s.lockMeetingEvidenceWith(ctx, tx, e.ID); err != nil {
 				return err
 			}
 		}
 		ctx := withWritableSnapshot(ctx, s.db.DB, tx)
-		clearStored := func(cause error) error {
-			if decision != "clear" || (!errors.Is(cause, sql.ErrNoRows) && !errors.Is(cause, ErrMeetingOccurrenceRequired)) {
-				return cause
-			}
-			leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
-			rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
-			left, args := meetingDecisionSideClause(a, "left")
-			right, rightValues := meetingDecisionSideClause(b, "right")
-			args = append(args, rightValues...)
-			args = append(args, leftArgs...)
-			args = append(args, rightArgs...)
-			deleted, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE choice_key IN (SELECT d.choice_key FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE `+left+` AND `+right+leftScope+rightScope+`)`, args...)
-			if err != nil {
-				return err
-			}
-			if count, err := deleted.RowsAffected(); err != nil {
-				return err
-			} else if count == 0 {
-				return cause
-			}
-			result = MeetingLinkDecisionResult{Left: a.ref(), Right: b.ref(), State: "automatic"}
-			return nil
-		}
 		budget := calrecur.RequestReadBudget
-		for _, endpoint := range []*meetingDecisionEndpoint{&a, &b} {
-			if endpoint.Kind == meetingRefEvent && endpoint.Key == "" {
-				rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{endpoint.ID}, &budget)
-				if err != nil {
-					return err
-				}
-				if len(rows) > 0 && rows[0].Event.Kind == "single" && rows[0].Event.Start != nil {
-					event := rows[0].Event
-					endpoint.Anchor = calrecur.Identity{Instant: *event.Start, Date: event.StartDate, AllDay: event.AllDay}.Key()
-				}
-			}
-		}
-		canonicalA, aliasesA, recordA, err := s.materializedMeetingEndpointRecord(ctx, a, &budget)
+		ca, err := s.meetingOccurrenceKey(ctx, a, &budget)
 		if err != nil {
-			return clearStored(err)
+			return s.clearStoredMeetingDecision(ctx, tx, a, b, decision, err, &result)
 		}
-		canonicalB, aliasesB, recordB, err := s.materializedMeetingEndpointRecord(ctx, b, &budget)
+		cb, err := s.meetingOccurrenceKey(ctx, b, &budget)
 		if err != nil {
-			return clearStored(err)
+			return s.clearStoredMeetingDecision(ctx, tx, a, b, decision, err, &result)
 		}
-		if compareMeetingEndpoints(canonicalA, canonicalB) == 0 {
+		if compareMeetingEndpoints(ca, cb) == 0 {
 			return ErrMeetingLinkSameCopy
 		}
-		if compareMeetingEndpoints(canonicalA, canonicalB) > 0 {
-			canonicalA, canonicalB = canonicalB, canonicalA
-			recordA, recordB = recordB, recordA
+		if compareMeetingEndpoints(ca, cb) > 0 {
+			ca, cb = cb, ca
 		}
-		var active []meetingDecisionEdge
-		var root func(string) string
-		if decision != "clear" {
-			graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
+		missing := false
+		for _, endpoint := range []meetingDecisionEndpoint{ca, cb} {
+			if endpoint.Kind != meetingRefEvent {
+				continue
+			}
+			record, err := s.meetingAutomaticRecordForEndpoint(ctx, endpoint, &budget)
+			if errors.Is(err, sql.ErrNoRows) {
+				missing = true
+				continue
+			}
 			if err != nil {
 				return err
 			}
-			var links []meetingDecisionEdge
-			root, links = graph.reduce()
+			if len(record.Links) == 0 {
+				missing = true
+			}
+		}
+		if missing && decision != "clear" {
+			return sql.ErrNoRows
+		}
+		var active []meetingDecisionEdge
+		if decision != "clear" {
+			graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{ca, cb}, &budget)
+			if err != nil {
+				return err
+			}
+			root, links := graph.reduce()
 			for _, link := range links {
 				if root(link.a.ref()) == root(link.b.ref()) {
 					active = append(active, link)
 				}
 			}
 		}
-		relevant, err := meetingDecisionRelevantEndpoints(canonicalA, canonicalB, recordA, recordB, append(aliasesA, aliasesB...))
-		if err != nil {
-			return err
+		state := "automatic"
+		switch decision {
+		case "link":
+			state = "link"
+		case "unlink":
+			state = "split"
 		}
+		if decision != "clear" {
+			for _, e := range []*meetingDecisionEndpoint{&a, &b} {
+				if e.Kind == meetingRefEvent && e.Key == "" {
+					id, ok, err := s.resolveMeetingMessage(ctx, e.ID)
+					if err != nil {
+						return err
+					}
+					if !ok {
+						return sql.ErrNoRows
+					}
+					rows, err := s.meetingEventRows(ctx, `e.message_id = ?`, []any{id}, &budget)
+					if err != nil {
+						return err
+					}
+					if len(rows) > 0 && rows[0].Event.Kind == "single" && rows[0].Event.Start != nil {
+						event := rows[0].Event
+						e.Key = calrecur.Identity{Instant: *event.Start, Date: event.StartDate, AllDay: event.AllDay}.Key()
+					}
+				}
+			}
+			if compareMeetingEndpoints(a, b) > 0 {
+				a, b = b, a
+			}
+		}
+		matched := false
+		var hidden []meetingDecisionEdge
 		seen := map[int64]bool{}
-		for _, id := range append(aliasesA, aliasesB...) {
-			choices, err := s.meetingDecisionEdges(ctx, meetingDecisionEndpoint{ID: id}, &budget)
+		for _, e := range []meetingDecisionEndpoint{ca, cb} {
+			choices, err := s.meetingDecisionEdges(ctx, e, &budget)
 			if err != nil {
 				return err
 			}
@@ -176,252 +291,152 @@ func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right Meetin
 					continue
 				}
 				seen[choice.id] = true
-				if !meetingDecisionRelevant(relevant, choice.a) || !meetingDecisionRelevant(relevant, choice.b) {
-					continue
-				}
-				left, _, err := s.materializedMeetingEndpoint(ctx, choice.a, &budget)
+				x, err := s.meetingOccurrenceKey(ctx, choice.a, &budget)
 				if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) {
 					continue
 				}
 				if err != nil {
 					return err
 				}
-				right, _, err := s.materializedMeetingEndpoint(ctx, choice.b, &budget)
+				y, err := s.meetingOccurrenceKey(ctx, choice.b, &budget)
 				if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) {
 					continue
 				}
 				if err != nil {
 					return err
 				}
-				if compareMeetingEndpoints(left, right) > 0 {
-					left, right = right, left
+				if compareMeetingEndpoints(x, y) > 0 {
+					x, y = y, x
 				}
-				matches := compareMeetingEndpoints(left, canonicalA) == 0 && compareMeetingEndpoints(right, canonicalB) == 0
-				equivalent := !matches
-				if !matches && decision != "clear" && (decision == "link") != (choice.decision == "link") {
-					matches = equivalentMeetingChoice(left, right, canonicalA, canonicalB, recordA, recordB, root)
+				if compareMeetingEndpoints(x, ca) != 0 || compareMeetingEndpoints(y, cb) != 0 {
+					continue
 				}
-				if matches {
-					active = slices.DeleteFunc(active, func(link meetingDecisionEdge) bool {
-						return compareMeetingEndpoints(link.a, left) == 0 && compareMeetingEndpoints(link.b, right) == 0
-					})
-					if equivalent && choice.decision == "link" {
-						// Keep the suppressed link so clearing the split restores it.
+				matched = true
+				for i, a := range slices.Backward(active) {
+					if compareMeetingEndpoints(a.a, x) == 0 && compareMeetingEndpoints(a.b, y) == 0 {
+						active = append(active[:i], active[i+1:]...)
+					}
+				}
+				if decision != "clear" && compareMeetingEndpoints(choice.a, a) == 0 && compareMeetingEndpoints(choice.b, b) == 0 {
+					continue
+				}
+				if decision != "clear" && (choice.a.ID != ca.ID && choice.a.ID != cb.ID || choice.b.ID != ca.ID && choice.b.ID != cb.ID) {
+					hidden = append(hidden, choice)
+				}
+				if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, choice.id); err != nil {
+					return err
+				}
+			}
+		}
+		if missing && !matched {
+			return sql.ErrNoRows
+		}
+		if decision != "clear" {
+			for _, choice := range hidden {
+				if compareMeetingEndpoints(choice.a, a) == 0 && compareMeetingEndpoints(choice.b, b) == 0 {
+					continue
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES (?,?,?,?,?,?,?)`, choice.a.ID, choice.a.Kind, choice.a.Key, choice.b.ID, choice.b.Kind, choice.b.Key, state); err != nil {
+					return err
+				}
+			}
+			liveA, liveB := a, b
+			for _, e := range []*meetingDecisionEndpoint{&liveA, &liveB} {
+				id, ok, err := s.resolveMeetingMessage(ctx, e.ID)
+				if err != nil {
+					return err
+				}
+				if ok {
+					e.ID = id
+				}
+			}
+			if compareMeetingEndpoints(liveA, liveB) > 0 {
+				liveA, liveB = liveB, liveA
+			}
+			if compareMeetingEndpoints(liveA, a) != 0 || compareMeetingEndpoints(liveB, b) != 0 {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES (?,?,?,?,?,?,?) ON CONFLICT(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key) DO UPDATE SET decision=excluded.decision`, liveA.ID, liveA.Kind, liveA.Key, liveB.ID, liveB.Kind, liveB.Key, state); err != nil {
+					return err
+				}
+			}
+			leftIDs, err := s.meetingCopies(ctx, liveA.ID)
+			if err != nil {
+				return err
+			}
+			rightIDs, err := s.meetingCopies(ctx, liveB.ID)
+			if err != nil {
+				return err
+			}
+			for _, leftID := range leftIDs {
+				for _, rightID := range rightIDs {
+					x, y := liveA, liveB
+					x.ID, y.ID = leftID, rightID
+					if compareMeetingEndpoints(x, y) > 0 {
+						x, y = y, x
+					}
+					if compareMeetingEndpoints(x, y) == 0 || compareMeetingEndpoints(x, a) == 0 && compareMeetingEndpoints(y, b) == 0 {
 						continue
 					}
-					if equivalent && !choice.isExplicit {
-						_, err = tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, choice.id)
-					} else {
-						err = deleteMeetingDecisionTx(ctx, tx, choice, decision == "clear")
-					}
-					if err != nil {
+					if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES (?,?,?,?,?,?,?) ON CONFLICT(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key) DO UPDATE SET decision=excluded.decision`, x.ID, x.Kind, x.Key, y.ID, y.Kind, y.Key, state); err != nil {
 						return err
 					}
 				}
 			}
-		}
-		state := "link"
-		if decision == "unlink" {
-			state = "split"
-		}
-		if decision == "clear" {
-			state = "automatic"
-		} else {
-			_, err = tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,choice_key) VALUES (?,?,?,?,?,?,?,?,?,?)`, a.ID, a.Kind, a.Key, a.Anchor, b.ID, b.Kind, b.Key, b.Anchor, state, rand.Text())
-		}
-		if err != nil {
-			return err
-		}
-		if state != "automatic" {
-			budget = calrecur.RequestReadBudget
-			graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{a, b}, &budget)
+			var insertedID int64
+			err = tx.QueryRowContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES (?,?,?,?,?,?,?) ON CONFLICT(left_message_id,left_kind,left_key,right_message_id,right_kind,right_key) DO UPDATE SET decision=excluded.decision RETURNING id`, a.ID, a.Kind, a.Key, b.ID, b.Kind, b.Key, state).Scan(&insertedID)
 			if err != nil {
 				return err
 			}
-			if !meetingDecisionAccepted(graph, canonicalA, canonicalB, state, active) {
-				return fmt.Errorf("%w: cannot save %s for %s %s", ErrMeetingLinkConflict, state, a.ref(), b.ref())
+			budget = calrecur.RequestReadBudget
+			graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{ca, cb}, &budget)
+			if err != nil {
+				return err
+			}
+			root, _ := graph.reduce()
+			if (root(ca.ref()) == root(cb.ref())) != (state == "link") {
+				for _, edge := range graph.candidates {
+					if edge.id != insertedID && edge.decision == "split" && ((root(edge.a.ref()) == root(ca.ref()) && root(edge.b.ref()) == root(cb.ref())) || (root(edge.b.ref()) == root(ca.ref()) && root(edge.a.ref()) == root(cb.ref()))) {
+						return fmt.Errorf("%w: %s %s", ErrMeetingLinkConflict, edge.a.ref(), edge.b.ref())
+					}
+				}
+				return fmt.Errorf("%w: %s %s", ErrMeetingLinkConflict, ca.ref(), cb.ref())
+			}
+			for _, link := range active {
+				if root(link.a.ref()) != root(link.b.ref()) {
+					for _, edge := range graph.candidates {
+						if edge.id != insertedID && edge.decision == "split" && ((root(edge.a.ref()) == root(link.a.ref()) && root(edge.b.ref()) == root(link.b.ref())) || (root(edge.b.ref()) == root(link.a.ref()) && root(edge.a.ref()) == root(link.b.ref()))) {
+							return fmt.Errorf("%w: %s %s", ErrMeetingLinkConflict, edge.a.ref(), edge.b.ref())
+						}
+					}
+					return fmt.Errorf("%w: %s %s", ErrMeetingLinkConflict, link.a.ref(), link.b.ref())
+				}
 			}
 		}
-		result = MeetingLinkDecisionResult{Left: canonicalA.ref(), Right: canonicalB.ref(), State: state}
+		result = MeetingLinkDecisionResult{Left: ca.ref(), Right: cb.ref(), State: state}
 		return nil
 	})
 	return result, err
 }
 
-func meetingDecisionAccepted(graph *meetingDecisionGraph, a, b meetingDecisionEndpoint, state string, active []meetingDecisionEdge) bool {
-	root, _ := graph.reduce()
-	if (root(a.ref()) == root(b.ref())) != (state == "link") {
-		return false
+func (s *Store) clearStoredMeetingDecision(ctx context.Context, tx *loggedTx, a, b meetingDecisionEndpoint, decision string, cause error, result *MeetingLinkDecisionResult) error {
+	if decision != "clear" || (!errors.Is(cause, sql.ErrNoRows) && !errors.Is(cause, ErrMeetingOccurrenceRequired)) {
+		return cause
 	}
-	for _, link := range active {
-		if root(link.a.ref()) != root(link.b.ref()) {
-			return false
-		}
-	}
-	return true
-}
-
-func meetingDecisionRelevantEndpoints(a, b meetingDecisionEndpoint, recordA, recordB MeetingRecord, aliases []int64) (map[int64][]meetingDecisionEndpoint, error) {
-	endpoints := map[int64][]meetingDecisionEndpoint{}
-	add := func(endpoint meetingDecisionEndpoint) {
-		endpoints[endpoint.ID] = append(endpoints[endpoint.ID], endpoint)
-	}
-	add(a)
-	add(b)
-	for _, record := range []MeetingRecord{recordA, recordB} {
-		for _, id := range record.MessageIDs {
-			add(meetingDecisionEndpoint{ID: id, Kind: meetingRefMessage})
-		}
-		for _, link := range record.Links {
-			ref, err := ParseMeetingLinkRef(link.Ref)
-			if err != nil {
-				return nil, err
-			}
-			endpoint := endpointFromRef(ref)
-			add(endpoint)
-			if link.MessageID != endpoint.ID {
-				add(meetingDecisionEndpoint{ID: link.MessageID, Kind: meetingRefEvent})
-			}
-		}
-	}
-	for _, id := range aliases {
-		if len(endpoints[id]) == 0 {
-			add(meetingDecisionEndpoint{ID: id, Kind: meetingRefEvent})
-		}
-	}
-	return endpoints, nil
-}
-
-func meetingDecisionRelevant(endpoints map[int64][]meetingDecisionEndpoint, stored meetingDecisionEndpoint) bool {
-	return slices.ContainsFunc(endpoints[stored.ID], func(query meetingDecisionEndpoint) bool {
-		return meetingDecisionEndpointMatches(query, stored)
-	})
-}
-
-func equivalentMeetingChoice(left, right, requestedA, requestedB meetingDecisionEndpoint, recordA, recordB MeetingRecord, root func(string) string) bool {
-	note, event, requestedNote, requestedEvent, record := left, right, requestedA, requestedB, recordB
-	if note.Kind == meetingRefEvent {
-		note, event = event, note
-	}
-	if requestedNote.Kind == meetingRefEvent {
-		requestedNote, requestedEvent, record = requestedEvent, requestedNote, recordA
-	}
-	if note.Kind == meetingRefMessage && event.Kind == meetingRefEvent && requestedEvent.Kind == meetingRefEvent && compareMeetingEndpoints(note, requestedNote) == 0 && root(event.ref()) == root(requestedEvent.ref()) {
-		for _, link := range record.Links {
-			if link.Ref == event.ref() {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// materializedMeetingEndpoint follows an event reference to its current occurrence.
-func (s *Store) materializedMeetingEndpoint(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (meetingDecisionEndpoint, []int64, error) {
-	resolved, aliases, _, err := s.materializedMeetingEndpointRecord(ctx, endpoint, budget)
-	return resolved, aliases, err
-}
-
-func (s *Store) meetingAutomaticRecordForEndpoint(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (record MeetingRecord, err error) {
-	ref, err := endpoint.meetingRef()
-	if err != nil {
-		return MeetingRecord{}, err
-	}
-	record, err = s.meetingAutomaticRecordContext(ctx, ref, budget)
-	if errors.Is(err, ErrMeetingOccurrenceRequired) && endpoint.Anchor != "" {
-		endpoint.Key = endpoint.Anchor
-		ref, err = endpoint.meetingRef()
-		if err == nil {
-			record, err = s.meetingAutomaticRecordContext(ctx, ref, budget)
-		}
-	}
-	return record, err
-}
-
-func (s *Store) materializedMeetingEndpointRecord(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) (meetingDecisionEndpoint, []int64, MeetingRecord, error) {
-	record, err := s.meetingAutomaticRecordForEndpoint(ctx, endpoint, budget)
-	if err != nil {
-		return endpoint, nil, MeetingRecord{}, err
-	}
-	if endpoint.Kind == meetingRefMessage {
-		return endpoint, []int64{endpoint.ID}, record, nil
-	}
-	for _, link := range record.Links {
-		if link.Ref == endpoint.ref() || link.MessageID == endpoint.ID {
-			resolved, err := ParseMeetingLinkRef(link.Ref)
-			return endpointFromRef(resolved), []int64{endpoint.ID, link.MessageID}, record, err
-		}
-	}
-	return endpoint, nil, record, sql.ErrNoRows
-}
-
-// copyMeetingLinkDecisionsTx keeps hidden originals for undo and preserves survivor choices.
-func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, into int64, dedup bool) error {
-	if from == into {
-		return nil
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,choice_key FROM meeting_link_decisions WHERE left_message_id=? OR right_message_id=?`, from, from)
+	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
+	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
+	args := []any{a.ID, a.Kind, a.Key, b.ID, b.Kind, b.Key}
+	args = append(args, leftArgs...)
+	args = append(args, rightArgs...)
+	deleted, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id IN (SELECT d.id FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE d.left_message_id=? AND d.left_kind=? AND d.left_key=? AND d.right_message_id=? AND d.right_kind=? AND d.right_key=?`+leftScope+rightScope+`)`, args...)
 	if err != nil {
 		return err
 	}
-	type copiedDecision struct {
-		meetingDecisionEdge
-
-		choiceKey string
-	}
-	var decisions []copiedDecision
-	for rows.Next() {
-		var d copiedDecision
-		if err := rows.Scan(&d.id, &d.a.ID, &d.a.Kind, &d.a.Key, &d.a.Anchor, &d.b.ID, &d.b.Kind, &d.b.Key, &d.b.Anchor, &d.decision, &d.choiceKey); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		decisions = append(decisions, d)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	count, err := deleted.RowsAffected()
+	if err != nil {
 		return err
 	}
-	for _, d := range decisions {
-		if d.a.ID == from {
-			d.a.ID = into
-		}
-		if d.b.ID == from {
-			d.b.ID = into
-		}
-		if compareMeetingEndpoints(d.a, d.b) == 0 {
-			continue
-		}
-		if compareMeetingEndpoints(d.a, d.b) > 0 {
-			d.a, d.b = d.b, d.a
-		}
-		var copyID int64
-		err := tx.QueryRowContext(ctx, `INSERT INTO meeting_link_decisions(left_message_id,left_kind,left_key,left_anchor,right_message_id,right_kind,right_key,right_anchor,decision,choice_key,is_explicit) VALUES (?,?,?,?,?,?,?,?,?,?,FALSE) RETURNING id`, d.a.ID, d.a.Kind, d.a.Key, d.a.Anchor, d.b.ID, d.b.Kind, d.b.Key, d.b.Anchor, d.decision, d.choiceKey).Scan(&copyID)
-		if err != nil {
-			return fmt.Errorf("copy meeting link decision: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decision_dependencies(decision_id,origin_message_id) SELECT ?,origin_message_id FROM meeting_link_decision_dependencies WHERE decision_id=?`, copyID, d.id); err != nil {
-			return err
-		}
-		if dedup {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decision_dependencies(decision_id,origin_message_id) VALUES (?,?) ON CONFLICT DO NOTHING`, copyID, from); err != nil {
-				return err
-			}
-		}
+	if count == 0 {
+		return cause
 	}
-	return nil
-}
-
-// undoMeetingLinkDecisionsTx removes contributions that depend on a restored message.
-func undoMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, batchID string) error {
-	_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id IN (SELECT decision_id FROM meeting_link_decision_dependencies WHERE origin_message_id IN (SELECT id FROM messages WHERE delete_batch_id=?))`, batchID)
-	return err
-}
-
-// deleteMeetingDecisionTx clears source choices or replaces a direct choice.
-func deleteMeetingDecisionTx(ctx context.Context, tx *loggedTx, d meetingDecisionEdge, clearing bool) error {
-	if clearing || d.isExplicit {
-		_, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE choice_key=(SELECT choice_key FROM meeting_link_decisions WHERE id=?)`, d.id)
-		return err
-	}
+	*result = MeetingLinkDecisionResult{Left: a.ref(), Right: b.ref(), State: "automatic"}
 	return nil
 }

@@ -1035,8 +1035,8 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 		if _, err := copyByName(ctx, tx, "meeting_link_decisions", `left_message_id IN (SELECT id FROM selected_messages) AND right_message_id IN (SELECT id FROM selected_messages)`); err != nil {
 			return nil, fmt.Errorf("copy meeting link decisions: %w", err)
 		}
-		if _, err := copyByName(ctx, tx, "meeting_link_decision_dependencies", `decision_id IN (SELECT id FROM meeting_link_decisions) AND origin_message_id IN (SELECT id FROM selected_messages)`); err != nil {
-			return nil, fmt.Errorf("copy meeting decision dependencies: %w", err)
+		if _, err := copyByName(ctx, tx, "meeting_copy_survivors", `message_id IN (SELECT id FROM selected_messages) AND survivor_message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy meeting copy survivors: %w", err)
 		}
 	}
 

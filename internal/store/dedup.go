@@ -574,7 +574,7 @@ func (s *Store) MergeDuplicates(
 			if err := s.copyLoopDecisionTx(ctx, tx, dupID, survivorID); err != nil {
 				return err
 			}
-			if err := copyMeetingLinkDecisionsTx(ctx, tx, dupID, survivorID, true); err != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_copy_survivors(message_id, survivor_message_id) VALUES (?, ?) ON CONFLICT (message_id) DO UPDATE SET survivor_message_id=excluded.survivor_message_id`, dupID, survivorID); err != nil {
 				return err
 			}
 		}
@@ -739,9 +739,6 @@ func (s *Store) StreamMessageRawContext(ctx context.Context, messageIDs []int64,
 func (s *Store) UndoDedup(ctx context.Context, batchID string) (int64, error) {
 	var count int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := undoMeetingLinkDecisionsTx(ctx, tx, batchID); err != nil {
-			return err
-		}
 		result, err := tx.ExecContext(ctx, `
 		UPDATE messages
 		SET deleted_at = NULL, delete_batch_id = NULL
@@ -801,6 +798,9 @@ func (s *Store) DeleteDedupedBatchesContext(
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		for _, batchID := range batchIDs {
+			if err := s.repointDeletedMeetingCopies(ctx, tx, `delete_batch_id = ? AND deleted_at IS NOT NULL`, batchID); err != nil {
+				return err
+			}
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM messages
 				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
@@ -910,6 +910,9 @@ func (s *Store) DeleteAllDedupedContext(
 			return fmt.Errorf("delete all dedup-hidden: count batches: %w", err)
 		}
 
+		if err := s.repointDeletedMeetingCopies(ctx, tx, `deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL`); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `
 			DELETE FROM messages
 			WHERE deleted_at IS NOT NULL AND delete_batch_id IS NOT NULL
@@ -1267,4 +1270,108 @@ func deriveRFC822MessageID(rawData []byte, compression sql.NullString) (string, 
 	}
 	normalizedID := mime.NormalizeMessageID(parsed.MessageID)
 	return normalizedID, normalizedID != ""
+}
+
+// repointDeletedMeetingCopies preserves saved choices before hidden messages are purged.
+func (s *Store) repointDeletedMeetingCopies(ctx context.Context, tx *loggedTx, predicate string, args ...any) error {
+	rows, err := tx.QueryContext(ctx, `SELECT m.id, COALESCE(c.survivor_message_id,sm.survivor_message_id) FROM messages m LEFT JOIN meeting_copy_survivors c ON c.message_id=m.id LEFT JOIN source_merge_messages sm ON sm.message_id=m.id WHERE `+predicate, args...)
+	if err != nil {
+		return err
+	}
+	type mapping struct {
+		id       int64
+		survivor sql.NullInt64
+	}
+	var mappings []mapping
+	for rows.Next() {
+		var m mapping
+		if err := rows.Scan(&m.id, &m.survivor); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		mappings = append(mappings, m)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	// Resolve chains within the deletion set before changing any references.
+	next := map[int64]sql.NullInt64{}
+	for _, m := range mappings {
+		next[m.id] = m.survivor
+	}
+	for _, m := range mappings {
+		target := m.survivor
+		seen := map[int64]bool{m.id: true}
+		for target.Valid {
+			if seen[target.Int64] {
+				target.Valid = false
+				break
+			}
+			seen[target.Int64] = true
+			n, doomed := next[target.Int64]
+			if !doomed {
+				break
+			}
+			target = n
+		}
+		if !target.Valid {
+			continue
+		}
+		decisions, err := tx.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key FROM meeting_link_decisions WHERE left_message_id=? OR right_message_id=?`, m.id, m.id)
+		if err != nil {
+			return err
+		}
+		var entries []meetingDecisionEdge
+		for decisions.Next() {
+			var d meetingDecisionEdge
+			if err := decisions.Scan(&d.id, &d.a.ID, &d.a.Kind, &d.a.Key, &d.b.ID, &d.b.Kind, &d.b.Key); err != nil {
+				_ = decisions.Close()
+				return err
+			}
+			entries = append(entries, d)
+		}
+		if err := errors.Join(decisions.Err(), decisions.Close()); err != nil {
+			return err
+		}
+		for _, d := range entries {
+			if d.a.ID == m.id {
+				d.a.ID = target.Int64
+			}
+			if d.b.ID == m.id {
+				d.b.ID = target.Int64
+			}
+			if compareMeetingEndpoints(d.a, d.b) > 0 {
+				d.a, d.b = d.b, d.a
+			}
+			var existingID int64
+			err := tx.QueryRowContext(ctx, `SELECT id FROM meeting_link_decisions WHERE id<>? AND left_message_id=? AND left_kind=? AND left_key=? AND right_message_id=? AND right_kind=? AND right_key=?`, d.id, d.a.ID, d.a.Kind, d.a.Key, d.b.ID, d.b.Kind, d.b.Key).Scan(&existingID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			if existingID != 0 && newerMeetingDecision(d, meetingDecisionEdge{id: existingID}) {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, existingID); err != nil {
+					return err
+				}
+				existingID = 0
+			}
+			if existingID != 0 || compareMeetingEndpoints(d.a, d.b) == 0 {
+				_, err = tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE id=?`, d.id)
+			} else {
+				_, err = tx.ExecContext(ctx, `UPDATE meeting_link_decisions SET left_message_id=?,left_kind=?,left_key=?,right_message_id=?,right_kind=?,right_key=? WHERE id=?`, d.a.ID, d.a.Kind, d.a.Key, d.b.ID, d.b.Kind, d.b.Key, d.id)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM meeting_copy_survivors WHERE survivor_message_id=? AND message_id=?`, m.id, target.Int64); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE meeting_copy_survivors SET survivor_message_id=? WHERE survivor_message_id=?`, target.Int64, m.id); err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE source_merge_messages SET survivor_message_id=CASE WHEN message_id=? THEN NULL ELSE CAST(? AS BIGINT) END WHERE survivor_message_id=?`, target.Int64, target.Int64, m.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }

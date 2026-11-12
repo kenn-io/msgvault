@@ -314,6 +314,19 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 	for _, candidate := range candidates {
 		note := MeetingLinkRef{Kind: meetingRefMessage, MessageID: candidate.MemberMessageID}
 		a, b := endpointFromRef(note), candidate.eventEndpoint
+		a, err = s.meetingOccurrenceKey(ctx, a, &budget)
+		if err == nil {
+			b, err = s.meetingOccurrenceKey(ctx, b, &budget)
+		}
+		if errors.Is(err, ErrQueryTooBroad) {
+			if len(page.Suggestions) == 0 {
+				return page, ErrQueryTooBroad
+			}
+			break
+		}
+		if err != nil {
+			return page, err
+		}
 		partner := b
 		if ref.Kind == meetingRefEvent {
 			partner = a
@@ -341,30 +354,14 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if root(a.ref()) == root(b.ref()) {
 			continue
 		}
-		// The saved edge is read for each matching endpoint, then materialized once.
-		for _, node := range graph.nodes {
-			if meetingDecisionEndpointMatches(node.endpoint, a) || meetingDecisionEndpointMatches(node.endpoint, b) {
-				budget--
+		var latest meetingDecisionEdge
+		for _, choice := range graph.candidates {
+			if choice.id > latest.id && (compareMeetingEndpoints(choice.a, a) == 0 && compareMeetingEndpoints(choice.b, b) == 0 || compareMeetingEndpoints(choice.a, b) == 0 && compareMeetingEndpoints(choice.b, a) == 0) {
+				latest = choice
 			}
 		}
-		if budget < 0 {
-			if len(page.Suggestions) == 0 {
-				return page, ErrQueryTooBroad
-			}
-			break
-		}
-		_, _, _, err = s.materializedMeetingEndpointRecord(ctx, a, &budget)
-		if err == nil {
-			_, _, _, err = s.materializedMeetingEndpointRecord(ctx, b, &budget)
-		}
-		if errors.Is(err, ErrQueryTooBroad) {
-			if len(page.Suggestions) == 0 {
-				return page, ErrQueryTooBroad
-			}
-			break
-		}
-		if err != nil {
-			return page, err
+		if latest.decision == "split" {
+			continue
 		}
 		var active []meetingDecisionEdge
 		for _, link := range links {
@@ -372,7 +369,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 				active = append(active, link)
 			}
 		}
-		graph.candidates = append(graph.candidates, meetingDecisionEdge{a: a, b: b, decision: "link", isExplicit: true})
+		graph.candidates = append(graph.candidates, meetingDecisionEdge{id: int64(^uint64(0) >> 1), a: a, b: b, decision: "link"})
 		if !meetingDecisionAccepted(graph, a, b, "link", active) {
 			continue
 		}
@@ -395,4 +392,17 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		}
 	}
 	return page, nil
+}
+
+func meetingDecisionAccepted(graph *meetingDecisionGraph, a, b meetingDecisionEndpoint, state string, active []meetingDecisionEdge) bool {
+	root, _ := graph.reduce()
+	if (root(a.ref()) == root(b.ref())) != (state == "link") {
+		return false
+	}
+	for _, link := range active {
+		if root(link.a.ref()) != root(link.b.ref()) {
+			return false
+		}
+	}
+	return true
 }

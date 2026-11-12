@@ -124,7 +124,7 @@ func TestSchemaVersionMeetingDecisionsPreviousUpgrade(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	ctx := t.Context()
-	_, err := f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decision_dependencies`)
+	_, err := f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_copy_survivors`)
 	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decisions`)
 	require.NoError(err)
@@ -135,7 +135,7 @@ func TestSchemaVersionMeetingDecisionsPreviousUpgrade(t *testing.T) {
 	var count int
 	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
 	require.Zero(count)
-	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_link_decision_dependencies`).Scan(&count))
+	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM meeting_copy_survivors`).Scan(&count))
 	require.Zero(count)
 	version, err := f.Store.SchemaVersionContext(ctx)
 	require.NoError(err)
@@ -363,8 +363,8 @@ var (
 		40: "a26d72acc985ec3ca25ab69f8173b6fc2fb050f26298e162a0cc1358abeda0f9",
 		41: "87805b27cac30a9b23f779a8bec0c9d5bf5d5cc463b286fb63f645e60567aa56",
 		42: "4e93e7add65b3641e55fff12f8930cf93c0e42568bdaf26dbda3b9f334346ee0",
-		43: "6b206afb3cce224a2071a6fcd5c4cdde190a6817d4f329dcaca0289cbb4fb907",
-		44: "349a539beac7501a1310dfa820931918bcf710b83f283685eda1620e7ffe3bee",
+		43: "1cd1a37745d861117c920b0636fb57de2c2a146a00b87d70bfad4603d581aa55",
+		44: "15912ddb2877fdc3cdab9d9df14df323550ace66228f939bc8c271e6635b6473",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -404,8 +404,8 @@ var (
 		40: "fd168ca80dd687aba404bf05be9a932eb5530303b9ac0cd73f91cc7ee01c14f2",
 		41: "f5438190c64d99d1f9d8f85e6a2d0508a8296aae5dfc5b389c5a1dc3e16c59d6",
 		42: "8a70dbb4c6fe8b8d0de33a8837441d25548c2a6a591066619ae17ac868787b2b",
-		43: "4e0c476bab90238b94646b9110a9a458966ffed1007d484097e28e1e6b6b7b9d",
-		44: "2830ba0b96acb8fa008814dbf20f276543ba84e96087b87946b8048573c8b41e",
+		43: "5057fd8fd49ae2da0363598421947c6ddb5b807e45c90bb0345fbc1a302454ae",
+		44: "63f15ab49f1649add1122153e62f52ea41b702089222f69a30b98270014cf709",
 	}
 )
 

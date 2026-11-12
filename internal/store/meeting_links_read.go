@@ -374,6 +374,25 @@ func (s *Store) meetingAutomaticRecordContext(ctx context.Context, ref MeetingLi
 				}
 			}
 		}
+		if seed.Ref == "" && row.Event.Kind == calendarSeriesKind && len(record.Unexpandable) > 0 {
+			edits, err := s.meetingEventRows(ctx, `m.source_id = ? AND e.series_provider_id = ? AND e.kind = 'exception'`, []any{row.SourceID, row.Event.ProviderEventID}, budget)
+			if err != nil {
+				return record, err
+			}
+			for _, edit := range edits {
+				if edit.Event.Original == nil || edit.Event.Original.Key() != ref.Identity.Key() {
+					continue
+				}
+				page, err := s.expandCalendarRows(ctx, []CalendarEventRow{edit}, at, at.Add(time.Second), false, budget)
+				if err != nil {
+					return record, err
+				}
+				if len(page.Occurrences) > 0 {
+					seed = page.Occurrences[0]
+					break
+				}
+			}
+		}
 		if seed.Ref == "" {
 			if row.Event.Kind != calendarSeriesKind || !slices.ContainsFunc(record.Unexpandable, func(item CalendarUnexpandable) bool { return item.MessageID == ref.MessageID }) {
 				return record, sql.ErrNoRows
