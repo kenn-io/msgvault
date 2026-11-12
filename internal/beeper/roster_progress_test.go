@@ -156,17 +156,22 @@ func TestRosterMatchingFailureRetriesAcrossChats(t *testing.T) {
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	sourceID := newBeeperTestSource(t, st, "slack")
 	works := []*rosterWork{{}, {}}
+	completed := NewSyncState()
 	for i, chat := range []*fakeChat{first, second} {
 		detail, err := imp.client.GetChat(t.Context(), chat.ID)
 		require.NoError(err)
 		_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: works[i]}, &ImportSummary{})
 		require.NoError(err)
 		require.True(complete)
+		checkpointWork := *works[i]
+		completed.EnsureChat(chat.ID).RosterWork = &checkpointWork
 		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE source_import_items SET status = 'pending' WHERE source_id = ? AND provider = ?`), sourceID, rosterProvider(chat.ID))
 		require.NoError(err)
 		works[i].Phase = "matching"
 		works[i].Next = 0
 	}
+	checkpoint, err := completed.Marshal()
+	require.NoError(err)
 	otherSource := newBeeperTestSource(t, st, "slack2")
 	other, err := newParticipantResolver(st, "slack2").resolveUser(t.Context(), &User{ID: "@slack_other:beeper.local"})
 	require.NoError(err)
@@ -201,9 +206,10 @@ func TestRosterMatchingFailureRetriesAcrossChats(t *testing.T) {
 	}
 	require.NoError(err)
 	imp = NewImporter(st, imp.client)
+	reloaded, err := LoadSyncState(checkpoint)
+	require.NoError(err)
 	for i, chat := range []*fakeChat{first, second} {
-		works[i].Phase = "done"
-		works[i].Next = len(chat.Participants)
+		works[i] = reloaded.Chats[chat.ID].RosterWork
 		detail, err := imp.client.GetChat(t.Context(), chat.ID)
 		require.NoError(err)
 		_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: works[i]}, &ImportSummary{})
@@ -221,143 +227,106 @@ func TestRosterMatchingFailureRetriesAcrossChats(t *testing.T) {
 }
 
 func TestRosterJoinRefreshesSettledMatchAfterStop(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := observationChat("slack", "Slack", "@slack_alice:beeper.local", map[string]any{"id": "@slack_alice:beeper.local", "username": "alice"}, map[string]any{"id": "@slack_extra:beeper.local"})
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	imp.res.accountID = "slack"
-	other, err := imp.res.resolveUser(t.Context(), &User{ID: "@slack_other:beeper.local"})
-	require.NoError(err)
-	otherSource := newBeeperTestSource(t, st, "slack2")
-	captureAndMatch(t, newObservationRecorder(st), newIdentityMatcher(st), other, &User{ID: "@slack_other:beeper.local", Username: "alice"}, captureContext{SourceID: otherSource, AccountID: "slack2", Network: "Slack"})
-	sourceID := newBeeperTestSource(t, st, "slack")
-	detail, err := imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	work := &rosterWork{}
-	//nolint:dogsled // Only the stop matters here.
-	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work, ShouldStop: func() bool {
-		return work.Phase == "matching" && work.Next >= 1
-	}}, &ImportSummary{})
-	require.ErrorIs(err, errBeeperBudgetExpired)
-	candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 100, 0)
-	require.NoError(err)
-	require.Len(candidates, 1)
-	require.Equal(store.IdentityMatchStateCandidate, candidates[0].State)
-	before, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
-	require.NoError(err)
-	for _, evidence := range before.Evidence {
-		assert.NotEqual(evidenceMembership, evidence.EvidenceKind)
+	for _, replacement := range []bool{false, true} {
+		t.Run(fmt.Sprintf("replacement=%t", replacement), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := newFakeBeeper(t)
+			chat := observationChat("slack", "Slack", "@slack_alice:beeper.local", map[string]any{"id": "@slack_alice:beeper.local", "username": "alice"}, map[string]any{"id": "@slack_extra:beeper.local"})
+			f.addChat(chat)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			imp.res.accountID = "slack"
+			other, err := imp.res.resolveUser(t.Context(), &User{ID: "@slack_other:beeper.local"})
+			require.NoError(err)
+			otherSource := newBeeperTestSource(t, st, "slack2")
+			captureAndMatch(t, newObservationRecorder(st), newIdentityMatcher(st), other, &User{ID: "@slack_other:beeper.local", Username: "alice"}, captureContext{SourceID: otherSource, AccountID: "slack2", Network: "Slack"})
+			sourceID := newBeeperTestSource(t, st, "slack")
+			detail, err := imp.client.GetChat(t.Context(), chat.ID)
+			require.NoError(err)
+			work := &rosterWork{}
+			if replacement {
+				_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
+				require.NoError(err)
+				require.True(complete)
+			} else {
+				_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work, ShouldStop: func() bool {
+					return work.Phase == "matching" && work.Next >= 1
+				}}, &ImportSummary{})
+				require.ErrorIs(err, errBeeperBudgetExpired)
+			}
+			candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 100, 0)
+			require.NoError(err)
+			require.Len(candidates, 1)
+			require.Equal(store.IdentityMatchStateCandidate, candidates[0].State)
+			before, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
+			require.NoError(err)
+			for _, evidence := range before.Evidence {
+				assert.NotEqual(evidenceMembership, evidence.EvidenceKind)
+			}
+			f.mu.Lock()
+			if replacement {
+				chat.Participants[0] = map[string]any{"id": "@slack_other:beeper.local"}
+			} else {
+				chat.Participants = append(chat.Participants, map[string]any{"id": "@slack_other:beeper.local", "username": "joined"})
+			}
+			f.mu.Unlock()
+			detail, err = imp.client.GetChat(t.Context(), chat.ID)
+			require.NoError(err)
+			f.setChatGetFailure(chat.ID, true)
+			imp = NewImporter(st, imp.client)
+			_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
+			require.NoError(err)
+			require.False(complete)
+			receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+			require.NoError(err)
+			key := imp.res.identifierForUser("@slack_other:beeper.local")
+			assert.Equal("pending", receipts[key].Status)
+			if !replacement {
+				observations, err := st.ListParticipantObservationsContext(t.Context(), other, true)
+				require.NoError(err)
+				foundJoined := false
+				for _, observation := range observations {
+					foundJoined = foundJoined || observation.NormalizedValue == "joined"
+				}
+				assert.True(foundJoined, "matching captures independent observations before verification")
+			}
+			candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
+			require.NoError(err)
+			for _, evidence := range candidate.Evidence {
+				assert.NotEqual(evidenceMembership, evidence.EvidenceKind)
+			}
+			state := NewSyncState()
+			state.EnsureChat(chat.ID).RosterWork = work
+			blob, err := state.Marshal()
+			require.NoError(err)
+			state, err = LoadSyncState(blob)
+			require.NoError(err)
+			work = state.Chats[chat.ID].RosterWork
+			f.setChatGetFailure(chat.ID, false)
+			imp = NewImporter(st, imp.client)
+			_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
+			require.NoError(err)
+			require.True(complete)
+			receipts, err = st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+			require.NoError(err)
+			assert.Equal("resolved", receipts[key].Status)
+			assert.Equal("done", work.Phase)
+			candidate, err = st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
+			require.NoError(err)
+			var conversationID int64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sourceID, chat.ID).Scan(&conversationID))
+			reference := fmt.Sprintf("conversation:%d", conversationID)
+			var found bool
+			for _, evidence := range candidate.Evidence {
+				found = found || evidence.EvidenceKind == evidenceMembership && evidence.EvidenceRef != nil && *evidence.EvidenceRef == reference
+			}
+			if replacement {
+				assert.False(found, "a departed participant must not gain shared evidence")
+			} else {
+				assert.True(found, "a settled candidate gains evidence when a member joins")
+			}
+		})
 	}
-	f.mu.Lock()
-	chat.Participants = append(chat.Participants, map[string]any{"id": "@slack_other:beeper.local", "username": "joined"})
-	f.mu.Unlock()
-	detail, err = imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	f.setChatGetFailure(chat.ID, true)
-	imp = NewImporter(st, imp.client)
-	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
-	require.NoError(err)
-	require.False(complete)
-	receipts, err := st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
-	require.NoError(err)
-	key := imp.res.identifierForUser("@slack_other:beeper.local")
-	assert.Equal("pending", receipts[key].Status)
-	observations, err := st.ListParticipantObservationsContext(t.Context(), other, true)
-	require.NoError(err)
-	foundJoined := false
-	for _, observation := range observations {
-		foundJoined = foundJoined || observation.NormalizedValue == "joined"
-	}
-	assert.True(foundJoined, "matching captures independent observations before verification")
-	candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
-	require.NoError(err)
-	for _, evidence := range candidate.Evidence {
-		assert.NotEqual(evidenceMembership, evidence.EvidenceKind)
-	}
-	state := NewSyncState()
-	state.EnsureChat(chat.ID).RosterWork = work
-	blob, err := state.Marshal()
-	require.NoError(err)
-	state, err = LoadSyncState(blob)
-	require.NoError(err)
-	work = state.Chats[chat.ID].RosterWork
-	f.setChatGetFailure(chat.ID, false)
-	imp = NewImporter(st, imp.client)
-	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
-	require.NoError(err)
-	require.True(complete)
-	receipts, err = st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
-	require.NoError(err)
-	assert.Equal("resolved", receipts[key].Status)
-	assert.Equal("done", work.Phase)
-	candidate, err = st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
-	require.NoError(err)
-	var conversationID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sourceID, chat.ID).Scan(&conversationID))
-	reference := fmt.Sprintf("conversation:%d", conversationID)
-	var found bool
-	for _, evidence := range candidate.Evidence {
-		found = found || evidence.EvidenceKind == evidenceMembership && evidence.EvidenceRef != nil && *evidence.EvidenceRef == reference
-	}
-	assert.True(found, "a settled candidate gains evidence when a member joins")
-}
-
-func TestUnverifiedTurnoverDoesNotAddSharedEvidence(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := observationChat("slack", "Slack", "@slack_alice:beeper.local", map[string]any{"id": "@slack_alice:beeper.local", "username": "alice"}, map[string]any{"id": "@slack_extra:beeper.local"})
-	later := observationChat("slack", "Slack", "@slack_alice:beeper.local", map[string]any{"id": "@slack_alice:beeper.local", "username": "alice"}, map[string]any{"id": "@slack_later:beeper.local"})
-	later.ID = "!later:example.test"
-	f.addChat(chat)
-	f.addChat(later)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	imp.res.accountID = "slack"
-	other, err := imp.res.resolveUser(t.Context(), &User{ID: "@slack_other:beeper.local"})
-	require.NoError(err)
-	otherSource := newBeeperTestSource(t, st, "slack2")
-	captureAndMatch(t, newObservationRecorder(st), newIdentityMatcher(st), other, &User{ID: "@slack_other:beeper.local", Username: "alice"}, captureContext{SourceID: otherSource, AccountID: "slack2", Network: "Slack"})
-	sourceID := newBeeperTestSource(t, st, "slack")
-	detail, err := imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	work := &rosterWork{}
-	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
-	require.NoError(err)
-	require.True(complete)
-	candidates, err := st.ListIdentityMatchCandidatesContext(t.Context(), nil, 100, 0)
-	require.NoError(err)
-	require.Len(candidates, 1)
-	f.mu.Lock()
-	chat.Participants[0] = map[string]any{"id": "@slack_other:beeper.local"}
-	f.mu.Unlock()
-	detail, err = imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	f.setChatGetFailure(chat.ID, true)
-	imp = NewImporter(st, imp.client)
-	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
-	require.NoError(err)
-	require.False(complete)
-	check := func() {
-		candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), candidates[0].ID)
-		require.NoError(err)
-		for _, evidence := range candidate.Evidence {
-			assert.NotEqual(evidenceMembership, evidence.EvidenceKind)
-		}
-	}
-	check()
-	laterDetail, err := imp.client.GetChat(t.Context(), later.ID)
-	require.NoError(err)
-	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, laterDetail, ImportOptions{AccountID: "slack", rosterState: &rosterWork{}}, &ImportSummary{}) //nolint:dogsled // The later chat exercises matching.
-	require.NoError(err)
-	check()
-	f.setChatGetFailure(chat.ID, false)
-	imp = NewImporter(st, imp.client)
-	_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "slack", rosterState: work}, &ImportSummary{})
-	require.NoError(err)
-	assert.True(complete)
-	assert.NotContains(rosterMembers(t, st, sourceID, chat.ID), participantForBeeperUser(t, st, "@slack_alice:beeper.local"))
 }
 
 func TestRosterUnchangedVisitSkipsMatching(t *testing.T) {
@@ -428,45 +397,6 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 	id, ok := all[0]["id"].(string)
 	require.True(ok)
 	assert.Contains(finalReceipts, imp.res.identifierForUser(id))
-}
-
-func TestRosterRetainedReceiptFollowsIdentifier(t *testing.T) {
-	for _, missing := range []bool{true} {
-		t.Run(fmt.Sprintf("missing=%t", missing), func(t *testing.T) {
-			require := require.New(t)
-			f := newFakeBeeper(t)
-			chat := budgetTestChat("!owner-change:example.test", 1, time.Now())
-			chat.Participants[0]["id"] = "@signal_owner:example.test"
-			f.addChat(chat)
-			imp, st := newHandlerTestImporter(t, f)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			if !missing {
-				_, err := newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_owner:example.test", PhoneNumber: "+12025550123"})
-				require.NoError(err)
-			}
-			first, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-			require.NoError(err)
-			key := imp.res.identifierForUser("@signal_owner:example.test")
-			var owner int64
-			if missing {
-				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM participant_identifiers WHERE identifier_type = 'beeper' AND identifier_value = ?`), key)
-				require.NoError(err)
-			} else {
-				owner, err = st.EnsureParticipantByPhone(t.Context(), "+12025550124", "", "signal")
-				require.NoError(err)
-				_, err = newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_owner:example.test", PhoneNumber: "+12025550124"})
-				require.NoError(err)
-			}
-			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-			require.NoError(err)
-			if missing {
-				owner, _, err = st.ParticipantByIdentifierContext(t.Context(), "beeper", key)
-				require.NoError(err)
-				require.Positive(owner)
-			}
-			require.Contains(rosterMembers(t, st, first.SourceID, chat.ID), owner)
-		})
-	}
 }
 
 func TestRosterCheckpointStaysCompact(t *testing.T) {
@@ -651,7 +581,7 @@ func TestManualImportRefreshesRosterAfterScheduledStop(t *testing.T) {
 }
 
 func TestRosterResumeTracksOwner(t *testing.T) {
-	for _, mode := range []string{"changed payload", "explicit phone", "bare identifier"} {
+	for _, mode := range []string{"changed payload", "explicit phone", "bare identifier", "identifier missing"} {
 		t.Run(mode, func(t *testing.T) {
 			require := require.New(t)
 			f := newFakeBeeper(t)
@@ -666,9 +596,11 @@ func TestRosterResumeTracksOwner(t *testing.T) {
 			sourceID := newBeeperTestSource(t, st, "signal")
 			oldOwner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550123", "", "signal")
 			require.NoError(err)
-			if mode == "bare identifier" {
-				_, err = newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_a:example.test", PhoneNumber: "+12025550123"})
-				require.NoError(err)
+			if mode == "bare identifier" || mode == "identifier missing" {
+				if mode == "bare identifier" {
+					_, err = newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_a:example.test", PhoneNumber: "+12025550123"})
+					require.NoError(err)
+				}
 				_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
 				require.NoError(err)
 			} else {
@@ -710,6 +642,19 @@ func TestRosterResumeTracksOwner(t *testing.T) {
 				} else {
 					require.Contains(rosterMembers(t, st, sourceID, chat.ID), oldOwner)
 				}
+				return
+			}
+			if mode == "identifier missing" {
+				key := imp.res.identifierForUser("@signal_a:example.test")
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM participant_identifiers WHERE identifier_type = 'beeper' AND identifier_value = ?`), key)
+				require.NoError(err)
+				imp = NewImporter(st, imp.client)
+				_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+				require.NoError(err)
+				owner, _, err := st.ParticipantByIdentifierContext(t.Context(), "beeper", key)
+				require.NoError(err)
+				require.Positive(owner)
+				require.Contains(rosterMembers(t, st, sourceID, chat.ID), owner)
 				return
 			}
 			newOwner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550124", "", "signal")

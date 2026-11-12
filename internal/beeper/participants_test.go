@@ -531,8 +531,7 @@ func TestRichUpgradeDoesNotAbsorbContactOwner(t *testing.T) {
 
 // Two Beeper IDs that share an email resolve to one participant. When one
 // gains a phone and that participant merges into the phone participant, the
-// other ID's cached owner must follow the merge, whatever the member order and
-// whether roster verification succeeds.
+// other ID's cached owner must follow the merge in either member order.
 func TestSharedEmailMergeKeepsResolverCacheCurrent(t *testing.T) {
 	for _, tc := range []struct{ name, upgraded, other string }{
 		{"upgraded member first", "@signal_a1:beeper.local", "@signal_a2:beeper.local"},
@@ -563,91 +562,78 @@ func TestSharedEmailMergeKeepsResolverCacheCurrent(t *testing.T) {
 
 func TestSharedEmailMergeKeepsSenderCacheCurrent(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name, upgraded, other string
-		deferVerification     bool
-	}{
-		{name: "deferred verification", upgraded: "@signal_c1:beeper.local", other: "@signal_c2:beeper.local", deferVerification: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			assert, require := assert.New(t), require.New(t)
-			f := newFakeBeeper(t)
-			chat := budgetTestChat("!shared-email:example.test", 1, time.Now().Add(-48*time.Hour))
-			chat.Type = "group"
-			chat.Participants = append(chat.Participants,
-				map[string]any{"id": tc.upgraded, "fullName": "Alex Upgraded", "email": "shared@example.test"},
-				map[string]any{"id": tc.other, "fullName": "Alex Other", "email": "shared@example.test"})
-			f.addChat(chat)
-			imp, st := newHandlerTestImporter(t, f)
-			t.Cleanup(func() { require.NoError(st.Close()) })
-			sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-			require.NoError(err)
-			require.Equal(participantForBeeperUser(t, st, tc.upgraded), participantForBeeperUser(t, st, tc.other),
-				"both IDs share the email participant")
-			old := participantForBeeperUser(t, st, tc.upgraded)
+	const upgraded, other = "@signal_c1:beeper.local", "@signal_c2:beeper.local"
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	chat := budgetTestChat("!shared-email:example.test", 1, time.Now().Add(-48*time.Hour))
+	chat.Type = "group"
+	chat.Participants = append(chat.Participants,
+		map[string]any{"id": upgraded, "fullName": "Alex Upgraded", "email": "shared@example.test"},
+		map[string]any{"id": other, "fullName": "Alex Other", "email": "shared@example.test"})
+	f.addChat(chat)
+	imp, st := newHandlerTestImporter(t, f)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	require.Equal(participantForBeeperUser(t, st, upgraded), participantForBeeperUser(t, st, other),
+		"both IDs share the email participant")
+	old := participantForBeeperUser(t, st, upgraded)
 
-			f.mu.Lock()
-			for _, member := range chat.Participants {
-				if member["id"] == tc.upgraded {
-					member["phoneNumber"] = "+12025550177"
-				}
-			}
-			f.mu.Unlock()
-			f.appendMsg(chat.ID, fakeMsg{
-				ID: chat.ID + "-other", SortKey: 1, Timestamp: time.Now(), Text: "after merge",
-				SenderID: tc.other, SenderName: "Alex Other",
-			})
-			if tc.deferVerification {
-				handler := f.handler()
-				imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path == "/v1/chats/"+chat.ID {
-						payload := f.chatJSON(chat, false)
-						payload["participants"] = map[string]any{"items": chat.Participants, "hasMore": true, "total": len(chat.Participants)}
-						writeJSON(t, w, payload)
-						return
-					}
-					handler(w, r)
-				}))
-			}
-			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-			require.NoError(err, "the other ID's message must not use the merged-away participant")
-
-			phone := participantForBeeperUser(t, st, tc.upgraded)
-			assert.NotEqual(old, phone)
-			assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), phone)
-			assert.NotContains(rosterMembers(t, st, sum.SourceID, chat.ID), old)
-			var phoneNumber string
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
-				`SELECT COALESCE(phone_number, '') FROM participants WHERE id = ?`), phone).Scan(&phoneNumber))
-			assert.Equal("+12025550177", phoneNumber)
-			var sender int64
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
-				`SELECT sender_id FROM messages WHERE source_message_id = ?`), chat.ID+"-other").Scan(&sender))
-			assert.Equal(phone, sender, "the other ID's new message belongs to the merged participant")
-			imp.client.http.Transport = handlerTransport(f.handler())
-			imp = NewImporter(st, imp.client)
-			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-			require.NoError(err)
-			require.True(latestBeeperState(t, imp).Chats[chat.ID].RosterWork.Verified)
-			{
-				source, err := st.GetOrCreateSource("beeper", "signal")
-				require.NoError(err)
-				receipts, err := st.BeeperRosterReceiptsContext(t.Context(), source.ID, rosterProvider(chat.ID))
-				require.NoError(err)
-				assert.Equal(strconv.FormatInt(phone, 10), receipts[imp.res.identifierForUser(tc.other)].Name)
-				f.mu.Lock()
-				chat.ParticipantsTruncated = true
-				f.mu.Unlock()
-				f.setChatGetFailure(chat.ID, true)
-				f.appendMsg(chat.ID, fakeMsg{ID: chat.ID + "-after-restart", SortKey: 100, Timestamp: time.Now().Add(time.Second), Text: "after restart", SenderID: tc.other})
-				imp = NewImporter(st, imp.client)
-				_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
-				var partial *PartialSyncError
-				require.ErrorAs(err, &partial)
-				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, chat.ID+"-after-restart").Scan(&sender))
-				assert.Equal(phone, sender)
-			}
-		})
+	f.mu.Lock()
+	for _, member := range chat.Participants {
+		if member["id"] == upgraded {
+			member["phoneNumber"] = "+12025550177"
+		}
 	}
+	f.mu.Unlock()
+	f.appendMsg(chat.ID, fakeMsg{
+		ID: chat.ID + "-other", SortKey: 1, Timestamp: time.Now(), Text: "after merge",
+		SenderID: other, SenderName: "Alex Other",
+	})
+	handler := f.handler()
+	imp.client.http.Transport = handlerTransport(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/chats/"+chat.ID {
+			payload := f.chatJSON(chat, false)
+			payload["participants"] = map[string]any{"items": chat.Participants, "hasMore": true, "total": len(chat.Participants)}
+			writeJSON(t, w, payload)
+			return
+		}
+		handler(w, r)
+	}))
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err, "the other ID's message must not use the merged-away participant")
+
+	phone := participantForBeeperUser(t, st, upgraded)
+	assert.NotEqual(old, phone)
+	assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), phone)
+	assert.NotContains(rosterMembers(t, st, sum.SourceID, chat.ID), old)
+	var phoneNumber string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT COALESCE(phone_number, '') FROM participants WHERE id = ?`), phone).Scan(&phoneNumber))
+	assert.Equal("+12025550177", phoneNumber)
+	var sender int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT sender_id FROM messages WHERE source_message_id = ?`), chat.ID+"-other").Scan(&sender))
+	assert.Equal(phone, sender, "the other ID's new message belongs to the merged participant")
+	imp.client.http.Transport = handlerTransport(f.handler())
+	imp = NewImporter(st, imp.client)
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+	require.NoError(err)
+	require.True(latestBeeperState(t, imp).Chats[chat.ID].RosterWork.Verified)
+	source, err := st.GetOrCreateSource("beeper", "signal")
+	require.NoError(err)
+	receipts, err := st.BeeperRosterReceiptsContext(t.Context(), source.ID, rosterProvider(chat.ID))
+	require.NoError(err)
+	assert.Equal(strconv.FormatInt(phone, 10), receipts[imp.res.identifierForUser(other)].Name)
+	f.mu.Lock()
+	chat.ParticipantsTruncated = true
+	f.mu.Unlock()
+	f.setChatGetFailure(chat.ID, true)
+	f.appendMsg(chat.ID, fakeMsg{ID: chat.ID + "-after-restart", SortKey: 100, Timestamp: time.Now().Add(time.Second), Text: "after restart", SenderID: other})
+	imp = NewImporter(st, imp.client)
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true})
+	var partial *PartialSyncError
+	require.ErrorAs(err, &partial)
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, chat.ID+"-after-restart").Scan(&sender))
+	assert.Equal(phone, sender)
 }

@@ -3,6 +3,7 @@ package beeper
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -539,9 +540,12 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!deadline:beeper.local", 2, base)
 	f.addChat(chat)
-	imp, _ := newHandlerTestImporter(t, f)
-	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	imp, st := newHandlerTestImporter(t, f)
+	first, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(t, err)
+	f.mu.Lock()
+	chat.Participants = append(chat.Participants, map[string]any{"id": "@signal_added:beeper.local"})
+	f.mu.Unlock()
 	f.appendMsg(chat.ID, fakeMsg{
 		ID: chat.ID + "-new", SortKey: 2, Timestamp: base.Add(2 * time.Minute),
 		Text: "new message", SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
@@ -571,7 +575,11 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 	work := latestBeeperState(t, imp).Chats[chat.ID].RosterWork
 	require.NotNil(work, "finished roster work waits for the message turn")
 	assert.Equal("done", work.Phase)
-	assert.False(work.MemberFirst, "the next visit is the message turn")
+	added := participantForBeeperUser(t, st, "@signal_added:beeper.local")
+	assert.Contains(rosterMembers(t, st, first.SourceID, chat.ID), added)
+	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), first.SourceID)
+	require.NoError(err)
+	assert.NotContains(unresolved, chat.ID)
 	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.False(sum.Stopped)
@@ -596,6 +604,10 @@ func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
 	require.NoError(err)
 	state, err := LoadSyncState(run.CursorAfter.String)
 	require.NoError(err)
+	oldID := participantForBeeperUser(t, st, "@signal_member2:beeper.local")
+	f.mu.Lock()
+	chat.Participants[3] = map[string]any{"id": "@signal_replacement:beeper.local"}
+	f.mu.Unlock()
 	work := state.Chats[chat.ID].RosterWork
 	require.True(work.Verified)
 	work.MemberFirst = false
@@ -628,6 +640,20 @@ func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
 	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 	require.NoError(err)
 	assert.Contains(unresolved, chat.ID)
+	var convID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sum.SourceID, chat.ID).Scan(&convID))
+	routeComplete := func() bool {
+		metadata, err := st.GetConversationMetadataContext(t.Context(), convID)
+		require.NoError(err)
+		var value struct {
+			Route struct {
+				MembershipComplete bool `json:"membership_complete"`
+			} `json:"messaging_route"`
+		}
+		require.NoError(json.Unmarshal([]byte(metadata.String), &value))
+		return value.Route.MembershipComplete
+	}
+	assert.False(routeComplete())
 	f.mu.Lock()
 	f.blockChatGetID = ""
 	f.mu.Unlock()
@@ -641,6 +667,9 @@ func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
 	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 	require.NoError(err)
 	assert.NotContains(unresolved, chat.ID)
+	assert.True(routeComplete())
+	assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), participantForBeeperUser(t, st, "@signal_replacement:beeper.local"))
+	assert.NotContains(rosterMembers(t, st, sum.SourceID, chat.ID), oldID)
 }
 
 func TestImportStopsAfterReconcilePage(t *testing.T) {

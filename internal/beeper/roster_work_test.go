@@ -133,6 +133,10 @@ func TestTruncatedChangedListingDefersRoster(t *testing.T) {
 			unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 			require.NoError(err)
 			assert.Contains(unresolved, chat.ID)
+			if !hidden {
+				assert.False(state.RosterWork.Verified)
+				assert.Equal("members", state.RosterWork.Phase)
+			}
 			if hidden {
 				assert.True(state.RosterWork.Verified)
 				assert.Equal("matching", state.RosterWork.Phase)
@@ -151,22 +155,6 @@ func TestTruncatedChangedListingDefersRoster(t *testing.T) {
 					return value.Route.MembershipComplete
 				}
 				assert.False(routeComplete())
-				state.RosterWork.MemberFirst = false
-				f.appendMsg(chat.ID, fakeMsg{ID: "hidden-change-message", SortKey: 99, Timestamp: time.Now(), SenderID: "@signal_ann:beeper.local", Text: "new"})
-				syncState := NewSyncState()
-				syncState.Chats[chat.ID] = state
-				opts := ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, routeAccount: &Account{AccountID: "signal", Bridge: &AccountBridge{Type: "signal"}, Status: "connected"}}
-				_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, &listing.Items[0], opts, syncState, time.Now().Add(-time.Hour), false, false, &ImportSummary{})
-				require.NoError(err)
-				assert.Equal(3, countBeeperMessages(t, imp))
-				_, _, err = imp.syncChat(t.Context(), 0, sum.SourceID, &listing.Items[0], opts, syncState, time.Now().Add(-time.Hour), false, false, &ImportSummary{})
-				require.NoError(err)
-				unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-				require.NoError(err)
-				assert.NotContains(unresolved, chat.ID)
-				assert.True(routeComplete())
-				assert.Contains(rosterMembers(t, st, sum.SourceID, chat.ID), participantForBeeperUser(t, st, "@signal_hidden_new:example.test"))
-				assert.NotContains(rosterMembers(t, st, sum.SourceID, chat.ID), participantForBeeperUser(t, st, "@signal_hidden_old:example.test"))
 			}
 		})
 	}

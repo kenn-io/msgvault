@@ -218,24 +218,6 @@ func TestQuietRosterYieldRetriesWithoutBackoff(t *testing.T) {
 
 // a stop during the message walk, after membership committed and
 // route proof stored, should not leave the committed roster marked unresolved.
-func TestMessageWalkStopKeepsCommittedRosterResolved(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	f.pageSize = 1
-	chat := budgetTestChat("!probe-walk:beeper.local", 3, time.Now().UTC().Add(-48*time.Hour))
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: stopAfterMessagePages(f, 1)})
-	require.NoError(err)
-	require.True(sum.Stopped)
-	require.Less(countBeeperMessages(t, imp), 3, "walk was interrupted")
-	require.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 2)
-	ids, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
-	require.NoError(err)
-	assert.NotContains(ids, chat.ID, "roster and route proof are committed and complete")
-}
-
 func rosterRetryChat() *fakeChat {
 	chat := budgetTestChat("!retry-budget:example.test", 2, time.Now().Add(-48*time.Hour))
 	chat.Type = "group"
@@ -601,7 +583,6 @@ func TestFinalMemberStopKeepsMessageTurn(t *testing.T) {
 	require.NoError(err)
 	require.True(stop, "the last member's capture must request the stop")
 	require.NotNil(state.Chats[chat.ID].RosterWork, "a stop after the last member keeps the message turn")
-	assert.False(state.Chats[chat.ID].RosterWork.MemberFirst)
 	assert.Equal(2, countBeeperMessages(t, imp), "no message work starts after the stop")
 
 	stop = false

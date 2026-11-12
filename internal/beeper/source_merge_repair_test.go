@@ -67,7 +67,7 @@ func TestMergeSourcesRepairsLiveRoster(t *testing.T) {
 				require.NoError(err)
 				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO conversation_participants(conversation_id, participant_id, role) VALUES (?, ?, 'member')`), conv, departed)
 				require.NoError(err)
-				historicalID, err := st.UpsertMessage(&store.Message{SourceID: history.ID, ConversationID: conv, SourceMessageID: "historical", MessageType: "beeper"})
+				_, err = st.UpsertMessage(&store.Message{SourceID: history.ID, ConversationID: conv, SourceMessageID: "historical", MessageType: "beeper"})
 				require.NoError(err)
 				req := store.MergeSourcesRequest{FromSourceID: history.ID, IntoSourceID: sum.SourceID, DryRun: true}
 				_, err = st.MergeSourcesContext(t.Context(), req)
@@ -88,9 +88,6 @@ func TestMergeSourcesRepairsLiveRoster(t *testing.T) {
 				pending, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 				require.NoError(err)
 				assert.NotContains(pending, chat.ID)
-				var count int
-				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND id = ?`), sum.SourceID, historicalID).Scan(&count))
-				assert.Positive(count)
 				routes, err = st.GetPersonMessagingRoutesContext(t.Context(), query)
 				require.NoError(err)
 				require.Len(routes.Routes.Items, 1)

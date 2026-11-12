@@ -61,15 +61,10 @@ func TestRosterBareSenderFollowsCurrentOwner(t *testing.T) {
 }
 
 func TestImportDefersTruncatedRosterAndContinues(t *testing.T) {
-	for _, incomplete := range []bool{false, true} {
-		t.Run(fmt.Sprintf("incomplete=%t", incomplete), func(t *testing.T) {
-			testImportDefersTruncatedRoster(t, incomplete, false, false)
-		})
-	}
 	t.Run("complete listing verification failure", testCompleteListingVerificationFailure)
 }
 
-func testImportDefersTruncatedRoster(t *testing.T, incomplete, omitted, checkSender bool) {
+func testImportDefersTruncatedRoster(t *testing.T, incomplete, omitted bool) {
 	t.Helper()
 	require := require.New(t)
 	f := newFakeBeeper(t)
@@ -140,11 +135,9 @@ func testImportDefersTruncatedRoster(t *testing.T, incomplete, omitted, checkSen
 		var count int
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, messageID).Scan(&count))
 		require.Equal(1, count)
-		if checkSender {
-			var sender int64
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, oldMessage).Scan(&sender))
-			require.Equal(oldOwner, sender)
-		}
+		var sender int64
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, oldMessage).Scan(&sender))
+		require.Equal(oldOwner, sender)
 		unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 		require.NoError(err)
 		require.Contains(unresolved, old.ID)
@@ -157,7 +150,7 @@ func testImportDefersTruncatedRoster(t *testing.T, incomplete, omitted, checkSen
 			}
 		}
 	}
-	if checkSender && !omitted {
+	if !omitted {
 		f.mu.Lock()
 		old.Participants[0]["phoneNumber"] = "+12025550125"
 		f.mu.Unlock()
@@ -184,11 +177,9 @@ func testImportDefersTruncatedRoster(t *testing.T, incomplete, omitted, checkSen
 	unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 	require.NoError(err)
 	require.NotContains(unresolved, old.ID)
-	if checkSender {
-		var sender int64
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "old-new-0").Scan(&sender))
-		require.Equal(oldOwner, sender)
-	}
+	var sender int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`), sum.SourceID, "old-new-0").Scan(&sender))
+	require.Equal(oldOwner, sender)
 }
 
 func TestRosterEachChatKeepsItsOwnPhone(t *testing.T) {
@@ -199,7 +190,7 @@ func TestRosterEachChatKeepsItsOwnPhone(t *testing.T) {
 		{"failed omitted", false, true}, {"failed visible", false, false},
 		{"truncated omitted", true, true}, {"truncated visible", true, false},
 	} {
-		t.Run(tc.name, func(t *testing.T) { testImportDefersTruncatedRoster(t, tc.incomplete, tc.omitted, true) })
+		t.Run(tc.name, func(t *testing.T) { testImportDefersTruncatedRoster(t, tc.incomplete, tc.omitted) })
 	}
 
 	for _, tc := range []struct {
