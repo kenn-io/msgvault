@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/netguard"
+	"go.kenn.io/msgvault/internal/oauth"
 )
 
 func federationHubOrigin(raw string) (string, error) {
@@ -21,6 +22,7 @@ func federationHubOrigin(raw string) (string, error) {
 	u.Path = ""
 	return u.String(), nil
 }
+
 func init() {
 	root := &cobra.Command{Use: "federation", Short: "Manage hub enrollment"}
 	identity := &cobra.Command{Use: "identity", Short: "Print this archive's federation UID", Long: "Print this archive's federation UID. Set [federation] role to spoke or hub and restart the daemon first.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
@@ -50,6 +52,7 @@ func init() {
 			if err != nil {
 				return err
 			}
+			origin = oauth.ShellQuote(origin)
 		}
 		c, _, err := OpenHTTPStore(cmd.Context(), "5.1.0")
 		if err != nil {
@@ -98,7 +101,9 @@ func init() {
 			if e.LastSeenAt != nil {
 				lastSeen = e.LastSeenAt.UTC().Format(time.RFC3339)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", e.EnrollmentUID, e.Member, e.SpokeName, state, lastSeen)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", e.EnrollmentUID, e.Member, e.SpokeName, state, lastSeen); err != nil {
+				return fmt.Errorf("write federation enrollments: %w", err)
+			}
 		}
 		return nil
 	}}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type federationFailWriter struct{}
+
+func (federationFailWriter) Write([]byte) (int, error) { return 0, errors.New("output failed") }
 
 func TestFederationHubOrigin(t *testing.T) {
 	for _, tc := range []struct {
@@ -106,6 +111,15 @@ func TestFederationEnrollOutput(t *testing.T) {
 		requirements.NoError(list.ExecuteContext(ctx))
 		assertions.Contains(output.String(), "\talice\talice\tactive\t")
 		assertions.NotContains(output.String(), "\t-\n")
+		list.SetOut(federationFailWriter{})
+		assertions.ErrorContains(list.ExecuteContext(ctx), "write federation enrollments: output failed")
+	})
+	t.Run("quoted join origin", func(t *testing.T) {
+		stdout.Reset()
+		stderr.Reset()
+		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://hub.example.test;false"})
+		require.NoError(t, command.ExecuteContext(ctx))
+		assert.Contains(t, stderr.String(), "msgvault federation join 'https://hub.example.test;false'")
 	})
 	t.Run("JSON output", func(t *testing.T) {
 		assertions := assert.New(t)

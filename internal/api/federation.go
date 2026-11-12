@@ -19,22 +19,27 @@ type FederationStore interface {
 	AuthenticateFederationEnrollmentContext(ctx context.Context, digest, spokeUID string) (*store.FederationEnrollment, error)
 	TouchFederationEnrollmentContext(ctx context.Context, uid string) error
 }
+
 type federationCreateRequest struct {
 	SpokeInstance string `json:"spoke_instance"`
 	Member        string `json:"member"`
 	SpokeName     string `json:"spoke_name,omitempty"`
 }
+
 type federationCreateResponse struct {
 	Enrollment  store.FederationEnrollment `json:"enrollment"`
 	Token       string                     `json:"token"`
 	HubInstance string                     `json:"hub_instance"`
 }
+
 type federationListResponse struct {
 	Enrollments []store.FederationEnrollment `json:"enrollments"`
 }
+
 type federationIdentityResponse struct {
 	ArchiveUID string `json:"archive_uid"`
 }
+
 type federationHandshakeResponse struct {
 	ProtocolVersions []int  `json:"protocol_versions"`
 	HubInstance      string `json:"hub_instance"`
@@ -54,6 +59,7 @@ func (s *Server) registerFederationRoutes(api huma.API) {
 	op.Responses = rawHumaResponses(http.StatusNoContent)
 	registerRawHumaRoute(api, op, s.handleFederationRevoke)
 }
+
 func (s *Server) federationRole(w http.ResponseWriter, r *http.Request, identity bool) bool {
 	role := s.cfg.Federation.Role
 	if role != "hub" && (!identity || role != "spoke") {
@@ -62,6 +68,7 @@ func (s *Server) federationRole(w http.ResponseWriter, r *http.Request, identity
 	}
 	return true
 }
+
 func (s *Server) federationOwner(w http.ResponseWriter, r *http.Request, identity bool) bool {
 	mode := s.requestAuthentication(r).Mode
 	if !s.ownerAccessAuthorized(r) && (!identity || mode != AuthModeLoopback) {
@@ -70,6 +77,7 @@ func (s *Server) federationOwner(w http.ResponseWriter, r *http.Request, identit
 	}
 	return true
 }
+
 func (s *Server) federationArchiveUID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	id, ok := s.store.(ArchiveIdentifier)
 	if !ok {
@@ -83,6 +91,7 @@ func (s *Server) federationArchiveUID(w http.ResponseWriter, r *http.Request) (s
 	}
 	return uid, true
 }
+
 func (s *Server) handleFederationIdentity(w http.ResponseWriter, r *http.Request) {
 	if !s.federationRole(w, r, true) || !s.federationOwner(w, r, true) {
 		return
@@ -92,6 +101,7 @@ func (s *Server) handleFederationIdentity(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, federationIdentityResponse{ArchiveUID: uid})
 	}
 }
+
 func (s *Server) handleFederationHandshake(w http.ResponseWriter, r *http.Request) {
 	if !s.federationRole(w, r, false) {
 		return
@@ -108,8 +118,9 @@ func (s *Server) handleFederationHandshake(w http.ResponseWriter, r *http.Reques
 	if err := s.federationStore.TouchFederationEnrollmentContext(r.Context(), auth.Federation.EnrollmentUID); err != nil {
 		s.logger.Warn("federation last-seen update failed", "enrollment_uid", auth.Federation.EnrollmentUID, "error", err)
 	}
-	writeJSON(w, http.StatusOK, federationHandshakeResponse{[]int{1}, uid, "active"})
+	writeJSON(w, http.StatusOK, federationHandshakeResponse{ProtocolVersions: []int{1}, HubInstance: uid, EnrollmentState: "active"})
 }
+
 func (s *Server) federationManagement(w http.ResponseWriter, r *http.Request) bool {
 	if !s.federationRole(w, r, false) || !s.federationOwner(w, r, false) {
 		return false
@@ -120,6 +131,7 @@ func (s *Server) federationManagement(w http.ResponseWriter, r *http.Request) bo
 	}
 	return true
 }
+
 func (s *Server) handleFederationCreate(w http.ResponseWriter, r *http.Request) {
 	if !s.federationManagement(w, r) {
 		return
@@ -147,8 +159,9 @@ func (s *Server) handleFederationCreate(w http.ResponseWriter, r *http.Request) 
 		}
 		return
 	}
-	writeJSON(w, http.StatusCreated, federationCreateResponse{*e, token, uid})
+	writeJSON(w, http.StatusCreated, federationCreateResponse{Enrollment: *e, Token: token, HubInstance: uid})
 }
+
 func (s *Server) handleFederationList(w http.ResponseWriter, r *http.Request) {
 	if !s.federationManagement(w, r) {
 		return
@@ -158,8 +171,9 @@ func (s *Server) handleFederationList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Could not list enrollments")
 		return
 	}
-	writeJSON(w, http.StatusOK, federationListResponse{list})
+	writeJSON(w, http.StatusOK, federationListResponse{Enrollments: list})
 }
+
 func (s *Server) handleFederationRevoke(w http.ResponseWriter, r *http.Request) {
 	if !s.federationManagement(w, r) {
 		return
