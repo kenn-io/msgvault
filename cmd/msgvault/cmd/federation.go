@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/netguard"
+	"go.kenn.io/msgvault/internal/oauth"
 )
 
 func federationHubOrigin(raw string) (string, error) {
@@ -66,7 +67,11 @@ func init() {
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), result.Token); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(cmd.ErrOrStderr(), "Enrollment: %s\nMember: %s\nSpoke: %s\nJoin (upcoming, not in this release): msgvault federation join %s --hub-instance %s --token-file <path>\n", result.Enrollment.EnrollmentUID, result.Enrollment.Member, result.Enrollment.SpokeName, origin, result.HubInstance)
+		joinOrigin := origin
+		if cmd.Flags().Changed("hub-url") {
+			joinOrigin = oauth.ShellQuote(origin)
+		}
+		_, err = fmt.Fprintf(cmd.ErrOrStderr(), "Enrollment: %s\nMember: %s\nSpoke: %s\nJoin (upcoming, not in this release): msgvault federation join %s --hub-instance %s --token-file <path>\n", result.Enrollment.EnrollmentUID, result.Enrollment.Member, result.Enrollment.SpokeName, joinOrigin, result.HubInstance)
 		return err
 	}}
 	enroll.Flags().StringVar(&spoke, "spoke-instance", "", "Spoke archive UID (64 lowercase hexadecimal digits)")
