@@ -1174,6 +1174,8 @@ const messagesAccountPendingIndexDefinition = "ON messages(source_id, id) WHERE 
 // it holds only emails whose email_link_keys are not derived yet.
 const messagesEmailLinkagePendingIndexDefinition = "ON messages(source_id, id) WHERE " + emailLinkagePendingPredicate
 
+const messageRecipientsNormalizedEmailIndexDefinition = "ON message_recipients(LOWER(TRIM(email_address)), message_id) WHERE email_address IS NOT NULL AND TRIM(email_address) <> ''"
+
 // The first SQLite index build can take minutes, so log its start and finish.
 func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
 	const name = "idx_message_recipients_email_from"
@@ -1188,6 +1190,30 @@ func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
 	slog.Info("building index", slog.String("index", name), slog.String("table", "message_recipients"))
 	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+name+` ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'`)
+		return err
+	}); err != nil {
+		return err
+	}
+	slog.Info("built index", slog.String("index", name), slog.Duration("elapsed", time.Since(started)))
+	return nil
+}
+
+// ensureMessageRecipientsNormalizedEmailIndex supports batched lookups by the
+// immutable recipient address snapshot. The address column is added by legacy
+// migrations, so this index is created after that migration loop.
+func (s *Store) ensureMessageRecipientsNormalizedEmailIndex(ctx context.Context) error {
+	const name = "idx_message_recipients_normalized_email"
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	started := time.Now()
+	slog.Info("building index", slog.String("index", name), slog.String("table", "message_recipients"))
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+name+` `+messageRecipientsNormalizedEmailIndexDefinition)
 		return err
 	}); err != nil {
 		return err
@@ -1271,6 +1297,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
 		{"idx_calendar_events_ical_uid", "ON calendar_events(ical_uid)"},
 		{"idx_calendar_events_series_provider_id", "ON calendar_events(series_provider_id)"},
+		{"idx_message_recipients_normalized_email", messageRecipientsNormalizedEmailIndexDefinition},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -2269,6 +2296,9 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 
 		if err := s.ensureFromAddressIndex(ctx); err != nil {
 			return fmt.Errorf("create identity From-envelope index: %w", err)
+		}
+		if err := s.ensureMessageRecipientsNormalizedEmailIndex(ctx); err != nil {
+			return fmt.Errorf("create normalized recipient-envelope index: %w", err)
 		}
 	}
 
