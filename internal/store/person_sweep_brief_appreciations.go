@@ -12,19 +12,21 @@ import (
 	"go.kenn.io/msgvault/internal/personfacts"
 )
 
-func (s *Store) PersonSweepAppreciationRetired(ctx context.Context, personID int64, keys []string, profile peoplesweep.ProviderProfile) (map[string]bool, error) {
+func (s *Store) PersonSweepAppreciationRetired(ctx context.Context, personID int64, keys []string, retainedQuotes map[string]string, profile peoplesweep.ProviderProfile) (map[string]bool, error) {
 	var retired map[string]bool
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
-		retired, err = s.appreciationRetiredTx(ctx, tx, personID, keys, profile, false)
+		retired, err = s.appreciationRetiredTx(ctx, tx, personID, keys, retainedQuotes, profile, false)
 		return err
 	})
 	return retired, err
 }
 
 // appreciationRetiredTx checks explicit keys in one snapshot, then validates
-// any exact proof in that same snapshot. No nested store transaction is opened.
-func (s *Store) appreciationRetiredTx(ctx context.Context, tx *loggedTx, personID int64, keys []string, profile peoplesweep.ProviderProfile, lock bool) (map[string]bool, error) {
+// any exact proof in that same snapshot. Retained quotes require an exact
+// match; keys without one use the existing fresh-peer retirement rule.
+// No nested store transaction is opened.
+func (s *Store) appreciationRetiredTx(ctx context.Context, tx *loggedTx, personID int64, keys []string, retainedQuotes map[string]string, profile peoplesweep.ProviderProfile, lock bool) (map[string]bool, error) {
 	retired := make(map[string]bool)
 	for start := 0; start < len(keys); start += MaxPersonAppreciationStateKeys {
 		end := min(start+MaxPersonAppreciationStateKeys, len(keys))
@@ -40,11 +42,11 @@ func (s *Store) appreciationRetiredTx(ctx context.Context, tx *loggedTx, personI
 			if state.ThanksBriefID == nil {
 				continue
 			}
-			_, valid, err := s.validAppreciationProofTx(ctx, tx, personID, key, *state.ThanksBriefID, profile, lock)
+			proof, valid, err := s.validAppreciationProofTx(ctx, tx, personID, key, *state.ThanksBriefID, profile, lock)
 			if err != nil {
 				return nil, err
 			}
-			if valid {
+			if quote, retained := retainedQuotes[key]; valid && (!retained || proof.Suggestion.Quote == quote) {
 				retired[key] = true
 			}
 		}

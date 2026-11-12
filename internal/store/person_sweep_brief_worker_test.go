@@ -478,9 +478,15 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	require.Len(t, projection.Appreciations, 1)
 	assert.Equal(t, 202, projection.Brief.Version)
 	assert.Equal(t, "already_thanked", projection.Appreciations[0].Suggestion.State, "the exact proof is older than the recent-version window")
-	retired, err := st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
+	retired, err := st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, nil, profile)
 	require.NoError(t, err)
 	assert.True(t, retired[key], "a valid old proof frees the active slot before provider input")
+	retired, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, map[string]string{key: "carried your boxes"}, profile)
+	require.NoError(t, err)
+	assert.True(t, retired[key], "matching retained proof retires the contribution")
+	retired, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, map[string]string{key: "assembled your shelf"}, profile)
+	require.NoError(t, err)
+	assert.False(t, retired[key], "a different retained quote is not retired")
 	// The same source key can describe another act in the same message.
 	later.Suggestion.Quote = "assembled your shelf"
 	otherJSON, err := json.Marshal(laterBoundary)
@@ -509,7 +515,7 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, projection.Appreciations, 1)
 	assert.Equal(t, "unknown", projection.Appreciations[0].Suggestion.PriorThanks)
-	retired, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
+	retired, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, nil, profile)
 	require.NoError(t, err)
 	assert.False(t, retired[key])
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'superseded' WHERE id = ?`), proofID)
@@ -517,7 +523,7 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	// A malformed persisted boundary must be refused by readers.
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET boundary_json = ? WHERE id = ?`), `{"appreciation_memory":[{}, {}, {}, {}]}`, proofID)
 	require.NoError(t, err)
-	_, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
+	_, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, nil, profile)
 	require.ErrorContains(t, err, "invalid appreciation proof boundary")
 	_, err = st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
 	require.ErrorContains(t, err, "invalid appreciation proof boundary")
@@ -568,7 +574,47 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	assert.Equal(t, key, mismatchBoundary.AppreciationMemory[0].Suggestion.Key)
 	assert.Equal(t, "assembled your shelf", mismatchBoundary.AppreciationMemory[0].Suggestion.Quote)
 	assert.Equal(t, "unknown", mismatchBoundary.AppreciationMemory[0].Suggestion.PriorThanks)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'superseded' WHERE id = ?`), mismatch.ID)
+	// The old boxes proof is now valid again. A subsequent refresh must retain
+	// the shelf act and its peer evidence rather than retire the source key.
+	f.runner.afterBrief = nil
+	run, err = f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+		PersonID: journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
+	require.NoError(t, err)
+	require.Equal(t, 1, run.PeopleSucceeded)
+	packet := f.runner.briefPackets[len(f.runner.briefPackets)-1]
+	briefContext, ok := packet["brief_context"].(map[string]any)
+	require.True(t, ok)
+	retained, ok := briefContext["appreciations"].([]any)
+	require.True(t, ok)
+	require.Len(t, retained, 1)
+	retainedSuggestion, ok := retained[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, key, retainedSuggestion["key"])
+	assert.Equal(t, "assembled your shelf", retainedSuggestion["quote"])
+	peers, ok := packet["appreciation_peers"].([]any)
+	require.True(t, ok)
+	var foundPeer bool
+	for _, value := range peers {
+		peer, ok := value.(map[string]any)
+		require.True(t, ok)
+		if peer["contribution_key"] == key {
+			foundPeer = true
+		}
+	}
+	assert.True(t, foundPeer, "the retained contribution must have its peer context")
+	refreshed, err := st.GetPersonBriefContext(t.Context(), journal.alicePersonID, 0)
+	require.NoError(t, err)
+	var refreshedBoundary peoplesweep.BriefBoundary
+	require.NoError(t, json.Unmarshal(refreshed.Boundary, &refreshedBoundary))
+	require.Len(t, refreshedBoundary.AppreciationMemory, 1)
+	assert.Equal(t, key, refreshedBoundary.AppreciationMemory[0].Suggestion.Key)
+	assert.Equal(t, "assembled your shelf", refreshedBoundary.AppreciationMemory[0].Suggestion.Quote)
+	assert.Equal(t, "unknown", refreshedBoundary.AppreciationMemory[0].Suggestion.PriorThanks)
+	f.runner.afterBrief = func() {
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_appreciation_state SET thanks_brief_id = ? WHERE contribution_key = ?`), proofID, key)
+		require.NoError(t, err)
+	}
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'superseded' WHERE id = ?`), refreshed.ID)
 	require.NoError(t, err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'current', boundary_json = ? WHERE person_id = ? AND version = 202`), string(laterJSON), journal.alicePersonID)
 	require.NoError(t, err)
@@ -600,7 +646,7 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, projection.Appreciations, 1)
 	assert.Equal(t, "unknown", projection.Appreciations[0].Suggestion.PriorThanks)
-	retired, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
+	retired, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, nil, profile)
 	require.NoError(t, err)
 	assert.False(t, retired[key], "stale proof does not prevent a fresh suggestion")
 	newOwnerID := journal.insertMessage(t, "new-owner-thanks", "chat", journal.bobID, f.now.Add(-30*time.Minute))
@@ -652,6 +698,9 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	projection, err = st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
 	require.NoError(t, err)
 	assert.Empty(t, projection.Appreciations)
+	retired, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, map[string]string{key: "assembled your shelf"}, profile)
+	require.NoError(t, err)
+	assert.True(t, retired[key], "dismissal retires the message even for a different quote")
 	_, err = st.RejectPersonBriefContext(t.Context(), journal.alicePersonID, "Reject after dismissal", f.now)
 	require.NoError(t, err)
 	states, err = st.GetPersonAppreciationStatesContext(t.Context(), []string{key})

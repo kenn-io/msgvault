@@ -50,7 +50,7 @@ type BriefArchive interface {
 	) ([]EvidenceItem, error)
 	PersonSweepAppreciationPeers(ctx context.Context, personID int64, items []EvidenceItem, throughSequence int64) ([]BriefAppreciationPeer, error)
 	PersonSweepAppreciationOwners(ctx context.Context, personID int64, peers []BriefAppreciationPeer, profile ProviderProfile, throughSequence int64, limit int) ([]BriefAppreciationOwner, error)
-	PersonSweepAppreciationRetired(ctx context.Context, personID int64, keys []string, profile ProviderProfile) (map[string]bool, error)
+	PersonSweepAppreciationRetired(ctx context.Context, personID int64, keys []string, retainedQuotes map[string]string, profile ProviderProfile) (map[string]bool, error)
 	PersonSweepLastContact(ctx context.Context, personID int64) (BriefLastContact, bool, error)
 }
 
@@ -358,7 +358,11 @@ func BuildBriefWindow(
 	for _, peer := range peers {
 		keys = append(keys, peer.ContributionKey)
 	}
-	retired, err := archive.PersonSweepAppreciationRetired(ctx, request.PersonID, keys, request.Profile)
+	retainedQuotes := make(map[string]string, len(request.retainedAppreciations))
+	for _, suggestion := range request.retainedAppreciations {
+		retainedQuotes[suggestion.Key] = suggestion.Quote
+	}
+	retired, err := archive.PersonSweepAppreciationRetired(ctx, request.PersonID, keys, retainedQuotes, request.Profile)
 	if err != nil {
 		return BriefWindow{}, fmt.Errorf("load appreciation retirement: %w", err)
 	}
