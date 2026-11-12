@@ -99,7 +99,7 @@ func earliestFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) (
 	var refKind sql.NullString
 	err := tx.QueryRowContext(ctx, `SELECT ae.message_id, ae.occurred_at, ae.conversation_id, ae.ref_kind
  FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
- WHERE aep.person_id = ? ORDER BY ae.occurred_at, ae.message_id LIMIT 1`, personID).Scan(&event.MessageID, &event.OccurredAt, &event.ConversationID, &refKind)
+ WHERE aep.person_id = ? AND NOT (aep.role = 'member' AND COALESCE(ae.ref_kind, '') <> 'meeting' AND EXISTS (SELECT 1 FROM conversations c WHERE c.id = ae.conversation_id AND c.conversation_type IN ('group_chat', 'channel'))) ORDER BY ae.occurred_at, ae.message_id LIMIT 1`, personID).Scan(&event.MessageID, &event.OccurredAt, &event.ConversationID, &refKind)
 	return event, refKind, err
 }
 

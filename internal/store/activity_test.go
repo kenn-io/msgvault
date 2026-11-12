@@ -3618,3 +3618,122 @@ func TestFirstSeenIntroductionContactState(t *testing.T) {
 	require.NotNil(state.Introducer.PersonID)
 	assert.Equal(senderPerson.ID, *state.Introducer.PersonID)
 }
+
+func TestFirstAppearanceSkipsUntimedGroupMembers(t *testing.T) {
+	firstAppearanceSkipsUntimedGroupMembers(t)
+}
+
+func firstAppearanceSkipsUntimedGroupMembers(t *testing.T) {
+	f := storetest.New(t)
+	require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	alpha := f.EnsureParticipant("alpha@example.test", "Alpha", "example.test")
+	bravo := f.EnsureParticipant("bravo@example.test", "Bravo", "example.test")
+	rosterOnly := f.EnsureParticipant("roster@example.test", "Roster", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(bravo)
+	require.NoError(t, err)
+	rosterPerson, _, err := f.Store.CreatePersonFromParticipant(rosterOnly)
+	require.NoError(t, err)
+	group, err := f.Store.EnsureConversationWithType(f.Source.ID, "synthetic-group", "group_chat", "Group")
+	require.NoError(t, err)
+	for _, participant := range []int64{owner, alpha, bravo, rosterOnly} {
+		require.NoError(t, f.Store.EnsureConversationParticipant(group, participant, "member"))
+	}
+	january := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	introAt := january.AddDate(0, 0, 15)
+	february := january.AddDate(0, 1, 0)
+	groupMessage := func(id string, sender int64, at time.Time) int64 {
+		message := f.NewMessage().WithSourceMessageID(id).WithSentAt(at).Build()
+		message.ConversationID = group
+		message.MessageType = "telegram"
+		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
+		messageID, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message})
+		require.NoError(t, err)
+		return messageID
+	}
+	groupMessage("january-alpha", alpha, january)
+	groupMessage("february-bravo", bravo, february)
+	intro := f.NewMessage().WithSourceMessageID("intervening-intro").WithSentAt(introAt).Build()
+	intro.SenderID = sql.NullInt64{Int64: alpha, Valid: true}
+	introID, err := f.Store.PersistMessage(&store.MessagePersistData{Message: intro})
+	require.NoError(t, err)
+	require.NoError(t, f.Store.ReplaceMessageRecipients(introID, "from", []int64{alpha}, []string{"Alpha"}))
+	require.NoError(t, f.Store.ReplaceMessageRecipients(introID, "to", []int64{owner, bravo}, []string{"Owner", "Bravo"}))
+	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
+	require.NoError(t, err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(t, err)
+	state, err := f.Store.ContactStateContext(t.Context(), person.ID, february)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", introID), state.FirstSeenRef)
+	require.NotNil(t, state.FirstSeenAt)
+	assert.Equal(t, introAt, state.FirstSeenAt.UTC())
+	assert.Equal(t, store.FirstContactEmailIntro, state.FirstContactKind)
+	rosterState, err := f.Store.ContactStateContext(t.Context(), rosterPerson.ID, february)
+	require.NoError(t, err)
+	assert.Nil(t, rosterState.FirstSeenAt)
+}
+
+func TestFirstAppearanceRealLoaderKinds(t *testing.T) {
+	firstAppearanceRealLoaderKinds(t)
+}
+
+func firstAppearanceRealLoaderKinds(t *testing.T) {
+	for _, tc := range []struct {
+		name, conversation, messageType string
+		fromOwner                       bool
+		want                            store.FirstContactKind
+	}{
+		{"owner direct chat", "direct_chat", "telegram", true, store.FirstContactOwnerOutreach},
+		{"inbound direct chat", "direct_chat", "telegram", false, store.FirstContactInboundOutreach},
+		{"group sender", "group_chat", "telegram", false, store.FirstContactGroupShared},
+		{"meeting", "email_thread", "calendar_event", false, store.FirstContactMeeting},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := storetest.New(t)
+			require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+			owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+			target := f.EnsureParticipant("target@example.test", "Target", "example.test")
+			person, _, err := f.Store.CreatePersonFromParticipant(target)
+			require.NoError(t, err)
+			conversation, err := f.Store.EnsureConversationWithType(f.Source.ID, "case-conversation", tc.conversation, "Case")
+			require.NoError(t, err)
+			at := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+			message := f.NewMessage().WithSourceMessageID("case-message").WithSentAt(at).Build()
+			message.ConversationID, message.MessageType, message.IsFromMe = conversation, tc.messageType, tc.fromOwner
+			sender := target
+			if tc.fromOwner {
+				sender = owner
+			}
+			message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
+			id, err := f.Store.PersistMessage(&store.MessagePersistData{Message: message})
+			require.NoError(t, err)
+			if tc.messageType == "calendar_event" {
+				require.NoError(t, f.Store.ReplaceMessageRecipients(id, "from", []int64{target}, []string{"Target"}))
+				require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", []int64{owner}, []string{"Owner"}))
+			} else {
+				for _, participant := range []int64{owner, target} {
+					require.NoError(t, f.Store.EnsureConversationParticipant(conversation, participant, "member"))
+				}
+			}
+			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
+			require.NoError(t, err)
+			_, err = projector.RunOnce(t.Context())
+			require.NoError(t, err)
+			state, err := f.Store.ContactStateContext(t.Context(), person.ID, at)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, state.FirstContactKind)
+			require.NotNil(t, state.FirstSeenAt)
+			assert.Equal(t, at, state.FirstSeenAt.UTC())
+		})
+	}
+}
+
+func TestPostgresFirstAppearanceRealLoader(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL integration database is not configured")
+	}
+	t.Run("untimed group members", firstAppearanceSkipsUntimedGroupMembers)
+	t.Run("kinds", firstAppearanceRealLoaderKinds)
+}
