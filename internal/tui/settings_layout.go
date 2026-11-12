@@ -26,7 +26,7 @@ func (m Model) settingsViewportContent(title, body, actions string) (int, int, s
 	titleRows := strings.Count(ansi.Wrap(title, width, ""), "\n") + 1
 	wrapped := ansi.Wrap(body, width, "")
 	if len(footer) > m.height-titleRows-2 {
-		wrapped = ansi.Wrap(body+"\n\n"+strings.ReplaceAll(actions, "  [", "\n["), width, "")
+		wrapped = ansi.Wrap(body+"\n\n"+strings.ReplaceAll(strings.TrimSuffix(actions, "  [Esc] Back"), "  [", "\n["), width, "")
 		footer = nil
 		if strings.Contains(actions, "Esc]") {
 			footer = wrapActions("[Esc] Back", width)

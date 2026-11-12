@@ -186,4 +186,5 @@ func TestSettingsViewportTinyScreenKeepsPagingAndBack(t *testing.T) {
 		}
 	}
 	assert.Regexp(t, `\[Ctrl\+S\] +Save`, screen.String())
+	assert.Equal(t, 1, strings.Count(screen.String(), "[Esc] Back"))
 }
