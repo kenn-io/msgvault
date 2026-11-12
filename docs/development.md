@@ -569,6 +569,12 @@ one-line summary. Replace `<summary-sha256>` with `printf '%s' 'Your summary' | 
 The suffix identifies the marker; the test does not check it against the summary.
 Keep every base marker. Replace a branch-only marker after changing its contract; if the version
 is used on the base, take the next minor and move feature minimums introduced by your change.
+If the main branch is on `upstream`, fetch it and set the base before testing:
+
+```bash
+git fetch upstream main
+export MSGVAULT_API_CONTRACT_BASE="$(git merge-base HEAD upstream/main)"
+```
 
 ## Archive schema version maintenance
 

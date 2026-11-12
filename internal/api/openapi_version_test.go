@@ -75,7 +75,7 @@ func apiBaseMarkers(t *testing.T, base string) []string {
 	t.Helper()
 	if base == "" {
 		out, err := exec.CommandContext(t.Context(), "git", "merge-base", "HEAD", "origin/main").Output()
-		require.NoError(t, err, "find API contract base; fetch origin/main and its history")
+		require.NoError(t, err, "find API contract base; fetch origin/main and its history or set MSGVAULT_API_CONTRACT_BASE to a base SHA")
 		base = strings.TrimSpace(string(out))
 	}
 	cmd := exec.CommandContext(t.Context(), "git", "ls-tree", "-z", "--name-only", "--full-tree", base, "--", "internal/api/"+apiContractsDir+"/") // #nosec G702 -- base is a Git ref supplied by the test runner.
@@ -218,8 +218,10 @@ func TestAPIBaseMarkers(t *testing.T) {
 	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"commit", "-qm", "fixture"}} {
 		git(args...)
 	}
+	git("update-ref", "refs/remotes/upstream/main", "HEAD")
+	t.Setenv("MSGVAULT_API_CONTRACT_BASE", "refs/remotes/upstream/main")
 	require.NoError(os.Remove(dir + marker))
-	assert.Equal(t, []string{marker}, apiBaseMarkers(t, "HEAD"))
+	assert.Equal(t, []string{marker}, apiBaseMarkers(t, os.Getenv("MSGVAULT_API_CONTRACT_BASE")))
 }
 
 func TestAPIContractDigest(t *testing.T) {
