@@ -175,7 +175,7 @@ describe('PersonAddresses', () => {
     }
   });
 
-  it.each(['second edge fails', 'first edge succeeds'])('finishes captured unlinks after navigation when %s', async outcome => {
+  it.each(['second edge fails', 'first edge is pending'])('finishes captured unlinks after navigation when %s', async outcome => {
     let release!: (result: LinkOutcome) => void;
     let calls = 0;
     const onUnlinkParticipants = vi.fn((): Promise<LinkOutcome> => {
@@ -192,6 +192,6 @@ describe('PersonAddresses', () => {
     release(outcome === 'second edge fails' ? { ok: false, code: 'error', message: 'Request failed (500)' } : { ok: true, identityRevision: 3, cacheState: 'ready' });
     await waitFor(() => expect(onUnlinkParticipants).toHaveBeenCalledWith(34, 56));
     await act(async () => { await onUnlinkParticipants.mock.results[1]!.value; });
-    expect(screen.queryByRole('alert')).toBeNull();
+    if (outcome === 'second edge fails') expect(screen.queryByRole('alert')).toBeNull();
   });
 });

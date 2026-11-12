@@ -669,11 +669,8 @@ export class RelationshipsController {
       if (this.readyIdentityCacheRevision === null || revision >= this.readyIdentityCacheRevision) this.pendingIdentityCacheRevision = Math.max(this.pendingIdentityCacheRevision ?? revision, revision);
     } else {
       this.readyIdentityCacheRevision = Math.max(this.readyIdentityCacheRevision ?? revision, revision);
-      this.clearCoveredIdentityCache(revision);
+      if (this.pendingIdentityCacheRevision !== null && revision >= this.pendingIdentityCacheRevision) this.pendingIdentityCacheRevision = null;
     }
-  }
-  private clearCoveredIdentityCache(revision: number): void {
-    if (this.pendingIdentityCacheRevision !== null && revision >= this.pendingIdentityCacheRevision) this.pendingIdentityCacheRevision = null;
   }
   private async applyLinkResponse(response: {
     data?: {

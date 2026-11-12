@@ -219,7 +219,7 @@ it.each([
       if (outcome === 'merges') return calls === 1 ? Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1]) }, { etag: '"person-9-r2"', person: profile(9, 2, [2]) }] }, { status: 409 }) : Response.json({ identity_revision: 5, cache_state: 'ready' });
       return calls === 1 ? Response.json({ identity_revision: 5, cache_state: 'ready' }) : Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [{ etag: '"person-7-r4"', person: profile(7, 4, [1, 2]) }, { etag: '"person-9-r2"', person: profile(9, 2, [3]) }] }, { status: 409 });
     },
-    '/api/v1/people/9/merge': () => { merged = true; return Response.json(mergeResult(survivor), { headers: { ETag: '"person-9-r3"' } }); },
+    '/api/v1/people/9/merge': () => { merged = true; return Response.json(mergeResult(survivor, 'stale'), { headers: { ETag: '"person-9-r3"' } }); },
   });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
   if (selectedID !== null) state.commitNavigation({ workspace: 'relationships', directoryPersonID: selectedID });
@@ -246,6 +246,7 @@ it.each([
       }
       releaseReconcile?.();
       expect(await screen.findByText('People are now treated as the same person.')).toBeDefined();
+      expect(controller.pendingIdentityCacheRevision).toBe(8);
       expect(links).toEqual([{ participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 2 }, { participant_a: 1, participant_b: 3 }]);
       if (selectedID !== null) {
         const expectedID = selectedID === 7 ? 9 : 42;
@@ -261,32 +262,6 @@ it.each([
     }
     if (outcome === 'is cancelled') expect(screen.getByText(/^1 of 2/).getAttribute('role')).toBe('status');
     expect(calls).toBe(outcome === 'merges' ? 3 : 2);
-  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
-it('retains merge recovery after the next bulk pair fails', async () => {
-  let links = 0;
-  const survivor = profile(7, 5, [1, 2]);
-  const client = clientFor({
-    '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }),
-    '/api/v1/identity/links': () => {
-      links++;
-      if (links === 1) return Response.json({ error: 'person_merge_required', message: 'Choose a survivor', profiles: [7, 9].map(id => ({ person: profile(id, id === 7 ? 4 : 2, [id === 7 ? 1 : 2]), etag: `"person-${id}-r${id === 7 ? 4 : 2}"` })) }, { status: 409 });
-      return Response.json({ error: 'internal_error' }, { status: 500 });
-    },
-    '/api/v1/people/7/merge': () => Response.json(mergeResult(survivor, 'stale'), { headers: { ETag: '"person-7-r5"' } }),
-  });
-  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try {
-    for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await screen.findByRole('dialog', { name: 'Resolve person merge' });
-    await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
-    await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-    await waitFor(() => expect(links).toBeGreaterThan(1));
-    await waitFor(() => expect(controller.pendingIdentityCacheRevision).toBe(8));
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
@@ -856,7 +831,7 @@ it('leaving People aborts its pending Save', async () => {
 it('keeps bulk progress when a later link fails', async () => {
   let writes = 0;
   const client = clientFor({
-    '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { sent_count: 3, received_from_them: 1, modalities: 2 } })) }),
+    '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example', 'Cara Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { sent_count: 3, received_from_them: 1, modalities: 2, sent_to_them: 1, meetings_together: 0, meeting_count: 0, last_interaction_at: when } })) }),
     '/api/v1/identity/links': () => ++writes === 1 ? Response.json({ identity_revision: 2, cache_state: 'stale' }) : Response.json({ message: 'Cara link failed' }, { status: 500 }),
   });
   const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
