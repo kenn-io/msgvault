@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -23,7 +24,7 @@ func (m Model) settingsViewport(title, body, actions string) (viewport.Model, st
 func (m Model) settingsViewportContent(title, body, actions string) (int, int, string, []string) {
 	width := max(m.width, 20)
 	footer := wrapActions(actions, width)
-	titleRows := strings.Count(ansi.Wrap(title, width, ""), "\n") + 1
+	titleRows := lipgloss.Height(ansi.Wrap(title, width, ""))
 	wrapped := ansi.Wrap(body, width, "")
 	if !m.settings.confirmDiscard && len(footer) > m.height-titleRows-2 {
 		bodyActions := strings.TrimSuffix(actions, "  [Esc] Back")
@@ -54,7 +55,7 @@ func settingsWrappedRows(lines []string, width int) int {
 	if len(lines) == 0 {
 		return 0
 	}
-	return strings.Count(ansi.Wrap(strings.Join(lines, "\n"), width, ""), "\n") + 1
+	return lipgloss.Height(ansi.Wrap(strings.Join(lines, "\n"), width, ""))
 }
 
 func (m *Model) revealSettingsFocus() {
