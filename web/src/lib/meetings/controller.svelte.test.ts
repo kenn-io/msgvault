@@ -11,7 +11,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 function api(): MeetingsAPI {
-  return { context: vi.fn(), actions: vi.fn(async () => meetingActions()), metrics: vi.fn(async () => meetingMetrics()) };
+  return { context: vi.fn(), actions: vi.fn(async () => meetingActions()), metrics: vi.fn(async () => meetingMetrics()), record: vi.fn() };
 }
 const person: MeetingPanelScope = { kind: 'direct', scope: { person_id: 7 } };
 const explore: MeetingPanelScope = { kind: 'explore', explore: { predicate: { query: 'budget', search_mode: 'hybrid', filters: [

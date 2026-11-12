@@ -4,7 +4,7 @@ import { MeetingsController } from '../../meetings/controller.svelte';
 import MeetingActionFilters from './MeetingActionFilters.svelte';
 
 it('debounces compact assignee changes for 300 milliseconds', async () => {
-  const controller = new MeetingsController({ context: vi.fn(), actions: vi.fn(), metrics: vi.fn() });
+  const controller = new MeetingsController({ context: vi.fn(), actions: vi.fn(), metrics: vi.fn(), record: vi.fn() });
   const setFilters = vi.spyOn(controller, 'setFilters').mockResolvedValue(undefined);
   render(MeetingActionFilters, { controller, compact: true });
   vi.useFakeTimers();
