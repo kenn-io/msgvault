@@ -247,16 +247,7 @@ func (s *Server) federationClaim(r *http.Request) bool {
 	if s.cfg.Federation.Role != "hub" {
 		return false
 	}
-	if len(r.Header.Values(apiprotocol.SpokeInstanceHeader)) > 0 {
-		return true
-	}
-	for _, value := range r.Header.Values("Authorization") {
-		parts := strings.Fields(value)
-		if len(parts) >= 2 && strings.EqualFold(parts[0], "Bearer") && strings.HasPrefix(parts[1], "mvf1_") {
-			return true
-		}
-	}
-	return false
+	return len(r.Header.Values(apiprotocol.SpokeInstanceHeader)) > 0
 }
 
 func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication {

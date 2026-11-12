@@ -334,9 +334,6 @@ func (c *Config) ValidateServerKey() error {
 		if c.Server.AuthenticationKey() == "" {
 			return errors.New("federation hub role requires an effective API key")
 		}
-		if strings.HasPrefix(c.Server.AuthenticationKey(), "mvf1_") {
-			return errors.New("federation hub owner key must not begin with mvf1_")
-		}
 	}
 	return c.Server.ValidateSecure()
 }

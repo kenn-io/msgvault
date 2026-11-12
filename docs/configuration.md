@@ -2802,8 +2802,8 @@ role = "off" # or "spoke" or "hub"
 ```
 
 The default is `off`.
-A hub requires an effective owner API key, refuses owner keys beginning with
-`mvf1_`, and cannot use `[[server.remote_clients]]` keys. It needs a dedicated
+A hub requires an effective owner API key and cannot use
+`[[server.remote_clients]]` keys. It needs a dedicated
 archive with an empty source catalog and refuses new local sources. A spoke can
 report its archive identity without an API key on a keyless loopback daemon.
 Enrollment shares no archive data.

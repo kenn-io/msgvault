@@ -17,7 +17,6 @@ func TestFederationRoleAndHubKeys(t *testing.T) {
 		{name: "case normalization", config: "[federation]\nrole = \"SPOKE\"", role: "spoke"},
 		{name: "hub keyless", config: "[federation]\nrole = \"hub\"", role: "hub", keyError: "federation hub role requires an effective API key"},
 		{name: "hub owner", config: "[federation]\nrole = \"hub\"\n[server]\napi_key = \"owner-key\"", role: "hub"},
-		{name: "reserved owner", config: "[federation]\nrole = \"hub\"\n[server]\napi_key = \"mvf1_reserved\"", role: "hub", keyError: "federation hub owner key must not begin with mvf1_"},
 		{name: "hub remote readers", config: "[federation]\nrole = \"hub\"\n[server]\napi_key = \"owner-key\"\n[[server.remote_clients]]\nclient_id = \"reader\"\napi_key_file = \"reader\"", role: "hub", keyError: "federation hub role refuses [[server.remote_clients]]"},
 		{name: "hub keyless network remote readers", config: "[federation]\nrole = \"hub\"\n[server]\nbind_addr = \"0.0.0.0\"\n[[server.remote_clients]]\nclient_id = \"reader\"\napi_key_file = \"reader\"", role: "hub", keyError: "federation hub role refuses [[server.remote_clients]]", autoMint: true},
 		{name: "hub keyless network auto mint", config: "[federation]\nrole = \"hub\"\n[server]\nbind_addr = \"0.0.0.0\"", role: "hub", autoMint: true},
