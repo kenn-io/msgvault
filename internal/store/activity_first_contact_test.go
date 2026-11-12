@@ -73,6 +73,7 @@ func TestClassifyFirstContactBoundaries(t *testing.T) {
 	}{
 		{"unsaved sender", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{sender, ownerRecipient, targetRecipient}}, 25, FirstContactEmailIntro, 12},
 		{"owner alias recipient", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{sender, ownerRecipient, {ParticipantID: 13, PersonID: &owner, RecipientType: "bcc"}, targetRecipient}}, 25, FirstContactEmailIntro, 12},
+		{"broadcast inbound", ActivityCandidate{ConversationType: "email_thread", Counterparts: []ActivityCounterpart{ownerRecipient, {ParticipantID: 10, PersonID: &target, RecipientType: "from"}, {ParticipantID: 14, PersonID: &alias, RecipientType: "to"}}}, 1, FirstContactObserved, 0},
 		{"broadcast outbound", ActivityCandidate{ConversationType: "email_thread", SourceIsFromMe: true, Counterparts: []ActivityCounterpart{targetRecipient, {ParticipantID: 14, PersonID: &alias, RecipientType: "to"}}}, 1, FirstContactObserved, 0},
 		{"direct chat member", ActivityCandidate{ConversationType: "direct_chat", SourceIsFromMe: true, Counterparts: []ActivityCounterpart{{ParticipantID: 10, PersonID: &target, RecipientType: "member"}}}, 25, FirstContactOwnerOutreach, 0},
 		{"channel inbound", ActivityCandidate{ConversationType: "channel", Counterparts: []ActivityCounterpart{sender, ownerRecipient, targetRecipient}}, 25, FirstContactGroupShared, 0},

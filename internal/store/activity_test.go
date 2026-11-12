@@ -30,7 +30,7 @@ var activityTableColumns = map[string][]string{
 		"message_id", "person_id", "role", "evidence", "local_date",
 	},
 	"person_first_contacts": {
-		"person_id", "first_seen_at", "first_seen_message_id", "conversation_id", "dirty_at", "computed_at",
+		"person_id", "first_seen_at", "first_seen_message_id",
 	},
 	"person_contact_state": {
 		"person_id", "first_contact_at", "first_contact_message_id",
@@ -3494,19 +3494,28 @@ func TestFirstSeenProjectionAndCascadeFallback(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("message:%d", low), state.FirstSeenRef)
 	assert.Nil(t, state.FirstContactAt)
 	assert.Zero(t, state.InteractionCount)
-	_, err = activityExec(t.Context(), f.Store, `UPDATE person_first_contacts SET dirty_at = NULL WHERE person_id = ?`, personID)
+	// A linked but superseded cache entry must not hide the earlier event.
+	_, err = activityExec(t.Context(), f.Store, `UPDATE person_first_contacts SET first_seen_message_id = ? WHERE person_id = ?`, high, personID)
+	require.NoError(t, err)
+	state, err = f.Store.ContactStateContext(t.Context(), personID, at)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", low), state.FirstSeenRef)
+	_, err = activityExec(t.Context(), f.Store, `UPDATE person_first_contacts SET first_seen_message_id = ? WHERE person_id = ?`, low, personID)
 	require.NoError(t, err)
 	_, err = activityExec(t.Context(), f.Store, `DELETE FROM messages WHERE id = ?`, low)
 	require.NoError(t, err)
-	var dirty sql.NullTime
-	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT dirty_at FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&dirty))
-	assert.True(t, dirty.Valid)
 	state, err = f.Store.ContactStateContext(t.Context(), personID, at)
 	require.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("message:%d", high), state.FirstSeenRef)
 	var storedID int64
 	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT first_seen_message_id FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&storedID))
 	assert.Equal(t, low, storedID, "snapshot fallback must not write the cache")
+	third := f.NewMessage().WithSourceMessageID("first-seen-third").WithSentAt(at.Add(time.Hour)).Create(t, f.Store)
+	c := activityProjectionForMessage(t, f, third, personID, at.Add(time.Hour))
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{c})
+	require.NoError(t, err)
+	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT first_seen_message_id FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&storedID))
+	assert.Equal(t, third, storedID, "a subsequent writer replaces a missing target")
 }
 
 func TestFirstSeenReplacementAndRetraction(t *testing.T) {
@@ -3563,12 +3572,15 @@ func TestFirstSeenBackfillsDrainedProjectionOnce(t *testing.T) {
 	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT first_seen_message_id FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&got))
 	assert.Equal(t, id, got)
 	assert.Equal(t, revision, activityQueueRevision(t, f.Store, id))
-	_, err = activityExec(t.Context(), f.Store, `UPDATE person_first_contacts SET dirty_at = NULL WHERE person_id = ?`, personID)
+	_, err = activityExec(t.Context(), f.Store, `DELETE FROM person_first_contacts WHERE person_id = ?`, personID)
 	require.NoError(t, err)
 	require.NoError(t, f.Store.InitSchemaContext(t.Context()))
-	var dirty sql.NullTime
-	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT dirty_at FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&dirty))
-	assert.False(t, dirty.Valid)
+	var count int
+	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT COUNT(*) FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&count))
+	assert.Zero(t, count, "the completed backfill does not run again")
+	state, err := f.Store.ContactStateContext(t.Context(), personID, at)
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("message:%d", id), state.FirstSeenRef)
 }
 
 func TestFirstSeenDateChangesRecomputeWinner(t *testing.T) {

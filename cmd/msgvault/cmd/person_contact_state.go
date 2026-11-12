@@ -27,6 +27,9 @@ func newPersonContactStateCommand() *cobra.Command {
 				return err
 			}
 			defer func() { _ = client.Close() }()
+			if err := requireFirstAppearanceSchema(cmd, client); err != nil {
+				return err
+			}
 			response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.GetPersonContactStateResp, error) {
 				return api.GetPersonContactStateWithResponse(cmd.Context(), &generated.GetPersonContactStateRequestOptions{PathParams: &generated.GetPersonContactStatePath{ID: id}})
 			})
@@ -38,6 +41,19 @@ func newPersonContactStateCommand() *cobra.Command {
 	}
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
 	return command
+}
+
+const firstAppearanceMinAPISchemaVersion = "5.1.0"
+
+func requireFirstAppearanceSchema(cmd *cobra.Command, client *daemonclient.Client) error {
+	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), firstAppearanceMinAPISchemaVersion)
+	if err != nil {
+		return fmt.Errorf("check first appearance capability: %w", err)
+	}
+	if !supported {
+		return fmt.Errorf("first appearance requires daemon API schema %s or newer; upgrade the daemon", firstAppearanceMinAPISchemaVersion)
+	}
+	return nil
 }
 
 func writePersonContactState(cmd *cobra.Command, state *generated.ContactState, jsonOutput bool) error {
@@ -52,6 +68,11 @@ func writePersonContactState(cmd *cobra.Command, state *generated.ContactState, 
 	}
 	if state.FirstSeenAt != nil {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "First seen: %s\n", state.FirstSeenAt.UTC().Format("2006-01-02 15:04:05 UTC")); err != nil {
+			return err
+		}
+	}
+	if state.FirstSeenRef != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Evidence: %s\n", textutil.SanitizeTerminal(*state.FirstSeenRef)); err != nil {
 			return err
 		}
 	}

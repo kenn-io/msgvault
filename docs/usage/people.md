@@ -58,12 +58,12 @@ Run `msgvault person contact-state <person-id> --json` to see the earliest
 archived event linked to a saved person, including messages where they were
 copied. `first_seen_at` and `first_seen_ref` describe that appearance;
 `first_contact_at` and interaction counts still describe direct contact.
-The HTTP contact-state route and assembled profiles carry the same fields.
+The HTTP contact-state route, assembled profiles, and `person get --json` carry the same fields. These JSON reads and the contact-state command require daemon API schema 5.1.0 or newer. The Web UI and TUI do not yet show first appearance.
 
-`first_contact_kind` describes the evidence: `email_intro` is an inbound email
+`first_contact_kind` describes the envelope evidence, not a verified introduction: `email_intro` is an inbound email
 from a third party to you and the person with at most four other non-owner
 recipients; `owner_outreach` is your addressed, non-broadcast email or direct
-chat; `inbound_outreach` is a direct email or chat sent by the person;
+chat; `inbound_outreach` is a non-broadcast direct email or chat sent by the person;
 `group_shared` is a group or channel message; `meeting` is a meeting; and
 `observed` covers other evidence, including messages without your identity.
 When known, `introducer` identifies the sender of an introduction email or

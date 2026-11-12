@@ -2005,7 +2005,6 @@ func (d *PostgreSQLDialect) EnsureActivityProjectionTriggers(q querier) error {
 		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_delete ON conversation_participants`,
 		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update ON conversations`,
 		`DROP TRIGGER IF EXISTS trg_activity_direct_link_delete_dirty ON activity_event_persons`,
-		`DROP TRIGGER IF EXISTS trg_activity_first_link_delete_dirty ON activity_event_persons`,
 		`CREATE OR REPLACE FUNCTION enqueue_activity_projection_message(p_message_id BIGINT) RETURNS VOID AS $$
 		 BEGIN
 		     IF p_message_id IS NULL OR NOT EXISTS (
@@ -2102,13 +2101,6 @@ func (d *PostgreSQLDialect) EnsureActivityProjectionTriggers(q querier) error {
 		     RETURN OLD;
 		 END;
 		 $$ LANGUAGE plpgsql`,
-		`CREATE OR REPLACE FUNCTION dirty_activity_first_link_delete() RETURNS trigger AS $$
-         BEGIN
-             UPDATE person_first_contacts SET dirty_at = COALESCE(dirty_at, CURRENT_TIMESTAMP)
-             WHERE person_id = OLD.person_id AND first_seen_message_id = OLD.message_id;
-             RETURN OLD;
-         END;
-         $$ LANGUAGE plpgsql`,
 		fmt.Sprintf(`CREATE TRIGGER trg_activity_queue_messages_update
 		     AFTER UPDATE OF %s ON messages FOR EACH ROW
 		     EXECUTE FUNCTION queue_activity_messages()`, activityTriggerColumnList()),
@@ -2133,9 +2125,6 @@ func (d *PostgreSQLDialect) EnsureActivityProjectionTriggers(q querier) error {
 		`CREATE TRIGGER trg_activity_queue_conversation_type_update
 		     AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
 		     EXECUTE FUNCTION queue_activity_conversation_type_update()`,
-		`CREATE TRIGGER trg_activity_first_link_delete_dirty
-             AFTER DELETE ON activity_event_persons FOR EACH ROW
-             EXECUTE FUNCTION dirty_activity_first_link_delete()`,
 		`CREATE TRIGGER trg_activity_direct_link_delete_dirty
 		     AFTER DELETE ON activity_event_persons FOR EACH ROW
 		     EXECUTE FUNCTION dirty_activity_direct_link_delete()`,

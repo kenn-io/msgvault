@@ -52,16 +52,23 @@ func TestPersonGetLooksUpVCardUIDAndJSONIncludesCardDAVBindings(t *testing.T) {
 	var requestedPath string
 	var requestedUID string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestedPath = r.URL.Path
-		requestedUID = r.URL.Query().Get("uid")
+		if r.URL.Path == "/api/v1/people/by-uid" {
+			requestedPath = r.URL.Path
+			requestedUID = r.URL.Query().Get("uid")
+		}
 		assert.Equal(http.MethodGet, r.Method)
 		if r.URL.Path == "/api/v1/health" {
 			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"3.10.0"}`))
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.1.0"}`))
 			assert.NoError(err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/people/7/contact-state" {
+			_, err := w.Write([]byte(`{"person_id":7,"interaction_count":0,"cadence_status":"unknown","stale":false,"computed_at":"0001-01-01T00:00:00Z"}`))
+			assert.NoError(err)
+			return
+		}
 		_, err := w.Write([]byte(`{
 			"id":7,"vcard_uid":"person-7","revision":2,"participant_ids":[],
 			"carddav_bindings":[{"connection":"personal","book":"Personal",
@@ -96,7 +103,8 @@ func TestPersonGetLooksUpVCardUIDAndJSONIncludesCardDAVBindings(t *testing.T) {
 		`"carddav_bindings":[{"connection":"personal","book":"Personal",`+
 		`"href":"https://contacts.example.test/book/person.vcf","remote_uid":"`+uid+`",`+
 		`"mapping_status":"mapped"}],"created_at":"2026-07-29T12:00:00Z",`+
-		`"updated_at":"2026-07-29T12:00:00Z"}`, stdout.String())
+		`"updated_at":"2026-07-29T12:00:00Z",`+
+		`"contact_state":{"person_id":7,"interaction_count":0,"cadence_status":"unknown","stale":false,"computed_at":"0001-01-01T00:00:00Z"}}`, stdout.String())
 }
 
 func TestPersonGetByUIDRequiresCurrentDaemonSchema(t *testing.T) {

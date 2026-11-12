@@ -40,7 +40,7 @@ func TestMergePersons_DefersMemberOnlyActivity(t *testing.T) {
 				var roomIDs []int64
 				for i := range 6 {
 					message := f.NewMessage().WithSourceMessageID(fmt.Sprintf("room-%d", i)).
-						WithSentAt(time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)).WithIsFromMe(true).Build()
+						WithSentAt(time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)).WithIsFromMe(true).Build()
 					message.ConversationID = room
 					message.SenderID = sql.NullInt64{Int64: owner, Valid: true}
 					id, insertErr := f.Store.UpsertMessage(message)
@@ -122,6 +122,7 @@ func TestMergePersons_DefersMemberOnlyActivity(t *testing.T) {
 				state, err = f.Store.ContactStateContext(ctx, third.ID, time.Now())
 				require.NoError(err)
 				assert.False(state.Stale)
+				assert.Equal(fmt.Sprintf("message:%d", roomIDs[0]), state.FirstSeenRef)
 				wantCount := int64(len(roomIDs))
 				if splitBeforeProjection && limit == 2 && !scenario.owner {
 					wantCount = 0
@@ -148,16 +149,22 @@ func TestMergePersons_DefersMemberOnlyActivity(t *testing.T) {
 					require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
 						`SELECT COUNT(*) FROM activity_event_persons WHERE person_id = ? AND role = 'member'`), splitID).Scan(&splitLinks))
 					assert.Equal(len(roomIDs), splitLinks)
+					splitState, readErr := f.Store.ContactStateContext(ctx, splitID, time.Now())
+					require.NoError(readErr)
+					assert.Equal(fmt.Sprintf("message:%d", roomIDs[0]), splitState.FirstSeenRef)
 				} else {
 					// A split after the merged epoch has already converged must
 					// also restore the original room audience and evidence.
-					_, err = f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+					split, err := f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
 						SourcePersonID: survivor.ID, MergeID: merged.Merge.ID,
 						ParticipantIDs: absorbed.ParticipantIDs, ExpectedSourceRevision: merged.Person.Revision,
 						IdempotencyKey: "scope-split-after-projection", Actor: "test",
 					})
 					require.NoError(err)
 					drain()
+					splitState, readErr := f.Store.ContactStateContext(ctx, split.NewPerson.ID, time.Now())
+					require.NoError(readErr)
+					assert.Equal(fmt.Sprintf("message:%d", roomIDs[0]), splitState.FirstSeenRef)
 					restored, readErr := f.Store.ContactStateContext(ctx, third.ID, time.Now())
 					require.NoError(readErr)
 					assert.False(restored.Stale)

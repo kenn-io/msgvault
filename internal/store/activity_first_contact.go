@@ -46,10 +46,6 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirect
 	}
 	var sender, ownerSender *ActivityCounterpart
 	addressed, introAddressed, targetSender := false, false, false
-	type audienceKey struct {
-		person bool
-		id     int64
-	}
 	others := map[audienceKey]struct{}{}
 	for i := range counterparts {
 		c := &counterparts[i]
@@ -74,11 +70,7 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirect
 			}
 		}
 		if recipient && !isTarget && !ownerLinked(*c) {
-			key := audienceKey{id: c.ParticipantID}
-			if c.PersonID != nil {
-				key = audienceKey{person: true, id: *c.PersonID}
-			}
-			others[key] = struct{}{}
+			others[activityAudienceKey(*c)] = struct{}{}
 		}
 	}
 	introducer := func(c *ActivityCounterpart) *FirstContactIntroducer {
@@ -96,7 +88,7 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirect
 		}
 		return FirstContactOwnerOutreach, nil
 	}
-	if classification.Direction == DirectionInbound && targetSender {
+	if classification.Direction == DirectionInbound && targetSender && !classification.Broadcast {
 		return FirstContactInboundOutreach, nil
 	}
 	return FirstContactObserved, nil
@@ -124,23 +116,31 @@ func (s *Store) firstContactWinnersTx(ctx context.Context, tx *loggedTx, message
 }
 
 func (s *Store) notePersonFirstContactTx(ctx context.Context, tx *loggedTx, personID int64, event ActivityEvent) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO person_first_contacts (person_id, first_seen_at, first_seen_message_id, conversation_id, dirty_at)
- VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+	_, err := tx.ExecContext(ctx, `INSERT INTO person_first_contacts (person_id, first_seen_at, first_seen_message_id)
+ VALUES (?, ?, ?)
  ON CONFLICT(person_id) DO UPDATE SET first_seen_at = excluded.first_seen_at,
- first_seen_message_id = excluded.first_seen_message_id, conversation_id = excluded.conversation_id,
- dirty_at = COALESCE(person_first_contacts.dirty_at, CURRENT_TIMESTAMP), computed_at = CURRENT_TIMESTAMP
+ first_seen_message_id = excluded.first_seen_message_id
  WHERE excluded.first_seen_at < person_first_contacts.first_seen_at OR
- (excluded.first_seen_at = person_first_contacts.first_seen_at AND excluded.first_seen_message_id < person_first_contacts.first_seen_message_id)`, personID, event.OccurredAt.UTC(), event.MessageID, event.ConversationID)
+ (excluded.first_seen_at = person_first_contacts.first_seen_at AND excluded.first_seen_message_id < person_first_contacts.first_seen_message_id) OR
+ NOT EXISTS (SELECT 1 FROM activity_event_persons aep WHERE aep.person_id = person_first_contacts.person_id AND aep.message_id = person_first_contacts.first_seen_message_id)`, personID, event.OccurredAt.UTC(), event.MessageID)
 	if err != nil {
 		return fmt.Errorf("note first contact for person %d: %w", personID, err)
 	}
 	return nil
 }
 
-func (s *Store) recomputePersonFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) error {
+// earliestFirstContactTx is shared by writer repair and read-only fallback.
+func earliestFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) (ActivityEvent, sql.NullString, error) {
 	var event ActivityEvent
-	err := tx.QueryRowContext(ctx, `SELECT ae.message_id, ae.occurred_at, ae.conversation_id FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
- WHERE aep.person_id = ? ORDER BY ae.occurred_at, ae.message_id LIMIT 1`, personID).Scan(&event.MessageID, &event.OccurredAt, &event.ConversationID)
+	var refKind sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT ae.message_id, ae.occurred_at, ae.conversation_id, ae.ref_kind
+ FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
+ WHERE aep.person_id = ? ORDER BY ae.occurred_at, ae.message_id LIMIT 1`, personID).Scan(&event.MessageID, &event.OccurredAt, &event.ConversationID, &refKind)
+	return event, refKind, err
+}
+
+func (s *Store) recomputePersonFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) error {
+	event, _, err := earliestFirstContactTx(ctx, tx, personID)
 	if errors.Is(err, sql.ErrNoRows) {
 		_, err = tx.ExecContext(ctx, `DELETE FROM person_first_contacts WHERE person_id = ?`, personID)
 		return err
@@ -148,10 +148,9 @@ func (s *Store) recomputePersonFirstContactTx(ctx context.Context, tx *loggedTx,
 	if err != nil {
 		return fmt.Errorf("find earliest contact for person %d: %w", personID, err)
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO person_first_contacts (person_id, first_seen_at, first_seen_message_id, conversation_id, dirty_at)
- VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(person_id) DO UPDATE SET
- first_seen_at = excluded.first_seen_at, first_seen_message_id = excluded.first_seen_message_id,
- conversation_id = excluded.conversation_id, dirty_at = COALESCE(person_first_contacts.dirty_at, CURRENT_TIMESTAMP), computed_at = CURRENT_TIMESTAMP`, personID, event.OccurredAt.UTC(), event.MessageID, event.ConversationID)
+	_, err = tx.ExecContext(ctx, `INSERT INTO person_first_contacts (person_id, first_seen_at, first_seen_message_id)
+ VALUES (?, ?, ?) ON CONFLICT(person_id) DO UPDATE SET
+ first_seen_at = excluded.first_seen_at, first_seen_message_id = excluded.first_seen_message_id`, personID, event.OccurredAt.UTC(), event.MessageID)
 	if err != nil {
 		return fmt.Errorf("recompute first contact for person %d: %w", personID, err)
 	}
@@ -183,11 +182,16 @@ func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state 
 	err := tx.QueryRowContext(ctx, `SELECT ae.message_id, ae.occurred_at, ae.ref_kind
  FROM person_first_contacts pfc JOIN activity_events ae ON ae.message_id = pfc.first_seen_message_id
  WHERE pfc.person_id = ? AND ae.occurred_at = pfc.first_seen_at
- AND EXISTS (SELECT 1 FROM activity_event_persons aep WHERE aep.person_id = pfc.person_id AND aep.message_id = ae.message_id)`, state.PersonID).Scan(&messageID, &occurredAt, &refKind)
+ AND EXISTS (SELECT 1 FROM activity_event_persons aep WHERE aep.person_id = pfc.person_id AND aep.message_id = ae.message_id)
+ AND NOT EXISTS (SELECT 1 FROM activity_event_persons earlier_link JOIN activity_events earlier ON earlier.message_id = earlier_link.message_id
+ WHERE earlier_link.person_id = pfc.person_id AND (earlier.occurred_at < ae.occurred_at OR (earlier.occurred_at = ae.occurred_at AND earlier.message_id < ae.message_id)))`, state.PersonID).Scan(&messageID, &occurredAt, &refKind)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = tx.QueryRowContext(ctx, `SELECT ae.message_id, ae.occurred_at, ae.ref_kind
-  FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
-  WHERE aep.person_id = ? ORDER BY ae.occurred_at, ae.message_id LIMIT 1`, state.PersonID).Scan(&messageID, &occurredAt, &refKind)
+		var event ActivityEvent
+		event, refKind, err = earliestFirstContactTx(ctx, tx, state.PersonID)
+		if err == nil {
+			messageID = event.MessageID
+			occurredAt = sql.NullTime{Time: event.OccurredAt, Valid: true}
+		}
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -207,9 +211,11 @@ func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state 
 	candidate := candidates[0]
 	state.FirstContactKind, state.Introducer = ClassifyFirstContact(candidate, state.PersonID, candidate.DirectLimitTransition.Target)
 	if state.Introducer != nil {
-		err = tx.QueryRowContext(ctx, `SELECT `+participantSenderNameSQL+` FROM participants p
+		state.Introducer.DisplayName = "-"
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(TRIM(person.display_name), ''), NULLIF(TRIM(`+participantSenderNameSQL+`), ''), NULLIF(TRIM(p.email_address), ''), NULLIF(TRIM(p.phone_number), ''), '-') FROM participants p
+  LEFT JOIN persons person ON person.id = ?
   LEFT JOIN message_recipients mr ON mr.participant_id = p.id AND mr.message_id = ? AND mr.recipient_type = 'from'
-  WHERE p.id = ? ORDER BY mr.id LIMIT 1`, messageID, state.Introducer.ParticipantID).Scan(&state.Introducer.DisplayName)
+  WHERE p.id = ? ORDER BY mr.id LIMIT 1`, state.Introducer.PersonID, messageID, state.Introducer.ParticipantID).Scan(&state.Introducer.DisplayName)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("load first-contact introducer: %w", err)
 		}

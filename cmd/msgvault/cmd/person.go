@@ -115,13 +115,13 @@ or a bound CardDAV contact UID. Addresses are in 'person identities'.`,
 			if err != nil {
 				return err
 			}
-			return writeCLIPerson(cmd, resp.JSON200)
+			return writeCLIGetPerson(cmd, client, resp.JSON200)
 		}
 		resp, err := getCLIPerson(cmd, client, id)
 		if err != nil {
 			return err
 		}
-		return writeCLIPerson(cmd, resp.JSON200)
+		return writeCLIGetPerson(cmd, client, resp.JSON200)
 	},
 }
 
@@ -731,6 +731,25 @@ func getCLIPersonByUID(
 					Query: &generated.GetPersonByUIDQuery{UID: uid},
 				})
 		})
+}
+
+func writeCLIGetPerson(cmd *cobra.Command, client *daemonclient.Client, person *generated.Person) error {
+	if !personJSON || person == nil {
+		return writeCLIPerson(cmd, person)
+	}
+	if err := requireFirstAppearanceSchema(cmd, client); err != nil {
+		return err
+	}
+	response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.GetPersonContactStateResp, error) {
+		return api.GetPersonContactStateWithResponse(cmd.Context(), &generated.GetPersonContactStateRequestOptions{PathParams: &generated.GetPersonContactStatePath{ID: person.ID}})
+	})
+	if err != nil {
+		return err
+	}
+	return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), struct {
+		*generated.Person `json:",inline"`
+		ContactState      *generated.ContactState `json:"contact_state"`
+	}{person, response.JSON200}, json.Deterministic(true))
 }
 
 func writeCLIPerson(cmd *cobra.Command, person *generated.Person) error {

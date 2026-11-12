@@ -2092,16 +2092,13 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 	}
 
 	// Existing projections may be drained, so populate first appearances independently
-	// of event replay and install the cascade trigger on upgraded PostgreSQL archives.
+	// of event replay.
 	if err := s.runOnceMigration(ctx, "person_first_contacts_v1", 1, false, func(ctx context.Context) error {
 		return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-			if err := s.dialect.EnsureActivityProjectionTriggers(boundQuerier{ctx: ctx, q: tx}); err != nil {
-				return err
-			}
 			_, err := tx.ExecContext(ctx, `INSERT INTO person_first_contacts
-				(person_id, first_seen_at, first_seen_message_id, conversation_id, dirty_at)
-				SELECT person_id, occurred_at, message_id, conversation_id, CURRENT_TIMESTAMP FROM (
-					SELECT aep.person_id, ae.occurred_at, ae.message_id, ae.conversation_id,
+				(person_id, first_seen_at, first_seen_message_id)
+				SELECT person_id, occurred_at, message_id FROM (
+					SELECT aep.person_id, ae.occurred_at, ae.message_id,
 					ROW_NUMBER() OVER (PARTITION BY aep.person_id ORDER BY ae.occurred_at, ae.message_id) AS rank
 					FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
 				) ranked WHERE rank = 1 ON CONFLICT(person_id) DO NOTHING`)

@@ -2535,7 +2535,10 @@ func (s *Store) ContactStateContext(
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var err error
 		state, err = s.contactStateTxContext(ctx, tx, personID, now)
-		return err
+		if err != nil {
+			return err
+		}
+		return s.populateFirstContactTx(ctx, tx, &state)
 	})
 	if err != nil {
 		return ContactState{}, err

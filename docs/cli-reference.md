@@ -3607,7 +3607,7 @@ msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-js
 msgvault person attributes clear <person-id> <slug> [flags]
 ```
 
-`contact-state` shows first archived appearance and direct-contact history.
+`contact-state` shows first archived appearance and the first direct contact.
 JSON includes the appearance reference, kind and introducer when known. See
 [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance)
 for evidence rules and limitations.
