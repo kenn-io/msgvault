@@ -307,15 +307,14 @@ func isKnownMetadataFile(name string) bool {
 	return false
 }
 
-// isNumberedMessageFile reports whether name is a message_<N>.json whose N
-// fits an int, matching what ParseJSONThread can order and read.
-func isNumberedMessageFile(name string) bool {
+// messageFileNumber parses a numbered message filename that fits an int.
+func messageFileNumber(name string) (int, bool) {
 	m := reMessageFile.FindStringSubmatch(name)
 	if m == nil {
-		return false
+		return 0, false
 	}
-	_, err := strconv.Atoi(m[1])
-	return err == nil
+	n, err := strconv.Atoi(m[1])
+	return n, err == nil
 }
 
 // detectFormat inspects a thread directory and reports whether it has a
@@ -339,8 +338,14 @@ func detectFormat(threadPath string, reportUnsupported bool) (string, bool, int)
 		if strings.HasPrefix(name, ".") || name == "autofill_information.json" {
 			continue
 		}
+		var numbered bool
+		if reportUnsupported {
+			_, numbered = messageFileNumber(name)
+		} else {
+			numbered = reMessageFile.MatchString(name)
+		}
 		switch {
-		case (reportUnsupported && isNumberedMessageFile(name)) || (!reportUnsupported && reMessageFile.MatchString(name)):
+		case numbered:
 			hasJSON = true
 		case strings.HasPrefix(name, "message_") && strings.HasSuffix(name, ".html"):
 			html++

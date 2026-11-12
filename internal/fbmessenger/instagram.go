@@ -664,6 +664,9 @@ func instagramJSONMessage(record rawJSONMessage) Message {
 	message := metaJSONMessage(record, 0, "")
 	if record.Share != nil {
 		message.Body = renderShareBody(rawJSONMessage{Share: &rawJSONShare{Link: DecodeMojibake(record.Share.Link), ShareText: record.Share.ShareText}}, DecodeMojibake(record.Content))
+		if owner := DecodeMojibake(record.Share.OriginalContentOwner); owner != "" {
+			message.Body += "\n" + owner
+		}
 		if len(message.Reactions) > 0 {
 			message.Body = appendReactionSummary(message.Body, message.Reactions)
 		}

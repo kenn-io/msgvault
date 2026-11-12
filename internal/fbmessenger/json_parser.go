@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -125,18 +124,11 @@ func parseJSONThread(ctx context.Context, rootDir, threadDir string, instagram *
 		if !strings.HasPrefix(name, "message_") || !strings.HasSuffix(name, ".json") {
 			continue
 		}
-		m := reMessageFile.FindStringSubmatch(name)
-		if m == nil {
+		n, ok := messageFileNumber(name)
+		if !ok {
 			// Unrecognized sibling (e.g. message_final.json). Skip it and
 			// record the bad name so the importer can log + count it
 			// without aborting the entire thread.
-			badSiblings = append(badSiblings, name)
-			continue
-		}
-		n, err := strconv.Atoi(m[1])
-		if err != nil {
-			// Regex guarantees \d+, so this is effectively unreachable;
-			// treat it the same as an unrecognized sibling.
 			badSiblings = append(badSiblings, name)
 			continue
 		}

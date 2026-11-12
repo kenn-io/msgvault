@@ -616,6 +616,31 @@ func TestInstagramSharedLink(t *testing.T) {
 	}
 }
 
+func TestInstagramSharedOwnerSearch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	record := instagramTestRecord("")
+	record["type"] = "Share"
+	record["share"] = map[string]string{"link": "https://example.org/post", "original_content_owner": "RenÃ©"}
+	instagramTestShard(t, root, "circle", "message_1.json", record)
+	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
+	for i := range 2 {
+		summary, err := ImportDYI(t.Context(), st, opts)
+		require.NoError(err)
+		assert.Equal(int64(1-i), summary.MessagesAdded)
+		_, total, err := st.SearchMessagesQueryContext(t.Context(), &search.Query{TextTerms: []string{"René"}}, 0, 10)
+		require.NoError(err)
+		assert.Equal(int64(1), total)
+		if i == 0 {
+			_, err := st.DB().ExecContext(t.Context(), `UPDATE message_bodies SET body_text = '[shared link] https://example.org/post'`)
+			require.NoError(err)
+			_, err = st.RebuildFTS(nil)
+			require.NoError(err)
+		}
+	}
+}
+
 func TestInstagramReplayChangedUnknownMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
