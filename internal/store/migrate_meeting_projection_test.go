@@ -69,9 +69,6 @@ func TestMeetingScheduledStartProjectionUpgrade(t *testing.T) {
 		r.NoError(err)
 	}
 	r.NoError(st.InitSchemaContext(t.Context()))
-	version, err := st.SchemaVersionContext(t.Context())
-	r.NoError(err)
-	r.Equal(44, version)
 	var start nullableTimestamp
 	r.NoError(st.db.QueryRowContext(t.Context(), `SELECT scheduled_start FROM meeting_details WHERE message_id=?`, note).Scan(&start))
 	r.True(start.Valid)

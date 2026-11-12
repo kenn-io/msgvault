@@ -141,6 +141,7 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 						item := page.Suggestions[0]
 						if !tc.reveal {
 							require.NotEmpty(t, spy.counts)
+							require.Zero(t, item.TitleTokens)
 						}
 						for _, count := range spy.counts {
 							require.Equal(t, 1, count)
