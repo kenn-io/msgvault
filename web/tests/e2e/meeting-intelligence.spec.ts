@@ -387,20 +387,23 @@ test('opens an archived note without an available transcript', async ({ page, da
   expect(errors).toEqual([]);
 });
 
-test('opens a note linked to two dates', async ({ page, daemon }, info) => {
-  const errors: string[] = [];
-  page.on('pageerror', error => errors.push(error.message));
-  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
-  const id = daemon.two_dates_note;
-  expect(id).toBeDefined();
-  const record = await page.request.get(`${daemon.origin}/api/v1/meetings/record?ref=msg:${id}`, { headers: { Authorization: 'Bearer synthetic-meeting-acceptance-key' } });
-  expect(record.ok()).toBe(true);
-  expect((await record.json()).links).toHaveLength(2);
-  await page.goto(meetingURL(daemon, { selectedRow: `archive-meeting:${id}` }));
-  await expect(page.getByRole('dialog', { name: 'Archived meeting', exact: true })).toBeVisible();
-  await expect(page.getByText('Two date meeting note', { exact: true }).first()).toBeVisible();
-  await page.screenshot({ path: info.outputPath('two-dates-note.png') });
-  expect(errors).toEqual([]);
+test.describe('a note linked to two dates', () => {
+  test.use({ twoDates: true });
+  test('opens the archived note', async ({ page, daemon }, info) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    const id = daemon.two_dates_note;
+    expect(id).toBeDefined();
+    const record = await page.request.get(`${daemon.origin}/api/v1/meetings/record?ref=msg:${id}`, { headers: { Authorization: 'Bearer synthetic-meeting-acceptance-key' } });
+    expect(record.ok()).toBe(true);
+    expect((await record.json()).links).toHaveLength(2);
+    await page.goto(meetingURL(daemon, { selectedRow: `archive-meeting:${id}` }));
+    await expect(page.getByRole('dialog', { name: 'Archived meeting', exact: true })).toBeVisible();
+    await expect(page.getByText('Two date meeting note', { exact: true }).first()).toBeVisible();
+    await page.screenshot({ path: info.outputPath('two-dates-note.png') });
+    expect(errors).toEqual([]);
+  });
 });
 
 for (const viewport of [{ width: 1280, height: 720 }, { width: 700, height: 560 }]) {

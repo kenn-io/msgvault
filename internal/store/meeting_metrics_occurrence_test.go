@@ -60,11 +60,14 @@ func TestMeetingOccurrenceEvidence(t *testing.T) {
 		require.NoError(t, err)
 		rows, _, err := st.MeetingOccurrencesContext(t.Context(), through, nil)
 		require.NoError(t, err)
+		found := map[int64]bool{}
 		for _, row := range rows {
 			if row.MessageID == a || row.MessageID == b {
+				found[row.MessageID] = true
 				assert.True(t, at.Equal(row.OccurredAt))
 			}
 		}
+		assert.Equal(t, map[int64]bool{a: true, b: true}, found)
 	})
 	t.Run("removed-attendee", func(t *testing.T) {
 		st := newRFC822IDBackfillBackendStore(t)

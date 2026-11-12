@@ -28,22 +28,19 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 	require.NoError(t, err)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
 	require.NoError(t, err)
-	persist := func(source int64, key string, at time.Time) int64 {
+	other, err := st.EnsureParticipant("other-person@example.com", "Other", "example.com")
+	require.NoError(t, err)
+	persist := func(source, sender int64, fromMe bool, key string, at time.Time) int64 {
 		raw := `{"id":"` + key + `","start":{"dateTime":"` + at.Format(time.RFC3339) + `"},"end":{"dateTime":"` + at.Add(time.Hour).Format(time.RFC3339) + `"}}`
-		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source, SourceMessageID: key, MessageType: "calendar_event", SentAt: sql.NullTime{Time: at, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(raw), RawFormat: "gcal_json"})
+		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source, SourceMessageID: key, MessageType: "calendar_event", SentAt: sql.NullTime{Time: at, Valid: true}, SenderID: sql.NullInt64{Int64: sender, Valid: true}, IsFromMe: fromMe}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(raw), RawFormat: "gcal_json"})
 		require.NoError(t, err)
-		require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
+		require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{""}))
 		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
 		return id
 	}
 	dec := time.Date(2024, 12, 31, 10, 0, 0, 0, time.UTC)
 	jan := dec.Add(24 * time.Hour)
-	left, right := persist(first.ID, "first", dec), persist(second.ID, "second", jan)
-	other, err := st.EnsureParticipant("other-person@example.com", "Other", "example.com")
-	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET source_is_from_me=1, sender_id=? WHERE id=?`, other, left)
-	require.NoError(t, err)
-	require.NoError(t, st.ReplaceMessageRecipients(left, "from", []int64{other}, []string{""}))
+	left, right := persist(first.ID, other, true, "first", dec), persist(second.ID, owner, false, "second", jan)
 	late, err := st.EnsureParticipant("late@example.com", "Late", "example.com")
 	require.NoError(t, err)
 	require.NoError(t, st.ReplaceMessageRecipients(right, "to", []int64{person, other, late}, []string{"", "", ""}))

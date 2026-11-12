@@ -43,10 +43,11 @@ async function stop(child: ChildProcess): Promise<void> {
   }
 }
 
-export const test = base.extend<{ daemon: MeetingDaemon }>({
+export const test = base.extend<{ daemon: MeetingDaemon; twoDates: boolean }>({
   userAgent,
+  twoDates: [false, { option: true }],
   daemon: [
-    async ({}, use, testInfo) => {
+    async ({ twoDates }, use) => {
       const scratch = await mkdtemp(join(tmpdir(), "msgvault-meeting-e2e-"));
       const archive = join(scratch, "archive");
       let child: ChildProcess | undefined;
@@ -97,7 +98,7 @@ export const test = base.extend<{ daemon: MeetingDaemon }>({
             cwd: repo,
             env: {
               ...env, ...caches, CGO_ENABLED: "1",
-              ...(testInfo.title.includes('note linked to two dates') ? { MSGVAULT_FIXTURE_TWO_DATES: '1' } : {}),
+              ...(twoDates ? { MSGVAULT_FIXTURE_TWO_DATES: '1' } : {}),
               ...(process.platform === "win32" ? Object.fromEntries(
                 ["CC", "CGO_CFLAGS", "CGO_LDFLAGS"].flatMap((key) =>
                   process.env[key] ? [[key, process.env[key]]] : [],

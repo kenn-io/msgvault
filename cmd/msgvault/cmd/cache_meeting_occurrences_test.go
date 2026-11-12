@@ -499,6 +499,15 @@ func TestMeetingCountsAllDayCalendarUsesCivilDate(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, detail)
 	assert.EqualValues(t, 2, detail.MeetingCount)
+	calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: person, Year: 2024, Timezone: "America/Los_Angeles"})
+	require.NoError(t, err)
+	var days []string
+	for _, day := range calendar.Days {
+		if day.Meetings != 0 {
+			days = append(days, day.Date)
+		}
+	}
+	assert.Equal(t, []string{"2024-01-01", "2024-12-31"}, days)
 }
 
 func TestMeetingCountsAllDayRefresh(t *testing.T) {
