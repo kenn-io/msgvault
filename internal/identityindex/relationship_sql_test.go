@@ -344,7 +344,7 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 	requirements.NoError(err)
 
 	activity := testExpandedActivity(root, root)
-	activity = "(SELECT * FROM " + activity + " UNION ALL SELECT * REPLACE (102::BIGINT AS message_id, false AS is_chat, true AS email_invite) FROM " + activity + ")"
+	activity = "(SELECT * FROM " + activity + " UNION ALL SELECT * REPLACE (102::BIGINT AS message_id, false AS is_chat, true AS email_invite, 'calendar_event' AS message_type, 'event' AS entry_kind, 'calendar' AS conversation_type) FROM " + activity + ")"
 	query := logicalActivitySQL(activity, "f.source_id = ?") + `
 		SELECT
 			(SELECT count(*) FROM logical_units),
