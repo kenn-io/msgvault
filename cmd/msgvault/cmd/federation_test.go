@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -92,19 +91,6 @@ func TestFederationEnrollOutput(t *testing.T) {
 		requirements.NoError(list.ExecuteContext(ctx))
 		assert.Contains(t, output.String(), matching.EnrollmentUID+"\talice\tactive\n")
 		assert.Contains(t, output.String(), distinct.EnrollmentUID+"\tbob (laptop)\tactive\n")
-	})
-	t.Run("JSON output", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		_, command, ctx, stdout, stderr := setup(t)
-		command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--json"})
-		requirements.NoError(command.ExecuteContext(ctx))
-		var output struct {
-			Token string `json:"token"`
-		}
-		requirements.NoError(json.Unmarshal(stdout.Bytes(), &output))
-		assertions.Regexp(`^mvf1_[A-Za-z0-9_-]+$`, output.Token)
-		assertions.NotContains(stderr.String(), output.Token)
 	})
 	t.Run("server error", func(t *testing.T) {
 		_, command, ctx, _, _ := setup(t)

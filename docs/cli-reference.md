@@ -5794,10 +5794,9 @@ The command prints the one-time token to standard output and a token-free join
 command for the upcoming `federation join` to standard error. Save the token
 securely; it cannot be retrieved again.
 The join command carries a `<hub-url>` placeholder that the operator replaces with
-the address spokes use to reach the hub. `--json` prints the response, including
-the token, once. Joining is not yet available.
+the address spokes use to reach the hub. Joining is not yet available.
 
-Use `msgvault federation enrollments list [--json]` to inspect enrollments and
+Use `msgvault federation enrollments list` to inspect enrollments and
 `msgvault federation revoke <enrollment-uid>` to revoke one. Record the enrollment
 UID when enrolling. If a token is lost, revoke that UID and enroll again. If you
 do not know which enrollment it belongs to, revoke the affected candidates and
