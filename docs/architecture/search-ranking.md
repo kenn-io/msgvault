@@ -87,10 +87,10 @@ Full-text query parsing also differs:
 | PostgreSQL FTS | Ordered phrases with a prefix on the final token |
 | PostgreSQL hybrid FTS signal | Ordered phrases with a prefix on the final token |
 
-PostgreSQL FTS and hybrid mode match the same ordered phrases, then rank their
-pieces without requiring order. Plain FTS uses `ts_rank()`; the hybrid FTS signal
-uses cover-density `ts_rank_cd(..., 32)` before combining it with vector
-similarity through RRF. Results can therefore appear in a different order.
+Both modes filter for ordered phrases with a prefix on the final token. Their
+ranking queries use unordered terms. Plain FTS uses `ts_rank()`; hybrid uses
+cover-density `ts_rank_cd(..., 32)` before RRF combines it with vector similarity.
+They can order the same matches differently.
 
 ## Vector Ranking
 
