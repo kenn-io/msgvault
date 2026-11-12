@@ -1337,3 +1337,26 @@ func TestPostalSnapshotExport(t *testing.T) {
 		})
 	}
 }
+
+func TestLegacyPostalLabelKeepsCurrentTextAndClears(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		text *string
+		want string
+	}{
+		{"original", nil, "Home\n12 Main St; Unit 7"},
+		{"current", new("Current address"), "Home\nCurrent address"},
+		{"cleared", new(""), "Home"},
+		{"same label", new("Home"), "Home"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			address := store.PersonAddress{AddressKind: store.PersonAddressPostal, OriginalValue: "12 Main St; Unit 7", Label: new("Home"), FreeText: tc.text}
+			raw, label, err := postalAddressValue(address)
+			require := require.New(t)
+			require.NoError(err)
+			require.Equal(";;;;;;", raw)
+			require.NotNil(label)
+			require.Equal(tc.want, *label)
+		})
+	}
+}

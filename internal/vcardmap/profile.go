@@ -655,10 +655,18 @@ func postalAddressValue(address store.PersonAddress) (string, *string, error) {
 	if err == nil && (len(parsed) >= 7 || len(parsed) >= 4 && parsed[1] == "" || strings.HasPrefix(original, ";;")) && !allBlank(parsed) {
 		return vcard.JoinStructuredText(parsed), address.Label, nil
 	}
-	for _, text := range []*string{address.Label, address.FreeText, &original} {
-		if !isBlank(text) {
-			return vcard.JoinStructuredText(components), text, nil
+	label, text := deref(address.Label), original
+	if address.FreeText != nil {
+		text = *address.FreeText
+	}
+	if strings.TrimSpace(text) != "" && text != label {
+		if label != "" {
+			label += "\n"
 		}
+		label += text
+	}
+	if strings.TrimSpace(label) != "" {
+		return vcard.JoinStructuredText(components), &label, nil
 	}
 	return "", nil, nil
 }

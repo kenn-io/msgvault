@@ -147,3 +147,37 @@ func TestNativeProfileProjectionOfUnchangedSnapshotIsANoOpCommit(t *testing.T) {
 	assert.Equal(first.ETag, second.ETag)
 	assert.Equal(first.UpdatedAt, second.UpdatedAt)
 }
+
+func TestLegacyLabeledPostalAddressSurvivesCardDAVExport(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	participant, err := st.EnsureParticipant("alice@example.com", "Alice Example", "example.com")
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	_, err = st.AddPersonAddressContext(t.Context(), person.ID, store.PersonAddressInput{AddressKind: store.PersonAddressPostal, OriginalValue: "Box 1;Suite 2;12 Example St;Town", Label: new("Home"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
+	require.NoError(err)
+	envelope, err := vcard.ParseResourceEnvelope([]byte("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Alice Example\r\nEND:VCARD\r\n"))
+	require.NoError(err)
+	envelope.SourceRef, envelope.SourceResourceUID, envelope.CanonicalPersonUID = "address-book", "alice-source", person.VCardUID
+	created, err := st.PutVCardResourceEnvelopeContext(t.Context(), store.VCardResourceEnvelopeInput{PersonID: person.ID, Envelope: envelope})
+	require.NoError(err)
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
+	require.NoError(err)
+	projected, err := ProjectPersonEnvelope(*snapshot, created.ResourceEnvelope)
+	require.NoError(err)
+	_, err = st.CommitVCardResourceEnvelopeContext(t.Context(), "address-book", "alice-source", created.Revision, snapshot.Fingerprint, projected)
+	require.NoError(err)
+	body, err := st.RenderVCardResourceViewContext(t.Context(), "address-book", "alice-source", vcard.Version40)
+	require.NoError(err)
+	card, err := vcard.ParseResourceEnvelope(body)
+	require.NoError(err)
+	for _, occurrence := range card.PropertyTree {
+		if occurrence.Property.Name == "ADR" {
+			require.Equal(";;;;;;", occurrence.Property.RawValue)
+			require.Equal([]string{"Home\nBox 1;Suite 2;12 Example St;Town"}, projectedParameterValues(occurrence.Property, "LABEL"))
+			return
+		}
+	}
+	require.FailNow("missing ADR")
+}
