@@ -190,7 +190,7 @@ func TestSettingsViewportSettingsRestartNotice(t *testing.T) {
 			}
 			assert.Equal(t, 1, strings.Count(view, "msgvault daemon restart"))
 			assert.Contains(t, view, "On the daemon host, restart its service, or stop and rerun your foreground msgvault serve with the same flags")
-			assert.Contains(t, view, "Otherwise, run msgvault daemon restart with the same options: --home and --config")
+			assert.Contains(t, view, "Otherwise, run: msgvault daemon restart with the same --home and --config")
 		})
 	}
 }

@@ -87,8 +87,10 @@ func TestSettingsViewportSaveShowsNoticeAndSelectedField(t *testing.T) {
 	assert.Contains(t, screen.String(), "[Esc]")
 	assert.Regexp(t, `\[Ctrl\+S\] +Save`, screen.String())
 	assert.Contains(t, screen.String(), "Restart pending.")
+	first := screen.String()
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Regexp(t, `(?m)^msgvault daemon restart\s*$`, first+"\n"+screen.String())
 	assert.Contains(t, screen.String(), "▶   Automatic start")
 	assert.Contains(t, screen.String(), "Key: server.daemon_auto_start")
 }
