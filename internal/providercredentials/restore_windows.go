@@ -68,6 +68,15 @@ func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootA
 		if err != nil {
 			return fmt.Errorf("%w: inspect tokens: %w", ErrRestorePermissionsConflict, err)
 		}
+		parentAffected := affected[filepath.Dir(rel)]
+		_, selectedFile := selected[rel]
+		_, selectedAncestor := ancestors[rel]
+		if !parentAffected && !selectedFile && !selectedAncestor {
+			if entry.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		if entry.Type()&fs.ModeSymlink != 0 || (!entry.IsDir() && !entry.Type().IsRegular()) {
 			return fmt.Errorf("%w: ambiguous tokens/%s", ErrRestorePermissionsConflict, rel)
 		}
@@ -76,13 +85,11 @@ func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootA
 			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
 		}
 		defer windows.CloseHandle(h) //nolint:errcheck // inspection result is authoritative
-		parentAffected := affected[filepath.Dir(rel)]
 		if entry.IsDir() {
 			protected, err := protectedDACL(h)
 			if err != nil {
 				return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
 			}
-			_, selectedAncestor := ancestors[rel]
 			if protected {
 				affected[rel] = false
 				if !selectedAncestor {
@@ -96,7 +103,7 @@ func restorePreflight(dir string, selected, ancestors map[string]struct{}, rootA
 				return nil
 			}
 			affected[rel] = parentAffected
-		} else if _, ok := selected[rel]; ok {
+		} else if selectedFile {
 			return nil
 		}
 		if !parentAffected {

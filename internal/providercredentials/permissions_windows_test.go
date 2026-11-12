@@ -505,6 +505,9 @@ func TestRestorePreflightRejectsReparseEntry(t *testing.T) {
 	}
 	_, err := restorePreflight(dir, map[string]struct{}{}, map[string]struct{}{}, true)
 	requirements.ErrorIs(err, ErrRestorePermissionsConflict)
+	selected := filepath.Join(dir, "selected")
+	requirements.NoError(os.WriteFile(selected, []byte("selected"), 0o600))
+	requirements.NoError(SecureRestored(dir, []string{"selected"}))
 }
 
 func TestSecureRestoredPreservesOmittedLockAndProtectedMixedTree(t *testing.T) {
