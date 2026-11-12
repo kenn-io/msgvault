@@ -1,16 +1,20 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -89,23 +93,102 @@ func TestStore_BackfillFTS_ResumesCommittedBatch(t *testing.T) {
 	assertFTSContains(t, f.Store, "orchard", 2)
 }
 
-func TestPG_BackfillFTS_RefreshesOutdatedEntries(t *testing.T) {
+// TestPG_BackfillFTSUpgradesLegacyEntries reindexes older rows from stored text.
+func TestPG_BackfillFTSUpgradesLegacyEntries(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	skipUnlessPostgres(t)
 	f := storetest.New(t)
 	ids := f.CreateMessages(2)
-	_, err := f.Store.BackfillFTS(nil)
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages
-		SET search_fts = to_tsvector('simple', 'obsolete'), indexing_version = $1
-		WHERE id = $2`, store.CurrentFTSIndexingVersion-1, ids[1])
-	require.NoError(err)
-
+	for i, version := range []sql.NullInt64{{Int64: 2, Valid: true}, {}} {
+		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'stored marker', search_fts = setweight(to_tsvector('simple', 'obsolete phantom-marker'), 'B'), indexing_version = $2 WHERE id = $1`, ids[i], version)
+		require.NoError(err)
+	}
+	current := f.CreateMessage("current-index")
+	require.NoError(f.Store.UpsertFTS(current, "current marker", "", "", "", ""))
 	n, err := f.Store.BackfillFTS(nil)
 	require.NoError(err)
-	assert.Equal(int64(1), n, "only the outdated entry needs backfill")
-	assertFTSContains(t, f.Store, "obsolete", 0)
+	assert.Equal(int64(2), n)
+	for term, want := range map[string][]int64{"stored marker": ids, "obsolete": nil, "phantom marker": nil, "current marker": {current}} {
+		got, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err)
+		assert.ElementsMatch(want, got, term)
+	}
+}
+
+func TestPG_BackfillFTS_ContinuesAcrossLargeMessagePages(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	body := strings.Repeat("filler ", 83000) + "alice@example.com"
+	for _, id := range f.CreateMessages(8) {
+		require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+	}
+	_, err := f.Store.DB().ExecContext(t.Context(), `CREATE TABLE fts_page_audit (n bigint);
+		CREATE FUNCTION record_fts_page() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN INSERT INTO fts_page_audit SELECT count(*) FROM indexed_rows; RETURN NULL; END $$;
+		CREATE TRIGGER record_fts_page AFTER UPDATE ON messages
+		REFERENCING NEW TABLE AS indexed_rows FOR EACH STATEMENT EXECUTE FUNCTION record_fts_page()`)
+	require.NoError(err)
+	count, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	assert.EqualValues(8, count)
+	var pages, largest int
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT count(*), max(n) FROM fts_page_audit`).Scan(&pages, &largest))
+	assert.Greater(pages, 1)
+	assert.Less(largest, 8)
+	assertFTSContains(t, f.Store, "alice@example.com", 8)
+}
+
+func TestPG_BackfillFTS_ConcurrentUpdates(t *testing.T) {
+	for _, refreshed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("refreshed=%t", refreshed), func(t *testing.T) {
+			skipUnlessPostgres(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			ids := f.CreateMessages(65)
+			if refreshed {
+				_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'old'), indexing_version = 2`)
+				require.NoError(err)
+			}
+			require.NoError(f.Store.UpsertMessageBody(ids[0], sql.NullString{String: "old body", Valid: true}, sql.NullString{}))
+			tx, err := f.Store.DB().BeginTx(t.Context(), nil)
+			require.NoError(err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			if refreshed {
+				dialect := &store.PostgreSQLDialect{}
+				for _, id := range ids[:64] {
+					require.NoError(dialect.FTSUpsert(tx, store.FTSDoc{MessageID: id, FromAddr: "slackdisplayname"}))
+				}
+			} else {
+				_, err = tx.ExecContext(t.Context(), `UPDATE messages SET subject = 'updated', search_fts = NULL WHERE id = $1`, ids[0])
+				require.NoError(err)
+				_, err = tx.ExecContext(t.Context(), `UPDATE message_bodies SET body_text = 'new@example.com' WHERE message_id = $1`, ids[0])
+				require.NoError(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { _, err := f.Store.BackfillFTSContext(ctx, nil); done <- err }()
+			require.Eventually(func() bool {
+				var waiting bool
+				err := f.Store.DB().QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'SELECT m.id FROM messages m WHERE m.id IN (%' AND cardinality(pg_blocking_pids(pid)) > 0)`).Scan(&waiting)
+				return err == nil && waiting
+			}, 30*time.Second, 20*time.Millisecond)
+			require.NoError(tx.Commit())
+			require.NoError(<-done)
+			if refreshed {
+				assertFTSContains(t, f.Store, "slackdisplayname", 64)
+				var version int
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT indexing_version FROM messages WHERE id = $1`, ids[64]).Scan(&version))
+				assert.Equal(t, store.CurrentFTSIndexingVersion, version)
+			} else {
+				assertFTSContains(t, f.Store, "new@example.com", 1)
+				assertFTSContains(t, f.Store, "old", 0)
+			}
+		})
+	}
 }
 
 // isPostgresTestDB reports whether the active test backend is PostgreSQL,

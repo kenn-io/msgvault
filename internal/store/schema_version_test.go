@@ -128,7 +128,7 @@ func TestSchemaVersionMeetingDecisionsPreviousUpgrade(t *testing.T) {
 	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(ctx, `DROP TABLE meeting_link_decisions`)
 	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '42' WHERE key = 'schema_version'`)
+	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value = '43' WHERE key = 'schema_version'`)
 	require.NoError(err)
 	require.Error(f.Store.ValidateSchemaContext(ctx))
 	require.NoError(f.Store.InitSchemaUnlessCurrentContext(ctx))
@@ -362,8 +362,9 @@ var (
 		39: "3b4a4d69ac0ae321fddcd1836b788118f5a7f25cda49d89ef8c327bd7338288d",
 		40: "a26d72acc985ec3ca25ab69f8173b6fc2fb050f26298e162a0cc1358abeda0f9",
 		41: "87805b27cac30a9b23f779a8bec0c9d5bf5d5cc463b286fb63f645e60567aa56",
-		42: "4e93e7add65b3641e55fff12f8930cf93c0e42568bdaf26dbda3b9f334346ee0",
-		43: "1cd1a37745d861117c920b0636fb57de2c2a146a00b87d70bfad4603d581aa55",
+		42: "d59c2905aca47c18220182ebf5ada7a8e781f5bda3d2cb65d6bdd6d66fd2d936",
+		43: "ad5e46104eedc5c5cbc902203aac73fa775e3ee727da30d5fb9a8cc59370b709",
+		44: "6eda1bbb6cd7c686cd7f01b0864b83f2af966b05baeaafbd5dd74fa7b520ab86",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -402,8 +403,9 @@ var (
 		39: "77f763ebf58ff6f1df95dac4e187489afb6cc3521177cac60e7eef0894a8306a",
 		40: "fd168ca80dd687aba404bf05be9a932eb5530303b9ac0cd73f91cc7ee01c14f2",
 		41: "f5438190c64d99d1f9d8f85e6a2d0508a8296aae5dfc5b389c5a1dc3e16c59d6",
-		42: "8a70dbb4c6fe8b8d0de33a8837441d25548c2a6a591066619ae17ac868787b2b",
-		43: "5057fd8fd49ae2da0363598421947c6ddb5b807e45c90bb0345fbc1a302454ae",
+		42: "f3cc0baedce3bb1638cc4a4ecf5443039c176fd069c25975397bb35c41c26167",
+		43: "f5645d1dfa70e30ff631d79214553bcf74316ffbc5ae4144df5a6cc2c82ca643",
+		44: "383d487c50397f4dd467b6789f6791fdc5b604fc98e892fabcd1b2619d954952",
 	}
 )
 
