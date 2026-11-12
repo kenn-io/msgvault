@@ -96,14 +96,14 @@ func newImportFixture(t *testing.T) (*store.Store, *fakeSource, ImportOptions) {
 func attendeeCount(t *testing.T, st *store.Store, id int64, email string) int {
 	t.Helper()
 	var recipients int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT count(*) FROM message_recipients mr JOIN participants p ON p.id=mr.participant_id WHERE mr.message_id=? AND p.email_address=?`), id, email).Scan(&recipients))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM message_recipients mr JOIN participants p ON p.id=mr.participant_id WHERE mr.message_id=? AND p.email_address=?`), id, email).Scan(&recipients))
 	return recipients
 }
 func archivedID(t *testing.T, st *store.Store, id string) int64 {
 	t.Helper()
 	require := require.New(t)
 	var result int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id=?`), "recording:"+id).Scan(&result))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id=?`), "recording:"+id).Scan(&result))
 	return result
 }
 func TestImportTwentyArchivesAndConverges(t *testing.T) {
@@ -111,11 +111,11 @@ func TestImportTwentyArchivesAndConverges(t *testing.T) {
 	require := require.New(t)
 	st, f, opts := newImportFixture(t)
 	imp := NewImporter(st, f)
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MeetingsAdded)
 	id := archivedID(t, st, "r1")
-	body, err := st.GetMessageBodyText(id)
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Contains(body, "Searchableword")
 	assert.Contains(body, "Guest")
@@ -127,28 +127,28 @@ func TestImportTwentyArchivesAndConverges(t *testing.T) {
 	assert.Equal(meetingcontent.CoverageUnsupported, content.ActionCoverage)
 	var kind string
 	var fromMe bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT message_type,is_from_me FROM messages WHERE id=?`), id).Scan(&kind, &fromMe))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_type,is_from_me FROM messages WHERE id=?`), id).Scan(&kind, &fromMe))
 	assert.Equal("meeting_transcript", kind)
 	assert.True(fromMe)
 	hits, total, err := st.SearchMessages("Searchableword", 0, 10)
 	require.NoError(err)
 	assert.Equal(int64(1), total)
 	require.Len(hits, 1)
-	sum, err = imp.Import(context.Background(), opts)
+	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Zero(sum.MeetingsUpdated)
 	assert.Zero(sum.MeetingsProcessed, "the overlap re-read skips the recording already handled")
 	assert.Equal([]string{"1970-01-01T00:00:00Z", "2026-09-01T10:55:00Z"}, f.since, "the second run lists recordings updated since the first, less the overlap")
 	f.pages[""].Records[0].Calendar.Participants[1] = jsontext.Value(`{"id":"p2","handle":"updated@example.com","displayName":"Updated Example"}`)
 	opts.Full = true
-	sum, err = imp.Import(context.Background(), opts)
+	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal("1970-01-01T00:00:00Z", f.since[len(f.since)-1], "full rescans every recording")
 	assert.Equal(int64(1), sum.MeetingsUpdated)
 	assert.Equal(id, archivedID(t, st, "r1"))
 	assert.Equal(1, attendeeCount(t, st, id, "updated@example.com"))
 	f.pages[""].Records = nil
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(id, archivedID(t, st, "r1"))
 }
@@ -162,15 +162,15 @@ func TestImportTwentyRevisitsPendingAndLateEvidence(t *testing.T) {
 	r.CalendarEventID = ""
 	r.Calendar = nil
 	f.pages[""].Records = []Recording{r}
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.SkippedEmpty)
 	f.pages[""].Records = []Recording{updated(t, recordingFixture(t, "r1", `[{"words":[{"text":"Late transcript"}]}]`), "2026-09-01T12:00:00Z")}
-	sum, err = imp.Import(context.Background(), opts)
+	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MeetingsAdded)
 	f.pages[""].Records = []Recording{updated(t, recordingFixture(t, "r1", `[{"words":[{"text":"Revised transcript"}]}]`), "2026-09-01T13:00:00Z")}
-	sum, err = imp.Import(context.Background(), opts)
+	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MeetingsUpdated)
 }
@@ -280,19 +280,19 @@ func TestImportTwentyPaginationFiltersAndLimit(t *testing.T) {
 	}
 	f.pages[""] = first
 	f.pages["next"] = &Page{Records: []Recording{recordingFixture(t, "r100", `[]`)}}
-	sum, err := NewImporter(st, f).Import(context.Background(), opts)
+	sum, err := NewImporter(st, f).Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(101), sum.MeetingsAdded)
 	assert.NotZero(archivedID(t, st, "r100"))
 	assert.False(sum.PartialCoverage)
 	opts.Limit, opts.Full = 1, true
-	sum, err = NewImporter(st, f).Import(context.Background(), opts)
+	sum, err = NewImporter(st, f).Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MeetingsProcessed)
 	assert.True(sum.PartialCoverage)
 	opts.Limit, opts.Full = 0, false
 	opts.StartedAfter = time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
-	sum, err = NewImporter(st, f).Import(context.Background(), opts)
+	sum, err = NewImporter(st, f).Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Zero(sum.MeetingsProcessed)
 }
@@ -301,13 +301,13 @@ func TestImportTwentyFailsWithoutOverwritingEvidence(t *testing.T) {
 	require := require.New(t)
 	st, f, opts := newImportFixture(t)
 	imp := NewImporter(st, f)
-	_, err := imp.Import(context.Background(), opts)
+	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	id := archivedID(t, st, "r1")
 	before, err := st.GetMessageRaw(id)
 	require.NoError(err)
 	f.listError = errors.New("list unavailable")
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err)
 	after, err := st.GetMessageRaw(id)
 	require.NoError(err)
@@ -316,9 +316,9 @@ func TestImportTwentyFailsWithoutOverwritingEvidence(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(store.SyncStatusFailed, run.Status)
 	require.NoError(st.RemoveSource(1))
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.Error(err)
-	_, err = st.GetSourceByTypeAndIdentifier(SourceType, "work")
+	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
 	require.ErrorIs(err, store.ErrSourceNotFound)
 }
 
@@ -403,7 +403,7 @@ func TestImportTwentyFailedSecondPageRetainsCommittedCounts(t *testing.T) {
 			st, f, opts := newImportFixture(t)
 			f.pages[""].HasMore = true
 			f.pages[""].NextCursor = "next"
-			ctx, stop := context.WithCancel(context.Background())
+			ctx, stop := context.WithCancel(t.Context())
 			defer stop()
 			if cancel {
 				f.listHook = func(cursor string) {
@@ -427,7 +427,7 @@ func TestImportTwentyRejectsInvalidOptions(t *testing.T) {
 	require := require.New(t)
 	st, f, opts := newImportFixture(t)
 	opts.Limit = -1
-	_, err := NewImporter(st, f).Import(context.Background(), opts)
+	_, err := NewImporter(st, f).Import(t.Context(), opts)
 	require.Error(err)
 }
 
@@ -480,7 +480,7 @@ func TestImportTwentyArchivesRecordingWhenLinkedCalendarEventIsGone(t *testing.T
 	assert.Equal(int64(1), summary.MeetingsAdded)
 	assert.Equal(1, requests, "a deleted event should not trigger a participant request")
 	id := archivedID(t, st, "recording-1")
-	body, err := st.GetMessageBodyText(id)
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Contains(body, "Recording fallback")
 	assert.Contains(body, "Kept summary")
@@ -553,7 +553,7 @@ func TestImportTwentyOccurrenceFallbackAndMissingTime(t *testing.T) {
 	_, err := NewImporter(st, f).Import(t.Context(), opts)
 	require.NoError(err)
 	var sent time.Time
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sent_at FROM messages WHERE id=?`), archivedID(t, st, "r1")).Scan(&sent))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT sent_at FROM messages WHERE id=?`), archivedID(t, st, "r1")).Scan(&sent))
 	assert.Equal(time.Date(2026, 9, 1, 9, 30, 0, 0, time.UTC), sent.UTC())
 	r.ID = "r2"
 	r.CalendarEventID = ""

@@ -61,10 +61,10 @@ func TestAddSlackContinuesWhenDisplayNameConflictsWithAlias(t *testing.T) {
 	st, err = store.Open(cfg.DatabaseDSN())
 	require.NoError(err)
 	defer func() { assert.NoError(st.Close()) }()
-	source, err := st.GetSourceByTypeAndIdentifier(sourceTypeSlack, "T_SYNTHETIC:U_SYNTHETIC")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeSlack, "T_SYNTHETIC:U_SYNTHETIC")
 	require.NoError(err)
 	assert.False(source.DisplayName.Valid, "the conflicting display name should keep its prior empty value")
 	var identityCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM account_identities WHERE source_id = ?`), source.ID).Scan(&identityCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM account_identities WHERE source_id = ?`), source.ID).Scan(&identityCount))
 	assert.Equal(1, identityCount, "source setup must continue after the display name is skipped")
 }

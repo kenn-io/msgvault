@@ -362,7 +362,7 @@ func TestListCalendarOccurrencesAllDayQueryZone(t *testing.T) {
 				recurrence = `,"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]`
 			}
 			data, id := calendarFixture(t, st, "all-day", `{"id":"all-day","start":{"date":"2027-03-02"},"end":{"date":"2027-03-03"}`+recurrence+`}`)
-			requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"time_zone":"Pacific/Auckland"}`))
+			requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"time_zone":"Pacific/Auckland"}`))
 			zone, err := time.LoadLocation("America/Los_Angeles")
 			requirements.NoError(err)
 			from := time.Date(2027, 3, 1, 0, 0, 0, 0, zone)
@@ -487,7 +487,7 @@ func TestListCalendarOccurrencesExceptionZone(t *testing.T) {
 			data, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00-05:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-02T10:00:00-05:00","timeZone":"America/New_York"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 			_, exception := calendarFixture(t, st, "exception", fmt.Sprintf(`{"id":"exception","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00-05:00"},%s}`, tc.bounds))
 			_, single := calendarFixture(t, st, "single", `{"id":"single","start":{"dateTime":"2027-03-09T03:00:00Z"},"end":{"dateTime":"2027-03-09T04:00:00Z"}}`)
-			requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"time_zone":"Asia/Tokyo"}`))
+			requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"time_zone":"Asia/Tokyo"}`))
 			if tc.wantAllDay {
 				rows := calendarRows(t, st, exception)
 				requirements.Len(rows, 1)
@@ -527,7 +527,7 @@ func TestListCalendarOccurrencesSparseCancellationZone(t *testing.T) {
 			st := newRFC822IDBackfillBackendStore(t)
 			data, master := calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"weekly","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, tc.start, tc.end))
 			_, cancelled := calendarFixture(t, st, "cancelled", fmt.Sprintf(`{"id":"cancelled","recurringEventId":"weekly","originalStartTime":%s,"status":"cancelled"}`, tc.original))
-			requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"time_zone":"Asia/Tokyo"}`))
+			requirements.NoError(st.UpdateSourceSyncConfig(t.Context(), data.Message.SourceID, `{"time_zone":"Asia/Tokyo"}`))
 			from := time.Date(2027, 3, 9, 0, 0, 0, 0, time.UTC)
 			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 			requirements.NoError(err)

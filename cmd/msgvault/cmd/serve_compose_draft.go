@@ -167,7 +167,7 @@ func (a *storeAPIAdapter) runCLIComposeDraft(
 	if intent.ConversationID != 0 {
 		return a.runCLIChatDraftCreate(ctx, intent, req.Grant, emit)
 	}
-	if source, err := sourceops.ResolveExactOne(a.store, sourceops.Selector{
+	if source, err := sourceops.ResolveExactOneContext(ctx, a.store, sourceops.Selector{
 		Account: intent.Account, SourceID: intent.SourceID, SourceIDSet: intent.SourceIDSet,
 	}); err == nil && source.SourceType == "beeper" {
 		return a.runBeeperDraftCreate(ctx, req.Grant, intent, source, emit)

@@ -351,8 +351,8 @@ describe('Explore URL state', () => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
       workspace: 'everything', operationHistory: true,
-      operationLane: 'documents',
-      operationKind: 'document_extraction',
+      operationLane: 'visual_attachments',
+      operationKind: 'visual_embedding',
       operationState: 'partial',
       operationStartedFrom: '2026-08-01T00:00:00Z',
       operationStartedBefore: '2026-09-01T00:00:00.1Z',
@@ -362,8 +362,8 @@ describe('Explore URL state', () => {
 
     expect(restored).toMatchObject({
       workspace: 'everything', operationHistory: true,
-      operationLane: 'documents',
-      operationKind: 'document_extraction',
+      operationLane: 'visual_attachments',
+      operationKind: 'visual_embedding',
       operationState: 'partial',
       operationStartedFrom: '2026-08-01T00:00:00Z',
       operationStartedBefore: '2026-09-01T00:00:00.1Z',
@@ -372,15 +372,11 @@ describe('Explore URL state', () => {
     expect(restored).not.toHaveProperty('operationCursor');
   });
 
-  it('round-trips only the three live Operations status authorities', () => {
-    for (const operationStatus of [
-      'getDocumentIndexStatus', 'getDocumentVectorStatus', 'getVisualAttachmentStatus'
-    ] as const) {
-      const restored = parseExploreURLState(serializeExploreURLState({
-        ...defaultExploreURLState, workspace: 'everything', operationHistory: true, operationStatus
-      }));
-      expect(restored.operationStatus).toBe(operationStatus);
-    }
+  it('round-trips only the live Operations status authority', () => {
+    const restored = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState, workspace: 'everything', operationHistory: true, operationStatus: 'getVisualAttachmentStatus'
+    }));
+    expect(restored.operationStatus).toBe('getVisualAttachmentStatus');
     const invalid = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState, workspace: 'everything', operationHistory: true, operationStatus: 'getCardDAVStatus'
     } as unknown as ExploreURLState));
@@ -492,7 +488,7 @@ describe('Explore URL state', () => {
       ...defaultExploreURLState,
       workspace: 'everything', operationHistory: true,
       operationLane: 'contacts',
-      operationKind: 'document_embedding',
+      operationKind: 'person_embedding',
       operationState: 'future_state',
       operationStartedFrom: '2026-08-01',
       operationStartedBefore: '2026-09-01T02:00:00+02:00',

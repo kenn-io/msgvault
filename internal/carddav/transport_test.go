@@ -793,7 +793,7 @@ func TestClientHonorsRequestAndOperationTimeouts(t *testing.T) {
 
 func newFixtureResolver(t *testing.T, addresses ...netip.Addr) (*net.Resolver, *atomic.Int32) {
 	t.Helper()
-	listener, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
 	queries := new(atomic.Int32)

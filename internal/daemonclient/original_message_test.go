@@ -58,7 +58,7 @@ func newOriginalDaemon(t *testing.T) originalDaemon {
 
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(t, err)
-	convID, err := st.EnsureConversation(src.ID, "thread-daemon", "Daemon")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-daemon", "Daemon")
 	require.NoError(t, err)
 	raw := []byte("Subject: daemon\r\n\r\n\x00\xff bytes\n")
 	persist := func(sourceMessageID string, sentAt time.Time, rawMIME []byte) int64 {
@@ -156,7 +156,7 @@ func TestEngineListsThreadThroughDaemon(t *testing.T) {
 
 	other, err := d.st.GetOrCreateSource("gmail", "second@example.com")
 	must.NoError(err)
-	otherConv, err := d.st.EnsureConversation(other.ID, "thread-daemon", "Other")
+	otherConv, err := d.st.EnsureConversation(t.Context(), other.ID, "thread-daemon", "Other")
 	must.NoError(err)
 	_, err = d.st.UpsertMessage(&store.Message{
 		SourceID: other.ID, ConversationID: otherConv, SourceMessageID: "other-message", MessageType: "email",
@@ -189,13 +189,13 @@ func TestEngineOriginalCapabilityRetriesFailureAndCachesSuccess(t *testing.T) {
 func TestEngineRawIDDoesNotFallBackAfterDedupPurge(t *testing.T) {
 	must := require.New(t)
 	d := newOriginalDaemon(t)
-	_, err := d.st.MergeDuplicates(d.noRaw, []int64{d.withRaw}, "strict-id-test")
+	_, err := d.st.MergeDuplicates(t.Context(), d.noRaw, []int64{d.withRaw}, "strict-id-test")
 	must.NoError(err)
 	_, err = d.st.DeleteDedupedBatch("strict-id-test")
 	must.NoError(err)
 	src, err := d.st.GetOrCreateSource("gmail", "other@example.com")
 	must.NoError(err)
-	conv, err := d.st.EnsureConversation(src.ID, "unrelated-thread", "Unrelated")
+	conv, err := d.st.EnsureConversation(t.Context(), src.ID, "unrelated-thread", "Unrelated")
 	must.NoError(err)
 	_, err = d.st.PersistMessage(&store.MessagePersistData{
 		Message: &store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: strconv.FormatInt(d.withRaw, 10), MessageType: "email"},
@@ -231,7 +231,7 @@ func TestEngineOriginalMessageNeedsCurrentDaemon(t *testing.T) {
 func TestEngineMapsUnsupportedOriginalExportThroughDaemon(t *testing.T) {
 	must := require.New(t)
 	st := testutil.NewTestStore(t)
-	engine, err := query.NewDuckDBEngine("", "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), "", "", nil)
 	must.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{

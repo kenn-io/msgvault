@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -24,7 +23,7 @@ func TestWindowsBackgroundProcessDoesNotRunBeforeJobAttachment(t *testing.T) {
 	require := require.New(t)
 
 	pidPath := filepath.Join(t.TempDir(), "child.pid")
-	cmd := helperProcessCommand(context.Background(), "spawn-blocking-child")
+	cmd := helperProcessCommand(t.Context(), "spawn-blocking-child")
 	cmd.Env = append(cmd.Env, "GO_HELPER_CHILD_PID_PATH="+pidPath)
 	commandConfig, err := configureServeBackgroundCommand(cmd)
 	require.NoError(err, "configure process tree")
@@ -56,7 +55,7 @@ func TestStopBackgroundServeStartupTerminatesWindowsProcessTree(t *testing.T) {
 	require := require.New(t)
 
 	pidPath := filepath.Join(t.TempDir(), "child.pid")
-	cmd := helperProcessCommand(context.Background(), "spawn-blocking-child")
+	cmd := helperProcessCommand(t.Context(), "spawn-blocking-child")
 	cmd.Env = append(cmd.Env, "GO_HELPER_CHILD_PID_PATH="+pidPath)
 	commandConfig, err := configureServeBackgroundCommand(cmd)
 	require.NoError(err, "configure process tree")
@@ -103,7 +102,7 @@ func TestReleaseWindowsProcessTreeLeavesDetachedDaemonRunning(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	cmd := helperProcessCommand(context.Background(), "block")
+	cmd := helperProcessCommand(t.Context(), "block")
 	commandConfig, err := configureServeBackgroundCommand(cmd)
 	require.NoError(err, "configure process tree")
 	tree := commandConfig.ProcessTree

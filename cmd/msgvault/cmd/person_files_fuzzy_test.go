@@ -20,7 +20,7 @@ func TestPersonFilesFuzzyValidation(t *testing.T) {
 		want string
 	}{
 		{[]string{"40", "--fuzzy-filename"}, "--filename"},
-		{[]string{"40", "--fuzzy-filename", "--filename", "report", "--lane", "documents", "--query", "report"}, "metadata"},
+		{[]string{"40", "--fuzzy-filename", "--filename", "report", "--lane", "documents", "--query", "report"}, "--lane must be metadata, visual, or all"},
 		{[]string{"40", "--fuzzy-filename", "--filename", "report", "--lane", "visual", "--query", "report"}, "metadata"},
 		{[]string{"40", "--fuzzy-filename", "--filename", "report", "--lane", "all", "--query", "report"}, "metadata"},
 		{[]string{"40", "--fuzzy-filename", "--filename", "report", "--cursor", "opaque"}, "cursor"},

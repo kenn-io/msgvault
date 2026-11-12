@@ -27,7 +27,7 @@ func TestPersonInferenceProviderV2PersistsCanonicalFields(t *testing.T) {
 		programFingerprint, disclosedFields                    string
 		allowAnonymous                                         bool
 	)
-	err = st.DB().QueryRow(st.Rebind(`
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT provider_kind, api_key_env, allow_anonymous, auth_scheme,
 		       credential_source, credential_ref, output_mode,
 		       token_limit_parameter, reasoning_effort, reasoning_mode,
@@ -58,7 +58,7 @@ func TestPersonInferenceProviderV2PersistsCanonicalFields(t *testing.T) {
 		"unresolved_claims", "seed_evidence", "retrieved_context"
 	]`, disclosedFields)
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE person_inference_profiles SET reasoning_mode = 'tampered'
 		WHERE fingerprint = ?`), profile.Fingerprint)
 	requirements.NoError(err)
@@ -66,7 +66,7 @@ func TestPersonInferenceProviderV2PersistsCanonicalFields(t *testing.T) {
 	requirements.ErrorContains(err, "different immutable policy")
 
 	var credentialReference string
-	err = st.DB().QueryRow(st.Rebind(`
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT credential_ref FROM person_inference_profiles WHERE fingerprint = ?`),
 		profile.Fingerprint).Scan(&credentialReference)
 	requirements.NoError(err)
@@ -109,7 +109,7 @@ func TestPersonInferenceCheckPinsAndReplacesExactProfile(t *testing.T) {
 	checks.Equal(replacement, *got)
 
 	var rows int
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM person_inference_checks
 		WHERE profile_fingerprint = ?`), profile.Fingerprint).Scan(&rows))
 	checks.Equal(1, rows)
@@ -208,7 +208,7 @@ func TestPersonInferenceCheckRejectsStoredProfileMetadataMismatch(t *testing.T) 
 		OutputMode:         profile.OutputMode,
 		ModelVersion:       "model-safe",
 	}))
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE person_inference_checks SET driver_version = 'different-safe-driver'
 		WHERE profile_fingerprint = ?`), profile.Fingerprint)
 	require.NoError(err)

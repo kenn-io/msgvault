@@ -159,7 +159,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.Identifier)
+	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, opts.Identifier)
 	if err != nil {
 		if errors.Is(err, store.ErrSourceNotFound) {
 			return nil, fmt.Errorf("twenty source %q is not registered; run msgvault add-twenty first", opts.Identifier)
@@ -184,7 +184,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return sum, err
 	}
 	var state syncState
-	if previous, err := imp.store.GetLastSuccessfulSync(source.ID); err == nil && previous.CursorAfter.Valid {
+	if previous, err := imp.store.GetLastSuccessfulSyncContext(ctx, source.ID); err == nil && previous.CursorAfter.Valid {
 		// An unreadable cursor restarts discovery from the beginning.
 		_ = json.Unmarshal([]byte(previous.CursorAfter.String), &state)
 	} else if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
@@ -305,7 +305,7 @@ func (imp *Importer) importRecording(ctx context.Context, run *importRun, record
 	}
 	calendar := recording.Calendar
 	if calendar == nil {
-		archived, ok, err := imp.archivedCalendar(run.sourceID, recording)
+		archived, ok, err := imp.archivedCalendar(ctx, run.sourceID, recording)
 		if err != nil {
 			return false, err
 		}
@@ -338,9 +338,9 @@ func (imp *Importer) importRecording(ctx context.Context, run *importRun, record
 // archived with, so a deleted or unlinked event keeps the attendees already
 // archived. A recording now linked to a different event that can't be read
 // doesn't inherit the old event.
-func (imp *Importer) archivedCalendar(sourceID int64, recording Recording) (Calendar, bool, error) {
+func (imp *Importer) archivedCalendar(ctx context.Context, sourceID int64, recording Recording) (Calendar, bool, error) {
 	sourceMessageID := "recording:" + recording.ID
-	existing, err := imp.store.MessageMetadataBatch(sourceID, []string{sourceMessageID})
+	existing, err := imp.store.MessageMetadataBatch(ctx, sourceID, []string{sourceMessageID})
 	if err != nil {
 		return Calendar{}, false, err
 	}
@@ -348,7 +348,7 @@ func (imp *Importer) archivedCalendar(sourceID int64, recording Recording) (Cale
 	if !ok {
 		return Calendar{}, false, nil
 	}
-	raw, err := imp.store.GetMessageRaw(message.ID)
+	raw, err := imp.store.GetMessageRawContext(ctx, message.ID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Calendar{}, false, nil
 	}

@@ -30,7 +30,7 @@ func TestStoreAttachmentFromPath(t *testing.T) {
 		attDir := t.TempDir()
 		src := writeSrcFile(t, t.TempDir(), "a.bin", content)
 
-		rel, hash, size, err := StoreAttachmentFromPath(attDir, src, 0)
+		rel, hash, size, err := StoreAttachmentFromPath(t.Context(), attDir, src, 0)
 		require.NoError(err)
 		assert.Equal(wantHash[:2]+"/"+wantHash, rel)
 		assert.Equal(wantHash, hash)
@@ -46,10 +46,10 @@ func TestStoreAttachmentFromPath(t *testing.T) {
 		assert := assert.New(t)
 		attDir := t.TempDir()
 		src := writeSrcFile(t, t.TempDir(), "a.bin", content)
-		_, _, _, err := StoreAttachmentFromPath(attDir, src, 0)
+		_, _, _, err := StoreAttachmentFromPath(t.Context(), attDir, src, 0)
 		require.NoError(err)
 
-		rel, hash, _, err := StoreAttachmentFromPath(attDir, src, 0)
+		rel, hash, _, err := StoreAttachmentFromPath(t.Context(), attDir, src, 0)
 		require.NoError(err)
 		assert.Equal(wantHash[:2]+"/"+wantHash, rel)
 		assert.Equal(wantHash, hash)
@@ -59,13 +59,13 @@ func TestStoreAttachmentFromPath(t *testing.T) {
 		attDir := t.TempDir()
 		src := writeSrcFile(t, t.TempDir(), "a.bin", content)
 
-		_, hash, _, err := StoreAttachmentFromPath(attDir, src, 4)
+		_, hash, _, err := StoreAttachmentFromPath(t.Context(), attDir, src, 4)
 		require.Error(t, err)
 		assert.Empty(t, hash)
 	})
 
 	t.Run("errors on missing source", func(t *testing.T) {
-		_, hash, _, err := StoreAttachmentFromPath(t.TempDir(), filepath.Join(t.TempDir(), "gone"), 0)
+		_, hash, _, err := StoreAttachmentFromPath(t.Context(), t.TempDir(), filepath.Join(t.TempDir(), "gone"), 0)
 		require.Error(t, err)
 		assert.Empty(t, hash)
 	})
@@ -76,7 +76,7 @@ func TestStoreAttachmentFromPath(t *testing.T) {
 		link := filepath.Join(srcDir, "link.bin")
 		require.NoError(t, os.Symlink(target, link))
 
-		_, _, _, err := StoreAttachmentFromPath(t.TempDir(), link, 0)
+		_, _, _, err := StoreAttachmentFromPath(t.Context(), t.TempDir(), link, 0)
 		require.Error(t, err)
 	})
 
@@ -88,7 +88,7 @@ func TestStoreAttachmentFromPath(t *testing.T) {
 			filepath.Join(attDir, wantHash[:2], wantHash), []byte("XXXXXXXXXXXXXXXXXX"), 0o600))
 
 		src := writeSrcFile(t, t.TempDir(), "a.bin", content)
-		_, _, _, err := StoreAttachmentFromPath(attDir, src, 0)
+		_, _, _, err := StoreAttachmentFromPath(t.Context(), attDir, src, 0)
 		require.Error(t, err)
 	})
 }

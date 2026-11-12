@@ -28,7 +28,7 @@ func TestVCardResourceNoOpWriteRejectsReplacementCommittedAfterRead(t *testing.T
 	require := require.New(t)
 	ctx := t.Context()
 	dbPath := filepath.Join(t.TempDir(), "noop-cas.db")
-	first, err := OpenForTest(dbPath)
+	first, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = first.Close() })
 	require.NoError(first.InitSchema())
@@ -38,7 +38,7 @@ func TestVCardResourceNoOpWriteRejectsReplacementCommittedAfterRead(t *testing.T
 	require.NoError(err)
 	person, _, err := first.CreatePersonFromParticipant(participantID)
 	require.NoError(err)
-	second, err := OpenForTest(dbPath)
+	second, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = second.Close() })
 

@@ -3,6 +3,7 @@ import type {
   ExploreCacheUnavailable,
   ExploreGroupDimension,
   ExploreGroupRow,
+  ExploreGroupOverview,
   ExploreGroupResult,
   ExplorePredicate
 } from './models';
@@ -10,7 +11,7 @@ import type {
 export type GroupDetailAuthority = Pick<ExploreGroupResult, 'cacheRevision' | 'searchProvenance' | 'candidateSnapshotId'>;
 
 export type GroupDetailLookup =
-  | { status: 'found'; row: ExploreGroupRow; authority: GroupDetailAuthority }
+  | { status: 'found'; row: ExploreGroupRow; overview?: ExploreGroupOverview; authority: GroupDetailAuthority }
   | { status: 'missing' }
   | { status: 'unavailable'; unavailable: ExploreCacheUnavailable };
 
@@ -37,5 +38,5 @@ export async function findGroupDetail(
   }
   const row = loaded.result.rows.find((candidate) => candidate.key === key);
   const { cacheRevision, searchProvenance, candidateSnapshotId } = loaded.result;
-  return row ? { status: 'found', row, authority: { cacheRevision, searchProvenance, candidateSnapshotId } } : { status: 'missing' };
+  return row ? { status: 'found', row, overview: loaded.result.overview, authority: { cacheRevision, searchProvenance, candidateSnapshotId } } : { status: 'missing' };
 }

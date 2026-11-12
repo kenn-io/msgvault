@@ -54,6 +54,7 @@ type Message struct {
 	BodyHTML        string
 	Attachments     []Attachment
 	Errors          []string // Non-fatal parsing errors
+	Incomplete      bool     // The parser reports that some message content was lost.
 }
 
 // Address represents an email address with optional display name.
@@ -165,6 +166,7 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 	// Collect any parsing errors
 	for _, e := range env.Errors {
 		msg.Errors = append(msg.Errors, e.Error())
+		msg.Incomplete = msg.Incomplete || e.Severe
 	}
 
 	if inspect != nil {
@@ -175,8 +177,8 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 }
 
 // ParseWithRecovery parses a message and salvages its top-level headers when
-// malformed MIME structure prevents full envelope parsing. Body content and
-// attachments remain unavailable after a fatal parse error.
+// malformed MIME structure prevents full envelope parsing. A narrowly recognized
+// legacy CSV framing defect is retried on a copy before falling back to headers.
 func ParseWithRecovery(raw []byte, fallbackSubject string) (*Message, error) {
 	return parseWithRecovery(raw, fallbackSubject, nil)
 }
@@ -187,7 +189,13 @@ func parseWithRecovery(raw []byte, fallbackSubject string, inspect func(*enmime.
 		return msg, nil
 	}
 
+	if recovered := recoverLegacyCSV(raw); recovered != nil {
+		// Repaired framing must not be exposed as original raw-part evidence.
+		return recovered, nil
+	}
+
 	msg = salvageHeaders(raw)
+	msg.Incomplete = true
 	if msg.Subject == "" {
 		msg.Subject = fallbackSubject
 	}

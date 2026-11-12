@@ -35,7 +35,7 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 
 	src, err := s.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "create source")
-	conv, err := s.EnsureConversation(src.ID, "c1", "")
+	conv, err := s.EnsureConversation(t.Context(), src.ID, "c1", "")
 	require.NoError(err, "create conversation")
 	msgID, err := s.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: conv,
@@ -63,7 +63,10 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 		"description": "e2e staging",
 	})
 	require.NoError(err, "marshal request")
-	resp, err := http.Post(httpSrv.URL+"/api/v1/deletions", "application/json", bytes.NewReader(body))
+	stageReq, err := http.NewRequestWithContext(t.Context(), http.MethodPost, httpSrv.URL+"/api/v1/deletions", bytes.NewReader(body))
+	require.NoError(err, "build POST /deletions")
+	stageReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(stageReq)
 	require.NoError(err, "POST /deletions")
 	defer func() { _ = resp.Body.Close() }()
 	require.Equal(http.StatusCreated, resp.StatusCode, "stage status")
@@ -81,7 +84,9 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 	assert.Equal("alice@example.com", persisted.Filters.Account, "manifest account")
 
 	// List pending — the staged manifest appears.
-	listResp, err := http.Get(httpSrv.URL + "/api/v1/deletions?status=pending")
+	listReq, err := http.NewRequestWithContext(t.Context(), http.MethodGet, httpSrv.URL+"/api/v1/deletions?status=pending", nil)
+	require.NoError(err, "build GET /deletions")
+	listResp, err := http.DefaultClient.Do(listReq)
 	require.NoError(err, "GET /deletions")
 	defer func() { _ = listResp.Body.Close() }()
 	require.Equal(http.StatusOK, listResp.StatusCode, "list status")
@@ -92,7 +97,7 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 	assert.Equal("api", listed.Manifests[0].CreatedBy)
 
 	// Cancel it.
-	req, err := http.NewRequest(http.MethodDelete, httpSrv.URL+"/api/v1/deletions/"+staged.ID, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodDelete, httpSrv.URL+"/api/v1/deletions/"+staged.ID, nil)
 	require.NoError(err, "build DELETE request")
 	cancelResp, err := http.DefaultClient.Do(req)
 	require.NoError(err, "DELETE /deletions/{id}")
@@ -100,7 +105,7 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 	require.Equal(http.StatusOK, cancelResp.StatusCode, "cancel status")
 
 	// Second cancel conflicts.
-	req2, err := http.NewRequest(http.MethodDelete, httpSrv.URL+"/api/v1/deletions/"+staged.ID, nil)
+	req2, err := http.NewRequestWithContext(t.Context(), http.MethodDelete, httpSrv.URL+"/api/v1/deletions/"+staged.ID, nil)
 	require.NoError(err, "build second DELETE request")
 	conflictResp, err := http.DefaultClient.Do(req2)
 	require.NoError(err, "second DELETE")
@@ -108,7 +113,9 @@ func TestDeletionStagingEndToEnd(t *testing.T) {
 	assert.Equal(http.StatusConflict, conflictResp.StatusCode, "second cancel conflicts")
 
 	// Pending list is empty again.
-	list2, err := http.Get(httpSrv.URL + "/api/v1/deletions?status=pending")
+	list2Req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, httpSrv.URL+"/api/v1/deletions?status=pending", nil)
+	require.NoError(err, "build GET /deletions after cancel")
+	list2, err := http.DefaultClient.Do(list2Req)
 	require.NoError(err, "GET /deletions after cancel")
 	defer func() { _ = list2.Body.Close() }()
 	require.Equal(http.StatusOK, list2.StatusCode, "list after cancel status")

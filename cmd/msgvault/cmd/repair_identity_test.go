@@ -219,7 +219,7 @@ func installFailingRepairIdentityTrigger(t *testing.T, st *store.Store) {
 
 	var err error
 	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`
+		_, err = st.DB().ExecContext(t.Context(), `
 			CREATE FUNCTION fail_repair_identity() RETURNS trigger
 			LANGUAGE plpgsql AS $$
 			BEGIN
@@ -235,7 +235,7 @@ func installFailingRepairIdentityTrigger(t *testing.T, st *store.Store) {
 			FOR EACH ROW EXECUTE FUNCTION fail_repair_identity()
 		`)
 	} else {
-		_, err = st.DB().Exec(`
+		_, err = st.DB().ExecContext(t.Context(), `
 			CREATE TRIGGER fail_repair_identity
 			BEFORE INSERT ON account_identities
 			WHEN NEW.address = 'fail@example.com'
@@ -256,6 +256,6 @@ func newRepairIdentityIMAPSource(t *testing.T, st *store.Store) *store.Source {
 	require.NoError(t, err)
 	configJSON, err := imapCfg.ToJSON()
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, configJSON))
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, configJSON))
 	return source
 }

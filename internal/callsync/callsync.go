@@ -131,7 +131,7 @@ func Import[L any](ctx context.Context, st *store.Store, spec Spec, now time.Tim
 	if err := opts.MediaPolicy.Validate(); err != nil {
 		return nil, err
 	}
-	source, err := st.GetSourceByTypeAndIdentifier(spec.SourceType, opts.Identifier)
+	source, err := st.GetSourceByTypeAndIdentifier(ctx, spec.SourceType, opts.Identifier)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func Import[L any](ctx context.Context, st *store.Store, spec Spec, now time.Tim
 			retErr = errors.Join(retErr, scoped.FailSyncWithCheckpoint(runID, spec.Label+" sync incomplete", checkpoint()))
 		}
 	}()
-	current, err := scoped.GetSourceByID(source.ID)
+	current, err := scoped.GetSourceByIDContext(ctx, source.ID)
 	if err != nil {
 		return sum, err
 	}
@@ -212,12 +212,12 @@ func relistBound(watermark time.Time) time.Time {
 	return watermark.Add(-LateArtifactWindow).UTC().Truncate(24 * time.Hour)
 }
 
-func (e *engine[L]) save() error {
+func (e *engine[L]) save(ctx context.Context) error {
 	raw, err := json.Marshal(e.state, json.Deterministic(true))
 	if err != nil {
 		return err
 	}
-	return e.St.UpdateSourceSyncState(e.SourceID, string(raw))
+	return e.St.UpdateSourceSyncState(ctx, e.SourceID, string(raw))
 }
 
 // retry handles saved failures so old calls remain reachable.
@@ -276,7 +276,7 @@ func (e *engine[L]) discover(ctx context.Context) error {
 			}
 			if e.Opts.Limit > 0 && int(e.Sum.MeetingsProcessed) >= e.Opts.Limit && !e.calls[item.ID] {
 				e.Sum.DiscoveryPending = true
-				return e.save()
+				return e.save(ctx)
 			}
 			e.handled[key] = true
 			t.Handled = append(t.Handled, key)
@@ -289,7 +289,7 @@ func (e *engine[L]) discover(ctx context.Context) error {
 		}
 		cursor = next
 		t.Cursor, t.Handled = next, nil
-		if err := e.save(); err != nil {
+		if err := e.save(ctx); err != nil {
 			return err
 		}
 	}
@@ -300,7 +300,7 @@ func (e *engine[L]) discover(ctx context.Context) error {
 		e.state.Watermark = t.StartedAt
 	}
 	*t = Traversal{}
-	return e.save()
+	return e.save(ctx)
 }
 
 // handle archives one call. A provider failure is reported and the run goes
@@ -336,7 +336,7 @@ func (e *engine[L]) handle(ctx context.Context, item Item[L]) error {
 	}
 	if wasRetry || callErr != nil {
 		// Keep retries durable even if a later call or listing stops the run.
-		return e.save()
+		return e.save(ctx)
 	}
 	return nil
 }

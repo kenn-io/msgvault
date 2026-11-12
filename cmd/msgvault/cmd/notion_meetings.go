@@ -186,7 +186,7 @@ var addNotionMeetingsCmd = &cobra.Command{
 		if err := runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client, users); err != nil {
 			return err
 		}
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -195,7 +195,7 @@ var addNotionMeetingsCmd = &cobra.Command{
 			source.Identifier, accountEmail); err != nil {
 			return err
 		}
-		if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nNotion meeting source %s registered.\n", source.Identifier)
@@ -249,7 +249,7 @@ maintenance. --probe validates access without printing meeting content.`,
 			return runNotionMeetingsProbe(cmd.Context(), cmd.OutOrStdout(), client, users)
 		}
 
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -303,6 +303,7 @@ func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, sourc
 		"notion meeting source %q is not registered; run msgvault add-notion-meetings %s first",
 		source.Identifier, source.Identifier)
 	registered, err := requireRegisteredMeetingSource(
+		ctx,
 		st, notionmeetings.SourceType, source.Identifier, notRegistered,
 	)
 	if err != nil {

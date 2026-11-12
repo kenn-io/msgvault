@@ -87,7 +87,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	}
 
 	var state syncState
-	if prev, perr := imp.store.GetLastSuccessfulSync(src.ID); perr == nil && prev != nil && prev.CursorAfter.Valid {
+	if prev, perr := imp.store.GetLastSuccessfulSyncContext(ctx, src.ID); perr == nil && prev != nil && prev.CursorAfter.Valid {
 		_ = json.Unmarshal([]byte(prev.CursorAfter.String), &state)
 	}
 
@@ -168,7 +168,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	}); err != nil {
 		return sum, err
 	}
-	if err = imp.store.RecomputeConversationStats(src.ID); err != nil {
+	if err = imp.store.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
 		return sum, err
 	}
 	if sum.Errors > 0 {

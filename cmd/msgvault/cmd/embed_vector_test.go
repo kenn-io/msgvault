@@ -24,7 +24,6 @@ import (
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/scheduler"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
@@ -350,8 +349,6 @@ func setupVectorFeaturesFixture(
 	c.Vector.Embeddings.Model = "text-embedding-test"
 	c.Vector.Embeddings.Dimension = 4
 	c.Vector.Embeddings.APIFormat = apiFormat
-	c.Attachments.Documents.Index.Embeddings.Enabled = true
-	c.Attachments.Documents.Index.Embeddings.Profile = "vector.embeddings"
 	if apiFormat == vector.APIFormatVoyageContextual {
 		c.Vector.Embeddings.Model = "voyage-context-4"
 	}
@@ -373,28 +370,6 @@ func setupVectorFeaturesFixture(
 		)
 		require.NoError(t, err)
 	}
-	fingerprint := strings.Repeat("d", 64)
-	profile := store.DocumentExtractionProfile{
-		ID: "profile-" + fingerprint, Fingerprint: fingerprint, Provider: "synthetic",
-		Endpoint: "https://documents.example.test/v1", Region: localValue, Model: "extract-test",
-		RetentionPosture: "standard", TrainingPosture: "opted-out",
-		AllowedMediaTypes: []string{"application/pdf"}, PolicyJSON: []byte(`{"policy":1}`),
-	}
-	_, err := s.EnsureDocumentExtractionProfile(testCtx, profile)
-	require.NoError(t, err)
-	_, err = s.DB().Exec(s.Rebind(`UPDATE document_index_state SET target_profile_id = ? WHERE singleton = 1`), profile.ID)
-	require.NoError(t, err)
-	spec, err := configuredDocumentVectorSpec(testCtx, s)
-	require.NoError(t, err)
-	documentConsent, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "document_embedding")
-	require.NoError(t, err)
-	queryConsent, err := configuredDocumentVectorConsentSpec(spec, invocationFromContext(testCtx), "query_embedding")
-	require.NoError(t, err)
-	for _, consentSpec := range []store.DocumentVectorConsentSpec{documentConsent, queryConsent} {
-		_, _, err = s.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
-		require.NoError(t, err)
-	}
-
 	vf, err := setupVectorFeatures(testCtx, s, mainPath, readOnly)
 	require.NoError(t, err)
 	require.NotNil(t, vf)
@@ -402,39 +377,9 @@ func setupVectorFeaturesFixture(
 	return vf
 }
 
-func TestSetupVectorFeaturesDocumentClientRejectsCrossOriginRedirects(t *testing.T) {
-	for _, apiFormat := range []vector.EmbeddingAPIFormat{vector.APIFormatOpenAI, vector.APIFormatVoyageContextual} {
-		t.Run(string(apiFormat), func(t *testing.T) {
-			var targetRequests atomic.Int32
-			target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-				targetRequests.Add(1)
-			}))
-			t.Cleanup(target.Close)
-			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Location", target.URL+"/outside-consent")
-				w.WriteHeader(http.StatusTemporaryRedirect)
-			}))
-			t.Cleanup(origin.Close)
-
-			vf := setupVectorFeaturesFixture(t, apiFormat, false, func(c *config.Config) {
-				c.Vector.Embeddings.Endpoint = origin.URL
-			})
-			_, err := vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{{
-				Chunks: []string{"private attachment text"},
-			}})
-
-			require.ErrorIs(t, err, embed.ErrEmbeddingProviderRedirect)
-			_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "private query text")
-			require.ErrorIs(t, err, embed.ErrEmbeddingProviderRedirect)
-			assert.Zero(t, targetRequests.Load(), "attachment text must not reach the redirect target")
-		})
-	}
-}
-
 func TestSetupVectorFeatures_AppliesOpenAIEmbeddingPrefixes(t *testing.T) {
 	check := assert.New(t)
 	must := require.New(t)
-	maxChunk := strings.Repeat("x", 2000)
 	var calls [][]string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -456,45 +401,26 @@ func TestSetupVectorFeatures_AppliesOpenAIEmbeddingPrefixes(t *testing.T) {
 	t.Cleanup(server.Close)
 	vf := setupVectorFeaturesFixture(t, vector.APIFormatOpenAI, false, func(c *config.Config) {
 		c.Vector.Embeddings.Endpoint = server.URL
-		c.Vector.Embeddings.MaxInputChars = len(maxChunk)
-		c.Vector.Embeddings.DocumentPrefix = "search_document: "
 		c.Vector.Embeddings.QueryPrefix = "search_query: "
 		c.Vector.People = vector.PeopleConfig{
 			Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 		}
 	})
 
-	_, err := vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
-		{Chunks: []string{"first chunk", "second chunk"}},
-	})
-	must.NoError(err)
-	_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "document query")
-	must.NoError(err)
-	_, err = vf.HybridEngine.EmbedQuery(t.Context(), "message query")
+	_, err := vf.HybridEngine.EmbedQuery(t.Context(), "message query")
 	must.NoError(err)
 	_, err = vf.PersonQueryClient.EmbedQuery(t.Context(), "person query")
 	must.NoError(err)
-	_, err = vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
-		{Chunks: []string{maxChunk}},
-	})
-	must.NoError(err)
 
 	check.Equal([][]string{
-		{"search_document: first chunk", "search_document: second chunk"},
-		{"search_query: document query"},
 		{"search_query: message query"},
 		{"search_query: person query"},
-		{"search_document: " + maxChunk},
 	}, calls)
-	must.Len(calls, 5)
-	must.Len(calls[4], 1)
-	check.Len(calls[4][0], len(maxChunk)+len("search_document: "))
 }
 
 func TestSetupVectorFeatures_AppliesVoyageEmbeddingPrefixes(t *testing.T) {
 	check := assert.New(t)
 	must := require.New(t)
-	maxChunk := strings.Repeat("x", 2000)
 	type voyageCall struct {
 		Inputs    [][]string `json:"inputs"`
 		InputType string     `json:"input_type"`
@@ -522,40 +448,21 @@ func TestSetupVectorFeatures_AppliesVoyageEmbeddingPrefixes(t *testing.T) {
 	t.Cleanup(server.Close)
 	vf := setupVectorFeaturesFixture(t, vector.APIFormatVoyageContextual, false, func(c *config.Config) {
 		c.Vector.Embeddings.Endpoint = server.URL
-		c.Vector.Embeddings.MaxInputChars = len(maxChunk)
-		c.Vector.Embeddings.DocumentPrefix = "search_document: "
 		c.Vector.Embeddings.QueryPrefix = "search_query: "
 		c.Vector.People = vector.PeopleConfig{
 			Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 		}
 	})
 
-	_, err := vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
-		{Chunks: []string{"first chunk", "second chunk"}},
-	})
-	must.NoError(err)
-	_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "document query")
-	must.NoError(err)
-	_, err = vf.HybridEngine.EmbedQuery(t.Context(), "message query")
+	_, err := vf.HybridEngine.EmbedQuery(t.Context(), "message query")
 	must.NoError(err)
 	_, err = vf.PersonQueryClient.EmbedQuery(t.Context(), "person query")
 	must.NoError(err)
-	_, err = vf.SemanticClient.EmbedDocuments(t.Context(), []vector.DocumentInput{
-		{Chunks: []string{maxChunk}},
-	})
-	must.NoError(err)
 
 	check.Equal([]voyageCall{
-		{InputType: "document", Inputs: [][]string{{"search_document: first chunk", "search_document: second chunk"}}},
-		{InputType: "query", Inputs: [][]string{{"search_query: document query"}}},
 		{InputType: "query", Inputs: [][]string{{"search_query: message query"}}},
 		{InputType: "query", Inputs: [][]string{{"search_query: person query"}}},
-		{InputType: "document", Inputs: [][]string{{"search_document: " + maxChunk}}},
 	}, calls)
-	must.Len(calls, 5)
-	must.Len(calls[4].Inputs, 1)
-	must.Len(calls[4].Inputs[0], 1)
-	check.Len(calls[4].Inputs[0][0], len(maxChunk)+len("search_document: "))
 }
 
 func TestSetupVectorFeaturesUsesStoredCredentialSnapshotWithoutEnvironment(t *testing.T) {
@@ -587,7 +494,7 @@ func TestSetupVectorFeaturesUsesStoredCredentialSnapshotWithoutEnvironment(t *te
 		providercredentials.VectorEmbeddingsID, provider.URL, "stored-after-startup")
 	require.NoError(t, err)
 
-	_, err = vf.DocumentQueryClient.EmbedQuery(t.Context(), "private query")
+	_, err = vf.HybridEngine.EmbedQuery(t.Context(), "private query")
 	require.NoError(t, err)
 	assert.Equal(t, "Bearer stored-at-startup", authorization)
 }
@@ -701,7 +608,7 @@ func TestConfiguredConvergenceRequiresExactPersonRevisionsAndAllowsZeroPeople(t 
 	require.NoError(err)
 	personChecker, ok := checker.(personsearch.CoverageChecker)
 	require.True(ok, "configured convergence must expose the person-only readiness check")
-	_, err = mainStore.DB().Exec(`
+	_, err = mainStore.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'person-coverage@example.test');
 		INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)
@@ -715,7 +622,7 @@ func TestConfiguredConvergenceRequiresExactPersonRevisionsAndAllowsZeroPeople(t 
 	state, err := checker.CheckConvergence(t.Context(), gen)
 	require.NoError(err)
 	assert.False(state.MessageCoverageComplete, "precondition: message coverage is incomplete")
-	_, err = mainStore.DB().Exec(`UPDATE messages SET embed_gen = ? WHERE id = 1`, gen)
+	_, err = mainStore.DB().ExecContext(t.Context(), `UPDATE messages SET embed_gen = ? WHERE id = 1`, gen)
 	require.NoError(err)
 
 	state, err = checker.CheckConvergence(t.Context(), gen)
@@ -723,17 +630,17 @@ func TestConfiguredConvergenceRequiresExactPersonRevisionsAndAllowsZeroPeople(t 
 	assert.True(state.PersonCoverageComplete)
 	assert.Zero(state.PersonCoverageMismatched)
 	assert.True(state.Complete(), "zero-person archive must converge")
-	_, err = mainStore.DB().Exec(`INSERT INTO persons (vcard_uid) VALUES (?)`,
+	_, err = mainStore.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid) VALUES (?)`,
 		"urn:uuid:00000000-0000-0000-0000-000000000000")
 	require.NoError(err)
 	state, err = checker.CheckConvergence(t.Context(), gen)
 	require.NoError(err)
 	assert.True(state.Complete(), "person without semantic text must not require a vector")
-	_, err = mainStore.DB().Exec(`DELETE FROM persons WHERE vcard_uid = ?`,
+	_, err = mainStore.DB().ExecContext(t.Context(), `DELETE FROM persons WHERE vcard_uid = ?`,
 		"urn:uuid:00000000-0000-0000-0000-000000000000")
 	require.NoError(err)
 
-	_, err = mainStore.DB().Exec(`INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`,
+	_, err = mainStore.DB().ExecContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)`,
 		"urn:uuid:00000000-0000-0000-0000-000000000001", "Synthetic Person")
 	require.NoError(err)
 	documents, err := mainStore.ListPersonSemanticDocumentsContext(t.Context())
@@ -761,7 +668,7 @@ func TestConfiguredConvergenceRequiresExactPersonRevisionsAndAllowsZeroPeople(t 
 	require.NoError(err)
 	assert.True(state.Complete())
 
-	_, err = mainStore.DB().Exec(`UPDATE persons SET display_name = ? WHERE id = ?`,
+	_, err = mainStore.DB().ExecContext(t.Context(), `UPDATE persons SET display_name = ? WHERE id = ?`,
 		"Synthetic Person Updated", documents[0].PersonID)
 	require.NoError(err)
 	state, err = checker.CheckConvergence(t.Context(), gen)
@@ -770,7 +677,7 @@ func TestConfiguredConvergenceRequiresExactPersonRevisionsAndAllowsZeroPeople(t 
 	assert.Equal(int64(1), state.PersonCoverageMismatched)
 	assert.False(state.Complete(), "stale exact digest must block activation")
 
-	_, err = mainStore.DB().Exec(`DELETE FROM persons WHERE id = ?`, documents[0].PersonID)
+	_, err = mainStore.DB().ExecContext(t.Context(), `DELETE FROM persons WHERE id = ?`, documents[0].PersonID)
 	require.NoError(err)
 	state, err = checker.CheckConvergence(t.Context(), gen)
 	require.NoError(err)
@@ -787,7 +694,7 @@ func TestConfiguredConvergenceRequiresExactPersonRevisionsAndAllowsZeroPeople(t 
 // discover and embed.
 func openTestBackend(t *testing.T) *sqlitevec.Backend {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	require.NoError(t, sqlitevec.RegisterExtension(), "RegisterExtension")
 
 	dir := t.TempDir()
@@ -801,9 +708,9 @@ CREATE TABLE messages (
     deleted_at DATETIME,
     deleted_from_source_at DATETIME
 );`
-	_, err = main.Exec(schema)
+	_, err = main.ExecContext(t.Context(), schema)
 	require.NoError(t, err, "schema")
-	_, err = main.Exec(`INSERT INTO messages (id) VALUES (1)`)
+	_, err = main.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES (1)`)
 	require.NoError(t, err, "seed")
 	b, err := sqlitevec.Open(ctx, sqlitevec.Options{
 		Path:      filepath.Join(dir, "vectors.db"),
@@ -835,7 +742,7 @@ func openStderrSink(t *testing.T) *os.File {
 func TestPickEmbedGeneration_ResumesBuildingGeneration(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	b := openTestBackend(t)
 
 	// Simulate an interrupted full rebuild: a building generation
@@ -859,7 +766,7 @@ func TestPickEmbedGeneration_ResumesBuildingGeneration(t *testing.T) {
 // "fresh install" path: default-mode embed with no generations must
 // surface a clear hint rather than silently doing nothing.
 func TestPickEmbedGeneration_NoGenerations_HintsFullRebuild(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	b := openTestBackend(t)
 
 	_, _, err := pickEmbedGeneration(ctx, b, embedGenerationOpts{
@@ -881,7 +788,7 @@ func TestPickEmbedGeneration_NoGenerations_HintsFullRebuild(t *testing.T) {
 // dimension than the current config — continuing would silently
 // embed against the wrong model.
 func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	b := openTestBackend(t)
 	_, err := b.CreateGeneration(ctx, "old-model", 4, "")
 	require.NoError(t, err, "CreateGeneration")
@@ -907,7 +814,7 @@ func TestPickEmbedGeneration_ResumeFingerprintMismatch(t *testing.T) {
 func TestPickEmbedGeneration_PrefersBuildingOverActive_MatchingFingerprint(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	b := openTestBackend(t)
 
 	// Build state: an active generation exists, and a second building
@@ -939,7 +846,7 @@ func TestPickEmbedGeneration_PrefersBuildingOverActive_MatchingFingerprint(t *te
 // without any warning. The new precedence-then-mismatch flow should
 // either resume a matching build or refuse with a clear error.
 func TestPickEmbedGeneration_RejectsBuildingWithMismatchedFingerprint(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	b := openTestBackend(t)
 
 	// State: building generation exists for an old model. No active
@@ -961,7 +868,7 @@ func TestPickEmbedGeneration_RejectsBuildingWithMismatchedFingerprint(t *testing
 func TestPickEmbedGeneration_ContextualRejectsWrongGenerationFingerprint(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	backend := openTestBackend(t)
 	_, err := backend.CreateGeneration(ctx, "voyage-context-4", 4,
 		"voyage-context-4:4:p1-111111:c32768:e1:avoyage-contextual:v0")
@@ -994,7 +901,7 @@ func TestPickEmbedGeneration_ContextualRejectsWrongGenerationFingerprint(t *test
 func TestPickEmbedGeneration_StaleActivePlusMatchingBuilding(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	b := openTestBackend(t)
 
 	staleActive, err := b.CreateGeneration(ctx, "old-model", 4, "")
@@ -1025,7 +932,7 @@ func TestPickEmbedGeneration_StaleActivePlusMatchingBuilding(t *testing.T) {
 // missed this active-also-matches case.
 func TestPickEmbedGeneration_ActivePlusMismatchedBuildingRejected(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	b := openTestBackend(t)
 
 	matchingActive, err := b.CreateGeneration(ctx, "fake", 4, "")
@@ -1048,7 +955,7 @@ func TestPickEmbedGeneration_ActivePlusMismatchedBuildingRejected(t *testing.T) 
 // TestPickEmbedGeneration_FullRebuildAbortsWhenDeclined verifies the
 // Confirm hook short-circuits when the user declines a rebuild.
 func TestPickEmbedGeneration_FullRebuildAbortsWhenDeclined(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	b := openTestBackend(t)
 
 	_, _, err := pickEmbedGeneration(ctx, b, embedGenerationOpts{

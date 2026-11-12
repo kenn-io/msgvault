@@ -34,7 +34,7 @@ const savedViewRunFixtureJSON = `{
 		"occurred_at":"2026-08-18T07:00:00Z","match":{"semantic_score":0.91},
 		"source_id":3,"source_type":"gmail","source_identifier":"archive@example.com",
 		"message_type":"email","conversation_type":"thread","title":"Quarterly invoice",
-		"preview":"Invoice details","matched_sender_identities":["archive@example.com"],
+		"preview":"Invoice details","sender_label":"Invoice Sender","matched_sender_identities":["archive@example.com"],
 		"matched_recipient_identities":["billing@example.com"],"message_count":1,
 		"has_attachments":true,"attachment_count":1,"attachment_size":2048,
 		"deleted_from_source":false
@@ -64,13 +64,15 @@ func TestRunSavedViewDelegatesExecutionToTheDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	page, err := newSavedViewTestClient(t, server).RunSavedView(t.Context(), 7, 25, "page-1")
+	page, err := newSavedViewTestClient(t, server).RunSavedView(t.Context(), 7, 25, "page-1", "America/New_York")
 	requirements.NoError(err)
 	assertions.Equal(1, requests, "the daemon owns the view lookup and the Explore translation")
 	requirements.NotNil(body.Limit)
 	assertions.Equal(int64(25), *body.Limit)
 	requirements.NotNil(body.Cursor)
 	assertions.Equal("page-1", *body.Cursor)
+	requirements.NotNil(body.Timezone)
+	assertions.Equal("America/New_York", *body.Timezone)
 
 	assertions.Equal(int64(7), page.View.ID)
 	assertions.JSONEq(`{
@@ -82,6 +84,7 @@ func TestRunSavedViewDelegatesExecutionToTheDaemon(t *testing.T) {
 	assertions.Equal(savedview.ResultEntries, page.ResultKind)
 	requirements.Len(page.Rows, 1)
 	assertions.Equal("Quarterly invoice", page.Rows[0].Title)
+	assertions.Equal("Invoice Sender", page.Rows[0].SenderLabel)
 	assertions.Equal(1, page.Returned())
 	requirements.NotNil(page.TotalCount)
 	assertions.Equal(int64(1), *page.TotalCount)
@@ -103,7 +106,7 @@ func TestRunSavedViewDecodesGroupAndFilePages(t *testing.T) {
 		{
 			name: "groups",
 			body: `{"saved_view":` + savedViewFixtureJSON + `,"result_kind":"groups",
-				"groups":[{"key":"example.com","label":"example.com","count":4,"estimated_bytes":512,"latest_at":"2026-08-18T07:00:00Z"}],
+				"groups":[{"key":"example.com","label":"example.com","count":4,"total_items":40,"estimated_bytes":512,"latest_at":"2026-08-18T07:00:00Z"}],
 				"total_count":1,"cache_revision":"cache-9","search_provenance":{}}`,
 			kind: savedview.ResultGroups,
 			want: func(t *testing.T, page *savedview.RunPage) {
@@ -111,6 +114,7 @@ func TestRunSavedViewDecodesGroupAndFilePages(t *testing.T) {
 				require.Len(t, page.Groups, 1)
 				assert.Equal(t, "example.com", page.Groups[0].Key)
 				assert.Equal(t, int64(4), page.Groups[0].Count)
+				assert.Equal(t, int64(40), page.Groups[0].TotalItems)
 				assert.Empty(t, page.Rows)
 			},
 		},
@@ -138,7 +142,7 @@ func TestRunSavedViewDecodesGroupAndFilePages(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			page, err := newSavedViewTestClient(t, server).RunSavedView(t.Context(), 7, 20, "")
+			page, err := newSavedViewTestClient(t, server).RunSavedView(t.Context(), 7, 20, "", "")
 			require.NoError(t, err)
 			assert.Equal(t, tc.kind, page.ResultKind)
 			assert.Equal(t, 1, page.Returned())
@@ -179,7 +183,7 @@ func TestRunSavedViewMapsDaemonErrors(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			_, err := newSavedViewTestClient(t, server).RunSavedView(t.Context(), 7, 20, "")
+			_, err := newSavedViewTestClient(t, server).RunSavedView(t.Context(), 7, 20, "", "")
 			require.ErrorIs(t, err, tc.wantErr)
 		})
 	}

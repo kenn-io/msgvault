@@ -7,7 +7,7 @@
 
 <script lang="ts">
   import { appShortcuts, ROOT_SCOPE } from '@kenn-io/kit-ui';
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { TimelineScope } from '../../explore/api';
   import { ExploreLoader, type MessagesTable } from '../../explore/loader.svelte';
@@ -86,7 +86,7 @@
     event.preventDefault();
     event.stopPropagation();
   }
-  function closeReadingPane(): void { navigate({ selectedRow: null }); focusGrid(); }
+  async function closeReadingPane(): Promise<void> { navigate({ selectedRow: null }); await tick(); focusGrid(); }
   function focusGrid(): void { root?.querySelector<HTMLElement>('[role="grid"]')?.focus(); }
   function navigate(patch: Partial<ExploreURLState>): void {
     if (patch.workspace === 'settings') { onOpenSettings?.(); return; }

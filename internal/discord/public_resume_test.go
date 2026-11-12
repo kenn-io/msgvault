@@ -47,16 +47,16 @@ func TestPublicImportResumesOlderArchivedThreadAndRepairsItsMessages(t *testing.
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT count(*) FROM messages WHERE source_message_id=?`), messageID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM messages WHERE source_message_id=?`), messageID).Scan(&count))
 	require.Equal(1, count, "retry must finish the older archived thread")
 	api.messages["500"][0].Content = "repaired astronomy history"
 	api.messages["500"][0].Raw = nil
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id=?`), messageIDBySource(t, st, source.ID, messageID)).Scan(&body))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id=?`), messageIDBySource(t, st, source.ID, messageID)).Scan(&body))
 	assert.Equal("repaired astronomy history", body, "completed older threads remain in the repair walk")
 }
 
@@ -140,7 +140,7 @@ func TestFullImportWithoutAttachmentsDirKeepsArchivedFiles(t *testing.T) {
 	require.NoError(err)
 
 	hash := strings.Repeat("ab", 32)
-	result, err := st.DB().Exec(st.Rebind(`UPDATE attachments SET storage_path = ?, content_hash = ?, attachment_state = 'stored'
+	result, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attachments SET storage_path = ?, content_hash = ?, attachment_state = 'stored'
 		WHERE source_attachment_id LIKE 'discord:%'`), hash[:2]+"/"+hash, hash)
 	require.NoError(err)
 	rows, err := result.RowsAffected()
@@ -151,7 +151,7 @@ func TestFullImportWithoutAttachmentsDirKeepsArchivedFiles(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(summary.MediaPending, "an archived file is not pending")
 	var storagePath, contentHash, state string
-	require.NoError(st.DB().QueryRow(`SELECT storage_path, content_hash, attachment_state FROM attachments
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT storage_path, content_hash, attachment_state FROM attachments
 		WHERE source_attachment_id LIKE 'discord:%'`).Scan(&storagePath, &contentHash, &state))
 	assert.Equal(hash[:2]+"/"+hash, storagePath)
 	assert.Equal(hash, contentHash)

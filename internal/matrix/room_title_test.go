@@ -41,6 +41,6 @@ func TestImporterStripsTerminalControlsFromRoomTitles(t *testing.T) {
 	_, err = NewImporter(st, &Runtime{Client: client}).Import(t.Context(), ImportOptions{UserID: "@archive:example.org"})
 	require.NoError(err)
 	var title string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT title FROM conversations WHERE source_conversation_id = ?`), "!room:example.org").Scan(&title))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT title FROM conversations WHERE source_conversation_id = ?`), "!room:example.org").Scan(&title))
 	assert.Equal("Member", title)
 }

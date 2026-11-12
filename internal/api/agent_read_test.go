@@ -32,7 +32,7 @@ func TestAgentCLISearchOmitsHybridHint(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
-	source, _, err := testutil.CreateIndexedSourceMessage(st, "reader@example.com", "message", "Project plan", "")
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.com", "message", "Project plan", "")
 	requirements.NoError(err)
 	vectorCfg := vector.Config{}
 	backend := &fakeVectorBackend{active: &vector.Generation{
@@ -47,7 +47,8 @@ func TestAgentCLISearchOmitsHybridHint(t *testing.T) {
 		VectorCfg:    vectorCfg,
 		Logger:       testLogger(),
 	})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	requirements.NoError(err)
 
@@ -61,7 +62,7 @@ func TestAgentCLISearchOmitsHybridHint(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=missingterm", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/search?q=missingterm", nil)
 			req.Header.Set(tc.header, tc.credential)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
@@ -76,7 +77,7 @@ func TestAgentCLISearchOmitsHybridHint(t *testing.T) {
 		})
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=missingterm&mode=hybrid", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q=missingterm&mode=hybrid", nil)
 	req.Header.Set(apiprotocol.AgentTokenHeader, token)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
@@ -98,7 +99,7 @@ func TestAgentReadAuthorization(t *testing.T) {
 	ids := make([]int64, 2)
 	for i, identifier := range []string{"allowed@example.test", "other@example.test"} {
 		var err error
-		sources[i], ids[i], err = testutil.CreateIndexedSourceMessage(st, identifier, strconv.Itoa(i), fmt.Sprintf("glacier source-%d", i), "")
+		sources[i], ids[i], err = testutil.CreateIndexedSourceMessage(t.Context(), st, identifier, strconv.Itoa(i), fmt.Sprintf("glacier source-%d", i), "")
 		requirements.NoError(err)
 		participant, err := st.EnsureParticipant(identifier, "", "example.test")
 		requirements.NoError(err)
@@ -129,11 +130,11 @@ func TestAgentReadAuthorization(t *testing.T) {
 	requirements.NoError(os.MkdirAll(filepath.Dir(storagePath), 0700))
 	requirements.NoError(os.WriteFile(storagePath, []byte("synthetic attachment"), 0600))
 	requirements.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "sample.bin"), []byte("synthetic attachment"), 0600))
-	requirements.NoError(st.UpsertAttachment(ids[0], "sample.bin", "application/octet-stream", "sample.bin", hash, 20))
+	requirements.NoError(st.UpsertAttachment(t.Context(), ids[0], "sample.bin", "application/octet-stream", "sample.bin", hash, 20))
 	var attID int64
-	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM attachments WHERE message_id=?"), ids[0]).Scan(&attID))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id=?"), ids[0]).Scan(&attID))
 	outsideHash := strings.Repeat("b", 64)
-	requirements.NoError(st.UpsertAttachment(ids[1], "outside.bin", "application/octet-stream", "outside.bin", outsideHash, 20))
+	requirements.NoError(st.UpsertAttachment(t.Context(), ids[1], "outside.bin", "application/octet-stream", "outside.bin", outsideHash, 20))
 	outsidePath, err := msgexport.StoragePath(cfg.AttachmentsDir(), outsideHash)
 	requirements.NoError(err)
 	requirements.NoError(os.MkdirAll(filepath.Dir(outsidePath), 0700))
@@ -178,7 +179,7 @@ func TestAgentReadAuthorization(t *testing.T) {
 						_, token, _, err = srv.agentGrants.Issue("wrong", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 						requirements.NoError(err)
 					}
-					r := httptest.NewRequest(http.MethodGet, tc.path, nil)
+					r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil)
 					requestCount++
 					r.RemoteAddr = fmt.Sprintf("10.0.0.%d:1234", requestCount)
 					r.Header.Set(apiprotocol.AgentTokenHeader, token)
@@ -207,7 +208,7 @@ func TestAgentReadAuthorization(t *testing.T) {
 		{"/api/v1/cli/attachment?content_hash=" + strings.Repeat("c", 64), http.StatusNotFound},
 		{"/api/v1/attachments/" + strings.Repeat("c", 64) + "/content", http.StatusNotFound},
 	} {
-		r := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil)
 		requestCount++
 		r.RemoteAddr = fmt.Sprintf("10.0.0.%d:1234", requestCount)
 		r.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -223,7 +224,7 @@ func TestAgentReadAuthorization(t *testing.T) {
 	} {
 		bodies := [2]string{}
 		for i, path := range pair {
-			r := httptest.NewRequest(http.MethodGet, path, nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 			requestCount++
 			r.RemoteAddr = fmt.Sprintf("10.0.0.%d:1234", requestCount)
 			r.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -237,7 +238,7 @@ func TestAgentReadAuthorization(t *testing.T) {
 	_, multiToken, _, err := srv.agentGrants.Issue("multiple sources", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}, {ID: other.ID, Type: other.SourceType, Identifier: other.Identifier}}, time.Time{})
 	requirements.NoError(err)
 	for _, path := range []string{"/api/v1/cli/search?q=glacier", "/api/v1/cli/search?q=glacier&collection=mixed"} {
-		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 		r.Header.Set(apiprotocol.AgentTokenHeader, multiToken)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
@@ -254,14 +255,14 @@ func TestAgentReadSourceFilterPrecedence(t *testing.T) {
 	refs := make([]agentgrant.SourceRef, 2)
 	for i := range sources {
 		subject := fmt.Sprintf("glacier source-%d", i)
-		source, id, err := testutil.CreateIndexedSourceMessage(st, fmt.Sprintf("source-%d@example.test", i), "message", subject, subject)
+		source, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, fmt.Sprintf("source-%d@example.test", i), "message", subject, subject)
 		requirements.NoError(err)
 		sources[i] = source
 		participant, err := st.EnsureParticipant(source.Identifier, "", "example.test")
 		requirements.NoError(err)
 		requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
 		if i == 0 {
-			conv, err := st.EnsureConversation(source.ID, "thread", "Synthetic")
+			conv, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Synthetic")
 			requirements.NoError(err)
 			extra, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "second", MessageType: "email", Subject: sql.NullString{String: "glacier source-0-extra", Valid: true}})
 			requirements.NoError(err)
@@ -280,7 +281,8 @@ func TestAgentReadSourceFilterPrecedence(t *testing.T) {
 	}
 	requirements.NoError(st.RemoveSourcesFromCollection("empty", []int64{sources[0].ID}))
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	t.Cleanup(srv.agentGrants.Close)
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead}, refs, time.Time{})
 	requirements.NoError(err)
@@ -330,7 +332,7 @@ func TestAgentReadSourceFilterPrecedence(t *testing.T) {
 						if owner && (!route.owner || tc.name != "plural overrides scalar") {
 							continue
 						}
-						req := httptest.NewRequest(http.MethodGet, route.path+"&"+tc.scope, nil)
+						req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, route.path+"&"+tc.scope, nil)
 						requests++
 						req.RemoteAddr = fmt.Sprintf("10.1.%d.%d:1234", requests/256, requests%256)
 						if owner {
@@ -369,7 +371,7 @@ func TestAgentCollections(t *testing.T) {
 	other, err := st.GetOrCreateSource("test", "outside@example.test")
 	requirements.NoError(err)
 	requirements.NoError(st.UpdateSourceDisplayName(src.ID, "Selected archive"))
-	conversation, err := st.EnsureConversation(src.ID, "thread", "Synthetic")
+	conversation, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Synthetic")
 	requirements.NoError(err)
 	for _, key := range []string{"live", "deleted"} {
 		_, err = st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conversation, SourceMessageID: key, MessageType: "email"})
@@ -397,7 +399,7 @@ func TestAgentCollections(t *testing.T) {
 		path string
 		code int
 	}{{"/api/v1/search/fast?q=glacier&collection=empty", 200}, {"/api/v1/cli/collections", 200}} {
-		r := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil)
 		r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
@@ -424,7 +426,7 @@ func TestAgentCollections(t *testing.T) {
 		}
 	}
 	requirements.NoError(st.AddSourcesToCollection("allowed", []int64{other.ID}))
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/stats/total?collection=allowed", nil)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/stats/total?collection=allowed", nil)
 	r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, r)
@@ -471,7 +473,7 @@ func TestAgentThreadErrors(t *testing.T) {
 			t.Cleanup(srv.agentGrants.Close)
 			_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 			requirements.NoError(err)
-			r := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message/thread"+tc.path, nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/message/thread"+tc.path, nil)
 			r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 			w := httptest.NewRecorder()
 			if tc.err == nil {
@@ -515,7 +517,7 @@ func TestAgentThreadOutsideGrantLoadsNothing(t *testing.T) {
 	_, secret, grant, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: allowed.ID, Type: allowed.SourceType, Identifier: allowed.Identifier}}, time.Time{})
 	requirements.NoError(err)
 
-	owner := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d&all=true", f.withRaw), nil)
+	owner := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d&all=true", f.withRaw), nil)
 	owner.Header.Set("X-Api-Key", "owner")
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, owner)
@@ -534,7 +536,7 @@ func TestAgentThreadOutsideGrantLoadsNothing(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			observed.pages = nil
-			r := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message/thread?"+selector, nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/message/thread?"+selector, nil)
 			r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 			requirements.Nil(srv.authorizeAgentRead(r, "getCLIMessageThread", &grant, agentgrant.PermissionMessageRead, 0, false))
 			w := httptest.NewRecorder()
@@ -560,7 +562,7 @@ func TestAgentTokenExpiryAPI(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	defer srv.agentGrants.Close()
 	request := func(method, path, body, token string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 		if body != "" {
 			r.Header.Set("Content-Type", "application/json")
 		}
@@ -614,7 +616,7 @@ func TestAgentTokenSelf(t *testing.T) {
 	_, drafter, _, err := srv.agentGrants.Issue("drafter", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, ref, time.Time{})
 	requirements.NoError(err)
 	get := func(header, value string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodGet, agentTokensPath+"/self", nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, agentTokensPath+"/self", nil)
 		r.Header.Set(header, value)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
@@ -658,7 +660,7 @@ func TestAgentReadScopeCounts(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: newExploreDuckDBFixture(t), Logger: testLogger()})
 	defer srv.agentGrants.Close()
 	get := func(path, token string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 		r.Header.Set(apiprotocol.AgentTokenHeader, token)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
@@ -723,7 +725,7 @@ func TestAgentAttachmentCanonicalFallback(t *testing.T) {
 	hash := strings.Repeat("c", 64)
 	var attachmentIDs []int64
 	for _, source := range []*store.Source{outside, allowed} {
-		conv, err := st.EnsureConversation(source.ID, "thread", "Synthetic")
+		conv, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Synthetic")
 		requirements.NoError(err)
 		id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "message", MessageType: "email"})
 		requirements.NoError(err)
@@ -731,13 +733,13 @@ func TestAgentAttachmentCanonicalFallback(t *testing.T) {
 		if source.ID == outside.ID {
 			filename = "private.bin"
 		}
-		requirements.NoError(st.UpsertAttachment(id, filename, "application/octet-stream", "cc/"+hash, hash, 8))
+		requirements.NoError(st.UpsertAttachment(t.Context(), id, filename, "application/octet-stream", "cc/"+hash, hash, 8))
 		var attachmentID int64
-		requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM attachments WHERE message_id=?"), id).Scan(&attachmentID))
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id=?"), id).Scan(&attachmentID))
 		attachmentIDs = append(attachmentIDs, attachmentID)
 	}
 	// Legacy canonical paths still identify blobs when content_hash is NULL or empty.
-	_, err = st.DB().Exec(st.Rebind("UPDATE attachments SET content_hash=NULL WHERE id=?"), attachmentIDs[1])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE attachments SET content_hash=NULL WHERE id=?"), attachmentIDs[1])
 	requirements.NoError(err)
 	cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
@@ -750,19 +752,19 @@ func TestAgentAttachmentCanonicalFallback(t *testing.T) {
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: allowed.ID, Type: allowed.SourceType, Identifier: allowed.Identifier}}, time.Time{})
 	requirements.NoError(err)
 	get := func(path string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 		r.Header.Set(apiprotocol.AgentTokenHeader, token)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
 		return w
 	}
 	var privateMessageID int64
-	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT message_id FROM attachments WHERE id=?"), attachmentIDs[0]).Scan(&privateMessageID))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT message_id FROM attachments WHERE id=?"), attachmentIDs[0]).Scan(&privateMessageID))
 	for i := range 24 {
-		requirements.NoError(st.UpsertAttachment(privateMessageID, fmt.Sprintf("private-%d.bin", i), "application/octet-stream", "cc/"+hash, hash, 8))
+		requirements.NoError(st.UpsertAttachment(t.Context(), privateMessageID, fmt.Sprintf("private-%d.bin", i), "application/octet-stream", "cc/"+hash, hash, 8))
 	}
 	for _, empty := range []any{nil, ""} {
-		_, err = st.DB().Exec(st.Rebind("UPDATE attachments SET content_hash=? WHERE id=?"), empty, attachmentIDs[1])
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE attachments SET content_hash=? WHERE id=?"), empty, attachmentIDs[1])
 		requirements.NoError(err)
 		for _, path := range []string{"/api/v1/cli/attachment?content_hash=" + hash, "/api/v1/attachments/" + hash + "/content"} {
 			before := protected.sourceLists.Load()
@@ -792,7 +794,7 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		var err error
 		sources[i], err = st.GetOrCreateSource("test", name)
 		requirements.NoError(err)
-		conv, err := st.EnsureConversation(sources[i].ID, "thread", "Synthetic")
+		conv, err := st.EnsureConversation(t.Context(), sources[i].ID, "thread", "Synthetic")
 		requirements.NoError(err)
 		ids[i], err = st.UpsertMessage(&store.Message{SourceID: sources[i].ID, ConversationID: conv, SourceMessageID: "shared", MessageType: "email"})
 		requirements.NoError(err)
@@ -800,11 +802,11 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		requirements.NoError(err)
 		requirements.NoError(st.ReplaceMessageRecipients(ids[i], "from", []int64{participant}, nil))
 	}
-	outsideConv, err := st.EnsureConversation(sources[0].ID, "outside", "Synthetic")
+	outsideConv, err := st.EnsureConversation(t.Context(), sources[0].ID, "outside", "Synthetic")
 	requirements.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{SourceID: sources[0].ID, ConversationID: outsideConv, SourceMessageID: "outside-only", MessageType: "email"})
 	requirements.NoError(err)
-	conv, err := st.EnsureConversation(sources[1].ID, "numeric", "Synthetic")
+	conv, err := st.EnsureConversation(t.Context(), sources[1].ID, "numeric", "Synthetic")
 	requirements.NoError(err)
 	numericSourceMessage, err := st.UpsertMessage(&store.Message{SourceID: sources[1].ID, ConversationID: conv, SourceMessageID: strconv.FormatInt(ids[0], 10), MessageType: "email"})
 	requirements.NoError(err)
@@ -823,7 +825,7 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		{strconv.FormatInt(ids[0], 10), true, 200, numericSourceMessage}, {strconv.FormatInt(ids[0], 10), false, 200, ids[0]},
 		{"missing", true, 404, 0}, {"outside-only", true, 404, 0},
 	} {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message?id="+tc.ref, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/message?id="+tc.ref, nil)
 		if tc.agent {
 			req.Header.Set(apiprotocol.AgentTokenHeader, token)
 		} else {
@@ -856,7 +858,7 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		{"source_message_id=shared&account=" + sources[0].Identifier, 403},
 		{"id=" + strconv.FormatInt(ids[0], 10), 404},
 	} {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message/thread?"+tc.path, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/message/thread?"+tc.path, nil)
 		req.RemoteAddr = fmt.Sprintf("10.0.0.%d:1234", i+1)
 		req.Header.Set(apiprotocol.AgentTokenHeader, token)
 		w := httptest.NewRecorder()
@@ -879,7 +881,7 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 	_, both, _, err := srv.agentGrants.Issue("both", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: sources[0].ID, Type: sources[0].SourceType, Identifier: sources[0].Identifier}, {ID: sources[1].ID, Type: sources[1].SourceType, Identifier: sources[1].Identifier}}, time.Time{})
 	requirements.NoError(err)
 	for _, ref := range []string{"source_message_id=shared", "thread_id=thread"} {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/message/thread?"+ref, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/message/thread?"+ref, nil)
 		req.Header.Set(apiprotocol.AgentTokenHeader, both)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
@@ -894,7 +896,7 @@ func TestAgentMessageReferenceScope(t *testing.T) {
 		{"source_id=" + strconv.FormatInt(sources[0].ID, 10), ids[0]},
 		{"source_id=" + strconv.FormatInt(sources[0].ID, 10) + "&source_ids=" + strconv.FormatInt(sources[1].ID, 10), ids[1]},
 	} {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/search/domains?domains=example.test&"+scope.path, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search/domains?domains=example.test&"+scope.path, nil)
 		req.Header.Set("Authorization", "Bearer owner")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)

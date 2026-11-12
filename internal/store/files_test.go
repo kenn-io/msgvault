@@ -15,10 +15,11 @@ func TestGetFileMetadataBatchUsesTransactionalAttachmentAuthority(t *testing.T) 
 	f := storetest.New(t)
 	localMessageID := f.CreateMessage("file-local")
 	requirements.NoError(f.Store.UpsertAttachment(
+		t.Context(),
 		localMessageID, "report.pdf", "application/pdf", "aa/report", "localhash", 2048,
 	))
 	urlMessageID := f.CreateMessage("file-url")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		INSERT INTO attachments
 			(message_id, filename, mime_type, storage_path, content_hash, size, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`),
@@ -26,7 +27,7 @@ func TestGetFileMetadataBatchUsesTransactionalAttachmentAuthority(t *testing.T) 
 	)
 	requirements.NoError(err)
 
-	rows, err := f.Store.DB().Query(f.Store.Rebind(`
+	rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`
 		SELECT id FROM attachments WHERE message_id IN (?, ?) ORDER BY id`), localMessageID, urlMessageID)
 	requirements.NoError(err)
 	defer func() { requirements.NoError(rows.Close()) }()
@@ -71,7 +72,7 @@ func TestGetFileMetadataBatchRecoversHashFromTrustedCASPath(t *testing.T) {
 	aliasMessageID := f.CreateMessage("file-cas-alias")
 	looseMessageID := f.CreateMessage("file-loose-hashless")
 	insert := func(messageID int64, filename, storagePath string) {
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 			INSERT INTO attachments
 				(message_id, filename, mime_type, storage_path, content_hash, size, created_at)
 			VALUES (?, ?, ?, ?, '', ?, CURRENT_TIMESTAMP)`),
@@ -110,14 +111,16 @@ func TestGetFileMetadataHidesAttachmentsOnDedupHiddenMessages(t *testing.T) {
 	survivorID := f.CreateMessage("dedup-file-keep")
 	hiddenID := f.CreateMessage("dedup-file-drop")
 	requirements.NoError(f.Store.UpsertAttachment(
+		t.Context(),
 		survivorID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
 	))
 	requirements.NoError(f.Store.UpsertAttachment(
+		t.Context(),
 		hiddenID, "shared.pdf", "application/pdf", "aa/shared", "sharedhash", 2048,
 	))
 	survivorFileID := singleAttachmentID(t, f, survivorID)
 	hiddenFileID := singleAttachmentID(t, f, hiddenID)
-	_, err := f.Store.MergeDuplicates(survivorID, []int64{hiddenID}, "dedup-file-batch")
+	_, err := f.Store.MergeDuplicates(t.Context(), survivorID, []int64{hiddenID}, "dedup-file-batch")
 	requirements.NoError(err)
 
 	hidden, err := f.Store.GetFileMetadata(t.Context(), hiddenFileID)
@@ -134,7 +137,7 @@ func TestGetFileMetadataHidesAttachmentsOnDedupHiddenMessages(t *testing.T) {
 func singleAttachmentID(t *testing.T, f *storetest.Fixture, messageID int64) int64 {
 	t.Helper()
 	var id int64
-	err := f.Store.DB().QueryRow(f.Store.Rebind(
+	err := f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		"SELECT id FROM attachments WHERE message_id = ?"), messageID).Scan(&id)
 	require.NoError(t, err, "look up attachment for message %d", messageID)
 	return id

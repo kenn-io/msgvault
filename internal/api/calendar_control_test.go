@@ -51,7 +51,7 @@ func TestCalendarControlDelegationAndStrictJSON(t *testing.T) {
 	srv.agentGrants = agentgrant.NewRegistry()
 	_, secret, issued, err := srv.agentGrants.Issue("calendar", []agentgrant.Permission{agentgrant.PermissionCalendarWrite}, []agentgrant.SourceRef{{ID: 1, Type: "gcal", Identifier: "person@example.com/team@example.com"}}, time.Time{})
 	requirements.NoError(err)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	response := httptest.NewRecorder()
@@ -62,7 +62,7 @@ func TestCalendarControlDelegationAndStrictJSON(t *testing.T) {
 	assertions.Equal("team@example.com", backend.request.CalendarID)
 	for _, body := range []string{strings.Replace(controlTestBody, `"action":"create"`, `"action":"create","unknown":true`, 1), strings.Replace(controlTestBody, `"summary":"Planning"`, `"summary":null`, 1), controlTestBody + controlTestBody, strings.Replace(controlTestBody, `"summary":"Planning"`, `"summary":"Planning","Summary":"Other"`, 1)} {
 		before := backend.calls
-		request = httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", strings.NewReader(body))
+		request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/calendar/control", strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("X-Api-Key", "synthetic-owner-key")
 		response = httptest.NewRecorder()
@@ -71,7 +71,7 @@ func TestCalendarControlDelegationAndStrictJSON(t *testing.T) {
 		assertions.Equal(before, backend.calls)
 	}
 	backend.err = calcontrol.ErrDenied
-	request = httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
+	request = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", "synthetic-owner-key")
 	response = httptest.NewRecorder()
@@ -81,7 +81,7 @@ func TestCalendarControlDelegationAndStrictJSON(t *testing.T) {
 func TestCalendarControlRequiresAuthentication(t *testing.T) {
 	backend := &controlTestStore{mockStore: &mockStore{stats: &StoreStats{}}}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}, backend, nil, testLogger())
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, request)
@@ -95,7 +95,7 @@ func TestCalendarControlUnknownWriteOutcomeIsNotQueryTimeout(t *testing.T) {
 			assertions := assert.New(t)
 			backend := &controlTestStore{mockStore: &mockStore{stats: &StoreStats{}}, err: fmt.Errorf("%w; inspect the event before retrying: %w", gcal.ErrOutcomeUnknown, cause)}
 			srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}, backend, nil, testLogger())
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("X-Api-Key", "synthetic-owner-key")
 			response := httptest.NewRecorder()
@@ -118,7 +118,7 @@ func TestCalendarControlPartialUnknownOutcomeIsExplicitAndKeepsReceipts(t *testi
 	requirements.NoError(json.Unmarshal([]byte(`{"account":"person@example.com","calendar_id":"team@example.com","send_updates":"none","plan":[],"writes":[{"action":"update","calendar_id":"team@example.com","event":{"id":"series","status":"confirmed"},"message_id":42,"archived":true}],"error":"create outcome unknown after completed writes; reconcile the calendar and receipts before taking further action","outcome_unknown":true,"outcome_code":"calendar_outcome_unknown"}`), &result))
 	backend := &controlTestStore{mockStore: &mockStore{stats: &StoreStats{}}, result: &result}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}, backend, nil, testLogger())
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", "synthetic-owner-key")
 	response := httptest.NewRecorder()
@@ -144,7 +144,7 @@ func TestCalendarControlPlanChangeUses409(t *testing.T) {
 		err:       calcontrol.ErrPlanChanged,
 	}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}, backend, nil, testLogger())
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", "synthetic-owner-key")
 	response := httptest.NewRecorder()
@@ -160,7 +160,7 @@ func TestCalendarControlPreconditionConflictUses409(t *testing.T) {
 		err:       &gcal.PreconditionFailedError{},
 	}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}, backend, nil, testLogger())
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/calendar/control", strings.NewReader(controlTestBody))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Api-Key", "synthetic-owner-key")
 	response := httptest.NewRecorder()
@@ -181,11 +181,11 @@ func TestCalendarControlReadsBodyBeforeTakingGate(t *testing.T) {
 			Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}},
 			Store:  backend, Logger: testLogger(), OperationGate: gate,
 		})
-		defer func() { assertions.NoError(srv.Shutdown(context.Background())) }()
+		defer func() { assertions.NoError(srv.Shutdown(t.Context())) }()
 		reader, writer := io.Pipe()
 		defer func() { assertions.NoError(reader.Close()) }()
 		defer func() { assertions.NoError(writer.Close()) }()
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/calendar/control", reader)
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/calendar/control", reader)
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("X-Api-Key", "synthetic-owner-key")
 		response := httptest.NewRecorder()

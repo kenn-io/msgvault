@@ -16,12 +16,10 @@ func TestOperationInvocationSchemasExposeOnlyAllowlistedColumns(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	common := []string{"id", "invocation_key", "trigger", "state", "started_at", "finished_at", "error_code", "attempted", "succeeded", "failed"}
 	want := map[string][]string{
-		"message_embedding_runs":   append(slices.Clone(common), "truncated"),
-		"person_embedding_runs":    append(slices.Clone(common), "truncated"),
-		"document_extraction_runs": slices.Clone(common),
-		"document_embedding_runs":  slices.Clone(common),
-		"visual_embedding_runs":    append(slices.Clone(common), "skipped"),
-		"operation_token_keys":     {"key_id", "key_bytes", "state", "created_at", "retired_at"},
+		"message_embedding_runs": append(slices.Clone(common), "truncated"),
+		"person_embedding_runs":  append(slices.Clone(common), "truncated"),
+		"visual_embedding_runs":  append(slices.Clone(common), "skipped"),
+		"operation_token_keys":   {"key_id", "key_bytes", "state", "created_at", "retired_at"},
 	}
 	for table, expected := range want {
 		t.Run(table, func(t *testing.T) {
@@ -41,7 +39,7 @@ func operationTableColumns(t *testing.T, st interface {
 		query = `SELECT column_name FROM information_schema.columns
 			WHERE table_schema = current_schema() AND table_name = ? ORDER BY ordinal_position`
 	}
-	rows, err := st.DB().Query(st.Rebind(query), table)
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(query), table)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	var columns []string
@@ -62,14 +60,12 @@ func TestOperationRunOrderIndexes(t *testing.T) {
 		columns []string
 	}
 	want := map[string]expectedIndex{
-		"idx_sync_runs_operations_order":                {table: "sync_runs", columns: []string{"started_at", "id"}},
-		"idx_person_sweep_runs_operations_order":        {table: "person_sweep_runs", columns: []string{"started_at", "id"}},
-		"idx_carddav_sync_runs_operations_order":        {table: "carddav_sync_runs", columns: []string{"started_at", "id"}},
-		"idx_message_embedding_runs_operations_order":   {table: "message_embedding_runs", columns: []string{"started_at", "id"}},
-		"idx_person_embedding_runs_operations_order":    {table: "person_embedding_runs", columns: []string{"started_at", "id"}},
-		"idx_document_extraction_runs_operations_order": {table: "document_extraction_runs", columns: []string{"started_at", "id"}},
-		"idx_document_embedding_runs_operations_order":  {table: "document_embedding_runs", columns: []string{"started_at", "id"}},
-		"idx_visual_embedding_runs_operations_order":    {table: "visual_embedding_runs", columns: []string{"started_at", "id"}},
+		"idx_sync_runs_operations_order":              {table: "sync_runs", columns: []string{"started_at", "id"}},
+		"idx_person_sweep_runs_operations_order":      {table: "person_sweep_runs", columns: []string{"started_at", "id"}},
+		"idx_carddav_sync_runs_operations_order":      {table: "carddav_sync_runs", columns: []string{"started_at", "id"}},
+		"idx_message_embedding_runs_operations_order": {table: "message_embedding_runs", columns: []string{"started_at", "id"}},
+		"idx_person_embedding_runs_operations_order":  {table: "person_embedding_runs", columns: []string{"started_at", "id"}},
+		"idx_visual_embedding_runs_operations_order":  {table: "visual_embedding_runs", columns: []string{"started_at", "id"}},
 	}
 	for indexName, expected := range want {
 		t.Run(indexName, func(t *testing.T) {
@@ -156,7 +152,7 @@ func assertSQLiteIndexDefinitionContains(
 ) {
 	t.Helper()
 	var definition string
-	err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`, indexName).Scan(&definition)
+	err := db.QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`, indexName).Scan(&definition)
 	require.NoError(t, err)
 	assert.Contains(t, definition, fragment)
 }
@@ -178,7 +174,7 @@ func assertPostgresDescendingIndex(t *testing.T, db queryRower, tableName, index
 
 func assertSQLiteDescendingIndex(t *testing.T, db *sql.DB, tableName, indexName string, columns []string) {
 	t.Helper()
-	indexRows, err := db.Query("PRAGMA index_list(" + tableName + ")")
+	indexRows, err := db.QueryContext(t.Context(), "PRAGMA index_list("+tableName+")")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, indexRows.Close()) }()
 	owned := false
@@ -195,7 +191,7 @@ func assertSQLiteDescendingIndex(t *testing.T, db *sql.DB, tableName, indexName 
 		name string
 		desc int
 	}
-	rows, err := db.Query("PRAGMA index_xinfo(" + indexName + ")")
+	rows, err := db.QueryContext(t.Context(), "PRAGMA index_xinfo("+indexName+")")
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 

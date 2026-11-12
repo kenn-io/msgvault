@@ -339,13 +339,13 @@ func (f *fakeGraph) sync(t *testing.T, st *store.Store) (*Summary, error) {
 	if dir == "" {
 		dir = f.t.TempDir()
 	}
-	return Import(context.Background(), st, c, Options{Email: "me@example.com", AttachmentsDir: dir}, slog.Default())
+	return Import(t.Context(), st, c, Options{Email: "me@example.com", AttachmentsDir: dir}, slog.Default())
 }
 
 // state returns message ID -> "folder label name" or "deleted".
 func state(t *testing.T, st *store.Store) map[string]string {
 	t.Helper()
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT m.source_message_id, COALESCE(l.name, ''), m.deleted_from_source_at IS NOT NULL
 		FROM messages m
 		LEFT JOIN message_labels ml ON ml.message_id = m.id
@@ -386,11 +386,11 @@ func TestImportFirstSyncThenNoChange(t *testing.T) {
 	assert.EqualValues(5, f.mimeCalls.Load(), "four downloads plus one 429")
 
 	var labelType string
-	require.NoError(st.DB().QueryRow(`SELECT label_type FROM labels WHERE source_label_id = 'inbox'`).Scan(&labelType))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT label_type FROM labels WHERE source_label_id = 'inbox'`).Scan(&labelType))
 	assert.Equal("system", labelType)
 
 	var synced bool
-	require.NoError(st.DB().QueryRow(`SELECT last_sync_at IS NOT NULL FROM sources`).Scan(&synced))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT last_sync_at IS NOT NULL FROM sources`).Scan(&synced))
 	assert.True(synced, "a completed sync sets last_sync_at")
 
 	f.mimeCalls.Store(0)
@@ -474,7 +474,7 @@ func TestImportExpiredTokenWalksAgain(t *testing.T) {
 // snippets returns message ID -> snippet, the stored body start.
 func snippets(t *testing.T, st *store.Store) map[string]string {
 	t.Helper()
-	rows, err := st.DB().Query(`SELECT source_message_id, COALESCE(snippet, '') FROM messages`)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT source_message_id, COALESCE(snippet, '') FROM messages`)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	out := map[string]string{}
@@ -509,7 +509,7 @@ func TestImportRefreshesChangedMessages(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(2, sum.Updated)
 	var runUpdated int64
-	require.NoError(st.DB().QueryRow(`SELECT messages_updated FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&runUpdated))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT messages_updated FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&runUpdated))
 	assert.EqualValues(2, runUpdated)
 	assert.EqualValues(2, f.mimeCalls.Load())
 	assert.Equal(map[string]string{"d1": "body d1 v1", "m1": "body m1 v1"}, snippets(t, st))
@@ -546,7 +546,7 @@ func TestImportRefreshReplacesAttachments(t *testing.T) {
 func attachments(t *testing.T, st *store.Store) [2]int {
 	t.Helper()
 	var rows, count int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT (SELECT COUNT(*) FROM attachments a WHERE a.message_id = m.id), m.attachment_count
 		FROM messages m WHERE m.source_message_id = 'm1'`)).Scan(&rows, &count))
 	return [2]int{rows, count}
@@ -621,14 +621,14 @@ func TestImportStoreFailureDoesNotAdvanceCursor(t *testing.T) {
 	f := newFakeGraph(t)
 	f.put("m1", "inbox")
 	f.put("m2", "inbox")
-	_, err := st.DB().Exec(`CREATE TRIGGER fail_m2 BEFORE INSERT ON messages
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_m2 BEFORE INSERT ON messages
 		WHEN NEW.source_message_id = 'm2' BEGIN SELECT RAISE(ABORT, 'boom'); END`)
 	require.NoError(err)
 
 	_, err = f.sync(t, st)
 	require.Error(err)
 
-	_, err = st.DB().Exec(`DROP TRIGGER fail_m2`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_m2`)
 	require.NoError(err)
 	_, err = f.sync(t, st)
 	require.NoError(err)
@@ -722,7 +722,7 @@ func TestImportRefreshRetriesChangedPartNotWritten(t *testing.T) {
 func attachmentKey(t *testing.T, st *store.Store) string {
 	t.Helper()
 	var key string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT a.source_part_key FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = 'm1'`)).Scan(&key))
 	return key
@@ -731,7 +731,7 @@ func attachmentKey(t *testing.T, st *store.Store) string {
 func attachmentHash(t *testing.T, st *store.Store) string {
 	t.Helper()
 	var hash string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT a.content_hash FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = 'm1'`)).Scan(&hash))
 	return hash
@@ -760,7 +760,7 @@ func TestImportNewMessageAttachmentWriteFails(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([2]int{1, 1}, attachments(t, st))
 	var hasDate bool
-	require.NoError(st.DB().QueryRow(`SELECT internal_date IS NOT NULL FROM messages WHERE source_message_id = 'm1'`).Scan(&hasDate))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT internal_date IS NOT NULL FROM messages WHERE source_message_id = 'm1'`).Scan(&hasDate))
 	assert.True(hasDate, "the retry keeps the receipt time")
 }
 
@@ -845,7 +845,7 @@ func TestImportRecreatedFolderReconcilesOldMessages(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(map[string]string{"m1": "deleted", "m2": "Inbox", "m3": "Projects"}, state(t, st))
 	var sourceLabelID string
-	require.NoError(st.DB().QueryRow(`SELECT source_label_id FROM labels WHERE name = 'Projects'`).Scan(&sourceLabelID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT source_label_id FROM labels WHERE name = 'Projects'`).Scan(&sourceLabelID))
 	assert.Equal("new", sourceLabelID, "the new folder took over the old label")
 }
 
@@ -968,7 +968,7 @@ func TestImportDownloadFailureDoesNotBlockAccount(t *testing.T) {
 			}
 			assert.Equal(want, snippets(t, st)["bad"])
 			var hasDate bool
-			require.NoError(st.DB().QueryRow(`SELECT internal_date IS NOT NULL FROM messages WHERE source_message_id = 'bad'`).Scan(&hasDate))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT internal_date IS NOT NULL FROM messages WHERE source_message_id = 'bad'`).Scan(&hasDate))
 			assert.True(hasDate)
 
 			f.mimeCalls.Store(0)
@@ -1022,7 +1022,7 @@ func TestImportRetryDeletionErrorKeepsMarker(t *testing.T) {
 	require.Error(err)
 
 	f.goneOnValue["m1"] = true
-	_, err = st.DB().Exec(`CREATE TRIGGER reject_delete BEFORE UPDATE OF deleted_from_source_at ON messages
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_delete BEFORE UPDATE OF deleted_from_source_at ON messages
  WHEN NEW.source_message_id = 'm1' BEGIN SELECT RAISE(ABORT, 'deletion failed'); END`)
 	require.NoError(err)
 	sum, err := f.sync(t, st)

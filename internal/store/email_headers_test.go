@@ -36,28 +36,28 @@ func TestEmailReplyParentEligibility(t *testing.T) {
 			st := f.Store
 			parent := f.CreateMessage("parent")
 			child := f.CreateMessage("child")
-			_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), tc.parentID, parent)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), tc.parentID, parent)
 			requirements.NoError(err)
 			switch tc.state {
 			case "duplicate":
 				duplicate := f.CreateMessage("duplicate")
-				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "<parent@example.test>", duplicate)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "<parent@example.test>", duplicate)
 			case "self":
 				child = parent
 			case "cross source":
 				other, sourceErr := st.GetOrCreateSource("apple-mail", "other@example.test")
 				requirements.NoError(sourceErr)
-				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), other.ID, parent)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), other.ID, parent)
 			case "hidden":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), parent)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), parent)
 			case "source deleted":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), parent)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), parent)
 			}
 			requirements.NoError(err)
 			requirements.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, child, "", "<parent@example.test>"))
 			requirements.NoError(st.ResolveEmailReplyParentsContext(t.Context(), f.Source.ID, 0, nil))
 			var reply sql.NullInt64
-			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), child).Scan(&reply))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), child).Scan(&reply))
 			want := sql.NullInt64{}
 			if tc.want {
 				want = sql.NullInt64{Int64: parent, Valid: true}
@@ -88,7 +88,7 @@ func TestEmailHeaderRepairPreservesMetadataAndRevision(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(after, again)
 	var rfcID string
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), child).Scan(&rfcID))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), child).Scan(&rfcID))
 	assertions.Equal("child@example.test", rfcID)
 }
 
@@ -105,7 +105,7 @@ func TestEmailRepliesSurviveDeduplication(t *testing.T) {
 
 	other, err := st.GetOrCreateSource("mbox", "other@example.test")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(other.ID, "thread", "Thread")
+	conversation, err := st.EnsureConversation(t.Context(), other.ID, "thread", "Thread")
 	require.NoError(err)
 	survivor, err := st.UpsertMessage(&store.Message{
 		SourceID: other.ID, SourceMessageID: "parent-copy", ConversationID: conversation,
@@ -113,10 +113,10 @@ func TestEmailRepliesSurviveDeduplication(t *testing.T) {
 		RFC822MessageID: sql.NullString{String: "parent@example.test", Valid: true},
 	})
 	require.NoError(err)
-	_, err = st.MergeDuplicates(survivor, []int64{parent}, "reply-dedup")
+	_, err = st.MergeDuplicates(t.Context(), survivor, []int64{parent}, "reply-dedup")
 	require.NoError(err)
 	var reply int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT reply_to_message_id FROM messages WHERE id = ?`), child).Scan(&reply))
 	assert.Equal(survivor, reply)
 	deleted, _, err := st.DeleteAllDedupedContext(t.Context())
@@ -146,10 +146,10 @@ func TestEmailReplyResolutionResumesCommittedPages(t *testing.T) {
 	requirements.NoError(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, parent, "parent@example.test", ""))
 	requirements.NoError(st.ResolveEmailReplyParentsContext(t.Context(), f.Source.ID, cursor, nil))
 	var linked int
-	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL`).Scan(&linked))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL`).Scan(&linked))
 	assertions.Equal(5, linked, "resume must not revisit the first committed page")
 	requirements.NoError(st.ResolveEmailReplyParentsContext(t.Context(), f.Source.ID, 0, nil))
-	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL`).Scan(&linked))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL`).Scan(&linked))
 	assertions.Equal(205, linked, "a later full pass resolves older missing parents")
 }
 
@@ -164,7 +164,7 @@ func TestEmailHeaderRepairRejectsWrongSourceAndCancellation(t *testing.T) {
 	cancel()
 	requirements.ErrorIs(f.Store.RecordEmailHeadersContext(ctx, f.Source.ID, id, "message@example.test", ""), context.Canceled)
 	var got sql.NullString
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&got))
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&got))
 	assertions.False(got.Valid)
 }
 
@@ -177,15 +177,15 @@ func TestEmailHeaderRepairRollsBackWhenRevisionWriteFails(t *testing.T) {
 	requirements.NoError(st.SetMessageMetadata(id, sql.NullString{String: `{"other":true}`, Valid: true}))
 	var err error
 	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`ALTER TABLE archive_metadata ADD CONSTRAINT reject_email_revision CHECK (key <> 'derived_data_revision')`)
+		_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE archive_metadata ADD CONSTRAINT reject_email_revision CHECK (key <> 'derived_data_revision')`)
 	} else {
-		_, err = st.DB().Exec(`CREATE TRIGGER reject_email_revision BEFORE INSERT ON archive_metadata
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_email_revision BEFORE INSERT ON archive_metadata
    WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT,'synthetic revision failure'); END`)
 	}
 	requirements.NoError(err)
 	requirements.Error(st.RecordEmailHeadersContext(t.Context(), f.Source.ID, id, "repair@example.test", "parent@example.test"))
 	var rfcID sql.NullString
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&rfcID))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&rfcID))
 	assertions.False(rfcID.Valid)
 	metadata, err := st.GetMessageMetadata(id)
 	requirements.NoError(err)
@@ -211,7 +211,7 @@ func TestEmailHeadersFenceSupersededSync(t *testing.T) {
 	requirements.ErrorIs(stale.ResolveEmailReplyParentsContext(t.Context(), f.Source.ID, 0, nil), store.ErrSyncRunSuperseded)
 	requirements.ErrorIs(stale.RecordPstEmailHeadersContext(t.Context(), f.Source.ID, id, "child@example.test", "parent@example.test", "parent@example.test"), store.ErrSyncRunSuperseded)
 	var reply sql.NullInt64
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), id).Scan(&reply))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`), id).Scan(&reply))
 	assertions.False(reply.Valid)
 }
 
@@ -231,7 +231,7 @@ func TestPstEmailHeaderRepair(t *testing.T) {
 			f := storetest.New(t)
 			st := f.Store
 			id := f.CreateMessage("child")
-			_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id = ?, metadata = ? WHERE id = ?`), tc.storedID, tc.metadata, id)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET rfc822_message_id = ?, metadata = ? WHERE id = ?`), tc.storedID, tc.metadata, id)
 			require.NoError(err)
 			require.NoError(st.RecordPstEmailHeadersContext(t.Context(), f.Source.ID, id, tc.incomingID, tc.parent, tc.key))
 			metadata, err := st.GetMessageMetadata(id)
@@ -244,7 +244,7 @@ func TestPstEmailHeaderRepair(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(before, after)
 			var gotID string
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&gotID))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&gotID))
 			want := tc.storedID
 			if want == "" {
 				want = "child@example.test"
@@ -347,7 +347,7 @@ func TestEmailHeaderRepairScopedStoredFactsWin(t *testing.T) {
 			fixture := storetest.New(t)
 			id := fixture.CreateMessage("stored-facts")
 			st := fixture.Store
-			_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id = ?, metadata = ? WHERE id = ?`),
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET rfc822_message_id = ?, metadata = ? WHERE id = ?`),
 				tc.storedID, tc.metadata, id)
 			requirements.NoError(err)
 			st = st.ScopedToSync(fixture.Source.ID, fixture.StartSync())
@@ -371,10 +371,10 @@ func TestEmailHeaderRepairScopedRollsBackWhenRevisionWriteFails(t *testing.T) {
 	before := readEmailHeaderSnapshot(t, st, id)
 	var err error
 	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`ALTER TABLE archive_metadata ADD CONSTRAINT reject_scoped_email_revision
+		_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE archive_metadata ADD CONSTRAINT reject_scoped_email_revision
 			CHECK (key <> 'derived_data_revision')`)
 	} else {
-		_, err = st.DB().Exec(`CREATE TRIGGER reject_scoped_email_revision BEFORE INSERT ON archive_metadata
+		_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_scoped_email_revision BEFORE INSERT ON archive_metadata
 			WHEN NEW.key = 'derived_data_revision' BEGIN SELECT RAISE(ABORT,'synthetic revision failure'); END`)
 	}
 	requirements.NoError(err)

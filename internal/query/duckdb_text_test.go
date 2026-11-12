@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"testing"
@@ -10,6 +9,7 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
@@ -25,7 +25,7 @@ func TestDuckDBTextSnapshotRevisionUsesCommittedCacheMarker(t *testing.T) {
 
 	analyticsDir, cleanup := b.Build()
 	t.Cleanup(cleanup)
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(engine.Close()) })
 
@@ -75,7 +75,7 @@ func TestDuckDBTextSnapshotRevisionTracksHybridSQLiteTimeline(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
-	_, err := tdb.DB.Exec(`
+	_, err := tdb.DB.ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'owner@chat.test');
 		INSERT INTO participants (id, phone_number, display_name) VALUES (11, '+15550000011', 'Alice');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
@@ -85,7 +85,7 @@ func TestDuckDBTextSnapshotRevisionTracksHybridSQLiteTimeline(t *testing.T) {
 	`)
 	require.NoError(err)
 
-	engine, err := NewDuckDBEngine(analyticsDir, "", tdb.DB)
+	engine, err := NewDuckDBEngine(t.Context(), analyticsDir, "", tdb.DB)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(engine.Close()) })
 
@@ -100,7 +100,7 @@ func TestDuckDBTextSnapshotRevisionTracksHybridSQLiteTimeline(t *testing.T) {
 	before, err := engine.TextSnapshotRevision(t.Context(), scope)
 	require.NoError(err)
 
-	_, err = tdb.DB.Exec(`
+	_, err = tdb.DB.ExecContext(t.Context(), `
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
 			VALUES (802, 701, 7, 'message-802', 'whatsapp', '2026-08-20 11:00:00', 'second', 11)
 	`)
@@ -197,7 +197,7 @@ func buildTextContactsEngine(t *testing.T) *DuckDBEngine {
 func TestDuckDBTextAggregate_Contacts(t *testing.T) {
 	t.Parallel()
 	engine := buildTextContactsEngine(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	tests := []struct {
 		name     string
@@ -303,7 +303,7 @@ func TestDuckDBListConversationsParticipantMembership(t *testing.T) {
 	b.AddTo(b.AddMessage(MessageOpt{SourceID: sourceID, ConversationID: unrelatedFallbackConversation, MessageType: "imessage", SenderID: &ownerID}), sameNameID, "Alice Cluster")
 
 	engine := b.BuildEngine()
-	rows, err := engine.ListConversations(context.Background(), TextFilter{
+	rows, err := engine.ListConversations(t.Context(), TextFilter{
 		SourceID:       &sourceID,
 		ParticipantIDs: []int64{aliceID, aliceAliasID},
 	})
@@ -324,4 +324,56 @@ func TestDuckDBListConversationsParticipantMembership(t *testing.T) {
 	}, conversationIDs)
 	assert.Equal(int64(2), byID[senderFallbackConversationID].MessageCount)
 	assert.Equal(int64(2), byID[recipientFallbackConversation].MessageCount)
+}
+
+func TestDuckDBUnnamedXParticipantsAcrossViews(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("1", "x_archive")
+	participant := b.AddParticipant("", "", "")
+	b.AddParticipantIdentifier(participant, "x_user", "2", "2", true)
+	b.AddMessage(MessageOpt{MessageType: "x_dm", SourceID: source, SenderID: &participant, ConversationID: 701, ConversationType: "direct_chat"})
+	explicit := b.AddMessage(MessageOpt{MessageType: "x_dm", SourceID: source, SenderID: &participant, ConversationID: 701, ConversationType: "direct_chat"})
+	b.AddFrom(explicit, participant, "")
+	b.AddConversationParticipant(701, participant)
+	engine := b.BuildEngine()
+	messages, err := engine.ListConversationMessages(t.Context(), 701, TextFilter{})
+	require.NoError(err)
+	require.Len(messages, 2)
+	for _, message := range messages {
+		assert.Equal("2", message.FromName)
+	}
+	groups, err := engine.TextAggregate(t.Context(), TextViewContactNames, TextAggregateOptions{})
+	require.NoError(err)
+	require.Len(groups, 1)
+	assert.Equal("2", groups[0].Key)
+	conversations, err := engine.ListConversations(t.Context(), TextFilter{ContactName: groups[0].Key})
+	require.NoError(err)
+	require.Len(conversations, 1)
+	assert.EqualValues(701, conversations[0].ConversationID)
+	listed, err := engine.ListMessages(t.Context(), MessageFilter{})
+	require.NoError(err)
+	require.Len(listed, 2)
+	for _, message := range listed {
+		assert.Equal("2", message.FromName)
+	}
+	q := search.Parse("")
+	hits, err := engine.SearchFast(t.Context(), q, MessageFilter{}, 10, 0)
+	require.NoError(err)
+	require.Len(hits, 2)
+	for _, hit := range hits {
+		assert.Equal("2", hit.FromName)
+	}
+	cached, err := engine.SearchFastWithStats(t.Context(), q, "", MessageFilter{}, ViewNoStats, 10, 0)
+	require.NoError(err)
+	require.Len(cached.Messages, 2)
+	for _, hit := range cached.Messages {
+		assert.Equal("2", hit.FromName)
+	}
+	fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{})
+	for _, result := range []*ExploreResponse{fast, legacy} {
+		require.Len(result.Rows, 1)
+		assert.Contains(result.Rows[0].ParticipantLabels, "2")
+	}
 }

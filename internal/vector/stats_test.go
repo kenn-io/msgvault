@@ -93,7 +93,7 @@ func (f *statsFakeBackend) Close() error { return nil }
 var _ Backend = (*statsFakeBackend)(nil)
 
 func TestCollectStats_NilBackend(t *testing.T) {
-	sv, err := CollectStats(context.Background(), nil)
+	sv, err := CollectStats(t.Context(), nil)
 	require.NoError(t, err, "CollectStats(nil)")
 	assert.Nil(t, sv, "CollectStats(nil) should return nil")
 }
@@ -117,7 +117,7 @@ func TestCollectStats_ActiveOnly(t *testing.T) {
 		rejected: map[GenerationID]int64{5: 2},
 	}
 
-	sv, err := CollectStats(context.Background(), b)
+	sv, err := CollectStats(t.Context(), b)
 	require.NoError(err, "CollectStats")
 	require.NotNil(sv, "CollectStats returned nil StatsView")
 	assert.True(sv.Enabled)
@@ -152,7 +152,7 @@ func TestCollectStats_BuildingOnly(t *testing.T) {
 		},
 	}
 
-	sv, err := CollectStats(context.Background(), b)
+	sv, err := CollectStats(t.Context(), b)
 	require.NoError(err, "CollectStats")
 	require.NotNil(sv, "CollectStats returned nil StatsView")
 	assert.True(sv.Enabled)
@@ -194,7 +194,7 @@ func TestCollectStats_BothGenerations(t *testing.T) {
 		},
 	}
 
-	sv, err := CollectStats(context.Background(), b)
+	sv, err := CollectStats(t.Context(), b)
 	require.NoError(err, "CollectStats")
 	require.NotNil(sv, "CollectStats returned nil StatsView")
 	if assert.NotNil(sv.ActiveGeneration) {
@@ -219,7 +219,7 @@ func TestCollectStats_ActiveError(t *testing.T) {
 	wantErr := errors.New("db connection refused")
 	b := &statsFakeBackend{activeErr: wantErr}
 
-	sv, err := CollectStats(context.Background(), b)
+	sv, err := CollectStats(t.Context(), b)
 	require.Error(err, "CollectStats err should wrap want")
 	require.ErrorIs(err, wantErr)
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope even on partial failure")
@@ -235,7 +235,7 @@ func TestCollectStats_BuildingError(t *testing.T) {
 	wantErr := errors.New("db connection refused")
 	b := &statsFakeBackend{buildErr: wantErr}
 
-	sv, err := CollectStats(context.Background(), b)
+	sv, err := CollectStats(t.Context(), b)
 	require.Error(err, "CollectStats err should wrap want")
 	require.ErrorIs(err, wantErr)
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope even on partial failure")
@@ -260,7 +260,7 @@ func TestCollectStats_BuildingStatsError_Tolerated(t *testing.T) {
 		statsErr: map[GenerationID]error{2: wantErr},
 	}
 
-	sv, err := CollectStats(context.Background(), b)
+	sv, err := CollectStats(t.Context(), b)
 	require.Error(err, "CollectStats err should wrap want")
 	require.ErrorIs(err, wantErr)
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")
@@ -291,7 +291,7 @@ func TestCollectStats_BuildingStatsErrorDoesNotReportFrozenActiveDrift(t *testin
 		statsErr: map[GenerationID]error{2: wantErr},
 	}
 
-	sv, err := CollectStats(context.Background(), b)
+	sv, err := CollectStats(t.Context(), b)
 	require.Error(err, "CollectStats err should wrap want")
 	require.ErrorIs(err, wantErr)
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")
@@ -317,7 +317,7 @@ func TestCollectStats_StatsError_Tolerated(t *testing.T) {
 		statsErr: map[GenerationID]error{5: wantErr},
 	}
 
-	sv, err := CollectStats(context.Background(), b)
+	sv, err := CollectStats(t.Context(), b)
 	require.Error(err, "CollectStats err should wrap want")
 	require.ErrorIs(err, wantErr)
 	require.NotNil(sv, "CollectStats sv = nil, want non-nil envelope")

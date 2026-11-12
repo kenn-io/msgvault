@@ -3,7 +3,6 @@
 package sqlitevec
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -17,12 +16,12 @@ func TestMetadataReadOnlyOpenDuringWriter(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "vectors.db")
 	rw, err := Open(ctx, Options{Path: path, Dimension: 4})
 	require.NoError(err)
 	defer func() { require.NoError(rw.Close()) }()
-	_, err = rw.DB().Exec("CREATE TABLE pending_embeddings (message_id INTEGER)")
+	_, err = rw.DB().ExecContext(t.Context(), "CREATE TABLE pending_embeddings (message_id INTEGER)")
 	require.NoError(err)
 	conn, err := rw.DB().Conn(ctx)
 	require.NoError(err)
@@ -50,7 +49,7 @@ func TestMetadataReadOnlyOpenDuringWriter(t *testing.T) {
 		connections = append(connections, c)
 	}
 	var count int
-	require.NoError(ro.DB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name='pending_embeddings'").Scan(&count))
+	require.NoError(ro.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sqlite_master WHERE name='pending_embeddings'").Scan(&count))
 	assert.Equal(1, count)
 }
 

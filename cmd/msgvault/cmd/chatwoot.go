@@ -89,8 +89,8 @@ func registerChatwootProfile(ctx context.Context, st *store.Store, src config.Ch
 	return chatwoot.NewImporter(st, client).Register(ctx, selected)
 }
 
-func resolveChatwootSyncInboxes(st *store.Store, src config.ChatwootSource, requested []int64) ([]int64, error) {
-	sources, err := st.ListSources(chatwoot.SourceType)
+func resolveChatwootSyncInboxes(ctx context.Context, st *store.Store, src config.ChatwootSource, requested []int64) ([]int64, error) {
+	sources, err := st.ListSourcesContext(ctx, chatwoot.SourceType)
 	if err != nil {
 		return nil, fmt.Errorf("list registered Chatwoot sources: %w", err)
 	}
@@ -157,7 +157,7 @@ func chatwootImportOptions(src config.ChatwootSource, inboxID int64, cfg *config
 }
 
 func importChatwootProfile(ctx context.Context, st *store.Store, src config.ChatwootSource, run chatwootRunOptions, cfg *config.Config) (*chatwoot.ImportSummary, error) {
-	ids, err := resolveChatwootSyncInboxes(st, src, run.Inboxes)
+	ids, err := resolveChatwootSyncInboxes(ctx, st, src, run.Inboxes)
 	if err != nil || len(ids) == 0 {
 		return nil, err
 	}
@@ -256,7 +256,7 @@ func newAddChatwootCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -274,7 +274,7 @@ func newAddChatwootCmd() *cobra.Command {
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered %d Chatwoot inbox(es) for %s\n", len(sources), src.Identifier)
 			}
-			if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+			if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state); err != nil {
 				errs = append(errs, fmt.Errorf("post-source-create migrations: %w", err))
 			}
 			return errors.Join(errs...)
@@ -323,7 +323,7 @@ func newSyncChatwootCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}

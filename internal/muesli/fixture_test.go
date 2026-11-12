@@ -117,7 +117,7 @@ func newFixtureDB(t *testing.T, path, ddl string) *sql.DB {
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(ddl)
+	_, err = db.ExecContext(t.Context(), ddl)
 	require.NoError(t, err)
 	return db
 }
@@ -136,7 +136,7 @@ func insertRow(t *testing.T, db *sql.DB, table string, values map[string]any) in
 		args[i] = values[column]
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",")
-	result, err := db.Exec(fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+	result, err := db.ExecContext(t.Context(), fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		table, strings.Join(columns, ","), placeholders), args...)
 	require.NoError(t, err)
 	id, err := result.LastInsertId()

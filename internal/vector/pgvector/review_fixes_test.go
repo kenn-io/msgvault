@@ -155,7 +155,7 @@ func openTracedPGTestDB(t *testing.T, schema string) (*sql.DB, *sqlTracer) {
 func currentSchema(t *testing.T, db *sql.DB) string {
 	t.Helper()
 	var sp string
-	require.NoError(t, db.QueryRow("SELECT current_schema()").Scan(&sp), "current_schema")
+	require.NoError(t, db.QueryRowContext(t.Context(), "SELECT current_schema()").Scan(&sp), "current_schema")
 	return sp
 }
 
@@ -167,7 +167,7 @@ func currentSchema(t *testing.T, db *sql.DB) string {
 // embeddings tables never leak into the result.
 func indexNames(t *testing.T, db *sql.DB) map[string]bool {
 	t.Helper()
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(t.Context(), `
 		SELECT ic.relname
 		  FROM pg_index i
 		  JOIN pg_class ic ON ic.oid = i.indexrelid
@@ -192,7 +192,7 @@ func TestMigrate_DropsRedundantGenMsgIndex(t *testing.T) {
 	assert := assert.New(t)
 
 	db := openPGTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	require.NoError(t, Migrate(ctx, db, 768, false), "Migrate")
 
 	idx := indexNames(t, db)
@@ -211,7 +211,7 @@ func TestMigrate_DropsPreExistingGenMsgIndex(t *testing.T) {
 	require := require.New(t)
 
 	db := openPGTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	require.NoError(
 
 		Migrate(ctx, db, 0, false), "first Migrate")
@@ -242,7 +242,7 @@ func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
 	require := require.New(t)
 
 	db := openPGTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	require.NoError(
 		Migrate(ctx, db, 0, false), "first Migrate")
 
@@ -283,7 +283,7 @@ func TestMigrate_SkipExtension(t *testing.T) {
 	require := require.New(t)
 
 	db := openPGTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	schema := currentSchema(t, db)
 
 	// ---- skipExtension = true: CREATE EXTENSION must NOT appear ----
@@ -392,7 +392,7 @@ func TestOpen_SkipExtensionWiring(t *testing.T) {
 	require := require.New(t)
 
 	db := openPGTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	b, err := Open(ctx, Options{DB: db, Dimension: 4, SkipExtension: true})
 	require.NoError(
 		err, "Open(SkipExtension)")

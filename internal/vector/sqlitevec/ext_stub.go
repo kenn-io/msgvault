@@ -68,6 +68,9 @@ func (b *Backend) DB() *sql.DB { return nil }
 // Close is a no-op stub.
 func (b *Backend) Close() error { return nil }
 
+// WithBuildScope returns the unavailable backend placeholder.
+func (b *Backend) WithBuildScope(vector.BuildScope) vector.Backend { return b }
+
 // CreateGeneration is a stub that always returns ErrNotBuilt.
 func (b *Backend) CreateGeneration(_ context.Context, _ string, _ int, _ string) (vector.GenerationID, error) {
 	return 0, ErrNotBuilt

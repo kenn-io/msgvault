@@ -775,7 +775,7 @@ func TestPeopleBrowserFilesAndActivityForwardCursorsAndMapRows(t *testing.T) {
 					"id":80,"key":"file:80","entry_key":"message:88","message_id":88,"conversation_id":44,
 					"occurred_at":"2026-08-20T12:30:00Z","source_id":6,"source_type":"meeting","source_identifier":"Recorder",
 					"containing_title":"Weekly sync","filename":"notes.pdf","mime_type":"application/pdf","mime_family":"pdf",
-					"size_bytes":2048,"participant_ids":[11],"participant_labels":["Alice"],"participant_domains":[],
+					"size_bytes":2048,"sender_label":"File Sender","participant_ids":[11],"participant_labels":["Alice"],"participant_domains":[],
 					"content_state":"local_content","content_available":true,
 					"person_provenance":{"participant_ids":[11],"roles":["from"],"directions":["from_person"]}
 				}],
@@ -806,6 +806,7 @@ func TestPeopleBrowserFilesAndActivityForwardCursorsAndMapRows(t *testing.T) {
 	require.NoError(err)
 	require.Len(files.Rows, 1)
 	assert.Equal("notes.pdf", files.Rows[0].Filename)
+	assert.Equal("File Sender", files.Rows[0].SenderLabel)
 	assert.Equal(query.FileMIMEPDF, files.Rows[0].MIMEFamily)
 	assert.Equal("files-next", files.NextCursor)
 

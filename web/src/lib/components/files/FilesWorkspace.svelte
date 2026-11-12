@@ -1,10 +1,5 @@
 <script lang="ts" module>
-  function formatDate(value: string): string {
-    const date = new Date(value);
-    return Number.isNaN(date.valueOf())
-      ? value
-      : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
-  }
+  import { formatDate } from '../../util/format';
   function people(row: FileSearchRow): string {
     const labels = row.participant_labels ?? [];
     const domains = row.participant_domains ?? [];
@@ -24,6 +19,7 @@
   }
   function availability(row: FileSearchRow): string {
     if (row.content_state === 'local_content') return 'Local content';
+    if (row.content_state === 'unverified') return 'Not checked';
     if (row.content_state === 'missing_blob') return 'File missing';
     if (row.content_state === 'url_only') return 'URL only';
     return 'Metadata only';
@@ -40,6 +36,7 @@
   import {
     Button,
     Checkbox,
+    MEDIA,
     SearchInput,
     SegmentedControl,
     Toggle,
@@ -47,10 +44,11 @@
     virtualSlice,
   } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack, type Snippet } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import type { APIClient } from '../../api/client';
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
-  import { sourceMailbox, sourceTypeLabel } from '../../sources/labels';
+  import { sourceDisplayName } from '../../sources/labels';
   import { analyticalAuthority } from '../../explore/authority';
   import { FILE_FAMILY_LABELS, fileTypeLabel } from '../../explore/labels';
   import type {
@@ -69,6 +67,7 @@
   import { formatBytes } from '../../util/format';
   import { reportError, reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import { visualReadiness } from '../../search/visual-ready.svelte';
+  import RowKind from '../explore/RowKind.svelte';
   import FileFilters from './FileFilters.svelte';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
@@ -117,7 +116,7 @@
     expectedAuthority?: string;
     embedded?: boolean;
     showHeader?: boolean;
-    toolbar?: Snippet<[Snippet]>;
+    toolbar?: Snippet<[Snippet, () => void, boolean]>;
     fileCount?: number | null;
     fileCountLoading?: boolean;
     sort: FileSearchSort;
@@ -130,7 +129,7 @@
     restorationEpoch?: number;
     onSortChange?: (sort: FileSearchSort) => void;
     onActiveKey?: (key: string) => void;
-    onSelectedKey?: (key: string | null) => void;
+    onSelectedKey?: (key: string | null, options?: { replace?: boolean }) => void;
     onFilenameQueryChange?: (query: string) => void;
     onMIMEFamiliesChange?: (families: FileMIMEFamily[]) => void;
     onPersonPresentationChange?: (presentation: 'media' | 'files') => void;
@@ -172,7 +171,8 @@
     onOpenConversation = undefined,
   }: Props = $props();
   const visual = visualReadiness();
-  const geometry = new RowGeometry();
+  const compact = new MediaQuery(MEDIA.compact);
+  const geometry = new RowGeometry('--table-short-row-height');
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
   let rows = $state<WorkspaceFileRow[]>([]);
@@ -195,8 +195,11 @@
   let scrollTop = $state(0);
   let activeKey = $state<string | null>(untrack(() => providedActiveKey));
   let viewerFile = $state<WorkspaceFileRow>();
+  const viewerIndex = $derived(viewerFile ? rows.findIndex((row) => row.key === viewerFile?.key) : -1);
   let pendingViewerKey = $state<string | null>(null);
   let viewerReturnFocus = $state<HTMLElement>();
+  let returningViewerKey: string | null = null;
+  let previousRestorationEpoch = untrack(() => restorationEpoch);
   let controller: AbortController | undefined;
   let cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
@@ -223,6 +226,8 @@
   let visualImageBase64 = $state('');
   let visualImageName = $state('');
   let visualImageRevision = $state(0);
+  let visualImageSelection = 0;
+  let visualImageInput = $state<HTMLInputElement>();
   let completingRestoration = '';
   // The restoration epoch that has not been acknowledged yet. It outlives a
   // cursor failure inside restoreDeepState so retry and reload can resume the
@@ -283,6 +288,8 @@
     if (signature === requestSignature && !submitted) return;
     const isInitialLoad = requestSignature === '';
     requestSignature = signature;
+    const restoring = restorationEpoch !== previousRestorationEpoch;
+    previousRestorationEpoch = restorationEpoch;
     unacknowledgedRestorationEpoch = restorationEpoch;
     // The refreshed context may exclude the file the viewer is showing —
     // close it rather than let its download/open actions keep targeting a
@@ -292,6 +299,7 @@
     // The initial load is exempt: there is no stale viewer yet, and deep
     // restoration owns resolving a mount-time controlled selection.
     if (!isInitialLoad) {
+      if (restoring && !selectedKey) returningViewerKey = untrack(() => viewerFile?.key) ?? null;
       viewerFile = undefined;
       pendingViewerKey = untrack(() => selectedKey) ?? null;
     }
@@ -374,8 +382,7 @@
     previousRowHeight = nextHeight;
     if (!grid || nextHeight === undefined || previousHeight === undefined || previousHeight === nextHeight) return;
     const element = grid;
-    const rebased =
-      activeIndex >= 0 ? activeIndex * nextHeight : rebaseVirtualScroll(scrollTop, previousHeight, nextHeight);
+    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, activeIndex, untrack(() => viewport));
     const expectedScrollHeight = rows.length * nextHeight;
     requestAnimationFrame(() => applyDensityRebase(element, nextHeight, expectedScrollHeight, rebased));
   });
@@ -429,7 +436,12 @@
       if (loaded) return restoreDeepState(currentGeneration, epoch, signal);
     });
   }
-  async function loadPage(
+  let pageLoad: Promise<boolean> | undefined;
+  function loadPage(currentGeneration: number, cursor: string | undefined, signal: AbortSignal): Promise<boolean> {
+    pageLoad = requestPage(currentGeneration, cursor, signal);
+    return pageLoad;
+  }
+  async function requestPage(
     currentGeneration: number,
     cursor: string | undefined,
     signal: AbortSignal,
@@ -588,7 +600,8 @@
     signal: AbortSignal | undefined,
   ): Promise<void> {
     if (epoch === undefined || !signal) return;
-    const targets = [providedActiveKey, selectedKey].filter((key): key is string => Boolean(key));
+    const focusKey = returningViewerKey ?? providedActiveKey;
+    const targets = [focusKey, selectedKey].filter((key): key is string => Boolean(key));
     while (
       currentGeneration === generation &&
       !signal.aborted &&
@@ -599,13 +612,13 @@
       if (!(await loadPage(currentGeneration, nextCursor, signal))) return;
     }
     if (currentGeneration !== generation || signal.aborted) return;
-    if (providedActiveKey && rows.some((row) => row.key === providedActiveKey)) {
-      activeKey = providedActiveKey;
+    if (focusKey && rows.some((row) => row.key === focusKey)) {
+      activeKey = focusKey;
     }
     pendingRestoration = {
       generation: currentGeneration,
       epoch,
-      activeKey: providedActiveKey,
+      activeKey: focusKey,
     };
   }
   async function completeDeepRestoration(
@@ -628,6 +641,11 @@
         if (!isCurrentRestoration(pending) || !renderedRows.some((row) => row.key === target.key)) return;
         if (!grid?.querySelector(`#${rowID(target)}`)) return;
       }
+      if (returningViewerKey && target) {
+        onActiveKey?.(target.key);
+        grid.focus();
+      }
+      returningViewerKey = null;
       pendingRestoration = undefined;
       if (unacknowledgedRestorationEpoch === pending.epoch) unacknowledgedRestorationEpoch = undefined;
       onRestorationComplete?.(pending.epoch);
@@ -643,15 +661,17 @@
     );
   }
   async function loadMore(): Promise<void> {
-    if (!nextCursor || loadingMore || !controller) return;
+    if (loadingMore) { await pageLoad; return; }
+    if (!nextCursor || !controller) return;
     pageError = '';
     // A transient cursor failure may have interrupted restoreDeepState. Resume
     // the restoration loop so later-page targets are still found, scrolled to,
     // and the epoch acknowledged only after focus completes. pendingRestoration
     // set means the loop already handed off; page normally in that case.
     if (unacknowledgedRestorationEpoch !== undefined && pendingRestoration === undefined) {
+      const loadedCount = rows.length;
       await restoreDeepState(generation, unacknowledgedRestorationEpoch, controller.signal);
-      return;
+      if (rows.length > loadedCount || pageError || error || !nextCursor) return;
     }
     loadingMore = true;
     await loadPage(generation, nextCursor, controller.signal);
@@ -680,13 +700,26 @@
   function rowID(row: WorkspaceFileRow): string {
     return `file-row-${row.id}`;
   }
-  function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid): void {
+  function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid, options: { replace?: boolean } | undefined = undefined): void {
     activeKey = row.key;
     onActiveKey?.(row.key);
     viewerReturnFocus = returnFocus;
     viewerFile = row;
     pendingViewerKey = null;
-    onSelectedKey?.(row.key);
+    onSelectedKey?.(row.key, options);
+  }
+  async function step(delta: -1 | 1): Promise<void> {
+    const current = viewerFile;
+    if (!current || viewerIndex < 0) return;
+    const target = viewerIndex + delta;
+    if (target < 0 || target >= totalCount) return;
+    if (target >= rows.length) { await loadMore(); await tick(); }
+    if (viewerFile !== current || !rows[target]) return;
+    move(target);
+    if (nextCursor && !pageError && target >= rows.length - OVERSCAN) void loadMore();
+    const gallery = viewerReturnFocus?.closest('.media-gallery');
+    const returnFocus = gallery?.querySelector<HTMLElement>(`[data-file-id="${rows[target].id}"]`) ?? viewerReturnFocus;
+    open(rows[target], returnFocus, { replace: true });
   }
   function move(index: number): void {
     const height = rowHeight;
@@ -701,8 +734,8 @@
     if (grid && top < grid.scrollTop) grid.scrollTop = top;
     else if (grid && top + height > grid.scrollTop + visibleHeight) grid.scrollTop = top + height - visibleHeight;
   }
-  function measuredViewport(element: HTMLDivElement, header: HTMLDivElement): number {
-    return tableViewportHeight(element.clientHeight, header.offsetHeight || 34, window.innerHeight);
+  function measuredViewport(element: HTMLDivElement, header: HTMLDivElement | undefined): number {
+    return tableViewportHeight(element.clientHeight, header?.offsetHeight || 34, window.innerHeight);
   }
   function applyDensityRebase(
     element: HTMLDivElement,
@@ -758,6 +791,7 @@
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
+    const selection = ++visualImageSelection;
     if (file.size > 20 * 1024 * 1024) {
       error = 'Visual query images must be 20 MiB or smaller.';
       rejectedImages += 1;
@@ -770,6 +804,7 @@
       reader.onload = () => resolve(String(reader.result));
       reader.readAsDataURL(file);
     });
+    if (selection !== visualImageSelection) return;
     submitted = true;
     visualQuery = visualQueryDraft = '';
     visualImageName = file.name;
@@ -783,11 +818,18 @@
     visualImageName = '';
     visualImageRevision += 1;
   }
+  function clearVisualSearch(): void {
+    clearTimeout(visualQueryDebounce);
+    visualQuery = visualQueryDraft = '';
+    visualImageSelection += 1;
+    removeVisualImage();
+    if (visualImageInput) visualImageInput.value = '';
+  }
 </script>
 
 {#snippet sortHeader(field: FileSearchSort['field'], label: string)}
   <!-- kit-ui-check-ignore: the virtualized div grid owns focus and deep restoration; kit TableHeaderCell renders a <th> and needs kit Table. -->
-  <span role="columnheader" aria-sort={sort.field === field ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
+  <span class={`header--${field}`} role="columnheader" aria-sort={sort.field === field ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
     <button type="button" aria-label={`Sort by ${label.toLowerCase()}`} onclick={() => chooseSort(field)}>
       {label}
       {#if sort.field === field}
@@ -856,6 +898,7 @@
         Query image
         <input
           type="file"
+          bind:this={visualImageInput}
           accept="image/jpeg,image/png,image/webp"
           onchange={(event) => void chooseVisualImage(event)}
         />
@@ -869,7 +912,7 @@
   </div>
   {/snippet}
   {#if toolbar}
-    {@render toolbar(controls)}
+    {@render toolbar(controls, clearVisualSearch, hostedVisualSearch && Boolean(visualQuery.trim() || visualImageBase64))}
   {:else}
     <div class="embedded-controls">
       <div class="embedded-filters">
@@ -913,16 +956,16 @@
         onkeydown={handleKeydown}
         onscroll={handleScroll}
       >
-        <div class="table-header" style:grid-template-columns={columns} bind:this={headerElement} role="row">
+        <div class="table-header" style:--row-template={columns} bind:this={headerElement} role="row">
           {@render sortHeader('occurred_at', 'Date')}
           {@render sortHeader('filename', 'Filename')}
-          <span role="columnheader">Type</span>
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Type</span>
           {@render sortHeader('size', 'Size')}
-          {#if personScoped}<span role="columnheader">Direction</span>{/if}
-          <span role="columnheader">People</span>
-          <span role="columnheader">Source</span>
-          <span role="columnheader">Message</span>
-          <span role="columnheader">Availability</span>
+          {#if personScoped}<span role="columnheader" class={[compact.current && 'kit-sr-only']}>Direction</span>{/if}
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>People</span>
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Source</span>
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Message</span>
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Availability</span>
         </div>
         <div class="table-body" role="rowgroup">
           {#if unavailable?.readiness === 'building'}
@@ -976,7 +1019,7 @@
                   <div
                     id={rowID(row)}
                     class="data-row"
-                    style:grid-template-columns={columns}
+                    style:--row-template={columns}
                     class:data-row--active={index === activeIndex}
                     role="row"
                     aria-rowindex={index + 2}
@@ -991,23 +1034,32 @@
                       }
                     }}
                   >
-                    <span role="gridcell"
+                    <span class="file-kind" aria-hidden="true"><RowKind kind="file" messageType="" /></span>
+                    <span class="cell--date" role="gridcell" aria-colindex={1}
                       ><time datetime={row.occurred_at} data-mono>{formatDate(row.occurred_at)}</time></span
                     >
                     <span
+                      class="cell--name"
                       role="gridcell"
+                      aria-colindex={2}
                       title={row.search_explain ? `Match score ${row.search_explain.rrf.toFixed(4)}` : undefined}
                     >
                       <Tooltip text={row.filename || '(unnamed)'}><strong title={row.filename || '(unnamed)'}>{row.filename || '(unnamed)'}</strong></Tooltip>
                     </span>
-                    <span role="gridcell" title={row.mime_type || row.mime_family}
+                    <span class="cell--type" role="gridcell" aria-colindex={3} title={row.mime_type || row.mime_family}
                       >{fileTypeLabel(row.mime_type, row.mime_family)}</span
                     >
-                    <span role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
-                    {#if personScoped}<span role="gridcell">{relationship(row)}</span>{/if}
-                    <span role="gridcell">{people(row)}</span>
-                    <span role="gridcell">{row.source_identifier.includes('://') ? row.source_type === 'imap' ? sourceMailbox(row.source_identifier) : sourceTypeLabel(row.source_type) : row.source_identifier}</span>
-                    <span role="gridcell">
+                    <span class="cell--size" role="gridcell" aria-colindex={4} data-mono>{formatBytes(row.size_bytes)}</span>
+                    {#if personScoped}<span class="cell--direction" role="gridcell" aria-colindex={5}>{relationship(row)}</span>{/if}
+                    <span class="cell--people" role="gridcell" aria-colindex={personScoped ? 6 : 5}>
+                      {#if compact.current}
+                        <span class="phone-sender">{row.sender_label || people(row)}</span>
+                      {:else}
+                        <span class="desktop-people">{people(row)}</span>
+                      {/if}
+                    </span>
+                    <span class="cell--source" role="gridcell" aria-colindex={personScoped ? 7 : 6}>{row.source_identifier.includes('://') ? sourceDisplayName(row.source_type, row.source_identifier) : row.source_identifier}</span>
+                    <span class="cell--message" role="gridcell" aria-colindex={personScoped ? 8 : 7}>
                       {#if onOpenItem}
                         {@const openItem = onOpenItem}
                         <button
@@ -1020,7 +1072,7 @@
                         {row.containing_title || row.entry_key}
                       {/if}
                     </span>
-                    <span role="gridcell">{availability(row)}</span>
+                    <span class="cell--availability" class:local-content={row.content_state === 'local_content'} role="gridcell" aria-colindex={personScoped ? 9 : 8}>{availability(row)}</span>
                   </div>
                 {/each}
               </div>
@@ -1084,6 +1136,10 @@
   <FileViewer
     {client}
     file={viewerFile}
+    position={viewerIndex >= 0 ? { index: viewerIndex, total: totalCount } : undefined}
+    onStep={viewerIndex >= 0 ? (delta) => { void step(delta); } : undefined}
+    canStepForward={viewerIndex + 1 < rows.length || !!nextCursor && !pageError && !error}
+    notice={viewerIndex + 1 >= rows.length && totalCount > rows.length ? pageError || error : ''}
     returnFocus={viewerReturnFocus ?? grid}
     onClose={() => {
       viewerFile = undefined;
@@ -1166,6 +1222,7 @@
     flex: 1;
     flex-direction: column;
     overflow: auto;
+    overflow-anchor: none;
     outline: none;
   }
   .files-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-blue); }
@@ -1174,6 +1231,7 @@
     display: grid;
     align-items: center;
     min-width: 840px;
+    grid-template-columns: var(--row-template);
   }
   .table-header {
     position: sticky;
@@ -1197,6 +1255,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  .data-row .desktop-people { padding: 0; }
   .table-header button {
     width: 100%;
     height: var(--table-header-height);
@@ -1241,7 +1300,7 @@
     inset: 0 0 auto;
   }
   .data-row {
-    height: var(--row-height);
+    height: var(--table-short-row-height);
     border-bottom: 1px solid var(--border-muted);
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
@@ -1273,5 +1332,29 @@
     padding: var(--space-2);
     background: var(--bg-inset);
     text-align: center;
+  }
+  .file-kind { display: none; }
+  @media (max-width: 640px) {
+    .table-header, .data-row { min-width: 0; }
+    .table-header { display: flex; gap: var(--space-2); padding: 0 var(--pane-pad-x); }
+    .table-header > span { padding: 0; }
+    .table-header button { width: auto; height: 26px; padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
+    .data-row {
+      grid-template-columns: 22px auto auto minmax(0, 1fr) auto;
+      grid-template-areas: 'icon name name name avail' 'date date size people people';
+      align-content: center;
+      gap: var(--space-1) 0;
+      padding: var(--pane-pad-y) var(--pane-pad-x);
+    }
+    .data-row span { padding: 0; }
+    .data-row .file-kind { display: block; grid-area: icon; color: var(--artifact-ink); }
+    .file-kind :global(.row-kind__label) { display: none; }
+    .cell--name { grid-area: name; color: var(--text-primary); font-size: var(--font-size-sm); }
+    .cell--date { grid-area: date; }
+    .cell--size { grid-area: size; }
+    .cell--people { grid-area: people; }
+    .cell--size::before, .cell--people::before { content: ' · '; white-space: pre; }
+    .data-row .cell--availability { grid-area: avail; color: var(--text-muted); text-align: right; }
+    .cell--type, .cell--direction, .cell--source, .cell--message, .local-content { display: none; }
   }
 </style>

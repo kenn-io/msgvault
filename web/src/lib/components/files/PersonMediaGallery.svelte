@@ -3,6 +3,7 @@
 
   import type { APIClient } from '../../api/client';
   import type { PersonFileSearchRow } from '../../explore/models';
+  import { formatDate } from '../../util/format';
   import MediaThumbnail from './MediaThumbnail.svelte';
 
   interface Props {
@@ -37,6 +38,7 @@
         <button
           type="button"
           class="media-card"
+          data-file-id={row.id}
           aria-label={`Open ${row.filename || `attachment ${row.id}`}`}
           onclick={(event) => onOpen?.(row, event.currentTarget)}
         >
@@ -68,13 +70,6 @@
 </section>
 
 <script lang="ts" module>
-  function formatDate(value: string): string {
-    const date = new Date(value);
-    return Number.isNaN(date.valueOf())
-      ? value
-      : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
-  }
-
   function relationship(row: PersonFileSearchRow): string {
     const labels: string[] = [];
     if (row.person_provenance.directions?.includes('from_person')) labels.push('From them');

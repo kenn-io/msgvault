@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -27,7 +26,7 @@ func TestBuildCache_AfterMessengerImport(t *testing.T) {
 
 	fixture, err := filepath.Abs("../../../internal/fbmessenger/testdata/json_simple")
 	require.NoError(err)
-	summary, err := fbmessenger.ImportDYI(context.Background(), st, fbmessenger.ImportOptions{
+	summary, err := fbmessenger.ImportDYI(t.Context(), st, fbmessenger.ImportOptions{
 		Me:             "wes@facebook.messenger",
 		RootDir:        fixture,
 		Format:         "auto",
@@ -37,7 +36,7 @@ func TestBuildCache_AfterMessengerImport(t *testing.T) {
 	require.NoError(st.Close())
 	require.Equal(int64(4), summary.MessagesAdded, "imported messages")
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 	require.False(result.Skipped, "buildCache unexpectedly skipped")
 
@@ -47,14 +46,16 @@ func TestBuildCache_AfterMessengerImport(t *testing.T) {
 
 	var n int
 	pattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
-	err = duckdb.QueryRow(
+	err = duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true)`, pattern,
 	).Scan(&n)
 	require.NoError(err, "duckdb scan")
 	assert.Equal(4, n, "parquet messages")
 
 	var mtype string
-	err = duckdb.QueryRow(
+	err = duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT DISTINCT message_type FROM read_parquet(?, hive_partitioning=true)`, pattern,
 	).Scan(&mtype)
 	require.NoError(err, "duckdb message_type")

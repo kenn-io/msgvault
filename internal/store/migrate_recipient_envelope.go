@@ -220,7 +220,7 @@ func rebuildRecipientTableWithoutUniqueSQLite(
 		return recipientOrphanCleanup{}, false, nil
 	}
 
-	if err := dropPersonSweepSQLiteTriggers(tx); err != nil {
+	if err := dropPersonSweepSQLiteTriggers(boundQuerier{ctx: ctx, q: tx}); err != nil {
 		return recipientOrphanCleanup{}, false, err
 	}
 
@@ -263,11 +263,12 @@ func rebuildRecipientTableWithoutUniqueSQLite(
 			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
 			recipient_type TEXT NOT NULL,
 			display_name TEXT,
-			email_address TEXT
+			email_address TEXT,
+			is_relayed BOOLEAN NOT NULL DEFAULT FALSE
 		)`,
 		`INSERT INTO message_recipients_new
-			(id, message_id, participant_id, recipient_type, display_name, email_address)
-			SELECT id, message_id, participant_id, recipient_type, display_name, email_address
+			(id, message_id, participant_id, recipient_type, display_name, email_address, is_relayed)
+			SELECT id, message_id, participant_id, recipient_type, display_name, email_address, is_relayed
 			FROM message_recipients`,
 		`DROP TABLE message_recipients`,
 		`ALTER TABLE message_recipients_new RENAME TO message_recipients`,

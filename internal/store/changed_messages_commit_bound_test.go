@@ -262,7 +262,8 @@ func oldestWatermark(t *testing.T, st *store.Store, ids []int64) time.Time {
 	oldest := time.Time{}
 	for _, id := range ids {
 		var stamp nullableFeedTime
-		require.NoError(t, st.DB().QueryRow(
+		require.NoError(t, st.DB().QueryRowContext(
+			t.Context(),
 			st.Rebind(`SELECT content_changed_at FROM messages WHERE id = ?`), id).Scan(&stamp),
 			"read a watermark")
 		require.Truef(t, stamp.valid, "message %d has no watermark", id)
@@ -308,8 +309,9 @@ func (n *nullableFeedTime) parse(raw string) error {
 // writeSubject writes a message's subject on the pooled handle: an ordinary
 // autocommit write that the triggers stamp and publish together. It returns the
 // error rather than asserting, so a background writer can use it.
-func writeSubject(st *store.Store, id int64, subject string) error {
-	_, err := st.DB().Exec(
+func writeSubject(ctx context.Context, st *store.Store, id int64, subject string) error {
+	_, err := st.DB().ExecContext(
+		ctx,
 		st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), subject, id)
 	if err != nil {
 		return fmt.Errorf("set subject for message %d: %w", id, err)
@@ -320,7 +322,7 @@ func writeSubject(st *store.Store, id int64, subject string) error {
 // setSubject is writeSubject on the test's own goroutine.
 func setSubject(t *testing.T, st *store.Store, id int64, subject string) {
 	t.Helper()
-	require.NoError(t, writeSubject(st, id, subject))
+	require.NoError(t, writeSubject(t.Context(), st, id, subject))
 }
 
 // staggered generates pseudo-jitter for writer interleavings; it is not a wait.
@@ -338,7 +340,8 @@ func staggered(i, base, spread int) time.Duration {
 func readWatermarkInTx(t *testing.T, st *store.Store, tx *sql.Tx, id int64) time.Time {
 	t.Helper()
 	var stamp any
-	require.NoError(t, tx.QueryRow(
+	require.NoError(t, tx.QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT content_changed_at FROM messages WHERE id = ?`), id).Scan(&stamp),
 		"read the uncommitted watermark")
 	switch v := stamp.(type) {
@@ -418,16 +421,16 @@ func TestListChangedMessages_SameInstantUncommittedChangeIsNotStranded(t *testin
 		sharedParam = shared.UTC().Format(store.SQLiteTimestampLayout)
 	}
 	const pinned = `UPDATE messages SET subject = ?, content_changed_at = ? WHERE id = ?`
-	_, err := st.DB().Exec(st.Rebind(pinned), "high-changed", sharedParam, high)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(pinned), "high-changed", sharedParam, high)
 	require.NoError(err, "the committed change")
 
 	// The same instant takes a second change on the lower id, which stays
 	// uncommitted while the consumer polls. On SQLite this is the write holding
 	// the single writer slot; on PostgreSQL it is one transaction among many.
-	tx, err := st.DB().BeginTx(context.Background(), nil)
+	tx, err := st.DB().BeginTx(t.Context(), nil)
 	require.NoError(err, "begin the pending write")
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.Exec(st.Rebind(pinned), "low-changed", sharedParam, low)
+	_, err = tx.ExecContext(t.Context(), st.Rebind(pinned), "low-changed", sharedParam, low)
 	require.NoError(err, "the pending change")
 
 	// The consumer polls while it is pending, then again once it lands.
@@ -474,10 +477,11 @@ func TestListChangedMessages_LaterCommitDoesNotStrandAnEarlierPendingChange(t *t
 	consumer := newChangeFeedConsumer()
 	consumer.drain(t, st)
 
-	tx, err := st.DB().BeginTx(context.Background(), nil)
+	tx, err := st.DB().BeginTx(t.Context(), nil)
 	require.NoError(err, "begin the batched write")
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.Exec(
+	_, err = tx.ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), "batched-change", pending)
 	require.NoError(err, "stamp the batched change")
 	pendingAt := readWatermarkInTx(t, st, tx, pending)
@@ -529,10 +533,11 @@ func TestListChangedMessages_CompleteThroughHoldsBelowAPendingChange(t *testing.
 		"a quiet database is complete through some instant: the feed has proof "+
 			"every stamp in it has committed")
 
-	tx, err := st.DB().BeginTx(context.Background(), nil)
+	tx, err := st.DB().BeginTx(t.Context(), nil)
 	require.NoError(err, "begin the pending write")
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.Exec(
+	_, err = tx.ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), "pending", id)
 	require.NoError(err, "stamp the pending change")
 	pendingAt := readWatermarkInTx(t, st, tx, id)
@@ -740,7 +745,7 @@ func TestListChangedMessages_BoundNeverEntersABatchesStampRange(t *testing.T) {
 	consumer := newChangeFeedConsumer()
 	consumer.drain(t, st)
 
-	tx, err := st.DB().BeginTx(context.Background(), nil)
+	tx, err := st.DB().BeginTx(t.Context(), nil)
 	require.NoError(err, "begin the batch")
 	defer func() { _ = tx.Rollback() }()
 
@@ -759,7 +764,7 @@ func TestListChangedMessages_BoundNeverEntersABatchesStampRange(t *testing.T) {
 					return
 				default:
 				}
-				if err := writeSubject(st, traffic, fmt.Sprintf("traffic-%d", i)); err != nil {
+				if err := writeSubject(t.Context(), st, traffic, fmt.Sprintf("traffic-%d", i)); err != nil {
 					trafficErr = err
 					return
 				}
@@ -771,7 +776,7 @@ func TestListChangedMessages_BoundNeverEntersABatchesStampRange(t *testing.T) {
 	var firstStamp time.Time
 	consumer.watchBounds(func() {
 		for chunk, id := range batch {
-			_, err := tx.Exec(st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`),
+			_, err := tx.ExecContext(t.Context(), st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`),
 				fmt.Sprintf("batched-%d", chunk), id)
 			require.NoError(err, "stamp chunk %d", chunk)
 			if firstStamp.IsZero() {
@@ -868,7 +873,7 @@ func TestListChangedMessages_ConcurrentTransactionalWritersLoseNothing(t *testin
 			}
 			id := plain[i%len(plain)]
 			value := fmt.Sprintf("plain-%d", i)
-			if err := writeSubject(st, id, value); err != nil {
+			if err := writeSubject(t.Context(), st, id, value); err != nil {
 				consumer.record(err)
 				return
 			}
@@ -881,9 +886,9 @@ func TestListChangedMessages_ConcurrentTransactionalWritersLoseNothing(t *testin
 	for round := range rounds {
 		id := batched[round%len(batched)]
 		value := fmt.Sprintf("batched-%d", round)
-		tx, err := st.DB().BeginTx(context.Background(), nil)
+		tx, err := st.DB().BeginTx(t.Context(), nil)
 		require.NoError(err, "begin batched write")
-		_, err = tx.Exec(st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), value, id)
+		_, err = tx.ExecContext(t.Context(), st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), value, id)
 		require.NoError(err, "batched write")
 		time.Sleep(pendingStampWindow) //nolint:kennlint // sleeptest: holds the stamped write uncommitted while the feed polls
 		require.NoError(tx.Commit(), "commit batched write")
@@ -932,7 +937,8 @@ func storedWatermarks(t *testing.T, st *store.Store, ids []int64) map[int64]stri
 	out := make(map[int64]string, len(ids))
 	for _, id := range ids {
 		var stamp any
-		if err := st.DB().QueryRow(
+		if err := st.DB().QueryRowContext(
+			t.Context(),
 			st.Rebind(`SELECT content_changed_at FROM messages WHERE id = ?`), id,
 		).Scan(&stamp); err != nil {
 			out[id] = fmt.Sprintf("unreadable: %v", err)
@@ -964,17 +970,17 @@ func TestListChangedMessages_UnresolvableMessagesTableIsRefused(t *testing.T) {
 
 	seedFeedMessage(t, st, 1, time.Time{})
 	settleFeedClock(t, st)
-	_, err := st.ListChangedMessages(context.Background(), store.ChangedMessagesCursor{}, 10)
+	_, err := st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, 10)
 	require.NoError(err, "the feed works before the table moves out of reach")
 
-	_, err = st.DB().Exec(`ALTER TABLE messages RENAME TO messages_moved`)
+	_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE messages RENAME TO messages_moved`)
 	require.NoError(err, "move the table out of the bound query's reach")
 	defer func() {
-		_, err := st.DB().Exec(`ALTER TABLE messages_moved RENAME TO messages`)
+		_, err := st.DB().ExecContext(t.Context(), `ALTER TABLE messages_moved RENAME TO messages`)
 		require.NoError(err, "put the table back")
 	}()
 
-	_, err = st.ListChangedMessages(context.Background(), store.ChangedMessagesCursor{}, 10)
+	_, err = st.ListChangedMessages(t.Context(), store.ChangedMessagesCursor{}, 10)
 	require.Error(err,
 		"a bound that cannot see which transactions are writing must refuse the "+
 			"page; serving one bounded at the clock is the original data loss, "+
@@ -1009,7 +1015,7 @@ func TestListChangedMessages_BlockedFirstProbePublishesNoBound(t *testing.T) {
 	testutil.SkipIfPostgres(t, "the SQLite bound is a write-lock probe; PostgreSQL has none")
 
 	path := filepath.Join(t.TempDir(), "feed.db")
-	seedStore, err := store.OpenForTest(path)
+	seedStore, err := store.OpenForTest(t.Context(), path)
 	require.NoError(err, "open the archive")
 	require.NoError(seedStore.InitSchema(), "init schema")
 	seeded := seedFeedMessage(t, seedStore, 1, time.Time{})
@@ -1018,16 +1024,16 @@ func TestListChangedMessages_BlockedFirstProbePublishesNoBound(t *testing.T) {
 
 	// A restarted server: a new store, so a dialect that has never proved the
 	// database quiescent.
-	st, err := store.OpenForTest(path)
+	st, err := store.OpenForTest(t.Context(), path)
 	require.NoError(err, "reopen the archive")
 	defer func() { _ = st.Close() }()
 
 	holder, err := sql.Open(sqliteutil.DriverName(), path+"?_busy_timeout=30000")
 	require.NoError(err, "open the writer that holds the lock")
 	defer func() { _ = holder.Close() }()
-	held, err := holder.Conn(context.Background())
+	held, err := holder.Conn(t.Context())
 	require.NoError(err, "pin the holding connection")
-	_, err = held.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+	_, err = held.ExecContext(t.Context(), "BEGIN IMMEDIATE")
 	require.NoError(err, "take the write lock")
 
 	consumer := newChangeFeedConsumer()
@@ -1045,7 +1051,7 @@ func TestListChangedMessages_BlockedFirstProbePublishesNoBound(t *testing.T) {
 		"server_time still comes from the database, so a consumer can see that the "+
 			"clock is moving while the bound is not")
 
-	_, err = held.ExecContext(context.Background(), "ROLLBACK")
+	_, err = held.ExecContext(t.Context(), "ROLLBACK")
 	require.NoError(err, "release the write lock")
 	require.NoError(held.Close(), "return the holding connection")
 	require.True(

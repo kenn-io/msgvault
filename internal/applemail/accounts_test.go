@@ -21,7 +21,7 @@ func createTestAccountsDB(t *testing.T, accounts []testAccount) string {
 	require.NoError(t, err, "create test db")
 	defer func() { _ = db.Close() }()
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE ZACCOUNT (
 			Z_PK INTEGER PRIMARY KEY,
 			ZIDENTIFIER TEXT,
@@ -33,7 +33,8 @@ func createTestAccountsDB(t *testing.T, accounts []testAccount) string {
 	require.NoError(t, err, "create schema")
 
 	for _, a := range accounts {
-		_, err := db.Exec(
+		_, err := db.ExecContext(
+			t.Context(),
 			`INSERT INTO ZACCOUNT (Z_PK, ZIDENTIFIER, ZUSERNAME, ZACCOUNTDESCRIPTION, ZPARENTACCOUNT)
 			 VALUES (?, ?, ?, ?, ?)`,
 			a.pk, a.identifier, a.username, a.description, a.parentAccount,
@@ -168,7 +169,7 @@ func TestResolveAccounts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
-			result, err := ResolveAccounts(dbPath, tt.guids)
+			result, err := ResolveAccounts(t.Context(), dbPath, tt.guids)
 			require.NoError(t, err, "ResolveAccounts")
 
 			assert.Len(result, tt.wantLen)
@@ -198,7 +199,7 @@ func TestResolveAccounts(t *testing.T) {
 }
 
 func TestResolveAccounts_BadPath(t *testing.T) {
-	_, err := ResolveAccounts("/nonexistent/path/Accounts4.sqlite", []string{"some-guid"})
+	_, err := ResolveAccounts(t.Context(), "/nonexistent/path/Accounts4.sqlite", []string{"some-guid"})
 	require.Error(t, err, "expected error for bad DB path")
 }
 
@@ -251,7 +252,7 @@ func TestDiscoverV10Accounts(t *testing.T) {
 	}
 	dbPath := createTestAccountsDB(t, accounts)
 
-	result, err := DiscoverV10Accounts(mailDir, dbPath, nil)
+	result, err := DiscoverV10Accounts(t.Context(), mailDir, dbPath, nil)
 	require.NoError(err, "DiscoverV10Accounts")
 
 	require.Len(result, 2)

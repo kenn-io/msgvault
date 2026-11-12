@@ -93,6 +93,7 @@ function fixture(doc: ReturnType<typeof settingsDoc> = settingsDoc(), extra?: (r
     seen.push({ method: request.method, path, query: new URL(request.url).search, ifMatch: request.headers.get('If-Match'), body });
     const custom = await extra?.(request);
     if (custom) return custom;
+    if (path === '/api/v1/person-fact-targets') return Response.json({ targets: [] });
     if (path === '/api/v1/settings' && request.method === 'GET') {
       return Response.json(doc, { headers: { ETag: `"s${etag}"`, 'Credential-ETag': '"credential-a"' } });
     }
@@ -186,7 +187,7 @@ it('warns before leaving with drafts, keeps them on Stay, and discards before co
   const firstLeave = vi.fn();
   expect(hold?.(firstLeave)).toBe(true);
   const stay = await screen.findByRole('button', { name: 'Stay' });
-  expect(screen.getByText('Leave Settings and discard 1 unsaved change?')).toBeDefined();
+  expect(screen.getByText('Leave Settings and discard unsaved changes?')).toBeDefined();
   expect(document.activeElement).toBe(stay);
   await fireEvent.click(stay);
   expect(field).toHaveProperty('value', '15m');
@@ -284,6 +285,119 @@ it('refreshes shared Contacts status after saving a disabled account', async () 
   await waitFor(() => expect(within(updatedContacts).getByText('Off')).toBeDefined());
 });
 
+it.each([
+  ['provider settings', 'enrichment', 'primary endpoint'],
+  ['People sweep profile', 'enrichment', 'Model ID'],
+  ['contact account', 'carddav', 'Base URL'],
+] as const)('warns before leaving with an unsaved %s and drops it on leave', async (_form, category, label) => {
+  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
+  const { client, operationsController, onStatusChange, seen } = fixture(settingsDoc({ person_enrichment_providers: [provider] }));
+  let hold: ((leave: () => void) => boolean) | undefined;
+  render(SettingsWorkspace, {
+    props: { client, operationsController, onStatusChange, category },
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
+  });
+  const field = await screen.findByLabelText(label);
+  const saved = (field as HTMLInputElement).value;
+  expect(hold?.(vi.fn())).toBe(false);
+  await fireEvent.input(field, { target: { value: 'https://changed.example.test' } });
+  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+  const reload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(reload);
+  expect(reload.defaultPrevented).toBe(true);
+  const leave = vi.fn();
+  expect(hold?.(leave)).toBe(true);
+  await fireEvent.click(await screen.findByRole('button', { name: 'Discard and leave' }));
+  expect(leave).toHaveBeenCalledOnce();
+  expect(screen.getByLabelText(label)).toHaveProperty('value', saved);
+  expect(hold?.(vi.fn())).toBe(false);
+  expect(seen.filter(request => request.method !== 'GET')).toEqual([]);
+});
+
+it('keeps a People provider check through an unrelated settings save', async () => {
+  let revision = '"s1"';
+  let checked = false;
+  const doc = settingsDoc();
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/settings') {
+      if (request.method === 'PATCH') revision = '"s2"';
+      return Response.json(doc, { headers: { ETag: revision } });
+    }
+    if (path.includes('/settings/people-inference')) {
+      if (path.endsWith('/check')) {
+        checked = true;
+        return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      }
+      return Response.json({
+        profiles: [{ ...inferenceProfile, checked, consent_active: path.endsWith('/consent') }],
+        configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: revision } });
+    }
+  });
+  const profileReads = () => seen.filter(request => request.method === 'GET' && request.path.endsWith('/settings/people-inference')).length;
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Check provider' }));
+  await fireEvent.click(await screen.findByLabelText('I confirm this exact disclosure'));
+  const readsBeforeSave = profileReads();
+  await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(profileReads()).toBeGreaterThan(readsBeforeSave));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Grant consent' })).toHaveProperty('disabled', false));
+  await fireEvent.click(screen.getByRole('button', { name: 'Grant consent' }));
+  await waitFor(() => expect(seen.find(request => request.path.endsWith('/consent'))?.ifMatch).toBe('"s2"'));
+  expect(seen.filter(request => request.path.endsWith('/check'))).toHaveLength(1);
+});
+
+it('drops a People provider check after another tab replaces its key', async () => {
+  let checked = false;
+  const doc = settingsDoc();
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => {
+    const path = new URL(request.url).pathname;
+    if (path.includes('/settings/people-inference')) {
+      if (path.endsWith('/check')) {
+        checked = true;
+        return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      }
+      return Response.json({
+        profiles: [{ ...inferenceProfile, checked }],
+        configured_enabled: false, running_enabled: false, pending_restart: false,
+      }, { headers: { ETag: '"s1"' } });
+    }
+  });
+  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Check provider' }));
+  await fireEvent.click(await screen.findByLabelText('I confirm this exact disclosure'));
+  // Replacing the key elsewhere revokes the check; the policy fingerprint stays the same.
+  checked = false;
+  await fireEvent.click(screen.getByRole('button', { name: 'Reload people sweep settings' }));
+  await waitFor(() => expect(screen.queryByLabelText('I confirm this exact disclosure')).toBeNull());
+  expect(screen.queryByRole('button', { name: 'Grant consent' })).toBeNull();
+  expect(seen.some(request => request.path.endsWith('/consent'))).toBe(false);
+});
+
+it('warns before a reload drops an API key typed into its dialog', async () => {
+  const { client, operationsController, onStatusChange, seen } = fixture();
+  let hold: ((leave: () => void) => boolean) | undefined;
+  render(SettingsWorkspace, {
+    props: { client, operationsController, onStatusChange, category: 'tasks' },
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
+  });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Add API key' }));
+  await fireEvent.input(screen.getByLabelText('New API key'), { target: { value: 'synthetic-key' } });
+  expect(screen.queryByRole('button', { name: 'Save changes' })).toBeNull();
+  const reload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(reload);
+  expect(reload.defaultPrevented).toBe(true);
+  const leave = vi.fn();
+  expect(hold?.(leave)).toBe(true);
+  await fireEvent.click(await screen.findByRole('button', { name: 'Discard and leave' }));
+  expect(leave).toHaveBeenCalledOnce();
+  expect(screen.queryByLabelText('New API key')).toBeNull();
+  expect(hold?.(vi.fn())).toBe(false);
+  expect(seen.filter(request => request.method !== 'GET')).toEqual([]);
+});
+
 it('keeps a failed Overview action error on Overview', async () => {
   const { client, operationsController, onStatusChange } = fixture(settingsDoc(), request => {
     if (request.url.endsWith('/operations/status')) return Response.json({ lanes: lanes(lane('carddav_sync', { supported_actions: ['carddav_sync'] })) });
@@ -323,14 +437,14 @@ describe('SettingsWorkspace', () => {
     render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'server' });
     await screen.findByRole('heading', { name: 'Server' });
     expect(screen.getByLabelText('Stop when idle after')).toBeDefined();
-    const advanced = screen.getByText('Advanced', { selector: 'summary' }).closest('details')!;
+    const advanced = screen.getByText('Advanced', { selector: '.kit-disclosure__title' }).closest('details')!;
     expect(within(advanced).getByRole('switch', { name: 'Trace every SQL statement' })).toBeDefined();
     const config = screen.getByText('Set in config.toml').closest('details')!;
     expect(within(config).getByText('Bind address')).toBeDefined();
     expect(within(config).getByText('127.0.0.1')).toBeDefined();
     expect(within(config).getByText('The daemon picks a free port')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
-    const archiveTuning = screen.getByText('Advanced', { selector: 'summary' }).closest('details')!;
+    const archiveTuning = screen.getByText('Advanced', { selector: '.kit-disclosure__title' }).closest('details')!;
     expect(within(archiveTuning).getByLabelText('Builder threads')).toBeDefined();
   });
 
@@ -427,7 +541,7 @@ it.each([
   await fireEvent.click(await screen.findByRole('button', { name: 'Add Exa' }));
   await fireEvent.input(screen.getByLabelText('Exa name'), { target: { value: name } });
   await fireEvent.submit(screen.getByRole('form', { name: 'Add Exa' }));
-  expect((await screen.findByRole('alert')).textContent).toContain(error);
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain(error));
   expect(seen.filter(request => request.method !== 'GET')).toEqual([]);
 });
 
@@ -446,10 +560,34 @@ it('locks fields and newly mounted category controls without holding leave while
   try {
     await waitFor(() => expect(seen.some(request => request.method === 'PATCH')).toBe(true));
     expect(hold?.(vi.fn())).toBe(false);
-    expect(screen.queryByText('Leave Settings and discard 1 unsaved change?')).toBeNull();
+    expect(screen.queryByText('Leave Settings and discard unsaved changes?')).toBeNull();
     expect(screen.getByLabelText('Stop when idle after').matches(':disabled')).toBe(true);
     await fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
     expect(screen.getByLabelText('Builder threads').matches(':disabled')).toBe(true);
+  } finally {
+    finish(Response.json(doc, { headers: { ETag: '"s2"' } }));
+  }
+});
+
+it('holds leave for a self-saving form while an ordinary save waits', async () => {
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { finish = resolve; });
+  const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
+  const doc = settingsDoc({ person_enrichment_providers: [provider] });
+  const { client, operationsController, onStatusChange, seen } = fixture(doc, request => request.method === 'PATCH' ? pending : undefined);
+  let hold: ((leave: () => void) => boolean) | undefined;
+  render(SettingsWorkspace, {
+    props: { client, operationsController, onStatusChange, category: 'enrichment' },
+    context: new Map([['msgvault:hold-settings-leave', (next: typeof hold) => { hold = next; }]])
+  });
+  await fireEvent.input(await screen.findByLabelText('primary endpoint'), { target: { value: 'https://changed.example.test' } });
+  await fireEvent.click(screen.getByRole('switch', { name: 'Look people up' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  try {
+    await waitFor(() => expect(seen.some(request => request.method === 'PATCH')).toBe(true));
+    const leave = vi.fn();
+    expect(hold?.(leave)).toBe(true);
+    expect(leave).not.toHaveBeenCalled();
   } finally {
     finish(Response.json(doc, { headers: { ETag: '"s2"' } }));
   }
@@ -522,7 +660,7 @@ it('keeps feature rows during refresh and recovers from a later status failure',
   });
   render(SettingsWorkspace, { client, operationsController, onStatusChange });
   await screen.findByText('Running');
-  await screen.findByRole('button', { name: 'Build index, Message search' });
+  await screen.findByRole('button', { name: 'Build index, Search by meaning' });
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
   try {
     await waitFor(() => {
@@ -530,7 +668,7 @@ it('keeps feature rows during refresh and recovers from a later status failure',
       expect(coverageReads).toBe(2);
     });
     expect(screen.getByText('Running')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Build index, Message search' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Build index, Search by meaning' })).toBeDefined();
   } finally {
     finish(Response.json({ lanes: lanes(lane('visual_embedding')) }));
     finishCoverage(Response.json(coverage));
@@ -590,6 +728,7 @@ it.each([
   let revision = '"s1"';
   let consented = false;
   let selected = false;
+  const checkedFingerprints = new Set<string>();
   const provider = { ...providerDefaults, name: 'primary', kind: 'exa', enabled: false, endpoint: 'https://provider.example.test', credential_id: 'people.enrichment/primary', credential: { configured: false, source: 'none' } };
   const doc = settingsDoc({ person_enrichment_providers: [provider] });
   const { client, operationsController, onStatusChange, seen } = fixture(doc, async request => {
@@ -610,11 +749,16 @@ it.each([
     }
     if (path.includes('/settings/people-inference')) {
       if (request.method !== 'GET' && request.headers.get('If-Match') !== revision) return Response.json({ message: 'Config changed' }, { status: 412 });
-      if (path.endsWith('/check')) return Response.json({ ok: true, fingerprint: 'fingerprint-primary' });
+      // The daemon's fingerprint covers the model, so the changed profile needs a new check.
+      const fingerprint = revision === '"s1"' ? 'fingerprint-primary' : 'fingerprint-two';
+      if (path.endsWith('/check')) {
+        checkedFingerprints.add(fingerprint);
+        return Response.json({ ok: true, fingerprint });
+      }
       if (path.endsWith('/consent')) consented = true;
       if (path.endsWith('/select')) selected = true;
       return Response.json({
-        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two', consent_active: consented }],
+        profiles: [{ ...inferenceProfile, model: revision === '"s1"' ? 'model-one' : 'model-two', fingerprint, checked: checkedFingerprints.has(fingerprint), consent_active: consented }],
         configured_enabled: selected, running_enabled: false, pending_restart: selected,
       }, { headers: { ETag: revision } });
     }
@@ -722,17 +866,17 @@ it('marks failed coverage refreshes unavailable without hiding Overview', async 
     }
   });
   render(SettingsWorkspace, { client, operationsController, onStatusChange });
-  await screen.findByRole('button', { name: 'Build index, Message search' });
+  await screen.findByRole('button', { name: 'Build index, Search by meaning' });
   await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
   const features = screen.getByRole('list', { name: 'Features' });
-  const row = within(features).getByText('Message search').closest('li')!;
-  await waitFor(() => expect(within(row).queryByRole('button', { name: 'Build index, Message search' })).toBeNull());
+  const row = within(features).getByText('Search by meaning').closest('li')!;
+  await waitFor(() => expect(within(row).queryByRole('button', { name: 'Build index, Search by meaning' })).toBeNull());
   expect(within(row).getByText('Unavailable')).toBeDefined();
   expect(within(features).getByText('Source sync')).toBeDefined();
 });
 
 it.each([
-  { name: 'Message search', kind: 'message_embedding' as const, path: '/embeddings/status', status: { ...embeddingStatus, current: 2, pending: 8 } },
+  { name: 'Search by meaning', kind: 'message_embedding' as const, path: '/embeddings/status', status: { ...embeddingStatus, current: 2, pending: 8 } },
   { name: 'Visual search', kind: 'visual_embedding' as const, path: '/multimodal/status', status: { ...visualStatus, current: 2 } },
 ])('clears $name progress when a refresh fails over the network', async ({ name, kind, path, status }) => {
   let reads = 0;
@@ -768,14 +912,14 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
     if (request.url.endsWith('/cli/run')) { building = true; sent(); return pending; }
   });
   render(SettingsWorkspace, { client, operationsController, onStatusChange });
-  await fireEvent.click(await screen.findByRole('button', { name: 'Build index, Message search' }));
+  await fireEvent.click(await screen.findByRole('button', { name: 'Build index, Search by meaning' }));
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
     await waitFor(() => expect(seen.some(request => request.path === '/api/v1/cli/run')).toBe(true));
-    const row = screen.getByText('Message search').closest('li')!;
+    const row = screen.getByText('Search by meaning').closest('li')!;
     await waitFor(() => {
       expect(within(row).getByText('Running')).toBeDefined();
-      const button = within(row).getByRole('button', { name: 'Build index, Message search' });
+      const button = within(row).getByRole('button', { name: 'Build index, Search by meaning' });
       expect(button).toHaveProperty('disabled', true);
       expect(button.textContent).toContain('Working…');
     });
@@ -785,5 +929,69 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
     building = false;
     finish(new Response('{"type":"complete"}\n'));
   }
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Search by meaning' })).toHaveProperty('disabled', false));
+});
+
+const localStatus = (status: Record<string, unknown> = {}) => ({ host: 'archive.example.test', enabled: false, provider: '', download_bytes: 290000000, done_bytes: 0, total_bytes: 0, phase: 'idle', running: false, ...status });
+const localPosts = (seen: Seen[]) => seen.filter(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST');
+
+it.each(['http 503', 'network'] as const)('shows status diagnostics and refreshes after an initial %s failure', async failure => {
+  let reads = 0;
+  const { client, operationsController } = fixture(settingsDoc(), async request => {
+    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
+    if (++reads === 1) {
+      if (failure === 'network') throw new TypeError('Network interrupted');
+      return Response.json({ error: 'unavailable', message: 'sqlite-vec support is not compiled in; rebuild with `make build`, then re-run setup' }, { status: 503 });
+    }
+    if (reads === 2) return Response.json(localStatus({ phase: 'downloading', running: true, done_bytes: 1000, total_bytes: 290000000 }));
+    return Response.json({ error: 'unavailable', message: 'toml: line 3: expected value but found "=" instead' }, { status: 503 });
+  });
+  render(SettingsWorkspace, { client, operationsController });
+  await screen.findByRole('button', { name: 'Set up Search by meaning' });
+  const generic = screen.getByText('Search by meaning').closest('li')!;
+  expect(within(generic).queryByRole('button', { name: 'Turn on' })).toBeNull();
+  if (failure === 'http 503') expect((await within(generic).findByRole('alert')).textContent).toBe('sqlite-vec support is not compiled in; rebuild with `make build`, then re-run setup.');
+  await fireEvent.click(screen.getByRole('button', { name: 'Refresh feature status' }));
+  await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
+  const row = screen.getByText('Search by meaning').closest('li')!;
+  expect((await within(row).findByRole('alert', {}, { timeout: 3000 })).textContent).toBe('toml: line 3: expected value but found "=" instead.');
+  expect(within(row).queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();
+  expect(within(row).getByRole('button', { name: 'Turn on' })).toBeDefined();
+});
+
+it.each(['http', 'network'] as const)('turns on local search once and keeps unrelated drafts after %s polling failure', async failure => {
+  let phase = 'idle';
+  let enabled = false;
+  let failed = false;
+  let releaseActivation!: () => void;
+  const activation = new Promise<void>(resolve => { releaseActivation = resolve; });
+  const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
+    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
+    if (request.method === 'POST') {
+      phase = 'indexing'; enabled = true;
+      await activation;
+      return Response.json(localStatus({ host: '', download_bytes: 0, running: true }), { status: 202 });
+    } else if (phase !== 'idle' && !failed) {
+      failed = true;
+      if (failure === 'network') throw new TypeError('Network interrupted');
+      return new Response('', { status: 503 });
+    }
+    return Response.json(localStatus({ enabled, provider: enabled ? 'builtin' : '', phase, running: phase !== 'idle' }));
+  });
+  render(SettingsWorkspace, { client, operationsController, category: 'advanced' });
+  await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  const turnOn = await screen.findByRole('button', { name: 'Turn on' });
+  await fireEvent.click(turnOn);
+  await fireEvent.click(turnOn);
+  expect(localPosts(seen).map(request => request.body)).toEqual([undefined]);
+  releaseActivation();
+  await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await waitFor(() => expect(failed).toBe(true));
+  await screen.findByText(/^Indexing /, {}, { timeout: 3000 });
+  phase = 'idle'; enabled = true;
+  await screen.findByText('On', {}, { timeout: 3000 });
+  expect(screen.queryByRole('progressbar', { name: 'Search by meaning setup' })).toBeNull();
+  expect(screen.getByText('1 unsaved change')).toBeDefined();
 });

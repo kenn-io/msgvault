@@ -27,7 +27,7 @@ func TestTimestampKeySQLPreservesExactInstants(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			var less, equal bool
-			err := db.QueryRow(`SELECT msgvault_timestamp_key(?) < msgvault_timestamp_key(?), msgvault_timestamp_key(?) = msgvault_timestamp_key(?)`, tc.earlier, tc.later, tc.earlier, tc.later).Scan(&less, &equal)
+			err := db.QueryRowContext(t.Context(), `SELECT msgvault_timestamp_key(?) < msgvault_timestamp_key(?), msgvault_timestamp_key(?) = msgvault_timestamp_key(?)`, tc.earlier, tc.later, tc.earlier, tc.later).Scan(&less, &equal)
 			requirements.NoError(err)
 			assert.Equal(t, !tc.equal, less)
 			assert.Equal(t, tc.equal, equal)
@@ -35,7 +35,7 @@ func TestTimestampKeySQLPreservesExactInstants(t *testing.T) {
 	}
 	for _, value := range []any{nil, "invalid", "0001-01-01T00:00:00Z"} {
 		var key any
-		requirements.NoError(db.QueryRow(`SELECT msgvault_timestamp_key(?)`, value).Scan(&key))
+		requirements.NoError(db.QueryRowContext(t.Context(), `SELECT msgvault_timestamp_key(?)`, value).Scan(&key))
 		assert.Nil(t, key)
 	}
 }

@@ -190,7 +190,7 @@ func TestCLICatalogRejectsMalformedOrAmbiguousShapes(t *testing.T) {
 }
 
 func TestCLIDiscoverReportsUnsupportedCatalogCommand(t *testing.T) {
-	_, err := NewCLIClient(cliProcessFixture(t, "exit 2\n")).Discover(context.Background())
+	_, err := NewCLIClient(cliProcessFixture(t, "exit 2\n")).Discover(t.Context())
 	require.ErrorContains(t, err, "upgrade Inline")
 	require.ErrorContains(t, err, "--include-subthreads")
 }
@@ -315,24 +315,24 @@ case "$*" in
 esac
 `)
 	client := NewCLIClient(executable)
-	account, err := client.Me(context.Background())
+	account, err := client.Me(t.Context())
 	requires.NoError(err)
 	assertions.Equal(Account{UserID: 42, Origin: ProductionOrigin, DisplayName: "Example User"}, account)
-	conversations, err := client.Discover(context.Background())
+	conversations, err := client.Discover(t.Context())
 	requires.NoError(err)
 	requires.Len(conversations, 1)
 	assertions.Equal(int64(123), conversations[0].ID)
-	conversation, err := client.Conversation(context.Background(), 123)
+	conversation, err := client.Conversation(t.Context(), 123)
 	requires.NoError(err)
 	assertions.Equal("Fixture", conversation.Title)
-	self, err := client.Conversation(context.Background(), 456)
+	self, err := client.Conversation(t.Context(), 456)
 	requires.NoError(err)
 	assertions.True(self.MemberCountKnown)
 	assertions.Equal(1, self.MemberCount)
-	page, err := client.Messages(context.Background(), 123, 8)
+	page, err := client.Messages(t.Context(), 123, 8)
 	requires.NoError(err)
 	requires.Len(page.Messages, 1)
-	media, err := client.Files(context.Background(), 123, []int64{7})
+	media, err := client.Files(t.Context(), 123, []int64{7})
 	requires.NoError(err)
 	requires.Len(media, 1)
 	assertions.Equal("voice:56", media[0].ID)
@@ -342,25 +342,25 @@ func TestCLIClientBoundsPipesCancelsAndDoesNotEchoDiagnostics(t *testing.T) {
 	t.Run("stdout", func(t *testing.T) {
 		client := NewCLIClient(cliProcessFixture(t, "while :; do printf '%s' '0123456789'; done\n"))
 		client.maxStdout = 64
-		_, err := client.run(context.Background(), "fixture")
+		_, err := client.run(t.Context(), "fixture")
 		require.ErrorContains(t, err, "bounded response limit")
 	})
 	t.Run("stderr", func(t *testing.T) {
 		client := NewCLIClient(cliProcessFixture(t, "while :; do printf '%s' 'private-account-text' >&2; done\n"))
 		client.maxStderr = 64
-		_, err := client.run(context.Background(), "fixture")
+		_, err := client.run(t.Context(), "fixture")
 		require.ErrorContains(t, err, "bounded response limit")
 		assert.NotContains(t, err.Error(), "private-account-text")
 	})
 	t.Run("exit", func(t *testing.T) {
 		client := NewCLIClient(cliProcessFixture(t, "printf '%s' 'secret=private-account-text' >&2; exit 9\n"))
-		_, err := client.run(context.Background(), "fixture")
+		_, err := client.run(t.Context(), "fixture")
 		require.ErrorContains(t, err, "status 9")
 		assert.NotContains(t, err.Error(), "private-account-text")
 	})
 	t.Run("cancel", func(t *testing.T) {
 		client := NewCLIClient(cliProcessFixture(t, "exec sleep 30\n"))
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, err := client.run(ctx, "fixture")
 		require.ErrorIs(t, err, context.Canceled)
@@ -368,7 +368,7 @@ func TestCLIClientBoundsPipesCancelsAndDoesNotEchoDiagnostics(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
 		client := NewCLIClient(cliProcessFixture(t, "exec sleep 30\n"))
 		client.timeout = 30 * time.Millisecond //nolint:kennlint // deadlinetest: the sleeping subprocess must end with DeadlineExceeded
-		_, err := client.run(context.Background(), "fixture")
+		_, err := client.run(t.Context(), "fixture")
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 }
@@ -389,7 +389,7 @@ func TestCLIClientRejectsUnsupportedVersionAndOrigin(t *testing.T) {
 esac
 `, test.version, test.origin)
 			client := NewCLIClient(cliProcessFixture(t, body))
-			_, err := client.Me(context.Background())
+			_, err := client.Me(t.Context())
 			require.EqualError(t, err, test.wantError)
 		})
 	}
@@ -403,10 +403,10 @@ func TestCLIFileRefreshRequiresCompleteRequestedSet(t *testing.T) {
 	requires := require.New(t)
 
 	fixture := cliProcessFixture(t, "printf '%s' '{\"messages\":[{\"id\":7,\"chat_id\":123,\"from_id\":42,\"date\":0}],\"missingMessageIds\":[8]}'\n")
-	_, err := NewCLIClient(fixture).Files(context.Background(), 123, []int64{7, 8})
+	_, err := NewCLIClient(fixture).Files(t.Context(), 123, []int64{7, 8})
 	requires.ErrorContains(err, "all requested messages")
-	_, err = NewCLIClient(fixture).Files(context.Background(), 123, []int64{7, 7})
+	_, err = NewCLIClient(fixture).Files(t.Context(), 123, []int64{7, 7})
 	requires.ErrorContains(err, "duplicate")
-	_, err = NewCLIClient(fixture).Messages(context.Background(), 123, -1)
+	_, err = NewCLIClient(fixture).Messages(t.Context(), 123, -1)
 	requires.ErrorContains(err, "cursor")
 }

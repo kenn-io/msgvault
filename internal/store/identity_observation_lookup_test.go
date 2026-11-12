@@ -37,7 +37,7 @@ func recordObservation(
 		input.ScopeKind = &kindName
 		input.ScopeValue = scopeValue
 	}
-	result, err := st.RecordContactObservationContext(context.Background(), participantID, input)
+	result, err := st.RecordContactObservationContext(t.Context(), participantID, input)
 	require.NoError(err, "RecordContactObservationContext")
 	return result
 }
@@ -46,7 +46,7 @@ func TestFindObservationsByProviderUserIDGroupsBothParticipants(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, err := st.EnsureParticipantByIdentifier("beeper", "@alice:beeper.local", "Alice Example")
 	require.NoError(err, "ensure alice")
@@ -77,7 +77,7 @@ func TestFindObservationsByServiceValueIgnoresScope(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, err := st.EnsureParticipantByIdentifier("beeper", "@alice:beeper.local", "Alice Example")
 	require.NoError(err, "ensure alice")
@@ -103,7 +103,7 @@ func TestFindObservationsByQueriesPreserveCompleteValueEnvelope(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	participantID, err := st.EnsureParticipantByIdentifier(
 		"beeper", "@alice:beeper.local", "Alice Example")
@@ -173,7 +173,7 @@ func TestFindObservationsByQueriesPreserveCompleteValueEnvelope(t *testing.T) {
 func TestFindObservationsByAndEvidenceQueriesHonorCancellation(t *testing.T) {
 	require := require.New(t)
 	st := storetest.New(t).Store
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	tests := []struct {
@@ -213,7 +213,7 @@ func TestClassifyParticipantIdentifierService(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	participantID, err := st.EnsureParticipantByIdentifier("beeper", "@alice:beeper.local", "Alice Example")
 	require.NoError(err, "ensure alice")
@@ -230,7 +230,7 @@ func TestClassifyParticipantIdentifierService(t *testing.T) {
 		gotKind      string
 		gotValue     string
 	)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT service_id, scope_kind, scope_value FROM participant_identifiers
 		 WHERE identifier_type = ? AND identifier_value = ?`),
 		"beeper", "@alice:beeper.local",
@@ -248,7 +248,7 @@ func TestParticipantDisplayNamesAndSharedConversations(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	source, err := st.GetOrCreateSource("beeper", "signal")
 	require.NoError(err, "GetOrCreateSource")

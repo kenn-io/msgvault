@@ -208,7 +208,7 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 		return false, err
 	}
 	if changed || catalogChanged {
-		if err := s.bumpDerivedDataRevision(tx, true); err != nil {
+		if err := s.bumpDerivedDataRevisionContext(ctx, tx, true); err != nil {
 			return false, err
 		}
 	}

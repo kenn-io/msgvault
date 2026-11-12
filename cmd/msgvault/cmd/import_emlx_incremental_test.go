@@ -41,7 +41,8 @@ func TestImportEmlxCacheFailurePreservesSuccessfulImport(t *testing.T) {
 			requirements.NoError(err)
 			t.Cleanup(func() { requirements.NoError(st.Close()) })
 			var count int
-			requirements.NoError(st.DB().QueryRow(
+			requirements.NoError(st.DB().QueryRowContext(
+				t.Context(),
 				`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'cachepersistedneedle'`).Scan(&count))
 			assertions.Equal(1, count, "cache failure must leave the imported message searchable")
 		})
@@ -85,7 +86,8 @@ func TestImportEmlxCommandFullReconcileRepairsSearch(t *testing.T) {
 				r.NoError(err)
 				defer func() { r.NoError(st.Close()) }()
 				var n int
-				r.NoError(st.DB().QueryRow(
+				r.NoError(st.DB().QueryRowContext(
+					t.Context(),
 					`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'reconcilecommandneedle'`).Scan(&n))
 				return n
 			}
@@ -95,7 +97,7 @@ func TestImportEmlxCommandFullReconcileRepairsSearch(t *testing.T) {
 			r.Equal(1, indexed())
 			st, err := store.Open(filepath.Join(home, "msgvault.db"))
 			r.NoError(err)
-			_, err = st.DB().Exec(`DELETE FROM messages_fts`)
+			_, err = st.DB().ExecContext(t.Context(), `DELETE FROM messages_fts`)
 			r.NoError(err)
 			r.NoError(st.Close())
 

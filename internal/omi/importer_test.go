@@ -58,7 +58,7 @@ func TestImportSummaryOnlyContinuesHistory(t *testing.T) {
 	client := testOmiClient(t, server.URL, "omi_dev_synthetic")
 	imp := NewImporter(st, client)
 	opts := ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"}
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(3), sum.MeetingsAdded)
 	ids, err := st.MessageExistsBatch(src.ID, []string{"summary-only", "older", "title-only"})
@@ -75,7 +75,7 @@ func TestImportSummaryOnlyContinuesHistory(t *testing.T) {
 	assert.JSONEq(titleOnly, string(savedTitle))
 	assert.Equal(meetingcontent.StateUnavailable, meetingcontent.Decode(RawFormat, savedTitle, nil).Transcript.State)
 	rawSummary = strings.ReplaceAll(rawSummary, "Initialsummary", "Editedsummary")
-	sum, err = imp.Import(context.Background(), opts)
+	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), sum.MeetingsUpdated)
 	raw, err = st.GetMessageRaw(ids["summary-only"])
@@ -116,11 +116,11 @@ func TestImportUnavailableReplacementContinuesHistory(t *testing.T) {
 					// "older-page" must arrive on a later page than the kept transcript.
 					imp.pageSize = 2
 					opts := ImportOptions{Identifier: "work", AccountEmail: "owner@example.com", Full: full}
-					_, err = imp.Import(context.Background(), opts)
+					_, err = imp.Import(t.Context(), opts)
 					require.NoError(err)
 					initialIDs, err := st.MessageExistsBatch(src.ID, []string{"meeting-1"})
 					require.NoError(err)
-					priorBody, err := st.GetMessageBodyText(initialIDs["meeting-1"])
+					priorBody, err := st.GetMessageBodyText(t.Context(), initialIDs["meeting-1"])
 					require.NoError(err)
 					switch replacement {
 					case "null":
@@ -135,7 +135,7 @@ func TestImportUnavailableReplacementContinuesHistory(t *testing.T) {
 					require.NoError(err)
 					pages[0] = []Conversation{decodeFixture(t, string(replaced)), decodeFixture(t, strings.ReplaceAll(fixture, "meeting-1", "same-page"))}
 					pages[PageSize] = []Conversation{decodeFixture(t, strings.ReplaceAll(fixture, "meeting-1", "older-page"))}
-					sum, err := imp.Import(context.Background(), opts)
+					sum, err := imp.Import(t.Context(), opts)
 					require.NoError(err, "keeping an archived transcript is not a failure")
 					assert.Zero(sum.Errors)
 
@@ -147,7 +147,7 @@ func TestImportUnavailableReplacementContinuesHistory(t *testing.T) {
 					raw, err := st.GetMessageRaw(ids["meeting-1"])
 					require.NoError(err)
 					assert.JSONEq(string(original), string(raw))
-					body, err := st.GetMessageBodyText(ids["meeting-1"])
+					body, err := st.GetMessageBodyText(t.Context(), ids["meeting-1"])
 					require.NoError(err)
 					assert.Equal(priorBody, body)
 					if st.FTS5Available() && !st.IsPostgreSQL() {
@@ -192,7 +192,7 @@ func TestImportArchiveRescanAndRepair(t *testing.T) {
 	source := &pageSource{pages: map[int][]Conversation{0: {decodeFixture(t, fixture)}}}
 	imp := NewImporter(st, source)
 	opts := ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"}
-	first, err := imp.Import(context.Background(), opts)
+	first, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), first.MeetingsAdded)
 	ids, err := st.MessageExistsBatch(src.ID, []string{"meeting-1"})
@@ -214,23 +214,23 @@ func TestImportArchiveRescanAndRepair(t *testing.T) {
 		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchable'`).Scan(&hits))
 		assert.Equal(1, hits)
 	}
-	fromMe, err := st.GetMessageIsFromMe(id)
+	fromMe, err := st.GetMessageIsFromMe(t.Context(), id)
 	require.NoError(err)
 	assert.False(fromMe, "archive ownership does not establish an organizer")
-	second, err := imp.Import(context.Background(), opts)
+	second, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Zero(second.MeetingsAdded + second.MeetingsUpdated)
 	changedRaw := strings.ReplaceAll(fixture, "Discuss the synthetic roadmap", "Edited old conversation")
 	changed := decodeFixture(t, changedRaw)
 	source.pages[0] = []Conversation{changed}
-	third, err := imp.Import(context.Background(), opts)
+	third, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), third.MeetingsUpdated)
 	contentRaw, err := st.GetMessageRaw(id)
 	require.NoError(err)
 	assert.Contains(string(contentRaw), "Edited old conversation")
 	opts.Full = true
-	repaired, err := imp.Import(context.Background(), opts)
+	repaired, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.Equal(int64(1), repaired.MeetingsUpdated)
 }
@@ -270,7 +270,7 @@ func TestImportAfterFiltersByCreationTime(t *testing.T) {
 	defer server.Close()
 	client := testOmiClient(t, server.URL, "omi_dev_synthetic")
 	imp := NewImporter(st, client)
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Identifier: "work", AccountEmail: "owner@example.com", CreatedAfter: after,
 	})
 	require.NoError(err)
@@ -305,7 +305,7 @@ func TestClientHostedAndSelfHostedContract(t *testing.T) {
 			defer server.Close()
 			client := testOmiClient(t, server.URL+"/prefix/", "omi_dev_synthetic")
 			client.http = server.Client()
-			result, err := client.ListConversations(context.Background(), ListParams{
+			result, err := client.ListConversations(t.Context(), ListParams{
 				Limit: 1000, Offset: 200,
 				CreatedAfter:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 				CreatedBefore: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
@@ -332,7 +332,7 @@ func TestClientErrorsAndRetry(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer server.Close()
-			_, err := testOmiClient(t, server.URL, "test").ListConversations(context.Background(), ListParams{})
+			_, err := testOmiClient(t, server.URL, "test").ListConversations(t.Context(), ListParams{})
 			require.ErrorContains(err, tc.want)
 			assert.NotContains(t, err.Error(), "private provider text")
 		})
@@ -350,10 +350,10 @@ func TestClientErrorsAndRetry(t *testing.T) {
 	}))
 	defer server.Close()
 	client := testOmiClient(t, server.URL, "test")
-	_, err := client.ListConversations(context.Background(), ListParams{})
+	_, err := client.ListConversations(t.Context(), ListParams{})
 	require.NoError(err)
 	assert.Equal(t, 2, requests)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = client.ListConversations(ctx, ListParams{})
 	require.ErrorIs(err, context.Canceled)
@@ -411,11 +411,11 @@ func TestImportLimitAndInvalidTranscript(t *testing.T) {
 	completed := decodeFixture(t, fixture)
 	source := &pageSource{pages: map[int][]Conversation{0: {completed}}}
 	imp := NewImporter(st, source)
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"})
 	require.NoError(err)
 	invalid := decodeFixture(t, `{"id":"meeting-1","created_at":"2026-01-01T12:00:00Z","structured":{"title":"Invalid replacement"},"transcript_segments":42}`)
 	source.pages[0] = []Conversation{invalid}
-	failed, err := imp.Import(context.Background(), ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"})
+	failed, err := imp.Import(t.Context(), ImportOptions{Identifier: "work", AccountEmail: "owner@example.com"})
 	require.ErrorContains(err, "unavailable transcript evidence")
 	assert.Zero(failed.MeetingsUpdated)
 	existing, err := st.MessageExistsBatch(sum.SourceID, []string{"meeting-1"})
@@ -449,7 +449,7 @@ func TestImportIncrementalWatermark(t *testing.T) {
 	run := func(opts ImportOptions) (int64, string) {
 		t.Helper()
 		opts.Identifier, opts.AccountEmail = "work", "owner@example.com"
-		sum, err := imp.Import(context.Background(), opts)
+		sum, err := imp.Import(t.Context(), opts)
 		require.NoError(err)
 		last, err := st.GetLastSuccessfulSync(src.ID)
 		require.NoError(err)
@@ -539,7 +539,7 @@ func TestImportRefusesUnsupportedStoredStateBeforeWrites(t *testing.T) {
 				raw, err := st.GetMessageRaw(ids["meeting-1"])
 				require.NoError(err)
 				assert.JSONEq(fixture, string(raw))
-				body, err := st.GetMessageBodyText(ids["meeting-1"])
+				body, err := st.GetMessageBodyText(t.Context(), ids["meeting-1"])
 				require.NoError(err)
 				assert.Contains(body, "Searchable synthetic transcript")
 			})
@@ -611,7 +611,7 @@ func TestImportBlankSpeechKeepsRawAndTimes(t *testing.T) {
 	assert.Equal(int64(1), sum.MeetingsAdded)
 	ids, err := st.MessageExistsBatch(sum.SourceID, []string{"meeting-1"})
 	require.NoError(err)
-	body, err := st.GetMessageBodyText(ids["meeting-1"])
+	body, err := st.GetMessageBodyText(t.Context(), ids["meeting-1"])
 	require.NoError(err)
 	assert.Contains(body, "[00:00] Synthetic Speaker: First speech")
 	assert.Contains(body, "\nSpeaker 2: Untimed speech")
@@ -676,7 +676,7 @@ func TestImportFailedRowReplaysCurrentPage(t *testing.T) {
 				assert.Zero(sum.MeetingsAdded)
 			}
 			assert.True(sum.CheckpointSaved)
-			prior, err := st.GetLatestCheckpointedSyncByType(src.ID, SourceType)
+			prior, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, SourceType)
 			require.NoError(err)
 			var cursor scanCheckpoint
 			require.NoError(json.Unmarshal([]byte(prior.CursorBefore.String), &cursor))
@@ -875,7 +875,7 @@ func TestImportPausePreservesCheckpointAndWatermark(t *testing.T) {
 			assert.True(run.CompletedAt.Valid)
 			assert.Zero(run.ErrorsCount)
 			assert.Empty(run.ErrorMessage.String)
-			typed, err := st.GetLatestCheckpointedSyncByType(src.ID, SourceType)
+			typed, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, SourceType)
 			require.NoError(err)
 			assert.Equal(run.ID, typed.ID)
 			last, err := st.GetLastSuccessfulSync(src.ID)

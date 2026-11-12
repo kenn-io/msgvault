@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -52,9 +53,12 @@ func TestOpenReportsFTSAvailableForInitializedPostgresSchema(t *testing.T) {
 	adminDB, err := sql.Open("pgx", dbURL)
 	require.NoError(err, "open setup connection")
 	t.Cleanup(func() { _ = adminDB.Close() })
-	_, err = adminDB.Exec("CREATE SCHEMA " + schemaName)
+	_, err = adminDB.ExecContext(t.Context(), "CREATE SCHEMA "+schemaName)
 	require.NoErrorf(err, "create schema %s", schemaName)
-	t.Cleanup(func() { _, _ = adminDB.Exec("DROP SCHEMA IF EXISTS " + schemaName + " CASCADE") })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() {
+		_, _ = adminDB.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+schemaName+" CASCADE")
+	})
 
 	separator := "?"
 	if strings.Contains(dbURL, "?") {

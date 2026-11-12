@@ -34,7 +34,7 @@ func TestHelperProcess(t *testing.T) {
 	case "block":
 		select {}
 	case "spawn-blocking-child":
-		child := helperProcessCommand(context.Background(), "block")
+		child := helperProcessCommand(t.Context(), "block")
 		if err := child.Start(); err != nil {
 			os.Exit(10)
 		}
@@ -89,7 +89,7 @@ func TestClassifyDaemonCLIWaitErrSignalTerminated(t *testing.T) {
 	}
 	require := require.New(t)
 
-	cmd := helperProcessCommand(context.Background(), "block")
+	cmd := helperProcessCommand(t.Context(), "block")
 	require.NoError(cmd.Start(), "start blocking helper")
 	require.NoError(cmd.Process.Kill(), "kill helper")
 	waitErr := cmd.Wait()
@@ -169,7 +169,7 @@ func TestDaemonCLIChildEnvStripsUnforwardedRemoteDeleteConsent(t *testing.T) {
 func TestNewDaemonCLISubprocessCommandAppliesWorkingDirectory(t *testing.T) {
 	cwd := t.TempDir()
 
-	cmd, err := newDaemonCLISubprocessCommand(context.Background(), []string{"version"}, nil, cwd)
+	cmd, err := newDaemonCLISubprocessCommand(t.Context(), []string{"version"}, nil, cwd)
 
 	require.NoError(t, err, "newDaemonCLISubprocessCommand")
 	assert.Equal(t, cwd, cmd.Dir, "working directory")

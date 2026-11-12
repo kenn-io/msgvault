@@ -40,19 +40,19 @@ func TestOwnerAttributionParityStoreVersusCache(t *testing.T) {
 
 	caseSender, err := st.EnsureParticipant("Alice@Example.COM", "Alice", "example.com")
 	require.NoError(err)
-	aliasOnly, err := st.EnsureParticipantByPhone("+15550111", "Alias", "whatsapp")
+	aliasOnly, err := st.EnsureParticipantByPhone(t.Context(), "+15550111", "Alias", "whatsapp")
 	require.NoError(err)
 	require.NoError(st.SetParticipantIdentifier(aliasOnly, "email", "Alias@Example.com"))
 	guarded, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
 	require.NoError(err)
 	require.NoError(st.SetParticipantIdentifier(guarded, "email", "carol@example.com"))
-	phone, err := st.EnsureParticipantByPhone("+15550100", "Phone", "whatsapp")
+	phone, err := st.EnsureParticipantByPhone(t.Context(), "+15550100", "Phone", "whatsapp")
 	require.NoError(err)
 
 	sentAt := time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC)
 	messageIDs := map[string]int64{}
 	addMessage := func(source int64, id string, sender int64, envelope ...store.RecipientSet) {
-		conv, err := st.EnsureConversation(source, "thread-"+id, "Thread")
+		conv, err := st.EnsureConversation(t.Context(), source, "thread-"+id, "Thread")
 		require.NoError(err)
 		messageID, err := st.PersistMessage(&store.MessagePersistData{
 			Message: &store.Message{
@@ -77,7 +77,7 @@ func TestOwnerAttributionParityStoreVersusCache(t *testing.T) {
 	addMessage(sourceA.ID, "a-envelope-disagrees", caseSender, fromEnvelope(guarded, "bob@example.com"))
 	addMessage(sourceA.ID, "a-envelope-owner", guarded, fromEnvelope(caseSender, "Alice@Example.COM"))
 
-	_, err = buildCache(dbPath, analyticsDir, false)
+	_, err = buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 	duckdb, err := sql.Open("duckdb", "")
 	require.NoError(err)
@@ -88,7 +88,7 @@ func TestOwnerAttributionParityStoreVersusCache(t *testing.T) {
 		IsFromMe bool
 	}
 	readAttribution := func(db *sql.DB, query string, args ...any) []attribution {
-		rows, err := db.Query(query, args...)
+		rows, err := db.QueryContext(t.Context(), query, args...)
 		require.NoError(err)
 		defer func() { _ = rows.Close() }()
 		var got []attribution
@@ -139,7 +139,7 @@ func TestOwnerAttributionParityStoreVersusCache(t *testing.T) {
 		}
 		return int(a.Participant - b.Participant)
 	})
-	rows, err := duckdb.Query(`SELECT source_id, participant_id FROM read_parquet(?)
+	rows, err := duckdb.QueryContext(t.Context(), `SELECT source_id, participant_id FROM read_parquet(?)
 		GROUP BY source_id, participant_id ORDER BY source_id, participant_id`,
 		filepath.Join(analyticsDir, "owner_participants", "*.parquet"))
 	require.NoError(err)

@@ -1,14 +1,17 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/importer"
@@ -107,7 +110,7 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 		"--no-resume",
 		"--checkpoint-interval", "1",
 	})
-	require.NoError(rootCmd.ExecuteContext(context.Background()), "import-mbox")
+	require.NoError(rootCmd.ExecuteContext(t.Context()), "import-mbox")
 
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err, "open store")
@@ -118,15 +121,15 @@ func TestImportMboxCmd_EndToEnd_MboxFile(t *testing.T) {
 		messageCount    int
 		attachmentCount int
 	)
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sources WHERE source_type = 'hey' AND identifier = 'me@hey.com'`).Scan(&sourceCount), "count sources")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sources WHERE source_type = 'hey' AND identifier = 'me@hey.com'`).Scan(&sourceCount), "count sources")
 	require.Equal(1, sourceCount, "sourceCount")
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
 	require.Equal(2, messageCount, "messageCount")
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&attachmentCount), "count attachments")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&attachmentCount), "count attachments")
 	require.Equal(1, attachmentCount, "attachmentCount")
 
 	var storagePath string
-	require.NoError(st.DB().QueryRow(`SELECT storage_path FROM attachments LIMIT 1`).Scan(&storagePath), "select storage_path")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT storage_path FROM attachments LIMIT 1`).Scan(&storagePath), "select storage_path")
 	require.NotEmpty(storagePath, "storage_path empty")
 	_, err = os.Stat(filepath.Join(tmp, "attachments", filepath.FromSlash(storagePath)))
 	require.NoError(err, "attachment file missing")
@@ -208,7 +211,7 @@ func TestImportMboxCmd_AttachmentFailureIsBestEffort(t *testing.T) {
 
 	// Attachment storage failures are best-effort: the import
 	// succeeds even though the attachment file can't be written.
-	require.NoError(t, rootCmd.ExecuteContext(context.Background()), "expected success")
+	require.NoError(t, rootCmd.ExecuteContext(t.Context()), "expected success")
 }
 
 func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
@@ -285,7 +288,7 @@ func TestImportMboxCmd_ReturnsCanceledWhenContextCanceled(t *testing.T) {
 		"--checkpoint-interval", "1",
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	// Set the import command's context to the canceled context directly,
@@ -401,7 +404,7 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 
 	// Pre-import the first message.
 	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "msgvault.db"))
-	_, err := importer.ImportMbox(context.Background(), st, mboxFirstOnlyPath, importer.MboxImportOptions{
+	_, err := importer.ImportMbox(t.Context(), st, mboxFirstOnlyPath, importer.MboxImportOptions{
 		SourceType:         "hey",
 		Identifier:         "me@hey.com",
 		NoResume:           true,
@@ -454,20 +457,122 @@ func TestImportMboxCmd_EndToEnd_ZipResumeAcrossFiles(t *testing.T) {
 		"--checkpoint-interval", "1",
 		"--no-attachments",
 	})
-	require.NoError(rootCmd.ExecuteContext(context.Background()), "import-mbox resume")
+	require.NoError(rootCmd.ExecuteContext(t.Context()), "import-mbox resume")
 
 	st2, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st2.Close() })
 
 	var messageCount int
-	require.NoError(st2.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
+	require.NoError(st2.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount), "count messages")
 	require.Equal(3, messageCount, "messageCount")
 
 	for _, subj := range []string{"One", "Two", "Three"} {
 		var c int
-		err := st2.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE subject = ?`, subj).Scan(&c)
+		err := st2.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE subject = ?`, subj).Scan(&c)
 		require.NoError(err, "count subject %q", subj)
 		assert.Equal(t, 1, c, "subject %q count", subj)
 	}
+}
+
+func saveImportMboxState(t *testing.T) func() {
+	t.Helper()
+	prevSourceType := importMboxSourceType
+	prevLabels := importMboxLabels
+	prevNoResume := importMboxNoResume
+	prevCheckpointInterval := importMboxCheckpointInterval
+	prevNoAttachments := importMboxNoAttachments
+	prevNoDefaultIdentity := noDefaultIdentityImportMbox
+	return func() {
+		importMboxSourceType = prevSourceType
+		importMboxLabels = prevLabels
+		importMboxNoResume = prevNoResume
+		importMboxCheckpointInterval = prevCheckpointInterval
+		importMboxNoAttachments = prevNoAttachments
+		noDefaultIdentityImportMbox = prevNoDefaultIdentity
+	}
+}
+
+// An interrupted mbox import still confirms the source's own identifier,
+// then runs the deferred legacy identity migration, then prints its summary.
+// If either step ran on the cancelled context, the migration would fail and
+// the command would return before the summary, and the source would be left
+// without its own identifier.
+func TestImportMboxCmd_InterruptedConfirmsIdentityRunsMigrationAndPrintsSummary(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+
+	markDaemonCLISubprocessForTest(t)
+	tmp := t.TempDir()
+	t.Cleanup(saveImportMboxState(t))
+	testCfg := lifecycleTestConfig(tmp)
+	testCfg.Identity.Addresses = []string{"legacy@example.com"}
+	testCtx := withStoreResolverConfig(t, testCfg)
+	importMboxSourceType = "mbox"
+	importMboxLabels = nil
+	importMboxNoResume = true
+	importMboxCheckpointInterval = 1
+	importMboxNoAttachments = true
+	noDefaultIdentityImportMbox = false
+
+	message := func(id, date string) []byte {
+		return email.NewMessage().
+			From("Alice <alice@example.com>").
+			To("Bob <bob@example.com>").
+			Subject("Message "+id).
+			Date(date).
+			Header("Message-ID", "<"+id+"@example.com>").
+			Body("Hello.\n").
+			Bytes()
+	}
+	// The second message's Date header is implausible, so the importer logs
+	// a warning while ingesting it. That warning stands in for an interrupt
+	// arriving after the first message committed.
+	var mbox strings.Builder
+	for _, raw := range [][]byte{
+		message("first", "Mon, 01 Jan 2024 12:00:00 +0000"),
+		message("second", "Sat, 01 Jan 2124 12:00:00 +0000"),
+		message("third", "Mon, 01 Jan 2024 14:00:00 +0000"),
+	} {
+		mbox.WriteString("From alice@example.com Mon Jan 1 12:00:00 2024\n")
+		mbox.Write(raw)
+		if !strings.HasSuffix(string(raw), "\n") {
+			mbox.WriteString("\n")
+		}
+	}
+	mboxPath := filepath.Join(tmp, "export.mbox")
+	require.NoError(os.WriteFile(mboxPath, []byte(mbox.String()), 0600), "write mbox")
+
+	ctx, cancel := context.WithCancel(testCtx)
+	defer cancel()
+	handler := &cancelOnLogMessageHandler{Handler: slog.DiscardHandler, message: "ignored implausible email Date header", cancel: cancel}
+	invocationFromContext(testCtx).logger = slog.New(handler)
+	var stdout bytes.Buffer
+	cmd := &cobra.Command{Use: "import-mbox"}
+	cmd.SetContext(ctx)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(io.Discard)
+
+	err := importMboxCmd.RunE(cmd, []string{"archive@example.com", mboxPath})
+	require.ErrorIs(ctx.Err(), context.Canceled, "the import must be interrupted")
+	assert.Contains(stdout.String(), "Import interrupted. Run again to resume.", "stdout")
+	require.ErrorIs(err, context.Canceled, "import-mbox")
+
+	st, err := store.Open(testCfg.DatabaseDSN())
+	require.NoError(err, "open store after import")
+	t.Cleanup(func() { _ = st.Close() })
+	src, err := st.GetSourceByIdentifier(t.Context(), "archive@example.com")
+	require.NoError(err, "get mbox source")
+	require.NotNil(src, "mbox source")
+	var committed int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND subject = ?`), src.ID, "Message first").Scan(&committed), "count committed messages")
+	require.Equal(1, committed, "the first message commits before the interrupt")
+
+	identities, err := st.ListAccountIdentities(src.ID)
+	require.NoError(err, "ListAccountIdentities mbox")
+	addresses := make([]string, 0, len(identities))
+	for _, identity := range identities {
+		addresses = append(addresses, identity.Address)
+	}
+	assert.ElementsMatch([]string{"archive@example.com", "legacy@example.com"}, addresses,
+		"the source keeps its own identifier and gains the migrated legacy address")
 }

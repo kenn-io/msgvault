@@ -1,7 +1,6 @@
 package importer
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -38,7 +37,7 @@ func TestImportMbox_GoogleGroupsMetadataQuality(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(int64(1), summary.MessagesAdded)
 			require.Zero(summary.Errors)
-			source, err := f.Store.GetSourceByTypeAndIdentifier("google-groups", "synthetic-group")
+			source, err := f.Store.GetSourceByTypeAndIdentifier(t.Context(), "google-groups", "synthetic-group")
 			require.NoError(err)
 			require.NotNil(source)
 			single, err := f.Store.GetDuplicateGroupMessages("group-copy@example.test", source.ID)
@@ -49,7 +48,7 @@ func TestImportMbox_GoogleGroupsMetadataQuality(t *testing.T) {
 			require.NoError(err)
 			require.Len(batch["group-copy@example.test"], 1)
 			assert.Equal(tc.want, batch["group-copy@example.test"][0].MetadataQuality)
-			candidates, err := f.Store.GetAllRawMIMECandidates(source.ID)
+			candidates, err := f.Store.GetAllRawMIMECandidates(t.Context(), source.ID)
 			require.NoError(err)
 			require.Len(candidates, 1)
 			assert.Equal(tc.want, candidates[0].MetadataQuality)
@@ -77,14 +76,14 @@ func TestImportMbox_GoogleGroups(t *testing.T) {
 	path := filepath.Join(tmp, "topics.mbox")
 	require.NoError(os.WriteFile(path, []byte(data.String()), 0600))
 	opts := MboxImportOptions{SourceType: "google-groups", Identifier: "groups-export", Labels: []string{"archive"}, NoResume: true}
-	summary, err := ImportMbox(context.Background(), st, path, opts)
+	summary, err := ImportMbox(t.Context(), st, path, opts)
 	require.NoError(err)
 	assert.Equal(int64(4), summary.MessagesAdded)
 	assert.Zero(summary.Errors)
 	var conversations int
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM conversations").Scan(&conversations))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM conversations").Scan(&conversations))
 	assert.Equal(3, conversations, "same group and thread should join; different groups should stay separate")
-	rows, err := st.DB().Query("SELECT name FROM labels ORDER BY name")
+	rows, err := st.DB().QueryContext(t.Context(), "SELECT name FROM labels ORDER BY name")
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	var labels []string
@@ -96,17 +95,17 @@ func TestImportMbox_GoogleGroups(t *testing.T) {
 	require.NoError(rows.Err())
 	assert.ElementsMatch([]string{"archive", "test-group", "other-group", "Starred", "Résolu"}, labels)
 	var sent sql.NullTime
-	require.NoError(st.DB().QueryRow("SELECT sent_at FROM messages LIMIT 1").Scan(&sent))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT sent_at FROM messages LIMIT 1").Scan(&sent))
 	require.True(sent.Valid)
 	assert.True(sent.Time.Equal(time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)))
 	// Reimport restores metadata labels even for messages whose raw MIME exists.
-	_, err = st.DB().Exec("DELETE FROM message_labels")
+	_, err = st.DB().ExecContext(t.Context(), "DELETE FROM message_labels")
 	require.NoError(err)
-	summary, err = ImportMbox(context.Background(), st, path, opts)
+	summary, err = ImportMbox(t.Context(), st, path, opts)
 	require.NoError(err)
 	assert.Equal(int64(4), summary.MessagesSkipped)
 	var links int
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM message_labels").Scan(&links))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM message_labels").Scan(&links))
 	assert.Equal(16, links)
 }
 
@@ -125,13 +124,13 @@ func TestImportMbox_GoogleGroupsHeadersInOrdinaryMail(t *testing.T) {
 	}
 	path := filepath.Join(tmp, "mail.mbox")
 	require.NoError(os.WriteFile(path, []byte(data.String()), 0600))
-	summary, err := ImportMbox(context.Background(), st, path, MboxImportOptions{Identifier: "user@example.com"})
+	summary, err := ImportMbox(t.Context(), st, path, MboxImportOptions{Identifier: "user@example.com"})
 	require.NoError(err)
 	require.Equal(int64(2), summary.MessagesAdded)
 	var conversations, labels int
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM conversations").Scan(&conversations))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM conversations").Scan(&conversations))
 	assert.Equal(t, 1, conversations, "on-list and off-list replies must retain ordinary email threading")
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM labels").Scan(&labels))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM labels").Scan(&labels))
 	assert.Zero(t, labels, "Groups metadata must require an explicit Groups import")
 }
 
@@ -154,9 +153,9 @@ func TestImportMbox_GoogleGroupsHeaderFallbackKeepsThread(t *testing.T) {
 	require.NoError(err)
 	require.Equal(int64(3), summary.MessagesAdded)
 	var conversations int
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM conversations").Scan(&conversations))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM conversations").Scan(&conversations))
 	assert.Equal(1, conversations, "header and fallback identities must share a thread")
 	var groupLabels int
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM message_labels ml JOIN labels l ON l.id = ml.label_id WHERE l.name = 'test-group'").Scan(&groupLabels))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM message_labels ml JOIN labels l ON l.id = ml.label_id WHERE l.name = 'test-group'").Scan(&groupLabels))
 	assert.Equal(3, groupLabels, "every message must retain the same group label")
 }

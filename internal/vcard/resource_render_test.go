@@ -5,8 +5,10 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"testing/quick"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -446,31 +448,37 @@ func TestV3ViewKeepsQuotedParameterValues(t *testing.T) {
 func TestGeneratedV4CardsRoundTripAndCanonicalizeIdempotently(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	random := rand.New(rand.NewSource(20260818)) //nolint:gosec // deterministic seeded generator for a round-trip test
-	for iteration := range 200 {
-		raw := generateV4Card(random)
+	config := &quick.Config{
+		MaxCount: 200,
+		Rand:     rand.New(rand.NewSource(20260818)), //nolint:gosec // deterministic seeded generator for a round-trip test
+		Values: func(args []reflect.Value, random *rand.Rand) {
+			args[0] = reflect.ValueOf(generateV4Card(random))
+		},
+	}
+	require.NoError(quick.Check(func(raw []byte) bool {
 		envelope, err := ParseResourceEnvelope(raw)
-		require.NoError(err, "iteration %d: %q", iteration, raw)
+		require.NoError(err, "card: %q", raw)
 
 		rendered := forcedRender(t, envelope)
 		reparsed, err := ParseResourceEnvelope(rendered)
-		require.NoError(err, "iteration %d: %q", iteration, rendered)
+		require.NoError(err, "rendered card: %q", rendered)
 		assertSameProperties(t, envelope.PropertyTree, reparsed.PropertyTree)
 
 		envelope.RenderMetadata.RenderRequired = true
 		first, err := envelope.PrepareCanonicalRender()
-		require.NoError(err, "iteration %d: %q", iteration, raw)
+		require.NoError(err, "card: %q", raw)
 		first.RenderMetadata.RenderRequired = true
 		second, err := first.PrepareCanonicalRender()
-		require.NoError(err, "iteration %d", iteration)
-		assert.Equal(string(first.StoredBody), string(second.StoredBody), "iteration %d", iteration)
-		assert.Equal(first.PropertyTree, second.PropertyTree, "iteration %d", iteration)
+		require.NoError(err, "card: %q", raw)
+		assert.Equal(string(first.StoredBody), string(second.StoredBody), "card: %q", raw)
+		assert.Equal(first.PropertyTree, second.PropertyTree, "card: %q", raw)
 
 		v3, err := first.RenderView(Version30)
-		require.NoError(err, "iteration %d: %q", iteration, first.StoredBody)
+		require.NoError(err, "canonical card: %q", first.StoredBody)
 		_, err = ParseResourceEnvelope(v3)
-		require.NoError(err, "iteration %d: %q", iteration, v3)
-	}
+		require.NoError(err, "v3 card: %q", v3)
+		return !t.Failed()
+	}, config))
 }
 
 func generateV4Card(random *rand.Rand) []byte {

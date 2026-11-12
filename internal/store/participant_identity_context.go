@@ -1,9 +1,14 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"fmt"
+	"strings"
+
+	"go.kenn.io/msgvault/internal/beeperidentity"
 )
 
 // ParticipantIdentityContext is the live-store detail omitted from the
@@ -24,13 +29,15 @@ type ParticipantIdentityMember struct {
 
 // ParticipantIdentifierContext gives an identifier its stored service and scope.
 type ParticipantIdentifierContext struct {
-	ParticipantID int64
-	Type          string
-	Value         string
-	ServiceSlug   string
-	ServiceLabel  string
-	ScopeKind     string
-	ScopeValue    string
+	ParticipantID   int64  `json:"participant_id"`
+	Type            string `json:"type"`
+	Value           string `json:"value"`
+	DisplayValue    string `json:"display_value"`
+	NormalizedValue string `json:"-"`
+	ServiceSlug     string `json:"service_slug"`
+	ServiceLabel    string `json:"service_label"`
+	ScopeKind       string `json:"scope_kind"`
+	ScopeValue      string `json:"scope_value"`
 }
 
 // ParticipantLinkContext records the origin of a link between cluster members.
@@ -47,6 +54,21 @@ type ParticipantLinkContext struct {
 func (s *Store) GetParticipantIdentityContext(
 	ctx context.Context, participantIDs []int64,
 ) (*ParticipantIdentityContext, error) {
+	return s.getParticipantIdentityContext(ctx, ReadDBContext(ctx, s.db.DB), participantIDs, true)
+}
+
+// presentParticipantIdentifiers hides opaque Beeper display text in a read copy.
+// Raw type and value keep the stored identity.
+func presentParticipantIdentifiers(identifiers []ParticipantIdentifierContext) {
+	for i, identifier := range identifiers {
+		if identifier.Type == sourceTypeBeeper && !strings.HasPrefix(identifier.DisplayValue, "+") && (identifier.DisplayValue == identifier.Value ||
+			strings.HasPrefix(identifier.Value, beeperidentity.Prefix+":") && strings.HasSuffix(identifier.Value, ":"+beeperidentity.EncodePart(identifier.DisplayValue))) {
+			identifiers[i].DisplayValue = ""
+		}
+	}
+}
+
+func (s *Store) getParticipantIdentityContext(ctx context.Context, reader SQLReader, participantIDs []int64, links bool) (*ParticipantIdentityContext, error) {
 	result := &ParticipantIdentityContext{}
 	if len(participantIDs) == 0 {
 		return result, nil
@@ -72,25 +94,27 @@ func (s *Store) GetParticipantIdentityContext(
 			args[i] = id
 		}
 		in := placeholders(len(chunk))
-		if err := s.readParticipantIdentityMembers(ctx, &result.Members, in, args); err != nil {
+		if err := s.readParticipantIdentityMembers(ctx, reader, &result.Members, in, args); err != nil {
 			return nil, err
 		}
-		if err := s.readParticipantIdentifierContext(ctx, &result.Identifiers, in, args); err != nil {
+		if err := s.readParticipantIdentifierContext(ctx, reader, &result.Identifiers, in, args); err != nil {
 			return nil, err
 		}
-		if err := s.readParticipantLinkContext(ctx, &result.Links, wanted, in, args); err != nil {
-			return nil, err
+		if links {
+			if err := s.readParticipantLinkContext(ctx, reader, &result.Links, wanted, in, args); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return result, nil
 }
 
 func (s *Store) readParticipantIdentityMembers(
-	ctx context.Context, dest *[]ParticipantIdentityMember, in string, args []any,
+	ctx context.Context, reader SQLReader, dest *[]ParticipantIdentityMember, in string, args []any,
 ) error {
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT id,
+	rows, err := reader.QueryContext(ctx, s.Rebind(fmt.Sprintf(`SELECT id,
 		COALESCE(display_name, ''), COALESCE(email_address, ''), COALESCE(phone_number, '')
-		FROM participants WHERE id IN (%s) ORDER BY id`, in), args...)
+		FROM participants WHERE id IN (%s) ORDER BY id`, in)), args...)
 	if err != nil {
 		return fmt.Errorf("read participant identity members: %w", err)
 	}
@@ -106,26 +130,35 @@ func (s *Store) readParticipantIdentityMembers(
 }
 
 func (s *Store) readParticipantIdentifierContext(
-	ctx context.Context, dest *[]ParticipantIdentifierContext, in string, args []any,
+	ctx context.Context, reader SQLReader, dest *[]ParticipantIdentifierContext, in string, args []any,
 ) error {
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT pi.participant_id,
-		pi.identifier_type, pi.identifier_value, COALESCE(cs.slug, ''),
+	rows, err := reader.QueryContext(ctx, s.Rebind(fmt.Sprintf(`SELECT pi.participant_id,
+		pi.identifier_type, pi.identifier_value, COALESCE(pi.display_value, ''), COALESCE(cs.slug, ''),
 		COALESCE(cs.display_label, ''), COALESCE(pi.scope_kind, ''),
-		COALESCE(pi.scope_value, '')
+		COALESCE(pi.scope_value, ''), COALESCE(cs.normalization, '')
 		FROM participant_identifiers pi
 		LEFT JOIN communication_services cs ON cs.id = pi.service_id
 		WHERE pi.participant_id IN (%s)
-		ORDER BY pi.participant_id, pi.id`, in), args...)
+		ORDER BY pi.participant_id, pi.id`, in)), args...)
 	if err != nil {
 		return fmt.Errorf("read participant identifier context: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var identifier ParticipantIdentifierContext
-		if err := rows.Scan(&identifier.ParticipantID, &identifier.Type, &identifier.Value,
+		var strategy string
+		if err := rows.Scan(&identifier.ParticipantID, &identifier.Type, &identifier.Value, &identifier.DisplayValue,
 			&identifier.ServiceSlug, &identifier.ServiceLabel, &identifier.ScopeKind,
-			&identifier.ScopeValue); err != nil {
+			&identifier.ScopeValue, &strategy); err != nil {
 			return fmt.Errorf("scan participant identifier context: %w", err)
+		}
+		var service *CommunicationService
+		if strategy != "" {
+			service = &CommunicationService{Normalization: strategy}
+		}
+		identifier.NormalizedValue, _ = NormalizeServiceValue(service, ContactAddressKind(identifier.Type), identifier.Value)
+		if identifier.Type == sourceTypeBeeper && !isExactMailbox(identifier.Value) && !strings.HasPrefix(identifier.Value, "+") {
+			identifier.NormalizedValue = identifier.Type + ":" + identifier.Value
 		}
 		*dest = append(*dest, identifier)
 	}
@@ -133,15 +166,15 @@ func (s *Store) readParticipantIdentifierContext(
 }
 
 func (s *Store) readParticipantLinkContext(
-	ctx context.Context, dest *[]ParticipantLinkContext, wanted map[int64]struct{}, in string, args []any,
+	ctx context.Context, reader SQLReader, dest *[]ParticipantLinkContext, wanted map[int64]struct{}, in string, args []any,
 ) error {
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT pl.participant_a,
+	rows, err := reader.QueryContext(ctx, s.Rebind(fmt.Sprintf(`SELECT pl.participant_a,
 		pl.participant_b, pl.identity_match_candidate_id,
 		COALESCE(imc.source, ''), COALESCE(imc.basis, '')
 		FROM participant_links pl
 		LEFT JOIN identity_match_candidates imc ON imc.id = pl.identity_match_candidate_id
 		WHERE pl.participant_a IN (%s)
-		ORDER BY pl.participant_a, pl.participant_b`, in), args...)
+		ORDER BY pl.participant_a, pl.participant_b`, in)), args...)
 	if err != nil {
 		return fmt.Errorf("read participant link context: %w", err)
 	}
@@ -164,4 +197,123 @@ func (s *Store) readParticipantLinkContext(
 		*dest = append(*dest, link)
 	}
 	return rows.Err()
+}
+
+// ParticipantAddress reconciles a member's email and phone with its identifiers.
+// IdentityKey compares addresses across participants and saved contact points.
+type ParticipantAddress struct {
+	ParticipantIdentifierContext
+
+	IdentityKey            string `json:"identity_key"`
+	ParticipantDisplayName string `json:"participant_display_name"`
+}
+
+func addressIdentityKey(service, scopeKind, scopeValue, normalized string) string {
+	key, _ := json.Marshal([4]string{service, scopeKind, scopeValue, normalized})
+	return string(key)
+}
+
+func participantAddresses(identities *ParticipantIdentityContext, observations []ParticipantContactObservation) ([]ParticipantAddress, []int64) {
+	addresses, ids := []ParticipantAddress{}, []int64{}
+	for i, identifier := range identities.Identifiers {
+		if identifier.ServiceSlug == "" && identifier.ScopeKind == "" && identifier.ScopeValue == "" {
+			identifier = ordinaryAddress(identifier)
+		}
+		if text := cmp.Or(identifier.DisplayValue, identifier.Value); identifier.Type == sourceTypeBeeper && strings.HasPrefix(text, "+") {
+			identifier.DisplayValue = text
+		}
+		identities.Identifiers[i] = identifier
+	}
+	presentParticipantIdentifiers(identities.Identifiers)
+	byParticipant := make(map[int64][]ParticipantIdentifierContext)
+	for _, identifier := range identities.Identifiers {
+		byParticipant[identifier.ParticipantID] = append(byParticipant[identifier.ParticipantID], identifier)
+	}
+	for _, member := range identities.Members {
+		ids = append(ids, member.ParticipantID)
+		seen := map[string]bool{}
+		appendAddress := func(identifier ParticipantIdentifierContext) {
+			key := addressIdentityKey(identifier.ServiceSlug, identifier.ScopeKind, identifier.ScopeValue, identifier.NormalizedValue)
+			if !seen[key] {
+				addresses = append(addresses, ParticipantAddress{ParticipantIdentifierContext: identifier, IdentityKey: key, ParticipantDisplayName: member.DisplayName})
+				seen[key] = true
+			}
+		}
+		for _, identifier := range byParticipant[member.ParticipantID] {
+			if identifier.Type == sourceTypeBeeper && identifier.ServiceSlug != "" {
+				replaced := false
+				for _, observation := range observations {
+					if observation.ParticipantID != member.ParticipantID || observation.ServiceSlug == nil || *observation.ServiceSlug != identifier.ServiceSlug ||
+						derefString(observation.ScopeKind) != identifier.ScopeKind || derefString(observation.ScopeValue) != identifier.ScopeValue ||
+						(observation.AddressKind != ContactAddressEmail && observation.AddressKind != ContactAddressPhone && observation.AddressKind != ContactAddressUsername) {
+						continue
+					}
+					address := identifier
+					address.Type, address.Value, address.DisplayValue = string(observation.AddressKind), observation.OriginalValue, ""
+					address.NormalizedValue = observation.NormalizedValue
+					appendAddress(address)
+					replaced = true
+				}
+				if replaced {
+					continue
+				}
+			}
+			if identifier.Type == sourceTypeBeeper && strings.HasPrefix(identifier.Value, beeperidentity.Prefix+":") &&
+				identifier.ServiceSlug == "" && identifier.ScopeKind == "" && identifier.ScopeValue == "" && (member.Email != "" || member.Phone != "") {
+				continue
+			}
+			if identifier.NormalizedValue == "" || identifier.ServiceSlug == "" {
+				identifier.NormalizedValue = identifier.Type + ":" + identifier.Value
+			}
+			if identifier.Type != sourceTypeBeeper && identifier.DisplayValue == identifier.Value {
+				identifier.DisplayValue = ""
+			}
+			appendAddress(identifier)
+		}
+		for _, address := range memberContactAddresses(member) {
+			appendAddress(address)
+		}
+	}
+	return addresses, ids
+}
+
+// ordinaryAddress lists an unserviced identifier that holds an email or an
+// E.164 phone as that address, so it matches the member's own and saved ones.
+func ordinaryAddress(identifier ParticipantIdentifierContext) ParticipantIdentifierContext {
+	text := cmp.Or(identifier.DisplayValue, identifier.Value)
+	kind := ContactAddressKind(identifier.Type)
+	if isExactMailbox(text) {
+		kind = ContactAddressEmail
+	} else if kind != ContactAddressEmail && strings.HasPrefix(text, "+") {
+		kind = ContactAddressPhone
+	}
+	if kind != ContactAddressEmail && kind != ContactAddressPhone {
+		return identifier
+	}
+	normalized, err := NormalizeServiceValue(nil, kind, text)
+	if err != nil {
+		return identifier
+	}
+	identifier.Type, identifier.Value, identifier.DisplayValue = string(kind), text, ""
+	identifier.ServiceSlug, identifier.NormalizedValue = string(kind), normalized
+	return identifier
+}
+
+// memberContactAddresses returns a member's own email and phone as addresses.
+func memberContactAddresses(member ParticipantIdentityMember) []ParticipantIdentifierContext {
+	addresses := []ParticipantIdentifierContext{}
+	for _, field := range []struct {
+		kind  ContactAddressKind
+		value string
+	}{{ContactAddressEmail, member.Email}, {ContactAddressPhone, member.Phone}} {
+		if field.value == "" {
+			continue
+		}
+		normalized, err := NormalizeServiceValue(nil, field.kind, field.value)
+		if err != nil || normalized == "" {
+			normalized = string(field.kind) + ":" + field.value
+		}
+		addresses = append(addresses, ParticipantIdentifierContext{ParticipantID: member.ParticipantID, Type: string(field.kind), Value: field.value, NormalizedValue: normalized, ServiceSlug: string(field.kind)})
+	}
+	return addresses
 }

@@ -1,13 +1,15 @@
 <script lang="ts">
-  import { autoReposition, Button, Checkbox, escapeCloses, floatingPopoverStyle } from '@kenn-io/kit-ui';
+  import { autoReposition, Button, Checkbox, escapeCloses } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 
   import type { APIClient } from '../../api/client';
+  import { boundaryDate, editedBoundary, isLocalBound } from '../../explore/date-bound';
   import { createExploreAPI } from '../../explore/api';
   import { entryKindPresentation } from '../../explore/labels';
   import type { ExploreFilter } from '../../explore/models';
   import AccountFilter from './AccountFilter.svelte';
   import IdentityFilter from './IdentityFilter.svelte';
+  import { popoverStyle } from './popover-position';
 
   interface KindOption {
     name: string;
@@ -17,12 +19,14 @@
   let {
     client,
     filters,
+    extraActive = false,
     lockedFilter = undefined,
     onChange,
     extra = undefined,
     onClear = undefined,
   }: {
     extra?: Snippet;
+    extraActive?: boolean;
     onClear?: () => void;
     client: APIClient;
     filters: ExploreFilter[];
@@ -31,6 +35,8 @@
   } = $props();
 
   const api = createExploreAPI(untrack(() => client));
+  const visualStatusId = $props.id();
+  const filterCount = $derived(filters.length + Number(extraActive));
   let open = $state(false);
   let triggerElement = $state<HTMLSpanElement>();
   let panelElement = $state<HTMLDivElement>();
@@ -61,14 +67,7 @@
 
   function position(): void {
     if (!triggerElement || !panelElement) return;
-    panelStyle = floatingPopoverStyle({
-      trigger: triggerElement.getBoundingClientRect(),
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-      popoverWidth: panelElement.offsetWidth,
-      popoverHeight: panelElement.offsetHeight,
-      align: 'start',
-    });
+    panelStyle = popoverStyle(triggerElement, panelElement);
   }
 
   async function toggle(): Promise<void> {
@@ -99,25 +98,25 @@
   function dateValue(dimension: 'after' | 'before'): string {
     const value = filters.find((filter) => filter.dimension === dimension)?.values[0];
     if (!value) return '';
-    const date = new Date(value);
-    if (dimension === 'before') date.setUTCMilliseconds(date.getUTCMilliseconds() - 1);
-    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+    return boundaryDate(value, dimension === 'before');
   }
 
   function changeDate(dimension: 'after' | 'before', input: HTMLInputElement): void {
     const value = input.value;
     dateError = '';
-    const from = dimension === 'after' ? value : dateValue('after');
-    const to = dimension === 'before' ? value : dateValue('before');
-    if (from && to && from > to) {
+    const rest = filters.filter((filter) => filter.dimension !== dimension);
+    if (!value) return onChange(rest);
+    const current = filters.find((filter) => filter.dimension === dimension)?.values[0];
+    const peer = filters.find((filter) => filter.dimension === (dimension === 'after' ? 'before' : 'after'))?.values[0];
+    const edited = editedBoundary(value, dimension === 'before', isLocalBound(current ?? peer));
+    const from = dimension === 'after' ? edited : peer;
+    const to = dimension === 'before' ? edited : peer;
+    if (from && to && Date.parse(from) >= Date.parse(to)) {
       dateError = 'From must be on or before To.';
       input.value = dateValue(dimension);
       return;
     }
-    const rest = filters.filter((filter) => filter.dimension !== dimension);
-    if (!value) return onChange(rest);
-    const boundary = new Date(`${value}T00:00:00Z`).getTime() + (dimension === 'before' ? 86400000 : 0);
-    onChange([...rest, { dimension, values: [new Date(boundary).toISOString()] }]);
+    onChange([...rest, { dimension, values: [edited] }]);
   }
 
   function clear(): void {
@@ -137,16 +136,18 @@
 
 <span class="filter-trigger" bind:this={triggerElement}>
   <Button
-    surface={open || filters.length > 0 ? 'soft' : 'outline'}
-    label={filters.length > 0 ? `Filter · ${filters.length}` : 'Filter'}
+    surface={open || filterCount > 0 ? 'soft' : 'outline'}
+    label={filterCount > 0 ? `Filter · ${filterCount}` : 'Filter'}
     ariaLabel="Filter"
+    ariaDescribedby={extraActive ? visualStatusId : undefined}
     ariaExpanded={open}
     onclick={() => void toggle()}
   />
 </span>
+{#if extraActive}<span id={visualStatusId} class="kit-sr-only">Visual search active</span>{/if}
 
 {#if open}
-  <div class="filter-panel kit-popover-card" role="dialog" aria-label="Filter" bind:this={panelElement} style={panelStyle}>
+  <div class="filter-panel kit-popover-card" role="dialog" aria-label="Filter" data-form bind:this={panelElement} style={panelStyle}>
     {#if kinds.length > 0}
       <fieldset class="field">
         <legend>Kind</legend>
@@ -165,12 +166,12 @@
     <AccountFilter {client} {filters} {onChange} showSingleMailbox />
     {#if !lockedFilter}<IdentityFilter {client} {filters} {onChange} />{/if}
     <fieldset class="field">
-      <legend>Dates (UTC)</legend>
+      <legend>{filters.some((filter) => (filter.dimension === 'after' || filter.dimension === 'before') && isLocalBound(filter.values[0])) ? 'Dates' : 'Dates (UTC)'}</legend>
       <div class="dates">
       <!-- kit-ui-check-ignore: independent optional boundaries; DateRangePicker commits complete ranges. -->
-      <label>From<input type="date" aria-label="From" value={dateValue('after')} onchange={(event) => changeDate('after', event.currentTarget)} /></label>
+      <label>From<input type="date" aria-label={isLocalBound(filters.find((filter) => filter.dimension === 'before')?.values[0]) && !isLocalBound(filters.find((filter) => filter.dimension === 'after')?.values[0]) && filters.some((filter) => filter.dimension === 'after') ? 'From (UTC)' : 'From'} value={dateValue('after')} onchange={(event) => changeDate('after', event.currentTarget)} /></label>
       <!-- kit-ui-check-ignore: independent optional boundaries; DateRangePicker commits complete ranges. -->
-      <label>To<input type="date" aria-label="To" value={dateValue('before')} onchange={(event) => changeDate('before', event.currentTarget)} /></label>
+      <label>To<input type="date" aria-label={isLocalBound(filters.find((filter) => filter.dimension === 'after')?.values[0]) && !isLocalBound(filters.find((filter) => filter.dimension === 'before')?.values[0]) && filters.some((filter) => filter.dimension === 'before') ? 'To (UTC)' : 'To'} value={dateValue('before')} onchange={(event) => changeDate('before', event.currentTarget)} /></label>
       </div>
     </fieldset>
     {#if dateError}<p role="alert">{dateError}</p>{/if}
@@ -184,9 +185,10 @@
 {/if}
 
 <style>
-  .dates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
-  .dates label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  .dates input { min-width: 0; width: 100%; box-sizing: border-box; padding: var(--space-2); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); font: inherit; }
+  /* A Meta label 4 above each field, the two dates a pair 12 apart. */
+  .dates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-box); }
+  .dates label { display: grid; gap: var(--space-tight); color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
+  .dates input { min-width: 0; width: 100%; height: var(--field-h); box-sizing: border-box; padding: 0 var(--field-pad-x); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); font: inherit; font-size: var(--field-text-size); line-height: var(--type-body-line); }
   .filter-trigger {
     display: inline-flex;
   }

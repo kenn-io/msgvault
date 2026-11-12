@@ -24,7 +24,7 @@ import (
 func TestParseAccountScopes(t *testing.T) {
 	assert := assert.New(t)
 	request := func(values url.Values) *http.Request {
-		return httptest.NewRequest(http.MethodGet, "/api/v1/messages?"+values.Encode(), nil)
+		return httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages?"+values.Encode(), nil)
 	}
 	source := int64(7)
 	scopes, err := parseAccountScopes(request(url.Values{
@@ -81,12 +81,15 @@ func TestHandleCLIAccountsSurvivesCatalogFailure(t *testing.T) {
 	_, err := st.GetOrCreateSource("mbox", "archive-1")
 	require.NoError(err)
 	// Hiding a table the catalog reads makes only the catalog fail.
-	_, err = st.DB().Exec(`ALTER TABLE account_identities RENAME TO account_identities_off`)
+	_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE account_identities RENAME TO account_identities_off`)
 	require.NoError(err)
-	t.Cleanup(func() { _, _ = st.DB().Exec(`ALTER TABLE account_identities_off RENAME TO account_identities`) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() {
+		_, _ = st.DB().ExecContext(context.WithoutCancel(t.Context()), `ALTER TABLE account_identities_off RENAME TO account_identities`)
+	})
 
 	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil))
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	var resp struct {
 		Accounts []struct {
@@ -112,7 +115,7 @@ func TestHandleCLIAccountsShowsNewIdentityDespiteCachedCatalog(t *testing.T) {
 	})
 	src, err := st.GetOrCreateSource("mbox", "archive@example.net")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(src.ID, "thread", "Thread")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Thread")
 	require.NoError(err)
 	_, err = st.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: conv, SourceMessageID: "m1", MessageType: "email",
@@ -121,7 +124,7 @@ func TestHandleCLIAccountsShowsNewIdentityDespiteCachedCatalog(t *testing.T) {
 
 	children := func() []string {
 		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil))
+		srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil))
 		require.Equal(http.StatusOK, w.Code, w.Body.String())
 		var resp struct {
 			Accounts []struct {
@@ -159,12 +162,13 @@ func TestAgentAccountCatalogReadsReusedSourceIDFresh(t *testing.T) {
 		Store:  st,
 		Logger: testLogger(),
 	})
-	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { _ = srv.Shutdown(context.WithoutCancel(t.Context())) })
 	t.Cleanup(srv.agentGrants.Close)
 	addSourceWithMail := func(identifier string) *store.Source {
 		src, err := st.GetOrCreateSource("mbox", identifier)
 		require.NoError(err)
-		conv, err := st.EnsureConversation(src.ID, "thread", "Thread")
+		conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Thread")
 		require.NoError(err)
 		_, err = st.UpsertMessage(&store.Message{
 			SourceID: src.ID, ConversationID: conv, SourceMessageID: "m1", MessageType: "email",
@@ -173,7 +177,7 @@ func TestAgentAccountCatalogReadsReusedSourceIDFresh(t *testing.T) {
 		return src
 	}
 	accounts := func(header, value string) string {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
 		req.Header.Set(header, value)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
@@ -218,12 +222,13 @@ func TestAgentAccountCatalogUsesAuthorizationSnapshot(t *testing.T) {
 		Store:  gate,
 		Logger: testLogger(),
 	})
-	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { _ = srv.Shutdown(context.WithoutCancel(t.Context())) })
 	t.Cleanup(srv.agentGrants.Close)
 	addSourceWithMail := func(identifier string) *store.Source {
 		src, err := st.GetOrCreateSource("mbox", identifier)
 		require.NoError(err)
-		conv, err := st.EnsureConversation(src.ID, "thread", "Thread")
+		conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Thread")
 		require.NoError(err)
 		_, err = st.UpsertMessage(&store.Message{
 			SourceID: src.ID, ConversationID: conv, SourceMessageID: "m1", MessageType: "email",
@@ -238,7 +243,7 @@ func TestAgentAccountCatalogUsesAuthorizationSnapshot(t *testing.T) {
 
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/accounts", nil)
 		req.Header.Set(apiprotocol.AgentTokenHeader, token)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)

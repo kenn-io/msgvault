@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -38,7 +37,7 @@ func TestTryAcquireWriteOwnerLockExcludesSecondOwner(t *testing.T) {
 	require.NoError(
 		first.Close(), "release first lock")
 
-	third, err := acquireWriteOwnerLock(context.Background(), dataDir)
+	third, err := acquireWriteOwnerLock(t.Context(), dataDir)
 	require.NoError(
 		err, "third lock after release")
 

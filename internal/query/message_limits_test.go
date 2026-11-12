@@ -21,14 +21,15 @@ func TestBoundedDuckDBMessageDetails(t *testing.T) {
 	requirements.NoError(err)
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
  CREATE SCHEMA sqlite_db;
  CREATE TABLE sqlite_db.messages (id BIGINT, source_id BIGINT, source_message_id VARCHAR, rfc822_message_id VARCHAR, conversation_id BIGINT, subject VARCHAR, message_type VARCHAR, snippet VARCHAR, sent_at TIMESTAMP, received_at TIMESTAMP, size_estimate BIGINT, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, is_from_me BOOLEAN, deleted_from_source_at TIMESTAMP, deleted_at TIMESTAMP, sender_id BIGINT, metadata VARCHAR);
  CREATE TABLE sqlite_db.conversations (id BIGINT, source_conversation_id VARCHAR, title VARCHAR);
  CREATE TABLE sqlite_db.message_bodies (message_id BIGINT, body_text VARCHAR, body_html VARCHAR);
  CREATE TABLE sqlite_db.message_raw (message_id BIGINT, raw_data BLOB, compression VARCHAR);
  CREATE TABLE sqlite_db.participants (id BIGINT, email_address VARCHAR, phone_number VARCHAR, display_name VARCHAR);
- CREATE TABLE sqlite_db.message_recipients (message_id BIGINT, participant_id BIGINT, recipient_type VARCHAR, display_name VARCHAR);
+ CREATE TABLE sqlite_db.participant_identifiers (participant_id BIGINT, identifier_type VARCHAR, identifier_value VARCHAR);
+ CREATE TABLE sqlite_db.message_recipients (message_id BIGINT, participant_id BIGINT, recipient_type VARCHAR, display_name VARCHAR, email_address VARCHAR, is_relayed BOOLEAN NOT NULL DEFAULT FALSE);
  CREATE TABLE sqlite_db.labels (id BIGINT, name VARCHAR);
  CREATE TABLE sqlite_db.message_labels (message_id BIGINT, label_id BIGINT);
  CREATE TABLE sqlite_db.attachments (id BIGINT, message_id BIGINT, filename VARCHAR, mime_type VARCHAR, size BIGINT, content_hash VARCHAR, storage_path VARCHAR, source_attachment_id VARCHAR);
@@ -36,7 +37,7 @@ func TestBoundedDuckDBMessageDetails(t *testing.T) {
  INSERT INTO sqlite_db.conversations (id, source_conversation_id) VALUES (1,'fixture-thread');`)
 	requirements.NoError(err)
 	body := strings.Repeat("é", 17)
-	_, err = db.Exec(`INSERT INTO sqlite_db.message_bodies VALUES (1, ?, '')`, body)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO sqlite_db.message_bodies VALUES (1, ?, '')`, body)
 	requirements.NoError(err)
 	t.Run("text", func(t *testing.T) {
 		for _, limit := range []int64{32, 34} {
@@ -51,7 +52,7 @@ func TestBoundedDuckDBMessageDetails(t *testing.T) {
 		}
 	})
 	raw := []byte("Subject: Fixture\r\n\r\nSynthetic body.")
-	_, err = db.Exec(`INSERT INTO sqlite_db.message_raw VALUES (1, ?, NULL)`, raw)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO sqlite_db.message_raw VALUES (1, ?, NULL)`, raw)
 	requirements.NoError(err)
 	t.Run("raw", func(t *testing.T) {
 		for _, limit := range []int64{16, 64} {

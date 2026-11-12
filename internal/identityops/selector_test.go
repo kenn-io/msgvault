@@ -19,7 +19,7 @@ func TestSourceSelectorJSONPreservesExplicitSourceIDPresence(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(`{"source_id":0,"identifier":"me@example.test"}`), &req))
 
 	assert.True(req.SourceIDSet)
-	_, err := identityops.ResolveSource(testutil.NewTestStore(t), req.SourceSelector)
+	_, err := identityops.ResolveSource(t.Context(), testutil.NewTestStore(t), req.SourceSelector)
 	require.Error(err)
 	assert.Equal(opserr.KindInvalid, opserr.KindOf(err))
 	assert.ErrorContains(err, "source ID must be positive")
@@ -31,11 +31,11 @@ func TestResolveSourceRequiresExactlyOneSelector(t *testing.T) {
 	_, err := st.GetOrCreateSource("gmail", "shared@example.test")
 	requirements.NoError(err)
 
-	_, err = identityops.ResolveSource(st, identityops.SourceSelector{})
+	_, err = identityops.ResolveSource(t.Context(), st, identityops.SourceSelector{})
 	requirements.ErrorContains(err, "account or source ID is required")
-	_, err = identityops.ResolveSource(st, identityops.SourceSelector{SourceID: -1})
+	_, err = identityops.ResolveSource(t.Context(), st, identityops.SourceSelector{SourceID: -1})
 	requirements.ErrorContains(err, "source ID must be positive")
-	_, err = identityops.ResolveSource(st, identityops.SourceSelector{
+	_, err = identityops.ResolveSource(t.Context(), st, identityops.SourceSelector{
 		Account: "shared@example.test", SourceID: 1,
 	})
 	requirements.ErrorContains(err, "mutually exclusive")
@@ -50,9 +50,9 @@ func TestResolveSourceIDDisambiguatesDuplicateIdentifiers(t *testing.T) {
 	_, err = st.GetOrCreateSource("imap", "shared@example.test")
 	require.NoError(err)
 
-	_, err = identityops.ResolveSource(st, identityops.SourceSelector{Account: "shared@example.test"})
+	_, err = identityops.ResolveSource(t.Context(), st, identityops.SourceSelector{Account: "shared@example.test"})
 	require.ErrorContains(err, "ambiguous")
-	got, err := identityops.ResolveSource(st, identityops.SourceSelector{SourceID: providerSource.ID})
+	got, err := identityops.ResolveSource(t.Context(), st, identityops.SourceSelector{SourceID: providerSource.ID})
 	require.NoError(err)
 	assert.Equal(providerSource.ID, got.ID)
 }

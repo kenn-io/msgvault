@@ -154,7 +154,7 @@ func (imp *Importer) persistCall(ctx context.Context, sourceID int64, c Conversa
 		chatMetadata["meeting_message_id"] = result.MessageID
 		encoded, linkErr := json.Marshal(chatMetadata, json.Deterministic(true))
 		if linkErr == nil {
-			linkErr = imp.store.SetMessageMetadata(chatMessageID, sql.NullString{String: string(encoded), Valid: true})
+			linkErr = imp.store.SetMessageMetadataContext(ctx, chatMessageID, sql.NullString{String: string(encoded), Valid: true})
 		}
 		if linkErr != nil {
 			return result.MessageID, 0, errors.Join(err, linkErr)

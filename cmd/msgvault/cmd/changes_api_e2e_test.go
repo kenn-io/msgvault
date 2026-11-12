@@ -29,7 +29,9 @@ var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
 // unavailable is caught before any settling happens.
 func changesPage(t *testing.T, baseURL string) api.ChangesResponse {
 	t.Helper()
-	resp, err := http.Get(baseURL + "/api/v1/messages/changes?limit=100")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL+"/api/v1/messages/changes?limit=100", nil)
+	require.NoError(t, err, "build GET /messages/changes")
+	resp, err := http.DefaultClient.Do(request)
 	require.NoError(t, err, "GET /messages/changes")
 	defer func() { _ = resp.Body.Close() }()
 	require.Equalf(t, http.StatusOK, resp.StatusCode,
@@ -87,7 +89,7 @@ func TestChangesEndpointServesThroughTheProductionAdapter(t *testing.T) {
 
 	src, err := s.GetOrCreateSource("gmail", "archive-owner@example.com")
 	require.NoError(err, "create source")
-	conv, err := s.EnsureConversation(src.ID, "c1", "")
+	conv, err := s.EnsureConversation(t.Context(), src.ID, "c1", "")
 	require.NoError(err, "create conversation")
 	msgID, err := s.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: conv,

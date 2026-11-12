@@ -80,8 +80,10 @@ func TestPersonAgendaEndpointServesThroughTheProductionAdapter(t *testing.T) {
 	httpSrv := httptest.NewServer(srv.Router())
 	t.Cleanup(httpSrv.Close)
 
-	response, err := http.Get(
-		fmt.Sprintf("%s/api/v1/people/%d/agenda", httpSrv.URL, person.ID))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
+		fmt.Sprintf("%s/api/v1/people/%d/agenda", httpSrv.URL, person.ID), nil)
+	require.NoError(err, "build GET /people/{id}/agenda")
+	response, err := http.DefaultClient.Do(request)
 	require.NoError(err, "GET /people/{id}/agenda")
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(response.Body)

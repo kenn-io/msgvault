@@ -110,7 +110,7 @@ func TestPersonSemanticStoredProfileRejectsImmutablePolicyCorruption(t *testing.
 	_, err := st.EnsurePersonSemanticEmbeddingProfile(t.Context(), profile)
 	require.NoError(t, err)
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE person_semantic_embedding_profiles
 		SET renderer_policy = ? WHERE fingerprint = ?`),
 		"person-semantic-corrupted", profile.Fingerprint)

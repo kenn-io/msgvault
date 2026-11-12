@@ -139,7 +139,7 @@ func TestImportTieBoundaryAcrossPasses(t *testing.T) {
 			_, err = imp.Import(t.Context(), opts)
 			require.Error(err)
 			provider.discardAt = 0
-			prior, err := st.GetLatestCheckpointedSyncByType(src.ID, SourceType)
+			prior, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, SourceType)
 			require.NoError(err)
 			var cursor scanCheckpoint
 			require.NoError(json.Unmarshal([]byte(prior.CursorBefore.String), &cursor))
@@ -227,7 +227,7 @@ func TestImportCheckpointOptions(t *testing.T) {
 			}
 			_, err = imp.Import(t.Context(), opts)
 			require.Error(err)
-			prior, err := st.GetLatestCheckpointedSyncByType(src.ID, SourceType)
+			prior, err := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, SourceType)
 			require.NoError(err)
 			var saved scanCheckpoint
 			require.NoError(json.Unmarshal([]byte(prior.CursorBefore.String), &saved))
@@ -305,7 +305,7 @@ func TestImportLimitBoundsRequestsAndUniqueConversations(t *testing.T) {
 			client := testOmiClient(t, server.URL, "omi_dev_synthetic")
 			imp := NewImporter(st, sourceFunc(func(ctx context.Context, params ListParams) ([]Conversation, error) {
 				processed := int64(0)
-				prior, err := st.GetLatestCheckpointedSyncByType(src.ID, SourceType)
+				prior, err := st.GetLatestCheckpointedSyncByType(ctx, src.ID, SourceType)
 				if err == nil {
 					var scan scanCheckpoint
 					require.NoError(json.Unmarshal([]byte(prior.CursorBefore.String), &scan))
@@ -438,7 +438,7 @@ func TestImportBackfilledWindowsAcrossPasses(t *testing.T) {
 					break
 				}
 				require.Error(err)
-				prior, checkpointErr := st.GetLatestCheckpointedSyncByType(src.ID, SourceType)
+				prior, checkpointErr := st.GetLatestCheckpointedSyncByType(t.Context(), src.ID, SourceType)
 				require.NoError(checkpointErr)
 				var scan scanCheckpoint
 				require.NoError(json.Unmarshal([]byte(prior.CursorBefore.String), &scan))

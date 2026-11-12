@@ -36,7 +36,7 @@ func newDeleteFixture(t *testing.T, ids ...string) *deleteFixture {
 	}
 	_, err := f.sync(t, st)
 	require.NoError(t, err)
-	src, err := st.GetSourceByTypeAndIdentifier(SourceType, "me@example.com")
+	src, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "me@example.com")
 	require.NoError(t, err)
 	mgr, err := deletion.NewManager(t.TempDir())
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func (d *deleteFixture) stage(t *testing.T, ids ...string) string {
 func (d *deleteFixture) label(t *testing.T, id string) string {
 	t.Helper()
 	var name string
-	require.NoError(t, d.st.DB().QueryRow(d.st.Rebind(`
+	require.NoError(t, d.st.DB().QueryRowContext(t.Context(), d.st.Rebind(`
 		SELECT l.name FROM messages m
 		JOIN message_labels ml ON ml.message_id = m.id
 		JOIN labels l ON l.id = ml.label_id

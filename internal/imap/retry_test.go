@@ -196,7 +196,7 @@ func startRetryMemServer(
 	startTLSConfig *tls.Config,
 ) (string, *retryCountingListener) {
 	t.Helper()
-	base, err := net.Listen("tcp", "127.0.0.1:0")
+	base, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 
@@ -234,7 +234,7 @@ func TestConnectRetry_ImplicitTLSDisconnectBeforeGreeting(t *testing.T) {
 		}
 		tlsConn, ok := conn.(*tls.Conn)
 		if ok {
-			_ = tlsConn.Handshake()
+			_ = tlsConn.HandshakeContext(t.Context())
 		}
 		return &retryDropConn{Conn: conn}
 	}, nil)
@@ -269,7 +269,7 @@ func TestConnectRetry_TransportModesBeforeGreeting(t *testing.T) {
 				if count == 1 && tt.mode == "implicit-tls" {
 					tlsConn, ok := conn.(*tls.Conn)
 					if ok {
-						_ = tlsConn.Handshake()
+						_ = tlsConn.HandshakeContext(t.Context())
 					}
 				}
 				if count == 1 {
@@ -339,7 +339,7 @@ func TestConnectRetry_PartialGreetingRetries(t *testing.T) {
 func TestConnectRetry_ByeGreetingIsTerminal(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	t.Cleanup(func() { _ = listener.Close() })
 	counted := &retryCountingListener{Listener: listener}
@@ -444,7 +444,7 @@ func TestConnectRetry_TransportErrorTypes(t *testing.T) {
 func TestConnectRetry_BoundedScheduleAndWarnings(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	counted := &retryCountingListener{Listener: listener, transform: func(conn net.Conn, _ int64) net.Conn {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
@@ -610,7 +610,7 @@ func TestConnectRetry_CancellationAtBlockingStages(t *testing.T) {
 			name: "greeting",
 			run: func(t *testing.T, ctx context.Context) error {
 				t.Helper()
-				listener, err := net.Listen("tcp", "127.0.0.1:0")
+				listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 				require.NoError(t, err)
 				defer func() { _ = listener.Close() }()
 				counted := &retryCountingListener{Listener: listener}
@@ -629,7 +629,7 @@ func TestConnectRetry_CancellationAtBlockingStages(t *testing.T) {
 			name: "STARTTLS",
 			run: func(t *testing.T, ctx context.Context) error {
 				t.Helper()
-				listener, err := net.Listen("tcp", "127.0.0.1:0")
+				listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 				require.NoError(t, err)
 				defer func() { _ = listener.Close() }()
 				counted := &retryCountingListener{Listener: listener}
@@ -662,7 +662,7 @@ func TestConnectRetry_CancellationAtBlockingStages(t *testing.T) {
 			name: "backoff",
 			run: func(t *testing.T, ctx context.Context) error {
 				t.Helper()
-				listener, err := net.Listen("tcp", "127.0.0.1:0")
+				listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 				require.NoError(t, err)
 				defer func() { _ = listener.Close() }()
 				counted := &retryCountingListener{Listener: listener, transform: func(conn net.Conn, _ int64) net.Conn {
@@ -691,7 +691,7 @@ func TestConnectRetry_CancellationAtBlockingStages(t *testing.T) {
 }
 
 func TestConnectRetry_CancelDuringBackoff(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	counted := &retryCountingListener{Listener: listener, transform: func(conn net.Conn, _ int64) net.Conn {
 		_ = conn.Close()

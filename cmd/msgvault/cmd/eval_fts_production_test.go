@@ -46,7 +46,7 @@ func seedRankingDivergenceArchiveIn(t *testing.T, dataDir string) *store.Store {
 	// documents apart, with the query term buried once inside it.
 	filler := strings.Repeat("quarterly figures and other unrelated correspondence text ", 60)
 
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES
 	(1, 1, 'thread-1', 'email_thread'),
@@ -67,7 +67,8 @@ INSERT INTO messages (id, conversation_id, source_id, source_message_id, message
 		{2, filler + " renewal " + filler},
 		{3, "Notice served."},
 	} {
-		_, err = s.DB().Exec(
+		_, err = s.DB().ExecContext(
+			t.Context(),
 			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`, b.id, b.body)
 		require.NoError(t, err, "seed body %d", b.id)
 	}
@@ -146,15 +147,10 @@ func TestRankedFTS_MatchesProductionRelevanceRanking(t *testing.T) {
 	assert.Empty(t, diag.notes(), "a clean archive produces a clean run")
 }
 
-// TestRankedFTS_HonoursProductionAddressFilterSemantics pins the second
-// divergence roborev flagged. The store path resolves from: as a substring
-// match against the participant address (so `from:landlord` finds
-// landlord@example.com); query.Engine.Search requires an exact address or an
-// @domain pattern, and would have scored a flat zero for the same topic.
-func TestRankedFTS_HonoursProductionAddressFilterSemantics(t *testing.T) {
+// Evaluation must forward sender terms along with the text query.
+func TestRankedFTS_PreservesSenderFilter(t *testing.T) {
 	s := seedRankingDivergenceArchive(t)
-	ctx := t.Context()
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 INSERT INTO participants (id, email_address) VALUES (1, 'landlord@example.com');
 INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (1, 1, 'from');
 `)
@@ -162,23 +158,13 @@ INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALU
 
 	const topic = "from:landlord renewal"
 
-	production, _, err := s.SearchMessagesQueryContext(ctx, search.Parse(topic), 0, 10)
-	require.NoError(t, err, "production store search")
-	require.Equal(t, []string{"<m1@example.com>"}, keysOfAPIMessages(production),
-		"production matches the address by substring")
-
-	qeng := query.NewEngine(s.DB(), s.IsPostgreSQL())
-	legacy, err := qeng.Search(ctx, search.Parse(topic), 10, 0)
-	require.NoError(t, err, "query engine search")
-	require.Empty(t, legacy, "the exact-match path finds nothing for the same topic")
-
 	ev, _ := newTestEvaluator(t, s, "message")
 	ev.limit = 10
 
 	ranked, err := ev.rankedFTS(evalTestQuery(t, topic))
 	require.NoError(t, err)
 	assert.Equal(t, []string{"<m1@example.com>"}, ranked,
-		"the eval must score the hits production returns, not zero")
+		"evaluation retains the sender filter")
 }
 
 // writeEvalFile writes one of the run's input files and returns its path.

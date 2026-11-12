@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,7 +13,7 @@ func TestPersonNamesRetainStructuredComponentsAndRFC9554Fields(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 
 	structured, err := st.AddPersonNameContext(ctx, personID, store.PersonNameInput{
@@ -50,7 +49,7 @@ func TestPersonNameRetainsCompleteVCardResourceProvenance(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	sourceRef := "address-book"
 	sourceResourceUID := "alice.vcf"
@@ -92,7 +91,7 @@ func TestPersonNamesKeepMultipleFormattedFormsPerLanguage(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 
 	for _, form := range []struct {
@@ -118,7 +117,7 @@ func TestSupersedePersonNameClosesBothTimeAxes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	name, err := st.AddPersonNameContext(ctx, personID, store.PersonNameInput{
 		NameKind: store.PersonNameFormatted, Formatted: new("Alice Example"),
@@ -140,7 +139,7 @@ func TestSupersedePersonNameClosesBothTimeAxes(t *testing.T) {
 func TestAddPersonNameRejectsInvalidInput(t *testing.T) {
 	require := require.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	_, err := st.AddPersonNameContext(ctx, personID, store.PersonNameInput{
 		NameKind: "middle", Formatted: new("Alice Example"),
@@ -177,7 +176,7 @@ func newTestPerson(t *testing.T, st *store.Store) int64 {
 	require := require.New(t)
 	participantID, err := st.EnsureParticipantByIdentifier("email", "alice@example.com", "Alice Example")
 	require.NoError(err)
-	person, _, err := st.CreatePersonFromParticipantContext(context.Background(), participantID)
+	person, _, err := st.CreatePersonFromParticipantContext(t.Context(), participantID)
 	require.NoError(err)
 	return person.ID
 }

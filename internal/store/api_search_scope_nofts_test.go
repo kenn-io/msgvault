@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 
@@ -22,7 +21,7 @@ func TestSearchMessagesQueryImpl_NoFTS_AccountScoping(t *testing.T) {
 
 	src1, err := st.GetOrCreateSource("gmail", "scope-nofts-1@example.com")
 	require.NoError(err, "GetOrCreateSource src1")
-	conv1, err := st.EnsureConversation(src1.ID, "nofts-scope-thread-1", "Thread 1")
+	conv1, err := st.EnsureConversation(t.Context(), src1.ID, "nofts-scope-thread-1", "Thread 1")
 	require.NoError(err, "EnsureConversation src1")
 	msg1, err := st.UpsertMessage(&Message{
 		ConversationID:  conv1,
@@ -37,7 +36,7 @@ func TestSearchMessagesQueryImpl_NoFTS_AccountScoping(t *testing.T) {
 
 	src2, err := st.GetOrCreateSource("gmail", "scope-nofts-2@example.com")
 	require.NoError(err, "GetOrCreateSource src2")
-	conv2, err := st.EnsureConversation(src2.ID, "nofts-scope-thread-2", "Thread 2")
+	conv2, err := st.EnsureConversation(t.Context(), src2.ID, "nofts-scope-thread-2", "Thread 2")
 	require.NoError(err, "EnsureConversation src2")
 	_, err = st.UpsertMessage(&Message{
 		ConversationID:  conv2,
@@ -52,12 +51,12 @@ func TestSearchMessagesQueryImpl_NoFTS_AccountScoping(t *testing.T) {
 
 	// Baseline: unscoped LIKE search sees both.
 	_, total, err := st.searchMessagesQueryImpl(
-		context.Background(), &search.Query{TextTerms: []string{"invoice"}}, 0, 50, false)
+		t.Context(), &search.Query{TextTerms: []string{"invoice"}}, 0, 50, false)
 	require.NoError(err, "baseline no-FTS search")
 	require.Equal(int64(2), total, "unscoped no-FTS total")
 
 	msgs, total, err := st.searchMessagesQueryImpl(
-		context.Background(), &search.Query{
+		t.Context(), &search.Query{
 			TextTerms:  []string{"invoice"},
 			AccountIDs: []int64{src1.ID},
 		}, 0, 50, false)

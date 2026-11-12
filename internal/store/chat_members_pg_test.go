@@ -38,13 +38,13 @@ func TestChatMembersRefreshVsSourceRemovalPG(t *testing.T) {
 
 	searchDone := make(chan error, 1)
 	go func() {
-		_, err := st.SearchChatsContext(context.Background(), store.ChatDiscoveryQuery{Query: "Refresh"})
+		_, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "Refresh"})
 		searchDone <- err
 	}()
 	<-paused
 	removeDone := make(chan error, 1)
 	go func() {
-		_, _, err := st.RemoveSourceSerialized(context.Background(), victim.source.ID)
+		_, _, err := st.RemoveSourceSerialized(t.Context(), victim.source.ID)
 		removeDone <- err
 	}()
 	waitForLockWait(t, st, "archive_metadata", "source removal must wait at the identity row, before its table locks")
@@ -76,7 +76,7 @@ func TestChatMembersWriterCommittingAfterRefreshPG(t *testing.T) {
 
 	searchDone := make(chan error, 1)
 	go func() {
-		_, err := st.SearchChatsContext(context.Background(), store.ChatDiscoveryQuery{Query: "Kilo"})
+		_, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "Kilo"})
 		searchDone <- err
 	}()
 	requirements.NoError(waitResult(t, searchDone, "chat discovery during an open write"))
@@ -118,7 +118,7 @@ func TestChatMembersRefreshVsRecipientWriterPG(t *testing.T) {
 
 	searchDone := make(chan error, 1)
 	go func() {
-		_, err := st.SearchChatsContext(context.Background(), store.ChatDiscoveryQuery{Query: "Recipient"})
+		_, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "Recipient"})
 		searchDone <- err
 	}()
 	<-paused

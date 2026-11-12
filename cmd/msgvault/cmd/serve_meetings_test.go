@@ -19,7 +19,7 @@ func TestStoreAPIAdapterServesMeetingMetricsThroughRealDaemonRoute(t *testing.T)
 	srv := api.NewServerWithOptions(api.ServerOptions{
 		Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler),
 	})
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/meetings/metrics", strings.NewReader(`{}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/meetings/metrics", strings.NewReader(`{}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 

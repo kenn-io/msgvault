@@ -28,7 +28,7 @@ func mustOrganizationAttributeDefinition(
 ) *store.AttributeDefinition {
 	t.Helper()
 	definition, err := st.CreateAttributeDefinitionContext(
-		context.Background(), organizationTextDefinition(slug))
+		t.Context(), organizationTextDefinition(slug))
 	require.NoError(t, err)
 	return definition
 }
@@ -36,7 +36,7 @@ func mustOrganizationAttributeDefinition(
 func mustAttributeOrganization(t *testing.T, st *store.Store) *store.Organization {
 	t.Helper()
 	organization, err := st.CreateOrganizationContext(
-		context.Background(), store.OrganizationInput{Name: "Example Org"})
+		t.Context(), store.OrganizationInput{Name: "Example Org"})
 	require.NoError(t, err)
 	return organization
 }
@@ -51,7 +51,7 @@ func organizationAttributeTestBind(st *store.Store) string {
 func TestOrganizationAttributeSetSupersedeAndHistory(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization := mustAttributeOrganization(t, st)
 	mustOrganizationAttributeDefinition(t, st, "industry_focus")
@@ -115,7 +115,7 @@ func TestOrganizationAttributeSetSupersedeAndHistory(t *testing.T) {
 
 func TestOrganizationAttributeRejectsWrongScopeAndInvalidConfidence(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization := mustAttributeOrganization(t, st)
 
@@ -146,7 +146,7 @@ func TestOrganizationAttributeRejectsWrongScopeAndInvalidConfidence(t *testing.T
 
 func TestOrganizationAttributeRequiresAnExistingOrganization(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	mustOrganizationAttributeDefinition(t, st, "industry_focus")
 
@@ -163,7 +163,7 @@ func TestOrganizationAttributeRequiresAnExistingOrganization(t *testing.T) {
 func TestOrganizationAttributeDryRunCASAndMultiOrdinal(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization := mustAttributeOrganization(t, st)
 	input := organizationTextDefinition("specialties")
@@ -228,7 +228,7 @@ func TestOrganizationAttributeDryRunCASAndMultiOrdinal(t *testing.T) {
 func TestOrganizationMultiAttributeAppendsAfterSupersede(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization := mustAttributeOrganization(t, st)
 	definition := organizationTextDefinition("append_only_specialties")
@@ -275,7 +275,7 @@ func TestOrganizationMultiAttributeAppendsAfterSupersede(t *testing.T) {
 func TestOrganizationAttributeRetractionIsNotCurrentAndCanBeReplaced(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization := mustAttributeOrganization(t, st)
 	mustOrganizationAttributeDefinition(t, st, "industry_focus")
@@ -327,7 +327,7 @@ func TestOrganizationAttributeRetractionIsNotCurrentAndCanBeReplaced(t *testing.
 func TestOrganizationDeleteCascadesAttributeValues(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization := mustAttributeOrganization(t, st)
 	mustOrganizationAttributeDefinition(t, st, "industry_focus")
@@ -355,7 +355,7 @@ func TestDeleteAttributeDefinitionRejectsDefinitionsWithOnlyOrganizationValues(
 	t *testing.T,
 ) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization := mustAttributeOrganization(t, st)
 	definition := mustOrganizationAttributeDefinition(t, st, "industry_focus")
@@ -375,7 +375,7 @@ func TestDeleteAttributeDefinitionRejectsDefinitionsWithOnlyOrganizationValues(
 
 func TestOrganizationAttributeWriteUsesTransactionalDefinitionState(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL row locks are required for this race regression")
@@ -425,7 +425,7 @@ func TestOrganizationAttributeWriteUsesTransactionalDefinitionState(t *testing.T
 
 func TestInactiveOrganizationAttributeDefinitionAllowsSupersede(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization := mustAttributeOrganization(t, st)
 	definition := mustOrganizationAttributeDefinition(t, st, "retired_field")
@@ -458,7 +458,7 @@ func TestOrganizationAttributeSupersedeRetriesDeadlock(t *testing.T) {
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL row locks are required for attribute retry regression")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
 	organization := mustAttributeOrganization(t, st)
 	definition := mustOrganizationAttributeDefinition(t, st, "retry_field")
@@ -488,7 +488,7 @@ func TestOrganizationAttributeSupersedeRetriesDeadlock(t *testing.T) {
 func TestDeletePersonRejectsOrganizationStoredRecordReferences(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	targetParticipant, err := st.EnsureParticipant(
 		"org-ref-target@example.com", "org-ref-target", "example.com")
 	require.NoError(err)
@@ -531,7 +531,7 @@ func TestDeletePersonRejectsOrganizationStoredRecordReferences(t *testing.T) {
 
 func TestOrganizationAttributeWritesRejectMergedOrganization(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	survivor := mustAttributeOrganization(t, st)
 	losing, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{Name: "Other Org"})
@@ -558,7 +558,7 @@ func TestOrganizationAttributeWritesRejectMergedOrganization(t *testing.T) {
 
 func TestAttributeWriteErrorPrecedence(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	inactive := false
 	for _, input := range []store.AttributeDefinitionInput{
@@ -596,7 +596,7 @@ func TestAttributeWriteErrorPrecedence(t *testing.T) {
 
 func TestOrganizationAttributeCreatedAtUsesColumnDefault(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	if st.IsPostgreSQL() {
 		t.Skip("PostgreSQL CURRENT_TIMESTAMP keeps sub-second precision")

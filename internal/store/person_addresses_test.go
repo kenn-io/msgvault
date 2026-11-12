@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,7 +13,7 @@ func TestPersonAddressRoundTripsStructuredComponentsAndMetadata(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 
 	address, err := st.AddPersonAddressContext(ctx, personID, store.PersonAddressInput{
@@ -45,7 +44,7 @@ func TestBirthAndDeathPlacesAreAddressRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	_, err := st.AddPersonAddressContext(ctx, personID, store.PersonAddressInput{
 		AddressKind: store.PersonAddressBirthPlace, FreeText: new("Exampleville, CA"),
@@ -151,7 +150,7 @@ func TestPersonAddressValidationAndSupersession(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	_, err := st.AddPersonAddressContext(ctx, personID, store.PersonAddressInput{
 		AddressKind: "billing", StreetAddress: new("123 Example St."),

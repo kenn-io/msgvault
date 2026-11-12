@@ -33,14 +33,14 @@ func setMatrixTestDatabaseURL(t *testing.T, s *store.Store, cfg *config.Config) 
 		u, err := url.Parse(os.Getenv("MSGVAULT_TEST_DB"))
 		req.NoError(err)
 		var database, schema string
-		req.NoError(s.DB().QueryRow(`SELECT current_database(), current_schema()`).Scan(&database, &schema))
+		req.NoError(s.DB().QueryRowContext(t.Context(), `SELECT current_database(), current_schema()`).Scan(&database, &schema))
 		u.Path = "/" + database
 		q := u.Query()
 		q.Set("search_path", schema)
 		u.RawQuery = q.Encode()
 		cfg.Data.DatabaseURL = u.String()
 	} else {
-		req.NoError(s.DB().QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&cfg.Data.DatabaseURL))
+		req.NoError(s.DB().QueryRowContext(t.Context(), `SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&cfg.Data.DatabaseURL))
 	}
 }
 
@@ -89,7 +89,7 @@ func TestAddMatrixBackupSetup(t *testing.T) {
 				source, err = s.GetOrCreateSource(sourceTypeMatrix, "@archive:example.org")
 				req.NoError(err)
 				if mode == "secret storage" {
-					req.NoError(s.UpdateSourceSyncConfig(source.ID, `{"skip_key_backup":true,"rooms":["!keep:example.org"],"extra":{"keep":1}}`))
+					req.NoError(s.UpdateSourceSyncConfig(t.Context(), source.ID, `{"skip_key_backup":true,"rooms":["!keep:example.org"],"extra":{"keep":1}}`))
 				}
 			}
 			t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))

@@ -121,6 +121,9 @@ type Dialect interface {
 	DateComparison(column, operator string) string
 	DateOrderExpression(column string) string
 
+	// SourceTimelineColumn returns the source expression for date-sorted listings.
+	SourceTimelineColumn() string
+
 	// messageBodyContextBackend selects the backend-native highlighter used to
 	// extract exact context for body-index hits.
 	messageBodyContextBackend() messageBodyContextBackend
@@ -128,6 +131,8 @@ type Dialect interface {
 
 // SQLiteQueryDialect implements Dialect for SQLite.
 type SQLiteQueryDialect struct{}
+
+func (SQLiteQueryDialect) SourceTimelineColumn() string { return "coalesce(m.source_id, m.source_id)" }
 
 func (SQLiteQueryDialect) Rebind(query string) string { return query }
 
@@ -223,6 +228,8 @@ func (SQLiteQueryDialect) SanitizeFTSQuery(query string) string {
 
 // PostgreSQLQueryDialect implements Dialect for PostgreSQL.
 type PostgreSQLQueryDialect struct{}
+
+func (PostgreSQLQueryDialect) SourceTimelineColumn() string { return "m.source_id" }
 
 // Rebind converts ? placeholders to $1, $2, ... for PostgreSQL.
 // Delegates to sqldialect so store.PostgreSQLDialect.Rebind stays in

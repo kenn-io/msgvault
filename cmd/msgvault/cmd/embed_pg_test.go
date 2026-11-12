@@ -28,7 +28,8 @@ import (
 func countEmbeddingRowsPG(t *testing.T, db *sql.DB, gen vector.GenerationID) int {
 	t.Helper()
 	var n int
-	require.NoError(t, db.QueryRowContext(context.Background(),
+	require.NoError(t, db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = $1`, int64(gen)).Scan(&n),
 		"count embedding rows for generation %d", gen)
 	return n
@@ -41,7 +42,7 @@ func countEmbeddingRowsPG(t *testing.T, db *sql.DB, gen vector.GenerationID) int
 // generation id.
 func seedGenWithEmbeddingsPG(t *testing.T, pgb *pgvector.Backend, ids ...int64) vector.GenerationID {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	// No messages rows are inserted: embeddings.message_id has no FK to
 	// messages, and the consuming tests force-activate/retire (force=true),
 	// bypassing the coverage gate, so no live messages are needed. (The full
@@ -74,7 +75,7 @@ func TestRunEmbeddingsRetire_PG_DeletesEmbeddings(t *testing.T) {
 	require := require.New(t)
 
 	pgb, rebind, dsn := openEmbedManagePGDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := pgb.DB()
 
 	gen := seedGenWithEmbeddingsPG(t, pgb, 1, 2, 3)
@@ -120,7 +121,7 @@ func TestRunEmbeddingsActivate_PG_AutoRetireDeletesPrevious(t *testing.T) {
 	require := require.New(t)
 
 	pgb, rebind, dsn := openEmbedManagePGDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := pgb.DB()
 
 	genA := seedGenWithEmbeddingsPG(t, pgb, 1, 2)
@@ -172,7 +173,7 @@ func TestRunEmbeddingsActivate_PG_AutoRetireDeletesPrevious(t *testing.T) {
 func openEmbedManagePGDB(t *testing.T) (*pgvector.Backend, func(string) string, string) {
 	t.Helper()
 	_, dsn := openServePGSchema(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	st, err := store.Open(dsn)
 	require.NoError(t, err, "store.Open")
@@ -214,9 +215,9 @@ func TestFillFullCoveragePartitionsScopedLiveMessagesPG(t *testing.T) {
 	outOfScope, err := main.GetOrCreateSource("gmail", "other@example.test")
 	require.NoError(err)
 	addMessage := func(sourceID int64, sourceMessageID string, stamped, embedded bool) int64 {
-		conversationID, err := main.EnsureConversation(sourceID, "thread-"+sourceMessageID, "Coverage")
+		conversationID, err := main.EnsureConversation(t.Context(), sourceID, "thread-"+sourceMessageID, "Coverage")
 		require.NoError(err)
-		id, err := main.UpsertMessage(&store.Message{
+		id, err := main.UpsertMessageContext(t.Context(), &store.Message{
 			SourceID: sourceID, ConversationID: conversationID,
 			SourceMessageID: sourceMessageID, MessageType: "email",
 		})
@@ -257,7 +258,7 @@ func TestListEmbeddingGenerations_PG(t *testing.T) {
 	require := require.New(t)
 
 	pgb, rebind, _ := openEmbedManagePGDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := pgb.DB()
 
 	// Start with an empty database — list must return an empty slice, not error.
@@ -297,7 +298,7 @@ func TestOpenEmbeddingsMetadataDB_PG(t *testing.T) {
 	// Stand up an isolated schema and migrate the pgvector metadata tables
 	// into it so the helper's existence pre-check passes.
 	db, dsn := openServePGSchema(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	require.NoError(
 		pgvector.Migrate(ctx, db, 4, false), "pgvector.Migrate")
 
@@ -375,15 +376,16 @@ func openEmptyPGSchemaSolo(t *testing.T) string {
 	setup, err := sql.Open("pgx", url)
 	require.NoError(t, err, "open setup")
 	defer func() { _ = setup.Close() }()
-	_, err = setup.Exec("CREATE SCHEMA " + schemaName)
+	_, err = setup.ExecContext(t.Context(), "CREATE SCHEMA "+schemaName)
 	require.NoError(t, err, "create schema")
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		cleanup, err := sql.Open("pgx", url)
 		if err != nil {
 			return
 		}
 		defer func() { _ = cleanup.Close() }()
-		_, _ = cleanup.Exec("DROP SCHEMA " + schemaName + " CASCADE")
+		_, _ = cleanup.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA "+schemaName+" CASCADE")
 	})
 
 	sep := "?"

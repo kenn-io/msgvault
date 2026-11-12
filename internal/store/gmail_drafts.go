@@ -391,7 +391,7 @@ func (s *Store) PublishGmailDraftReplacementContext(
 		`, draft.CurrentMessageID, draft.SourceID); err != nil {
 			return fmt.Errorf("tombstone Gmail draft predecessor: %w", err)
 		}
-		if err := s.bumpDerivedDataRevision(tx); err != nil {
+		if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -491,7 +491,7 @@ func (s *Store) AdoptGmailDraftObservationContext(
 		`, draft.CurrentMessageID, draft.SourceID); err != nil {
 			return fmt.Errorf("tombstone Gmail draft predecessor: %w", err)
 		}
-		if err := s.bumpDerivedDataRevision(tx); err != nil {
+		if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -546,7 +546,7 @@ func (s *Store) FinishGmailDraftDeleteContext(
 		`, draft.CurrentMessageID, draft.SourceID); err != nil {
 			return fmt.Errorf("tombstone deleted Gmail draft: %w", err)
 		}
-		if err := s.bumpDerivedDataRevision(tx); err != nil {
+		if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`

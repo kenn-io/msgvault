@@ -22,7 +22,7 @@ func TestMuesliReviewedAcceptanceRetry(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := storetest.New(t).Store
-			phoneID, err := st.EnsureParticipantByPhone("+16045550100", "Existing Chat", "imessage")
+			phoneID, err := st.EnsureParticipantByPhone(t.Context(), "+16045550100", "Existing Chat", "imessage")
 			require.NoError(err)
 			imp := muesli.NewImporter(st)
 			source := meetingimport.Source{Identifier: "recorder", AccountEmail: "owner@example.com"}

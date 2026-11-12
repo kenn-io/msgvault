@@ -17,19 +17,19 @@ func adoptionFixture(t *testing.T) (*store.Store, int64, []int64) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("imap", "adopt-atomic@example.test")
 	require.NoError(t, err)
-	conv, err := st.EnsureConversation(src.ID, "thread", "Adoption")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Adoption")
 	require.NoError(t, err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: conv,
 		SourceMessageID: "INBOX|7", MessageType: "email",
 	})
 	require.NoError(t, err)
-	labelA, err := st.EnsureLabel(src.ID, "INBOX", "INBOX", "system")
+	labelA, err := st.EnsureLabel(t.Context(), src.ID, "INBOX", "INBOX", "system")
 	require.NoError(t, err)
-	labelB, err := st.EnsureLabel(src.ID, "Archive", "Archive", "user")
+	labelB, err := st.EnsureLabel(t.Context(), src.ID, "Archive", "Archive", "user")
 	require.NoError(t, err)
 	for _, labelID := range []int64{labelA, labelB} {
-		_, err = st.DB().Exec(st.Rebind(
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 			"INSERT INTO message_labels (message_id, label_id) VALUES (?, ?)"),
 			messageID, labelID)
 		require.NoError(t, err)
@@ -41,7 +41,7 @@ func adoptionFixture(t *testing.T) (*store.Store, int64, []int64) {
 
 func adoptionLabelNames(t *testing.T, st *store.Store, messageID int64) []string {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(
 		"SELECT l.name FROM message_labels ml JOIN labels l ON ml.label_id = l.id"+
 			" WHERE ml.message_id = ? ORDER BY l.name"), messageID)
 	require.NoError(t, err)
@@ -71,7 +71,7 @@ func TestAdoptMessageSourceIDContextRollsBackLabelFailure(t *testing.T) {
 	require.Error(err)
 	assert.False(changed)
 	var sourceMessageID string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		"SELECT source_message_id FROM messages WHERE id = ?"), messageID,
 	).Scan(&sourceMessageID))
 	assert.Equal("INBOX|7", sourceMessageID, "the old composite key must survive a failed label step")
@@ -82,7 +82,7 @@ func TestAdoptMessageSourceIDContextRollsBackLabelFailure(t *testing.T) {
 		t.Context(), messageID, "INBOX|7", "Archive|9", true, labelIDs[:1], true)
 	require.NoError(err)
 	assert.True(changed)
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		"SELECT source_message_id FROM messages WHERE id = ?"), messageID,
 	).Scan(&sourceMessageID))
 	assert.Equal("Archive|9", sourceMessageID)
@@ -101,7 +101,7 @@ func TestAdoptMessageSourceIDContextDeferredLabels(t *testing.T) {
 	require.NoError(err)
 	assert.True(changed)
 	var sourceMessageID string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		"SELECT source_message_id FROM messages WHERE id = ?"), messageID,
 	).Scan(&sourceMessageID))
 	assert.Equal("Trash|3", sourceMessageID)
@@ -128,7 +128,7 @@ func TestAdoptMessageSourceIDContextGuardAndCancellation(t *testing.T) {
 	require.Error(err)
 
 	var sourceMessageID string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		"SELECT source_message_id FROM messages WHERE id = ?"), messageID,
 	).Scan(&sourceMessageID))
 	assert.Equal("INBOX|7", sourceMessageID,

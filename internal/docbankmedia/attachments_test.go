@@ -1,7 +1,6 @@
 package docbankmedia
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -42,7 +41,7 @@ func TestAttachmentUploadDigestContract(t *testing.T) {
 			defer srv.Close()
 			client, err := NewClient(srv.URL, func() (string, error) { return "key", nil })
 			require.NoError(err)
-			receipt, err := client.UploadAttachment(context.Background(), 7, hash+".pdf", "application/pdf", hash, 18, strings.NewReader(content))
+			receipt, err := client.UploadAttachment(t.Context(), 7, hash+".pdf", "application/pdf", hash, 18, strings.NewReader(content))
 			if invalid {
 				assert.ErrorIs(err, ErrInvalidReceipt)
 			} else {

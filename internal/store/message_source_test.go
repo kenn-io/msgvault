@@ -16,7 +16,7 @@ func TestGetMessageSourceContextReadsOnlyTheMessageSource(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("mbox", "offline@example.test")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "offline-thread", "Archived")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "offline-thread", "Archived")
 	requirements.NoError(err)
 	senderID, err := st.EnsureParticipant("sender@example.test", "Sender", "example.test")
 	requirements.NoError(err)

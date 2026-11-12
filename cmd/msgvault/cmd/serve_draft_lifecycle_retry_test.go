@@ -24,7 +24,7 @@ func TestDraftDeleteCancelledBeforeStoreCanRetry(t *testing.T) {
 	slog.SetDefault(slog.New(reviewDraftCommitHandler{
 		Handler: slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}),
 		onCommit: func() {
-			draft, err := fixture.store.GetIMAPDraftContext(context.Background(), created.DraftID)
+			draft, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
 			if err == nil && draft.Pending != nil {
 				cancel()
 			}

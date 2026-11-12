@@ -19,7 +19,7 @@ func filenameIntersectionFixture(t *testing.T) (*storetest.Fixture, []int64, int
 	f := storetest.New(t)
 	alternate, err := f.Store.GetOrCreateSource("imap", "shared@example.test")
 	require.NoError(err)
-	alternateConv, err := f.Store.EnsureConversation(alternate.ID, "alternate", "Alternate")
+	alternateConv, err := f.Store.EnsureConversation(t.Context(), alternate.ID, "alternate", "Alternate")
 	require.NoError(err)
 	after := time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2026, 2, 5, 0, 0, 0, 0, time.UTC)
@@ -40,14 +40,14 @@ func filenameIntersectionFixture(t *testing.T) (*storetest.Fixture, []int64, int
 			path = "sent"
 		}
 		var message, id int64
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sent_at,account_address,account_path) VALUES(?,?,?,'email',?,?,?) RETURNING id`), source, conv, "scope-"+time.Date(2026, 2, i+1, 0, 0, 0, 0, time.UTC).Format("02"), sent, accounts[i], path).Scan(&message))
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,storage_path) VALUES(?,'report.pdf',?,'') RETURNING id`), message, mime).Scan(&id))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sent_at,account_address,account_path) VALUES(?,?,?,'email',?,?,?) RETURNING id`), source, conv, "scope-"+time.Date(2026, 2, i+1, 0, 0, 0, 0, time.UTC).Format("02"), sent, accounts[i], path).Scan(&message))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,storage_path) VALUES(?,'report.pdf',?,'') RETURNING id`), message, mime).Scan(&id))
 		if i == 9 {
-			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), message)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), message)
 			require.NoError(err)
 		}
 		if i == 10 {
-			_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), message)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), message)
 			require.NoError(err)
 		}
 		ids = append(ids, id)
@@ -121,13 +121,13 @@ func TestFilenameSuggestionScopeDateBoundsCompareOffsetInstants(t *testing.T) {
 	laterMessage := f.CreateMessage("filename-offset-later")
 	earlierMessage := f.CreateMessage("filename-offset-earlier")
 	var laterAttachment, earlierAttachment int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path)
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path)
 		VALUES(?,'later.pdf','') RETURNING id`), laterMessage).Scan(&laterAttachment))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path)
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path)
 		VALUES(?,'earlier.pdf','') RETURNING id`), earlierMessage).Scan(&earlierAttachment))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), "2024-01-15 11:00:00-05:00", laterMessage)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), "2024-01-15 11:00:00-05:00", laterMessage)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), "2024-01-15 10:00:00-05:00", earlierMessage)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), "2024-01-15 10:00:00-05:00", earlierMessage)
 	require.NoError(err)
 	bound := time.Date(2024, 1, 15, 15, 30, 0, 0, time.UTC)
 

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"database/sql"
 	"io"
 	"os"
@@ -55,7 +54,7 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 		"--no-default-identity",
 		voice,
 	})
-	require.NoError(rootCmd.ExecuteContext(context.Background()))
+	require.NoError(rootCmd.ExecuteContext(t.Context()))
 	runCfg := invocationFromCommand(rootCmd).cfg
 
 	st, err := store.Open(filepath.Join(home, "msgvault.db"))
@@ -63,11 +62,11 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 
 	var stored, failed int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM attachments
 		WHERE source_part_key = ? AND attachment_state = ?
 	`), "gvoice:voicemail:audio", "stored").Scan(&stored))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM attachments
 		WHERE source_part_key = ? AND attachment_state = ?
 	`), "gvoice:voicemail:audio", "failed").Scan(&failed))
@@ -75,7 +74,7 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 	assert.Equal(1, failed)
 
 	var storagePath, contentHash string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT storage_path, content_hash FROM attachments
 		WHERE source_part_key = ? AND attachment_state = ?
 	`), "gvoice:voicemail:audio", "stored").Scan(&storagePath, &contentHash))
@@ -85,7 +84,7 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 	assert.Equal(path.Join(contentHash[:2], contentHash), storagePath)
 
 	var filename, mimeType, skipReason sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT filename, mime_type, attachment_skip_reason FROM attachments
 		WHERE source_part_key = ? AND attachment_state = ?
 	`), "gvoice:voicemail:audio", "failed").Scan(&filename, &mimeType, &skipReason))
@@ -114,12 +113,12 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 		"--no-default-identity",
 		voice,
 	})
-	require.NoError(rootCmd.ExecuteContext(context.Background()))
+	require.NoError(rootCmd.ExecuteContext(t.Context()))
 	runCfg = invocationFromCommand(rootCmd).cfg
 
-	engine, err := query.NewDuckDBEngine(runCfg.AnalyticsDir(), "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), runCfg.AnalyticsDir(), "", nil)
 	require.NoError(err)
-	result, queryErr := engine.QuerySQL(context.Background(), `
+	result, queryErr := engine.QuerySQL(t.Context(), `
 		SELECT size FROM attachments
 		WHERE filename = 'Test User - Voicemail - 2024-01-02T03_04_05Z.mp3'
 	`)
@@ -130,11 +129,13 @@ func TestImportGvoiceStoresVoicemailAudioEndToEnd(t *testing.T) {
 	assert.EqualValues(len(updated), result.Rows[0][0])
 
 	var revisionBefore, revisionAfter int64
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'), 0)`,
 	).Scan(&revisionBefore))
-	require.NoError(rootCmd.ExecuteContext(context.Background()))
-	require.NoError(st.DB().QueryRow(
+	require.NoError(rootCmd.ExecuteContext(t.Context()))
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM archive_metadata WHERE key = 'derived_data_revision'), 0)`,
 	).Scan(&revisionAfter))
 	assert.Equal(revisionBefore, revisionAfter)

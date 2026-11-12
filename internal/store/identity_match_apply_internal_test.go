@@ -25,7 +25,7 @@ func TestReviewedIdentityMatchRequiresFreshReviewAfterCandidateCollapse(t *testi
 			assert := assert.New(t)
 			require := require.New(t)
 			dbPath := filepath.Join(t.TempDir(), "review-collapse.db")
-			st, err := OpenForTest(dbPath)
+			st, err := OpenForTest(t.Context(), dbPath)
 			require.NoError(err)
 			t.Cleanup(func() { require.NoError(st.Close()) })
 			require.NoError(st.InitSchema())
@@ -71,7 +71,7 @@ func TestReviewedIdentityMatchRequiresFreshReviewAfterCandidateCollapse(t *testi
 			if test.restart {
 				require.ErrorIs(err, context.Canceled)
 				require.NoError(st.Close())
-				st, err = OpenForTest(dbPath)
+				st, err = OpenForTest(t.Context(), dbPath)
 				require.NoError(err)
 			} else {
 				require.ErrorIs(err, ErrIdentityMatchReviewStale)
@@ -105,7 +105,7 @@ func TestApplyAcceptedIdentityMatchesDoesNotRebuildConnectivityPerSatisfiedCandi
 ) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "accepted-replay.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "accepted-replay.db"))
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	require.NoError(st.InitSchema())
@@ -149,7 +149,7 @@ func TestApplyAcceptedIdentityMatchesDoesNotRebuildConnectivityPerSatisfiedCandi
 func TestApplyAcceptedIdentityMatchFollowsParticipantMergeCollision(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "accepted-merge-collision.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "accepted-merge-collision.db"))
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	require.NoError(st.InitSchema())
@@ -210,7 +210,7 @@ func TestApplyAcceptedIdentityMatchFollowsParticipantMergeCollision(t *testing.T
 
 func TestApplyAcceptedIdentityMatchDoesNotAssumeMissingCandidateWasMerged(t *testing.T) {
 	require := require.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "accepted-missing-candidate.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "accepted-missing-candidate.db"))
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	require.NoError(st.InitSchema())

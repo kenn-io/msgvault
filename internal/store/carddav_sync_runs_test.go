@@ -102,7 +102,7 @@ func TestCardDAVSyncRunConcurrentActiveClaim(t *testing.T) {
 	assert.Equal(1, successes)
 	assert.Equal(1, activeConflicts)
 	var activeRows int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM carddav_sync_runs WHERE state = 'running'`).Scan(&activeRows))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM carddav_sync_runs WHERE state = 'running'`).Scan(&activeRows))
 	assert.Equal(1, activeRows)
 }
 
@@ -192,8 +192,8 @@ func TestCardDAVSyncRunPaginationPreservesPublicHistory(t *testing.T) {
 	require.NoError(err)
 
 	var terminalCount, activeCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM carddav_sync_runs WHERE state <> 'running'`)).Scan(&terminalCount))
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM carddav_sync_runs WHERE state = 'running'`)).Scan(&activeCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM carddav_sync_runs WHERE state <> 'running'`)).Scan(&terminalCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM carddav_sync_runs WHERE state = 'running'`)).Scan(&activeCount))
 	assert.Equal(103, terminalCount)
 	assert.Equal(1, activeCount)
 
@@ -240,11 +240,11 @@ func TestCardDAVSyncRunTerminalTransitionsSurvivePruneFailure(t *testing.T) {
 	ctx := t.Context()
 
 	for range 101 {
-		_, err := st.DB().Exec(`INSERT INTO carddav_sync_runs
+		_, err := st.DB().ExecContext(t.Context(), `INSERT INTO carddav_sync_runs
 			(trigger, full_sync, state, finished_at) VALUES ('manual', FALSE, 'succeeded', CURRENT_TIMESTAMP)`)
 		require.NoError(err)
 	}
-	_, err := st.DB().Exec(`CREATE TRIGGER reject_carddav_history_prune
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_carddav_history_prune
 		BEFORE DELETE ON carddav_sync_runs WHEN OLD.state <> 'running'
 		BEGIN SELECT RAISE(ABORT, 'forced prune failure'); END`)
 	require.NoError(err)
@@ -262,7 +262,7 @@ func TestCardDAVSyncRunTerminalTransitionsSurvivePruneFailure(t *testing.T) {
 	assert.Equal(int64(1), recovered)
 
 	var state store.CardDAVSyncRunState
-	require.NoError(st.DB().QueryRow(`SELECT state FROM carddav_sync_runs WHERE id = ?`, orphan.ID).Scan(&state))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT state FROM carddav_sync_runs WHERE id = ?`, orphan.ID).Scan(&state))
 	assert.Equal(store.CardDAVSyncRunFailed, state)
 	_, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err, "the committed recovery must release the active-run constraint")
@@ -324,21 +324,21 @@ func TestCardDAVSyncRunSchemaIndexesAndSQLiteReopenRecovery(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	var indexCount int
 	if st.IsPostgreSQL() {
-		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM pg_indexes
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM pg_indexes
 			WHERE schemaname = current_schema()
 			  AND indexname IN ('idx_carddav_sync_runs_one_active', 'idx_carddav_sync_runs_state_id')`).Scan(&indexCount))
 	} else {
-		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sqlite_master
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master
 			WHERE type = 'index'
 			  AND name IN ('idx_carddav_sync_runs_one_active', 'idx_carddav_sync_runs_state_id')`).Scan(&indexCount))
 	}
 	assert.Equal(2, indexCount)
-	_, err := st.DB().Exec(st.Rebind(`INSERT INTO carddav_sync_runs
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_sync_runs
 		(trigger, full_sync, state, finished_at, error_code, error_message)
 		VALUES (?, ?, 'failed', CURRENT_TIMESTAMP, 'remote_failure', ?)`),
 		store.CardDAVSyncTriggerManual, false, strings.Repeat("x", 2001))
 	require.Error(err, "schema must reject oversized public errors")
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO carddav_sync_runs
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_sync_runs
 		(trigger, full_sync, state, finished_at, error_code, error_message)
 		VALUES (?, ?, 'succeeded', CURRENT_TIMESTAMP, 'remote_failure', 'failure')`),
 		store.CardDAVSyncTriggerManual, false)
@@ -348,14 +348,14 @@ func TestCardDAVSyncRunSchemaIndexesAndSQLiteReopenRecovery(t *testing.T) {
 		return
 	}
 	path := filepath.Join(t.TempDir(), "reopen.db")
-	first, err := store.OpenForTest(path)
+	first, err := store.OpenForTest(t.Context(), path)
 	require.NoError(err)
 	require.NoError(first.InitSchema())
 	orphan, err := first.StartCardDAVSyncRunContext(t.Context(), store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
 	require.NoError(err)
 	require.NoError(first.Close())
 
-	reopened, err := store.OpenForTest(path)
+	reopened, err := store.OpenForTest(t.Context(), path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	require.NoError(reopened.InitSchema())
@@ -379,12 +379,12 @@ func TestCardDAVSyncRunSchemaErrorCodeConstraintParity(t *testing.T) {
 		VALUES (?, ?, 'failed', CURRENT_TIMESTAMP, ?, 'Safe public failure')`)
 
 	for _, code := range []string{"1bad", "_bad"} {
-		_, err := st.DB().Exec(insert, store.CardDAVSyncTriggerManual, false, code)
+		_, err := st.DB().ExecContext(t.Context(), insert, store.CardDAVSyncTriggerManual, false, code)
 		require.Error(err, "schema must reject error code %q", code)
 	}
 
 	validBoundary := "a" + strings.Repeat("_", 63)
-	result, err := st.DB().Exec(insert, store.CardDAVSyncTriggerManual, false, validBoundary)
+	result, err := st.DB().ExecContext(t.Context(), insert, store.CardDAVSyncTriggerManual, false, validBoundary)
 	require.NoError(err)
 	rows, err := result.RowsAffected()
 	require.NoError(err)
@@ -421,7 +421,7 @@ func TestCardDAVSyncRunErrorProjectionIsUTF8BoundedAndRedacted(t *testing.T) {
 	}
 
 	var stored string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT error_message FROM carddav_sync_runs WHERE id = ?`), finished.ID).Scan(&stored))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT error_message FROM carddav_sync_runs WHERE id = ?`), finished.ID).Scan(&stored))
 	assert.Equal(finished.ErrorMessage, stored)
 
 	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
@@ -441,7 +441,7 @@ func TestCardDAVSyncRunErrorProjectionIsUTF8BoundedAndRedacted(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("google_authorization_required", finished.ErrorCode)
 	assert.Equal("Google Contacts authorization is required. Connect Google in CardDAV account settings.", finished.ErrorMessage)
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT error_message FROM carddav_sync_runs WHERE id = ?`), finished.ID).Scan(&stored))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT error_message FROM carddav_sync_runs WHERE id = ?`), finished.ID).Scan(&stored))
 	assert.Equal(finished.ErrorMessage, stored)
 
 	run, err = st.StartCardDAVSyncRunContext(ctx, store.CardDAVSyncRunStart{AccountID: store.DefaultCardDAVAccountID, Trigger: store.CardDAVSyncTriggerManual})
@@ -483,7 +483,7 @@ func TestCardDAVSyncRunRedactsStandaloneCredentialMarkers(t *testing.T) {
 			assert.Equal("CardDAV sync failed; sensitive details were removed.", finished.ErrorMessage)
 
 			var storedCode, storedMessage string
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT error_code, error_message
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT error_code, error_message
 				FROM carddav_sync_runs WHERE id = ?`), finished.ID).Scan(&storedCode, &storedMessage))
 			assert.Equal("unsafe_error_redacted", storedCode)
 			assert.Equal("CardDAV sync failed; sensitive details were removed.", storedMessage)

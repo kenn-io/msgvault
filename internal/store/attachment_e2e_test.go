@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -34,9 +33,9 @@ func newAttachmentCorpus(t *testing.T) *attachmentCorpus {
 	require.NoError(t, err, "GetOrCreateSource A")
 	srcB, err := st.GetOrCreateSource("gmail", "bob@example.com")
 	require.NoError(t, err, "GetOrCreateSource B")
-	convA, err := st.EnsureConversation(srcA.ID, "thread-A", "Thread A")
+	convA, err := st.EnsureConversation(t.Context(), srcA.ID, "thread-A", "Thread A")
 	require.NoError(t, err, "EnsureConversation A")
-	convB, err := st.EnsureConversation(srcB.ID, "thread-B", "Thread B")
+	convB, err := st.EnsureConversation(t.Context(), srcB.ID, "thread-B", "Thread B")
 	require.NoError(t, err, "EnsureConversation B")
 
 	return &attachmentCorpus{
@@ -69,7 +68,7 @@ func (c *attachmentCorpus) addAttachment(gmailID, filename, hash string) {
 	msgID, ok := c.msgRows[gmailID]
 	require.Truef(c.t, ok, "addAttachment: unknown gmail id %q", gmailID)
 	storagePath := hash[:2] + "/" + hash
-	err := c.store.UpsertAttachment(msgID, filename, "application/pdf",
+	err := c.store.UpsertAttachment(c.t.Context(), msgID, filename, "application/pdf",
 		storagePath, hash, 100)
 	require.NoErrorf(c.t, err, "UpsertAttachment(%s, %s)", gmailID, filename)
 }
@@ -77,7 +76,7 @@ func (c *attachmentCorpus) addAttachment(gmailID, filename, hash string) {
 func (c *attachmentCorpus) attachmentRowCount() int {
 	c.t.Helper()
 	var n int
-	err := c.store.DB().QueryRow(`SELECT COUNT(*) FROM attachments`).Scan(&n)
+	err := c.store.DB().QueryRowContext(c.t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&n)
 	require.NoError(c.t, err, "attachmentRowCount")
 	return n
 }
@@ -88,7 +87,8 @@ func (c *attachmentCorpus) attachmentRowCount() int {
 func (c *attachmentCorpus) attachmentRowsForHash(hash string) int {
 	c.t.Helper()
 	var n int
-	err := c.store.DB().QueryRow(
+	err := c.store.DB().QueryRowContext(
+		c.t.Context(),
 		c.store.Rebind(`SELECT COUNT(*) FROM attachments WHERE content_hash = ?`),
 		hash,
 	).Scan(&n)
@@ -109,7 +109,7 @@ func TestGetMessageIncludesAttachmentWithNullableMetadata(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "thread-nullhash", "Thread Null Hash")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-nullhash", "Thread Null Hash")
 	require.NoError(err, "EnsureConversation")
 	msgID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
@@ -122,7 +122,8 @@ func TestGetMessageIncludesAttachmentWithNullableMetadata(t *testing.T) {
 	require.NoError(err, "UpsertMessage")
 
 	var attachmentID int64
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
 			VALUES (?, ?, ?, ?, NULL, ?, CURRENT_TIMESTAMP)
 			RETURNING id`),
@@ -164,7 +165,7 @@ func TestAttachment_E2E_MultiMessageDedup(t *testing.T) {
 	assert.Equal(3, c.attachmentRowsForHash(hashShared), "rows for hashShared after re-upsert")
 
 	// IsAttachmentPathReferenced reports the hash storage path as referenced.
-	referenced, err := c.store.IsAttachmentPathReferenced(hashShared[:2] + "/" + hashShared)
+	referenced, err := c.store.IsAttachmentPathReferenced(t.Context(), hashShared[:2]+"/"+hashShared)
 	require.NoError(t, err, "IsAttachmentPathReferenced")
 	assert.True(referenced, "expected referenced=true while messages still hold the hash")
 }
@@ -190,22 +191,22 @@ func TestAttachment_E2E_CascadeOnLocalMessageDelete(t *testing.T) {
 	assert.Equal(3, c.attachmentRowCount(), "initial attachment count")
 
 	// Delete msg-1 locally; its attachment row cascades.
-	_, err := c.store.DB().Exec(c.store.Rebind(`DELETE FROM messages WHERE source_message_id = ?`), "msg-1")
+	_, err := c.store.DB().ExecContext(t.Context(), c.store.Rebind(`DELETE FROM messages WHERE source_message_id = ?`), "msg-1")
 	require.NoError(err, "local message delete, msg-1")
 
 	assert.Equal(1, c.attachmentRowsForHash(hashShared), "rows for hashShared after delete")
 
 	// The shared storage path is still referenced (msg-2 holds it).
-	referenced, err := c.store.IsAttachmentPathReferenced(hashShared[:2] + "/" + hashShared)
+	referenced, err := c.store.IsAttachmentPathReferenced(t.Context(), hashShared[:2]+"/"+hashShared)
 	require.NoError(err, "IsAttachmentPathReferenced")
 	assert.True(referenced, "shared path should remain referenced via msg-2 after msg-1 delete")
 
 	// Now delete the last referrer of hashShared.
-	_, err = c.store.DB().Exec(c.store.Rebind(`DELETE FROM messages WHERE source_message_id = ?`), "msg-2")
+	_, err = c.store.DB().ExecContext(t.Context(), c.store.Rebind(`DELETE FROM messages WHERE source_message_id = ?`), "msg-2")
 	require.NoError(err, "local message delete, msg-2")
 	assert.Equal(0, c.attachmentRowsForHash(hashShared), "rows for hashShared after both deleted")
 
-	referenced, err = c.store.IsAttachmentPathReferenced(hashShared[:2] + "/" + hashShared)
+	referenced, err = c.store.IsAttachmentPathReferenced(t.Context(), hashShared[:2]+"/"+hashShared)
 	require.NoError(err, "IsAttachmentPathReferenced after both deleted")
 	assert.False(referenced, "shared path should be unreferenced after both messages deleted")
 }
@@ -237,7 +238,7 @@ func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
 		StoredBytes: 300,
 		CreatedAt:   time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
 	}
-	require.NoError(c.store.RecordPackedBlobs(rec, []store.PackIndexEntry{
+	require.NoError(c.store.RecordPackedBlobs(t.Context(), rec, []store.PackIndexEntry{
 		{BlobHash: hashShared, PackID: packID, StoredLen: 100, RawLen: 100},
 		{BlobHash: hashUniqA, PackID: packID, Offset: 100, StoredLen: 100, RawLen: 100},
 		{BlobHash: hashUniqB, PackID: packID, Offset: 200, StoredLen: 100, RawLen: 100},
@@ -261,13 +262,13 @@ func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
 
 	// Remove source B transactionally. Its unique mapping is deleted while
 	// the cross-source shared mapping remains live for A.
-	_, packedB, err := c.store.RemoveSourceSerialized(context.Background(), c.srcB.ID)
+	_, packedB, err := c.store.RemoveSourceSerialized(t.Context(), c.srcB.ID)
 	require.NoError(err, "RemoveSourceSerialized(B)")
 	assert.Equal(int64(1), packedB, "only B's unique packed mapping is removed")
-	entry, err := c.store.GetAttachmentPackEntry(hashShared)
+	entry, err := c.store.GetAttachmentPackEntry(t.Context(), hashShared)
 	require.NoError(err)
 	assert.NotNil(entry, "shared packed mapping remains live for A")
-	entry, err = c.store.GetAttachmentPackEntry(hashUniqB)
+	entry, err = c.store.GetAttachmentPackEntry(t.Context(), hashUniqB)
 	require.NoError(err)
 	assert.Nil(entry, "B's unique packed mapping is logically deleted")
 
@@ -278,7 +279,7 @@ func TestAttachment_E2E_CrossSourceDedupPromotion(t *testing.T) {
 		assert.Truef(got[want], "paths missing %q after B removal; got %v", want, pathsA)
 	}
 	assert.Len(pathsA, 2, "pathsA len after B removal; got %v", pathsA)
-	_, packedA, err := c.store.RemoveSourceSerialized(context.Background(), c.srcA.ID)
+	_, packedA, err := c.store.RemoveSourceSerialized(t.Context(), c.srcA.ID)
 	require.NoError(err, "RemoveSourceSerialized(A)")
 	assert.Equal(int64(2), packedA,
 		"shared packed blob becomes unique and is deleted with A's original unique blob")
@@ -308,7 +309,7 @@ func TestAttachment_E2E_RemoveSourceCascadesAttachmentRows(t *testing.T) {
 
 	// IsAttachmentPathReferenced still reports the shared path as referenced
 	// (B's row).
-	referenced, err := c.store.IsAttachmentPathReferenced(hashShared[:2] + "/" + hashShared)
+	referenced, err := c.store.IsAttachmentPathReferenced(t.Context(), hashShared[:2]+"/"+hashShared)
 	require.NoError(err, "IsAttachmentPathReferenced")
 	assert.True(referenced, "shared path should remain referenced via source B")
 }
@@ -343,7 +344,7 @@ func TestAttachment_E2E_OrphanCleanupLifecycle(t *testing.T) {
 	}
 
 	// Pipeline step 2: cascade-delete source A.
-	hadActive, packedRemoved, err := c.store.RemoveSourceSerialized(context.Background(), c.srcA.ID)
+	hadActive, packedRemoved, err := c.store.RemoveSourceSerialized(t.Context(), c.srcA.ID)
 	require.NoError(err, "RemoveSourceSerialized(A)")
 	assert.False(hadActive, "hadActiveSync want false (no sync running in fixture)")
 	assert.Zero(packedRemoved, "fixture has no packed mappings")
@@ -351,12 +352,12 @@ func TestAttachment_E2E_OrphanCleanupLifecycle(t *testing.T) {
 	// Pipeline step 3: per-candidate reference recheck. The candidate path
 	// for A is now unreferenced (msg-a2 row is gone); the shared path is
 	// still referenced by source B.
-	referenced, err := c.store.IsAttachmentPathReferenced(wantUniqAPath)
+	referenced, err := c.store.IsAttachmentPathReferenced(t.Context(), wantUniqAPath)
 	require.NoError(err, "IsAttachmentPathReferenced(uniqA)")
 	assert.False(referenced, "uniqA path should be unreferenced after source A removed")
 
 	sharedPath := hashShared[:2] + "/" + hashShared
-	referenced, err = c.store.IsAttachmentPathReferenced(sharedPath)
+	referenced, err = c.store.IsAttachmentPathReferenced(t.Context(), sharedPath)
 	require.NoError(err, "IsAttachmentPathReferenced(shared)")
 	assert.True(referenced, "shared path should remain referenced after source A removed")
 }
@@ -378,7 +379,7 @@ func TestAttachment_E2E_NullAndEmptyHashesIgnored(t *testing.T) {
 	c.addAttachment("msg-a1", "good.pdf", hashUniqA)
 
 	// Attachment with NULL content_hash — must NOT appear in unique set.
-	_, err := c.store.DB().Exec(c.store.Rebind(fmt.Sprintf(
+	_, err := c.store.DB().ExecContext(t.Context(), c.store.Rebind(fmt.Sprintf(
 		`INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
 		 VALUES (?, 'null-hash.pdf', 'application/pdf', 'nn/nullpath', NULL, 0, %s)`,
 		"CURRENT_TIMESTAMP",
@@ -386,7 +387,7 @@ func TestAttachment_E2E_NullAndEmptyHashesIgnored(t *testing.T) {
 	require.NoError(err, "insert null-hash attachment")
 
 	// Attachment with empty storage_path — also excluded.
-	err = c.store.UpsertAttachment(c.msgRows["msg-a3"], "empty.pdf",
+	err = c.store.UpsertAttachment(t.Context(), c.msgRows["msg-a3"], "empty.pdf",
 		"application/pdf", "", "emptypathhash", 0)
 	require.NoError(err, "UpsertAttachment(empty)")
 

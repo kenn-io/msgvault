@@ -94,13 +94,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		return nil, errors.New("omi limit cannot be negative")
 	}
 	start := time.Now().UTC()
-	src, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, opts.Identifier)
+	src, err := imp.store.GetSourceByTypeAndIdentifier(ctx, SourceType, opts.Identifier)
 	if err != nil {
 		return nil, fmt.Errorf("omi source is not registered; run msgvault add-omi %s: %w", opts.Identifier, err)
 	}
 	sum = &ImportSummary{SourceID: src.ID}
 	var state syncState
-	prev, err := imp.store.GetLastSuccessfulSync(src.ID)
+	prev, err := imp.store.GetLastSuccessfulSyncContext(ctx, src.ID)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return sum, fmt.Errorf("load previous Omi sync cursor: %w", err)
 	}
@@ -123,7 +123,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		createdAfter = watermark.Add(-rescanOverlap)
 	}
 	scan := scanCheckpoint{Version: syncStateVersion, Full: opts.Full, Limit: opts.Limit, After: opts.CreatedAfter, AccountEmail: opts.AccountEmail, Lower: createdAfter, Ceiling: start, MaxCreated: watermark}
-	prior, err := imp.store.GetLatestCheckpointedSyncByType(src.ID, SourceType)
+	prior, err := imp.store.GetLatestCheckpointedSyncByType(ctx, src.ID, SourceType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return sum, fmt.Errorf("load Omi scan checkpoint: %w", err)
 	}
@@ -158,7 +158,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			paused := syncPaused(ctx, retErr)
 			var checkpointErr error
 			if paused {
-				checkpointErr = st.PauseSyncWithCheckpoint(syncID, checkpoint(sum, scan))
+				// A canceled run still records its terminal state.
+				checkpointErr = st.PauseSyncWithCheckpoint(context.WithoutCancel(ctx), syncID, checkpoint(sum, scan))
 			} else {
 				checkpointErr = st.FailSyncWithCheckpoint(syncID, retErr.Error(), checkpoint(sum, scan))
 			}
@@ -302,7 +303,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			if content.Transcript.State == meetingcontent.StateUnavailable {
 				// A legitimate summary-only response must not erase previously
 				// archived transcript evidence, even during a forced refresh.
-				existing, err := st.MessageExistsBatch(src.ID, []string{c.ID})
+				existing, err := st.MessageExistsBatchContext(ctx, src.ID, []string{c.ID})
 				if err != nil {
 					return sum, fmt.Errorf("omi find existing conversation: %w", err)
 				}

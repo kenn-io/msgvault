@@ -93,7 +93,7 @@ func TestReauthHintPreservesReadonlyGrant(t *testing.T) {
 			// Non-interactive: the out-of-band remedy is printed rather than
 			// a browser being opened.
 			_, err := getTokenSourceWithReauth(
-				context.Background(), mock, "x@gmail.com", false, gmailReauthHint)
+				t.Context(), mock, "x@gmail.com", false, gmailReauthHint)
 
 			require.Error(err)
 			assert.Contains(err.Error(), tt.wantInCommand)
@@ -150,7 +150,7 @@ func TestReauthAliasMismatchPreservesReadonlyGrant(t *testing.T) {
 	mock := newScopedReauthorizer([]string{oauth.ScopeGmailReadonly}, mismatch)
 
 	_, err := getTokenSourceWithReauth(
-		context.Background(), mock, "alias@gmail.com", true, gmailReauthHint)
+		t.Context(), mock, "alias@gmail.com", true, gmailReauthHint)
 
 	require.Error(err)
 	var got *oauth.TokenMismatchError
@@ -171,7 +171,7 @@ func TestReauthAliasMismatchUnchangedForWriteGrant(t *testing.T) {
 	mock := newScopedReauthorizer(oauth.Scopes, mismatch)
 
 	_, err := getTokenSourceWithReauth(
-		context.Background(), mock, "alias@gmail.com", true, gmailReauthHint)
+		t.Context(), mock, "alias@gmail.com", true, gmailReauthHint)
 
 	require.Error(err)
 	assert.Contains(err.Error(), "msgvault add-account primary@gmail.com")

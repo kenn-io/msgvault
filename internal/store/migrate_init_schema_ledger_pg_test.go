@@ -14,12 +14,13 @@ func TestInitSchemaAddsVersionToLegacyLedgerPostgres(t *testing.T) {
 	require := require.New(t)
 	st := newPGStoreInternal(t)
 
-	_, err := st.DB().Exec(`ALTER TABLE applied_migrations DROP COLUMN version`)
+	_, err := st.DB().ExecContext(t.Context(), `ALTER TABLE applied_migrations DROP COLUMN version`)
 	require.NoError(err, "remove the version column from the legacy ledger")
 
 	const name = "legacy_postgres_version_probe"
 	const appliedAt = "2020-01-02 03:04:05+00"
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		`INSERT INTO applied_migrations (name, applied_at) VALUES ($1, $2)`,
 		name, appliedAt)
 	require.NoError(err, "seed legacy ledger row")
@@ -27,7 +28,8 @@ func TestInitSchemaAddsVersionToLegacyLedgerPostgres(t *testing.T) {
 	require.NoError(st.InitSchema(), "upgrade the legacy ledger")
 	var version int
 	var gotAppliedAt time.Time
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT version, applied_at FROM applied_migrations WHERE name = $1`, name).
 		Scan(&version, &gotAppliedAt))
 	assert.Equal(1, version, "legacy PostgreSQL rows must default to version 1")

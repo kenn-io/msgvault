@@ -167,7 +167,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		return usageErr(cmd, err)
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -327,6 +327,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		}
 		fmt.Println("\nRebuilding analytics cache...")
 		_, refreshErr := buildCacheLocked(
+			cmd.Context(),
 			cfg.DatabaseDSN(),
 			cfg.AnalyticsDir(),
 			true,
@@ -637,7 +638,7 @@ func deleteOrphanedAttachmentFiles(
 
 	lockErr := s.WithExclusiveLock(ctx, func() error {
 		// Catch a sync started after source deletion released its lock.
-		running, err := s.HasAnyActiveSync()
+		running, err := s.HasAnyActiveSync(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr,
 				"Warning: could not check for active syncs: %v; "+

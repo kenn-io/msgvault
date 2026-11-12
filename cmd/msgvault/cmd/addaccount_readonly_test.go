@@ -83,7 +83,7 @@ func saveAddAccountFlags(t *testing.T) {
 // the absence of that failure.
 func runAddAccountForTest(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	return runAddAccountForTestContext(ctx, t, args...)
 }
@@ -509,7 +509,7 @@ func TestAddAccount_ReadonlyRemediationPreservesNamedOAuthApp(t *testing.T) {
 	cfg.OAuth.Apps = map[string]config.OAuthApp{
 		"workspace app": {ClientSecrets: cfg.OAuth.ClientSecrets},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	ctx = testInvocationContext(ctx, cfg, invocationOptions{})
 

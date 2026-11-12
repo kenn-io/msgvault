@@ -37,7 +37,7 @@ func latestMessagePassState(t *testing.T, f *contextWorkerFixture) operations.St
 
 func failEmbedGenStamp(t *testing.T, f *contextWorkerFixture, id int64) {
 	t.Helper()
-	_, err := f.store.DB().Exec(fmt.Sprintf(`CREATE TRIGGER fail_stamp BEFORE UPDATE OF embed_gen ON messages
+	_, err := f.store.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_stamp BEFORE UPDATE OF embed_gen ON messages
 		WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'synthetic stamp failure'); END`, id))
 	require.NoError(t, err)
 }
@@ -66,7 +66,7 @@ func TestWorkerCoverageStampFailureStampsNothing(t *testing.T) {
 	assert.Equal(int64(0), counters[string(operations.CounterSucceeded)])
 	assert.Equal(int64(2), counters[string(operations.CounterFailed)])
 
-	_, err = f.store.DB().Exec(`DROP TRIGGER fail_stamp`)
+	_, err = f.store.DB().ExecContext(t.Context(), `DROP TRIGGER fail_stamp`)
 	require.NoError(err)
 	_, err = w.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(err)
@@ -164,7 +164,7 @@ func TestContextWorkerResumedPassCountsOnlyItsOwnScopes(t *testing.T) {
 	f.deps.MaxRunUTF8Bytes = 1
 	f.deps.Recorder = f.store
 	f.restartWorker()
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "ordinary", "Ordinary")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "ordinary", "Ordinary")
 	require.NoError(err)
 	day := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
 	f.seed("email", conversationID, day, "reject-first")

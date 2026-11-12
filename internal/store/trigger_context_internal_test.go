@@ -48,7 +48,7 @@ func TestInitSchema_TriggerReplacementStopsWhenTheContextIsCancelled(t *testing.
 	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	st.dialect = cancelDuringTriggersDialect{Dialect: st.dialect, cancel: cancel}
 

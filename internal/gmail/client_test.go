@@ -289,7 +289,7 @@ func TestGetMessagesRawBatch_LogLevels(t *testing.T) {
 		rateLimiter: NewRateLimiter(1000), // High QPS to avoid rate limit delays
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	results, err := client.GetMessagesRawBatch(ctx, []string{"msg_ok", "msg_404", "msg_err"})
 	require.NoError(err, "GetMessagesRawBatch()")
 

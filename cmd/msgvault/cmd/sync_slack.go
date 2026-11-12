@@ -64,12 +64,12 @@ Examples:
 			if len(args) > 0 {
 				flagTeam = args[0]
 			}
-			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
-			sources, err := resolveSlackSyncSources(s, flagTeam)
+			sources, err := resolveSlackSyncSources(cmd.Context(), s, flagTeam)
 			if err != nil {
 				return err
 			}
@@ -187,8 +187,8 @@ func splitSlackIdentifier(identifier string) (teamID, userID string, ok bool) {
 
 // resolveSlackSyncSources returns the slack sources to sync: the one for the
 // given team ID, or all registered workspaces.
-func resolveSlackSyncSources(s *store.Store, flagTeam string) ([]*store.Source, error) {
-	sources, err := s.ListSources(sourceTypeSlack)
+func resolveSlackSyncSources(ctx context.Context, s *store.Store, flagTeam string) ([]*store.Source, error) {
+	sources, err := s.ListSourcesContext(ctx, sourceTypeSlack)
 	if err != nil {
 		return nil, fmt.Errorf("list slack sources: %w", err)
 	}
@@ -262,7 +262,7 @@ func runConfiguredSlackSync(ctx context.Context, s *store.Store) error {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	sources, err := resolveSlackSyncSources(s, "")
+	sources, err := resolveSlackSyncSources(ctx, s, "")
 	if err != nil {
 		return err
 	}

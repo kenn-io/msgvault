@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -35,7 +34,7 @@ func TestCacheTextRepairsSanitize(t *testing.T) {
 
 func requireSQLiteScanner(t *testing.T, duckDB *sql.DB) {
 	t.Helper()
-	if _, err := duckDB.Exec("INSTALL sqlite; LOAD sqlite;"); err != nil {
+	if _, err := duckDB.ExecContext(t.Context(), "INSTALL sqlite; LOAD sqlite;"); err != nil {
 		t.Skipf("DuckDB sqlite extension unavailable: %v", err)
 	}
 }
@@ -47,7 +46,7 @@ func TestCacheIdentityTextSQLValidOrNull(t *testing.T) {
 	sqlitePath := filepath.Join(t.TempDir(), "identity.db")
 	sqliteDB, err := sql.Open("sqlite3", sqlitePath)
 	require.NoError(err)
-	_, err = sqliteDB.Exec(`CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`)
+	_, err = sqliteDB.ExecContext(t.Context(), `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`)
 	require.NoError(err)
 	for id, raw := range map[int][]byte{
 		1: []byte("ok"),
@@ -55,10 +54,10 @@ func TestCacheIdentityTextSQLValidOrNull(t *testing.T) {
 		3: []byte("\x80"),
 		4: []byte("primary\uFFFD@example.com"),
 	} {
-		_, err = sqliteDB.Exec(`INSERT INTO t VALUES (?, CAST(? AS TEXT))`, id, raw)
+		_, err = sqliteDB.ExecContext(t.Context(), `INSERT INTO t VALUES (?, CAST(? AS TEXT))`, id, raw)
 		require.NoError(err)
 	}
-	_, err = sqliteDB.Exec(`INSERT INTO t VALUES (5, NULL)`)
+	_, err = sqliteDB.ExecContext(t.Context(), `INSERT INTO t VALUES (5, NULL)`)
 	require.NoError(err)
 	require.NoError(sqliteDB.Close())
 
@@ -67,13 +66,13 @@ func TestCacheIdentityTextSQLValidOrNull(t *testing.T) {
 	defer func() { _ = duckDB.Close() }()
 	duckDB.SetMaxOpenConns(1)
 	requireSQLiteScanner(t, duckDB)
-	_, err = duckDB.Exec(fmt.Sprintf("ATTACH '%s' AS src (TYPE sqlite, READ_ONLY)",
+	_, err = duckDB.ExecContext(t.Context(), fmt.Sprintf("ATTACH '%s' AS src (TYPE sqlite, READ_ONLY)",
 		strings.ReplaceAll(sqlitePath, "'", "''")))
 	require.NoError(err)
 
 	// cacheIdentityTextSQL is pure SQL: it needs no registered fallback
 	// function, only the sqlite scanner passing stored bytes through.
-	rows, err := duckDB.Query(`SELECT id, ` + cacheIdentityTextSQL("v") + ` FROM src.t ORDER BY id`)
+	rows, err := duckDB.QueryContext(t.Context(), `SELECT id, `+cacheIdentityTextSQL("v")+` FROM src.t ORDER BY id`)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	got := map[int]sql.NullString{}
@@ -108,19 +107,19 @@ func TestCacheIdentityPresenceSQLMatchesSQLiteTrimSemantics(t *testing.T) {
 	sqlitePath := filepath.Join(t.TempDir(), "envelope.db")
 	sqliteDB, err := sql.Open("sqlite3", sqlitePath)
 	require.NoError(err)
-	_, err = sqliteDB.Exec(`CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`)
+	_, err = sqliteDB.ExecContext(t.Context(), `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`)
 	require.NoError(err)
 	for id, raw := range cases {
-		_, err = sqliteDB.Exec(`INSERT INTO t VALUES (?, CAST(? AS TEXT))`, id, raw)
+		_, err = sqliteDB.ExecContext(t.Context(), `INSERT INTO t VALUES (?, CAST(? AS TEXT))`, id, raw)
 		require.NoError(err)
 	}
-	_, err = sqliteDB.Exec(`INSERT INTO t VALUES (7, NULL)`)
+	_, err = sqliteDB.ExecContext(t.Context(), `INSERT INTO t VALUES (7, NULL)`)
 	require.NoError(err)
 
 	// The store decides envelope presence with SQLite over the raw bytes;
 	// the cache expression must agree row for row.
 	want := map[int]bool{}
-	storeRows, err := sqliteDB.Query(`SELECT id, v IS NOT NULL AND TRIM(v) <> '' FROM t`)
+	storeRows, err := sqliteDB.QueryContext(t.Context(), `SELECT id, v IS NOT NULL AND TRIM(v) <> '' FROM t`)
 	require.NoError(err)
 	defer func() { require.NoError(storeRows.Close()) }()
 	for storeRows.Next() {
@@ -137,11 +136,11 @@ func TestCacheIdentityPresenceSQLMatchesSQLiteTrimSemantics(t *testing.T) {
 	defer func() { _ = duckDB.Close() }()
 	duckDB.SetMaxOpenConns(1)
 	requireSQLiteScanner(t, duckDB)
-	_, err = duckDB.Exec(fmt.Sprintf("ATTACH '%s' AS src (TYPE sqlite, READ_ONLY)",
+	_, err = duckDB.ExecContext(t.Context(), fmt.Sprintf("ATTACH '%s' AS src (TYPE sqlite, READ_ONLY)",
 		strings.ReplaceAll(sqlitePath, "'", "''")))
 	require.NoError(err)
 
-	rows, err := duckDB.Query(`SELECT id, ` + cacheIdentityPresenceSQL("v") + ` FROM src.t ORDER BY id`)
+	rows, err := duckDB.QueryContext(t.Context(), `SELECT id, `+cacheIdentityPresenceSQL("v")+` FROM src.t ORDER BY id`)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	got := map[int]bool{}
@@ -167,18 +166,18 @@ func TestCacheIdentityPresenceSQLMatchesSQLiteTrimSemantics(t *testing.T) {
 func TestCacheTextSQLRepairsSQLiteScannerValues(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	sqlitePath := filepath.Join(t.TempDir(), "text.db")
 	sqliteDB, err := sql.Open("sqlite3", sqlitePath)
 	require.NoError(err)
-	_, err = sqliteDB.Exec(`CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`)
+	_, err = sqliteDB.ExecContext(t.Context(), `CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`)
 	require.NoError(err)
 	for id, raw := range map[int][]byte{1: []byte("ok"), 2: []byte("ab\xf0\x9fcd"), 3: []byte("\x80")} {
-		_, err = sqliteDB.Exec(`INSERT INTO t VALUES (?, CAST(? AS TEXT))`, id, raw)
+		_, err = sqliteDB.ExecContext(t.Context(), `INSERT INTO t VALUES (?, CAST(? AS TEXT))`, id, raw)
 		require.NoError(err)
 	}
-	_, err = sqliteDB.Exec(`INSERT INTO t VALUES (4, NULL)`)
+	_, err = sqliteDB.ExecContext(t.Context(), `INSERT INTO t VALUES (4, NULL)`)
 	require.NoError(err)
 	require.NoError(sqliteDB.Close())
 
@@ -189,11 +188,11 @@ func TestCacheTextSQLRepairsSQLiteScannerValues(t *testing.T) {
 	repairs := &cacheTextRepairs{}
 	require.NoError(registerCacheTextFunctions(ctx, duckDB, repairs))
 	requireSQLiteScanner(t, duckDB)
-	_, err = duckDB.Exec(fmt.Sprintf("ATTACH '%s' AS src (TYPE sqlite, READ_ONLY)",
+	_, err = duckDB.ExecContext(t.Context(), fmt.Sprintf("ATTACH '%s' AS src (TYPE sqlite, READ_ONLY)",
 		strings.ReplaceAll(sqlitePath, "'", "''")))
 	require.NoError(err)
 
-	rows, err := duckDB.Query(`SELECT id, ` + cacheTextSQL("v") + ` FROM src.t ORDER BY id`)
+	rows, err := duckDB.QueryContext(t.Context(), `SELECT id, `+cacheTextSQL("v")+` FROM src.t ORDER BY id`)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	got := map[int]sql.NullString{}

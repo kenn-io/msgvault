@@ -34,7 +34,7 @@ func TestCardDAVStatusUnconfiguredRemainsReadable(t *testing.T) {
 	})
 
 	resp := httptest.NewRecorder()
-	srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/api/v1/carddav/status", nil))
+	srv.Router().ServeHTTP(resp, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/carddav/status", nil))
 	require.Equal(http.StatusOK, resp.Code, resp.Body.String())
 	var status CardDAVStatusResponse
 	require.NoError(json.NewDecoder(resp.Body).Decode(&status))
@@ -85,7 +85,7 @@ func cardDAVReadServer(t *testing.T, cfg *config.Config, controller *CardDAVCont
 func getCardDAVRead(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	resp := httptest.NewRecorder()
-	srv.Router().ServeHTTP(resp, httptest.NewRequest(http.MethodGet, path, nil))
+	srv.Router().ServeHTTP(resp, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	return resp
 }
 
@@ -406,7 +406,7 @@ func TestCardDAVStatusAndRunsMapMissingDependenciesAndStorageFailureSafely(t *te
 	}
 
 	st := testutil.NewTestStore(t)
-	_, err := st.DB().Exec(`DROP TABLE carddav_sync_runs`)
+	_, err := st.DB().ExecContext(t.Context(), `DROP TABLE carddav_sync_runs`)
 	require.NoError(t, err)
 	controller := &CardDAVController{cfg: cfg, store: st}
 	for _, path := range []string{"/api/v1/carddav/status", "/api/v1/carddav/runs"} {

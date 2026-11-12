@@ -117,7 +117,7 @@ func TestStartSearchStatusLoopShowsDaemonActivity(t *testing.T) {
 			return &api.OperationHealth{Busy: true, Label: "checking the search index"}
 		},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

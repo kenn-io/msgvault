@@ -563,7 +563,7 @@ func peopleBriefItemText(item peoplebrowser.PersonBriefItem) string {
 
 func peopleBriefEvidenceLines(evidence []peoplebrowser.PersonBriefEvidence) []string {
 	if len(evidence) == 0 {
-		return []string{"     no evidence reference"}
+		return []string{"     no source linked"}
 	}
 	parts := make([]string, 0, len(evidence))
 	for _, reference := range evidence {

@@ -33,7 +33,7 @@ func (f linkFixture) emailParticipant(t *testing.T, email string) int64 {
 
 func (f linkFixture) phoneParticipant(t *testing.T, phone string) int64 {
 	t.Helper()
-	id, err := f.st.EnsureParticipantByPhone(phone, "", "imessage")
+	id, err := f.st.EnsureParticipantByPhone(t.Context(), phone, "", "imessage")
 	require.NoError(t, err)
 	return id
 }
@@ -55,7 +55,7 @@ func (f linkFixture) linked(t *testing.T, a, b int64) bool {
 func (f linkFixture) boundPerson(t *testing.T, participantID int64) int64 {
 	t.Helper()
 	var personID int64
-	err := f.st.DB().QueryRow(f.st.Rebind(
+	err := f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(
 		`SELECT person_id FROM person_participants WHERE participant_id = ?`), participantID).Scan(&personID)
 	if err != nil {
 		return 0
@@ -164,7 +164,7 @@ func TestLinkIdentitiesContinuesAfterStaleReviewedAcceptance(t *testing.T) {
 	review, err := f.st.GetIdentityMatchReviewContext(ctx, candidate.ID)
 	require.NoError(err)
 	// Keep the accepted decision while interrupting its separate link write.
-	_, err = f.st.DB().Exec(`CREATE TRIGGER fail_reviewed_link
+	_, err = f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_reviewed_link
 		BEFORE INSERT ON participant_links FOR EACH ROW BEGIN
 			SELECT RAISE(ABORT, 'interrupted reviewed link');
 		END`)
@@ -172,7 +172,7 @@ func TestLinkIdentitiesContinuesAfterStaleReviewedAcceptance(t *testing.T) {
 	_, _, err = f.st.DecideIdentityMatchReviewedContext(ctx, candidate.ID,
 		review.ReviewToken, store.IdentityMatchStateAccepted, nil)
 	require.ErrorContains(err, "interrupted reviewed link")
-	_, err = f.st.DB().Exec(`DROP TRIGGER fail_reviewed_link`)
+	_, err = f.st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_reviewed_link`)
 	require.NoError(err)
 	pending, err := f.st.GetIdentityMatchReviewContext(ctx, candidate.ID)
 	require.NoError(err)

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -23,11 +22,11 @@ func TestBatchGetRecipientsAndLabels_ChunkLargeIDSets(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := openTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	src, err := st.GetOrCreateSource("gmail", "batchchunk@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "thread-batchchunk", "Thread BatchChunk")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-batchchunk", "Thread BatchChunk")
 	require.NoError(err, "EnsureConversation")
 	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	require.NoError(err, "EnsureParticipant alice")
@@ -56,12 +55,12 @@ func TestBatchGetRecipientsAndLabels_ChunkLargeIDSets(t *testing.T) {
 	require.NoError(st.ReplaceMessageRecipients(ids[total-1], "to", []int64{bobID}, []string{"Bob"}),
 		"recipient on the second chunk's message")
 
-	firstLabelID, err := st.EnsureLabel(src.ID, "first-chunk", "first-chunk", "user")
+	firstLabelID, err := st.EnsureLabel(t.Context(), src.ID, "first-chunk", "first-chunk", "user")
 	require.NoError(err, "EnsureLabel first-chunk")
-	require.NoError(st.LinkMessageLabel(ids[0], firstLabelID))
-	secondLabelID, err := st.EnsureLabel(src.ID, "second-chunk", "second-chunk", "user")
+	require.NoError(st.LinkMessageLabel(t.Context(), ids[0], firstLabelID))
+	secondLabelID, err := st.EnsureLabel(t.Context(), src.ID, "second-chunk", "second-chunk", "user")
 	require.NoError(err, "EnsureLabel second-chunk")
-	require.NoError(st.LinkMessageLabel(ids[total-1], secondLabelID))
+	require.NoError(st.LinkMessageLabel(t.Context(), ids[total-1], secondLabelID))
 
 	recipients, err := st.batchGetRecipients(ctx, ids, "to")
 	require.NoError(err, "batchGetRecipients")

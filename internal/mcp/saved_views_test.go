@@ -19,12 +19,13 @@ import (
 )
 
 type savedViewServiceFixture struct {
-	views     []store.SavedView
-	page      *savedview.RunPage
-	runID     int64
-	runLimit  int
-	runCursor string
-	err       error
+	views       []store.SavedView
+	page        *savedview.RunPage
+	runID       int64
+	runLimit    int
+	runCursor   string
+	runTimezone string
+	err         error
 }
 
 func savedViewTestMap(t *testing.T, value any) map[string]any {
@@ -69,9 +70,10 @@ func (f *savedViewServiceFixture) GetSavedView(_ context.Context, id int64) (*st
 }
 
 func (f *savedViewServiceFixture) RunSavedView(
-	_ context.Context, id int64, limit int, cursor string,
+	_ context.Context, id int64, limit int, cursor, timezone string,
 ) (*savedview.RunPage, error) {
 	f.runID, f.runLimit, f.runCursor = id, limit, cursor
+	f.runTimezone = timezone
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -211,7 +213,7 @@ func TestRunSavedViewReturnsTypedExplorePage(t *testing.T) {
 	opts := ServeOptions{Engine: &querytest.MockEngine{}, SavedViews: reader}
 
 	result := rawCallTool(t, opts, ToolRunSavedView, map[string]any{
-		"id": 7, "limit": 5000, "cursor": "current-page",
+		"id": 7, "limit": 5000, "cursor": "current-page", "timezone": "America/New_York",
 	})
 	require.NotEqual(t, true, result["isError"], "result: %#v", result)
 	structured := savedViewTestMap(t, result["structuredContent"])
@@ -223,6 +225,7 @@ func TestRunSavedViewReturnsTypedExplorePage(t *testing.T) {
 	assertions.Equal(int64(7), reader.runID)
 	assertions.Equal(maxSearchMessagesLimit, reader.runLimit)
 	assertions.Equal("current-page", reader.runCursor)
+	assertions.Equal("America/New_York", reader.runTimezone)
 }
 
 func TestSavedViewReadToolsReturnCleanErrors(t *testing.T) {

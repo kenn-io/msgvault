@@ -74,7 +74,7 @@ func TestRunVerifyLocalRawSamples(t *testing.T) {
 				dsn, err := url.Parse(testDB)
 				require.NoError(err)
 				var database, schema string
-				require.NoError(st.DB().QueryRow("SELECT current_database(), current_schema()").Scan(&database, &schema))
+				require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT current_database(), current_schema()").Scan(&database, &schema))
 				dsn.Path = "/" + database
 				query := dsn.Query()
 				query.Set("search_path", schema+",public")
@@ -85,7 +85,7 @@ func TestRunVerifyLocalRawSamples(t *testing.T) {
 			}
 			source, err := st.GetOrCreateSource("gmail", "verify@example.test")
 			require.NoError(err)
-			conversationID, err := st.EnsureConversation(source.ID, "thread", "Original")
+			conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Original")
 			require.NoError(err)
 			id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID,
 				SourceMessageID: "synthetic-verify", MessageType: store.MessageTypeEmail})

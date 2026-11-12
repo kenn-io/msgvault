@@ -272,7 +272,7 @@ func TestCardDAVTrustedPolicyChangeDuringDiscoveryConflicts(t *testing.T) {
 		BaseURL: "https://new.example/dav", Username: "new-user", Password: "new-password", Enabled: new(false),
 	})
 	require.ErrorIs(err, config.ErrConfigConflict)
-	assert.NotSame(candidate, controller.Current())
+	assert.NotSame(candidate, cardDAVRuntimeDelegate(controller.Current()))
 	persisted, loadErr := config.Load(cfg.ConfigFilePath(), "")
 	require.NoError(loadErr)
 	assert.Equal("https://old.example", persisted.CardDAV.TrustedOrigin)
@@ -349,7 +349,7 @@ func TestCardDAVAccountSaveRollsBackPublishedFilesWhenDiscoveryStoreFails(t *tes
 	require.NoError(booksErr)
 	require.Len(books, 1)
 	assert.Equal("Old", books[0].DisplayName)
-	assert.NotSame(newService, controller.Current())
+	assert.NotSame(newService, cardDAVRuntimeDelegate(controller.Current()))
 }
 
 func TestCardDAVAccountSavePreservesOldStateWhenConfigPublicationFails(t *testing.T) {
@@ -421,7 +421,7 @@ func TestCardDAVAccountSaveRepublishesPreviousConfigAfterPublishThenError(t *tes
 	credential, loadErr := carddav.LoadCredential(cfg.TokensDir())
 	require.NoError(loadErr)
 	assert.Equal("old-password", credential.Password)
-	assert.NotSame(candidate, controller.Current())
+	assert.NotSame(candidate, cardDAVRuntimeDelegate(controller.Current()))
 }
 
 func TestCardDAVAccountSavePreservesConcurrentNonCardDAVConfigEdits(t *testing.T) {
@@ -579,7 +579,7 @@ func TestCardDAVAccountSaveRepairsUnboundLegacyCredentialWithExplicitPassword(t 
 	require.NoError(loadErr)
 	assert.Equal("replacement-password", credential.Password)
 	assert.Equal("replacement-user", credential.Username)
-	assert.Same(candidate, controller.Current())
+	assert.Same(candidate, cardDAVRuntimeDelegate(controller.Current()))
 }
 
 func TestCardDAVAccountSaveRestoresUnboundLegacyCredentialOnRollback(t *testing.T) {
@@ -656,8 +656,8 @@ func TestCardDAVAccountSaveUpdatesSchedulingWithoutDiscovery(t *testing.T) {
 	assert.Equal(int32(0), candidate.discoverCalls.Load())
 	assert.Equal(1, response.Books)
 	assert.Equal(config.CardDAVConfig{BaseURL: cfg.CardDAV.BaseURL, Username: cfg.CardDAV.Username, Enabled: false, Schedule: "0 3 * * *"}, scheduledConfig)
-	assert.Same(candidate, scheduledService)
-	assert.Same(candidate, controller.Current())
+	assert.Same(candidate, cardDAVRuntimeDelegate(scheduledService))
+	assert.Same(candidate, cardDAVRuntimeDelegate(controller.Current()))
 	credential, loadErr := carddav.LoadCredential(cfg.TokensDir())
 	require.NoError(loadErr)
 	assert.Equal("old-password", credential.Password)
@@ -721,7 +721,7 @@ func TestCardDAVAccountSaveExplicitPasswordRefreshesDiscovery(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int32(1), candidate.discoverCalls.Load())
 	assert.Equal(len(candidate.discovery.Books), response.Books)
-	assert.Same(candidate, controller.Current())
+	assert.Same(candidate, cardDAVRuntimeDelegate(controller.Current()))
 }
 
 func TestCardDAVAccountSaveRepairsMissingCredentialAfterStartup(t *testing.T) {
@@ -757,7 +757,7 @@ func TestCardDAVAccountSaveRepairsMissingCredentialAfterStartup(t *testing.T) {
 		Password: "replacement-password", Enabled: new(true), Schedule: cfg.CardDAV.Schedule,
 	})
 	require.NoError(err)
-	assert.Same(candidate, controller.Current())
+	assert.Same(candidate, cardDAVRuntimeDelegate(controller.Current()))
 	credential, err := carddav.LoadCredential(cfg.TokensDir())
 	require.NoError(err)
 	account, err := st.GetCardDAVAccountByIDContext(t.Context(), store.DefaultCardDAVAccountID)
@@ -858,7 +858,7 @@ func TestCardDAVAccountSaveRejectsCredentialRotationBeforeDiscoveryWhenIntentIsP
 		{name: "publication", seed: func(t *testing.T, st *store.Store, book store.CardDAVAddressBook) {
 			t.Helper()
 			var personID int64
-			require.NoError(t, st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
 				VALUES (?, ?) RETURNING id`), "api-rotation-publication", "API Rotation").Scan(&personID))
 			snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 			require.NoError(t, err)
@@ -872,7 +872,7 @@ func TestCardDAVAccountSaveRejectsCredentialRotationBeforeDiscoveryWhenIntentIsP
 		}},
 		{name: "conflict", seed: func(t *testing.T, st *store.Store, book store.CardDAVAddressBook) {
 			t.Helper()
-			_, err := st.DB().Exec(st.Rebind(`INSERT INTO carddav_conflicts (
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_conflicts (
 				address_book_id, href, base_local_hash, local_hash, base_remote_hash,
 				base_remote_etag, remote_etag, mapping_revision, local_body, remote_body,
 				local_tombstone, remote_tombstone, pending_operation, connection_generation,
@@ -932,16 +932,16 @@ func TestCardDAVAccountSaveRejectsIdentityChangeBeforeDiscoveryWhenRemoteStateIs
 		{name: "publication", seed: func(t *testing.T, st *store.Store, book store.CardDAVAddressBook) {
 			t.Helper()
 			var personID int64
-			require.NoError(t, st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
 				VALUES (?, ?) RETURNING id`), "api-identity-publication", "API Identity").Scan(&personID))
-			_, err := st.DB().Exec(st.Rebind(`INSERT INTO carddav_publications
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_publications
 				(person_id, desired, address_book_id, href) VALUES (?, TRUE, ?, ?)`),
 				personID, book.ID, book.CanonicalURL+"api-identity-publication.vcf")
 			require.NoError(t, err)
 		}},
 		{name: "conflict", seed: func(t *testing.T, st *store.Store, book store.CardDAVAddressBook) {
 			t.Helper()
-			_, err := st.DB().Exec(st.Rebind(`INSERT INTO carddav_conflicts (
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_conflicts (
 				address_book_id, href, base_local_hash, local_hash, base_remote_hash,
 				base_remote_etag, remote_etag, mapping_revision, local_body, remote_body,
 				local_tombstone, remote_tombstone
@@ -1132,7 +1132,7 @@ func fixtureCardDAVFactory(t *testing.T, target *url.URL) cardDAVServiceFactory 
 
 func fixtureCardDAVResolver(t *testing.T, address netip.Addr) *net.Resolver {
 	t.Helper()
-	listener, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
 	go func() {
@@ -1230,7 +1230,7 @@ func TestCardDAVConflictListNeverExposesSnapshots(t *testing.T) {
 
 	controller := &CardDAVController{service: cardDAVListFixture{conflict: store.CardDAVConflict{ID: 7, AddressBookID: 2, Href: "/books/personal/alice.vcf", Status: store.CardDAVConflictUnresolved, LocalBody: []byte("private-local-card"), RemoteBody: []byte("private-remote-card")}}}
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger(), CardDAV: controller})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/carddav/conflicts", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/carddav/conflicts", nil)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
 	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
@@ -1473,7 +1473,7 @@ func cardDAVRouteResponse(t *testing.T, service CardDAVOperations, method, path,
 	t.Helper()
 	controller := &CardDAVController{service: service}
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger(), CardDAV: controller})
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -1540,7 +1540,7 @@ func TestCardDAVRetryGateResponseCarriesSafeRetryAfter(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger(), CardDAV: controller,
 	})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/carddav/sync", strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/carddav/sync", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 
@@ -1591,7 +1591,7 @@ func TestCardDAVAccountTestMapsValidationAndUpstreamFailures(t *testing.T) {
 		{name: "upstream", body: `{"base_url":"https://contacts.example/dav","username":"alice","password":"secret","enabled":true}`, want: http.StatusBadGateway},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/carddav/account/test", strings.NewReader(tc.body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/carddav/account/test", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 			resp := httptest.NewRecorder()
 			srv.Router().ServeHTTP(resp, req)
@@ -1623,7 +1623,7 @@ func TestCardDAVAccountTestMapsCredentialStorageFailure(t *testing.T) {
 		return carddav.Credential{}, errors.New("database-backed credential lookup unavailable")
 	}
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger(), CardDAV: controller})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/carddav/account/test", strings.NewReader(`{
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/carddav/account/test", strings.NewReader(`{
 		"base_url":"https://old.example/dav","username":"old-user","enabled":true
 	}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -1675,10 +1675,10 @@ func TestCardDAVPublicationStateRouteRequiresAuthAndReturnsState(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: &mockStore{}, Logger: testLogger(), CardDAV: controller})
 
 	unauthorized := httptest.NewRecorder()
-	srv.Router().ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v1/carddav/publications/11", nil))
+	srv.Router().ServeHTTP(unauthorized, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/carddav/publications/11", nil))
 	assert.Equal(http.StatusUnauthorized, unauthorized.Code)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/carddav/publications/11", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/carddav/publications/11", nil)
 	req.Header.Set("X-Api-Key", "synthetic-api-key")
 	authorized := httptest.NewRecorder()
 	srv.Router().ServeHTTP(authorized, req)

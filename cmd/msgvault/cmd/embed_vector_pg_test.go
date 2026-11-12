@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +25,7 @@ func TestRunEmbed_PG_OpenAndZeroPending(t *testing.T) {
 	require := require.New(t)
 
 	_, dsn := openServePGSchema(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Open the store through the same helper the real code uses.
 	st, err := store.Open(dsn)

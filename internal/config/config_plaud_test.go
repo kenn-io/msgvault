@@ -31,6 +31,10 @@ account_email="owner@example.com"`, "surrounding whitespace"},
 		{"control character", `[[plaud]]
 identifier="work\u0001"
 account_email="owner@example.com"`, "unsafe identifier"},
+		{"negative limit", `[[plaud]]
+identifier="work"
+account_email="owner@example.com"
+limit=-1`, "limit must be nonnegative"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Load(writeMeetingConfig(t, tt.body), "")
@@ -59,10 +63,12 @@ func TestPlaudConfigDefaultsAndScheduling(t *testing.T) {
 	cfg, err := Load(writeMeetingConfig(t, `[[plaud]]
 account_email=" Owner@Example.COM "
 enabled=true
-schedule="0 */6 * * *"`), "")
+schedule="0 */6 * * *"
+limit=50`), "")
 	require.NoError(err)
 	require.Len(cfg.Plaud, 1)
 	assert.Equal("default", cfg.Plaud[0].Identifier)
+	assert.Equal(50, cfg.Plaud[0].Limit)
 	assert.Equal("owner@example.com", cfg.Plaud[0].AccountEmail)
 	require.NotNil(cfg.GetPlaudSource("DEFAULT"))
 	assert.Nil(cfg.GetPlaudSource("missing"))

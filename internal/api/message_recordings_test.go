@@ -134,7 +134,7 @@ func (rf *recordingFixture) audioHash(sourceMessageID, part string) string {
 func newRecordingFixture(t *testing.T) *recordingFixture {
 	t.Helper()
 	f := storetest.New(t)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE sources SET source_type = 'beeper', identifier = ? WHERE id = ?`), "signal", f.Source.ID)
 	require.NoError(t, err)
 	docbank := newFakeDocbank(t)
@@ -205,7 +205,7 @@ func (rf *recordingFixture) storedAudio(
 		RoleSource: store.AttachmentRoleSourceImporterSemantics,
 	}))
 	var attachmentID int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM attachments WHERE message_id = ? AND content_hash = ?`), messageID, hash).Scan(&attachmentID))
 	if !slices.Contains(rf.parts[sourceMessageID], part) {
 		rf.parts[sourceMessageID] = append(rf.parts[sourceMessageID], part)
@@ -246,7 +246,7 @@ func (rf *recordingFixture) audio(
 	if processingKey != "" {
 		inputDigest := sha256.Sum256([]byte("input-" + processingKey))
 		seed.suppliedInputID = hex.EncodeToString(inputDigest[:])
-		_, err := st.DB().Exec(st.Rebind(`UPDATE beeper_media_deliveries SET supplied_input_id = ?
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE beeper_media_deliveries SET supplied_input_id = ?
 			WHERE destination_key = ? AND processing_key = ?`), seed.suppliedInputID, recordingsTestDestination, processingKey)
 		require.NoError(t, err)
 	}
@@ -291,7 +291,7 @@ func (rf *recordingFixture) deliver(t *testing.T, processingKey, operationState 
 	st := rf.f.Store
 	rf.finished++
 	finishedAt := fmt.Sprintf("2026-01-01 00:%02d:%02d", rf.finished/60, rf.finished%60)
-	result, err := st.DB().Exec(st.Rebind(`UPDATE beeper_media_deliveries
+	result, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE beeper_media_deliveries
 		SET phase = 'done', operation_state = ?, updated_at = ?
 		WHERE destination_key = ? AND processing_key = ?`),
 		operationState, finishedAt, recordingsTestDestination, processingKey)
@@ -303,7 +303,7 @@ func (rf *recordingFixture) deliver(t *testing.T, processingKey, operationState 
 
 func getRecordings(t *testing.T, srv *Server, messageID string) (int, MessageRecordingsResponse, string) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/"+messageID+"/recordings", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/messages/"+messageID+"/recordings", nil)
 	req.Header.Set("X-Api-Key", recordingsTestAPIKey)
 	req.RemoteAddr = "127.0.0.1:1"
 	response := httptest.NewRecorder()
@@ -411,7 +411,7 @@ func TestMessageRecordingsStates(t *testing.T) {
 			seed = rf.retained(t, fmt.Sprintf("case-%d", i))
 		}
 		if tc.deliveryPhase != "" {
-			_, err := rf.f.Store.DB().Exec(rf.f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = ?, operation_state = ? WHERE processing_key = ?`),
+			_, err := rf.f.Store.DB().ExecContext(t.Context(), rf.f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = ?, operation_state = ? WHERE processing_key = ?`),
 				tc.deliveryPhase, tc.deliveryState, "delivery-"+fmt.Sprintf("case-%d", i))
 			require.NoError(err)
 		}
@@ -458,7 +458,7 @@ func TestMessageRecordingsStates(t *testing.T) {
 			}
 			rf.audio(t, messageID, name, "", key, result)
 			if profile != "" {
-				_, err := rf.f.Store.DB().Exec(rf.f.Store.Rebind(`UPDATE beeper_media_deliveries SET profile = ? WHERE processing_key = ?`), profile, key)
+				_, err := rf.f.Store.DB().ExecContext(t.Context(), rf.f.Store.Rebind(`UPDATE beeper_media_deliveries SET profile = ? WHERE processing_key = ?`), profile, key)
 				require.NoError(err)
 			}
 			assert.Equal(want, recordingsFor(t, srv, messageID)[0].State, name)
@@ -628,7 +628,7 @@ func TestMessageRecordingsVisibility(t *testing.T) {
 	var mergeErr error
 	rf.docbank.set(hidden.contentVersionID, func(w http.ResponseWriter) {
 		// The message is hidden as a duplicate while its transcript is being read.
-		_, mergeErr = rf.f.Store.MergeDuplicates(survivor, []int64{hidden.messageID}, "batch")
+		_, mergeErr = rf.f.Store.MergeDuplicates(t.Context(), survivor, []int64{hidden.messageID}, "batch")
 		ready(w)
 	})
 	status, body, raw := getRecordings(t, srv, strconv.FormatInt(hidden.messageID, 10))
@@ -737,7 +737,7 @@ func TestMessageRecordingsProviderTranscriptEdit(t *testing.T) {
 		for _, timing := range []string{"before", "during"} {
 			name := "erased-" + evidence + "-" + timing
 			erased := seed(name)
-			_, err := rf.f.Store.DB().Exec(rf.f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'pending-process' WHERE processing_key = ?`), "delivery-"+name)
+			_, err := rf.f.Store.DB().ExecContext(t.Context(), rf.f.Store.Rebind(`UPDATE beeper_media_deliveries SET phase = 'pending-process' WHERE processing_key = ?`), "delivery-"+name)
 			require.NoError(err)
 			state, operation := evidence, "running"
 			var transcript map[string]any
@@ -799,7 +799,7 @@ func TestMessageRecordingsExactProviderInput(t *testing.T) {
 	assert.Nil(got[0].Transcript)
 	// A blocked remote job can finish after credentials recover, before polling.
 	for _, phase := range []string{"blocked", "observing"} {
-		_, err := rf.f.Store.DB().Exec(rf.f.Store.Rebind(`UPDATE beeper_media_deliveries
+		_, err := rf.f.Store.DB().ExecContext(t.Context(), rf.f.Store.Rebind(`UPDATE beeper_media_deliveries
 			SET phase = ? WHERE processing_key = 'delivery-second'`), phase)
 		require.NoError(err)
 		got = recordingsFor(t, srv, second.messageID)

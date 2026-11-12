@@ -1,7 +1,6 @@
 package whatsapp
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"strings"
@@ -31,7 +30,7 @@ func createGroupParticipantsImportFixture(t *testing.T, setup func(*sql.DB)) str
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(err)
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE jid (
 			_id INTEGER PRIMARY KEY, user TEXT, server TEXT, raw_string TEXT
 		);
@@ -80,7 +79,7 @@ func TestImportGroupChatWithoutGroupParticipantsTable(t *testing.T) {
 	opts.Phone = "+12025550123"
 	opts.DisplayName = "Example User"
 
-	summary, err := NewImporter(st, progress).Import(context.Background(), waDBPath, opts)
+	summary, err := NewImporter(st, progress).Import(t.Context(), waDBPath, opts)
 	require.NoError(err)
 	t.Logf("recorded import errors: %v", progress.errors)
 	assert.Equal(int64(0), summary.Errors)
@@ -89,7 +88,7 @@ func TestImportGroupChatWithoutGroupParticipantsTable(t *testing.T) {
 	assert.Equal(int64(2), summary.MessagesAdded)
 
 	var messageCount int
-	err = st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), summary.SourceID).Scan(&messageCount)
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), summary.SourceID).Scan(&messageCount)
 	require.NoError(err)
 	assert.Equal(2, messageCount)
 
@@ -101,14 +100,16 @@ func TestImportGroupChatWithoutGroupParticipantsTable(t *testing.T) {
 		{keyID: "message-second-group", body: "second group message"},
 	} {
 		var messageID int64
-		err = st.DB().QueryRow(
+		err = st.DB().QueryRowContext(
+			t.Context(),
 			st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 			summary.SourceID, message.keyID,
 		).Scan(&messageID)
 		require.NoError(err)
 
 		var body string
-		err = st.DB().QueryRow(
+		err = st.DB().QueryRowContext(
+			t.Context(),
 			st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), messageID,
 		).Scan(&body)
 		require.NoError(err)
@@ -116,7 +117,7 @@ func TestImportGroupChatWithoutGroupParticipantsTable(t *testing.T) {
 	}
 
 	var participantCount int
-	err = st.DB().QueryRow(st.Rebind(`
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*)
 		FROM conversation_participants cp
 		JOIN conversations c ON c.id = cp.conversation_id
@@ -133,7 +134,7 @@ func TestImportGroupChatWithPopulatedGroupParticipants(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	waDBPath := createGroupParticipantsImportFixture(t, func(db *sql.DB) {
-		_, err := db.Exec(`
+		_, err := db.ExecContext(t.Context(), `
 			CREATE TABLE group_participants (gjid TEXT, jid TEXT, admin INTEGER);
 			INSERT INTO group_participants VALUES
 				('120255501234567-987654321@g.us', '12025550124@s.whatsapp.net', NULL),
@@ -146,12 +147,12 @@ func TestImportGroupChatWithPopulatedGroupParticipants(t *testing.T) {
 	opts.Phone = "+12025550123"
 	opts.DisplayName = "Example User"
 
-	summary, err := NewImporter(st, nil).Import(context.Background(), waDBPath, opts)
+	summary, err := NewImporter(st, nil).Import(t.Context(), waDBPath, opts)
 	require.NoError(err)
 	assert.Equal(int64(0), summary.Errors)
 
 	var adminRole string
-	err = st.DB().QueryRow(st.Rebind(`
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT cp.role
 		FROM conversation_participants cp
 		JOIN conversations c ON c.id = cp.conversation_id

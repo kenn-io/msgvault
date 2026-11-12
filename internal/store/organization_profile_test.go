@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -15,7 +14,7 @@ import (
 func TestReplaceOrganizationProfileRoundTripsEveryCollectionAndKeepsStableRows(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
 		Name: "Example Org", Kind: store.OrganizationKindCompany,
@@ -86,7 +85,7 @@ func TestReplaceOrganizationProfileRoundTripsEveryCollectionAndKeepsStableRows(t
 func TestReplaceOrganizationProfileAppendsOmittedOrdinalsAcrossHistory(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(
 		ctx, store.OrganizationInput{Name: "Example Org"})
@@ -118,7 +117,7 @@ func TestReplaceOrganizationProfileAppendsOmittedOrdinalsAcrossHistory(t *testin
 
 func TestReplaceOrganizationProfileValidatesBeforeWriting(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(
 		ctx, store.OrganizationInput{Name: "Example Org"})
@@ -323,7 +322,7 @@ func TestRemovingFutureOrganizationProfileRowRetractsWithoutInvalidWorldInterval
 ) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(
 		ctx, store.OrganizationInput{Name: "Example Org"})
@@ -357,14 +356,14 @@ func TestRemovingFutureOrganizationProfileRowRetractsWithoutInvalidWorldInterval
 func TestGetOrganizationProfileRejectsMissingOrganization(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	_, err := st.GetOrganizationProfileContext(context.Background(), 9999, false)
+	_, err := st.GetOrganizationProfileContext(t.Context(), 9999, false)
 	require.ErrorIs(err, store.ErrOrganizationNotFound)
 }
 
 func TestGetOrganizationProfileReturnsOneRootAndChildrenSnapshot(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(
 		ctx, store.OrganizationInput{Name: "Old Root"})
@@ -437,7 +436,7 @@ func TestGetOrganizationProfileReturnsOneRootAndChildrenSnapshot(t *testing.T) {
 func TestOrganizationProfileKeepsValueDuplicatesWithDistinctIdentity(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
 		Name: "Duplicate Value Org", Kind: store.OrganizationKindCompany,

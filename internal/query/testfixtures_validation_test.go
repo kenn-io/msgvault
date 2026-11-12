@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -91,7 +90,7 @@ func TestAddMessage_UsesFirstSource(t *testing.T) {
 	engine := b.BuildEngine()
 	defer func() { _ = engine.Close() }()
 
-	stats, err := engine.GetTotalStats(context.Background(), StatsOptions{})
+	stats, err := engine.GetTotalStats(t.Context(), StatsOptions{})
 	require.NoError(err, "GetTotalStats")
 	assert.Equal(int64(1), stats.MessageCount)
 }

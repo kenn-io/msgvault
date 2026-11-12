@@ -346,7 +346,7 @@ func (s *Store) ApplySenderRepairContext(
 				return fmt.Errorf("refresh message %d FTS after sender repair: %w", messageID, err)
 			}
 		}
-		if err := s.bumpDerivedDataRevision(tx); err != nil {
+		if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 			return fmt.Errorf("invalidate derived data after repairing message %d sender: %w", messageID, err)
 		}
 		return nil

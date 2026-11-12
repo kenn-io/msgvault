@@ -27,7 +27,7 @@ func TestClientReadAPI(t *testing.T) {
 
 	client, err := NewClient(server.URL+"/api/v10", "test-bot-token")
 	require.NoError(err)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	me, err := client.Me(ctx)
 	require.NoError(err)
@@ -163,7 +163,7 @@ func TestMessageQueryValidation(t *testing.T) {
 			client, err := NewClient(server.URL+"/api/v10", "test-token")
 			require.NoError(t, err)
 
-			_, err = client.Messages(context.Background(), "301", tt.query)
+			_, err = client.Messages(t.Context(), "301", tt.query)
 
 			require.Error(t, err)
 			assert.Empty(t, fake.requestPaths())
@@ -185,7 +185,7 @@ func TestClientGuildWithCountsAsksDiscordForApproximateMembership(t *testing.T) 
 	client, err := NewClient(server.URL+"/api/v10", "test-bot-token")
 	require.NoError(err)
 
-	guild, err := client.GuildWithCounts(context.Background(), "201")
+	guild, err := client.GuildWithCounts(t.Context(), "201")
 
 	require.NoError(err)
 	assert.Equal("/api/v10/guilds/201?with_counts=true", <-requested)
@@ -204,7 +204,7 @@ func TestClientDecodesDiscordAPIError(t *testing.T) {
 	client, err := NewClient(server.URL, "secret-token")
 	require.NoError(err)
 
-	_, err = client.GuildChannels(context.Background(), "201")
+	_, err = client.GuildChannels(t.Context(), "201")
 
 	var apiErr *APIError
 	require.ErrorAs(err, &apiErr)
@@ -227,7 +227,7 @@ func TestClientSanitizesSuccessfulResponseDecodeErrors(t *testing.T) {
 	client, err := NewClient(server.URL, "secret-token")
 	require.NoError(err)
 
-	_, err = client.Message(context.Background(), "301", "501")
+	_, err = client.Message(t.Context(), "301", "501")
 
 	require.Error(err)
 	if strings.Contains(err.Error(), "decode-marker") || strings.Contains(err.Error(), "token-marker") || strings.Contains(err.Error(), "secret-token") {
@@ -265,9 +265,9 @@ func TestClientSerializesRoutesLearnedToShareBucket(t *testing.T) {
 		require.NoError(err)
 		client.http.Transport = server.Client().Transport
 
-		_, err = client.Messages(context.Background(), "301", MessageQuery{Limit: 1})
+		_, err = client.Messages(t.Context(), "301", MessageQuery{Limit: 1})
 		require.NoError(err)
-		_, err = client.Message(context.Background(), "301", "501")
+		_, err = client.Message(t.Context(), "301", "501")
 		require.NoError(err)
 		enabled.Store(true)
 
@@ -276,12 +276,12 @@ func TestClientSerializesRoutesLearnedToShareBucket(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_, callErr := client.Messages(context.Background(), "301", MessageQuery{Limit: 1})
+			_, callErr := client.Messages(t.Context(), "301", MessageQuery{Limit: 1})
 			errs <- callErr
 		}()
 		go func() {
 			defer wg.Done()
-			_, callErr := client.Message(context.Background(), "301", "501")
+			_, callErr := client.Message(t.Context(), "301", "501")
 			errs <- callErr
 		}()
 		wg.Wait()
@@ -352,7 +352,7 @@ func TestClientHonorsGlobal429AcrossRoutes(t *testing.T) {
 
 				meDone := make(chan error, 1)
 				go func() {
-					_, callErr := client.Me(context.Background())
+					_, callErr := client.Me(t.Context())
 					meDone <- callErr
 				}()
 				<-limited
@@ -371,7 +371,7 @@ func TestClientHonorsGlobal429AcrossRoutes(t *testing.T) {
 				}, globalRateLimitObservationBudget, time.Millisecond)
 				started := time.Now()
 
-				_, err = client.Guild(context.Background(), "201")
+				_, err = client.Guild(t.Context(), "201")
 
 				require.NoError(err)
 				require.NoError(<-meDone)
@@ -396,10 +396,10 @@ func TestClientRetainsGlobalPauseAfterRetryExhaustion(t *testing.T) {
 	client, err := NewClient(server.URL, "test-token")
 	require.NoError(err)
 
-	_, err = client.Me(context.Background())
+	_, err = client.Me(t.Context())
 	require.Error(err)
 	exhaustedAt := time.Now()
-	_, err = client.Guild(context.Background(), "201")
+	_, err = client.Guild(t.Context(), "201")
 
 	require.NoError(err)
 	assert.GreaterOrEqual(t, time.Unix(0, guildAt.Load()).Sub(exhaustedAt), 30*time.Millisecond)
@@ -422,10 +422,10 @@ func TestClientRetainsHeaderSignaledGlobalPauseAfterRetryExhaustion(t *testing.T
 	client, err := NewClient(server.URL, "test-token")
 	require.NoError(err)
 
-	_, err = client.Me(context.Background())
+	_, err = client.Me(t.Context())
 	require.Error(err)
 	exhaustedAt := time.Now()
-	_, err = client.Guild(context.Background(), "201")
+	_, err = client.Guild(t.Context(), "201")
 
 	require.NoError(err)
 	assert.GreaterOrEqual(t, time.Unix(0, guildAt.Load()).Sub(exhaustedAt), 30*time.Millisecond)
@@ -463,7 +463,7 @@ func TestClientHonorsRetryAfterHeaderAndJSON(t *testing.T) {
 			require.NoError(err)
 
 			started := time.Now()
-			_, err = client.Me(context.Background())
+			_, err = client.Me(t.Context())
 
 			require.NoError(err)
 			assert.GreaterOrEqual(time.Since(started), tt.minimumDelay)
@@ -482,7 +482,7 @@ func TestClientCancellationDuringRateLimitWaits(t *testing.T) {
 		t.Cleanup(server.Close)
 		client, err := NewClient(server.URL, "test-token")
 		require.NoError(t, err)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 		go func() {
 			_, callErr := client.Me(ctx)
@@ -515,10 +515,10 @@ func TestClientCancellationDuringRateLimitWaits(t *testing.T) {
 		t.Cleanup(server.Close)
 		client, err := NewClient(server.URL, "test-token")
 		require.NoError(t, err)
-		_, err = client.Me(context.Background())
+		_, err = client.Me(t.Context())
 		require.NoError(t, err)
 		<-firstDone
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 
 		_, err = client.Me(ctx)
@@ -538,7 +538,7 @@ func TestClientBoundsServerErrorRetries(t *testing.T) {
 	client, err := NewClient(server.URL, "test-token")
 	require.NoError(t, err)
 
-	_, err = client.Me(context.Background())
+	_, err = client.Me(t.Context())
 
 	require.Error(t, err)
 	assert.Equal(t, int32(maxAttempts), calls.Load())
@@ -561,7 +561,7 @@ func TestClientRejectsRedirects(t *testing.T) {
 	client, err := NewClient(server.URL, "secret-token")
 	require.NoError(err)
 
-	_, err = client.Me(context.Background())
+	_, err = client.Me(t.Context())
 
 	require.Error(err)
 	assert.Empty(redirectedAuthorization)

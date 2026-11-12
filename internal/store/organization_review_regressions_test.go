@@ -15,7 +15,7 @@ import (
 func TestOrganizationProfileUsesStoredCanonicalAddressAndMediaValuesAsKeys(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
 		Name: "Example Org",
@@ -60,7 +60,7 @@ func TestOrganizationProfileUsesStoredCanonicalAddressAndMediaValuesAsKeys(t *te
 func TestOrganizationContactScopePartsAreTrimmedBeforeValidationAndStorage(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{Name: "Example Org"})
 	require.NoError(err)
@@ -93,7 +93,7 @@ func TestOrganizationContactScopePartsAreTrimmedBeforeValidationAndStorage(t *te
 func TestOrganizationProfileReconcilesWritableMetadataWithDurableVCardIdentity(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{Name: "Example Org"})
 	require.NoError(err)
@@ -139,7 +139,7 @@ func TestOrganizationProfileReconcilesWritableMetadataWithDurableVCardIdentity(t
 func TestOrganizationProfileMatchesDurableVCardIdentityWhenBusinessValueChanges(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{Name: "Example Org"})
 	require.NoError(err)
@@ -184,7 +184,7 @@ func TestOrganizationProfileMatchesDurableVCardIdentityWhenBusinessValueChanges(
 func TestOrganizationProfileScopesDuplicateValuesToVCardResources(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{Name: "Example Org"})
 	require.NoError(err)
@@ -225,7 +225,7 @@ func TestOrganizationProfileScopesDuplicateValuesToVCardResources(t *testing.T) 
 func TestOrganizationProfileHistorizesSourceResourceUIDChanges(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{Name: "Example Org"})
 	require.NoError(err)
@@ -271,7 +271,7 @@ func TestMergeOrganizationsLocksBothRootsInStableOrder(t *testing.T) {
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL row locks are required for reciprocal merge deadlock regression")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
 	first, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{Name: "First Org"})
 	require.NoError(err)

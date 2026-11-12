@@ -519,7 +519,7 @@ func TestBulkDeletionResolutionBlocksMessageListActions(t *testing.T) {
 	}
 
 	canceled := make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	model.deletionCancel = func() {
 		cancel()
 		close(canceled)
@@ -563,7 +563,7 @@ func TestBulkDeletionResolutionBlocksAndCancelsAggregateActions(t *testing.T) {
 	assert.Nil(cmd)
 
 	canceled := make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	model.deletionCancel = func() {
 		cancel()
 		close(canceled)

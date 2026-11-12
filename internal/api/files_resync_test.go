@@ -17,7 +17,7 @@ func TestFilesSearchRetainsCachedAttachmentAfterProviderResync(t *testing.T) {
 	// The committed DuckDB fixture contains attachment 11 on message 1.
 	// Archives written before source-part keys still have the provider ID.
 	// The first resync must retain that row's cached file ID too.
-	_, err := f.store.DB().Exec(`UPDATE attachments SET
+	_, err := f.store.DB().ExecContext(t.Context(), `UPDATE attachments SET
 		source_attachment_id = 'discord:report', source_part_key = NULL,
 		storage_path = 'https://files.example/report.txt'
 		WHERE id = 11`)

@@ -27,7 +27,7 @@ type archivedMCPReaction struct {
 
 func readMCPReactionSnapshot(t *testing.T, st *store.Store, messageID int64) []archivedMCPReaction {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`SELECT pi.identifier_value, r.reaction_type, r.reaction_value, r.created_at
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT pi.identifier_value, r.reaction_type, r.reaction_value, r.created_at
 		FROM reactions r JOIN participant_identifiers pi ON pi.participant_id = r.participant_id
 		WHERE r.message_id = ? AND pi.identifier_type = ? ORDER BY pi.identifier_value, r.reaction_value`), messageID, SourceType)
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func TestMCPMediaRefreshVerificationFailureBlocksFurtherReads(t *testing.T) {
 			requires.NoError(imp.persistMedia(t.Context(), id, parsed.Text, conversation, parsed.Media, opts, summary))
 			checks.Equal(1, summary.Errors)
 			checks.Equal(1, summary.AttachmentsPending)
-			refs, err := st.MessageInlineProviderAttachments(id)
+			refs, err := st.MessageInlineProviderAttachments(t.Context(), id)
 			requires.NoError(err)
 			requires.Contains(refs, "inline:document:11")
 			checks.Equal(attachmentpolicy.StateFailed, refs["inline:document:11"].State)
@@ -273,7 +273,7 @@ func TestMCPImportPersistsDiscoveredHistoryAndBackfill(t *testing.T) {
 			checks.Equal(1, first.MessagesAdded)
 			checks.Equal(1, first.AttachmentsPending)
 			id := archivedMessage(t, st, first.SourceID, 7, 5)
-			body, err := st.GetMessageBodyText(id)
+			body, err := st.GetMessageBodyText(t.Context(), id)
 			requires.NoError(err)
 			checks.Equal("original body", body)
 			before, err := storedState(t, imp, first.SourceID, account.Identifier()).Marshal()
@@ -293,7 +293,7 @@ func TestMCPImportPersistsDiscoveredHistoryAndBackfill(t *testing.T) {
 			after, err := storedState(t, imp, first.SourceID, account.Identifier()).Marshal()
 			requires.NoError(err)
 			checks.Equal(before, after, "media work preserves message resume state")
-			refs, err := st.MessageInlineProviderAttachments(id)
+			refs, err := st.MessageInlineProviderAttachments(t.Context(), id)
 			requires.NoError(err)
 			requires.Contains(refs, "inline:document:11")
 			checks.Equal(attachmentpolicy.StateStored, refs["inline:document:11"].State)
@@ -310,7 +310,7 @@ func TestMCPImportPersistsDiscoveredHistoryAndBackfill(t *testing.T) {
 			checks.Equal(1, full.MessagesUpdated)
 			checks.Zero(full.MessagesAdded)
 			checks.Equal(id, archivedMessage(t, st, first.SourceID, 7, 5))
-			body, err = st.GetMessageBodyText(id)
+			body, err = st.GetMessageBodyText(t.Context(), id)
 			requires.NoError(err)
 			checks.Equal("edited body", body)
 			hasAttachments, count := storedMediaMessageStats(t, imp, id)

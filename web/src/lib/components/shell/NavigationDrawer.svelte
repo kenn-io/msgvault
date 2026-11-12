@@ -23,12 +23,12 @@
   <button
     type="button"
     class="drawer__scrim"
-    aria-label="Close navigation"
+    aria-hidden="true"
     tabindex="-1"
     onclick={onclose}
   ></button>
   <div
-    class="drawer__panel"
+    class="drawer__panel touch-controls"
     role="dialog"
     aria-modal="true"
     aria-label="Navigation"

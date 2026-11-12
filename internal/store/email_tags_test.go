@@ -18,7 +18,7 @@ func tagFixture(t *testing.T, provider, id string) (*store.Store, *store.Source,
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource(provider, "owner@example.test")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(source.ID, "thread-1", "Tags fixture")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Tags fixture")
 	require.NoError(err)
 	mid, err := st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: id, ConversationID: conv, MessageType: "email", RFC822MessageID: sql.NullString{String: "duplicate@example.test", Valid: true}})
 	require.NoError(err)
@@ -27,9 +27,9 @@ func tagFixture(t *testing.T, provider, id string) (*store.Store, *store.Source,
 func tagMembership(t *testing.T, st *store.Store, source, id int64, mailbox string, epoch, uid uint32) {
 	t.Helper()
 	require := require.New(t)
-	_, err := st.DB().Exec(st.Rebind(`INSERT INTO imap_folder_state (source_id,mailbox,uidvalidity,uidnext) VALUES (?,?,?,?)`), source, mailbox, epoch, uid+1)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO imap_folder_state (source_id,mailbox,uidvalidity,uidnext) VALUES (?,?,?,?)`), source, mailbox, epoch, uid+1)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO imap_message_memberships (source_id,mailbox,uidvalidity,uid,message_id,flags) VALUES (?,?,?,?,?,?)`), source, mailbox, epoch, uid, id, `["Old"]`)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO imap_message_memberships (source_id,mailbox,uidvalidity,uid,message_id,flags) VALUES (?,?,?,?,?,?)`), source, mailbox, epoch, uid, id, `["Old"]`)
 	require.NoError(err)
 }
 func TestEmailTagsIMAPMembershipIdentityAndSave(t *testing.T) {
@@ -52,19 +52,19 @@ func TestEmailTagsIMAPMembershipIdentityAndSave(t *testing.T) {
 	result := &emailtags.MessageTagResult{Provider: "imap", Mailbox: target.Mailbox, UIDValidity: target.UIDValidity, UID: target.UID, Flags: []string{"Next", "\\Seen", "Unrelated"}, Tags: []string{"Next", "Unrelated"}, Verified: true}
 	require.NoError(st.SaveEmailTagsContext(t.Context(), target, result))
 	var flags string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT flags FROM imap_message_memberships WHERE source_id=? AND mailbox=?`), source.ID, "INBOX").Scan(&flags))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT flags FROM imap_message_memberships WHERE source_id=? AND mailbox=?`), source.ID, "INBOX").Scan(&flags))
 	var saved []string
 	require.NoError(json.Unmarshal([]byte(flags), &saved))
 	assert.ElementsMatch(result.Flags, saved)
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT flags FROM imap_message_memberships WHERE source_id=? AND mailbox=?`), source.ID, "Archive").Scan(&flags))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT flags FROM imap_message_memberships WHERE source_id=? AND mailbox=?`), source.ID, "Archive").Scan(&flags))
 	assert.Equal(`["Old"]`, flags)
 	// A mapping retired or moved during a remote operation must not be updated.
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET source_message_id=? WHERE id=?`), "Archive|9", id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_message_id=? WHERE id=?`), "Archive|9", id)
 	require.NoError(err)
 	require.Error(st.SaveEmailTagsContext(t.Context(), target, result))
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET source_message_id=? WHERE id=?`), "INBOX|7", id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_message_id=? WHERE id=?`), "INBOX|7", id)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE imap_folder_state SET uidvalidity=? WHERE source_id=? AND mailbox=?`), 78, source.ID, "INBOX")
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE imap_folder_state SET uidvalidity=? WHERE source_id=? AND mailbox=?`), 78, source.ID, "INBOX")
 	require.NoError(err)
 	require.Error(st.SaveEmailTagsContext(t.Context(), target, result), "retired epoch cannot save")
 	_, err = st.EmailTagTargetContext(t.Context(), id, "INBOX")
@@ -148,7 +148,7 @@ func TestEmailTagsIMAPDraftReadbackRefreshesReceivedSearch(t *testing.T) {
 	_, path := attribution(t, f.st, id)
 	assert.Equal("sent", path.String)
 	var draftAuthored bool
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT draft_authored FROM messages WHERE id = ?`), id).Scan(&draftAuthored))
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT draft_authored FROM messages WHERE id = ?`), id).Scan(&draftAuthored))
 	assert.True(draftAuthored)
 	assert.NotContains(searchIDs(t, f.st, "received:"+attrSink), id)
 
@@ -189,7 +189,7 @@ func TestEmailTagsGmailRefreshesReceivedSearch(t *testing.T) {
 	require := require.New(t)
 	f := newAttrFixture(t, "gmail", attrSink)
 	f.confirm(attrSink)
-	labels, err := f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+	labels, err := f.st.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 		"INBOX": {Name: "INBOX", Type: "system"},
 		"SENT":  {Name: "SENT", Type: "system", SystemRole: store.LabelSystemRoleSent},
 	})
@@ -282,7 +282,7 @@ func TestEmailTagsGmailLeavesUnassignedCatalogLabelsAlone(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, source, id := tagFixture(t, "gmail", "message-1")
-	labels, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+	labels, err := st.EnsureLabelsBatch(t.Context(), source.ID, map[string]store.LabelInfo{
 		"INBOX":        {Name: "INBOX", Type: "system"},
 		"Label_unused": {Name: "Unchanged", Type: "user"},
 	})
@@ -300,10 +300,10 @@ func TestEmailTagsGmailLeavesUnassignedCatalogLabelsAlone(t *testing.T) {
 		},
 	}))
 	var name string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT name FROM labels WHERE id=?`), labels["Label_unused"]).Scan(&name))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT name FROM labels WHERE id=?`), labels["Label_unused"]).Scan(&name))
 	assert.Equal("Unchanged", name)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM labels WHERE source_id=?`), source.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM labels WHERE source_id=?`), source.ID).Scan(&count))
 	assert.Equal(2, count)
 	after, err := st.DerivedDataRevision()
 	require.NoError(err)
@@ -316,11 +316,11 @@ func TestEmailTagsGmailPreservesCrossRenamedLabelIdentities(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st, source, first := tagFixture(t, "gmail", "message-1")
-			conversation, err := st.EnsureConversation(source.ID, "thread-1", "Tags fixture")
+			conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Tags fixture")
 			require.NoError(err)
 			second, err := st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "message-2", ConversationID: conversation, MessageType: "email"})
 			require.NoError(err)
-			labels, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+			labels, err := st.EnsureLabelsBatch(t.Context(), source.ID, map[string]store.LabelInfo{
 				"Label_a": {Name: "Alpha", Type: "user"},
 				"Label_b": {Name: "Beta", Type: "user"},
 				"Label_c": {Name: "Gamma", Type: "user"},
@@ -365,7 +365,7 @@ func TestEmailTagsGmailPreservesSystemLabelNames(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := newAttrFixture(t, "gmail", "owner@example.test")
-			labels, err := f.st.EnsureLabelsBatch(f.source.ID, map[string]store.LabelInfo{
+			labels, err := f.st.EnsureLabelsBatch(t.Context(), f.source.ID, map[string]store.LabelInfo{
 				tc.id: {Name: tc.name, Type: "system"},
 			})
 			require.NoError(err)
@@ -385,7 +385,7 @@ func TestEmailTagsGmailPreservesSystemLabelNames(t *testing.T) {
 			assert.ElementsMatch([]string{tc.name, "Next"}, message.Labels)
 			assert.ElementsMatch([]int64{first, second}, searchIDs(t, f.st, "label:"+tc.name))
 			var role string
-			require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT system_role FROM labels WHERE id=?`), labels[tc.id]).Scan(&role))
+			require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT system_role FROM labels WHERE id=?`), labels[tc.id]).Scan(&role))
 			assert.Equal(tc.role, role)
 		})
 	}
@@ -398,7 +398,7 @@ func TestEmailTagsGmailKeepsDraftRole(t *testing.T) {
 			require := require.New(t)
 			st, source, id := tagFixture(t, "gmail", "message-1")
 			if existing {
-				_, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+				_, err := st.EnsureLabelsBatch(t.Context(), source.ID, map[string]store.LabelInfo{
 					"DRAFT": {Name: "DRAFT", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
 				})
 				require.NoError(err)
@@ -409,7 +409,7 @@ func TestEmailTagsGmailKeepsDraftRole(t *testing.T) {
 				Provider: "gmail", Tags: []string{"DRAFT"}, Verified: true,
 			}))
 			var role sql.NullString
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT system_role FROM labels WHERE source_id=? AND source_label_id='DRAFT'`), source.ID).Scan(&role))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT system_role FROM labels WHERE source_id=? AND source_label_id='DRAFT'`), source.ID).Scan(&role))
 			assert.Equal(sql.NullString{String: "drafts", Valid: true}, role)
 		})
 	}
@@ -430,7 +430,7 @@ func TestMicrosoftMailCategoryIdentityMatchesNativeCaseRules(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st, source, first := tagFixture(t, "msmail", "message-1")
-			conversation, err := st.EnsureConversation(source.ID, "thread-1", "Tags fixture")
+			conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Tags fixture")
 			require.NoError(err)
 			second, err := st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "message-2", ConversationID: conversation, MessageType: "email"})
 			require.NoError(err)
@@ -466,6 +466,6 @@ func TestMicrosoftMailCategoriesDeduplicateSnapshotCaseVariants(t *testing.T) {
 	require.NoError(err)
 	assert.Len(ids, 1)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM labels WHERE source_id=?`), source.ID).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM labels WHERE source_id=?`), source.ID).Scan(&count))
 	assert.Equal(1, count)
 }

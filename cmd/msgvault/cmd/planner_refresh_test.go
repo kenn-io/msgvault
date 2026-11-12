@@ -20,7 +20,8 @@ import (
 func runPlannerRefreshChild() {
 	db, err := sql.Open("sqlite3", os.Getenv("MSGVAULT_TEST_PLANNER_DB"))
 	if err == nil {
-		_, err = db.Exec("PRAGMA analysis_limit=0; ANALYZE messages")
+		// This child process is its own root, with no caller context.
+		_, err = db.ExecContext(context.Background(), "PRAGMA analysis_limit=0; ANALYZE messages")
 		_ = db.Close()
 	}
 	if err != nil {
@@ -92,7 +93,7 @@ func TestRunChildReloadsPlannerStatistics(t *testing.T) {
 				require.Error(err)
 			}
 			var stat string
-			require.NoError(s.DB().QueryRow(`SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'`).Scan(&stat))
+			require.NoError(s.DB().QueryRowContext(t.Context(), `SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'`).Scan(&stat))
 			assert.Equal("3004 1502", stat, "reload preserves the child's full statistics")
 			// Reserve each checked connection until every serving slot is checked.
 			for range 2 {

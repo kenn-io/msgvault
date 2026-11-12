@@ -52,7 +52,7 @@ func TestAuthorizeGoogleScopeAliases(t *testing.T) {
 			mgr.browserFlowFn = func(context.Context, string, bool) (*oauth2.Token, error) {
 				return (&oauth2.Token{AccessToken: "alias-token", TokenType: "Bearer", Expiry: time.Now().Add(time.Hour)}).WithExtra(map[string]any{"scope": strings.Join(granted, " ")}), nil
 			}
-			requirements.NoError(mgr.Authorize(context.Background(), "person@example.com"))
+			requirements.NoError(mgr.Authorize(t.Context(), "person@example.com"))
 			tf, err := mgr.loadTokenFile(t.Context(), "person@example.com")
 			requirements.NoError(err)
 			assertions.Equal(expanded, tf.Scopes)

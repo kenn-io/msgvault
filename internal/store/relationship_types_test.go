@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,7 +14,7 @@ func TestSeededRelationshipTypesCoverEveryRegisteredRelatedValue(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 
-	types, err := f.Store.ListRelationshipTypesContext(context.Background())
+	types, err := f.Store.ListRelationshipTypesContext(t.Context())
 	require.NoError(err)
 	require.Len(types, 19)
 
@@ -69,7 +68,7 @@ func TestSeededRelationshipTypeOrientationAndSymmetry(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	parent, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "parent")
 	require.NoError(err)
@@ -112,7 +111,7 @@ func TestEnsureSeededRelationshipTypesIsIdempotentAndPreservesLabelEdits(t *test
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	friend, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "friend")
 	require.NoError(err)
@@ -125,7 +124,7 @@ func TestEnsureSeededRelationshipTypesIsIdempotentAndPreservesLabelEdits(t *test
 
 	// Corrupt a structural column the way a stale database or a bad manual
 	// edit would, so the reconciler has something real to repair.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE relationship_types SET is_symmetric = FALSE, is_deletable = TRUE WHERE slug = ?`), "friend")
 	require.NoError(err)
 
@@ -160,7 +159,7 @@ func TestInitSchemaPreservesUserRemappedSeededVCardType(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	friend, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "friend")
 	require.NoError(err)
@@ -212,12 +211,12 @@ func TestEnsureSeededRelationshipTypesRestoresADeletedSeed(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// A partially seeded or hand-edited database self-heals, which is why the
 	// reconciler runs on every open instead of behind an applied_migrations
 	// gate that can only ever fire once.
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`DELETE FROM relationship_types WHERE slug = ?`), "neighbor")
 	require.NoError(err)
 
@@ -238,7 +237,7 @@ func TestEnsureSeededRelationshipTypesRepairsStructuralDriftButPreservesLabels(t
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	friend, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "friend")
 	require.NoError(err)
@@ -247,7 +246,7 @@ func TestEnsureSeededRelationshipTypesRepairsStructuralDriftButPreservesLabels(t
 	// while these three fields are structural.
 	// The stale timestamp makes a successful repair observable on SQLite too,
 	// whose datetime('now') has second precision.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE relationship_types
 		SET forward_label = ?, reverse_label = ?, is_symmetric = FALSE,
 		    is_deletable = TRUE,
@@ -287,14 +286,14 @@ func TestEnsureSeededRelationshipTypesRepairsInverseDriftWithRevision(t *testing
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	parent, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "parent")
 	require.NoError(err)
 	child, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "child")
 	require.NoError(err)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE relationship_types
 		SET inverse_type_id = NULL, updated_at = '2000-01-01 00:00:00'
 		WHERE id = ?
@@ -325,7 +324,7 @@ func TestCreateRelationshipTypeAssignsUUIDUniversalIDAndUserOwnership(t *testing
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	color := "#336699"
 	created, err := f.Store.CreateRelationshipTypeContext(ctx, store.RelationshipTypeInput{
@@ -367,7 +366,7 @@ func TestCreateRelationshipTypeValidatesSlugSymmetryAndRelatedType(t *testing.T)
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for _, slug := range []string{
 		"", "  ", "Mentor", "co worker", "co_worker", "-lead", "lead-",
@@ -427,7 +426,7 @@ func TestUpdateRelationshipTypeEditsPresentationAndRejectsStaleRevision(t *testi
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	created, err := f.Store.CreateRelationshipTypeContext(ctx, store.RelationshipTypeInput{
 		Slug: "mentor", ForwardLabel: "mentor", ReverseLabel: "mentee",
@@ -466,7 +465,7 @@ func TestRelationshipTypeVCardMappingNormalizesAndClears(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	rawRelatedType := "  ME  "
 
 	created, err := f.Store.CreateRelationshipTypeContext(ctx, store.RelationshipTypeInput{
@@ -488,7 +487,7 @@ func TestUpdateRelationshipTypeKeepsSymmetricLabelsIdentical(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	spouse, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "spouse")
 	require.NoError(err)
@@ -509,7 +508,7 @@ func TestUpdateRelationshipTypeKeepsSymmetricLabelsIdentical(t *testing.T) {
 func TestDeleteRelationshipTypeProtectsSystemTypesAndTypesInUse(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	friend, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "friend")
 	require.NoError(err)
@@ -536,12 +535,12 @@ func TestSeededSymmetryDriftRepairsLabelsInsteadOfBreakingInitSchema(t *testing.
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// A writer that bypasses Go flips a symmetric seed's flag. The update
 	// API must still refuse unequal labels, because the next reconciliation
 	// restores seed-defined symmetry regardless of the stored flag.
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE relationship_types SET is_symmetric = FALSE WHERE slug = 'friend'`))
 	require.NoError(err)
 	friend, err := f.Store.GetRelationshipTypeBySlugContext(ctx, "friend")
@@ -554,7 +553,7 @@ func TestSeededSymmetryDriftRepairsLabelsInsteadOfBreakingInitSchema(t *testing.
 	// The same out-of-band writer also pulls the labels apart. Restoring
 	// is_symmetric must repair the labels too, not fail InitSchema on the
 	// symmetric-label CHECK.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE relationship_types SET forward_label = 'mate', reverse_label = 'buddy' WHERE slug = 'friend'`))
 	require.NoError(err)
 	require.NoError(f.Store.EnsureSeededRelationshipTypesContext(ctx))

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,18 +25,18 @@ func TestRegisterCalendarsAndReport_RegistersSourcesAndReports(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := registerCalendarsAndReport(context.Background(), &out, st, api,
+	err := registerCalendarsAndReport(t.Context(), &out, st, api,
 		"alice@example.com", "acme", true)
 	require := require.New(t)
 	assert := assert.New(t)
 	require.NoError(err)
 
 	for _, id := range []string{"alice@example.com/primary", "alice@example.com/team@group.calendar.google.com"} {
-		src, err := st.GetSourceByIdentifier(id)
+		src, err := st.GetSourceByIdentifier(t.Context(), id)
 		require.NoError(err, id)
 		assert.Equal("gcal", src.SourceType)
 	}
-	_, err = st.GetSourceByIdentifier("alice@example.com/holidays")
+	_, err = st.GetSourceByIdentifier(t.Context(), "alice@example.com/holidays")
 	require.Error(err, "reader-only calendar is not registered without --all-calendars")
 
 	assert.Contains(out.String(), "Registered 2 calendar(s) for alice@example.com")
@@ -50,7 +49,7 @@ func TestRegisterCalendarsAndReport_NoMatchIsNotAnError(t *testing.T) {
 	api.Calendars = []gcal.Calendar{{ID: "holidays", AccessRole: "reader"}}
 
 	var out bytes.Buffer
-	require.NoError(t, registerCalendarsAndReport(context.Background(), &out, st, api,
+	require.NoError(t, registerCalendarsAndReport(t.Context(), &out, st, api,
 		"alice@example.com", "", false))
 	assert.Contains(t, out.String(), "No calendars matched the filter")
 }

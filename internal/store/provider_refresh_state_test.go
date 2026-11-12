@@ -103,7 +103,8 @@ func TestProviderIdentityRefreshStateUndecodablePayloadIsDue(t *testing.T) {
 	source, err := st.GetOrCreateSource("gmail", "user@example.test")
 	require.NoError(err)
 
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`INSERT INTO archive_metadata (key, value) VALUES (?, ?)`),
 		"provider_identity_refresh:"+strconv.FormatInt(source.ID, 10), "not json",
 	)

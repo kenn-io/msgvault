@@ -1,7 +1,6 @@
 package query_test
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -36,11 +35,11 @@ func TestDateBoundary_StoreAPIMatchesEngine(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	src, err := st.GetOrCreateSource("gmail", "boundary@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "thread-1", "Thread 1")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-1", "Thread 1")
 	require.NoError(err, "EnsureConversation")
 
 	// Message lands at exactly midnight UTC — the worst case for a boundary

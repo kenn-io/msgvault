@@ -24,14 +24,14 @@ func TestConversationWindowConcurrentWriteSnapshot(t *testing.T) {
 					st = newPGStoreInternal(t)
 				} else {
 					var err error
-					st, err = OpenForTest(filepath.Join(t.TempDir(), "window.db"))
+					st, err = OpenForTest(t.Context(), filepath.Join(t.TempDir(), "window.db"))
 					requirements.NoError(err)
 					t.Cleanup(func() { requirements.NoError(st.Close()) })
 					requirements.NoError(st.InitSchema())
 				}
 				source, err := st.GetOrCreateSource("gmail", "snapshot@example.com")
 				requirements.NoError(err)
-				conv, err := st.EnsureConversation(source.ID, "snapshot", "Snapshot")
+				conv, err := st.EnsureConversation(t.Context(), source.ID, "snapshot", "Snapshot")
 				requirements.NoError(err)
 				base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 				var ids []int64
@@ -47,9 +47,9 @@ func TestConversationWindowConcurrentWriteSnapshot(t *testing.T) {
 				requirements.NoError(err)
 				defer func() { _ = writer.Rollback() }()
 				if change == "insert" {
-					_, err = writer.Exec(st.Rebind(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, sent_at) VALUES (?, ?, 'new', 'email', ?)`), source.ID, conv, base.Add(-time.Minute))
+					_, err = writer.ExecContext(t.Context(), st.Rebind(`INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, sent_at) VALUES (?, ?, 'new', 'email', ?)`), source.ID, conv, base.Add(-time.Minute))
 				} else {
-					_, err = writer.Exec(st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id IN (?, ?)`), base, ids[0], ids[1])
+					_, err = writer.ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id IN (?, ?)`), base, ids[0], ids[1])
 				}
 				requirements.NoError(err)
 

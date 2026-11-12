@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -26,12 +27,12 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/msgsegment"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
@@ -162,7 +163,7 @@ func (e *listAccountsTrackingEngine) ListAccounts(ctx context.Context) ([]query.
 func callToolDirect(t *testing.T, name string, fn toolHandler, args map[string]any) *toolResult {
 	t.Helper()
 	req := toolRequest{arguments: args}
-	result, err := fn(context.Background(), req)
+	result, err := fn(t.Context(), req)
 	require.NoError(t, err, "%s handler returned error", name)
 	return result
 }
@@ -197,7 +198,7 @@ func TestToolErrorHasNoStructuredOutput(t *testing.T) {
 	localResult := toolErrorResult("test failure")
 	wireResult, output, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
 		return localResult, nil
-	})(context.Background(), &sdkmcp.CallToolRequest{}, map[string]any{})
+	})(t.Context(), &sdkmcp.CallToolRequest{}, map[string]any{})
 	must.NoError(err)
 	checks.Nil(output)
 	wireJSON, err := json.Marshal(wireResult)
@@ -212,7 +213,7 @@ func TestOfficialToolHandlerSanitizesInternalErrors(t *testing.T) {
 	checks := assert.New(t)
 	wireResult, output, err := officialToolHandler(func(context.Context, toolRequest) (*toolResult, error) {
 		return nil, &internalError{operation: "load private archive", cause: errors.New("secret filesystem path")}
-	})(context.Background(), &sdkmcp.CallToolRequest{}, map[string]any{})
+	})(t.Context(), &sdkmcp.CallToolRequest{}, map[string]any{})
 
 	checks.Nil(wireResult)
 	checks.Nil(output)
@@ -240,7 +241,7 @@ func TestErrorIsolationMiddlewarePreservesWrappedJSONRPCErrors(t *testing.T) {
 		return nil, wrappedErr
 	})
 
-	result, err := handler(context.Background(), "tools/call", nil)
+	result, err := handler(t.Context(), "tools/call", nil)
 
 	checks.Nil(result)
 	must.Same(wrappedErr, err)
@@ -348,10 +349,6 @@ func TestSearchMetadata(t *testing.T) {
 	})
 }
 
-type recordingDocumentSearcher struct {
-	request store.DocumentSearchRequest
-}
-
 type recordingVisualSearcher struct{ request VisualSearchRequest }
 
 func (s *recordingVisualSearcher) SearchVisualAttachments(
@@ -438,80 +435,6 @@ func TestSearchPersonFilesPreservesOmittedDirectionDefault(t *testing.T) {
 
 	assert.Nil(t, searcher.request.Directions,
 		"an omitted direction must let the metadata route include unclassified roster rows")
-}
-
-func (s *recordingDocumentSearcher) SearchDocuments(
-	_ context.Context,
-	request store.DocumentSearchRequest,
-) (store.DocumentSearchResponse, error) {
-	s.request = request
-	return store.DocumentSearchResponse{
-		Revision: 4,
-		Results: []store.DocumentSearchResult{{
-			AttachmentID: 17, MessageID: 18, Filename: "inspection.xlsx",
-			OccurrenceKey: "occurrence", CanonicalBlobHash: "hash", ChunkKey: "chunk",
-			Excerpt: "carton damage", ProfileID: "profile", ExtractionID: "extraction",
-			Provider: "mistral", Model: "ocr", MatchedSignals: []string{"content"}, Rank: 1,
-			PersonProvenance: &personscope.Provenance{
-				ParticipantIDs: []int64{4}, Roles: []personscope.Role{personscope.RoleFrom},
-				Directions: []personscope.Direction{personscope.FromPerson},
-			},
-		}},
-	}, nil
-}
-
-func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
-	response := runTool[store.DocumentSearchResponse](t, ToolSearchDocuments, h.searchDocuments, map[string]any{
-		"query": "carton damage", "source_ids": []any{float64(3), float64(7)},
-		"message_types": []any{"email", "mms"}, "attachment_id": float64(17),
-		"message_id": float64(18), "person_id": float64(40),
-		"directions": []any{"from_person", "group"},
-		"after":      "2026-08-01", "before": "2026-08-20",
-		"limit": float64(5), "cursor": "opaque",
-		"mode": "lexical", "candidate_limit": float64(1001),
-	})
-	assert.Equal("carton damage", searcher.request.Query)
-	assert.Equal([]int64{3, 7}, searcher.request.SourceIDs)
-	assert.Equal([]string{"email", "mms"}, searcher.request.MessageTypes)
-	assert.Equal(int64(17), searcher.request.AttachmentID)
-	assert.Equal(int64(18), searcher.request.MessageID)
-	assert.Equal(int64(40), searcher.request.PersonID)
-	assert.Equal([]personscope.Direction{personscope.FromPerson, personscope.Group}, searcher.request.Directions)
-	require.NotNil(searcher.request.After)
-	require.NotNil(searcher.request.Before)
-	assert.Equal(5, searcher.request.PageSize)
-	assert.Equal("opaque", searcher.request.Cursor)
-	assert.Equal("lexical", searcher.request.SearchMode)
-	assert.Equal(1001, searcher.request.CandidateLimit)
-	require.Len(response.Results, 1)
-	assert.Equal("inspection.xlsx", response.Results[0].Filename)
-	assert.Equal("mistral", response.Results[0].Provider)
-	require.NotNil(response.Results[0].PersonProvenance)
-	assert.Equal([]int64{4}, response.Results[0].PersonProvenance.ParticipantIDs)
-}
-
-func TestSearchDocumentAttachmentsRejectsOutOfRangeExactID(t *testing.T) {
-	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
-	result := runToolExpectError(t, ToolSearchDocuments, h.searchDocuments, map[string]any{
-		"query": "carton damage", "attachment_id": math.Exp2(63),
-	})
-	assert.Contains(t, resultText(t, result), "attachment_id must be a positive integer")
-	assert.Empty(t, searcher.request.Query, "an invalid exact filter must never be silently dropped")
-}
-
-func TestSearchDocumentAttachmentsRejectsSemanticCandidateLimitAboveBound(t *testing.T) {
-	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
-	result := runToolExpectError(t, ToolSearchDocuments, h.searchDocuments, map[string]any{
-		"query": "carton damage", "mode": "semantic", "candidate_limit": float64(1001),
-	})
-	assert.Contains(t, resultText(t, result), "candidate_limit must be an integer between 1 and 1000")
-	assert.Empty(t, searcher.request.Query)
 }
 
 func TestSearchRejectsInvalidQueryBeforeDispatch(t *testing.T) {
@@ -1236,7 +1159,7 @@ func TestSearchMessageBodies_HonorsBackendCancellation(t *testing.T) {
 		},
 	}
 	h := newTestHandlers(engine)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	req := toolRequest{arguments: map[string]any{"query": "needle"}}
 
@@ -1536,7 +1459,7 @@ func TestAttachVectorChunkMatches_HTMLOnlyUsesEmbeddingCorpus(t *testing.T) {
 	}
 	items := []searchMessageItem{{ID: messageID}}
 
-	require.NoError(t, h.attachVectorChunkMatches(context.Background(), 1, []float32{1}, items, 0))
+	require.NoError(t, h.attachVectorChunkMatches(t.Context(), 1, []float32{1}, items, 0))
 
 	require.Len(t, items[0].Matches, 1)
 	assert.Equal(t, "semantic needle", items[0].Matches[0].Snippet)
@@ -2000,6 +1923,99 @@ func TestSearchMessageBodies_UnknownMode(t *testing.T) {
 }
 
 func TestGetMessage(t *testing.T) {
+	t.Run("segment windows and limits", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, body, messageType, html string
+			args                          map[string]any
+			want                          []msgsegment.Segment
+			truncated                     bool
+		}{
+			{"first page", "New\n> Old\n", "email", "", map[string]any{"max_chars": float64(6)}, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 4}, {Kind: msgsegment.Quoted, Start: 4, End: 10, Depth: 1}}, false},
+			{"second page", "New\n> Old\n", "email", "", map[string]any{"offset": float64(6)}, []msgsegment.Segment{{Kind: msgsegment.Quoted, Start: 4, End: 10, Depth: 1}}, false},
+			{"chat", "> my markdown\n", "beeper", "", nil, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 14}}, false},
+			{"HTML only", "", "email", "<p>Hello</p>", nil, nil, false},
+			{"explicit HTML", "Hello", "email", "<p>Hello</p>", map[string]any{"body_format": "html"}, nil, false},
+			{"empty text", "", "beeper", "", nil, nil, false},
+			{"past end", "New\n> Old\n", "email", "", map[string]any{"offset": float64(10)}, nil, false},
+			{"scan limit", strings.Repeat("a", msgsegment.MaxBodyBytes+1), "email", "", nil, []msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: msgsegment.MaxBodyBytes + 1}}, true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				message := testutil.NewMessageDetail(42).WithBodyText(tc.body).WithBodyHTML(tc.html).BuildPtr()
+				message.MessageType = tc.messageType
+				h := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: message}})
+				args := map[string]any{"id": float64(42), "include_segments": true}
+				maps.Copy(args, tc.args)
+				got := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, args)
+				assert.Equal(t, tc.want, got.Segments)
+				assert.Equal(t, tc.truncated, got.SegmentsTruncated)
+				if got.BodyFormat == bodyFormatHTML {
+					assert.Equal(t, "unsupported_format", got.SegmentsUnavailable)
+					assert.Empty(t, got.SegmentsVersion)
+				} else {
+					assert.Equal(t, "seg-v1", got.SegmentsVersion)
+					assert.Empty(t, got.SegmentsUnavailable)
+				}
+			})
+		}
+	})
+
+	t.Run("alternating body", func(t *testing.T) {
+		assert := assert.New(t)
+		body := strings.Repeat("a\n> b\n", 70000)
+		h := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
+			42: testutil.NewMessageDetail(42).WithBodyText(body).BuildPtr(),
+		}})
+		page := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42), "include_segments": true, "max_chars": float64(4)})
+		assert.Equal([]msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 2}, {Kind: msgsegment.Quoted, Start: 2, End: 6, Depth: 1}}, page.Segments)
+		assert.False(page.SegmentsTruncated)
+		late := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42), "include_segments": true, "offset": float64(419996), "max_chars": float64(4)})
+		assert.Equal([]msgsegment.Segment{{Kind: msgsegment.Quoted, Start: 419996, End: 420000, Depth: 1}}, late.Segments)
+		assert.False(late.SegmentsTruncated)
+	})
+
+	t.Run("segment flag off", func(t *testing.T) {
+		h := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
+			42: testutil.NewMessageDetail(42).WithBodyText("New\n> Old\n").BuildPtr(),
+		}})
+		for _, args := range []map[string]any{{"id": float64(42)}, {"id": float64(42), "include_segments": false}} {
+			got := runTool[map[string]any](t, ToolGetMessage, h.getMessage, args)
+			for _, key := range []string{"segments", "segments_version", "segments_truncated", "segments_unavailable"} {
+				assert.NotContains(t, got, key)
+			}
+		}
+	})
+
+	t.Run("segments through SDK", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		eng := &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
+			42: testutil.NewMessageDetail(42).WithBodyText("New\n> Old\n").BuildPtr(),
+			43: testutil.NewMessageDetail(43).WithBodyText("New\n> Old\n>> Older\n-- \nSender\nBegin forwarded message:\nOld").BuildPtr(),
+		}}
+		ctx := t.Context()
+		session := task5ConnectClient(t, ServeOptions{Engine: eng}, false)
+		result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMessage, Arguments: map[string]any{"id": 42, "include_segments": true}})
+		require.NoError(err)
+		require.False(result.IsError)
+		got := task5StructuredAs[map[string]any](t, result)
+		assert.Equal("seg-v1", got["segments_version"])
+		assert.Equal([]any{
+			map[string]any{"kind": "authored", "start": float64(0), "end": float64(4)},
+			map[string]any{"kind": "quoted", "start": float64(4), "end": float64(10), "depth": float64(1)},
+		}, got["segments"])
+		result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMessage, Arguments: map[string]any{"id": 43, "include_segments": true}})
+		require.NoError(err)
+		require.False(result.IsError)
+		got = task5StructuredAs[map[string]any](t, result)
+		assert.Equal([]any{
+			map[string]any{"kind": "authored", "start": float64(0), "end": float64(4)},
+			map[string]any{"kind": "quoted", "start": float64(4), "end": float64(10), "depth": float64(1)},
+			map[string]any{"kind": "quoted", "start": float64(10), "end": float64(19), "depth": float64(2)},
+			map[string]any{"kind": "signature", "start": float64(19), "end": float64(30)},
+			map[string]any{"kind": "forwarded", "start": float64(30), "end": float64(58)},
+		}, got["segments"])
+	})
+
 	eng := &querytest.MockEngine{
 		Messages: map[int64]*query.MessageDetail{
 			42: testutil.NewMessageDetail(42).WithSubject("Test Message").WithBodyText("Hello world").WithSourceConversationID("thread-xyz").BuildPtr(),
@@ -2041,7 +2057,7 @@ func TestGetMessage(t *testing.T) {
 				require.NoError(t, f.Store.UpsertMessageBody(messageID,
 					sql.NullString{String: "Previously archived text", Valid: true},
 					sql.NullString{String: tc.html, Valid: true}))
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, messageID)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, messageID)
 				require.NoError(t, err)
 				handlers := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
 				msg := runTool[map[string]any](t, "get_message", handlers.getMessage, map[string]any{"id": float64(messageID)})
@@ -2058,7 +2074,7 @@ func TestGetMessage(t *testing.T) {
 			WithSourceMessageID("beeper-sender-only").
 			WithSubject("Synthetic Beeper message").
 			Create(t, f.Store)
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE messages SET message_type = 'beeper', sender_id = ? WHERE id = ?`,
 		), senderID, messageID)
 		require.NoError(t, err, "set direct sender")
@@ -2428,7 +2444,7 @@ func TestAggregate(t *testing.T) {
 	t.Run("list uses mailing-list dimension", func(t *testing.T) {
 		f := storetest.New(t)
 		messageID := f.NewMessage().WithSourceMessageID("mcp-list-aggregate").Create(t, f.Store)
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET list_id = ? WHERE id = ?`),
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id = ? WHERE id = ?`),
 			"<announce.example.test>", messageID)
 		require.NoError(t, err)
 		realHandlers := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
@@ -3048,7 +3064,7 @@ func TestSearchInMessageHiddenHTMLText(t *testing.T) {
 			require.NoError(f.Store.UpsertMessageBody(id,
 				sql.NullString{String: "semantic body", Valid: true},
 				sql.NullString{String: tc.html, Valid: true}))
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, id)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, id)
 			require.NoError(err)
 			h := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
 			if tc.mode == searchModeVector {
@@ -4087,7 +4103,7 @@ func TestSearchByDomains(t *testing.T) {
 // down and returning ctx.Err(). Regression-guards a roborev #299
 // finding where Start was called without ever consulting ctx.
 func TestServeHTTPWithOptions_ContextCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 
 	// Bind on :0 so we don't conflict with anything on the host.
 	opts := ServeOptions{
@@ -4120,12 +4136,12 @@ func TestServeHTTPWithOptionsLiveListenerRequiresBearerAuth(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	addr := probe.Addr().String()
 	require.NoError(probe.Close())
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	stopped := make(chan struct{})
 	attachmentsDir := t.TempDir()
@@ -4152,7 +4168,7 @@ func TestServeHTTPWithOptionsLiveListenerRequiresBearerAuth(t *testing.T) {
 	var responseChallenge string
 	var responseCloseErr error
 	require.Eventually(func() bool {
-		req, requestErr := http.NewRequest(http.MethodPatch, "http://"+addr+"/mcp", nil)
+		req, requestErr := http.NewRequestWithContext(t.Context(), http.MethodPatch, "http://"+addr+"/mcp", nil)
 		if requestErr != nil {
 			return false
 		}
@@ -4227,7 +4243,7 @@ func TestBearerAuthHandler(t *testing.T) {
 					w.WriteHeader(http.StatusNoContent)
 				})
 				handler := bearerAuthHandler(apiKey, next)
-				req := httptest.NewRequest(method, "/mcp", nil)
+				req := httptest.NewRequestWithContext(t.Context(), method, "/mcp", nil)
 				req.Header.Set("Mcp-Session-Id", "test-session")
 				if tt.addAuth != nil {
 					tt.addAuth(req)
@@ -4261,7 +4277,7 @@ func TestBearerAuthHandlerRejectsMalformedCredentials(t *testing.T) {
 			handler := bearerAuthHandler("test-api-key", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 				called = true
 			}))
-			req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil)
 			for _, header := range tt.headers {
 				req.Header.Add("Authorization", header)
 			}
@@ -4285,7 +4301,7 @@ func TestBearerAuthHandlerCompatibilityAndSchemeCase(t *testing.T) {
 		}))
 		resp := httptest.NewRecorder()
 
-		handler.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/mcp", nil))
+		handler.ServeHTTP(resp, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil))
 
 		assert.Equal(t, http.StatusAccepted, resp.Code)
 		assert.True(t, called)
@@ -4297,7 +4313,7 @@ func TestBearerAuthHandlerCompatibilityAndSchemeCase(t *testing.T) {
 			called = true
 			w.WriteHeader(http.StatusAccepted)
 		}))
-		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil)
 		req.Header.Set("Authorization", "bEaReR test-api-key")
 		resp := httptest.NewRecorder()
 
@@ -4319,13 +4335,13 @@ func TestMCPHTTPServerMountsProtectedEndpoint(t *testing.T) {
 	checks.Equal(120*time.Second, stdlibServer.IdleTimeout)
 
 	missing := httptest.NewRecorder()
-	missingRequest := httptest.NewRequest(http.MethodPatch, "/mcp", nil)
+	missingRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/mcp", nil)
 	missingRequest.Header.Set("Mcp-Session-Id", "test-session")
 	stdlibServer.Handler.ServeHTTP(missing, missingRequest)
 	checks.Equal(http.StatusUnauthorized, missing.Code)
 
 	authorized := httptest.NewRecorder()
-	authorizedRequest := httptest.NewRequest(http.MethodPatch, "/mcp", nil)
+	authorizedRequest := httptest.NewRequestWithContext(t.Context(), http.MethodPatch, "/mcp", nil)
 	authorizedRequest.Header.Set("Authorization", "Bearer test-api-key")
 	stdlibServer.Handler.ServeHTTP(authorized, authorizedRequest)
 	checks.Equal(http.StatusMethodNotAllowed, authorized.Code)
@@ -4452,4 +4468,21 @@ func TestMetadataSearchLiteralORWarning(t *testing.T) {
 
 func (*fakeBackend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
 	return vector.EmbeddingCheckpoints{}
+}
+
+func TestHTTPCallsSkipFamilyDiscovery(t *testing.T) {
+	probes := 0
+	handler, closeHandler := NewHTTPHandler(ServeOptions{
+		Engine:           &querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, Subject: "synthetic message"}}},
+		DiscoverFamilies: func(context.Context) *ArchiveFamilies { probes++; return &ArchiveFamilies{} },
+	}, HTTPOptions{})
+	defer closeHandler()
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_message","arguments":{"id":42}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("Mcp-Protocol-Version", "2025-11-25")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Zero(t, probes)
 }

@@ -1227,6 +1227,7 @@ func (e *Engine) SearchFastWithStats(ctx context.Context, q *search.Query, query
 		Messages:   e.store.messageSummariesWithURLs(ctx, resp.JSON200.Messages),
 		TotalCount: resp.JSON200.TotalCount,
 		Stats:      totalStatsFromGenerated(resp.JSON200.Stats),
+		Hints:      searchHintsFromGenerated(resp.JSON200.Hints),
 	}, nil
 }
 

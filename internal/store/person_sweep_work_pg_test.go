@@ -64,9 +64,11 @@ func TestPersonSweepPostgreSQLUntrackingWinsPausedPublication(t *testing.T) {
 		err   error
 	}
 	untrackDone := make(chan untrackResult, 1)
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		if locked {
-			_, _ = holder.ExecContext(context.Background(),
+			_, _ = holder.ExecContext(
+				context.WithoutCancel(t.Context()),
 				`SELECT pg_advisory_unlock($1)`, advisoryKey)
 		}
 		if publishStarted {
@@ -75,9 +77,11 @@ func TestPersonSweepPostgreSQLUntrackingWinsPausedPublication(t *testing.T) {
 		if untrackStarted {
 			waitForPostgreSQLTestGoroutine(t, untrackFinished)
 		}
-		_, _ = f.store.DB().ExecContext(context.Background(),
+		_, _ = f.store.DB().ExecContext(
+			context.WithoutCancel(t.Context()),
 			`DROP TRIGGER IF EXISTS wait_for_person_sweep_publication ON person_sweep_work`)
-		_, _ = f.store.DB().ExecContext(context.Background(),
+		_, _ = f.store.DB().ExecContext(
+			context.WithoutCancel(t.Context()),
 			`DROP FUNCTION IF EXISTS wait_for_person_sweep_publication()`)
 		_ = holder.Close()
 	})

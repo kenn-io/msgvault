@@ -355,6 +355,33 @@ func (l LinkKataEvidencePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
+type MarkLoopDonePath struct {
+	// MessageID ID of the message that anchors the loop
+	MessageID int64 `json:"message_id" validate:"gte=1"`
+}
+
+func (m MarkLoopDonePath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type ReopenLoopPath struct {
+	// MessageID ID of the message that anchors the loop
+	MessageID int64 `json:"message_id" validate:"gte=1"`
+}
+
+func (r ReopenLoopPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type SnoozeLoopPath struct {
+	// MessageID ID of the message that anchors the loop
+	MessageID int64 `json:"message_id" validate:"gte=1"`
+}
+
+func (s SnoozeLoopPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type GetMessagePath struct {
 	// ID Message ID
 	ID int64 `json:"id"`

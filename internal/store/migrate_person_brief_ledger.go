@@ -54,20 +54,20 @@ func (s *Store) migratePersonFactClaimOriginBrief(ctx context.Context) error {
 // connection-scoped and cannot change inside a transaction, so this runs on a
 // dedicated pooled connection rather than through runMaintenance.
 func (s *Store) migratePersonFactClaimOriginBriefSQLite(ctx context.Context) (err error) {
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("acquire connection to widen person fact claim origins: %w", err)
-	}
-	defer func() { _ = conn.Close() }()
-
 	var definition string
-	if err := conn.QueryRowContext(ctx, `SELECT sql FROM sqlite_master
+	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master
 		WHERE type = 'table' AND name = 'person_fact_claims'`).Scan(&definition); err != nil {
 		return fmt.Errorf("inspect person fact claim origins: %w", err)
 	}
 	if strings.Contains(definition, "'brief'") {
 		return nil
 	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire connection to widen person fact claim origins: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
 	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
 		return fmt.Errorf("suspend foreign keys to widen person fact claim origins: %w", err)
 	}

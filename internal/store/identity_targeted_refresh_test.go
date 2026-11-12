@@ -31,7 +31,7 @@ func TestIdentityTargetedRefreshUsesEnvelopeAndSource(t *testing.T) {
 			target := create("forwarded-gmail-mask", "Mask@Example.test", sql.NullInt64{})
 			unrelated := create("another-envelope", "other@example.test", sql.NullInt64{Int64: participant, Valid: true})
 			// A source-wide refresh would also correct this deliberately stale unrelated row.
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET identity_is_from_me=TRUE,is_from_me=TRUE WHERE id=?`), unrelated)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET identity_is_from_me=TRUE,is_from_me=TRUE WHERE id=?`), unrelated)
 			require.NoError(err)
 			var retry int64
 			if path == "meeting" {
@@ -50,16 +50,16 @@ func TestIdentityTargetedRefreshUsesEnvelopeAndSource(t *testing.T) {
 			}
 			require.NoError(err)
 			if path != "unseen-batch" {
-				got, err := f.Store.GetMessageIsFromMe(target)
+				got, err := f.Store.GetMessageIsFromMe(t.Context(), target)
 				require.NoError(err)
 				assert.True(got, "envelope-only message is repaired in the confirmation transaction")
 			}
 			if retry != 0 {
-				got, err := f.Store.GetMessageIsFromMe(retry)
+				got, err := f.Store.GetMessageIsFromMe(t.Context(), retry)
 				require.NoError(err)
 				assert.False(got, "the meeting being retried stays on its persistence path")
 			}
-			got, err := f.Store.GetMessageIsFromMe(unrelated)
+			got, err := f.Store.GetMessageIsFromMe(t.Context(), unrelated)
 			require.NoError(err)
 			assert.True(got, "unrelated message must not be recomputed")
 			if path != "single" {
@@ -67,10 +67,10 @@ func TestIdentityTargetedRefreshUsesEnvelopeAndSource(t *testing.T) {
 			}
 			_, err = f.Store.RemoveAccountIdentity(f.Source.ID, "mask@example.test")
 			require.NoError(err)
-			got, err = f.Store.GetMessageIsFromMe(target)
+			got, err = f.Store.GetMessageIsFromMe(t.Context(), target)
 			require.NoError(err)
 			assert.False(got)
-			got, err = f.Store.GetMessageIsFromMe(unrelated)
+			got, err = f.Store.GetMessageIsFromMe(t.Context(), unrelated)
 			require.NoError(err)
 			assert.True(got, "removal is also targeted")
 		})

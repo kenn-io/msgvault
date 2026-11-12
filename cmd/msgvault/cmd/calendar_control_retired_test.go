@@ -28,7 +28,7 @@ func retireCalendarControlSourceForTest(t *testing.T, st *store.Store, account, 
 		"calendar_id":   calendarID,
 	})
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(retired.ID, string(syncConfig)))
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), retired.ID, string(syncConfig)))
 	destination, err := st.GetOrCreateSource(gcal.SourceType, account+"/archive@example.test")
 	require.NoError(t, err)
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{

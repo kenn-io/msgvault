@@ -117,7 +117,7 @@ func TestImportJobCreationDoesNotWaitForWorkerStartup(t *testing.T) {
 		st.finish()
 	})
 	srv := NewServer(&config.Config{}, st, nil, testLogger())
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/imports", strings.NewReader(`{"account":"archive@example.com"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/imports", strings.NewReader(`{"account":"archive@example.com"}`))
 	req.Header.Set("Content-Type", applicationJSONMediaType)
 	resp := httptest.NewRecorder()
 	responseDone := make(chan struct{})
@@ -194,7 +194,7 @@ type importJobTestResponse struct {
 
 func submitImportJob(t *testing.T, srv *Server, body string) importJobTestResponse {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/imports", bytes.NewBufferString(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/imports", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", applicationJSONMediaType)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
@@ -207,7 +207,7 @@ func submitImportJob(t *testing.T, srv *Server, body string) importJobTestRespon
 
 func getImportJob(t *testing.T, srv *Server, jobID string) (int, importJobTestResponse, string) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/imports/"+jobID, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/imports/"+jobID, nil)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
 	var result importJobTestResponse
@@ -226,7 +226,7 @@ func TestImportJobUsesDurableSyncOperationForProgressAndSummary(t *testing.T) {
 		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, OperationGate: NewSerialOperationGate(), Logger: testLogger()})
 		defer func() {
 			st.finish()
-			require.NoError(srv.Shutdown(context.Background()), "shutdown")
+			require.NoError(srv.Shutdown(t.Context()), "shutdown")
 		}()
 
 		created := submitImportJob(t, srv, `{"account":"archive@example.com","after":"2024-01-01","limit":25}`)
@@ -276,7 +276,7 @@ func TestImportJobHoldsIdleWorkLeaseUntilWorkerFinishes(t *testing.T) {
 		})
 		defer func() {
 			st.finish()
-			require.NoError(srv.Shutdown(context.Background()), "shutdown")
+			require.NoError(srv.Shutdown(t.Context()), "shutdown")
 		}()
 
 		submitImportJob(t, srv, `{"account":"archive@example.com"}`)
@@ -301,7 +301,7 @@ func TestImportJobRejectsAccountWithActiveSync(t *testing.T) {
 	st.active = &store.SyncRun{ID: 7, SourceID: 42, Status: store.SyncStatusRunning}
 	t.Cleanup(st.finish)
 	srv := NewServer(&config.Config{}, st, nil, testLogger())
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/imports", strings.NewReader(`{"account":"archive@example.com"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/imports", strings.NewReader(`{"account":"archive@example.com"}`))
 	req.Header.Set("Content-Type", applicationJSONMediaType)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
@@ -315,7 +315,7 @@ func TestImportJobReturnsConflictWhenSourceReservationFails(t *testing.T) {
 	st.createErr = store.ErrSyncAlreadyActive
 	t.Cleanup(st.finish)
 	srv := NewServer(&config.Config{}, st, nil, testLogger())
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/imports", strings.NewReader(`{"account":"archive@example.com"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/imports", strings.NewReader(`{"account":"archive@example.com"}`))
 	req.Header.Set("Content-Type", applicationJSONMediaType)
 	resp := httptest.NewRecorder()
 
@@ -331,7 +331,8 @@ func TestImportJobRejectsQueryForIMAPSource(t *testing.T) {
 	st := newImportJobTestStore()
 	st.sources[42].SourceType = "imap"
 	srv := NewServer(&config.Config{}, st, nil, testLogger())
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/imports",
 		strings.NewReader(`{"account":"archive@example.com","query":"from:alice@example.com"}`),
@@ -362,7 +363,8 @@ func TestImportJobTreatsLegacyEmptySourceTypeAsGmail(t *testing.T) {
 func TestImportJobCreationHasNoOrdinaryRequestDeadline(t *testing.T) {
 	t.Parallel()
 	srv := NewServer(&config.Config{}, nil, nil, testLogger())
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 
 	_, bounded := srv.requestTimeoutForPath(importJobsEndpointPath)
 	assert.False(t, bounded)
@@ -378,7 +380,7 @@ func TestImportJobFailureIsSanitized(t *testing.T) {
 		srv := NewServer(&config.Config{}, st, nil, testLogger())
 		defer func() {
 			st.finish()
-			require.NoError(srv.Shutdown(context.Background()), "shutdown")
+			require.NoError(srv.Shutdown(t.Context()), "shutdown")
 		}()
 
 		created := submitImportJob(t, srv, `{"account":"archive@example.com"}`)
@@ -402,7 +404,7 @@ func TestImportJobReturnsBusyInsteadOfBuildingASecondQueue(t *testing.T) { //nol
 	operationGateWaitLimit = 10 * time.Millisecond
 	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/imports", strings.NewReader(`{"account":"archive@example.com"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/imports", strings.NewReader(`{"account":"archive@example.com"}`))
 	req.Header.Set("Content-Type", applicationJSONMediaType)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
@@ -426,7 +428,7 @@ func TestImportJobRequestValidation(t *testing.T) {
 	}
 	for i, tt := range tests {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/imports", strings.NewReader(tt.body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/imports", strings.NewReader(tt.body))
 			if tt.contentType != "" {
 				req.Header.Set("Content-Type", tt.contentType)
 			}
@@ -442,7 +444,7 @@ func TestImportJobsRequireAuthentication(t *testing.T) {
 	st := newImportJobTestStore()
 	t.Cleanup(st.finish)
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "key"}}, st, nil, testLogger())
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/imports", strings.NewReader(`{"account":"archive@example.com"}`))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/imports", strings.NewReader(`{"account":"archive@example.com"}`))
 	req.Header.Set("Content-Type", applicationJSONMediaType)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)

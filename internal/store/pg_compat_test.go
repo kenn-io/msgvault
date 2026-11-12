@@ -191,7 +191,8 @@ func TestEnsureParticipant_Concurrent(t *testing.T) {
 	}
 
 	var count int
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind("SELECT COUNT(*) FROM participants WHERE email_address = ?"),
 		"race@example.com",
 	).Scan(&count), "count participants")
@@ -214,7 +215,7 @@ func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			id, err := st.EnsureParticipantByPhone("+15555550100", "Bob", "whatsapp")
+			id, err := st.EnsureParticipantByPhone(t.Context(), "+15555550100", "Bob", "whatsapp")
 			ids[idx] = id
 			errs[idx] = err
 		}(i)
@@ -230,7 +231,8 @@ func TestEnsureParticipantByPhone_Concurrent(t *testing.T) {
 	}
 
 	var count int
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind("SELECT COUNT(*) FROM participants WHERE phone_number = ?"),
 		"+15555550100",
 	).Scan(&count), "count participants")
@@ -309,6 +311,7 @@ func TestUpsertAttachment_Concurrent(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			errs[idx] = f.Store.UpsertAttachment(
+				t.Context(),
 				mid, "file.pdf", "application/pdf",
 				"ab/abcd1234", "abcd1234", 1024,
 			)
@@ -321,7 +324,8 @@ func TestUpsertAttachment_Concurrent(t *testing.T) {
 	}
 
 	var count int
-	require.NoError(t, f.Store.DB().QueryRow(
+	require.NoError(t, f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT COUNT(*) FROM attachments WHERE message_id = ? AND content_hash = ?"),
 		mid, "abcd1234",
 	).Scan(&count), "count attachments")

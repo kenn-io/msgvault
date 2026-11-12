@@ -205,7 +205,7 @@ func TestInlineOAuthAuthorizePayloadPKCELoopback(t *testing.T) {
 	f := newInlineOAuthServer(t)
 	tokensDir := t.TempDir()
 	m := inlineOAuthManagerForTest(t, f, tokensDir)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	payload, err := m.AuthorizePayload(ctx)
 	requires.NoError(err)
@@ -283,7 +283,7 @@ func TestInlineOAuthWrongStateDoesNotConsumeFlow(t *testing.T) {
 		http.Redirect(w, r, correct, http.StatusFound) //nolint:gosec // Registered loopback callback in the synthetic OAuth flow.
 	}
 	m := inlineOAuthManagerForTest(t, f, t.TempDir())
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	_, err := m.AuthorizePayload(ctx)
 	requires.NoError(err)
@@ -310,7 +310,7 @@ func TestInlineOAuthRejectsUnconfirmedPublicRegistration(t *testing.T) {
 			f := newInlineOAuthServer(t)
 			f.registrationHook = tc.mutate
 			m := inlineOAuthManagerForTest(t, f, t.TempDir())
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 			defer cancel()
 			var browserOpened atomic.Bool
 			m.openBrowserFn = func(context.Context, string) error { browserOpened.Store(true); cancel(); return nil }
@@ -344,7 +344,7 @@ func TestInlineOAuthRejectsUnsafeDiscovery(t *testing.T) {
 			f := newInlineOAuthServer(t)
 			f.metadataHook = tc.mutate
 			m := inlineOAuthManagerForTest(t, f, t.TempDir())
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 			defer cancel()
 			var browserOpened atomic.Bool
 			m.openBrowserFn = func(context.Context, string) error { browserOpened.Store(true); cancel(); return nil }
@@ -426,7 +426,7 @@ func TestInlineOAuthRejectsUnsafeCredentialDocuments(t *testing.T) {
 			payload := inlineOAuthPayloadForTest(t, credentials)
 			require.Error(t, m.ImportCredentials("inline:synthetic-account-42", payload))
 			assert.False(t, m.HasToken("inline:synthetic-account-42"))
-			_, err := m.HTTPClientFromPayload(context.Background(), payload)
+			_, err := m.HTTPClientFromPayload(t.Context(), payload)
 			require.Error(t, err)
 		})
 	}
@@ -460,20 +460,26 @@ func TestInlineOAuthPayloadClientFencesOriginAndPath(t *testing.T) {
 	}))
 	t.Cleanup(resource.Close)
 	m := NewOAuthManager(resource.URL+"/mcp/v2", t.TempDir(), nil)
-	client, err := m.HTTPClientFromPayload(context.Background(), inlineOAuthPayloadForTest(t, inlineOAuthCredentialsForTest(m)))
+	client, err := m.HTTPClientFromPayload(t.Context(), inlineOAuthPayloadForTest(t, inlineOAuthCredentialsForTest(m)))
 	requires.NoError(err)
-	resp, err := client.Get(m.endpoint)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, m.endpoint, nil)
+	requires.NoError(err)
+	resp, err := client.Do(request)
 	requires.NoError(err)
 	assertions.Equal(http.StatusOK, resp.StatusCode)
 	_ = resp.Body.Close()
 	for _, target := range []string{cdn.URL + "/media", resource.URL + "/media", resource.URL + "/mcp", strings.Replace(m.endpoint, "http://", "http://synthetic-user@", 1)} {
-		resp, err := client.Get(target)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
+		requires.NoError(err)
+		resp, err := client.Do(request)
 		if resp != nil {
 			_ = resp.Body.Close()
 		}
 		requires.ErrorContains(err, "only be sent to their MCP endpoint")
 	}
-	resp, err = client.Get(m.endpoint + "?redirect=1")
+	request, err = http.NewRequestWithContext(t.Context(), http.MethodGet, m.endpoint+"?redirect=1", nil)
+	requires.NoError(err)
+	resp, err = client.Do(request)
 	requires.NoError(err)
 	assertions.Equal(http.StatusFound, resp.StatusCode)
 	_ = resp.Body.Close()
@@ -489,7 +495,7 @@ func TestInlineOAuthExpiredPayloadCannotVerifyOrRefresh(t *testing.T) {
 	m := inlineOAuthManagerForTest(t, f, t.TempDir())
 	credentials := inlineOAuthCredentialsForTest(m)
 	credentials.Token.Expiry = time.Now().Add(-time.Hour)
-	_, err := m.HTTPClientFromPayload(context.Background(), inlineOAuthPayloadForTest(t, credentials))
+	_, err := m.HTTPClientFromPayload(t.Context(), inlineOAuthPayloadForTest(t, credentials))
 	require.ErrorContains(t, err, "expired")
 	f.mu.Lock()
 	assert.Empty(t, f.grants)
@@ -533,9 +539,9 @@ func TestInlineOAuthRefreshRotationAcrossManagers(t *testing.T) {
 	identifier := "inline:synthetic-account-42"
 	credentials := inlineOAuthCredentialsForTest(first)
 	requires.NoError(first.ImportCredentials(identifier, inlineOAuthPayloadForTest(t, credentials)))
-	firstSource, err := first.TokenSource(context.Background(), identifier)
+	firstSource, err := first.TokenSource(t.Context(), identifier)
 	requires.NoError(err)
-	secondSource, err := second.TokenSource(context.Background(), identifier)
+	secondSource, err := second.TokenSource(t.Context(), identifier)
 	requires.NoError(err)
 	// Sources obtained before replacement must reload the stored credential;
 	// neither may cache the earlier valid access or refresh token snapshot.
@@ -547,7 +553,7 @@ func TestInlineOAuthRefreshRotationAcrossManagers(t *testing.T) {
 	}
 	results := make(chan result, 2)
 	go func() { token, err := firstSource.Token(); results <- result{token, err} }()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	select {
 	case <-entered:
@@ -563,7 +569,7 @@ func TestInlineOAuthRefreshRotationAcrossManagers(t *testing.T) {
 	// manager's nonblocking lock retries and cancellation use virtual time;
 	// neither the HTTP server nor runner throughput controls the deadline.
 	synctest.Test(t, func(t *testing.T) {
-		blockedCtx, blockedCancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		blockedCtx, blockedCancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
 		defer blockedCancel()
 		_, blockedErr := second.TokenSource(blockedCtx, identifier)
 		require.ErrorIs(t, blockedErr, context.DeadlineExceeded)
@@ -615,7 +621,7 @@ func TestInlineOAuthRefreshPreservesOmittedRefreshToken(t *testing.T) {
 	credentials.Token.Expiry = time.Now().Add(-time.Hour)
 	identifier := "inline:synthetic-account-42"
 	requires.NoError(m.ImportCredentials(identifier, inlineOAuthPayloadForTest(t, credentials)))
-	source, err := m.TokenSource(context.Background(), identifier)
+	source, err := m.TokenSource(t.Context(), identifier)
 	requires.NoError(err)
 	token, err := source.Token()
 	requires.NoError(err)
@@ -646,7 +652,7 @@ func TestInlineOAuthRefreshFailureDoesNotDiscloseProviderBody(t *testing.T) {
 	requires.NoError(m.ImportCredentials(identifier, inlineOAuthPayloadForTest(t, credentials)))
 	before, err := m.ExportCredentials(identifier)
 	requires.NoError(err)
-	source, err := m.TokenSource(context.Background(), identifier)
+	source, err := m.TokenSource(t.Context(), identifier)
 	requires.NoError(err)
 	token, err := source.Token()
 	requires.ErrorContains(err, "HTTP 401")
@@ -676,7 +682,7 @@ func TestInlineOAuthRejectsEscalatedRefreshScopes(t *testing.T) {
 	requires.NoError(m.ImportCredentials(identifier, inlineOAuthPayloadForTest(t, credentials)))
 	before, err := m.ExportCredentials(identifier)
 	requires.NoError(err)
-	source, err := m.TokenSource(context.Background(), identifier)
+	source, err := m.TokenSource(t.Context(), identifier)
 	requires.NoError(err)
 	_, err = source.Token()
 	requires.ErrorContains(err, "unrequested scope")
@@ -693,7 +699,7 @@ func TestInlineOAuthRemovalInvalidatesExistingTokenSource(t *testing.T) {
 	m := inlineOAuthManagerForTest(t, f, t.TempDir())
 	identifier := "inline:synthetic-account-42"
 	requires.NoError(m.ImportCredentials(identifier, inlineOAuthPayloadForTest(t, inlineOAuthCredentialsForTest(m))))
-	source, err := m.TokenSource(context.Background(), identifier)
+	source, err := m.TokenSource(t.Context(), identifier)
 	requires.NoError(err)
 	token, err := source.Token()
 	requires.NoError(err)
@@ -703,7 +709,7 @@ func TestInlineOAuthRemovalInvalidatesExistingTokenSource(t *testing.T) {
 	token, err = source.Token()
 	requires.Error(err)
 	assertions.Nil(token)
-	_, err = m.TokenSource(context.Background(), identifier)
+	_, err = m.TokenSource(t.Context(), identifier)
 	requires.ErrorContains(err, "add-inline")
 	requires.NoError(m.DeleteToken(identifier), "removing absent credentials is idempotent")
 	f.mu.Lock()
@@ -728,9 +734,11 @@ func TestInlineOAuthHTTPClientObservesCredentialReplacementAndRemoval(t *testing
 	identifier := "inline:synthetic-account-42"
 	credentials := inlineOAuthCredentialsForTest(m)
 	requires.NoError(m.ImportCredentials(identifier, inlineOAuthPayloadForTest(t, credentials)))
-	client, err := m.HTTPClient(context.Background(), identifier)
+	client, err := m.HTTPClient(t.Context(), identifier)
 	requires.NoError(err)
-	resp, err := client.Get(m.endpoint)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, m.endpoint, nil)
+	requires.NoError(err)
+	resp, err := client.Do(request)
 	requires.NoError(err)
 	_ = resp.Body.Close()
 
@@ -739,11 +747,11 @@ func TestInlineOAuthHTTPClientObservesCredentialReplacementAndRemoval(t *testing
 	credentials.Token.AccessToken = "synthetic-replacement-access"
 	credentials.Token.RefreshToken = "synthetic-replacement-refresh"
 	requires.NoError(m.ImportCredentials(identifier, inlineOAuthPayloadForTest(t, credentials)))
-	resp, err = client.Get(m.endpoint)
+	resp, err = client.Do(request)
 	requires.NoError(err)
 	_ = resp.Body.Close()
 	requires.NoError(m.DeleteToken(identifier))
-	resp, err = client.Get(m.endpoint)
+	resp, err = client.Do(request)
 	if resp != nil {
 		_ = resp.Body.Close()
 	}

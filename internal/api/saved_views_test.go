@@ -257,7 +257,8 @@ func newSavedViewTestServer(t *testing.T) *Server {
 		SavedViewStore: st,
 		Logger:         testLogger(),
 	})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	return srv
 }
 
@@ -274,7 +275,7 @@ func performSavedViewRequest(
 	t *testing.T, srv *Server, method, path string, body []byte, headers http.Header,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, "http://example.com"+path, bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, "http://example.com"+path, bytes.NewReader(body))
 	req.RemoteAddr = "192.0.2.10:4242"
 	if len(body) > 0 {
 		req.Header.Set("Content-Type", "application/json")
@@ -429,14 +430,14 @@ func TestSavedViewsReadReportsUnsupportedSchema(t *testing.T) {
 	})
 	requirements.NoError(err)
 	// Simulate an archive containing a definition from another schema version.
-	_, err = st.DB().ExecContext(t.Context(), "UPDATE saved_views SET schema_version = 3 WHERE id = ?", view.ID)
+	_, err = st.DB().ExecContext(t.Context(), "UPDATE saved_views SET schema_version = 4 WHERE id = ?", view.ID)
 	requirements.NoError(err)
 	itemPath := savedViewsPath + "/" + strconv.FormatInt(view.ID, 10)
 	response := performSavedViewRequest(t, srv, http.MethodGet, itemPath, nil, session.headers())
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	var item SavedView
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &item))
-	assertions.Contains(item.IncompatibilityReason, "schema version 3")
+	assertions.Contains(item.IncompatibilityReason, "schema version 4")
 	listed := performSavedViewRequest(t, srv, http.MethodGet, savedViewsPath, nil, session.headers())
 	requirements.Equal(http.StatusOK, listed.Code, listed.Body.String())
 	var library SavedViewsResponse

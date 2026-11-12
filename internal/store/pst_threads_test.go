@@ -14,7 +14,7 @@ import (
 func pstThreadMessage(t *testing.T, st *store.Store, sourceID int64, sourceKey, rfcID string) (int64, int64) {
 	t.Helper()
 	require := require.New(t)
-	conv, err := st.EnsureConversation(sourceID, sourceKey, "Thread")
+	conv, err := st.EnsureConversation(t.Context(), sourceID, sourceKey, "Thread")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: sourceID, ConversationID: conv, SourceMessageID: sourceKey + "/" + rfcID, MessageType: "email", RFC822MessageID: sql.NullString{String: rfcID, Valid: rfcID != ""}})
 	require.NoError(err)
@@ -24,7 +24,7 @@ func pstMessageConversation(t *testing.T, st *store.Store, id int64) int64 {
 	t.Helper()
 	require := require.New(t)
 	var conv int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), id).Scan(&conv))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), id).Scan(&conv))
 	return conv
 }
 
@@ -52,10 +52,10 @@ func TestPstThreadReconciliation(t *testing.T) {
 	require.NoError(err)
 	assert.Greater(after, before)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT message_count FROM conversations WHERE id = ?`), rootConv).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE id = ?`), rootConv).Scan(&count))
 	assert.Equal(3, count)
 	for _, old := range []int64{middleConv, childConv} {
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT message_count FROM conversations WHERE id = ?`), old).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE id = ?`), old).Scan(&count))
 		assert.Zero(count)
 	}
 	// This references-only message enters the old, now-empty middle key.
@@ -87,18 +87,18 @@ func TestPstThreadAliasEligibility(t *testing.T) {
 			case "duplicate":
 				pstThreadMessage(t, st, f.Source.ID, "duplicate", "<parent@example.test>")
 			case "hidden":
-				_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), parent)
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), parent)
 				require.NoError(err)
 			case "cross source":
 				other, err := st.GetOrCreateSource("pst", "other@example.test")
 				require.NoError(err)
-				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), other.ID, parent)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), other.ID, parent)
 				require.NoError(err)
 			case "cycle":
 				require.NoError(st.RecordPstEmailHeadersContext(t.Context(), f.Source.ID, parent, "parent@example.test", "child@example.test", "child@example.test"))
 			}
 			// A stale pointer alone must never override alias eligibility.
-			_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET reply_to_message_id = ? WHERE id = ?`), parent, child)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET reply_to_message_id = ? WHERE id = ?`), parent, child)
 			require.NoError(err)
 			require.NoError(st.ReconcilePstEmailThreadsContext(t.Context(), f.Source.ID))
 			want := childConv
@@ -136,12 +136,12 @@ func TestPstThreadAcceptedParentWithMissingReferenceRoot(t *testing.T) {
 			case "duplicate":
 				pstThreadMessage(t, st, f.Source.ID, "duplicate", "<parent@example.test>")
 			case "hidden":
-				_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), parent)
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), parent)
 				require.NoError(err)
 			case "cross source":
 				other, err := st.GetOrCreateSource("pst", "other@example.test")
 				require.NoError(err)
-				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), other.ID, parent)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_id = ? WHERE id = ?`), other.ID, parent)
 				require.NoError(err)
 			}
 			require.NoError(st.ResolveEmailReplyParentsContext(t.Context(), f.Source.ID, 0, nil))
@@ -164,11 +164,11 @@ func TestPstThreadKeyJoinsMessagesWithoutKeyedConversation(t *testing.T) {
 	second, _ := pstThreadMessage(t, st, f.Source.ID, "legacy-second", "second@example.test")
 	unrelated, unrelatedConv := pstThreadMessage(t, st, f.Source.ID, "legacy-unrelated", "unrelated@example.test")
 	var before, after int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&before))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversations`).Scan(&before))
 	for _, id := range []int64{first, second} {
 		require.NoError(st.RecordPstEmailHeadersContext(t.Context(), f.Source.ID, id, "", "", "missing-root@example.test"))
 	}
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&after))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversations`).Scan(&after))
 	assert.Equal(before, after, "recording a thread key must not create a conversation")
 
 	require.NoError(st.ReconcilePstEmailThreadsContext(t.Context(), f.Source.ID))

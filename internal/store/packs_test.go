@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -36,9 +35,9 @@ func TestRecordAndGetPackedBlobs(t *testing.T) {
 		{BlobHash: "bb11223344556677889900aabbccddeeff00112233445566778899aabbccddee",
 			PackID: rec.PackID, Offset: 2054, StoredLen: 2048, RawLen: 2048, Flags: 0, CRC32C: 1},
 	}
-	require.NoError(st.RecordPackedBlobs(rec, entries))
+	require.NoError(st.RecordPackedBlobs(t.Context(), rec, entries))
 
-	got, err := st.GetAttachmentPackEntry(entries[0].BlobHash)
+	got, err := st.GetAttachmentPackEntry(t.Context(), entries[0].BlobHash)
 	require.NoError(err)
 	require.NotNil(got)
 	assert.Equal(entries[0], *got)
@@ -47,12 +46,13 @@ func TestRecordAndGetPackedBlobs(t *testing.T) {
 	assert.Equal(uint32(4022250974), got.CRC32C)
 
 	missing, err := st.GetAttachmentPackEntry(
+		t.Context(),
 		"cc11223344556677889900aabbccddeeff00112233445566778899aabbccddee")
 	require.NoError(err)
 	assert.Nil(missing)
 
 	// Idempotent re-record (crash-reconciliation re-runs adoption).
-	require.NoError(st.RecordPackedBlobs(rec, entries))
+	require.NoError(st.RecordPackedBlobs(t.Context(), rec, entries))
 }
 
 func TestRecordPackedBlobsRejectsMismatchedPackID(t *testing.T) {
@@ -69,11 +69,11 @@ func TestRecordPackedBlobsRejectsMismatchedPackID(t *testing.T) {
 		{BlobHash: "dd11223344556677889900aabbccddeeff00112233445566778899aabbccddee",
 			PackID: "01hzy3v7q8r9s0t1a2v3w4x5y7", Offset: 6, StoredLen: 64, RawLen: 64},
 	}
-	err := st.RecordPackedBlobs(rec, entries)
+	err := st.RecordPackedBlobs(t.Context(), rec, entries)
 	require.Error(err)
 
 	// The mismatch must fail the whole call: no index row was written.
-	got, err := st.GetAttachmentPackEntry(entries[0].BlobHash)
+	got, err := st.GetAttachmentPackEntry(t.Context(), entries[0].BlobHash)
 	require.NoError(err)
 	require.Nil(got)
 }
@@ -88,13 +88,13 @@ func TestRecordPackedBlobsRejectsInvalidPackID(t *testing.T) {
 	hash := packTestHash("ee06")
 	rec, entries := packTestRecord(invalidPackID, hash)
 
-	err := st.RecordPackedBlobs(rec, entries)
+	err := st.RecordPackedBlobs(t.Context(), rec, entries)
 	require.ErrorContains(err, "malformed pack id")
 
 	has, err := st.HasPackRecordContext(t.Context(), invalidPackID)
 	require.NoError(err)
 	require.False(has, "invalid metadata must not be persisted")
-	entry, err := st.GetAttachmentPackEntry(hash)
+	entry, err := st.GetAttachmentPackEntry(t.Context(), hash)
 	require.NoError(err)
 	require.Nil(entry, "invalid metadata must fail atomically")
 }
@@ -160,8 +160,8 @@ func TestRecordAndAdoptPackedBlobsRejectInvalidMetadataAtomically(t *testing.T) 
 				)
 				if op.adopt {
 					oldRec, oldEntries := packTestRecord(oldPackID, hash)
-					require.NoError(st.RecordPackedBlobs(oldRec, oldEntries))
-					_, err := st.DB().Exec(st.Rebind(`
+					require.NoError(st.RecordPackedBlobs(t.Context(), oldRec, oldEntries))
+					_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 						UPDATE attachments SET storage_path = ? WHERE content_hash = ?`),
 						legacyPath, hash)
 					require.NoError(err)
@@ -173,14 +173,14 @@ func TestRecordAndAdoptPackedBlobsRejectInvalidMetadataAtomically(t *testing.T) 
 				if op.adopt {
 					err = st.AdoptPackedBlobs(rec, entries)
 				} else {
-					err = st.RecordPackedBlobs(rec, entries)
+					err = st.RecordPackedBlobs(t.Context(), rec, entries)
 				}
 				require.Error(err)
 
 				has, getErr := st.HasPackRecordContext(t.Context(), newPackID)
 				require.NoError(getErr)
 				assert.False(has, "invalid input must not create a pack record")
-				entry, getErr := st.GetAttachmentPackEntry(hash)
+				entry, getErr := st.GetAttachmentPackEntry(t.Context(), hash)
 				require.NoError(getErr)
 				if op.adopt {
 					require.NotNil(entry)
@@ -215,11 +215,11 @@ func TestAdoptPackedBlobsRepointsExistingIndex(t *testing.T) {
 	hash := packTestHash("fa07")
 	recA, entriesA := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a1", hash)
 	recB, entriesB := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5a2", hash)
-	require.NoError(st.RecordPackedBlobs(recA, entriesA))
+	require.NoError(st.RecordPackedBlobs(t.Context(), recA, entriesA))
 
 	require.NoError(st.AdoptPackedBlobs(recB, entriesB))
 
-	entry, err := st.GetAttachmentPackEntry(hash)
+	entry, err := st.GetAttachmentPackEntry(t.Context(), hash)
 	require.NoError(err)
 	require.NotNil(entry)
 	assert.Equal(recB.PackID, entry.PackID, "adoption transaction replaces unreadable source index")
@@ -268,11 +268,11 @@ func TestAdoptPackedBlobsWithAliasesCanonicalizesLocalReferences(t *testing.T) {
 		"URL-backed and empty content paths retain their original hash and path")
 	assert.ElementsMatch([]string{thumbnailURL, ""}, fx.thumbnailPathsForHash(uppercase),
 		"URL-backed and empty thumbnail paths retain their original hash and path")
-	entry, err := st.GetAttachmentPackEntry(hash)
+	entry, err := st.GetAttachmentPackEntry(t.Context(), hash)
 	require.NoError(err)
 	require.NotNil(entry)
 	assert.Equal(rec.PackID, entry.PackID)
-	usage, err := st.ListPackUsage(context.Background())
+	usage, err := st.ListPackUsage(t.Context())
 	require.NoError(err)
 	require.Len(usage, 1)
 	assert.Equal(int64(1), usage[0].LiveEntries)
@@ -307,7 +307,7 @@ func TestAdoptPackedBlobsWithAliasesPreservesKeyedDuplicateOccurrences(t *testin
 		Entry: entries[0], OriginalHashes: []string{uppercase},
 	}}))
 
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT source_part_key, content_hash, storage_path
 		FROM attachments WHERE message_id = ? ORDER BY source_part_key`), fx.msgID)
 	require.NoError(err)
@@ -342,7 +342,7 @@ func TestCanonicalizeAttachmentBlobAliasesDeduplicatesCaseEquivalentRows(t *test
 	require.NoError(err)
 
 	var rows int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM attachments
 		WHERE message_id = ? AND LOWER(content_hash) = ?`), fx.msgID, hash).Scan(&rows))
 	assert.Equal(1, rows, "case-equivalent content rows are one logical attachment")
@@ -373,7 +373,7 @@ func TestCanonicalizeAttachmentBlobAliasesPreservesCaseEquivalentNonlocalRows(t 
 			err := st.CanonicalizeAttachmentBlobAliases(hash, []string{uppercase})
 			require.NoError(err)
 
-			rows, err := st.DB().Query(st.Rebind(`
+			rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 				SELECT content_hash, storage_path FROM attachments
 				WHERE message_id = ? AND LOWER(content_hash) = ? ORDER BY id`), fx.msgID, hash)
 			require.NoError(err)
@@ -430,7 +430,7 @@ func TestAdoptPackedBlobsWithAliasesRejectsInvalidAliasesAtomically(t *testing.T
 			require.NoError(getErr)
 			assert.False(has)
 			for _, hash := range []string{hashA, hashB} {
-				entry, entryErr := st.GetAttachmentPackEntry(hash)
+				entry, entryErr := st.GetAttachmentPackEntry(t.Context(), hash)
 				require.NoError(entryErr)
 				assert.Nil(entry)
 			}
@@ -480,7 +480,7 @@ func forceCaseSensitiveSQLiteLike(t *testing.T, st *store.Store) {
 	}
 	st.DB().SetMaxOpenConns(1)
 	st.DB().SetMaxIdleConns(1)
-	_, err := st.DB().Exec(`PRAGMA case_sensitive_like = ON`)
+	_, err := st.DB().ExecContext(t.Context(), `PRAGMA case_sensitive_like = ON`)
 	require.NoError(t, err)
 }
 
@@ -488,7 +488,7 @@ func newPackAttachmentFixture(t *testing.T, st *store.Store) *packAttachmentFixt
 	t.Helper()
 	src, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(t, err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "thread-pack", "Pack Thread")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-pack", "Pack Thread")
 	require.NoError(t, err, "EnsureConversation")
 	msgID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
@@ -507,7 +507,7 @@ func (f *packAttachmentFixture) addAttachment(hash, path string, size int) {
 	f.t.Helper()
 	f.seq++
 	name := fmt.Sprintf("file-%d.bin", f.seq)
-	err := f.store.UpsertAttachment(f.msgID, name, "application/octet-stream",
+	err := f.store.UpsertAttachment(f.t.Context(), f.msgID, name, "application/octet-stream",
 		path, hash, size)
 	require.NoErrorf(f.t, err, "UpsertAttachment(%s)", name)
 }
@@ -517,7 +517,7 @@ func (f *packAttachmentFixture) addAttachmentOnNewMessage(hash, path string, siz
 	f.seq++
 	src, err := f.store.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(f.t, err, "GetOrCreateSource")
-	convID, err := f.store.EnsureConversation(src.ID, "thread-pack", "Pack Thread")
+	convID, err := f.store.EnsureConversation(f.t.Context(), src.ID, "thread-pack", "Pack Thread")
 	require.NoError(f.t, err, "EnsureConversation")
 	msgID, err := f.store.UpsertMessage(&store.Message{
 		ConversationID:  convID,
@@ -527,7 +527,7 @@ func (f *packAttachmentFixture) addAttachmentOnNewMessage(hash, path string, siz
 		SizeEstimate:    100,
 	})
 	require.NoError(f.t, err, "UpsertMessage")
-	err = f.store.UpsertAttachment(msgID, fmt.Sprintf("file-%d.bin", f.seq),
+	err = f.store.UpsertAttachment(f.t.Context(), msgID, fmt.Sprintf("file-%d.bin", f.seq),
 		"application/octet-stream", path, hash, size)
 	require.NoErrorf(f.t, err, "UpsertAttachment(%s)", hash)
 }
@@ -535,7 +535,7 @@ func (f *packAttachmentFixture) addAttachmentOnNewMessage(hash, path string, siz
 // setThumbnail sets thumbnail columns on the newest row with contentHash.
 func (f *packAttachmentFixture) setThumbnail(contentHash, thumbHash, thumbPath string) {
 	f.t.Helper()
-	_, err := f.store.DB().Exec(f.store.Rebind(`
+	_, err := f.store.DB().ExecContext(f.t.Context(), f.store.Rebind(`
 		UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ?
 		WHERE id = (SELECT MAX(id) FROM attachments WHERE content_hash = ?)`),
 		thumbHash, thumbPath, contentHash)
@@ -558,7 +558,7 @@ func TestResolveAttachmentBlob(t *testing.T) {
 
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5v1",
 		contentHash, thumbnailHash, staleHash)
-	require.NoError(st.RecordPackedBlobs(rec, entries))
+	require.NoError(st.RecordPackedBlobs(t.Context(), rec, entries))
 
 	for _, hash := range []string{contentHash, thumbnailHash} {
 		loc, err := st.ResolveAttachmentBlobContext(t.Context(), hash)
@@ -606,7 +606,7 @@ func TestResolveAttachmentBlobNormalizesPreservedCaseAliases(t *testing.T) {
 			preservedPath := tc.path(uppercase)
 			fx.addAttachment(uppercase, preservedPath, 100)
 			rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5v4", hash)
-			require.NoError(st.RecordPackedBlobs(rec, entries))
+			require.NoError(st.RecordPackedBlobs(t.Context(), rec, entries))
 
 			for _, requested := range []string{hash, uppercase} {
 				loc, err := st.ResolveAttachmentBlobContext(t.Context(), requested)
@@ -645,7 +645,7 @@ func TestPackIndexReadsRejectOutOfRangeScalars(t *testing.T) {
 		read func(*store.Store, string, string) error
 	}{
 		{name: "get", read: func(st *store.Store, hash, _ string) error {
-			_, err := st.GetAttachmentPackEntry(hash)
+			_, err := st.GetAttachmentPackEntry(t.Context(), hash)
 			return err
 		}},
 		{name: "resolve", read: func(st *store.Store, hash, _ string) error {
@@ -657,7 +657,7 @@ func TestPackIndexReadsRejectOutOfRangeScalars(t *testing.T) {
 			return err
 		}},
 		{name: "list referenced pack", read: func(st *store.Store, _, packID string) error {
-			_, err := st.ListReferencedPackEntries(context.Background(), packID)
+			_, err := st.ListReferencedPackEntries(t.Context(), packID)
 			return err
 		}},
 		{name: "list indexed", read: func(st *store.Store, _, _ string) error {
@@ -674,9 +674,9 @@ func TestPackIndexReadsRejectOutOfRangeScalars(t *testing.T) {
 			const packID = "01hzy3v7q8r9s0t1a2v3w4x5t1"
 			fx.addAttachment(hash, hash[:2]+"/"+hash, 100)
 			rec, entries := packTestRecord(packID, hash)
-			require.NoError(t, st.RecordPackedBlobs(rec, entries))
+			require.NoError(t, st.RecordPackedBlobs(t.Context(), rec, entries))
 
-			_, err := st.DB().Exec(st.Rebind(fmt.Sprintf(
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(fmt.Sprintf(
 				"UPDATE attachment_pack_index SET %s = ? WHERE blob_hash = ?", tc.field,
 			)), tc.value, hash)
 			require.NoError(t, err)
@@ -704,7 +704,7 @@ func TestPackIndexReadsRejectMalformedHashes(t *testing.T) {
 		read func(*store.Store, string, string) error
 	}{
 		{name: "get", read: func(st *store.Store, hash, _ string) error {
-			_, err := st.GetAttachmentPackEntry(hash)
+			_, err := st.GetAttachmentPackEntry(t.Context(), hash)
 			return err
 		}},
 		{name: "resolve", read: func(st *store.Store, hash, _ string) error {
@@ -716,7 +716,7 @@ func TestPackIndexReadsRejectMalformedHashes(t *testing.T) {
 			return err
 		}},
 		{name: "list referenced pack", read: func(st *store.Store, _, packID string) error {
-			_, err := st.ListReferencedPackEntries(context.Background(), packID)
+			_, err := st.ListReferencedPackEntries(t.Context(), packID)
 			return err
 		}},
 		{name: "list indexed", read: func(st *store.Store, _, _ string) error {
@@ -731,11 +731,11 @@ func TestPackIndexReadsRejectMalformedHashes(t *testing.T) {
 			fx := newPackAttachmentFixture(t, st)
 			fx.addAttachment(tc.hash, "legacy/"+tc.hash, 100)
 			const packID = "01hzy3v7q8r9s0t1a2v3w4x5t2"
-			_, err := st.DB().Exec(st.Rebind(`
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 				INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
 				VALUES (?, 1, 128, ?)`), packID, time.Now().UTC().Format(time.RFC3339))
 			require.NoError(t, err)
-			_, err = st.DB().Exec(st.Rebind(`
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 				INSERT INTO attachment_pack_index
 				    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
 				VALUES (?, ?, 6, 128, 256, 0, 0)`), tc.hash, packID)
@@ -785,9 +785,9 @@ func TestPruneUnreferencedPackIndex(t *testing.T) {
 	fx.setThumbnail(contentHash, thumbnailHash, thumbnailHash[:2]+"/"+thumbnailHash)
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5v2",
 		contentHash, thumbnailHash, staleA, staleB)
-	require.NoError(st.RecordPackedBlobs(rec, entries))
+	require.NoError(st.RecordPackedBlobs(t.Context(), rec, entries))
 
-	pruned, err := st.PruneUnreferencedPackIndex(context.Background())
+	pruned, err := st.PruneUnreferencedPackIndex(t.Context())
 	require.NoError(err)
 	assert.Equal(int64(2), pruned)
 
@@ -795,7 +795,7 @@ func TestPruneUnreferencedPackIndex(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(map[string]struct{}{contentHash: {}, thumbnailHash: {}}, indexed)
 
-	pruned, err = st.PruneUnreferencedPackIndex(context.Background())
+	pruned, err = st.PruneUnreferencedPackIndex(t.Context())
 	require.NoError(err)
 	assert.Zero(pruned, "repair is idempotent")
 }
@@ -810,13 +810,13 @@ func TestPruneUnreferencedPackIndexPreservesCaseAliasReference(t *testing.T) {
 	uppercase := strings.ToUpper(hash)
 	fx.addAttachment(uppercase, "legacy/"+uppercase, 100)
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5v3", hash)
-	require.NoError(st.RecordPackedBlobs(rec, entries))
+	require.NoError(st.RecordPackedBlobs(t.Context(), rec, entries))
 
-	pruned, err := st.PruneUnreferencedPackIndex(context.Background())
+	pruned, err := st.PruneUnreferencedPackIndex(t.Context())
 
 	require.NoError(err)
 	assert.Zero(pruned, "case aliases must preserve an otherwise-live packed mapping")
-	entry, err := st.GetAttachmentPackEntry(hash)
+	entry, err := st.GetAttachmentPackEntry(t.Context(), hash)
 	require.NoError(err)
 	require.NotNil(entry)
 	assert.Equal(rec.PackID, entry.PackID)
@@ -824,7 +824,7 @@ func TestPruneUnreferencedPackIndexPreservesCaseAliasReference(t *testing.T) {
 
 func (f *packAttachmentFixture) pathsForContentHash(hash string) []string {
 	f.t.Helper()
-	rows, err := f.store.DB().Query(f.store.Rebind(`
+	rows, err := f.store.DB().QueryContext(f.t.Context(), f.store.Rebind(`
 		SELECT storage_path FROM attachments WHERE content_hash = ? ORDER BY id`), hash)
 	require.NoError(f.t, err, "query storage_path")
 	defer rows.Close() //nolint:errcheck // read-only cursor
@@ -841,7 +841,7 @@ func (f *packAttachmentFixture) pathsForContentHash(hash string) []string {
 func (f *packAttachmentFixture) thumbnailPathForHash(thumbHash string) string {
 	f.t.Helper()
 	var p string
-	err := f.store.DB().QueryRow(f.store.Rebind(`
+	err := f.store.DB().QueryRowContext(f.t.Context(), f.store.Rebind(`
 		SELECT thumbnail_path FROM attachments WHERE thumbnail_hash = ?`), thumbHash).Scan(&p)
 	require.NoErrorf(f.t, err, "query thumbnail_path for %s", thumbHash)
 	return p
@@ -849,7 +849,7 @@ func (f *packAttachmentFixture) thumbnailPathForHash(thumbHash string) string {
 
 func (f *packAttachmentFixture) thumbnailPathsForHash(thumbHash string) []string {
 	f.t.Helper()
-	rows, err := f.store.DB().Query(f.store.Rebind(`
+	rows, err := f.store.DB().QueryContext(f.t.Context(), f.store.Rebind(`
 		SELECT thumbnail_path FROM attachments WHERE thumbnail_hash = ? ORDER BY id`), thumbHash)
 	require.NoErrorf(f.t, err, "query thumbnail_path for %s", thumbHash)
 	defer rows.Close() //nolint:errcheck // read-only cursor
@@ -921,7 +921,7 @@ func TestCanonicalizeAttachmentBlobPathsPreservesURLsWithCaseSensitiveLike(t *te
 	st := testutil.NewSQLiteTestStore(t)
 	st.DB().SetMaxOpenConns(1)
 	st.DB().SetMaxIdleConns(1)
-	_, err := st.DB().Exec(`PRAGMA case_sensitive_like = ON`)
+	_, err := st.DB().ExecContext(t.Context(), `PRAGMA case_sensitive_like = ON`)
 	require.NoError(err)
 	fx := newPackAttachmentFixture(t, st)
 
@@ -982,25 +982,25 @@ func TestCanonicalizeAttachmentBlobPathsNormalizesUppercaseStoredHash(t *testing
 	require.NoError(st.CanonicalizeAttachmentBlobPaths(uppercaseThumbnailHash))
 
 	var storedContentHash, storedContentPath string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT content_hash, storage_path FROM attachments WHERE storage_path = ?`),
 		contentPath).Scan(&storedContentHash, &storedContentPath))
 	assert.Equal(contentHash, storedContentHash)
 	assert.Equal(contentPath, storedContentPath)
 	var storedThumbnailHash, storedThumbnailPath string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT thumbnail_hash, thumbnail_path FROM attachments WHERE thumbnail_path = ?`),
 		thumbnailPath).Scan(&storedThumbnailHash, &storedThumbnailPath))
 	assert.Equal(thumbnailHash, storedThumbnailHash)
 	assert.Equal(thumbnailPath, storedThumbnailPath)
 
 	var preserved int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM attachments
 		WHERE content_hash = ? AND (storage_path = ? OR storage_path = '')`),
 		uppercaseContentHash, contentURL).Scan(&preserved))
 	assert.Equal(2, preserved, "content URL and empty rows retain their original hash and path")
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM attachments
 		WHERE thumbnail_hash = ? AND (thumbnail_path = ? OR thumbnail_path = '')`),
 		uppercaseThumbnailHash, thumbnailURL).Scan(&preserved))
@@ -1016,7 +1016,7 @@ func TestCanonicalizeAttachmentBlobPathsNormalizesUppercaseStoredHash(t *testing
 		{hash: storedContentHash, want: content},
 		{hash: storedThumbnailHash, want: thumbnail},
 	} {
-		reader, size, err := loose.Open(tc.hash)
+		reader, size, err := loose.Open(t.Context(), tc.hash)
 		require.NoError(err)
 		got, err := io.ReadAll(reader)
 		require.NoError(err)
@@ -1068,7 +1068,7 @@ func TestRecordPackedBlobsCanonicalizesPaths(t *testing.T) {
 
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z1",
 		hashLoose, hashCanonical, hashURL, hashThumb, hashThumbURL)
-	require.NoError(st.RecordPackedBlobs(rec, entries))
+	require.NoError(st.RecordPackedBlobs(t.Context(), rec, entries))
 
 	assert.Equal([]string{canonicalOf(hashLoose)}, fx.pathsForContentHash(hashLoose),
 		"noncanonical storage_path is rewritten")
@@ -1085,7 +1085,7 @@ func TestRecordPackedBlobsCanonicalizesPaths(t *testing.T) {
 
 	// Canonicalization and index inserts share one transaction: the index
 	// rows for the same call must be visible too.
-	got, err := st.GetAttachmentPackEntry(hashLoose)
+	got, err := st.GetAttachmentPackEntry(t.Context(), hashLoose)
 	require.NoError(err)
 	require.NotNil(got)
 	assert.Equal(rec.PackID, got.PackID)
@@ -1106,7 +1106,7 @@ func TestRecordPackedBlobsRejectsMalformedHash(t *testing.T) {
 	})
 	rec.EntryCount = 2
 
-	err := st.RecordPackedBlobs(rec, entries)
+	err := st.RecordPackedBlobs(t.Context(), rec, entries)
 	require.Error(err)
 	assert.Contains(err.Error(), "malformed blob hash")
 
@@ -1114,7 +1114,7 @@ func TestRecordPackedBlobsRejectsMalformedHash(t *testing.T) {
 	has, err := st.HasPackRecordContext(t.Context(), rec.PackID)
 	require.NoError(err)
 	assert.False(has, "pack record must not exist")
-	got, err := st.GetAttachmentPackEntry(hashGood)
+	got, err := st.GetAttachmentPackEntry(t.Context(), hashGood)
 	require.NoError(err)
 	assert.Nil(got, "no index row for the valid entry either")
 	assert.Equal([]string{"synctech-sms/aa/" + hashGood}, fx.pathsForContentHash(hashGood),
@@ -1145,7 +1145,7 @@ func TestListUnpackedBlobs(t *testing.T) {
 	fx.setThumbnail(hashPacked, hashThumbOnly, "thumbs/"+hashThumbOnly)
 
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z3", hashPacked)
-	require.NoError(st.RecordPackedBlobs(rec, entries))
+	require.NoError(st.RecordPackedBlobs(t.Context(), rec, entries))
 
 	blobs, err := st.ListUnpackedBlobsContext(t.Context())
 	require.NoError(err)
@@ -1236,7 +1236,7 @@ func TestListUnpackedBlobsExcludesPackedCaseAliases(t *testing.T) {
 	fx.addAttachment(carrierHash, carrierHash[:2]+"/"+carrierHash, 100)
 	fx.setThumbnail(carrierHash, uppercaseThumbnail, "legacy/thumb/"+uppercaseThumbnail)
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z6", contentHash, thumbnailHash)
-	require.NoError(st.RecordPackedBlobs(rec, entries))
+	require.NoError(st.RecordPackedBlobs(t.Context(), rec, entries))
 
 	blobs, err := st.ListUnpackedBlobsContext(t.Context())
 
@@ -1255,7 +1255,7 @@ func TestListUnpackedBlobsExcludesURLsWithCaseSensitiveLike(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	st.DB().SetMaxOpenConns(1)
 	st.DB().SetMaxIdleConns(1)
-	_, err := st.DB().Exec(`PRAGMA case_sensitive_like = ON`)
+	_, err := st.DB().ExecContext(t.Context(), `PRAGMA case_sensitive_like = ON`)
 	require.NoError(err)
 	fx := newPackAttachmentFixture(t, st)
 
@@ -1287,8 +1287,8 @@ func TestPackRecordLifecycle(t *testing.T) {
 
 	recA, entriesA := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z4", hashA, hashB)
 	recB, entriesB := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5z5", hashC)
-	require.NoError(st.RecordPackedBlobs(recA, entriesA))
-	require.NoError(st.RecordPackedBlobs(recB, entriesB))
+	require.NoError(st.RecordPackedBlobs(t.Context(), recA, entriesA))
+	require.NoError(st.RecordPackedBlobs(t.Context(), recB, entriesB))
 
 	recs, err := st.ListPackRecordsContext(t.Context())
 	require.NoError(err)
@@ -1322,7 +1322,7 @@ func TestPackRecordLifecycle(t *testing.T) {
 	n, err = st.CountPackIndexEntries(recA.PackID)
 	require.NoError(err)
 	assert.Zero(n, "index rows removed")
-	got, err := st.GetAttachmentPackEntry(hashA)
+	got, err := st.GetAttachmentPackEntry(t.Context(), hashA)
 	require.NoError(err)
 	assert.Nil(got)
 
@@ -1345,7 +1345,7 @@ func TestListIndexedBlobEntries(t *testing.T) {
 	rec, entries := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5r1", hashA, hashB)
 	entries[0].Flags = 1
 	entries[0].CRC32C = 4022250974
-	require.NoError(st.RecordPackedBlobs(rec, entries))
+	require.NoError(st.RecordPackedBlobs(t.Context(), rec, entries))
 
 	indexed, err := st.ListIndexedBlobEntriesContext(t.Context())
 	require.NoError(err)
@@ -1364,8 +1364,8 @@ func TestClearAttachmentPackMetadata(t *testing.T) {
 		packTestHash("aa41"), packTestHash("bb42"))
 	recB, entriesB := packTestRecord("01hzy3v7q8r9s0t1a2v3w4x5w2",
 		packTestHash("cc43"))
-	require.NoError(st.RecordPackedBlobs(recA, entriesA))
-	require.NoError(st.RecordPackedBlobs(recB, entriesB))
+	require.NoError(st.RecordPackedBlobs(t.Context(), recA, entriesA))
+	require.NoError(st.RecordPackedBlobs(t.Context(), recB, entriesB))
 
 	require.NoError(st.ClearAttachmentPackMetadataContext(t.Context()))
 
@@ -1375,7 +1375,7 @@ func TestClearAttachmentPackMetadata(t *testing.T) {
 	hashes, err := st.ListIndexedBlobHashes()
 	require.NoError(err)
 	assert.Empty(hashes, "attachment_pack_index cleared")
-	entry, err := st.GetAttachmentPackEntry(packTestHash("aa41"))
+	entry, err := st.GetAttachmentPackEntry(t.Context(), packTestHash("aa41"))
 	require.NoError(err)
 	assert.Nil(entry, "cleared blob reads as unpacked")
 

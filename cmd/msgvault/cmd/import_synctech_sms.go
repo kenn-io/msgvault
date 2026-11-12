@@ -33,12 +33,12 @@ SMS Backup & Restore by SyncTech Pty Ltd.`,
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
 			opts.AttachmentsDir = cfg.AttachmentsDir()
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
-			summary, err := synctechsms.NewImporter(st, opts).ImportPath(args[0])
+			summary, err := synctechsms.NewImporter(st, opts).ImportPath(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}

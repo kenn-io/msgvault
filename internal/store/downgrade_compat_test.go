@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"testing"
@@ -75,7 +76,7 @@ func openArchiveAsPreviousRelease(t *testing.T, st *store.Store) {
 	}
 	schema, err := os.ReadFile(schemaFile)
 	require.NoErrorf(t, err, "read %s", schemaFile)
-	_, err = st.DB().Exec(string(schema))
+	_, err = st.DB().ExecContext(t.Context(), string(schema))
 	require.NoErrorf(t, err,
 		"the previous release re-execs %s on every open; a migrated archive must "+
 			"still satisfy it", schemaFile)
@@ -85,7 +86,7 @@ func openArchiveAsPreviousRelease(t *testing.T, st *store.Store) {
 		stmts = previousReleasePGTriggers
 	}
 	for _, stmt := range stmts {
-		_, err := st.DB().Exec(stmt)
+		_, err := st.DB().ExecContext(t.Context(), stmt)
 		require.NoError(t, err, "previous release trigger installation")
 	}
 }
@@ -115,7 +116,7 @@ func countContentChangedAtTriggers(t *testing.T, st *store.Store) int {
 	total := 0
 	for _, trg := range contentChangedAtTriggerNames {
 		var n int
-		require.NoErrorf(t, st.DB().QueryRow(st.Rebind(query), trg.name).Scan(&n),
+		require.NoErrorf(t, st.DB().QueryRowContext(t.Context(), st.Rebind(query), trg.name).Scan(&n),
 			"count trigger %s", trg.name)
 		total += n
 	}
@@ -166,7 +167,8 @@ func TestDowngrade_PreviousReleaseCanOpenAndWriteAMigratedArchive(t *testing.T) 
 	//    PostgreSQL does not perform.)
 	if !st.IsPostgreSQL() {
 		var ddl string
-		require.NoError(st.DB().QueryRow(
+		require.NoError(st.DB().QueryRowContext(
+			t.Context(),
 			`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?`,
 			"trg_messages_last_modified").Scan(&ddl), "read the last_modified trigger DDL")
 		assert.Contains(ddl, "UPDATE OF",
@@ -181,13 +183,13 @@ func TestDowngrade_PreviousReleaseCanOpenAndWriteAMigratedArchive(t *testing.T) 
 	require.NoError(err, "GetOrCreateSource")
 	convID, err := st.EnsureConversationWithType(src.ID, "conv-downgrade", "email_thread", "S")
 	require.NoError(err, "EnsureConversationWithType")
-	res, err := st.DB().Exec(st.Rebind(`
+	res, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO messages (source_id, source_message_id, conversation_id, message_type,
 		                      subject, size_estimate)
 		VALUES (?, ?, ?, ?, ?, ?)`),
 		src.ID, "msg-written-by-previous-release", convID, "email", "old build subject", 42)
 	require.NoError(err, "the previous release must still be able to insert a message")
-	written, err := lastInsertedMessageID(st, res)
+	written, err := lastInsertedMessageID(t.Context(), st, res)
 	require.NoError(err, "read the inserted message id")
 
 	inserted := readRawContentChangedAt(t, st, written)
@@ -200,7 +202,8 @@ func TestDowngrade_PreviousReleaseCanOpenAndWriteAMigratedArchive(t *testing.T) 
 	//    that the clock ticked between two statements.
 	lmBefore := baselineLM(t, st, written)
 	ccaBefore := stampContentChangedAt(t, st, written)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET subject = ? WHERE id = ?`), "edited by old build", written)
 	require.NoError(err, "the previous release must still be able to update a message")
 	assert.NotEqual(lmBefore, readLM(t, st, written), "last_modified must still bump")
@@ -210,7 +213,7 @@ func TestDowngrade_PreviousReleaseCanOpenAndWriteAMigratedArchive(t *testing.T) 
 	// 5. A body write, the other trigger pair, through the previous release's
 	//    columns only.
 	lmBefore = baselineLM(t, st, written)
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`),
 		written, "body from the old build")
 	require.NoError(err, "the previous release must still be able to write a body")
@@ -230,12 +233,12 @@ func TestDowngrade_PreviousReleaseCanOpenAndWriteAMigratedArchive(t *testing.T) 
 // lastInsertedMessageID reads the id of a row just inserted with raw SQL.
 // LastInsertId is a SQLite affordance PostgreSQL's driver does not offer, so on
 // PostgreSQL the id is looked up by the natural key instead.
-func lastInsertedMessageID(st *store.Store, res sql.Result) (int64, error) {
+func lastInsertedMessageID(ctx context.Context, st *store.Store, res sql.Result) (int64, error) {
 	if !st.IsPostgreSQL() {
 		return res.LastInsertId()
 	}
 	var id int64
-	err := st.DB().QueryRow(st.Rebind(
+	err := st.DB().QueryRowContext(ctx, st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`),
 		"msg-written-by-previous-release").Scan(&id)
 	return id, err

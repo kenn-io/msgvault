@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -102,7 +101,7 @@ func TestPersonInboxesDeduplicateChatSources(t *testing.T) {
 	require.NoError(err)
 	require.NoError(os.WriteFile(CacheStatePath(engine.analyticsDir), stateData, 0o600))
 
-	result, err := engine.ListPersonInboxes(context.Background(), PersonInboxRequest{CanonicalID: subject})
+	result, err := engine.ListPersonInboxes(t.Context(), PersonInboxRequest{CanonicalID: subject})
 	require.NoError(err)
 	require.Len(result.Rows, 2)
 
@@ -123,6 +122,6 @@ func TestPersonInboxesDeduplicateChatSources(t *testing.T) {
 func TestPersonInboxesRejectsNonPositiveCanonicalID(t *testing.T) {
 	t.Parallel()
 	engine := NewTestDataBuilder(t).BuildEngine()
-	_, err := engine.ListPersonInboxes(context.Background(), PersonInboxRequest{})
+	_, err := engine.ListPersonInboxes(t.Context(), PersonInboxRequest{})
 	require.ErrorIs(t, err, ErrInvalidExploreRequest)
 }

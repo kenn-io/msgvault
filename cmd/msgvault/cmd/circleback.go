@@ -148,7 +148,7 @@ func runAddCirclebackLocal(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func runAddCirclebackLocal(cmd *cobra.Command, args []string) error {
 	); err != nil {
 		return err
 	}
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+	if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
@@ -222,7 +222,7 @@ Examples:
 			return probeCircleback(cmd, &src)
 		}
 
-		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -369,7 +369,7 @@ func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src confi
 	notRegistered := fmt.Errorf(
 		"circleback source %q is not registered; run msgvault add-circleback %s first",
 		src.Identifier, src.Identifier)
-	registered, err := requireRegisteredMeetingSource(st, circleback.SourceType, src.Identifier, notRegistered)
+	registered, err := requireRegisteredMeetingSource(ctx, st, circleback.SourceType, src.Identifier, notRegistered)
 	if err != nil {
 		return recordSyncAttempt(ctx, circleback.SourceType, src.Identifier, err)
 	}

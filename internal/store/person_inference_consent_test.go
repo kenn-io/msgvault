@@ -56,7 +56,7 @@ func TestPersonInferenceProfileNormalizesNullAndEmptySourceUntil(t *testing.T) {
 	_, err := st.EnsurePersonInferenceProfile(t.Context(), profile)
 	require.NoError(err)
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE person_inference_profiles SET source_until = '' WHERE fingerprint = ?`),
 		profile.Fingerprint)
 	require.NoError(err)
@@ -135,7 +135,7 @@ func TestPersonInferenceConsentLifecycle(t *testing.T) {
 	assert.True(active)
 
 	var history int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM provider_consents
 		WHERE purpose = 'people_inference' AND fingerprint = ?`), profile.Fingerprint).Scan(&history))
 	assert.Equal(2, history)
@@ -183,7 +183,7 @@ func TestPersonInferenceProfilesCanBeListedAndRevokedWithoutRuntimeConfig(t *tes
 	normalizedPolicy, err := json.Marshal(policy)
 	require.NoError(err)
 	require.NotEqual(string(profile.PolicyJSON), string(normalizedPolicy))
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE person_inference_profiles SET policy_json = ? WHERE fingerprint = ?`),
 		string(normalizedPolicy), profile.Fingerprint)
 	require.NoError(err)
@@ -226,25 +226,25 @@ func TestPersonInferenceProfilesCanBeListedAfterProgramChange(t *testing.T) {
 		current.PolicyJSON, []byte(current.ProgramFingerprint), []byte(historical.ProgramFingerprint), 1)
 	digest := sha256.Sum256(historical.PolicyJSON)
 	historical.Fingerprint = hex.EncodeToString(digest[:])
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM person_inference_checks WHERE profile_fingerprint = ?`), current.Fingerprint)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM provider_consents WHERE purpose = 'people_inference' AND fingerprint = ?`), current.Fingerprint)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE person_inference_profiles
 		SET fingerprint = ?, program_fingerprint = ?, policy_json = ?
 		WHERE fingerprint = ?`),
 		historical.Fingerprint, historical.ProgramFingerprint, string(historical.PolicyJSON), current.Fingerprint)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO person_inference_checks
 			(profile_fingerprint, checked_at, driver_version, output_mode, model_version)
 		VALUES (?, CURRENT_TIMESTAMP, ?, ?, ?)`), historical.Fingerprint,
 		historical.DriverVersion, historical.OutputMode, "test-model-v1")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO provider_consents (purpose, id, fingerprint, granted_by)
 		VALUES ('people_inference', 2, ?, ?)`), historical.Fingerprint, "cli")
 	require.NoError(err)
@@ -270,7 +270,7 @@ func TestPersonInferenceProfilesRejectChangedIndexedProjection(t *testing.T) {
 	profile := inferenceTestProfile(t)
 	_, err := st.EnsurePersonInferenceProfile(t.Context(), profile)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE person_inference_profiles SET model = ? WHERE fingerprint = ?`),
 		"changed-model", profile.Fingerprint)
 	require.NoError(err)

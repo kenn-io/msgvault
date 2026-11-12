@@ -16,7 +16,7 @@ func TestParticipantIdentifiersServiceScopeBackfillClassifiesLegacyIdentifiers(t
 	}
 	require := require.New(t)
 	assert := assert.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "legacy.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "legacy.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
@@ -40,7 +40,7 @@ func TestParticipantIdentifiersServiceScopeBackfillClassifiesLegacyIdentifiers(t
 	)
 	require.NoError(err)
 	require.NoError(st.InitSchema())
-	classified, err := st.classifiedIdentifierServiceSlugs(context.Background())
+	classified, err := st.classifiedIdentifierServiceSlugs(t.Context())
 	require.NoError(err)
 	assert.Equal("imessage", classified["imessage:+12025550124"])
 	assert.Equal("matrix", classified["matrix:@alice:example.org"])
@@ -57,7 +57,7 @@ func TestInitSchemaContext_ParticipantIdentifiersServiceScopeBackfillStopsWhenCo
 	}
 	require := require.New(t)
 	assert := assert.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "cancelled-backfill.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "cancelled-backfill.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
@@ -75,7 +75,7 @@ func TestInitSchemaContext_ParticipantIdentifiersServiceScopeBackfillStopsWhenCo
 	)
 	require.NoError(err)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	trigger := cancelAtStatement{
 		stop:   "UPDATE participant_identifiers",
@@ -101,7 +101,7 @@ func TestInitSchemaContext_CommunicationServiceSeedStopsWhenContextIsCancelled(t
 	}
 	require := require.New(t)
 	assert := assert.New(t)
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "cancelled-seed.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "cancelled-seed.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema())
@@ -111,7 +111,7 @@ func TestInitSchemaContext_CommunicationServiceSeedStopsWhenContextIsCancelled(t
 	)
 	require.NoError(err)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	trigger := cancelAtStatement{
 		stop:   "INTO communication_services",

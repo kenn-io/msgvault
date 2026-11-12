@@ -5,7 +5,10 @@ package scheduler_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,13 +18,67 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/embedclient"
+	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
+
+type kitEmbeddingClient struct{ *embedclient.Client }
+
+func (c kitEmbeddingClient) Embed(ctx context.Context, inputs []string) ([][]float32, error) {
+	vectors, err := c.EmbedTexts(ctx, embedconfig.RoleDocument, inputs)
+	if err != nil {
+		return nil, fmt.Errorf("embed texts: %w", err)
+	}
+	return vectors, nil
+}
+
+func TestAutomaticEmbeddingPassRetriesTimeoutAndSavesProgress(t *testing.T) {
+	bodies := []string{"body zero", "body one", "body two", "body three", "body four", "body five", "body six", "body seven"}
+	st, backend, gen := newIndexingGateFixture(t, "mail@example.com", bodies)
+	synctest.Test(t, func(t *testing.T) {
+		var calls []int
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var request struct {
+				Input []string `json:"input"`
+			}
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&request)) {
+				return
+			}
+			calls = append(calls, len(request.Input))
+			if len(request.Input) > 1 {
+				<-r.Context().Done()
+				return
+			}
+			time.Sleep(4 * time.Minute)
+			_, _ = fmt.Fprint(w, `{"data":[{"index":0,"embedding":[1,0,0,0]}]}`)
+		}))
+		httpClient := server.Client()
+		httpClient.Timeout = 5 * time.Minute
+		client, err := embedclient.New(embedclient.Options{
+			Model:      embedconfig.Model{Name: "test", Dimensions: 4, Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone},
+			Deployment: embedconfig.Deployment{BaseURL: "http://example.com/v1", TrustPrivateNetwork: true},
+			HTTP:       httpClient, Retry: embedclient.Retry{MaxAttempts: 1},
+		})
+		require.NoError(t, err)
+		worker := embed.NewWorker(embed.WorkerDeps{Backend: backend, VectorsDB: backend.DB(), MainDB: st.DB(), Store: st, Client: kitEmbeddingClient{client}, BatchSize: 8, Recorder: st})
+		job := &scheduler.EmbedJob{Worker: worker, Backend: backend, Store: st, Fingerprint: "synthetic:4", BackstopInterval: -1, RequestTimeout: 5 * time.Minute, BatchSize: 8}
+		s := scheduler.New(nil)
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(t, s.SetEmbedJob(job, "", false))
+		require.NoError(t, s.TriggerJob(jobctx.ScheduledEmbeddingLabel))
+		assert.Equal(t, []int{8, 4, 2, 1, 1, 2, 1, 1, 4, 2, 1, 1, 2, 1, 1}, calls)
+		missing, err := st.ScanForEmbedding(t.Context(), int64(gen), 0, 10)
+		require.NoError(t, err)
+		assert.Empty(t, missing)
+	})
+}
 
 // slowEmbeddingClient takes 70 seconds per request.
 type slowEmbeddingClient struct {
@@ -51,13 +108,13 @@ func newIndexingGateFixture(t *testing.T, email string, bodies []string) (*store
 	t.Helper()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "msgvault.db")
-	st, err := store.OpenForTest(mainPath)
+	st, err := store.OpenForTest(t.Context(), mainPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(t, st.InitSchema())
 	source, err := st.GetOrCreateSource("gmail", email)
 	require.NoError(t, err)
-	conversation, err := st.EnsureConversation(source.ID, "thread", "Thread")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Thread")
 	require.NoError(t, err)
 	for i, body := range bodies {
 		id, err := st.UpsertMessage(&store.Message{

@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"testing"
 
@@ -20,8 +19,8 @@ func TestIndexStoredMessageLeavesUnchangedEntry(t *testing.T) {
 		t.Skip("FTS5 not available")
 	}
 	id := f.CreateMessage("unchanged")
-	require.NoError(st.UpsertMessageBody(id, sql.NullString{String: "orchard", Valid: true}, sql.NullString{}))
-	require.NoError(st.IndexStoredMessageContext(context.Background(), id))
+	require.NoError(st.UpsertMessageBodyContext(t.Context(), id, sql.NullString{String: "orchard", Valid: true}, sql.NullString{}))
+	require.NoError(st.IndexStoredMessageContext(t.Context(), id))
 	// Observe database writes, so replacing an identical search row fails this test.
 	query := `SELECT total_changes()`
 	var args []any
@@ -32,9 +31,9 @@ func TestIndexStoredMessageLeavesUnchangedEntry(t *testing.T) {
 		st.DB().SetMaxOpenConns(1)
 	}
 	var before, after string
-	require.NoError(st.DB().QueryRow(query, args...).Scan(&before))
-	require.NoError(st.IndexStoredMessageContext(context.Background(), id))
-	require.NoError(st.DB().QueryRow(query, args...).Scan(&after))
+	require.NoError(st.DB().QueryRowContext(t.Context(), query, args...).Scan(&before))
+	require.NoError(st.IndexStoredMessageContext(t.Context(), id))
+	require.NoError(st.DB().QueryRowContext(t.Context(), query, args...).Scan(&after))
 	assert.Equal(before, after)
 
 	// Restore a missing search entry without changing the stored body.
@@ -42,9 +41,9 @@ func TestIndexStoredMessageLeavesUnchangedEntry(t *testing.T) {
 	if st.IsPostgreSQL() {
 		clearDocument = `UPDATE messages SET search_fts = NULL WHERE id = ?`
 	}
-	_, err := st.DB().Exec(st.Rebind(clearDocument), id)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(clearDocument), id)
 	require.NoError(err)
-	ctx := context.Background()
+	ctx := t.Context()
 	searchQuery := &search.Query{TextTerms: []string{"orchard"}}
 	ids, total, err := st.SearchMessageIDsQueryContext(ctx, searchQuery, 10)
 	require.NoError(err)

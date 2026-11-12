@@ -55,6 +55,7 @@ func TestRunRepairSendersLocalDryRunAndApply(t *testing.T) {
 	source, err := st.GetOrCreateSource("gmail", "archive@example.test")
 	require.NoError(err, "GetOrCreateSource")
 	conversationID, err := st.EnsureConversation(
+		t.Context(),
 		source.ID, "sender-repair-thread", "Sender repair",
 	)
 	require.NoError(err, "EnsureConversation")
@@ -114,11 +115,11 @@ func TestRunRepairSendersLocalDryRunAndApply(t *testing.T) {
 	assert.False(readRepairSenderID(t, chat, cfg).Valid,
 		"non-email messages must remain untouched")
 
-	check, err := store.OpenForTest(cfg.DatabaseDSN())
+	check, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err, "open repaired store")
 	defer func() { _ = check.Close() }()
 	var fromCount int
-	require.NoError(check.DB().QueryRow(check.Rebind(`
+	require.NoError(check.DB().QueryRowContext(t.Context(), check.Rebind(`
 		SELECT COUNT(*)
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
@@ -135,11 +136,11 @@ func readRepairSenderID(t *testing.T, messageID int64, configs ...*config.Config
 		cfg = configs[0]
 	}
 
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	st, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(t, err, "open sender check store")
 	defer func() { _ = st.Close() }()
 	var senderID sql.NullInt64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT sender_id FROM messages WHERE id = ?`), messageID).Scan(&senderID),
 		"read sender_id")
 	return senderID

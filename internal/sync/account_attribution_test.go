@@ -30,7 +30,8 @@ func TestSyncHealsPendingAccountAttribution(t *testing.T) {
 		return len(results)
 	}
 	pending := func() {
-		_, err := env.Store.DB().Exec(
+		_, err := env.Store.DB().ExecContext(
+			t.Context(),
 			`UPDATE messages SET account_address = NULL, account_path = NULL WHERE source_id = ?`, source.ID)
 		require.NoError(err)
 	}
@@ -58,21 +59,22 @@ func TestSyncContinuesWhenHealFails(t *testing.T) {
 	require.NoError(err)
 	require.NoError(env.Store.AddAccountIdentity(source.ID, "work@example.org", "manual"))
 	db := env.Store.DB()
-	_, err = db.Exec(`UPDATE messages SET account_address = NULL, account_path = NULL WHERE source_id = ?`, source.ID)
+	_, err = db.ExecContext(t.Context(), `UPDATE messages SET account_address = NULL, account_path = NULL WHERE source_id = ?`, source.ID)
 	require.NoError(err)
 	pendingRows := func() int {
 		var n int
-		require.NoError(db.QueryRow(
+		require.NoError(db.QueryRowContext(
+			t.Context(),
 			`SELECT COUNT(*) FROM messages WHERE source_id = ? AND account_path IS NULL`, source.ID).Scan(&n))
 		return n
 	}
 
 	// Hiding a table the pass writes makes it fail without touching sync itself.
-	_, err = db.Exec(`ALTER TABLE message_delivery_addresses RENAME TO message_delivery_addresses_off`)
+	_, err = db.ExecContext(t.Context(), `ALTER TABLE message_delivery_addresses RENAME TO message_delivery_addresses_off`)
 	require.NoError(err)
 	env.SetHistory(1000)
 	runIncrementalSync(t, env)
-	_, err = db.Exec(`ALTER TABLE message_delivery_addresses_off RENAME TO message_delivery_addresses`)
+	_, err = db.ExecContext(t.Context(), `ALTER TABLE message_delivery_addresses_off RENAME TO message_delivery_addresses`)
 	require.NoError(err)
 
 	assert.Equal(1, pendingRows(), "a failed pass leaves the row pending")

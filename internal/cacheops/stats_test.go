@@ -30,13 +30,13 @@ func TestCollectStatsWaitsForCacheBuildLock(t *testing.T) {
 	require.NoError(err, "acquire exclusive build lock")
 	require.True(locked, "acquire exclusive build lock")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the held build lock keeps collection waiting
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the held build lock keeps collection waiting
 	defer cancel()
 	_, err = CollectStats(ctx, dir)
 	require.Error(err, "stats collection must wait while a build holds the lock")
 
 	require.NoError(build.Unlock(), "release build lock")
-	stats, err := CollectStats(context.Background(), dir)
+	stats, err := CollectStats(t.Context(), dir)
 	require.NoError(err, "stats collection after the build releases")
 	require.Equal(StatusNoCacheFiles, stats.Status, "empty cache directories are absent")
 }
@@ -44,7 +44,7 @@ func TestCollectStatsWaitsForCacheBuildLock(t *testing.T) {
 func TestCollectStatsClassifiesCacheReadiness(t *testing.T) {
 	t.Run("absent", func(t *testing.T) {
 		require := require.New(t)
-		stats, err := CollectStats(context.Background(), t.TempDir())
+		stats, err := CollectStats(t.Context(), t.TempDir())
 		require.NoError(err)
 		assert.Equal(t, StatusNoCacheFiles, stats.Status)
 	})
@@ -53,7 +53,7 @@ func TestCollectStatsClassifiesCacheReadiness(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		dir := writeCacheStatsFixture(t)
-		stats, err := CollectStats(context.Background(), dir)
+		stats, err := CollectStats(t.Context(), dir)
 		require.NoError(err)
 		assert.Equal(StatusReady, stats.Status)
 		assert.Equal(int64(1), stats.TotalMessages)
@@ -67,7 +67,7 @@ func TestCollectStatsClassifiesCacheReadiness(t *testing.T) {
 		require.NoError(os.MkdirAll(filepath.Join(dir, tableMessages), 0o755))
 		require.NoError(os.WriteFile(filepath.Join(dir, tableMessages, "broken.parquet"), []byte("not parquet"), 0o600))
 
-		stats, err := CollectStats(context.Background(), dir)
+		stats, err := CollectStats(t.Context(), dir)
 		require.NoError(err)
 		assert.Equal(t, StatusInterrupted, stats.Status)
 	})
@@ -77,7 +77,7 @@ func TestCollectStatsClassifiesCacheReadiness(t *testing.T) {
 		dir := writeCacheStatsFixture(t)
 		require.NoError(os.WriteFile(query.CacheStatePath(dir), []byte("{"), 0o600))
 
-		stats, err := CollectStats(context.Background(), dir)
+		stats, err := CollectStats(t.Context(), dir)
 		require.NoError(err)
 		assert.Equal(t, StatusInterrupted, stats.Status)
 	})
@@ -87,7 +87,7 @@ func TestCollectStatsClassifiesCacheReadiness(t *testing.T) {
 		dir := writeCacheStatsFixture(t)
 		require.NoError(os.RemoveAll(filepath.Join(dir, "labels")))
 
-		stats, err := CollectStats(context.Background(), dir)
+		stats, err := CollectStats(t.Context(), dir)
 		require.NoError(err)
 		assert.Equal(t, StatusInterrupted, stats.Status)
 	})
@@ -99,7 +99,7 @@ func TestCollectStatsClassifiesCacheReadiness(t *testing.T) {
 		state.SchemaVersion--
 		writeCacheStatsState(t, dir, state)
 
-		stats, err := CollectStats(context.Background(), dir)
+		stats, err := CollectStats(t.Context(), dir)
 		require.NoError(t, err)
 		assert.Equal(t, StatusStaleSchema, stats.Status)
 	})
@@ -108,7 +108,7 @@ func TestCollectStatsClassifiesCacheReadiness(t *testing.T) {
 		dir := writeCacheStatsFixture(t)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "sources", "drift.parquet"), []byte("drift"), 0o600))
 
-		stats, err := CollectStats(context.Background(), dir)
+		stats, err := CollectStats(t.Context(), dir)
 		require.NoError(t, err)
 		assert.Equal(t, StatusDrifted, stats.Status)
 	})
@@ -126,7 +126,7 @@ func TestCollectStatsUsesCommittedMarkerWithoutScanningParquet(t *testing.T) {
 	requirementsForTest.NoError(err)
 	writeCacheStatsState(t, dir, state)
 
-	stats, err := CollectStats(context.Background(), dir)
+	stats, err := CollectStats(t.Context(), dir)
 	requirementsForTest.NoError(err)
 	assert.Equal(t, StatusReady, stats.Status)
 	assert.Equal(t, state.Stats.TotalMessages, stats.TotalMessages)
@@ -162,7 +162,7 @@ func writeCacheStatsFixture(t *testing.T) string {
 		}
 		requirementsForTest.NoError(os.MkdirAll(datasetDir, 0o755))
 		path := strings.ReplaceAll(filepath.Join(datasetDir, "data.parquet"), "'", "''")
-		_, err := db.Exec("COPY (" + selectSQL + ") TO '" + path + "' (FORMAT PARQUET)")
+		_, err := db.ExecContext(t.Context(), "COPY ("+selectSQL+") TO '"+path+"' (FORMAT PARQUET)")
 		requirementsForTest.NoError(err, "write %s fixture", dataset)
 	}
 	for _, dataset := range query.RequiredParquetDirs {
@@ -172,7 +172,7 @@ func writeCacheStatsFixture(t *testing.T) string {
 		datasetDir := filepath.Join(dir, dataset)
 		requirementsForTest.NoError(os.MkdirAll(datasetDir, 0o755))
 		path := strings.ReplaceAll(filepath.Join(datasetDir, "data.parquet"), "'", "''")
-		_, err := db.Exec("COPY (SELECT 1::BIGINT AS value) TO '" + path + "' (FORMAT PARQUET)")
+		_, err := db.ExecContext(t.Context(), "COPY (SELECT 1::BIGINT AS value) TO '"+path+"' (FORMAT PARQUET)")
 		requirementsForTest.NoError(err, "write %s fixture", dataset)
 	}
 

@@ -54,12 +54,12 @@ func seed(ctx context.Context, dataDir string) (*manifest, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, err
 	}
-	st, err := store.Open(filepath.Join(dataDir, "msgvault.db"))
+	st, err := store.OpenContext(ctx, filepath.Join(dataDir, "msgvault.db"))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = st.Close() }()
-	if err := st.InitSchema(); err != nil {
+	if err := st.InitSchemaContext(ctx); err != nil {
 		return nil, err
 	}
 	out := &manifest{Meetings: map[string]meetingRef{}}
@@ -80,7 +80,7 @@ func seed(ctx context.Context, dataDir string) (*manifest, error) {
 		if err != nil {
 			return nil, fmt.Errorf("import %s: %w", entry.provider, err)
 		}
-		ids, err := st.MessageExistsBatch(sourceID, []string{entry.externalID})
+		ids, err := st.MessageExistsBatchContext(ctx, sourceID, []string{entry.externalID})
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +92,7 @@ func seed(ctx context.Context, dataDir string) (*manifest, error) {
 	}
 	// Use the same Store transition that source deletion observation uses. No
 	// archive row or normalized meeting projection is manufactured by this helper.
-	if err := st.MarkMessageDeleted(out.Meetings["circleback"].SourceID, "meeting:circleback-provider"); err != nil {
+	if err := st.MarkMessageDeletedContext(ctx, out.Meetings["circleback"].SourceID, "meeting:circleback-provider"); err != nil {
 		return nil, err
 	}
 	// This is a historical source deletion. Keep it before the cache build's
@@ -166,7 +166,7 @@ func importChatwoot(ctx context.Context, st *store.Store, attachmentsDir string)
 	if _, err = imp.Import(ctx, chatwoot.ImportOptions{InboxID: 7, AttachmentsDir: attachmentsDir}); err != nil {
 		return [2]int64{}, err
 	}
-	ids, err := st.MessageExistsBatch(sources[0].ID, []string{"201", "call:201"})
+	ids, err := st.MessageExistsBatchContext(ctx, sources[0].ID, []string{"201", "call:201"})
 	return [2]int64{ids["201"], ids["call:201"]}, err
 }
 

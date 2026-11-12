@@ -324,7 +324,11 @@ func (m Model) aggregateTableView() string {
 		sb.WriteString("\n")
 		sb.WriteString(m.styles.separator.Render(strings.Repeat("\u2500", m.width)))
 		sb.WriteString("\n")
-		sb.WriteString(m.styles.normalRow.Render(padRight("   No data", m.width)))
+		emptyText := "   No data"
+		if m.accountsLoaded && len(m.accounts) == 0 {
+			emptyText = "   No mail yet. Run `msgvault setup` to see how to add a source."
+		}
+		sb.WriteString(m.styles.normalRow.Render(padRight(emptyText, m.width)))
 		sb.WriteString("\n")
 		// 1 "No data" + (pageSize-2) blanks = pageSize-1 data rows,
 		// then +1 info line = pageSize body rows total.

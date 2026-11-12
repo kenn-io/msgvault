@@ -12,9 +12,9 @@ func TestPhoneParticipantContextResolvesAliasesConservatively(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := storetest.New(t).Store
-	survivor, err := st.EnsureParticipantByPhone("+16045550100", "Synthetic Survivor", "imessage")
+	survivor, err := st.EnsureParticipantByPhone(t.Context(), "+16045550100", "Synthetic Survivor", "imessage")
 	require.NoError(err)
-	absorbed, err := st.EnsureParticipantByPhone("+16045550101", "Synthetic Absorbed", "imessage")
+	absorbed, err := st.EnsureParticipantByPhone(t.Context(), "+16045550101", "Synthetic Absorbed", "imessage")
 	require.NoError(err)
 	require.NoError(st.MergeParticipants(absorbed, survivor))
 
@@ -28,9 +28,9 @@ func TestPhoneParticipantContextResolvesAliasesConservatively(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(got, "unknown numbers create nothing")
 
-	other, err := st.EnsureParticipantByPhone("+16045550102", "Synthetic Other", "imessage")
+	other, err := st.EnsureParticipantByPhone(t.Context(), "+16045550102", "Synthetic Other", "imessage")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO participant_identifiers
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers
 		(participant_id, identifier_type, identifier_value, is_primary) VALUES (?, 'whatsapp', '+16045550100', FALSE)`), other)
 	require.NoError(err)
 	got, err = st.PhoneParticipantContext(t.Context(), "+16045550100")
@@ -44,7 +44,7 @@ func TestEmailParticipantContextResolvesAliasesConservatively(t *testing.T) {
 	st := storetest.New(t).Store
 	primary, err := st.EnsureParticipant("attendee@example.com", "", "example.com")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO participant_identifiers
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers
 		(participant_id, identifier_type, identifier_value, is_primary) VALUES (?, 'email', 'Alias@Example.com', FALSE)`), primary)
 	require.NoError(err)
 
@@ -60,7 +60,7 @@ func TestEmailParticipantContextResolvesAliasesConservatively(t *testing.T) {
 
 	other, err := st.EnsureParticipant("other@example.com", "", "example.com")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO participant_identifiers
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers
 		(participant_id, identifier_type, identifier_value, is_primary) VALUES (?, 'apple_id', 'attendee@example.com', FALSE)`), other)
 	require.NoError(err)
 	got, err = st.EmailParticipantContext(t.Context(), "attendee@example.com")

@@ -292,7 +292,7 @@ func TestImport_AccountIdentityControlsFromMe(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(source.ID, " User-B@Example.COM ", "manual"))
 
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Identifier:   "work",
 		AccountEmail: " user-a@example.com ",
 	})
@@ -308,7 +308,7 @@ func TestImport_AccountIdentityControlsFromMe(t *testing.T) {
 		{id: "other", want: false},
 	} {
 		var got bool
-		require.NoError(st.DB().QueryRow(st.Rebind(
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 			`SELECT is_from_me FROM messages WHERE source_id = ? AND source_message_id = ?`),
 			source.ID, "meeting:"+tc.id).Scan(&got))
 		assert.Equal(tc.want, got, tc.id)
@@ -316,7 +316,7 @@ func TestImport_AccountIdentityControlsFromMe(t *testing.T) {
 
 	msgID := circlebackMessageIDFor(t, st, "primary")
 	var sender string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT p.email_address
 		FROM messages m
 		JOIN participants p ON p.id = m.sender_id
@@ -335,10 +335,10 @@ func TestImport_NormalizesSentAtToUTC(t *testing.T) {
 	}}
 	imp, st := newTestImporter(t, f)
 
-	_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	var sentAt string
-	require.NoError(st.DB().QueryRow(`SELECT CAST(sent_at AS TEXT) FROM messages`).Scan(&sentAt))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT CAST(sent_at AS TEXT) FROM messages`).Scan(&sentAt))
 	assert.Contains(sentAt, "2026-07-09 20:00:00")
 	assert.NotContains(sentAt, "-05:00")
 }
@@ -401,7 +401,7 @@ func countLoggedSQLStatements(t *testing.T, logs *bytes.Buffer, fragment string)
 func circlebackMessageIDFor(t *testing.T, st *store.Store, meetingID string) int64 {
 	t.Helper()
 	var msgID int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), "meeting:"+meetingID).Scan(&msgID))
 	return msgID
 }
@@ -554,7 +554,7 @@ func TestPendingTranscript_MissingOrRecognizedEmptyPersistsAndAdvancesWatermark(
 			}
 			imp, st := newTestImporter(t, f)
 
-			sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+			sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 
 			require.NoError(err)
 			assert.EqualValues(1, sum.MeetingsProcessed)
@@ -593,7 +593,7 @@ func TestPendingTranscript_SearchOverlapSuppressesNotDueMeeting(t *testing.T) {
 	imp, st := newTestImporter(t, f)
 	seeded := seedCirclebackState(t, st, prior)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Identifier:   "alice@example.com",
 		AccountEmail: "alice@example.com",
 	})
@@ -629,7 +629,7 @@ func TestPendingTranscript_DueMeetingFetchedDirectlyAndDeduplicated(t *testing.T
 			}}}
 			seeded := seedCirclebackState(t, st, prior)
 
-			sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com", Limit: 1})
+			sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com", Limit: 1})
 
 			require.NoError(err)
 			assert.EqualValues(1, sum.MeetingsProcessed)
@@ -670,7 +670,7 @@ func TestPendingTranscript_MaintenanceRunsBeforeCancelableSearchBacklog(t *testi
 	}
 	imp, st := newTestImporter(t, f)
 	seeded := seedCirclebackState(t, st, syncState{PendingTranscripts: pending})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	f.readHook = func(ids []string) {
 		if countString(ids, "new-search") > 0 {
 			cancel()
@@ -716,7 +716,7 @@ func TestPendingTranscript_MaintenanceRunsBeforeSearchFailure(t *testing.T) {
 	}
 	prior := seedCirclebackState(t, st, priorState)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 
 	require.Error(err)
 	assert.Equal([]string{
@@ -730,7 +730,7 @@ func TestPendingTranscript_MaintenanceRunsBeforeSearchFailure(t *testing.T) {
 	dueMsgID := circlebackMessageIDFor(t, st, "due-before-search")
 	assert.Equal("present", circlebackMetadataMap(t, st, dueMsgID)["transcript_state"])
 	var searchedCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`),
 		"meeting:never-searched").Scan(&searchedCount))
 	assert.Zero(searchedCount)
@@ -784,7 +784,7 @@ func TestPendingTranscript_FailedRunRecoversPersistedRetryBeforeCreationCutoff(t
 	assert.True(result.Created)
 	assert.True(result.Changed)
 
-	failed, err := imp.Import(context.Background(), ImportOptions{
+	failed, err := imp.Import(t.Context(), ImportOptions{
 		Identifier: "alice@example.com",
 		Full:       true,
 	})
@@ -808,7 +808,7 @@ func TestPendingTranscript_FailedRunRecoversPersistedRetryBeforeCreationCutoff(t
 		slog.SetDefault(previousLogger)
 	})
 
-	retried, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	retried, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(1, retried.MeetingsProcessed)
 	assert.Equal([]string{oldID}, f.readIDs)
@@ -842,7 +842,7 @@ func TestPendingTranscript_TerminalExpiryRunsBeforeSearchFailure(t *testing.T) {
 		RetryUntil:    "2026-07-09T12:00:00Z",
 	}}})
 
-	_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 
 	require.Error(err)
 	assert.Equal([]string{"read:expired-before-search", "search"}, f.operations,
@@ -867,7 +867,7 @@ func TestImport_MidTranscriptCancellationStopsBeforePersistence(t *testing.T) {
 		orderedIDs:  []string{"cancel-transcript"},
 	}
 	imp, st := newTestImporter(t, f)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	f.transcriptHook = func([]string) { cancel() }
 
 	sum, err := imp.Import(ctx, ImportOptions{Identifier: "alice@example.com"})
@@ -877,7 +877,7 @@ func TestImport_MidTranscriptCancellationStopsBeforePersistence(t *testing.T) {
 	assert.EqualValues(1, sum.Errors)
 	assert.Equal([]string{"cancel-transcript"}, f.transcriptIDs)
 	var messageCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`),
 		"meeting:cancel-transcript").Scan(&messageCount))
 	assert.Zero(messageCount, "cancellation during transcript fetch must not persist notes-only data")
@@ -901,12 +901,12 @@ func TestImport_TranscriptCancellationErrorStopsBeforePersistence(t *testing.T) 
 	}
 	imp, st := newTestImporter(t, f)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 
 	require.ErrorIs(err, context.Canceled)
 	assert.EqualValues(1, sum.Errors)
 	var messageCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`),
 		"meeting:cancel-error").Scan(&messageCount))
 	assert.Zero(messageCount, "a canceled transcript call must never fall back to notes-only persistence")
@@ -934,7 +934,7 @@ func TestImport_MalformedPendingCursorFailsRecordedSync(t *testing.T) {
 			imp, st := newTestImporter(t, f)
 			prior := seedCirclebackCursor(t, st, tt.cursor)
 
-			sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+			sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 
 			require.Error(err)
 			require.NotNil(sum)
@@ -969,7 +969,7 @@ func TestImport_FutureMeetingWithoutCreatedAtDoesNotAdvanceCursor(t *testing.T) 
 	priorState := syncState{CreatedAfter: "2026-07-09T11:00:00Z"}
 	prior := seedCirclebackState(t, st, priorState)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 
 	require.NoError(err)
 	assert.EqualValues(1, sum.MeetingsAdded)
@@ -991,7 +991,7 @@ func TestImport_TranscriptBatchFailureCountsAffectedMeetings(t *testing.T) {
 	}
 	imp, st := newTestImporter(t, f)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 
 	require.Error(err)
 	assert.EqualValues(2, sum.Errors)
@@ -1010,7 +1010,7 @@ func TestImport_SearchFailureCountsOneOperation(t *testing.T) {
 	}
 	imp, st := newTestImporter(t, f)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 
 	require.Error(err)
 	assert.EqualValues(1, sum.Errors)
@@ -1036,7 +1036,7 @@ func TestPendingTranscript_RepeatedOmissionExpiresAndFullPromotes(t *testing.T) 
 	}}}
 	seeded := seedCirclebackState(t, st, prior)
 
-	_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	rescheduled := pendingTranscriptByID(t, lastCirclebackState(t, st, seeded.SourceID), "lifecycle")
 	assert.Equal("2026-07-09T18:00:00Z", rescheduled.NextAttemptAt)
@@ -1045,7 +1045,7 @@ func TestPendingTranscript_RepeatedOmissionExpiresAndFullPromotes(t *testing.T) 
 	assert.Equal("pending", circlebackMetadataMap(t, st, msgID)["transcript_state"])
 
 	imp.now = func() time.Time { return time.Date(2026, 7, 10, 18, 0, 0, 0, time.UTC) }
-	_, err = imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.Empty(lastCirclebackState(t, st, seeded.SourceID).PendingTranscripts)
 	assert.Equal("unavailable", circlebackMetadataMap(t, st, msgID)["transcript_state"])
@@ -1061,7 +1061,7 @@ func TestPendingTranscript_RepeatedOmissionExpiresAndFullPromotes(t *testing.T) 
 		"notes":"Refreshed notes after transcript expiry"
 	}`)
 	f.transcriptIDs = nil
-	_, err = imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.Equal("unavailable", circlebackMetadataMap(t, st, msgID)["transcript_state"],
 		"ordinary incremental overlap must not restart or promote an expired retry lifecycle")
@@ -1069,7 +1069,7 @@ func TestPendingTranscript_RepeatedOmissionExpiresAndFullPromotes(t *testing.T) 
 	assert.Contains(circlebackMessageBody(t, st, msgID), "Refreshed notes after transcript expiry",
 		"transcript suppression must not block ordinary meeting-detail refreshes")
 
-	_, err = imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com", Full: true})
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com", Full: true})
 	require.NoError(err)
 	assert.Equal("present", circlebackMetadataMap(t, st, msgID)["transcript_state"])
 }
@@ -1100,7 +1100,7 @@ func TestImport_LimitCapsOnlyNewSearchWork(t *testing.T) {
 	seeded := seedCirclebackState(t, st, prior)
 	var progress []string
 
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Identifier: "alice@example.com",
 		Limit:      1,
 		Progress:   func(line string) { progress = append(progress, line) },
@@ -1147,7 +1147,7 @@ func TestImport_FullLimitPreservesUnprocessedPending(t *testing.T) {
 	}
 	seeded := seedCirclebackState(t, st, prior)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Identifier: "alice@example.com",
 		Full:       true,
 		Limit:      1,
@@ -1190,7 +1190,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	}
 	imp, st := newTestImporter(t, f)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Identifier:   "alice@example.com",
 		AccountEmail: "alice@example.com",
 	})
@@ -1205,7 +1205,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	var hasAttachments bool
 	var attachmentCount int
 	var msgID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id, subject, sent_at, is_from_me, has_attachments, attachment_count
 		 FROM messages WHERE source_message_id = ?`),
 		"meeting:42").Scan(&msgID, &subject, &sentAt, &fromMe, &hasAttachments, &attachmentCount))
@@ -1217,7 +1217,7 @@ func TestImport_RoundTrip(t *testing.T) {
 
 	// Conversation.
 	var convType string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT c.conversation_type FROM conversations c
 		JOIN messages m ON m.conversation_id = c.id WHERE m.id = ?`), msgID).Scan(&convType))
 	assert.Equal("meeting", convType)
@@ -1225,7 +1225,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	// Body: notes, action items, transcript lines; name-only guest in the
 	// body but not as a participant.
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT body_text FROM message_bodies WHERE message_id = ?`), msgID).Scan(&body))
 	assert.Contains(body, "Ship the new layout")
 	assert.Contains(body, "- Update mockups (Bob Jones) [pending]")
@@ -1234,7 +1234,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	assert.Contains(body, "Attendees: Alice Smith, Bob Jones, Guest Speaker")
 
 	var toCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_recipients WHERE message_id = ? AND recipient_type = 'to'`),
 		msgID).Scan(&toCount))
 	assert.Equal(2, toCount, "name-only attendee must not become a recipient")
@@ -1242,7 +1242,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	// The short-lived recording URL remains in provider metadata but is not
 	// represented as a durable attachment.
 	var recordingAttachments int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM attachments WHERE message_id = ?`), msgID).Scan(&recordingAttachments))
 	assert.Zero(recordingAttachments)
 
@@ -1282,14 +1282,14 @@ func TestImport_IdempotentRefreshAndWatermark(t *testing.T) {
 	}
 	imp, st := newTestImporter(t, f)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	require.EqualValues(1, sum.MeetingsAdded)
 	assert.Empty(f.lastSearchStart, "first run has no watermark")
 
 	cursorOf := func() string {
 		var blob string
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT cursor_after FROM sync_runs
 			WHERE source_id = ? AND status = 'completed'
 			ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&blob))
@@ -1301,36 +1301,37 @@ func TestImport_IdempotentRefreshAndWatermark(t *testing.T) {
 
 	// Second run: discovery remains unbounded, but an identical overlap row is
 	// neither added nor counted as an update.
-	sum2, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum2, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(0, sum2.MeetingsAdded)
 	assert.EqualValues(0, sum2.MeetingsUpdated, "identical overlap rows are no-op refreshes")
 	assert.Empty(f.lastSearchStart, "incremental discovery is not bounded by scheduled date")
 
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count)
 
 	// An incremental sync leaves a stale derived preview alone when the
 	// evidence is unchanged; --full must rewrite it.
 	const snippetQuery = `SELECT snippet FROM messages WHERE source_message_id = ?`
 	var snippet string
-	require.NoError(st.DB().QueryRow(st.Rebind(snippetQuery), "meeting:42").Scan(&snippet))
-	_, err = st.DB().Exec(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(snippetQuery), "meeting:42").Scan(&snippet))
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE messages SET snippet = ? WHERE source_message_id = ?`), "stale", "meeting:42")
 	require.NoError(err)
-	forced, err := imp.Import(context.Background(),
+	forced, err := imp.Import(
+		t.Context(),
 		ImportOptions{Identifier: "alice@example.com", Full: true})
 	require.NoError(err)
 	assert.EqualValues(0, forced.MeetingsAdded)
 	assert.EqualValues(1, forced.MeetingsUpdated)
 	var repaired string
-	require.NoError(st.DB().QueryRow(st.Rebind(snippetQuery), "meeting:42").Scan(&repaired))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(snippetQuery), "meeting:42").Scan(&repaired))
 	assert.Equal(snippet, repaired)
 
 	// Failing run: watermark holds.
 	f.failRead = true
-	sum3, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum3, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.Error(err)
 	assert.Positive(sum3.Errors)
 	assert.Equal("2026-06-10T17:05:00Z", cursorOf(), "cursor must hold after a failing run")
@@ -1341,7 +1342,7 @@ func TestImport_IdempotentRefreshAndWatermark(t *testing.T) {
 		"42": json.RawMessage(`{"id": 42, "name": "Design Review v2", "createdAt": "2026-06-12T09:00:00Z", "startTime": "2026-06-10T17:00:00Z", "organizer": {"name": "Alice Smith", "email": "alice@example.com"}, "attendees": [{"name": "Alice Smith", "email": "alice@example.com"}], "notes": "updated"}`),
 	}
 	f.meetings = edited
-	sum4, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum4, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(0, sum4.MeetingsAdded)
 	assert.EqualValues(1, sum4.MeetingsUpdated)
@@ -1350,14 +1351,14 @@ func TestImport_IdempotentRefreshAndWatermark(t *testing.T) {
 	assert.Equal(sum4.MeetingsUpdated, latest.MessagesUpdated, "refresh count persisted to sync history")
 
 	var subject string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT subject FROM messages WHERE source_message_id = ?`), "meeting:42").Scan(&subject))
 	assert.Equal("Design Review v2", subject)
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(1, count, "refresh must update in place")
 	assert.Equal("2026-06-12T09:00:00Z", cursorOf(), "watermark advances to the edited createdAt")
 	var conversationParticipantCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM conversation_participants cp
 		JOIN messages m ON m.conversation_id = cp.conversation_id
 		WHERE m.source_message_id = ?`), "meeting:42").Scan(&conversationParticipantCount))
@@ -1366,13 +1367,13 @@ func TestImport_IdempotentRefreshAndWatermark(t *testing.T) {
 	// The recording link attachment was removed on refresh (edited meeting
 	// has no recordingUrl).
 	var attCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = ?`), "meeting:42").Scan(&attCount))
 	assert.Equal(0, attCount, "stale recording link cleared by unconditional replace")
 	var hasAttachments bool
 	var attachmentCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT has_attachments, attachment_count FROM messages
 		WHERE source_message_id = ?`), "meeting:42").Scan(&hasAttachments, &attachmentCount))
 	assert.False(hasAttachments, "removing recording link must update message attachment metadata")
@@ -1392,7 +1393,7 @@ func TestImport_IncrementalDiscoversBackfilledMeetingBeforeScheduledOverlap(t *t
 	}
 	imp, st := newTestImporter(t, f)
 
-	first, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	require.EqualValues(1, first.MeetingsAdded)
 
@@ -1405,7 +1406,7 @@ func TestImport_IncrementalDiscoversBackfilledMeetingBeforeScheduledOverlap(t *t
 	)
 	f.orderedIDs = []string{"current", "backfill"}
 
-	second, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(1, second.MeetingsAdded,
 		"incremental discovery must not hide newly created meetings behind a scheduled-date filter")
@@ -1430,7 +1431,7 @@ func TestImport_RefreshesKnownBackfillWhenSearchSummaryOmitsCreatedAt(t *testing
 	}
 	imp, st := newTestImporter(t, f)
 
-	first, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	require.EqualValues(1, first.MeetingsAdded)
 
@@ -1447,13 +1448,13 @@ func TestImport_RefreshesKnownBackfillWhenSearchSummaryOmitsCreatedAt(t *testing
 		"endTime":"2026-05-01T10:00:00Z"
 	}`)
 
-	second, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(1, second.MeetingsUpdated,
 		"missing summary creation time must fail open to hydration")
 
 	var subject string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT subject FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		first.SourceID, "meeting:"+id,
 	).Scan(&subject))
@@ -1474,7 +1475,7 @@ func TestImport_SkipsKnownOldMeetingWhenSearchSummaryOmitsCreatedAt(t *testing.T
 	}
 	imp, _ := newTestImporter(t, f)
 
-	first, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	first, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	require.EqualValues(2, first.MeetingsAdded)
 
@@ -1486,7 +1487,7 @@ func TestImport_SkipsKnownOldMeetingWhenSearchSummaryOmitsCreatedAt(t *testing.T
 	f.readIDs = nil
 	f.transcriptIDs = nil
 
-	second, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	second, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(0, second.MeetingsUpdated)
 	assert.NotContains(f.readIDs, "old",
@@ -1505,9 +1506,9 @@ func TestImport_SearchDateBounds(t *testing.T) {
 		}
 		imp, _ := newTestImporter(t, f)
 
-		_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+		_, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 		require.NoError(err)
-		_, err = imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+		_, err = imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 		require.NoError(err)
 
 		assert.Empty(f.lastSearchStart,
@@ -1525,7 +1526,7 @@ func TestImport_SearchDateBounds(t *testing.T) {
 		plusTwo := time.FixedZone("UTC+2", 2*60*60)
 		createdAfter := time.Date(2026, 6, 10, 0, 30, 0, 0, plusTwo)
 
-		_, err := imp.Import(context.Background(), ImportOptions{
+		_, err := imp.Import(t.Context(), ImportOptions{
 			Identifier:   "alice@example.com",
 			Full:         true,
 			CreatedAfter: createdAfter,
@@ -1559,12 +1560,12 @@ func TestImport_LimitDoesNotAdvanceCursor(t *testing.T) {
 	}
 	imp, st := newTestImporter(t, f)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com", Limit: 1})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com", Limit: 1})
 	require.NoError(err)
 	require.EqualValues(1, sum.MeetingsProcessed)
 
 	var cursorJSON string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT cursor_after FROM sync_runs
 		WHERE source_id = ? AND status = 'completed'
 		ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&cursorJSON))
@@ -1572,10 +1573,10 @@ func TestImport_LimitDoesNotAdvanceCursor(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(cursorJSON), &cursor))
 	assert.Empty(cursor.CreatedAfter, "limited run must preserve the prior cursor")
 
-	_, err = imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(2, count, "normal incremental run must still import the older meeting")
 }
 
@@ -1611,7 +1612,7 @@ func TestImport_MissingReadResultDoesNotAdvanceCursor(t *testing.T) {
 	}
 	prior := seedCirclebackState(t, st, priorState)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.Error(err)
 	assert.EqualValues(1, sum.Errors, "missing detail result must make the traversal incomplete")
 	latest, latestErr := st.GetLatestSync(sum.SourceID)
@@ -1626,10 +1627,10 @@ func TestImport_MissingReadResultDoesNotAdvanceCursor(t *testing.T) {
 		"missing ReadMeetings result must retain the prior watermark and pending list")
 
 	f.omitRead[olderID] = false
-	_, err = imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(2, count, "retry must still import the previously omitted meeting")
 }
 
@@ -1687,7 +1688,7 @@ func TestImport_TranscriptProviderUnrecognizedAndIngestFailuresRetainCursor(t *t
 			}
 			prior := seedCirclebackState(t, st, priorState)
 			if tt.ingestFailure {
-				_, triggerErr := st.DB().Exec(`
+				_, triggerErr := st.DB().ExecContext(t.Context(), `
 					CREATE TRIGGER fail_circleback_task3_ingest
 					BEFORE INSERT ON message_raw
 					WHEN NEW.raw_format = 'circleback_json'
@@ -1698,7 +1699,7 @@ func TestImport_TranscriptProviderUnrecognizedAndIngestFailuresRetainCursor(t *t
 				require.NoError(triggerErr)
 			}
 
-			sum, importErr := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+			sum, importErr := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 
 			require.Error(importErr)
 			require.NotNil(sum)
@@ -1716,7 +1717,7 @@ func TestImport_TranscriptProviderUnrecognizedAndIngestFailuresRetainCursor(t *t
 			assert.Equal(prior.CursorAfter, lastSuccessful.CursorAfter,
 				"hard failure must retain the exact prior watermark and pending list")
 			var messageCount int
-			require.NoError(st.DB().QueryRow(st.Rebind(
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`),
 				prior.SourceID, "meeting:hard-error").Scan(&messageCount))
 			assert.Zero(messageCount,
@@ -1743,13 +1744,13 @@ func TestImport_ExhaustsSearchPagesBeforeAdvancingCursor(t *testing.T) {
 	}
 	imp, st := newTestImporter(t, f)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(2, sum.MeetingsProcessed)
 	assert.Equal([]int{0, 1, 2}, f.searchedPages)
 
 	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 	assert.Equal(2, count)
 }
 
@@ -1760,14 +1761,14 @@ func TestImport_CancellationMarksSyncFailed(t *testing.T) {
 		transcripts: map[string]json.RawMessage{},
 	}
 	imp, st := newTestImporter(t, f)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	sum, err := imp.Import(ctx, ImportOptions{Identifier: "alice@example.com"})
 	require.ErrorIs(err, context.Canceled)
 
 	var status string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT status FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`),
 		sum.SourceID).Scan(&status))
 	require.Equal("failed", status)
@@ -1782,12 +1783,12 @@ func TestImport_TranscriptFailureStillArchivesNotes(t *testing.T) {
 	}
 	imp, st := newTestImporter(t, f)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(1, sum.MeetingsAdded)
 
 	var body string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text FROM message_bodies mb
 		JOIN messages m ON m.id = mb.message_id
 		WHERE m.source_message_id = ?`), "meeting:42").Scan(&body))
@@ -1805,12 +1806,12 @@ func TestImport_TranscriptFailurePreservesArchivedTranscript(t *testing.T) {
 	imp, st := newTestImporter(t, f)
 
 	// Clean run archives the transcript.
-	_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	_, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 
 	bodyOf := func(smid string) string {
 		var body string
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT mb.body_text FROM message_bodies mb
 			JOIN messages m ON m.id = mb.message_id
 			WHERE m.source_message_id = ?`), smid).Scan(&body))
@@ -1839,7 +1840,7 @@ func TestImport_TranscriptFailurePreservesArchivedTranscript(t *testing.T) {
 		"notes": "Retro notes"
 	}`)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.Error(err)
 	assert.Positive(sum.Errors, "transcript failure must count as an error (holds the watermark)")
 	assert.Zero(sum.MeetingsAdded, "a new meeting without a fetched transcript remains retryable")
@@ -1850,7 +1851,7 @@ func TestImport_TranscriptFailurePreservesArchivedTranscript(t *testing.T) {
 	assert.NotContains(body42, "EDITED notes", "the skipped meeting is untouched until transcripts return")
 
 	var meeting43Count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "meeting:43").Scan(&meeting43Count))
 	assert.Zero(meeting43Count, "historical meeting must not be persisted without durable retry state")
 
@@ -1860,7 +1861,7 @@ func TestImport_TranscriptFailurePreservesArchivedTranscript(t *testing.T) {
 	f.transcripts["43"] = json.RawMessage(`{"meetingId": 43, "transcript": [
 		{"speaker": "Alice Smith", "text": "What went well?", "start": 0}
 	]}`)
-	_, err = imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	_, err = imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	body42 = bodyOf("meeting:42")
 	assert.Contains(body42, "EDITED notes")
@@ -1880,13 +1881,13 @@ func TestImport_OmittedTranscriptPreservesArchive(t *testing.T) {
 				}
 				imp, st := newTestImporter(t, f)
 
-				initial, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+				initial, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 				require.NoError(err)
 				originalID := circlebackMessageID(t, st)
 				require.Contains(circlebackMessageBody(t, st, originalID), archive.bodyText)
-				labelID, err := st.EnsureLabel(initial.SourceID, "circleback-test-label", "Keep", "user")
+				labelID, err := st.EnsureLabel(t.Context(), initial.SourceID, "circleback-test-label", "Keep", "user")
 				require.NoError(err)
-				require.NoError(st.AddMessageLabels(originalID, []int64{labelID}))
+				require.NoError(st.AddMessageLabels(t.Context(), originalID, []int64{labelID}))
 
 				f.meetings["42"] = json.RawMessage(refreshedMeeting42)
 				if refresh.payload == nil {
@@ -1895,7 +1896,7 @@ func TestImport_OmittedTranscriptPreservesArchive(t *testing.T) {
 					f.transcripts["42"] = refresh.payload
 				}
 
-				sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+				sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 				require.NoError(err)
 				assert.EqualValues(0, sum.Errors)
 				assert.EqualValues(0, sum.MeetingsAdded)
@@ -1903,17 +1904,17 @@ func TestImport_OmittedTranscriptPreservesArchive(t *testing.T) {
 				refreshedID := circlebackMessageID(t, st)
 				assert.Equal(originalID, refreshedID, "refresh must rewrite the canonical message row")
 				var count int
-				require.NoError(st.DB().QueryRow(st.Rebind(
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 					`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`),
 					sum.SourceID, "meeting:42").Scan(&count))
 				assert.Equal(1, count)
-				require.NoError(st.DB().QueryRow(st.Rebind(
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 					`SELECT COUNT(*) FROM message_labels WHERE message_id = ? AND label_id = ?`),
 					refreshedID, labelID).Scan(&count))
 				assert.Equal(1, count, "canonical refresh must preserve user-added labels")
 
 				var subject string
-				require.NoError(st.DB().QueryRow(st.Rebind(
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 					`SELECT subject FROM messages WHERE id = ?`), refreshedID).Scan(&subject))
 				assert.Equal("Design Review Refreshed", subject)
 				body := circlebackMessageBody(t, st, refreshedID)
@@ -1948,13 +1949,13 @@ func TestImport_ArchivedTranscriptRecovery(t *testing.T) {
 					transcripts: map[string]json.RawMessage{"42": archive.payload},
 				}
 				imp, st := newTestImporter(t, f)
-				_, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+				_, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 				require.NoError(err)
 				msgID := circlebackMessageID(t, st)
 
 				f.meetings["42"] = json.RawMessage(refreshedMeeting42)
 				delete(f.transcripts, "42")
-				sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+				sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 				require.NoError(err)
 				assert.EqualValues(0, sum.Errors)
 				body := circlebackMessageBody(t, st, msgID)
@@ -2014,7 +2015,7 @@ func TestImport_ArchivedTranscriptRecovery(t *testing.T) {
 					transcripts: map[string]json.RawMessage{"42": json.RawMessage(transcript42)},
 				}
 				imp, st := newTestImporter(t, f)
-				initial, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+				initial, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 				require.NoError(err)
 				msgID := circlebackMessageID(t, st)
 				priorSuccessful, err := st.GetLastSuccessfulSync(initial.SourceID)
@@ -2030,7 +2031,7 @@ func TestImport_ArchivedTranscriptRecovery(t *testing.T) {
 
 				f.meetings["42"] = json.RawMessage(refreshedMeeting42)
 				delete(f.transcripts, "42")
-				sum, importErr := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+				sum, importErr := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 				require.Error(importErr)
 				require.NotNil(sum)
 				assert.EqualValues(1, sum.MeetingsProcessed)
@@ -2073,13 +2074,13 @@ func TestIngestMeeting_RawFailureRollsBackCanonicalRefresh(t *testing.T) {
 	}
 	imp, st := newTestImporter(t, f)
 	require.True(st.FTS5Available(), "atomic rollback test inspects the SQLite FTS row")
-	initial, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	initial, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	msgID := circlebackMessageID(t, st)
 	before := circlebackPersistenceSnapshot(t, st, msgID)
 	participantsBefore := circlebackStringRows(t, st, `SELECT email_address FROM participants ORDER BY email_address`)
 
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_circleback_raw_archive
 		BEFORE INSERT ON message_raw
 		WHEN NEW.raw_format = 'circleback_json'
@@ -2119,10 +2120,10 @@ func TestImport_MessageLookupFailureMarksSyncFailed(t *testing.T) {
 	imp, st := newTestImporter(t, f)
 	src, err := st.GetOrCreateSource(SourceType, "alice@example.com")
 	require.NoError(err)
-	_, err = st.DB().Exec(`ALTER TABLE messages RENAME TO unavailable_messages`)
+	_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE messages RENAME TO unavailable_messages`)
 	require.NoError(err)
 
-	sum, importErr := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, importErr := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.Error(importErr)
 	require.NotNil(sum)
 	assert.Contains(importErr.Error(), "lookup search page")
@@ -2141,7 +2142,7 @@ func TestImport_CheckpointFailureJoinsHardError(t *testing.T) {
 		transcripts: map[string]json.RawMessage{"42": json.RawMessage(transcript42)},
 	}
 	imp, st := newTestImporter(t, f)
-	initial, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	initial, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	msgID := circlebackMessageID(t, st)
 
@@ -2151,7 +2152,7 @@ func TestImport_CheckpointFailureJoinsHardError(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.SetMessageMetadata(msgID, sql.NullString{String: string(encoded), Valid: true}))
 	require.NoError(st.UpsertMessageRawWithFormat(msgID, []byte(`{"meeting":{"id":42}}`), RawFormat))
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_circleback_checkpoint
 		BEFORE UPDATE OF messages_processed ON sync_runs
 		WHEN OLD.status = 'running' AND NEW.status = 'running'
@@ -2164,7 +2165,7 @@ func TestImport_CheckpointFailureJoinsHardError(t *testing.T) {
 
 	f.meetings["42"] = json.RawMessage(refreshedMeeting42)
 	delete(f.transcripts, "42")
-	sum, importErr := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, importErr := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.Error(importErr)
 	require.NotNil(sum)
 	assert.Contains(importErr.Error(), "recover archived transcript")
@@ -2195,18 +2196,18 @@ func TestImport_NotesOnlyMeetingDoesNotStallWatermark(t *testing.T) {
 	}
 	imp, st := newTestImporter(t, f)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(1, sum.MeetingsAdded)
 	assert.EqualValues(0, sum.Errors, "a new notes-only meeting is not an error")
 
 	// Re-run: still omitted, still clean, notes refresh in place.
-	sum2, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum2, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 	require.NoError(err)
 	assert.EqualValues(0, sum2.Errors, "an archived notes-only meeting must not error on re-sync")
 
 	var blob string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT cursor_after FROM sync_runs
 		WHERE source_id = ? AND status = 'completed'
 		ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&blob))
@@ -2218,7 +2219,7 @@ func TestImport_NotesOnlyMeetingDoesNotStallWatermark(t *testing.T) {
 func circlebackMessageID(t *testing.T, st *store.Store) int64 {
 	t.Helper()
 	var msgID int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), "meeting:42").Scan(&msgID))
 	return msgID
 }
@@ -2226,7 +2227,7 @@ func circlebackMessageID(t *testing.T, st *store.Store) int64 {
 func circlebackMessageBody(t *testing.T, st *store.Store, msgID int64) string {
 	t.Helper()
 	var body string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT body_text FROM message_bodies WHERE message_id = ?`), msgID).Scan(&body))
 	return body
 }
@@ -2260,7 +2261,7 @@ type meetingPersistenceSnapshot struct {
 func circlebackPersistenceSnapshot(t *testing.T, st *store.Store, msgID int64) meetingPersistenceSnapshot {
 	t.Helper()
 	var snapshot meetingPersistenceSnapshot
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.subject, m.snippet, m.size_estimate, m.has_attachments,
 		       m.attachment_count, m.metadata, c.title
 		FROM messages m
@@ -2270,7 +2271,7 @@ func circlebackPersistenceSnapshot(t *testing.T, st *store.Store, msgID int64) m
 		&snapshot.HasAttachments, &snapshot.AttachmentCount,
 		&snapshot.Metadata, &snapshot.ConversationTitle,
 	))
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT body_text FROM message_bodies WHERE message_id = ?`), msgID).Scan(&snapshot.Body))
 	raw, err := st.GetMessageRaw(msgID)
 	require.NoError(t, err)
@@ -2292,7 +2293,7 @@ func circlebackPersistenceSnapshot(t *testing.T, st *store.Store, msgID int64) m
 		WHERE message_id = ?
 		ORDER BY id`, msgID)
 	var ftsSubject, ftsBody, ftsFrom, ftsTo, ftsCC string
-	ftsErr := st.DB().QueryRow(st.Rebind(`
+	ftsErr := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT subject, body, from_addr, to_addr, cc_addr
 		FROM messages_fts WHERE rowid = ?`), msgID).Scan(
 		&ftsSubject, &ftsBody, &ftsFrom, &ftsTo, &ftsCC,
@@ -2307,7 +2308,7 @@ func circlebackPersistenceSnapshot(t *testing.T, st *store.Store, msgID int64) m
 
 func circlebackStringRows(t *testing.T, st *store.Store, query string, args ...any) []string {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(query), args...)
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(query), args...)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	var values []string

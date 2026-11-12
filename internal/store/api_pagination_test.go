@@ -31,7 +31,7 @@ func TestStoreAPI_PaginationStability_IdenticalSentAt(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "page@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "thread-page", "Thread Page")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-page", "Thread Page")
 	require.NoError(err, "EnsureConversation")
 	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	require.NoError(err, "EnsureParticipant")

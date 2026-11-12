@@ -2,7 +2,6 @@ package gvoice
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -124,8 +123,8 @@ func TestImportVoicemailExactAssociation(t *testing.T) {
 	firstID := sourceMessageID(t, "with-audio.html")
 	secondID := sourceMessageID(t, "leading-space-src.html")
 	var firstMessage, secondMessage int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), firstID).Scan(&firstMessage))
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), secondID).Scan(&secondMessage))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), firstID).Scan(&firstMessage))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), secondID).Scan(&secondMessage))
 	assert.NotEqual(rows[0].contentHash.String, rows[1].contentHash.String)
 	assert.Equal(firstMessage, rows[0].messageID)
 	assert.Equal(secondMessage, rows[1].messageID)
@@ -159,7 +158,7 @@ func TestImportVoicemailNoAudioReferenceWritesGap(t *testing.T) {
 	assert.True(messageHasAttachments(t, st, sourceMessageID(t, "no-audio.html")))
 	hash := sha256.Sum256(audioData)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE content_hash = ?`), hex.EncodeToString(hash[:])).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE content_hash = ?`), hex.EncodeToString(hash[:])).Scan(&count))
 	assert.Zero(count)
 	entries, err := os.ReadDir(attachments)
 	require.NoError(err)
@@ -244,7 +243,7 @@ func TestImportVoicemailRejectsEscapingSrc(t *testing.T) {
 	assert.Equal("fetch_failure", rows[0].skipReason.String)
 	hash := sha256.Sum256(audioData)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM attachments WHERE content_hash = ?`), hex.EncodeToString(hash[:])).Scan(&count))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM attachments WHERE content_hash = ?`), hex.EncodeToString(hash[:])).Scan(&count))
 	assert.Zero(count)
 	entries, err := os.ReadDir(attachments)
 	require.NoError(err)
@@ -353,7 +352,7 @@ func TestImportVoicemailRollsBackAudioWhenRevisionFails(t *testing.T) {
 	updated := []byte("replacement audio")
 	require.NoError(os.WriteFile(filepath.Join(voice, "Calls", withAudioMP3), updated, 0o600))
 	// Reject just the revision update to exercise the atomic write contract.
-	_, err = st.DB().Exec(`CREATE TRIGGER reject_audio_revision
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_audio_revision
 		BEFORE UPDATE ON archive_metadata WHEN NEW.key = 'derived_data_revision'
 		BEGIN SELECT RAISE(ABORT, 'revision write rejected'); END`)
 	require.NoError(err)
@@ -362,7 +361,7 @@ func TestImportVoicemailRollsBackAudioWhenRevisionFails(t *testing.T) {
 	messageID := messageIDBySource(t, st, sourceMessageID(t, "with-audio.html"))
 	var hasAttachments bool
 	var attachmentCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT has_attachments, attachment_count FROM messages WHERE id = ?
 	`), messageID).Scan(&hasAttachments, &attachmentCount))
 	assert.True(hasAttachments)
@@ -371,7 +370,7 @@ func TestImportVoicemailRollsBackAudioWhenRevisionFails(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(revision, unchangedRevision)
 
-	_, err = st.DB().Exec(`DROP TRIGGER reject_audio_revision`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER reject_audio_revision`)
 	require.NoError(err)
 	importVoice(t, st, voice, attachments)
 	assert.Equal(updated, readStoredAttachment(t, attachments, attachmentRows(t, st)[0]))
@@ -389,7 +388,7 @@ func TestImportVoicemailRollsBackAudioWhenStatsFail(t *testing.T) {
 	})
 	st := testutil.NewSQLiteTestStore(t)
 	attachments := t.TempDir()
-	_, err := st.DB().Exec(`CREATE TRIGGER reject_audio_stats
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_audio_stats
 		BEFORE UPDATE ON messages WHEN NEW.attachment_count > 0
 		BEGIN SELECT RAISE(ABORT, 'stats write rejected'); END`)
 	require.NoError(err)
@@ -399,7 +398,7 @@ func TestImportVoicemailRollsBackAudioWhenStatsFail(t *testing.T) {
 	before, err := st.DerivedDataRevision()
 	require.NoError(err)
 
-	_, err = st.DB().Exec(`DROP TRIGGER reject_audio_stats`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER reject_audio_stats`)
 	require.NoError(err)
 	importVoice(t, st, voice, attachments)
 	assert.Len(attachmentRows(t, st), 1)
@@ -465,8 +464,8 @@ func TestImportVoicemailPreservesMessageFields(t *testing.T) {
 	messageID := messageIDBySource(t, st, sourceMessageID(t, "with-audio.html"))
 	var messageType string
 	var snippet sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT message_type, snippet FROM messages WHERE id = ?`), messageID).Scan(&messageType, &snippet))
-	body, err := st.GetMessageBodyText(messageID)
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_type, snippet FROM messages WHERE id = ?`), messageID).Scan(&messageType, &snippet))
+	body, err := st.GetMessageBodyText(t.Context(), messageID)
 	require.NoError(err)
 	gotRaw, err := st.GetMessageRaw(messageID)
 	require.NoError(err)
@@ -476,7 +475,7 @@ func TestImportVoicemailPreservesMessageFields(t *testing.T) {
 	assert.Equal(raw, gotRaw)
 
 	var labelCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_labels ml
 		JOIN labels l ON l.id = ml.label_id
 		WHERE ml.message_id = ? AND l.name = ?
@@ -563,7 +562,7 @@ func clientImport(t *testing.T, client *Client, st *store.Store) (*ImportSummary
 	t.Helper()
 	source, err := st.GetOrCreateSource("google_voice", client.Identifier())
 	require.NoError(t, err)
-	return client.Import(context.Background(), st, source.ID)
+	return client.Import(t.Context(), st, source.ID)
 }
 
 func importVoice(t *testing.T, st *store.Store, voice, attachments string) *ImportSummary {
@@ -575,7 +574,7 @@ func importVoice(t *testing.T, st *store.Store, voice, attachments string) *Impo
 
 func attachmentRows(t *testing.T, st *store.Store) []voicemailAttachmentWithMessage {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT message_id, filename, mime_type, storage_path, content_hash, size,
 		       media_type, attachment_role, role_source, source_part_key,
 		       source_attachment_id, attachment_state, attachment_skip_reason
@@ -615,21 +614,21 @@ func sourceMessageID(t *testing.T, fixture string) string {
 func messageIDBySource(t *testing.T, st *store.Store, sourceMessageID string) int64 {
 	t.Helper()
 	var id int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&id))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&id))
 	return id
 }
 
 func messageHasAttachments(t *testing.T, st *store.Store, sourceMessageID string) bool {
 	t.Helper()
 	var has bool
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT has_attachments FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&has))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT has_attachments FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&has))
 	return has
 }
 
 func onlyMessageSourceID(t *testing.T, st *store.Store) string {
 	t.Helper()
 	var sourceMessageID string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT source_message_id FROM messages ORDER BY id LIMIT 1`)).Scan(&sourceMessageID))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT source_message_id FROM messages ORDER BY id LIMIT 1`)).Scan(&sourceMessageID))
 	return sourceMessageID
 }
 

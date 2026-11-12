@@ -35,25 +35,25 @@ func TestPackUsageIsReferenceAwareAndDeterministic(t *testing.T) {
 	fx.addAttachment(liveB, liveB[:2]+"/"+liveB, 222)
 
 	created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: packB, EntryCount: 1, StoredBytes: 70, CreatedAt: created,
 	}, []store.PackIndexEntry{{
 		BlobHash: liveB, PackID: packB, Offset: 6, StoredLen: 70, RawLen: 222,
 	}}))
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: packA, EntryCount: 3, StoredBytes: 120, CreatedAt: created,
 	}, []store.PackIndexEntry{
 		{BlobHash: liveA, PackID: packA, Offset: 6, StoredLen: 40, RawLen: 111},
 		{BlobHash: liveA2, PackID: packA, Offset: 46, StoredLen: 20, RawLen: 90},
 		{BlobHash: staleA, PackID: packA, Offset: 66, StoredLen: 60, RawLen: 333},
 	}))
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: packC, EntryCount: 1, StoredBytes: 80, CreatedAt: created,
 	}, []store.PackIndexEntry{
 		{BlobHash: staleC, PackID: packC, Offset: 6, StoredLen: 80, RawLen: 444},
 	}))
 
-	usage, err := st.ListPackUsage(context.Background())
+	usage, err := st.ListPackUsage(t.Context())
 	require.NoError(err)
 	require.Len(usage, 3)
 	assert.Equal(packA, usage[0].PackID, "equal timestamps order by pack ID")
@@ -72,7 +72,7 @@ func TestPackUsageIsReferenceAwareAndDeterministic(t *testing.T) {
 	assert.Zero(usage[2].MaxLiveStoredLen, "zero-live pack has no referenced maximum")
 	assert.Zero(usage[2].MaxLiveRawLen, "zero-live pack has no referenced maximum")
 
-	entries, err := st.ListReferencedPackEntries(context.Background(), packA)
+	entries, err := st.ListReferencedPackEntries(t.Context(), packA)
 	require.NoError(err)
 	require.Len(entries, 2)
 	assert.Equal(liveA, entries[0].BlobHash)
@@ -105,25 +105,25 @@ func TestPackMaintenanceUsesPreservedCaseAliasesForLiveness(t *testing.T) {
 			preservedPath := tc.path(uppercase)
 			fx.addAttachment(uppercase, preservedPath, 100)
 			created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
-			require.NoError(st.RecordPackedBlobs(store.PackRecord{
+			require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 				PackID: oldPack, EntryCount: 1, StoredBytes: 80, CreatedAt: created,
 			}, []store.PackIndexEntry{{
 				BlobHash: hash, PackID: oldPack, Offset: 6, StoredLen: 80, RawLen: 100,
 			}}))
 
-			usage, err := st.ListPackUsage(context.Background())
+			usage, err := st.ListPackUsage(t.Context())
 			require.NoError(err)
 			require.Len(usage, 1)
 			assert.Equal(int64(1), usage[0].LiveEntries)
-			entries, err := st.ListReferencedPackEntries(context.Background(), oldPack)
+			entries, err := st.ListReferencedPackEntries(t.Context(), oldPack)
 			require.NoError(err)
 			require.Len(entries, 1)
 			assert.Equal(hash, entries[0].BlobHash)
-			deleted, err := st.DeleteEmptyPackRecord(context.Background(), oldPack)
+			deleted, err := st.DeleteEmptyPackRecord(t.Context(), oldPack)
 			require.NoError(err)
 			assert.False(deleted, "uppercase alias keeps the source pack live")
 
-			require.NoError(st.CommitRepack(context.Background(), []string{oldPack}, []store.PackRecord{{
+			require.NoError(st.CommitRepack(t.Context(), []string{oldPack}, []store.PackRecord{{
 				PackID: newPack, EntryCount: 1, StoredBytes: 50, CreatedAt: created.Add(time.Hour),
 			}}, []store.RepackMove{{
 				OldPackID: oldPack,
@@ -132,11 +132,11 @@ func TestPackMaintenanceUsesPreservedCaseAliasesForLiveness(t *testing.T) {
 				},
 			}}))
 
-			entry, err := st.GetAttachmentPackEntry(hash)
+			entry, err := st.GetAttachmentPackEntry(t.Context(), hash)
 			require.NoError(err)
 			require.NotNil(entry)
 			assert.Equal(newPack, entry.PackID)
-			entries, err = st.ListReferencedPackEntries(context.Background(), newPack)
+			entries, err = st.ListReferencedPackEntries(t.Context(), newPack)
 			require.NoError(err)
 			assert.Len(entries, 1)
 			assert.Equal([]string{preservedPath}, fx.pathsForContentHash(uppercase),
@@ -161,13 +161,13 @@ func TestCommitRepackKeepsCanonicalIndexCASExactForCaseAliases(t *testing.T) {
 	uppercase := strings.ToUpper(hash)
 	fx.addAttachment(uppercase, "HTTPS://cdn.example.com/"+uppercase, 100)
 	created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: oldPack, EntryCount: 1, StoredBytes: 80, CreatedAt: created,
 	}, []store.PackIndexEntry{{
 		BlobHash: hash, PackID: oldPack, Offset: 6, StoredLen: 80, RawLen: 100,
 	}}))
 
-	err := st.CommitRepack(context.Background(), []string{oldPack}, []store.PackRecord{{
+	err := st.CommitRepack(t.Context(), []string{oldPack}, []store.PackRecord{{
 		PackID: newPack, EntryCount: 1, StoredBytes: 50, CreatedAt: created.Add(time.Hour),
 	}}, []store.RepackMove{{
 		OldPackID: oldPack,
@@ -177,7 +177,7 @@ func TestCommitRepackKeepsCanonicalIndexCASExactForCaseAliases(t *testing.T) {
 	}})
 
 	require.ErrorContains(err, "exact")
-	entry, getErr := st.GetAttachmentPackEntry(hash)
+	entry, getErr := st.GetAttachmentPackEntry(t.Context(), hash)
 	require.NoError(getErr)
 	require.NotNil(entry)
 	assert.Equal(oldPack, entry.PackID)
@@ -194,17 +194,17 @@ func TestPackUsageRejectsImpossibleAccounting(t *testing.T) {
 	fx.addAttachment(hash, hash[:2]+"/"+hash, 100)
 
 	const packID = "01hzy3v7q8r9s0t1a2v3w4x6c1"
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
 		VALUES (?, 0, 1, ?)`), packID, time.Now().UTC().Format(time.RFC3339))
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO attachment_pack_index
 		    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
 		VALUES (?, ?, 6, 2, 100, 0, 0)`), hash, packID)
 	require.NoError(err)
 
-	_, err = st.ListPackUsage(context.Background())
+	_, err = st.ListPackUsage(t.Context())
 	require.ErrorContains(err, "impossible accounting")
 }
 
@@ -219,13 +219,13 @@ func TestPackUsageRejectsNegativeTotals(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
-			_, err := st.DB().Exec(st.Rebind(`
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 				INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
 				VALUES (?, ?, ?, ?)`), "01hzy3v7q8r9s0t1a2v3w4x6c2", tc.entryCount,
 				tc.storedBytes, time.Now().UTC().Format(time.RFC3339))
 			require.NoError(t, err)
 
-			_, err = st.ListPackUsage(context.Background())
+			_, err = st.ListPackUsage(t.Context())
 			require.ErrorContains(t, err, "impossible accounting")
 		})
 	}
@@ -241,7 +241,7 @@ func TestPackUsageRejectsInconsistentMaxima(t *testing.T) {
 			fx.addAttachment(hashA, hashA[:2]+"/"+hashA, 10)
 			fx.addAttachment(hashB, hashB[:2]+"/"+hashB, 10)
 			const packID = "01hzy3v7q8r9s0t1a2v3w4x6c3"
-			_, err := st.DB().Exec(st.Rebind(`
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 				INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
 				VALUES (?, 2, 20, ?)`), packID, time.Now().UTC().Format(time.RFC3339))
 			require.NoError(t, err)
@@ -253,14 +253,14 @@ func TestPackUsageRejectsInconsistentMaxima(t *testing.T) {
 				if field == "raw_len" && i == 1 {
 					rawLen = -9
 				}
-				_, err = st.DB().Exec(st.Rebind(`
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 					INSERT INTO attachment_pack_index
 					    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
 					VALUES (?, ?, ?, ?, ?, 0, 0)`), hash, packID, 6+i*10, storedLen, rawLen)
 				require.NoError(t, err)
 			}
 
-			_, err = st.ListPackUsage(context.Background())
+			_, err = st.ListPackUsage(t.Context())
 			require.ErrorContains(t, err, "impossible accounting",
 				"a maximum cannot exceed its nonnegative aggregate")
 		})
@@ -273,17 +273,17 @@ func TestPackUsageRejectsRawMaximumBeyondPackLimit(t *testing.T) {
 	hash := packTestHash("ca03")
 	fx.addAttachment(hash, hash[:2]+"/"+hash, 10)
 	const packID = "01hzy3v7q8r9s0t1a2v3w4x6c4"
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO attachment_packs (pack_id, entry_count, stored_bytes, created_at)
 		VALUES (?, 1, 10, ?)`), packID, time.Now().UTC().Format(time.RFC3339))
 	require.NoError(t, err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO attachment_pack_index
 		    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
 		VALUES (?, ?, 6, 10, ?, 0, 0)`), hash, packID, int64(pack.MaxRawLen)+1)
 	require.NoError(t, err)
 
-	_, err = st.ListPackUsage(context.Background())
+	_, err = st.ListPackUsage(t.Context())
 	require.ErrorContains(t, err, "impossible accounting")
 }
 
@@ -303,10 +303,10 @@ func TestCommitRepackSwapsAllSelectedMappingsAtomically(t *testing.T) {
 	fx.addAttachment(hashA, hashA[:2]+"/"+hashA, 100)
 	fx.addAttachment(hashB, hashB[:2]+"/"+hashB, 200)
 	created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: oldA, EntryCount: 1, StoredBytes: 80, CreatedAt: created,
 	}, []store.PackIndexEntry{{BlobHash: hashA, PackID: oldA, Offset: 6, StoredLen: 80, RawLen: 100}}))
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: oldB, EntryCount: 1, StoredBytes: 90, CreatedAt: created,
 	}, []store.PackIndexEntry{{BlobHash: hashB, PackID: oldB, Offset: 6, StoredLen: 90, RawLen: 200}}))
 
@@ -315,10 +315,10 @@ func TestCommitRepackSwapsAllSelectedMappingsAtomically(t *testing.T) {
 		{OldPackID: oldA, NewEntry: store.PackIndexEntry{BlobHash: hashA, PackID: newA, Offset: 6, StoredLen: 50, RawLen: 100}},
 		{OldPackID: oldB, NewEntry: store.PackIndexEntry{BlobHash: hashB, PackID: newA, Offset: 56, StoredLen: 70, RawLen: 200}},
 	}
-	require.NoError(st.CommitRepack(context.Background(), []string{oldA, oldB}, []store.PackRecord{record}, moves))
+	require.NoError(st.CommitRepack(t.Context(), []string{oldA, oldB}, []store.PackRecord{record}, moves))
 
 	for _, hash := range []string{hashA, hashB} {
-		entry, err := st.GetAttachmentPackEntry(hash)
+		entry, err := st.GetAttachmentPackEntry(t.Context(), hash)
 		require.NoError(err)
 		require.NotNil(entry)
 		assert.Equal(newA, entry.PackID)
@@ -344,14 +344,14 @@ func TestCommitRepackRejectsWhollyOmittedSelectedPack(t *testing.T) {
 	fx.addAttachment(hashA, hashA[:2]+"/"+hashA, 100)
 	fx.addAttachment(hashB, hashB[:2]+"/"+hashB, 200)
 	created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: oldA, EntryCount: 1, StoredBytes: 80, CreatedAt: created,
 	}, []store.PackIndexEntry{{BlobHash: hashA, PackID: oldA, Offset: 6, StoredLen: 80, RawLen: 100}}))
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: oldB, EntryCount: 1, StoredBytes: 90, CreatedAt: created,
 	}, []store.PackIndexEntry{{BlobHash: hashB, PackID: oldB, Offset: 6, StoredLen: 90, RawLen: 200}}))
 
-	err := st.CommitRepack(context.Background(), []string{oldA, oldB}, []store.PackRecord{{
+	err := st.CommitRepack(t.Context(), []string{oldA, oldB}, []store.PackRecord{{
 		PackID: newA, EntryCount: 1, StoredBytes: 50, CreatedAt: created.Add(time.Hour),
 	}}, []store.RepackMove{{
 		OldPackID: oldA,
@@ -360,7 +360,7 @@ func TestCommitRepackRejectsWhollyOmittedSelectedPack(t *testing.T) {
 	require.ErrorContains(err, "exact")
 
 	for hash, wantPack := range map[string]string{hashA: oldA, hashB: oldB} {
-		entry, getErr := st.GetAttachmentPackEntry(hash)
+		entry, getErr := st.GetAttachmentPackEntry(t.Context(), hash)
 		require.NoError(getErr)
 		require.NotNil(entry)
 		assert.Equal(wantPack, entry.PackID)
@@ -385,7 +385,7 @@ func TestCommitRepackRejectsChangedExpectedMappingSets(t *testing.T) {
 			name: "missing current mapping",
 			mutate: func(t *testing.T, st *store.Store, _ string, hashB string) {
 				t.Helper()
-				_, err := st.DB().Exec(st.Rebind(
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind(
 					`DELETE FROM attachment_pack_index WHERE blob_hash = ?`), hashB)
 				require.NoError(t, err)
 			},
@@ -403,12 +403,12 @@ func TestCommitRepackRejectsChangedExpectedMappingSets(t *testing.T) {
 				extra := packTestHash("a813")
 				fx := newPackAttachmentFixture(t, st)
 				fx.addAttachment(extra, extra[:2]+"/"+extra, 300)
-				_, err := st.DB().Exec(st.Rebind(`
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 					INSERT INTO attachment_pack_index
 					    (blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c)
 					VALUES (?, ?, 96, 40, 300, 0, 0)`), extra, oldA)
 				require.NoError(t, err)
-				entry, err := st.GetAttachmentPackEntry(hashA)
+				entry, err := st.GetAttachmentPackEntry(t.Context(), hashA)
 				require.NoError(t, err)
 				require.NotNil(t, entry)
 			},
@@ -423,7 +423,7 @@ func TestCommitRepackRejectsChangedExpectedMappingSets(t *testing.T) {
 			name: "changed pack ownership",
 			mutate: func(t *testing.T, st *store.Store, hashA, _ string) {
 				t.Helper()
-				_, err := st.DB().Exec(st.Rebind(`
+				_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 					UPDATE attachment_pack_index SET pack_id = ? WHERE blob_hash = ?`), oldB, hashA)
 				require.NoError(t, err)
 			},
@@ -447,21 +447,21 @@ func TestCommitRepackRejectsChangedExpectedMappingSets(t *testing.T) {
 			fx.addAttachment(hashA, hashA[:2]+"/"+hashA, 100)
 			fx.addAttachment(hashB, hashB[:2]+"/"+hashB, 200)
 			created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
-			require.NoError(st.RecordPackedBlobs(store.PackRecord{
+			require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 				PackID: oldA, EntryCount: 1, StoredBytes: 80, CreatedAt: created,
 			}, []store.PackIndexEntry{{
 				BlobHash: hashA, PackID: oldA, Offset: 6, StoredLen: 80, RawLen: 100,
 			}}))
-			require.NoError(st.RecordPackedBlobs(store.PackRecord{
+			require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 				PackID: oldB, EntryCount: 1, StoredBytes: 90, CreatedAt: created,
 			}, []store.PackIndexEntry{{
 				BlobHash: hashB, PackID: oldB, Offset: 6, StoredLen: 90, RawLen: 200,
 			}}))
 
 			tt.mutate(t, st, hashA, hashB)
-			beforeA, err := st.GetAttachmentPackEntry(hashA)
+			beforeA, err := st.GetAttachmentPackEntry(t.Context(), hashA)
 			require.NoError(err)
-			beforeB, err := st.GetAttachmentPackEntry(hashB)
+			beforeB, err := st.GetAttachmentPackEntry(t.Context(), hashB)
 			require.NoError(err)
 
 			moves := tt.moves(hashA, hashB)
@@ -469,15 +469,15 @@ func TestCommitRepackRejectsChangedExpectedMappingSets(t *testing.T) {
 			for _, move := range moves {
 				stored += move.NewEntry.StoredLen
 			}
-			err = st.CommitRepack(context.Background(), []string{oldA, oldB}, []store.PackRecord{{
+			err = st.CommitRepack(t.Context(), []string{oldA, oldB}, []store.PackRecord{{
 				PackID: newA, EntryCount: int64(len(moves)), StoredBytes: stored,
 				CreatedAt: created.Add(time.Hour),
 			}}, moves)
 			require.ErrorContains(err, "exact")
 
-			afterA, getErr := st.GetAttachmentPackEntry(hashA)
+			afterA, getErr := st.GetAttachmentPackEntry(t.Context(), hashA)
 			require.NoError(getErr)
-			afterB, getErr := st.GetAttachmentPackEntry(hashB)
+			afterB, getErr := st.GetAttachmentPackEntry(t.Context(), hashB)
 			require.NoError(getErr)
 			assert.Equal(beforeA, afterA, "failed swap preserves pre-call mapping A")
 			assert.Equal(beforeB, afterB, "failed swap preserves pre-call mapping B")
@@ -502,27 +502,27 @@ func TestDeleteEmptyPackRecordIsReferenceAware(t *testing.T) {
 	staleHash := packTestHash("f802")
 	fx.addAttachment(liveHash, liveHash[:2]+"/"+liveHash, 100)
 	created := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: livePack, EntryCount: 1, StoredBytes: 80, CreatedAt: created,
 	}, []store.PackIndexEntry{{BlobHash: liveHash, PackID: livePack, Offset: 6, StoredLen: 80, RawLen: 100}}))
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: stalePack, EntryCount: 1, StoredBytes: 90, CreatedAt: created,
 	}, []store.PackIndexEntry{{BlobHash: staleHash, PackID: stalePack, Offset: 6, StoredLen: 90, RawLen: 200}}))
 
-	deleted, err := st.DeleteEmptyPackRecord(context.Background(), livePack)
+	deleted, err := st.DeleteEmptyPackRecord(t.Context(), livePack)
 	require.NoError(err)
 	assert.False(deleted)
 	has, err := st.HasPackRecordContext(t.Context(), livePack)
 	require.NoError(err)
 	assert.True(has)
 
-	deleted, err = st.DeleteEmptyPackRecord(context.Background(), stalePack)
+	deleted, err = st.DeleteEmptyPackRecord(t.Context(), stalePack)
 	require.NoError(err)
 	assert.True(deleted)
 	has, err = st.HasPackRecordContext(t.Context(), stalePack)
 	require.NoError(err)
 	assert.False(has)
-	entry, err := st.GetAttachmentPackEntry(staleHash)
+	entry, err := st.GetAttachmentPackEntry(t.Context(), staleHash)
 	require.NoError(err)
 	assert.Nil(entry, "stale index rows are deleted explicitly with the pack record")
 }
@@ -530,7 +530,7 @@ func TestDeleteEmptyPackRecordIsReferenceAware(t *testing.T) {
 func TestRepackMetadataMaintenanceHonorsCancellation(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	const packID = "01hzy3v7q8r9s0t1a2v3w4x6h1"
 

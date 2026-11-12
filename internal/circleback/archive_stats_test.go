@@ -1,7 +1,6 @@
 package circleback
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -21,7 +20,7 @@ func TestCirclebackCountsWriteWhenStatsMaintenanceFails(t *testing.T) {
 		transcripts: map[string]json.RawMessage{"42": json.RawMessage(transcript42)},
 	}
 	imp, st := newTestImporter(t, f)
-	_, err := st.DB().Exec(`
+	_, err := st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_circleback_stats
 		BEFORE UPDATE OF participant_count ON conversations
 		BEGIN
@@ -30,12 +29,12 @@ func TestCirclebackCountsWriteWhenStatsMaintenanceFails(t *testing.T) {
 	`)
 	require.NoError(err)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 
 	require.Error(err)
 	require.NotNil(sum)
 	assert.EqualValues(1, sum.MeetingsAdded)
 	var messages int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
 	assert.Equal(1, messages)
 }

@@ -96,7 +96,7 @@ func startScriptedRFC7162Server(
 ) (string, *scriptedRFC7162Server) {
 	t.Helper()
 	require.NotEmpty(t, snapshot.Capabilities)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
 
@@ -563,7 +563,7 @@ func queryScriptedRFC7162Memberships(
 	sourceID int64,
 ) []string {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT mailbox, uid, flags FROM imap_message_memberships
 		WHERE source_id = ? ORDER BY mailbox, uid
 	`), sourceID)
@@ -591,7 +591,7 @@ func queryScriptedRFC7162LabelsBySourceMessageID(
 	sourceID int64,
 ) []string {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT messages.source_message_id, labels.source_label_id
 		FROM messages
 		JOIN message_labels ON message_labels.message_id = messages.id
@@ -614,7 +614,7 @@ func queryScriptedRFC7162LabelsBySourceMessageID(
 func installScriptedRFC7162ApplyFailureTrigger(t *testing.T, st *store.Store) {
 	t.Helper()
 	if st.IsPostgreSQL() {
-		_, err := st.DB().Exec(`
+		_, err := st.DB().ExecContext(t.Context(), `
 			CREATE FUNCTION fail_scripted_imap_apply() RETURNS trigger AS $$
 			BEGIN
 				RAISE EXCEPTION 'scripted IMAP apply failure';
@@ -622,7 +622,7 @@ func installScriptedRFC7162ApplyFailureTrigger(t *testing.T, st *store.Store) {
 			$$ LANGUAGE plpgsql
 		`)
 		require.NoError(t, err)
-		_, err = st.DB().Exec(`
+		_, err = st.DB().ExecContext(t.Context(), `
 			CREATE TRIGGER fail_scripted_imap_apply
 			BEFORE UPDATE ON imap_folder_state
 			FOR EACH ROW EXECUTE FUNCTION fail_scripted_imap_apply()
@@ -630,7 +630,7 @@ func installScriptedRFC7162ApplyFailureTrigger(t *testing.T, st *store.Store) {
 		require.NoError(t, err)
 		return
 	}
-	_, err := st.DB().Exec(`
+	_, err := st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_scripted_imap_apply
 		BEFORE UPDATE ON imap_folder_state
 		BEGIN
@@ -648,7 +648,7 @@ func queryScriptedRFC7162MessageState(
 ) (sourceMessageID string, deleted bool, isRead bool) {
 	t.Helper()
 	var deletedAt sql.NullTime
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT source_message_id, deleted_from_source_at, is_read
 		FROM messages WHERE source_id = ? AND rfc822_message_id = ?
 	`), sourceID, "<"+messageID+">").Scan(&sourceMessageID, &deletedAt, &isRead))
@@ -662,7 +662,7 @@ func queryScriptedRFC7162MessageLabels(
 	messageID string,
 ) []string {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT l.source_label_id
 		FROM messages m
 		JOIN message_labels ml ON ml.message_id = m.id
@@ -711,7 +711,7 @@ func TestIMAPQresyncEndToEndLegacyMessageIDBaseline(t *testing.T) {
 			const identifier = "imap://legacy-baseline@example.test"
 			source, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
 			requirements.NoError(err)
-			conversation, err := st.EnsureConversation(source.ID, "legacy", "Archived subject")
+			conversation, err := st.EnsureConversation(t.Context(), source.ID, "legacy", "Archived subject")
 			requirements.NoError(err)
 			messageID, err := st.UpsertMessage(&store.Message{
 				SourceID: source.ID, ConversationID: conversation, SourceMessageID: "Archive|1",
@@ -742,13 +742,13 @@ func TestIMAPQresyncEndToEndLegacyMessageIDBaseline(t *testing.T) {
 			assertions.NotContains(server.commandsFor(2), "UID SEARCH")
 			var gotID int64
 			var stored string
-			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id, rfc822_message_id FROM messages WHERE source_id = ?`), source.ID).Scan(&gotID, &stored))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id, rfc822_message_id FROM messages WHERE source_id = ?`), source.ID).Scan(&gotID, &stored))
 			assertions.Equal(messageID, gotID)
 			assertions.Equal(test.stored, stored)
 			var count, memberships int
-			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`), source.ID).Scan(&count))
 			assertions.Equal(1, count)
-			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ? AND message_id = ?`), source.ID, messageID).Scan(&memberships))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ? AND message_id = ?`), source.ID, messageID).Scan(&memberships))
 			assertions.Equal(3, memberships)
 			raw, err := st.GetMessageRaw(messageID)
 			requirements.NoError(err)
@@ -917,7 +917,7 @@ func TestIMAPQresyncEndToEndRetiresChangedMailboxTopology(t *testing.T) {
 			"an authoritative empty topology must remain distinct from suppressed publication")
 		assertions.Empty(deltas)
 		requirements.NoError(saveIMAPFolderStates(
-			context.Background(), st, source, second, summary, options.Limit))
+			t.Context(), st, source, second, summary, options.Limit))
 		requirements.NoError(second.Close())
 
 		states, err := st.GetIMAPFolderStates(source.ID)
@@ -946,7 +946,7 @@ func TestIMAPQresyncEndToEndFlagOnlyChangePreservesLocalReadState(t *testing.T) 
 	const identifier = "imap://flags@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	requirements.NoError(first.Close())
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages SET is_read = ? WHERE source_id = ? AND source_message_id = ?
 	`), false, source.ID, "INBOX|1")
 	requirements.NoError(err)
@@ -1013,7 +1013,7 @@ func TestIMAPQresyncEndToEndLimitedRunPreservesOverlappingMailboxLabels(t *testi
 		WithLogger(slog.New(slog.DiscardHandler)).Full(t.Context(), identifier)
 	requirements.NoError(err)
 	requirements.NoError(saveIMAPFolderStates(
-		context.Background(), st, source, limitedClient, summary, options.Limit))
+		t.Context(), st, source, limitedClient, summary, options.Limit))
 	requirements.NoError(limitedClient.Close())
 
 	assertions.Equal([]string{"Archive", "INBOX"}, queryScriptedRFC7162MessageLabels(
@@ -1128,11 +1128,11 @@ func TestIMAPQresyncEndToEndReplaysAfterFailedApplication(t *testing.T) {
 		testInvocationWithConfig(testConfigValue())).
 		WithLogger(slog.New(slog.DiscardHandler)).Full(t.Context(), identifier)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM messages WHERE source_id = ? AND source_message_id = ?
 	`), source.ID, "INBOX|1")
 	requirements.NoError(err)
-	err = saveIMAPFolderStates(context.Background(), st, source, failedClient, summary, 0)
+	err = saveIMAPFolderStates(t.Context(), st, source, failedClient, summary, 0)
 	requirements.Error(err)
 	requirements.NoError(failedClient.Close())
 
@@ -1184,7 +1184,7 @@ func TestIMAPQresyncEndToEndFailedMoveApplyPreservesBaselineLabels(t *testing.T)
 		WithLogger(slog.New(slog.DiscardHandler)).Full(t.Context(), identifier)
 	requirements.NoError(err)
 	installScriptedRFC7162ApplyFailureTrigger(t, st)
-	err = saveIMAPFolderStates(context.Background(), st, source, failedClient, summary, 0)
+	err = saveIMAPFolderStates(t.Context(), st, source, failedClient, summary, 0)
 	requirements.ErrorContains(err, "scripted IMAP apply failure")
 	requirements.NoError(failedClient.Close())
 
@@ -1384,7 +1384,7 @@ func TestIMAPQresyncEndToEndUnsupportedAllDoesNotUseStaleShortcut(t *testing.T) 
 	const identifier = "imap://unsupported-all@example.test"
 	first, source := requireScriptedRFC7162Sync(t, st, identifier, addr)
 	requirements.NoError(first.Close())
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages SET is_read = ? WHERE source_id = ? AND rfc822_message_id = ?
 	`), false, source.ID, "<unsupported-all@example.test>")
 	requirements.NoError(err)
@@ -1569,7 +1569,7 @@ func TestIMAPQresyncEndToEndGmailAllIncrementalUnidentifiedMembershipUsesDurable
 		"[Gmail]/All Mail|1|INBOX", "[Gmail]/All Mail|1|[Gmail]/All Mail",
 	}, queryScriptedRFC7162LabelsBySourceMessageID(t, st, source.ID))
 	var liveMessages int
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages
 		WHERE source_id = ? AND deleted_from_source_at IS NULL
 	`), source.ID).Scan(&liveMessages))

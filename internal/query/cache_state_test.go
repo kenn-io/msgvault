@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -43,7 +42,7 @@ func TestCacheSyncStateEncodesStatsAsNestedObject(t *testing.T) {
 
 func TestAcquireReadyCacheReadLockRejectsAbsentCache(t *testing.T) {
 	t.Parallel()
-	_, err := AcquireReadyCacheReadLock(context.Background(), t.TempDir())
+	_, err := AcquireReadyCacheReadLock(t.Context(), t.TempDir())
 	require.ErrorIs(t, err, ErrCacheUnavailable)
 	var unavailable *CacheUnavailableError
 	require.ErrorAs(t, err, &unavailable)

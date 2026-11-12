@@ -25,7 +25,7 @@ func TestArchiveWriteSearchRead(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("slack", "TEXAMPLE:UEXAMPLE")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "CEXAMPLE", "General")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "CEXAMPLE", "General")
 	require.NoError(err)
 	message := &store.Message{
 		SourceID: source.ID, ConversationID: conversation,

@@ -104,7 +104,7 @@ func TestDirectChatImportPersistsKnownPeerPersonScope(t *testing.T) {
 					assertions.Equal([]personscope.Direction{wantDirection}, results[0].Provenance.Directions)
 					assertions.Equal([]personscope.Role{wantRole}, results[0].Provenance.Roles)
 					var archivedCount, rosterCount int
-					err = st.DB().QueryRow(st.Rebind(`SELECT participant_count,
+					err = st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_count,
 						(SELECT COUNT(*) FROM conversation_participants cp WHERE cp.conversation_id = c.id)
 						FROM conversations c WHERE c.id = ?`), message.ConversationID).Scan(&archivedCount, &rosterCount)
 					requires.NoError(err)

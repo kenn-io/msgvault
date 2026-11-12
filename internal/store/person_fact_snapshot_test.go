@@ -15,7 +15,7 @@ func TestPersonFactLedgerReadsOneRepeatableSnapshot(t *testing.T) {
 	reader, personID := newPersonFactLedgerStore(t)
 	evidenceKey := seedPersonFactEvidence(t, reader, personID, "snapshot")
 
-	writer, err := OpenForTest(reader.dbPath)
+	writer, err := OpenForTest(t.Context(), reader.dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = writer.Close() })
 

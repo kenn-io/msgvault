@@ -740,7 +740,7 @@ func TestSyncFullCmd_MalformedIMAPDateFlagErrors(t *testing.T) {
 	require.NoError(err, "create imap source")
 	// Store a minimal IMAP config so buildAPIClient reaches
 	// the date-parsing code instead of failing on missing config.
-	require.NoError(s.UpdateSourceSyncConfig(src.ID, `{"host":"localhost","port":993,"username":"i@example.com","tls":true}`), "set sync config")
+	require.NoError(s.UpdateSourceSyncConfig(t.Context(), src.ID, `{"host":"localhost","port":993,"username":"i@example.com","tls":true}`), "set sync config")
 	_ = s.Close()
 
 	savedCfg := cfg

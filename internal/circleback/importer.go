@@ -232,7 +232,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	); err != nil {
 		return nil, fmt.Errorf("confirm Circleback account identity: %w", err)
 	}
-	accountIdentities, err := meetingidentity.ForSource(imp.store, src.ID, opts.AccountEmail)
+	// The identity lookup ignores cancellation, as it did before, so a canceled
+	// import still starts and then fails a sync run the user can see.
+	accountIdentities, err := meetingidentity.ForSource(context.WithoutCancel(ctx), imp.store, src.ID, opts.AccountEmail)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +273,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	}
 
 	var state syncState
-	prev, prevErr := imp.store.GetLastSuccessfulSync(src.ID)
+	prev, prevErr := imp.store.GetLastSuccessfulSyncContext(ctx, src.ID)
 	if prevErr == nil && prev != nil && prev.CursorAfter.Valid && prev.CursorAfter.String != "" {
 		if decodeErr := json.Unmarshal([]byte(prev.CursorAfter.String), &state); decodeErr != nil {
 			sum.Errors++
@@ -402,7 +404,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 				existing := map[string]int64{}
 				if len(smids) > 0 {
 					var exErr error
-					existing, exErr = imp.store.MessageExistsBatch(src.ID, smids)
+					existing, exErr = imp.store.MessageExistsBatchContext(ctx, src.ID, smids)
 					if exErr != nil {
 						sum.Errors += int64(len(orderedMeetings))
 						hardErrors = append(hardErrors, fmt.Errorf("lookup existing meetings: %w", exErr))
@@ -423,7 +425,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 					}
 					msgID, exists := existing["meeting:"+id]
 					if exists && !opts.Full {
-						archivedState, stateErr := imp.archivedTranscriptState(msgID)
+						archivedState, stateErr := imp.archivedTranscriptState(ctx, msgID)
 						if stateErr != nil {
 							hardErr := fmt.Errorf("meeting %s: read archived transcript state: %w", id, stateErr)
 							sum.Errors++
@@ -523,7 +525,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 						continue
 					}
 					if exists && (tr == nil || tr.Classification() == TranscriptRecognizedEmpty) {
-						recovered, recoveredOK, recoveryErr := imp.recoverArchivedTranscript(msgID)
+						recovered, recoveredOK, recoveryErr := imp.recoverArchivedTranscript(ctx, msgID)
 						if recoveryErr != nil {
 							hardErr := fmt.Errorf("meeting %s: recover archived transcript: %w", m.ID, recoveryErr)
 							sum.Errors++
@@ -624,7 +626,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 				pageSMIDs = append(pageSMIDs, "meeting:"+id)
 			}
 		}
-		existingPage, lookupErr := imp.store.MessageMetadataBatch(src.ID, pageSMIDs)
+		existingPage, lookupErr := imp.store.MessageMetadataBatch(ctx, src.ID, pageSMIDs)
 		if lookupErr != nil {
 			sum.Errors++
 			hardErrors = append(hardErrors, fmt.Errorf("lookup search page %d meetings: %w", pageIndex, lookupErr))
@@ -701,7 +703,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	if cancelIfDone(1) {
 		return sum, err
 	}
-	if recomputeErr := imp.store.RecomputeConversationStats(src.ID); recomputeErr != nil {
+	if recomputeErr := imp.store.RecomputeConversationStatsContext(ctx, src.ID); recomputeErr != nil {
 		sum.Errors++
 		hardErrors = append(hardErrors, fmt.Errorf("recompute conversation stats: %w", recomputeErr))
 	}
@@ -734,8 +736,8 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	return sum, nil
 }
 
-func (imp *Importer) archivedTranscriptState(msgID int64) (transcriptState, error) {
-	metaNS, err := imp.store.GetMessageMetadata(msgID)
+func (imp *Importer) archivedTranscriptState(ctx context.Context, msgID int64) (transcriptState, error) {
+	metaNS, err := imp.store.GetMessageMetadataContext(ctx, msgID)
 	if err != nil {
 		return "", err
 	}
@@ -765,8 +767,8 @@ func decodeArchivedTranscriptState(encoded string) transcriptState {
 // refresh omits a transcript or returns a recognized-empty payload. Explicit
 // transcript state is authoritative: a present transcript must have a valid
 // archived payload, while pending and unavailable transcripts are not restored.
-func (imp *Importer) recoverArchivedTranscript(msgID int64) (Transcript, bool, error) {
-	metaNS, err := imp.store.GetMessageMetadata(msgID)
+func (imp *Importer) recoverArchivedTranscript(ctx context.Context, msgID int64) (Transcript, bool, error) {
+	metaNS, err := imp.store.GetMessageMetadataContext(ctx, msgID)
 	if err != nil {
 		return Transcript{}, false, err
 	}
@@ -787,7 +789,7 @@ func (imp *Importer) recoverArchivedTranscript(msgID int64) (Transcript, bool, e
 			"archived meeting has invalid transcript state %q", meta.TranscriptState)
 	}
 
-	raw, err := imp.store.GetMessageRaw(msgID)
+	raw, err := imp.store.GetMessageRawContext(ctx, msgID)
 	if err != nil {
 		return Transcript{}, false, fmt.Errorf("read composed raw: %w", err)
 	}
@@ -925,7 +927,7 @@ func (imp *Importer) ingestMeeting(
 	}
 	smid := "meeting:" + string(m.ID)
 
-	existing, err := imp.store.MessageMetadataBatch(sourceID, []string{smid})
+	existing, err := imp.store.MessageMetadataBatch(ctx, sourceID, []string{smid})
 	if err != nil {
 		return meetingarchive.Result{}, fmt.Errorf("lookup existing meeting: %w", err)
 	}

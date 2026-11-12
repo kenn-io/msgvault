@@ -174,7 +174,7 @@ func (s *draftRemovalWireServer) commandTexts() []string {
 
 func startDraftRemovalWireServer(t *testing.T, options draftRemovalWireOptions) (string, *draftRemovalWireServer) {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	server := &draftRemovalWireServer{}
 	go serveDraftRemovalWire(listener, server, options)
@@ -1001,7 +1001,7 @@ func startReviewIMAPServer(
 	wrap func(imapserver.Session, *imapserver.Conn) imapserver.Session,
 ) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	user := imapmemserver.NewUser(testutil.IMAPTestUsername, testutil.IMAPTestPassword)
 	require.NoError(t, user.Create("Drafts", nil))

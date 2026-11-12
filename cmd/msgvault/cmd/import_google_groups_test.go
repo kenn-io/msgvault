@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"io"
 	"path/filepath"
 	"strings"
@@ -86,19 +85,19 @@ Synthetic attachment.
 	rootCmd.SetOut(io.Discard)
 	rootCmd.SetErr(io.Discard)
 	rootCmd.SetArgs([]string{"--home", tmp, "import-mbox", "test-group@googlegroups.com", zipPath, "--source-type", "google-groups", "--label", "test-group", "--no-resume"})
-	require.NoError(rootCmd.ExecuteContext(context.Background()))
+	require.NoError(rootCmd.ExecuteContext(t.Context()))
 	st, err := store.Open(filepath.Join(tmp, "msgvault.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	var messages, identities, fromMe, attachments, labels int
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&messages))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&messages))
 	assert.Equal(2, messages)
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM account_identities").Scan(&identities))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM account_identities").Scan(&identities))
 	assert.Zero(identities, "the group address must not become the user's identity")
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM messages WHERE is_from_me = 1").Scan(&fromMe))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages WHERE is_from_me = 1").Scan(&fromMe))
 	assert.Zero(fromMe)
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM attachments").Scan(&attachments))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM attachments").Scan(&attachments))
 	assert.Equal(2, attachments)
-	require.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM message_labels").Scan(&labels))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM message_labels").Scan(&labels))
 	assert.Equal(5, labels, "repeated header and explicit labels must not duplicate links")
 }

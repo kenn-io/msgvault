@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -28,7 +27,7 @@ func TestCLISourceMaintenanceRoutes(t *testing.T) {
 	srv := NewServer(&config.Config{}, &cliIdentityDiscoveryTestStore{Store: st}, nil, testLogger())
 	post := func(path, body string) *httptest.ResponseRecorder {
 		t.Helper()
-		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
 		response := httptest.NewRecorder()
 		srv.Router().ServeHTTP(response, request)
@@ -83,13 +82,13 @@ func TestCLISourceMergeSchedulesCacheRebuildOnlyAfterNewCommit(t *testing.T) {
 		wrapped := &stubIdentityRebuildStore{Store: st, buildCh: make(chan bool, 2)}
 		srv := NewServer(&config.Config{}, wrapped, nil, testLogger())
 		defer func() {
-			require.NoError(srv.Shutdown(context.Background()))
+			require.NoError(srv.Shutdown(t.Context()))
 			synctest.Wait()
 		}()
 
 		post := func(body string) *httptest.ResponseRecorder {
 			t.Helper()
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/account/merge", strings.NewReader(body))
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/account/merge", strings.NewReader(body))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			srv.Router().ServeHTTP(response, request)

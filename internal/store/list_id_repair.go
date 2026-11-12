@@ -120,7 +120,7 @@ func (s *Store) repairListIDsApply(
 		if changed == 0 {
 			return nil
 		}
-		return s.bumpDerivedDataRevision(tx)
+		return s.bumpDerivedDataRevisionContext(ctx, tx)
 	})
 	if err != nil {
 		return ListIDRepairSummary{}, err

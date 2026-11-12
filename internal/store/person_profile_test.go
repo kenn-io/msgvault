@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"strconv"
 	"testing"
 
@@ -17,7 +16,7 @@ func TestGetPersonProfileReturnsEveryValueKindWithOneRevision(t *testing.T) {
 	st := storetest.New(t).Store
 	personID := newTestPerson(t, st)
 	seedFullProfile(t, st, personID)
-	profile, err := st.GetPersonProfileContext(context.Background(), personID)
+	profile, err := st.GetPersonProfileContext(t.Context(), personID)
 	require.NoError(err)
 	assert.Equal(personID, profile.Person.ID)
 	assert.Len(profile.Names, 2)
@@ -109,7 +108,7 @@ func TestApplyPersonProfilePatchIsAtomicUnderRevision(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	person, err := st.GetPersonContext(ctx, personID)
 	require.NoError(err)
@@ -159,7 +158,7 @@ func TestFailedPatchRollsBackEveryCollection(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	person, err := st.GetPersonContext(ctx, personID)
 	require.NoError(err)
@@ -184,7 +183,7 @@ func TestPatchSupersedeMovesValuesIntoHistoryOnly(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	seedFullProfile(t, st, personID)
 	before, err := st.GetPersonProfileContext(ctx, personID)
@@ -204,7 +203,7 @@ func TestPatchSupersedeMovesValuesIntoHistoryOnly(t *testing.T) {
 func TestPatchRejectsEmptyAndOversizedRequests(t *testing.T) {
 	require := require.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	person, err := st.GetPersonContext(ctx, personID)
 	require.NoError(err)
@@ -227,7 +226,7 @@ func TestGetPersonProfileHistoryIncludesParticipantObservations(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	participantID, err := st.EnsureParticipantByIdentifier(
 		"email", "alice@example.com", "Alice Example",
 	)
@@ -255,14 +254,14 @@ func TestGetPersonProfileHistoryIncludesParticipantObservations(t *testing.T) {
 func TestGetPersonProfileRejectsUnknownPerson(t *testing.T) {
 	st := storetest.New(t).Store
 
-	_, err := st.GetPersonProfileContext(context.Background(), 999999)
+	_, err := st.GetPersonProfileContext(t.Context(), 999999)
 	assert.ErrorIs(t, err, store.ErrPersonNotFound)
 }
 
 func seedFullProfile(t *testing.T, st *store.Store, personID int64) {
 	t.Helper()
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, input := range []store.PersonNameInput{
 		{NameKind: store.PersonNameFormatted, Formatted: new("Alice Example"),
 			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},

@@ -3,6 +3,7 @@
 package meetingidentity
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -15,8 +16,8 @@ type Set map[string]struct{}
 // ForSource loads every confirmed identity for sourceID and unions the
 // configured primary account email. Email comparison is case-insensitive and
 // ignores surrounding whitespace.
-func ForSource(s *store.Store, sourceID int64, primaryEmail string) (Set, error) {
-	stored, err := s.GetIdentitiesForScope([]int64{sourceID})
+func ForSource(ctx context.Context, s *store.Store, sourceID int64, primaryEmail string) (Set, error) {
+	stored, err := s.GetIdentitiesForScope(ctx, []int64{sourceID})
 	if err != nil {
 		return nil, fmt.Errorf("load account identities: %w", err)
 	}

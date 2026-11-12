@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -28,7 +29,7 @@ func TestPersonInferenceProviderV2RemovesPreProfileRows(t *testing.T) {
 		createdAtType = "TIMESTAMPTZ"
 	}
 
-	_, err := st.DB().Exec(`
+	_, err := st.DB().ExecContext(t.Context(), `
 		CREATE TABLE person_inference_profiles (
 			fingerprint TEXT PRIMARY KEY, provider_kind TEXT NOT NULL,
 			endpoint TEXT NOT NULL, model TEXT NOT NULL, api_key_env TEXT NOT NULL,
@@ -36,7 +37,7 @@ func TestPersonInferenceProviderV2RemovesPreProfileRows(t *testing.T) {
 			retention_posture TEXT NOT NULL, training_posture TEXT NOT NULL,
 			allowed_sources JSON NOT NULL, source_since TEXT NOT NULL, source_until TEXT,
 			allow_sensitive BOOLEAN NOT NULL DEFAULT FALSE, policy_json JSON NOT NULL,
-			created_at ` + createdAtType + ` NOT NULL DEFAULT CURRENT_TIMESTAMP
+			created_at `+createdAtType+` NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 		INSERT INTO person_inference_profiles
 			(fingerprint, provider_kind, endpoint, model, api_key_env,
@@ -55,9 +56,9 @@ func TestPersonInferenceProviderV2RemovesPreProfileRows(t *testing.T) {
 		"provider_request_id", "model_version",
 	}, liveTableColumns(t, st, "person_inference_checks"))
 	var profiles, checks, consents int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM person_inference_profiles`).Scan(&profiles))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM person_inference_checks`).Scan(&checks))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM provider_consents`).Scan(&consents))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_inference_profiles`).Scan(&profiles))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_inference_checks`).Scan(&checks))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM provider_consents`).Scan(&consents))
 	assert.Zero(profiles)
 	assert.Zero(checks)
 	assert.Zero(consents)
@@ -67,7 +68,7 @@ func newUninitializedPersonInferenceMigrationStore(t *testing.T) *store.Store {
 	t.Helper()
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !store.IsPostgresURL(dbURL) {
-		st, err := store.OpenForTest(filepath.Join(t.TempDir(), "legacy.db"))
+		st, err := store.OpenForTest(t.Context(), filepath.Join(t.TempDir(), "legacy.db"))
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, st.Close()) })
 		return st
@@ -75,12 +76,12 @@ func newUninitializedPersonInferenceMigrationStore(t *testing.T) *store.Store {
 
 	admin, err := sql.Open("pgx", dbURL)
 	require.NoError(t, err)
-	require.NoError(t, admin.Ping())
+	require.NoError(t, admin.PingContext(t.Context()))
 	var entropy [8]byte
 	_, err = rand.Read(entropy[:])
 	require.NoError(t, err)
 	schema := "msgvault_task3_" + hex.EncodeToString(entropy[:])
-	_, err = admin.Exec(`CREATE SCHEMA ` + schema)
+	_, err = admin.ExecContext(t.Context(), `CREATE SCHEMA `+schema)
 	require.NoError(t, err)
 
 	parsed, err := url.Parse(dbURL)
@@ -88,11 +89,12 @@ func newUninitializedPersonInferenceMigrationStore(t *testing.T) *store.Store {
 	query := parsed.Query()
 	query.Set("search_path", schema)
 	parsed.RawQuery = query.Encode()
-	st, err := store.OpenForTest(parsed.String())
+	st, err := store.OpenForTest(t.Context(), parsed.String())
 	require.NoError(t, err)
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		require.NoError(t, st.Close())
-		_, dropErr := admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+		_, dropErr := admin.ExecContext(context.WithoutCancel(t.Context()), `DROP SCHEMA `+schema+` CASCADE`)
 		require.NoError(t, dropErr)
 		require.NoError(t, admin.Close())
 	})
@@ -106,29 +108,29 @@ func TestPersonInferenceConsentSchemaEnforcesAuditState(t *testing.T) {
 	_, err := st.EnsurePersonInferenceProfile(t.Context(), profile)
 	require.NoError(err)
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO provider_consents
 			(purpose, id, fingerprint, granted_by, revoked_by)
 		VALUES ('people_inference', 1, ?, 'cli', 'cli')`), profile.Fingerprint)
 	require.Error(err, "revocation actor without timestamp must fail")
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO provider_consents
 			(purpose, id, fingerprint, granted_by)
 		VALUES ('people_inference', 1, ?, 'cli')`), profile.Fingerprint)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO provider_consents
 			(purpose, id, fingerprint, granted_by)
 		VALUES ('people_inference', 2, ?, 'second')`), profile.Fingerprint)
 	require.Error(err, "only one active consent is allowed")
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE provider_consents
 		SET revoked_by = 'cli', revoked_at = CURRENT_TIMESTAMP
 		WHERE purpose = 'people_inference' AND fingerprint = ? AND revoked_at IS NULL`), profile.Fingerprint)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO provider_consents
 			(purpose, id, fingerprint, granted_by)
 		VALUES ('people_inference', 2, ?, 'second')`), profile.Fingerprint)

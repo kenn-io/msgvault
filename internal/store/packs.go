@@ -153,8 +153,8 @@ type PackRecord struct {
 // so crash reconciliation can re-run adoption safely. The record must carry a
 // canonical pack ID, and every entry must belong to that pack and carry a
 // canonical lowercase SHA-256 blob hash; any violation fails the whole call.
-func (s *Store) RecordPackedBlobs(rec PackRecord, entries []PackIndexEntry) error {
-	return s.recordPackedBlobs(context.Background(), rec, entries, false, nil)
+func (s *Store) RecordPackedBlobs(ctx context.Context, rec PackRecord, entries []PackIndexEntry) error {
+	return s.recordPackedBlobs(ctx, rec, entries, false, nil)
 }
 
 // RecordPackedBlobsWithAliasesContext inserts a newly sealed pack while
@@ -460,8 +460,8 @@ func swapPreservedCanonicalHashOwnersTx(ctx context.Context, tx *loggedTx, blobH
 
 // GetAttachmentPackEntry returns the pack location of a blob, or (nil, nil)
 // when the blob is not packed (loose or unknown).
-func (s *Store) GetAttachmentPackEntry(blobHash string) (*PackIndexEntry, error) {
-	entry, err := scanPackIndexEntry(s.db.QueryRow(`
+func (s *Store) GetAttachmentPackEntry(ctx context.Context, blobHash string) (*PackIndexEntry, error) {
+	entry, err := scanPackIndexEntry(s.db.QueryRowContext(ctx, `
 		SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
 		FROM attachment_pack_index WHERE blob_hash = ?`, blobHash))
 	if errors.Is(err, sql.ErrNoRows) {

@@ -2,8 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"io"
+	"log/slog"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -120,7 +123,7 @@ func TestRunPstPostImportMigrationsConfirmsDefaultIdentityBeforeHardErrorMigrati
 	require.NoError(
 		err, "create source")
 
-	err = runPstPostImportMigrations(io.Discard, st, &importer.PstImportSummary{
+	err = runPstPostImportMigrations(t.Context(), io.Discard, st, &importer.PstImportSummary{
 		SourceID:   src.ID,
 		HardErrors: true,
 	}, "mbox", "archive@example.com", invocationFromContext(testCtx))
@@ -135,4 +138,73 @@ func TestRunPstPostImportMigrationsConfirmsDefaultIdentityBeforeHardErrorMigrati
 	assert.Equal("archive@example.com", ids[0].Address, "default identity")
 	assert.Equal("account-identifier", ids[0].SourceSignal, "default identity signal")
 	assert.Equal("legacy@example.com", ids[1].Address, "migrated identity")
+}
+
+// cancelOnLogMessageHandler cancels once when a record with the given message
+// is logged.
+type cancelOnLogMessageHandler struct {
+	slog.Handler
+
+	message string
+	cancel  context.CancelFunc
+	once    sync.Once
+}
+
+func (*cancelOnLogMessageHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *cancelOnLogMessageHandler) Handle(_ context.Context, record slog.Record) error {
+	if record.Message == h.message {
+		h.once.Do(h.cancel)
+	}
+	return nil
+}
+
+// An interrupted PST import still runs the post-import identity migration and
+// prints its summary. If the migration ran on the cancelled context, it would
+// fail, and the command would return that error without printing the summary
+// or migrating the legacy identity.
+func TestImportPstInterruptedRunsMigrationAndPrintsSummary(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+
+	markDaemonCLISubprocessForTest(t)
+	tmp := t.TempDir()
+	t.Cleanup(saveImportPstState(t))
+	testCfg := lifecycleTestConfig(tmp)
+	testCfg.Identity.Addresses = []string{"legacy@example.com"}
+	testCtx := withStoreResolverConfig(t, testCfg)
+	st := testutil.NewSQLiteTestStoreAt(t, testCfg.DatabaseDSN())
+	emailSource, err := st.GetOrCreateSource("gmail", "mailbox@example.com")
+	require.NoError(err, "create eligible email source")
+	require.NoError(st.Close(), "close seed store")
+	pstPath, err := filepath.Abs("../../../internal/pst/testdata/support.pst")
+	require.NoError(err, "pst fixture path")
+	importPstSourceType = "pst"
+	importPstNoResume = true
+	importPstCheckpointInterval = 200
+	importPstNoAttachments = true
+
+	// The importer logs this as it reaches the first folder, after the
+	// source exists, so the import stops as an interrupt would.
+	ctx, cancel := context.WithCancel(testCtx)
+	defer cancel()
+	handler := &cancelOnLogMessageHandler{Handler: slog.DiscardHandler, message: "processing folder", cancel: cancel}
+	invocationFromContext(testCtx).logger = slog.New(handler)
+	var stdout bytes.Buffer
+	cmd := &cobra.Command{Use: "import-pst"}
+	cmd.SetContext(ctx)
+	cmd.SetOut(&stdout)
+	cmd.SetErr(io.Discard)
+
+	err = importPstCmd.RunE(cmd, []string{"archive@example.com", pstPath})
+	require.ErrorIs(ctx.Err(), context.Canceled, "the import must be interrupted")
+	assert.Contains(stdout.String(), "Import interrupted. Run again to resume.", "stdout")
+	require.ErrorIs(err, context.Canceled, "import-pst")
+
+	st, err = store.Open(testCfg.DatabaseDSN())
+	require.NoError(err, "open store after import")
+	t.Cleanup(func() { _ = st.Close() })
+	emailIDs, err := st.ListAccountIdentities(emailSource.ID)
+	require.NoError(err, "ListAccountIdentities gmail")
+	require.Len(emailIDs, 1, "the post-import migration must run for the interrupted import")
+	assert.Equal("legacy@example.com", emailIDs[0].Address, "migrated identity address")
 }

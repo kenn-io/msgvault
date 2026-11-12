@@ -46,6 +46,16 @@ func civilTime(t time.Time) time.Time {
 	return time.Date(year, month, day, hour, minute, second, t.Nanosecond(), time.UTC)
 }
 
+// zoneEnd corrects the leap-year end returned by Go's extended zone rules.
+// See https://github.com/golang/go/issues/81583.
+func zoneEnd(t time.Time) time.Time {
+	_, end := t.ZoneBounds()
+	if !end.IsZero() && !end.After(t) {
+		return time.Date(t.UTC().Year()+1, time.January, 1, 0, 0, 0, 0, time.UTC)
+	}
+	return end
+}
+
 // civilHorizon includes wall times before a backward offset transition even
 // when they compare later than the horizon's local clock. The original
 // absolute horizon is checked again after resolving each candidate.
@@ -74,10 +84,10 @@ func firstLocalWallTime(anchor time.Time, loc *time.Location) (time.Time, bool) 
 	for cursor := searchStart; cursor < searchEnd; {
 		instant := time.Unix(cursor, 0).In(loc)
 		_, offset := instant.Zone()
-		_, zoneEnd := instant.ZoneBounds()
+		end := zoneEnd(instant)
 		intervalEnd := searchEnd
-		if !zoneEnd.IsZero() && zoneEnd.Unix() < intervalEnd {
-			intervalEnd = zoneEnd.Unix()
+		if !end.IsZero() && end.Unix() < intervalEnd {
+			intervalEnd = end.Unix()
 		}
 		if intervalEnd <= cursor {
 			return time.Time{}, false

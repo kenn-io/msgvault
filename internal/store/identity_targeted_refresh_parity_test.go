@@ -23,12 +23,12 @@ func buildAttributionParityFixture(t *testing.T) attributionParityFixture {
 	f, mergedID := mergedAliasEnvelopeFixture(t)
 	other, err := f.Store.GetOrCreateSource("gmail", "other@example.test")
 	require.NoError(err)
-	otherConv, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other")
+	otherConv, err := f.Store.EnsureConversation(t.Context(), other.ID, "other-thread", "Other")
 	require.NoError(err)
 	withoutEmail := func(placeholder, kind, value string) int64 {
 		id := f.EnsureParticipant(placeholder, "Synthetic", "example.test")
 		require.NoError(f.Store.SetParticipantIdentifier(id, kind, value))
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE participants SET email_address=NULL WHERE id=?`), id)
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE participants SET email_address=NULL WHERE id=?`), id)
 		require.NoError(err)
 		return id
 	}
@@ -84,7 +84,7 @@ func buildAttributionParityFixture(t *testing.T) attributionParityFixture {
 
 func attributionSnapshot(t *testing.T, st *store.Store) map[int64][2]bool {
 	t.Helper()
-	rows, err := st.DB().Query(`SELECT id, identity_is_from_me, COALESCE(is_from_me, FALSE) FROM messages ORDER BY id`)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT id, identity_is_from_me, COALESCE(is_from_me, FALSE) FROM messages ORDER BY id`)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	result := map[int64][2]bool{}

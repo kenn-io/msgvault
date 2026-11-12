@@ -33,7 +33,7 @@ func TestImportedMeetingReachesExistingPerson(t *testing.T) {
 	require.NoError(err)
 
 	var role string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT aep.role FROM activity_event_persons aep
 		JOIN messages m ON m.id = aep.message_id
 		WHERE m.source_message_id = ? AND aep.person_id = ?`),

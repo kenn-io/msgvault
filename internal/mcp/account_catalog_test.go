@@ -52,7 +52,7 @@ func TestStaleAccountCatalogNeverRejectsConfirmedAlias(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(src.ID, "thread", "")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "work@example.org", "manual"))
 	_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{

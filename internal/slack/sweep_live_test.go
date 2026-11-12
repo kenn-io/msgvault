@@ -33,7 +33,7 @@ func TestLiveThreadsRepliesModifierPin(t *testing.T) {
 	}
 
 	c := NewClient("", token)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	nonce := time.Now().UnixNano()
 

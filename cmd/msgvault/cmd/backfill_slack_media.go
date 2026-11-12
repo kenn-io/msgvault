@@ -40,12 +40,12 @@ Examples:
 			if len(args) > 0 {
 				flagTeam = args[0]
 			}
-			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
-			sources, err := resolveSlackSyncSources(s, flagTeam)
+			sources, err := resolveSlackSyncSources(cmd.Context(), s, flagTeam)
 			if err != nil {
 				return err
 			}
@@ -81,7 +81,7 @@ Examples:
 			return slackMediaBackfillExit(
 				ctx.Err(),
 				runErrors,
-				rebuildCacheAfterWrite(cfg.DatabaseDSN(), state),
+				rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state),
 			)
 		},
 	}

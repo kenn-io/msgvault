@@ -36,15 +36,15 @@ func TestReviewedPublicationStoreRejectsChangedArtifactFences(t *testing.T) {
 			case "body":
 				plan.Publication.OutgoingBody = append(plan.Publication.OutgoingBody, '\n')
 			case "person":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE persons SET display_name = ? WHERE id = ?`), "Changed Person", personID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE persons SET display_name = ? WHERE id = ?`), "Changed Person", personID)
 			case "inference":
 				_, err = st.AppendPersonNoteContext(t.Context(), store.PersonNoteAppendInput{PersonID: personID, Text: "Later", Source: store.ProvenanceExtraction})
 			case "generation":
-				_, err = st.DB().Exec(`UPDATE carddav_accounts SET connection_generation = connection_generation + 1`)
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE carddav_accounts SET connection_generation = connection_generation + 1`)
 			case "book_revision":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET sync_revision = sync_revision + 1 WHERE id = ?`), book.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET sync_revision = sync_revision + 1 WHERE id = ?`), book.ID)
 			case "write_target":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET is_write_target = FALSE WHERE id = ?`), book.ID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET is_write_target = FALSE WHERE id = ?`), book.ID)
 			case "href":
 				plan.Publication.Href += "-changed"
 			case "token":
@@ -66,7 +66,7 @@ func TestReviewedPublicationStoreRejectsChangedArtifactFences(t *testing.T) {
 			_, err = st.PrepareReviewedCardDAVPublicationContext(t.Context(), plan)
 			require.ErrorIs(err, store.ErrCardDAVReviewStale)
 			var approvedRevision int64
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT approved_revision FROM person_carddav_inference_state WHERE person_id = ?`), personID).Scan(&approvedRevision))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT approved_revision FROM person_carddav_inference_state WHERE person_id = ?`), personID).Scan(&approvedRevision))
 			assert.Zero(t, approvedRevision)
 			_, err = st.GetCardDAVPublicationContext(t.Context(), personID)
 			require.ErrorIs(err, store.ErrCardDAVPublicationNotFound)
@@ -136,7 +136,7 @@ func TestReviewedPublicationZeroStateRemainsSparseAndIntentAuthorized(t *testing
 	require.NotNil(pending.ApprovedInferenceRevision)
 	assert.Zero(t, *pending.ApprovedInferenceRevision)
 	var revision int64
-	err = st.DB().QueryRow(st.Rebind(`SELECT inference_revision FROM person_carddav_inference_state WHERE person_id = ?`), personID).Scan(&revision)
+	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT inference_revision FROM person_carddav_inference_state WHERE person_id = ?`), personID).Scan(&revision)
 	require.ErrorIs(err, sql.ErrNoRows)
 	require.NoError(st.RollbackCardDAVPublicationContext(t.Context(), pending))
 	_, err = st.GetCardDAVPublicationContext(t.Context(), personID)
@@ -200,7 +200,7 @@ func TestReviewedPublicationUpgradeLeavesLegacyIntentUnapproved(t *testing.T) {
 	// Exercise the production legacy column migrations by reopening a schema
 	// with a real old pending intent and without any new proof columns.
 	for _, column := range []string{"approved_body_sha256", "approved_inference_revision", "approved_mutation_revision", "outgoing_envelope_metadata"} {
-		_, err := st.DB().Exec(`ALTER TABLE carddav_publications DROP COLUMN ` + column)
+		_, err := st.DB().ExecContext(t.Context(), `ALTER TABLE carddav_publications DROP COLUMN `+column)
 		require.NoError(err)
 	}
 	for range 2 {
@@ -241,7 +241,7 @@ func TestCurrentPublicationOrdinaryPreparationRejectsChangedSourceFence(t *testi
 	personID := inferenceReviewPerson(t, st)
 	reviewed := reviewedCurrentPlan(t, st, personID)
 	reviewed.Publication.SourceFence = &reviewed.Fence
-	_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET sync_revision = sync_revision + 1 WHERE id = ?`), book.ID)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET sync_revision = sync_revision + 1 WHERE id = ?`), book.ID)
 	require.NoError(t, err)
 	_, err = st.PrepareCardDAVPublicationContext(t.Context(), reviewed.Publication)
 	require.ErrorIs(t, err, store.ErrCardDAVStalePlan)

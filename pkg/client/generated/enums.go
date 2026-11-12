@@ -936,6 +936,7 @@ func (e ExploreSortField) Validate() error {
 	}
 }
 
+// FileMetadataResponseContentState File details check whether content can be opened; read or integrity errors can still occur.
 type FileMetadataResponseContentState string
 
 const (
@@ -955,6 +956,7 @@ func (f FileMetadataResponseContentState) Validate() error {
 	}
 }
 
+// FileSearchRowContentState List availability is based on metadata; file details check whether storage can be opened.
 type FileSearchRowContentState string
 
 const (
@@ -962,12 +964,13 @@ const (
 	FileSearchRowContentStateMetadataOnly FileSearchRowContentState = "metadata_only"
 	FileSearchRowContentStateMissingBlob  FileSearchRowContentState = "missing_blob"
 	FileSearchRowContentStateURLOnly      FileSearchRowContentState = "url_only"
+	Unverified                            FileSearchRowContentState = "unverified"
 )
 
 // Validate checks if the FileSearchRowContentState value is valid
 func (f FileSearchRowContentState) Validate() error {
 	switch f {
-	case FileSearchRowContentStateLocalContent, FileSearchRowContentStateMetadataOnly, FileSearchRowContentStateMissingBlob, FileSearchRowContentStateURLOnly:
+	case FileSearchRowContentStateLocalContent, FileSearchRowContentStateMetadataOnly, FileSearchRowContentStateMissingBlob, FileSearchRowContentStateURLOnly, Unverified:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid FileSearchRowContentState value, got: %v", f))
@@ -997,6 +1000,7 @@ func (f FileSuggestionHTTPRequestMimeFamilies) Validate() error {
 	}
 }
 
+// FileSuggestionRowContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 type FileSuggestionRowContentState string
 
 const (
@@ -1004,12 +1008,13 @@ const (
 	FileSuggestionRowContentStateMetadataOnly FileSuggestionRowContentState = "metadata_only"
 	FileSuggestionRowContentStateMissingBlob  FileSuggestionRowContentState = "missing_blob"
 	FileSuggestionRowContentStateURLOnly      FileSuggestionRowContentState = "url_only"
+	FileSuggestionRowContentStateUnverified   FileSuggestionRowContentState = "unverified"
 )
 
 // Validate checks if the FileSuggestionRowContentState value is valid
 func (f FileSuggestionRowContentState) Validate() error {
 	switch f {
-	case FileSuggestionRowContentStateLocalContent, FileSuggestionRowContentStateMetadataOnly, FileSuggestionRowContentStateMissingBlob, FileSuggestionRowContentStateURLOnly:
+	case FileSuggestionRowContentStateLocalContent, FileSuggestionRowContentStateMetadataOnly, FileSuggestionRowContentStateMissingBlob, FileSuggestionRowContentStateURLOnly, FileSuggestionRowContentStateUnverified:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid FileSuggestionRowContentState value, got: %v", f))
@@ -1162,6 +1167,77 @@ func (i ImportJobResponseStatus) Validate() error {
 	}
 }
 
+type LocalEmbeddingsStatusPhase string
+
+const (
+	Downloading LocalEmbeddingsStatusPhase = "downloading"
+	Idle        LocalEmbeddingsStatusPhase = "idle"
+	Indexing    LocalEmbeddingsStatusPhase = "indexing"
+)
+
+// Validate checks if the LocalEmbeddingsStatusPhase value is valid
+func (l LocalEmbeddingsStatusPhase) Validate() error {
+	switch l {
+	case Downloading, Idle, Indexing:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LocalEmbeddingsStatusPhase value, got: %v", l))
+	}
+}
+
+type LoopDecisionResponseState string
+
+const (
+	Done    LoopDecisionResponseState = "done"
+	Open    LoopDecisionResponseState = "open"
+	Snoozed LoopDecisionResponseState = "snoozed"
+)
+
+// Validate checks if the LoopDecisionResponseState value is valid
+func (l LoopDecisionResponseState) Validate() error {
+	switch l {
+	case Done, Open, Snoozed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopDecisionResponseState value, got: %v", l))
+	}
+}
+
+type LoopItemChannel string
+
+const (
+	Chat  LoopItemChannel = "chat"
+	Email LoopItemChannel = "email"
+)
+
+// Validate checks if the LoopItemChannel value is valid
+func (l LoopItemChannel) Validate() error {
+	switch l {
+	case Chat, Email:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopItemChannel value, got: %v", l))
+	}
+}
+
+// LoopItemKind reply_owed waits on you; awaiting_reply waits on them
+type LoopItemKind string
+
+const (
+	AwaitingReply LoopItemKind = "awaiting_reply"
+	ReplyOwed     LoopItemKind = "reply_owed"
+)
+
+// Validate checks if the LoopItemKind value is valid
+func (l LoopItemKind) Validate() error {
+	switch l {
+	case AwaitingReply, ReplyOwed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopItemKind value, got: %v", l))
+	}
+}
+
 type MediaSearchResultOrigin string
 
 const (
@@ -1247,6 +1323,23 @@ func (m MeetingScopeRequestDeletion) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MeetingScopeRequestDeletion value, got: %v", m))
+	}
+}
+
+type MessageImportResponseStatus string
+
+const (
+	MessageImportResponseStatusCreated MessageImportResponseStatus = "created"
+	MessageImportResponseStatusUpdated MessageImportResponseStatus = "updated"
+)
+
+// Validate checks if the MessageImportResponseStatus value is valid
+func (m MessageImportResponseStatus) Validate() error {
+	switch m {
+	case MessageImportResponseStatusCreated, MessageImportResponseStatusUpdated:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid MessageImportResponseStatus value, got: %v", m))
 	}
 }
 
@@ -1437,21 +1530,19 @@ func (o OperationLaneStatusHistoryAvailability) Validate() error {
 type OperationLaneStatusKind string
 
 const (
-	CarddavSync        OperationLaneStatusKind = "carddav_sync"
-	DocumentEmbedding  OperationLaneStatusKind = "document_embedding"
-	DocumentExtraction OperationLaneStatusKind = "document_extraction"
-	MessageEmbedding   OperationLaneStatusKind = "message_embedding"
-	PersonEmbedding    OperationLaneStatusKind = "person_embedding"
-	PersonEnrichment   OperationLaneStatusKind = "person_enrichment"
-	PersonSweep        OperationLaneStatusKind = "person_sweep"
-	SourceSync         OperationLaneStatusKind = "source_sync"
-	VisualEmbedding    OperationLaneStatusKind = "visual_embedding"
+	CarddavSync      OperationLaneStatusKind = "carddav_sync"
+	MessageEmbedding OperationLaneStatusKind = "message_embedding"
+	PersonEmbedding  OperationLaneStatusKind = "person_embedding"
+	PersonEnrichment OperationLaneStatusKind = "person_enrichment"
+	PersonSweep      OperationLaneStatusKind = "person_sweep"
+	SourceSync       OperationLaneStatusKind = "source_sync"
+	VisualEmbedding  OperationLaneStatusKind = "visual_embedding"
 )
 
 // Validate checks if the OperationLaneStatusKind value is valid
 func (o OperationLaneStatusKind) Validate() error {
 	switch o {
-	case CarddavSync, DocumentEmbedding, DocumentExtraction, MessageEmbedding, PersonEmbedding, PersonEnrichment, PersonSweep, SourceSync, VisualEmbedding:
+	case CarddavSync, MessageEmbedding, PersonEmbedding, PersonEnrichment, PersonSweep, SourceSync, VisualEmbedding:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationLaneStatusKind value, got: %v", o))
@@ -1462,7 +1553,6 @@ type OperationLaneStatusLane string
 
 const (
 	Contacts          OperationLaneStatusLane = "contacts"
-	Documents         OperationLaneStatusLane = "documents"
 	Messages          OperationLaneStatusLane = "messages"
 	PersonFacts       OperationLaneStatusLane = "person_facts"
 	VisualAttachments OperationLaneStatusLane = "visual_attachments"
@@ -1471,7 +1561,7 @@ const (
 // Validate checks if the OperationLaneStatusLane value is valid
 func (o OperationLaneStatusLane) Validate() error {
 	switch o {
-	case Contacts, Documents, Messages, PersonFacts, VisualAttachments:
+	case Contacts, Messages, PersonFacts, VisualAttachments:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationLaneStatusLane value, got: %v", o))
@@ -1482,8 +1572,6 @@ type OperationLaneStatusRelatedStatus string
 
 const (
 	GetCardDAVStatus          OperationLaneStatusRelatedStatus = "getCardDAVStatus"
-	GetDocumentIndexStatus    OperationLaneStatusRelatedStatus = "getDocumentIndexStatus"
-	GetDocumentVectorStatus   OperationLaneStatusRelatedStatus = "getDocumentVectorStatus"
 	GetVisualAttachmentStatus OperationLaneStatusRelatedStatus = "getVisualAttachmentStatus"
 	ListSourceStatus          OperationLaneStatusRelatedStatus = "listSourceStatus"
 )
@@ -1491,7 +1579,7 @@ const (
 // Validate checks if the OperationLaneStatusRelatedStatus value is valid
 func (o OperationLaneStatusRelatedStatus) Validate() error {
 	switch o {
-	case GetCardDAVStatus, GetDocumentIndexStatus, GetDocumentVectorStatus, GetVisualAttachmentStatus, ListSourceStatus:
+	case GetCardDAVStatus, GetVisualAttachmentStatus, ListSourceStatus:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationLaneStatusRelatedStatus value, got: %v", o))
@@ -1553,9 +1641,7 @@ type OperationPublicCounterUnit string
 const (
 	OperationPublicCounterUnitAttachments OperationPublicCounterUnit = "attachments"
 	OperationPublicCounterUnitBooks       OperationPublicCounterUnit = "books"
-	OperationPublicCounterUnitChunks      OperationPublicCounterUnit = "chunks"
 	OperationPublicCounterUnitContacts    OperationPublicCounterUnit = "contacts"
-	OperationPublicCounterUnitDocuments   OperationPublicCounterUnit = "documents"
 	OperationPublicCounterUnitMessages    OperationPublicCounterUnit = "messages"
 	OperationPublicCounterUnitPeople      OperationPublicCounterUnit = "people"
 	OperationPublicCounterUnitWrites      OperationPublicCounterUnit = "writes"
@@ -1564,7 +1650,7 @@ const (
 // Validate checks if the OperationPublicCounterUnit value is valid
 func (o OperationPublicCounterUnit) Validate() error {
 	switch o {
-	case OperationPublicCounterUnitAttachments, OperationPublicCounterUnitBooks, OperationPublicCounterUnitChunks, OperationPublicCounterUnitContacts, OperationPublicCounterUnitDocuments, OperationPublicCounterUnitMessages, OperationPublicCounterUnitPeople, OperationPublicCounterUnitWrites:
+	case OperationPublicCounterUnitAttachments, OperationPublicCounterUnitBooks, OperationPublicCounterUnitContacts, OperationPublicCounterUnitMessages, OperationPublicCounterUnitPeople, OperationPublicCounterUnitWrites:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationPublicCounterUnit value, got: %v", o))
@@ -1623,21 +1709,19 @@ func (o OperationPublicErrorCode) Validate() error {
 type OperationRunDetailKind string
 
 const (
-	OperationRunDetailKindCarddavSync        OperationRunDetailKind = "carddav_sync"
-	OperationRunDetailKindDocumentEmbedding  OperationRunDetailKind = "document_embedding"
-	OperationRunDetailKindDocumentExtraction OperationRunDetailKind = "document_extraction"
-	OperationRunDetailKindMessageEmbedding   OperationRunDetailKind = "message_embedding"
-	OperationRunDetailKindPersonEmbedding    OperationRunDetailKind = "person_embedding"
-	OperationRunDetailKindPersonEnrichment   OperationRunDetailKind = "person_enrichment"
-	OperationRunDetailKindPersonSweep        OperationRunDetailKind = "person_sweep"
-	OperationRunDetailKindSourceSync         OperationRunDetailKind = "source_sync"
-	OperationRunDetailKindVisualEmbedding    OperationRunDetailKind = "visual_embedding"
+	OperationRunDetailKindCarddavSync      OperationRunDetailKind = "carddav_sync"
+	OperationRunDetailKindMessageEmbedding OperationRunDetailKind = "message_embedding"
+	OperationRunDetailKindPersonEmbedding  OperationRunDetailKind = "person_embedding"
+	OperationRunDetailKindPersonEnrichment OperationRunDetailKind = "person_enrichment"
+	OperationRunDetailKindPersonSweep      OperationRunDetailKind = "person_sweep"
+	OperationRunDetailKindSourceSync       OperationRunDetailKind = "source_sync"
+	OperationRunDetailKindVisualEmbedding  OperationRunDetailKind = "visual_embedding"
 )
 
 // Validate checks if the OperationRunDetailKind value is valid
 func (o OperationRunDetailKind) Validate() error {
 	switch o {
-	case OperationRunDetailKindCarddavSync, OperationRunDetailKindDocumentEmbedding, OperationRunDetailKindDocumentExtraction, OperationRunDetailKindMessageEmbedding, OperationRunDetailKindPersonEmbedding, OperationRunDetailKindPersonEnrichment, OperationRunDetailKindPersonSweep, OperationRunDetailKindSourceSync, OperationRunDetailKindVisualEmbedding:
+	case OperationRunDetailKindCarddavSync, OperationRunDetailKindMessageEmbedding, OperationRunDetailKindPersonEmbedding, OperationRunDetailKindPersonEnrichment, OperationRunDetailKindPersonSweep, OperationRunDetailKindSourceSync, OperationRunDetailKindVisualEmbedding:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunDetailKind value, got: %v", o))
@@ -1648,7 +1732,6 @@ type OperationRunDetailLane string
 
 const (
 	OperationRunDetailLaneContacts          OperationRunDetailLane = "contacts"
-	OperationRunDetailLaneDocuments         OperationRunDetailLane = "documents"
 	OperationRunDetailLaneMessages          OperationRunDetailLane = "messages"
 	OperationRunDetailLanePersonFacts       OperationRunDetailLane = "person_facts"
 	OperationRunDetailLaneVisualAttachments OperationRunDetailLane = "visual_attachments"
@@ -1657,7 +1740,7 @@ const (
 // Validate checks if the OperationRunDetailLane value is valid
 func (o OperationRunDetailLane) Validate() error {
 	switch o {
-	case OperationRunDetailLaneContacts, OperationRunDetailLaneDocuments, OperationRunDetailLaneMessages, OperationRunDetailLanePersonFacts, OperationRunDetailLaneVisualAttachments:
+	case OperationRunDetailLaneContacts, OperationRunDetailLaneMessages, OperationRunDetailLanePersonFacts, OperationRunDetailLaneVisualAttachments:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunDetailLane value, got: %v", o))
@@ -1668,8 +1751,6 @@ type OperationRunDetailRelatedStatus string
 
 const (
 	OperationRunDetailRelatedStatusGetCardDAVStatus          OperationRunDetailRelatedStatus = "getCardDAVStatus"
-	OperationRunDetailRelatedStatusGetDocumentIndexStatus    OperationRunDetailRelatedStatus = "getDocumentIndexStatus"
-	OperationRunDetailRelatedStatusGetDocumentVectorStatus   OperationRunDetailRelatedStatus = "getDocumentVectorStatus"
 	OperationRunDetailRelatedStatusGetVisualAttachmentStatus OperationRunDetailRelatedStatus = "getVisualAttachmentStatus"
 	OperationRunDetailRelatedStatusListSourceStatus          OperationRunDetailRelatedStatus = "listSourceStatus"
 )
@@ -1677,7 +1758,7 @@ const (
 // Validate checks if the OperationRunDetailRelatedStatus value is valid
 func (o OperationRunDetailRelatedStatus) Validate() error {
 	switch o {
-	case OperationRunDetailRelatedStatusGetCardDAVStatus, OperationRunDetailRelatedStatusGetDocumentIndexStatus, OperationRunDetailRelatedStatusGetDocumentVectorStatus, OperationRunDetailRelatedStatusGetVisualAttachmentStatus, OperationRunDetailRelatedStatusListSourceStatus:
+	case OperationRunDetailRelatedStatusGetCardDAVStatus, OperationRunDetailRelatedStatusGetVisualAttachmentStatus, OperationRunDetailRelatedStatusListSourceStatus:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunDetailRelatedStatus value, got: %v", o))
@@ -1744,21 +1825,19 @@ func (o OperationRunDetailSupportedActions) Validate() error {
 type OperationRunSummaryKind string
 
 const (
-	OperationRunSummaryKindCarddavSync        OperationRunSummaryKind = "carddav_sync"
-	OperationRunSummaryKindDocumentEmbedding  OperationRunSummaryKind = "document_embedding"
-	OperationRunSummaryKindDocumentExtraction OperationRunSummaryKind = "document_extraction"
-	OperationRunSummaryKindMessageEmbedding   OperationRunSummaryKind = "message_embedding"
-	OperationRunSummaryKindPersonEmbedding    OperationRunSummaryKind = "person_embedding"
-	OperationRunSummaryKindPersonEnrichment   OperationRunSummaryKind = "person_enrichment"
-	OperationRunSummaryKindPersonSweep        OperationRunSummaryKind = "person_sweep"
-	OperationRunSummaryKindSourceSync         OperationRunSummaryKind = "source_sync"
-	OperationRunSummaryKindVisualEmbedding    OperationRunSummaryKind = "visual_embedding"
+	OperationRunSummaryKindCarddavSync      OperationRunSummaryKind = "carddav_sync"
+	OperationRunSummaryKindMessageEmbedding OperationRunSummaryKind = "message_embedding"
+	OperationRunSummaryKindPersonEmbedding  OperationRunSummaryKind = "person_embedding"
+	OperationRunSummaryKindPersonEnrichment OperationRunSummaryKind = "person_enrichment"
+	OperationRunSummaryKindPersonSweep      OperationRunSummaryKind = "person_sweep"
+	OperationRunSummaryKindSourceSync       OperationRunSummaryKind = "source_sync"
+	OperationRunSummaryKindVisualEmbedding  OperationRunSummaryKind = "visual_embedding"
 )
 
 // Validate checks if the OperationRunSummaryKind value is valid
 func (o OperationRunSummaryKind) Validate() error {
 	switch o {
-	case OperationRunSummaryKindCarddavSync, OperationRunSummaryKindDocumentEmbedding, OperationRunSummaryKindDocumentExtraction, OperationRunSummaryKindMessageEmbedding, OperationRunSummaryKindPersonEmbedding, OperationRunSummaryKindPersonEnrichment, OperationRunSummaryKindPersonSweep, OperationRunSummaryKindSourceSync, OperationRunSummaryKindVisualEmbedding:
+	case OperationRunSummaryKindCarddavSync, OperationRunSummaryKindMessageEmbedding, OperationRunSummaryKindPersonEmbedding, OperationRunSummaryKindPersonEnrichment, OperationRunSummaryKindPersonSweep, OperationRunSummaryKindSourceSync, OperationRunSummaryKindVisualEmbedding:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunSummaryKind value, got: %v", o))
@@ -1769,7 +1848,6 @@ type OperationRunSummaryLane string
 
 const (
 	OperationRunSummaryLaneContacts          OperationRunSummaryLane = "contacts"
-	OperationRunSummaryLaneDocuments         OperationRunSummaryLane = "documents"
 	OperationRunSummaryLaneMessages          OperationRunSummaryLane = "messages"
 	OperationRunSummaryLanePersonFacts       OperationRunSummaryLane = "person_facts"
 	OperationRunSummaryLaneVisualAttachments OperationRunSummaryLane = "visual_attachments"
@@ -1778,7 +1856,7 @@ const (
 // Validate checks if the OperationRunSummaryLane value is valid
 func (o OperationRunSummaryLane) Validate() error {
 	switch o {
-	case OperationRunSummaryLaneContacts, OperationRunSummaryLaneDocuments, OperationRunSummaryLaneMessages, OperationRunSummaryLanePersonFacts, OperationRunSummaryLaneVisualAttachments:
+	case OperationRunSummaryLaneContacts, OperationRunSummaryLaneMessages, OperationRunSummaryLanePersonFacts, OperationRunSummaryLaneVisualAttachments:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationRunSummaryLane value, got: %v", o))
@@ -1827,21 +1905,19 @@ func (o OperationRunSummaryTrigger) Validate() error {
 type OperationUnavailableKindKind string
 
 const (
-	OperationUnavailableKindKindCarddavSync        OperationUnavailableKindKind = "carddav_sync"
-	OperationUnavailableKindKindDocumentEmbedding  OperationUnavailableKindKind = "document_embedding"
-	OperationUnavailableKindKindDocumentExtraction OperationUnavailableKindKind = "document_extraction"
-	OperationUnavailableKindKindMessageEmbedding   OperationUnavailableKindKind = "message_embedding"
-	OperationUnavailableKindKindPersonEmbedding    OperationUnavailableKindKind = "person_embedding"
-	OperationUnavailableKindKindPersonEnrichment   OperationUnavailableKindKind = "person_enrichment"
-	OperationUnavailableKindKindPersonSweep        OperationUnavailableKindKind = "person_sweep"
-	OperationUnavailableKindKindSourceSync         OperationUnavailableKindKind = "source_sync"
-	OperationUnavailableKindKindVisualEmbedding    OperationUnavailableKindKind = "visual_embedding"
+	OperationUnavailableKindKindCarddavSync      OperationUnavailableKindKind = "carddav_sync"
+	OperationUnavailableKindKindMessageEmbedding OperationUnavailableKindKind = "message_embedding"
+	OperationUnavailableKindKindPersonEmbedding  OperationUnavailableKindKind = "person_embedding"
+	OperationUnavailableKindKindPersonEnrichment OperationUnavailableKindKind = "person_enrichment"
+	OperationUnavailableKindKindPersonSweep      OperationUnavailableKindKind = "person_sweep"
+	OperationUnavailableKindKindSourceSync       OperationUnavailableKindKind = "source_sync"
+	OperationUnavailableKindKindVisualEmbedding  OperationUnavailableKindKind = "visual_embedding"
 )
 
 // Validate checks if the OperationUnavailableKindKind value is valid
 func (o OperationUnavailableKindKind) Validate() error {
 	switch o {
-	case OperationUnavailableKindKindCarddavSync, OperationUnavailableKindKindDocumentEmbedding, OperationUnavailableKindKindDocumentExtraction, OperationUnavailableKindKindMessageEmbedding, OperationUnavailableKindKindPersonEmbedding, OperationUnavailableKindKindPersonEnrichment, OperationUnavailableKindKindPersonSweep, OperationUnavailableKindKindSourceSync, OperationUnavailableKindKindVisualEmbedding:
+	case OperationUnavailableKindKindCarddavSync, OperationUnavailableKindKindMessageEmbedding, OperationUnavailableKindKindPersonEmbedding, OperationUnavailableKindKindPersonEnrichment, OperationUnavailableKindKindPersonSweep, OperationUnavailableKindKindSourceSync, OperationUnavailableKindKindVisualEmbedding:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationUnavailableKindKind value, got: %v", o))
@@ -1852,7 +1928,6 @@ type OperationUnavailableKindLane string
 
 const (
 	OperationUnavailableKindLaneContacts          OperationUnavailableKindLane = "contacts"
-	OperationUnavailableKindLaneDocuments         OperationUnavailableKindLane = "documents"
 	OperationUnavailableKindLaneMessages          OperationUnavailableKindLane = "messages"
 	OperationUnavailableKindLanePersonFacts       OperationUnavailableKindLane = "person_facts"
 	OperationUnavailableKindLaneVisualAttachments OperationUnavailableKindLane = "visual_attachments"
@@ -1861,7 +1936,7 @@ const (
 // Validate checks if the OperationUnavailableKindLane value is valid
 func (o OperationUnavailableKindLane) Validate() error {
 	switch o {
-	case OperationUnavailableKindLaneContacts, OperationUnavailableKindLaneDocuments, OperationUnavailableKindLaneMessages, OperationUnavailableKindLanePersonFacts, OperationUnavailableKindLaneVisualAttachments:
+	case OperationUnavailableKindLaneContacts, OperationUnavailableKindLaneMessages, OperationUnavailableKindLanePersonFacts, OperationUnavailableKindLaneVisualAttachments:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationUnavailableKindLane value, got: %v", o))
@@ -1936,22 +2011,22 @@ func (o OrganizationCategoryBodySource) Validate() error {
 type OrganizationContactPointBodyContactKind string
 
 const (
-	Calendar     OrganizationContactPointBodyContactKind = "calendar"
-	ContactURI   OrganizationContactPointBodyContactKind = "contact_uri"
-	Email        OrganizationContactPointBodyContactKind = "email"
-	Impp         OrganizationContactPointBodyContactKind = "impp"
-	Language     OrganizationContactPointBodyContactKind = "language"
-	OrgDirectory OrganizationContactPointBodyContactKind = "org_directory"
-	Phone        OrganizationContactPointBodyContactKind = "phone"
-	Social       OrganizationContactPointBodyContactKind = "social"
-	URL          OrganizationContactPointBodyContactKind = "url"
-	Username     OrganizationContactPointBodyContactKind = "username"
+	Calendar                                     OrganizationContactPointBodyContactKind = "calendar"
+	ContactURI                                   OrganizationContactPointBodyContactKind = "contact_uri"
+	Impp                                         OrganizationContactPointBodyContactKind = "impp"
+	Language                                     OrganizationContactPointBodyContactKind = "language"
+	OrgDirectory                                 OrganizationContactPointBodyContactKind = "org_directory"
+	OrganizationContactPointBodyContactKindEmail OrganizationContactPointBodyContactKind = "email"
+	Phone                                        OrganizationContactPointBodyContactKind = "phone"
+	Social                                       OrganizationContactPointBodyContactKind = "social"
+	URL                                          OrganizationContactPointBodyContactKind = "url"
+	Username                                     OrganizationContactPointBodyContactKind = "username"
 )
 
 // Validate checks if the OrganizationContactPointBodyContactKind value is valid
 func (o OrganizationContactPointBodyContactKind) Validate() error {
 	switch o {
-	case Calendar, ContactURI, Email, Impp, Language, OrgDirectory, Phone, Social, URL, Username:
+	case Calendar, ContactURI, Impp, Language, OrgDirectory, OrganizationContactPointBodyContactKindEmail, Phone, Social, URL, Username:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationContactPointBodyContactKind value, got: %v", o))
@@ -2258,6 +2333,7 @@ func (p PersonFileSearchHTTPRequestDirections) Validate() error {
 	}
 }
 
+// PersonFileSearchRowContentState List availability is based on metadata; file details check whether storage can be opened.
 type PersonFileSearchRowContentState string
 
 const (
@@ -2265,12 +2341,13 @@ const (
 	PersonFileSearchRowContentStateMetadataOnly PersonFileSearchRowContentState = "metadata_only"
 	PersonFileSearchRowContentStateMissingBlob  PersonFileSearchRowContentState = "missing_blob"
 	PersonFileSearchRowContentStateURLOnly      PersonFileSearchRowContentState = "url_only"
+	PersonFileSearchRowContentStateUnverified   PersonFileSearchRowContentState = "unverified"
 )
 
 // Validate checks if the PersonFileSearchRowContentState value is valid
 func (p PersonFileSearchRowContentState) Validate() error {
 	switch p {
-	case PersonFileSearchRowContentStateLocalContent, PersonFileSearchRowContentStateMetadataOnly, PersonFileSearchRowContentStateMissingBlob, PersonFileSearchRowContentStateURLOnly:
+	case PersonFileSearchRowContentStateLocalContent, PersonFileSearchRowContentStateMetadataOnly, PersonFileSearchRowContentStateMissingBlob, PersonFileSearchRowContentStateURLOnly, PersonFileSearchRowContentStateUnverified:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSearchRowContentState value, got: %v", p))
@@ -2318,6 +2395,7 @@ func (p PersonFileSuggestionHTTPRequestMimeFamilies) Validate() error {
 	}
 }
 
+// PersonFileSuggestionRowContentState Suggestion availability is based on metadata; file details check whether storage can be opened.
 type PersonFileSuggestionRowContentState string
 
 const (
@@ -2325,12 +2403,13 @@ const (
 	PersonFileSuggestionRowContentStateMetadataOnly PersonFileSuggestionRowContentState = "metadata_only"
 	PersonFileSuggestionRowContentStateMissingBlob  PersonFileSuggestionRowContentState = "missing_blob"
 	PersonFileSuggestionRowContentStateURLOnly      PersonFileSuggestionRowContentState = "url_only"
+	PersonFileSuggestionRowContentStateUnverified   PersonFileSuggestionRowContentState = "unverified"
 )
 
 // Validate checks if the PersonFileSuggestionRowContentState value is valid
 func (p PersonFileSuggestionRowContentState) Validate() error {
 	switch p {
-	case PersonFileSuggestionRowContentStateLocalContent, PersonFileSuggestionRowContentStateMetadataOnly, PersonFileSuggestionRowContentStateMissingBlob, PersonFileSuggestionRowContentStateURLOnly:
+	case PersonFileSuggestionRowContentStateLocalContent, PersonFileSuggestionRowContentStateMetadataOnly, PersonFileSuggestionRowContentStateMissingBlob, PersonFileSuggestionRowContentStateURLOnly, PersonFileSuggestionRowContentStateUnverified:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonFileSuggestionRowContentState value, got: %v", p))
@@ -2758,14 +2837,13 @@ type SelectorKind string
 
 const (
 	SelectorKindDocbankRendition SelectorKind = "docbank_rendition"
-	SelectorKindDocumentChunk    SelectorKind = "document_chunk"
 	SelectorKindMessage          SelectorKind = "message"
 )
 
 // Validate checks if the SelectorKind value is valid
 func (s SelectorKind) Validate() error {
 	switch s {
-	case SelectorKindDocbankRendition, SelectorKindDocumentChunk, SelectorKindMessage:
+	case SelectorKindDocbankRendition, SelectorKindMessage:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SelectorKind value, got: %v", s))
@@ -2963,21 +3041,19 @@ func (t TelemetryEventResponseStatus) Validate() error {
 type ListOperationRunsQueryKind string
 
 const (
-	ListOperationRunsQueryKindCarddavSync        ListOperationRunsQueryKind = "carddav_sync"
-	ListOperationRunsQueryKindDocumentEmbedding  ListOperationRunsQueryKind = "document_embedding"
-	ListOperationRunsQueryKindDocumentExtraction ListOperationRunsQueryKind = "document_extraction"
-	ListOperationRunsQueryKindMessageEmbedding   ListOperationRunsQueryKind = "message_embedding"
-	ListOperationRunsQueryKindPersonEmbedding    ListOperationRunsQueryKind = "person_embedding"
-	ListOperationRunsQueryKindPersonEnrichment   ListOperationRunsQueryKind = "person_enrichment"
-	ListOperationRunsQueryKindPersonSweep        ListOperationRunsQueryKind = "person_sweep"
-	ListOperationRunsQueryKindSourceSync         ListOperationRunsQueryKind = "source_sync"
-	ListOperationRunsQueryKindVisualEmbedding    ListOperationRunsQueryKind = "visual_embedding"
+	ListOperationRunsQueryKindCarddavSync      ListOperationRunsQueryKind = "carddav_sync"
+	ListOperationRunsQueryKindMessageEmbedding ListOperationRunsQueryKind = "message_embedding"
+	ListOperationRunsQueryKindPersonEmbedding  ListOperationRunsQueryKind = "person_embedding"
+	ListOperationRunsQueryKindPersonEnrichment ListOperationRunsQueryKind = "person_enrichment"
+	ListOperationRunsQueryKindPersonSweep      ListOperationRunsQueryKind = "person_sweep"
+	ListOperationRunsQueryKindSourceSync       ListOperationRunsQueryKind = "source_sync"
+	ListOperationRunsQueryKindVisualEmbedding  ListOperationRunsQueryKind = "visual_embedding"
 )
 
 // Validate checks if the ListOperationRunsQueryKind value is valid
 func (l ListOperationRunsQueryKind) Validate() error {
 	switch l {
-	case ListOperationRunsQueryKindCarddavSync, ListOperationRunsQueryKindDocumentEmbedding, ListOperationRunsQueryKindDocumentExtraction, ListOperationRunsQueryKindMessageEmbedding, ListOperationRunsQueryKindPersonEmbedding, ListOperationRunsQueryKindPersonEnrichment, ListOperationRunsQueryKindPersonSweep, ListOperationRunsQueryKindSourceSync, ListOperationRunsQueryKindVisualEmbedding:
+	case ListOperationRunsQueryKindCarddavSync, ListOperationRunsQueryKindMessageEmbedding, ListOperationRunsQueryKindPersonEmbedding, ListOperationRunsQueryKindPersonEnrichment, ListOperationRunsQueryKindPersonSweep, ListOperationRunsQueryKindSourceSync, ListOperationRunsQueryKindVisualEmbedding:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListOperationRunsQueryKind value, got: %v", l))
@@ -2988,7 +3064,6 @@ type ListOperationRunsQueryLane string
 
 const (
 	ListOperationRunsQueryLaneContacts          ListOperationRunsQueryLane = "contacts"
-	ListOperationRunsQueryLaneDocuments         ListOperationRunsQueryLane = "documents"
 	ListOperationRunsQueryLaneMessages          ListOperationRunsQueryLane = "messages"
 	ListOperationRunsQueryLanePersonFacts       ListOperationRunsQueryLane = "person_facts"
 	ListOperationRunsQueryLaneVisualAttachments ListOperationRunsQueryLane = "visual_attachments"
@@ -2997,7 +3072,7 @@ const (
 // Validate checks if the ListOperationRunsQueryLane value is valid
 func (l ListOperationRunsQueryLane) Validate() error {
 	switch l {
-	case ListOperationRunsQueryLaneContacts, ListOperationRunsQueryLaneDocuments, ListOperationRunsQueryLaneMessages, ListOperationRunsQueryLanePersonFacts, ListOperationRunsQueryLaneVisualAttachments:
+	case ListOperationRunsQueryLaneContacts, ListOperationRunsQueryLaneMessages, ListOperationRunsQueryLanePersonFacts, ListOperationRunsQueryLaneVisualAttachments:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListOperationRunsQueryLane value, got: %v", l))

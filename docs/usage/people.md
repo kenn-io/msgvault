@@ -10,9 +10,12 @@ and the things you want to remember in one profile. Start in the Web UI's
 choose **Save** in their header. You can also use the
 [TUI People browser](/docs/usage/tui/#people).
 
+Google resource addresses not linked to a person are excluded from observed people regardless of `exclude_domain_patterns`; their addresses stay searchable.
+
 | I want to… | Start here |
 |---|---|
 | Save someone's name, details, or notes | [Create a profile](#promote-a-durable-person) |
+| See which conversations still need an answer | [Open loops](open-loops.md) |
 | Remember what they recently shared | [Person briefs](/docs/usage/people-briefs/) |
 | Review meeting time and recorded follow-ups | [Meeting activity](meetings.md#export-context-and-read-follow-ups) |
 | Find files you exchanged | [Person files](#find-files-related-to-a-person) |
@@ -283,7 +286,7 @@ Use a saved person ID to find attachments across their linked identities:
 ```bash
 msgvault person files 7 --direction from_person --filename proposal
 msgvault person files 7 --mime-family pdf --after 2026-01-01
-msgvault person files 7 --lane documents --query "project proposal"
+msgvault media search "project proposal" --person 7 --direction from_person
 msgvault person files 7 --lane visual --query "garden plan"
 msgvault person files 7 --lane all --query "project proposal" --json
 ```
@@ -294,12 +297,8 @@ The `metadata` lane lists only attachments on sent or received mail.
 `--filename` matches a case-insensitive substring. MIME families are `image`,
 `pdf`, `audio`, `video`, `text`, `document`, `archive`, and `other`.
 
-The `documents` and `visual` lanes need their respective indexes; see
-[document search](/docs/usage/document-indexing/) and
-[visual search](/docs/usage/vector-search/). Both require `--query`, as does
-`all`. The `all` result reports each lane separately, including unavailable
-lanes; its metadata results do not use the semantic query. Document search
-cannot apply filename or MIME-family filters.
+The `visual` lane needs [visual search](/docs/usage/vector-search/). It requires `--query`, as does `all`. The `all` result reports each lane separately, including unavailable
+lanes; its metadata results do not use the semantic query. Search document text through Docbank with `media search --person <id>`.
 
 Each lane has its own cursor. Use `--cursor` with one lane to continue a result;
 `all` cannot take a cursor. `--limit` is per lane, defaults to 100, and accepts

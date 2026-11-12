@@ -32,11 +32,11 @@ func newEmailHeaderWALFixture(t *testing.T) emailHeaderWALFixture {
 	st.DB().SetMaxIdleConns(1)
 	// Every subsequent Store call uses this one retained connection. Closing
 	// the final connection or auto-checkpointing could hide committed frames.
-	_, err := st.DB().Exec(`PRAGMA wal_autocheckpoint = 0`)
+	_, err := st.DB().ExecContext(t.Context(), `PRAGMA wal_autocheckpoint = 0`)
 	requirements.NoError(err)
 	source, err := st.GetOrCreateSource("apple-mail", "wal@example.test")
 	requirements.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "wal-thread", "Synthetic thread")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "wal-thread", "Synthetic thread")
 	requirements.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversation,
@@ -48,11 +48,12 @@ func newEmailHeaderWALFixture(t *testing.T) emailHeaderWALFixture {
 		String: `{"unrelated":{"answer":42}}`, Valid: true,
 	}))
 	var path string
-	requirements.NoError(st.DB().QueryRow(
+	requirements.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path))
 	requirements.NotEmpty(path, "physical WAL requires a file-backed database")
 	var indexPage uint32
-	requirements.NoError(st.DB().QueryRow(`SELECT rootpage FROM sqlite_schema
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT rootpage FROM sqlite_schema
 		WHERE type = 'index' AND name = 'idx_messages_content_changed_at'`).Scan(&indexPage))
 	requirements.Positive(indexPage, "the production index must remain present")
 	return emailHeaderWALFixture{st, source.ID, messageID, path + "-wal", indexPage}
@@ -61,7 +62,7 @@ func newEmailHeaderWALFixture(t *testing.T) emailHeaderWALFixture {
 func (f emailHeaderWALFixture) checkpoint(t *testing.T) {
 	t.Helper()
 	var busy, frames, checkpointed int
-	require.NoError(t, f.st.DB().QueryRow(`PRAGMA wal_checkpoint(TRUNCATE)`).Scan(
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(
 		&busy, &frames, &checkpointed))
 	require.Zero(t, busy)
 	require.Empty(t, f.walPages(t), "setup WAL must be truncated before measurement")
@@ -108,7 +109,7 @@ func readEmailHeaderSnapshot(t *testing.T, st *store.Store, id int64) emailHeade
 	t.Helper()
 	requirements := require.New(t)
 	var got emailHeaderSnapshot
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT rfc822_message_id,
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT rfc822_message_id,
 		metadata, subject, reply_to_message_id, CAST(last_modified AS TEXT),
 		CAST(content_changed_at AS TEXT) FROM messages WHERE id = ?`), id).Scan(
 		&got.rfcID, &got.metadata, &got.subject, &got.reply, &got.modified, &got.content))

@@ -1,8 +1,12 @@
 <script lang="ts">
-  import { Button, Checkbox, SelectDropdown } from '@kenn-io/kit-ui';
+  import { SegmentedControl } from '@kenn-io/kit-ui';
 
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { NetworkEdge, NetworkNode } from '../../directory/models';
+  import { joinWords, wordSeparator } from '../../util/words';
+  import InlineNotice from '../common/InlineNotice.svelte';
+  import DetailRow from '../people/DetailRow.svelte';
+  import DetailSection from '../people/DetailSection.svelte';
 
   interface Props {
     controller: DirectoryEntityController;
@@ -11,170 +15,113 @@
   }
 
   let { controller, onOpenPerson, onOpenOrganization }: Props = $props();
-  const graphMinimumWidth = 650;
-  const nodeLabelOffset = 25;
-  const nodeLabelLaneWidth = 160;
+  // Direct links are this person's jobs and connections, which Work and Connections already list,
+  // so Direct opens as a one-line summary naming them; 2 and 3 steps list the people reached through them, and links among them.
   let depth = $state('1');
-  let includeEnded = $state(false);
-  const depthOptions = [1, 2, 3].map((value) => ({ value: String(value), label: `${value} ${value === 1 ? 'hop' : 'hops'}` }));
+  const depthOptions = [
+    { value: '1', label: 'Direct' },
+    { value: '2', label: '2 steps' },
+    { value: '3', label: '3 steps' }
+  ];
   const nodes = $derived(controller.network?.nodes ?? []);
   const edges = $derived(controller.network?.edges ?? []);
   const nodeByID = $derived(new Map(nodes.map((node) => [node.id, node])));
-  const rootNode = $derived(nodes.find((node) => node.id === `person:${controller.personID}`));
-  const edgeGroups = $derived.by(() => {
-    const grouped = new Map<number, NetworkEdge[]>();
-    for (const edge of edges) {
-      const source = nodeByID.get(edge.source_node_id);
-      const target = nodeByID.get(edge.target_node_id);
-      const hop = Math.max(source?.hop ?? 0, target?.hop ?? 0);
-      grouped.set(hop, [...(grouped.get(hop) ?? []), edge]);
-    }
-    return [...grouped.entries()].sort(([left], [right]) => left - right);
-  });
-  const positions = $derived.by(() => {
-    const byHop = new Map<number, NetworkNode[]>();
-    for (const node of nodes) byHop.set(node.hop, [...(byHop.get(node.hop) ?? []), node]);
-    const result = new Map<string, { x: number; y: number }>();
-    for (const [hop, hopNodes] of byHop) {
-      hopNodes.forEach((node, index) => result.set(node.id, {
-        x: 70 + hop * 190,
-        y: 45 + index * 80
-      }));
-    }
-    return result;
-  });
-  const graphWidth = $derived(Math.max(graphMinimumWidth, ...nodes.map((node) => {
-    const position = positions.get(node.id);
-    if (!position) return 0;
-    return Math.max(
-      position.x + nodeRadius(node),
-      position.x + nodeLabelOffset + nodeLabelLaneWidth
-    );
-  })));
-  const graphHeight = $derived(Math.max(100, ...[...positions.values()].map((position) => position.y + 45)));
+  // Name up to three direct records, then retain the count of the rest.
+  const direct = $derived(nodes.filter(node => node.hop === 1));
+  const reached = $derived(direct.length <= 3 ? direct : [...direct.slice(0, 2), { id: 'more', label: `${direct.length - 2} more` }]);
 
   $effect(() => {
-    void controller.loadNetwork(Number(depth), includeEnded);
+    void controller.loadNetwork(Number(depth));
   });
 
-  function openNode(node: NetworkNode): void {
-    if (node.kind === 'person') onOpenPerson(node.entity_id);
-    else onOpenOrganization(node.entity_id);
+  /** The connection label or job title, using the catalog's direction when available. */
+  function relation(edge: NetworkEdge, node: NetworkNode): { label: string | undefined; namesSource: boolean } {
+    if (edge.kind === 'employment') return { label: edge.label || undefined, namesSource: false };
+    const type = controller.relationshipTypes.find(({ slug }) => slug === edge.relationship_type_slug);
+    // A relationship's target reads its type's reverse label from the source's side, and the source its forward label.
+    if (type) return { label: edge.target_node_id === node.id ? type.reverse_label : type.forward_label, namesSource: false };
+    if (!edge.label || edge.source_node_id === node.id) return { label: edge.label || undefined, namesSource: false };
+    // The row names the target; name the source to keep the forward label's direction clear.
+    return { label: `From ${nodeByID.get(edge.source_node_id)!.label}: ${edge.label}`, namesSource: true };
   }
 
-  function nodeActionLabel(node: NetworkNode): string {
-    return `Open ${node.kind} ${node.label}`;
+  // Each link is said once, on its farther end. Between two at the same step it's said on the side it describes:
+  // a job on its person, a connection on its source.
+  function side(edge: NetworkEdge): string | undefined {
+    const source = nodeByID.get(edge.source_node_id), target = nodeByID.get(edge.target_node_id);
+    if (!source || !target) return undefined;
+    if (source.hop !== target.hop) return source.hop > target.hop ? source.id : target.id;
+    return edge.kind === 'employment' && source.kind !== 'person' ? target.id : source.id;
   }
 
-  function nodeRadius(node: NetworkNode): number {
-    return node.kind === 'person' ? 19 : 16;
-  }
+  // Everyone past the direct links, and links among contacts at the same step.
+  const further = $derived.by(() => {
+    const rows: { node: NetworkNode; line: string }[] = [];
+    for (const node of nodes) {
+      if (node.hop === 0) continue;
+      // Group by relation, so each title stays with its employer.
+      const paths = new Map<string, { label: string | undefined; via: string[]; with: string[] }>();
+      for (const edge of edges.filter((edge) => side(edge) === node.id)) {
+        const other = nodeByID.get(edge.source_node_id === node.id ? edge.target_node_id : edge.source_node_id)!;
+        if (node.hop === 1 && other.hop === 0) continue;
+        const { label, namesSource } = relation(edge, node), key = label ?? '';
+        const path = paths.get(key) ?? { label, via: [], with: [] };
+        if (!namesSource) (other.hop < node.hop ? path.via : path.with).push(other.label);
+        paths.set(key, path);
+      }
+      if (!paths.size) continue;
+      const line = [...paths.values()].map((path) => [
+        path.label,
+        path.via.length ? `via ${joinWords([...new Set(path.via)])}` : undefined,
+        path.with.length ? `with ${joinWords([...new Set(path.with)])}` : undefined
+      ].filter(Boolean).join(' · ')).join('; ');
+      rows.push({ node, line: line[0]!.toUpperCase() + line.slice(1) });
+    }
+    return rows.sort((left, right) => left.node.hop - right.node.hop || left.node.label.localeCompare(right.node.label));
+  });
 
   function retry(): void {
-    void controller.loadNetwork(Number(depth), includeEnded);
+    void controller.loadNetwork(Number(depth));
   }
 </script>
 
-<section class="person-network" aria-label="Directory network">
-  <header>
-    <div>
-      <h2>Network</h2>
-      <p>Curated typed relationships and employments only. Messages and co-occurrence never create connections.</p>
-    </div>
-    <div class="controls">
-      <label>Depth<SelectDropdown title="Network depth" value={depth} options={depthOptions} onchange={(value) => { depth = value; }} /></label>
-      <Checkbox checked={includeEnded} label="Include ended connections" onchange={(checked) => { includeEnded = checked; }} />
-    </div>
-  </header>
-
-  <!-- Keyboard focus lets a user scroll a graph wider than its pane without a pointer. -->
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <div class="projection" role="region" aria-label="Network graph" tabindex="0" aria-busy={controller.networkLoading}>
-    {#if controller.network}
-      <svg aria-hidden="true" width={graphWidth} viewBox={`0 0 ${graphWidth} ${graphHeight}`} preserveAspectRatio="xMinYMin meet">
-        {#each edges as edge (edge.id)}
-          {@const source = positions.get(edge.source_node_id)}
-          {@const target = positions.get(edge.target_node_id)}
-          {#if source && target}<line x1={source.x} y1={source.y} x2={target.x} y2={target.y} />{/if}
-        {/each}
-        {#each nodes as node (node.id)}
-          {@const position = positions.get(node.id)}
-          {#if position}
-            <g transform={`translate(${position.x} ${position.y})`}>
-              <circle r={nodeRadius(node)} />
-              <text x={nodeLabelOffset} y="5">{node.label}</text>
-            </g>
-          {/if}
-        {/each}
-      </svg>
+{#if edges.length > 0 || depth !== '1' || controller.errors.network}
+  <DetailSection title="Network">
+    {#snippet control()}<SegmentedControl ariaLabel="Network depth" value={depth} options={depthOptions} onchange={(value) => { depth = value; }} />{/snippet}
+    {#if controller.errors.network}
+      <InlineNotice message="Couldn't load the network." details={controller.errors.network} actionLabel="Retry" onaction={retry} />
     {/if}
-
-    {#if controller.networkLoading}<p class="loading" role="status">Loading network…</p>{/if}
-  </div>
-
-  {#if controller.errors.network}
-    <div class="network-error" role="alert">
-      <p>{controller.errors.network}</p>
-      <Button label="Retry network" onclick={retry} />
-    </div>
-  {/if}
-
-  {#if controller.network?.truncated}
-    <p class="truncated">This is a bounded prefix with at most 250 nodes and 500 connections at depth {controller.network.depth}.</p>
-  {/if}
-
-  <ul class="connection-list" aria-label="Directory network connections">
-    {#if edges.length === 0 && rootNode}
-      <li class="root-only">
-        <h3>Hop 0</h3>
-        <Button size="sm" label={rootNode.label} ariaLabel={nodeActionLabel(rootNode)} onclick={() => openNode(rootNode)} />
-      </li>
+    {#if depth === '1'}
+      <!-- Direct links only: name them in one line rather than repeat Work and Connections. -->
+      {#if controller.networkLoading || reached.length > 0}<p class="summary">{#if controller.networkLoading}<span role="status">Loading network…</span>{:else}{#each reached as node, index (node.id)}{wordSeparator(index, reached.length)}{#if 'kind' in node}<!-- kit-ui-check-ignore: a record name styled as a link, matching Connections and Work. --><button type="button" class="link" onclick={() => node.kind === 'person' ? onOpenPerson(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>{:else}{node.label}{/if}{/each}{/if}</p>{/if}
     {:else}
-      {#each edgeGroups as [hop, hopEdges] (hop)}
-        <li class="hop-group">
-          <h3>Hop {hop}</h3>
-          <ul>
-            {#each hopEdges as edge (edge.id)}
-              {@const source = nodeByID.get(edge.source_node_id)}
-              {@const target = nodeByID.get(edge.target_node_id)}
-              {#if source && target}
-                <li class="connection">
-                  <Button size="sm" label={source.label} ariaLabel={nodeActionLabel(source)} onclick={() => openNode(source)} />
-                  <span>{edge.label}</span>
-                  <Button size="sm" label={target.label} ariaLabel={nodeActionLabel(target)} onclick={() => openNode(target)} />
-                  <small>{edge.kind === 'relationship' ? 'Typed relationship' : 'Employment'}</small>
-                </li>
-              {/if}
-            {/each}
-          </ul>
-        </li>
-      {/each}
+      <div class="further" role="region" aria-label={`Network at ${depth} steps`} aria-busy={controller.networkLoading}>
+        {#each further as { node, line } (node.id)}
+          <DetailRow description={line}>
+            <!-- kit-ui-check-ignore: a record name styled as a link, matching Connections and Work. -->
+            <button type="button" class="link" onclick={() => node.kind === 'person' ? onOpenPerson(node.entity_id) : onOpenOrganization(node.entity_id)}>{node.label}</button>
+          </DetailRow>
+        {:else}
+          {#if controller.networkLoading}<p class="summary" role="status">Loading network…</p>
+          {:else if !controller.errors.network}<p class="summary">No one else at {depth} steps</p>{/if}
+        {/each}
+      </div>
     {/if}
-  </ul>
-
-  {#if controller.network && edges.length === 0}<p class="empty">No curated connections at this depth.</p>{/if}
-</section>
+    {#if controller.network?.truncated}<p class="summary truncated">Showing up to 250 people and organizations and 500 connections.</p>{/if}
+  </DetailSection>
+{/if}
 
 <style>
-  .person-network, header, .controls, .projection, .network-error, .connection-list, .hop-group, .hop-group > ul { display: grid; gap: var(--space-3); }
-  header { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
-  header p, h2, h3, p, ul { margin: 0; }
-  header p, .empty, small { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .controls { grid-auto-flow: column; align-items: end; }
-  .controls label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
-  .projection { position: relative; min-height: 7rem; overflow: auto; padding: var(--pane-pad-y) var(--pane-pad-x); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
-  .projection:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
-  svg { min-width: 100%; max-height: 24rem; }
-  line { stroke: var(--border-strong); stroke-width: 1.5; }
-  circle { fill: var(--bg-surface); stroke: var(--accent-blue); stroke-width: 2; }
-  text { fill: var(--text-primary); font: var(--font-size-sm) var(--font-sans); }
-  .loading { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg-surface) 72%, transparent); }
-  .network-error { justify-items: start; padding: var(--pane-pad-y) var(--pane-pad-x); border-radius: var(--radius-sm); background: var(--bg-inset); color: var(--text-danger); }
-  .truncated { padding: var(--pane-pad-y) var(--pane-pad-x); border-radius: var(--radius-sm); background: var(--bg-warning); color: var(--text-primary); }
-  .connection-list, .hop-group > ul { list-style: none; padding: 0; }
-  .hop-group, .root-only { padding: var(--pane-pad-y) var(--pane-pad-x); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
-  .connection { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-  .connection small { margin-left: auto; }
-  @media (max-width: 640px) { header { grid-template-columns: 1fr; } .controls { grid-auto-flow: row; justify-items: start; } }
-  @media (prefers-reduced-motion: reduce) { .projection { scroll-behavior: auto; } }
+  /* L2 through DetailSection: the summary (Meta) sits 8 below the header, and the 2 and 3 steps lists are L3 rows.
+   * A notice sits 16 from what follows it. */
+  p { margin: 0; }
+  .further { display: grid; min-width: 0; }
+  .further > :global(.detail-row:last-child) { box-shadow: none; }
+  .further[aria-busy='true'] { opacity: 0.6; }
+  :global(.inline-notice) + .summary, :global(.inline-notice) + .further { margin-top: var(--space-pane); }
+  .truncated { margin-top: var(--space-group); }
+  /* kit-ui-check-ignore: a text link, matching record links in Connections and Work. */
+  .link { padding: 0; border: 0; background: none; color: var(--link-ink); cursor: pointer; font: inherit; text-align: left; }
+  .link:hover { text-decoration: underline; }
+  .summary { color: var(--text-muted); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
 </style>

@@ -48,7 +48,7 @@ func TestEngineListMessagesPreservesDeletedAt(t *testing.T) {
 	store := newTestStore(srv, "")
 	engine := NewEngineAdapter(store)
 
-	msgs, err := engine.ListMessages(context.Background(), query.MessageFilter{})
+	msgs, err := engine.ListMessages(t.Context(), query.MessageFilter{})
 	require.NoError(err, "ListMessages()")
 	require.Len(msgs, 1)
 	assert.Equal(t, int64(42), msgs[0].SourceID, "SourceID")
@@ -96,7 +96,7 @@ func TestEngineSemanticSearchUsesHybridEndpointAndReturnsRankedSummaries(t *test
 	defer srv.Close()
 
 	engine := NewEngineAdapter(newTestStore(srv, ""))
-	result, err := engine.SearchSemanticMessages(context.Background(), query.SemanticMessageSearchRequest{
+	result, err := engine.SearchSemanticMessages(t.Context(), query.SemanticMessageSearchRequest{
 		Query: "find realtor invoice",
 		Filter: query.MessageFilter{
 			SourceID:            &accountID,
@@ -168,7 +168,7 @@ func TestEngineSemanticSearchRejectsScopesItCannotPreserve(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			engine := &Engine{}
-			_, err := engine.SearchSemanticMessages(context.Background(), query.SemanticMessageSearchRequest{
+			_, err := engine.SearchSemanticMessages(t.Context(), query.SemanticMessageSearchRequest{
 				Query: "find invoice", Filter: tt.filter,
 			})
 			require.Error(t, err)
@@ -317,7 +317,7 @@ func TestEngineListMessagesUsesGeneratedClientAdapter(t *testing.T) {
 	engine := NewEngineAdapter(store)
 
 	msgs, err := engine.ListMessages(
-		context.Background(),
+		t.Context(),
 		query.MessageFilter{
 			Sender:                "alice@example.com",
 			ListID:                "<dev_1@example.test>",
@@ -363,7 +363,7 @@ func TestEngineListAccountsUsesSourceBackedCLIAccounts(t *testing.T) {
 	})
 
 	engine := NewEngineAdapter(store)
-	accounts, err := engine.ListAccounts(context.Background())
+	accounts, err := engine.ListAccounts(t.Context())
 	require.NoError(err, "ListAccounts")
 	require.Len(accounts, 1, "accounts")
 	assert.Equal(int64(42), accounts[0].ID)
@@ -438,7 +438,7 @@ func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
 	textEngine, ok := any(engine).(query.TextEngine)
 	require.True(ok, "daemon engine must satisfy TextEngine")
 
-	conversations, err := textEngine.ListConversations(context.Background(), query.TextFilter{
+	conversations, err := textEngine.ListConversations(t.Context(), query.TextFilter{
 		ContactPhone: "+15555550123",
 		SourceType:   "sms",
 		Pagination:   query.Pagination{Limit: 25},
@@ -450,7 +450,7 @@ func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("Family", conversations[0].Title)
 	assert.Equal("2024-01-15T10:30:00Z", conversations[0].LastMessageAt.UTC().Format(time.RFC3339))
 
-	aggregates, err := textEngine.TextAggregate(context.Background(), query.TextViewLabels, query.TextAggregateOptions{
+	aggregates, err := textEngine.TextAggregate(t.Context(), query.TextViewLabels, query.TextAggregateOptions{
 		SearchQuery: "family",
 	})
 	require.NoError(err, "TextAggregate")
@@ -458,7 +458,7 @@ func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("Friends", aggregates[0].Key)
 	assert.Equal(int64(3), aggregates[0].Count)
 
-	timeline, err := textEngine.ListConversationMessages(context.Background(), 77, query.TextFilter{
+	timeline, err := textEngine.ListConversationMessages(t.Context(), 77, query.TextFilter{
 		SearchQuery: "hiddenneedle",
 		Pagination:  query.Pagination{Limit: 10},
 	})
@@ -469,13 +469,13 @@ func TestEngineTextMethodsUseGeneratedClientAdapter(t *testing.T) {
 	assert.Equal("Family", timeline[0].ConversationTitle)
 	assert.Equal("+15555550123", timeline[0].FromPhone)
 
-	searchResults, err := textEngine.TextSearch(context.Background(), "dinner", nil, 10, 5)
+	searchResults, err := textEngine.TextSearch(t.Context(), "dinner", nil, 10, 5)
 	require.NoError(err, "TextSearch")
 	require.Len(searchResults, 1, "searchResults")
 	assert.Equal("search body", searchResults[0].BodyText)
 	assert.Equal(store.baseURL+"/messages/99", searchResults[0].WebURL)
 
-	stats, err := textEngine.GetTextStats(context.Background(), query.TextStatsOptions{SearchQuery: "family"})
+	stats, err := textEngine.GetTextStats(t.Context(), query.TextStatsOptions{SearchQuery: "family"})
 	require.NoError(err, "GetTextStats")
 	require.NotNil(stats, "stats")
 	assert.Equal(int64(3), stats.MessageCount)
@@ -502,7 +502,7 @@ func TestEngineTextAggregatePreservesExplicitYearGranularity(t *testing.T) {
 	textEngine, ok := any(engine).(query.TextEngine)
 	require.True(ok, "daemon engine must satisfy TextEngine")
 
-	rows, err := textEngine.TextAggregate(context.Background(), query.TextViewTime, query.TextAggregateOptions{
+	rows, err := textEngine.TextAggregate(t.Context(), query.TextViewTime, query.TextAggregateOptions{
 		TimeGranularity:    query.TimeYear,
 		TimeGranularitySet: true,
 	})
@@ -583,7 +583,7 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 
 	engine := NewEngineAdapter(store)
 
-	msg, err := engine.GetMessage(context.Background(), 42)
+	msg, err := engine.GetMessage(t.Context(), 42)
 	require.NoError(err, "GetMessage")
 	require.NotNil(msg, "GetMessage returned nil")
 	assert.Equal("msg-42", msg.SourceMessageID, "SourceMessageID")
@@ -617,7 +617,7 @@ func TestEngineGetMessageRendersLargeIDInPath(t *testing.T) {
 
 	engine := NewEngineAdapter(store)
 
-	msg, err := engine.GetMessage(context.Background(), 24489626)
+	msg, err := engine.GetMessage(t.Context(), 24489626)
 	require.NoError(err, "GetMessage")
 	require.NotNil(msg, "GetMessage returned nil")
 	assert.Equal("Large ID detail", msg.Subject, "Subject")
@@ -651,7 +651,7 @@ func TestEngineGetMessageUsesPerCallContext(t *testing.T) {
 		}
 	})
 
-	rootCtx, cancelRoot := context.WithCancel(context.Background())
+	rootCtx, cancelRoot := context.WithCancel(t.Context())
 	t.Cleanup(cancelRoot)
 	store, err := New(Config{
 		URL:           srv.URL,
@@ -662,7 +662,7 @@ func TestEngineGetMessageUsesPerCallContext(t *testing.T) {
 	require.NoError(err, "New")
 	engine := NewEngineAdapter(store)
 
-	callCtx, cancelCall := context.WithCancel(context.Background())
+	callCtx, cancelCall := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		_, err := engine.GetMessage(callCtx, 42)
@@ -720,7 +720,7 @@ func TestEngineGetMessageUsesClientRootContext(t *testing.T) {
 		}
 	})
 
-	rootCtx, cancelRoot := context.WithCancel(context.Background())
+	rootCtx, cancelRoot := context.WithCancel(t.Context())
 	t.Cleanup(cancelRoot)
 	store, err := New(Config{
 		URL:           srv.URL,
@@ -734,7 +734,7 @@ func TestEngineGetMessageUsesClientRootContext(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := engine.GetMessage(context.Background(), 42)
+		_, err := engine.GetMessage(t.Context(), 42)
 		done <- err
 	}()
 
@@ -767,7 +767,7 @@ func TestEngineGetMessagePreservesNotFoundSemantics(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	engine := NewEngineAdapter(newTestStore(srv, ""))
-	msg, err := engine.GetMessage(context.Background(), 999)
+	msg, err := engine.GetMessage(t.Context(), 999)
 
 	require.NoError(t, err)
 	assert.Nil(t, msg)
@@ -798,7 +798,7 @@ func TestEngineGetMessagePreservesPhoneOnlyGeneratedSender(t *testing.T) {
 
 	engine := NewEngineAdapter(store)
 
-	msg, err := engine.GetMessage(context.Background(), 42)
+	msg, err := engine.GetMessage(t.Context(), 42)
 	require.NoError(err, "GetMessage")
 	require.NotNil(msg, "GetMessage returned nil")
 	require.Len(msg.From, 1, "len(From)")
@@ -823,7 +823,7 @@ func TestEngineGetAttachmentUsesGeneratedClientAdapter(t *testing.T) {
 
 	engine := NewEngineAdapter(store)
 
-	att, err := engine.GetAttachment(context.Background(), 42)
+	att, err := engine.GetAttachment(t.Context(), 42)
 	require.NoError(err, "GetAttachment")
 	require.NotNil(att, "attachment")
 	assert.Equal(int64(42), att.ID, "ID")
@@ -848,7 +848,7 @@ func TestEngineGetDeletionTargetsByFilterPreservesSource(t *testing.T) {
 			}},
 		})
 	})
-	targets, err := NewEngineAdapter(store).GetDeletionTargetsByFilter(context.Background(), query.MessageFilter{
+	targets, err := NewEngineAdapter(store).GetDeletionTargetsByFilter(t.Context(), query.MessageFilter{
 		ListID: "<dev_1@example.test>",
 	})
 	require.NoError(t, err)
@@ -871,7 +871,7 @@ func TestEngineGetDeletionTargetsByFilterForwardsSourceIDs(t *testing.T) {
 			}},
 		})
 	})
-	targets, err := NewEngineAdapter(store).GetDeletionTargetsByFilter(context.Background(), query.MessageFilter{
+	targets, err := NewEngineAdapter(store).GetDeletionTargetsByFilter(t.Context(), query.MessageFilter{
 		SourceIDs: []int64{7, 8},
 	})
 	require.NoError(t, err)
@@ -1224,7 +1224,7 @@ func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
 	engine := NewEngineAdapter(store)
 
 	results, err := engine.SearchByDomains(
-		context.Background(),
+		t.Context(),
 		[]string{"example.com", "test.org"},
 		&after,
 		&before,
@@ -1270,11 +1270,11 @@ func TestEngineTimeFiltersPreserveUTCNanoseconds(t *testing.T) {
 	})
 	engine := NewEngineAdapter(store)
 
-	_, err := engine.Aggregate(context.Background(), query.ViewSenders, query.AggregateOptions{
+	_, err := engine.Aggregate(t.Context(), query.ViewSenders, query.AggregateOptions{
 		After: &after, Before: &before,
 	})
 	require.NoError(err)
-	_, err = engine.SearchByDomains(context.Background(), []string{"example.com"}, &after, &before, 10, 0, nil)
+	_, err = engine.SearchByDomains(t.Context(), []string{"example.com"}, &after, &before, 10, 0, nil)
 	require.NoError(err)
 	assert.True(seen["/api/v1/aggregates"])
 	assert.True(seen["/api/v1/search/domains"])
@@ -1322,7 +1322,7 @@ func TestFindSimilarMessagesUsesGeneratedClientAdapter(t *testing.T) {
 		})
 	})
 
-	resp, err := store.FindSimilarMessages(context.Background(), SimilarSearchRequest{
+	resp, err := store.FindSimilarMessages(t.Context(), SimilarSearchRequest{
 		MessageID:     42,
 		Limit:         25,
 		Account:       "alice@example.com",
@@ -1367,7 +1367,7 @@ func TestEngineAggregateUsesGeneratedClientAdapter(t *testing.T) {
 
 	engine := NewEngineAdapter(store)
 
-	rows, err := engine.Aggregate(context.Background(), query.ViewSenders, query.AggregateOptions{
+	rows, err := engine.Aggregate(t.Context(), query.ViewSenders, query.AggregateOptions{
 		SourceID:      &sourceID,
 		SortField:     query.SortByName,
 		SortDirection: query.SortAsc,
@@ -1434,7 +1434,7 @@ func TestEngineSubAggregateUsesGeneratedClientAdapter(t *testing.T) {
 	engine := NewEngineAdapter(store)
 
 	rows, err := engine.SubAggregate(
-		context.Background(),
+		t.Context(),
 		query.MessageFilter{Sender: "alice@example.com", ListID: "<dev_1@example.test>"},
 		query.ViewLabels,
 		query.AggregateOptions{
@@ -1488,7 +1488,7 @@ func TestEngineGetTotalStatsUsesGeneratedClientAdapter(t *testing.T) {
 
 	engine := NewEngineAdapter(store)
 
-	stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{
+	stats, err := engine.GetTotalStats(t.Context(), query.StatsOptions{
 		Filter: &query.MessageFilter{
 			SenderName:        "Alice",
 			RecipientName:     "Bob",
@@ -1537,7 +1537,7 @@ func TestEngineGetTotalStatsOmitsSearchScopeByDefault(t *testing.T) {
 	})
 
 	engine := NewEngineAdapter(store)
-	stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{SearchQuery: "urgent"})
+	stats, err := engine.GetTotalStats(t.Context(), query.StatsOptions{SearchQuery: "urgent"})
 	require.NoError(err, "GetTotalStats")
 	require.NotNil(stats, "stats")
 	assert.Equal(int64(5), stats.MessageCount)
@@ -1558,7 +1558,7 @@ func TestEngineGetTotalStatsForwardsSourceIDs(t *testing.T) {
 	})
 
 	engine := NewEngineAdapter(store)
-	stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{
+	stats, err := engine.GetTotalStats(t.Context(), query.StatsOptions{
 		SourceIDs:   []int64{8, 7, 8},
 		SearchQuery: "urgent",
 		SearchScope: true,
@@ -1654,7 +1654,7 @@ func TestEngineGetTotalStatsRequiresCapabilityEchoes(t *testing.T) {
 			})
 			engine := NewEngineAdapter(store)
 
-			stats, err := engine.GetTotalStats(context.Background(), tc.opts)
+			stats, err := engine.GetTotalStats(t.Context(), tc.opts)
 			require.Error(err, "unconfirmed opt-in must fail closed")
 			assert.Nil(stats)
 			assert.Contains(err.Error(), tc.want)
@@ -1671,7 +1671,7 @@ func TestEngineGetTotalStatsRejectsMismatchedSourceIDEcho(t *testing.T) {
 	})
 	engine := NewEngineAdapter(store)
 
-	stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{
+	stats, err := engine.GetTotalStats(t.Context(), query.StatsOptions{
 		SourceIDs: []int64{7, 8},
 	})
 	require.Error(t, err, "mismatched source echo must fail closed")
@@ -1690,7 +1690,7 @@ func TestEngineGetTotalStatsExplicitEmptySourceIDsSkipsHTTP(t *testing.T) {
 	})
 	engine := NewEngineAdapter(store)
 
-	stats, err := engine.GetTotalStats(context.Background(), query.StatsOptions{
+	stats, err := engine.GetTotalStats(t.Context(), query.StatsOptions{
 		SourceIDs:   []int64{},
 		SearchQuery: "urgent",
 		SearchScope: true,
@@ -1735,7 +1735,7 @@ func TestEngineGetMessageCarriesAttachmentContentHash(t *testing.T) {
 	store := newTestStore(srv, "")
 	engine := NewEngineAdapter(store)
 
-	detail, err := engine.GetMessage(context.Background(), 42)
+	detail, err := engine.GetMessage(t.Context(), 42)
 	require.NoError(err, "GetMessage")
 	require.NotNil(detail, "detail")
 	require.Len(detail.Attachments, 1)
@@ -1774,7 +1774,7 @@ func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing
 	store := newTestStore(srv, "")
 	engine := NewEngineAdapter(store)
 
-	summaries, err := engine.GetMessageSummariesByIDs(context.Background(), []int64{42})
+	summaries, err := engine.GetMessageSummariesByIDs(t.Context(), []int64{42})
 	require.NoError(err, "GetMessageSummariesByIDs")
 	require.Len(summaries, 1)
 	s := summaries[0]
@@ -1805,7 +1805,7 @@ func TestEngineGetMessageSummariesByIDsPreservesDeletedAt(t *testing.T) {
 	ids := []int64{42, 7, 99, 3, 42}
 	want := []*time.Time{&deletedAt, nil, nil, &epoch, &deletedAt}
 
-	summaries, err := engine.GetMessageSummariesByIDs(context.Background(), ids)
+	summaries, err := engine.GetMessageSummariesByIDs(t.Context(), ids)
 	require.NoError(err)
 	require.Len(summaries, len(ids))
 	for i, summary := range summaries {
@@ -1842,7 +1842,7 @@ func TestEngineSearchSerializesMessageTypes(t *testing.T) {
 	store := newTestStore(srv, "")
 	engine := NewEngineAdapter(store)
 
-	_, err := engine.Search(context.Background(), &search.Query{
+	_, err := engine.Search(t.Context(), &search.Query{
 		TextTerms:    []string{"lunch"},
 		MessageTypes: []string{"sms"},
 	}, 10, 0)
@@ -1879,7 +1879,7 @@ func TestEngineSearchDeepForwardsCompleteViewFilter(t *testing.T) {
 	})
 	engine := NewEngineAdapter(store)
 
-	result, err := engine.SearchDeepWithStats(context.Background(), search.Parse("needle"), query.MessageFilter{
+	result, err := engine.SearchDeepWithStats(t.Context(), search.Parse("needle"), query.MessageFilter{
 		SenderName:        "Alice",
 		RecipientName:     "Bob",
 		Domain:            "example.com",
@@ -1916,7 +1916,7 @@ func TestEngineSearchForwardsMessageTypeOnlyTerms(t *testing.T) {
 	store := newTestStore(srv, "")
 	engine := NewEngineAdapter(store)
 
-	msgs, err := engine.Search(context.Background(), &search.Query{
+	msgs, err := engine.Search(t.Context(), &search.Query{
 		MessageTypes: []string{"sms"},
 	}, 10, 0)
 
@@ -1966,7 +1966,7 @@ func TestEngineSearchUsesGeneratedClientAdapter(t *testing.T) {
 	engine := NewEngineAdapter(store)
 
 	msgs, err := engine.Search(
-		context.Background(),
+		t.Context(),
 		&search.Query{
 			TextTerms:    []string{"lunch"},
 			AccountIDs:   []int64{17},
@@ -2017,9 +2017,9 @@ func TestEngineDeepSearchAndStatsUseSameQuotedQuery(t *testing.T) {
 		Labels:    []string{`Project "Review"`},
 	}
 
-	_, err := engine.Search(context.Background(), q, 10, 0)
+	_, err := engine.Search(t.Context(), q, 10, 0)
 	require.NoError(err, "Search")
-	_, err = engine.GetTotalStats(context.Background(), query.StatsOptions{
+	_, err = engine.GetTotalStats(t.Context(), query.StatsOptions{
 		SearchQuery: search.Format(q),
 		SearchScope: true,
 	})
@@ -2058,13 +2058,13 @@ func TestEngineDeepSearchExplicitEmptyScopeSkipsHTTP(t *testing.T) {
 		{
 			name: "composite search",
 			run: func(engine *Engine, q *search.Query) ([]query.MessageSummary, error) {
-				return engine.Search(context.Background(), q, 10, 0)
+				return engine.Search(t.Context(), q, 10, 0)
 			},
 		},
 		{
 			name: "body search",
 			run: func(engine *Engine, q *search.Query) ([]query.MessageSummary, error) {
-				result, err := engine.SearchMessageBodies(context.Background(), q, 10, 0)
+				result, err := engine.SearchMessageBodies(t.Context(), q, 10, 0)
 				if err != nil {
 					return nil, err
 				}
@@ -2108,21 +2108,21 @@ func TestEngineSearchMethodsRejectParsedQueryErrorsBeforeHTTP(t *testing.T) {
 		{
 			name: "composite",
 			run: func(engine *Engine, q *search.Query) error {
-				_, err := engine.Search(context.Background(), q, 10, 0)
+				_, err := engine.Search(t.Context(), q, 10, 0)
 				return err
 			},
 		},
 		{
 			name: "body",
 			run: func(engine *Engine, q *search.Query) error {
-				_, err := engine.SearchMessageBodies(context.Background(), q, 10, 0)
+				_, err := engine.SearchMessageBodies(t.Context(), q, 10, 0)
 				return err
 			},
 		},
 		{
 			name: "fast with stats",
 			run: func(engine *Engine, q *search.Query) error {
-				_, err := engine.SearchFastWithStats(context.Background(), q, "needle before:not-a-date",
+				_, err := engine.SearchFastWithStats(t.Context(), q, "needle before:not-a-date",
 					query.MessageFilter{}, query.ViewSenders, 10, 0)
 				return err
 			},
@@ -2130,14 +2130,14 @@ func TestEngineSearchMethodsRejectParsedQueryErrorsBeforeHTTP(t *testing.T) {
 		{
 			name: "fast",
 			run: func(engine *Engine, q *search.Query) error {
-				_, err := engine.SearchFast(context.Background(), q, query.MessageFilter{}, 10, 0)
+				_, err := engine.SearchFast(t.Context(), q, query.MessageFilter{}, 10, 0)
 				return err
 			},
 		},
 		{
 			name: "fast count",
 			run: func(engine *Engine, q *search.Query) error {
-				_, err := engine.SearchFastCount(context.Background(), q, query.MessageFilter{})
+				_, err := engine.SearchFastCount(t.Context(), q, query.MessageFilter{})
 				return err
 			},
 		},
@@ -2206,7 +2206,7 @@ func TestEngineSearchPreservesExactTimeBounds(t *testing.T) {
 	})
 	engine := NewEngineAdapter(store)
 
-	_, err := engine.Search(context.Background(), &search.Query{
+	_, err := engine.Search(t.Context(), &search.Query{
 		TextTerms: []string{"needle"}, AfterDate: &after, BeforeDate: &before,
 	}, 10, 0)
 	require.NoError(err)
@@ -2246,7 +2246,7 @@ func TestEngineSearchMessageBodiesForwardsAndRequiresScopeEcho(t *testing.T) {
 	})
 	engine := NewEngineAdapter(store)
 
-	messages, err := engine.SearchMessageBodies(context.Background(), &search.Query{
+	messages, err := engine.SearchMessageBodies(t.Context(), &search.Query{
 		TextTerms:  []string{"bodyneedle"},
 		AccountIDs: []int64{7},
 	}, 5, 2)
@@ -2323,7 +2323,8 @@ func TestEngineSearchMessageBodiesFailsClosedWithoutScopeEcho(t *testing.T) {
 	})
 	engine := NewEngineAdapter(store)
 
-	messages, err := engine.SearchMessageBodies(context.Background(),
+	messages, err := engine.SearchMessageBodies(
+		t.Context(),
 		&search.Query{TextTerms: []string{"bodyneedle"}}, 5, 0)
 	require.Error(t, err, "old daemon must not produce generic false positives")
 	assert.Nil(messages, "unconfirmed results must be discarded")
@@ -2383,7 +2384,7 @@ func TestEngineSearchFastWithStatsUsesGeneratedClientAdapter(t *testing.T) {
 	parsedQuery := search.Parse("message_type:sms lunch")
 
 	result, err := engine.SearchFastWithStats(
-		context.Background(),
+		t.Context(),
 		parsedQuery,
 		"message_type:sms lunch",
 		query.MessageFilter{
@@ -2466,7 +2467,7 @@ func TestEngineSearchFastWithStatsForwardsSourceIDs(t *testing.T) {
 	})
 	engine := NewEngineAdapter(store)
 
-	result, err := engine.SearchFastWithStats(context.Background(), search.Parse("needle"), "needle",
+	result, err := engine.SearchFastWithStats(t.Context(), search.Parse("needle"), "needle",
 		query.MessageFilter{SourceIDs: []int64{7, 8}}, query.ViewSenders, 10, 0)
 	require.NoError(err)
 	require.Len(result.Messages, 2)
@@ -2492,7 +2493,7 @@ func TestEngineListCollectionScopesProjectsUserCollections(t *testing.T) {
 	})
 	engine := NewEngineAdapter(store)
 
-	got, err := engine.ListCollectionScopes(context.Background())
+	got, err := engine.ListCollectionScopes(t.Context())
 	requirements.NoError(err)
 	requirements.Len(got, 2)
 	assertions.Equal("Work", got[0].Name)
@@ -2512,7 +2513,7 @@ func TestEngineAggregateForwardsAndConfirmsCollectionSourceIDs(t *testing.T) {
 	})
 	engine := NewEngineAdapter(store)
 
-	rows, err := engine.Aggregate(context.Background(), query.ViewSenders, query.AggregateOptions{SourceIDs: []int64{7, 8}})
+	rows, err := engine.Aggregate(t.Context(), query.ViewSenders, query.AggregateOptions{SourceIDs: []int64{7, 8}})
 	require.NoError(t, err)
 	assert.Empty(t, rows)
 }
@@ -2526,7 +2527,7 @@ func TestEngineSubAggregateForwardsOptionSourceIDs(t *testing.T) {
 		})
 	})
 
-	rows, err := NewEngineAdapter(store).SubAggregate(context.Background(), query.MessageFilter{}, query.ViewSenders,
+	rows, err := NewEngineAdapter(store).SubAggregate(t.Context(), query.MessageFilter{}, query.ViewSenders,
 		query.AggregateOptions{SourceIDs: []int64{7, 8}})
 	require.NoError(t, err)
 	assert.Empty(t, rows)
@@ -2540,7 +2541,7 @@ func TestEngineCollectionReadsFailClosedWithoutAppliedSourceEcho(t *testing.T) {
 	})
 	engine := NewEngineAdapter(store)
 
-	rows, err := engine.Aggregate(context.Background(), query.ViewSenders, query.AggregateOptions{SourceIDs: []int64{7, 8}})
+	rows, err := engine.Aggregate(t.Context(), query.ViewSenders, query.AggregateOptions{SourceIDs: []int64{7, 8}})
 	requirements.Error(err)
 	assertions.Nil(rows)
 	assertions.Contains(err.Error(), "source IDs")
@@ -2562,10 +2563,10 @@ func TestEngineCollectionMessageReadsForwardSourceIDsAndEmptySkipsHTTP(t *testin
 	})
 	engine := NewEngineAdapter(store)
 
-	messages, err := engine.ListMessages(context.Background(), query.MessageFilter{SourceIDs: []int64{7, 8}})
+	messages, err := engine.ListMessages(t.Context(), query.MessageFilter{SourceIDs: []int64{7, 8}})
 	requirements.NoError(err)
 	assertions.Empty(messages)
-	empty, err := engine.ListMessages(context.Background(), query.MessageFilter{SourceIDs: []int64{}})
+	empty, err := engine.ListMessages(t.Context(), query.MessageFilter{SourceIDs: []int64{}})
 	requirements.NoError(err)
 	assertions.Empty(empty)
 	assertions.Equal(1, calls)
@@ -2596,7 +2597,7 @@ func TestEngineSearchFastWithStatsRequiresSourceIDEcho(t *testing.T) {
 			})
 			engine := NewEngineAdapter(store)
 
-			result, err := engine.SearchFastWithStats(context.Background(), search.Parse("needle"), "needle",
+			result, err := engine.SearchFastWithStats(t.Context(), search.Parse("needle"), "needle",
 				query.MessageFilter{SourceIDs: []int64{7, 8}}, query.ViewSenders, 10, 0)
 			require.Error(err, "unconfirmed fast source scope must fail closed")
 			assert.Nil(result)
@@ -2619,13 +2620,13 @@ func TestEngineFastSearchExplicitEmptySourceIDsSkipsHTTP(t *testing.T) {
 	filter := query.MessageFilter{SourceIDs: []int64{}}
 	q := search.Parse("needle")
 
-	messages, err := engine.SearchFast(context.Background(), q, filter, 10, 0)
+	messages, err := engine.SearchFast(t.Context(), q, filter, 10, 0)
 	require.NoError(err)
 	assert.Empty(messages)
-	count, err := engine.SearchFastCount(context.Background(), q, filter)
+	count, err := engine.SearchFastCount(t.Context(), q, filter)
 	require.NoError(err)
 	assert.Zero(count)
-	result, err := engine.SearchFastWithStats(context.Background(), q, "needle", filter, query.ViewSenders, 10, 0)
+	result, err := engine.SearchFastWithStats(t.Context(), q, "needle", filter, query.ViewSenders, 10, 0)
 	require.NoError(err)
 	require.NotNil(result.Stats)
 	assert.Zero(result.TotalCount)
@@ -2671,7 +2672,7 @@ func TestEngineSearchFastWithStatsUsesCanonicalParsedQuery(t *testing.T) {
 	engine := NewEngineAdapter(store)
 
 	result, err := engine.SearchFastWithStats(
-		context.Background(),
+		t.Context(),
 		q,
 		`lossy query label:Wrong`,
 		query.MessageFilter{},
@@ -2722,7 +2723,7 @@ func TestEngineSearchFastWithStatsMergesFilterMessageTypeIntoQuery(t *testing.T)
 	parsedQuery := search.Parse("lunch")
 
 	result, err := engine.SearchFastWithStats(
-		context.Background(),
+		t.Context(),
 		parsedQuery,
 		"lunch",
 		query.MessageFilter{MessageType: "sms"},
@@ -2750,7 +2751,7 @@ func TestEngineSearchFastWithStatsMessageTypeConflictReturnsNoMatches(t *testing
 	parsedQuery := search.Parse("message_type:email lunch")
 
 	result, err := engine.SearchFastWithStats(
-		context.Background(),
+		t.Context(),
 		parsedQuery,
 		"message_type:email lunch",
 		query.MessageFilter{MessageType: "sms"},
@@ -2798,6 +2799,6 @@ func TestEngineListVirtualAccountsFailsWhenCatalogUnavailable(t *testing.T) {
 			"virtual_accounts_unavailable": true,
 		})
 	})
-	_, err := NewEngineAdapter(store).ListVirtualAccounts(context.Background())
+	_, err := NewEngineAdapter(store).ListVirtualAccounts(t.Context())
 	require.ErrorIs(t, err, errVirtualAccountsUnavailable, "an unread catalog is not an empty one")
 }

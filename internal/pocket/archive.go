@@ -1,6 +1,7 @@
 package pocket
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -22,17 +23,17 @@ type evidence struct {
 	Owner      *RecordingOwner        `json:"owner,omitempty"`
 }
 
-func buildSnapshot(st *store.Store, sourceID int64, account Account, rec Recording) (meetingarchive.Snapshot, error) {
+func buildSnapshot(ctx context.Context, st *store.Store, sourceID int64, account Account, rec Recording) (meetingarchive.Snapshot, error) {
 	content, err := Normalize(rec)
 	if err != nil {
 		return meetingarchive.Snapshot{}, err
 	}
-	existing, err := st.MessageExistsBatch(sourceID, []string{rec.ID})
+	existing, err := st.MessageExistsBatchContext(ctx, sourceID, []string{rec.ID})
 	if err != nil {
 		return meetingarchive.Snapshot{}, err
 	}
 	if id := existing[rec.ID]; id != 0 {
-		raw, e := st.GetMessageRaw(id)
+		raw, e := st.GetMessageRawContext(ctx, id)
 		if e != nil {
 			return meetingarchive.Snapshot{}, e
 		}

@@ -31,12 +31,14 @@ func TestRemoveAccountIdentityRecomputesOnlyIdentityDerivedAttribution(t *testin
 	sourceNative.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
 	sourceNativeID, err := st.UpsertMessage(sourceNative)
 	require.NoError(err, "persist source-native message")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET source_is_from_me = NULL WHERE id = ?`),
 		sourceNativeID,
 	)
 	require.NoError(err, "simulate legacy message without attribution provenance")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
 		"message_attribution_provenance_v3",
 	)
@@ -44,7 +46,7 @@ func TestRemoveAccountIdentityRecomputesOnlyIdentityDerivedAttribution(t *testin
 	require.NoError(st.InitSchema(), "initialize legacy attribution provenance")
 
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
-	afterAdd, err := st.GetMessageIsFromMe(identityDerivedID)
+	afterAdd, err := st.GetMessageIsFromMe(t.Context(), identityDerivedID)
 	require.NoError(err, "read identity-derived attribution after add")
 	assert.True(afterAdd)
 
@@ -52,10 +54,10 @@ func TestRemoveAccountIdentityRecomputesOnlyIdentityDerivedAttribution(t *testin
 	require.NoError(err, "RemoveAccountIdentity")
 	require.Equal(int64(1), removed)
 
-	afterRemove, err := st.GetMessageIsFromMe(identityDerivedID)
+	afterRemove, err := st.GetMessageIsFromMe(t.Context(), identityDerivedID)
 	require.NoError(err, "read identity-derived attribution after remove")
 	assert.False(afterRemove, "removing the last matching identity must clear derived attribution")
-	nativeAfterRemove, err := st.GetMessageIsFromMe(sourceNativeID)
+	nativeAfterRemove, err := st.GetMessageIsFromMe(t.Context(), sourceNativeID)
 	require.NoError(err, "read source-native attribution after remove")
 	assert.True(nativeAfterRemove, "identity removal must preserve source-native attribution")
 }
@@ -80,7 +82,7 @@ func TestAddAccountIdentityUpdatesOnlyChangedMessageAttribution(t *testing.T) {
 	otherMessageID, err := st.UpsertMessage(otherMessage)
 	require.NoError(err, "persist unrelated message")
 
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		DROP TRIGGER IF EXISTS trg_messages_last_modified;
 		CREATE TABLE message_update_audit (message_id INTEGER NOT NULL);
 		CREATE TRIGGER audit_message_update
@@ -97,11 +99,13 @@ func TestAddAccountIdentityUpdatesOnlyChangedMessageAttribution(t *testing.T) {
 	)
 
 	var ownerUpdates, otherUpdates int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM message_update_audit WHERE message_id = ?`,
 		ownerMessageID,
 	).Scan(&ownerUpdates))
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM message_update_audit WHERE message_id = ?`,
 		otherMessageID,
 	).Scan(&otherUpdates))
@@ -129,7 +133,7 @@ func TestUpsertMessageDerivesAttributionFromConfirmedIdentity(t *testing.T) {
 	require.NoError(err, "persist message")
 
 	var isFromMe, sourceIsFromMe, identityIsFromMe bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT is_from_me, source_is_from_me, identity_is_from_me
 		FROM messages
 		WHERE id = ?
@@ -155,7 +159,7 @@ func TestUpsertMessagePreservesRepairedIdentityAttribution(t *testing.T) {
 		st.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"),
 		"confirm identity and repair existing message",
 	)
-	isFromMe, err := st.GetMessageIsFromMe(messageID)
+	isFromMe, err := st.GetMessageIsFromMe(t.Context(), messageID)
 	require.NoError(err, "read repaired attribution")
 	require.True(isFromMe, "identity confirmation must repair the existing message")
 
@@ -164,7 +168,7 @@ func TestUpsertMessagePreservesRepairedIdentityAttribution(t *testing.T) {
 	require.NoError(err, "re-upsert message without caller-derived attribution")
 
 	var sourceIsFromMe, identityIsFromMe bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT is_from_me, source_is_from_me, identity_is_from_me
 		FROM messages
 		WHERE id = ?
@@ -331,7 +335,8 @@ func TestAccountIdentities_FKCascadeOnSourceDelete(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "manual"))
 	require.NoError(st.RemoveSource(f.Source.ID))
 	var n int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM account_identities WHERE source_id = ?`), f.Source.ID,
 	).Scan(&n))
 	assert.Equal(t, 0, n, "FK cascade failed: %d rows remain", n)
@@ -349,7 +354,7 @@ func TestGetIdentitiesForScope_MultiSource(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "alice@example.com", "manual"), "add alice")
 	require.NoError(st.AddAccountIdentity(src2.ID, "bob@example.com", "manual"), "add bob")
 
-	scope, err := st.GetIdentitiesForScope([]int64{f.Source.ID, src2.ID})
+	scope, err := st.GetIdentitiesForScope(t.Context(), []int64{f.Source.ID, src2.ID})
 	require.NoError(err, "GetIdentitiesForScope")
 
 	require.Len(scope, 2)
@@ -365,7 +370,7 @@ func TestGetIdentitiesForScope_EmptyInput(t *testing.T) {
 
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "me@example.com", "manual"), "add identity")
 
-	scope, err := st.GetIdentitiesForScope([]int64{})
+	scope, err := st.GetIdentitiesForScope(t.Context(), []int64{})
 	require.NoError(err, "GetIdentitiesForScope empty")
 	assert.NotNil(scope, "expected non-nil map for empty scope")
 	assert.Empty(scope, "want empty scope")
@@ -507,7 +512,7 @@ func TestRemoveAccountIdentity_SavesDefaultIdentityOptOutAfterLastRemoval(t *tes
 	f := storetest.New(t)
 	st := f.Store
 
-	require.NoError(st.UpdateSourceSyncConfig(f.Source.ID,
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), f.Source.ID,
 		`{"account_email":"owner@example.test","no_default_identity":false}`))
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "owner@example.test", "account-identifier"))
 	require.NoError(st.AddAccountIdentity(f.Source.ID, "alias@example.test", "manual"))

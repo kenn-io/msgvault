@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"strings"
@@ -327,7 +326,7 @@ func createDirectoryPerson(
 	displayName, email, category, contactState, organizationName string,
 ) *store.Person {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	participantID, err := st.EnsureParticipantByIdentifier("email", email, displayName)
 	require.NoError(t, err)
 	person, _, err := st.CreatePersonFromParticipantContext(ctx, participantID)

@@ -26,6 +26,20 @@ func assertFTSContains(t *testing.T, st *store.Store, term string, wantCount int
 	assert.Equal(t, int64(wantCount), total, "FTS match count for %q", term)
 }
 
+func TestStoreRebuildFTSRelayedSender(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	id := f.CreateMessage("relay-rebuild")
+	author := f.EnsureParticipant("author@example.test", "Author", "example.test")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address, is_relayed) VALUES (?, ?, 'from', ?, TRUE)`), id, author, "notifications@github.com")
+	require.NoError(t, err)
+	_, err = f.Store.RebuildFTS(nil)
+	require.NoError(t, err)
+	assertFTSContains(t, f.Store, "notifications", 1)
+}
+
 // TestStore_RebuildFTS_HappyPath verifies RebuildFTS on a healthy database
 // recreates the FTS index with correct searchable content.
 // Runs on both SQLite and PostgreSQL — PG verification uses the tsvector column.
@@ -113,7 +127,7 @@ func TestStore_RebuildFTS_AfterTableDropped(t *testing.T) {
 		sql.NullString{String: "date square confection", Valid: true}, sql.NullString{}),
 		"UpsertMessageBody")
 
-	_, err := f.Store.DB().Exec("DROP TABLE messages_fts")
+	_, err := f.Store.DB().ExecContext(t.Context(), "DROP TABLE messages_fts")
 	require.NoError(err, "DROP TABLE messages_fts")
 
 	n, err := f.Store.RebuildFTS(nil)
@@ -121,7 +135,8 @@ func TestStore_RebuildFTS_AfterTableDropped(t *testing.T) {
 	assert.Equal(int64(1), n, "RebuildFTS rows")
 
 	var count int
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		"SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'confection'").Scan(&count),
 		"FTS MATCH confection")
 	assert.Equal(1, count, "match 'confection'")

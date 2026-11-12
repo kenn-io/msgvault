@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -254,7 +253,7 @@ func TestMergeParticipantsTransfersCollapsedSystemMatchOwnership(t *testing.T) {
 	assert.Equal(absorbedCandidate.ID, merged.ID)
 	assert.Equal(store.IdentityMatchStateAccepted, merged.State)
 	var owner int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT identity_match_candidate_id FROM participant_links
 		 WHERE participant_a = ? AND participant_b = ?`),
 		minInt64(survivor, third), maxInt64(survivor, third),
@@ -289,7 +288,7 @@ func TestMergeParticipantsPreservesManualSupportWhenEdgesCollapse(t *testing.T) 
 
 	require.NoError(st.MergeParticipants(absorbed, survivor))
 	var owner *int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT identity_match_candidate_id FROM participant_links
 		 WHERE participant_a = ? AND participant_b = ?`),
 		minInt64(survivor, third), maxInt64(survivor, third),
@@ -335,7 +334,7 @@ func TestMergeParticipantsRetainsDeterministicOwnerForCollapsedAutomatedEdges(t 
 
 	require.NoError(st.MergeParticipants(absorbed, survivor))
 	var owner int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT identity_match_candidate_id FROM participant_links
 		 WHERE participant_a = ? AND participant_b = ?`),
 		minInt64(survivor, third), maxInt64(survivor, third),
@@ -698,7 +697,7 @@ func TestMergeParticipantsRollsBackWhenCandidateRewriteFails(t *testing.T) {
 	createParticipantMatchCandidate(t, st, absorbed, third, 0.50)
 
 	if st.IsPostgreSQL() {
-		_, err := st.DB().ExecContext(context.Background(), `
+		_, err := st.DB().ExecContext(t.Context(), `
 			CREATE FUNCTION fail_candidate_merge() RETURNS trigger AS $$
 			BEGIN
 				RAISE EXCEPTION 'forced candidate merge failure';
@@ -710,7 +709,7 @@ func TestMergeParticipantsRollsBackWhenCandidateRewriteFails(t *testing.T) {
 		`)
 		require.NoError(err)
 	} else {
-		_, err := st.DB().ExecContext(context.Background(), `
+		_, err := st.DB().ExecContext(t.Context(), `
 			CREATE TRIGGER fail_candidate_merge
 			BEFORE UPDATE OF left_id, right_id ON identity_match_candidates
 			BEGIN
@@ -725,7 +724,7 @@ func TestMergeParticipantsRollsBackWhenCandidateRewriteFails(t *testing.T) {
 	assert.Contains(err.Error(), "forced candidate merge failure")
 
 	var participantCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM participants WHERE id = ?`), absorbed,
 	).Scan(&participantCount))
 	assert.Equal(1, participantCount, "the absorbed participant delete must roll back")

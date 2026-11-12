@@ -24,7 +24,7 @@ func TestSearchMessageIDsQueryPreservesRankScopeAndTotal(t *testing.T) {
 	requirements.NoError(f.Store.MarkMessageDeleted(f.Source.ID, "deleted"))
 	other, err := f.Store.GetOrCreateSource("gmail", "other@example.test")
 	requirements.NoError(err)
-	conversation, err := f.Store.EnsureConversation(other.ID, "other", "Other thread")
+	conversation, err := f.Store.EnsureConversation(t.Context(), other.ID, "other", "Other thread")
 	requirements.NoError(err)
 	id := storetest.NewMessage(other.ID, conversation).WithSubject("glacier").
 		WithSentAt(day.Add(3*24*time.Hour)).Create(t, f.Store)
@@ -76,7 +76,7 @@ func TestSearchMessagesFilenameLiteralFilters(t *testing.T) {
 	f := storetest.New(t)
 	id := f.NewMessage().WithSubject("Plan").Create(t, f.Store)
 	other := f.NewMessage().WithSubject("Plan").Create(t, f.Store)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path,content_hash) VALUES (?,'Budget%_Plan.PDF','application/pdf',10,'synthetic',NULL),(?,'界.csv','text/csv',10,'synthetic',NULL),(?,'BudgetXXPlan.pdf','application/pdf',10,'synthetic',NULL),(?,'界.csv','text/csv',10,'synthetic',NULL)`), id, id, other, other)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,size,storage_path,content_hash) VALUES (?,'Budget%_Plan.PDF','application/pdf',10,'synthetic',NULL),(?,'界.csv','text/csv',10,'synthetic',NULL),(?,'BudgetXXPlan.pdf','application/pdf',10,'synthetic',NULL),(?,'界.csv','text/csv',10,'synthetic',NULL)`), id, id, other, other)
 	require.NoError(err)
 	rows, _, err := f.Store.SearchMessagesQueryContext(t.Context(), search.Parse(`filename:budget%_ filename:界`), 0, 1)
 	require.NoError(err)

@@ -2,7 +2,6 @@ package backupapp_test
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -115,7 +114,7 @@ func TestNewManifestReadableByOldReader(t *testing.T) {
 	dbPath, attDir := seedCompatArchive(t, archive)
 	r, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(err)
-	m, err := backup.Create(context.Background(), r, backupapp.New("golden-test"), backup.CreateOptions{
+	m, err := backup.Create(t.Context(), r, backupapp.New("golden-test"), backup.CreateOptions{
 		DBPath:     dbPath,
 		ContentDir: attDir,
 		DataDir:    archive,

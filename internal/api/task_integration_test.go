@@ -52,7 +52,7 @@ func TestTaskIntegrationStatusAndTestStayServerSide(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			req := httptest.NewRequest(test.method, test.path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil)
 			req.Header.Set("X-Api-Key", "msgvault-test-api-key")
 			resp := httptest.NewRecorder()
 
@@ -91,7 +91,7 @@ func TestTaskIntegrationStatusMapsRuntimeConfigWithoutAmbientDiscovery(t *testin
 			return taskclient.Status{State: taskclient.StateDisabled, Message: "Task integration is disabled."}
 		},
 	})
-	req := httptest.NewRequest(http.MethodGet, taskIntegrationStatusPath, nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, taskIntegrationStatusPath, nil)
 	req.RemoteAddr = "127.0.0.1:32145"
 	resp := httptest.NewRecorder()
 

@@ -25,7 +25,7 @@ func TestCardDAVConnectionsExposeOrphansAndRecoverByName(t *testing.T) {
 	require.NoError(err)
 	require.Len(books, 1)
 	var personID int64
-	require.NoError(controller.store.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name) VALUES ('orphan-recovery', 'Example Person') RETURNING id`).Scan(&personID))
+	require.NoError(controller.store.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name) VALUES ('orphan-recovery', 'Example Person') RETURNING id`).Scan(&personID))
 	snapshot, err := controller.store.LoadPersonVCardSnapshotContext(t.Context(), personID)
 	require.NoError(err)
 	_, err = controller.store.PrepareCardDAVPublicationContext(t.Context(), store.CardDAVPublicationPlan{

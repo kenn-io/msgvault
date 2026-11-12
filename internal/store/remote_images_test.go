@@ -20,7 +20,7 @@ func TestRemoteImageBackfillIncludesLegacyEmailTypes(t *testing.T) {
 		})
 		require.NoError(err)
 		// Persist the historical representation; normal ingestion defaults to email.
-		_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), messageType, id)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), messageType, id)
 		require.NoError(err)
 		if i < 3 {
 			want = append(want, id)
@@ -33,7 +33,7 @@ func TestRemoteImageBackfillIncludesLegacyEmailTypes(t *testing.T) {
 	ids, err = st.RemoteImageBackfillMessageIDs(t.Context(), want[0], sourceID, 1)
 	require.NoError(err)
 	assert.Equal(want[1:2], ids, "legacy email must respect the cursor and page limit")
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), want[2])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), want[2])
 	require.NoError(err)
 	ids, err = st.RemoteImageBackfillMessageIDs(t.Context(), 0, sourceID, 100)
 	require.NoError(err)

@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -28,7 +27,7 @@ func makeUpgradedMainDB(t *testing.T, mainPath string) {
 	s, err := store.Open(mainPath)
 	require.NoError(t, err, "store.Open for fixture")
 	require.NoError(t, s.InitSchema(), "InitSchema for fixture")
-	_, err = s.DB().Exec(`
+	_, err = s.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)
@@ -48,9 +47,9 @@ VALUES (1, 1, 1, 'm1', 'email');
 // just before the embed_gen-touching reopen.
 func dropEmbedGenColumn(t *testing.T, db *sql.DB) {
 	t.Helper()
-	_, err := db.Exec(`DROP TRIGGER IF EXISTS trg_embedding_changes_message_update`)
+	_, err := db.ExecContext(t.Context(), `DROP TRIGGER IF EXISTS trg_embedding_changes_message_update`)
 	require.NoError(t, err, "drop post-upgrade journal trigger")
-	_, err = db.Exec(`ALTER TABLE messages DROP COLUMN embed_gen`)
+	_, err = db.ExecContext(t.Context(), `ALTER TABLE messages DROP COLUMN embed_gen`)
 	require.NoError(t, err, "drop embed_gen to simulate pre-upgrade schema")
 }
 
@@ -73,7 +72,7 @@ func TestEmbed_UpgradedDBMissingEmbedGen_NeedsInitSchema(t *testing.T) {
 	require.NoError(
 		sqlitevec.RegisterExtension(), "RegisterExtension")
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// --- 1. Failure mode without InitSchema -------------------------------
 	dir := t.TempDir()
@@ -91,7 +90,7 @@ func TestEmbed_UpgradedDBMissingEmbedGen_NeedsInitSchema(t *testing.T) {
 	require.NoError(
 		sSeed.InitSchema(), "InitSchema for fixture")
 
-	_, err = sSeed.DB().Exec(`
+	_, err = sSeed.DB().ExecContext(t.Context(), `
 INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'me@example.com');
 INSERT INTO conversations (id, source_id, conversation_type) VALUES (1, 1, 'email_thread');
 INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type)
@@ -126,7 +125,7 @@ VALUES (1, 1, 1, 'm1', 'email');
 	require.NoError(
 		seed.Close(), "close seed backend")
 
-	_, err = mainRaw.Exec(`DELETE FROM applied_migrations WHERE name = 'embed_gen_backfill_active_v1'`)
+	_, err = mainRaw.ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = 'embed_gen_backfill_active_v1'`)
 	require.NoError(
 		err, "clear backfill ledger")
 

@@ -23,7 +23,7 @@ func filenameScopePlanFixture(t *testing.T) (*Store, *filenamePostingObserver, [
 	st, observer := filenameObservedStore(t)
 	source, err := st.GetOrCreateSource("imap", "fixture@example.test")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(source.ID, "scope-plan", "Scope Example")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "scope-plan", "Scope Example")
 	require.NoError(err)
 	tx, err := st.db.BeginTx(t.Context(), nil)
 	require.NoError(err)
@@ -73,7 +73,7 @@ func filenameScopePlanFixture(t *testing.T) (*Store, *filenamePostingObserver, [
 	}
 	require.NoError(tx.Commit())
 	for _, table := range []string{"message_recipients", "conversation_participants", "person_participants", "messages", "conversations"} {
-		_, err = st.DB().Exec(`ANALYZE ` + table)
+		_, err = st.DB().ExecContext(t.Context(), `ANALYZE `+table)
 		require.NoError(err)
 	}
 	observer.all = true

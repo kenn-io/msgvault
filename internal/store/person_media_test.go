@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"testing"
@@ -17,7 +16,7 @@ func TestPersonMediaStoresInlineBytesWithHashAndSize(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	payload := bytes.Repeat([]byte{0x89, 0x50, 0x4e, 0x47}, 64)
 	digest := sha256.Sum256(payload)
@@ -43,7 +42,7 @@ func TestPersonMediaStoresURIReferenceWithoutBytes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	stored, err := st.AddPersonMediaContext(ctx, personID, store.PersonMediaInput{
 		MediaKind: store.PersonMediaPhoto, URI: new("https://example.com/alice.png"),
@@ -61,7 +60,7 @@ func TestPersonMediaHoldsAllFourVCardMediaKinds(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	for _, kind := range []store.PersonMediaKind{
 		store.PersonMediaPhoto, store.PersonMediaLogo, store.PersonMediaSound, store.PersonMediaKey,
@@ -86,7 +85,7 @@ func TestPersonMediaValidation(t *testing.T) {
 	require := require.New(t)
 	st := storetest.New(t).Store
 	personID := newTestPerson(t, st)
-	ctx := context.Background()
+	ctx := t.Context()
 	_, err := st.AddPersonMediaContext(ctx, personID, store.PersonMediaInput{
 		MediaKind: "avatar", Data: []byte("synthetic"),
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},

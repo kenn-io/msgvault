@@ -1,7 +1,6 @@
 package vcardmap_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,7 +16,7 @@ import (
 func TestStoreProjectionMapsToOrgTitleAndRole(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	participantID, err := st.EnsureParticipant("alice@example.com", "alice", "example.com")
@@ -66,7 +65,7 @@ func TestStoreProjectionMapsToOrgTitleAndRole(t *testing.T) {
 func TestNoPrimaryCurrentEmploymentYieldsNoOrgValue(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	participantID, err := st.EnsureParticipant("bob@example.com", "bob", "example.com")

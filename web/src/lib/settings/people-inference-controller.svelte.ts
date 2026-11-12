@@ -47,13 +47,17 @@ export class PeopleInferenceController {
       this.selectedProfile?.consent_active && this.consentedFingerprint === this.checkedProfile.fingerprint);
   }
 
+  // Settings reloads after unrelated saves too, so a check survives a reload
+  // unless the checked profile changed or the daemon dropped its check. A key
+  // replaced from another tab drops the check without changing the fingerprint.
   async load(): Promise<void> {
-    this.loading = true;
-    this.clearCheck();
     await this.run(async () => {
       this.capture(await getSettingsPeopleInference(this.client));
       if (!this.status?.profiles.some((profile) => profile.name === this.selectedName)) {
         this.choose(this.status?.configured_name ?? this.status?.profiles[0]?.name ?? '');
+      } else if (this.checkedProfile && (this.checkedProfile.fingerprint !== this.selectedProfile?.fingerprint ||
+        !this.selectedProfile?.checked)) {
+        this.clearCheck();
       }
     });
     if (!this.destroyed) this.loading = false;

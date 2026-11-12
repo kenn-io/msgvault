@@ -135,7 +135,7 @@ func TestChatwootSyncSkipsRetiredInboxes(t *testing.T) {
 			} else {
 				assert.Empty(paths, "a retired-only profile must skip provider discovery")
 			}
-			_, err := resolveChatwootSyncInboxes(st, src, []int64{7})
+			_, err := resolveChatwootSyncInboxes(t.Context(), st, src, []int64{7})
 			require.ErrorIs(err, store.ErrSourceRetired, "explicit inbox selections must report retirement")
 		})
 	}
@@ -153,7 +153,7 @@ func TestScheduledCalendarFiltersRetiredSelections(t *testing.T) {
 			for _, id := range []string{"old", "active"} {
 				source, err := st.GetOrCreateSource(sourceTypeCalendar, "user@example.com/"+id)
 				require.NoError(err)
-				require.NoError(st.UpdateSourceSyncConfig(source.ID, fmt.Sprintf(`{"account_email":"user@example.com","calendar_id":%q,"access_role":"owner"}`, id)))
+				require.NoError(st.UpdateSourceSyncConfig(t.Context(), source.ID, fmt.Sprintf(`{"account_email":"user@example.com","calendar_id":%q,"access_role":"owner"}`, id)))
 				sources = append(sources, source)
 			}
 			_, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: sources[0].ID, IntoSourceID: sources[1].ID})
@@ -199,7 +199,7 @@ func TestScheduledCalendarDiscoversNewSelectionAfterRetirement(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			retired, err := st.GetOrCreateSource(sourceTypeCalendar, "user@example.com/old")
 			require.NoError(err)
-			require.NoError(st.UpdateSourceSyncConfig(retired.ID,
+			require.NoError(st.UpdateSourceSyncConfig(t.Context(), retired.ID,
 				`{"account_email":"user@example.com","calendar_id":"old","access_role":"owner"}`))
 			retireScheduledTestSource(t, st, sourceTypeCalendar, retired.Identifier, "archive@example.com/old")
 			cfg := lifecycleTestConfig(t.TempDir())
@@ -220,11 +220,11 @@ func TestScheduledCalendarDiscoversNewSelectionAfterRetirement(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(1, client.ListCalendarsCalls(), "new configured calendars must reach discovery")
 			assert.Equal(1, client.ListEventsCalls(), "only the new calendar should sync")
-			discovered, err := st.GetSourceByTypeAndIdentifier(sourceTypeCalendar, "user@example.com/new")
+			discovered, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeCalendar, "user@example.com/new")
 			require.NoError(err)
 			assert.Equal("new-calendar-token", discovered.SyncCursor.String)
 			var subject string
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT subject FROM messages WHERE source_id = ?`), discovered.ID).Scan(&subject))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT subject FROM messages WHERE source_id = ?`), discovered.ID).Scan(&subject))
 			assert.Equal("Example meeting", subject)
 			assert.Contains(selected, "new", "selection must not be consumed by filtering")
 			if len(selected) == 2 {

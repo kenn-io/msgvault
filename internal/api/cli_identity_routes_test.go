@@ -147,7 +147,8 @@ func postDiscoverNDJSON(
 	body string,
 ) []identityops.DiscoverEvent {
 	t.Helper()
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/cli/identities/discover",
 		strings.NewReader(body),
@@ -186,7 +187,8 @@ func postIdentityImport(
 	body string,
 ) (*httptest.ResponseRecorder, identityops.ImportResult) {
 	t.Helper()
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/cli/identities/import",
 		strings.NewReader(body),
@@ -318,7 +320,8 @@ func TestCLIIdentityDiscoverProviderErrorsAreActionableAndRedacted(t *testing.T)
 		assertions := assert.New(t)
 		requirements := require.New(t)
 		srv, _, source := newCLIIdentityDiscoveryTestServer(t)
-		request := httptest.NewRequest(
+		request := httptest.NewRequestWithContext(
+			t.Context(),
 			http.MethodPost,
 			"/api/v1/cli/identities/discover",
 			strings.NewReader(fmt.Sprintf(`{"source_id":%d,"provider":true}`, source.ID)),
@@ -347,7 +350,8 @@ func TestCLIIdentityDiscoverProviderErrorsAreActionableAndRedacted(t *testing.T)
 		srv.fastmailInventoryFactory = func(string) fastmailIdentityInventory { return inventory }
 		var logs bytes.Buffer
 		srv.logger = slog.New(slog.NewJSONHandler(&logs, nil))
-		request := httptest.NewRequest(
+		request := httptest.NewRequestWithContext(
+			t.Context(),
 			http.MethodPost,
 			"/api/v1/cli/identities/discover",
 			strings.NewReader(fmt.Sprintf(`{"source_id":%d,"provider":true}`, source.ID)),
@@ -380,7 +384,8 @@ func TestCLIIdentityDiscoverStoreFailureIsInternalNotInvalid(t *testing.T) {
 	wrapped.listSourcesErr = errors.New("db unavailable: connection reset")
 	var logs bytes.Buffer
 	srv.logger = slog.New(slog.NewJSONHandler(&logs, nil))
-	request := httptest.NewRequest(
+	request := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/cli/identities/discover",
 		strings.NewReader(fmt.Sprintf(`{"source_id":%d,"provider":true}`, source.ID)),
@@ -418,7 +423,8 @@ func TestCLIIdentityDiscoverInventoryFailureLogsStatusBearingError(t *testing.T)
 	srv.fastmailInventoryFactory = func(string) fastmailIdentityInventory { return inventory }
 	var logs bytes.Buffer
 	srv.logger = slog.New(slog.NewJSONHandler(&logs, nil))
-	request := httptest.NewRequest(
+	request := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/cli/identities/discover",
 		strings.NewReader(fmt.Sprintf(`{"source_id":%d,"provider":true}`, source.ID)),
@@ -584,7 +590,8 @@ func TestCLIIdentityDiscoverStreamsSanitizedTerminalErrorAfterProgress(t *testin
 	var logs bytes.Buffer
 	srv.logger = slog.New(slog.NewTextHandler(&logs, nil))
 
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/cli/identities/discover",
 		strings.NewReader(fmt.Sprintf(`{"source_id":%d}`, source.ID)),
@@ -637,7 +644,8 @@ func TestCLIIdentityDiscoverRejectsExplicitZeroSourceID(t *testing.T) {
 	for _, body := range tests {
 		t.Run(body, func(t *testing.T) {
 			srv, _, _ := newCLIIdentityDiscoveryTestServer(t)
-			req := httptest.NewRequest(
+			req := httptest.NewRequestWithContext(
+				t.Context(),
 				http.MethodPost,
 				"/api/v1/cli/identities/discover",
 				strings.NewReader(body),
@@ -683,7 +691,8 @@ func TestCLIIdentityDiscoverClassifiesContextErrorsBeforeStreaming(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
 			wrapped.countErr = test.err
-			req := httptest.NewRequest(
+			req := httptest.NewRequestWithContext(
+				t.Context(),
 				http.MethodPost,
 				"/api/v1/cli/identities/discover",
 				strings.NewReader(fmt.Sprintf(`{"source_id":%d}`, source.ID)),
@@ -704,9 +713,10 @@ func TestCLIIdentityDiscoverClassifiesContextErrorsBeforeStreaming(t *testing.T)
 func TestCLIIdentityDiscoverCancellationEmitsNoResult(t *testing.T) {
 	t.Parallel()
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	wrapped.scanCancel = cancel
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/cli/identities/discover",
 		strings.NewReader(fmt.Sprintf(`{"source_id":%d}`, source.ID)),
@@ -743,7 +753,8 @@ func TestCLIIdentityDiscoverPartialApplyErrorSchedulesOneCacheRebuildWithoutResu
 		requirements.NoError(err)
 		return outcomes, applyErr
 	}
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/cli/identities/discover",
 		strings.NewReader(fmt.Sprintf(`{"source_id":%d,"apply":true}`, source.ID)),
@@ -768,7 +779,7 @@ func TestCLIIdentityDiscoverCancellationAfterCommitSchedulesOneCacheRebuildWitho
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	srv, wrapped, source := newCLIIdentityDiscoveryTestServer(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	wrapped.batchFunc = func(
 		ctx context.Context,
 		sourceID int64,
@@ -779,7 +790,8 @@ func TestCLIIdentityDiscoverCancellationAfterCommitSchedulesOneCacheRebuildWitho
 		cancel()
 		return outcomes, nil
 	}
-	req := httptest.NewRequest(
+	req := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/cli/identities/discover",
 		strings.NewReader(fmt.Sprintf(`{"source_id":%d,"apply":true}`, source.ID)),
@@ -812,7 +824,7 @@ func TestCLIIdentityListSourceIDSelectsOneDuplicateAccount(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(gmail.ID, "gmail-alias@example.test", "manual"))
 	require.NoError(st.AddAccountIdentity(imap.ID, "imap-alias@example.test", "manual"))
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/cli/identities?source_id="+strconv.FormatInt(gmail.ID, 10), nil)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
@@ -833,7 +845,7 @@ func TestCLIIdentityListRejectsSourceIDWithAccount(t *testing.T) {
 	source, err := st.GetOrCreateSource("gmail", "shared@example.test")
 	require.NoError(err)
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		"/api/v1/cli/identities?source_id="+strconv.FormatInt(source.ID, 10)+"&account=shared@example.test", nil)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
@@ -856,7 +868,7 @@ func TestCLIIdentityListRejectsExplicitNonPositiveSourceID(t *testing.T) {
 		"source_id=0&account=alice@example.test",
 	} {
 		t.Run(rawQuery, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/identities?"+rawQuery, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/identities?"+rawQuery, nil)
 			resp := httptest.NewRecorder()
 			srv.Router().ServeHTTP(resp, req)
 
@@ -879,7 +891,8 @@ func TestCLIIdentityMutationsSourceIDDisambiguateDuplicateAccounts(t *testing.T)
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(imap.ID, "shared-alias@example.test", "manual"))
 
-	addReq := httptest.NewRequest(
+	addReq := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodPost,
 		"/api/v1/cli/identities",
 		strings.NewReader(fmt.Sprintf(`{"source_id":%d,"identifier":"shared-alias@example.test","signal":"manual"}`, gmail.ID)),
@@ -896,7 +909,8 @@ func TestCLIIdentityMutationsSourceIDDisambiguateDuplicateAccounts(t *testing.T)
 	require.NoError(err)
 	require.Len(imapIdentities, 1)
 
-	removeReq := httptest.NewRequest(
+	removeReq := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodDelete,
 		"/api/v1/cli/identities",
 		strings.NewReader(fmt.Sprintf(`{"source_id":%d,"identifier":"shared-alias@example.test"}`, gmail.ID)),
@@ -1087,7 +1101,7 @@ func TestCLIIdentityDiscoverGmailProfileFailurePrecedesScan(t *testing.T) {
 			source, err := wrapped.GetOrCreateSource("gmail", "primary@example.test")
 			require.NoError(err)
 			srv.gmailProfileAddress = tc.profile
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/identities/discover", strings.NewReader(fmt.Sprintf(`{"source_id":%d,"provider":true,"apply":true}`, source.ID)))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/identities/discover", strings.NewReader(fmt.Sprintf(`{"source_id":%d,"provider":true,"apply":true}`, source.ID)))
 			req.Header.Set("Content-Type", "application/json")
 			resp := httptest.NewRecorder()
 			srv.Router().ServeHTTP(resp, req)

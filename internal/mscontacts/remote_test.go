@@ -960,7 +960,7 @@ func TestWriteFailingBeforeSendIsSentLater(t *testing.T) {
 				t.Helper()
 				f.fake.onLookup = func() {
 					f.fake.onLookup = nil
-					assert.NoError(t, f.store.SetCardDAVRetryAfterContext(context.Background(), time.Now().Add(time.Hour), store.DefaultCardDAVAccountID))
+					assert.NoError(t, f.store.SetCardDAVRetryAfterContext(t.Context(), time.Now().Add(time.Hour), store.DefaultCardDAVAccountID))
 				}
 				return t.Context()
 			},

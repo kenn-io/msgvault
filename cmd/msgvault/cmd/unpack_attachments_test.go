@@ -60,7 +60,7 @@ func TestRefuseUnpackWithLiveDaemon(t *testing.T) {
 		},
 	})
 	require.NoError(err, "write runtime record")
-	require.Nil(findDaemonRuntime(dataDir),
+	require.Nil(findDaemonRuntime(t.Context(), dataDir),
 		"precondition: the daemon reads as incompatible to this client")
 
 	err = refuseUnpackWithLiveDaemon(dataDir)

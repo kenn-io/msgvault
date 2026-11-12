@@ -53,7 +53,7 @@ func TestOptimizeSQLiteCancellationLogsDebug(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	t.Cleanup(func() { _ = s.Close() })
 	require.NoError(s.InitSchema())
@@ -64,7 +64,7 @@ func TestOptimizeSQLiteCancellationLogsDebug(t *testing.T) {
 	t.Cleanup(func() { _ = blocker.Close() })
 
 	buf := captureSlog(t)
-	s.optimizeSQLiteBestEffort(context.Background(), "cancellation proof", false)
+	s.optimizeSQLiteBestEffort(t.Context(), "cancellation proof", false)
 
 	records := plannerMaintenanceRecords(t, buf)
 	require.Len(records, 1)
@@ -155,7 +155,7 @@ func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	require.NoError(s.db.Close())
 	actualErr := s.optimizeSQLite(t.Context())
@@ -172,16 +172,72 @@ func TestPlannerMaintenanceDatabaseErrorWarns(t *testing.T) {
 	assert.Equal(actualErr.Error(), records[0]["error"])
 }
 
+func TestOptimizeSQLiteStatisticsSingleTransaction(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	s, err := openSQLiteContext(t.Context(), path, testSQLiteParams)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(s.db.Close()) })
+	require.NoError(s.InitSchema())
+	seedLiveMessages(t, s, 1000)
+
+	conn, err := s.db.Conn(t.Context())
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(conn.Close()) })
+	_, err = conn.ExecContext(t.Context(), "PRAGMA analysis_limit=1000")
+	require.NoError(err)
+
+	var commits int
+	require.NoError(conn.Raw(func(raw any) error {
+		c, ok := raw.(*sqlite3.SQLiteConn)
+		require.True(ok)
+		c.RegisterCommitHook(func() int {
+			commits++
+			return 0
+		})
+		return nil
+	}))
+	t.Cleanup(func() {
+		require.NoError(conn.Raw(func(raw any) error {
+			c, ok := raw.(*sqlite3.SQLiteConn)
+			require.True(ok)
+			c.RegisterCommitHook(nil)
+			return nil
+		}))
+	})
+
+	// The first run must analyze several tables in one commit.
+	require.NoError(optimizeSQLiteStatistics(t.Context(), conn))
+	assert.Equal(t, 1, commits, "statistics maintenance must commit once across all analyzed tables")
+	var analyzedTables int
+	require.NoError(conn.QueryRowContext(t.Context(), "SELECT COUNT(DISTINCT tbl) FROM sqlite_stat1 WHERE stat IS NOT NULL").Scan(&analyzedTables))
+	assert.Greater(t, analyzedTables, 1, "maintenance must analyze several tables")
+	require.Positive(messagePlannerStatisticCount(t, s))
+
+	// A second run must leave the analyzed archive unchanged.
+	observer, err := sql.Open("sqlite3", path)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(observer.Close()) })
+	observerConn, err := observer.Conn(t.Context())
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(observerConn.Close()) })
+	var before, after int
+	require.NoError(observerConn.QueryRowContext(t.Context(), "PRAGMA data_version").Scan(&before))
+	require.NoError(optimizeSQLiteStatistics(t.Context(), conn))
+	require.NoError(observerConn.QueryRowContext(t.Context(), "PRAGMA data_version").Scan(&after))
+	assert.Equal(t, before, after, "maintenance on an analyzed archive must leave its statistics unchanged")
+}
+
 func TestStoreCloseDatabaseErrorWarnsAndRunsCleanup(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	cleaned := false
 	s.closeCleanup = func() { cleaned = true }
 	require.NoError(s.db.Close())
-	_, actualErr := s.db.DB.ExecContext(context.Background(), "PRAGMA optimize=0x10002")
+	_, actualErr := s.db.Conn(t.Context())
 	require.Error(actualErr)
 
 	buf := captureSlog(t)
@@ -201,7 +257,7 @@ func TestStoreCloseCancellationLogsDebugAndRunsCleanup(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	require.NoError(s.InitSchema())
 	s.db.SetMaxOpenConns(1)
@@ -267,7 +323,7 @@ func TestInitSchemaRefreshesSQLitePlannerStatistics(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -285,7 +341,7 @@ func TestCompleteSyncAndUpdateSourceCursorRefreshesSQLitePlannerStatistics(t *te
 	assert := assert.New(t)
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -305,7 +361,7 @@ func TestCompleteSyncAndUpdateSourceCursorRefreshesSQLitePlannerStatistics(t *te
 func TestSyncCheckpointDoesNotDrainSQLitePool(t *testing.T) {
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -321,7 +377,7 @@ func TestSyncCheckpointDoesNotDrainSQLitePool(t *testing.T) {
 	checkpointDone := make(chan error, 1)
 	go func() {
 		checkpointDone <- s.UpdateSyncCheckpointContext(
-			context.Background(), syncID, &Checkpoint{MessagesProcessed: 100},
+			t.Context(), syncID, &Checkpoint{MessagesProcessed: 100},
 		)
 	}()
 	select {
@@ -339,7 +395,7 @@ func TestOptimizeSQLiteReloadsEveryPooledConnection(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	s.db.SetMaxOpenConns(2)
@@ -407,7 +463,7 @@ func TestOptimizeSQLiteReloadsEveryPooledConnection(t *testing.T) {
 func TestOptimizeSQLiteSkipsConcurrentMaintenance(t *testing.T) {
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -449,7 +505,7 @@ func TestOptimizeSQLiteSkipsConcurrentMaintenance(t *testing.T) {
 func TestOptimizeSQLiteBoundsPoolReservation(t *testing.T) {
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -459,7 +515,7 @@ func TestOptimizeSQLiteBoundsPoolReservation(t *testing.T) {
 	require.NoError(err)
 
 	result := make(chan error, 1)
-	go func() { result <- s.optimizeSQLite(context.Background()) }()
+	go func() { result <- s.optimizeSQLite(t.Context()) }()
 	select {
 	case optimizeErr := <-result:
 		require.ErrorIs(optimizeErr, context.DeadlineExceeded)
@@ -476,7 +532,7 @@ func TestCloseOptimizesWithoutDrainingSQLitePool(t *testing.T) {
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "archive.db")
 
-	s, err := OpenForTest(dbPath)
+	s, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	require.NoError(s.InitSchema())
 	// Startup maintenance is best-effort and may leave no statistics table.
@@ -505,7 +561,7 @@ func TestCloseOptimizesWithoutDrainingSQLitePool(t *testing.T) {
 	}
 	require.NoError(blocker.Close())
 
-	reopened, err := OpenForTest(dbPath)
+	reopened, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	defer func() { _ = reopened.Close() }()
 	assert.Positive(messagePlannerStatisticCount(t, reopened),
@@ -528,7 +584,7 @@ func TestSuccessfulSyncOptimizeThrottled(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -560,7 +616,7 @@ func TestDailyMaintenanceOptimizesAndTruncatesWAL(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+	s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -580,7 +636,7 @@ func TestDailyMaintenanceRetriesBusyCheckpoint(t *testing.T) {
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "archive.db")
 
-	s, err := OpenForTest(dbPath)
+	s, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -592,12 +648,12 @@ func TestDailyMaintenanceRetriesBusyCheckpoint(t *testing.T) {
 	reader, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
 	defer func() { _ = reader.Close() }()
-	readerTx, err := reader.Begin()
+	readerTx, err := reader.BeginTx(t.Context(), nil)
 	require.NoError(err)
 	defer func() { _ = readerTx.Rollback() }()
 	var n int
-	require.NoError(readerTx.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&n))
-	_, err = s.db.DB.Exec(`UPDATE messages SET snippet = 'changed after the reader snapshot'`)
+	require.NoError(readerTx.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&n))
+	_, err = s.db.DB.ExecContext(t.Context(), `UPDATE messages SET snippet = 'changed after the reader snapshot'`)
 	require.NoError(err)
 
 	buf := captureSlog(t)
@@ -610,7 +666,7 @@ func TestDailyMaintenanceRetriesBusyCheckpoint(t *testing.T) {
 func TestCheckpointWALContextInterruptsBusyCheckpoint(t *testing.T) {
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "archive.db")
-	s, err := OpenForTest(dbPath)
+	s, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -619,12 +675,12 @@ func TestCheckpointWALContextInterruptsBusyCheckpoint(t *testing.T) {
 	reader, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
 	defer func() { _ = reader.Close() }()
-	readerTx, err := reader.Begin()
+	readerTx, err := reader.BeginTx(t.Context(), nil)
 	require.NoError(err)
 	defer func() { _ = readerTx.Rollback() }()
 	var n int
-	require.NoError(readerTx.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&n))
-	_, err = s.db.DB.Exec(`UPDATE messages SET snippet = 'changed after the reader snapshot'`)
+	require.NoError(readerTx.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&n))
+	_, err = s.db.DB.ExecContext(t.Context(), `UPDATE messages SET snippet = 'changed after the reader snapshot'`)
 	require.NoError(err)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the reader snapshot keeps the checkpoint busy
@@ -640,7 +696,7 @@ func TestCheckpointWALContextInterruptsBusyCheckpoint(t *testing.T) {
 func TestCheckpointWALPassiveContextHonorsDeadlineWaitingForPool(t *testing.T) {
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "archive.db")
-	s, err := OpenForTest(dbPath)
+	s, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	defer func() { _ = s.Close() }()
 	require.NoError(s.InitSchema())
@@ -674,7 +730,7 @@ func TestDailyMaintenanceRepairsSampledMessageStatistics(t *testing.T) {
 	for _, failAnalysis := range []bool{false, true} {
 		t.Run(fmt.Sprintf("analysis_error=%t", failAnalysis), func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
-			s, err := OpenForTest(filepath.Join(t.TempDir(), "archive.db"))
+			s, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "archive.db"))
 			require.NoError(err)
 			defer func() { _ = s.Close() }()
 			s.db.SetMaxOpenConns(2)

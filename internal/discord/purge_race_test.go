@@ -23,7 +23,7 @@ func TestPurgeCannotInterleaveWithLoadedDiscordResumeState(t *testing.T) {
 	opts := ImportOptions{GuildID: "200"}
 	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
-	source, err := st.GetSourceByIdentifier("200")
+	source, err := st.GetSourceByIdentifier(t.Context(), "200")
 	require.NoError(err)
 
 	var racedPurge error
@@ -39,7 +39,7 @@ func TestPurgeCannotInterleaveWithLoadedDiscordResumeState(t *testing.T) {
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT count(*) FROM messages WHERE source_id=? AND source_message_id=?`), source.ID, messageID).Scan(&count))
 	assert.Equal(1, count, "a later import must restore purged history")
 }

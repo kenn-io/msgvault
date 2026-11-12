@@ -37,7 +37,8 @@ func openLoggedMem(t *testing.T) *loggedDB {
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err, "open mem db")
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(
+	_, err = db.ExecContext(
+		t.Context(),
 		"CREATE TABLE t(id INTEGER PRIMARY KEY, val TEXT)",
 	)
 	require.NoError(t, err, "create table")
@@ -54,7 +55,7 @@ func TestLoggedDB_RequestIDFromContext(t *testing.T) {
 	buf := captureSlog(t)
 	db := openLoggedMem(t)
 
-	ctx := WithRequestID(context.Background(), "msgvault-99")
+	ctx := WithRequestID(t.Context(), "msgvault-99")
 	rows, err := db.QueryContext(ctx, "SELECT id FROM t")
 	require.NoError(t, err, "query")
 	for rows.Next() {
@@ -137,7 +138,7 @@ func TestLoggedDB_ErrorAlwaysLogged(t *testing.T) {
 	db := openLoggedMem(t)
 
 	_, err := db.ExecContext(
-		context.Background(), "INSERT INTO no_such_table VALUES (1)",
+		t.Context(), "INSERT INTO no_such_table VALUES (1)",
 	)
 	require.Error(err, "expected exec error")
 
@@ -354,7 +355,7 @@ func TestLoggedRows_IterationErrorSurfacedOnClose(t *testing.T) {
 	require.NoError(err, "seed")
 	buf.Reset()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	rows, err := db.QueryContext(ctx, "SELECT val FROM t ORDER BY id")
 	require.NoError(err, "query")
 	// Cancel before iterating; Next() will see the cancellation

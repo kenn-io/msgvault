@@ -133,7 +133,7 @@ var addTwilioCmd = &cobra.Command{
 		if err := runTwilioProbe(cmd.Context(), cmd.OutOrStdout(), client); err != nil {
 			return err
 		}
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -142,7 +142,7 @@ var addTwilioCmd = &cobra.Command{
 			source.Identifier, accountEmail); err != nil {
 			return err
 		}
-		if err := runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+		if err := runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nTwilio source %s registered.\n", source.Identifier)
@@ -193,7 +193,7 @@ This command does not place calls or enable paid processing.`,
 			return runTwilioProbe(cmd.Context(), cmd.OutOrStdout(), client)
 		}
 
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -203,7 +203,7 @@ This command does not place calls or enable paid processing.`,
 		written := &twilio.ImportSummary{}
 		var errs []error
 		for _, source := range sources {
-			registered, err := requireTwilioRegistered(st, source.Identifier)
+			registered, err := requireTwilioRegistered(cmd.Context(), st, source.Identifier)
 			if err == nil && registered.MergedIntoSourceID != 0 {
 				if len(args) == 0 {
 					continue
@@ -237,8 +237,8 @@ This command does not place calls or enable paid processing.`,
 	},
 }
 
-func requireTwilioRegistered(st *store.Store, identifier string) (*store.Source, error) {
-	registered, err := st.GetSourceByTypeAndIdentifier(twilio.SourceType, identifier)
+func requireTwilioRegistered(ctx context.Context, st *store.Store, identifier string) (*store.Source, error) {
+	registered, err := st.GetSourceByTypeAndIdentifier(ctx, twilio.SourceType, identifier)
 	if err != nil {
 		if errors.Is(err, store.ErrSourceNotFound) {
 			return nil, fmt.Errorf("twilio source %q is not registered; run msgvault add-twilio %s first", identifier, identifier)
@@ -249,7 +249,7 @@ func requireTwilioRegistered(st *store.Store, identifier string) (*store.Source,
 }
 
 func runConfiguredTwilioSync(ctx context.Context, st *store.Store, source config.TwilioSource) error {
-	registered, err := requireTwilioRegistered(st, source.Identifier)
+	registered, err := requireTwilioRegistered(ctx, st, source.Identifier)
 	if err != nil {
 		return recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, err)
 	}

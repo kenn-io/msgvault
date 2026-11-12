@@ -73,12 +73,12 @@ func newContractMCPSession(t *testing.T, results map[string]string, calls *[]con
 	}
 
 	ct, st := mcp.NewInMemoryTransports()
-	ss, err := server.Connect(context.Background(), st, nil)
+	ss, err := server.Connect(t.Context(), st, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ss.Wait() })
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "msgvault-test", Version: "0"}, nil)
-	cs, err := client.Connect(context.Background(), ct, nil)
+	cs, err := client.Connect(t.Context(), ct, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cs.Close() })
 	return NewSessionForTesting(cs)
@@ -109,12 +109,12 @@ func newFakeMCPSession(t *testing.T, results map[string]string) *Session {
 	}
 
 	ct, st := mcp.NewInMemoryTransports()
-	ss, err := server.Connect(context.Background(), st, nil)
+	ss, err := server.Connect(t.Context(), st, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ss.Wait() })
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "msgvault-test", Version: "0"}, nil)
-	cs, err := client.Connect(context.Background(), ct, nil)
+	cs, err := client.Connect(t.Context(), ct, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cs.Close() })
 	return NewSessionForTesting(cs)
@@ -133,7 +133,7 @@ func TestSearchMeetings_EnvelopeShapes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			s := newFakeMCPSession(t, map[string]string{toolSearchMeetings: tc.payload})
-			meetings, err := s.SearchMeetings(context.Background(), "2026-01-01", "", 0)
+			meetings, err := s.SearchMeetings(t.Context(), "2026-01-01", "", 0)
 			require.NoError(err)
 			require.Len(meetings, 1)
 			require.Equal("7", string(meetings[0].ID), "string and numeric IDs both decode")
@@ -149,7 +149,7 @@ func TestSearchMeetings_OfficialArgumentsAndSchemas(t *testing.T) {
 	var calls []contractToolCall
 	s := newContractMCPSession(t, map[string]string{toolSearchMeetings: `[]`}, &calls)
 
-	_, err := s.SearchMeetings(context.Background(), "2026-01-01", "2026-02-01", 3)
+	_, err := s.SearchMeetings(t.Context(), "2026-01-01", "2026-02-01", 3)
 	require.NoError(err)
 	require.Len(calls, 1)
 	assert.Equal(toolSearchMeetings, calls[0].name)
@@ -159,7 +159,7 @@ func TestSearchMeetings_OfficialArgumentsAndSchemas(t *testing.T) {
 	assert.NotEmpty(calls[0].args["intent"])
 	assert.NotContains(calls[0].args, "limit")
 
-	_, err = s.SearchMeetings(context.Background(), "", "", 0)
+	_, err = s.SearchMeetings(t.Context(), "", "", 0)
 	require.NoError(err)
 	require.Len(calls, 2)
 	assert.EqualValues(0, calls[1].args["pageIndex"])
@@ -184,7 +184,7 @@ func TestReadMeetings_OfficialArgumentsAndSchemas(t *testing.T) {
 		}]}`,
 	}, &calls)
 
-	meetings, err := s.ReadMeetings(context.Background(), []string{"meeting-7"})
+	meetings, err := s.ReadMeetings(t.Context(), []string{"meeting-7"})
 	require.NoError(err)
 	require.Len(calls, 1)
 	assert.Equal(toolReadMeetings, calls[0].name)
@@ -230,7 +230,7 @@ func TestReadMeetings_KeyedInsightsObjectDoesNotRejectMeeting(t *testing.T) {
 		}]}`,
 	}, &calls)
 
-	meetings, err := s.ReadMeetings(context.Background(), []string{"meeting-9"})
+	meetings, err := s.ReadMeetings(t.Context(), []string{"meeting-9"})
 	require.NoError(err)
 	require.Len(meetings, 1)
 	assert.Equal("Planning", meetings[0].DisplayName())
@@ -270,12 +270,12 @@ func newScriptedMCPSession(t *testing.T, tool string, responses []scriptedRespon
 	})
 
 	ct, st := mcp.NewInMemoryTransports()
-	ss, err := server.Connect(context.Background(), st, nil)
+	ss, err := server.Connect(t.Context(), st, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ss.Wait() })
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "msgvault-test", Version: "0"}, nil)
-	cs, err := client.Connect(context.Background(), ct, nil)
+	cs, err := client.Connect(t.Context(), ct, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cs.Close() })
 	return NewSessionForTesting(cs)
@@ -295,7 +295,7 @@ func TestCallToolJSON_RetriesProviderRateLimit(t *testing.T) {
 		{text: `{"meetings":[{"id":"meeting-1","name":"Planning"}]}`},
 	}, &calls)
 
-	meetings, err := s.ReadMeetings(context.Background(), []string{"meeting-1"})
+	meetings, err := s.ReadMeetings(t.Context(), []string{"meeting-1"})
 	require.NoError(err)
 	require.Len(meetings, 1)
 	require.Equal(3, calls, "should retry until the provider recovers")
@@ -309,7 +309,7 @@ func TestCallToolJSON_RateLimitGivesUpAfterBoundedAttempts(t *testing.T) {
 		{isError: true, text: rateLimitText},
 	}, &calls)
 
-	_, err := s.ReadMeetings(context.Background(), []string{"meeting-1"})
+	_, err := s.ReadMeetings(t.Context(), []string{"meeting-1"})
 	require.Error(err)
 	assert.Equal(rateLimitAttempts, calls, "retries must be bounded, not infinite")
 	assert.Contains(err.Error(), "still rate limited")
@@ -327,7 +327,7 @@ func TestCallToolJSON_DoesNotRetryOtherServerErrors(t *testing.T) {
 		{isError: true, text: "meeting not found"},
 	}, &calls)
 
-	_, err := s.ReadMeetings(context.Background(), []string{"meeting-1"})
+	_, err := s.ReadMeetings(t.Context(), []string{"meeting-1"})
 	require.Error(err)
 	assert.Equal(1, calls)
 	assert.Contains(err.Error(), "meeting not found")
@@ -435,7 +435,7 @@ func TestGetTranscripts_OfficialArgumentsAndSchemas(t *testing.T) {
 		}]}`,
 	}, &calls)
 
-	transcripts, err := s.GetTranscripts(context.Background(), []string{"meeting-7"})
+	transcripts, err := s.GetTranscripts(t.Context(), []string{"meeting-7"})
 	require.NoError(err)
 	require.Len(calls, 1)
 	assert.Equal(toolGetTranscripts, calls[0].name)
@@ -465,7 +465,7 @@ func TestTranscript_AliasesAndBlankEntries(t *testing.T) {
 		}]}`,
 	}, &calls)
 
-	transcripts, err := s.GetTranscripts(context.Background(), []string{"alias-1"})
+	transcripts, err := s.GetTranscripts(t.Context(), []string{"alias-1"})
 	require.NoError(err)
 	tr := transcripts["alias-1"]
 	require.NotNil(tr)
@@ -488,7 +488,7 @@ func TestTranscript_RecognizedEmpty(t *testing.T) {
 		]}`,
 	}, &calls)
 
-	transcripts, err := s.GetTranscripts(context.Background(), []string{"empty-list", "blank-text"})
+	transcripts, err := s.GetTranscripts(t.Context(), []string{"empty-list", "blank-text"})
 	require.NoError(err)
 	requireTranscriptClassification(t, transcripts["empty-list"], TranscriptRecognizedEmpty)
 	requireTranscriptClassification(t, transcripts["blank-text"], TranscriptRecognizedEmpty)
@@ -508,7 +508,7 @@ func TestTranscript_PresentContentWinsOverUnsupportedEntries(t *testing.T) {
 		}]}`,
 	}, &calls)
 
-	transcripts, err := s.GetTranscripts(context.Background(), []string{"mixed-content"})
+	transcripts, err := s.GetTranscripts(t.Context(), []string{"mixed-content"})
 	require.NoError(err)
 	tr := transcripts["mixed-content"]
 	requireTranscriptClassification(t, tr, TranscriptPresent)
@@ -532,7 +532,7 @@ func TestTranscript_MixedAbsoluteAndNumericOffsets(t *testing.T) {
 		}]}`,
 	}, &calls)
 
-	transcripts, err := s.GetTranscripts(context.Background(), []string{"mixed-offsets"})
+	transcripts, err := s.GetTranscripts(t.Context(), []string{"mixed-offsets"})
 	require.NoError(err)
 	body := buildBody(&Meeting{Name: "Mixed offsets"}, transcripts["mixed-offsets"])
 	assert.Contains(body, "[00:00] Alice Example: Absolute time")
@@ -566,7 +566,7 @@ func TestTranscript_ContractErrors(t *testing.T) {
 			var calls []contractToolCall
 			s := newContractMCPSession(t, map[string]string{toolGetTranscripts: tc.payload}, &calls)
 
-			_, err := s.GetTranscripts(context.Background(), []string{"meeting-7"})
+			_, err := s.GetTranscripts(t.Context(), []string{"meeting-7"})
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "contract")
@@ -585,7 +585,7 @@ func TestGetTranscripts_KeysByMeetingID(t *testing.T) {
 			]}
 		]}`,
 	})
-	trs, err := s.GetTranscripts(context.Background(), []string{"7"})
+	trs, err := s.GetTranscripts(t.Context(), []string{"7"})
 	require.NoError(err)
 	tr, ok := trs["7"]
 	require.True(ok, "transcript keyed by meeting ID")
@@ -607,15 +607,15 @@ func TestCallToolJSON_ServerErrorSurfaces(t *testing.T) {
 		}, nil
 	})
 	ct, st := mcp.NewInMemoryTransports()
-	ss, err := server.Connect(context.Background(), st, nil)
+	ss, err := server.Connect(t.Context(), st, nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = ss.Wait() })
 	client := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil)
-	cs, err := client.Connect(context.Background(), ct, nil)
+	cs, err := client.Connect(t.Context(), ct, nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = cs.Close() })
 
-	_, err = NewSessionForTesting(cs).ReadMeetings(context.Background(), []string{"1"})
+	_, err = NewSessionForTesting(cs).ReadMeetings(t.Context(), []string{"1"})
 	require.Error(err)
 	require.Contains(err.Error(), "no such meeting")
 }

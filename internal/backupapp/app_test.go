@@ -1,7 +1,6 @@
 package backupapp_test
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
@@ -41,7 +40,7 @@ func seedDB(t *testing.T) string {
 			('aabb01', 'aa/aabb01', 'ccdd02', 'cc/ccdd02', 10),
 			('eeff03', 'imports/eeff03', NULL, NULL, 20)`,
 	} {
-		_, err := db.Exec(stmt)
+		_, err := db.ExecContext(t.Context(), stmt)
 		require.NoError(t, err, "seed: %s", stmt)
 	}
 	return dbPath
@@ -53,18 +52,18 @@ func TestFrozenViewContentInfoAndStats(t *testing.T) {
 
 	app := backupapp.New("test")
 	session, err := backup.OpenFrozenSession(
-		context.Background(), seedDB(t), backup.NoopFreezeCoordinator{})
+		t.Context(), seedDB(t), backup.NoopFreezeCoordinator{})
 	require.NoError(err)
 	defer func() { require.NoError(session.Close()) }()
 	view := app.FrozenView(session)
 
-	info, err := view.ContentInfo(context.Background())
+	info, err := view.ContentInfo(t.Context())
 	require.NoError(err)
 	assert.Len(info.Refs, 3) // 2 content hashes + 1 thumbnail
 	assert.Equal(int64(2), info.Rows)
 	assert.True(info.NonCanonicalPaths) // 'imports/eeff03'
 
-	raw, err := view.Stats(context.Background())
+	raw, err := view.Stats(t.Context())
 	require.NoError(err)
 	stats, err := backupapp.ParseStats(raw)
 	require.NoError(err)
@@ -114,13 +113,13 @@ func TestCheckManifest(t *testing.T) {
 func TestBackupRestorePreservesSavedViews(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "msgvault.db")
 	attachmentsDir := filepath.Join(dataDir, "attachments")
 	requirements.NoError(os.MkdirAll(attachmentsDir, 0o700))
 
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	requirements.NoError(err)
 	requirements.NoError(st.InitSchema())
 	archiveUID, err := st.ArchiveUID()
@@ -147,7 +146,7 @@ func TestBackupRestorePreservesSavedViews(t *testing.T) {
 		TargetDir: filepath.Join(t.TempDir(), "restored"),
 	})
 	requirements.NoError(err)
-	restored, err := store.OpenForTest(restoreResult.DBPath)
+	restored, err := store.OpenForTest(t.Context(), restoreResult.DBPath)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = restored.Close() })
 	restoredArchiveUID, err := restored.ArchiveUID()

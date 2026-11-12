@@ -6,7 +6,12 @@ import type { FileSearchRowContentState } from "./fileSearchRowContentState";
 
 export interface FileSearchRow {
   containing_title: string;
-  content_available: boolean;
+  /**
+   * Null means availability has not been checked.
+   * @nullable
+   */
+  content_available: boolean | null;
+  /** List availability is based on metadata; file details check whether storage can be opened. */
   content_state: FileSearchRowContentState;
   conversation_id: number;
   entry_key: string;
@@ -21,6 +26,7 @@ export interface FileSearchRow {
   participant_ids?: number[];
   participant_labels?: string[];
   search_explain?: FileSearchExplain;
+  sender_label?: string;
   size_bytes: number;
   source_id: number;
   source_identifier: string;

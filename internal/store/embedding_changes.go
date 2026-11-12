@@ -120,11 +120,11 @@ func (s *Store) EnableEmbeddingChangeJournal(ctx context.Context) error {
 		return nil
 	}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(ctx,
 			`SELECT pg_advisory_xact_lock(hashtextextended('msgvault.embedding_change_clock', 0))`); err != nil {
 			return fmt.Errorf("fence in-flight source transactions: %w", err)
 		}
-		if _, err := tx.Exec(enable); err != nil {
+		if _, err := tx.ExecContext(ctx, enable); err != nil {
 			return err
 		}
 		return nil

@@ -41,7 +41,7 @@ func TestEmbedJobMissingCountForwardsScope(t *testing.T) {
 		Store:      cov,
 		BuildScope: vector.NewBuildScope([]string{"SMS"}, []int64{7, 3}),
 	}
-	got, err := job.missingCount(context.Background(), 12)
+	got, err := job.missingCount(t.Context(), 12)
 	require.NoError(err)
 	assert.Equal(int64(5), got)
 	assert.Equal([]string{"sms"}, cov.messageTypes, "message types normalized")
@@ -56,13 +56,13 @@ func TestEmbedJobScopeChangeFailsClosedBeforeWorkerRuns(t *testing.T) {
 		Worker:     runner,
 		Backend:    &fakeBackend{},
 		BuildScope: vector.NewBuildScope(nil, []int64{7}),
-		ResolveBuildScope: func() (vector.BuildScope, error) {
+		ResolveBuildScope: func(context.Context) (vector.BuildScope, error) {
 			return vector.NewBuildScope(nil, []int64{9}), nil
 		},
 		OnScopeDrift: func(detail string) { driftDetail = detail },
 	}
 
-	_ = job.Run(context.Background())
+	_ = job.Run(t.Context())
 	assert.Equal(0, runner.runCalls, "changed source mapping must stop before embedding")
 	assert.Equal(0, runner.reclaimCalls, "changed source mapping must stop before any worker write")
 	assert.Contains(driftDetail, "src-9", "drift signal names the newly resolved scope")
@@ -80,13 +80,13 @@ func TestEmbedJobScopeErrorDoesNotSignalDrift(t *testing.T) {
 		Worker:     runner,
 		Backend:    &fakeBackend{},
 		BuildScope: vector.NewBuildScope(nil, []int64{7}),
-		ResolveBuildScope: func() (vector.BuildScope, error) {
+		ResolveBuildScope: func(context.Context) (vector.BuildScope, error) {
 			return vector.BuildScope{}, errors.New("database is locked")
 		},
 		OnScopeDrift: func(string) { drifts++ },
 	}
 
-	_ = job.Run(context.Background())
+	_ = job.Run(t.Context())
 	assert.Equal(0, runner.runCalls, "resolution failure must stop before embedding")
 	assert.Zero(drifts, "a transient resolution error is not scope drift")
 }
@@ -105,14 +105,14 @@ func TestEmbedJobUnresolvableScopeSignalsDrift(t *testing.T) {
 		Worker:     runner,
 		Backend:    &fakeBackend{},
 		BuildScope: vector.NewBuildScope(nil, []int64{7}),
-		ResolveBuildScope: func() (vector.BuildScope, error) {
+		ResolveBuildScope: func(context.Context) (vector.BuildScope, error) {
 			return vector.BuildScope{}, fmt.Errorf("%w: no account found for %q",
 				vector.ErrScopeUnresolvable, "gone@example.com")
 		},
 		OnScopeDrift: func(detail string) { driftDetail = detail },
 	}
 
-	_ = job.Run(context.Background())
+	_ = job.Run(t.Context())
 	assert.Equal(0, runner.runCalls, "unresolvable scope must stop before embedding")
 	assert.Contains(driftDetail, "gone@example.com", "the latch detail names the unresolvable account")
 	assert.Contains(driftDetail, "[vector.embed.scope]", "the latch detail names the recovery path")

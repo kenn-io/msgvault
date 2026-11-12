@@ -190,7 +190,7 @@ func (s *Syncer) incrementalWithRecovery(
 				return nil, err
 			}
 		}
-		if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+		if err := s.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
 			s.logger.Warn("failed to save replay checkpoint", "error", err)
 		}
 	}
@@ -230,7 +230,7 @@ func (s *Syncer) incrementalWithRecovery(
 			for id := range allIDs {
 				idList = append(idList, id)
 			}
-			existingMap, err := s.store.MessageExistsBatch(source.ID, idList)
+			existingMap, err := s.store.MessageExistsBatchContext(ctx, source.ID, idList)
 			if err != nil {
 				_ = s.store.FailSync(syncID, err.Error())
 				return nil, fmt.Errorf("check existing messages: %w", err)
@@ -311,7 +311,9 @@ func (s *Syncer) incrementalWithRecovery(
 								return nil, recErr
 							}
 							checkpoint.ErrorsCount++
-							continue
+							if _, committed := errors.AsType[*committedMessageError](err); !committed {
+								continue
+							}
 						}
 						checkpoint.MessagesAdded++
 						summary.BytesDownloaded += int64(len(raw.Raw))
@@ -326,12 +328,14 @@ func (s *Syncer) incrementalWithRecovery(
 
 			// Batch-mark deleted messages
 			if len(deletedIDs) > 0 {
-				if err := s.store.MarkMessagesDeletedBatch(source.ID, deletedIDs); err != nil {
+				if err := s.store.MarkMessagesDeletedBatch(ctx, source.ID, deletedIDs); err != nil {
 					s.logger.Warn("failed to batch mark messages deleted", "error", err)
 					for _, id := range deletedIDs {
 						s.recordSyncItem(syncID, id, syncItemPhaseDelete, store.SyncRunItemStatusError, syncItemKindDeleteError, err)
 					}
 					checkpoint.ErrorsCount += int64(len(deletedIDs))
+					s.failStoppedSync(syncID, err)
+					return nil, fmt.Errorf("save deleted-message state: %w", err)
 				}
 			}
 
@@ -378,9 +382,9 @@ func (s *Syncer) incrementalWithRecovery(
 		s.drainIdentityDiscoveryBacklog(ctx, source.ID)
 	}
 
-	// Advance past item errors, including during recovery catch-up, so one
-	// permanently failing message cannot block the source. Failed fetches carry
-	// forward to the next incremental run.
+	// Acquisition errors with durable retry debt may advance, including during
+	// recovery catch-up. Label and deletion persistence failures return above
+	// to retain History for the next attempt.
 	historyIDStr := strconv.FormatUint(profile.HistoryID, 10)
 	if checkpoint.ErrorsCount > 0 {
 		s.logger.Warn("incremental sync completed with errors",
@@ -433,8 +437,14 @@ func (s *Syncer) replayAcquisitionFailures(
 		if _, ok := existing[messageID]; !ok {
 			fetchIDs = append(fetchIDs, messageID)
 		} else {
-			if err := s.resolveAcquisition(messageID); err != nil {
-				return nil, err
+			if err := s.repairPendingAttachments(ctx, sourceID, messageID); err != nil {
+				if ctx.Err() != nil || errors.Is(err, store.ErrSyncRunSuperseded) {
+					return nil, err
+				}
+				if recErr := s.recordAcquisitionFailure(syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
+					return nil, recErr
+				}
+				checkpoint.ErrorsCount++
 			}
 		}
 	}
@@ -499,13 +509,15 @@ func (s *Syncer) replayAcquisitionFailures(
 					return nil, recErr
 				}
 				checkpoint.ErrorsCount++
-				continue
+				if _, committed := errors.AsType[*committedMessageError](err); !committed {
+					continue
+				}
 			}
 			checkpoint.MessagesAdded++
 			summary.BytesDownloaded += int64(len(result.Message.Raw))
 			successfulIDs = append(successfulIDs, messageID)
 		}
-		if err := s.store.UpdateSyncCheckpoint(syncID, checkpoint); err != nil {
+		if err := s.store.UpdateSyncCheckpointContext(ctx, syncID, checkpoint); err != nil {
 			return nil, fmt.Errorf("checkpoint replay batch: %w", err)
 		}
 	}
@@ -516,6 +528,8 @@ func (s *Syncer) replayAcquisitionFailures(
 // processLabelChanges handles label additions and removals for messages.
 // existingMap maps source_message_id -> internal message_id for known messages.
 // Acquisition failures may continue only if their retry debt was persisted.
+// Existing-message mutations have no acquisition replay, so their failures
+// must retain History for the next attempt.
 func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, newMsgThreads map[string]string, updatedExisting, identityDiscoverySet map[string]struct{}, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) error {
 	for _, item := range record.LabelsAdded {
 		if _, exists := existingMap[item.Message.ID]; !exists {
@@ -523,16 +537,17 @@ func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64
 				continue
 			}
 		}
+		_, existedBeforeChange := existingMap[item.Message.ID]
 		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap, checkpoint, summary)
+		if discoverable {
+			identityDiscoverySet[item.Message.ID] = struct{}{}
+		}
 		if err != nil {
-			if errors.Is(err, errAcquisitionFailureRecord) {
-				return err
+			if existedBeforeChange || errors.Is(err, errAcquisitionFailureRecord) {
+				return fmt.Errorf("add labels for message %s: %w", item.Message.ID, err)
 			}
 			s.logLabelChangeError("add", item.Message.ID, err)
 			continue
-		}
-		if discoverable {
-			identityDiscoverySet[item.Message.ID] = struct{}{}
 		}
 		if updated {
 			updatedExisting[item.Message.ID] = struct{}{}
@@ -541,8 +556,7 @@ func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64
 	for _, item := range record.LabelsRemoved {
 		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, false, existingMap, checkpoint, summary)
 		if err != nil {
-			s.logLabelChangeError("remove", item.Message.ID, err)
-			continue
+			return fmt.Errorf("remove labels for message %s: %w", item.Message.ID, err)
 		}
 		if discoverable {
 			identityDiscoverySet[item.Message.ID] = struct{}{}
@@ -579,10 +593,19 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 			if _, err := s.ingestMessage(
 				ctx, sourceID, raw, threadID, labelMap,
 			); err != nil {
+				committed, saved := errors.AsType[*committedMessageError](err)
+				if saved {
+					existingMap[messageID] = committed.messageID
+				}
 				if recErr := s.recordAcquisitionFailure(syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
 					return false, false, recErr
 				}
 				checkpoint.ErrorsCount++
+				if saved {
+					checkpoint.MessagesAdded++
+					summary.BytesDownloaded += int64(len(raw.Raw))
+					return false, true, err
+				}
 				return false, false, err
 			}
 			// Later label events in this sync must take the existing-message
@@ -618,12 +641,12 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 
 	// Apply label diff directly — no API call needed
 	if isAdd {
-		if err := s.store.AddMessageLabels(internalID, labelIDs); err != nil {
+		if err := s.store.AddMessageLabels(ctx, internalID, labelIDs); err != nil {
 			return false, false, err
 		}
 		return true, true, nil
 	}
-	if err := s.store.RemoveMessageLabels(internalID, labelIDs); err != nil {
+	if err := s.store.RemoveMessageLabels(ctx, internalID, labelIDs); err != nil {
 		return false, false, err
 	}
 	return true, true, nil

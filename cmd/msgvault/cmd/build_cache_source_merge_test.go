@@ -32,7 +32,7 @@ func TestBuildCacheMergedHistoryDeletionEligibility(t *testing.T) {
 			require.NoError(err)
 			var ids []int64
 			for _, source := range []*store.Source{history, live} {
-				conversation, err := st.EnsureConversation(source.ID, "thread", "Synthetic message")
+				conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Synthetic message")
 				require.NoError(err)
 				id, err := st.UpsertMessage(&store.Message{
 					SourceID: source.ID, ConversationID: conversation, SourceMessageID: "provider-message",
@@ -42,7 +42,7 @@ func TestBuildCacheMergedHistoryDeletionEligibility(t *testing.T) {
 				require.NoError(err)
 				ids = append(ids, id)
 			}
-			_, err = buildCache(dbPath, analytics, false)
+			_, err = buildCache(t.Context(), dbPath, analytics, false)
 			require.NoError(err)
 			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
 				FromSourceID: history.ID, IntoSourceID: live.ID,
@@ -51,7 +51,7 @@ func TestBuildCacheMergedHistoryDeletionEligibility(t *testing.T) {
 			staleness := cacheNeedsBuildContext(t.Context(), dbPath, analytics)
 			assert.True(staleness.NeedsBuild)
 			assert.True(staleness.FullRebuild)
-			_, err = buildCacheAuto(dbPath, analytics)
+			_, err = buildCacheAuto(t.Context(), dbPath, analytics)
 			require.NoError(err)
 
 			for _, attached := range []bool{true, false} {
@@ -59,7 +59,7 @@ func TestBuildCacheMergedHistoryDeletionEligibility(t *testing.T) {
 				if attached {
 					db = st.DB()
 				}
-				engine, err := query.NewDuckDBEngine(analytics, "", db)
+				engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", db)
 				require.NoError(err)
 				t.Cleanup(func() { require.NoError(engine.Close()) })
 				stats, err := engine.ExploreSelectionStats(t.Context(), query.ExploreSelectionRequest{

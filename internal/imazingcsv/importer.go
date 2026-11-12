@@ -138,7 +138,7 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 		}
 	}()
 
-	if err := importer.checkAndStoreTimezone(source.ID); err != nil {
+	if err := importer.checkAndStoreTimezone(ctx, source.ID); err != nil {
 		return Summary{}, err
 	}
 	rows, err := ParseFiles(ctx, layout, importer.opts.Timezone)
@@ -159,8 +159,11 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 		ctx, syncStore, source.ID, plans, existingMessages,
 		retainedConversations,
 	)
+	// Committed messages need current conversation statistics even when a
+	// cancel stopped persistence or arrives before the recompute.
+	statsCtx := context.WithoutCancel(ctx)
 	if err != nil {
-		if statsErr := syncStore.RecomputeConversationStats(source.ID); statsErr != nil {
+		if statsErr := syncStore.RecomputeConversationStatsContext(statsCtx, source.ID); statsErr != nil {
 			return Summary{}, errors.Join(err,
 				fmt.Errorf("recompute iMazing CSV conversation statistics after partial persistence: %w", statsErr))
 		}
@@ -170,7 +173,7 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 	// messages even when a later stage of the run fails, so recompute them
 	// immediately after persistence and before reply, attachment, and
 	// contact processing.
-	if err := syncStore.RecomputeConversationStats(source.ID); err != nil {
+	if err := syncStore.RecomputeConversationStatsContext(statsCtx, source.ID); err != nil {
 		return Summary{}, fmt.Errorf("recompute iMazing CSV conversation statistics: %w", err)
 	}
 	repliesLinked, repliesUnresolved, err := resolveReplies(
@@ -188,7 +191,7 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 	}
 	contactsMatched, contactsTotal := 0, 0
 	if importer.opts.ContactsPath != "" {
-		contactsMatched, contactsTotal, err = importContacts(importer.store, importer.opts.ContactsPath)
+		contactsMatched, contactsTotal, err = importContacts(ctx, importer.store, importer.opts.ContactsPath)
 		if err != nil {
 			return Summary{}, err
 		}
@@ -221,8 +224,8 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 	}, nil
 }
 
-func (importer *Importer) checkAndStoreTimezone(sourceID int64) error {
-	source, err := importer.store.GetSourceByID(sourceID)
+func (importer *Importer) checkAndStoreTimezone(ctx context.Context, sourceID int64) error {
+	source, err := importer.store.GetSourceByIDContext(ctx, sourceID)
 	if err != nil {
 		return fmt.Errorf("reload iMazing CSV source: %w", err)
 	}
@@ -244,7 +247,7 @@ func (importer *Importer) checkAndStoreTimezone(sourceID int64) error {
 	if err != nil {
 		return fmt.Errorf("encode iMazing CSV source timezone: %w", err)
 	}
-	if err := importer.store.UpdateSourceSyncConfig(sourceID, string(encoded)); err != nil {
+	if err := importer.store.UpdateSourceSyncConfig(ctx, sourceID, string(encoded)); err != nil {
 		return fmt.Errorf("store iMazing CSV source timezone: %w", err)
 	}
 	return nil
@@ -308,7 +311,7 @@ func planMessages(ctx context.Context, st *store.Store, owner participantIdentit
 				return nil, nil, 0, err
 			}
 			identity := chat.participants[participantKey]
-			id, err := ensureIdentity(st, identity)
+			id, err := ensureIdentity(ctx, st, identity)
 			if err != nil {
 				return nil, nil, 0, fmt.Errorf("ensure iMazing CSV participant %q: %w", identity.Value, err)
 			}
@@ -407,7 +410,7 @@ func assignMessageIDs(
 	// for the same base. Probing for those IDs per duplicate group would cost
 	// one extra query per message on archives where almost every message is a
 	// group of one.
-	existing, err := st.SourceMessageMetadata(sourceID)
+	existing, err := st.SourceMessageMetadata(ctx, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("load existing iMazing CSV messages: %w", err)
 	}

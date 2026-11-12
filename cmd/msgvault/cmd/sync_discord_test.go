@@ -157,7 +157,7 @@ func TestSyncDiscordResolvesUnambiguousDisplayNameAndForwardsBounds(t *testing.T
 	source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
 	require.NoError(err)
 	require.NoError(st.UpdateSourceDisplayName(source.ID, "Alpha Guild"))
-	require.NoError(st.UpdateSourceOAuthApp(source.ID, sql.NullString{}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), source.ID, sql.NullString{}))
 	runID, err := st.StartSync(source.ID, "discord")
 	require.NoError(err)
 	require.NoError(st.CompleteSync(runID, "not-json"), "--full must ignore malformed stored state")
@@ -177,7 +177,7 @@ func TestSyncDiscordResolvesUnambiguousDisplayNameAndForwardsBounds(t *testing.T
 	assert.Contains(output.String(), "Alpha Guild")
 	assert.NotContains(output.String(), testDiscordBotToken)
 	var messageCount int
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&messageCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&messageCount))
 	assert.Zero(messageCount, "--after must exclude earlier Discord messages")
 }
 
@@ -242,7 +242,7 @@ func TestSyncDiscordRebuildsCacheAfterPartialDurableImportFailure(t *testing.T) 
 	source, err := st.GetOrCreateSource("discord", testDiscordGuildA)
 	require.NoError(err)
 	require.NoError(st.UpdateSourceDisplayName(source.ID, "Alpha Guild"))
-	require.NoError(st.UpdateSourceOAuthApp(source.ID, sql.NullString{}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), source.ID, sql.NullString{}))
 	installFailingDiscordParticipantTrigger(t, st)
 	api := newDiscordCLIServer(t)
 	api.messages[testDiscordChannel] = []discord.Message{{
@@ -263,7 +263,8 @@ func TestSyncDiscordRebuildsCacheAfterPartialDurableImportFailure(t *testing.T) 
 	err = cmd.Execute()
 	require.ErrorContains(err, "synthetic participant persistence failure")
 	var messageCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID,
 	).Scan(&messageCount))
 	assert.Equal(1, messageCount, "core message persistence must precede the injected failure")
@@ -339,7 +340,7 @@ func installFailingDiscordParticipantTrigger(t *testing.T, st *store.Store) {
 	t.Helper()
 	var err error
 	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`
+		_, err = st.DB().ExecContext(t.Context(), `
 			CREATE OR REPLACE FUNCTION fail_discord_conversation_participant()
 			RETURNS trigger AS $$
 			BEGIN
@@ -354,7 +355,7 @@ func installFailingDiscordParticipantTrigger(t *testing.T, st *store.Store) {
 			EXECUTE FUNCTION fail_discord_conversation_participant();
 		`)
 	} else {
-		_, err = st.DB().Exec(`
+		_, err = st.DB().ExecContext(t.Context(), `
 			CREATE TRIGGER fail_discord_conversation_participant
 			BEFORE INSERT ON conversation_participants
 			BEGIN

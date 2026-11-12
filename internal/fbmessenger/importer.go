@@ -200,14 +200,14 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 
 	// Pre-create label taxonomy.
 	labelIDs := make(map[string]int64)
-	parentLabelID, err := st.EnsureLabel(source.ID, "messenger", "Messenger", "folder")
+	parentLabelID, err := st.EnsureLabel(ctx, source.ID, "messenger", "Messenger", "folder")
 	if err != nil {
 		syncErr = err
 		return nil, fmt.Errorf("fbmessenger: ensure parent label: %w", err)
 	}
 	labelIDs["Messenger"] = parentLabelID
 	for _, pair := range sectionLabelNames() {
-		lid, err := st.EnsureLabel(source.ID, pair.id, pair.name, "folder")
+		lid, err := st.EnsureLabel(ctx, source.ID, pair.id, pair.name, "folder")
 		if err != nil {
 			syncErr = err
 			return nil, fmt.Errorf("fbmessenger: ensure label %s: %w", pair.name, err)
@@ -217,7 +217,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 
 	// Seed the self participant so even an empty import leaves a trace.
 	meAddr := mime.Address{Name: "", Email: opts.Me, Domain: Domain}
-	if _, err := st.EnsureParticipantsBatch([]mime.Address{meAddr}); err != nil {
+	if _, err := st.EnsureParticipantsBatch(ctx, []mime.Address{meAddr}); err != nil {
 		syncErr = err
 		return nil, fmt.Errorf("fbmessenger: seed self participant: %w", err)
 	}
@@ -239,6 +239,15 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		startThreadIdx = 0
 		summary.WasResumed = false
 	}
+
+	// Threads written before a failure or cancel stay committed, so refresh
+	// their conversation statistics on every return from here, even when the
+	// import is stopping. This runs before the sync run is finalized.
+	defer func() {
+		if err := st.RecomputeConversationStatsContext(context.WithoutCancel(ctx), source.ID); err != nil {
+			logger.Warn("fbmessenger: recompute stats", "err", err)
+		}
+	}()
 
 	for threadIdx, td := range threads {
 		if threadIdx < startThreadIdx {
@@ -306,9 +315,6 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		}
 	}
 
-	if err := st.RecomputeConversationStats(source.ID); err != nil {
-		logger.Warn("fbmessenger: recompute stats", "err", err)
-	}
 	summary.Duration = time.Since(start)
 	return summary, nil
 }
@@ -461,7 +467,7 @@ func writeThreadToStore(
 	// the same basename in different sections (e.g. inbox vs archived)
 	// don't collide.
 	threadKey := td.Section + "/" + td.Name
-	convID, err := st.EnsureConversationWithType(sourceID, threadKey, thread.ConvType, thread.Title)
+	convID, err := st.EnsureConversationWithTypeContext(ctx, sourceID, threadKey, thread.ConvType, thread.Title)
 	if err != nil {
 		return fmt.Errorf("ensure conversation: %w", err)
 	}
@@ -472,7 +478,7 @@ func writeThreadToStore(
 	for _, p := range thread.Participants {
 		addrs = append(addrs, Address(p.Name))
 	}
-	partIDs, err := st.EnsureParticipantsBatch(addrs)
+	partIDs, err := st.EnsureParticipantsBatch(ctx, addrs)
 	if err != nil {
 		return fmt.Errorf("ensure participants: %w", err)
 	}
@@ -488,9 +494,9 @@ func writeThreadToStore(
 	}
 	meID := partIDs[opts.Me]
 	// Ensure all participants (incl. self) are linked to the conversation.
-	_ = st.EnsureConversationParticipant(convID, meID, "member")
+	_ = st.EnsureConversationParticipantContext(ctx, convID, meID, "member")
 	for _, pid := range nameToID {
-		_ = st.EnsureConversationParticipant(convID, pid, "member")
+		_ = st.EnsureConversationParticipantContext(ctx, convID, pid, "member")
 	}
 
 	// Determine label IDs for this thread.
@@ -521,13 +527,13 @@ func writeThreadToStore(
 				// Participant not in the thread's participants list;
 				// synthesize.
 				addr := Address(senderName)
-				m2, err := st.EnsureParticipantsBatch([]mime.Address{addr})
+				m2, err := st.EnsureParticipantsBatch(ctx, []mime.Address{addr})
 				if err == nil {
 					if id, ok := m2[addr.Email]; ok {
 						senderID = sql.NullInt64{Int64: id, Valid: true}
 						nameToID[senderName] = id
 						nameToEmail[senderName] = addr.Email
-						_ = st.EnsureConversationParticipant(convID, id, "member")
+						_ = st.EnsureConversationParticipantContext(ctx, convID, id, "member")
 					}
 				}
 			}
@@ -560,7 +566,8 @@ func writeThreadToStore(
 			// seeded self (--me) participant is created with an empty
 			// display_name; falling back to what we wrote on the prior
 			// import preserves the sender label for self-authored rows.
-			err := st.DB().QueryRow(
+			err := st.DB().QueryRowContext(
+				ctx,
 				st.Rebind(`SELECT m.sender_id, m.is_from_me,
 					COALESCE(NULLIF(p.display_name, ''),
 						(SELECT mr.display_name FROM message_recipients mr
@@ -591,7 +598,7 @@ func writeThreadToStore(
 				// messages.sender_id but no matching
 				// conversation_participants row; this repairs
 				// them on re-import.
-				_ = st.EnsureConversationParticipant(convID, priorID.Int64, "member")
+				_ = st.EnsureConversationParticipantContext(ctx, convID, priorID.Int64, "member")
 			}
 		}
 
@@ -610,7 +617,7 @@ func writeThreadToStore(
 			HasAttachments:  len(m.Attachments) > 0,
 			AttachmentCount: len(m.Attachments),
 		}
-		messageID, err := st.UpsertMessage(msgRow)
+		messageID, err := st.UpsertMessageContext(ctx, msgRow)
 		if err != nil {
 			summary.Errors++
 			summary.MessagesSkipped++
@@ -621,14 +628,14 @@ func writeThreadToStore(
 
 		// Body.
 		bodyText := sql.NullString{String: m.Body, Valid: m.Body != ""}
-		if err := st.UpsertMessageBody(messageID, bodyText, sql.NullString{}); err != nil {
+		if err := st.UpsertMessageBodyContext(ctx, messageID, bodyText, sql.NullString{}); err != nil {
 			summary.Errors++
 			logger.Warn("fbmessenger: upsert body", "err", err)
 		}
 
 		// Raw bytes — store once per thread (first message only) to avoid bloat.
 		if mi == 0 && len(thread.RawBytes) > 0 {
-			if err := st.UpsertMessageRawWithFormat(messageID, thread.RawBytes, rawFormat); err != nil {
+			if err := st.UpsertMessageRawWithFormatContext(ctx, messageID, thread.RawBytes, rawFormat); err != nil {
 				logger.Warn("fbmessenger: upsert raw", "err", err)
 			}
 		}
@@ -640,7 +647,7 @@ func writeThreadToStore(
 		if senderID.Valid {
 			fromIDs := []int64{senderID.Int64}
 			fromNames := []string{senderName}
-			if err := st.ReplaceMessageRecipients(messageID, "from", fromIDs, fromNames); err != nil {
+			if err := st.ReplaceMessageRecipientsContext(ctx, messageID, "from", fromIDs, fromNames); err != nil {
 				logger.Warn("fbmessenger: replace from recipients", "err", err)
 			}
 		}
@@ -671,21 +678,21 @@ func writeThreadToStore(
 			toNames = append(toNames, "")
 			seenPID[meID] = true
 		}
-		_ = st.ReplaceMessageRecipients(messageID, "to", toIDs, toNames)
+		_ = st.ReplaceMessageRecipientsContext(ctx, messageID, "to", toIDs, toNames)
 
 		// Labels.
 		if parentLabelID != 0 {
-			_ = st.LinkMessageLabel(messageID, parentLabelID)
+			_ = st.LinkMessageLabel(ctx, messageID, parentLabelID)
 		}
 		if sectionLabelID != 0 {
-			_ = st.LinkMessageLabel(messageID, sectionLabelID)
+			_ = st.LinkMessageLabel(ctx, messageID, sectionLabelID)
 		}
 
 		// Attachments.
 		for ai := range m.Attachments {
 			att := m.Attachments[ai]
 			summary.AttachmentsFound++
-			storagePath, contentHash, size := handleAttachment(att, opts.AttachmentsDir)
+			storagePath, contentHash, size := handleAttachment(ctx, att, opts.AttachmentsDir)
 			if storagePath != "" {
 				summary.AttachmentsStored++
 			}
@@ -697,7 +704,7 @@ func writeThreadToStore(
 				existingContentHash = hashAttachmentSource(att)
 			}
 			if !storedContent && existingContentHash != "" {
-				stored, err := hasStoredAttachment(st, messageID, existingContentHash)
+				stored, err := hasStoredAttachment(ctx, st, messageID, existingContentHash)
 				if err != nil {
 					logger.Warn("fbmessenger: check stored attachment", "err", err)
 				} else if stored {
@@ -749,7 +756,7 @@ func writeThreadToStore(
 		// Reactions: first-class rows and body-append already done.
 		for _, r := range m.Reactions {
 			actorAddr := Address(r.Actor)
-			m2, err := st.EnsureParticipantsBatch([]mime.Address{actorAddr})
+			m2, err := st.EnsureParticipantsBatch(ctx, []mime.Address{actorAddr})
 			if err != nil {
 				continue
 			}
@@ -757,7 +764,7 @@ func writeThreadToStore(
 			if pid == 0 {
 				continue
 			}
-			if err := st.UpsertReaction(messageID, pid, "emoji", r.Reaction, m.SentAt); err == nil {
+			if err := st.UpsertReaction(ctx, messageID, pid, "emoji", r.Reaction, m.SentAt); err == nil {
 				summary.ReactionsAdded++
 			}
 		}
@@ -771,7 +778,7 @@ func writeThreadToStore(
 			}
 		}
 		toAddr := strings.Join(nameToEmailsList(nameToEmail, opts.Me, senderName), " ")
-		if err := st.UpsertFTS(messageID, thread.Title, m.Body, fromAddr, toAddr, ""); err != nil {
+		if err := st.UpsertFTSContext(ctx, messageID, thread.Title, m.Body, fromAddr, toAddr, ""); err != nil {
 			logger.Warn("fbmessenger: upsert fts", "err", err)
 		}
 
@@ -784,7 +791,9 @@ func writeThreadToStore(
 			_ = saveFbmessengerCheckpoint(st, syncID, absRoot, threadIdx, m.Index, cp, summary)
 		}
 	}
-	return nil
+	// The writes above log and skip failures, so a cancellation may have
+	// skipped one; report it so ImportDYI does not checkpoint past this thread.
+	return ctx.Err()
 }
 
 // saveFbmessengerCheckpoint marshals a fbmessengerCheckpoint JSON blob
@@ -837,11 +846,11 @@ func buildSnippet(body string) string {
 // rejected: a malicious DYI export could plant a symlink pointing at a
 // sensitive local file (e.g. ~/.ssh/id_rsa) and we would otherwise copy
 // the target into the attachment store.
-func handleAttachment(att Attachment, attachmentsDir string) (string, string, int) {
+func handleAttachment(ctx context.Context, att Attachment, attachmentsDir string) (string, string, int) {
 	if attachmentsDir == "" || att.AbsPath == "" {
 		return "", "", 0
 	}
-	rel, contentHash, size, err := export.StoreAttachmentFromPath(attachmentsDir, att.AbsPath, 0)
+	rel, contentHash, size, err := export.StoreAttachmentFromPath(ctx, attachmentsDir, att.AbsPath, 0)
 	if err != nil {
 		// contentHash is set when hashing succeeded but storage failed —
 		// preserved so the caller's failed-store bookkeeping still works.
@@ -898,9 +907,9 @@ func deleteFailedStoredAttachmentByMetadata(
 	return st.DeleteUnstoredAttachmentByMetadataContext(ctx, messageID, filename, mimeType)
 }
 
-func hasStoredAttachment(st *store.Store, messageID int64, contentHash string) (bool, error) {
+func hasStoredAttachment(ctx context.Context, st *store.Store, messageID int64, contentHash string) (bool, error) {
 	var stored bool
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(ctx, st.Rebind(`
 		SELECT EXISTS (
 			SELECT 1
 			FROM attachments

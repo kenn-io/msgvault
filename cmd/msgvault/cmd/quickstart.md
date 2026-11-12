@@ -143,7 +143,7 @@ msgvault search "quarterly report" --limit 100 --offset 50
 
 | Operator      | Description                          | Example                    |
 |---------------|--------------------------------------|----------------------------|
-| `from:`       | Sender email address                 | `from:bob@example.com`     |
+| `from:`       | Sender name, address, or domain       | `from:bob@example.com`     |
 | `to:`         | Recipient email address              | `to:team@company.com`      |
 | `cc:`         | CC recipient                         | `cc:manager@company.com`   |
 | `bcc:`        | BCC recipient                        | `bcc:hr@company.com`       |
@@ -377,8 +377,10 @@ msgvault --agent-url https://archive.example.test --agent-token-file ./reader.to
 msgvault --agent-url https://archive.example.test --agent-token-file ./reader.token show-message 42 --json
 ```
 
-Add `stats.read` for source statistics and `attachment.read` for attachment
-bytes. `mcp` accepts the same agent flags for scoped reads over stdio, alongside
+Add `stats.read` for source statistics, `attachment.read` for attachment
+bytes, and `verification.read` to allow detected verification content. The
+`verification.read` modifier grants no reads alone. `mcp` accepts the same
+agent flags for scoped reads over stdio, alongside
 delegated draft and calendar tools. Explicit account,
 collection, and multi-source scopes must fit entirely inside the grant. Read
 grants do not authorize sync, deletion, SQL, export, or administration. See the

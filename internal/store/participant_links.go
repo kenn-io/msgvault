@@ -1178,8 +1178,8 @@ func clustersFromEdges(edges []linkEdge) map[int64]int64 {
 // ParticipantClusters returns participant_id → canonical cluster ID
 // (the smallest member ID) for every participant that appears in a link
 // edge. Unlinked participants are their own cluster and are not returned.
-func (s *Store) ParticipantClusters() (map[int64]int64, error) {
-	edges, err := s.loadLinkEdges()
+func (s *Store) ParticipantClusters(ctx context.Context) (map[int64]int64, error) {
+	edges, err := s.loadLinkEdgesContext(ctx)
 	if err != nil {
 		return nil, err
 	}

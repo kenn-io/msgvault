@@ -34,12 +34,12 @@ func profileDomainPopulation(t *testing.T, engine *DuckDBEngine, request Explore
 func profileQuery(t *testing.T, engine *DuckDBEngine, query func() error) (domainPopulationProfile, error) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "listing.json")
-	_, err := engine.db.Exec("SET enable_profiling = 'json'")
+	_, err := engine.db.ExecContext(t.Context(), "SET enable_profiling = 'json'")
 	require.NoError(t, err)
-	_, err = engine.db.Exec("SET profiling_output = '" + escapePath(path) + "'")
+	_, err = engine.db.ExecContext(t.Context(), "SET profiling_output = '"+escapePath(path)+"'")
 	require.NoError(t, err)
 	queryErr := query()
-	_, err = engine.db.Exec("PRAGMA disable_profiling")
+	_, err = engine.db.ExecContext(t.Context(), "PRAGMA disable_profiling")
 	require.NoError(t, err)
 	if queryErr != nil {
 		return domainPopulationProfile{}, queryErr

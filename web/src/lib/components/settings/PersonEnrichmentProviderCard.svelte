@@ -1,6 +1,6 @@
 <script lang="ts">
   import { putSettingsPersonEnrichmentProvider as generatedPutSettingsPersonEnrichmentProvider } from '../../api/generated/api/api';
-  import { Button, Chip, NumberInput, Toggle } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, Chip, NumberInput, Toggle } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -9,6 +9,7 @@
     SettingsResponse as SettingsDocument,
   } from '../../api/generated/models';
   import { providerUpdate } from '../../settings/catalog';
+  import { trackUnsavedForm } from '../../settings/unsaved-forms.svelte';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
   let {
     client,
@@ -34,6 +35,13 @@
   let dirty = $state(false);
   let saving = $state(false);
   let error = $state('');
+  trackUnsavedForm({
+    dirty: () => dirty,
+    discard: () => {
+      draft = cloneProvider(provider);
+      dirty = false;
+    },
+  });
   const endpointDirty = $derived(
     draft.endpoint !== provider.endpoint || draft.poll_endpoint !== provider.poll_endpoint,
   );
@@ -136,8 +144,7 @@
       onConflict={onCredentialConflict}
     />
   </div>
-  <details class="advanced">
-    <summary>Advanced</summary>
+  <Disclosure variant="plain" class="advanced">{#snippet summary()}Advanced{/snippet}
     <div class="provider-grid">
       <label class="wide">
         Endpoint
@@ -279,7 +286,7 @@
         />
       </div>
     </div>
-  </details>
+  </Disclosure>
   {#if error}<p class="provider-error" role="alert">{error}</p>{/if}
   <footer>
     <Button
@@ -329,7 +336,7 @@
     color: var(--status-error-ink);
     font-size: var(--font-size-sm);
   }
-  .advanced summary {
+  .provider-card :global(.advanced .kit-disclosure__summary) {
     color: var(--text-secondary);
     font-size: var(--font-size-sm);
     cursor: pointer;

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-02"
+last_edited: "2026-11-04"
 title: Matrix
 description: Archive Matrix room history with keys from your account's backup.
 ---
@@ -51,8 +51,8 @@ msgvault sync-matrix
 # Re-read complete history to pick up anything missed.
 msgvault sync-matrix --full
 
-# Sync one registered Matrix user.
-msgvault sync-matrix --account @archive:example.org
+# Sync one registered Matrix user and defer media bytes.
+msgvault sync-matrix --account @archive:example.org --no-media
 ```
 
 The first run takes a Matrix `/sync` snapshot, then walks backward through each
@@ -77,6 +77,8 @@ mark the account online, and `unavailable` would mark it idle.
 
 - Text, notice, and emote events, with HTML formatted bodies converted to
   searchable plain text.
+- Images, stickers, video, audio, and files under the shared chat
+  [media policy](../configuration.md#media-policy).
 - Edits from the original sender, redactions, reactions, and reply
   relationships.
 - Current joined-room membership as conversation participants. The account's
@@ -96,17 +98,45 @@ Recovery runs after joined-room history finishes. The pending count includes all
 Matrix messages use per-message semantic indexing. Once imported, their text is
 available to keyword, semantic, and people workflows enabled for the archive.
 
+## Media behavior and limits
+
+After upgrading, each sync scans up to 10,000 previously archived message rows without media markers, including text-only messages, and saves its progress. Later syncs resume the scan until it completes for the account and configured room scope. Temporary lookup failures and unavailable decryption keys get another scan pass. Invalid or permanently unavailable edits are skipped for that pass. Changing `rooms` or `exclude_rooms` restarts discovery. `sync-matrix --full` restarts discovery and re-fetches complete joined-room history.
+
+By default, eligible media is downloaded for direct chats and groups with at most 20 participants, with a 250 MiB per-file cap. `--no-media` records eligible media as pending without downloading bytes. Pending and failed media excluded by current policy becomes skipped, including during `--no-media` runs and retry backoff. The summary separates media downloaded this sync from outstanding pending and failed media for the selected account and rooms. Each media item is attempted once per run; content-addressed storage avoids duplicate files.
+
+Downloads buffer one file in memory up to the configured per-file cap, 250 MiB by default. Set `max_media_mb` to fit the daemon's available memory.
+
+### Retry timing
+
+- Temporary failures such as 408, 425, 429, 5xx, timeouts and connection errors stay pending. Normal syncs retry after 1, 2, 4, 8, 16, then 24 hours. Later failures keep the 24-hour wait.
+- File access denied, missing files, hash mismatches and decryption errors stay failed. Normal syncs retry after one week. An edit that changes the media URL or encryption details starts a fresh attempt.
+- `--full` bypasses both waits. An invalid or expired account token stops the sync.
+
+Media downloads use the authenticated endpoint added in [Matrix 1.11](https://matrix.org/docs/spec-guides/authed-media-servers/). Older homeservers without that endpoint return `M_UNRECOGNIZED`. Sync prints one warning and continues archiving messages. Media downloads stop for the rest of that run, and eligible items stay pending.
+
+A homeserver may redirect a media download, for example to object storage. msgvault follows redirects only to HTTPS URLs and never sends the access token with them. A refused redirect, or a redirect target that answers 401, marks only that item failed. Other Matrix requests do not follow redirects.
+
+Three consecutive transient download failures also stop media downloads for the rest of the run. Remaining items stay pending for a later sync.
+
+msgvault retains archived message data after source redaction or deletion. Later media discovery can still fetch a saved URL when current policy allows it and the homeserver retains the file.
+
+Redacting an edit restores the earlier event's media under the current policy. If that media was already attempted in the same run, the restored attachment stays pending until a later sync. Otherwise, sync downloads it immediately. `--no-media` leaves eligible media pending for a later sync. Restoration requires the homeserver to still have the media.
+
+Encrypted Matrix attachments are decrypted locally after download. Temporary download failures leave pending metadata. Permanent download or decryption failures leave a typed failure marker. The message and raw event remain archived. Changing policy affects future downloads. Use
+`msgvault purge-excluded-media` to remove stored bytes that a new policy would
+exclude.
+
 ## Current limits
 
 - Legacy recovery keys outside Matrix secret storage are unsupported.
-- Decryption uses only the account's key backup. Keys shared directly with a device but absent from the backup remain unavailable. Media download isn't included.
-- msgvault checks the decrypted `room_id` and the imported session's ID against the outer event's room and `session_id`. A Megolm session and message index can belong to only one recovered event in a room. If a recovered message has a competing earlier event, the earliest `origin_server_ts` wins, with event ID breaking ties. The losing message returns to its encrypted placeholder and records the winner in `matrix_replay_conflict` metadata. This rule also applies when the earlier event arrives in a later sync. Recovered edits and reactions keep their first claim, so a copied edit or reaction can still take precedence over its original.
+- Decryption uses only the account's key backup. Keys shared directly with a device but absent from the backup remain unavailable.
+- msgvault checks the decrypted `room_id` and the imported session's ID against the outer event's room and `session_id`. A Megolm session and message index can belong to only one recovered event in a room. If a recovered message has a competing earlier event, the earliest `origin_server_ts` wins, with event ID breaking ties. The losing message returns to its encrypted placeholder and records the winner in `matrix_replay_conflict` metadata. This rule also applies when the earlier event arrives in a later sync. When restoring a redacted edit, msgvault checks for an earlier archived copy before claiming an unclaimed index. Recovered edits and reactions keep their first claim, so a copied edit or reaction can still take precedence over its original.
 - msgvault attributes each recovered message to the outer event's sender and doesn't authenticate devices or bind sessions to them. It trusts the backup's keys. A hostile homeserver can supply its own session or change the claimed sender. The sender's homeserver sets `origin_server_ts`, so a room member on a homeserver they control can backdate a copied ciphertext and win the replay rule. The backup algorithm does not authenticate who created a session entry: anyone with the public key can construct one, and a hostile homeserver can insert it into the backup. See the [Matrix key-backup specification](https://spec.matrix.org/latest/client-server-api/#backup-algorithm-mmegolm_backupv1curve25519-aes-sha2).
 - `--recovery-passphrase` uses the server's PBKDF2 iteration count without a local upper bound. A hostile or misconfigured server can make key derivation consume excessive CPU; use a recovery key to avoid passphrase derivation.
 - Only rooms the account has joined are archived. Invited, knocked, and left
   rooms are not imported.
 - Room filters accept stable room IDs, not aliases or display names.
 - Historical membership is not reconstructed. The current joined-member list
-  is used for participants.
+  is the conversation roster used for participant and media-policy decisions.
 - A homeserver or SSO provider that does not expose a login token requires a
   password or app password for the dedicated device.

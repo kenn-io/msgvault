@@ -371,10 +371,10 @@ func TestWorkerDiagnosticsCountCommittedCoverage(t *testing.T) {
 			tokens := make(map[int64]any)
 			for _, id := range ids {
 				var token string
-				require.NoError(f.store.DB().QueryRow(`SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?`, id).Scan(&token))
+				require.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?`, id).Scan(&token))
 				tokens[id] = token
 			}
-			_, err := f.store.DB().Exec(fmt.Sprintf(`CREATE TRIGGER fail_second_stamp BEFORE UPDATE OF embed_gen ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'synthetic stamp failure'); END`, ids[1]))
+			_, err := f.store.DB().ExecContext(t.Context(), fmt.Sprintf(`CREATE TRIGGER fail_second_stamp BEFORE UPDATE OF embed_gen ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'synthetic stamp failure'); END`, ids[1]))
 			require.NoError(err)
 			capture := &diagnosticCapture{}
 			d := newEmbeddingDiagnosticRun(t.Context(), capture, nil, f.gen, 1)
@@ -556,7 +556,7 @@ func TestDiagnosticWriteScheduling(t *testing.T) {
 				finalAttempts := 0
 				writer := diagnosticWriterFunc(func(ctx context.Context, snapshot vector.EmbeddingDiagnostics) error {
 					if mode == "stuck writer" {
-						stuckWriterContext = ctx
+						stuckWriterContext = ctx //nolint:fatcontext // The test captures the write context to inspect it.
 						_, hasDeadline := ctx.Deadline()
 						assert.True(hasDeadline, "each diagnostic write has a deadline")
 						<-ctx.Done()

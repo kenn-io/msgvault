@@ -29,7 +29,7 @@ func TestCacheSnapshotSyncCatchUp(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", tt.csv)
 			c, st := openTestDaemonAnalyticsStore(t)
-			_, err := st.DB().Exec(`
+			_, err := st.DB().ExecContext(t.Context(), `
 				INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'owner@example.com');
 				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 					VALUES (1, 1, 'thread', 'email_thread');
@@ -45,12 +45,12 @@ func TestCacheSnapshotSyncCatchUp(t *testing.T) {
 				require.NoError(err)
 				defer func() { require.NoError(writer.Close()) }()
 				if tt.appendMessage {
-					_, err = writer.Exec(`INSERT INTO messages
+					_, err = writer.ExecContext(t.Context(), `INSERT INTO messages
 						(id, source_id, source_message_id, conversation_id, message_type, sent_at)
 						VALUES (2, 1, 'message-2', 1, 'email', '2024-01-02 00:00:00')`)
 					require.NoError(err)
 				}
-				_, err = writer.Exec(`
+				_, err = writer.ExecContext(t.Context(), `
 					INSERT INTO message_labels (message_id, label_id) VALUES (1, 1);
 					INSERT INTO sync_runs (source_id, started_at, completed_at, status, messages_added)
 						VALUES (1, datetime('now'), datetime('now'), 'completed', 1);
@@ -58,7 +58,7 @@ func TestCacheSnapshotSyncCatchUp(t *testing.T) {
 				require.NoError(err)
 			}
 			t.Cleanup(func() { buildCacheAfterSnapshotHook = nil })
-			_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+			_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 			require.NoError(err)
 			buildCacheAfterSnapshotHook = nil
 			state, err := query.ReadCacheSyncState(c.AnalyticsDir())
@@ -70,7 +70,7 @@ func TestCacheSnapshotSyncCatchUp(t *testing.T) {
 			stale := cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir())
 			assert.True(stale.NeedsBuild)
 			assert.False(stale.FullRebuild, "journaled catch-up: %s", stale.Reason)
-			_, err = buildCacheAuto(c.DatabaseDSN(), c.AnalyticsDir())
+			_, err = buildCacheAuto(t.Context(), c.DatabaseDSN(), c.AnalyticsDir())
 			require.NoError(err)
 			after := snapshotMessagesDatasetBytes(t, c.AnalyticsDir())
 			for path, contents := range before {
@@ -78,7 +78,7 @@ func TestCacheSnapshotSyncCatchUp(t *testing.T) {
 					"retain message shard %s", path)
 			}
 			assert.False(cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir()).NeedsBuild)
-			engine, err := openDaemonDuckDBEngine(c, st)
+			engine, err := openDaemonDuckDBEngine(t.Context(), c, st)
 			require.NoError(err)
 			t.Cleanup(func() { require.NoError(engine.Close()) })
 			rows, err := engine.QuerySQL(t.Context(), "SELECT message_id, label_id FROM message_labels")
@@ -120,10 +120,10 @@ func TestCacheRelatedRefreshRaceFallsBackToFullBuild(t *testing.T) {
 		build func(dbPath, analyticsDir string) (*buildResult, error)
 	}{
 		{name: "auto", build: func(dbPath, analyticsDir string) (*buildResult, error) {
-			return buildCacheAuto(dbPath, analyticsDir)
+			return buildCacheAuto(t.Context(), dbPath, analyticsDir)
 		}},
 		{name: "scheduled", build: func(dbPath, analyticsDir string) (*buildResult, error) {
-			return buildCacheScheduled(dbPath, analyticsDir, 0, time.Now)
+			return buildCacheScheduled(t.Context(), dbPath, analyticsDir, 0, time.Now)
 		}},
 	}
 	for _, entry := range builds {
@@ -131,7 +131,7 @@ func TestCacheRelatedRefreshRaceFallsBackToFullBuild(t *testing.T) {
 			t.Run(entry.name+"/"+race.name, func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				c, st := openTestDaemonAnalyticsStore(t)
-				_, err := st.DB().Exec(`
+				_, err := st.DB().ExecContext(t.Context(), `
 					INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'owner@example.com');
 					INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 						VALUES (1, 1, 'thread', 'email_thread');
@@ -141,9 +141,9 @@ func TestCacheRelatedRefreshRaceFallsBackToFullBuild(t *testing.T) {
 					INSERT INTO labels (id, name) VALUES (1, 'synthetic');
 				`)
 				require.NoError(err)
-				_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+				_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 				require.NoError(err)
-				_, err = st.DB().Exec(`
+				_, err = st.DB().ExecContext(t.Context(), `
 					INSERT INTO message_labels (message_id, label_id) VALUES (2, 1);
 					INSERT INTO sync_runs (source_id, started_at, completed_at, status, messages_added)
 						VALUES (1, datetime('now'), datetime('now'), 'completed', 1);
@@ -154,7 +154,7 @@ func TestCacheRelatedRefreshRaceFallsBackToFullBuild(t *testing.T) {
 				require.False(stale.FullRebuild, "the label alone is a child-row repair: %s", stale.Reason)
 
 				derivedRefreshBeforeSnapshotHook = func() {
-					_, err := st.DB().Exec(race.write)
+					_, err := st.DB().ExecContext(t.Context(), race.write)
 					require.NoError(err)
 				}
 				t.Cleanup(func() { derivedRefreshBeforeSnapshotHook = nil })
@@ -164,7 +164,7 @@ func TestCacheRelatedRefreshRaceFallsBackToFullBuild(t *testing.T) {
 				assert.Equal(race.wantMessages, built.StagedCount, "full rebuild stages every message")
 				assert.False(cacheNeedsBuild(c.DatabaseDSN(), c.AnalyticsDir()).NeedsBuild)
 
-				engine, err := openDaemonDuckDBEngine(c, st)
+				engine, err := openDaemonDuckDBEngine(t.Context(), c, st)
 				require.NoError(err)
 				t.Cleanup(func() { require.NoError(engine.Close()) })
 				rows, err := engine.QuerySQL(t.Context(), "SELECT COUNT(*) FROM messages")

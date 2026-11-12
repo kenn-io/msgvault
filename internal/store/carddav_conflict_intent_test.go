@@ -41,7 +41,7 @@ func TestConflictOwnedIntentReopenPreservesEvidenceAndIdentity(t *testing.T) {
 			require.NoError(err)
 			require.ErrorIs(st.DeletePersonContext(t.Context(), person.ID, person.Revision), store.ErrPersonCardDAVPublished)
 			var otherID int64
-			require.NoError(st.DB().QueryRow(`INSERT INTO persons(vcard_uid,display_name) VALUES ('intent-survivor','Survivor') RETURNING id`).Scan(&otherID))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons(vcard_uid,display_name) VALUES ('intent-survivor','Survivor') RETURNING id`).Scan(&otherID))
 			other, err := st.GetPersonContext(t.Context(), otherID)
 			require.NoError(err)
 			merge := store.PersonMergeRequest{SurvivorID: other.ID, AbsorbedID: person.ID, ExpectedSurvivorRevision: other.Revision, ExpectedAbsorbedRevision: person.Revision, Actor: "test", IdempotencyKey: "intent-merge"}
@@ -90,7 +90,7 @@ func TestConflictOwnedCreateRetryUsesCapturedApprovalScope(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			require := require.New(t)
 			st, c := approvedStandaloneConflict(t)
-			_, err := st.DB().Exec(st.Rebind(`UPDATE carddav_conflicts SET remote_tombstone=TRUE,remote_etag=NULL WHERE id=?`), c.ID)
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_conflicts SET remote_tombstone=TRUE,remote_etag=NULL WHERE id=?`), c.ID)
 			require.NoError(err)
 			// Approve the current tombstone artifact explicitly before preparing create.
 			plan := conflictApprovalPlan(t, st, c.ID)
@@ -103,9 +103,9 @@ func TestConflictOwnedCreateRetryUsesCapturedApprovalScope(t *testing.T) {
 			case "inference":
 				_, err = st.AppendPersonNoteContext(t.Context(), store.PersonNoteAppendInput{PersonID: pending.PersonID, Text: "Later", Source: store.ProvenanceExtraction})
 			case "generation":
-				_, err = st.DB().Exec(`UPDATE carddav_accounts SET connection_generation=connection_generation+1`)
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE carddav_accounts SET connection_generation=connection_generation+1`)
 			case "book":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_address_books SET sync_revision=sync_revision+1 WHERE id=?`), pending.AddressBookID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_address_books SET sync_revision=sync_revision+1 WHERE id=?`), pending.AddressBookID)
 			case "body":
 				pending.OutgoingBody = append(pending.OutgoingBody, '\n')
 			}
@@ -135,7 +135,7 @@ func approvedStandaloneConflict(t *testing.T) (*store.Store, *store.CardDAVConfl
 func standaloneConflict(t *testing.T, inferred bool) (*store.Store, *store.CardDAVConflict) {
 	t.Helper()
 	st, account, book := newCardDAVResourceStore(t)
-	_, seedErr := st.DB().Exec(`INSERT INTO persons(vcard_uid,display_name) VALUES ('standalone','Standalone')`)
+	_, seedErr := st.DB().ExecContext(t.Context(), `INSERT INTO persons(vcard_uid,display_name) VALUES ('standalone','Standalone')`)
 	require.NoError(t, seedErr)
 	remote := remoteResource(book.CanonicalURL+"standalone.vcf", "standalone", "Standalone", "", `"base"`)
 	remote.RemoteBody = []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:standalone\r\nFN:Standalone\r\nEND:VCARD\r\n")
@@ -176,14 +176,14 @@ func TestConflictOwnedIntentSurvivesLegacyTableUpgrade(t *testing.T) {
 	}
 	// A partially upgraded database already has durable evidence, but lacks the
 	// e7 pending constraint. The SQLite rebuild must copy these bytes as well.
-	_, err = st.DB().Exec(`ALTER TABLE carddav_conflicts ADD COLUMN review_revision INTEGER NOT NULL DEFAULT 1`)
+	_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE carddav_conflicts ADD COLUMN review_revision INTEGER NOT NULL DEFAULT 1`)
 	require.NoError(err)
-	_, err = st.DB().Exec(`ALTER TABLE carddav_conflicts ADD COLUMN local_mutation_intent ` + binary)
+	_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE carddav_conflicts ADD COLUMN local_mutation_intent `+binary)
 	require.NoError(err)
-	_, err = st.DB().Exec(`ALTER TABLE carddav_conflicts ADD COLUMN local_envelope_metadata ` + binary)
+	_, err = st.DB().ExecContext(t.Context(), `ALTER TABLE carddav_conflicts ADD COLUMN local_envelope_metadata `+binary)
 	require.NoError(err)
 	var id int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`INSERT INTO carddav_conflicts(address_book_id,href,base_local_hash,local_hash,base_remote_hash,base_remote_etag,remote_etag,mapping_revision,local_body,remote_body,local_mutation_intent,local_envelope_metadata,review_revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`), c.AddressBookID, c.Href, c.BaseLocalHash, c.LocalHash, c.BaseRemoteHash, c.BaseRemoteETag, c.RemoteETag, c.MappingRevision, c.LocalBody, c.RemoteBody, c.LocalMutationIntent, c.LocalEnvelopeMetadata, c.ReviewRevision).Scan(&id))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO carddav_conflicts(address_book_id,href,base_local_hash,local_hash,base_remote_hash,base_remote_etag,remote_etag,mapping_revision,local_body,remote_body,local_mutation_intent,local_envelope_metadata,review_revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`), c.AddressBookID, c.Href, c.BaseLocalHash, c.LocalHash, c.BaseRemoteHash, c.BaseRemoteETag, c.RemoteETag, c.MappingRevision, c.LocalBody, c.RemoteBody, c.LocalMutationIntent, c.LocalEnvelopeMetadata, c.ReviewRevision).Scan(&id))
 	require.NoError(st.InitSchema())
 	require.NoError(st.InitSchema())
 	reopened, err := store.Open(store.DBPathForTest(st))

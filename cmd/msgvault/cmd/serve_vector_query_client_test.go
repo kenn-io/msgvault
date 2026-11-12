@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -83,7 +82,7 @@ func TestNewQueryEmbeddingClient_VoyageContextualUsesContextualQueryRole(t *test
 		queryClientTestConfig(endpoint, vector.APIFormatVoyageContextual, "voyage-context-4"), "")
 	require.NoError(err)
 
-	vec, err := client.EmbedQuery(context.Background(), "who signed the lease?")
+	vec, err := client.EmbedQuery(t.Context(), "who signed the lease?")
 	require.NoError(err)
 	assert.Equal([]float32{0.25, 0.5, 0.75}, vec)
 
@@ -103,7 +102,7 @@ func TestNewQueryEmbeddingClient_DefaultFormatStaysOpenAICompatible(t *testing.T
 	client, err := newQueryEmbeddingClient(queryClientTestConfig(endpoint, "", "bge-m3"), "")
 	require.NoError(err)
 
-	vec, err := client.EmbedQuery(context.Background(), "who signed the lease?")
+	vec, err := client.EmbedQuery(t.Context(), "who signed the lease?")
 	require.NoError(err)
 	assert.Equal([]float32{0.25, 0.5, 0.75}, vec)
 

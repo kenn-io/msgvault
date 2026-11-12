@@ -30,7 +30,7 @@ func TestMessageMIMEAttachmentsContextIncludesOccurrenceState(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "attachment-refs@example.test")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "attachment-refs", "Attachment refs")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "attachment-refs", "Attachment refs")
 	requirements.NoError(err)
 	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "attachment-refs-message")
 	hash := strings.Repeat("a", 64)
@@ -147,7 +147,7 @@ func TestListDiscordAttachmentMessagesIncludesCompletedAndPendingInOneQuery(t *t
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "channel-all", "channel", "all")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET participant_count = 12 WHERE id = ?`), conversationID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET participant_count = 12 WHERE id = ?`), conversationID)
 	require.NoError(err)
 	completedID := insertStoreTestMessage(t, st, source.ID, conversationID, "completed")
 	pendingID := insertStoreTestMessage(t, st, source.ID, conversationID, "pending")
@@ -173,7 +173,7 @@ func TestListDiscordAttachmentMessagesIncludesCompletedAndPendingInOneQuery(t *t
 	}}))
 
 	logs := captureAttachmentQueryLogs(t)
-	items, err := st.ListDiscordAttachmentMessages(source.ID)
+	items, err := st.ListDiscordAttachmentMessages(t.Context(), source.ID)
 	require.NoError(err)
 	assert.Equal([]store.DiscordPendingAttachmentMessage{
 		{MessageID: completedID, ConversationID: conversationID, SourceMessageID: "completed", ChatID: "channel-all", ConversationType: "channel", ParticipantCount: 12},
@@ -231,7 +231,7 @@ func TestReplaceMessageDiscordAttachmentsPreservesDuplicateContentSourceIDs(t *t
 
 	remaining := got["discord:attachment-2"]
 	var storedHash string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(content_hash, '') FROM attachments
 		WHERE message_id = ? AND source_attachment_id = ?
 	`), messageID, "discord:attachment-2").Scan(&storedHash))
@@ -318,7 +318,7 @@ func TestBeeperHashlessLocalPathRemainsPending(t *testing.T) {
 		MessageID: messageID, ConversationID: conversationID, SourceMessageID: "message-1", ChatID: "chat-1",
 	}}, pending)
 
-	refs, err := st.MessageBeeperAttachments(messageID)
+	refs, err := st.MessageBeeperAttachments(t.Context(), messageID)
 	require.NoError(err)
 	assert.Empty(refs["beeper:asset-1"].ContentHash)
 	message, err := st.GetMessage(messageID)
@@ -341,7 +341,7 @@ func TestBeeperUnavailableAttachmentIsNeverRetried(t *testing.T) {
 		State: attachmentpolicy.StateUnavailable, SkipReason: attachmentpolicy.SkipSourceUnavailable,
 	}}))
 
-	retryable, err := st.ListBeeperRetryableAttachmentMessages(source.ID, attachmentpolicy.Policy{})
+	retryable, err := st.ListBeeperRetryableAttachmentMessages(t.Context(), source.ID, attachmentpolicy.Policy{})
 	require.NoError(err)
 	assert.Empty(retryable)
 	pending, err := st.ListBeeperPendingAttachmentMessages(source.ID)
@@ -353,7 +353,7 @@ func TestBeeperUnavailableAttachmentIsNeverRetried(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(result.NewlySkipped)
 	assert.False(result.HasExcluded)
-	refs, err := st.MessageBeeperAttachments(messageID)
+	refs, err := st.MessageBeeperAttachments(t.Context(), messageID)
 	require.NoError(err)
 	ref := refs["beeper:mxc://example.test/expired"]
 	assert.Equal(attachmentpolicy.StateUnavailable, ref.State)
@@ -458,7 +458,7 @@ func TestReplaceAndListMessageDiscordAttachments(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(map[string]store.AttachmentRef{keep.SourceAttachmentID: keep}, got)
 
-	beeperGot, err := st.MessageBeeperAttachments(messageID)
+	beeperGot, err := st.MessageBeeperAttachments(t.Context(), messageID)
 	require.NoError(err)
 	assert.Equal(map[string]store.AttachmentRef{
 		beeperRef.SourceAttachmentID: persistedProviderRef(beeperRef),
@@ -541,7 +541,7 @@ func TestSetDiscordAttachmentMetadataPreservesMediaState(t *testing.T) {
 		},
 		{SourceAttachmentID: "discord:stale", StoragePath: "discord:pending:stale"},
 	}))
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE attachments
 		SET attachment_role = ?, role_source = ?, attachment_state = ?,
 		    attachment_skip_reason = ?, source_part_key = ?
@@ -561,7 +561,7 @@ func TestSetDiscordAttachmentMetadataPreservesMediaState(t *testing.T) {
 	}
 	read := func(id string) snapshot {
 		var got snapshot
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT storage_path, COALESCE(content_hash, ''), size, attachment_role,
 			       role_source, COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, ''),
 			       COALESCE(source_part_key, ''), COALESCE(CAST(attachment_metadata AS TEXT), '')
@@ -609,14 +609,14 @@ func TestInlineRetryableMediaFailsClosedOnUnknownRoster(t *testing.T) {
 		StoragePath: "inline:pending:photo:70",
 		State:       attachmentpolicy.StateSkipped, SkipReason: attachmentpolicy.SkipParticipantThreshold}}
 	require.NoError(st.ReplaceMessageInlineProviderAttachments(messageID, refs))
-	stored, err := st.MessageInlineProviderAttachments(messageID)
+	stored, err := st.MessageInlineProviderAttachments(t.Context(), messageID)
 	require.NoError(err)
 	require.Contains(stored, "inline:photo:70")
 	assert.Equal(refs[0].SkipReason, stored["inline:photo:70"].SkipReason)
-	blocked, err := st.ListInlineProviderRetryableAttachmentMessages(source.ID, attachmentpolicy.Policy{MaxParticipants: 20})
+	blocked, err := st.ListInlineProviderRetryableAttachmentMessages(t.Context(), source.ID, attachmentpolicy.Policy{MaxParticipants: 20})
 	require.NoError(err)
 	assert.Empty(blocked, "observed senders cannot stand in for a complete effective roster")
-	allowed, err := st.ListInlineProviderRetryableAttachmentMessages(source.ID, attachmentpolicy.Policy{})
+	allowed, err := st.ListInlineProviderRetryableAttachmentMessages(t.Context(), source.ID, attachmentpolicy.Policy{})
 	require.NoError(err)
 	require.Len(allowed, 1)
 	assert.Equal(messageID, allowed[0].MessageID)
@@ -632,20 +632,20 @@ func TestInlineAttachmentReplacementRecomputesStatsAndPreservesOtherOccurrences(
 	conversationID, err := st.EnsureConversationWithType(source.ID, "chat:1", "direct_chat", "Synthetic chat")
 	requires.NoError(err)
 	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "chat:1:message:1")
-	requires.NoError(st.UpsertAttachment(messageID, "legacy.txt", "text/plain", "legacy:1", "", 1))
+	requires.NoError(st.UpsertAttachment(t.Context(), messageID, "legacy.txt", "text/plain", "legacy:1", "", 1))
 	var has bool
 	var count int
 	requires.NoError(st.ReplaceMessageInlineProviderAttachments(messageID, []store.AttachmentRef{{
 		SourceAttachmentID: "inline:document:1", StoragePath: "inline:pending:document:1", State: attachmentpolicy.StatePending,
 	}}))
-	requires.NoError(st.DB().QueryRow(st.Rebind(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`), messageID).Scan(&has, &count))
+	requires.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`), messageID).Scan(&has, &count))
 	assertions.True(has)
 	assertions.Equal(2, count)
 	requires.NoError(st.ReplaceMessageInlineProviderAttachments(messageID, nil))
-	requires.NoError(st.DB().QueryRow(st.Rebind(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`), messageID).Scan(&has, &count))
+	requires.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`), messageID).Scan(&has, &count))
 	assertions.True(has)
 	assertions.Equal(1, count)
-	refs, err := st.MessageInlineProviderAttachments(messageID)
+	refs, err := st.MessageInlineProviderAttachments(t.Context(), messageID)
 	requires.NoError(err)
 	assertions.Empty(refs)
 }

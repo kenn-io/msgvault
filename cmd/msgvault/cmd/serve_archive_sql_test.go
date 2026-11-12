@@ -16,7 +16,7 @@ func TestDaemonArchiveSQLUsesRestrictedEngine(t *testing.T) {
 	requirements := require.New(t)
 	c, s := openTestDaemonAnalyticsStore(t)
 	c.Analytics.AutoBuildCache = false
-	_, err := s.DB().Exec(`
+	_, err := s.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'gmail', 'user@example.com');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 			VALUES (1, 1, 'thread-1', 'email_thread');
@@ -24,9 +24,9 @@ func TestDaemonArchiveSQLUsesRestrictedEngine(t *testing.T) {
 			VALUES (1, 1, 'message-1', 1, 'email', '2024-01-01 00:00:00');
 	`)
 	requirements.NoError(err)
-	_, err = buildCache(c.DatabaseDSN(), c.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), c.DatabaseDSN(), c.AnalyticsDir(), true)
 	requirements.NoError(err)
-	ownerEngine, err := openDaemonDuckDBEngine(c, s)
+	ownerEngine, err := openDaemonDuckDBEngine(t.Context(), c, s)
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(ownerEngine.Close()) })
 	jobs := newCacheBuildJobs(t.Context(), nil, func(context.Context, buildCacheMode) error { return nil })

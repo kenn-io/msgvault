@@ -3,8 +3,11 @@ package novelty
 import (
 	"math"
 	"math/big"
+	quickrand "math/rand"
 	"math/rand/v2"
+	"reflect"
 	"testing"
+	"testing/quick"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,23 +54,34 @@ func referenceDot(a, b []float64) float64 {
 
 func TestNorm64MatchesUnfusedReference(t *testing.T) {
 	r := rand.New(rand.NewPCG(7, 11)) //nolint:gosec // Deterministic synthetic fixtures, not cryptographic randomness.
-	for range 2000 {
-		a, b := make([]float64, 64), make([]float64, 64)
-		a32, b32 := make([]float32, 64), make([]float32, 64)
-		for i := range a {
-			a[i] = r.NormFloat64()
-			a32[i] = float32(a[i])
-			b32[i] = float32(r.NormFloat64())
-			b[i] = float64(b32[i])
-		}
+	config := &quick.Config{
+		MaxCount: 2000,
+		Values: func(args []reflect.Value, _ *quickrand.Rand) {
+			a, b := make([]float64, 64), make([]float64, 64)
+			a32, b32 := make([]float32, 64), make([]float32, 64)
+			for i := range a {
+				a[i] = r.NormFloat64()
+				a32[i] = float32(a[i])
+				b32[i] = float32(r.NormFloat64())
+				b[i] = float64(b32[i])
+			}
+			args[0] = reflect.ValueOf(a)
+			args[1] = reflect.ValueOf(b)
+			args[2] = reflect.ValueOf(a32)
+			args[3] = reflect.ValueOf(b32)
+		},
+	}
+	require.NoError(t, quick.Check(func(a, b []float64, a32, b32 []float32) bool {
 		// Compare bits so the unfused rounding contract remains exact.
 		assert.Equal(t, math.Float64bits(math.Sqrt(referenceDot(a, a))), math.Float64bits(norm64(a)))
-		for i := range a {
-			a[i] = float64(a32[i])
+		rounded := make([]float64, len(a32))
+		for i := range rounded {
+			rounded[i] = float64(a32[i])
 		}
-		assert.Equal(t, math.Float64bits(math.Sqrt(referenceDot(a, a))), math.Float64bits(norm32(a32)))
-		assert.Equal(t, math.Float64bits(referenceDot(a, b)), math.Float64bits(dot(a32, b32)))
-	}
+		assert.Equal(t, math.Float64bits(math.Sqrt(referenceDot(rounded, rounded))), math.Float64bits(norm32(a32)))
+		assert.Equal(t, math.Float64bits(referenceDot(rounded, b)), math.Float64bits(dot(a32, b32)))
+		return !t.Failed()
+	}, config))
 }
 
 func TestMicroQuantizes(t *testing.T) {

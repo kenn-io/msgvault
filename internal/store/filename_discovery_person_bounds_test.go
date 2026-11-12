@@ -18,12 +18,12 @@ func filenamePersonFixture(t *testing.T, count int) (*storetest.Fixture, int64, 
 	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	var person int64
-	require.NoError(t, tx.QueryRow(`INSERT INTO persons(vcard_uid,display_name) VALUES('filename-scope-person','Scope Example') RETURNING id`).Scan(&person))
+	require.NoError(t, tx.QueryRowContext(t.Context(), `INSERT INTO persons(vcard_uid,display_name) VALUES('filename-scope-person','Scope Example') RETURNING id`).Scan(&person))
 	var ids []int64
 	for i := range count {
 		var id int64
-		require.NoError(t, tx.QueryRow(f.Store.Rebind(`INSERT INTO participants(email_address,display_name) VALUES(?,?) RETURNING id`), fmt.Sprintf("member%03d@example.test", i), "Member Example").Scan(&id))
-		_, err := tx.Exec(f.Store.Rebind(`INSERT INTO person_participants(person_id,participant_id) VALUES(?,?)`), person, id)
+		require.NoError(t, tx.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO participants(email_address,display_name) VALUES(?,?) RETURNING id`), fmt.Sprintf("member%03d@example.test", i), "Member Example").Scan(&id))
+		_, err := tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO person_participants(person_id,participant_id) VALUES(?,?)`), person, id)
 		require.NoError(t, err)
 		ids = append(ids, id)
 	}
@@ -83,18 +83,18 @@ func TestFilenamePersonScopeProvenanceBudget(t *testing.T) {
 	for i := range 64 {
 		// Real archive rows use one synthetic conversation/source and actual FK roots.
 		var message, id int64
-		require.NoError(tx.QueryRow(f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type) VALUES(?,?,?,'email') RETURNING id`), f.Source.ID, f.ConvID, fmt.Sprintf("provenance-%d", i)).Scan(&message))
-		require.NoError(tx.QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&id))
+		require.NoError(tx.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type) VALUES(?,?,?,'email') RETURNING id`), f.Source.ID, f.ConvID, fmt.Sprintf("provenance-%d", i)).Scan(&message))
+		require.NoError(tx.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&id))
 		ids = append(ids, id)
 		messages = append(messages, message)
 		for _, member := range members {
-			_, err = tx.Exec(f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address) VALUES(?,?,'to','alias@example.test')`), message, member)
+			_, err = tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address) VALUES(?,?,'to','alias@example.test')`), message, member)
 			require.NoError(err)
 		}
 	}
 	// Same role/participant/message but another envelope is an observation, not
 	// an additional provenance tuple.
-	_, err = tx.Exec(f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address) VALUES(?,?,'to','other-alias@example.test')`), messages[0], members[0])
+	_, err = tx.ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address) VALUES(?,?,'to','other-alias@example.test')`), messages[0], members[0])
 	require.NoError(err)
 	require.NoError(tx.Commit())
 	rows, err := f.Store.FilenameSuggestionRowsContext(t.Context(), ids, store.FilenameSuggestionScope{Person: &scope})
@@ -106,9 +106,9 @@ func TestFilenamePersonScopeProvenanceBudget(t *testing.T) {
 		assert.Equal([]personscope.Role{personscope.RoleTo}, row.PersonProvenance.Roles)
 	}
 	// Sender plus envelope-from is still exactly ONE additional role tuple.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), members[0], messages[0])
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), members[0], messages[0])
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address) VALUES(?,?,'from','member000@example.test')`), messages[0], members[0])
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address) VALUES(?,?,'from','member000@example.test')`), messages[0], members[0])
 	require.NoError(err)
 	overflow, err := f.Store.FilenameSuggestionRowsContext(t.Context(), ids, store.FilenameSuggestionScope{Person: &scope})
 	require.ErrorIs(err, store.ErrFilenameScopeTooLarge)

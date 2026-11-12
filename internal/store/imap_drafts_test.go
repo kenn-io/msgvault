@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -26,7 +25,7 @@ func TestPersistIMAPDraft(t *testing.T) {
 		{Mailbox: "Archive", UIDValidity: 8, UIDNext: 77, HighestModSeq: 1 << 42},
 	}
 	requirements.NoError(st.UpsertIMAPFolderStates(source.ID, initialStates))
-	conversationID, err := st.EnsureConversation(source.ID, "thread-666", "Thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread-666", "Thread")
 	requirements.NoError(err)
 	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts*2026", UIDValidity: 7, UID: 42}
 	build := func(ids []int64) *store.MessagePersistData {
@@ -51,13 +50,13 @@ func TestPersistIMAPDraft(t *testing.T) {
 		{EmailAddress: "alice@example.com", Domain: "example.com"},
 		{EmailAddress: "user@example.com", Domain: "example.com"},
 	}
-	draft, err := st.PersistIMAPDraftContext(context.Background(), receipt, participants, build)
+	draft, err := st.PersistIMAPDraftContext(t.Context(), receipt, participants, build)
 	requirements.NoError(err)
 	id := draft.CurrentMessageID
 	assertions.Positive(id)
 	var draftMembershipCount, cursorCount int
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE message_id = ?`), id).Scan(&draftMembershipCount))
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM imap_folder_state WHERE source_id = ?`), source.ID).Scan(&cursorCount))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE message_id = ?`), id).Scan(&draftMembershipCount))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM imap_folder_state WHERE source_id = ?`), source.ID).Scan(&cursorCount))
 	assertions.Equal(1, draftMembershipCount)
 	assertions.Equal(len(initialStates), cursorCount)
 	states, err := st.GetIMAPFolderStates(source.ID)
@@ -75,25 +74,25 @@ func TestPersistIMAPDraft(t *testing.T) {
 		}},
 	}}))
 	var reconciledID int64
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT message_id FROM imap_message_memberships
 		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
 	`), source.ID, receipt.Mailbox, receipt.UIDValidity, receipt.UID).Scan(&reconciledID))
 	assertions.Equal(id, reconciledID)
 
-	_, err = st.PersistIMAPDraftContext(context.Background(), receipt, nil, build)
+	_, err = st.PersistIMAPDraftContext(t.Context(), receipt, nil, build)
 	requirements.ErrorContains(err, "source_key_conflict")
 	states, err = st.GetIMAPFolderStates(source.ID)
 	requirements.NoError(err)
 	receipt.UIDValidity++
 	// A failed insert must also roll back the old message's rekey.
-	_, err = st.PersistIMAPDraftContext(context.Background(), receipt, nil, func([]int64) *store.MessagePersistData { return nil })
+	_, err = st.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData { return nil })
 	requirements.ErrorContains(err, "persist message requires a message")
-	oldSourceID, err := st.GetMessageSourceID(id)
+	oldSourceID, err := st.GetMessageSourceID(t.Context(), id)
 	requirements.NoError(err)
 	assertions.Equal(store.IMAPDraftSourceMessageID(receipt), oldSourceID)
 
-	newDraft, err := st.PersistIMAPDraftContext(context.Background(), receipt, participants, build)
+	newDraft, err := st.PersistIMAPDraftContext(t.Context(), receipt, participants, build)
 	requirements.NoError(err)
 	newID := newDraft.CurrentMessageID
 	assertions.NotEqual(id, newID)
@@ -103,13 +102,13 @@ func TestPersistIMAPDraft(t *testing.T) {
 	newRaw, err := st.GetMessageRaw(newID)
 	requirements.NoError(err)
 	assertions.Contains(string(newRaw), "draft body epoch 8")
-	oldSourceID, err = st.GetMessageSourceID(id)
+	oldSourceID, err = st.GetMessageSourceID(t.Context(), id)
 	requirements.NoError(err)
 	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", id), oldSourceID)
 	unchangedStates, err := st.GetIMAPFolderStates(source.ID)
 	requirements.NoError(err)
 	assertions.ElementsMatch(states, unchangedStates)
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT message_id FROM imap_message_memberships
 		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
 	`), source.ID, receipt.Mailbox, receipt.UIDValidity, receipt.UID).Scan(&reconciledID))
@@ -127,7 +126,7 @@ func TestPersistIMAPDraft(t *testing.T) {
 	assertions.False(messageTombstoned(t, st, newID))
 	assertions.Equal(1, membershipCount(t, st, source.ID))
 	var messageCount int
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, store.IMAPDraftSourceMessageID(receipt)).Scan(&messageCount))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?`), source.ID, store.IMAPDraftSourceMessageID(receipt)).Scan(&messageCount))
 	assertions.Equal(1, messageCount)
 }
 
@@ -137,7 +136,7 @@ func TestPersistIMAPDraftAttachmentsAtomic(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "imap://draft-attachments@example.test:143")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "draft-attachments", "Attachments")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "draft-attachments", "Attachments")
 	requirements.NoError(err)
 	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 4, UID: 8}
 	participants := []store.ParticipantPersistData{
@@ -175,7 +174,7 @@ func TestPersistIMAPDraftAttachmentsAtomic(t *testing.T) {
 	assertions.Equal("forwarded.txt", refs[0].Filename)
 	assertions.Equal(contentHash, refs[0].ContentHash)
 	var hasAttachments bool
-	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT has_attachments FROM messages WHERE id = ?"), draft.CurrentMessageID).Scan(&hasAttachments))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT has_attachments FROM messages WHERE id = ?"), draft.CurrentMessageID).Scan(&hasAttachments))
 	assertions.True(hasAttachments)
 }
 
@@ -185,7 +184,7 @@ func TestPersistIMAPDraftAttachmentsRollsBackAfterAttachmentFailure(t *testing.T
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "imap://draft-attachments-rollback@example.test:143")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "draft-attachments-rollback", "Attachments rollback")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "draft-attachments-rollback", "Attachments rollback")
 	requirements.NoError(err)
 	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 5, UID: 9}
 	participants := []store.ParticipantPersistData{
@@ -221,12 +220,12 @@ func TestPersistIMAPDraftAttachmentsRollsBackAfterAttachmentFailure(t *testing.T
 	})
 	requirements.ErrorContains(err, "invalid attachment role")
 	var count int
-	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM messages WHERE source_id = ?"), source.ID).Scan(&count))
 	assertions.Zero(count)
-	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?"), source.ID).Scan(&count))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?"), source.ID).Scan(&count))
 	assertions.Zero(count)
-	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM imap_drafts WHERE source_id = ?"), source.ID).Scan(&count))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT COUNT(*) FROM imap_drafts WHERE source_id = ?"), source.ID).Scan(&count))
 	assertions.Zero(count)
-	requirements.NoError(st.DB().QueryRow("SELECT COUNT(*) FROM attachments").Scan(&count))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM attachments").Scan(&count))
 	assertions.Zero(count)
 }

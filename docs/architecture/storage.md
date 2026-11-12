@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-11-08"
 title: Data Storage
 description: Database schema, Parquet analytics cache, content-addressed attachments, and token storage.
 ---
@@ -58,11 +58,12 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `conversation_id` | INTEGER FK | References `conversations` |
 | `source_id` | INTEGER FK | References `sources` |
 | `source_message_id` | TEXT | Source-specific message ID |
-| `message_type` | TEXT | `email`, `calendar_event`, `meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `telegram`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
+| `message_type` | TEXT | `email`, `calendar_event`, `meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `telegram`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail`, or a type chosen by a [message import](../usage/message-import.md) caller |
 | `sent_at` | DATETIME | Send timestamp |
 | `sender_id` | INTEGER FK | References `participants` |
 | `account_address` | TEXT, nullable | The one confirmed address an email or calendar event belongs to; NULL when evidence conflicts or is missing |
 | `account_path` | TEXT, nullable | `inbound`, `sent` or `calendar`; NULL on email and calendar rows means attribution is still pending |
+| `email_linkage_outcome` | TEXT, nullable | `complete`, or why the identifiers in `email_link_keys` may be incomplete (`missing_raw`, `invalid_headers`, `size_limit` and others); NULL on an email means the keys are still pending |
 | `subject` | TEXT | Message subject |
 | `snippet` | TEXT | Preview excerpt |
 | `size_estimate` | INTEGER | Approximate size in bytes |
@@ -77,6 +78,10 @@ identifier returns the affected rows to pending in its own transaction, then
 derives them in pages after it commits. Every sync or import first derives the
 source's pending rows, which a partial index on pending rows keeps cheap when
 there are none. Attribution never changes `source_id`.
+Email linkage follows the same pattern: a write that stores MIME also fills
+`email_link_keys` and `email_linkage_outcome` in its transaction, and the
+same sync step derives any email still pending, through its own partial index.
+Archives from before the column start with every email pending.
 Rows other than email and calendar events keep both columns NULL. The
 [received-account design](https://github.com/kenn-io/msgvault/blob/main/docs/internal/received-as-identity-design.md) records
 the rules; [Searching](../usage/searching.md#find-mail-by-the-address-that-received-it)
@@ -87,6 +92,13 @@ email's stored MIME (`kind` is `original` or `delivered`, `address` is
 lowercased). The address-leading index lets an identity change re-derive only
 the messages that mention it. A derived row's addresses always match its stored
 MIME; messages without MIME have none.
+
+**email_link_keys** -- Identifiers each email names in its headers, read from
+its stored MIME: `reply` (In-Reply-To), `reference` (References) and `attached`
+(the Message-ID of each attached `message/rfc822` original), at most 128 per
+kind, unique per email and kind. The value-leading index finds every email that names an identifier. A
+copy's own Message-ID is `messages.rfc822_message_id`, so related-copy lookups
+match these values against that column and against each other.
 
 **message_bodies** -- Parsed content stored separately from message metadata.
 
@@ -289,11 +301,10 @@ the background after HTTP is ready. In `engine = "auto"`, aggregate views use
 live SQL while that work runs and switch to DuckDB after the cache is ready and
 opens successfully; a failed build or open keeps live SQL. In
 `engine = "duckdb"`, analytics remain unavailable until the required cache is
-ready, with no SQL fallback. While that automatic initialization is active,
-cache-dependent Web UI views report that preparation is in progress and retry
+ready, with no SQL fallback. In auto mode, Messages serves live archive rows during a full rebuild and switches to the published cache when it opens. If no usable cache is produced, the live rows stay available with recovery steps. Other cache-dependent Web UI views report that preparation is in progress and retry
 until the cache becomes ready; terminal unavailable states retain the explicit
 rebuild action. Set `auto_build_cache = false` to skip automatic startup
-maintenance; scheduled syncs, ingest commands, and
+maintenance and its live Messages path; scheduled syncs, ingest commands, and
 `msgvault build-cache` can refresh or build the cache explicitly.
 
 Each build writes and verifies a same-filesystem staging tree before publishing

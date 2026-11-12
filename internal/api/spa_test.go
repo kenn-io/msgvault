@@ -29,19 +29,19 @@ func TestSPARoutePreservesRegisteredAPIPriorityAndServesNavigation(t *testing.T)
 	})
 
 	health := httptest.NewRecorder()
-	srv.Router().ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/health", nil))
+	srv.Router().ServeHTTP(health, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/health", nil))
 	assert.Equal(http.StatusOK, health.Code)
 	assert.Contains(health.Header().Get("Content-Type"), "application/json")
 	assert.NotContains(health.Body.String(), "test shell")
 
 	navigation := httptest.NewRecorder()
-	srv.Router().ServeHTTP(navigation, httptest.NewRequest(http.MethodGet, "/not/a/real/route", nil))
+	srv.Router().ServeHTTP(navigation, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/not/a/real/route", nil))
 	assert.Equal(http.StatusOK, navigation.Code)
 	assert.Equal("text/html; charset=utf-8", navigation.Header().Get("Content-Type"))
 	assert.Equal(string(shell), navigation.Body.String())
 
 	unknownAPI := httptest.NewRecorder()
-	srv.Router().ServeHTTP(unknownAPI, httptest.NewRequest(http.MethodGet, "/api/v1/not-a-real-route", nil))
+	srv.Router().ServeHTTP(unknownAPI, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/not-a-real-route", nil))
 	assert.Equal(http.StatusNotFound, unknownAPI.Code)
 	assert.Contains(unknownAPI.Header().Get("Content-Type"), "application/json")
 	var response ErrorResponse

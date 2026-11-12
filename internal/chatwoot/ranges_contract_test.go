@@ -57,7 +57,7 @@ func contractRegister(t *testing.T, st *store.Store, api *contractAPI) (*Importe
 
 func contractMessageIDs(t *testing.T, st *store.Store) []int64 {
 	t.Helper()
-	rows, err := st.DB().Query(`SELECT source_message_id FROM messages WHERE message_type = 'chatwoot'`)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT source_message_id FROM messages WHERE message_type = 'chatwoot'`)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, rows.Close()) }()
 	var ids []int64
@@ -181,7 +181,7 @@ func TestImportContractMaximumIDMediaAndCall(t *testing.T) {
 			_, err = NewImporter(st, api.client(t)).Import(t.Context(), opts)
 			require.NoError(err)
 			for _, id := range []int64{chatID, meetingID} {
-				body, err := st.GetMessageBodyText(id)
+				body, err := st.GetMessageBodyText(t.Context(), id)
 				require.NoError(err)
 				assert.Contains(body, "maximumquartz")
 				_, payloads := readMediaRefreshBytes(t, st, id, opts.AttachmentsDir)
@@ -261,7 +261,7 @@ func TestOversizedResponsesSplitAndResume(t *testing.T) {
 				sum, err = restarted.Import(t.Context(), opts)
 				require.NoError(err)
 				if artifact {
-					body, err := st.GetMessageBodyText(contractArchivedMessageID(t, st, "359"))
+					body, err := st.GetMessageBodyText(t.Context(), contractArchivedMessageID(t, st, "359"))
 					require.NoError(err)
 					if strings.Contains(body, "latequartz") {
 						break
@@ -271,7 +271,7 @@ func TestOversizedResponsesSplitAndResume(t *testing.T) {
 				}
 			}
 			if artifact {
-				body, err := st.GetMessageBodyText(contractArchivedMessageID(t, st, "359"))
+				body, err := st.GetMessageBodyText(t.Context(), contractArchivedMessageID(t, st, "359"))
 				require.NoError(err)
 				assert.Contains(body, "latequartz")
 			} else {

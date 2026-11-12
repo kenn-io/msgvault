@@ -80,7 +80,7 @@ func TestCreateSharedOwnedCalendar(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	s, f, r := fixture(t)
-	got, err := s.Execute(context.Background(), r, nil)
+	got, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	assertions.Equal("team@example.com", f.calendar)
 	assertions.Equal("none", f.options.SendUpdates)
@@ -96,7 +96,7 @@ func TestCreateRecurrenceUsesTargetCalendarTimeZone(t *testing.T) {
 	f.Calendars[0].TimeZone = "Europe/London"
 	r.Event.Start.TimeZone, r.Event.End.TimeZone = "", ""
 	r.Event.Recurrence = &[]string{"RRULE:FREQ=WEEKLY;COUNT=4"}
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	assertions.Equal("Europe/London", f.input.Start.TimeZone)
 	assertions.Equal("Europe/London", f.input.End.TimeZone)
@@ -127,7 +127,7 @@ func TestWriteChecksFailClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, f, r := fixture(t)
 			tc.change(s, f, &r)
-			_, err := s.Execute(context.Background(), r, tc.grant)
+			_, err := s.Execute(t.Context(), r, tc.grant)
 			require.Error(t, err)
 			assert.Empty(t, f.calls)
 		})
@@ -138,13 +138,13 @@ func TestDryRunStillChecksPermissionAndNeverWrites(t *testing.T) {
 	assertions := assert.New(t)
 	s, f, r := fixture(t)
 	r.DryRun = true
-	got, err := s.Execute(context.Background(), r, nil)
+	got, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	assertions.True(got.DryRun)
 	assertions.Empty(f.calls)
 	assertions.Empty(got.Writes)
 	f.Calendars[0].AccessRole = "reader"
-	_, err = s.Execute(context.Background(), r, nil)
+	_, err = s.Execute(t.Context(), r, nil)
 	requirements.Error(err)
 }
 
@@ -166,7 +166,7 @@ func TestAvailabilityWithExplicitCalendarIDsIgnoresPositionalCalendar(t *testing
 				Sources:     []agentgrant.SourceRef{{Type: gcal.SourceType, Identifier: "person@example.com/team@example.com"}},
 			}
 
-			result, err := s.Execute(context.Background(), r, grant)
+			result, err := s.Execute(t.Context(), r, grant)
 			requirements.NoError(err)
 			requirements.NotNil(result)
 			assertions.Equal("team@example.com", result.CalendarID)
@@ -192,7 +192,7 @@ func TestAvailabilityRejectsUnauthorizedExplicitCalendarBeforeListing(t *testing
 		Sources:     []agentgrant.SourceRef{{Type: gcal.SourceType, Identifier: "person@example.com/team@example.com"}},
 	}
 
-	_, err := s.Execute(context.Background(), r, grant)
+	_, err := s.Execute(t.Context(), r, grant)
 
 	requirements.ErrorIs(err, ErrDenied)
 	assertions.Contains(err.Error(), "grant lacks calendar.read")
@@ -221,7 +221,7 @@ func TestMoveRejectsUnauthorizedDestinationBeforeListing(t *testing.T) {
 				Sources:     []agentgrant.SourceRef{{Type: gcal.SourceType, Identifier: "person@example.com/team@example.com"}},
 			}
 
-			_, err := s.Execute(context.Background(), r, grant)
+			_, err := s.Execute(t.Context(), r, grant)
 
 			requirements.ErrorIs(err, ErrDenied)
 			assertions.Contains(err.Error(), tc.wantError)
@@ -244,7 +244,7 @@ func TestPrimaryMoveDestinationAuthorizesCanonicalIDBeforeRoleDisclosure(t *test
 		Sources:     []agentgrant.SourceRef{{Type: gcal.SourceType, Identifier: "person@example.com/team@example.com"}},
 	}
 
-	_, err := s.Execute(context.Background(), r, grant)
+	_, err := s.Execute(t.Context(), r, grant)
 
 	requirements.ErrorIs(err, ErrDenied)
 	assertions.Contains(err.Error(), "calendar access denied")
@@ -267,7 +267,7 @@ func TestOrganizerAttendeeDoesNotRequireInviteGrantForUpdate(t *testing.T) {
 		Sources:     []agentgrant.SourceRef{{Type: gcal.SourceType, Identifier: "person@example.com/team@example.com"}},
 	}
 
-	_, err := s.Execute(context.Background(), r, grant)
+	_, err := s.Execute(t.Context(), r, grant)
 
 	requirements.NoError(err)
 	assertions.Equal([]string{"patch:event"}, f.calls)
@@ -278,7 +278,7 @@ func TestWriteReceiptSurvivesArchiveFailure(t *testing.T) {
 	assertions := assert.New(t)
 	s, f, r := fixture(t)
 	s.Persist = func(context.Context, gcal.Calendar, gcal.Event) (int64, error) { return 0, errors.New("disk full") }
-	got, err := s.Execute(context.Background(), r, nil)
+	got, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	requirements.Len(f.calls, 1)
 	requirements.Len(got.Writes, 1)
@@ -332,7 +332,7 @@ func TestDelegatedWriteReceiptsRequireEventContentGrantForDetails(t *testing.T) 
 				Sources:     []agentgrant.SourceRef{{Type: gcal.SourceType, Identifier: "person@example.com/team@example.com"}},
 			}
 
-			result, err := s.Execute(context.Background(), r, grant)
+			result, err := s.Execute(t.Context(), r, grant)
 			requirements.NoError(err)
 			requirements.Len(result.Writes, 1)
 			receipt := result.Writes[0]
@@ -372,7 +372,7 @@ func TestAddAttendeesPreservesExistingAndUsesETag(t *testing.T) {
 		{Email: "organizer@example.com", Organizer: true},
 		{Email: "guest@example.com", ResponseStatus: "accepted"},
 	}}}
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	assertions.Equal(`"v1"`, f.options.IfMatch)
 	requirements.NotNil(f.input.Attendees)
@@ -393,7 +393,7 @@ func TestRecurringScopes(t *testing.T) {
 			r.EventID = "instance"
 			r.Scope = scope
 			f.EventsByID["team@example.com"] = map[string]gcal.Event{"instance": {ID: "instance", RecurringEventID: "series"}, "series": {ID: "series", Recurrence: []string{"RRULE:FREQ=DAILY"}}}
-			_, err := s.Execute(context.Background(), r, nil)
+			_, err := s.Execute(t.Context(), r, nil)
 			require.NoError(t, err)
 			want := "delete:instance"
 			if scope == "all" {
@@ -410,7 +410,7 @@ func TestRespondRejectsSelfOrganizer(t *testing.T) {
 	f.EventsByID["team@example.com"] = map[string]gcal.Event{"event": {
 		ID: "event", Attendees: []gcal.Attendee{{Email: "team@example.com", Self: true, Organizer: true}},
 	}}
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	require.ErrorIs(t, err, ErrInvalid)
 	assert.Contains(t, err.Error(), "organizer")
 	assert.Empty(t, f.calls)
@@ -425,7 +425,7 @@ func TestRespondOnlySelf(t *testing.T) {
 	r.Event = gcal.EventInput{}
 	r.Response = "accepted"
 	f.EventsByID["team@example.com"] = map[string]gcal.Event{"event": {ID: "event", ETag: `"v1"`, Attendees: []gcal.Attendee{{Email: "person@example.com", Self: true, ResponseStatus: "declined"}, {Email: "guest@example.com"}}}}
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	requirements.NoError(err)
 	requirements.NotNil(f.input.Attendees)
 	requirements.Len(*f.input.Attendees, 1)
@@ -443,7 +443,7 @@ func TestFreeBusyDoesNotHideProviderErrors(t *testing.T) {
 	r.TimeMin = time.Now()
 	r.TimeMax = r.TimeMin.Add(time.Hour)
 	f.busy.Calendars = map[string]gcal.CalendarBusy{"team@example.com": {Errors: []gcal.CalendarError{{Reason: "notFound"}}}}
-	_, err := s.Execute(context.Background(), r, nil)
+	_, err := s.Execute(t.Context(), r, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "notFound")
 }

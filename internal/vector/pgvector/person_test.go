@@ -17,30 +17,32 @@ import (
 // startup applies it a second time.
 func TestPersonMigration_UpgradesAndIsIdempotent(t *testing.T) {
 	db := openPGTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	seedLegacyPersonlessVectorSchema(t, db)
 
 	var before sql.NullString
-	require.NoError(t, db.QueryRow(`SELECT to_regclass('person_embeddings')::text`).Scan(&before))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT to_regclass('person_embeddings')::text`).Scan(&before))
 	require.False(t, before.Valid, "legacy schema must predate person vector storage")
 
 	require.NoError(t, Migrate(ctx, db, 4, false))
 	require.NoError(t, Migrate(ctx, db, 4, false))
 
 	var tableName string
-	require.NoError(t, db.QueryRow(`SELECT to_regclass('person_embeddings')::text`).Scan(&tableName))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT to_regclass('person_embeddings')::text`).Scan(&tableName))
 	assert.Equal(t, "person_embeddings", tableName)
 	var deadDimensionIndex sql.NullString
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(
+		t.Context(),
 		`SELECT to_regclass('idx_person_embeddings_dim')::text`).Scan(&deadDimensionIndex))
 	assert.False(t, deadDimensionIndex.Valid, "exact person ranking must not retain a dead dimension index")
 	var personHNSWIndex string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(
+		t.Context(),
 		`SELECT to_regclass($1)::text`, PersonVectorIndexName(4)).Scan(&personHNSWIndex))
 	assert.Equal(t, PersonVectorIndexName(4), personHNSWIndex,
 		"migration must retain the approved per-dimension person HNSW compatibility object")
 	var personHNSWPredicate string
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, db.QueryRowContext(t.Context(), `
 		SELECT pg_get_expr(i.indpred, i.indrelid)
 		  FROM pg_index AS i
 		  JOIN pg_class AS c ON c.oid = i.indexrelid
@@ -48,7 +50,7 @@ func TestPersonMigration_UpgradesAndIsIdempotent(t *testing.T) {
 	assert.Contains(t, personHNSWPredicate, "dimension = 4")
 	assert.Contains(t, personHNSWPredicate, "embedding IS NOT NULL")
 	var legacyRows int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM embeddings WHERE message_id = 1`).Scan(&legacyRows))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embeddings WHERE message_id = 1`).Scan(&legacyRows))
 	assert.Equal(t, 1, legacyRows, "upgrade must preserve legacy message vectors")
 }
 
@@ -59,7 +61,8 @@ func TestPersonBackend_CreateGenerationSupportsNonDefaultDimension(t *testing.T)
 	gen, err := b.CreateGeneration(ctx, "m", 7, "")
 	require.NoError(t, err)
 	var personHNSWIndex string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(
+		t.Context(),
 		`SELECT to_regclass($1)::text`, PersonVectorIndexName(7)).Scan(&personHNSWIndex))
 	assert.Equal(t, PersonVectorIndexName(7), personHNSWIndex,
 		"new dimensions must lazily receive their person HNSW compatibility object")
@@ -222,7 +225,7 @@ func TestPersonBackend_ErrorsAndRetirement(t *testing.T) {
 	require.ErrorIs(t, err, vector.ErrGenerationRetired)
 
 	var count int
-	require.NoError(t, b.db.QueryRow(`SELECT COUNT(*) FROM person_embeddings WHERE generation_id = $1`, int64(gen)).Scan(&count))
+	require.NoError(t, b.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_embeddings WHERE generation_id = $1`, int64(gen)).Scan(&count))
 	assert.Zero(t, count, "pgvector retirement should remove rows from its shared ANN graph")
 }
 
@@ -246,8 +249,8 @@ func TestPersonBackend_AutomaticRetirementDeletesPersonRows(t *testing.T) {
 	require.NoError(t, b.ActivateGeneration(ctx, replacement, true))
 
 	var retiredCount, replacementCount int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM person_embeddings WHERE generation_id = $1`, int64(serving)).Scan(&retiredCount))
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM person_embeddings WHERE generation_id = $1`, int64(replacement)).Scan(&replacementCount))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_embeddings WHERE generation_id = $1`, int64(serving)).Scan(&retiredCount))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM person_embeddings WHERE generation_id = $1`, int64(replacement)).Scan(&replacementCount))
 	assert.Zero(t, retiredCount, "automatic retirement must clean the demoted person corpus")
 	assert.Equal(t, 1, replacementCount, "activation must preserve the promoted person corpus")
 }
@@ -297,7 +300,7 @@ func newPersonBackendForTest(t *testing.T) (*Backend, context.Context, *sql.DB) 
 // generation/message-vector tables rather than initialize an empty schema.
 func seedLegacyPersonlessVectorSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		CREATE EXTENSION IF NOT EXISTS vector;
 		CREATE TABLE index_generations (
 			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

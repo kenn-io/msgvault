@@ -18,7 +18,7 @@ func TestLinkParticipantsReadsOnlyTouchedComponents(t *testing.T) {
 			require := require.New(t)
 			st := openTestStore(t)
 			seedDisjointParticipantLinks(t, st, 4, 1000)
-			_, err := st.DB().Exec(`INSERT INTO participant_links (participant_a, participant_b) VALUES (1, 4), (2, 4)`)
+			_, err := st.DB().ExecContext(t.Context(), `INSERT INTO participant_links (participant_a, participant_b) VALUES (1, 4), (2, 4)`)
 			require.NoError(err)
 			orig := buildAdjacency
 			t.Cleanup(func() { buildAdjacency = orig })
@@ -29,7 +29,7 @@ func TestLinkParticipantsReadsOnlyTouchedComponents(t *testing.T) {
 			}
 			var rejectedID int64
 			if operation == "reject" {
-				_, err = st.DB().Exec(`DELETE FROM participant_links WHERE participant_a = 1 AND participant_b = 4`)
+				_, err = st.DB().ExecContext(t.Context(), `DELETE FROM participant_links WHERE participant_a = 1 AND participant_b = 4`)
 				require.NoError(err)
 				for _, pair := range [][2]int64{{1, 4}, {1, 2}} {
 					candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), IdentityMatchCandidateInput{
@@ -191,15 +191,15 @@ func TestMergeParticipantsUsesIndexedLinkAndCandidateQueries(t *testing.T) {
 			assert := assert.New(t)
 			st := openTestStore(t)
 			seedDisjointOwnedParticipantLinks(t, st, 4, 3000)
-			_, err := st.db.Exec(`INSERT INTO participant_links (participant_a, participant_b) VALUES (1, 4), (2, 4)`)
+			_, err := st.db.ExecContext(t.Context(), `INSERT INTO participant_links (participant_a, participant_b) VALUES (1, 4), (2, 4)`)
 			require.NoError(err)
 			// Exercise both the self-link clear and the collision owner move.
-			_, err = st.db.Exec(`INSERT INTO identity_match_candidates (id, left_kind, left_id, right_kind, right_id, basis, state, source)
+			_, err = st.db.ExecContext(t.Context(), `INSERT INTO identity_match_candidates (id, left_kind, left_id, right_kind, right_id, basis, state, source)
     VALUES (1, 'participant', 1, 'participant', 2, 'display_name', 'accepted', 'system'),
      (2, 'participant', 1, 'participant', 4, 'display_name', 'accepted', 'system'),
      (3, 'participant', 2, 'participant', 4, 'display_name', 'accepted', 'system')`)
 			require.NoError(err)
-			_, err = st.db.Exec(`UPDATE participant_links SET identity_match_candidate_id = CASE participant_a WHEN 1 THEN 2 ELSE 3 END WHERE participant_a IN (1, 2)`)
+			_, err = st.db.ExecContext(t.Context(), `UPDATE participant_links SET identity_match_candidate_id = CASE participant_a WHEN 1 THEN 2 ELSE 3 END WHERE participant_a IN (1, 2)`)
 			require.NoError(err)
 			var statements []string
 			rebind := st.db.rebind
@@ -246,16 +246,16 @@ func TestMergeParticipantsUsesIndexedLinkAndCandidateQueries(t *testing.T) {
 func TestInitSchemaAddsCandidateRightIndexBeforeLegacyMerge(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "existing.db")
-	st, err := OpenForTest(path)
+	st, err := OpenForTest(t.Context(), path)
 	require.NoError(err)
 	require.NoError(st.InitSchema())
-	_, err = st.db.Exec(`DROP INDEX idx_identity_match_candidates_right;
+	_, err = st.db.ExecContext(t.Context(), `DROP INDEX idx_identity_match_candidates_right;
   DROP INDEX idx_participants_phone;
-  DELETE FROM applied_migrations WHERE name = '` + migrationPhoneUniqueIndex + `';
+  DELETE FROM applied_migrations WHERE name = '`+migrationPhoneUniqueIndex+`';
   INSERT INTO participants (phone_number, display_name) VALUES ('+15550000001', 'First'), ('+15550000001', 'Second')`)
 	require.NoError(err)
 	require.NoError(st.Close())
-	st, err = OpenForTest(path)
+	st, err = OpenForTest(t.Context(), path)
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	rebind := st.db.rebind
@@ -264,7 +264,7 @@ func TestInitSchemaAddsCandidateRightIndexBeforeLegacyMerge(t *testing.T) {
 		if !checked && strings.Contains(query, "JOIN participant_links") {
 			checked = true
 			var count int
-			require.NoError(st.db.DB.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_identity_match_candidates_right'`).Scan(&count))
+			require.NoError(st.db.DB.QueryRowContext(t.Context(), `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_identity_match_candidates_right'`).Scan(&count))
 			require.Equal(1, count, "the index must exist when legacy merges begin")
 		}
 		return rebind(query)
@@ -272,7 +272,7 @@ func TestInitSchemaAddsCandidateRightIndexBeforeLegacyMerge(t *testing.T) {
 	require.NoError(st.InitSchema())
 	require.True(checked)
 	var count int
-	require.NoError(st.db.QueryRow(`SELECT count(*) FROM participants`).Scan(&count))
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT count(*) FROM participants`).Scan(&count))
 	assert.Equal(t, 1, count)
 }
 

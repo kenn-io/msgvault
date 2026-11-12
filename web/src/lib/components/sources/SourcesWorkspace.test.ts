@@ -5,6 +5,7 @@ import type { CardDAVConnectionResponse, CardDAVRunResponse, CardDAVStatusRespon
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import SourcesWorkspace from './SourcesWorkspace.svelte';
+import { ADD_SOURCE_KINDS, type CommandSourceKind } from '../../sources/add-source';
 import { formatDateTime } from '../../util/format';
 import { cardDAVRepairCopy } from '../../carddav/account-settings';
 import { sourceStatus, syncRunStatus } from '../../jobs/fixtures.test-support';
@@ -125,8 +126,10 @@ describe('SourcesWorkspace', () => {
     }
 
     const alert = await within(panel).findByRole('alert');
-    expect(alert.textContent).toContain('Source status unavailable');
-    await fireEvent.click(within(alert).getByRole('button', { name: 'Refresh' }));
+    expect(within(alert).getByText("Couldn't load your sources.")).toBeDefined();
+    const details = within(alert).getByText('Details').closest('details')!;
+    expect(details.textContent).toContain('Source status unavailable');
+    await fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(statusReads).toBe(3));
     await waitFor(() => expect(within(panel).queryByText('Source status unavailable')).toBeNull());
     expect(screen.getByRole('dialog', { name: 'Archive' })).toBe(panel);
@@ -183,11 +186,14 @@ describe('SourcesWorkspace', () => {
     expect(within(panel).getAllByText(title, { exact: true })).toHaveLength(1);
   });
 
-  it('presents generic meeting imports as on-demand API sources', async () => {
+  it.each([
+    ['meeting_import', 'local-meetings', 'Local Meetings', 'Meeting import'],
+    ['message_import', 'feeds', 'Feeds', 'Message import']
+  ])('presents %s sources as on-demand API sources', async (sourceType, identifier, title, label) => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
-      source_type: 'meeting_import',
-      identifier: 'local-meetings',
-      display_name: 'Local Meetings',
+      source_type: sourceType,
+      identifier,
+      display_name: title,
       can_sync: false,
       scheduled: false,
       sync_unavailable_reason: 'source_not_schedulable'
@@ -195,15 +201,15 @@ describe('SourcesWorkspace', () => {
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
     expect(await screen.findByText('On demand')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Details for Local Meetings' }));
-    const panel = screen.getByRole('dialog', { name: 'Local Meetings' });
+    await fireEvent.click(screen.getByRole('button', { name: `Details for ${title}` }));
+    const panel = screen.getByRole('dialog', { name: title });
     expect(within(within(panel).getByRole('region', { name: 'Schedule' })).getByText('On demand')).toBeDefined();
     expect(within(panel).getAllByText('On demand')).toHaveLength(1);
     expect(within(panel).queryByRole('region', { name: 'Sync' })).toBeNull();
-    expect(screen.getByText('Meeting import · local-meetings')).toBeDefined();
+    expect(screen.getByText(`${label} · ${identifier}`)).toBeDefined();
     expect(screen.queryByText('Not scheduled')).toBeNull();
     expect(screen.queryByText('source_not_schedulable')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Sync now Local Meetings' })).toBeNull();
+    expect(screen.queryByRole('button', { name: `Sync now ${title}` })).toBeNull();
   });
 
   it('shows authoritative schedule, fresh result, and bounded item error details', async () => {
@@ -239,7 +245,8 @@ describe('SourcesWorkspace', () => {
     })] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
 
-    expect(await screen.findByTitle(formatDateTime('2026-07-18T08:15:00Z', 'long'))).toBeDefined();
+    const timestamp = await screen.findByTitle(formatDateTime('2026-07-18T08:15:00Z', 'long'));
+    expect(timestamp.textContent).toBe(formatDateTime('2026-07-18T08:15:00Z'));
     expect(screen.queryByTitle('2026-07-18T08:15:00Z')).toBeNull();
   });
 
@@ -276,6 +283,7 @@ describe('SourcesWorkspace', () => {
       await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
       await fireEvent.click(button);
       expect(await within(panel).findByText('Other sync rejected')).toBeDefined();
+      expect(within(panel).getByText("Couldn't start the sync.")).toBeDefined();
       expect(posts).toEqual(['/api/v1/sync/archive%40example.com', '/api/v1/sync/other%40example.com']);
     } finally { view.unmount(); }
   });
@@ -522,14 +530,80 @@ describe('SourcesWorkspace', () => {
     view.unmount();
   });
 
-  it('opens source setup and sync history from an empty workspace', async () => {
+  it.each([{ state: 'messages', empty: false }, { state: 'contacts', empty: false }, { state: 'sources first', empty: true }, { state: 'contacts first', empty: true }, { state: 'delayed gmail', empty: true }] as const)('handles an Add source request during initial archive loading, $state', async ({ state, empty }) => {
+    let releaseStatus!: (response: Response) => void, releaseContacts!: (response: Response) => void;
+    const status = new Promise<Response>(resolve => { releaseStatus = resolve; });
+    const contacts = new Promise<Response>(resolve => { releaseContacts = resolve; });
+    let statusReads = 0, contactReads = 0;
+    const view = render(SourcesWorkspace, { client: createCaptureClient(api([], url => {
+      if (url.pathname.endsWith('/sources/status')) return ++statusReads === 1 ? status : Response.json({ sources: [source()] });
+      if (url.pathname.endsWith('/carddav/connections')) return ++contactReads === 1 ? contacts : Response.json({ connections: [] });
+      return undefined;
+    }), []) });
+    expect(await screen.findByText('Loading…')).toBeDefined();
+    expect(screen.queryByRole('list', { name: 'Source kinds' })).toBeNull();
+    if (state === 'delayed gmail') {
+      view.component.openAddSource(ADD_SOURCE_KINDS.find(kind => kind.id === 'gmail') as CommandSourceKind);
+      await fireEvent.input(within(await screen.findByRole('dialog', { name: 'Add Gmail' })).getByLabelText('Email address'), { target: { value: 'reader@example.org' } });
+    } else view.component.openAddSource();
+    const finishStatus = () => releaseStatus(Response.json({ sources: state === 'messages' ? [source()] : [] }));
+    const finishContacts = () => releaseContacts(Response.json({ connections: state === 'contacts' ? [contact] : [] }));
+    (state === 'contacts first' ? finishContacts : finishStatus)();
+    await tick();
+    (state === 'contacts first' ? finishStatus : finishContacts)();
+    if (empty) {
+      await screen.findByText('Add your first source');
+      if (state === 'delayed gmail') {
+        expect((within(screen.getByRole('dialog', { name: 'Add Gmail' })).getByLabelText('Email address') as HTMLInputElement).value).toBe('reader@example.org');
+        await fireEvent.click(screen.getByRole('button', { name: 'Back to Add source' }));
+      }
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(screen.getByRole('list', { name: 'Source kinds' })).toBeDefined();
+      document.dispatchEvent(new Event('visibilitychange'));
+      await screen.findByRole('table', { name: 'Sources' });
+      expect(screen.queryByRole('dialog', { name: 'Add source' })).toBeNull();
+    } else {
+      await screen.findByRole('table', { name: 'Sources' });
+      expect(within(await screen.findByRole('dialog', { name: 'Add source' })).getByRole('list', { name: 'Source kinds' })).toBeDefined();
+    }
+    view.unmount();
+  });
+
+  it('keeps source steps and their filled field through a status poll', async () => {
+    let reads = 0;
+    const view = render(SourcesWorkspace, { client: createCaptureClient(api([], url => {
+      if (!url.pathname.endsWith('/sources/status')) return undefined;
+      return Response.json({ sources: ++reads === 1 ? [] : [source()] });
+    }), []) });
+    await fireEvent.click(await screen.findByRole('button', { name: /^Gmail Includes/ }));
+    const email = within(await screen.findByRole('dialog', { name: 'Add Gmail' })).getByLabelText('Email address');
+    await fireEvent.input(email, { target: { value: 'reader@example.org' } });
+    document.dispatchEvent(new Event('visibilitychange'));
+    await screen.findByRole('table', { name: 'Sources' });
+    expect(screen.queryByText('Add your first source')).toBeNull();
+    expect(within(screen.getByRole('dialog', { name: 'Add Gmail' })).getByLabelText('Email address')).toBe(email);
+    expect((email as HTMLInputElement).value).toBe('reader@example.org');
+    view.unmount();
+  });
+
+  it('opens sync history from an empty workspace', async () => {
     const onOpenOperations = vi.fn();
     render(SourcesWorkspace, { client: createCaptureClient(api([]), []), onOpenOperations });
-    expect(await screen.findByText('No sources yet')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
-    expect(within(screen.getByRole('dialog', { name: 'Add source' })).getByText('msgvault add-account user@example.com')).toBeDefined();
+    await screen.findByText('Add your first source');
     await fireEvent.click(screen.getByRole('button', { name: 'Sync history' }));
     expect(onOpenOperations).toHaveBeenCalledOnce();
+  });
+
+
+  it('opens existing CardDAV setup and closes the picker', async () => {
+    const onOpenSettings = vi.fn();
+    render(SourcesWorkspace, { client: createCaptureClient(api([source()]), []), onOpenSettings });
+    await screen.findByRole('table', { name: 'Sources' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source…' }));
+    expect(within(screen.getByRole('dialog', { name: 'Add source' })).getByRole('list', { name: 'Source kinds' })).toBeDefined();
+    await fireEvent.click(await screen.findByRole('button', { name: /^Contacts Google/ }));
+    expect(onOpenSettings).toHaveBeenCalledWith('carddav');
+    expect(screen.queryByRole('dialog', { name: 'Add source' })).toBeNull();
   });
 
   it('keeps polling through idle races until the accepted run completes', async () => {
@@ -709,10 +783,16 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(archiveButton);
     expect(archiveButton.disabled).toBe(true);
     expect(otherButton.disabled).toBe(true);
-    expect((await screen.findByRole('alert')).textContent).toMatch(/timed out/i);
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('Starting sync timed out. Check source status before trying again.')).toBeDefined();
     expect(archiveButton.disabled).toBe(false);
     expect(otherButton.disabled).toBe(false);
-    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for Archive' }));
+    const panel = screen.getByRole('dialog', { name: 'Archive' });
+    const panelAlert = within(panel).getByRole('alert');
+    expect(within(panelAlert).getByText('Starting sync timed out. Check source status before trying again.')).toBeDefined();
+    expect(within(panelAlert).queryByText('Details')).toBeNull();
+    await fireEvent.click(within(panelAlert).getByRole('button', { name: 'Refresh' }));
     expect(await screen.findByText('5 processed')).toBeDefined();
     expect((screen.getByRole('button', { name: 'Sync now Archive' }) as HTMLButtonElement).disabled).toBe(true);
     expect(triggers).toBe(1);
@@ -742,6 +822,9 @@ describe('SourcesWorkspace', () => {
     await tick();
     await Promise.all(requests);
     expect(events).toEqual([]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source…' }));
+    expect(screen.getByRole('dialog', { name: 'Add source' })).toBeDefined();
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add source' })).getByRole('button', { name: 'Close' }));
 
     await vi.advanceTimersByTimeAsync(8_000);
     expect(reads).toBe(1);
@@ -821,7 +904,10 @@ describe('SourcesWorkspace', () => {
       client: createAPIClient(fetchFn), requestTimeoutMs: 20
     });
 
-    expect((await screen.findByRole('alert')).textContent).toMatch(/timed out/i);
+    const alert = await screen.findByRole('alert');
+    const guidance = within(alert).getByText('Loading source status timed out; the server may be busy, so retry in a moment.');
+    expect(guidance).toBeDefined();
+    expect(within(alert).queryByText('Details')).toBeNull();
     expect(signals[0]!.aborted).toBe(true);
     expect(screen.queryByText('Loading…')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -1079,7 +1165,7 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
     if (request.url.endsWith('/sources/status')) return Response.json({ sources: [] });
     if (request.url.endsWith('/carddav/connections')) {
       if (++contactsReads > 1) return Response.json({ connections: [contact] });
-      if (failure === 'error') return Response.json({}, { status: 500 });
+      if (failure === 'error') return Response.json({ message: 'Contacts upstream unavailable' }, { status: 500 });
       return new Promise<Response>((_resolve, reject) => request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true }));
     }
     if (request.url.includes('/carddav/status')) return Response.json(contact.status);
@@ -1088,8 +1174,15 @@ it.each(['error', 'timeout'])('recovers a contacts-only load %s without claiming
   });
   const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []), requestTimeoutMs: 20 });
   try {
-    expect((await screen.findByRole('alert')).textContent).toMatch(/contacts/i);
+    const alert = await screen.findByRole('alert');
+    const message = failure === 'error' ? "Couldn't load your contact accounts." : 'Loading contact accounts timed out; retry in a moment.';
+    expect(within(alert).getByText(message)).toBeDefined();
+    if (failure === 'timeout') expect(within(alert).queryByText('Details')).toBeNull();
+    if (failure === 'error') expect(alert.textContent).toContain('Contacts upstream unavailable');
     expect(screen.queryByText('No sources yet')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source…' }));
+    expect(screen.getByRole('dialog', { name: 'Add source' })).toBeDefined();
+    await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add source' })).getByRole('button', { name: 'Close' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();

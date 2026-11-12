@@ -59,7 +59,7 @@ func runRepairLabelsLocal(cmd *cobra.Command, only string, apply bool) error {
 	// idiom the store package uses elsewhere for a dry-run plan (see
 	// errAttributeDryRun) — a read-only connection would reject the writes
 	// outright before rollback ever came into it.
-	st, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	st, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
 	if err != nil {
 		return fmt.Errorf("open archive for label repair: %w", err)
 	}
@@ -127,7 +127,7 @@ func runRepairLabelsLocal(cmd *cobra.Command, only string, apply bool) error {
 	if !apply {
 		return runErr
 	}
-	if cacheErr := rebuildCacheAfterWrite(cfg.DatabaseDSN(), state); cacheErr != nil {
+	if cacheErr := rebuildCacheAfterWrite(cmd.Context(), cfg.DatabaseDSN(), state); cacheErr != nil {
 		return errors.Join(runErr, cacheErr)
 	}
 	return runErr

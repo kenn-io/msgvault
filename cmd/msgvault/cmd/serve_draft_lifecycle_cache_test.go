@@ -38,10 +38,10 @@ func TestDraftReplyOutputFailureRefreshesCache(t *testing.T) {
 		if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if err := fixture.store.BackupDatabase(cacheDB); err != nil {
+		if err := fixture.store.BackupDatabaseContext(ctx, cacheDB); err != nil {
 			return err
 		}
-		_, err := buildCache(cacheDB, analyticsDir, true)
+		_, err := buildCache(ctx, cacheDB, analyticsDir, true)
 		return err
 	}
 	requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
@@ -58,7 +58,7 @@ func TestDraftReplyOutputFailureRefreshesCache(t *testing.T) {
 	requirements.ErrorContains(err, "output_failed")
 	draft, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
 	requirements.NoError(err)
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 	results, err := engine.SearchFast(t.Context(), search.Parse("createdcache"), query.MessageFilter{}, 100, 0)
@@ -85,10 +85,10 @@ func TestDraftEditCancelledAfterPublicationRefreshesCache(t *testing.T) {
 		if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if err := fixture.store.BackupDatabase(cacheDB); err != nil {
+		if err := fixture.store.BackupDatabaseContext(ctx, cacheDB); err != nil {
 			return err
 		}
-		_, err := buildCache(cacheDB, analyticsDir, true)
+		_, err := buildCache(ctx, cacheDB, analyticsDir, true)
 		return err
 	}
 	requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
@@ -116,7 +116,7 @@ func TestDraftEditCancelledAfterPublicationRefreshesCache(t *testing.T) {
 	requirements.NotNil(draft.Pending)
 	assertions.Equal(store.IMAPDraftCodeCleanup, draft.Pending.Code)
 	assertions.Equal(int64(2), draft.Revision)
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 	results, err := engine.SearchFast(t.Context(), search.Parse("publishedcache"), query.MessageFilter{}, 100, 0)
@@ -163,14 +163,14 @@ func TestDraftDeleteOutputFailureRefreshesCache(t *testing.T) {
 				if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
 					return err
 				}
-				if err := fixture.store.BackupDatabase(cacheDB); err != nil {
+				if err := fixture.store.BackupDatabaseContext(ctx, cacheDB); err != nil {
 					return err
 				}
-				_, err := buildCache(cacheDB, analyticsDir, true)
+				_, err := buildCache(ctx, cacheDB, analyticsDir, true)
 				return err
 			}
 			requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
-			engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+			engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 			requirements.NoError(err)
 			results, err := engine.SearchFast(t.Context(), search.Parse("deletedcache"), query.MessageFilter{HideDeletedFromSource: true}, 100, 0)
 			requirements.NoError(err)
@@ -189,7 +189,7 @@ func TestDraftDeleteOutputFailureRefreshesCache(t *testing.T) {
 			draft, err := fixture.store.GetIMAPDraftContext(t.Context(), created.DraftID)
 			requirements.NoError(err)
 			requirements.NotNil(draft.DiscardedAt)
-			engine, err = query.NewDuckDBEngine(analyticsDir, "", nil)
+			engine, err = query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 			requirements.NoError(err)
 			t.Cleanup(func() { _ = engine.Close() })
 			results, err = engine.SearchFast(t.Context(), search.Parse("deletedcache"), query.MessageFilter{HideDeletedFromSource: true}, 100, 0)
@@ -227,14 +227,14 @@ func TestDraftRecoverRefreshesCache(t *testing.T) {
 		if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if err := fixture.store.BackupDatabase(cacheDB); err != nil {
+		if err := fixture.store.BackupDatabaseContext(ctx, cacheDB); err != nil {
 			return err
 		}
-		_, err := buildCache(cacheDB, analyticsDir, true)
+		_, err := buildCache(ctx, cacheDB, analyticsDir, true)
 		return err
 	}
 	requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
-	baselineEngine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	baselineEngine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	requirements.NoError(err)
 	baselineResults, err := baselineEngine.SearchFast(t.Context(), search.Parse("recovercache"), query.MessageFilter{HideDeletedFromSource: true}, 100, 0)
 	requirements.NoError(err)
@@ -253,7 +253,7 @@ func TestDraftRecoverRefreshesCache(t *testing.T) {
 	events, err := runReviewLifecycle(t, adapter, "draft-recover", created.DraftID, "--revision", "1", "--json")
 	requirements.NoError(err)
 	requirements.Len(events, 1)
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 	results, err := engine.SearchFast(t.Context(), search.Parse("recovercache"), query.MessageFilter{HideDeletedFromSource: true}, 100, 0)
@@ -323,14 +323,14 @@ func TestDraftRecoverPublishedEditCleanupRefreshesCache(t *testing.T) {
 		if err := os.Remove(cacheDB); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if err := fixture.store.BackupDatabase(cacheDB); err != nil {
+		if err := fixture.store.BackupDatabaseContext(ctx, cacheDB); err != nil {
 			return err
 		}
-		_, err := buildCache(cacheDB, analyticsDir, true)
+		_, err := buildCache(ctx, cacheDB, analyticsDir, true)
 		return err
 	}
 	requirements.NoError(adapter.draftCacheRefresh(t.Context(), fixture.source.Identifier))
-	baselineEngine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	baselineEngine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	requirements.NoError(err)
 	baselineResults, err := baselineEngine.SearchFast(t.Context(), search.Parse("recoverpublishedcache"), query.MessageFilter{HideDeletedFromSource: true}, 100, 0)
 	requirements.NoError(err)
@@ -349,7 +349,7 @@ func TestDraftRecoverPublishedEditCleanupRefreshesCache(t *testing.T) {
 	events, err := runReviewLifecycle(t, adapter, api.CLIRunDraftRecoverCommand, created.DraftID, "--revision", "2", "--json")
 	requirements.NoError(err)
 	requirements.Len(events, 1)
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 	results, err := engine.SearchFast(t.Context(), search.Parse("recoverpublishedcache"), query.MessageFilter{HideDeletedFromSource: true}, 100, 0)

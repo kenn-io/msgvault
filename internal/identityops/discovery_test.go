@@ -561,7 +561,7 @@ func newSentEvidenceStore(t *testing.T) (*store.Store, *store.Source) {
 // provider-native attribution whose only From address is sender.
 func archiveSentMessage(t *testing.T, st *store.Store, source *store.Source, sourceMessageID, sender string) {
 	t.Helper()
-	convID, err := st.EnsureConversation(source.ID, "thread-"+sourceMessageID, "Thread")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "thread-"+sourceMessageID, "Thread")
 	require.NoError(t, err, "create conversation")
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  convID,
@@ -577,7 +577,7 @@ func archiveSentMessage(t *testing.T, st *store.Store, source *store.Source, sou
 	require.NoError(t,
 		st.ReplaceMessageRecipients(messageID, "from", []int64{participantID}, []string{"Test User"}),
 		"add From participant")
-	sentLabelID, err := st.EnsureLabel(source.ID, "SENT", "Sent Mail", "system")
+	sentLabelID, err := st.EnsureLabel(t.Context(), source.ID, "SENT", "Sent Mail", "system")
 	require.NoError(t, err, "create Gmail sent label")
 	require.NoError(t, st.ReplaceMessageLabels(messageID, []int64{sentLabelID}), "label sent message")
 }
@@ -859,7 +859,7 @@ func TestDiscoverApplyAfterParticipantMergeConfirmsOnlyEnvelopeAddress(t *testin
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
 	require.NoError(err, "create source")
-	convID, err := st.EnsureConversation(source.ID, "merge-thread", "Merge Thread")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "merge-thread", "Merge Thread")
 	require.NoError(err, "create conversation")
 	aliceID, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
 	require.NoError(err, "create alice")

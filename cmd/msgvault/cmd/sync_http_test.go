@@ -302,7 +302,7 @@ func TestPreflightReauth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			managers := map[string]*mockReauthorizer{"": tt.manager}
-			err := preflightReauth(context.Background(), tt.config(managers), "", 0)
+			err := preflightReauth(t.Context(), tt.config(managers), "", 0)
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
@@ -324,7 +324,7 @@ func TestPreflightReauth_SpecificEmail(t *testing.T) {
 		preflightAccount{Email: "bob@example.com", OAuthApp: "bob-app"},
 	)
 
-	require.NoError(t, preflightReauth(context.Background(), c, "bob@example.com", 0))
+	require.NoError(t, preflightReauth(t.Context(), c, "bob@example.com", 0))
 	assert.Equal(t, 0, alice.authorizeCount, "alice must not be re-authorized")
 	assert.Equal(t, 1, bob.authorizeCount, "bob must be re-authorized")
 }
@@ -338,7 +338,7 @@ func TestPreflightReauth_SourceIDTargetsOneDuplicateAccount(t *testing.T) {
 		preflightAccount{ID: 42, Email: "shared@example.com", OAuthApp: "second-app"},
 	)
 
-	require.NoError(t, preflightReauth(context.Background(), c, "", 42))
+	require.NoError(t, preflightReauth(t.Context(), c, "", 42))
 	assert.Equal(t, 0, first.authorizeCount)
 	assert.Equal(t, 1, second.authorizeCount)
 }
@@ -350,7 +350,7 @@ func TestPreflightReauth_IMAPRequestSkips(t *testing.T) {
 	managers := map[string]*mockReauthorizer{"": gmailMgr}
 	c := basePreflight(managers, preflightAccount{Email: "alice@example.com"})
 
-	require.NoError(t, preflightReauth(context.Background(), c, "imap-user@example.com", 0))
+	require.NoError(t, preflightReauth(t.Context(), c, "imap-user@example.com", 0))
 	assert.Equal(t, 0, gmailMgr.authorizeCount, "no reauth for non-Gmail request")
 }
 
@@ -366,7 +366,7 @@ func TestPreflightReauth_DisplayName(t *testing.T) {
 		preflightAccount{Email: "bob@example.com", DisplayName: "Personal", OAuthApp: "personal-app"},
 	)
 
-	require.NoError(t, preflightReauth(context.Background(), c, "Work Gmail", 0))
+	require.NoError(t, preflightReauth(t.Context(), c, "Work Gmail", 0))
 	assert.Equal(t, 1, work.authorizeCount, "display-name match must be re-authorized")
 	assert.Equal(t, 0, personal.authorizeCount, "non-matching account untouched")
 }
@@ -380,7 +380,7 @@ func TestPreflightReauth_NoMatch(t *testing.T) {
 		preflightAccount{Email: "alice@example.com", DisplayName: "Work Gmail"},
 	)
 
-	require.NoError(t, preflightReauth(context.Background(), c, "Nonexistent", 0))
+	require.NoError(t, preflightReauth(t.Context(), c, "Nonexistent", 0))
 	assert.Equal(t, 0, mgr.authorizeCount, "no reauth when nothing matches")
 }
 

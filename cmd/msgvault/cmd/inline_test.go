@@ -68,7 +68,7 @@ esac
 				requires.NoError(cmd.Execute())
 				assertions.Contains(output.String(), "Added Inline account api.inline.chat:user:42")
 			}
-			source, err := st.GetSourceByTypeAndIdentifier(sourceTypeInline, "api.inline.chat:user:42")
+			source, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeInline, "api.inline.chat:user:42")
 			requires.NoError(err)
 			assertions.False(source.DisplayName.Valid)
 			identities, err := st.ListAccountIdentities(source.ID)
@@ -109,13 +109,13 @@ func TestInlineProbeChecksPrincipalAndAvoidsPrivateText(t *testing.T) {
 	account := inline.Account{UserID: 42, Origin: inline.ProductionOrigin}
 	client := &inlineProbeClient{account: account, page: inline.Page{Messages: []inline.Message{{ID: 7, ChatID: 123, Text: "synthetic private message body"}}}}
 	var out bytes.Buffer
-	requires.NoError(runInlineProbe(context.Background(), &out, client, inline.ImportOptions{Account: account, ChatIDs: []int64{123}}))
+	requires.NoError(runInlineProbe(t.Context(), &out, client, inline.ImportOptions{Account: account, ChatIDs: []int64{123}}))
 	assertions.Contains(out.String(), "schema accepted, 1 first-page messages")
 	assertions.NotContains(out.String(), "synthetic private")
 	assertions.Equal(1, client.messageCalls)
 	client.account.UserID = 43
 	client.messageCalls = 0
-	requires.ErrorContains(runInlineProbe(context.Background(), &out, client, inline.ImportOptions{Account: account, ChatIDs: []int64{123}}), "differs from configuration")
+	requires.ErrorContains(runInlineProbe(t.Context(), &out, client, inline.ImportOptions{Account: account, ChatIDs: []int64{123}}), "differs from configuration")
 	assertions.Zero(client.messageCalls, "a different signed-in account must not reach message reads")
 }
 

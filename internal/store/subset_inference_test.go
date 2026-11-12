@@ -82,7 +82,7 @@ func TestCopySubsetPreservesInferenceDebtWithoutApproval(t *testing.T) {
 			}
 			require.NoError(source.Close())
 			destinationDir := filepath.Join(t.TempDir(), "subset")
-			_, err = CopySubsetWithOptions(sourcePath, destinationDir, 5, test.options)
+			_, err = CopySubsetWithOptions(t.Context(), sourcePath, destinationDir, 5, test.options)
 			require.NoError(err)
 			for range 2 {
 				destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))

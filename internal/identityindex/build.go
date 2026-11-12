@@ -89,7 +89,8 @@ func Build(
 
 	b := builder{db: db, opts: opts}
 	defer func() {
-		resultErr = errors.Join(resultErr, b.dropBuildTables())
+		// Drop the build tables even when ctx was canceled mid-build.
+		resultErr = errors.Join(resultErr, b.dropBuildTables(context.WithoutCancel(ctx)))
 	}()
 
 	for _, dataset := range baseIdentityDatasets {
@@ -398,14 +399,14 @@ func (b builder) materializeBuildTable(
 	return nil
 }
 
-func (b builder) dropBuildTables() error {
+func (b builder) dropBuildTables(ctx context.Context) error {
 	var result error
 	for _, table := range []string{
 		logicalBuildRelation, temperatureBuildRelation, directoryBuildRelation,
 		activityBuildRelation, deltaActivityBuildRelation,
 	} {
 		if _, err := b.db.ExecContext(
-			context.Background(),
+			ctx,
 			"DROP TABLE IF EXISTS "+table,
 		); err != nil {
 			result = errors.Join(result, fmt.Errorf("drop %s: %w", table, err))
@@ -536,7 +537,8 @@ WITH messages AS (
 	       coalesce(try_cast(size_estimate AS BIGINT), 0) AS size_estimate
 	FROM %s
 ), senders AS (
-	SELECT DISTINCT p.email_address, p.domain
+	SELECT DISTINCT %s AS email_address,
+	       %s AS domain
 	FROM %s mr
 	JOIN %s p ON p.id = try_cast(mr.participant_id AS BIGINT)
 	WHERE mr.recipient_type = 'from'
@@ -551,6 +553,8 @@ SELECT
 	(SELECT coalesce(sum(size_estimate), 0) FROM messages),
 	(SELECT coalesce(sum(try_cast(size AS BIGINT)), 0) FROM %s)`,
 		inputs.messages,
+		SenderAddressExpr("mr", "p"),
+		SenderDomainExpr("mr", "p"),
 		inputs.recipients,
 		inputs.participants,
 		inputs.attachments,
@@ -607,4 +611,9 @@ func parquetDatasetGlob(root, dataset string) string {
 
 func quoteSQLString(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
+}
+
+// SenderEnvelopeDomainExpr extracts the domain after the final at sign.
+func SenderEnvelopeDomainExpr(address string) string {
+	return "CASE WHEN " + address + " LIKE '%@%' THEN LOWER(SUBSTR(" + address + ", LENGTH(RTRIM(" + address + ", REPLACE(" + address + ", '@', ''))) + 1)) END"
 }

@@ -22,7 +22,7 @@ func TestActivityTriggerMigrationDefersConversationMemberFanout(t *testing.T) {
 	participantID := f.EnsureParticipant("member@example.com", "Member", "example.com")
 	// Restore the old fanout trigger, as an archive awaiting the v6 repair has it.
 	if f.Store.IsPostgreSQL() {
-		_, err := f.Store.DB().Exec(`CREATE OR REPLACE FUNCTION queue_activity_conversation_people_insert() RETURNS trigger AS $$
+		_, err := f.Store.DB().ExecContext(t.Context(), `CREATE OR REPLACE FUNCTION queue_activity_conversation_people_insert() RETURNS trigger AS $$
 		BEGIN
 		    PERFORM enqueue_activity_projection_conversation(NEW.conversation_id);
 		    RETURN NEW;
@@ -30,7 +30,7 @@ func TestActivityTriggerMigrationDefersConversationMemberFanout(t *testing.T) {
 		$$ LANGUAGE plpgsql`)
 		require.NoError(err)
 	} else {
-		_, err := f.Store.DB().Exec(`DROP TRIGGER trg_activity_queue_conversation_people_insert;
+		_, err := f.Store.DB().ExecContext(t.Context(), `DROP TRIGGER trg_activity_queue_conversation_people_insert;
 		CREATE TRIGGER trg_activity_queue_conversation_people_insert
 		AFTER INSERT ON conversation_participants FOR EACH ROW BEGIN
 		    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
@@ -39,14 +39,14 @@ func TestActivityTriggerMigrationDefersConversationMemberFanout(t *testing.T) {
 		END;`)
 		require.NoError(err)
 	}
-	_, err := f.Store.DB().Exec(`DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v6'`)
+	_, err := f.Store.DB().ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v6'`)
 	require.NoError(err)
 	require.NoError(f.Store.InitSchema())
 	before := activityQueueRevision(t, f.Store, messageID)
 	require.NoError(f.Store.EnsureConversationParticipantContext(t.Context(), f.ConvID, participantID, "member"))
 	assert.Equal(before, activityQueueRevision(t, f.Store, messageID))
 	var conversationID int64
-	require.NoError(f.Store.DB().QueryRow(`SELECT conversation_id FROM activity_projection_conversation_queue`).Scan(&conversationID))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT conversation_id FROM activity_projection_conversation_queue`).Scan(&conversationID))
 	assert.Equal(f.ConvID, conversationID)
 }
 
@@ -61,12 +61,12 @@ func TestActivityTriggerMigrationRequeuesProjectedUnsentMessages(t *testing.T) {
 	require.NoError(err)
 	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
 	// Bypass attribution hooks to reproduce a draft projected by an older daemon.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO message_labels (message_id, label_id) VALUES (?, ?)`), messageID, labels["DRAFT"])
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_labels (message_id, label_id) VALUES (?, ?)`), messageID, labels["DRAFT"])
 	require.NoError(err)
 	queued, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
 	require.NoError(err)
 	require.Empty(queued)
-	_, err = f.Store.DB().Exec(`DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v6'`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v6'`)
 	require.NoError(err)
 	require.NoError(f.Store.InitSchema())
 	queued, err = f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
@@ -91,11 +91,11 @@ func TestActivityUpgradeRetractsUnsentContact(t *testing.T) {
 	require.NoError(err)
 	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
 	// Reproduce an older projector's event without running attribution hooks.
-	_, err = activityExec(f.Store, `INSERT INTO message_labels(message_id, label_id) VALUES (?, ?)`, messageID, labels["DRAFT"])
+	_, err = activityExec(t.Context(), f.Store, `INSERT INTO message_labels(message_id, label_id) VALUES (?, ?)`, messageID, labels["DRAFT"])
 	require.NoError(err)
 	var revisionBefore int64
-	require.NoError(activityQueryRow(f.Store, `SELECT revision FROM activity_projection_queue WHERE message_id = ?`, messageID).Scan(&revisionBefore))
-	_, err = activityExec(f.Store, `DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v6'`)
+	require.NoError(activityQueryRow(t.Context(), f.Store, `SELECT revision FROM activity_projection_queue WHERE message_id = ?`, messageID).Scan(&revisionBefore))
+	_, err = activityExec(t.Context(), f.Store, `DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v6'`)
 	require.NoError(err)
 	require.NoError(f.Store.InitSchema())
 	queued, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
@@ -140,6 +140,7 @@ func TestPostgresActivityTriggersInstallAfterCombinedTriggerMigration(t *testing
 	source, err := st.GetOrCreateSource("gmail", "activity-trigger@example.invalid")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversation(
+		t.Context(),
 		source.ID, "activity-trigger-thread", "Activity trigger")
 	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{

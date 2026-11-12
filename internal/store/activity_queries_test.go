@@ -426,7 +426,7 @@ func TestContactStateMarksExistingProjectionStaleWhileQueueIsPending(t *testing.
 	require.NoError(err)
 	assert.False(fresh.Stale)
 
-	_, err = activityExec(f.Store,
+	_, err = activityExec(t.Context(), f.Store,
 		`UPDATE messages SET metadata = ? WHERE id = ?`, activityTouch("queued change"), messageID)
 	require.NoError(err)
 	pending, err := f.Store.ContactStateContext(t.Context(), personID, occurredAt)
@@ -450,7 +450,7 @@ func TestProjectorClassifiesImportedMeetingTranscriptAsMeeting(t *testing.T) {
 	f, personID := activityProjectionFixture(t)
 	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
 	var attendeeParticipantID int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT participant_id FROM person_participants WHERE person_id = ?`),
 		personID).Scan(&attendeeParticipantID))
 	organizerID := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
@@ -480,7 +480,7 @@ func TestProjectorClassifiesImportedMeetingTranscriptAsMeeting(t *testing.T) {
 	require.NoError(err)
 
 	var refKind, channel, direction string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT ref_kind, channel, direction FROM activity_events WHERE message_id = ?`),
 		messageID).Scan(&refKind, &channel, &direction))
 	assert.Equal(string(store.RefKindMeeting), refKind)
@@ -488,7 +488,7 @@ func TestProjectorClassifiesImportedMeetingTranscriptAsMeeting(t *testing.T) {
 	assert.Equal(string(store.DirectionOutbound), direction)
 
 	var role string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT role FROM activity_event_persons
 		WHERE message_id = ? AND person_id = ?`),
 		messageID, personID).Scan(&role))
@@ -509,7 +509,7 @@ func TestRepairedParticipantEmailReprojectsActivity(t *testing.T) {
 	f, personID := activityProjectionFixture(t)
 	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
 	var contactParticipantID int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT participant_id FROM person_participants WHERE person_id = ?`),
 		personID).Scan(&contactParticipantID))
 
@@ -536,7 +536,7 @@ func TestRepairedParticipantEmailReprojectsActivity(t *testing.T) {
 
 	readDirection := func() string {
 		var direction string
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 			`SELECT direction FROM activity_events WHERE message_id = ?`),
 			messageID).Scan(&direction))
 		return direction
@@ -547,6 +547,7 @@ func TestRepairedParticipantEmailReprojectsActivity(t *testing.T) {
 	// The encoding repair rewrites the address and, in the same transaction,
 	// settles attribution and advances the revisions the projector keys on.
 	require.NoError(f.Store.RepairParticipantEmailAddresses(
+		t.Context(),
 		[]store.ParticipantEmailRepair{
 			{ParticipantID: senderID, EmailAddress: "owner@example.com"},
 		}))
@@ -556,12 +557,12 @@ func TestRepairedParticipantEmailReprojectsActivity(t *testing.T) {
 	assert.Equal(string(store.DirectionOutbound), readDirection(),
 		"the incremental projector must reclassify under the repaired owner email")
 
-	isFromMe, err := f.Store.GetMessageIsFromMe(messageID)
+	isFromMe, err := f.Store.GetMessageIsFromMe(t.Context(), messageID)
 	require.NoError(err)
 	assert.True(isFromMe, "persisted attribution must agree with the repaired ownership")
 
 	var directLinks int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT COUNT(*) FROM activity_event_persons
 		WHERE message_id = ? AND person_id = ? AND evidence = 'direct'`),
 		messageID, personID).Scan(&directLinks))
@@ -585,12 +586,13 @@ func TestRecomputeContactStateLocksAcrossPersonChunks(t *testing.T) {
 		values = append(values, "(?)")
 		args = append(args, fmt.Sprintf("chunk-lock-person-%d", i))
 	}
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`INSERT INTO persons (vcard_uid) VALUES `+strings.Join(values, ",")), args...)
 	require.NoError(err, "seed persons across several lock chunks")
 
 	personIDs := []int64{personID}
-	rows, err := f.Store.DB().Query(
+	rows, err := f.Store.DB().QueryContext(
+		t.Context(),
 		`SELECT id FROM persons WHERE vcard_uid LIKE 'chunk-lock-person-%'`)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
@@ -634,7 +636,7 @@ func TestSourceNativeOwnershipScopedToSender(t *testing.T) {
 	require.NoError(err)
 	require.NoError(f.Store.ReplaceMessageRecipients(
 		messageID, "from", []int64{author, coauthor}, []string{"Author", "Coauthor"}))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE message_recipients
 		SET email_address = CASE participant_id
 			WHEN ? THEN 'author@example.com'
@@ -666,7 +668,7 @@ func TestSourceNativeOwnershipScopedToSender(t *testing.T) {
 	_, err = projector.RunOnce(t.Context())
 	require.NoError(err)
 	var projectedRole string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT role
 		FROM activity_event_persons
 		WHERE message_id = ? AND person_id = ?`),
@@ -688,7 +690,7 @@ func TestSourceNativeOwnershipScopedToSender(t *testing.T) {
 	require.NoError(f.Store.ReplaceMessageRecipients(
 		envelopeMessageID, "from", []int64{author, envelopeCoauthor},
 		[]string{"Author", "Envelope Coauthor"}))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE message_recipients
 		SET email_address = CASE participant_id
 			WHEN ? THEN 'author@example.com'
@@ -846,7 +848,7 @@ func TestContactStateMarksMissingProjectionStaleForPendingSenderBinding(t *testi
 	assert.True(pending.Stale,
 		"a missing contact row must stay stale while a new sender binding is queued")
 
-	_, err = activityExec(f.Store, `
+	_, err = activityExec(t.Context(), f.Store, `
 		UPDATE activity_projection_queue SET processed_revision = revision
 		WHERE message_id = ?
 	`, messageID)

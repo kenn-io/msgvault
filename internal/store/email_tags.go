@@ -200,7 +200,7 @@ func (s *Store) SaveEmailTagsContext(ctx context.Context, target EmailTagTarget,
 			return err
 		}
 		if changed || catalogChanged {
-			return s.bumpDerivedDataRevision(tx, true)
+			return s.bumpDerivedDataRevisionContext(ctx, tx, true)
 		}
 		return nil
 	})

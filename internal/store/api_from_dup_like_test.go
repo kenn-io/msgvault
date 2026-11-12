@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"strconv"
@@ -26,7 +25,7 @@ func TestSearchMessagesLike_MultipleFromRows_NoDuplication(t *testing.T) {
 	st := openTestStore(t)
 	src, err := st.GetOrCreateSource("gmail", "fromduplike@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "thread-fromduplike", "Thread FromDupLike")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-fromduplike", "Thread FromDupLike")
 	require.NoError(err, "EnsureConversation")
 
 	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
@@ -99,7 +98,7 @@ func TestSearchMessagesLike_MultipleFromRows_NoDuplication(t *testing.T) {
 
 	t.Run("searchMessagesQueryImpl no-FTS branch", func(t *testing.T) {
 		msgs, total, err := st.searchMessagesQueryImpl(
-			context.Background(), &search.Query{TextTerms: []string{tag}}, 0, n, false)
+			t.Context(), &search.Query{TextTerms: []string{tag}}, 0, n, false)
 		require.NoError(err, "searchMessagesQueryImpl ftsAvailable=false")
 		assertDistinct(t, msgs, total, "searchMessagesQueryImpl no-FTS")
 	})

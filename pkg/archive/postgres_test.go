@@ -37,12 +37,13 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	otherSchema := "outside_" + strings.ToLower(rand.Text())
 	role := "reader_" + strings.ToLower(rand.Text())
 	quote := func(name string) string { return pgx.Identifier{name}.Sanitize() }
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		_, err := admin.Exec("DROP SCHEMA IF EXISTS " + quote(schema) + " CASCADE")
+		_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+quote(schema)+" CASCADE")
 		assert.NoError(err)
-		_, err = admin.Exec("DROP SCHEMA IF EXISTS " + quote(otherSchema) + " CASCADE")
+		_, err = admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+quote(otherSchema)+" CASCADE")
 		assert.NoError(err)
-		_, err = admin.Exec("DROP ROLE IF EXISTS " + quote(role))
+		_, err = admin.ExecContext(context.WithoutCancel(t.Context()), "DROP ROLE IF EXISTS "+quote(role))
 		assert.NoError(err)
 	})
 	opts := archive.PostgreSQL{URL: dsn, Schema: schema}
@@ -62,7 +63,7 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 	source, err := st.GetOrCreateSource("slack", "TEXAMPLE:UEXAMPLE")
 	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "CEXAMPLE", "Announcements")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "CEXAMPLE", "Announcements")
 	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "1704110400.000001",
@@ -74,20 +75,20 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	require.NoError(st.UpsertMessageBody(id, sql.NullString{String: body, Valid: true}, sql.NullString{}))
 	require.NoError(st.UpsertFTS(id, "Launch", body, "", "", ""))
 
-	_, err = admin.Exec("CREATE SCHEMA " + quote(otherSchema))
+	_, err = admin.ExecContext(t.Context(), "CREATE SCHEMA "+quote(otherSchema))
 	require.NoError(err)
-	_, err = admin.Exec("CREATE TABLE " + quote(otherSchema) + ".private_data (value text)")
+	_, err = admin.ExecContext(t.Context(), "CREATE TABLE "+quote(otherSchema)+".private_data (value text)")
 	require.NoError(err)
 
 	// This role can use an archive, but cannot create or alter its tables.
-	_, err = admin.Exec("CREATE ROLE " + quote(role) + " LOGIN PASSWORD 'archive_test'")
+	_, err = admin.ExecContext(t.Context(), "CREATE ROLE "+quote(role)+" LOGIN PASSWORD 'archive_test'")
 	require.NoError(err)
 	for _, grant := range []string{
 		"GRANT USAGE ON SCHEMA " + quote(schema) + " TO " + quote(role),
 		"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA " + quote(schema) + " TO " + quote(role),
 		"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA " + quote(schema) + " TO " + quote(role),
 	} {
-		_, err = admin.Exec(grant)
+		_, err = admin.ExecContext(t.Context(), grant)
 		require.NoError(err)
 	}
 	u.User = url.UserPassword(role, "archive_test")
@@ -113,7 +114,7 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	})
 	request := func(path string) *httptest.ResponseRecorder {
 		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		handler.ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 		return response
 	}
 	assert.Equal(http.StatusForbidden, request("/api/v1/search?q=observatory").Code)
@@ -150,7 +151,7 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	assert.Equal(source.ID, accounts.Accounts[0].ID)
 	exerciseSlackReplacement(t, runtime)
 	exerciseDiscordCollection(t, runtime)
-	_, err = admin.Exec("UPDATE "+quote(schema)+".archive_metadata SET value = $1 WHERE key = 'schema_version'", strconv.Itoa(store.SchemaVersion-1))
+	_, err = admin.ExecContext(t.Context(), "UPDATE "+quote(schema)+".archive_metadata SET value = $1 WHERE key = 'schema_version'", strconv.Itoa(store.SchemaVersion-1))
 	require.NoError(err)
 	legacy, err := archive.Open(t.Context(), opts)
 	if legacy != nil {
@@ -159,7 +160,7 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	require.ErrorContains(err, "run setup")
 
 	// An incompatible setup must fail without trying to repair its marker.
-	_, err = admin.Exec("UPDATE " + quote(schema) + ".archive_metadata SET value = 'unsupported' WHERE key = 'schema_version'")
+	_, err = admin.ExecContext(t.Context(), "UPDATE "+quote(schema)+".archive_metadata SET value = 'unsupported' WHERE key = 'schema_version'")
 	require.NoError(err)
 	_, err = archive.Open(t.Context(), opts)
 	require.Error(err)
@@ -204,8 +205,9 @@ func TestPostgreSQLArchiveRequiresSourceLifecycleSetup(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(admin.Close()) })
 	schema := "archive_" + strings.ToLower(rand.Text())
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		_, err := admin.Exec("DROP SCHEMA IF EXISTS " + quotedSchema + " CASCADE")
+		_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+quotedSchema+" CASCADE")
 		assert.NoError(err)
 	})
 	opts := archive.PostgreSQL{URL: dsn, Schema: schema}
@@ -218,9 +220,9 @@ func TestPostgreSQLArchiveRequiresSourceLifecycleSetup(t *testing.T) {
 	require.NoError(seed.Close())
 	// Version 8 predates source lifecycle tables. Keep that historical marker
 	// literal so omitting the version bump makes runtime opening fail this test.
-	_, err = admin.Exec("UPDATE " + quotedSchema + ".archive_metadata SET value = '8' WHERE key = 'schema_version'")
+	_, err = admin.ExecContext(t.Context(), "UPDATE "+quotedSchema+".archive_metadata SET value = '8' WHERE key = 'schema_version'")
 	require.NoError(err)
-	_, err = admin.Exec("DROP TABLE " + quotedSchema + ".source_settings")
+	_, err = admin.ExecContext(t.Context(), "DROP TABLE "+quotedSchema+".source_settings")
 	require.NoError(err)
 
 	runtime, err := archive.Open(t.Context(), opts)
@@ -229,10 +231,10 @@ func TestPostgreSQLArchiveRequiresSourceLifecycleSetup(t *testing.T) {
 	}
 	require.ErrorContains(err, "run setup")
 	var version string
-	require.NoError(admin.QueryRow("SELECT value FROM " + quotedSchema + ".archive_metadata WHERE key = 'schema_version'").Scan(&version))
+	require.NoError(admin.QueryRowContext(t.Context(), "SELECT value FROM "+quotedSchema+".archive_metadata WHERE key = 'schema_version'").Scan(&version))
 	assert.Equal("8", version, "runtime opening must not certify an upgrade")
 	var exists bool
-	require.NoError(admin.QueryRow("SELECT to_regclass($1) IS NOT NULL", schema+".source_settings").Scan(&exists))
+	require.NoError(admin.QueryRowContext(t.Context(), "SELECT to_regclass($1) IS NOT NULL", schema+".source_settings").Scan(&exists))
 	assert.False(exists, "runtime opening must not create the missing table")
 
 	require.NoError(archive.Setup(t.Context(), opts))
@@ -266,16 +268,17 @@ func TestPostgreSQLSetupUsesProvisionedSchema(t *testing.T) {
 	schema := "provisioned_" + strings.ToLower(rand.Text())
 	role := "owner_" + strings.ToLower(rand.Text())
 	quote := func(name string) string { return pgx.Identifier{name}.Sanitize() }
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		_, err := admin.Exec("DROP SCHEMA IF EXISTS " + quote(schema) + " CASCADE")
+		_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+quote(schema)+" CASCADE")
 		assert.NoError(err)
-		_, err = admin.Exec("DROP ROLE IF EXISTS " + quote(role))
+		_, err = admin.ExecContext(context.WithoutCancel(t.Context()), "DROP ROLE IF EXISTS "+quote(role))
 		assert.NoError(err)
 	})
 	// The role owns its schema but cannot create schemas in the database.
-	_, err = admin.Exec("CREATE ROLE " + quote(role) + " LOGIN PASSWORD 'archive_test'")
+	_, err = admin.ExecContext(t.Context(), "CREATE ROLE "+quote(role)+" LOGIN PASSWORD 'archive_test'")
 	require.NoError(err)
-	_, err = admin.Exec("CREATE SCHEMA " + quote(schema) + " AUTHORIZATION " + quote(role))
+	_, err = admin.ExecContext(t.Context(), "CREATE SCHEMA "+quote(schema)+" AUTHORIZATION "+quote(role))
 	require.NoError(err)
 	u, err := url.Parse(dsn)
 	require.NoError(err)

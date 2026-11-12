@@ -58,7 +58,7 @@ func TestConfirmationChallengesBoundAndPurge(t *testing.T) {
 func TestConfirmationModernStdioSDKObtainsApproval(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "confirmation-test", Version: "1"}, nil)
 	var approved, executed atomic.Int32

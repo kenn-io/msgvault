@@ -800,12 +800,12 @@ func (s *Store) contactStateFreshnessTxContext(
 	ctx context.Context,
 	tx *loggedTx,
 ) (ContactRevisions, bool, error) {
-	identity, err := s.currentIdentityRevisionTx(tx)
+	identity, err := s.currentIdentityRevisionTxContext(ctx, tx)
 	if err != nil {
 		return ContactRevisions{}, false,
 			fmt.Errorf("read contact identity revision: %w", err)
 	}
-	account, err := readAccountIdentityRevision(tx)
+	account, err := readAccountIdentityRevision(boundQuerier{ctx: ctx, q: tx})
 	if err != nil {
 		return ContactRevisions{}, false,
 			fmt.Errorf("read contact account identity revision: %w", err)

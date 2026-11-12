@@ -175,6 +175,7 @@ type SearchProvenance struct {
 // EntryRow is one logical archive row. Chat/text rows aggregate messages only
 // after Context has been applied; other modalities retain durable item units.
 type EntryRow struct {
+	SenderLabel                string       `json:"sender_label,omitempty"`
 	Key                        string       `json:"key"`
 	Kind                       EntryKind    `json:"kind"`
 	AnchorMessageID            *int64       `json:"anchor_message_id,omitzero" nullable:"false"`
@@ -247,7 +248,25 @@ type ExploreGroupRequest struct {
 	Page     PageSpec `json:"page"`
 }
 
+type ExploreGroupActivity struct {
+	Bucket string `json:"bucket"`
+	Count  int64  `json:"count"`
+}
+
+type ExploreGroupCoParticipant struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
+type ExploreGroupOverview struct {
+	FirstAt        time.Time                   `json:"first_at"`
+	Activity       []ExploreGroupActivity      `json:"activity"`
+	CoParticipants []ExploreGroupCoParticipant `json:"co_participants"`
+}
+
 type ExploreGroupRow struct {
+	TotalItems     int64     `json:"total_items,omitempty,omitzero"`
 	Key            string    `json:"key"`
 	Label          string    `json:"label"`
 	Count          int64     `json:"count"`
@@ -258,10 +277,11 @@ type ExploreGroupRow struct {
 }
 
 type ExploreGroupResponse struct {
-	Rows             []ExploreGroupRow `json:"rows"`
-	TotalCount       int64             `json:"total_count"`
-	CacheRevision    string            `json:"cache_revision"`
-	SearchProvenance SearchProvenance  `json:"search_provenance"`
+	Overview         *ExploreGroupOverview `json:"overview,omitempty"`
+	Rows             []ExploreGroupRow     `json:"rows"`
+	TotalCount       int64                 `json:"total_count"`
+	CacheRevision    string                `json:"cache_revision"`
+	SearchProvenance SearchProvenance      `json:"search_provenance"`
 }
 
 type ExploreSelectionRequest struct {

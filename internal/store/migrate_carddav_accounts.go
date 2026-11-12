@@ -153,18 +153,18 @@ func (s *Store) upgradeCardDAVAccountsPostgreSQL(ctx context.Context) error {
 }
 
 func (s *Store) upgradeCardDAVAccountsSQLite(ctx context.Context) (err error) {
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("acquire CardDAV account upgrade connection: %w", err)
-	}
-	defer func() { _ = conn.Close() }()
 	var definition string
-	if err := conn.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'carddav_accounts'`).Scan(&definition); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'carddav_accounts'`).Scan(&definition); err != nil {
 		return err
 	}
 	if strings.Contains(definition, "connection_name") {
 		return nil
 	}
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire CardDAV account upgrade connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
 	// DROP TABLE implicitly deletes parent rows. Disable cascading foreign keys
 	// on this pinned connection before entering the rebuild transaction, then
 	// restore enforcement before the connection returns to the pool.

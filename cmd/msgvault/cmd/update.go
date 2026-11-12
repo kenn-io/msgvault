@@ -175,6 +175,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 type updateDaemonStopResult struct {
 	Stopped    bool
 	Background bool
+	Persistent bool
 }
 
 func performUpdateWithDaemonLifecycle(
@@ -247,6 +248,7 @@ func stopLocalDaemonsForUpdate(c *config.Config, logger *slog.Logger) (updateDae
 		if err := stopDaemonRuntimeForUpgrade(*c, rt, logger); err != nil {
 			return result, err
 		}
+		result.Persistent = result.Persistent || rec.Metadata[runtimePersistent] == runtimeBackgroundValue
 		result.Stopped = true
 		result.Background = result.Background && rec.Metadata[runtimeBackground] == runtimeBackgroundValue
 	}
@@ -281,7 +283,7 @@ func restartDaemonAfterUpdate(c *config.Config, result updateDaemonStopResult, e
 	cmd.SetContext(ctx)
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	return runServeStartWithOptions(cmd, c, backgroundServeStartOptions{ExecutablePath: executablePath})
+	return runServeStartWithOptions(cmd, c, backgroundServeStartOptions{ExecutablePath: executablePath, Persistent: result.Persistent})
 }
 
 func updateExecutableName() string {

@@ -142,7 +142,9 @@ func (e *Executor) deleteOne(ctx context.Context, sourceID int64, gmailID string
 		if err != nil {
 			e.logger.Debug("message already deleted", "gmail_id", gmailID)
 		}
-		if markErr := e.store.MarkMessageDeletedBySourceMessageID(sourceID, method == MethodDelete, gmailID); markErr != nil {
+		// The provider already removed the message, so record that locally
+		// even when a cancel arrives now.
+		if markErr := e.store.MarkMessageDeletedBySourceMessageID(context.WithoutCancel(ctx), sourceID, method == MethodDelete, gmailID); markErr != nil {
 			e.logger.Warn("failed to mark deleted in DB", "gmail_id", gmailID, "error", markErr)
 			return resultFailed, fmt.Errorf("%w: %w", errLocalTombstone, markErr)
 		}
@@ -165,7 +167,7 @@ func (e *Executor) manifestSourceID(ctx context.Context, manifest *Manifest) (in
 		sourceID, err := e.requireManifestSourceWritable(ctx, e.sourceID)
 		return sourceID, classifyManifestSourceLifecycleError(err)
 	}
-	source, err := e.store.GetSourceByTypeAndIdentifier(manifest.Source.Type, manifest.Source.Identifier)
+	source, err := e.store.GetSourceByTypeAndIdentifier(ctx, manifest.Source.Type, manifest.Source.Identifier)
 	if err != nil {
 		err = fmt.Errorf("resolve manifest source: %w", err)
 		if errors.Is(err, store.ErrSourceNotFound) {
@@ -490,7 +492,7 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:])
 			return ErrManifestCancelled
 		}
-		if err := e.store.MarkMessageDeletedBySourceMessageID(sourceID, opts.Method == MethodDelete, gmailID); err != nil {
+		if err := e.store.MarkMessageDeletedBySourceMessageID(ctx, sourceID, opts.Method == MethodDelete, gmailID); err != nil {
 			remaining := tombstoneIDs[ti:]
 			e.saveTombstoneCheckpoint(
 				manifest,
@@ -694,7 +696,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) (retErr 
 			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:])
 			return ErrManifestCancelled
 		}
-		if err := e.store.MarkMessageDeletedBySourceMessageID(sourceID, true, gmailID); err != nil {
+		if err := e.store.MarkMessageDeletedBySourceMessageID(ctx, sourceID, true, gmailID); err != nil {
 			remaining := slices.Clone(tombstoneIDs[ti:])
 			e.saveTombstoneCheckpoint(
 				manifest,
@@ -823,8 +825,9 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) (retErr 
 				e.progress.OnProgress(i+j+1, succeeded, failed)
 			}
 		} else {
-			// Mark all as deleted in DB using batch update
-			if markErr := e.store.MarkMessagesDeletedBySourceMessageIDBatch(sourceID, batch); markErr != nil {
+			// Mark all as deleted in DB using batch update. The provider
+			// already removed them, so a cancel must not skip the record.
+			if markErr := e.store.MarkMessagesDeletedBySourceMessageIDBatch(context.WithoutCancel(ctx), sourceID, batch); markErr != nil {
 				e.logger.Warn("failed to mark batch as deleted in DB", "count", len(batch), "error", markErr)
 				// The remote batch is complete, so retry only its tombstones;
 				// later IDs must remain on the normal batch path.

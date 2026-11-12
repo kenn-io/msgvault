@@ -1,7 +1,6 @@
 package query_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"strconv"
@@ -37,7 +36,7 @@ func seedPaginationStabilityFixture(t *testing.T, st *store.Store) (*store.Sourc
 	require := require.New(t)
 	src, err := st.GetOrCreateSource("gmail", "pagination@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	convID, err := st.EnsureConversation(src.ID, "thread-page", "Thread Page")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-page", "Thread Page")
 	require.NoError(err, "EnsureConversation")
 	aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	require.NoError(err, "EnsureParticipant")
@@ -72,7 +71,7 @@ func TestPaginationStability_IdenticalSentAt(t *testing.T) {
 	const subjectTag = paginationStabilitySubjectTag
 
 	eng := query.NewEngine(st.DB(), st.IsPostgreSQL())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// (1) ListMessages — assert determinism for every sort field. The
 	// tiebreaker must apply regardless of the primary sort column.

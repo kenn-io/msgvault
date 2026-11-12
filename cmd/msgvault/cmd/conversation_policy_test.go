@@ -19,7 +19,7 @@ func TestPolicyCommandsStageOverrides(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("beeper", "policy-cli-account")
 	requirements.NoError(err)
-	_, err = st.EnsureConversation(source.ID, "room", "Synthetic room")
+	_, err = st.EnsureConversation(t.Context(), source.ID, "room", "Synthetic room")
 	requirements.NoError(err)
 	cfg := config.NewDefaultConfig()
 	cfg.ConversationPolicy.Overrides = []conversationpolicy.Override{{SourceType: "beeper", SourceIdentifier: "policy-cli-account", ConversationID: "room", Tier: conversationpolicy.Full}}

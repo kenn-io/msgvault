@@ -32,7 +32,7 @@ func newTestEnv(t *testing.T) *TestEnv {
 	st := testutil.NewSQLiteTestStore(t)
 	var sequence int
 	var database, dbPath string
-	require.NoError(t, st.DB().QueryRow(`PRAGMA database_list`).Scan(&sequence, &database, &dbPath))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `PRAGMA database_list`).Scan(&sequence, &database, &dbPath))
 	tmpDir := filepath.Dir(dbPath)
 
 	mock := gmail.NewMockAPI()
@@ -47,7 +47,7 @@ func newTestEnv(t *testing.T) *TestEnv {
 		Mock:    mock,
 		Syncer:  New(mock, st, nil),
 		TmpDir:  tmpDir,
-		Context: context.Background(),
+		Context: t.Context(),
 	}
 }
 
@@ -265,7 +265,7 @@ func assertDateFallback(t *testing.T, st *store.Store, sourceMessageID, wantDate
 func assertMessageHasLabel(t *testing.T, st *store.Store, sourceMessageID, sourceLabelID string) {
 	t.Helper()
 	var count int
-	err := st.DB().QueryRow(`
+	err := st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM message_labels ml
 		JOIN messages m ON ml.message_id = m.id
 		JOIN labels l ON ml.label_id = l.id
@@ -279,7 +279,7 @@ func assertMessageHasLabel(t *testing.T, st *store.Store, sourceMessageID, sourc
 func assertMessageNotHasLabel(t *testing.T, st *store.Store, sourceMessageID, sourceLabelID string) {
 	t.Helper()
 	var count int
-	err := st.DB().QueryRow(`
+	err := st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM message_labels ml
 		JOIN messages m ON ml.message_id = m.id
 		JOIN labels l ON ml.label_id = l.id

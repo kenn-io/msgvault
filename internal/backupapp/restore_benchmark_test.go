@@ -29,7 +29,7 @@ const (
 )
 
 func BenchmarkBackupRestoreLayouts(b *testing.B) {
-	ctx := context.Background()
+	ctx := b.Context()
 	f := newVaultFixture(b)
 	expected := make(map[string][]byte, benchmarkRestoreBlobs)
 	var totalBytes int64
@@ -78,7 +78,7 @@ func BenchmarkBackupRestoreLayouts(b *testing.B) {
 				elapsed := time.Since(started)
 				if !layout.packed && restoreErr == nil {
 					var restored *store.Store
-					restored, restoreErr = store.OpenForTest(res.DBPath)
+					restored, restoreErr = store.OpenForTest(b.Context(), res.DBPath)
 					if restoreErr == nil {
 						restoreErr = restored.ClearAttachmentPackMetadataContext(ctx)
 					}
@@ -102,7 +102,7 @@ func BenchmarkBackupRestoreLayouts(b *testing.B) {
 					require.Zero(b, res.PackedAttachmentBlobs)
 					require.Equal(b, int64(benchmarkRestoreBlobs), res.LooseAttachmentBlobs)
 				}
-				assertRestoredBenchmarkBytes(b, res.DBPath, filepath.Join(target, "attachments"), expected)
+				assertRestoredBenchmarkBytes(b.Context(), b, res.DBPath, filepath.Join(target, "attachments"), expected)
 				attach, databaseChecks := timer.durations()
 				attachmentDuration += attach
 				databaseCheckDuration += databaseChecks
@@ -210,17 +210,18 @@ func countRestoreLayoutFiles(tb testing.TB, root string) (int64, int64) {
 }
 
 func assertRestoredBenchmarkBytes(
+	ctx context.Context,
 	tb testing.TB,
 	dbPath, attachmentsDir string,
 	expected map[string][]byte,
 ) {
 	tb.Helper()
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(tb.Context(), dbPath)
 	require.NoError(tb, err)
 	blobs, err := attachmentstore.New(store.NewPackCatalog(st), attachmentsDir)
 	require.NoError(tb, err)
 	for hash, want := range expected {
-		reader, size, err := blobs.Open(hash)
+		reader, size, err := blobs.Open(ctx, hash)
 		require.NoError(tb, err)
 		got, err := io.ReadAll(reader)
 		require.NoError(tb, err)

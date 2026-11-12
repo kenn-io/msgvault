@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -70,8 +71,8 @@ func ResolveAccountFlag(st *store.Store, input string) (Scope, error) {
 
 // ResolveEmailAccountFlag resolves an account for commands that operate only
 // on email-like source rows and must not expand into Calendar sources.
-func ResolveEmailAccountFlag(st *store.Store, input string) (Scope, error) {
-	return resolveEmailAccountFlag(st, input)
+func ResolveEmailAccountFlag(ctx context.Context, st *store.Store, input string) (Scope, error) {
+	return resolveEmailAccountFlag(ctx, st, input)
 }
 
 func scopeFromResolvedAccount(scope collectionops.Scope) Scope {
@@ -89,14 +90,14 @@ func scopeFromResolvedCollection(scope collectionops.CollectionScope) Scope {
 	}
 }
 
-func resolveEmailAccountFlag(st *store.Store, input string) (Scope, error) {
+func resolveEmailAccountFlag(ctx context.Context, st *store.Store, input string) (Scope, error) {
 	scope := Scope{Input: input}
 	if input == "" {
 		return scope, nil
 	}
 
 	// Try source resolution first.
-	sources, err := st.GetSourcesByIdentifierOrDisplayName(input)
+	sources, err := st.GetSourcesByIdentifierOrDisplayNameContext(ctx, input)
 	if err != nil {
 		return scope, opserr.Internal(fmt.Errorf("look up source for %q: %w", input, err))
 	}
@@ -121,7 +122,7 @@ func resolveEmailAccountFlag(st *store.Store, input string) (Scope, error) {
 
 	// No source match — check whether a collection exists with this name and
 	// reject with a helpful hint.
-	_, cerr := st.GetCollectionByName(input)
+	_, cerr := st.GetCollectionByNameContext(ctx, input)
 	switch {
 	case cerr == nil:
 		return scope, opserr.Invalid(fmt.Errorf(

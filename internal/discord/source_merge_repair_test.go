@@ -71,7 +71,7 @@ func TestMergeSourcesRestartsDiscordRepairForMovedHistory(t *testing.T) {
 			require.Equal(int64(1), merged.MessagesMoved)
 			require.Zero(merged.DuplicatesHidden)
 			var currentSource int64
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_id FROM messages WHERE id = ?`), historicalID).Scan(&currentSource))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT source_id FROM messages WHERE id = ?`), historicalID).Scan(&currentSource))
 			require.Equal(live.ID, currentSource)
 			// This is the real automatic entry point. The provider exposes only
 			// the live channel, so moved historical raw data must repair locally.

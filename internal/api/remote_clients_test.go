@@ -43,8 +43,9 @@ func newRemoteClientFixture(t *testing.T, collectionsWrite bool) *remoteClientFi
 		}}
 		options.OperationGate = gate
 	})
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
 		defer cancel()
 		require.NoError(t, f.srv.Shutdown(ctx))
 	})
@@ -57,7 +58,7 @@ func (f *remoteClientFixture) do(t *testing.T, key, method, target, body string)
 	if body != "" {
 		reader = strings.NewReader(body)
 	}
-	r := httptest.NewRequest(method, target, reader)
+	r := httptest.NewRequestWithContext(t.Context(), method, target, reader)
 	if body != "" {
 		r.Header.Set("Content-Type", "application/json")
 	}
@@ -192,9 +193,9 @@ func TestRemoteClientLimits(t *testing.T) {
 	// Latin-1 doubles when decoded, so the body fallback exceeds the limit while the raw MIME fits.
 	raw := []byte("From: owner@example.com\r\nSubject: Original\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=iso-8859-1\r\n\r\n" +
 		strings.Repeat("\xe9", int(remoteMessageBytes)/2+1))
-	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`), raw, f.withRaw)
+	_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`), raw, f.withRaw)
 	require.NoError(err)
-	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE message_bodies SET body_text = NULL, body_html = NULL WHERE message_id = ?`), f.withRaw)
+	_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind(`UPDATE message_bodies SET body_text = NULL, body_html = NULL WHERE message_id = ?`), f.withRaw)
 	require.NoError(err)
 
 	w = f.do(t, remoteClientTestReaderKey, http.MethodGet, "/api/v1/cli/message?id="+id, "")
@@ -203,7 +204,7 @@ func TestRemoteClientLimits(t *testing.T) {
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	assert.Len(w.Body.Bytes(), len(raw), "raw export ignores the decoded body size")
 
-	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`),
+	_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`),
 		[]byte(strings.Repeat("x", int(remoteMessageBytes)+1)), f.withRaw)
 	require.NoError(err)
 	for _, target := range []string{"/api/v1/cli/message/raw?id=" + id, "/api/v1/cli/message/original?id=" + id} {
@@ -214,7 +215,7 @@ func TestRemoteClientLimits(t *testing.T) {
 	assert.Equal(http.StatusOK, w.Code)
 
 	var convID int64
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), f.withRaw).Scan(&convID))
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), f.withRaw).Scan(&convID))
 	for i := 2; i <= query.ThreadMaxLimit; i++ {
 		_, err := f.st.PersistMessage(&store.MessagePersistData{Message: &store.Message{
 			SourceID: f.sourceID, ConversationID: convID, SourceMessageID: fmt.Sprintf("thread-member-%d", i),

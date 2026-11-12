@@ -57,7 +57,7 @@ func TestLive429RetryAfter(t *testing.T) {
 	c.disableRateLimits()
 	c.http.Transport = ct
 
-	ctx, cancel := context.WithTimeout(context.Background(), probeDeadline)
+	ctx, cancel := context.WithTimeout(t.Context(), probeDeadline)
 	defer cancel()
 
 	calls := 0

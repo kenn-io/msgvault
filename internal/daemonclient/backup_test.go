@@ -1,7 +1,6 @@
 package daemonclient
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -28,7 +27,7 @@ func TestBackupFreezeBeginReturnsTokenAndSetsAuthHeader(t *testing.T) {
 	c, err := New(Config{URL: srv.URL, APIKey: "secret-key", AllowInsecure: true})
 	require.NoError(err, "New")
 
-	token, err := c.BackupFreezeBegin(context.Background())
+	token, err := c.BackupFreezeBegin(t.Context())
 	require.NoError(err, "BackupFreezeBegin")
 	assert.Equal("01hz-fake-token", token, "token")
 }
@@ -48,7 +47,7 @@ func TestBackupFreezeBeginReturnsErrorOnNonOKStatus(t *testing.T) {
 	c, err := New(Config{URL: srv.URL, APIKey: "secret-key", AllowInsecure: true})
 	require.NoError(err, "New")
 
-	token, err := c.BackupFreezeBegin(context.Background())
+	token, err := c.BackupFreezeBegin(t.Context())
 	assert.Empty(token, "token")
 	require.Error(err, "BackupFreezeBegin should fail on 409")
 	assert.Contains(err.Error(), "already active", "error message")
@@ -73,7 +72,7 @@ func TestBackupFreezeEndSendsTokenAndSetsAuthHeader(t *testing.T) {
 	c, err := New(Config{URL: srv.URL, APIKey: "secret-key", AllowInsecure: true})
 	require.NoError(err, "New")
 
-	err = c.BackupFreezeEnd(context.Background(), "01hz-fake-token")
+	err = c.BackupFreezeEnd(t.Context(), "01hz-fake-token")
 	require.NoError(err, "BackupFreezeEnd")
 	assert.Equal("01hz-fake-token", gotBody.Token, "request token")
 }
@@ -93,7 +92,7 @@ func TestBackupFreezeEndReturnsErrorOnNonOKStatus(t *testing.T) {
 	c, err := New(Config{URL: srv.URL, APIKey: "secret-key", AllowInsecure: true})
 	require.NoError(err, "New")
 
-	err = c.BackupFreezeEnd(context.Background(), "bogus-token")
+	err = c.BackupFreezeEnd(t.Context(), "bogus-token")
 	require.Error(err, "BackupFreezeEnd should fail on 400")
 	assert.Contains(err.Error(), "no active backup freeze", "error message")
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/emlx"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
@@ -38,7 +39,8 @@ type EmlxImportOptions struct {
 	// Empty means no disk storage.
 	AttachmentsDir string
 	// RemoteImages is nil unless remote image archiving was explicitly enabled.
-	RemoteImages *remoteimage.Fetcher
+	RemoteImages   *remoteimage.Fetcher
+	RelayedSenders []mime.RelayedSenderRule
 
 	// MaxMessageBytes limits the maximum .emlx file size to read.
 	// Defaults to 128 MiB.
@@ -178,7 +180,7 @@ func importEmlxDir(
 	rederive.Heal(ctx, slog.Default(), st, src)
 	run := &emlxRun{absRoot: absRoot, opts: opts, log: log, summary: summary}
 	if !opts.NoResume && !opts.FullReconcile {
-		if err := run.resumeCounters(st, src.ID); err != nil {
+		if err := run.resumeCounters(ctx, st, src.ID); err != nil {
 			return nil, err
 		}
 	}
@@ -230,8 +232,8 @@ func importEmlxDir(
 // resumeCounters carries the totals of an interrupted run on the same root.
 // Every run revisits every file, so receipts, not a position, decide what is
 // complete and the processed count restarts. Errors count failed attempts.
-func (r *emlxRun) resumeCounters(st *store.Store, sourceID int64) error {
-	active, err := st.GetLatestCheckpointedSyncByType(sourceID, "import-emlx")
+func (r *emlxRun) resumeCounters(ctx context.Context, st *store.Store, sourceID int64) error {
+	active, err := st.GetLatestCheckpointedSyncByType(ctx, sourceID, "import-emlx")
 	if errors.Is(err, store.ErrSyncRunNotFound) || active == nil {
 		return nil
 	}
@@ -264,7 +266,7 @@ func reportDiscoveryErrors(run *emlxRun, err error) {
 }
 
 func (r *emlxRun) importMailbox(ctx context.Context, sourceID int64, mboxIdx int, mb emlx.Mailbox) {
-	labelID, err := r.st.EnsureLabel(sourceID, mb.Label, mb.Label, "user")
+	labelID, err := r.st.EnsureLabel(ctx, sourceID, mb.Label, mb.Label, "user")
 	if err != nil {
 		r.reportHard("failed to ensure label", fmt.Errorf("label %q: %w", mb.Label, err))
 		return

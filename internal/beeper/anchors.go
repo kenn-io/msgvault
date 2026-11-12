@@ -70,7 +70,7 @@ func (imp *Importer) verifyAnchors(ctx context.Context, syncID, sourceID int64, 
 // means the installation was rebuilt and stored cursors must not be trusted.
 // A no-op for accounts with nothing archived yet.
 func (imp *Importer) verifyArchivedSample(ctx context.Context, sourceID int64) error {
-	refs, err := imp.store.ListRecentMessagesForSource(sourceID, 5)
+	refs, err := imp.store.ListRecentMessagesForSource(ctx, sourceID, 5)
 	if err != nil {
 		return err
 	}

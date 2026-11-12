@@ -120,7 +120,7 @@ func BenchmarkPackedConcurrentRead(b *testing.B) {
 	var once sync.Once
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			reader, _, err := blobs.Open(hash)
+			reader, _, err := blobs.Open(b.Context(), hash)
 			if err == nil {
 				_, err = io.Copy(io.Discard, reader)
 				err = errors.Join(err, reader.Close())
@@ -144,7 +144,7 @@ func BenchmarkPackedConcurrentStream(b *testing.B) {
 	var once sync.Once
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			reader, _, err := blobs.OpenStream(context.Background(), hash)
+			reader, _, err := blobs.OpenStream(b.Context(), hash)
 			if err == nil {
 				_, err = io.Copy(io.Discard, reader)
 				err = errors.Join(err, reader.Close())
@@ -166,7 +166,7 @@ func BenchmarkBackupPackedCapture(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		reader, err := source.Open(context.Background(), ref)
+		reader, err := source.Open(b.Context(), ref)
 		require.NoError(b, err)
 		_, readErr := io.Copy(io.Discard, reader)
 		require.NoError(b, errors.Join(readErr, reader.Close()))
@@ -253,7 +253,7 @@ func benchmarkHash(content []byte) string {
 
 func readBenchmarkBlob(b *testing.B, blobs *attachmentstore.Store, hash string) {
 	b.Helper()
-	reader, _, err := blobs.Open(hash)
+	reader, _, err := blobs.Open(b.Context(), hash)
 	require.NoError(b, err)
 	_, readErr := io.Copy(io.Discard, reader)
 	require.NoError(b, errors.Join(readErr, reader.Close()))
@@ -261,7 +261,7 @@ func readBenchmarkBlob(b *testing.B, blobs *attachmentstore.Store, hash string) 
 
 func streamBenchmarkBlob(b *testing.B, blobs *attachmentstore.Store, hash string) {
 	b.Helper()
-	reader, _, err := blobs.OpenStream(context.Background(), hash)
+	reader, _, err := blobs.OpenStream(b.Context(), hash)
 	require.NoError(b, err)
 	_, readErr := io.Copy(io.Discard, reader)
 	require.NoError(b, errors.Join(readErr, reader.Close()))

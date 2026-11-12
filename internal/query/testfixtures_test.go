@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -104,6 +103,7 @@ type RecipientFixture struct {
 	// participant's current address in email_address, matching what the
 	// exporter writes for cache schema v26.
 	EmailAddress string
+	IsRelayed    bool
 }
 
 // LabelFixture defines a label row for Parquet test data.
@@ -508,7 +508,7 @@ func (m MessageFixture) sqlValues() []string {
 		fmt.Sprintf("%d::BIGINT", m.ConversationID),
 		sqlStr(m.Subject),
 		sqlStr(m.Snippet),
-		fmt.Sprintf("TIMESTAMP '%s'", m.SentAt.Format("2006-01-02 15:04:05")),
+		fmt.Sprintf("TIMESTAMP '%s'", m.SentAt.Format("2006-01-02 15:04:05.999999")),
 		fmt.Sprintf("%d::BIGINT", m.SizeEstimate),
 		strconv.FormatBool(m.HasAttachments),
 		strconv.FormatBool(m.HiddenTextPresent),
@@ -557,7 +557,7 @@ func (m MessageFixture) sqlValuesWithInternalDeletion() []string {
 		fmt.Sprintf("%d::BIGINT", m.ConversationID),
 		sqlStr(m.Subject),
 		sqlStr(m.Snippet),
-		fmt.Sprintf("TIMESTAMP '%s'", m.SentAt.Format("2006-01-02 15:04:05")),
+		fmt.Sprintf("TIMESTAMP '%s'", m.SentAt.Format("2006-01-02 15:04:05.999999")),
 		fmt.Sprintf("%d::BIGINT", m.SizeEstimate),
 		strconv.FormatBool(m.HasAttachments),
 		strconv.FormatBool(m.HiddenTextPresent),
@@ -618,9 +618,9 @@ func (b *TestDataBuilder) recipientsSQL() string {
 		} else if email := b.participantEmail(r.ParticipantID); email != "" {
 			resolved = sqlStr(email)
 		}
-		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s, %s, %s)",
+		return fmt.Sprintf("(%d::BIGINT, %d::BIGINT, %s, %s, %s, %s, %t)",
 			r.MessageID, r.ParticipantID, sqlStr(r.Type), sqlStr(r.DisplayName),
-			resolved, envelope)
+			resolved, envelope, r.IsRelayed)
 	})
 }
 
@@ -694,7 +694,7 @@ const (
 	// messageRecipientsColsWithEnvelope adds the resolved recipient address
 	// and the raw header address (cache schema v26). messageRecipientsCols
 	// stays for fixtures that model pre-v17 caches without either column.
-	messageRecipientsColsWithEnvelope = "message_id, participant_id, recipient_type, display_name, email_address, envelope_address"
+	messageRecipientsColsWithEnvelope = "message_id, participant_id, recipient_type, display_name, email_address, envelope_address, is_relayed"
 	labelsCols                        = "id, name"
 	messageLabelsCols                 = "message_id, label_id"
 	attachmentsCols                   = "attachment_id, message_id, size, filename, mime_type"
@@ -724,6 +724,7 @@ func (b *TestDataBuilder) Build() (string, func()) {
 
 	pb := newParquetBuilder(b.t)
 	pb.unsentMessages = b.unsentMessages
+	pb.legacyRecipientSchema = b.legacyRecipientSchema
 	b.addMessageTables(pb)
 	b.addAuxiliaryTables(pb)
 	b.addAttachmentsTable(pb)
@@ -776,7 +777,7 @@ func (b *TestDataBuilder) recipientDummyRow() string {
 	if b.legacyRecipientSchema {
 		return "(0::BIGINT, 0::BIGINT, '', '')"
 	}
-	return "(0::BIGINT, 0::BIGINT, '', '', '', '')"
+	return "(0::BIGINT, 0::BIGINT, '', '', '', '', false)"
 }
 
 // addAuxiliaryTables adds sources, participants, recipients, labels, message_labels, and conversations.
@@ -822,7 +823,7 @@ func (b *TestDataBuilder) BuildEngine() *DuckDBEngine {
 	b.t.Helper()
 	analyticsDir, cleanup := b.Build()
 	b.t.Cleanup(cleanup)
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(b.t.Context(), analyticsDir, "", nil)
 	require.NoError(b.t, err, "NewDuckDBEngine")
 	b.t.Cleanup(func() { _ = engine.Close() })
 	return engine
@@ -844,9 +845,10 @@ type parquetTable struct {
 
 // parquetBuilder creates a temp directory with Parquet test data files.
 type parquetBuilder struct {
-	t              testing.TB
-	tables         []parquetTable
-	unsentMessages string
+	t                     testing.TB
+	tables                []parquetTable
+	unsentMessages        string
+	legacyRecipientSchema bool
 }
 
 // Like dbtest.schemaTemplates and testutil.sqliteTemplate, retain templates in
@@ -871,7 +873,7 @@ func (b *parquetBuilder) contentKey() [sha256.Size]byte {
 			_, _ = fmt.Fprintf(h, "%d:%s", len(field), field)
 		}
 	}
-	_, _ = fmt.Fprintf(h, "%d:%s", len(b.unsentMessages), b.unsentMessages)
+	_, _ = fmt.Fprintf(h, "%d:%s:%t", len(b.unsentMessages), b.unsentMessages, b.legacyRecipientSchema)
 	return [sha256.Size]byte(h.Sum(nil))
 }
 
@@ -959,13 +961,27 @@ func (b *parquetBuilder) buildTemplate() (fstest.MapFS, identityindex.BuildResul
 	require.NoError(b.t, err, "open duckdb")
 	defer func() { _ = db.Close() }()
 	b.writeParquetFiles(db, tmpDir)
-	derived, err := identityindex.Build(context.Background(), db, identityindex.BuildOptions{
+	var legacyRecipients []byte
+	var recipientPath string
+	if b.legacyRecipientSchema {
+		recipientPath = filepath.Join(tmpDir, "message_recipients", "message_recipients.parquet")
+		legacyRecipients, err = os.ReadFile(recipientPath)
+		require.NoError(b.t, err)
+		currentPath := recipientPath + ".current"
+		_, err = db.ExecContext(b.t.Context(), "COPY (SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address FROM read_parquet('"+escapePath(recipientPath)+"')) TO '"+escapePath(currentPath)+"' (FORMAT PARQUET)")
+		require.NoError(b.t, err)
+		require.NoError(b.t, os.Rename(currentPath, recipientPath))
+	}
+	derived, err := identityindex.Build(b.t.Context(), db, identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: tmpDir,
 		OutputRoot:     tmpDir,
 		UnsentMessages: b.unsentMessages,
 	})
 	require.NoError(b.t, err, "derive identity fixture datasets")
+	if b.legacyRecipientSchema {
+		require.NoError(b.t, os.WriteFile(recipientPath, legacyRecipients, 0o600))
+	}
 	files := fstest.MapFS{}
 	err = fs.WalkDir(os.DirFS(tmpDir), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -1070,6 +1086,17 @@ func (b *parquetBuilder) writeParquetFiles(db *sql.DB, tmpDir string) {
 	for _, tbl := range b.tables {
 		path := escapePath(filepath.Join(tmpDir, tbl.subdir, tbl.file))
 		writeTableParquet(b.t, db, path, tbl.columns, tbl.values, tbl.empty)
+		if tbl.name == "message_recipients" && tbl.columns == messageRecipientsCols {
+			// Every cache v36 shard has is_relayed. Only legacy TestDataBuilder
+			// fixtures omit the envelope columns.
+			current := "SELECT *, false AS is_relayed"
+			if !b.legacyRecipientSchema {
+				current = "SELECT *, NULL::VARCHAR AS email_address, NULL::VARCHAR AS envelope_address, false AS is_relayed"
+			}
+			_, err := db.ExecContext(b.t.Context(), "COPY ("+current+" FROM read_parquet('"+path+"')) TO '"+path+".v36' (FORMAT PARQUET)")
+			require.NoError(b.t, err)
+			require.NoError(b.t, os.Rename(filepath.FromSlash(path+".v36"), filepath.FromSlash(path)))
+		}
 	}
 }
 
@@ -1081,9 +1108,9 @@ func escapePath(p string) string {
 // writeTableParquet writes a single table's data to a Parquet file using DuckDB.
 func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, empty bool) {
 	tb.Helper()
-	_, err := db.Exec("CREATE TABLE fixture_values AS SELECT * FROM (VALUES " + values + ")")
+	_, err := db.ExecContext(tb.Context(), "CREATE TABLE fixture_values AS SELECT * FROM (VALUES "+values+")")
 	require.NoError(tb, err, "parse fixture values for %s", path)
-	valueRows, err := db.Query("SELECT * FROM fixture_values LIMIT 0")
+	valueRows, err := db.QueryContext(tb.Context(), "SELECT * FROM fixture_values LIMIT 0")
 	require.NoError(tb, err, "read fixture values for %s", path)
 	defer func() { _ = valueRows.Close() }()
 	valueColumns, err := valueRows.Columns()
@@ -1109,9 +1136,9 @@ func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, 
 			) TO '%s' (FORMAT PARQUET)
 		`, projection, columns, whereClause, path)
 
-	_, err = db.Exec(query)
+	_, err = db.ExecContext(tb.Context(), query)
 	require.NoError(tb, err, "create parquet %s", path)
-	_, err = db.Exec("DROP TABLE fixture_values")
+	_, err = db.ExecContext(tb.Context(), "DROP TABLE fixture_values")
 	require.NoError(tb, err, "drop fixture values for %s", path)
 }
 
@@ -1125,7 +1152,7 @@ func createEngineFromBuilder(tb testing.TB, pb *parquetBuilder) *DuckDBEngine {
 	tb.Helper()
 	analyticsDir, cleanup := pb.build()
 	tb.Cleanup(cleanup)
-	engine, err := NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := NewDuckDBEngine(tb.Context(), analyticsDir, "", nil)
 	require.NoError(tb, err, "NewDuckDBEngine")
 	tb.Cleanup(func() { _ = engine.Close() })
 	return engine

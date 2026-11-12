@@ -2,7 +2,6 @@ package imap
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -78,7 +77,7 @@ func (s *qresyncTestServer) commandsFor(connID int) []string {
 func startQresyncTestServer(t *testing.T, cfg qresyncServerConfig) (string, *qresyncTestServer) {
 	t.Helper()
 	require.NotEmpty(t, cfg.capabilities)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ln.Close() })
 
@@ -485,7 +484,7 @@ func TestListMessagesQresyncReconnectDoesNotReuseEnabledState(t *testing.T) {
 	require.Equal([]string{"INBOX|2"}, listQresyncMessages(t, client))
 
 	client.mu.Lock()
-	require.NoError(client.reconnect(context.Background()))
+	require.NoError(client.reconnect(t.Context()))
 	client.messageListCache = nil
 	client.mu.Unlock()
 

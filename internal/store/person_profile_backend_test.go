@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"testing"
@@ -351,7 +350,7 @@ func TestFullProfileLifecycleOnConfiguredBackend(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	participantID, err := st.EnsureParticipantByIdentifier(
 		"email", "alice@example.com", "Alice Example",
@@ -433,7 +432,7 @@ func liveTableColumns(t *testing.T, st *store.Store, table string) []string {
 	require := require.New(t)
 
 	rows, err := st.DB().QueryContext(
-		context.Background(), "SELECT * FROM "+table+" WHERE 1 = 0",
+		t.Context(), "SELECT * FROM "+table+" WHERE 1 = 0",
 	)
 	require.NoError(err, "table %s must exist and be queryable", table)
 	defer func() { _ = rows.Close() }()

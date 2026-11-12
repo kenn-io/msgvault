@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,7 +21,7 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 	b.AddMessage(MessageOpt{SourceID: first, Subject: "Two", SizeEstimate: 200})
 	b.AddMessage(MessageOpt{SourceID: second, Subject: "Three", SizeEstimate: 300})
 
-	result, err := b.BuildEngine().ExploreGroups(context.Background(), ExploreGroupRequest{
+	result, err := b.BuildEngine().ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore: ExploreRequest{}, Dimension: "source",
 		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 1},
 	})
@@ -35,6 +34,96 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 	assertions.NotEmpty(result.CacheRevision)
 }
 
+func TestExploreGroupTimezoneValidationAndCalendarBuckets(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	groupBuilder := NewTestDataBuilder(t)
+	groupSource := groupBuilder.AddSourceWithType("archive@example.org", "gmail")
+	for _, instant := range []string{"2024-05-30T02:00:00Z", "2024-05-31T02:00:00Z", "2024-06-01T02:00:00Z", "2024-07-01T02:00:00Z", "2025-01-01T02:00:00Z"} {
+		at, err := time.Parse(time.RFC3339, instant)
+		requirements.NoError(err)
+		groupBuilder.AddMessage(MessageOpt{SourceID: groupSource, SentAt: at})
+	}
+	groupEngine := groupBuilder.BuildEngine()
+	result, err := groupEngine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "source", Timezone: "Invalid/Zone"})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 1)
+	assertions.Equal(strconv.FormatInt(groupSource, 10), result.Rows[0].Key)
+	assertions.Equal(int64(5), result.Rows[0].Count)
+	for _, dimension := range []string{"day", "month", "year"} {
+		for _, timezone := range []string{"Invalid/Zone", "Local"} {
+			_, err := groupEngine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: dimension, Timezone: timezone})
+			requirements.ErrorContains(err, "invalid timezone")
+			requirements.ErrorIs(err, ErrInvalidExploreRequest)
+		}
+	}
+	month := ExploreGroupRequest{Dimension: "month", Timezone: "America/New_York", Sort: SortSpec{Field: "key", Direction: "desc"}, Page: PageSpec{Limit: 1}}
+	var total int64
+	for offset := range 3 {
+		month.Page.Offset = offset
+		page, err := groupEngine.ExploreGroups(t.Context(), month)
+		requirements.NoError(err)
+		requirements.Len(page.Rows, 1)
+		assertions.Equal(int64(5), page.Rows[0].TotalItems)
+		total += page.Rows[0].Count
+		if offset == 2 {
+			assertions.Equal("2024-05", page.Rows[0].Key)
+			assertions.Equal(int64(3), page.Rows[0].Count)
+		}
+	}
+	assertions.Equal(int64(5), total)
+
+	localYear, err := groupEngine.ExploreGroups(t.Context(), ExploreGroupRequest{
+		Dimension: "year", Timezone: "America/New_York", Page: PageSpec{Limit: 10},
+	})
+	requirements.NoError(err)
+	requirements.Len(localYear.Rows, 1)
+	assertions.Equal("2024", localYear.Rows[0].Key)
+}
+
+func TestPersonGroupLabelAvoidsParticipantPageProduct(t *testing.T) {
+	t.Parallel()
+	for _, files := range []bool{false, true} {
+		name := "messages"
+		if files {
+			name = "files"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := NewTestDataBuilder(t)
+			source := b.AddSourceWithType("owner@example.test", "gmail")
+			owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+			b.AddOwnerParticipant(source, owner)
+			for i := range 40 {
+				person := b.AddParticipant("person"+strconv.Itoa(i)+"@example.test", "example.test", "Person "+strconv.Itoa(i))
+				curated := "Curated person " + strconv.Itoa(i)
+				addPersonOverride(b, person, int64(i+1), &curated)
+				message := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true})
+				b.AddFrom(message, owner, "Owner")
+				b.AddTo(message, person, "")
+				b.AddAttachmentWithMIME(int64(1000+i), message, 10, "file.pdf", "application/pdf")
+			}
+			engine := b.BuildEngine()
+			var groups int
+			profile, err := profileQuery(t, engine, func() error {
+				if files {
+					result, err := engine.GroupFiles(t.Context(), FileGroupRequest{Dimension: "participant"})
+					groups = len(result.Rows)
+					return err
+				}
+				result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
+					Dimension: "participant", Page: PageSpec{Limit: 500},
+				})
+				groups = len(result.Rows)
+				return err
+			})
+			require.NoError(t, err)
+			require.Equal(t, 41, groups)
+			assert.LessOrEqual(t, profile.maxCardinality(), 4*41, "label lookup must avoid pairing every participant with every page group")
+		})
+	}
+}
+
 func TestExploreAttachmentByteEstimates(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
@@ -45,6 +134,7 @@ func TestExploreAttachmentByteEstimates(t *testing.T) {
 		{"slack includes attachments", "slack", "slack", 12, 12},
 		{"teams includes attachments", "teams", "teams", 12, 12},
 		{"inline includes attachments", "inline", "inline", 12, 12},
+		{"matrix includes attachments", "matrix", "matrix", 12, 12},
 		{"known attachments bound incomplete estimates", "teams", "teams", 0, 7},
 		{"body-only chat adds attachments", "imessage", "imessage", 5, 12},
 		{"email accounting is unchanged", "gmail", "email", 100, 107},
@@ -95,7 +185,7 @@ func TestExploreGroupsMailingListsPreserveAggregateDrillPopulation(t *testing.T)
 	b.AddMessage(MessageOpt{Subject: "Missing", SizeEstimate: 800})
 	engine := b.BuildEngine()
 
-	grouped, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+	grouped, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore: ExploreRequest{}, Dimension: "mailing_list",
 		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
@@ -138,7 +228,7 @@ func TestExploreGroupsMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
 	b.AddMessage(MessageOpt{Subject: "calendar", MessageType: messageTypeCalendar, SentAt: base.Add(2 * time.Hour)})
 	engine := b.BuildEngine()
 
-	result, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+	result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore: ExploreRequest{}, Dimension: messageTypeDimension,
 		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
@@ -151,7 +241,7 @@ func TestExploreGroupsMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
 	assertions.Equal(messageTypeCalendar, result.Rows[1].Key)
 	assertions.Equal(int64(1), result.Rows[1].Count)
 
-	drilled, err := engine.Explore(context.Background(), ExploreRequest{
+	drilled, err := engine.Explore(t.Context(), ExploreRequest{
 		Context: Context{MessageTypes: []string{messageTypeEmail}}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
@@ -168,7 +258,7 @@ func TestExploreMessageTypeGroupsUseLatestConversationMessage(t *testing.T) {
 	b.AddMessage(MessageOpt{SourceID: source, ConversationID: 101, Subject: "Newer MMS", MessageType: "mms", SentAt: base.Add(time.Hour)})
 	engine := b.BuildEngine()
 
-	groups, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+	groups, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore: ExploreRequest{}, Dimension: messageTypeDimension, Page: PageSpec{Limit: 50},
 	})
 	require.NoError(err)
@@ -176,7 +266,7 @@ func TestExploreMessageTypeGroupsUseLatestConversationMessage(t *testing.T) {
 	assert.Equal("mms", groups.Rows[0].Key)
 	assert.Equal(int64(1), groups.Rows[0].Count)
 
-	entries, err := engine.Explore(context.Background(), ExploreRequest{
+	entries, err := engine.Explore(t.Context(), ExploreRequest{
 		Context: Context{MessageTypes: []string{"sms"}}, Page: PageSpec{Limit: 50},
 	})
 	require.NoError(err)
@@ -202,7 +292,7 @@ func TestExploreGroupsGroupKeyReturnsExactGroupRegardlessOfRank(t *testing.T) {
 	b.AddTo(second, alice, "")
 	b.AddCc(second, bob, "")
 
-	result, err := b.BuildEngine().ExploreGroups(context.Background(), ExploreGroupRequest{
+	result, err := b.BuildEngine().ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore: ExploreRequest{}, Dimension: "participant", GroupKey: strconv.FormatInt(bob, 10),
 		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 1},
 	})
@@ -223,7 +313,7 @@ func TestExploreGroupsGroupKeyWithoutMatchReturnsZeroRows(t *testing.T) {
 	b.AddSource("archive@example.com")
 	b.AddMessage(MessageOpt{Subject: "One"})
 
-	result, err := b.BuildEngine().ExploreGroups(context.Background(), ExploreGroupRequest{
+	result, err := b.BuildEngine().ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore: ExploreRequest{}, Dimension: "source", GroupKey: "999",
 		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
@@ -248,7 +338,7 @@ func TestExploreGroupsGroupKeyComposesWithContextFilters(t *testing.T) {
 	b.AddTo(inSecond, carol, "")
 	engine := b.BuildEngine()
 
-	filtered, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+	filtered, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore:   ExploreRequest{Context: Context{SourceIDs: []int64{first}}},
 		Dimension: "domain", GroupKey: "example.net",
 		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
@@ -257,8 +347,15 @@ func TestExploreGroupsGroupKeyComposesWithContextFilters(t *testing.T) {
 	requirements.Len(filtered.Rows, 1)
 	assertions.Equal("example.net", filtered.Rows[0].Key)
 	assertions.Equal(int64(1), filtered.Rows[0].Count, "the source filter must scope the keyed group's count")
+	requirements.NotNil(filtered.Overview)
+	var filteredActivity int64
+	for _, bucket := range filtered.Overview.Activity {
+		filteredActivity += bucket.Count
+	}
+	assertions.Equal(int64(1), filteredActivity)
+	assertions.Equal([]ExploreGroupCoParticipant{{Key: strconv.FormatInt(bob, 10), Label: "Bob Example", Count: 1}}, filtered.Overview.CoParticipants)
 
-	unfiltered, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+	unfiltered, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore: ExploreRequest{}, Dimension: "domain", GroupKey: "example.net",
 		Sort: SortSpec{Field: "count", Direction: "desc"}, Page: PageSpec{Limit: 10},
 	})
@@ -290,7 +387,7 @@ func TestExploreGroupsParticipantLabelsUseDurableIdentityPrecedence(t *testing.T
 	fifth := b.AddMessage(MessageOpt{SourceID: source, Subject: "Stable ID"})
 	b.AddTo(fifth, stableID, "")
 
-	result, err := b.BuildEngine().ExploreGroups(context.Background(), ExploreGroupRequest{
+	result, err := b.BuildEngine().ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore: ExploreRequest{}, Dimension: "participant",
 		Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 10},
 	})
@@ -336,7 +433,7 @@ func TestExploreGroupsMergesLinkedParticipantIdentities(t *testing.T) {
 	assertions := assert.New(t)
 	b, _, _ := linkedParticipantExploreFixture(t)
 
-	result, err := b.BuildEngine().ExploreGroups(context.Background(), ExploreGroupRequest{
+	result, err := b.BuildEngine().ExploreGroups(t.Context(), ExploreGroupRequest{
 		Explore: ExploreRequest{}, Dimension: "participant",
 		Sort: SortSpec{Field: "key", Direction: "asc"}, Page: PageSpec{Limit: 10},
 	})
@@ -462,7 +559,7 @@ func TestExploreParticipantFilterMatchesLinkedAliases(t *testing.T) {
 	b, alice, alias := linkedParticipantExploreFixture(t)
 	engine := b.BuildEngine()
 
-	byCanonical, err := engine.Explore(context.Background(), ExploreRequest{
+	byCanonical, err := engine.Explore(t.Context(), ExploreRequest{
 		Context: Context{ParticipantIDs: []int64{alice}}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
@@ -470,13 +567,13 @@ func TestExploreParticipantFilterMatchesLinkedAliases(t *testing.T) {
 	assertions.Equal("source:1:message:msg2", byCanonical.Rows[0].Key, "alias-only entry")
 	assertions.Equal("source:1:message:msg1", byCanonical.Rows[1].Key)
 
-	byAlias, err := engine.Explore(context.Background(), ExploreRequest{
+	byAlias, err := engine.Explore(t.Context(), ExploreRequest{
 		Context: Context{ParticipantIDs: []int64{alias}}, Page: PageSpec{Limit: 10},
 	})
 	requirements.NoError(err)
 	assertions.Len(byAlias.Rows, 2, "a member ID widens to its whole cluster")
 
-	stats, err := engine.ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+	stats, err := engine.ExploreSelectionStats(t.Context(), ExploreSelectionRequest{
 		Explore: ExploreRequest{Context: Context{ParticipantIDs: []int64{alice}}},
 	})
 	requirements.NoError(err)
@@ -492,7 +589,7 @@ func TestExploreSelectionStatsCoversPredicateAndExclusions(t *testing.T) {
 	b.AddAttachment(first, 10, "one.txt")
 	b.AddMessage(MessageOpt{SourceID: source, Subject: "Two", SizeEstimate: 200})
 
-	result, err := b.BuildEngine().ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+	result, err := b.BuildEngine().ExploreSelectionStats(t.Context(), ExploreSelectionRequest{
 		Explore: ExploreRequest{}, ExcludedKeys: []string{"source:1:message:msg1"},
 	})
 	require.NoError(t, err)
@@ -513,7 +610,7 @@ func TestExploreSelectionStatsCountsPerEntryActionSupport(t *testing.T) {
 	b.AddMessage(MessageOpt{SourceID: gmail, Subject: "Open only"})
 	b.AddMessage(MessageOpt{SourceID: imap, Subject: "Neither"})
 
-	result, err := b.BuildEngine().ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+	result, err := b.BuildEngine().ExploreSelectionStats(t.Context(), ExploreSelectionRequest{
 		Explore: ExploreRequest{},
 	})
 	requirements.NoError(err)
@@ -531,7 +628,7 @@ func TestExploreSelectionStatsCanResolveExactDeletableMessageIDs(t *testing.T) {
 	first := b.AddMessage(MessageOpt{SourceID: source, Subject: "One"})
 	second := b.AddMessage(MessageOpt{SourceID: source, Subject: "Two"})
 
-	result, err := b.BuildEngine().ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+	result, err := b.BuildEngine().ExploreSelectionStats(t.Context(), ExploreSelectionRequest{
 		Explore: ExploreRequest{}, ExcludedKeys: []string{"source:1:message:msg1"},
 		IncludeDeletableMessageIDs: true,
 	})
@@ -552,13 +649,13 @@ func TestDeletionCoversGmailAndMSMailOnly(t *testing.T) {
 	b.AddMessage(MessageOpt{SourceID: b.AddSourceWithType("i@example.com", "imap"), Subject: "Three"})
 	engine := b.BuildEngine()
 
-	result, err := engine.ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+	result, err := engine.ExploreSelectionStats(t.Context(), ExploreSelectionRequest{
 		IncludeDeletableMessageIDs: true,
 	})
 	requirements.NoError(err)
 	assertions.ElementsMatch([]int64{gmailMsg, msmailMsg}, result.DeletableMessageIDs)
 
-	targets, err := engine.GetDeletionTargetsByFilter(context.Background(), MessageFilter{})
+	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), MessageFilter{})
 	requirements.NoError(err)
 	ids, err := deletionTargetSourceMessageIDs(targets, nil)
 	requirements.NoError(err)
@@ -578,7 +675,7 @@ func TestExploreSelectionStatsExcludesDedupHiddenDeletionTargets(t *testing.T) {
 			b.AddMessage(MessageOpt{SourceID: source, Subject: "Hidden duplicate", InternalDeletedAt: &hiddenAt})
 			engine := b.BuildEngine()
 
-			stats, err := engine.ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+			stats, err := engine.ExploreSelectionStats(t.Context(), ExploreSelectionRequest{
 				Explore:                    ExploreRequest{Context: Context{Deletion: deletion}},
 				IncludeDeletableMessageIDs: true,
 			})
@@ -587,7 +684,7 @@ func TestExploreSelectionStatsExcludesDedupHiddenDeletionTargets(t *testing.T) {
 			assertions.Equal(int64(1), stats.DeletableCount, "only the live message can be staged")
 			assertions.Equal([]int64{live}, stats.DeletableMessageIDs)
 
-			targets, err := engine.GetDeletionTargetsByMessageIDs(context.Background(), stats.DeletableMessageIDs)
+			targets, err := engine.GetDeletionTargetsByMessageIDs(t.Context(), stats.DeletableMessageIDs)
 			requirements.NoError(err)
 			requirements.Len(targets, 1)
 			assertions.Equal(stats.DeletableCount, int64(len(targets)), "preflight and staging resolve the same subset")
@@ -604,14 +701,14 @@ func TestExploreSelectionStatsCanResolveExactRawExportMessageID(t *testing.T) {
 	first := b.AddMessage(MessageOpt{SourceID: source, Subject: "One"})
 	b.AddMessage(MessageOpt{SourceID: source, Subject: "Two"})
 
-	result, err := b.BuildEngine().ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+	result, err := b.BuildEngine().ExploreSelectionStats(t.Context(), ExploreSelectionRequest{
 		Explore: ExploreRequest{}, IncludedKeys: []string{"source:1:message:msg1"},
 	})
 	requirements.NoError(err)
 	requirements.NotNil(result.RawExportMessageID)
 	assertions.Equal(first, *result.RawExportMessageID)
 
-	bulk, err := b.BuildEngine().ExploreSelectionStats(context.Background(), ExploreSelectionRequest{
+	bulk, err := b.BuildEngine().ExploreSelectionStats(t.Context(), ExploreSelectionRequest{
 		Explore: ExploreRequest{},
 	})
 	requirements.NoError(err)
@@ -630,7 +727,7 @@ func TestExploreFilesReturnsBoundedChronologicalAttachmentFacts(t *testing.T) {
 	newer := b.AddMessage(MessageOpt{SourceID: source, Subject: "Newer", SentAt: time.Date(2026, 7, 18, 11, 0, 0, 0, time.UTC)})
 	b.AddAttachmentWithMIME(77, newer, 20, "newer.pdf", "application/pdf")
 
-	result, err := b.BuildEngine().ExploreFiles(context.Background(), ExploreFilesRequest{
+	result, err := b.BuildEngine().ExploreFiles(t.Context(), ExploreFilesRequest{
 		Explore: ExploreRequest{}, Page: PageSpec{Limit: 1},
 	})
 	requirements.NoError(err)
@@ -656,12 +753,12 @@ func TestExploreFilesUsesDurableAttachmentIdentityForDuplicateMetadataPages(t *t
 	b.AddAttachmentWithID(42, message, 10, "same.txt")
 	engine := b.BuildEngine()
 
-	first, err := engine.ExploreFiles(context.Background(), ExploreFilesRequest{
+	first, err := engine.ExploreFiles(t.Context(), ExploreFilesRequest{
 		Explore: ExploreRequest{}, Page: PageSpec{Limit: 1},
 	})
 	requirements.NoError(err)
 	requirements.Len(first.Files, 1)
-	second, err := engine.ExploreFiles(context.Background(), ExploreFilesRequest{
+	second, err := engine.ExploreFiles(t.Context(), ExploreFilesRequest{
 		Explore: ExploreRequest{}, Page: PageSpec{Limit: 1, Offset: 1},
 	})
 	requirements.NoError(err)
@@ -681,7 +778,7 @@ func TestExploreMatchCountsBatchesExactLogicalRowCounts(t *testing.T) {
 	second := b.AddMessage(MessageOpt{SourceID: source, ConversationID: conversationID, MessageType: messageTypeIMessage, ConversationType: "direct_chat"})
 	b.AddMessage(MessageOpt{SourceID: source, ConversationID: conversationID, MessageType: messageTypeIMessage, ConversationType: "direct_chat"})
 
-	result, err := b.BuildEngine().ExploreMatchCounts(context.Background(), ExploreMatchCountsRequest{
+	result, err := b.BuildEngine().ExploreMatchCounts(t.Context(), ExploreMatchCountsRequest{
 		Explore: ExploreRequest{Search: SearchSpec{
 			Mode: SearchFullText, Query: "alpha", CandidateMessageIDs: []int64{first, second}, LexicalIndexRevision: "fts5:test",
 		}},
@@ -729,8 +826,92 @@ func TestExploreDayGroupsCountSentMessagesBeforeChatCollapse(t *testing.T) {
 	require.NoError(err)
 	require.Len(local.Rows, 3)
 	assert.Equal("2023-12-31", local.Rows[0].Key)
-	for _, timezone := range []string{"Invalid/Zone", "Local"} {
-		_, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "day", Timezone: timezone})
-		require.ErrorContains(err, "invalid timezone")
+}
+
+func TestExploreGroupOverviewMembershipAndTimeBuckets(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.com", "gmail")
+	other := b.AddSourceWithType("other@example.org", "gmail")
+	owner := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	b.AddOwnerParticipant(source, owner)
+	person := b.AddParticipant("person@example.net", "example.net", "Person Example")
+	alias := b.AddParticipant("alias@example.net", "example.net", "Person Alias")
+	b.LinkCluster(person, alias)
+	silent := b.AddParticipant("silent@example.org", "example.org", "Silent Example")
+	outsider := b.AddParticipant("outside@example.org", "example.org", "Outside Example")
+	upper, lower := "<List@Example.com>", "<list@example.com>"
+	at := time.Date(2024, 6, 1, 2, 0, 0, 0, time.UTC)
+	first := b.AddMessage(MessageOpt{SourceID: source, SentAt: at, ListID: &upper, IsFromMe: true, SizeEstimate: 100})
+	b.AddFrom(first, owner, "Owner")
+	b.AddTo(first, person, "Person Example")
+	second := b.AddMessage(MessageOpt{SourceID: source, SentAt: at.Add(-24 * time.Hour), ListID: &lower, IsFromMe: true, SizeEstimate: 200})
+	b.AddFrom(second, owner, "Owner")
+	b.AddTo(second, alias, "Person Alias")
+	chat := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 900, ConversationType: "chat", MessageType: "chat", SentAt: at.Add(-48 * time.Hour), SenderID: &person, SizeEstimate: 20})
+	b.AddFrom(chat, person, "Person Example")
+	speaker := b.AddParticipant("speaker@example.edu", "example.edu", "Other Speaker")
+	b.AddMessage(MessageOpt{SourceID: source, ConversationID: 900, ConversationType: "chat", MessageType: "chat", SentAt: at.Add(-47 * time.Hour), SenderID: &speaker, SizeEstimate: 30})
+	b.AddConversationParticipant(900, silent)
+	unrelated := b.AddMessage(MessageOpt{SourceID: other, SentAt: at.AddDate(0, 1, 0)})
+	b.AddFrom(unrelated, outsider, "Outside Example")
+	engine := b.BuildEngine()
+	// Start with an unfiltered keyed source: its people must come from that source alone.
+	sourceDetail, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "source", GroupKey: strconv.FormatInt(source, 10)})
+	requirements.NoError(err)
+	requirements.NotNil(sourceDetail.Overview)
+	assertions.Equal(at.Add(-47*time.Hour), sourceDetail.Overview.FirstAt)
+	assertions.Equal([]ExploreGroupCoParticipant{{Key: strconv.FormatInt(person, 10), Label: "Person Example", Count: 3}, {Key: strconv.FormatInt(silent, 10), Label: "Silent Example", Count: 1}, {Key: strconv.FormatInt(speaker, 10), Label: "Other Speaker", Count: 1}}, sourceDetail.Overview.CoParticipants)
+	for _, dimension := range []string{"participant", "domain", "source", "kind", "message_type", "mailing_list", "year", "month"} {
+		t.Run(dimension, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			request := ExploreGroupRequest{Dimension: dimension, Timezone: "America/New_York", Page: PageSpec{Limit: 100}}
+			page, err := engine.ExploreGroups(t.Context(), request)
+			require.NoError(err)
+			require.NotEmpty(page.Rows)
+			assert.Nil(page.Overview)
+			foundHistorical := false
+			for _, row := range page.Rows {
+				request.GroupKey = row.Key
+				detail, err := engine.ExploreGroups(t.Context(), request)
+				require.NoError(err)
+				require.NotNil(detail.Overview)
+				if dimension == "participant" && row.Key == strconv.FormatInt(person, 10) || dimension == "domain" && row.Key == "example.net" {
+					foundHistorical = true
+					require.Len(detail.Rows, 1)
+					assert.Equal(row, detail.Rows[0])
+					assert.Equal(int64(3), row.Count)
+					assert.Equal(int64(350), row.EstimatedBytes)
+					assert.Equal(at, row.LatestAt)
+					assert.Equal(at.Add(-47*time.Hour), detail.Overview.FirstAt)
+					assert.Contains(detail.Overview.CoParticipants, ExploreGroupCoParticipant{Key: strconv.FormatInt(speaker, 10), Label: "Other Speaker", Count: 1})
+					assert.Contains(detail.Overview.CoParticipants, ExploreGroupCoParticipant{Key: strconv.FormatInt(silent, 10), Label: "Silent Example", Count: 1})
+				}
+				var count int64
+				for _, bucket := range detail.Overview.Activity {
+					count += bucket.Count
+				}
+				assert.Equal(row.Count, count)
+				assert.False(detail.Overview.FirstAt.IsZero())
+				assert.False(detail.Overview.FirstAt.After(row.LatestAt))
+				for _, co := range detail.Overview.CoParticipants {
+					assert.NotEqual(strconv.FormatInt(owner, 10), co.Key)
+					if dimension == "participant" {
+						assert.NotEqual(row.Key, co.Key)
+					}
+				}
+			}
+			if dimension == "participant" || dimension == "domain" {
+				require.True(foundHistorical)
+			}
+		})
 	}
+
+	month := ExploreGroupRequest{Dimension: "month", Timezone: "America/New_York", GroupKey: "2024-05"}
+	detail, err := engine.ExploreGroups(t.Context(), month)
+	requirements.NoError(err)
+	assertions.Equal(at.Add(-47*time.Hour), detail.Overview.FirstAt)
+	assertions.Equal([]ExploreGroupActivity{{Bucket: "2024-05-29", Count: 1}, {Bucket: "2024-05-30", Count: 1}, {Bucket: "2024-05-31", Count: 1}}, detail.Overview.Activity)
 }

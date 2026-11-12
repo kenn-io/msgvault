@@ -35,14 +35,14 @@ func TestRepairIMAPSourceLabels_RemovesStrayAddOnlyLabel(t *testing.T) {
 	f := newIMAPMembershipFixture(t)
 	messageID1, messageID2 := seedTwoInboxMessages(t, f)
 
-	strayLabelID, err := f.store.EnsureLabel(f.source.ID, "stray-source-label", "Stray", "user")
+	strayLabelID, err := f.store.EnsureLabel(t.Context(), f.source.ID, "stray-source-label", "Stray", "user")
 	require.NoError(err)
-	changed, err := f.store.ReconcileMessageLabels(messageID1, []int64{strayLabelID}, false)
+	changed, err := f.store.ReconcileMessageLabels(t.Context(), messageID1, []int64{strayLabelID}, false)
 	require.NoError(err)
 	require.True(changed)
 	require.Equal([]string{"INBOX", "Stray"}, messageLabels(t, f.store, messageID1))
 
-	summary, err := f.store.RepairIMAPSourceLabels(context.Background(), f.source.ID, true)
+	summary, err := f.store.RepairIMAPSourceLabels(t.Context(), f.source.ID, true)
 	require.NoError(err)
 	assert.Equal(2, summary.Scanned)
 	assert.Equal(1, summary.Changed)
@@ -58,12 +58,12 @@ func TestRepairIMAPSourceLabels_DryRunDoesNotWrite(t *testing.T) {
 	f := newIMAPMembershipFixture(t)
 	messageID1, _ := seedTwoInboxMessages(t, f)
 
-	strayLabelID, err := f.store.EnsureLabel(f.source.ID, "stray-source-label", "Stray", "user")
+	strayLabelID, err := f.store.EnsureLabel(t.Context(), f.source.ID, "stray-source-label", "Stray", "user")
 	require.NoError(err)
-	_, err = f.store.ReconcileMessageLabels(messageID1, []int64{strayLabelID}, false)
+	_, err = f.store.ReconcileMessageLabels(t.Context(), messageID1, []int64{strayLabelID}, false)
 	require.NoError(err)
 
-	summary, err := f.store.RepairIMAPSourceLabels(context.Background(), f.source.ID, false)
+	summary, err := f.store.RepairIMAPSourceLabels(t.Context(), f.source.ID, false)
 	require.NoError(err)
 	assert.Equal(2, summary.Scanned)
 	assert.Equal(1, summary.Changed)
@@ -78,7 +78,7 @@ func TestRepairIMAPSourceLabels_NoopWhenLabelsAlreadyMatch(t *testing.T) {
 	f := newIMAPMembershipFixture(t)
 	seedTwoInboxMessages(t, f)
 
-	summary, err := f.store.RepairIMAPSourceLabels(context.Background(), f.source.ID, true)
+	summary, err := f.store.RepairIMAPSourceLabels(t.Context(), f.source.ID, true)
 	require.NoError(err)
 	assert.Equal(2, summary.Scanned)
 	assert.Equal(0, summary.Changed)
@@ -94,7 +94,7 @@ func TestRepairIMAPSourceLabels_CancellationStopsTheLoop(t *testing.T) {
 	f := newIMAPMembershipFixture(t)
 	messageID1, _ := seedTwoInboxMessages(t, f)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	var processed []int64
 	restore := f.store.SetIMAPLabelRepairPerMessageHookForTest(func(messageID int64) {
@@ -119,7 +119,7 @@ func TestRepairIMAPSourceLabels_DryRunCancellationIsNotMaskedAsSuccess(t *testin
 	f := newIMAPMembershipFixture(t)
 	messageID1, _ := seedTwoInboxMessages(t, f)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	var processed []int64
 	restore := f.store.SetIMAPLabelRepairPerMessageHookForTest(func(messageID int64) {
@@ -144,10 +144,10 @@ func TestReconcileMessageLabelsTxContext_CancelledContextStopsItsStatements(t *t
 	f := newIMAPMembershipFixture(t)
 	messageID1, _ := seedTwoInboxMessages(t, f)
 
-	labelID, err := f.store.EnsureLabel(f.source.ID, "ctx-probe-label", "Ctx Probe", "user")
+	labelID, err := f.store.EnsureLabel(t.Context(), f.source.ID, "ctx-probe-label", "Ctx Probe", "user")
 	require.NoError(err)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	require.ErrorIs(

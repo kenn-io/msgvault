@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../api/client';
 import type { FileMetadata, FileSearchRow } from './models';
 import { createExploreAPI } from './api';
+import { sourceGroup } from './fixtures.test-support';
 
 type RequiredNonNullableString<T, K extends keyof T> =
   {} extends Pick<T, K> ? false : null extends T[K] ? false : T[K] extends string ? true : false;
@@ -92,7 +93,7 @@ describe('ExploreAPI routing', () => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       return Response.json({
-        rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+        rows: [sourceGroup],
         total_count: 1,
         cache_revision: 'cache-1',
         search_provenance: {}
@@ -119,8 +120,35 @@ describe('ExploreAPI routing', () => {
       grouping: ['source'],
       presentation: 'table',
       limit: 500,
-      cursor: 'groups-2'
+      cursor: 'groups-2',
+      timezone: expect.any(String)
     });
+  });
+
+  it('sets group timezones and newest-first calendar sorting', async () => {
+    vi.stubEnv('TZ', 'America/Chicago');
+    try {
+      const requests: Request[] = [];
+      const api = createExploreAPI(createAPIClient(async (input) => {
+        requests.push(input as Request);
+        return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+      }));
+      await api.groups({ limit: 1 }, 'day');
+      await api.groups({ limit: 1 }, 'month');
+      await api.groups({ limit: 1, timezone: 'Europe/London' }, 'day');
+      expect(await requests[0]!.json()).not.toHaveProperty('timezone');
+      expect(await requests[1]!.json()).toMatchObject({ timezone: 'America/Chicago' });
+      expect(await requests[2]!.json()).toMatchObject({ timezone: 'Europe/London' });
+      for (const dimension of ['month', 'year', 'participant'] as const) {
+        await api.groups({ limit: 1 }, dimension);
+        await api.fileGroups({ limit: 1 }, '', [], dimension);
+        const grouped = requests.splice(3);
+        expect(grouped).toHaveLength(2);
+        for (const request of grouped) {
+          expect((await request.json()).sort).toEqual(dimension === 'participant' ? undefined : [{ field: 'key', direction: 'desc' }]);
+        }
+      }
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it('routes grouped Files exclusively through the file population with file constraints', async () => {

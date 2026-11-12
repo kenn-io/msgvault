@@ -22,7 +22,7 @@ func TestArchiveIdentityMigrationExecutesOnSelectedDialect(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("1", revision)
 
-	_, err = st.DB().Exec(`DELETE FROM archive_metadata WHERE key = 'archive_uid'`)
+	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM archive_metadata WHERE key = 'archive_uid'`)
 	require.NoError(err)
 	err = st.InitSchema()
 	require.Error(err)

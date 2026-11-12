@@ -28,7 +28,7 @@ func TestChannelPurgeInvalidatesCoverageDuringUnfinishedRepair(t *testing.T) {
 			opts.ChannelIDs = []string{"C01", "C02", "C03"}
 			_, err := imp.Import(t.Context(), opts)
 			require.NoError(err)
-			source, err := imp.store.GetSourceByIdentifier("T01:UME")
+			source, err := imp.store.GetSourceByIdentifier(t.Context(), "T01:UME")
 			require.NoError(err)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -59,7 +59,7 @@ func TestChannelPurgeInvalidatesCoverageDuringUnfinishedRepair(t *testing.T) {
 			_, err = imp.Import(t.Context(), opts)
 			require.NoError(err)
 			var count int
-			require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(`SELECT count(*) FROM messages WHERE source_id=? AND source_message_id=?`), source.ID, "C01:"+ts(0)).Scan(&count))
+			require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(`SELECT count(*) FROM messages WHERE source_id=? AND source_message_id=?`), source.ID, "C01:"+ts(0)).Scan(&count))
 			assert.Equal(1, count, "explicit repair must restore old non-thread messages after purge")
 		})
 	}

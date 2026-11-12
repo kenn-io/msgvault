@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -35,7 +34,7 @@ func savedViewInput(name string) store.SavedViewInput {
 func TestSavedViewsCRUDAndStableListOrder(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	zebra, err := st.CreateSavedView(ctx, savedViewInput("Zebra"))
@@ -74,7 +73,7 @@ func TestSavedViewsCRUDAndStableListOrder(t *testing.T) {
 func TestSavedViewsRejectDuplicateNamesAndStaleRevisions(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	created, err := st.CreateSavedView(ctx, savedViewInput("Invoices"))
 	requirements.NoError(err)
@@ -117,7 +116,7 @@ func TestSavedViewsPreserveInspectorPreference(t *testing.T) {
 func TestSavedViewsValidateCanonicalStateBeforePersistence(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	tests := []struct {
@@ -164,7 +163,7 @@ func TestSavedViewsValidateCanonicalStateBeforePersistence(t *testing.T) {
 func TestSavedViewsPersistOnlyServerGroupingDimensions(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	supported := []string{"source", "participant", "domain", "message_type", "mailing_list", "kind", "year", "month"}
 
@@ -202,7 +201,7 @@ func TestSavedViewsPersistOnlyServerGroupingDimensions(t *testing.T) {
 }
 
 func TestSavedViewsPreserveLargeNumericFilterIDs(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	input := savedViewInput("Large source ID")
 	input.CanonicalState = json.RawMessage(`{"filters":[{"field":"source_id","operator":"eq","values":["9223372036854775807"]}]}`)

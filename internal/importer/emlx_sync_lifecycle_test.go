@@ -50,7 +50,7 @@ func TestImportEmlxReconcileInvalidationFailureEndsSync(t *testing.T) {
 	first, err := ImportEmlxDir(t.Context(), st, root, opts)
 	r.NoError(err)
 	r.False(first.HardErrors)
-	_, err = st.DB().Exec(`CREATE TRIGGER reject_emlx_invalidation
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_emlx_invalidation
  BEFORE UPDATE ON source_import_items
  WHEN OLD.provider = 'emlx-occurrence' AND NEW.status = 'pending'
  BEGIN SELECT RAISE(FAIL, 'invalidation unavailable'); END`)

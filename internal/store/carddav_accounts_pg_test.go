@@ -22,7 +22,7 @@ func TestPostgreSQLCardDAVDiscoveryReplacementsSerializeCompleteSnapshots(t *tes
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL row locks are required for the CardDAV snapshot serialization regression")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	t.Cleanup(cancel)
 
 	blocker, err := st.DB().BeginTx(ctx, &sql.TxOptions{})

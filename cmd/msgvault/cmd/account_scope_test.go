@@ -73,7 +73,7 @@ func TestResolveAccountFlag_IncludesCalendarSourcesForAccountEmail(t *testing.T)
 			"calendar_id":   identifier,
 		})
 		require.NoError(err, "marshal sync_config")
-		require.NoError(f.Store.UpdateSourceSyncConfig(src.ID, string(cfg)), "UpdateSourceSyncConfig")
+		require.NoError(f.Store.UpdateSourceSyncConfig(t.Context(), src.ID, string(cfg)), "UpdateSourceSyncConfig")
 		return src
 	}
 	primaryCal := mkCalendarSource("test@example.com/primary", "Test@Example.COM")
@@ -103,7 +103,7 @@ func TestResolveAccountFlag_IncludesCalendarSourcesForDisplayName(t *testing.T) 
 		"calendar_id":   "primary",
 	})
 	require.NoError(err, "marshal sync_config")
-	require.NoError(f.Store.UpdateSourceSyncConfig(cal.ID, string(cfg)), "UpdateSourceSyncConfig")
+	require.NoError(f.Store.UpdateSourceSyncConfig(t.Context(), cal.ID, string(cfg)), "UpdateSourceSyncConfig")
 
 	scope, err := ResolveAccountFlag(f.Store, "Work")
 	require.NoError(err)
@@ -123,7 +123,7 @@ func TestResolveAccountFlag_CalendarOnlyAccountEmail(t *testing.T) {
 		"calendar_id":   "primary",
 	})
 	require.NoError(err, "marshal sync_config")
-	require.NoError(f.Store.UpdateSourceSyncConfig(cal.ID, string(cfg)), "UpdateSourceSyncConfig")
+	require.NoError(f.Store.UpdateSourceSyncConfig(t.Context(), cal.ID, string(cfg)), "UpdateSourceSyncConfig")
 
 	scope, err := ResolveAccountFlag(f.Store, "calendar.only@example.com")
 	require.NoError(err)

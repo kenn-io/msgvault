@@ -167,7 +167,7 @@ func importAttachments(
 			continue
 		}
 		if reference == "" {
-			if err := st.RecomputeMessageAttachmentStats(plan.messageID); err != nil {
+			if err := st.RecomputeMessageAttachmentStatsContext(ctx, plan.messageID); err != nil {
 				rowErrs = append(rowErrs, fmt.Errorf("%s record %d: recompute attachment stats: %w",
 					plan.row.File, plan.row.Record, err))
 			}
@@ -178,7 +178,7 @@ func importAttachments(
 		// absent instead of leaving a dangling claim.
 		fail := func(cause error) {
 			rowErrs = append(rowErrs, recordFailedAttachment(ctx, st, plan, reference, cause))
-			if err := st.RecomputeMessageAttachmentStats(plan.messageID); err != nil {
+			if err := st.RecomputeMessageAttachmentStatsContext(ctx, plan.messageID); err != nil {
 				rowErrs = append(rowErrs, fmt.Errorf("%s record %d: recompute attachment stats: %w",
 					plan.row.File, plan.row.Record, err))
 			}
@@ -203,6 +203,7 @@ func importAttachments(
 				continue
 			default:
 				relPath, contentHash, size, storeErr := export.StoreAttachmentFromPath(
+					ctx,
 					opts.AttachmentsDir, sourcePath, maxBytes,
 				)
 				if storeErr == nil {
@@ -228,7 +229,7 @@ func importAttachments(
 			rowErrs = append(rowErrs, fmt.Errorf("%s record %d: persist attachment %q: %w",
 				plan.row.File, plan.row.Record, reference, err))
 		}
-		if err := st.RecomputeMessageAttachmentStats(plan.messageID); err != nil {
+		if err := st.RecomputeMessageAttachmentStatsContext(ctx, plan.messageID); err != nil {
 			rowErrs = append(rowErrs, fmt.Errorf("%s record %d: recompute attachment stats: %w",
 				plan.row.File, plan.row.Record, err))
 		}

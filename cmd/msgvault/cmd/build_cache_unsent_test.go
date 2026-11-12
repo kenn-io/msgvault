@@ -33,7 +33,7 @@ func newUnsentCacheFixture(t *testing.T) unsentCacheFixture {
 	src, err := st.GetOrCreateSource("gmail", "owner@example.test")
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "owner@example.test", "manual"))
-	labels, err := st.EnsureLabelsBatch(src.ID, map[string]store.LabelInfo{
+	labels, err := st.EnsureLabelsBatch(t.Context(), src.ID, map[string]store.LabelInfo{
 		"DRAFT": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
 		"SENT":  {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 	})
@@ -52,7 +52,7 @@ func newUnsentCacheFixture(t *testing.T) unsentCacheFixture {
 	})
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(received, "to", []int64{owner}, []string{"Owner"}))
-	_, err = buildCacheAuto(dbPath, analytics)
+	_, err = buildCacheAuto(t.Context(), dbPath, analytics)
 	require.NoError(err)
 
 	draft, err := st.UpsertMessage(&store.Message{
@@ -62,7 +62,7 @@ func newUnsentCacheFixture(t *testing.T) unsentCacheFixture {
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(draft, "to", []int64{alice}, []string{"Alice"}))
 	require.NoError(st.ReplaceMessageLabels(draft, []int64{labels["DRAFT"]}))
-	_, err = buildCacheAuto(dbPath, analytics)
+	_, err = buildCacheAuto(t.Context(), dbPath, analytics)
 	require.NoError(err)
 	clean := cacheNeedsBuild(dbPath, analytics)
 	require.False(clean.NeedsBuild, "%+v", clean)
@@ -79,7 +79,7 @@ func (f unsentCacheFixture) unsentCount(t *testing.T) int {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, duck.Close()) }()
 	var count int
-	require.NoError(t, duck.QueryRow(`SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true) WHERE message_id = ? AND unsent`, filepath.Join(f.analytics, "relationship_activity", "**", "*.parquet"), f.draftID).Scan(&count))
+	require.NoError(t, duck.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true) WHERE message_id = ? AND unsent`, filepath.Join(f.analytics, "relationship_activity", "**", "*.parquet"), f.draftID).Scan(&count))
 	return count
 }
 
@@ -90,12 +90,12 @@ func TestBuildCacheRefreshesUnsentActivity(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			f := newUnsentCacheFixture(t)
-			_, err := f.store.ReconcileMessageLabels(f.draftID, []int64{f.sentLabelID}, true)
+			_, err := f.store.ReconcileMessageLabels(t.Context(), f.draftID, []int64{f.sentLabelID}, true)
 			require.NoError(err)
 			drift := cacheNeedsBuild(f.dbPath, f.analytics)
 			assert.True(drift.NeedsBuild)
 			assert.True(drift.HasUnsentDrift)
-			result, err := buildCacheAuto(f.dbPath, f.analytics)
+			result, err := buildCacheAuto(t.Context(), f.dbPath, f.analytics)
 			require.NoError(err)
 			assert.True(result.IdentityOnly, "%+v, drift=%+v", result, drift)
 			clean := cacheNeedsBuild(f.dbPath, f.analytics)
@@ -135,12 +135,12 @@ func TestBuildCacheAppendRechecksCoveredUnsentSnapshot(t *testing.T) {
 			require.NoError(f.store.ReplaceMessageRecipients(incoming, "to", []int64{f.ownerID}, []string{"Owner"}))
 			drift := cacheNeedsBuild(f.dbPath, f.analytics)
 			require.False(drift.FullRebuild)
-			changed, err := f.store.ReconcileMessageLabels(f.draftID, []int64{f.sentLabelID}, true)
+			changed, err := f.store.ReconcileMessageLabels(t.Context(), f.draftID, []int64{f.sentLabelID}, true)
 			require.NoError(err)
 			require.True(changed)
 			// Continue the checked append decision, as the scheduled builder does.
 			// The pinned snapshot must detect the send without a second check.
-			_, err = buildCacheImpl(f.dbPath, f.analytics, drift.FullRebuild, false)
+			_, err = buildCacheImpl(t.Context(), f.dbPath, f.analytics, drift.FullRebuild, false)
 			require.NoError(err)
 			for file, before := range retained {
 				after, err := os.ReadFile(file)

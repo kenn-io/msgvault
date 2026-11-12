@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"io"
 	"os"
@@ -36,7 +35,7 @@ func TestImportSlackdumpEndToEnd(t *testing.T) {
 		"--me", "alice@example.com",
 		fixture,
 	})
-	require.NoError(rootCmd.ExecuteContext(context.Background()))
+	require.NoError(rootCmd.ExecuteContext(t.Context()))
 	assert.Contains(stdout.String(), "Import complete!")
 	assert.Contains(stdout.String(), "Messages:      6 processed, 6 added, 0 updated")
 	assert.Contains(stdout.String(), "Attachments:   2 stored, 1 missing, 0 skipped")
@@ -59,7 +58,8 @@ func TestImportSlackdumpEndToEnd(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = duckdb.Close() })
 	var ownerRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE source_id = ?`,
 		filepath.Join(home, "analytics", "owner_participants", "*.parquet"), sources[0].ID,
 	).Scan(&ownerRows))
@@ -72,7 +72,7 @@ func TestImportSlackdumpEndToEnd(t *testing.T) {
 	assert.Equal("C001:1704067200.000001", results[0].SourceMessageID)
 
 	var linked int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT COUNT(*) FROM messages child
 		JOIN messages parent ON parent.id = child.reply_to_message_id
 		WHERE child.source_message_id = 'C001:1704153600.000002'
@@ -80,7 +80,7 @@ func TestImportSlackdumpEndToEnd(t *testing.T) {
 	assert.Equal(1, linked)
 
 	var storagePath string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT storage_path FROM attachments
 		WHERE source_attachment_id = 'slack:F_STD' AND attachment_state = 'stored'`).Scan(&storagePath))
 	content, err := os.ReadFile(filepath.Join(home, "attachments", filepath.FromSlash(storagePath)))
@@ -108,7 +108,7 @@ func TestImportSlackdumpNoDefaultIdentity(t *testing.T) {
 		"--no-default-identity",
 		fixture,
 	})
-	require.NoError(rootCmd.ExecuteContext(context.Background()))
+	require.NoError(rootCmd.ExecuteContext(t.Context()))
 
 	st, err := store.Open(filepath.Join(home, "msgvault.db"))
 	require.NoError(err)
@@ -147,7 +147,7 @@ func TestImportSlackdumpPartialFailureConfirmsIdentity(t *testing.T) {
 		"--me", "UALICE",
 		exportRoot,
 	})
-	err = rootCmd.ExecuteContext(context.Background())
+	err = rootCmd.ExecuteContext(t.Context())
 	require.Error(err)
 	require.ErrorContains(err, "2024-01-02.json")
 
@@ -155,7 +155,7 @@ func TestImportSlackdumpPartialFailureConfirmsIdentity(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	var messages int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
 	assert.Positive(t, messages)
 	sources, err := st.GetSourcesByIdentifier("T_TEST:UALICE")
 	require.NoError(err)

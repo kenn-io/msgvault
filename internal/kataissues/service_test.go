@@ -863,7 +863,7 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 	}})
 	require.NoError(err)
 	for i := range 500 {
-		request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/issues", f.kata.projectID), strings.NewReader(string(recentBody)))
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, fmt.Sprintf("/api/v1/projects/%d/issues", f.kata.projectID), strings.NewReader(string(recentBody)))
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("Authorization", "Bearer "+katatest.Token)
 		request.Header.Set("Idempotency-Key", fmt.Sprintf("recent-%d", i))

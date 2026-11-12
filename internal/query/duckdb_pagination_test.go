@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -50,7 +49,7 @@ func TestDuckDBPaginationStability_IdenticalSortKey(t *testing.T) {
 	}
 
 	engine := b.BuildEngine()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("ListMessages", func(t *testing.T) {
 		seen := pageDuckOneByOne(t, n, func(offset int) (int64, bool) {

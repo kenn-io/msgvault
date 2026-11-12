@@ -83,14 +83,14 @@ func persistLoopDirectChat(t *testing.T, f *storetest.Fixture, sourceConversatio
 	return ids
 }
 
-func (s *loopBodyCountingStore) GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error) {
+func (s *loopBodyCountingStore) GetMessageBodyText(ctx context.Context, messageID int64) (string, error) {
 	s.bodyReads = append(s.bodyReads, messageID)
-	return s.Store.GetMessageBodyTextContext(ctx, messageID)
+	return s.Store.GetMessageBodyText(ctx, messageID)
 }
 
 func conversationOf(t *testing.T, f *storetest.Fixture, messageID int64) int64 {
 	t.Helper()
-	ref, err := f.Store.MessageConversationContext(t.Context(), messageID)
+	ref, err := f.Store.MessageConversation(t.Context(), messageID)
 	require.NoError(t, err)
 	return ref.ConversationID
 }
@@ -106,13 +106,13 @@ func TestLoopConversationWalksNewestFirstAcrossPages(t *testing.T) {
 	between := f.PersistEmail(storetest.EmailSpec{From: "sam@example.test", To: []string{loopAlex}, Body: "Fyi", SentAt: loopAgo(2 * time.Hour)})
 	more := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "Thanks", SentAt: loopAgo(time.Hour)})
 	deleted := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "Gone?", SentAt: loopAgo(30 * time.Minute)})
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at = ? WHERE id IN (?, ?)`), loopNow, deleted, gone)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at = ? WHERE id IN (?, ?)`), loopNow, deleted, gone)
 	requirements.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id IN (?, ?)`), loopNow, in, out)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id IN (?, ?)`), loopNow, in, out)
 	requirements.NoError(err)
 	draft := f.PersistEmail(storetest.EmailSpec{From: loopOwner, To: []string{loopAlex}, Body: "Draft?", SentAt: loopAgo(10 * time.Minute)})
 	labels := f.EnsureLabels(map[string]string{"DRAFT": "Draft"}, "system")
-	requirements.NoError(f.Store.LinkMessageLabel(draft, labels["DRAFT"]))
+	requirements.NoError(f.Store.LinkMessageLabel(t.Context(), draft, labels["DRAFT"]))
 
 	var got []store.LoopMessage
 	var first, seen int
@@ -146,9 +146,9 @@ func TestLoopWalkExcludesUnsentReplies(t *testing.T) {
 	f := storetest.New(t)
 	source, err := f.Store.GetOrCreateSource("synctech_sms", "+15550000001")
 	require.NoError(err)
-	owner, err := f.Store.EnsureParticipantByPhone("+15550000001", "", "phone")
+	owner, err := f.Store.EnsureParticipantByPhone(t.Context(), "+15550000001", "", "phone")
 	require.NoError(err)
-	friend, err := f.Store.EnsureParticipantByPhone("+15551234567", "", "phone")
+	friend, err := f.Store.EnsureParticipantByPhone(t.Context(), "+15551234567", "", "phone")
 	require.NoError(err)
 	conversation, err := f.Store.EnsureConversationWithType(source.ID, "direct", "direct_chat", "Direct chat")
 	require.NoError(err)
@@ -196,7 +196,7 @@ func TestLoopWalkKeepsSentCopiesThatRetainDraftEvidence(t *testing.T) {
 		}},
 		{"Sent label", func(f *storetest.Fixture, id int64) error {
 			sent := f.EnsureLabels(map[string]string{"SENT": "Sent"}, "system")
-			return f.Store.LinkMessageLabel(id, sent["SENT"])
+			return f.Store.LinkMessageLabel(t.Context(), id, sent["SENT"])
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -205,8 +205,8 @@ func TestLoopWalkKeepsSentCopiesThatRetainDraftEvidence(t *testing.T) {
 			question := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Subject: "Contract", Body: "Can you send it?", SentAt: loopAgo(72 * time.Hour)})
 			reply := f.PersistEmail(storetest.EmailSpec{From: loopOwner, To: []string{loopAlex}, Body: "Sent it.", SentAt: loopAgo(24 * time.Hour)})
 			draft := f.EnsureLabels(map[string]string{"DRAFT": "Draft"}, "system")
-			requirements.NoError(f.Store.LinkMessageLabel(reply, draft["DRAFT"]))
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET draft_authored = TRUE WHERE id = ?`), reply)
+			requirements.NoError(f.Store.LinkMessageLabel(t.Context(), reply, draft["DRAFT"]))
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET draft_authored = TRUE WHERE id = ?`), reply)
 			requirements.NoError(err)
 			requirements.NoError(tc.mark(f, reply))
 
@@ -307,7 +307,7 @@ func TestLoopAutomationSignalsReadStoredRaw(t *testing.T) {
 	noRaw := f.PersistEmail(storetest.EmailSpec{Thread: "d", From: loopAlex, To: []string{loopOwner}, Body: "Hi", SentAt: loopNow, NoRaw: true})
 
 	corrupt := f.PersistEmail(storetest.EmailSpec{Thread: "e", From: loopAlex, To: []string{loopOwner}, Body: "Looks good to me.", SentAt: loopNow})
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`), []byte("invalid zlib data"), corrupt)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?`), []byte("invalid zlib data"), corrupt)
 	require.NoError(err)
 
 	for _, tt := range []struct {
@@ -613,13 +613,13 @@ func TestMergeDuplicatesKeepsTheStrongestLoopMark(t *testing.T) {
 			putLoopMark(t, f.Store, drop, tt.drop)
 			putLoopMark(t, f.Store, keep, tt.keep)
 
-			_, err := f.Store.MergeDuplicates(keep, []int64{drop}, "batch-loop-marks")
+			_, err := f.Store.MergeDuplicates(t.Context(), keep, []int64{drop}, "batch-loop-marks")
 			require.NoError(err)
 			got := storedLoopMark(t, f.Store, keep)
 			assert.Equal(tt.want.State, got.State)
 			assert.Equal(tt.want.Until, got.Until)
 			if tt.undo {
-				restored, err := f.Store.UndoDedup("batch-loop-marks")
+				restored, err := f.Store.UndoDedup(t.Context(), "batch-loop-marks")
 				require.NoError(err)
 				assert.Equal(int64(1), restored)
 				marks, err := f.Store.LoopMarksContext(t.Context())
@@ -698,7 +698,7 @@ func TestLoopMultiFromUsesStoredSender(t *testing.T) {
 			question := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
 			alexID := f.EnsureParticipant(loopAlex, "", "example.test")
 			if missingSnapshot {
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), question)
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), question)
 				requirements.NoError(err)
 			} else {
 				samID := f.EnsureParticipant("sam@example.test", "", "example.test")
@@ -783,7 +783,7 @@ func TestLoopGroupMembershipClassifiesConversations(t *testing.T) {
 	f := storetest.New(t)
 	messages := []loopChatMessage{{body: "Can you send the contract?"}}
 	ids := persistLoopDirectChat(t, f, "group", messages)
-	ref, err := f.Store.MessageConversationContext(t.Context(), ids[0])
+	ref, err := f.Store.MessageConversation(t.Context(), ids[0])
 	require.NoError(err)
 	extra := f.EnsureParticipant("sam@example.test", "", "example.test")
 	require.NoError(f.Store.EnsureConversationParticipant(ref.ConversationID, extra, "member"))

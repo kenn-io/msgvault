@@ -7,10 +7,13 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -101,7 +104,7 @@ func sqlStatementContaining(fragment string) func(slog.Record) bool {
 
 func rosterMembers(t *testing.T, st *store.Store, sourceID int64, chatID string) []int64 {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT participant_id FROM conversation_participants
 		WHERE conversation_id = (
 			SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?
@@ -143,13 +146,13 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			imp, st, closeServer := newTestImporter(t, f)
 			defer closeServer()
 			sourceID := newBeeperTestSource(t, st, "telegram")
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			detail, err := imp.client.GetChat(ctx, chat.ID)
 			require.NoError(err)
 			imp.res.accountID = "telegram"
 			for i := range detail.Participants.Items {
-				_, err := imp.res.resolveUser(&detail.Participants.Items[i].User)
+				_, err := imp.res.resolveUser(t.Context(), &detail.Participants.Items[i].User)
 				require.NoError(err)
 			}
 			_, _, err = imp.obs.services.resolveBridge(ctx, "telegram", "Telegram", "telegram")
@@ -186,7 +189,7 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			observed := 0
 			for _, participant := range detail.Participants.Items {
 				pid := participantForBeeperUser(t, st, participant.ID)
-				observations, err := st.ListParticipantObservationsContext(context.Background(), pid, true)
+				observations, err := st.ListParticipantObservationsContext(t.Context(), pid, true)
 				require.NoError(err)
 				if len(observations) > 0 {
 					observed++
@@ -198,12 +201,12 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			// skipped by the canceled visit, using the same archived membership.
 			slog.SetDefault(slog.New(slog.DiscardHandler))
 			_, err = NewImporter(st, imp.client).Import(
-				context.Background(), ImportOptions{AccountID: "telegram", NoMedia: true},
+				t.Context(), ImportOptions{AccountID: "telegram", NoMedia: true},
 			)
 			require.NoError(err)
 			for _, participant := range detail.Participants.Items {
 				pid := participantForBeeperUser(t, st, participant.ID)
-				observations, err := st.ListParticipantObservationsContext(context.Background(), pid, true)
+				observations, err := st.ListParticipantObservationsContext(t.Context(), pid, true)
 				require.NoError(err)
 				assert.NotEmpty(observations, "a resumed import must enrich every member")
 			}
@@ -222,19 +225,19 @@ func TestEnsureConversationCancellationBeforeMembership(t *testing.T) {
 			sourceID := newBeeperTestSource(t, st, "telegram")
 			imp := NewImporter(st, nil)
 			imp.res.accountID = "telegram"
-			oldID, err := imp.res.resolveUser(&User{ID: "@telegram_old:beeper.local"})
+			oldID, err := imp.res.resolveUser(t.Context(), &User{ID: "@telegram_old:beeper.local"})
 			require.NoError(err)
 			newUsers := []User{{ID: "@telegram_new1:beeper.local"}, {ID: "@telegram_new2:beeper.local"}}
 			participants := make([]Participant, 0, len(newUsers))
 			for i := range newUsers {
-				_, err = imp.res.resolveUser(&newUsers[i])
+				_, err = imp.res.resolveUser(t.Context(), &newUsers[i])
 				require.NoError(err)
 				participants = append(participants, Participant{User: newUsers[i]})
 			}
 			convID, err := st.EnsureConversationWithType(sourceID, "!cancel:example.com", "group", "Members")
 			require.NoError(err)
 			require.NoError(st.EnsureConversationParticipant(convID, oldID, "member"))
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			handler := installCancelOnLog(t, cancel, at, logMessage("sql tx begin"))
 			_, complete, _, err := imp.ensureConversation(ctx, 0, sourceID, &Chat{
@@ -270,7 +273,7 @@ func TestEnsureConversationCancellationDuringPartialRoster(t *testing.T) {
 		user := User{ID: fmt.Sprintf("@telegram_listed%d:beeper.local", i)}
 		participants = append(participants, Participant{User: user})
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	handler := installCancelOnLog(
 		t, cancel, 1, sqlStatementContaining("INTO conversation_participants"),
@@ -297,7 +300,7 @@ func TestEnsureConversationCancellationAtEntry(t *testing.T) {
 	imp, st, closeServer := newTestImporter(t, f)
 	defer closeServer()
 	sourceID := newBeeperTestSource(t, st, "telegram")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	handler := installCancelOnLog(t, cancel, 0, logMessage(""))
 	_, complete, _, err := imp.ensureConversation(ctx, 0, sourceID, &Chat{
@@ -309,7 +312,8 @@ func TestEnsureConversationCancellationAtEntry(t *testing.T) {
 	assert.Empty(f.requests(), "an already-canceled import must not fetch the roster")
 	assert.Empty(handler.warnings, "an already-canceled import must not attempt archive writes")
 	var count int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind("SELECT COUNT(*) FROM conversations WHERE source_id = ?"), sourceID,
 	).Scan(&count))
 	assert.Zero(count)
@@ -338,7 +342,7 @@ func TestProcessMessageCancellation(t *testing.T) {
 			case "reaction":
 				message.Type = "REACTION"
 			}
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			sum := &ImportSummary{}
 			err = NewImporter(st, nil).processMessage(ctx, &chatScope{
@@ -348,7 +352,7 @@ func TestProcessMessageCancellation(t *testing.T) {
 			assert.Zero(sum.MessagesProcessed)
 			var snippet string
 			var deletedFromSourceAt sql.NullTime
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT snippet, deleted_from_source_at FROM messages
 				WHERE source_id = ? AND source_message_id = ?`), sourceID, "message-1",
 			).Scan(&snippet, &deletedFromSourceAt))
@@ -356,4 +360,241 @@ func TestProcessMessageCancellation(t *testing.T) {
 			assert.False(deletedFromSourceAt.Valid)
 		})
 	}
+}
+
+// A stop that cancels a reply-link write must leave the chat's pending pairs
+// in its state. The stopped run still saves that state, so clearing the pairs
+// there would lose the links for good.
+func TestFlushRepliesCancellationKeepsPendingReplies(t *testing.T) {
+	require := require.New(t)
+
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-90 * 24 * time.Hour).UTC().Truncate(time.Second)
+	ch := &fakeChat{
+		ID: "!flush:beeper.local", AccountID: "signal", Network: "Signal", Title: "Flush", Type: "single",
+		Participants: []map[string]any{
+			{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+		},
+	}
+	for i := range 3 {
+		ch.Msgs = append(ch.Msgs, fakeMsg{
+			ID: fmt.Sprintf("f%d", i), SortKey: i,
+			Timestamp: base.Add(time.Duration(i) * time.Minute),
+			Text:      fmt.Sprintf("flush %d", i),
+			SenderID:  "@signal_ann:beeper.local", SenderName: "Ann",
+		})
+	}
+	ch.Msgs[2].LinkedMessageID = "f0"
+	ch.LastActivity = ch.Msgs[2].Timestamp
+	f.addChat(ch)
+
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	// The first page holds every message and the empty second page ends the
+	// backfill, so the next transaction after that page is the reply-link
+	// write. A stop request cancels the run as that transaction begins.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var walked atomic.Bool
+	f.cancelAfterPages = 2
+	f.cancelFn = func() { walked.Store(true) }
+	installCancelOnLog(t, cancel, 1, func(record slog.Record) bool {
+		return record.Message == "sql tx begin" && walked.Load()
+	})
+
+	sum, err := imp.Import(ctx, ImportOptions{AccountID: "signal", ShouldStop: walked.Load})
+	require.NoError(err)
+	require.True(sum.Stopped)
+
+	cs := latestBeeperState(t, imp).Chats[ch.ID]
+	require.NotNil(cs)
+	require.True(cs.Done, "the backfill must finish before cancellation lands")
+	require.Equal([][2]string{{"f2", "f0"}}, cs.PendingReplies)
+
+	// The next run flushes the kept pair.
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var parentID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), "f0").Scan(&parentID))
+	var linked sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`), "f2").Scan(&linked))
+	require.Equal(sql.NullInt64{Int64: parentID, Valid: true}, linked)
+}
+
+// A stop that cancels the tombstone write of a backfill page's last item must
+// leave the chat's resume cursor on that page. The failed write is only
+// counted as an item error, so a checkpoint past the page would leave the
+// resumed backfill nothing to revisit.
+func TestBackfillAuxiliaryWriteCancellationRetriesPage(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-90 * 24 * time.Hour).UTC().Truncate(time.Second)
+	ch := &fakeChat{
+		ID: "!tombstone:beeper.local", AccountID: "signal", Network: "Signal", Title: "Tombstone", Type: "single",
+		Participants: []map[string]any{
+			{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+		},
+		Msgs: []fakeMsg{{
+			ID: "d0", Timestamp: base, IsDeleted: true,
+			SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		}},
+		LastActivity: base,
+	}
+	f.addChat(ch)
+
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	// An earlier archive holds the message Beeper now reports deleted.
+	sourceID := newBeeperTestSource(t, st, "signal")
+	convID, err := st.EnsureConversationWithType(sourceID, ch.ID, "single", ch.Title)
+	require.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{
+		SourceID: sourceID, ConversationID: convID, SourceMessageID: "d0", MessageType: "beeper",
+	})
+	require.NoError(err)
+
+	// The page's only item is the tombstone, so the first transaction after
+	// the page is served is its write. A stop request cancels the run as that
+	// transaction begins.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var walked atomic.Bool
+	f.cancelAfterPages = 1
+	f.cancelFn = func() { walked.Store(true) }
+	handler := installCancelOnLog(t, cancel, 1, func(record slog.Record) bool {
+		return record.Message == "sql tx begin" && walked.Load()
+	})
+
+	_, firstErr := imp.Import(ctx, ImportOptions{AccountID: "signal", ShouldStop: walked.Load})
+	require.True(handler.canceled, "the stop must cancel the tombstone write")
+
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var deletedFromSourceAt sql.NullTime
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT deleted_from_source_at FROM messages
+		WHERE source_id = ? AND source_message_id = ?`), sourceID, "d0",
+	).Scan(&deletedFromSourceAt))
+	assert.True(deletedFromSourceAt.Valid, "the resumed backfill must apply the tombstone the stopped run missed")
+	assert.ErrorIs(firstErr, context.Canceled)
+}
+
+// The incremental walk has the same gap: a stop that cancels the tombstone
+// write of a head page's last item must leave the chat's forward cursor before
+// that page, so the next run re-reads it.
+func TestIncrementalAuxiliaryWriteCancellationRetriesPage(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-90 * 24 * time.Hour).UTC().Truncate(time.Second)
+	ch := &fakeChat{
+		ID: "!headtombstone:beeper.local", AccountID: "signal", Network: "Signal", Title: "Head", Type: "single",
+		Participants: []map[string]any{
+			{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+		},
+		Msgs: []fakeMsg{{
+			ID: "h0", Timestamp: base, Text: "soon deleted",
+			SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		}},
+		LastActivity: base,
+	}
+	f.addChat(ch)
+
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	require.True(latestBeeperState(t, imp).Chats[ch.ID].Done)
+
+	// Beeper now reports the archived message deleted at the head of the
+	// chat, outside the reconciliation window.
+	f.mu.Lock()
+	ch.Msgs = append(ch.Msgs, fakeMsg{
+		ID: "h0", SortKey: 1, Timestamp: base, IsDeleted: true,
+		SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+	})
+	ch.LastActivity = time.Now().UTC()
+	f.mu.Unlock()
+
+	// The head page's only item is the tombstone, so the first transaction
+	// after the page is served is its write. A stop request cancels the run
+	// as that transaction begins.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var walked atomic.Bool
+	f.cancelMessageListFor(ch.ID, func() { walked.Store(true) })
+	handler := installCancelOnLog(t, cancel, 1, func(record slog.Record) bool {
+		return record.Message == "sql tx begin" && walked.Load()
+	})
+
+	_, firstErr := imp.Import(ctx, ImportOptions{AccountID: "signal", ShouldStop: walked.Load})
+	require.True(handler.canceled, "the stop must cancel the tombstone write")
+
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var deletedFromSourceAt sql.NullTime
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT deleted_from_source_at FROM messages WHERE source_message_id = ?`), "h0",
+	).Scan(&deletedFromSourceAt))
+	assert.True(deletedFromSourceAt.Valid, "the resumed walk must apply the tombstone the stopped run missed")
+	assert.ErrorIs(firstErr, context.Canceled)
+}
+
+// Clearing a message's pending markers commits the row replacement before it
+// refreshes the message's attachment flags. If a cancel landing between the
+// two also stopped the refresh, has_attachments and attachment_count would
+// keep counting the deleted markers, and no later run revisits the message.
+// serial: changes slog.Default and SQL logging.
+func TestClearPendingMarkersRefreshesFlagsAfterCancel(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	sourceID := newBeeperTestSource(t, st, "signal")
+	convID, err := st.EnsureConversationWithType(sourceID, "!markers:example.com", "single", "Markers")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: sourceID, ConversationID: convID, SourceMessageID: "marker-1", MessageType: "beeper",
+	})
+	require.NoError(err)
+	const assetURL = "mxc://example.com/photo"
+	require.NoError(st.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{{
+		Filename: "photo.jpg", MimeType: "image/jpeg", StoragePath: assetURL,
+		SourceAttachmentID: beeperAttachmentID(assetURL), State: attachmentpolicy.StatePending,
+	}}))
+	require.NoError(st.RecomputeMessageAttachmentStatsContext(t.Context(), messageID))
+	attachmentFlags := func() (bool, int) {
+		var hasAttachments bool
+		var attachmentCount int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+			`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`), messageID,
+		).Scan(&hasAttachments, &attachmentCount))
+		return hasAttachments, attachmentCount
+	}
+	hasAttachments, attachmentCount := attachmentFlags()
+	require.True(hasAttachments, "the pending marker counts before it is cleared")
+	require.Equal(1, attachmentCount)
+
+	// The marker replacement is the only transaction clearPendingMarkers
+	// commits, so the cancel lands after it and before the refresh.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	handler := installCancelOnLog(t, cancel, 1, logMessage("sql tx commit"))
+	err = NewImporter(st, nil).clearPendingMarkers(ctx, messageID)
+	require.True(handler.canceled, "the cancel must land after the marker replacement commits")
+	assert.NoError(err)
+
+	var rows int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageID).Scan(&rows))
+	assert.Zero(rows, "the pending marker is removed")
+	hasAttachments, attachmentCount = attachmentFlags()
+	assert.False(hasAttachments, "has_attachments must match the remaining rows")
+	assert.Zero(attachmentCount, "attachment_count must match the remaining rows")
 }

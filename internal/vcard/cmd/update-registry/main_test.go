@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -23,7 +22,7 @@ func TestRunWritesValidatedSnapshot(t *testing.T) {
 	defer server.Close()
 
 	dest := t.TempDir()
-	err := run(context.Background(), server.Client(), io.Discard, options{
+	err := run(t.Context(), server.Client(), io.Discard, options{
 		baseURL: server.URL,
 		destDir: dest,
 		write:   true,
@@ -44,7 +43,7 @@ func TestRunRecordsConfiguredRegistrySource(t *testing.T) {
 	defer server.Close()
 
 	dest := t.TempDir()
-	require.NoError(run(context.Background(), server.Client(), io.Discard, options{
+	require.NoError(run(t.Context(), server.Client(), io.Discard, options{
 		baseURL: server.URL,
 		destDir: dest,
 		write:   true,
@@ -64,7 +63,7 @@ func TestRunCheckReportsDriftWithoutWriting(t *testing.T) {
 
 	dest := writeExistingSnapshot(t, "2026-01-13", server.URL+"/vcard-elements.xhtml")
 	var stdout bytes.Buffer
-	err := run(context.Background(), server.Client(), &stdout, options{
+	err := run(t.Context(), server.Client(), &stdout, options{
 		baseURL: server.URL,
 		destDir: dest,
 		write:   false,
@@ -82,12 +81,12 @@ func TestRunIdenticalSnapshotIsNoOp(t *testing.T) {
 	dest := writeExistingSnapshot(t, "2026-01-13", server.URL+"/vcard-elements.xhtml")
 	before := readSnapshotBytes(t, dest)
 
-	require.NoError(t, run(context.Background(), server.Client(), io.Discard, options{
+	require.NoError(t, run(t.Context(), server.Client(), io.Discard, options{
 		baseURL: server.URL,
 		destDir: dest,
 		write:   false,
 	}))
-	require.NoError(t, run(context.Background(), server.Client(), io.Discard, options{
+	require.NoError(t, run(t.Context(), server.Client(), io.Discard, options{
 		baseURL: server.URL,
 		destDir: dest,
 		write:   true,
@@ -103,7 +102,7 @@ func TestRunRejectsMalformedRemoteBeforeChangingDestination(t *testing.T) {
 
 	dest := writeExistingSnapshot(t, "2026-01-13", server.URL+"/vcard-elements.xhtml")
 	before := readSnapshotBytes(t, dest)
-	err := run(context.Background(), server.Client(), io.Discard, options{
+	err := run(t.Context(), server.Client(), io.Discard, options{
 		baseURL: server.URL,
 		destDir: dest,
 		write:   true,
@@ -119,7 +118,7 @@ func TestRunRejectsNonSuccessResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := run(context.Background(), server.Client(), io.Discard, options{
+	err := run(t.Context(), server.Client(), io.Discard, options{
 		baseURL: server.URL,
 		destDir: t.TempDir(),
 		write:   true,
@@ -140,7 +139,7 @@ func TestRunRejectsResponseLargerThanLimit(t *testing.T) {
 	})
 	defer server.Close()
 
-	err := run(context.Background(), server.Client(), io.Discard, options{
+	err := run(t.Context(), server.Client(), io.Discard, options{
 		baseURL: server.URL,
 		destDir: t.TempDir(),
 		write:   true,
@@ -161,7 +160,7 @@ func TestRunRejectsMalformedRegistryUpdateDate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := run(context.Background(), server.Client(), io.Discard, options{
+	err := run(t.Context(), server.Client(), io.Discard, options{
 		baseURL: server.URL,
 		destDir: t.TempDir(),
 		write:   true,

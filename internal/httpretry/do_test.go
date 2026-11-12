@@ -1,7 +1,6 @@
 package httpretry
 
 import (
-	"context"
 	"net/http"
 	"testing"
 	"time"
@@ -22,7 +21,7 @@ func TestDoRetriesUntilSuccessOrNoRetry(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			res, err := Do(context.Background(), 3, time.Second, func() (*http.Response, error) {
+			res, err := Do(t.Context(), 3, time.Second, func() (*http.Response, error) {
 				calls++
 				status := http.StatusServiceUnavailable
 				if calls > 1 {

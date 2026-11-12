@@ -46,7 +46,7 @@ func (f phonePersistFixture) persist(
 func phoneIdentifierOwner(t *testing.T, st *store.Store, phone string) int64 {
 	t.Helper()
 	var owner int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT participant_id FROM participant_identifiers
 		WHERE identifier_type = ? AND identifier_value = ?`),
 		store.PhoneIdentifierType, phone).Scan(&owner))
@@ -66,7 +66,7 @@ func TestPersistMessageCreatesPhoneParticipantInsideTransaction(t *testing.T) {
 	require.Len(ids, 2)
 
 	var phone, name string
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(
 		`SELECT phone_number, display_name FROM participants WHERE id = ?`), ids[1]).
 		Scan(&phone, &name))
 	assert.Equal("+16045550100", phone)
@@ -78,7 +78,7 @@ func TestPersistMessageCreatesPhoneParticipantInsideTransaction(t *testing.T) {
 func TestPersistMessageReusesExistingPhoneParticipant(t *testing.T) {
 	require := require.New(t)
 	f := newPhonePersistFixture(t)
-	existing, err := f.st.EnsureParticipantByPhone("+16045550101", "Chat Example", "imessage")
+	existing, err := f.st.EnsureParticipantByPhone(t.Context(), "+16045550101", "Chat Example", "imessage")
 	require.NoError(err)
 
 	ids, err := f.persist(t.Context(), "phone-reuse", []store.ParticipantPersistData{
@@ -100,7 +100,7 @@ func TestPersistMessageRejectsParticipantWithoutIdentity(t *testing.T) {
 	require.Error(err)
 
 	var count int
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(
 		`SELECT count(*) FROM messages WHERE source_id = ?`), f.sourceID).Scan(&count))
 	assert.Equal(0, count)
 }
@@ -121,7 +121,7 @@ func TestPersistMessageRollsBackPhoneParticipantOnFailure(t *testing.T) {
 	require.Error(err)
 
 	var count int
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(
 		`SELECT count(*) FROM participants WHERE phone_number = ?`), "+16045550102").Scan(&count))
 	assert.Equal(0, count)
 }
@@ -153,7 +153,7 @@ func TestPhoneParticipantErrorsDoNotRepeatTheNumber(t *testing.T) {
 
 func identifierTypesForValue(t *testing.T, st *store.Store, value string) []string {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT identifier_type FROM participant_identifiers
 		WHERE identifier_value = ? ORDER BY identifier_type`), value)
 	require.NoError(t, err)
@@ -174,7 +174,7 @@ func TestPhoneIdentifierIsNotDuplicatedByMessagingIdentifiers(t *testing.T) {
 	st := storetest.New(t).Store
 
 	// A chat importer saw the number first: the meeting adds no second row.
-	_, err := st.EnsureParticipantByPhone("+16045550120", "", "imessage")
+	_, err := st.EnsureParticipantByPhone(t.Context(), "+16045550120", "", "imessage")
 	require.NoError(err)
 	_, err = st.EnsurePhoneParticipantContext(t.Context(), "+16045550120", "")
 	require.NoError(err)
@@ -185,7 +185,7 @@ func TestPhoneIdentifierIsNotDuplicatedByMessagingIdentifiers(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]string{store.PhoneIdentifierType}, identifierTypesForValue(t, st, "+16045550121"),
 		"alone, the phone row is what owner attribution matches")
-	_, err = st.EnsureParticipantByPhone("+16045550121", "", "whatsapp")
+	_, err = st.EnsureParticipantByPhone(t.Context(), "+16045550121", "", "whatsapp")
 	require.NoError(err)
 	assert.Equal([]string{"whatsapp"}, identifierTypesForValue(t, st, "+16045550121"))
 }
@@ -198,16 +198,16 @@ func TestPhoneIdentifierStaysWhenServiceIdentifierBelongsElsewhere(t *testing.T)
 	// Another participant already owns the service identifier for this value.
 	other, err := st.EnsureParticipant("elsewhere@example.com", "", "example.com")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO participant_identifiers
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers
 		(participant_id, identifier_type, identifier_value, is_primary) VALUES (?, 'whatsapp', ?, FALSE)`),
 		other, "+16045550122")
 	require.NoError(err)
 
-	_, err = st.EnsureParticipantByPhone("+16045550122", "", "whatsapp")
+	_, err = st.EnsureParticipantByPhone(t.Context(), "+16045550122", "", "whatsapp")
 	require.NoError(err)
 
 	var owner int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT participant_id FROM participant_identifiers
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT participant_id FROM participant_identifiers
 		WHERE identifier_type = ? AND identifier_value = ?`), store.PhoneIdentifierType, "+16045550122").Scan(&owner))
 	assert.Equal(t, meetingPhone, owner, "the phone participant must keep an identifier for its own number")
 }

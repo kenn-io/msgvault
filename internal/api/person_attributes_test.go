@@ -235,7 +235,7 @@ func TestPersonAttributesHTTPPreservesLegacySlugAcrossSeedCollision(t *testing.T
 	person, _, err := st.CreatePersonFromParticipant(participant)
 	require.NoError(err)
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM attribute_definitions WHERE universal_id = ?
 	`), store.AttributeUniversalIDLocation)
 	require.NoError(err)

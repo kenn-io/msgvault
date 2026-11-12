@@ -64,7 +64,7 @@ func TestPlaudProbeRequiresIdentifierForMultipleAccounts(t *testing.T) {
 		{Identifier: "work", AccountEmail: "owner@example.com"},
 		{Identifier: "personal", AccountEmail: "personal@example.com"},
 	}
-	ctx, cancel := context.WithCancel(testInvocationContext(context.Background(), cfg, invocationOptions{}))
+	ctx, cancel := context.WithCancel(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	cancel()
 	cmd := newSyncPlaudCmd()
 	cmd.SetContext(ctx)
@@ -78,17 +78,17 @@ func TestPlaudRegistrationRejectsLiveMismatchBeforeCreatingSource(t *testing.T) 
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	for _, email := range []string{"other@example.com", "Display <owner@example.com>"} {
-		_, err := registerPlaudAccount(st, "work", "owner@example.com", email)
+		_, err := registerPlaudAccount(t.Context(), st, "work", "owner@example.com", email)
 		require.Error(err)
 		sources, err := st.ListSources("plaud")
 		require.NoError(err)
 		assert.Empty(sources)
 	}
-	src, err := registerPlaudAccount(st, "work", " Owner@Example.COM ", "owner@example.com")
+	src, err := registerPlaudAccount(t.Context(), st, "work", " Owner@Example.COM ", "owner@example.com")
 	require.NoError(err)
-	_, err = registerPlaudAccount(st, "work", "other@example.com", "other@example.com")
+	_, err = registerPlaudAccount(t.Context(), st, "work", "other@example.com", "other@example.com")
 	require.Error(err)
-	got, err := st.GetSourceByTypeAndIdentifier("plaud", "work")
+	got, err := st.GetSourceByTypeAndIdentifier(t.Context(), "plaud", "work")
 	require.NoError(err)
 	assert.Equal(src.ID, got.ID)
 }
@@ -107,10 +107,10 @@ func TestPlaudOwnerMismatchStopsBeforeAuthorization(t *testing.T) {
 	cfg.Data.DataDir = cfg.HomeDir
 	state := testInvocationWithConfig(cfg)
 	func() {
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(t.Context(), state)
 		require.NoError(err)
 		defer cleanup()
-		_, err = registerPlaudAccount(st, "work", "owner@example.com", "owner@example.com")
+		_, err = registerPlaudAccount(t.Context(), st, "work", "owner@example.com", "owner@example.com")
 		require.NoError(err)
 	}()
 
@@ -136,14 +136,14 @@ func TestPlaudOwnerPreflightAllowsUnboundSource(t *testing.T) {
 	cfg.Data.DataDir = cfg.HomeDir
 	state := testInvocationWithConfig(cfg)
 	func() {
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(t.Context(), state)
 		require.NoError(err)
 		defer cleanup()
 		_, err = st.GetOrCreateSource("plaud", "work")
 		require.NoError(err)
 	}()
 
-	require.NoError(validatePlaudOwnerBeforeAuthorization(state, "work", "owner@example.com"))
+	require.NoError(validatePlaudOwnerBeforeAuthorization(t.Context(), state, "work", "owner@example.com"))
 }
 
 func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
@@ -159,7 +159,7 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 	t.Cleanup(upstream.Close)
 	cfg.Plaud = []config.PlaudSource{{Identifier: "work", AccountEmail: "replacement@example.com", Endpoint: upstream.URL}}
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-	_, err := plaud.RegisterSource(st, "work", "owner@example.com")
+	_, err := plaud.RegisterSource(t.Context(), st, "work", "owner@example.com")
 	require.NoError(err)
 	require.NoError(st.Close())
 	owner, err := tryAcquireWriteOwnerLock(cfg.Data.DataDir)
@@ -169,19 +169,15 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 	tokenPath := plaud.NewManager("", cfg.TokensDir(), nil).TokenPath("work")
 	require.NoError(os.WriteFile(tokenPath, []byte("existing token"), 0600))
 
-	var requests atomic.Int32
+	requests := make(chan []string, 2)
 	mux := http.NewServeMux()
 	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
 	mux.HandleFunc("/api/v1/cli/run", func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
 		var req daemonCLIRunTestRequest
 		if !assert.NoError(json.UnmarshalRead(r.Body, &req)) {
 			return
 		}
-		assert.Contains([][]string{
-			{"add-plaud", "work", "--check-owner-only"},
-			{"add-plaud", "--check-owner-only", "work"},
-		}, req.Args)
+		requests <- req.Args
 		rawSource, err := json.Marshal(cfg.Plaud[0])
 		if !assert.NoError(err) {
 			return
@@ -219,7 +215,7 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 	var stderr bytes.Buffer
 	cmd.SetErr(&stderr)
 	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-	cmd.SetArgs([]string{"work"})
+	cmd.SetArgs([]string{"--", "work"})
 	err = cmd.Execute()
 	require.ErrorIs(err, errCLISubprocessProxied)
 	assert.Contains(stderr.String(), "plaud source owner differs or is unconfirmed")
@@ -230,7 +226,9 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	cmd.SetArgs([]string{"work", "--check-owner-only"})
 	require.NoError(cmd.Execute())
-	assert.Equal(int32(2), requests.Load())
+	require.Len(requests, 2)
+	assert.Equal([]string{"add-plaud", "--check-owner-only", "--", "work"}, <-requests)
+	assert.Equal([]string{"add-plaud", "--check-owner-only", "work"}, <-requests)
 	assert.Zero(oauthRequests.Load())
 	token, err := os.ReadFile(tokenPath)
 	require.NoError(err)
@@ -262,7 +260,7 @@ func TestPlaudOwnerCheckProcess(t *testing.T) {
 }
 func TestPlaudScheduledMissingSourceStopsBeforeAuth(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	ctx, cancel := context.WithCancel(testInvocationContext(context.Background(), config.NewDefaultConfig(), invocationOptions{}))
+	ctx, cancel := context.WithCancel(testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{}))
 	cancel()
 	err := runConfiguredPlaudSync(ctx, st, config.PlaudSource{Identifier: "work", AccountEmail: "owner@example.com"})
 	require.Error(t, err)
@@ -330,7 +328,7 @@ func TestScheduledPlaudSyncSkipsRetiredSourceBeforeCredentials(t *testing.T) {
 func TestPlaudPartialCanceledImportRefreshesDetachedContext(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	calls := 0
 	refreshErr := errors.New("refresh failed")
@@ -344,7 +342,7 @@ func TestPlaudPartialCanceledImportRefreshesDetachedContext(t *testing.T) {
 	require.ErrorIs(err, context.Canceled)
 	require.ErrorIs(err, refreshErr)
 	calls = 0
-	err = finishPlaudImport(context.Background(), "work", &plaud.ImportSummary{}, errors.New("failed"), func() error { calls++; return nil })
+	err = finishPlaudImport(t.Context(), "work", &plaud.ImportSummary{}, errors.New("failed"), func() error { calls++; return nil })
 	require.Error(err)
 	assert.Zero(calls)
 }

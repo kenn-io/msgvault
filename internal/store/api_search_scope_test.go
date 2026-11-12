@@ -79,7 +79,7 @@ func TestSearchMessagesQuery_AccountScoping(t *testing.T) {
 	// Source 2 gets a message with identical searchable content.
 	src2, err := f.Store.GetOrCreateSource("gmail", "second@example.com")
 	require.NoError(err, "GetOrCreateSource src2")
-	conv2, err := f.Store.EnsureConversation(src2.ID, "scope-thread-2", "Scope Thread 2")
+	conv2, err := f.Store.EnsureConversation(t.Context(), src2.ID, "scope-thread-2", "Scope Thread 2")
 	require.NoError(err, "EnsureConversation src2")
 
 	m2 := storetest.NewMessage(src2.ID, conv2).
@@ -206,6 +206,7 @@ func TestSearchMessagesQuery_ConversationIDScoping(t *testing.T) {
 		Create(t, f.Store)
 
 	secondConversation, err := f.Store.EnsureConversation(
+		t.Context(),
 		f.Source.ID, "conversation-scope-second", "Second Thread",
 	)
 	require.NoError(err, "EnsureConversation second")
@@ -214,6 +215,7 @@ func TestSearchMessagesQuery_ConversationIDScoping(t *testing.T) {
 		Create(t, f.Store)
 
 	thirdConversation, err := f.Store.EnsureConversation(
+		t.Context(),
 		f.Source.ID, "conversation-scope-third", "Third Thread",
 	)
 	require.NoError(err, "EnsureConversation third")
@@ -285,7 +287,7 @@ func TestSearchMessagesPipeOR(t *testing.T) {
 		if f.Store.IsPostgreSQL() {
 			t.Skip("messages_fts is SQLite-only")
 		}
-		_, err := f.Store.DB().Exec("DROP TABLE messages_fts")
+		_, err := f.Store.DB().ExecContext(t.Context(), "DROP TABLE messages_fts")
 		require.NoError(err)
 		rows, total, err := f.Store.SearchMessagesQuery(search.ParseOR("alpha | beta"), 0, 50)
 		require.NoError(err)

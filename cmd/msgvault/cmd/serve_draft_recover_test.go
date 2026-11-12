@@ -84,7 +84,7 @@ func issueDraftRecoveryToken(t *testing.T, server *httptest.Server, sourceID int
 		"source_ids":  []int64{sourceID},
 	})
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", "owner-key")
@@ -105,7 +105,7 @@ func runDraftRecoveryHTTP(t *testing.T, server *httptest.Server, secret, draftID
 		draftRecoverCommand, draftID, "--revision", strconv.FormatInt(revision, 10), "--json",
 	}})
 	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Msgvault-Agent-Token", secret)
@@ -168,7 +168,7 @@ func TestDraftRecoverThroughHTTP(t *testing.T) {
 			"source_ids":  []int64{fixture.source.ID},
 		})
 		requirements.NoError(err)
-		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/agent-tokens", bytes.NewReader(body))
 		requirements.NoError(err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", "owner-key")
@@ -186,7 +186,7 @@ func TestDraftRecoverThroughHTTP(t *testing.T) {
 	run := func(secret, draftID string, revision int64) []api.CLIRunEvent {
 		body, err := json.Marshal(api.CLIRunRequest{Args: []string{draftRecoverCommand, draftID, "--revision", strconv.FormatInt(revision, 10), "--json"}})
 		requirements.NoError(err)
-		req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/api/v1/cli/run", bytes.NewReader(body))
 		requirements.NoError(err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Msgvault-Agent-Token", secret)
@@ -223,7 +223,7 @@ func TestDraftRecoverThroughHTTP(t *testing.T) {
 
 	otherSource, err := fixture.store.GetOrCreateSource("imap", "imap://other@example.com:143")
 	requirements.NoError(err)
-	conversationID, err := fixture.store.EnsureConversation(otherSource.ID, "other-draft", "Other draft")
+	conversationID, err := fixture.store.EnsureConversation(t.Context(), otherSource.ID, "other-draft", "Other draft")
 	requirements.NoError(err)
 	otherReceipt := store.IMAPDraftReceipt{SourceID: otherSource.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
 	otherDraft, err := fixture.store.PersistIMAPDraftContext(t.Context(), otherReceipt, nil, func([]int64) *store.MessagePersistData {
@@ -553,7 +553,7 @@ func TestDraftRecoverKeepsRowUnchangedOnRemovalGenerationRefusal(t *testing.T) {
 	before, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
 	requirements.NoError(err)
 	var beforeUpdatedAt string
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`
 		SELECT CAST(updated_at AS TEXT) FROM imap_drafts WHERE draft_id = ?
 	`), fixture.draft.DraftID).Scan(&beforeUpdatedAt))
 
@@ -571,7 +571,7 @@ func TestDraftRecoverKeepsRowUnchangedOnRemovalGenerationRefusal(t *testing.T) {
 	after, err := fixture.store.GetIMAPDraftContext(t.Context(), fixture.draft.DraftID)
 	requirements.NoError(err)
 	var afterUpdatedAt string
-	requirements.NoError(fixture.store.DB().QueryRow(fixture.store.Rebind(`
+	requirements.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(`
 		SELECT CAST(updated_at AS TEXT) FROM imap_drafts WHERE draft_id = ?
 	`), fixture.draft.DraftID).Scan(&afterUpdatedAt))
 	assertions.Equal(before.Revision, after.Revision)
@@ -803,7 +803,7 @@ func TestDraftRecoverReloadsActionAndSourceAfterSourceLock(t *testing.T) {
 			name: "action",
 			mutate: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
 				t.Helper()
-				_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
+				_, err := fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind(`
 					UPDATE imap_drafts
 					SET pending_operation = 'delete', pending_raw = NULL,
 					    pending_replacement_mailbox = NULL,
@@ -818,7 +818,7 @@ func TestDraftRecoverReloadsActionAndSourceAfterSourceLock(t *testing.T) {
 			name: "draft removed",
 			mutate: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
 				t.Helper()
-				_, err := fixture.store.DB().Exec(fixture.store.Rebind(`DELETE FROM imap_drafts WHERE draft_id = ?`), fixture.draft.DraftID)
+				_, err := fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind(`DELETE FROM imap_drafts WHERE draft_id = ?`), fixture.draft.DraftID)
 				require.NoError(t, err)
 			},
 		},
@@ -826,7 +826,7 @@ func TestDraftRecoverReloadsActionAndSourceAfterSourceLock(t *testing.T) {
 			name: "source type",
 			mutate: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
 				t.Helper()
-				_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
+				_, err := fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind(`
 					UPDATE sources SET source_type = 'gmail' WHERE id = ?
 				`), fixture.source.ID)
 				require.NoError(t, err)
@@ -836,7 +836,7 @@ func TestDraftRecoverReloadsActionAndSourceAfterSourceLock(t *testing.T) {
 			name: "source identifier",
 			mutate: func(t *testing.T, fixture reviewManagedLifecycleFixture) {
 				t.Helper()
-				_, err := fixture.store.DB().Exec(fixture.store.Rebind(`
+				_, err := fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind(`
 					UPDATE sources SET identifier = 'imap://changed@example.test:143' WHERE id = ?
 				`), fixture.source.ID)
 				require.NoError(t, err)
@@ -901,15 +901,15 @@ func TestDraftRecoverRejectsInvalidPendingOperation(t *testing.T) {
 	_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
 	requirements.NoError(err)
 	requirements.NoError(func() error {
-		_, err := fixture.store.DB().Exec("PRAGMA ignore_check_constraints = ON")
+		_, err := fixture.store.DB().ExecContext(t.Context(), "PRAGMA ignore_check_constraints = ON")
 		return err
 	}())
-	_, err = fixture.store.DB().Exec(fixture.store.Rebind(`
+	_, err = fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind(`
 		UPDATE imap_drafts SET pending_operation = 'invalid' WHERE draft_id = ?
 	`), fixture.draft.DraftID)
 	requirements.NoError(err)
 	requirements.NoError(func() error {
-		_, err := fixture.store.DB().Exec("PRAGMA ignore_check_constraints = OFF")
+		_, err := fixture.store.DB().ExecContext(t.Context(), "PRAGMA ignore_check_constraints = OFF")
 		return err
 	}())
 	providerCalls := 0
@@ -1089,7 +1089,7 @@ func TestDraftRecoverDelegatedCompletionWithoutContentReads(t *testing.T) {
 	fixture, _ := newDraftRecoveryFixture(t)
 	_, err := fixture.store.ClaimIMAPDraftContext(t.Context(), fixture.draft.DraftID, 1, store.IMAPDraftOperationDelete, nil)
 	requirements.NoError(err)
-	_, err = fixture.store.DB().Exec(fixture.store.Rebind(`
+	_, err = fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind(`
 		UPDATE message_raw SET raw_data = ?, compression = 'zlib' WHERE message_id = ?
 	`), []byte("invalid compressed content"), fixture.draft.CurrentMessageID)
 	requirements.NoError(err)

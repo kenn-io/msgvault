@@ -13,8 +13,8 @@ import (
 
 // pstMessageIngester stores a new PST message and then records the threading
 // facts that ReconcilePstEmailThreadsContext reads when the import finishes.
-func pstMessageIngester(images *remoteimage.Fetcher) rawMessageIngestFunc {
-	ingest := rawMessageIngester(images)
+func pstMessageIngester(images *remoteimage.Fetcher, rules []mime.RelayedSenderRule) rawMessageIngestFunc {
+	ingest := rawMessageIngester(images, rules)
 	return func(
 		ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string,
 		labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time,
@@ -29,7 +29,7 @@ func pstMessageIngester(images *remoteimage.Fetcher) rawMessageIngestFunc {
 }
 
 func recordPstMessageHeaders(ctx context.Context, st *store.Store, sourceID int64, sourceMsgID string, raw []byte) error {
-	ids, err := st.MessageExistsBatch(sourceID, []string{sourceMsgID})
+	ids, err := st.MessageExistsBatchContext(ctx, sourceID, []string{sourceMsgID})
 	if err != nil {
 		return fmt.Errorf("find imported PST message: %w", err)
 	}

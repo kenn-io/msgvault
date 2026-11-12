@@ -194,7 +194,7 @@ func TestDeduplicateSingleAndMultiSourceBackfillOnlyOmitUndo(t *testing.T) {
 			"first-metadata", "first-metadata@example.test")
 		secondSource, err := f.Store.GetOrCreateSource("mbox", "backup@example.test")
 		require.NoError(err)
-		secondConversation, err := f.Store.EnsureConversation(secondSource.ID, "second-thread", "Second")
+		secondConversation, err := f.Store.EnsureConversation(t.Context(), secondSource.ID, "second-thread", "Second")
 		require.NoError(err)
 		secondID := createPendingRFC822Message(t, f.Store, secondSource.ID, secondConversation,
 			"second-metadata", "second-metadata@example.test")
@@ -226,7 +226,7 @@ func TestDeduplicateLocalAndPerSourceMergeOutputIncludesBatch(t *testing.T) {
 		dedupNoBackup = true
 		f := storetest.New(t)
 		messageIDs := f.CreateMessages(2)
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE messages SET rfc822_message_id = ? WHERE id IN (?, ?)`),
 			"local-merge@example.test", messageIDs[0], messageIDs[1])
 		require.NoError(err)
@@ -259,7 +259,7 @@ func TestDeduplicateLocalAndPerSourceMergeOutputIncludesBatch(t *testing.T) {
 		dedupNoBackup = true
 		f := storetest.New(t)
 		messageIDs := f.CreateMessages(2)
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE messages SET rfc822_message_id = ? WHERE id IN (?, ?)`),
 			"per-source-merge@example.test", messageIDs[0], messageIDs[1])
 		require.NoError(err)
@@ -381,7 +381,7 @@ func TestDeduplicateLocalAndDaemonPromptDescribeDerivationFence(t *testing.T) {
 			"multi-first-prompt", "multi-first-prompt@example.test")
 		secondSource, err := f.Store.GetOrCreateSource("mbox", "backup@example.test")
 		require.NoError(err)
-		secondConversation, err := f.Store.EnsureConversation(secondSource.ID, "prompt-thread", "Prompt")
+		secondConversation, err := f.Store.EnsureConversation(t.Context(), secondSource.ID, "prompt-thread", "Prompt")
 		require.NoError(err)
 		secondID := createPendingRFC822Message(t, f.Store, secondSource.ID, secondConversation,
 			"multi-second-prompt", "multi-second-prompt@example.test")
@@ -410,7 +410,7 @@ func TestDeduplicatePromptRetainsUndoGuidanceForDuplicateMerge(t *testing.T) {
 	dedupNoBackup = true
 	f := storetest.New(t)
 	messageIDs := f.CreateMessages(2)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET rfc822_message_id = ? WHERE id IN (?, ?)`),
 		"prompt-duplicate@example.test", messageIDs[0], messageIDs[1])
 	require.NoError(err)
@@ -440,7 +440,7 @@ func TestDeduplicatePlanChangedOutputReportsCommitAndNoBatch(t *testing.T) {
 	f := storetest.New(t)
 	messageIDs := f.CreateMessages(2)
 	const sharedID = "revealed-duplicate@example.test"
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), sharedID, messageIDs[0])
 	require.NoError(err)
 	require.NoError(f.Store.UpsertMessageRaw(messageIDs[1], []byte(
@@ -468,7 +468,7 @@ func TestDeduplicatePlanChangedOutputReportsCommitAndNoBatch(t *testing.T) {
 	assert.NotContains(out, "Batch ID:")
 	assert.Equal(sharedID, storedRFC822IDForCLI(t, f.Store, messageIDs[1]), "derivation committed")
 	var hidden int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT COUNT(*) FROM messages WHERE id IN (?, ?) AND deleted_at IS NOT NULL`),
 		messageIDs[0], messageIDs[1],
 	).Scan(&hidden))
@@ -506,7 +506,7 @@ func createPendingRFC822Message(
 func storedRFC822IDForCLI(t *testing.T, st *store.Store, messageID int64) string {
 	t.Helper()
 	var value sql.NullString
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT rfc822_message_id FROM messages WHERE id = ?`), messageID).Scan(&value))
 	return value.String
 }
@@ -694,7 +694,7 @@ func TestDeduplicatePlanFingerprintChangesWhenRemoteDeletionTargetsChange(t *tes
 	messageIDs := f.CreateMessages(2)
 
 	const rfc822MessageID = "remote-target-change@example.test"
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages
 		SET rfc822_message_id = ?
 		WHERE id IN (?, ?)`), rfc822MessageID, messageIDs[0], messageIDs[1])
 	require.NoError(err, "set shared RFC822 Message-ID")
@@ -812,9 +812,9 @@ func TestDeduplicateAccountResolutionExcludesCalendarSources(t *testing.T) {
 		"calendar_id":   "primary",
 	})
 	require.NoError(err, "marshal sync_config")
-	require.NoError(f.Store.UpdateSourceSyncConfig(cal.ID, string(cfg)), "UpdateSourceSyncConfig")
+	require.NoError(f.Store.UpdateSourceSyncConfig(t.Context(), cal.ID, string(cfg)), "UpdateSourceSyncConfig")
 
-	scope, err := ResolveEmailAccountFlag(f.Store, accountID)
+	scope, err := ResolveEmailAccountFlag(t.Context(), f.Store, accountID)
 	require.NoError(err)
 
 	assert.ElementsMatch([]int64{f.Source.ID}, scope.SourceIDs())
@@ -852,7 +852,7 @@ func TestResolveDeduplicateScopeNonEmailCollectionReturnsInvalidError(t *testing
 	_, err = f.Store.CreateCollection("calendars", "", []int64{calendarSource.ID})
 	require.NoError(err, "CreateCollection")
 
-	_, err = resolveDeduplicateScope(f.Store, deduplicateScopeRequest{
+	_, err = resolveDeduplicateScope(t.Context(), f.Store, deduplicateScopeRequest{
 		Collection: "calendars",
 	})
 

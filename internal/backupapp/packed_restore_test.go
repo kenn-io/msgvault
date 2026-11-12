@@ -24,7 +24,7 @@ func TestPackedRestoreTargetAcquiresMutationLease(t *testing.T) {
 	require := require.New(t)
 	target := NewPackedRestoreTarget(packstore.DefaultLimits())
 
-	lease, err := target.AcquireRestoreLease(context.Background())
+	lease, err := target.AcquireRestoreLease(t.Context())
 	require.NoError(err)
 	require.NoError(lease.ValidateMutation())
 	require.NoError(lease.Release())
@@ -32,7 +32,7 @@ func TestPackedRestoreTargetAcquiresMutationLease(t *testing.T) {
 }
 
 func TestPackedRestoreTargetWrapsLeaseAcquisitionFailure(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	lease, err := NewPackedRestoreTarget(packstore.DefaultLimits()).AcquireRestoreLease(ctx)
@@ -47,18 +47,18 @@ func TestPackedRestoreTargetOpensOnlyStagedCatalog(t *testing.T) {
 	assert := assert.New(t)
 	staged := openPackedRestoreTestDB(t, "staged.db")
 	other := openPackedRestoreTestDB(t, "other.db")
-	_, err := other.Exec(`CREATE TABLE live_marker (id INTEGER PRIMARY KEY)`)
+	_, err := other.ExecContext(t.Context(), `CREATE TABLE live_marker (id INTEGER PRIMARY KEY)`)
 	require.NoError(err)
 	target := NewPackedRestoreTarget(packstore.DefaultLimits())
 
-	catalog, err := target.OpenRestoreCatalog(context.Background(), staged)
+	catalog, err := target.OpenRestoreCatalog(t.Context(), staged)
 	require.NoError(err)
-	require.NoError(catalog.ReplaceRestoredPacks(context.Background(), nil, nil))
+	require.NoError(catalog.ReplaceRestoredPacks(t.Context(), nil, nil))
 
 	assert.Equal(2, countPackedRestoreTables(t, staged))
 	assert.Zero(countPackedRestoreTables(t, other), "target must not open or migrate any other database")
 	var markers int
-	require.NoError(other.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='live_marker'`).Scan(&markers))
+	require.NoError(other.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='live_marker'`).Scan(&markers))
 	assert.Equal(1, markers)
 }
 
@@ -67,7 +67,7 @@ func openPackedRestoreTestDB(t *testing.T, name string) *sql.DB {
 	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), name))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	_, err = db.Exec(`CREATE TABLE attachments (
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE attachments (
 		id INTEGER PRIMARY KEY,
 		content_hash TEXT,
 		thumbnail_hash TEXT
@@ -79,7 +79,7 @@ func openPackedRestoreTestDB(t *testing.T, name string) *sql.DB {
 func countPackedRestoreTables(t *testing.T, db *sql.DB) int {
 	t.Helper()
 	var count int
-	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM sqlite_master
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master
 		WHERE type='table' AND name IN ('attachment_pack_index', 'attachment_packs')`).Scan(&count))
 	return count
 }

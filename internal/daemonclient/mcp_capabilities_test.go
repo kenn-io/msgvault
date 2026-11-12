@@ -1,7 +1,6 @@
 package daemonclient
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -36,7 +35,7 @@ func TestMCPCapabilitiesFailClosed(t *testing.T) {
 			t.Cleanup(server.Close)
 			client, err := New(Config{URL: server.URL, APIKey: "synthetic-key", AllowInsecure: true})
 			requirements.NoError(err)
-			capabilities, err := client.MCPCapabilities(context.Background())
+			capabilities, err := client.MCPCapabilities(t.Context())
 			requirements.Error(err)
 			assertions.Nil(capabilities)
 		})
@@ -54,7 +53,7 @@ func TestMCPCapabilitiesRetainsRouteParameters(t *testing.T) {
 	t.Cleanup(server.Close)
 	client, err := New(Config{URL: server.URL, APIKey: "synthetic-key", AllowInsecure: true})
 	requirements.NoError(err)
-	capabilities, err := client.MCPCapabilities(context.Background())
+	capabilities, err := client.MCPCapabilities(t.Context())
 	requirements.NoError(err)
 	requirements.Len(capabilities.Routes, 1)
 	assertions.Equal("synthetic-key", <-seen)
@@ -76,7 +75,7 @@ func TestMCPCapabilitiesOwnerRouteIdentities(t *testing.T) {
 			t.Cleanup(server.Close)
 			client, err := New(Config{URL: server.URL, AllowInsecure: true})
 			requirements.NoError(err)
-			capabilities, err := client.MCPCapabilities(context.Background())
+			capabilities, err := client.MCPCapabilities(t.Context())
 			requirements.Error(err)
 			assertions.Nil(capabilities)
 		})

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 // CurrentFTSIndexingVersion identifies the PostgreSQL search_fts field-weight
@@ -35,7 +37,8 @@ type ftsEnvelopeExpressions struct {
 // The enclosing query must alias messages as m.
 func storedFTSEnvelopeSQL(aggregate string) ftsEnvelopeExpressions {
 	recipients := func(kind string) string {
-		return fmt.Sprintf("COALESCE((SELECT %s(p.email_address, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = '%s'), '')", aggregate, kind)
+		address := identityindex.SenderAddressExpr("mr", "p")
+		return fmt.Sprintf("COALESCE((SELECT %s(%s, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = '%s'), '')", aggregate, address, kind)
 	}
 	return ftsEnvelopeExpressions{
 		subject: "COALESCE(m.subject, '')",
@@ -200,6 +203,7 @@ type Dialect interface {
 	// "rank" is an implicit FTS5 column; PostgreSQL: 1 for ts_rank).
 	// Callers compose these with their own SQL and must run Rebind on the
 	// final query before execution.
+	// The order expression sorts ascending and has no direction suffix.
 	// rowIDs uses a self-contained predicate so MATCH can appear inside OR.
 	FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int)
 
@@ -233,7 +237,7 @@ type Dialect interface {
 	// turn an operator's SIGINT into a store that silently believes search is
 	// gone. Implementations must bind the probe to ctx and must not reach around
 	// it to a contextless handle.
-	FTSAvailable(ctx context.Context, db *sql.DB) (bool, error)
+	FTSAvailable(ctx context.Context, db SQLReader) (bool, error)
 
 	// FTSNeedsBackfill reports whether the FTS index needs to be populated.
 	FTSNeedsBackfill(db *sql.DB) bool

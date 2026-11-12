@@ -59,7 +59,7 @@ func TestConversationWindowIsAnchoredBoundedAndChronological(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, conversationID, ids := seedConversation(t, "email", 8)
-	req := httptest.NewRequest(http.MethodGet,
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		fmt.Sprintf("/api/v1/conversations/%d?anchor=%d&before=2&after=2", conversationID, ids[3]), nil)
 	w := httptest.NewRecorder()
 
@@ -86,7 +86,7 @@ func TestConversationWindowReturnsIndividualChatMessages(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	srv, conversationID, ids := seedConversation(t, "imessage", 3)
-	req := httptest.NewRequest(http.MethodGet,
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		fmt.Sprintf("/api/v1/conversations/%d?anchor=%d&before=1&after=1", conversationID, ids[1]), nil)
 	w := httptest.NewRecorder()
 
@@ -134,7 +134,7 @@ func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing
 	}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, nil, testLogger())
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conversationID, ids[0]), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
@@ -162,7 +162,7 @@ func TestConversationWindowCapsInlineBodiesAndServesOmittedBodiesByID(t *testing
 	assert.Equal("Preview 2", response.Messages[2].Snippet)
 
 	// The omitted body is fully served by the single-message PK lookup.
-	req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", ids[2]), nil)
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", ids[2]), nil)
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 	require.Equal(http.StatusOK, w.Code)
@@ -190,7 +190,7 @@ func TestConversationWindowRejectsMissingOrForeignAnchor(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, target.path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, target.path, nil)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
 			assert.Equal(t, http.StatusNotFound, w.Code)
@@ -204,7 +204,7 @@ func TestConversationWindowRejectsMissingOrForeignAnchor(t *testing.T) {
 func TestConversationWindowValidatesBounds(t *testing.T) {
 	t.Parallel()
 	srv, conversationID, ids := seedConversation(t, "email", 1)
-	req := httptest.NewRequest(http.MethodGet,
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		fmt.Sprintf("/api/v1/conversations/%d", conversationID), nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
@@ -216,13 +216,13 @@ func TestConversationWindowValidatesBounds(t *testing.T) {
 		"start=2026-01-02T00:00:00Z&end=2026-01-01T00:00:00Z",
 		"start=2026-01-01T00:00:00Z&end=2026-01-01T00:00:00Z",
 	} {
-		req = httptest.NewRequest(http.MethodGet,
+		req = httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 			fmt.Sprintf("/api/v1/conversations/%d?anchor=%d&%s", conversationID, ids[0], query), nil)
 		w = httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
 		assert.Equal(t, http.StatusBadRequest, w.Code, query)
 	}
-	req = httptest.NewRequest(http.MethodGet,
+	req = httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		fmt.Sprintf("/api/v1/conversations/%d?anchor=bad", conversationID), nil)
 	w = httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
@@ -277,7 +277,7 @@ func TestConversationWindowScopesToTimeRangeExcludingOtherDays(t *testing.T) {
 
 	start := day2.Truncate(24 * time.Hour)
 	end := start.AddDate(0, 0, 1)
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf(
 		"/api/v1/conversations/%d?anchor=%d&start=%s&end=%s",
 		conversationID, ids[4], start.Format(time.RFC3339), end.Format(time.RFC3339),
 	), nil)
@@ -303,7 +303,7 @@ func TestConversationWindowRejectsAnchorOutsideTimeRange(t *testing.T) {
 
 	start := day2.Truncate(24 * time.Hour)
 	end := start.AddDate(0, 0, 1)
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf(
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf(
 		"/api/v1/conversations/%d?anchor=%d&start=%s&end=%s",
 		conversationID, ids[0], start.Format(time.RFC3339), end.Format(time.RFC3339),
 	), nil)
@@ -322,7 +322,7 @@ func TestConversationWindowCarriesExactParticipantIdentities(t *testing.T) {
 	require := require.New(t)
 	srv := NewServer(&config.Config{}, &participantConversationStore{mockStore: &mockStore{}}, nil, testLogger())
 	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/conversations/7?anchor=42", nil))
+	srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/conversations/7?anchor=42", nil))
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var result struct {
 		Messages []map[string]json.RawMessage `json:"messages"`

@@ -25,7 +25,7 @@
   let invokingRow: HTMLButtonElement | undefined;
   let relatedFocus: string | undefined;
   const current = $derived(controller.snapshot);
-  const kindOptions = [{ value: '', label: 'All kinds' }, { value: 'lane:messages', label: 'All messages' }, { value: 'lane:person_facts', label: 'All people' }, { value: 'lane:contacts', label: 'All contacts' }, { value: 'lane:documents', label: 'All documents' }, { value: 'lane:visual_attachments', label: 'All visual attachments' }, ...Object.entries(OPERATION_KIND_LABELS).map(([value, label]) => ({ value, label }))];
+  const kindOptions = [{ value: '', label: 'All kinds' }, { value: 'lane:messages', label: 'All messages' }, { value: 'lane:person_facts', label: 'All people' }, { value: 'lane:contacts', label: 'All contacts' }, { value: 'lane:visual_attachments', label: 'All visual attachments' }, ...Object.entries(OPERATION_KIND_LABELS).map(([value, label]) => ({ value, label }))];
   const stateOptions = [{ value: '', label: 'All states' }, ...['queued', 'running', 'succeeded', 'partial', 'paused', 'failed', 'cancelled'].map(value => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }))];
   const dates = $derived<RangeSelection>({ mode: 'custom', from: local.operationStartedFrom.slice(0, 10), to: local.operationStartedBefore ? dayOffset(local.operationStartedBefore.slice(0, 10), -1).slice(0, 10) : '' });
   const configured = $derived(current.statusLanes.flatMap(lane => lane.kinds).find(lane => lane.related_status === local.operationStatus)?.configured);

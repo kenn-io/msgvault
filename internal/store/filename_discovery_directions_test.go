@@ -42,9 +42,9 @@ func TestFilenameSuggestionPersonDirections(t *testing.T) {
 	for _, tc := range cases {
 		require := require.New(t)
 		var conv, message, id int64
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO conversations(source_id,source_conversation_id,conversation_type) VALUES(?,?,?) RETURNING id`), f.Source.ID, tc.name, tc.kind).Scan(&conv))
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sender_id,is_sent) VALUES(?,?,?,'email',?,?) RETURNING id`), f.Source.ID, conv, tc.name, tc.sender, !tc.unsent).Scan(&message))
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&id))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO conversations(source_id,source_conversation_id,conversation_type) VALUES(?,?,?) RETURNING id`), f.Source.ID, tc.name, tc.kind).Scan(&conv))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sender_id,is_sent) VALUES(?,?,?,'email',?,?) RETURNING id`), f.Source.ID, conv, tc.name, tc.sender, !tc.unsent).Scan(&message))
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&id))
 		if tc.recipient != "" {
 			require.NoError(f.Store.ReplaceMessageRecipients(message, tc.recipient, []int64{member}, []string{"Member Example"}))
 		}
@@ -104,15 +104,15 @@ func TestFilenameSuggestionAllRolesAndSenderSuppression(t *testing.T) {
 
 	f, _, members := filenamePersonFixture(t, 2)
 	var conv, message, id int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO conversations(source_id,source_conversation_id,conversation_type) VALUES(?,'multi-role','direct_chat') RETURNING id`), f.Source.ID).Scan(&conv))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sender_id) VALUES(?,?,'multi-role','email',?) RETURNING id`), f.Source.ID, conv, members[0]).Scan(&message))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&id))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO conversations(source_id,source_conversation_id,conversation_type) VALUES(?,'multi-role','direct_chat') RETURNING id`), f.Source.ID).Scan(&conv))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sender_id) VALUES(?,?,'multi-role','email',?) RETURNING id`), f.Source.ID, conv, members[0]).Scan(&message))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,storage_path) VALUES(?,'report.pdf','') RETURNING id`), message).Scan(&id))
 	require.NoError(f.Store.EnsureConversationParticipant(conv, members[1], "member"))
 	to := personscope.Scope{ParticipantIDs: members, Directions: []personscope.Direction{personscope.ToPerson}}
 	rows, err := f.Store.FilenameSuggestionRowsContext(t.Context(), []int64{id}, store.FilenameSuggestionScope{Person: &to})
 	require.NoError(err)
 	assert.Empty(rows)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE conversations SET conversation_type='group_chat' WHERE id=?`), conv)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='group_chat' WHERE id=?`), conv)
 	require.NoError(err)
 	for _, role := range []string{"from", "to", "cc", "bcc"} {
 		require.NoError(f.Store.ReplaceMessageRecipients(message, role, members, []string{"First Example", "Second Example"}))

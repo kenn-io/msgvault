@@ -23,7 +23,7 @@ func TestRevalidationKeepsCoverageFromUntrackedOwnerCheckpoint(t *testing.T) {
 
 	var syncID int64
 	var cursor string
-	require.NoError(imp.store.DB().QueryRow(`SELECT id, cursor_after FROM sync_runs
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT id, cursor_after FROM sync_runs
 		WHERE status = 'completed' ORDER BY id DESC LIMIT 1`).Scan(&syncID, &cursor))
 	var state map[string]any
 	require.NoError(json.Unmarshal([]byte(cursor), &state))
@@ -31,7 +31,7 @@ func TestRevalidationKeepsCoverageFromUntrackedOwnerCheckpoint(t *testing.T) {
 	delete(state, "principal_id")
 	legacy, err := json.Marshal(state)
 	require.NoError(err)
-	_, err = imp.store.DB().Exec(imp.store.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), string(legacy), syncID)
+	_, err = imp.store.DB().ExecContext(t.Context(), imp.store.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), string(legacy), syncID)
 	require.NoError(err)
 
 	historyCalls := 0

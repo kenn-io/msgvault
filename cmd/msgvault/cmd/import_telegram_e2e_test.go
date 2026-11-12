@@ -46,7 +46,7 @@ func TestImportTelegramEndToEnd(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	var n int
-	require.NoError(st.DB().QueryRow("SELECT count(*) FROM messages WHERE message_type = 'telegram'").Scan(&n))
+	require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT count(*) FROM messages WHERE message_type = 'telegram'").Scan(&n))
 	assert.Equal(3, n)
 }
 
@@ -67,9 +67,9 @@ func TestImportTelegramRefreshesCacheAfterPartialFailure(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 	var n int
-	require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&n))
 	assert.Equal(1, n)
-	require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?)`, filepath.Join(cfg.AnalyticsDir(), "owner_participants", "*.parquet")).Scan(&n))
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT count(*) FROM read_parquet(?)`, filepath.Join(cfg.AnalyticsDir(), "owner_participants", "*.parquet")).Scan(&n))
 	assert.Equal(1, n)
 }
 

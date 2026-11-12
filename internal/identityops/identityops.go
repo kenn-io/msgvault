@@ -1,6 +1,7 @@
 package identityops
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -108,7 +109,7 @@ type RemoveResult struct {
 	CacheState string `json:"cache_state,omitempty" enum:"ready,stale"`
 }
 
-func Add(st Store, req AddRequest) (AddResult, error) {
+func Add(ctx context.Context, st Store, req AddRequest) (AddResult, error) {
 	identifier := strings.TrimSpace(req.Identifier)
 	if identifier == "" {
 		return AddResult{}, opserr.Invalid(errors.New("identifier cannot be empty"))
@@ -117,7 +118,7 @@ func Add(st Store, req AddRequest) (AddResult, error) {
 		return AddResult{}, opserr.Invalid(fmt.Errorf("signal names cannot contain commas: %q", req.Signal))
 	}
 
-	src, err := ResolveSource(st, req.SourceSelector)
+	src, err := ResolveSource(ctx, st, req.SourceSelector)
 	if err != nil {
 		return AddResult{}, err
 	}
@@ -154,13 +155,13 @@ func Add(st Store, req AddRequest) (AddResult, error) {
 	return result, nil
 }
 
-func Remove(st Store, req RemoveRequest) (RemoveResult, error) {
+func Remove(ctx context.Context, st Store, req RemoveRequest) (RemoveResult, error) {
 	identifier := strings.TrimSpace(req.Identifier)
 	if identifier == "" {
 		return RemoveResult{}, opserr.Invalid(errors.New("identifier must not be empty"))
 	}
 
-	src, err := ResolveSource(st, req.SourceSelector)
+	src, err := ResolveSource(ctx, st, req.SourceSelector)
 	if err != nil {
 		return RemoveResult{}, err
 	}
@@ -202,8 +203,8 @@ func Remove(st Store, req RemoveRequest) (RemoveResult, error) {
 	return result, nil
 }
 
-func ResolveSource(st Store, selector SourceSelector) (*store.Source, error) {
-	source, err := sourceops.ResolveExactOne(st, selector)
+func ResolveSource(ctx context.Context, st Store, selector SourceSelector) (*store.Source, error) {
+	source, err := sourceops.ResolveExactOneContext(ctx, st, selector)
 	if err == nil || opserr.KindOf(err) != opserr.KindNotFound ||
 		selector.SourceIDSet || selector.SourceID != 0 || strings.TrimSpace(selector.Account) == "" {
 		return source, err

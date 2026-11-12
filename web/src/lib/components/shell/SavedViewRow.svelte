@@ -172,7 +172,7 @@
 </div>
 
 {#if describing}
-  <Dialog title={`Describe ${view.name}`} onclose={() => void closeDescription()} primaryLabel="Save" onprimary={() => void saveDescription()} primaryDisabled={describeBusy}>
+  <Dialog title={`Describe ${view.name}`} onclose={() => void closeDescription()} cancelDisabled={describeBusy} primaryLabel="Save" onprimary={() => void saveDescription()} primaryDisabled={describeBusy}>
     <TextInput ariaLabel="Description" bind:value={description} placeholder="What this view is for" block disabled={describeBusy} />
     {#if describeError}<span class="saved-view__error" role="alert">{describeError}</span>{/if}
   </Dialog>

@@ -41,7 +41,7 @@ func TestReactionSourceIdentityIsScopedBySource(t *testing.T) {
 	for _, userID := range []string{"@archive-one:example.test", "@archive-two:example.test"} {
 		source, err := f.Store.GetOrCreateSource("matrix", userID)
 		require.NoError(err)
-		conversationID, err := f.Store.EnsureConversation(source.ID, "!shared:example.test", "Shared room")
+		conversationID, err := f.Store.EnsureConversation(t.Context(), source.ID, "!shared:example.test", "Shared room")
 		require.NoError(err)
 		messageID, err := f.Store.UpsertMessage(&store.Message{
 			ConversationID: conversationID,
@@ -49,28 +49,31 @@ func TestReactionSourceIdentityIsScopedBySource(t *testing.T) {
 		})
 		require.NoError(err)
 		require.NoError(f.Store.UpsertReactionWithSourceID(
+			t.Context(),
 			messageID, participantID, "emoji", "👍", "$shared-reaction", time.Now().UTC(),
 		))
 		reactions = append(reactions, archivedReaction{sourceID: source.ID, conversationID: conversationID, messageID: messageID})
 	}
 
 	var count int
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM reaction_source_events WHERE source_reaction_id = '$shared-reaction'`,
 	).Scan(&count))
 	assert.Equal(2, count)
-	deleted, err := f.Store.DeleteReactionBySourceID(reactions[0].sourceID, reactions[1].conversationID, "$shared-reaction")
+	deleted, err := f.Store.DeleteReactionBySourceID(t.Context(), reactions[0].sourceID, reactions[1].conversationID, "$shared-reaction")
 	require.NoError(err)
 	assert.False(deleted, "another conversation's reaction must not match")
-	deleted, err = f.Store.DeleteReactionBySourceID(reactions[0].sourceID, reactions[0].conversationID, "$shared-reaction")
+	deleted, err = f.Store.DeleteReactionBySourceID(t.Context(), reactions[0].sourceID, reactions[0].conversationID, "$shared-reaction")
 	require.NoError(err)
 	assert.True(deleted)
-	require.NoError(f.Store.DB().QueryRow(
+	require.NoError(f.Store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM reaction_source_events WHERE source_reaction_id = '$shared-reaction'`,
 	).Scan(&count))
 	assert.Equal(1, count)
 	var remainingMessageID int64
-	require.NoError(f.Store.DB().QueryRow(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `
 		SELECT r.message_id
 		FROM reaction_source_events rse
 		JOIN reactions r ON r.id = rse.reaction_id
@@ -83,7 +86,7 @@ func TestMessageIDByMetadataValueMatchesOneConversation(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	otherConv, err := f.Store.EnsureConversation(f.Source.ID, "!other:example.test", "Other")
+	otherConv, err := f.Store.EnsureConversation(t.Context(), f.Source.ID, "!other:example.test", "Other")
 	require.NoError(err)
 	ids := map[int64]int64{}
 	for i, convID := range []int64{f.ConvID, otherConv} {
@@ -96,10 +99,10 @@ func TestMessageIDByMetadataValueMatchesOneConversation(t *testing.T) {
 		ids[convID] = messageID
 	}
 
-	got, err := f.Store.MessageIDByMetadataValue(otherConv, "matrix_edit_event_id", "$edit")
+	got, err := f.Store.MessageIDByMetadataValue(t.Context(), otherConv, "matrix_edit_event_id", "$edit")
 	require.NoError(err)
 	assert.Equal(ids[otherConv], got)
-	got, err = f.Store.MessageIDByMetadataValue(f.ConvID, "matrix_edit_event_id", "$missing")
+	got, err = f.Store.MessageIDByMetadataValue(t.Context(), f.ConvID, "matrix_edit_event_id", "$missing")
 	require.NoError(err)
 	assert.Zero(got)
 }
@@ -115,20 +118,20 @@ func TestMergeParticipantsKeepsReactionSourceEvents(t *testing.T) {
 		SourceMessageID: "$message", MessageType: "matrix",
 	})
 	require.NoError(err)
-	require.NoError(f.Store.UpsertReactionWithSourceID(messageID, kept, "emoji", "👍", "$kept-reaction", time.Now().UTC()))
-	require.NoError(f.Store.UpsertReactionWithSourceID(messageID, absorbed, "emoji", "👍", "$absorbed-reaction", time.Now().UTC()))
+	require.NoError(f.Store.UpsertReactionWithSourceID(t.Context(), messageID, kept, "emoji", "👍", "$kept-reaction", time.Now().UTC()))
+	require.NoError(f.Store.UpsertReactionWithSourceID(t.Context(), messageID, absorbed, "emoji", "👍", "$absorbed-reaction", time.Now().UTC()))
 
 	require.NoError(f.Store.MergeParticipants(absorbed, kept))
-	deleted, err := f.Store.DeleteReactionBySourceID(f.Source.ID, f.ConvID, "$kept-reaction")
+	deleted, err := f.Store.DeleteReactionBySourceID(t.Context(), f.Source.ID, f.ConvID, "$kept-reaction")
 	require.NoError(err)
 	assert.True(deleted)
 	var visible int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
 	assert.Equal(1, visible, "the absorbed participant's event still backs the reaction")
-	deleted, err = f.Store.DeleteReactionBySourceID(f.Source.ID, f.ConvID, "$absorbed-reaction")
+	deleted, err = f.Store.DeleteReactionBySourceID(t.Context(), f.Source.ID, f.ConvID, "$absorbed-reaction")
 	require.NoError(err)
 	assert.True(deleted)
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
 	assert.Zero(visible)
 }
 
@@ -144,31 +147,33 @@ func TestEquivalentProviderReactionsRemainUntilEveryEventIsRedacted(t *testing.T
 	require.NoError(err)
 
 	require.NoError(f.Store.UpsertReactionWithSourceID(
+		t.Context(),
 		messageID, participantID, "emoji", "👍", "$reaction-one", time.Now().UTC(),
 	))
 	require.NoError(f.Store.UpsertReactionWithSourceID(
+		t.Context(),
 		messageID, participantID, "emoji", "👍", "$reaction-two", time.Now().UTC(),
 	))
 
 	var visible, identities int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reaction_source_events WHERE source_id = ?`), f.Source.ID).Scan(&identities))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM reaction_source_events WHERE source_id = ?`), f.Source.ID).Scan(&identities))
 	assert.Equal(1, visible)
 	assert.Equal(2, identities)
 
-	deleted, err := f.Store.DeleteReactionBySourceID(f.Source.ID, f.ConvID, "$reaction-one")
+	deleted, err := f.Store.DeleteReactionBySourceID(t.Context(), f.Source.ID, f.ConvID, "$reaction-one")
 	require.NoError(err)
 	assert.True(deleted)
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
 	assert.Equal(1, visible)
-	deleted, err = f.Store.DeleteReactionBySourceID(f.Source.ID, f.ConvID, "$reaction-one")
+	deleted, err = f.Store.DeleteReactionBySourceID(t.Context(), f.Source.ID, f.ConvID, "$reaction-one")
 	require.NoError(err)
 	assert.False(deleted)
 
-	deleted, err = f.Store.DeleteReactionBySourceID(f.Source.ID, f.ConvID, "$reaction-two")
+	deleted, err = f.Store.DeleteReactionBySourceID(t.Context(), f.Source.ID, f.ConvID, "$reaction-two")
 	require.NoError(err)
 	assert.True(deleted)
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM reactions WHERE message_id = ?`), messageID).Scan(&visible))
 	assert.Equal(0, visible)
 }
 
@@ -190,7 +195,7 @@ func TestPersistMessageDeliveryEvidenceEnrichesWithoutChangingLocalReadState(t *
 	})
 	require.NoError(err)
 	localReadAt := time.Date(2026, 9, 14, 11, 0, 0, 0, time.UTC)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET is_read = ?, read_at = ? WHERE id = ?`),
 		true, localReadAt, messageID)
 	require.NoError(err)
@@ -203,7 +208,7 @@ func TestPersistMessageDeliveryEvidenceEnrichesWithoutChangingLocalReadState(t *
 
 	var gotDeliveredAt, gotReadAt sql.NullTime
 	var gotDelivered, gotRead bool
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT delivered_at, is_delivered, read_at, is_read
 		FROM messages WHERE id = ?`), messageID).Scan(
 		&gotDeliveredAt, &gotDelivered, &gotReadAt, &gotRead,
@@ -240,7 +245,7 @@ func TestPersistMessageDeliveryEvidenceUsesNewExplicitEvidence(t *testing.T) {
 	}
 
 	var got sql.NullTime
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT delivered_at FROM messages WHERE id = ?`), messageID).Scan(&got))
 	require.True(got.Valid, "delivered_at should be present")
 	assert.Equal(t, second, got.Time.UTC(),
@@ -254,7 +259,7 @@ func TestUpsertMessagePersistsListID(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 
-	conversationID, err := f.Store.EnsureConversation(f.Source.ID, "list-thread", "List announcement")
+	conversationID, err := f.Store.EnsureConversation(t.Context(), f.Source.ID, "list-thread", "List announcement")
 	require.NoError(err, "ensure conversation")
 
 	message := &store.Message{
@@ -271,7 +276,7 @@ func TestUpsertMessagePersistsListID(t *testing.T) {
 	require.NoError(err, "upsert message")
 
 	var listID sql.NullString
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT list_id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		f.Source.ID, message.SourceMessageID,
 	).Scan(&listID), "read persisted list ID")
@@ -305,7 +310,7 @@ func TestUpsertMessagePreservesRFCMessageID(t *testing.T) {
 			_, err = f.Store.UpsertMessage(message)
 			require.NoError(err)
 			var got sql.NullString
-			require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 				`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&got))
 			assert.Equal(t, tc.want, got)
 		})
@@ -756,15 +761,15 @@ func TestPersistMessageWithParticipantsKeepsSiblingDependentsIsolatedOnUpsert(t 
 
 	source, err := st.GetOrCreateSource("gmail", "sibling-isolation@example.test")
 	require.NoError(err, "GetOrCreateSource")
-	conversationA, err := st.EnsureConversation(source.ID, "thread-a", "Thread A")
+	conversationA, err := st.EnsureConversation(t.Context(), source.ID, "thread-a", "Thread A")
 	require.NoError(err, "EnsureConversation A")
-	conversationB, err := st.EnsureConversation(source.ID, "thread-b", "Thread B")
+	conversationB, err := st.EnsureConversation(t.Context(), source.ID, "thread-b", "Thread B")
 	require.NoError(err, "EnsureConversation B")
-	labelA, err := st.EnsureLabel(source.ID, "LABEL_A", "Label A", "user")
+	labelA, err := st.EnsureLabel(t.Context(), source.ID, "LABEL_A", "Label A", "user")
 	require.NoError(err, "EnsureLabel A")
-	labelB1, err := st.EnsureLabel(source.ID, "LABEL_B1", "Label B 1", "user")
+	labelB1, err := st.EnsureLabel(t.Context(), source.ID, "LABEL_B1", "Label B 1", "user")
 	require.NoError(err, "EnsureLabel B1")
-	labelB2, err := st.EnsureLabel(source.ID, "LABEL_B2", "Label B 2", "user")
+	labelB2, err := st.EnsureLabel(t.Context(), source.ID, "LABEL_B2", "Label B 2", "user")
 	require.NoError(err, "EnsureLabel B2")
 	bSenderParticipantID, err := st.EnsureParticipant(
 		"sender-b@example.test", "Sender B", "example.test",
@@ -964,7 +969,7 @@ func seedRepairStoreFixture(t *testing.T) repairStoreFixture {
 	siblingConversationID, err := st.EnsureConversationWithType(
 		source.ID, "sibling-thread", "email_thread", "Sibling thread")
 	require.NoError(err)
-	oldLabelID, err := st.EnsureLabel(source.ID, "OLD", "Old label", "user")
+	oldLabelID, err := st.EnsureLabel(t.Context(), source.ID, "OLD", "Old label", "user")
 	require.NoError(err)
 	require.NoError(st.EnableEmbeddingChangeJournal(ctx))
 
@@ -1576,7 +1581,8 @@ func TestRecomputeConversationStats(t *testing.T) {
 
 	// Verify initial message_count is 0 (stats not maintained on insert).
 	var initialCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT message_count FROM conversations WHERE id = ?`), convID,
 	).Scan(&initialCount), "initial message_count scan")
 	assert.Equal(0, initialCount, "initial message_count")
@@ -1620,7 +1626,7 @@ func TestRecomputeConversationStats(t *testing.T) {
 	require.NoError(err, "UpsertMessage msg3")
 
 	// Add a conversation participant so participant_count is non-zero.
-	participantID, err := st.EnsureParticipantByPhone("+15559876543", "Bob", "whatsapp")
+	participantID, err := st.EnsureParticipantByPhone(t.Context(), "+15559876543", "Bob", "whatsapp")
 	require.NoError(err, "EnsureParticipantByPhone")
 	require.NoError(st.EnsureConversationParticipant(convID, participantID, "member"),
 		"EnsureConversationParticipant")
@@ -1632,7 +1638,8 @@ func TestRecomputeConversationStats(t *testing.T) {
 	var participantCount int
 	var lastMsgAt sql.NullTime
 	var preview sql.NullString
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT message_count, participant_count, last_message_at, last_message_preview
 		 FROM conversations WHERE id = ?`), convID,
 	).Scan(&count, &participantCount, &lastMsgAt, &preview), "post-recompute scan")
@@ -1646,7 +1653,8 @@ func TestRecomputeConversationStats(t *testing.T) {
 
 	// Idempotency: calling again should produce the same result.
 	require.NoError(st.RecomputeConversationStats(source.ID), "RecomputeConversationStats (second call)")
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT message_count FROM conversations WHERE id = ?`), convID,
 	).Scan(&count), "idempotency scan")
 	assert.Equal(3, count, "idempotency message_count")
@@ -1687,7 +1695,8 @@ func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
 
 	// New row: embed_gen NULL by default -> reported missing for any gen.
 	var embedGen sql.NullInt64
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT embed_gen FROM messages WHERE id = ?`), id).Scan(&embedGen))
 	assert.False(embedGen.Valid, "new message must have NULL embed_gen (no enqueue, no orphan)")
 
@@ -1710,7 +1719,8 @@ func TestEmbedGen_OrphanImpossibleAndCoverage(t *testing.T) {
 	msg.Subject = sql.NullString{String: "hello (edited)", Valid: true}
 	_, err = st.UpsertMessage(msg)
 	require.NoError(err, "re-UpsertMessage")
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT embed_gen FROM messages WHERE id = ?`), id).Scan(&embedGen))
 	assert.False(embedGen.Valid, "subject change must clear embed_gen")
 }
@@ -1728,19 +1738,21 @@ func TestMigrateSourceMessageIDRepointsRepliesBeforeDeletingDuplicate(t *testing
 	legacyParentID := insertStoreTestMessage(t, st, source.ID, convID, "m1")
 	scopedParentID := insertStoreTestMessage(t, st, source.ID, convID, "channel:team-1:channel-1:m1")
 	childID := insertStoreTestMessage(t, st, source.ID, convID, "m2")
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE messages SET reply_to_message_id = ? WHERE id = ?`),
 		legacyParentID, childID,
 	)
 	require.NoError(err, "seed reply")
 
 	require.NoError(
-		st.MigrateSourceMessageID(source.ID, convID, "m1", "channel:team-1:channel-1:m1"),
+		st.MigrateSourceMessageID(t.Context(), source.ID, convID, "m1", "channel:team-1:channel-1:m1"),
 		"MigrateSourceMessageID",
 	)
 
 	var replyTo sql.NullInt64
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id = ?`),
 		childID,
 	).Scan(&replyTo)
@@ -1749,7 +1761,8 @@ func TestMigrateSourceMessageIDRepointsRepliesBeforeDeletingDuplicate(t *testing
 	assert.Equal(scopedParentID, replyTo.Int64, "reply should point at scoped parent")
 
 	var legacyCount int
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`),
 		legacyParentID,
 	).Scan(&legacyCount)
@@ -1773,9 +1786,9 @@ func TestMigrateSourceMessageIDTransfersLoopDecisionBeforeDeletingLegacyTeamsCha
 	}})
 	require.NoError(err)
 
-	require.NoError(st.MigrateSourceMessageID(source.ID, convID, "m1", "chat:19:x@thread.v2:m1"))
+	require.NoError(st.MigrateSourceMessageID(t.Context(), source.ID, convID, "m1", "chat:19:x@thread.v2:m1"))
 	var state string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT state
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT state
 		FROM loop_decisions WHERE message_id = ?`), scopedID).Scan(&state))
 	assert.Equal(store.LoopStateDone, state)
 }
@@ -1793,7 +1806,7 @@ func TestListUnresolvedMessageRepliesReturnsOnlyUnlinkedProviderMetadata(t *test
 	childID := insertStoreTestMessage(t, st, source.ID, convID, "101")
 	linkedID := insertStoreTestMessage(t, st, source.ID, convID, "102")
 	nonReplyID := insertStoreTestMessage(t, st, source.ID, convID, "103")
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = 'discord' WHERE source_id = ?`), source.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET message_type = 'discord' WHERE source_id = ?`), source.ID)
 	require.NoError(err)
 	require.NoError(st.SetMessageMetadata(childID, sql.NullString{
 		String: `{"referenced_message_id":"100","referenced_channel_id":"channel-1"}`, Valid: true,
@@ -1838,7 +1851,7 @@ func TestListUnresolvedMessageRepliesAfterUsesBoundedConversationKeysetPages(t *
 			String: metadata, Valid: true,
 		}))
 	}
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET message_type = 'discord' WHERE source_id = ?`), source.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET message_type = 'discord' WHERE source_id = ?`), source.ID)
 	require.NoError(err)
 
 	first, err := st.ListUnresolvedMessageRepliesAfter(source.ID, "discord", 0, 2)
@@ -1856,9 +1869,9 @@ func TestListUnresolvedMessageRepliesAfterUsesBoundedConversationKeysetPages(t *
 	last, err := st.ListUnresolvedMessageRepliesAfter(source.ID, "discord", second[1].MessageID, 2)
 	require.NoError(err)
 	assert.Empty(last)
-	otherRoom, err := st.EnsureConversation(source.ID, "other-channel", "Other")
+	otherRoom, err := st.EnsureConversation(t.Context(), source.ID, "other-channel", "Other")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET conversation_id = ? WHERE id = ?`), otherRoom, ids[0])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET conversation_id = ? WHERE id = ?`), otherRoom, ids[0])
 	require.NoError(err)
 	filtered, err := st.ListUnresolvedMessageRepliesAfterContext(t.Context(), source.ID, "discord", 0, 2, convID)
 	require.NoError(err)
@@ -1884,7 +1897,7 @@ func TestMigrateSourceMessageIDClearsTombstoneWhenRenamingLegacyRow(t *testing.T
 	require.NoError(st.MarkMessageDeleted(source.ID, "m1"), "MarkMessageDeleted")
 
 	require.NoError(
-		st.MigrateSourceMessageID(source.ID, convID, "m1", "chat:19:x@thread.v2:m1"),
+		st.MigrateSourceMessageID(t.Context(), source.ID, convID, "m1", "chat:19:x@thread.v2:m1"),
 		"MigrateSourceMessageID",
 	)
 
@@ -1903,7 +1916,7 @@ func TestMigrateSourceMessageIDClearsTombstoneOnExistingScopedRow(t *testing.T) 
 	require.NoError(st.MarkMessageDeleted(source.ID, "chat:19:x@thread.v2:m1"), "MarkMessageDeleted")
 
 	require.NoError(
-		st.MigrateSourceMessageID(source.ID, convID, "m1", "chat:19:x@thread.v2:m1"),
+		st.MigrateSourceMessageID(t.Context(), source.ID, convID, "m1", "chat:19:x@thread.v2:m1"),
 		"MigrateSourceMessageID",
 	)
 
@@ -2051,7 +2064,8 @@ func TestClearMessageDeletedFromSource(t *testing.T) {
 	assertSourceMessageIDNotDeleted(t, st, source.ID, "345678901234567890")
 
 	var otherDeletedAt sql.NullTime
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		otherSource.ID, "345678901234567890",
 	).Scan(&otherDeletedAt)
@@ -2120,14 +2134,14 @@ func TestMarkMessagesDeletedFromReaderIsAtomicOnLateReadFailure(t *testing.T) {
 	err = st.MarkMessagesDeletedFromReader(source.ID, reader, 1)
 	require.ErrorContains(err, "synthetic staged-ID read failure")
 	var deleted int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages
 		WHERE source_id = ? AND deleted_from_source_at IS NOT NULL
 	`), source.ID).Scan(&deleted))
 	assert.Zero(deleted, "late reader failure rolls back earlier bounded batches")
 
 	require.NoError(st.MarkMessagesDeletedFromReader(source.ID, strings.NewReader("101\n102\n"), 1))
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages
 		WHERE source_id = ? AND deleted_from_source_at IS NOT NULL
 	`), source.ID).Scan(&deleted))
@@ -2152,7 +2166,8 @@ func insertStoreTestMessage(t *testing.T, st *store.Store, sourceID, convID int6
 func assertSourceMessageIDNotDeleted(t *testing.T, st *store.Store, sourceID int64, sourceMessageID string) {
 	t.Helper()
 	var deletedAt sql.NullTime
-	err := st.DB().QueryRow(
+	err := st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		sourceID, sourceMessageID,
 	).Scan(&deletedAt)
@@ -2165,7 +2180,8 @@ func assertMessageDeletedFromSource(
 ) {
 	t.Helper()
 	var deletedAt sql.NullTime
-	err := st.DB().QueryRow(
+	err := st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE source_id = ? AND source_message_id = ?`),
 		sourceID, sourceMessageID,
 	).Scan(&deletedAt)
@@ -2179,18 +2195,19 @@ func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	// Create participant via WhatsApp
-	id1, err := st.EnsureParticipantByPhone("+15551234567", "Alice", "whatsapp")
+	id1, err := st.EnsureParticipantByPhone(t.Context(), "+15551234567", "Alice", "whatsapp")
 	require.NoError(err, "EnsureParticipantByPhone(whatsapp)")
 	require.NotZero(id1, "expected non-zero participant ID")
 
 	// Same phone via iMessage — should return the same participant ID
-	id2, err := st.EnsureParticipantByPhone("+15551234567", "Alice", "imessage")
+	id2, err := st.EnsureParticipantByPhone(t.Context(), "+15551234567", "Alice", "imessage")
 	require.NoError(err, "EnsureParticipantByPhone(imessage)")
 	assert.Equal(id1, id2, "imessage call should return same participant ID as whatsapp")
 
 	// Both participant_identifiers rows should exist
 	var count int
-	err = st.DB().QueryRow(
+	err = st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ?`),
 		id1,
 	).Scan(&count)
@@ -2200,7 +2217,8 @@ func TestEnsureParticipantByPhone_IdentifierType(t *testing.T) {
 	// Verify each identifier type is present
 	for _, identType := range []string{"whatsapp", "imessage"} {
 		var exists int
-		err = st.DB().QueryRow(
+		err = st.DB().QueryRowContext(
+			t.Context(),
 			st.Rebind(`SELECT COUNT(*) FROM participant_identifiers
 			 WHERE participant_id = ? AND identifier_type = ?`),
 			id1, identType,
@@ -2218,13 +2236,14 @@ func TestUpdateParticipantDisplayNameByEmail(t *testing.T) {
 	// Create an unnamed email participant (e.g. inserted by iMessage import
 	// for an Apple ID handle).
 	var pid int64
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`INSERT INTO participants (email_address) VALUES (?) RETURNING id`),
 		"alice@example.com",
 	).Scan(&pid), "insert participant")
 
 	// Backfilling on an empty display_name succeeds.
-	updated, err := st.UpdateParticipantDisplayNameByEmail("alice@example.com", "Alice Example")
+	updated, err := st.UpdateParticipantDisplayNameByEmail(t.Context(), "alice@example.com", "Alice Example")
 	require.NoError(err, "UpdateParticipantDisplayNameByEmail")
 	require.True(updated, "expected backfill to update existing participant")
 
@@ -2232,21 +2251,21 @@ func TestUpdateParticipantDisplayNameByEmail(t *testing.T) {
 	assert.Equal("Alice Example", got, "display_name")
 
 	// Lookup is case-insensitive on the email.
-	updatedMixed, err := st.UpdateParticipantDisplayNameByEmail("ALICE@example.com", "Should Not Overwrite")
+	updatedMixed, err := st.UpdateParticipantDisplayNameByEmail(t.Context(), "ALICE@example.com", "Should Not Overwrite")
 	require.NoError(err, "UpdateParticipantDisplayNameByEmail (case)")
 	assert.False(updatedMixed, "second update should not modify a non-empty display_name")
 	assert.Equal("Alice Example", readDisplayName(t, st, pid), "display_name should not be overwritten")
 
 	// Empty inputs are no-ops.
-	updated, err = st.UpdateParticipantDisplayNameByEmail("", "X")
+	updated, err = st.UpdateParticipantDisplayNameByEmail(t.Context(), "", "X")
 	require.NoError(err, "empty email err")
 	assert.False(updated, "empty email updated")
-	updated, err = st.UpdateParticipantDisplayNameByEmail("x@y.com", "")
+	updated, err = st.UpdateParticipantDisplayNameByEmail(t.Context(), "x@y.com", "")
 	require.NoError(err, "empty name err")
 	assert.False(updated, "empty name updated")
 
 	// Unknown email is a no-op (does not create rows).
-	updated, err = st.UpdateParticipantDisplayNameByEmail("nobody@example.com", "Nobody")
+	updated, err = st.UpdateParticipantDisplayNameByEmail(t.Context(), "nobody@example.com", "Nobody")
 	require.NoError(err, "unknown email err")
 	assert.False(updated, "unknown email updated")
 }
@@ -2258,40 +2277,40 @@ func TestUpdateImessageParticipantDisplayNameByPhone(t *testing.T) {
 
 	// Case 1: legacy iMessage participant with display_name = phone_number.
 	// Should be overwritten by the contact name.
-	legacyID, err := st.EnsureParticipantByPhone("+15551111111", "+15551111111", "imessage")
+	legacyID, err := st.EnsureParticipantByPhone(t.Context(), "+15551111111", "+15551111111", "imessage")
 	require.NoError(err, "seed legacy")
 
 	// Case 2: iMessage participant already named by another source. Real
 	// name must be preserved.
-	namedID, err := st.EnsureParticipantByPhone("+15552222222", "Bob From Gmail", "imessage")
+	namedID, err := st.EnsureParticipantByPhone(t.Context(), "+15552222222", "Bob From Gmail", "imessage")
 	require.NoError(err, "seed named")
 
 	// Case 3: WhatsApp-only participant with display_name = phone_number.
 	// Not iMessage, must NOT be touched (no imessage identifier exists).
-	otherID, err := st.EnsureParticipantByPhone("+15553333333", "+15553333333", "whatsapp")
+	otherID, err := st.EnsureParticipantByPhone(t.Context(), "+15553333333", "+15553333333", "whatsapp")
 	require.NoError(err, "seed other")
 
 	// Apply contact-name backfill.
-	updated, err := st.UpdateImessageParticipantDisplayNameByPhone("+15551111111", "Alice Real")
+	updated, err := st.UpdateImessageParticipantDisplayNameByPhone(t.Context(), "+15551111111", "Alice Real")
 	require.NoError(err, "backfill legacy")
 	assert.True(updated, "legacy placeholder should be replaced")
 	assert.Equal("Alice Real", readDisplayName(t, st, legacyID), "legacy display_name")
 
-	updated, err = st.UpdateImessageParticipantDisplayNameByPhone("+15552222222", "Should Not Win")
+	updated, err = st.UpdateImessageParticipantDisplayNameByPhone(t.Context(), "+15552222222", "Should Not Win")
 	require.NoError(err, "backfill named")
 	assert.False(updated, "real name from another source should be preserved")
 	assert.Equal("Bob From Gmail", readDisplayName(t, st, namedID), "named display_name")
 
-	updated, err = st.UpdateImessageParticipantDisplayNameByPhone("+15553333333", "Not Allowed")
+	updated, err = st.UpdateImessageParticipantDisplayNameByPhone(t.Context(), "+15553333333", "Not Allowed")
 	require.NoError(err, "backfill other")
 	assert.False(updated, "non-iMessage participant should not be touched")
 	assert.Equal("+15553333333", readDisplayName(t, st, otherID), "non-iMessage display_name")
 
 	// Empty inputs are no-ops.
-	updated, err = st.UpdateImessageParticipantDisplayNameByPhone("", "X")
+	updated, err = st.UpdateImessageParticipantDisplayNameByPhone(t.Context(), "", "X")
 	require.NoError(err, "empty phone err")
 	assert.False(updated, "empty phone updated")
-	updated, err = st.UpdateImessageParticipantDisplayNameByPhone("+15551111111", "")
+	updated, err = st.UpdateImessageParticipantDisplayNameByPhone(t.Context(), "+15551111111", "")
 	require.NoError(err, "empty name err")
 	assert.False(updated, "empty name updated")
 }
@@ -2308,7 +2327,7 @@ func TestRetitleImessageChats(t *testing.T) {
 	require.NoError(err, "other source")
 
 	// Named iMessage participant whose phone is the current title of a 1:1.
-	namedID, err := st.EnsureParticipantByPhone("+15551111111", "Alice Real", "imessage")
+	namedID, err := st.EnsureParticipantByPhone(t.Context(), "+15551111111", "Alice Real", "imessage")
 	require.NoError(err, "seed alice")
 
 	// Email-backed iMessage participants did not always get an iMessage
@@ -2319,12 +2338,12 @@ func TestRetitleImessageChats(t *testing.T) {
 
 	// iMessage participant whose name is still the phone (poisoned). Must
 	// not be used as a title.
-	poisonedID, err := st.EnsureParticipantByPhone("+15552222222", "+15552222222", "imessage")
+	poisonedID, err := st.EnsureParticipantByPhone(t.Context(), "+15552222222", "+15552222222", "imessage")
 	require.NoError(err, "seed poisoned")
 
 	// Non-iMessage participant whose phone is a conversation title — must
 	// not be touched even if a real name exists elsewhere.
-	whatsappID, err := st.EnsureParticipantByPhone("+15553333333", "Carol", "whatsapp")
+	whatsappID, err := st.EnsureParticipantByPhone(t.Context(), "+15553333333", "Carol", "whatsapp")
 	require.NoError(err, "seed carol")
 
 	// 1:1 with named participant — title is the phone, should be replaced.
@@ -2350,11 +2369,11 @@ func TestRetitleImessageChats(t *testing.T) {
 
 	// Group chat whose title was generated from raw participant handles
 	// before contacts were backfilled. It should be regenerated with names.
-	bobID, err := st.EnsureParticipantByPhone("+15554444444", "Bob Real", "imessage")
+	bobID, err := st.EnsureParticipantByPhone(t.Context(), "+15554444444", "Bob Real", "imessage")
 	require.NoError(err, "seed bob")
-	carolID, err := st.EnsureParticipantByPhone("+15555555555", "Carol Real", "imessage")
+	carolID, err := st.EnsureParticipantByPhone(t.Context(), "+15555555555", "Carol Real", "imessage")
 	require.NoError(err, "seed carol")
-	daveID, err := st.EnsureParticipantByPhone("+15556666666", "Dave Real", "imessage")
+	daveID, err := st.EnsureParticipantByPhone(t.Context(), "+15556666666", "Dave Real", "imessage")
 	require.NoError(err, "seed dave")
 	convGroupID, err := st.EnsureConversationWithType(
 		src.ID, "imsg-group-1", "group_chat",
@@ -2377,7 +2396,7 @@ func TestRetitleImessageChats(t *testing.T) {
 			"link named group participant %d", pid)
 	}
 
-	n, err := st.RetitleImessageChats()
+	n, err := st.RetitleImessageChats(t.Context())
 	require.NoError(err, "RetitleImessageChats")
 	assert.Equal(int64(3), n, "rows updated")
 
@@ -2390,7 +2409,7 @@ func TestRetitleImessageChats(t *testing.T) {
 	assert.Equal("Road trip", readConvTitle(t, st, convNamedGroupID), "named group conv title (unchanged)")
 
 	// Idempotent: running again is a no-op.
-	n2, err := st.RetitleImessageChats()
+	n2, err := st.RetitleImessageChats(t.Context())
 	require.NoError(err, "idempotent rerun err")
 	assert.Equal(int64(0), n2, "idempotent rerun rows")
 }
@@ -2398,7 +2417,8 @@ func TestRetitleImessageChats(t *testing.T) {
 func readConvTitle(t *testing.T, st *store.Store, id int64) string {
 	t.Helper()
 	var title sql.NullString
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT title FROM conversations WHERE id = ?`), id,
 	).Scan(&title), "scan title")
 	return title.String
@@ -2407,7 +2427,8 @@ func readConvTitle(t *testing.T, st *store.Store, id int64) string {
 func readDisplayName(t *testing.T, st *store.Store, pid int64) string {
 	t.Helper()
 	var name sql.NullString
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT display_name FROM participants WHERE id = ?`), pid,
 	).Scan(&name), "scan display_name")
 	return name.String
@@ -2421,11 +2442,11 @@ func TestCountMessagesPerMailbox(t *testing.T) {
 	source, err := st.GetOrCreateSource("imap", "user@example.com")
 	require.NoError(err, "GetOrCreateSource")
 
-	convID, err := st.EnsureConversation(source.ID, "conv-1", "Test Chat")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "conv-1", "Test Chat")
 	require.NoError(err, "EnsureConversation")
 
 	// Create labels for each folder/mbox
-	labelMap, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+	labelMap, err := st.EnsureLabelsBatch(t.Context(), source.ID, map[string]store.LabelInfo{
 		"INBOX":  {Name: "INBOX", Type: "system"},
 		"Sent":   {Name: "Sent", Type: "system"},
 		"Drafts": {Name: "Drafts", Type: "system"},
@@ -2447,10 +2468,10 @@ func TestCountMessagesPerMailbox(t *testing.T) {
 	}
 
 	// Associate messages with labels (mimicking folder membership)
-	require.NoError(st.LinkMessageLabel(msgIDs[0], labelMap["INBOX"]))
-	require.NoError(st.LinkMessageLabel(msgIDs[1], labelMap["INBOX"]))
-	require.NoError(st.LinkMessageLabel(msgIDs[2], labelMap["Sent"]))
-	require.NoError(st.LinkMessageLabel(msgIDs[3], labelMap["Drafts"]))
+	require.NoError(st.LinkMessageLabel(t.Context(), msgIDs[0], labelMap["INBOX"]))
+	require.NoError(st.LinkMessageLabel(t.Context(), msgIDs[1], labelMap["INBOX"]))
+	require.NoError(st.LinkMessageLabel(t.Context(), msgIDs[2], labelMap["Sent"]))
+	require.NoError(st.LinkMessageLabel(t.Context(), msgIDs[3], labelMap["Drafts"]))
 
 	counts, err := st.CountMessagesPerMailbox(source.ID)
 	require.NoError(err, "CountMessagesPerMailbox")
@@ -2506,7 +2527,7 @@ func TestEnsurePhoneParticipantContextCancelsBlockedNameBackfill(t *testing.T) {
 	}
 
 	var name string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COALESCE(display_name, '') FROM participants WHERE id = ?`),
 		participantID).Scan(&name))
 	assert.Empty(t, name, "cancelled name backfill must roll back")

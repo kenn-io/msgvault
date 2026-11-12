@@ -70,7 +70,7 @@ func TestRepairListIDsIncludesLegacyEmailRows(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	messageID := f.CreateMessage("list-id-legacy-email")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET message_type = '' WHERE id = ?`), messageID)
 	require.NoError(err)
 	require.NoError(f.Store.UpsertMessageRaw(messageID,
@@ -102,7 +102,7 @@ func TestRepairListIDsIdempotentApplyPreservesMessageWatermarks(t *testing.T) {
 
 	const lastModified = "2001-02-03 04:05:06"
 	const contentChangedAt = "2002-03-04 05:06:07.008"
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE messages
 		SET last_modified = ?, content_changed_at = ?
 		WHERE id = ?`), lastModified, contentChangedAt, messageID)
@@ -224,7 +224,7 @@ func TestRepairListIDsRollsBackEarlierBatchesOnLaterWriteFailure(t *testing.T) {
 		[]byte("List-Id: <rollback-second.example.test>\r\n\r\nbody")))
 	before, err := f.Store.DerivedDataRevision()
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(`
+	_, err = f.Store.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_later_list_id_repair
 		BEFORE UPDATE OF list_id ON messages
 		WHEN NEW.source_message_id = 'list-id-rollback-second'
@@ -386,7 +386,7 @@ func TestRepairListIDsSerializesSQLiteWriterBeforeSnapshot(t *testing.T) {
 	st.DB().SetMaxIdleConns(2)
 	source, err := st.GetOrCreateSource("gmail", "list-id-wal@example.test")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "list-id-wal", "List-Id WAL")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "list-id-wal", "List-Id WAL")
 	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
@@ -471,10 +471,10 @@ func TestRepairListIDsSerializesSQLiteWriterBeforeSnapshot(t *testing.T) {
 	require.NoError(writerErr)
 	assert.Equal(store.ListIDRepairSummary{Scanned: 1, Found: 1, Changed: 1}, summary)
 	var snippet sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT snippet FROM messages WHERE id = ?`), messageID).Scan(&snippet))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT snippet FROM messages WHERE id = ?`), messageID).Scan(&snippet))
 	assert.Equal(sql.NullString{String: "concurrent writer", Valid: true}, snippet)
 	var listID sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT list_id FROM messages WHERE id = ?`), messageID).Scan(&listID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT list_id FROM messages WHERE id = ?`), messageID).Scan(&listID))
 	assert.Equal(sql.NullString{String: "<wal.example.test>", Valid: true}, listID)
 }
 
@@ -620,14 +620,14 @@ func TestRepairListIDsBumpsRevisionOnceAcrossBatches(t *testing.T) {
 
 func setListID(t *testing.T, f *storetest.Fixture, messageID int64, value string) {
 	t.Helper()
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET list_id = ? WHERE id = ?`), value, messageID)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id = ? WHERE id = ?`), value, messageID)
 	require.NoError(t, err)
 }
 
 func assertListID(t *testing.T, f *storetest.Fixture, messageID int64, want sql.NullString) {
 	t.Helper()
 	var got sql.NullString
-	err := f.Store.DB().QueryRow(f.Store.Rebind(`SELECT list_id FROM messages WHERE id = ?`), messageID).Scan(&got)
+	err := f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT list_id FROM messages WHERE id = ?`), messageID).Scan(&got)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }
@@ -635,7 +635,7 @@ func assertListID(t *testing.T, f *storetest.Fixture, messageID int64, want sql.
 func messageWatermarks(t *testing.T, f *storetest.Fixture, messageID int64) (string, string) {
 	t.Helper()
 	var lastModified, contentChangedAt string
-	err := f.Store.DB().QueryRow(f.Store.Rebind(`
+	err := f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT CAST(last_modified AS TEXT), CAST(content_changed_at AS TEXT)
 		FROM messages
 		WHERE id = ?`), messageID).Scan(&lastModified, &contentChangedAt)
@@ -645,7 +645,7 @@ func messageWatermarks(t *testing.T, f *storetest.Fixture, messageID int64) (str
 
 func setRaw(t *testing.T, f *storetest.Fixture, messageID int64, raw []byte, compression string) {
 	t.Helper()
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
 		VALUES (?, ?, ?, ?)`), messageID, raw, "mime", compression)
 	require.NoError(t, err)
@@ -662,7 +662,7 @@ func insertMessageAtID(t *testing.T, f *storetest.Fixture, id int64, sourceMessa
 			OVERRIDING SYSTEM VALUE
 			VALUES (?, ?, ?, ?, 'email', 1)`
 	}
-	_, err := f.Store.DB().Exec(f.Store.Rebind(insert), id, f.ConvID, f.Source.ID, sourceMessageID)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(insert), id, f.ConvID, f.Source.ID, sourceMessageID)
 	require.NoError(t, err)
 	return id
 }

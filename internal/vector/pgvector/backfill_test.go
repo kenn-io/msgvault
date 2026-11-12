@@ -3,7 +3,6 @@
 package pgvector
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -19,7 +18,7 @@ import (
 func embedGenOf(t *testing.T, db *sql.DB, id int64) (val int64, isNull bool) {
 	t.Helper()
 	var v sql.NullInt64
-	require.NoError(t, db.QueryRow(`SELECT embed_gen FROM messages WHERE id = $1`, id).Scan(&v))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id = $1`, id).Scan(&v))
 	return v.Int64, !v.Valid
 }
 
@@ -33,11 +32,11 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
 	// The minimal PG test schema omits applied_migrations; create it so the
 	// ledger guard has somewhere to record.
-	_, err := db.Exec(`CREATE TABLE applied_migrations (
+	_, err := db.ExecContext(t.Context(), `CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
@@ -46,7 +45,7 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 
 	// 3 messages: 1 and 2 embedded under the active gen, 3 not.
 	for _, id := range []int64{1, 2, 3} {
-		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES ($1)`, id)
 		require.NoError(
 			err, "insert message")
 	}
@@ -127,9 +126,9 @@ func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
-	_, err := db.Exec(`CREATE TABLE applied_migrations (
+	_, err := db.ExecContext(t.Context(), `CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
@@ -139,7 +138,7 @@ func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 	// msg 1: embedded AND pending-for-re-embed (stale) -> must stay NULL.
 	// msg 2: embedded, NO pending row (normal)         -> must be stamped.
 	for _, id := range []int64{1, 2} {
-		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES ($1)`, id)
 		require.NoError(
 			err, "insert message")
 	}
@@ -209,9 +208,9 @@ func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
 func TestOpen_DropsDeadPendingEmbeddings(t *testing.T) {
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
-	_, err := db.Exec(`CREATE TABLE applied_migrations (
+	_, err := db.ExecContext(t.Context(), `CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
@@ -253,16 +252,16 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
-	_, err := db.Exec(`CREATE TABLE applied_migrations (
+	_, err := db.ExecContext(t.Context(), `CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
 	require.NoError(
 		err, "create applied_migrations")
 
-	_, err = db.Exec(`INSERT INTO messages (id) VALUES (1)`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES (1)`)
 	require.NoError(
 		err, "insert message")
 
@@ -298,9 +297,9 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 	// Install a fault that makes ONLY the ledger mark fail. The embed_gen
 	// UPDATE on messages still succeeds, so a non-atomic implementation would
 	// leave embed_gen stamped while the ledger stays unmarked.
-	_, err = db.Exec(`CREATE FUNCTION zz_fail_backfill_mark() RETURNS trigger AS $fn$
+	_, err = db.ExecContext(t.Context(), `CREATE FUNCTION zz_fail_backfill_mark() RETURNS trigger AS $fn$
 		BEGIN
-			IF NEW.name = '` + embedGenBackfillMigration + `' THEN
+			IF NEW.name = '`+embedGenBackfillMigration+`' THEN
 				RAISE EXCEPTION 'injected backfill mark failure';
 			END IF;
 			RETURN NEW;
@@ -309,7 +308,7 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 	require.NoError(
 		err, "create fault function")
 
-	_, err = db.Exec(`CREATE TRIGGER zz_fail_backfill_mark
+	_, err = db.ExecContext(t.Context(), `CREATE TRIGGER zz_fail_backfill_mark
 		BEFORE INSERT ON applied_migrations
 		FOR EACH ROW EXECUTE FUNCTION zz_fail_backfill_mark()`)
 	require.NoError(
@@ -324,14 +323,15 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 	assert.True(isNull,
 		"embed_gen must be rolled back to NULL when the ledger mark fails (atomic)")
 	var marked int
-	require.NoError(db.QueryRow(
+	require.NoError(db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 		embedGenBackfillMigration).Scan(&marked))
 	assert.Equal(0, marked, "ledger must stay unmarked when the backfill tx rolls back")
 
 	// Recovery: remove the fault and re-run. The migration was never marked,
 	// so the one-time backfill re-runs cleanly and now completes.
-	_, err = db.Exec(`DROP TRIGGER zz_fail_backfill_mark ON applied_migrations`)
+	_, err = db.ExecContext(t.Context(), `DROP TRIGGER zz_fail_backfill_mark ON applied_migrations`)
 	require.NoError(
 		err, "drop fault trigger")
 
@@ -341,7 +341,8 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 	v, isNull := embedGenOf(t, db, 1)
 	assert.False(isNull, "embed_gen stamped after clean re-run")
 	assert.Equal(int64(gen), v, "embed_gen references the active generation")
-	require.NoError(db.QueryRow(
+	require.NoError(db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 		embedGenBackfillMigration).Scan(&marked))
 	assert.Equal(1, marked, "ledger marked after clean re-run")
@@ -355,11 +356,11 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_RollbackOnMarkFailure(t *testing.T)
 func TestResetOrphanedEmbedGen_RecreateScenario(t *testing.T) {
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
 
 	for _, id := range []int64{1, 2} {
-		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES ($1)`, id)
 		require.NoError(
 			err, "insert message")
 	}
@@ -393,7 +394,7 @@ func TestResetOrphanedEmbedGen_RecreateScenario(t *testing.T) {
 func TestResetOrphanedEmbedGen_ClearsOrphanedDiagnostics(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
 
 	b, err := Open(ctx, Options{DB: db, Dimension: 4})
@@ -430,11 +431,11 @@ func TestResetOrphanedEmbedGen_NoFalsePositive(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
 
 	for _, id := range []int64{1, 2} {
-		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES ($1)`, id)
 		require.NoError(
 			err, "insert message")
 	}
@@ -486,10 +487,10 @@ func TestResetOrphanedEmbedGen_ReadOnly_Skipped(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
 
-	_, err := db.Exec(`INSERT INTO messages (id) VALUES (1)`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES (1)`)
 	require.NoError(
 		err, "insert message")
 
@@ -526,10 +527,10 @@ func TestResetOrphanedEmbedGen_ReadOnly_Skipped(t *testing.T) {
 func TestResetOrphanedEmbedGen_SkipMigrate_Management_Resets(t *testing.T) {
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
 
-	_, err := db.Exec(`INSERT INTO messages (id) VALUES (1)`)
+	_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES (1)`)
 	require.NoError(
 		err, "insert message")
 
@@ -561,7 +562,7 @@ func TestResetOrphanedEmbedGen_SkipMigrate_Management_Resets(t *testing.T) {
 func pgRegclassExists(t *testing.T, db *sql.DB, rel string) bool {
 	t.Helper()
 	var name *string
-	require.NoError(t, db.QueryRow(`SELECT to_regclass($1)::text`, rel).Scan(&name))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT to_regclass($1)::text`, rel).Scan(&name))
 	return name != nil
 }
 
@@ -593,9 +594,9 @@ func TestManagementOpen_FiresUpgradeBackfill(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
-	_, err := db.Exec(`CREATE TABLE applied_migrations (
+	_, err := db.ExecContext(t.Context(), `CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
@@ -604,7 +605,7 @@ func TestManagementOpen_FiresUpgradeBackfill(t *testing.T) {
 
 	// 3 messages: 1 and 2 embedded under the active gen, 3 not.
 	for _, id := range []int64{1, 2, 3} {
-		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES ($1)`, id)
 		require.NoError(
 			err, "insert message")
 	}
@@ -679,7 +680,8 @@ func TestManagementOpen_FiresUpgradeBackfill(t *testing.T) {
 
 	// The ledger key is set so the one-time backfill never re-runs.
 	var marked int
-	require.NoError(db.QueryRow(
+	require.NoError(db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 		embedGenBackfillMigration).Scan(&marked))
 	assert.Equal(1, marked, "backfill ledger key must be set after management open")
@@ -706,9 +708,9 @@ func TestReadOnlyOpen_PerformsNoWrites(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
-	_, err := db.Exec(`CREATE TABLE applied_migrations (
+	_, err := db.ExecContext(t.Context(), `CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
@@ -716,7 +718,7 @@ func TestReadOnlyOpen_PerformsNoWrites(t *testing.T) {
 		err, "create applied_migrations")
 
 	for _, id := range []int64{1, 2} {
-		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
+		_, err := db.ExecContext(t.Context(), `INSERT INTO messages (id) VALUES ($1)`, id)
 		require.NoError(
 			err, "insert message")
 	}
@@ -779,7 +781,8 @@ func TestReadOnlyOpen_PerformsNoWrites(t *testing.T) {
 			"ReadOnly Open must NOT re-create embed_watermark (no schema apply)")
 	// No ledger mark.
 	var marked int
-	require.NoError(db.QueryRow(
+	require.NoError(db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 		embedGenBackfillMigration).Scan(&marked))
 	assert.Equal(0, marked, "ReadOnly Open must NOT mark the backfill ledger")
@@ -805,7 +808,7 @@ func openLowTimeoutHandle(t *testing.T, db *sql.DB) *sql.DB {
 	// openPGTestDB as "<schema>,public"). Read it back so the low-timeout
 	// handle targets the SAME tables.
 	var searchPath string
-	require.NoError(t, db.QueryRow(`SHOW search_path`).Scan(&searchPath),
+	require.NoError(t, db.QueryRowContext(t.Context(), `SHOW search_path`).Scan(&searchPath),
 		"read search_path from test db")
 	require.NotEmpty(t, searchPath, "search_path must be set on the test db")
 
@@ -824,7 +827,7 @@ func openLowTimeoutHandle(t *testing.T, db *sql.DB) *sql.DB {
 	low.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = low.Close() })
 
-	_, err = low.Exec(fmt.Sprintf(`SET statement_timeout = '%dms'`, lowTimeoutMS))
+	_, err = low.ExecContext(t.Context(), fmt.Sprintf(`SET statement_timeout = '%dms'`, lowTimeoutMS))
 	require.NoError(t, err, "set low statement_timeout on low handle")
 	return low
 }
@@ -855,9 +858,9 @@ func TestBackfillEmbedGen_CompletesUnderLowStatementTimeout(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	db := openPGTestDB(t)
-	_, err := db.Exec(`CREATE TABLE applied_migrations (
+	_, err := db.ExecContext(t.Context(), `CREATE TABLE applied_migrations (
 		name TEXT PRIMARY KEY,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)
@@ -943,14 +946,16 @@ func TestBackfillEmbedGen_CompletesUnderLowStatementTimeout(t *testing.T) {
 		assert.Equalf(int64(gen), v, "msg %d embed_gen", id)
 	}
 	var stamped int64
-	require.NoError(db.QueryRow(
+	require.NoError(db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages WHERE embed_gen = $1`, int64(gen)).Scan(&stamped))
 	assert.Equal(int64(lowTimeoutSeedRows), stamped,
 		"every embedded row stamped after the low-timeout backfill")
 
 	// And the ledger is marked so the one-time backfill never re-runs.
 	var marked int
-	require.NoError(db.QueryRow(
+	require.NoError(db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 		embedGenBackfillMigration).Scan(&marked))
 	assert.Equal(1, marked, "backfill ledger marked after completing under low timeout")

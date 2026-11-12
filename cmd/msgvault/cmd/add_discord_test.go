@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"testing"
@@ -108,10 +109,10 @@ func TestRegisterDiscordGuildContinuesWhenDisplayNameConflictsWithAlias(t *testi
 	_, err = st.UpdateSourceSettingsContext(t.Context(), selector.ID, store.SourceSettingsUpdate{Alias: &alias})
 	require.NoError(err)
 
-	err = registerDiscordGuild(st, discord.Guild{ID: testDiscordGuildA, Name: alias}, "archive-bot")
+	err = registerDiscordGuild(t.Context(), st, discord.Guild{ID: testDiscordGuildA, Name: alias}, "archive-bot")
 	require.NoError(err, "a name conflict must not interrupt source registration")
 
-	source, err := st.GetSourceByTypeAndIdentifier(sourceTypeDiscord, testDiscordGuildA)
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeDiscord, testDiscordGuildA)
 	require.NoError(err)
 	assert.False(source.DisplayName.Valid, "the conflicting display name should keep its prior empty value")
 	assert.Equal(sql.NullString{String: "archive-bot", Valid: true}, source.OAuthApp,
@@ -146,7 +147,7 @@ func TestAddDiscordCredentialFirstRegistrationFailureIsIdempotentlyRecoverable(t
 	tokensDir := t.TempDir()
 	api := newDiscordCLIServer(t, discord.Guild{ID: testDiscordGuildA, Name: "Alpha Guild"})
 	deps := testDiscordCommandDeps(t, st, tokensDir, api.server.URL)
-	deps.registerGuild = func(st *store.Store, guild discord.Guild, _ string) error {
+	deps.registerGuild = func(_ context.Context, st *store.Store, guild discord.Guild, _ string) error {
 		if _, err := st.GetOrCreateSource("discord", guild.ID); err != nil {
 			return err
 		}

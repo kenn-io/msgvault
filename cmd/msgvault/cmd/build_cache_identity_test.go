@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"database/sql"
 	"io"
 	"os"
@@ -27,7 +26,7 @@ func TestBuildCache_SlackDefaultIdentityResolvesOwnerParticipant(t *testing.T) {
 
 	src, err := st.GetOrCreateSource("slack", "T01:UME")
 	require.NoError(err)
-	confirmDefaultSlackIdentity(io.Discard, st, src.ID, "T01", "UME", testDiscardLogger())
+	confirmDefaultSlackIdentity(t.Context(), io.Discard, st, src.ID, "T01", "UME", testDiscardLogger())
 	ownerID, err := st.EnsureParticipantByIdentifier("slack", "T01:UME", "Me")
 	require.NoError(err)
 	convID, err := st.EnsureConversationWithType(src.ID, "D01", "direct_chat", "Alice")
@@ -45,7 +44,7 @@ func TestBuildCache_SlackDefaultIdentityResolvesOwnerParticipant(t *testing.T) {
 	require.NoError(st.ReplaceMessageRecipients(messageID, "from", []int64{ownerID}, []string{"Me"}))
 	require.NoError(st.Close())
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err)
 	require.False(result.Skipped)
 
@@ -55,7 +54,8 @@ func TestBuildCache_SlackDefaultIdentityResolvesOwnerParticipant(t *testing.T) {
 
 	ownerPattern := filepath.Join(analyticsDir, "owner_participants", "*.parquet")
 	var ownerRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE source_id = ? AND participant_id = ?`,
 		ownerPattern, src.ID, ownerID,
 	).Scan(&ownerRows))
@@ -63,7 +63,8 @@ func TestBuildCache_SlackDefaultIdentityResolvesOwnerParticipant(t *testing.T) {
 
 	messagePattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
 	var isFromMe bool
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 		messagePattern, messageID,
 	).Scan(&isFromMe))
@@ -90,24 +91,24 @@ func TestBuildCache_FromRecipientChangeRefreshesOwner(t *testing.T) {
 	})
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{first}, []string{"First"}))
-	_, err = buildCacheAuto(dbPath, analyticsDir)
+	_, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{second}, []string{"Second"}))
 	var isFromMe bool
-	require.NoError(st.DB().QueryRow(`SELECT is_from_me FROM messages WHERE id = ?`, id).Scan(&isFromMe))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT is_from_me FROM messages WHERE id = ?`, id).Scan(&isFromMe))
 	require.True(isFromMe)
 	assert.True(cacheNeedsBuild(dbPath, analyticsDir).FullRebuild)
-	_, err = buildCacheAuto(dbPath, analyticsDir)
+	_, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err)
 	db, err := sql.Open("duckdb", "")
 	require.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
 	var owner int64
-	require.NoError(db.QueryRow(`SELECT owner_participant_id FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT owner_participant_id FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 		filepath.Join(analyticsDir, "messages", "**", "*.parquet"), id).Scan(&owner))
 	assert.Equal(second, owner)
 	var isSender, isOwner bool
-	require.NoError(db.QueryRow(`SELECT is_sender, is_owner FROM read_parquet(?, hive_partitioning=true)
+	require.NoError(db.QueryRowContext(t.Context(), `SELECT is_sender, is_owner FROM read_parquet(?, hive_partitioning=true)
 		WHERE message_id = ? AND canonical_id = ?`,
 		filepath.Join(analyticsDir, "relationship_activity", "**", "*.parquet"), id, second).Scan(&isSender, &isOwner))
 	assert.True(isSender)
@@ -136,7 +137,7 @@ func TestBuildCache_DerivesIsFromMeAndIdentityDatasets(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "owner@example.com", "manual"))
 
-	convID, err := st.EnsureConversation(src.ID, "thread-1", "Hi")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-1", "Hi")
 	require.NoError(err)
 
 	// The owner's participant email differs only in case from the confirmed
@@ -171,7 +172,7 @@ func TestBuildCache_DerivesIsFromMeAndIdentityDatasets(t *testing.T) {
 	})
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(controlMsgID, "from", []int64{otherParticipantID}, []string{""}))
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages
 		SET is_from_me = TRUE,
 		    source_is_from_me = FALSE,
@@ -182,7 +183,7 @@ func TestBuildCache_DerivesIsFromMeAndIdentityDatasets(t *testing.T) {
 
 	require.NoError(st.Close())
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 	require.False(result.Skipped, "buildCache unexpectedly skipped")
 
@@ -192,10 +193,12 @@ func TestBuildCache_DerivesIsFromMeAndIdentityDatasets(t *testing.T) {
 
 	msgPattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
 	var ownerIsFromMe, controlIsFromMe bool
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 		msgPattern, ownerMsgID).Scan(&ownerIsFromMe))
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 		msgPattern, controlMsgID).Scan(&controlIsFromMe))
 	assert.True(ownerIsFromMe, "owner-sent message should derive is_from_me = true")
@@ -203,14 +206,16 @@ func TestBuildCache_DerivesIsFromMeAndIdentityDatasets(t *testing.T) {
 
 	ownerParticipantsPattern := filepath.Join(analyticsDir, "owner_participants", "*.parquet")
 	var ownerRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE source_id = ? AND participant_id = ?`,
 		ownerParticipantsPattern, src.ID, ownerParticipantID,
 	).Scan(&ownerRows))
 	assert.Equal(1, ownerRows, "owner_participants should map the source to the owner participant")
 
 	var otherRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = ?`,
 		ownerParticipantsPattern, otherParticipantID,
 	).Scan(&otherRows))
@@ -218,7 +223,8 @@ func TestBuildCache_DerivesIsFromMeAndIdentityDatasets(t *testing.T) {
 
 	clustersPattern := filepath.Join(analyticsDir, "participant_clusters", "*.parquet")
 	var initialClusterRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?)`, clustersPattern,
 	).Scan(&initialClusterRows))
 	assert.Equal(0, initialClusterRows, "no participants are linked yet")
@@ -231,12 +237,13 @@ func TestBuildCache_DerivesIsFromMeAndIdentityDatasets(t *testing.T) {
 	require.NoError(err, "LinkParticipants")
 	require.NoError(st2.Close())
 
-	result, err = buildCache(dbPath, analyticsDir, true)
+	result, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "buildCache full rebuild")
 	require.False(result.Skipped)
 
 	canonical := min(ownerParticipantID, otherParticipantID)
-	rows, err := duckdb.Query(
+	rows, err := duckdb.QueryContext(
+		t.Context(),
 		`SELECT participant_id, canonical_id FROM read_parquet(?) ORDER BY participant_id`, clustersPattern)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
@@ -276,12 +283,12 @@ func TestBuildCache_OwnerParticipantsMatchesNonEmailIdentifiersVerbatim(t *testi
 	require.NoError(st.AddAccountIdentity(src.ID, "+15550100001", "manual"), "confirm phone identity")
 	require.NoError(st.AddAccountIdentity(src.ID, "@user:matrix.org", "manual"), "confirm chat-handle identity")
 
-	convID, err := st.EnsureConversation(src.ID, "thread-1", "Hi")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-1", "Hi")
 	require.NoError(err)
 
 	// Owner known only by a phone participant_identifiers row, no email.
 	// EnsureParticipantByPhone writes the participant_identifiers row itself.
-	phoneOwnerID, err := st.EnsureParticipantByPhone("+15550100001", "Phone Owner", "phone")
+	phoneOwnerID, err := st.EnsureParticipantByPhone(t.Context(), "+15550100001", "Phone Owner", "phone")
 	require.NoError(err)
 
 	// Case-differing non-email identifier: must NOT match verbatim.
@@ -314,7 +321,7 @@ func TestBuildCache_OwnerParticipantsMatchesNonEmailIdentifiersVerbatim(t *testi
 
 	require.NoError(st.Close())
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 	require.False(result.Skipped, "buildCache unexpectedly skipped")
 
@@ -324,10 +331,12 @@ func TestBuildCache_OwnerParticipantsMatchesNonEmailIdentifiersVerbatim(t *testi
 
 	msgPattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
 	var phoneIsFromMe, caseVariantIsFromMe bool
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 		msgPattern, phoneMsgID).Scan(&phoneIsFromMe))
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 		msgPattern, caseVariantMsgID).Scan(&caseVariantIsFromMe))
 	assert.True(phoneIsFromMe, "phone-identified owner message should derive is_from_me = true")
@@ -335,14 +344,16 @@ func TestBuildCache_OwnerParticipantsMatchesNonEmailIdentifiersVerbatim(t *testi
 
 	ownerParticipantsPattern := filepath.Join(analyticsDir, "owner_participants", "*.parquet")
 	var phoneOwnerRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE source_id = ? AND participant_id = ?`,
 		ownerParticipantsPattern, src.ID, phoneOwnerID,
 	).Scan(&phoneOwnerRows))
 	assert.Equal(1, phoneOwnerRows, "owner_participants should map the source to the phone-identified owner")
 
 	var caseVariantRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = ?`,
 		ownerParticipantsPattern, caseVariantID,
 	).Scan(&caseVariantRows))
@@ -367,7 +378,7 @@ func TestBuildCache_AccountIdentityDriftForcesFullRebuildAndRederivesIsFromMe(t 
 
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err)
-	convID, err := st.EnsureConversation(src.ID, "thread-1", "Hi")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-1", "Hi")
 	require.NoError(err)
 	owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
 	require.NoError(err)
@@ -386,7 +397,7 @@ func TestBuildCache_AccountIdentityDriftForcesFullRebuildAndRederivesIsFromMe(t 
 	require.NoError(st.ReplaceMessageRecipients(msgID, "from", []int64{owner}, []string{""}))
 	require.NoError(st.Close())
 
-	result, err := buildCache(dbPath, analyticsDir, true)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, true)
 	require.NoError(err, "initial buildCache")
 	require.False(result.Skipped, "initial build must run")
 
@@ -395,7 +406,8 @@ func TestBuildCache_AccountIdentityDriftForcesFullRebuildAndRederivesIsFromMe(t 
 	defer func() { _ = duckdb.Close() }()
 	msgPattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
 	var isFromMe bool
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 		msgPattern, msgID).Scan(&isFromMe))
 	assert.False(isFromMe, "is_from_me must be false before the identity is confirmed")
@@ -412,13 +424,14 @@ func TestBuildCache_AccountIdentityDriftForcesFullRebuildAndRederivesIsFromMe(t 
 	assert.False(derivedDriftOnly(staleness),
 		"account identity drift must not take the identity-only refresh path")
 
-	result, err = buildCacheAuto(dbPath, analyticsDir)
+	result, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err, "buildCacheAuto after account identity confirmation")
 	require.False(result.Skipped, "account identity drift must still trigger a build")
 	assert.False(result.IdentityOnly,
 		"account identity drift must rewrite message shards, not take the identity-only path")
 
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 		msgPattern, msgID).Scan(&isFromMe))
 	assert.True(isFromMe,
@@ -442,7 +455,7 @@ func TestBuildCache_IdentityDriftOnlyRefreshesWithoutMessageRebuild(t *testing.T
 
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(err)
-	convID, err := st.EnsureConversation(src.ID, "thread-1", "Hi")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-1", "Hi")
 	require.NoError(err)
 	a, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	require.NoError(err)
@@ -460,7 +473,7 @@ func TestBuildCache_IdentityDriftOnlyRefreshesWithoutMessageRebuild(t *testing.T
 	require.NoError(st.ReplaceMessageRecipients(msgID, "from", []int64{a}, []string{""}))
 	require.NoError(st.Close())
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "initial buildCache")
 	require.False(result.Skipped, "initial build must run")
 
@@ -476,7 +489,7 @@ func TestBuildCache_IdentityDriftOnlyRefreshesWithoutMessageRebuild(t *testing.T
 	require.NoError(err, "LinkParticipants")
 	require.NoError(st2.Close())
 
-	result, err = buildCacheAuto(dbPath, analyticsDir)
+	result, err = buildCacheAuto(t.Context(), dbPath, analyticsDir)
 	require.NoError(err, "buildCacheAuto after identity drift")
 	require.False(result.Skipped, "identity drift alone must still trigger a build")
 	assert.True(result.IdentityOnly, "identity drift alone should take the lightweight refresh path")
@@ -495,10 +508,12 @@ func TestBuildCache_IdentityDriftOnlyRefreshesWithoutMessageRebuild(t *testing.T
 	require.NoError(err)
 	defer func() { _ = duckdb.Close() }()
 	var canonicalA, canonicalB int64
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT canonical_id FROM read_parquet(?) WHERE participant_id = ?`, clustersPattern, a,
 	).Scan(&canonicalA))
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT canonical_id FROM read_parquet(?) WHERE participant_id = ?`, clustersPattern, b,
 	).Scan(&canonicalB))
 	want := min(a, b)
@@ -527,7 +542,7 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.AddAccountIdentity(src.ID, "owner@example.com", "manual"))
 
-	convID, err := st.EnsureConversation(src.ID, "thread-1", "Hi")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-1", "Hi")
 	require.NoError(err)
 
 	contactID, err := st.EnsureParticipant("contact@example.com", "Contact", "example.com")
@@ -535,7 +550,7 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 	require.NoError(st.SetParticipantIdentifier(contactID, "email", "owner@example.com"))
 
 	var aliasOnlyID int64
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		INSERT INTO participants (display_name, created_at, updated_at)
 		VALUES ('Alias Only', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING id
@@ -577,7 +592,7 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 		outboundMsgID, "from", []int64{contactID, coauthorID}, []string{"Owner Alias", "Co-author"}))
 	require.NoError(st.ReplaceMessageRecipients(
 		outboundMsgID, "to", []int64{counterpartID}, []string{"Counterpart"}))
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE message_recipients
 		SET email_address = ?
 		WHERE message_id = ? AND recipient_type = 'from' AND participant_id = ?
@@ -598,7 +613,7 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 		[]int64{contactID, coauthorID}, []string{"Owner Alias", "Co-author"}))
 	require.NoError(st.ReplaceMessageRecipients(
 		envelopeOutboundMsgID, "to", []int64{counterpartID}, []string{"Counterpart"}))
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE message_recipients
 		SET email_address = ?
 		WHERE message_id = ? AND recipient_type = 'from' AND participant_id = ?
@@ -620,7 +635,7 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 		[]int64{coauthorID, contactID}, []string{"Co-author", "Owner Alias"}))
 	require.NoError(st.ReplaceMessageRecipients(
 		externalFirstMsgID, "to", []int64{counterpartID}, []string{"Counterpart"}))
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE message_recipients
 		SET email_address = CASE participant_id
 			WHEN ? THEN 'coauthor@example.org'
@@ -646,7 +661,7 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 		[]int64{coauthorID, contactID}, []string{"Co-author", "Owner Alias"}))
 	require.NoError(st.ReplaceMessageRecipients(
 		sourceNativeMsgID, "to", []int64{counterpartID}, []string{"Counterpart"}))
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE message_recipients
 		SET email_address = CASE participant_id
 			WHEN ? THEN 'coauthor@example.org'
@@ -657,7 +672,7 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 	require.NoError(err, "record the source-native multi-address envelope")
 	require.NoError(st.Close())
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 	require.False(result.Skipped, "buildCache unexpectedly skipped")
 
@@ -667,14 +682,16 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 
 	ownerPattern := filepath.Join(analyticsDir, "owner_participants", "*.parquet")
 	var contactRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = ?`,
 		ownerPattern, contactID).Scan(&contactRows))
 	assert.Equal(0, contactRows,
 		"a participant with its own primary email must not resolve as owner via an email identifier")
 
 	var aliasRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE source_id = ? AND participant_id = ?`,
 		ownerPattern, src.ID, aliasOnlyID).Scan(&aliasRows))
 	assert.Equal(1, aliasRows,
@@ -684,21 +701,24 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 	var inboundIsFromMe, outboundIsFromMe, envelopeOutboundIsFromMe bool
 	var externalFirstIsFromMe, sourceNativeIsFromMe bool
 	var externalFirstOwnerID, sourceNativeOwnerID int64
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 		msgPattern, inboundMsgID).Scan(&inboundIsFromMe))
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 		msgPattern, outboundMsgID).Scan(&outboundIsFromMe))
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT is_from_me FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 		msgPattern, envelopeOutboundMsgID).Scan(&envelopeOutboundIsFromMe))
-	require.NoError(duckdb.QueryRow(`
+	require.NoError(duckdb.QueryRowContext(t.Context(), `
 		SELECT is_from_me, owner_participant_id
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE id = ?
 	`, msgPattern, externalFirstMsgID).Scan(&externalFirstIsFromMe, &externalFirstOwnerID))
-	require.NoError(duckdb.QueryRow(`
+	require.NoError(duckdb.QueryRowContext(t.Context(), `
 		SELECT is_from_me, owner_participant_id
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE id = ?
@@ -723,47 +743,47 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 	var envelopeOwnerIsOwner, envelopeCoauthorIsOwner bool
 	var externalFirstOwnerIsOwner, externalFirstCoauthorIsOwner bool
 	var sourceNativeOwnerIsOwner, sourceNativeCoauthorIsOwner bool
-	require.NoError(duckdb.QueryRow(`
+	require.NoError(duckdb.QueryRowContext(t.Context(), `
 		SELECT bool_or(is_owner)
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE message_id = ? AND canonical_id = ? AND is_sender
 	`, activityPattern, inboundMsgID, contactID).Scan(&inboundSenderIsOwner))
-	require.NoError(duckdb.QueryRow(`
+	require.NoError(duckdb.QueryRowContext(t.Context(), `
 		SELECT bool_or(is_owner)
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE message_id = ? AND canonical_id = ? AND is_sender
 	`, activityPattern, outboundMsgID, contactID).Scan(&outboundSenderIsOwner))
-	require.NoError(duckdb.QueryRow(`
+	require.NoError(duckdb.QueryRowContext(t.Context(), `
 		SELECT bool_or(is_owner)
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE message_id = ? AND canonical_id = ? AND is_author
 	`, activityPattern, outboundMsgID, coauthorID).Scan(&outboundCoauthorIsOwner))
-	require.NoError(duckdb.QueryRow(`
+	require.NoError(duckdb.QueryRowContext(t.Context(), `
 		SELECT bool_or(is_owner)
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE message_id = ? AND canonical_id = ? AND is_author
 	`, activityPattern, envelopeOutboundMsgID, contactID).Scan(&envelopeOwnerIsOwner))
-	require.NoError(duckdb.QueryRow(`
+	require.NoError(duckdb.QueryRowContext(t.Context(), `
 		SELECT bool_or(is_owner)
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE message_id = ? AND canonical_id = ? AND is_author
 	`, activityPattern, envelopeOutboundMsgID, coauthorID).Scan(&envelopeCoauthorIsOwner))
-	require.NoError(duckdb.QueryRow(`
+	require.NoError(duckdb.QueryRowContext(t.Context(), `
 		SELECT bool_or(is_owner)
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE message_id = ? AND canonical_id = ? AND is_author
 	`, activityPattern, externalFirstMsgID, contactID).Scan(&externalFirstOwnerIsOwner))
-	require.NoError(duckdb.QueryRow(`
+	require.NoError(duckdb.QueryRowContext(t.Context(), `
 		SELECT bool_or(is_owner)
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE message_id = ? AND canonical_id = ? AND is_author
 	`, activityPattern, externalFirstMsgID, coauthorID).Scan(&externalFirstCoauthorIsOwner))
-	require.NoError(duckdb.QueryRow(`
+	require.NoError(duckdb.QueryRowContext(t.Context(), `
 		SELECT bool_or(is_owner)
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE message_id = ? AND canonical_id = ? AND is_author
 	`, activityPattern, sourceNativeMsgID, contactID).Scan(&sourceNativeOwnerIsOwner))
-	require.NoError(duckdb.QueryRow(`
+	require.NoError(duckdb.QueryRowContext(t.Context(), `
 		SELECT bool_or(is_owner)
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE message_id = ? AND canonical_id = ? AND is_author
@@ -787,11 +807,11 @@ func TestBuildCache_OwnerParticipantsHonorPrimaryEmailGuard(t *testing.T) {
 	assert.True(sourceNativeCoauthorIsOwner,
 		"the source-native sender must carry ownership")
 
-	engine, err := query.NewDuckDBEngine(analyticsDir, "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), analyticsDir, "", nil)
 	require.NoError(err)
 	defer func() { require.NoError(engine.Close()) }()
 
-	explored, err := engine.Explore(context.Background(), query.ExploreRequest{
+	explored, err := engine.Explore(t.Context(), query.ExploreRequest{
 		Page: query.PageSpec{Limit: 10},
 	})
 	require.NoError(err)
@@ -848,7 +868,7 @@ func TestSourceAttributionChangeRebuildsCachedOwner(t *testing.T) {
 					DisplayNames: []string{"Envelope"}, EmailAddresses: []string{"envelope@example.test"}}}})
 			require.NoError(err)
 			if upgrade {
-				_, err = st.DB().Exec(`
+				_, err = st.DB().ExecContext(t.Context(), `
                     DROP TRIGGER trg_cache_message_facts_update;
                     CREATE TRIGGER trg_cache_message_facts_update
                     AFTER UPDATE OF sender_id, is_from_me, has_attachments, attachment_count
@@ -863,20 +883,20 @@ func TestSourceAttributionChangeRebuildsCachedOwner(t *testing.T) {
                 `)
 				require.NoError(err)
 			}
-			_, err = buildCache(dbPath, analyticsDir, true)
+			_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 			require.NoError(err)
 			db, err := sql.Open("duckdb", "")
 			require.NoError(err)
 			t.Cleanup(func() { _ = db.Close() })
 			var cachedOwner int64
-			require.NoError(db.QueryRow(`SELECT owner_participant_id FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+			require.NoError(db.QueryRowContext(t.Context(), `SELECT owner_participant_id FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 				filepath.Join(analyticsDir, "messages", "**", "*.parquet"), id).Scan(&cachedOwner))
 			require.Equal(envelope, cachedOwner)
 			msg.IsFromMe = true
 			_, err = st.UpsertMessage(msg)
 			require.NoError(err)
 			var sourceNative, effective bool
-			require.NoError(st.DB().QueryRow(`SELECT source_is_from_me, is_from_me FROM messages WHERE id = ?`, id).Scan(&sourceNative, &effective))
+			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT source_is_from_me, is_from_me FROM messages WHERE id = ?`, id).Scan(&sourceNative, &effective))
 			require.True(sourceNative)
 			require.True(effective)
 			if upgrade {
@@ -887,11 +907,11 @@ func TestSourceAttributionChangeRebuildsCachedOwner(t *testing.T) {
 			stale := cacheNeedsBuild(dbPath, analyticsDir)
 			assert.True(stale.NeedsBuild)
 			assert.True(stale.FullRebuild)
-			automatic, err := buildCacheAuto(dbPath, analyticsDir)
+			automatic, err := buildCacheAuto(t.Context(), dbPath, analyticsDir)
 			require.NoError(err)
 			assert.False(automatic.Skipped)
 			var refreshedOwner int64
-			require.NoError(db.QueryRow(`SELECT owner_participant_id FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
+			require.NoError(db.QueryRowContext(t.Context(), `SELECT owner_participant_id FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`,
 				filepath.Join(analyticsDir, "messages", "**", "*.parquet"), id).Scan(&refreshedOwner))
 			assert.Equal(sender, refreshedOwner)
 			require.NoError(st.InitSchema())

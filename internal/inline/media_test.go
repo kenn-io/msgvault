@@ -149,7 +149,7 @@ func TestDeferredMediaBackfillRefreshesURLAndPreservesDuplicateOccurrences(t *te
 		hasAttachments, attachmentCount := storedMediaMessageStats(t, imp, id)
 		assertions.True(hasAttachments)
 		assertions.Equal(1, attachmentCount)
-		refs, err := imp.store.MessageInlineProviderAttachments(id)
+		refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), id)
 		requires.NoError(err)
 		requires.Len(refs, 1)
 		for _, ref := range refs {
@@ -183,7 +183,7 @@ func TestDeferredMediaBackfillRefreshesURLAndPreservesDuplicateOccurrences(t *te
 		hasAttachments, attachmentCount := storedMediaMessageStats(t, imp, id)
 		assertions.True(hasAttachments)
 		assertions.Equal(1, attachmentCount)
-		refs, err := imp.store.MessageInlineProviderAttachments(id)
+		refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), id)
 		requires.NoError(err)
 		requires.Len(refs, 1)
 		ref := refs[fmt.Sprintf("inline:photo:%d", index+9)]
@@ -225,7 +225,7 @@ func TestMediaFailureLeavesDurableMarkerAndPolicyCanRetry(t *testing.T) {
 	assertions.Equal(1, first.AttachmentsSkipped)
 	assertions.Zero(client.filesCalls)
 	id := archivedMessage(t, imp.store, first.SourceID, 1, 1)
-	refs, err := imp.store.MessageInlineProviderAttachments(id)
+	refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), id)
 	requires.NoError(err)
 	assertions.Equal(attachmentpolicy.SkipSizeCap, refs["inline:document:9"].SkipReason)
 	opts.MediaPolicy.MaxBytes = 10
@@ -235,7 +235,7 @@ func TestMediaFailureLeavesDurableMarkerAndPolicyCanRetry(t *testing.T) {
 	backfill, err := imp.BackfillMedia(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(1, backfill.Errors)
-	refs, err = imp.store.MessageInlineProviderAttachments(id)
+	refs, err = imp.store.MessageInlineProviderAttachments(t.Context(), id)
 	requires.NoError(err)
 	assertions.Equal(attachmentpolicy.StateFailed, refs["inline:document:9"].State)
 	client.files = nil
@@ -261,7 +261,7 @@ func TestUnknownRosterFailsClosedThenBackfillRetriesAfterRemovingParticipantCap(
 	requires.NoError(err)
 	assertions.Equal(1, first.AttachmentsSkipped)
 	assertions.Zero(client.filesCalls)
-	refs, err := imp.store.MessageInlineProviderAttachments(archivedMessage(t, imp.store, first.SourceID, 1, 1))
+	refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), archivedMessage(t, imp.store, first.SourceID, 1, 1))
 	requires.NoError(err)
 	assertions.Equal(attachmentpolicy.SkipParticipantThreshold, refs["inline:document:1"].SkipReason)
 	opts.MediaPolicy.MaxParticipants = 0
@@ -288,7 +288,7 @@ func TestUnknownRosterDoesNotOverflowMaximumParticipantCap(t *testing.T) {
 	requires.NoError(err)
 	assertions.Equal(1, summary.AttachmentsSkipped)
 	assertions.Zero(client.filesCalls)
-	refs, err := imp.store.MessageInlineProviderAttachments(archivedMessage(t, imp.store, summary.SourceID, 1, 1))
+	refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), archivedMessage(t, imp.store, summary.SourceID, 1, 1))
 	requires.NoError(err)
 	assertions.Equal(attachmentpolicy.SkipParticipantThreshold, refs["inline:document:1"].SkipReason)
 }
@@ -319,7 +319,7 @@ func TestMediaBackfillOnlyContactsSelectedChats(t *testing.T) {
 	backfill, err := imp.BackfillMedia(t.Context(), opts)
 	requires.NoError(err)
 	assertions.Equal(1, backfill.AttachmentsDownloaded)
-	refs, err := imp.store.MessageInlineProviderAttachments(archivedMessage(t, imp.store, first.SourceID, 1, 1))
+	refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), archivedMessage(t, imp.store, first.SourceID, 1, 1))
 	requires.NoError(err)
 	assertions.Equal(attachmentpolicy.StatePending, refs["inline:document:1"].State)
 }
@@ -337,7 +337,8 @@ func TestMediaReferenceUsesUnsignedOccurrenceKeys(t *testing.T) {
 
 func storedMediaMessageStats(t *testing.T, imp *Importer, messageID int64) (hasAttachments bool, attachmentCount int) {
 	t.Helper()
-	require.NoError(t, imp.store.DB().QueryRow(
+	require.NoError(t, imp.store.DB().QueryRowContext(
+		t.Context(),
 		imp.store.Rebind(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`), messageID,
 	).Scan(&hasAttachments, &attachmentCount))
 	return hasAttachments, attachmentCount
@@ -382,7 +383,7 @@ func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
 				seed, err := imp.Import(t.Context(), opts)
 				requires.NoError(err)
 				id := archivedMessage(t, imp.store, seed.SourceID, 1, 1)
-				refs, err := imp.store.MessageInlineProviderAttachments(id)
+				refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), id)
 				requires.NoError(err)
 				requires.Contains(refs, "inline:document:1")
 				ref := refs["inline:document:1"]
@@ -392,7 +393,7 @@ func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
 				requires.NoError(imp.store.ReplaceMessageInlineProviderAttachments(id, refsSlice(refs)))
 				// Older archives can retain incorrect statistics from before
 				// Inline replacement recomputed them; full replay repairs them.
-				_, err = imp.store.DB().Exec(imp.store.Rebind(`UPDATE messages SET has_attachments = FALSE, attachment_count = 0 WHERE id = ?`), id)
+				_, err = imp.store.DB().ExecContext(t.Context(), imp.store.Rebind(`UPDATE messages SET has_attachments = FALSE, attachment_count = 0 WHERE id = ?`), id)
 				requires.NoError(err)
 				opts.NoMedia = false
 				opts.Full = true
@@ -406,7 +407,7 @@ func TestMediaImportPersistsAttachmentStatsForListingsAndSearch(t *testing.T) {
 			hasAttachments, attachmentCount = storedMediaMessageStats(t, imp, archivedMessage(t, imp.store, summary.SourceID, 1, 2))
 			assertions.False(hasAttachments)
 			assertions.Zero(attachmentCount)
-			refs, err := imp.store.MessageInlineProviderAttachments(id)
+			refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), id)
 			requires.NoError(err)
 			assertions.Equal(state, refs["inline:document:1"].State)
 			engine := query.NewEngine(imp.store.DB(), imp.store.IsPostgreSQL())

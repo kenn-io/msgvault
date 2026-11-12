@@ -27,7 +27,7 @@ func seedMatchCandidate(
 	bob := st.mustParticipant(t, "bob@example.com", "Bob Example", "example.com")
 	value := "beeper:@alice:beeper.local"
 	candidate, _, err := st.UpsertIdentityMatchCandidateContext(
-		context.Background(), store.IdentityMatchCandidateInput{
+		t.Context(), store.IdentityMatchCandidateInput{
 			LeftKind: store.IdentityMatchParticipant, LeftID: alice,
 			RightKind: store.IdentityMatchParticipant, RightID: bob,
 			Basis: basis, NormalizedValue: &value,
@@ -216,7 +216,7 @@ func TestAcceptIdentityMatchCandidateAcrossPersonsReturnsPersonMergeRequired(t *
 	assert := assert.New(t)
 	srv, st := newIdentityLinkTestServer(t)
 	candidate, alice, bob := seedMatchCandidate(t, st, store.IdentityMatchStableProviderID)
-	ctx := context.Background()
+	ctx := t.Context()
 	left, _, err := st.CreatePersonFromParticipantContext(ctx, alice)
 	require.NoError(err, "promote alice")
 	right, _, err := st.CreatePersonFromParticipantContext(ctx, bob)
@@ -282,7 +282,7 @@ func TestRejectAcceptedSystemIdentityMatchUnlinksAndRetainsRejection(t *testing.
 	candidate, alice, bob := seedMatchCandidate(t, st, store.IdentityMatchStableProviderID)
 
 	_, _, err := st.AcceptIdentityMatchCandidateContext(
-		context.Background(), candidate.ID, "system", nil,
+		t.Context(), candidate.ID, "system", nil,
 	)
 	require.NoError(err, "system acceptance")
 	require.True(linkedParticipants(t, st, alice, bob), "precondition: accept linked the pair")
@@ -299,7 +299,7 @@ func TestRejectAcceptedSystemIdentityMatchUnlinksAndRetainsRejection(t *testing.
 	assert.Equal(1, st.refreshCalls,
 		"removing an owned automated edge must refresh the identity cache")
 
-	reloaded, err := st.GetIdentityMatchCandidateContext(context.Background(), candidate.ID)
+	reloaded, err := st.GetIdentityMatchCandidateContext(t.Context(), candidate.ID)
 	require.NoError(err, "reload candidate")
 	assert.Equal(store.IdentityMatchStateRejected, reloaded.State)
 	assert.False(linkedParticipants(t, st, alice, bob),
@@ -314,7 +314,7 @@ func TestRejectAcceptedSystemIdentityMatchRetryRepairsStaleCache(t *testing.T) {
 	candidate, _, _ := seedMatchCandidate(t, st, store.IdentityMatchStableProviderID)
 
 	_, _, err := st.AcceptIdentityMatchCandidateContext(
-		context.Background(), candidate.ID, "system", nil,
+		t.Context(), candidate.ID, "system", nil,
 	)
 	require.NoError(err, "system acceptance")
 	st.refreshErr = errors.New("cache refresh unavailable")
@@ -348,7 +348,7 @@ func TestRejectAcceptedSystemIdentityMatchPreservesManualEdgeWithoutBumpingRevis
 	_, err := st.LinkParticipants(alice, bob)
 	require.NoError(err, "manual link")
 	_, _, err = st.AcceptIdentityMatchCandidateContext(
-		context.Background(), candidate.ID, "system", nil,
+		t.Context(), candidate.ID, "system", nil,
 	)
 	require.NoError(err, "system acceptance of already-linked pair")
 	before, err := st.IdentityRevision()

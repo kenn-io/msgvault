@@ -23,6 +23,7 @@ export interface EntryRow {
   participant_ids?: number[];
   participant_labels?: string[];
   preview: string;
+  sender_label?: string;
   source_id: number;
   source_identifier: string;
   source_type: string;

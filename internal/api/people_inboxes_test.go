@@ -64,7 +64,8 @@ func TestParticipantInboxesResolveAliasAndReturnSourceRollups(t *testing.T) {
 	}
 
 	response := httptest.NewRecorder()
-	newTestServerWithEngine(t, engine).Router().ServeHTTP(response, httptest.NewRequest(
+	newTestServerWithEngine(t, engine).Router().ServeHTTP(response, httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet, "/api/v1/participants/22/inboxes", nil))
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	assert.Equal("no-store", response.Header().Get("Cache-Control"))
@@ -91,7 +92,7 @@ func TestParticipantInboxesValidationCapabilityAndMissingParticipant(t *testing.
 	t.Run("invalid ID", func(t *testing.T) {
 		response := httptest.NewRecorder()
 		newTestServerWithEngine(t, &peopleAPIEngine{MockEngine: &querytest.MockEngine{}}).Router().ServeHTTP(
-			response, httptest.NewRequest(http.MethodGet, "/api/v1/participants/0/inboxes", nil))
+			response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/participants/0/inboxes", nil))
 		assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
 	})
 
@@ -99,7 +100,8 @@ func TestParticipantInboxesValidationCapabilityAndMissingParticipant(t *testing.
 		response := httptest.NewRecorder()
 		newTestServerWithEngine(t, &peopleAPIEngine{
 			MockEngine: &querytest.MockEngine{}, person: &query.PersonSummary{ID: 7},
-		}).Router().ServeHTTP(response, httptest.NewRequest(
+		}).Router().ServeHTTP(response, httptest.NewRequestWithContext(
+			t.Context(),
 			http.MethodGet, "/api/v1/participants/7/inboxes", nil))
 		assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 		assert.Contains(t, response.Body.String(), "analytical_cache_unavailable")
@@ -112,7 +114,8 @@ func TestParticipantInboxesValidationCapabilityAndMissingParticipant(t *testing.
 			inboxResult:     &query.PersonInboxResponse{Rows: []query.PersonInboxRow{}},
 		}
 		response := httptest.NewRecorder()
-		newTestServerWithEngine(t, engine).Router().ServeHTTP(response, httptest.NewRequest(
+		newTestServerWithEngine(t, engine).Router().ServeHTTP(response, httptest.NewRequestWithContext(
+			t.Context(),
 			http.MethodGet, "/api/v1/participants/7/inboxes", nil))
 		assert.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
 		assert.Zero(t, engine.inboxCallCount)
@@ -129,7 +132,8 @@ func TestParticipantInboxesValidationCapabilityAndMissingParticipant(t *testing.
 			},
 		}
 		response := httptest.NewRecorder()
-		newTestServerWithEngine(t, engine).Router().ServeHTTP(response, httptest.NewRequest(
+		newTestServerWithEngine(t, engine).Router().ServeHTTP(response, httptest.NewRequestWithContext(
+			t.Context(),
 			http.MethodGet, "/api/v1/participants/7/inboxes", nil))
 		assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	})
@@ -145,7 +149,8 @@ func TestParticipantInboxesMapsCommittedCacheFailure(t *testing.T) {
 		inboxErr:    &query.CacheUnavailableError{Readiness: query.CacheStaleSchema},
 	}
 	response := httptest.NewRecorder()
-	newTestServerWithEngine(t, engine).Router().ServeHTTP(response, httptest.NewRequest(
+	newTestServerWithEngine(t, engine).Router().ServeHTTP(response, httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet, "/api/v1/participants/7/inboxes", nil))
 
 	assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())

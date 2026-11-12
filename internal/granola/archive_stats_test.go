@@ -1,7 +1,6 @@
 package granola
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +25,7 @@ func TestGranolaCountsWriteWhenStatsMaintenanceFails(t *testing.T) {
 	`)
 	require.NoError(err)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Identifier: "alice@example.com"})
+	sum, err := imp.Import(t.Context(), ImportOptions{Identifier: "alice@example.com"})
 
 	require.Error(err)
 	require.NotNil(sum)

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createBrowserRequestID } from '../../api/request-id';
   import { createOrLinkMessageTask as generatedCreateOrLinkMessageTask } from '../../api/generated/api/api';
-  import { Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   let {
@@ -153,8 +153,7 @@
         block
       /></label
     >
-    <details>
-      <summary>Metadata leaving the archive</summary>
+    <Disclosure variant="plain">{#snippet summary()}Metadata leaving the archive{/snippet}
       <dl>
         <div>
           <dt>Archive UID</dt>
@@ -198,7 +197,7 @@
         </div>
       </dl>
       <p>Bodies and attachments are never sent.</p>
-    </details>
+    </Disclosure>
     {#if error}<p role="alert">{error}</p>{/if}
     <div class="actions">
       <Button surface="soft" label="Cancel" disabled={pending} onclick={requestClose} />
@@ -233,7 +232,7 @@
     margin: 0;
   }
   .project span,
-  details {
+  form :global(.kit-disclosure) {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
   }

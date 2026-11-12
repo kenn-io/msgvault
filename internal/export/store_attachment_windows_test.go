@@ -30,7 +30,7 @@ func TestStoreAttachmentFileDurableWindowsRejectsFinalReparsePoint(t *testing.T)
 	// skipping would leave the final-component security property untested.
 	require.NoError(os.Symlink(target, canonical))
 
-	_, err := StoreAttachmentFileDurable(dir, &mime.Attachment{
+	_, err := StoreAttachmentFileDurable(t.Context(), dir, &mime.Attachment{
 		Content: content, ContentHash: hash,
 	})
 	require.ErrorIs(err, packstore.ErrContentMismatch)

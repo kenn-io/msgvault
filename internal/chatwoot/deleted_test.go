@@ -13,7 +13,7 @@ import (
 func deletedFromSource(t *testing.T, st *store.Store, messageID int64) bool {
 	t.Helper()
 	var deleted bool
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), messageID).Scan(&deleted))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`), messageID).Scan(&deleted))
 	return deleted
 }
 
@@ -53,7 +53,7 @@ func TestDeletedMessageKeepsArchivedContent(t *testing.T) {
 				"call:901": "deletedquartz call transcript",
 			} {
 				id := contractArchivedMessageID(t, st, providerID)
-				body, err := st.GetMessageBodyText(id)
+				body, err := st.GetMessageBodyText(t.Context(), id)
 				require.NoError(err)
 				assert.Contains(body, want, providerID)
 				assert.NotContains(body, "This message was deleted", providerID)

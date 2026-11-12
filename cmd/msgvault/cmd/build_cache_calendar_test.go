@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -71,7 +70,7 @@ func TestBuildCache_IncludesCalendarEventsInModalityNeutralCache(t *testing.T) {
 		Attendees: []gcal.Attendee{{Email: "bob@example.com", DisplayName: "Bob"}},
 	}}}
 	mock.FullSyncToken["primary"] = "T1"
-	_, err = calsync.New(mock, st, calsync.Options{AccountEmail: "dave@example.com"}).Full(context.Background())
+	_, err = calsync.New(mock, st, calsync.Options{AccountEmail: "dave@example.com"}).Full(t.Context())
 	require.NoError(err)
 
 	bobID, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
@@ -79,7 +78,7 @@ func TestBuildCache_IncludesCalendarEventsInModalityNeutralCache(t *testing.T) {
 
 	require.NoError(st.Close())
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 	require.False(result.Skipped, "buildCache unexpectedly skipped")
 
@@ -90,12 +89,14 @@ func TestBuildCache_IncludesCalendarEventsInModalityNeutralCache(t *testing.T) {
 	// messages Parquet is modality-neutral: email and calendar event coexist.
 	msgPattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
 	var msgCount int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true)`, msgPattern).Scan(&msgCount))
 	assert.Equal(2, msgCount, "email and calendar event should be exported")
 
 	var calCount int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true) WHERE message_type = 'calendar_event'`,
 		msgPattern).Scan(&calCount))
 	assert.Equal(1, calCount, "calendar_event row in the messages Parquet")
@@ -103,17 +104,20 @@ func TestBuildCache_IncludesCalendarEventsInModalityNeutralCache(t *testing.T) {
 	// Both email recipients and event attendees are analytical participants.
 	recPattern := filepath.Join(analyticsDir, "message_recipients", "*.parquet")
 	var bobRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = ?`, recPattern, bobID).Scan(&bobRows))
 	assert.Equal(1, bobRows, "calendar attendee should be exported")
 
 	var carolRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = ?`, recPattern, carolID).Scan(&carolRows))
 	assert.Equal(1, carolRows, "email recipient must still be exported")
 
 	var calendarConversationRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE conversation_type = 'calendar'`,
 		filepath.Join(analyticsDir, "conversations", "*.parquet")).Scan(&calendarConversationRows))
 	assert.Equal(1, calendarConversationRows, "calendar conversation should be exported")
@@ -139,11 +143,11 @@ func TestBuildCache_AllCalendarEventsWritesAnalyticalCacheState(t *testing.T) {
 		End:       gcal.EventDateTime{DateTime: time.Date(2024, 5, 2, 9, 30, 0, 0, time.UTC)},
 	}}}
 	mock.FullSyncToken["primary"] = "T1"
-	_, err := calsync.New(mock, st, calsync.Options{AccountEmail: "alice@example.com"}).Full(context.Background())
+	_, err := calsync.New(mock, st, calsync.Options{AccountEmail: "alice@example.com"}).Full(t.Context())
 	require.NoError(err)
 	require.NoError(st.Close())
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache should accept a calendar-only archive")
 	require.False(result.Skipped, "calendar-only database still advances cache state")
 	assert.Equal(int64(1), result.ExportedCount, "calendar events are part of the modality-neutral cache")
@@ -157,7 +161,7 @@ func TestBuildCache_AllCalendarEventsWritesAnalyticalCacheState(t *testing.T) {
 	staleness := cacheNeedsBuild(dbPath, analyticsDir)
 	require.False(staleness.NeedsBuild, "calendar-only cache state should not request repeated rebuilds: %+v", staleness)
 
-	result2, err := buildCache(dbPath, analyticsDir, false)
+	result2, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "second buildCache should accept stable calendar-only state")
 	assert.True(result2.Skipped, "calendar-only cache should be skipped on the second build")
 }
@@ -188,7 +192,7 @@ func TestBuildCache_PreservesCalsyncUTF8ByteBoundary(t *testing.T) {
 		_, stored := syncCalendarBoundaryEvent(t, dbPath, boundarySummary, "TOKEN1")
 		require.Equal(boundarySnippet, stored, "exact SQLite snippet")
 
-		_, err := buildCache(dbPath, analyticsDir, false)
+		_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 		require.NoError(err, "initial cache publication")
 		assertCalendarBoundarySnippetPublished(t, analyticsDir, boundarySnippet)
 	}
@@ -214,7 +218,7 @@ func TestBuildCache_PreservesCalsyncUTF8ByteBoundary(t *testing.T) {
 		oldID, stored := syncCalendarBoundaryEvent(t, dbPath, oldSummary, "TOKEN1")
 		require.Equal(oldSnippet, stored, "initial SQLite snippet")
 
-		_, err := buildCache(dbPath, analyticsDir, false)
+		_, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 		require.NoError(err, "initial cache publication")
 		assertCalendarBoundarySnippetPublished(t, analyticsDir, oldSnippet)
 
@@ -222,7 +226,7 @@ func TestBuildCache_PreservesCalsyncUTF8ByteBoundary(t *testing.T) {
 		require.Equal(oldID, updatedID, "full sync must update the existing event row")
 		require.Equal(boundarySnippet, stored, "updated SQLite snippet")
 
-		_, err = buildCache(dbPath, analyticsDir, true)
+		_, err = buildCache(t.Context(), dbPath, analyticsDir, true)
 		require.NoError(err, "explicit full cache publication")
 		assertCalendarBoundarySnippetPublished(t, analyticsDir, boundarySnippet)
 	})
@@ -298,12 +302,12 @@ func syncCalendarBoundaryEvent(
 
 	_, err = calsync.New(client, st, calsync.Options{
 		AccountEmail: cacheCalendarBoundaryAccount,
-	}).Full(context.Background())
+	}).Full(t.Context())
 	require.NoError(t, err, "full calendar sync")
 
 	var messageID int64
 	var stored sql.NullString
-	err = st.DB().QueryRow(`
+	err = st.DB().QueryRowContext(t.Context(), `
 		SELECT m.id, m.snippet
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
@@ -346,7 +350,7 @@ func readCalendarBoundarySnippet(t *testing.T, analyticsDir string) string {
 
 	pattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
 	var count int
-	require.NoError(duckDB.QueryRow(`
+	require.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT COUNT(*)
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE source_message_id = ? AND message_type = ?`,
@@ -357,7 +361,7 @@ func readCalendarBoundarySnippet(t *testing.T, analyticsDir string) string {
 	require.Equal(1, count, "boundary event must have exactly one Parquet row")
 
 	var got sql.NullString
-	require.NoError(duckDB.QueryRow(`
+	require.NoError(duckDB.QueryRowContext(t.Context(), `
 		SELECT snippet
 		FROM read_parquet(?, hive_partitioning=true)
 		WHERE source_message_id = ? AND message_type = ?`,

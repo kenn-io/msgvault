@@ -166,7 +166,7 @@ func TestOrganizationHTTPDeleteWithEmploymentReturnsConflict(t *testing.T) {
 	require.NoError(json.Unmarshal(createdResponse.Body.Bytes(), &created))
 
 	title := "Engineer"
-	_, err := st.AddEmploymentContext(context.Background(), store.EmploymentInput{
+	_, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{
 		PersonID: person.ID, OrganizationID: created.ID, Title: &title, Source: store.ProvenanceUser,
 	})
 	require.NoError(err)
@@ -247,10 +247,11 @@ func TestOrganizationHTTPPatchRejectsMergedRowWithoutPartialFieldUpdate(t *testi
 	survivor := mustAPIOrganization(t, st, "Example Org")
 	losing := mustAPIOrganization(t, st, "Former Org")
 
-	_, err := st.MergeOrganizationsContext(context.Background(),
+	_, err := st.MergeOrganizationsContext(
+		t.Context(),
 		survivor.ID, survivor.Revision, losing.ID, losing.Revision)
 	require.NoError(err)
-	redirect, err := st.GetOrganizationContext(context.Background(), losing.ID)
+	redirect, err := st.GetOrganizationContext(t.Context(), losing.ID)
 	require.NoError(err)
 
 	response := organizationRequest(t, srv, http.MethodPatch,
@@ -260,7 +261,7 @@ func TestOrganizationHTTPPatchRejectsMergedRowWithoutPartialFieldUpdate(t *testi
 	require.Equal(http.StatusBadRequest, response.Code)
 	assert.Contains(response.Body.String(), "invalid_organization")
 
-	unchanged, err := st.GetOrganizationContext(context.Background(), redirect.ID)
+	unchanged, err := st.GetOrganizationContext(t.Context(), redirect.ID)
 	require.NoError(err)
 	assert.Equal("Former Org", unchanged.Name)
 	assert.Equal(redirect.Revision, unchanged.Revision)
@@ -375,7 +376,7 @@ func TestOrganizationHTTPMergeMovesEmploymentAndBumpsBothRevisions(t *testing.T)
 	require.NoError(json.Unmarshal(losingResponse.Body.Bytes(), &losing))
 
 	title := "Engineer"
-	employment, err := st.AddEmploymentContext(context.Background(), store.EmploymentInput{
+	employment, err := st.AddEmploymentContext(t.Context(), store.EmploymentInput{
 		PersonID: person.ID, OrganizationID: losing.ID, Title: &title, Source: store.ProvenanceUser,
 	})
 	require.NoError(err)
@@ -390,7 +391,7 @@ func TestOrganizationHTTPMergeMovesEmploymentAndBumpsBothRevisions(t *testing.T)
 	assert.Equal(survivor.ID, merged.ID)
 	assert.Equal(survivor.Revision+1, merged.Revision)
 
-	moved, err := st.GetEmploymentContext(context.Background(), employment.ID)
+	moved, err := st.GetEmploymentContext(t.Context(), employment.ID)
 	require.NoError(err)
 	assert.Equal(survivor.ID, moved.OrganizationID)
 
@@ -616,7 +617,7 @@ func TestOrganizationHTTPProfilePutRetainsSourceResourceUID(t *testing.T) {
 
 	sourceRef := "address-book"
 	resourceUID := "card-42"
-	seeded, err := st.ReplaceOrganizationProfileContext(context.Background(), created.ID, created.Revision,
+	seeded, err := st.ReplaceOrganizationProfileContext(t.Context(), created.ID, created.Revision,
 		store.OrganizationProfileInput{Names: []store.OrganizationNameInput{{
 			Name: "Imported alias", NameKind: store.OrganizationNameKindAlias,
 			Envelope: store.ValueEnvelopeInput{
@@ -941,11 +942,13 @@ func TestOrganizationHTTPAttributeSetForwardsTemporalFields(t *testing.T) {
 			"active_from":"2020-01-01T00:00:00Z","active_until":"2021-01-01T00:00:00Z"}`), "")
 	require.Equal(http.StatusCreated, historical.Code, historical.Body.String())
 
-	current, err := st.ListOrganizationAttributeValuesContext(context.Background(),
+	current, err := st.ListOrganizationAttributeValuesContext(
+		t.Context(),
 		created.ID, store.OrganizationAttributeQuery{DefinitionSlug: "historical_note"})
 	require.NoError(err)
 	assert.Empty(current, "a fully historical write must not become the current value")
-	history, err := st.ListOrganizationAttributeValuesContext(context.Background(),
+	history, err := st.ListOrganizationAttributeValuesContext(
+		t.Context(),
 		created.ID, store.OrganizationAttributeQuery{
 			DefinitionSlug: "historical_note", IncludeHistory: true,
 		})
@@ -969,13 +972,14 @@ func newOrganizationTestServerWithStore(t *testing.T) (*Server, *store.Store) {
 		Store:  st,
 		Logger: testLogger(),
 	})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	return srv, st
 }
 
 func mustAPIOrganizationAttributeDefinition(t *testing.T, st *store.Store, slug string) *store.AttributeDefinition {
 	t.Helper()
-	definition, err := st.CreateAttributeDefinitionContext(context.Background(), store.AttributeDefinitionInput{
+	definition, err := st.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{
 		UniversalID: "test-organization-" + slug,
 		ObjectType:  store.AttributeObjectOrganization,
 		Slug:        slug, Label: slug,
@@ -999,7 +1003,7 @@ func mustAPIPerson(t *testing.T, st *store.Store, email, name string) *store.Per
 
 func organizationRequest(t *testing.T, srv *Server, method, path string, body []byte, ifMatch string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(body))
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

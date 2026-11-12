@@ -42,7 +42,7 @@ func runRepairListIDsLocal(cmd *cobra.Command, apply bool) error {
 		err     error
 	)
 	if apply {
-		st, cleanup, err = openWritableStoreAndInitForInvocation(state)
+		st, cleanup, err = openWritableStoreAndInitForInvocation(cmd.Context(), state)
 	} else {
 		st, err = store.OpenReadOnly(cfg.DatabaseDSN())
 		cleanup = func() { _ = st.Close() }
@@ -73,7 +73,7 @@ func runRepairListIDsLocal(cmd *cobra.Command, apply bool) error {
 		}
 	}
 	if apply && summary.Changed > 0 {
-		if err := rebuildCacheAfterWrite(cfg.DatabaseDSN(), state); err != nil {
+		if err := rebuildCacheAfterWrite(cmd.Context(), cfg.DatabaseDSN(), state); err != nil {
 			return err
 		}
 	}

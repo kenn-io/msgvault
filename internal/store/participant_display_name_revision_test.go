@@ -64,8 +64,9 @@ func TestPostgreSQLParticipantBatchSerializesWithMerge(t *testing.T) {
 	const advisoryKey int64 = 88442212
 	barrier, err := st.DB().Conn(ctx)
 	require.NoError(err)
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		_, _ = barrier.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", advisoryKey)
+		_, _ = barrier.ExecContext(context.WithoutCancel(t.Context()), "SELECT pg_advisory_unlock($1)", advisoryKey)
 		_ = barrier.Close()
 	})
 	_, err = barrier.ExecContext(ctx, "SELECT pg_advisory_lock($1)", advisoryKey)
@@ -92,7 +93,7 @@ func TestPostgreSQLParticipantBatchSerializesWithMerge(t *testing.T) {
 
 	batchDone := make(chan error, 1)
 	go func() {
-		_, batchErr := st.EnsureParticipantsBatch([]mime.Address{
+		_, batchErr := st.EnsureParticipantsBatch(t.Context(), []mime.Address{
 			{Name: "Absorbed", Email: "z-batch-merge@example.com", Domain: "example.com"},
 			{Name: "Survivor", Email: "a-batch-merge@example.com", Domain: "example.com"},
 		})
@@ -128,7 +129,7 @@ func TestEnsureParticipantsBatchConcurrentOppositeOrderConverges(t *testing.T) {
 		go func(batch []mime.Address) {
 			defer wg.Done()
 			<-start
-			result, err := st.EnsureParticipantsBatch(batch)
+			result, err := st.EnsureParticipantsBatch(t.Context(), batch)
 			results <- result
 			errs <- err
 		}(addresses)
@@ -187,14 +188,14 @@ func TestEnsureParticipantsBatchBumpsDisplayNameRevisionForActualInserts(t *test
 	}
 
 	before := participantDisplayNameRevision(t, st)
-	created, err := st.EnsureParticipantsBatch(addresses)
+	created, err := st.EnsureParticipantsBatch(t.Context(), addresses)
 	require.NoError(err)
 	require.Len(created, 2)
 	afterCreate := participantDisplayNameRevision(t, st)
 	assert.Equal(before+1, afterCreate,
 		"one successful batch must invalidate derived participant data once")
 
-	again, err := st.EnsureParticipantsBatch(addresses)
+	again, err := st.EnsureParticipantsBatch(t.Context(), addresses)
 	require.NoError(err)
 	assert.Equal(created, again)
 	assert.Equal(afterCreate, participantDisplayNameRevision(t, st),
@@ -250,7 +251,7 @@ func TestEnsureParticipantByPhoneBackfillBumpsDisplayNameRevisionOnceWhenIdentif
 	const phone = "+1555010200"
 
 	beforeCreate := participantDisplayNameRevision(t, st)
-	participantID, err := st.EnsureParticipantByPhone(phone, "", "whatsapp")
+	participantID, err := st.EnsureParticipantByPhone(t.Context(), phone, "", "whatsapp")
 	require.NoError(err, "seed blank phone participant")
 	assert.Equal(beforeCreate+1, participantDisplayNameRevision(t, st),
 		"new phone participant must invalidate derived participant data")
@@ -258,7 +259,7 @@ func TestEnsureParticipantByPhoneBackfillBumpsDisplayNameRevisionOnceWhenIdentif
 	beforeIdentifier, err := st.ParticipantIdentifierRevision()
 	require.NoError(err, "read participant identifier revision before backfill")
 
-	backfilledID, err := st.EnsureParticipantByPhone(phone, "Phone User", "whatsapp")
+	backfilledID, err := st.EnsureParticipantByPhone(t.Context(), phone, "Phone User", "whatsapp")
 	require.NoError(err, "backfill phone participant display name")
 	assert.Equal(participantID, backfilledID)
 	afterDisplayName := participantDisplayNameRevision(t, st)
@@ -269,7 +270,7 @@ func TestEnsureParticipantByPhoneBackfillBumpsDisplayNameRevisionOnceWhenIdentif
 	assert.Equal(beforeIdentifier, afterIdentifier,
 		"backfill must not bump an already-complete identifier write")
 
-	retryID, err := st.EnsureParticipantByPhone(phone, "Retry User", "whatsapp")
+	retryID, err := st.EnsureParticipantByPhone(t.Context(), phone, "Retry User", "whatsapp")
 	require.NoError(err, "retry phone participant display-name backfill")
 	assert.Equal(participantID, retryID)
 	assert.Equal(afterDisplayName, participantDisplayNameRevision(t, st),
@@ -283,11 +284,11 @@ func TestEnsureParticipantByPhoneSameWhitespaceNameDoesNotBumpDisplayNameRevisio
 	st := f.Store
 	const phone = "+1555010203"
 
-	participantID, err := st.EnsureParticipantByPhone(phone, "   ", "whatsapp")
+	participantID, err := st.EnsureParticipantByPhone(t.Context(), phone, "   ", "whatsapp")
 	require.NoError(err)
 	before := participantDisplayNameRevision(t, st)
 
-	againID, err := st.EnsureParticipantByPhone(phone, "   ", "whatsapp")
+	againID, err := st.EnsureParticipantByPhone(t.Context(), phone, "   ", "whatsapp")
 	require.NoError(err)
 	assert.Equal(participantID, againID)
 	assert.Equal(before, participantDisplayNameRevision(t, st),
@@ -301,18 +302,18 @@ func TestUpdateParticipantDisplayNameByPhoneBumpsDisplayNameRevisionOnlyOnActual
 	st := f.Store
 	const phone = "+1555010201"
 
-	_, err := st.EnsureParticipantByPhone(phone, "", "whatsapp")
+	_, err := st.EnsureParticipantByPhone(t.Context(), phone, "", "whatsapp")
 	require.NoError(err, "seed blank phone participant")
 	before := participantDisplayNameRevision(t, st)
 
-	updated, err := st.UpdateParticipantDisplayNameByPhone(phone, "Phone User")
+	updated, err := st.UpdateParticipantDisplayNameByPhone(t.Context(), phone, "Phone User")
 	require.NoError(err, "update phone participant display name")
 	assert.True(updated, "expected phone display-name update")
 	afterUpdate := participantDisplayNameRevision(t, st)
 	assert.Equal(before+1, afterUpdate,
 		"actual phone display-name update must invalidate derived participant data")
 
-	updated, err = st.UpdateParticipantDisplayNameByPhone(phone, "Replacement User")
+	updated, err = st.UpdateParticipantDisplayNameByPhone(t.Context(), phone, "Replacement User")
 	require.NoError(err, "retry phone participant display-name update")
 	assert.False(updated, "non-empty phone display name must not be overwritten")
 	assert.Equal(afterUpdate, participantDisplayNameRevision(t, st),
@@ -326,18 +327,18 @@ func TestUpdateImessageParticipantDisplayNameByPhoneBumpsDisplayNameRevisionOnly
 	st := f.Store
 	const phone = "+1555010202"
 
-	_, err := st.EnsureParticipantByPhone(phone, phone, "imessage")
+	_, err := st.EnsureParticipantByPhone(t.Context(), phone, phone, "imessage")
 	require.NoError(err, "seed legacy iMessage phone participant")
 	before := participantDisplayNameRevision(t, st)
 
-	updated, err := st.UpdateImessageParticipantDisplayNameByPhone(phone, "iMessage User")
+	updated, err := st.UpdateImessageParticipantDisplayNameByPhone(t.Context(), phone, "iMessage User")
 	require.NoError(err, "update iMessage participant display name")
 	assert.True(updated, "expected iMessage display-name update")
 	afterUpdate := participantDisplayNameRevision(t, st)
 	assert.Equal(before+1, afterUpdate,
 		"actual iMessage display-name update must invalidate derived participant data")
 
-	updated, err = st.UpdateImessageParticipantDisplayNameByPhone(phone, "Replacement User")
+	updated, err = st.UpdateImessageParticipantDisplayNameByPhone(t.Context(), phone, "Replacement User")
 	require.NoError(err, "retry iMessage participant display-name update")
 	assert.False(updated, "non-empty iMessage display name must not be overwritten")
 	assert.Equal(afterUpdate, participantDisplayNameRevision(t, st),
@@ -351,11 +352,11 @@ func TestUpdateImessageParticipantDisplayNameByPhoneSameValueIsNoop(t *testing.T
 	st := f.Store
 	const phone = "+1555010204"
 
-	_, err := st.EnsureParticipantByPhone(phone, phone, "imessage")
+	_, err := st.EnsureParticipantByPhone(t.Context(), phone, phone, "imessage")
 	require.NoError(err)
 	before := participantDisplayNameRevision(t, st)
 
-	updated, err := st.UpdateImessageParticipantDisplayNameByPhone(phone, phone)
+	updated, err := st.UpdateImessageParticipantDisplayNameByPhone(t.Context(), phone, phone)
 	require.NoError(err)
 	assert.False(updated)
 	assert.Equal(before, participantDisplayNameRevision(t, st),
@@ -372,14 +373,14 @@ func TestUpdateParticipantDisplayNameByEmailBumpsDisplayNameRevisionOnlyOnActual
 	require.NoError(err, "seed blank email participant")
 	before := participantDisplayNameRevision(t, st)
 
-	updated, err := st.UpdateParticipantDisplayNameByEmail("display-name@example.com", "Email User")
+	updated, err := st.UpdateParticipantDisplayNameByEmail(t.Context(), "display-name@example.com", "Email User")
 	require.NoError(err, "update email participant display name")
 	assert.True(updated, "expected email display-name update")
 	afterUpdate := participantDisplayNameRevision(t, st)
 	assert.Equal(before+1, afterUpdate,
 		"actual email display-name update must invalidate derived participant data")
 
-	updated, err = st.UpdateParticipantDisplayNameByEmail("display-name@example.com", "Replacement User")
+	updated, err = st.UpdateParticipantDisplayNameByEmail(t.Context(), "display-name@example.com", "Replacement User")
 	require.NoError(err, "retry email participant display-name update")
 	assert.False(updated, "non-empty email display name must not be overwritten")
 	assert.Equal(afterUpdate, participantDisplayNameRevision(t, st),

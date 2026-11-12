@@ -20,22 +20,22 @@ func BenchmarkVectorRetrieval(b *testing.B) {
 	const messages, dimension = 100_000, 64
 	root := b.TempDir()
 	mainPath := filepath.Join(root, "main.db")
-	st, err := store.OpenForTest(mainPath)
+	st, err := store.OpenForTest(b.Context(), mainPath)
 	requirements.NoError(err)
 	b.Cleanup(func() { require.NoError(b, st.Close()) })
 	requirements.NoError(st.InitSchema())
-	_, err = st.DB().Exec(`INSERT INTO sources (id, source_type, identifier)
+	_, err = st.DB().ExecContext(b.Context(), `INSERT INTO sources (id, source_type, identifier)
 		VALUES (1, 'gmail', 'archive@example.test')`)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+	_, err = st.DB().ExecContext(b.Context(), `INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
 		VALUES (1, 1, 'synthetic-thread', 'email')`)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(fmt.Sprintf(`WITH RECURSIVE ids(id) AS (
+	_, err = st.DB().ExecContext(b.Context(), fmt.Sprintf(`WITH RECURSIVE ids(id) AS (
 		SELECT 1 UNION ALL SELECT id + 1 FROM ids WHERE id < %d
 	) INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, message_type)
 		SELECT id, 1, 'message-' || id, 1, 'Synthetic correspondence', 'email' FROM ids`, messages))
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`INSERT INTO messages_fts (rowid, subject, body)
+	_, err = st.DB().ExecContext(b.Context(), `INSERT INTO messages_fts (rowid, subject, body)
 		SELECT id, subject, 'project update ' || CASE WHEN id <= 20 THEN 'quartz' ELSE '' END FROM messages`)
 	requirements.NoError(err)
 	backend, err := Open(b.Context(), Options{

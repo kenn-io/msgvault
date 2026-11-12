@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -20,7 +21,7 @@ type columnCacheKey struct {
 	table string
 }
 
-func hasColumn(db *sql.DB, table, column string) bool {
+func hasColumn(ctx context.Context, db *sql.DB, table, column string) bool {
 	columnCacheMu.Lock()
 	defer columnCacheMu.Unlock()
 
@@ -28,7 +29,8 @@ func hasColumn(db *sql.DB, table, column string) bool {
 	cols, ok := columnCache[key]
 	if !ok {
 		cols = make(map[string]bool)
-		rows, err := db.Query(
+		rows, err := db.QueryContext(
+			ctx,
 			fmt.Sprintf("PRAGMA table_info(%s)", table),
 		)
 		if err == nil {
@@ -66,15 +68,15 @@ func resetColumnCache() {
 // fetchChats returns all non-hidden chats from the WhatsApp database.
 // Joins with the jid table to get JID details for each chat.
 // Handles old WhatsApp schemas that lack the group_type column.
-func fetchChats(db *sql.DB) ([]waChat, error) {
-	hasGroupType := hasColumn(db, "chat", "group_type")
+func fetchChats(ctx context.Context, db *sql.DB) ([]waChat, error) {
+	hasGroupType := hasColumn(ctx, db, "chat", "group_type")
 
 	groupTypeExpr := "0"
 	if hasGroupType {
 		groupTypeExpr = "COALESCE(c.group_type, 0)"
 	}
 
-	rows, err := db.Query(fmt.Sprintf(`
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			c._id,
 			c.jid_row_id,
@@ -113,8 +115,8 @@ func fetchChats(db *sql.DB) ([]waChat, error) {
 // fetchMessages returns messages for a chat, batched after a given _id.
 // Messages are ordered by _id ascending for deterministic resumability.
 // Joins with jid to resolve sender information.
-func fetchMessages(db *sql.DB, chatRowID int64, afterID int64, limit int) ([]waMessage, error) {
-	rows, err := db.Query(`
+func fetchMessages(ctx context.Context, db *sql.DB, chatRowID int64, afterID int64, limit int) ([]waMessage, error) {
+	rows, err := db.QueryContext(ctx, `
 		SELECT
 			m._id,
 			m.chat_row_id,
@@ -160,12 +162,12 @@ func fetchMessages(db *sql.DB, chatRowID int64, afterID int64, limit int) ([]waM
 // fetchMedia returns media metadata for a batch of message row IDs.
 // Returns a map of message_row_id → waMedia.
 // Handles old WhatsApp schemas that lack the media_caption column.
-func fetchMedia(db *sql.DB, messageRowIDs []int64) (map[int64]waMedia, error) {
+func fetchMedia(ctx context.Context, db *sql.DB, messageRowIDs []int64) (map[int64]waMedia, error) {
 	if len(messageRowIDs) == 0 {
 		return make(map[int64]waMedia), nil
 	}
 
-	hasCaption := hasColumn(db, "message_media", "media_caption")
+	hasCaption := hasColumn(ctx, db, "message_media", "media_caption")
 
 	result := make(map[int64]waMedia)
 
@@ -201,7 +203,7 @@ func fetchMedia(db *sql.DB, messageRowIDs []int64) (map[int64]waMedia, error) {
 			WHERE mm.message_row_id IN (%s)
 		`, captionExpr, strings.Join(placeholders, ","))
 
-		rows, err := db.Query(query, args...)
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("fetch media: %w", err)
 		}
@@ -238,7 +240,7 @@ func scanMediaChunk(rows *sql.Rows, result map[int64]waMedia) error {
 
 // fetchReactions returns reactions for a batch of message row IDs.
 // Returns a map of message_row_id → []waReaction.
-func fetchReactions(db *sql.DB, messageRowIDs []int64) (map[int64][]waReaction, error) {
+func fetchReactions(ctx context.Context, db *sql.DB, messageRowIDs []int64) (map[int64][]waReaction, error) {
 	if len(messageRowIDs) == 0 {
 		return make(map[int64][]waReaction), nil
 	}
@@ -277,7 +279,7 @@ func fetchReactions(db *sql.DB, messageRowIDs []int64) (map[int64][]waReaction, 
 			  AND ar.reaction != ''
 		`, strings.Join(placeholders, ","))
 
-		rows, err := db.Query(query, args...)
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			// Table might not exist in older DB versions
 			if isTableNotFound(err) {
@@ -320,8 +322,8 @@ func scanReactionChunk(rows *sql.Rows, result map[int64][]waReaction) error {
 // In the WhatsApp schema, group_participants.gjid and .jid are TEXT fields
 // containing raw JID strings (e.g., "447700900000@s.whatsapp.net"),
 // not integer row IDs.
-func fetchGroupParticipants(db *sql.DB, groupJIDRawString string) ([]waGroupMember, error) {
-	rows, err := db.Query(`
+func fetchGroupParticipants(ctx context.Context, db *sql.DB, groupJIDRawString string) ([]waGroupMember, error) {
+	rows, err := db.QueryContext(ctx, `
 		SELECT
 			gp.gjid,
 			gp.jid,
@@ -356,7 +358,7 @@ func fetchGroupParticipants(db *sql.DB, groupJIDRawString string) ([]waGroupMemb
 
 // fetchQuotedMessages returns quoted message references for a batch of message row IDs.
 // Returns a map of message_row_id → waQuoted (the message that contains the quote).
-func fetchQuotedMessages(db *sql.DB, messageRowIDs []int64) (map[int64]waQuoted, error) {
+func fetchQuotedMessages(ctx context.Context, db *sql.DB, messageRowIDs []int64) (map[int64]waQuoted, error) {
 	if len(messageRowIDs) == 0 {
 		return make(map[int64]waQuoted), nil
 	}
@@ -385,7 +387,7 @@ func fetchQuotedMessages(db *sql.DB, messageRowIDs []int64) (map[int64]waQuoted,
 			  AND mq.key_id != ''
 		`, strings.Join(placeholders, ","))
 
-		rows, err := db.Query(query, args...)
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			if isTableNotFound(err) {
 				return result, nil
@@ -422,10 +424,10 @@ func scanQuotedChunk(rows *sql.Rows, result map[int64]waQuoted) error {
 // links two jid rows: one with server="lid" and one with the real phone
 // (server="s.whatsapp.net"). Returns an empty map gracefully if the
 // jid_map table doesn't exist (older WhatsApp DB versions).
-func fetchLidMap(db *sql.DB) (map[int64]waLidMapping, error) {
+func fetchLidMap(ctx context.Context, db *sql.DB) (map[int64]waLidMapping, error) {
 	result := make(map[int64]waLidMapping)
 
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(ctx, `
 		SELECT
 			jm.lid_row_id,
 			COALESCE(phone_jid.user, ''),

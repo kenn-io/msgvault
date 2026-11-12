@@ -287,52 +287,6 @@ func TestOpenHTTPStoreDisabledAutoStartDoesNotStartDaemon(t *testing.T) {
 	require.NoError(owner.Close(), "release supervised ownership")
 }
 
-func TestOpenHTTPStoreDisabledAutoStartReusesOlderDaemonWithoutRestart(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	withTestVersion(t, "v1.1.0")
-	dataDir := t.TempDir()
-	c := lifecycleTestConfig(dataDir)
-	c.Server.DaemonAutoStart = new(false)
-	c.Server.DaemonAutoRestart = config.DaemonAutoRestartAlways
-	testCtx := withStoreResolverConfig(t, c)
-	ping := httptestPingDaemon(t)
-	portText := strconv.Itoa(ping.Port)
-	_, err := daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
-		PID:     os.Getpid(),
-		Network: daemon.NetworkTCP,
-		Address: net.JoinHostPort(ping.Host, portText),
-		Service: daemonService,
-		Version: "v1.0.0",
-		Metadata: map[string]string{
-			runtimeHost:             ping.Host,
-			runtimePort:             portText,
-			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
-			runtimeAPISchemaVersion: api.APISchemaVersion,
-			runtimeAuthFingerprint:  daemonAPIKeyFingerprint(""),
-			runtimeCreateTime:       matchingProcessCreateTime(t),
-		},
-	})
-	require.NoError(err, "write runtime")
-
-	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
-		require.FailNow("disabled auto-start must not stop an older daemon")
-		return errors.New("unreachable")
-	})
-	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
-		require.FailNow("disabled auto-start must not start a replacement daemon")
-		return nil, errors.New("unreachable")
-	})
-
-	st, info, err := OpenHTTPStore(testCtx)
-	require.NoError(err, "OpenHTTPStore")
-	t.Cleanup(func() { _ = st.Close() })
-
-	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
-	assert.Equal("http://"+net.JoinHostPort(ping.Host, portText), info.URL)
-}
-
 func TestOpenHTTPStoreDisabledAutoStartReportsIncompatibleDaemonWithoutStopping(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -538,7 +492,7 @@ func TestWaitForStartupCacheBuildOutcomeWaitsAfterHTTPReadiness(t *testing.T) {
 		}()
 
 		gotRT, outcome, err := waitForStartupCacheBuildOutcome(
-			context.Background(), dataDir, &backgroundServeProcess{}, rt, time.Second,
+			t.Context(), dataDir, &backgroundServeProcess{}, rt, time.Second,
 		)
 		require.NoError(err)
 		require.NotNil(gotRT)
@@ -550,7 +504,7 @@ func TestWaitForStartupCacheBuildOutcomeReportsProcessExit(t *testing.T) {
 	waitCh := make(chan error, 1)
 	waitCh <- errors.New("server exited")
 	_, _, err := waitForStartupCacheBuildOutcome(
-		context.Background(), t.TempDir(), &backgroundServeProcess{Wait: waitCh},
+		t.Context(), t.TempDir(), &backgroundServeProcess{Wait: waitCh},
 		&DaemonRuntime{}, time.Second,
 	)
 	require.Error(t, err)
@@ -562,7 +516,7 @@ func TestWaitForStartupCacheBuildOutcomeConsumesFatalResultAfterDaemonExit(t *te
 	require := require.New(t)
 	dataDir := t.TempDir()
 	c := lifecycleTestConfig(dataDir)
-	owner, err := claimServeOwnership(context.Background(), c, "127.0.0.1", 8123, "v-test")
+	owner, err := claimServeOwnership(t.Context(), c, "127.0.0.1", 8123, "v-test")
 	require.NoError(err, "claim serve ownership")
 	record := owner.record
 	require.NoError(
@@ -574,7 +528,7 @@ func TestWaitForStartupCacheBuildOutcomeConsumesFatalResultAfterDaemonExit(t *te
 	waitCh := make(chan error, 1)
 	waitCh <- errors.New("server exited")
 	gotRT, outcome, err := waitForStartupCacheBuildOutcome(
-		context.Background(), dataDir, &backgroundServeProcess{Wait: waitCh},
+		t.Context(), dataDir, &backgroundServeProcess{Wait: waitCh},
 		&DaemonRuntime{Record: record}, time.Second,
 	)
 	require.NoError(err,
@@ -1141,7 +1095,7 @@ func TestProbeLocalDaemonAuthDoesNotWaitForStats(t *testing.T) {
 	c.Server.APIKey = "secret"
 
 	start := time.Now()
-	require.NoError(t, probeLocalDaemonAuth(context.Background(), rt, c))
+	require.NoError(t, probeLocalDaemonAuth(t.Context(), rt, c))
 	assert.Less(t, time.Since(start), localDaemonAuthProbeTimeout)
 	assert.False(t, statsCalled.Load(), "auth probe never performs archive statistics")
 }
@@ -1177,7 +1131,7 @@ func TestProbeLocalDaemonAuthDoesNotSendAPIKeyToUnprovenEndpoint(t *testing.T) {
 			c := lifecycleTestConfig(t.TempDir())
 			c.Server.APIKey = "configured-api-key"
 
-			err := probeLocalDaemonAuth(context.Background(), rt, c)
+			err := probeLocalDaemonAuth(t.Context(), rt, c)
 
 			require.Error(t, err, "unconfirmed process identity requires endpoint proof")
 			assert.Positive(t, proofRequests.Load(), "unconfirmed endpoint is challenged")
@@ -1202,7 +1156,7 @@ func TestProbeLocalDaemonAuthRespectsParentDeadline(t *testing.T) {
 	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint("secret"))
 	c := lifecycleTestConfig(t.TempDir())
 	c.Server.APIKey = "secret"
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the health handler blocks until the request ends
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // deadlinetest: the deadline is the expected result; the health handler blocks until the request ends
 	t.Cleanup(cancel)
 
 	err := probeLocalDaemonAuth(ctx, rt, c)
@@ -1240,32 +1194,61 @@ func daemonRuntimeForHTTPServer(t *testing.T, server *httptest.Server, authFinge
 	}
 }
 
-func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
+type openHTTPStoreDaemonVersionCase struct {
+	name, cli, daemon         string
+	disabled, replace, notice bool
+	persistent                bool
+	incompatible              bool
+	policy                    string
+}
+
+func TestOpenHTTPStoreDaemonVersionPolicy(t *testing.T) {
+	for _, tt := range []openHTTPStoreDaemonVersionCase{
+		{name: "same base source stays", cli: "v0.23.0-45-gabc", daemon: "v0.23.0-46-gdef", notice: true, policy: config.DaemonAutoRestartNewer},
+		{name: "persistent source replacement", persistent: true, cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
+		{name: "persistent incompatible replacement", persistent: true, incompatible: true, cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
+		{name: "source replaces release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", replace: true, policy: config.DaemonAutoRestartNewer},
+		{name: "never keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", notice: true, policy: config.DaemonAutoRestartNever},
+		{name: "disabled auto-start keeps release", cli: "v0.23.0-45-gabc", daemon: "v0.23.0", disabled: true, notice: true, policy: config.DaemonAutoRestartAlways},
+	} {
+		t.Run(tt.name, func(t *testing.T) { testOpenHTTPStoreDaemonVersionPolicy(t, tt) })
+	}
+}
+
+func testOpenHTTPStoreDaemonVersionPolicy(t *testing.T, tt openHTTPStoreDaemonVersionCase) {
+	t.Helper()
 	assert := assert.New(t)
 	require := require.New(
 		t)
 
-	withTestVersion(t, "v1.1.0")
+	withTestVersion(t, tt.cli)
 	dataDir := t.TempDir()
 	localCfg := lifecycleTestConfig(dataDir)
-	localCfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNever
+	localCfg.Server.DaemonAutoRestart = tt.policy
+	if tt.disabled {
+		localCfg.Server.DaemonAutoStart = new(false)
+	}
 	testCtx := withStoreResolverConfig(t, localCfg)
 
-	mux := http.NewServeMux()
-	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
-		Service: daemonService,
-		Version: "v1.0.0",
-	}))
-	mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"total_messages":9}`))
-	})
-	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-	server := httptest.NewServer(mux)
-	t.Cleanup(server.Close)
+	newServer := func(version string) *httptest.Server {
+		mux := http.NewServeMux()
+		mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+			Service: daemonService,
+			Version: version,
+		}))
+		mux.HandleFunc("/api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"total_messages":9}`))
+		})
+		mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		})
+		server := httptest.NewServer(mux)
+		t.Cleanup(server.Close)
+		return server
+	}
+	server := newServer(tt.daemon)
 	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
 	require.NoError(
 		err, "split listener address")
@@ -1274,16 +1257,27 @@ func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
 	require.NoError(
 		err, "parse listener port")
 
+	apiVersion := daemonAPIVersion
+	if tt.incompatible {
+		apiVersion--
+	}
+	idleTimeout := "20m0s"
+	if tt.persistent {
+		idleTimeout = "0s"
+	}
 	_, err = daemonRuntimeStore(dataDir).Write(daemon.RuntimeRecord{
 		PID:     os.Getpid(),
 		Network: daemon.NetworkTCP,
 		Address: net.JoinHostPort(host, portText),
 		Service: daemonService,
-		Version: "v1.0.0",
+		Version: tt.daemon,
 		Metadata: map[string]string{
+			runtimePersistent:       strconv.FormatBool(tt.persistent),
+			runtimeIdleTimeout:      idleTimeout,
+			runtimeBackground:       "true",
 			runtimeHost:             host,
 			runtimePort:             strconv.Itoa(port),
-			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
+			runtimeAPIVersion:       strconv.Itoa(apiVersion),
 			runtimeAPISchemaVersion: api.APISchemaVersion,
 			runtimeCreateTime:       matchingProcessCreateTime(t),
 		},
@@ -1291,12 +1285,28 @@ func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
 	require.NoError(
 		err, "write runtime")
 
-	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
-		require.FailNow("never policy must not start over a compatible daemon")
-		return nil, errors.New("unreachable")
+	successorServer := newServer(tt.cli)
+	successor := daemonRuntimeForHTTPServer(t, successorServer, daemonAPIKeyFingerprint(""))
+	successor.Record.Version = tt.cli
+	stopped, started := false, false
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
+		require.True(tt.replace, "retained daemon must not stop")
+		stopped = true
+		return nil
 	})
+	stubStartServeBackgroundProcess(t, func(_ *config.Config, opts backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		assert.Equal(tt.persistent, opts.Persistent)
+		require.True(tt.replace, "retained daemon must not start")
+		started = true
+		return &backgroundServeProcess{PID: os.Getpid(), Wait: make(chan error)}, nil
+	})
+	stubWaitForBackgroundServeReady(t, func(context.Context, string, <-chan error, time.Duration) (*DaemonRuntime, bool, error) {
+		return successor, true, nil
+	})
+	var st *daemonclient.Client
+	var info HTTPStoreInfo
+	stderr := captureStderrDuring(t, func() { st, info, err = OpenHTTPStore(testCtx) })
 
-	st, info, err := OpenHTTPStore(testCtx)
 	require.NoError(
 		err, "OpenHTTPStore")
 
@@ -1308,6 +1318,21 @@ func TestOpenHTTPStoreHonorsNeverAutoRestartPolicy(t *testing.T) {
 
 	assert.Equal(HTTPStoreLocalDaemon, info.Kind)
 	assert.Equal(int64(9), stats.MessageCount)
+	assert.Equal(tt.replace, info.StartedLocalDaemon)
+	wantURL := server.URL
+	if tt.replace {
+		assert.True(stopped)
+		assert.True(started)
+		wantURL = successorServer.URL
+	}
+	assert.Equal(wantURL, info.URL)
+	if tt.notice {
+		assert.Contains(stderr, "to use this version")
+	} else if tt.replace {
+		assert.Contains(stderr, "Starting local msgvault daemon")
+	} else {
+		assert.Empty(stderr)
+	}
 }
 
 func TestOpenHTTPStoreLocalFlagUsesLocalDaemonInsteadOfConfiguredRemote(t *testing.T) {
@@ -1361,7 +1386,7 @@ func TestWaitForUsableBackgroundRuntimeReturnsLockWhenNoDaemon(t *testing.T) {
 	dataDir := t.TempDir()
 
 	rt, lock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
-		context.Background(), dataDir, config.DaemonAutoRestartNewer, time.Second,
+		t.Context(), dataDir, config.DaemonAutoRestartNewer, time.Second,
 	)
 	require.NoError(err, "wait should not error when no daemon is running")
 	assert.Nil(rt, "no runtime")
@@ -1393,7 +1418,7 @@ func TestWaitForUsableBackgroundRuntimeWaitsWhileChildInitializing(t *testing.T)
 	require.NoError(err, "write runtime record")
 
 	rt, lock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
-		context.Background(), dataDir, config.DaemonAutoRestartNewer, 750*time.Millisecond, //nolint:kennlint // deadlinetest: the wait must expire while the live child has no usable endpoint
+		t.Context(), dataDir, config.DaemonAutoRestartNewer, 750*time.Millisecond, //nolint:kennlint // deadlinetest: the wait must expire while the live child has no usable endpoint
 	)
 	require.NoError(err, "wait should reach the timeout path without error")
 	assert.Nil(rt, "initializing child is not yet usable")
@@ -1410,7 +1435,7 @@ func TestDaemonStartInProgressDetectsInitializingChild(t *testing.T) {
 	require := require.New(t)
 
 	empty := t.TempDir()
-	inProgress, err := daemonStartInProgress(context.Background(), empty)
+	inProgress, err := daemonStartInProgress(t.Context(), empty)
 	require.NoError(err, "no records should not error")
 	assert.False(inProgress, "no runtime records means no start in progress")
 
@@ -1430,7 +1455,7 @@ func TestDaemonStartInProgressDetectsInitializingChild(t *testing.T) {
 	})
 	require.NoError(err, "write runtime record")
 
-	inProgress, err = daemonStartInProgress(context.Background(), dataDir)
+	inProgress, err = daemonStartInProgress(t.Context(), dataDir)
 	require.NoError(err, "live-but-unready record should not error")
 	assert.True(inProgress, "an initializing child must report a start in progress")
 }
@@ -1462,7 +1487,7 @@ func TestWaitForUsableBackgroundRuntimeTakesOverUpgradeEligibleDaemon(t *testing
 	require.NoError(err, "write runtime record")
 
 	rt, lock, err := waitForUsableBackgroundRuntimeOrLaunchLock(
-		context.Background(), dataDir, config.DaemonAutoRestartNewer, time.Second,
+		t.Context(), dataDir, config.DaemonAutoRestartNewer, time.Second,
 	)
 	require.NoError(err, "wait should not error")
 	assert.Nil(rt, "upgrade-eligible daemon must not be returned as usable")

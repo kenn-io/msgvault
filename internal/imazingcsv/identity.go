@@ -1,6 +1,7 @@
 package imazingcsv
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -57,18 +58,18 @@ func syntheticIdentity(sourceIdentifier, chatKey, category, displayName string) 
 	}
 }
 
-func ensureIdentity(st *store.Store, identity participantIdentity) (int64, error) {
+func ensureIdentity(ctx context.Context, st *store.Store, identity participantIdentity) (int64, error) {
 	switch identity.Kind {
 	case identityPhone:
-		return st.EnsureParticipantByPhone(identity.Value, identity.DisplayName, SourceType)
+		return st.EnsureParticipantByPhone(ctx, identity.Value, identity.DisplayName, SourceType)
 	case identityEmail:
 		domain := ""
 		if at := strings.LastIndexByte(identity.Value, '@'); at >= 0 {
 			domain = identity.Value[at+1:]
 		}
-		return st.EnsureParticipant(identity.Value, identity.DisplayName, domain)
+		return st.EnsureParticipantContext(ctx, identity.Value, identity.DisplayName, domain)
 	case identityOpaque:
-		return st.EnsureParticipantByIdentifier(SourceType, identity.Value, identity.DisplayName)
+		return st.EnsureParticipantByIdentifierContext(ctx, SourceType, identity.Value, identity.DisplayName)
 	default:
 		return 0, fmt.Errorf("unsupported identity kind %q", identity.Kind)
 	}

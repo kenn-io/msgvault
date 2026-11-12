@@ -3,7 +3,6 @@
 package embed
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -31,7 +30,7 @@ import (
 func TestWorker_RepairBelowWatermark_ReembedsAfterWatermarkReset(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Seed 5 messages and embed all of them. With BatchSize 5 the worker scans
 	// 1..5, embeds them, and advances the watermark to 5 (batchMax).

@@ -88,13 +88,13 @@ func TestImportChatsEndToEnd(t *testing.T) {
 
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
 	imp := NewImporter(st, c)
-	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
+	sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
 	require.NoError(err)
 	assert.EqualValues(1, sum.ChatsProcessed)
 	assert.EqualValues(1, sum.MessagesAdded)
 
 	var cnt int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='teams'`).Scan(&cnt))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='teams'`).Scan(&cnt))
 	assert.Equal(1, cnt)
 }
 
@@ -129,14 +129,14 @@ func TestImportChatsPopulatesConversationParticipantsAndStats(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
+	_, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
 	require.NoError(err)
 
 	var conversationID int64
 	var messageCount, participantCount int
 	var lastMessageAt sql.NullTime
 	var preview sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id, message_count, participant_count, last_message_at, last_message_preview
 		FROM conversations
 		WHERE source_conversation_id = ?
@@ -147,7 +147,7 @@ func TestImportChatsPopulatesConversationParticipantsAndStats(t *testing.T) {
 	assert.Equal("hello stats", preview.String)
 
 	var linkedParticipants int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*)
 		FROM conversation_participants cp
 		JOIN participants p ON p.id = cp.participant_id
@@ -217,22 +217,22 @@ func TestInlineImageDownloaded(t *testing.T) {
 	dir := t.TempDir()
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", AttachmentsDir: dir})
+	sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", AttachmentsDir: dir})
 	require.NoError(err)
 	assert.EqualValues(1, sum.InlineImagesCopied)
 	assert.EqualValues(0, sum.Errors)
 	var role, roleSource string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT attachment_role, role_source FROM attachments LIMIT 1`).Scan(&role, &roleSource))
 	assert.Equal("inline", role)
 	assert.Equal("importer_semantics", roleSource)
 	var sizeEstimate int64
-	require.NoError(st.DB().QueryRow(`SELECT size_estimate FROM messages LIMIT 1`).Scan(&sizeEstimate))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT size_estimate FROM messages LIMIT 1`).Scan(&sizeEstimate))
 	assert.EqualValues(7, sizeEstimate, "the downloaded image contributes its bytes")
 
-	_, err = imp.Import(context.Background(), ImportOptions{Email: "me@example.com", AttachmentsDir: dir, Full: true})
+	_, err = imp.Import(t.Context(), ImportOptions{Email: "me@example.com", AttachmentsDir: dir, Full: true})
 	require.NoError(err)
-	require.NoError(st.DB().QueryRow(`SELECT size_estimate FROM messages LIMIT 1`).Scan(&sizeEstimate))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT size_estimate FROM messages LIMIT 1`).Scan(&sizeEstimate))
 	assert.EqualValues(7, sizeEstimate, "reimport retains cached image bytes without counting them twice")
 }
 
@@ -264,7 +264,7 @@ func TestContentlessGraphAttachmentDoesNotSetMessageAttachmentStats(t *testing.T
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err := imp.Import(context.Background(), ImportOptions{
+	_, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 	})
@@ -273,7 +273,7 @@ func TestContentlessGraphAttachmentDoesNotSetMessageAttachmentStats(t *testing.T
 	var hasAttachments bool
 	var messageAttachmentCount int
 	var actualAttachmentRows int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.has_attachments, m.attachment_count, COUNT(a.id)
 		FROM messages m
 		LEFT JOIN attachments a ON a.message_id = m.id
@@ -322,7 +322,7 @@ func TestTeamsReimportRemovesStaleInlineAttachments(t *testing.T) {
 	attachmentsDir := t.TempDir()
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err := imp.Import(context.Background(), ImportOptions{
+	_, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 		AttachmentsDir:  attachmentsDir,
@@ -331,21 +331,22 @@ func TestTeamsReimportRemovesStaleInlineAttachments(t *testing.T) {
 	require.NoError(err)
 
 	var messageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT id FROM messages WHERE source_message_id = ?
 	`), chatSourceMessageID("19:inline-edit@thread.v2", "m1")).Scan(&messageID))
 	var attachmentCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 		messageID,
 	).Scan(&attachmentCount))
 	require.Equal(1, attachmentCount)
 	var sizeEstimate int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&sizeEstimate))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&sizeEstimate))
 	assert.EqualValues(7, sizeEstimate)
 
 	includeImage = false
-	_, err = imp.Import(context.Background(), ImportOptions{
+	_, err = imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 		AttachmentsDir:  attachmentsDir,
@@ -355,7 +356,7 @@ func TestTeamsReimportRemovesStaleInlineAttachments(t *testing.T) {
 
 	var hasAttachments bool
 	var denormalizedCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.has_attachments, m.attachment_count, COUNT(a.id)
 		FROM messages m
 		LEFT JOIN attachments a ON a.message_id = m.id
@@ -365,7 +366,7 @@ func TestTeamsReimportRemovesStaleInlineAttachments(t *testing.T) {
 	assert.False(hasAttachments)
 	assert.Equal(0, denormalizedCount)
 	assert.Equal(0, attachmentCount)
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&sizeEstimate))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&sizeEstimate))
 	assert.EqualValues(6, sizeEstimate, "removing the image leaves only the edited body bytes")
 }
 
@@ -426,21 +427,21 @@ func TestTeamsInlineMarkerSurvivesLinkAttachmentReplacement(t *testing.T) {
 		"the surviving oversize marker must keep the second sync from re-fetching")
 
 	var messageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
 		chatSourceMessageID("19:marker@thread.v2", "m1")).Scan(&messageID))
 	markerID := "teams:inline:/chats/19:marker@thread.v2/messages/m1/hostedContents/1/$value"
-	markers, err := st.MessageTeamsInlineAttachments(messageID)
+	markers, err := st.MessageTeamsInlineAttachments(t.Context(), messageID)
 	require.NoError(err)
 	require.Contains(markers, markerID)
 	assert.Equal(attachmentpolicy.StateSkipped, markers[markerID].State)
 	assert.Equal(attachmentpolicy.SkipSizeCap, markers[markerID].SkipReason)
 	assert.Greater(markers[markerID].Size, 10, "the observed oversize must survive the link replacement")
 	var sizeEstimate int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&sizeEstimate))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), messageID).Scan(&sizeEstimate))
 	assert.Zero(sizeEstimate, "an oversize marker does not report downloaded bytes")
 
 	var linkRows int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM attachments WHERE message_id = ? AND storage_path = ?
 	`), messageID, "https://example.com/spec.pdf").Scan(&linkRows))
 	assert.Equal(1, linkRows, "the link attachment must still be recorded")
@@ -505,7 +506,7 @@ func TestBackfillInlineMedia(t *testing.T) {
 	client := NewClient(srv.URL+"/v1.0", func(context.Context) (string, error) { return "t", nil }, 50)
 	imp := NewImporter(st, client)
 
-	sum, err := imp.BackfillInlineMedia(context.Background(), ImportOptions{
+	sum, err := imp.BackfillInlineMedia(t.Context(), ImportOptions{
 		Email:          "me@example.com",
 		AttachmentsDir: t.TempDir(),
 	})
@@ -514,7 +515,8 @@ func TestBackfillInlineMedia(t *testing.T) {
 	assert.EqualValues(0, sum.Errors)
 
 	var attCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 		msgID,
 	).Scan(&attCount))
@@ -522,14 +524,15 @@ func TestBackfillInlineMedia(t *testing.T) {
 
 	var hasAttachments bool
 	var messageAttachmentCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`),
 		msgID,
 	).Scan(&hasAttachments, &messageAttachmentCount))
 	assert.True(hasAttachments, "backfill should refresh the message attachment flag")
 	assert.Equal(1, messageAttachmentCount, "backfill should refresh the message attachment count")
 	var sizeEstimate int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), msgID).Scan(&sizeEstimate))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), msgID).Scan(&sizeEstimate))
 	assert.EqualValues(12, sizeEstimate, "backfill includes five UTF-8 body bytes and seven image bytes")
 }
 
@@ -588,13 +591,13 @@ func TestBackfillInlineMediaSkipsMergedHistoryAndPreservesCopiedAttachments(t *t
 	historyOnly := makeMessage(from.ID, makeConversation(from.ID, "!history:example.test"), "history-only", historyOnlyURL, false)
 
 	const contentHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO attachments(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO attachments(
 		message_id, storage_path, content_hash, size, source_attachment_id,
 		attachment_state, attachment_role, role_source, source_part_key
 	) VALUES (?, 'live-image', ?, 12, 'teams:inline:/chats/shared/messages/previous/hostedContents/1/$value',
 		'stored', 'inline', 'importer_semantics', 'teams:live-image')`), liveMessage, contentHash)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO attachments(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO attachments(
 		message_id, storage_path, content_hash, size, source_attachment_id, filename,
 		attachment_state, attachment_role, role_source, source_part_key
 	) VALUES (?, 'historical-image', ?, 12, 'teams:inline:/historical-copy',
@@ -607,16 +610,16 @@ func TestBackfillInlineMediaSkipsMergedHistoryAndPreservesCopiedAttachments(t *t
 	require.NoError(err)
 	assert.Equal(int64(1), merge.DuplicatesHidden)
 	var historyIsArchiveOnly bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT archive_only FROM source_merge_messages WHERE message_id = ?`),
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT archive_only FROM source_merge_messages WHERE message_id = ?`),
 		historyOnly).Scan(&historyIsArchiveOnly))
 	assert.True(historyIsArchiveOnly)
 	var duplicateHidden bool
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT deleted_at IS NOT NULL FROM messages WHERE id = ?`),
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT deleted_at IS NOT NULL FROM messages WHERE id = ?`),
 		historyDuplicate).Scan(&duplicateHidden))
 	assert.True(duplicateHidden)
 	var copiedAttachmentID int64
 	var copiedPath string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT a.id, a.storage_path
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT a.id, a.storage_path
 		FROM source_merge_attachments sa JOIN attachments a ON a.id = sa.attachment_id
 		WHERE a.message_id = ?`), liveMessage).Scan(&copiedAttachmentID, &copiedPath))
 
@@ -631,7 +634,7 @@ func TestBackfillInlineMediaSkipsMergedHistoryAndPreservesCopiedAttachments(t *t
 		"the destination backfill must not fetch archive-only provider URLs")
 
 	var retainedCopyPath string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT storage_path FROM attachments WHERE id = ?`),
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT storage_path FROM attachments WHERE id = ?`),
 		copiedAttachmentID).Scan(&retainedCopyPath))
 	assert.Equal(copiedPath, retainedCopyPath, "refresh must preserve copied historical attachment evidence")
 
@@ -668,7 +671,7 @@ func TestBackfillInlineMediaPolicySkipsChannelWithoutFetch(t *testing.T) {
 	client := NewClient(srv.URL+"/v1.0", func(context.Context) (string, error) { return "t", nil }, 50)
 	imp := NewImporter(st, client)
 
-	sum, err := imp.BackfillInlineMedia(context.Background(), ImportOptions{
+	sum, err := imp.BackfillInlineMedia(t.Context(), ImportOptions{
 		Email: "me@example.com", AttachmentsDir: t.TempDir(),
 		MediaPolicy: attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeDirect, MaxBytes: 100 << 20},
 	})
@@ -678,7 +681,7 @@ func TestBackfillInlineMediaPolicySkipsChannelWithoutFetch(t *testing.T) {
 	assert.Zero(requests)
 
 	var state, reason string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT attachment_state, attachment_skip_reason FROM attachments WHERE message_id = ?
 	`), messageID).Scan(&state, &reason))
 	assert.Equal(string(attachmentpolicy.StateSkipped), state)
@@ -721,7 +724,7 @@ func TestBackfillInlineMediaPreservesLegacyStoredMediaUntilReplacementSucceeds(t
 			require.NoError(err)
 			bodyHTML := `<img src="` + srv.URL + `/v1.0/chats/c/messages/m/hostedContents/1/$value">`
 			require.NoError(st.UpsertMessageBody(messageID, sql.NullString{}, sql.NullString{String: bodyHTML, Valid: true}))
-			require.NoError(st.UpsertAttachment(messageID, "", "", "legacy/inline.png", "legacy-inline-hash", 12))
+			require.NoError(st.UpsertAttachment(t.Context(), messageID, "", "", "legacy/inline.png", "legacy-inline-hash", 12))
 
 			imp := NewImporter(st, NewClient(srv.URL+"/v1.0", func(context.Context) (string, error) { return "t", nil }, 50))
 			_, err = imp.BackfillInlineMedia(t.Context(), ImportOptions{
@@ -730,7 +733,7 @@ func TestBackfillInlineMediaPreservesLegacyStoredMediaUntilReplacementSucceeds(t
 			require.NoError(err)
 
 			var legacyCount int
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT COUNT(*) FROM attachments
 				WHERE message_id = ? AND content_hash = 'legacy-inline-hash'
 			`), messageID).Scan(&legacyCount))
@@ -775,7 +778,7 @@ func TestBackfillInlineMediaRecordsStreamedOversizeForRetryPolicy(t *testing.T) 
 	assert.EqualValues(1, sum.InlineImagesSkipped)
 	assert.Zero(sum.InlineImagesCopied)
 	var size int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT size FROM attachments WHERE message_id = ?
 	`), messageID).Scan(&size))
 	assert.Greater(size, int64(10))
@@ -844,7 +847,7 @@ func TestImportChatsLimit(t *testing.T) {
 
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
 	imp := NewImporter(st, c)
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 		Limit:           2,
@@ -854,7 +857,7 @@ func TestImportChatsLimit(t *testing.T) {
 	assert.EqualValues(2, sum.MessagesAdded)
 
 	var cnt int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='teams'`).Scan(&cnt))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='teams'`).Scan(&cnt))
 	assert.Equal(2, cnt)
 }
 
@@ -867,7 +870,7 @@ func TestLimitedChatImportDoesNotAdvanceCursor(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err := imp.Import(context.Background(), ImportOptions{
+	_, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 		Limit:           2,
@@ -916,7 +919,7 @@ func TestLimitedChatImportStopsPaging(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 		Limit:           1,
@@ -950,7 +953,7 @@ func TestChatMemberFetchFailureDoesNotAdvanceCursor(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 	})
@@ -978,7 +981,7 @@ func TestRawArchiveFailureFailsImport(t *testing.T) {
 	installFailingTeamsRawArchiveTrigger(t, st)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err := imp.Import(context.Background(), ImportOptions{
+	_, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 	})
@@ -991,7 +994,7 @@ func TestRawArchiveFailureFailsImport(t *testing.T) {
 	require.ErrorIs(err, store.ErrSyncRunNotFound)
 
 	var failedRuns int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*)
 		FROM sync_runs
 		WHERE source_id = ? AND status = 'failed'
@@ -1004,7 +1007,7 @@ func installFailingTeamsRawArchiveTrigger(t *testing.T, st *store.Store) {
 
 	var err error
 	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`
+		_, err = st.DB().ExecContext(t.Context(), `
 			CREATE OR REPLACE FUNCTION fail_teams_raw_archive()
 			RETURNS trigger AS $$
 			BEGIN
@@ -1021,7 +1024,7 @@ func installFailingTeamsRawArchiveTrigger(t *testing.T, st *store.Store) {
 			EXECUTE FUNCTION fail_teams_raw_archive();
 		`)
 	} else {
-		_, err = st.DB().Exec(`
+		_, err = st.DB().ExecContext(t.Context(), `
 			CREATE TRIGGER fail_teams_raw_archive
 			BEFORE INSERT ON message_raw
 			WHEN NEW.raw_format = 'teams_json'
@@ -1060,11 +1063,12 @@ func TestChatMessageIDsAreNamespacedByConversation(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
+	_, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
 	require.NoError(err)
 
 	var count int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_message_id IN (?, ?)`),
 		chatSourceMessageID("chatA", "same"), chatSourceMessageID("chatB", "same"),
 	).Scan(&count))
@@ -1078,7 +1082,7 @@ func TestImportChannelsEndToEnd(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: true})
+	sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: true})
 	require.NoError(t, err)
 	assert.EqualValues(1, sum.ChannelsProcessed)
 	assert.EqualValues(1, sum.MessagesAdded)
@@ -1193,7 +1197,7 @@ func TestChannelMediaPolicyUsesTeamParticipantCount(t *testing.T) {
 			assert.Equal(tc.wantFetches, hostedFetches)
 
 			var state, reason, contentHash string
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT COALESCE(a.attachment_state, ''), COALESCE(a.attachment_skip_reason, ''),
 				       COALESCE(a.content_hash, '')
 				FROM attachments a JOIN messages m ON m.id = a.message_id
@@ -1208,7 +1212,7 @@ func TestChannelMediaPolicyUsesTeamParticipantCount(t *testing.T) {
 			}
 
 			var participantCount int
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT COALESCE(participant_count, 0) FROM conversations WHERE source_conversation_id = ?
 			`), "team1/chanA").Scan(&participantCount))
 			assert.Equal(tc.wantParticipants, participantCount,
@@ -1294,12 +1298,12 @@ func newPrivateChannelGraph(t *testing.T) *privateChannelGraph {
 func channelMediaState(t *testing.T, st *store.Store) (state, reason string, participants int) {
 	t.Helper()
 
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(a.attachment_state, ''), COALESCE(a.attachment_skip_reason, '')
 		FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = ?
 	`), channelSourceMessageID("team1", "chanA", "c1")).Scan(&state, &reason))
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(participant_count, 0) FROM conversations WHERE source_conversation_id = ?
 	`), "team1/chanA").Scan(&participants))
 	return state, reason, participants
@@ -1506,7 +1510,7 @@ func TestBackfillChannelMediaRefreshesUnknownTeamMembership(t *testing.T) {
 
 			archivedParticipants := func() int {
 				var count int
-				require.NoError(st.DB().QueryRow(st.Rebind(`
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 					SELECT COALESCE(participant_count, 0) FROM conversations WHERE source_conversation_id = ?
 				`), "team1/chanA").Scan(&count))
 				return count
@@ -1537,7 +1541,7 @@ func TestBackfillChannelMediaRefreshesUnknownTeamMembership(t *testing.T) {
 			assert.Equal(tc.wantErrors, sum.Errors)
 
 			var state, reason, contentHash string
-			require.NoError(st.DB().QueryRow(st.Rebind(`
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 				SELECT COALESCE(a.attachment_state, ''), COALESCE(a.attachment_skip_reason, ''),
 				       COALESCE(a.content_hash, '')
 				FROM attachments a JOIN messages m ON m.id = a.message_id
@@ -1590,7 +1594,7 @@ func TestLimitedChannelImportDoesNotAdvanceDelta(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: true, Limit: 1})
+	_, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: true, Limit: 1})
 	require.NoError(err)
 
 	src, err := st.GetOrCreateSource("teams", "me@example.com")
@@ -1642,7 +1646,7 @@ func TestLimitedChannelImportStopsPagingAndDeltaPrime(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: true, Limit: 1})
+	sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: true, Limit: 1})
 	require.NoError(err)
 	assert.EqualValues(1, sum.MessagesAdded)
 	assert.Equal(0, secondPageRequests)
@@ -1689,7 +1693,7 @@ func TestChannelReplyFetchErrorDoesNotAdvanceDelta(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: true})
+	sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: true})
 	require.NoError(err)
 	assert.EqualValues(1, sum.Errors)
 
@@ -1732,7 +1736,7 @@ func TestChannelDeltaPrimeErrorStillPersistsBackfill(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: true})
+	sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: true})
 	require.NoError(err)
 	assert.EqualValues(1, sum.Errors)
 	assert.EqualValues(2, sum.MessagesAdded)
@@ -1746,7 +1750,7 @@ func TestChannelDeltaPrimeErrorStillPersistsBackfill(t *testing.T) {
 	assert.Empty(state.ChannelDelta("team1/chanA"))
 
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages
 		WHERE source_id = ? AND source_message_id IN (?, ?)
 	`), src.ID,
@@ -1788,11 +1792,11 @@ func TestChannelDeltaPrimeMessageReplacesBackfilledVersion(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: true})
+	_, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: true})
 	require.NoError(err)
 
 	var bodyText string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT mb.body_text
 		FROM message_bodies mb
 		JOIN messages m ON m.id = mb.message_id
@@ -1840,16 +1844,18 @@ func TestReplyBeforeRoot(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: true})
+	_, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: true})
 	require.NoError(err)
 
 	// The reply (c2) must be linked to the root (c1).
 	var replyTo, rootID sql.NullInt64
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`),
 		channelSourceMessageID("team1", "chanA", "c2"),
 	).Scan(&replyTo))
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
 		channelSourceMessageID("team1", "chanA", "c1"),
 	).Scan(&rootID))
@@ -1897,19 +1903,20 @@ func TestRecipientAndMentionRows(t *testing.T) {
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
 	imp := NewImporter(st, c)
 
-	_, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
+	_, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
 	require.NoError(err)
 
 	// Get the message ID
 	var msgID int64
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
 		chatSourceMessageID("19:chat1@thread.v2", "msg1"),
 	).Scan(&msgID))
 
 	// Should have a "to" row for bob but NOT alice (the sender)
 	var toCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
         SELECT COUNT(*) FROM message_recipients mr
         JOIN participants p ON p.id = mr.participant_id
         WHERE mr.message_id = ? AND mr.recipient_type = 'to' AND p.email_address = 'bob@x.com'
@@ -1917,7 +1924,7 @@ func TestRecipientAndMentionRows(t *testing.T) {
 	assert.Equal(1, toCount, "should have a 'to' row for bob")
 
 	var aliceToCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
         SELECT COUNT(*) FROM message_recipients mr
         JOIN participants p ON p.id = mr.participant_id
         WHERE mr.message_id = ? AND mr.recipient_type = 'to' AND p.email_address = 'alice@x.com'
@@ -1925,7 +1932,7 @@ func TestRecipientAndMentionRows(t *testing.T) {
 	assert.Equal(0, aliceToCount, "alice is the sender so should NOT appear in 'to' rows")
 
 	var fromCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
         SELECT COUNT(*) FROM message_recipients mr
         JOIN participants p ON p.id = mr.participant_id
         WHERE mr.message_id = ? AND mr.recipient_type = 'from' AND p.email_address = 'alice@x.com'
@@ -1934,7 +1941,7 @@ func TestRecipientAndMentionRows(t *testing.T) {
 
 	// Should have a "mention" row for bob
 	var mentionCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
         SELECT COUNT(*) FROM message_recipients mr
         JOIN participants p ON p.id = mr.participant_id
         WHERE mr.message_id = ? AND mr.recipient_type = 'mention' AND p.email_address = 'bob@x.com'
@@ -1955,7 +1962,7 @@ func TestImportProgressCallback(t *testing.T) {
 	var lines []string
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
 	imp := NewImporter(st, c)
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 		Progress:        func(msg string) { lines = append(lines, msg) },
@@ -1980,7 +1987,7 @@ func TestImportChannelProgressCallback(t *testing.T) {
 
 	var lines []string
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: true,
 		Progress:        func(msg string) { lines = append(lines, msg) },
@@ -2004,7 +2011,7 @@ func TestCheckpointFlushedAfterEachConversation(t *testing.T) {
 
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
 	imp := NewImporter(st, c)
-	_, err := imp.Import(context.Background(), ImportOptions{
+	_, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 	})
@@ -2079,7 +2086,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 	// Now run a fresh import. It should pick up the checkpoint cursor.
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
 	imp := NewImporter(st, c)
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 	})
@@ -2136,7 +2143,7 @@ func TestFullIgnoresCursor(t *testing.T) {
 
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
 	imp := NewImporter(st, c)
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	sum, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 		Full:            true,
@@ -2167,7 +2174,7 @@ func TestImportMigratesLegacyRawMessageID(t *testing.T) {
 	require.NoError(err)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err = imp.Import(context.Background(), ImportOptions{
+	_, err = imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 		Full:            true,
@@ -2175,21 +2182,23 @@ func TestImportMigratesLegacyRawMessageID(t *testing.T) {
 	require.NoError(err)
 
 	var rowCount int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT COUNT(*) FROM messages WHERE source_id = ?`),
 		src.ID,
 	).Scan(&rowCount))
 	assert.Equal(1, rowCount)
 
 	var gotID int64
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
 		chatSourceMessageID("19:x@thread.v2", "m1"),
 	).Scan(&gotID))
 	assert.Equal(legacyID, gotID)
 
 	var rawCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE source_message_id = 'm1'`).Scan(&rawCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_message_id = 'm1'`).Scan(&rawCount))
 	assert.Equal(0, rawCount)
 }
 
@@ -2229,7 +2238,7 @@ func TestImportMigratesLegacyRawMessageIDBeforeDelete(t *testing.T) {
 	require.NoError(err)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err = imp.Import(context.Background(), ImportOptions{
+	_, err = imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 		Full:            true,
@@ -2237,14 +2246,15 @@ func TestImportMigratesLegacyRawMessageIDBeforeDelete(t *testing.T) {
 	require.NoError(err)
 
 	var deleted sql.NullTime
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE source_message_id = ?`),
 		chatSourceMessageID("19:x@thread.v2", "m1"),
 	).Scan(&deleted))
 	assert.True(deleted.Valid)
 
 	var rawCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE source_message_id = 'm1'`).Scan(&rawCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_message_id = 'm1'`).Scan(&rawCount))
 	assert.Equal(0, rawCount)
 }
 
@@ -2271,7 +2281,7 @@ func TestTeamsImportEnqueuesPersistedMessages(t *testing.T) {
 	enqueuer := &recordingEnqueuer{}
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err := imp.Import(context.Background(), ImportOptions{
+	_, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 		EmbedEnqueuer:   enqueuer,
@@ -2280,7 +2290,8 @@ func TestTeamsImportEnqueuesPersistedMessages(t *testing.T) {
 	require.Len(enqueuer.ids, 1)
 
 	var storedID int64
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
 		chatSourceMessageID("19:x@thread.v2", "m1"),
 	).Scan(&storedID))
@@ -2318,14 +2329,15 @@ func TestTeamsReimportReplacesRemovedChildCollections(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
 
-	_, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: false, Full: true})
+	_, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: false, Full: true})
 	require.NoError(err)
 	includeChildren = false
-	_, err = imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: false, Full: true})
+	_, err = imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: false, Full: true})
 	require.NoError(err)
 
 	var msgID int64
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
 		chatSourceMessageID("19:child@thread.v2", "msg1"),
 	).Scan(&msgID))
@@ -2335,7 +2347,7 @@ func TestTeamsReimportReplacesRemovedChildCollections(t *testing.T) {
 		"attachments": `SELECT COUNT(*) FROM attachments WHERE message_id = ? AND storage_path LIKE 'https://%'`,
 	} {
 		var count int
-		require.NoError(st.DB().QueryRow(st.Rebind(query), msgID).Scan(&count), table)
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(query), msgID).Scan(&count), table)
 		assert.Equal(0, count, table)
 	}
 }
@@ -2376,18 +2388,18 @@ func TestCallRecordingAndAttachmentsPersisted(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
 	imp := NewImporter(st, c)
-	_, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
+	_, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
 	require.NoError(err)
 
 	// Recording attachment row exists.
 	var recCount int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
         SELECT COUNT(*) FROM attachments a
         JOIN messages m ON m.id = a.message_id
         WHERE a.storage_path = 'https://sp/rec.mp4'`).Scan(&recCount))
 	assert.Equal(1, recCount, "recording attachment row should exist")
 	var recHash sql.NullString
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
         SELECT a.content_hash FROM attachments a
         JOIN messages m ON m.id = a.message_id
         WHERE a.storage_path = 'https://sp/rec.mp4'`).Scan(&recHash))
@@ -2395,13 +2407,13 @@ func TestCallRecordingAndAttachmentsPersisted(t *testing.T) {
 
 	// Reference attachment row exists.
 	var refCount int
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
         SELECT COUNT(*) FROM attachments a
         JOIN messages m ON m.id = a.message_id
         WHERE a.storage_path = 'https://sp/deck.pptx'`).Scan(&refCount))
 	assert.Equal(1, refCount, "reference attachment row should exist")
 	var refHash sql.NullString
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
         SELECT a.content_hash FROM attachments a
         JOIN messages m ON m.id = a.message_id
         WHERE a.storage_path = 'https://sp/deck.pptx'`).Scan(&refHash))
@@ -2409,7 +2421,7 @@ func TestCallRecordingAndAttachmentsPersisted(t *testing.T) {
 
 	// Body text for the system message contains the recording URL.
 	var bodyText sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
         SELECT mb.body_text FROM message_bodies mb
         JOIN messages m ON m.id = mb.message_id
         WHERE m.source_message_id = ?`), chatSourceMessageID("19:rec@thread.v2", "sys1")).Scan(&bodyText))
@@ -2458,7 +2470,7 @@ func TestTeamsMixedInlineAndLinkAttachmentsRefreshMessageStats(t *testing.T) {
 
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	_, err := imp.Import(context.Background(), ImportOptions{
+	_, err := imp.Import(t.Context(), ImportOptions{
 		Email:           "me@example.com",
 		IncludeChannels: false,
 		AttachmentsDir:  t.TempDir(),
@@ -2468,7 +2480,7 @@ func TestTeamsMixedInlineAndLinkAttachmentsRefreshMessageStats(t *testing.T) {
 	var hasAttachments bool
 	var messageAttachmentCount int
 	var actualAttachmentRows int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT m.has_attachments, m.attachment_count, COUNT(a.id)
 		FROM messages m
 		LEFT JOIN attachments a ON a.message_id = m.id
@@ -2522,18 +2534,19 @@ func TestDuplicateMentionDedup(t *testing.T) {
 	c := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
 	imp := NewImporter(st, c)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
+	sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
 	require.NoError(err)
 	assert.EqualValues(0, sum.Errors, "no errors expected")
 
 	var msgID int64
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
 		chatSourceMessageID("19:chat1@thread.v2", "msg1"),
 	).Scan(&msgID))
 
 	var mentionCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
         SELECT COUNT(*) FROM message_recipients mr
         JOIN participants p ON p.id = mr.participant_id
         WHERE mr.message_id = ? AND mr.recipient_type = 'mention' AND p.email_address = 'bob@x.com'
@@ -2609,7 +2622,7 @@ func newChatRosterGraph(t *testing.T, rosterSize int) *chatRosterGraph {
 func chatMediaState(t *testing.T, st *store.Store) (state, reason string) {
 	t.Helper()
 
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(a.attachment_state, ''), COALESCE(a.attachment_skip_reason, '')
 		FROM attachments a JOIN messages m ON m.id = a.message_id
 		WHERE m.source_message_id = ?
@@ -2623,7 +2636,7 @@ func chatMembershipRecord(t *testing.T, st *store.Store) (count int, unknown boo
 	t.Helper()
 
 	var metadata string
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(CAST(metadata AS TEXT), '') FROM conversations
 		WHERE source_conversation_id = ?
 	`), rosterChatID).Scan(&metadata))
@@ -2806,7 +2819,7 @@ func TestChatMediaPolicyFollowsRosterShrink(t *testing.T) {
 	assert.Equal(2, count, "the archived roster must follow the chat's current membership")
 	assert.False(unknown)
 	var accumulatedParticipants int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COALESCE(participant_count, 0) FROM conversations WHERE source_conversation_id = ?
 	`), rosterChatID).Scan(&accumulatedParticipants))
 	assert.Equal(6, accumulatedParticipants, "the participant rows keep every member ever seen")
@@ -2823,7 +2836,7 @@ func messageIDBySourceMessageID(t *testing.T, st *store.Store, sourceMessageID s
 	t.Helper()
 
 	var messageID int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT id FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&messageID))
 	return messageID
 }
@@ -2885,13 +2898,13 @@ func TestChatSyncRecoversMessageSharingCursorTimestamp(t *testing.T) {
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
 	opts := ImportOptions{Email: "me@example.com", IncludeChannels: false}
 
-	sum, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	require.EqualValues(1, sum.MessagesAdded, "first sync stores tm1")
 
 	// The cursor is now exactly tieTS, the timestamp tm2 also carries.
 	secondSync.Store(true)
-	sum, err = imp.Import(context.Background(), opts)
+	sum, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	assert.EqualValues(2, sum.MessagesProcessed, "second sync re-reads tm1 and recovers tm2")
 	assert.EqualValues(1, sum.MessagesAdded,
@@ -2900,7 +2913,7 @@ func TestChatSyncRecoversMessageSharingCursorTimestamp(t *testing.T) {
 	filters.check(t)
 
 	var got []string
-	rows, err := st.DB().Query(`SELECT source_message_id FROM messages WHERE message_type='teams' ORDER BY source_message_id`)
+	rows, err := st.DB().QueryContext(t.Context(), `SELECT source_message_id FROM messages WHERE message_type='teams' ORDER BY source_message_id`)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -3018,7 +3031,7 @@ func TestLimitedChatSyncDoesNotStrandTiedMessages(t *testing.T) {
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
 	base := ImportOptions{Email: "me@example.com", IncludeChannels: false}
 
-	_, err = imp.Import(context.Background(), base)
+	_, err = imp.Import(t.Context(), base)
 	require.NoError(err)
 	require.Equal(2, teamsMessageCount(t, st), "first sync archives both tied messages")
 
@@ -3028,7 +3041,7 @@ func TestLimitedChatSyncDoesNotStrandTiedMessages(t *testing.T) {
 	limited := base
 	limited.Limit = 1
 	for i := range 3 {
-		_, lerr := imp.Import(context.Background(), limited)
+		_, lerr := imp.Import(t.Context(), limited)
 		require.NoErrorf(lerr, "limited sync %d", i)
 	}
 
@@ -3047,7 +3060,7 @@ func TestLimitedChatSyncDoesNotStrandTiedMessages(t *testing.T) {
 		"a capped run must not advance the cursor past the tied timestamp (cursor=%s)", cursor)
 
 	// Therefore an unlimited run still recovers it: nothing was lost.
-	_, err = imp.Import(context.Background(), base)
+	_, err = imp.Import(t.Context(), base)
 	require.NoError(err)
 	assert.Equal(3, teamsMessageCount(t, st),
 		"an unlimited sync recovers the late tied message the cap had deferred")
@@ -3058,7 +3071,8 @@ func TestLimitedChatSyncDoesNotStrandTiedMessages(t *testing.T) {
 func teamsMessageCount(t *testing.T, st *store.Store) int {
 	t.Helper()
 	var n int
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages WHERE message_type='teams'`).Scan(&n))
 	return n
 }
@@ -3109,7 +3123,7 @@ func TestSyncImportsSelfChat(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	imp := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50))
-	sum, err := imp.Import(context.Background(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
+	sum, err := imp.Import(t.Context(), ImportOptions{Email: "me@example.com", IncludeChannels: false})
 	require.NoError(err)
 
 	assert.EqualValues(2, sum.MessagesAdded)
@@ -3271,4 +3285,168 @@ func TestSelfChatProbeCancellationStopsSync(t *testing.T) {
 	last, err := st.GetLastSuccessfulSync(sum.SourceID)
 	require.ErrorIs(t, err, store.ErrSyncRunNotFound)
 	assert.Nil(t, last, "a canceled probe must not complete the sync")
+}
+
+// A cancellation that lands while channel replies are being linked must leave
+// the channel's delta cursor where it was. Otherwise the checkpoint records a
+// delta past messages whose reply links were never written, and the resumed
+// run's delta returns nothing to relink them.
+func TestChannelReplyLinkCancellationRelinksOnResume(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	serverURL := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case r.URL.Path == "/me/joinedTeams":
+			_, _ = w.Write([]byte(`{"value":[{"id":"team1","displayName":"Acme"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/channels"):
+			_, _ = w.Write([]byte(`{"value":[{"id":"chanA","displayName":"General"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/messages"):
+			_, _ = w.Write([]byte(`{"value":[{"id":"root","createdDateTime":"2025-02-01T00:00:00Z","lastModifiedDateTime":"2025-02-01T00:00:00Z","body":{"contentType":"text","content":"root"}}]}`))
+		case strings.Contains(r.URL.Path, "/replies"):
+			_, _ = w.Write([]byte(`{"value":[{"id":"reply","replyToId":"root","createdDateTime":"2025-02-01T00:00:01Z","lastModifiedDateTime":"2025-02-01T00:00:01Z","body":{"contentType":"text","content":"reply"},
+			  "reactions":[{"reactionType":"like","createdDateTime":"2025-02-01T00:00:02Z","user":{"user":{"id":"reactor","displayName":"Reactor","userIdentityType":"aadUser"}}}]}]}`))
+		case strings.HasSuffix(r.URL.Path, "/messages/delta"):
+			_, _ = w.Write([]byte(`{"value":[],"@odata.deltaLink":"` + serverURL + `/teams/team1/channels/chanA/messages/delta?token=next"}`))
+		case r.URL.Path == "/users/reactor":
+			// The reaction on the last collected message is resolved after
+			// both messages are stored and before replies are linked.
+			cancel()
+			http.Error(w, "404", http.StatusNotFound)
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	serverURL = srv.URL
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+	opts := ImportOptions{Email: "me@example.com", IncludeChannels: true}
+
+	_, err := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)).Import(ctx, opts)
+	require.ErrorIs(err, context.Canceled)
+
+	_, err = NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)).Import(t.Context(), opts)
+	require.NoError(err)
+
+	var replyTo, rootID sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(),
+		st.Rebind(`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`),
+		channelSourceMessageID("team1", "chanA", "reply"),
+	).Scan(&replyTo))
+	require.NoError(st.DB().QueryRowContext(t.Context(),
+		st.Rebind(`SELECT id FROM messages WHERE source_message_id = ?`),
+		channelSourceMessageID("team1", "chanA", "root"),
+	).Scan(&rootID))
+	assert.Equal(sql.NullInt64{Int64: rootID.Int64, Valid: true}, replyTo)
+}
+
+// A cancellation that lands while the last collected message's reactions are
+// written must leave the conversation's resume position where it was. The
+// failed write is only counted as an item error, so a checkpoint past it
+// would leave the resumed run nothing to re-collect.
+func TestAuxiliaryWriteCancellationRewritesOnResume(t *testing.T) {
+	const message = `{"id":"m1","createdDateTime":"2025-02-01T00:00:00Z","lastModifiedDateTime":"2025-02-01T00:00:00Z","body":{"contentType":"text","content":"hello"},
+	  "reactions":[{"reactionType":"like","createdDateTime":"2025-02-01T00:00:02Z","user":{"user":{"id":"reactor","displayName":"Reactor","userIdentityType":"aadUser"}}}]}`
+	// The resumed chat query re-reads one second before the cursor, which
+	// would deliver m1 again on its own. m2 is newer by more than that, so a
+	// cursor saved past the failed reaction write would leave m1 out of range.
+	// Graph returns m2 first, so m1 is still the last message collected.
+	chatMessages := []struct {
+		modified time.Time
+		json     string
+	}{
+		{time.Date(2025, 2, 1, 0, 0, 5, 0, time.UTC), `{"id":"m2","createdDateTime":"2025-02-01T00:00:05Z","lastModifiedDateTime":"2025-02-01T00:00:05Z","body":{"contentType":"text","content":"later"}}`},
+		{time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC), message},
+	}
+	tests := []struct {
+		name            string
+		includeChannels bool
+		sourceMessageID string
+	}{
+		{name: "chat cursor", sourceMessageID: chatSourceMessageID("19:aux@thread.v2", "m1")},
+		{name: "channel delta", includeChannels: true, sourceMessageID: channelSourceMessageID("team1", "chanA", "m1")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			var filters graphFilterFake
+			serverURL := ""
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if selfChatAbsent(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/me/chats" && tt.includeChannels:
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				case r.URL.Path == "/me/chats":
+					_, _ = w.Write([]byte(`{"value":[{"id":"19:aux@thread.v2","chatType":"group","topic":"Chat"}]}`))
+				case strings.HasSuffix(r.URL.Path, "/members"):
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				case strings.HasPrefix(r.URL.Path, "/me/chats/") && strings.HasSuffix(r.URL.Path, "/messages"):
+					cut, ok := filters.cutoff(w, r.URL.Query().Get("$filter"))
+					if !ok {
+						return
+					}
+					var out []string
+					for _, m := range chatMessages {
+						if cut == nil || m.modified.After(*cut) {
+							out = append(out, m.json)
+						}
+					}
+					_, _ = w.Write([]byte(`{"value":[` + strings.Join(out, ",") + `]}`))
+				case r.URL.Path == "/me/joinedTeams":
+					_, _ = w.Write([]byte(`{"value":[{"id":"team1","displayName":"Acme"}]}`))
+				case strings.HasSuffix(r.URL.Path, "/channels"):
+					_, _ = w.Write([]byte(`{"value":[{"id":"chanA","displayName":"General"}]}`))
+				case strings.HasSuffix(r.URL.Path, "/channels/chanA/messages"):
+					_, _ = w.Write([]byte(`{"value":[` + message + `]}`))
+				case strings.Contains(r.URL.Path, "/replies"):
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				case strings.HasSuffix(r.URL.Path, "/messages/delta"):
+					// The stored delta returns no changes, as Graph does.
+					_, _ = w.Write([]byte(`{"value":[],"@odata.deltaLink":"` + serverURL + `/teams/team1/channels/chanA/messages/delta?token=next"}`))
+				case r.URL.Path == "/users/reactor":
+					// The reactor is resolved after every other write of the
+					// last collected message, just before its reactions.
+					cancel()
+					http.Error(w, "404", http.StatusNotFound)
+				default:
+					http.Error(w, "404", http.StatusNotFound)
+				}
+			}))
+			serverURL = srv.URL
+			defer srv.Close()
+			st := testutil.NewTestStore(t)
+			opts := ImportOptions{Email: "me@example.com", IncludeChannels: tt.includeChannels}
+
+			_, firstErr := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)).Import(ctx, opts)
+			_, err := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)).Import(t.Context(), opts)
+			require.NoError(err)
+
+			var reactions int
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+				SELECT COUNT(*) FROM reactions
+				WHERE message_id = (SELECT id FROM messages WHERE source_message_id = ?)`),
+				tt.sourceMessageID,
+			).Scan(&reactions))
+			assert.Equal(1, reactions, "the resumed run must write the reaction the canceled run missed")
+			require.ErrorIs(firstErr, context.Canceled)
+			filters.check(t)
+		})
+	}
 }

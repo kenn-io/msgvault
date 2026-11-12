@@ -154,7 +154,7 @@ func TestPromptScopeEscalation_PreservesTokenOnFailedReauth(t *testing.T) {
 
 	// A cancelled context makes the browser flow fail immediately (no network,
 	// no hang) — standing in for "re-auth cannot complete on a headless host".
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	mgr, err := oauth.NewManagerWithCredentials(t.Context(), config.OAuthApp{ClientSecrets: filepath.Join(filepath.Dir(filepath.Dir(tokenPath)), "client_secret.json")}, filepath.Dir(tokenPath), config.OAuthTokenCommands{}, nil, oauth.Scopes)

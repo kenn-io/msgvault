@@ -78,7 +78,7 @@ func TestVisualPublicationTwoPhaseCommitRejectsObsoleteFence(t *testing.T) {
 	assert.NotEmpty(token)
 
 	// A source mutation after preparation invalidates the captured journal fence.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET width = ? WHERE id = ?`), 99, attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET width = ? WHERE id = ?`), 99, attachmentID)
 	require.NoError(err)
 	err = f.Store.CommitVisualPublication(t.Context(), claim, token)
 	require.ErrorIs(err, store.ErrVisualSourceChanged)
@@ -161,7 +161,7 @@ func TestVisualSourceInvalidationIsSynchronous(t *testing.T) {
 		f := storetest.New(t)
 		generation, owner, attachmentID := publishVisualOwner(t, f, "visual-metadata")
 
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE attachments SET width = ? WHERE id = ?`), 320, attachmentID)
 		require.NoError(t, err)
 		assertVisualPublicationState(t, f, generation.ID, owner, store.VisualPublicationStale)
@@ -173,7 +173,7 @@ func TestVisualSourceInvalidationIsSynchronous(t *testing.T) {
 		f := storetest.New(t)
 		generation, owner, _ := publishVisualOwner(t, f, "visual-context")
 
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE messages SET subject = ? WHERE id = ?`), "changed context", owner.MessageID)
 		require.NoError(err)
 		assertVisualPublicationState(t, f, generation.ID, owner, store.VisualPublicationStale)
@@ -188,7 +188,7 @@ func TestVisualSourceInvalidationIsSynchronous(t *testing.T) {
 		f := storetest.New(t)
 		generation, owner, _ := publishVisualOwner(t, f, "visual-delete")
 
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), owner.MessageID)
 		require.NoError(t, err)
 		assertVisualPublicationState(t, f, generation.ID, owner, store.VisualPublicationTombstoned)
@@ -198,7 +198,7 @@ func TestVisualSourceInvalidationIsSynchronous(t *testing.T) {
 		f := storetest.New(t)
 		generation, owner, attachmentID := publishVisualOwner(t, f, "visual-role")
 
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 			UPDATE attachments SET attachment_role = 'inline' WHERE id = ?`), attachmentID)
 		require.NoError(t, err)
 		assertVisualPublicationState(t, f, generation.ID, owner, store.VisualPublicationTombstoned)
@@ -210,7 +210,7 @@ func TestVisualSourceInvalidationIsSynchronous(t *testing.T) {
 		f := storetest.New(t)
 		generation := createVisualGeneration(t, f)
 		owner, attachmentID, sourceFence := createVisualOwner(t, f, "visual-body-delete")
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`),
 			owner.MessageID, "context that the embedding was built from")
 		require.NoError(err)
@@ -223,7 +223,7 @@ func TestVisualSourceInvalidationIsSynchronous(t *testing.T) {
 		require.NoError(err)
 		require.NoError(f.Store.CommitVisualPublication(t.Context(), claim, token))
 
-		_, err = f.Store.DB().Exec(f.Store.Rebind(
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`DELETE FROM message_bodies WHERE message_id = ?`), owner.MessageID)
 		require.NoError(err)
 		assertVisualPublicationState(t, f, generation.ID, owner, store.VisualPublicationStale)
@@ -244,7 +244,7 @@ func TestVisualSourceInvalidationIsSynchronous(t *testing.T) {
 			Kind: "terminal", Reason: "provider_rejected",
 		}))
 
-		_, err := f.Store.DB().Exec(f.Store.Rebind(
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE messages SET subject = ? WHERE id = ?`), "new context", owner.MessageID)
 		require.NoError(err)
 		publication, err := f.Store.GetVisualPublication(t.Context(), generation.ID, owner)
@@ -271,7 +271,7 @@ func TestVisualSourceInvalidationIsSynchronous(t *testing.T) {
 		// A worker crash after PutUnpublished leaves a backend vector under
 		// the pending token; the invalidation trigger must keep a durable
 		// reference for the cleanup sweep when it clears the pending slot.
-		_, err = f.Store.DB().Exec(f.Store.Rebind(
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE attachments SET width = ? WHERE id = ?`), 640, attachmentID)
 		require.NoError(err)
 		obsolete, err := f.Store.ListObsoleteVisualTokens(t.Context(), generation.ID, 100)
@@ -288,7 +288,7 @@ func TestVisualSourceInvalidationIsSynchronous(t *testing.T) {
 
 		tx, err := f.Store.DB().BeginTx(t.Context(), nil)
 		require.NoError(err)
-		_, err = tx.Exec(f.Store.Rebind(
+		_, err = tx.ExecContext(t.Context(), f.Store.Rebind(
 			`UPDATE attachments SET attachment_role = 'inline' WHERE id = ?`), attachmentID)
 		require.NoError(err)
 		require.NoError(tx.Rollback())
@@ -343,7 +343,7 @@ func createVisualOwner(t *testing.T, f *storetest.Fixture, sourceMessageID strin
 	require.NoError(err)
 	require.NotEmpty(changes)
 	var attachmentID int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT id FROM attachments WHERE message_id = ?`), messageID).Scan(&attachmentID))
 	return store.VisualOwner{MessageID: messageID, BlobHash: hash, MediaInputKey: "original"}, attachmentID, changes[len(changes)-1].Sequence
 }
@@ -542,7 +542,7 @@ func TestVisualDriftDiscardParksPendingTokenForSweep(t *testing.T) {
 	// pending token reference before commit ever sees it. The worker's
 	// inline backend delete is the remaining cleanup; when that delete
 	// fails it parks the token so the sweep retries.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET width = ? WHERE id = ?`), 77, attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET width = ? WHERE id = ?`), 77, attachmentID)
 	require.NoError(err)
 	require.ErrorIs(f.Store.CommitVisualPublication(t.Context(), claim, token), store.ErrVisualSourceChanged)
 
@@ -631,10 +631,10 @@ func TestClaimRecordsSnapshotStampSoStaleContextCannotCommit(t *testing.T) {
 	// built from the stale snapshot commit as current. The stamp is bumped
 	// explicitly because CURRENT_TIMESTAMP's one-second resolution can
 	// otherwise leave a same-second edit undetectable.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET subject = ? WHERE id = ?`), "edited mid-snapshot", owner.MessageID)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET content_changed_at = ? WHERE id = ?`),
 		time.Now().UTC().Add(time.Hour), owner.MessageID)
 	require.NoError(err)
@@ -663,12 +663,12 @@ func TestPrepareRefusesContextChangeAfterClaim(t *testing.T) {
 	owner, attachmentID, sourceFence := createVisualOwner(t, f, "visual-prepare-fresh")
 	claim := claimVisualOwner(t, f, generation.ID, owner, "revision-1", sourceFence)
 
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET subject = ? WHERE id = ?`), "edited before prepare", owner.MessageID)
 	require.NoError(err)
 	// Explicit stamp bump: a same-second edit is invisible at
 	// CURRENT_TIMESTAMP resolution.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET content_changed_at = ? WHERE id = ?`),
 		time.Now().UTC().Add(time.Hour), owner.MessageID)
 	require.NoError(err)
@@ -732,10 +732,10 @@ func TestRestoreRefusesConcurrentContextEdit(t *testing.T) {
 	// context edit racing it. Restoring would erase the only stale signal
 	// left after the edit's trigger already ran.
 	claim = claimVisualOwner(t, f, generation.ID, owner, "revision-1", sourceFence)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET subject = ? WHERE id = ?`), "edited during restore", owner.MessageID)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET content_changed_at = ? WHERE id = ?`),
 		time.Now().UTC().Add(time.Hour), owner.MessageID)
 	require.NoError(err)
@@ -767,7 +767,7 @@ func TestHardDeletedMessagesLedgerTheirVectorTokens(t *testing.T) {
 	// permanently unreachable without the delete-ledger trigger.
 	require.NoError(f.Store.RemoveSource(f.Source.ID))
 	var remaining int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT COUNT(*) FROM visual_publications WHERE generation_id = ?`), generation.ID).Scan(&remaining))
 	require.Zero(remaining, "the cascade must have removed the publication row")
 
@@ -798,10 +798,10 @@ func TestScopeEntrySeedSkipsNonCanonicalOwners(t *testing.T) {
 		RoleSource: store.AttachmentRoleSourceImporterSemantics, SourcePartKey: "part:2",
 	}))
 
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET message_type = 'chat' WHERE id = ?`), messageID)
 	require.NoError(err)
-	rows, err := f.Store.DB().Query(f.Store.Rebind(
+	rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(
 		`SELECT blob_hash FROM visual_publications WHERE generation_id = ? AND message_id = ?`),
 		generation.ID, messageID)
 	require.NoError(err)
@@ -821,13 +821,13 @@ func TestBodyDeletionBumpsContentStamp(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	owner, _, _ := createVisualOwner(t, f, "visual-body-del-stamp")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`),
 		owner.MessageID, "text the embedding would capture")
 	require.NoError(err)
 	// Backdate the stamp: insert and delete within one millisecond would
 	// otherwise produce identical values at the stamp's resolution.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET content_changed_at = ? WHERE id = ?`),
 		time.Now().UTC().Add(-time.Hour), owner.MessageID)
 	require.NoError(err)
@@ -837,7 +837,7 @@ func TestBodyDeletionBumpsContentStamp(t *testing.T) {
 	// Deletion is a content change: without a stamp bump, a body deleted
 	// between the context snapshot and the claim passes the CAS and an
 	// embedding of the deleted text publishes as current.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`DELETE FROM message_bodies WHERE message_id = ?`), owner.MessageID)
 	require.NoError(err)
 	after, err := f.Store.GetVisualMessageContext(t.Context(), owner.MessageID)

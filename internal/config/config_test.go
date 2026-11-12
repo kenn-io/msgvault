@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -2089,6 +2090,28 @@ strip_signatures = false
 	assert.True(cfg.Vector.Preprocess.StripQuotesEnabled(), "StripQuotesEnabled() should be true (unset → default)")
 }
 
+func TestLoadEmbeddingTransportDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name, settings string
+		batch          int
+		timeout        time.Duration
+	}{
+		{"local", "local_only = true", 8, 5 * time.Minute},
+		{"remote", `endpoint = "https://example.com/v1"`, 32, 30 * time.Second},
+		{"local overrides", "local_only = true\nbatch_size = 17\ntimeout = \"45s\"", 17, 45 * time.Second},
+		{"local batch override", "local_only = true\nbatch_size = 32", 32, 5 * time.Minute},
+		{"local timeout override", "local_only = true\ntimeout = \"30s\"", 8, 30 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, []byte("[vector.embeddings]\n"+tc.settings+"\n"), 0o600))
+			cfg, err := Load(path, "")
+			require.NoError(t, err)
+			assert.Equal(t, []any{tc.batch, tc.timeout}, []any{cfg.Vector.Embeddings.BatchSize, cfg.Vector.Embeddings.Timeout})
+		})
+	}
+}
+
 func TestLoadAllowsIndependentMultimodalVectorLane(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -2574,4 +2597,83 @@ trusted_imap_sent_mailboxes = { "imaps://alice@example.com@imap.example.com:993"
 	require.NoError(err)
 	assert.Empty(cfg.Sync.TrustedIMAPSentMailboxes,
 		"unconfigured archives carry no explicit Sent-folder trust")
+}
+
+func TestLoadAppleImportPaths(t *testing.T) {
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	for _, tc := range []struct{ name, path string }{
+		{name: "relative", path: "apple/chat.db"},
+		{name: "tilde", path: "~/apple/chat.db"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.toml")
+			content := fmt.Sprintf("[[whatsapp_apple]]\nname = 'personal'\nenabled = true\nphone = '+15550000000'\nschedule = '*/10 * * * *'\npath = '%s'\n[imessage]\ndb_path = '%s'\n", tc.path, tc.path)
+			require.NoError(os.WriteFile(path, []byte(content), 0o600))
+			cfg, err := Load(path, "")
+			require.NoError(err)
+			wantPath := filepath.Join(dir, "apple/chat.db")
+			if strings.HasPrefix(tc.path, "~/") {
+				wantPath = filepath.Join(home, "apple/chat.db")
+			}
+			assert.Equal(wantPath, cfg.IMessage.DBPath)
+			assert.Equal(wantPath, cfg.WhatsAppApple[0].Path)
+		})
+	}
+}
+
+func TestLoadApplePhonePrefix(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		content   string
+		wantError string
+	}{
+		{name: "requires plus", content: "[[whatsapp_apple]]\nenabled = true\nphone = '15550000000'\n", wantError: "whatsapp_apple[0].phone must start with +"},
+		{name: "disabled without phone", content: "[[whatsapp_apple]]\nenabled = false\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(os.WriteFile(path, []byte(tc.content), 0600))
+			cfg, err := Load(path, "")
+			if tc.wantError != "" {
+				require.ErrorContains(err, tc.wantError)
+			} else {
+				require.NoError(err)
+				require.NoError(cfg.DaemonConfigError())
+				return
+			}
+			cfg, err = LoadClientWithOverrides(path, "", RuntimeOverrides{})
+			require.NoError(err)
+			require.ErrorContains(cfg.DaemonConfigError(), tc.wantError)
+		})
+	}
+}
+
+func TestRemovedDocumentConfigGuidesMigration(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	warnedRemovedDocuments.Store(false)
+	t.Cleanup(func() { warnedRemovedDocuments.Store(false) })
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[attachments.documents]\nenabled = true\nmodel = 'retired'\n"), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(err)
+	require.NotNil(cfg)
+	snapshot, err := ReadConfigFile(path)
+	require.NoError(err)
+	reloaded, err := cfg.ReloadConfigFile(snapshot)
+	require.NoError(err)
+	require.NotNil(reloaded)
+	assert.Contains(logs.String(), "level=WARN")
+	assert.Contains(logs.String(), "[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile")
+	assert.Contains(logs.String(), "for Mistral run docbank processing probe --profile <name> --seeds <dir>")
+	assert.Equal(1, strings.Count(logs.String(), "[attachments.documents]"))
 }

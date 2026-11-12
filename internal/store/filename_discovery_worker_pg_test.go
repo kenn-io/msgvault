@@ -31,16 +31,16 @@ func TestFilenameDiscoveryPostgresLateCommit(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = b.Rollback() })
 	var pidA, pidB int
-	require.NoError(a.QueryRow(`SELECT pg_backend_pid()`).Scan(&pidA))
-	require.NoError(b.QueryRow(`SELECT pg_backend_pid()`).Scan(&pidB))
+	require.NoError(a.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&pidA))
+	require.NoError(b.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&pidB))
 	require.NotEqual(pidA, pidB, "the writers must be separate physical connections")
 	var lower, higher int64
-	_, err = a.Exec(f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "lower.pdf", first)
+	_, err = a.ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "lower.pdf", first)
 	require.NoError(err)
-	require.NoError(a.QueryRow(`SELECT max(sequence) FROM attachment_change_log`).Scan(&lower))
-	_, err = b.Exec(f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "higher.pdf", second)
+	require.NoError(a.QueryRowContext(t.Context(), `SELECT max(sequence) FROM attachment_change_log`).Scan(&lower))
+	_, err = b.ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "higher.pdf", second)
 	require.NoError(err)
-	require.NoError(b.QueryRow(`SELECT max(sequence) FROM attachment_change_log`).Scan(&higher))
+	require.NoError(b.QueryRowContext(t.Context(), `SELECT max(sequence) FROM attachment_change_log`).Scan(&higher))
 	require.Less(lower, higher)
 	require.NoError(b.Commit())
 	// Keep A uncommitted until the consumer's own lock-timeout result arrives.
@@ -62,7 +62,7 @@ func TestFilenameDiscoveryPostgresLateCommit(t *testing.T) {
 	assert.Equal("synthetic.pdf", filenameEntryName(t, f.Store, before.Generation, first))
 	assert.Equal("synthetic.pdf", filenameEntryName(t, f.Store, before.Generation, second))
 	var checkpoint int64
-	require.NoError(f.Store.DB().QueryRow(`SELECT last_sequence FROM attachment_change_consumers
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT last_sequence FROM attachment_change_consumers
 		WHERE consumer_key='filename-discovery/v1'`).Scan(&checkpoint))
 	assert.Equal(before.LastSequence, checkpoint)
 	require.NoError(a.Commit())
@@ -73,7 +73,7 @@ func TestFilenameDiscoveryPostgresLateCommit(t *testing.T) {
 	assert.Equal("higher.pdf", filenameEntryName(t, f.Store, before.Generation, second))
 	assert.Equal(higher, batch.Status.LastSequence)
 	var retained sql.NullInt64
-	require.NoError(f.Store.DB().QueryRow(`SELECT min(sequence) FROM attachment_change_log`).Scan(&retained))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT min(sequence) FROM attachment_change_log`).Scan(&retained))
 	assert.False(retained.Valid, "both events are acknowledged only after both writers commit")
 }
 
@@ -101,7 +101,7 @@ func TestFilenameDiscoveryWriterFenceBeforeSyncGeneration(t *testing.T) {
 	writer, err := f.Store.DB().BeginTx(t.Context(), nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = writer.Rollback() })
-	_, err = writer.Exec(f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "pending.pdf", id)
+	_, err = writer.ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET filename=? WHERE id=?`), "pending.pdf", id)
 	require.NoError(err)
 	_, err = scoped.FilenameDiscoveryBatchContext(t.Context())
 	require.ErrorContains(err, "lock timeout")

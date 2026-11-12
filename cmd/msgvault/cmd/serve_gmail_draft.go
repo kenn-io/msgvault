@@ -101,6 +101,8 @@ func validateGmailSendAs(entries []gmail.SendAs, from string) error {
 }
 
 type gmailDraftReplyOutput struct {
+	draftRecipientAdvisory
+
 	Status          string `json:"status"`
 	DraftID         string `json:"draft_id,omitempty"`
 	Revision        int64  `json:"revision,omitzero"`
@@ -213,6 +215,9 @@ func (a *storeAPIAdapter) runGmailReplyDraft(
 	result.DraftID = localDraft.DraftID
 	result.Revision = localDraft.Revision
 	result.MessageID = localDraft.CurrentMessageID
+	if intent.JSON {
+		result.draftRecipientAdvisory = a.draftRecipientAdvisory(ctx, result.MessageID, result.SourceID, target.grant)
+	}
 	outputErr := emitGmailDraftReplyOutput(emit, cliStreamStdout, intent.JSON, result)
 	finish(true)
 	if outputErr != nil {
@@ -1216,7 +1221,7 @@ func (a *storeAPIAdapter) runCLIDraftSendAs(ctx context.Context, req api.CLIRunR
 	if err != nil {
 		return err
 	}
-	source, err := sourceops.ResolveExactOne(a.store, sourceops.Selector{Account: account, SourceType: "gmail"})
+	source, err := sourceops.ResolveExactOneContext(ctx, a.store, sourceops.Selector{Account: account, SourceType: "gmail"})
 	if err != nil {
 		return draftReplyError("invalid_source", err)
 	}

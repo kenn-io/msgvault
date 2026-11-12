@@ -294,7 +294,7 @@ func TestDefaultVectorConfigBlocksCuratedPeopleButKeepsMessageEmbedding(t *testi
 	requirements.NoError(configured.Save())
 
 	mainStore := testutil.NewSQLiteTestStoreAt(t, mainPath)
-	_, err := mainStore.DB().Exec(`
+	_, err := mainStore.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'test', 'default-policy-source');
 		INSERT INTO conversations
 			(id, source_id, source_conversation_id, conversation_type)

@@ -12,7 +12,7 @@ import (
 
 func TestOpenContextCanceledBeforeOpening(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	st, err := OpenContext(ctx, dbPath)
@@ -24,11 +24,11 @@ func TestOpenContextCanceledBeforeOpening(t *testing.T) {
 }
 
 func TestReadArchiveMetadataRevisionContextPropagatesCancellation(t *testing.T) {
-	db, err := OpenForTest(filepath.Join(t.TempDir(), "msgvault.db"))
+	db, err := OpenForTest(t.Context(), filepath.Join(t.TempDir(), "msgvault.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = db.DerivedDataRevisionContext(ctx)
 
@@ -38,7 +38,7 @@ func TestReadArchiveMetadataRevisionContextPropagatesCancellation(t *testing.T) 
 func TestOpenReadOnlyContextCanceledBeforeOpening(t *testing.T) {
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
-	st, err := OpenForTest(dbPath)
+	st, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	require.NoError(st.Close())
 	ctx, cancel := context.WithCancel(t.Context())

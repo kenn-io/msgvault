@@ -34,16 +34,16 @@ func IngestRawMessage(
 	sourceID int64, identifier, attachmentsDir string,
 	labelIDs []int64, sourceMsgID, rawHash string,
 	raw []byte, fallbackDate time.Time,
-	log *slog.Logger,
+	log *slog.Logger, rules []mime.RelayedSenderRule,
 ) error {
-	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "")
+	return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, nil, "", rules)
 }
 
 type rawMessageIngestFunc func(context.Context, *store.Store, int64, string, string, []int64, string, string, []byte, time.Time, *slog.Logger) error
 
-func rawMessageIngester(images *remoteimage.Fetcher) rawMessageIngestFunc {
+func rawMessageIngester(images *remoteimage.Fetcher, rules []mime.RelayedSenderRule) rawMessageIngestFunc {
 	return func(ctx context.Context, st *store.Store, sourceID int64, identifier, attachmentsDir string, labelIDs []int64, sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time, log *slog.Logger) error {
-		return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, "")
+		return ingestRawMessage(ctx, st, sourceID, identifier, attachmentsDir, labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log, images, "", rules)
 	}
 }
 
@@ -52,10 +52,10 @@ func ingestRawMessage(
 	sourceID int64, identifier, attachmentsDir string,
 	labelIDs []int64, sourceMsgID, rawHash string,
 	raw []byte, fallbackDate time.Time,
-	log *slog.Logger, images *remoteimage.Fetcher, threadID string,
+	log *slog.Logger, images *remoteimage.Fetcher, threadID string, rules []mime.RelayedSenderRule,
 ) error {
 	return ingestRawMessageWithCompletion(ctx, st, sourceID, identifier, attachmentsDir, labelIDs,
-		sourceMsgID, rawHash, raw, fallbackDate, log, images, threadID, false)
+		sourceMsgID, rawHash, raw, fallbackDate, log, images, threadID, false, rules)
 }
 
 // ingestRawMessageWithCompletion reports, when strict, attachment storage and
@@ -66,7 +66,7 @@ func ingestRawMessage(
 func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	sourceID int64, identifier, attachmentsDir string, labelIDs []int64,
 	sourceMsgID, rawHash string, raw []byte, fallbackDate time.Time,
-	log *slog.Logger, images *remoteimage.Fetcher, threadID string, strict bool,
+	log *slog.Logger, images *remoteimage.Fetcher, threadID string, strict bool, rules []mime.RelayedSenderRule,
 ) error {
 	parsed, parseErr := mime.ParseWithRecovery(raw, "(MIME parse error)")
 	parsed.OmitNULIdentities()
@@ -101,17 +101,28 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		len(parsed.From)+len(parsed.To)+
 			len(parsed.Cc)+len(parsed.Bcc),
 	)
-	allAddresses = append(allAddresses, parsed.From...)
+	relayType, relayValue := mime.RelayedSender(raw, parsed.From, mime.RelayedSenderRules(rules))
+	if relayType == "" {
+		allAddresses = append(allAddresses, parsed.From...)
+	}
 	allAddresses = append(allAddresses, parsed.To...)
 	allAddresses = append(allAddresses, parsed.Cc...)
 	allAddresses = append(allAddresses, parsed.Bcc...)
-	participantMap, err := st.EnsureParticipantsBatch(allAddresses)
+	participantMap, err := st.EnsureParticipantsBatch(ctx, allAddresses)
 	if err != nil {
 		return fmt.Errorf("ensure participants: %w", err)
 	}
 
 	var senderID sql.NullInt64
-	if len(parsed.From) > 0 && parsed.From[0].Email != "" {
+	if relayType != "" {
+		id, err := st.EnsureParticipantByIdentifierContext(ctx, relayType, relayValue, strings.TrimSpace(parsed.From[0].Name))
+		if err != nil {
+			return fmt.Errorf("ensure relay author: %w", err)
+		}
+		senderID = sql.NullInt64{Int64: id, Valid: true}
+	}
+
+	if relayType == "" && len(parsed.From) > 0 && parsed.From[0].Email != "" {
 		if id, ok := participantMap[parsed.From[0].Email]; ok {
 			senderID = sql.NullInt64{Int64: id, Valid: true}
 		}
@@ -133,6 +144,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		convSubject = "(no subject)"
 	}
 	conversationID, err := st.EnsureConversation(
+		ctx,
 		sourceID, threadID, convSubject,
 	)
 	if err != nil {
@@ -197,6 +209,9 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		buildRecipientSet("cc", parsed.Cc, participantMap),
 		buildRecipientSet("bcc", parsed.Bcc, participantMap),
 	}
+	if relayType != "" {
+		recipientSets[0] = store.RelayedFromRecipient(parsed.From[0], senderID.Int64)
+	}
 
 	// Persist atomically
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
@@ -210,6 +225,9 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	if err != nil {
 		return err
 	}
+	// The message row is committed. Finish its local attachment and search
+	// writes so a cancellation cannot leave it permanently incomplete.
+	postCommit := context.WithoutCancel(ctx)
 
 	// Attachments: best-effort outside the transaction (file I/O).
 	// Failures are logged but don't fail the ingest — the message,
@@ -218,6 +236,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	for i := range parsed.Attachments {
 		att := &parsed.Attachments[i]
 		if err := storeAttachment(
+			postCommit,
 			st, attachmentsDir, messageID, att, strict,
 		); err != nil {
 			incomplete(fmt.Errorf("store attachment: %w", err))
@@ -232,7 +251,8 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	// Correct attachment count if disk storage filtered some out
 	if attachmentsDir != "" && len(parsed.Attachments) > 0 {
 		var storedCount int
-		if err := st.DB().QueryRow(
+		if err := st.DB().QueryRowContext(
+			postCommit,
 			st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			messageID,
 		).Scan(&storedCount); err != nil {
@@ -241,7 +261,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 				"message", messageID, "error", err,
 			)
 		} else if storedCount != attachmentCount {
-			if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
+			if err := st.RecomputeMessageAttachmentStatsContext(postCommit, messageID); err != nil {
 				incomplete(fmt.Errorf("attachment metadata: %w", err))
 				log.Warn("failed to update attachment metadata",
 					"message", messageID, "error", err,
@@ -262,7 +282,8 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		fromAddr := joinEmails(parsed.From)
 		toAddrs := joinEmails(parsed.To)
 		ccAddrs := joinEmails(parsed.Cc)
-		if err := st.UpsertFTS(
+		if err := st.UpsertFTSContext(
+			postCommit,
 			messageID, subject, bodyText,
 			fromAddr, toAddrs, ccAddrs,
 		); err != nil {
@@ -362,6 +383,7 @@ func buildRecipientSet(recipientType string, addresses []mime.Address, participa
 }
 
 func storeAttachment(
+	ctx context.Context,
 	st *store.Store, attachmentsDir string,
 	messageID int64, att *mime.Attachment, includeEmpty bool,
 ) error {
@@ -376,7 +398,7 @@ func storeAttachment(
 	role, roleSource := store.AttachmentRoleFromMIME(
 		att.Disposition, att.IsInline, att.ContentID,
 	)
-	return st.UpsertAttachmentRecord(context.Background(), messageID, store.AttachmentWrite{
+	return st.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
 		Filename:      att.Filename,
 		MIMEType:      att.ContentType,
 		StoragePath:   storagePath,

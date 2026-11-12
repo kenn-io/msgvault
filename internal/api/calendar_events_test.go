@@ -52,7 +52,7 @@ func TestCalendarEventsRoute(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			backend.err = tc.err
 			before := backend.calls
-			r := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil)
 			if tc.name == "remote" {
 				r.Header.Set("X-Api-Key", tc.token)
 			} else if tc.token != "" {

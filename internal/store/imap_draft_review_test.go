@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -18,7 +17,7 @@ func TestManagedIMAPDraftPendingReopen(t *testing.T) {
 	st, _, draft, _ := newReviewManagedDraft(t, "pending-reopen", 11, "original")
 	candidate := []byte("From: alice@example.com\r\nTo: bob@example.com\r\n\r\ncandidate\r\n")
 
-	claimed, err := st.ClaimIMAPDraftContext(context.Background(), draft.DraftID, draft.Revision, store.IMAPDraftOperationEdit, candidate)
+	claimed, err := st.ClaimIMAPDraftContext(t.Context(), draft.DraftID, draft.Revision, store.IMAPDraftOperationEdit, candidate)
 	requirements.NoError(err)
 	requirements.NotNil(claimed.Pending)
 	assertions.Equal(store.IMAPDraftOperationEdit, claimed.Pending.Operation)
@@ -32,13 +31,13 @@ func TestManagedIMAPDraftPendingReopen(t *testing.T) {
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = reopenedStore.Close() })
 
-	reopened, err := reopenedStore.GetIMAPDraftContext(context.Background(), draft.DraftID)
+	reopened, err := reopenedStore.GetIMAPDraftContext(t.Context(), draft.DraftID)
 	requirements.NoError(err)
 	requirements.NotNil(reopened.Pending)
 	assertions.Equal(candidate, reopened.Pending.Raw)
 	assertions.Equal(draft.CurrentReceipt, reopened.Pending.OriginalReceipt)
 	assertions.Equal(int64(1), reopened.Revision)
-	_, err = reopenedStore.ClaimIMAPDraftContext(context.Background(), draft.DraftID, draft.Revision, store.IMAPDraftOperationDelete, nil)
+	_, err = reopenedStore.ClaimIMAPDraftContext(t.Context(), draft.DraftID, draft.Revision, store.IMAPDraftOperationDelete, nil)
 	requirements.ErrorIs(err, store.ErrIMAPDraftPending)
 }
 
@@ -47,7 +46,7 @@ func TestManagedIMAPDraftRevision(t *testing.T) {
 	assertions := assert.New(t)
 	st, source, draft, conversationID := newReviewManagedDraft(t, "revision", 21, "original")
 
-	_, err := st.ClaimIMAPDraftContext(context.Background(), draft.DraftID, 2, store.IMAPDraftOperationEdit, []byte("candidate"))
+	_, err := st.ClaimIMAPDraftContext(t.Context(), draft.DraftID, 2, store.IMAPDraftOperationEdit, []byte("candidate"))
 	requirements.ErrorIs(err, store.ErrIMAPDraftRevision)
 	second, err := store.Open(store.DBPathForTest(st))
 	requirements.NoError(err)
@@ -62,7 +61,7 @@ func TestManagedIMAPDraftRevision(t *testing.T) {
 	claim := func(client *store.Store, candidate []byte) {
 		<-start
 		claimed, claimErr := client.ClaimIMAPDraftContext(
-			context.Background(), draft.DraftID, 1, store.IMAPDraftOperationEdit, candidate,
+			t.Context(), draft.DraftID, 1, store.IMAPDraftOperationEdit, candidate,
 		)
 		results <- claimResult{claimed: claimed, err: claimErr}
 	}
@@ -84,20 +83,20 @@ func TestManagedIMAPDraftRevision(t *testing.T) {
 	requirements.Equal(1, wins)
 	requirements.NotNil(winner.claimed.Pending)
 	requirements.Equal(int64(1), winner.claimed.Revision)
-	_, err = st.AbortIMAPDraftContext(context.Background(), draft.DraftID, 1, "rejected")
+	_, err = st.AbortIMAPDraftContext(t.Context(), draft.DraftID, 1, "rejected")
 	requirements.NoError(err)
-	active, err := st.GetIMAPDraftContext(context.Background(), draft.DraftID)
+	active, err := st.GetIMAPDraftContext(t.Context(), draft.DraftID)
 	requirements.NoError(err)
 	assertions.Equal(int64(1), active.Revision)
 	requirements.Nil(active.Pending)
 
 	candidateRaw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\n\r\ncandidate\r\n")
-	claimed, err := st.ClaimIMAPDraftContext(context.Background(), draft.DraftID, 1, store.IMAPDraftOperationEdit, candidateRaw)
+	claimed, err := st.ClaimIMAPDraftContext(t.Context(), draft.DraftID, 1, store.IMAPDraftOperationEdit, candidateRaw)
 	requirements.NoError(err)
 	requirements.NotNil(claimed.Pending)
 	replacement := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 22}
-	requirements.NoError(st.RecordIMAPDraftOutcomeContext(context.Background(), draft.DraftID, 1, "append_uidplus", &replacement))
-	published, err := st.PublishIMAPDraftReplacementContext(context.Background(), draft.DraftID, 1, nil, func([]int64) *store.MessagePersistData {
+	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, 1, "append_uidplus", &replacement))
+	published, err := st.PublishIMAPDraftReplacementContext(t.Context(), draft.DraftID, 1, nil, func([]int64) *store.MessagePersistData {
 		return &store.MessagePersistData{
 			Message: &store.Message{
 				SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(replacement),
@@ -110,8 +109,8 @@ func TestManagedIMAPDraftRevision(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(int64(2), published.Revision)
 	requirements.NotNil(published.Pending)
-	requirements.NoError(st.RecordIMAPDraftOutcomeContext(context.Background(), draft.DraftID, 2, store.IMAPDraftCodeRemoved, nil))
-	finished, err := st.FinishIMAPDraftRemovalContext(context.Background(), draft.DraftID, 2)
+	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, 2, store.IMAPDraftCodeRemoved, nil))
+	finished, err := st.FinishIMAPDraftRemovalContext(t.Context(), draft.DraftID, 2)
 	requirements.NoError(err)
 	assertions.Equal(int64(2), finished.Revision)
 	requirements.Nil(finished.Pending)
@@ -137,7 +136,7 @@ func TestManagedIMAPDraftAbort(t *testing.T) {
 				requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, 1, "append_uidplus", &receipt))
 			}
 			if scenario == "advanced" {
-				_, err = st.DB().Exec(st.Rebind("UPDATE imap_drafts SET current_uid = 72 WHERE draft_id = ?"), draft.DraftID)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE imap_drafts SET current_uid = 72 WHERE draft_id = ?"), draft.DraftID)
 				requirements.NoError(err)
 			}
 			outcome := scenario
@@ -173,7 +172,7 @@ func TestManagedIMAPDraftConstraints(t *testing.T) {
 	requirements := require.New(t)
 	st, _, draft, _ := newReviewManagedDraft(t, "constraints", 31, "original")
 	update := func(query string, args ...any) error {
-		_, err := st.DB().Exec(st.Rebind(query), args...)
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(query), args...)
 		return err
 	}
 
@@ -188,12 +187,12 @@ func TestManagedIMAPDraftConstraints(t *testing.T) {
 	} {
 		t.Run(candidate.name, func(t *testing.T) {
 			requirements := require.New(t)
-			tx, err := st.DB().Begin()
+			tx, err := st.DB().BeginTx(t.Context(), nil)
 			requirements.NoError(err)
 			defer func() { _ = tx.Rollback() }()
 			args := append([]any{draft.CurrentMessageID}, candidate.args...)
 			args = append(args, draft.DraftID)
-			_, err = tx.Exec(st.Rebind(
+			_, err = tx.ExecContext(t.Context(), st.Rebind(
 				"UPDATE imap_drafts SET pending_operation = NULL, pending_original_message_id = ?, pending_original_mailbox = 'Drafts', pending_original_uidvalidity = 1, pending_original_uid = 31"+candidate.extra+" WHERE draft_id = ?"), args...)
 			requirements.Error(err)
 		})
@@ -211,7 +210,7 @@ func TestManagedIMAPDraftConstraints(t *testing.T) {
 		WHERE draft_id = ?
 	`, draft.DraftID))
 	requirements.Error(update(`UPDATE imap_drafts SET current_uid = 0 WHERE draft_id = ?`, draft.DraftID))
-	fetched, err := st.GetIMAPDraftContext(context.Background(), draft.DraftID)
+	fetched, err := st.GetIMAPDraftContext(t.Context(), draft.DraftID)
 	requirements.NoError(err)
 	requirements.Equal(int64(1), fetched.Revision)
 	requirements.Nil(fetched.Pending)
@@ -222,7 +221,7 @@ func TestManagedIMAPDraftRetention(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st, source, draft, conversationID := newReviewManagedDraft(t, "retention", 41, "managed")
-	_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), draft.CurrentMessageID)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), draft.CurrentMessageID)
 	requirements.NoError(err)
 	controlID, err := st.PersistMessage(&store.MessagePersistData{
 		Message: &store.Message{
@@ -233,29 +232,29 @@ func TestManagedIMAPDraftRetention(t *testing.T) {
 		RawMIME:  []byte("From: control@example.com\r\n\r\ncontrol\r\n"),
 	})
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), controlID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`), controlID)
 	requirements.NoError(err)
-	plan, err := st.PlanGCContext(context.Background())
+	plan, err := st.PlanGCContext(t.Context())
 	requirements.NoError(err)
 	assertions.Equal(int64(1), plan.SourceDeleted)
 	assertions.Equal([]int64{controlID}, plan.SourceDeletedIDs)
-	_, err = st.ExecuteGCContext(context.Background(), plan)
+	_, err = st.ExecuteGCContext(t.Context(), plan)
 	requirements.NoError(err)
-	_, err = st.GetMessageContext(context.Background(), draft.CurrentMessageID)
+	_, err = st.GetMessageContext(t.Context(), draft.CurrentMessageID)
 	requirements.NoError(err)
-	_, err = st.GetMessageContext(context.Background(), controlID)
+	_, err = st.GetMessageContext(t.Context(), controlID)
 	requirements.ErrorContains(err, "message not found")
 
 	purge := newReviewManagedDraftOnStore(t, st, "dedup-purge", 42, "purge")
 	purgeDraft := purge.draft
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages SET deleted_at = CURRENT_TIMESTAMP, delete_batch_id = ? WHERE id = ?
 	`), "review-batch", purgeDraft.CurrentMessageID)
 	requirements.NoError(err)
 	deleted, err := st.DeleteDedupedBatch("review-batch")
 	requirements.NoError(err)
 	assertions.Equal(int64(1), deleted)
-	_, err = st.GetIMAPDraftContext(context.Background(), purgeDraft.DraftID)
+	_, err = st.GetIMAPDraftContext(t.Context(), purgeDraft.DraftID)
 	requirements.ErrorIs(err, store.ErrIMAPDraftNotFound)
 }
 
@@ -263,7 +262,7 @@ func TestManagedIMAPDraftSourceCascade(t *testing.T) {
 	requirements := require.New(t)
 	st, source, draft, _ := newReviewManagedDraft(t, "source-cascade", 51, "source")
 	requirements.NoError(st.RemoveSource(source.ID))
-	_, err := st.GetIMAPDraftContext(context.Background(), draft.DraftID)
+	_, err := st.GetIMAPDraftContext(t.Context(), draft.DraftID)
 	requirements.ErrorIs(err, store.ErrIMAPDraftNotFound)
 }
 
@@ -341,11 +340,11 @@ func newReviewManagedDraftOnStore(
 	requirements := require.New(t)
 	source, err := st.GetOrCreateSource("imap", fmt.Sprintf("imap://%s@example.com:143", name))
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, name, name)
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, name, name)
 	requirements.NoError(err)
 	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: uid}
 	raw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nContent-Type: text/plain\r\n\r\n" + body + "\r\n")
-	draft, err := st.PersistIMAPDraftContext(context.Background(), receipt, nil, func([]int64) *store.MessagePersistData {
+	draft, err := st.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
 		return &store.MessagePersistData{
 			Message: &store.Message{
 				SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt),

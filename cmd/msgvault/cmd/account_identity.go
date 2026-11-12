@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -25,8 +26,8 @@ const savedDefaultIdentityHelp = noDefaultIdentityHelp +
 // setDefaultIdentityOptOut changes the saved choice only for an explicit flag.
 // source must contain the config from before registration: IMAP add commands
 // replace provider settings, so an omitted flag must carry the old choice forward.
-func setDefaultIdentityOptOut(cmd *cobra.Command, s *store.Store, source *store.Source, optOut bool) error {
-	src, err := s.GetSourceByID(source.ID)
+func setDefaultIdentityOptOut(ctx context.Context, cmd *cobra.Command, s *store.Store, source *store.Source, optOut bool) error {
+	src, err := s.GetSourceByIDContext(ctx, source.ID)
 	if err != nil {
 		return fmt.Errorf("read identity preference: %w", err)
 	}
@@ -65,7 +66,7 @@ func setDefaultIdentityOptOut(cmd *cobra.Command, s *store.Store, source *store.
 	if err != nil {
 		return fmt.Errorf("encode identity preference: %w", err)
 	}
-	if err := s.UpdateSourceSyncConfig(source.ID, string(encoded)); err != nil {
+	if err := s.UpdateSourceSyncConfig(ctx, source.ID, string(encoded)); err != nil {
 		return fmt.Errorf("save identity preference: %w", err)
 	}
 	return nil
@@ -94,12 +95,12 @@ func setDefaultIdentityOptOut(cmd *cobra.Command, s *store.Store, source *store.
 //
 // account is the user-facing account name shown in the confirmation message.
 // Callers should gate this behind the per-command --no-default-identity flag.
-func confirmDefaultIdentity(out io.Writer, s *store.Store, sourceID int64, account, identifier, signal string, logger *slog.Logger) {
+func confirmDefaultIdentity(ctx context.Context, out io.Writer, s *store.Store, sourceID int64, account, identifier, signal string, logger *slog.Logger) {
 	id := strings.TrimSpace(identifier)
 	if id == "" {
 		return
 	}
-	src, err := s.GetSourceByID(sourceID)
+	src, err := s.GetSourceByIDContext(ctx, sourceID)
 	var cfg struct {
 		NoDefaultIdentity bool `json:"no_default_identity"`
 	}
@@ -114,7 +115,7 @@ func confirmDefaultIdentity(out io.Writer, s *store.Store, sourceID int64, accou
 	if cfg.NoDefaultIdentity {
 		return
 	}
-	existing, err := s.ListAccountIdentities(sourceID)
+	existing, err := s.ListAccountIdentitiesContext(ctx, sourceID)
 	if err != nil {
 		logger.Warn("auto-default-identity precheck failed",
 			"source_id", sourceID,
@@ -125,7 +126,7 @@ func confirmDefaultIdentity(out io.Writer, s *store.Store, sourceID int64, accou
 	if len(existing) > 0 {
 		return
 	}
-	if err := s.AddAccountIdentity(sourceID, id, signal); err != nil {
+	if err := s.AddAccountIdentityContext(ctx, sourceID, id, signal); err != nil {
 		logger.Warn("auto-default-identity write failed",
 			"source_id", sourceID,
 			"account", account,

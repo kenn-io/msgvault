@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -37,7 +36,7 @@ func TestGetPersonNetworkContextUsesCuratedEdgesOnly(t *testing.T) {
 	require.NoError(s.ReplaceMessageRecipients(messageID, "from", []int64{root.ParticipantIDs[0]}, []string{"Root"}))
 	require.NoError(s.ReplaceMessageRecipients(messageID, "to", []int64{messageOnlyParticipantID}, []string{"Message Only"}))
 
-	graph, err := s.GetPersonNetworkContext(context.Background(), root.ID, store.PersonNetworkOptions{Depth: 2})
+	graph, err := s.GetPersonNetworkContext(t.Context(), root.ID, store.PersonNetworkOptions{Depth: 2})
 	require.NoError(err)
 	assert.Len(graph.Nodes, 3)
 	assert.Len(graph.Edges, 2)
@@ -498,6 +497,6 @@ func networkRelationshipSlugs(edges []store.NetworkEdge) []string {
 func employmentEdgeID(t *testing.T, s *store.Store, personID int64) int64 {
 	t.Helper()
 	var id int64
-	require.NoError(t, s.DB().QueryRow(s.Rebind(`SELECT id FROM employments WHERE person_id = ?`), personID).Scan(&id))
+	require.NoError(t, s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT id FROM employments WHERE person_id = ?`), personID).Scan(&id))
 	return id
 }

@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,13 +14,13 @@ func TestPostgresPersonMergeParity(t *testing.T) {
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL integration database is not configured")
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("merge replay and stale revision rollback", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		survivor := mustPromotedPerson(t, st, "pg-parity-survivor@example.com", "Survivor")
-		absorbed := mustPromotedPerson(t, st, "pg-parity-absorbed@example.com", "Absorbed")
+		survivor := mustPromotedPerson(t.Context(), t, st, "pg-parity-survivor@example.com", "Survivor")
+		absorbed := mustPromotedPerson(t.Context(), t, st, "pg-parity-absorbed@example.com", "Absorbed")
 		request := store.PersonMergeRequest{
 			SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
 			ExpectedSurvivorRevision: survivor.Revision,
@@ -34,8 +33,8 @@ func TestPostgresPersonMergeParity(t *testing.T) {
 		require.NoError(err)
 		assertJSONEquivalent(t, merged, replayed)
 
-		staleSurvivor := mustPromotedPerson(t, st, "pg-stale-survivor@example.com", "Stale Survivor")
-		staleAbsorbed := mustPromotedPerson(t, st, "pg-stale-absorbed@example.com", "Stale Absorbed")
+		staleSurvivor := mustPromotedPerson(t.Context(), t, st, "pg-stale-survivor@example.com", "Stale Survivor")
+		staleAbsorbed := mustPromotedPerson(t.Context(), t, st, "pg-stale-absorbed@example.com", "Stale Absorbed")
 		var mergeCountBefore int
 		require.NoError(st.DB().QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM person_merges`).Scan(&mergeCountBefore))
@@ -73,8 +72,8 @@ func TestPostgresPersonMergeParity(t *testing.T) {
 	t.Run("identity link conflict payload", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
-		left := mustPromotedPerson(t, st, "pg-conflict-left@example.com", "Left")
-		right := mustPromotedPerson(t, st, "pg-conflict-right@example.com", "Right")
+		left := mustPromotedPerson(t.Context(), t, st, "pg-conflict-left@example.com", "Left")
+		right := mustPromotedPerson(t.Context(), t, st, "pg-conflict-right@example.com", "Right")
 		_, err := st.LinkParticipants(left.ParticipantIDs[0], right.ParticipantIDs[0])
 		require.Error(err)
 		require.ErrorIs(err, store.ErrPersonBindingConflict)
@@ -98,10 +97,10 @@ func TestPostgresPersonSplitParity(t *testing.T) {
 			ExpectedSourceRevision: f.survivor.Revision,
 			IdempotencyKey:         "pg-parity-exact-split", Actor: "test",
 		}
-		result, err := f.store.SplitPersonMergeContext(context.Background(), request)
+		result, err := f.store.SplitPersonMergeContext(t.Context(), request)
 		require.NoError(err)
 		assert.True(result.ExactReversal)
-		replayed, err := f.store.SplitPersonMergeContext(context.Background(), request)
+		replayed, err := f.store.SplitPersonMergeContext(t.Context(), request)
 		require.NoError(err)
 		assertJSONEquivalent(t, result, replayed)
 	})
@@ -113,7 +112,7 @@ func TestPostgresPersonSplitParity(t *testing.T) {
 		if !f.store.IsPostgreSQL() {
 			t.Skip("PostgreSQL integration database is not configured")
 		}
-		result, err := f.store.SplitPersonMergeContext(context.Background(), store.PersonSplitRequest{
+		result, err := f.store.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
 			SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
 			ParticipantIDs:         []int64{f.absorbedParticipants[0]},
 			ExpectedSourceRevision: f.survivor.Revision,

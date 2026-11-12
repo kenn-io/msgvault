@@ -37,6 +37,6 @@ func TestFakeVaultCommandPassesScaleFlagsToGenerator(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
 	var participants int64
-	requirementsForTest.NoError(db.QueryRow("SELECT count(*) FROM participants").Scan(&participants))
+	requirementsForTest.NoError(db.QueryRowContext(t.Context(), "SELECT count(*) FROM participants").Scan(&participants))
 	assert.Equal(t, int64(17), participants)
 }

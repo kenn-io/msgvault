@@ -27,6 +27,7 @@ func TestDayContextUsesOnePostgresSnapshotAcrossIndependentSubpages(t *testing.T
 	source, err := first.GetOrCreateSource("gmail", "synthetic@example.invalid")
 	require.NoError(err)
 	conversationID, err := first.EnsureConversation(
+		t.Context(),
 		source.ID, "snapshot-thread", "Synthetic snapshot thread")
 	require.NoError(err)
 	require.NoError(first.AddAccountIdentity(

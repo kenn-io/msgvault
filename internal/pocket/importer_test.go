@@ -133,7 +133,7 @@ func TestPocketImportLastSyncAt(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			imp, st, src := testArchive(t, testRecording(t, recordingFixture), testRecording(t, `{"id":"rec-b","created_at":"2026-08-01T10:00:00Z","transcript":{"segments":[]}}`))
-			registered, err := st.GetSourceByTypeAndIdentifier(SourceType, "personal")
+			registered, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "personal")
 			requirements.NoError(err)
 			if tt.previousSync {
 				// Backdate the fixture so an incorrect update cannot hide in the same clock tick.
@@ -260,7 +260,7 @@ func TestPocketImportPreservesOwnerWhenLaterRecordingOmitsIt(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("owner@example.com", before.FromEmail)
 	assertions.Equal("Organizer One", before.FromName)
-	beforeIsFromMe, err := st.GetMessageIsFromMe(id)
+	beforeIsFromMe, err := st.GetMessageIsFromMe(t.Context(), id)
 	requirements.NoError(err)
 	assertions.True(beforeIsFromMe)
 	beforeRecipients := make(map[string][]store.MessageRecipient)
@@ -282,7 +282,7 @@ func TestPocketImportPreservesOwnerWhenLaterRecordingOmitsIt(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(before.FromEmail, after.FromEmail)
 	assertions.Equal(before.FromName, after.FromName)
-	afterIsFromMe, err := st.GetMessageIsFromMe(id)
+	afterIsFromMe, err := st.GetMessageIsFromMe(t.Context(), id)
 	requirements.NoError(err)
 	assertions.Equal(beforeIsFromMe, afterIsFromMe)
 	for _, recipientType := range []string{"from", "to", "cc", "bcc"} {
@@ -471,7 +471,7 @@ func TestPocketImportPartialFailurePreservesCommittedDataAndCheckpoint(t *testin
 	after, err := st.GetLastSuccessfulSync(first.SourceID)
 	requirements.NoError(err)
 	assertions.Equal(last.ID, after.ID)
-	checkpoint, err := st.GetLatestCheckpointedSyncByType(first.SourceID, SourceType)
+	checkpoint, err := st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
 	requirements.NoError(err)
 	assertions.NotEmpty(checkpoint.CursorBefore.String)
 	// Sync status shows this message, so it must name the failing recording.
@@ -480,7 +480,7 @@ func TestPocketImportPartialFailurePreservesCommittedDataAndCheckpoint(t *testin
 	src.listErr = errors.New("enumeration failed")
 	_, err = imp.Import(t.Context(), archiveOptions())
 	requirements.Error(err)
-	checkpoint, err = st.GetLatestCheckpointedSyncByType(first.SourceID, SourceType)
+	checkpoint, err = st.GetLatestCheckpointedSyncByType(t.Context(), first.SourceID, SourceType)
 	requirements.NoError(err)
 	assertions.JSONEq(before, checkpoint.CursorBefore.String)
 }
@@ -555,7 +555,7 @@ func TestPocketImportCancellationAndStateRepair(t *testing.T) {
 	_, content := archivedContent(t, st, summary.SourceID, "rec-a")
 	assertions.Equal("Roadmap decision", content.Summary.Text)
 	src.onRead = nil
-	state, err := imp.loadState(summary.SourceID, false)
+	state, err := imp.loadState(t.Context(), summary.SourceID, false)
 	requirements.NoError(err)
 	assertions.Equal(int64(2), state.Sequence)
 	runID, err := st.StartSync(summary.SourceID, SourceType)

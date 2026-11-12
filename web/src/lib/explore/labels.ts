@@ -1,3 +1,4 @@
+import { sourceDisplayName, sourceIcon } from '../sources/labels';
 import { groupingDimensionLabel, isGroupingDimension } from '../grouping/catalog';
 import type {
   ExploreColumn,
@@ -80,14 +81,13 @@ const KNOWN_MIME: Record<string, string> = {
   'text/plain': 'Text',
   'text/html': 'HTML',
   'text/csv': 'CSV',
+  'text/tab-separated-values': 'TSV',
   'text/calendar': 'Calendar invite',
   'message/rfc822': 'Email message'
 };
 
 // Keys are `${action}:${reason}`, matching the unavailable_actions the preflight endpoint returns.
 const REASONS: Record<string, string> = {
-  'open_in_source:trusted_source_link_unavailable':
-    'Your sources don’t provide links to open these items.',
   'export:browser_export_requires_single_message': 'Export works for one message at a time.',
   'export:selection_has_no_exportable_raw_message':
     'The selection has no original message to export.',
@@ -180,7 +180,9 @@ function kindPresentation(icon: string, label: string): EntryKindPresentation {
 // (internal/identityindex/schema.go).
 export const CHAT_MESSAGE_TYPES = new Set([
   'chat', 'text', 'google_chat', 'whatsapp', 'imessage', 'sms', 'mms', 'rcs',
-  'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'inline', 'fbmessenger', 'matrix', 'chatwoot', 'telegram'
+  'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'inline', 'fbmessenger', 'matrix', 'chatwoot', 'telegram', 'x_dm',
+  'facebook_comments',
+  'instagram_comments'
 ]);
 
 // The server-assigned kind wins; the message type covers rows and archive messages without one.
@@ -201,4 +203,32 @@ export function entryKindPresentation(kind: string, messageType = ''): EntryKind
     return kindPresentation('◫', 'Meeting item');
   }
   return kindPresentation('◇', 'Archive item');
+}
+
+export type SourceInventory = ReadonlyMap<string, { type: string; identifier: string; displayName?: string | null }>;
+
+export function groupRowName(dimension: ExploreGroupDimension, key: string, label: string, sources?: SourceInventory) {
+  if (dimension === 'month' && /^\d{4}-\d{2}$/.test(key)) {
+    const [year, month] = key.split('-').map(Number);
+    return { name: new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric' }).format(new Date(year!, month! - 1, 1)) };
+  }
+  if (dimension === 'source') {
+    const source = sources?.get(key);
+    const base = sourceDisplayName(source?.type, source?.identifier ?? label);
+    const collisions = [...(sources ?? [])].filter(([, item]) => sourceDisplayName(item.type, item.identifier) === base);
+    const displaySuffix = (item: { type: string; identifier: string; displayName?: string | null }) =>
+      item.displayName?.trim() || (item.type === 'chatwoot' ? '' :
+      item.type === 'imap' && item.identifier.includes('://') && item.identifier.lastIndexOf('@') > item.identifier.indexOf('://') + 3
+        ? item.identifier.slice(item.identifier.lastIndexOf('@') + 1) : item.identifier);
+    const suffixValue = source && displaySuffix(source);
+    const sameSuffix = collisions.filter(([, item]) => displaySuffix(item) === suffixValue).length > 1;
+    const suffix = !suffixValue || suffixValue === base ? key : `${suffixValue}${sameSuffix ? ` · ${key}` : ''}`;
+    const name = source && collisions.length > 1 ? `${base} (${suffix})` : base;
+    return { name, icon: source?.type ? sourceIcon(source.type) : undefined, title: label };
+  }
+  if (dimension === 'kind' || dimension === 'message_type') {
+    const presentation = dimension === 'kind' ? entryKindPresentation(key) : entryKindPresentation('', key);
+    return { name: dimension === 'kind' ? presentation.name : sentenceCase(key), icon: presentation.icon };
+  }
+  return { name: label };
 }

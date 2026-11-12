@@ -449,7 +449,7 @@ func (f *chatAssemblyFixture) seed(sourceID, timestamp, sender, body string) int
 func (f *chatAssemblyFixture) addConversation(title string) int64 {
 	f.t.Helper()
 	id, err := f.store.EnsureConversationWithType(f.sourceID,
-		fmt.Sprintf("chat-%d", time.Now().UnixNano()), "group_chat", title)
+		fmt.Sprintf("chat-%d", testSeedSequence.Add(1)), "group_chat", title)
 	require.NoError(f.t, err)
 	return id
 }
@@ -472,7 +472,7 @@ func (f *chatAssemblyFixture) assemble(scopes ...AffectedScope) []Document {
 }
 
 func (f *chatAssemblyFixture) exec(query string, args ...any) error {
-	_, err := f.store.DB().Exec(f.store.Rebind(query), args...)
+	_, err := f.store.DB().ExecContext(f.t.Context(), f.store.Rebind(query), args...)
 	return err
 }
 

@@ -13,7 +13,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 	assert := assert.New(t)
 	require := require.New(t)
 	_, db := writeRelationshipBaseFixture(t, true)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_temperature_activity AS
 		SELECT *, false AS unsent FROM (VALUES
 			-- Direct chat written by the owner: the explicit edge identifies
@@ -51,7 +51,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 		"synthetic_temperature_activity",
 		time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC),
 	)
-	err = db.QueryRow(`
+	err = db.QueryRowContext(t.Context(), `
 		SELECT sent_count, received_count, meeting_count, email_count,
 		       chat_count, total_count, modality_mask
 		FROM (`+query+`)
@@ -70,7 +70,7 @@ func TestRelationshipTemperatureDailyAttributesDirectAndGroupInteractions(t *tes
 func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 	require := require.New(t)
 	_, db := writeRelationshipBaseFixture(t, true)
-	_, err := db.Exec(`
+	_, err := db.ExecContext(t.Context(), `
 		CREATE TEMP TABLE synthetic_unsent_activity AS
 		SELECT * FROM (VALUES
 			(8::BIGINT, 1::BIGINT, TIMESTAMP '2026-01-02 19:00:00', true, 'item'::VARCHAR, 'direct_chat'::VARCHAR, true, false, true, true, true, true),
@@ -82,7 +82,7 @@ func TestRelationshipTemperatureDailyExcludesUnsent(t *testing.T) {
 	require.NoError(err)
 	query := buildRelationshipTemperatureDailySQL("synthetic_unsent_activity", time.Date(2026, time.January, 3, 0, 0, 0, 0, time.UTC))
 	var count int
-	require.NoError(db.QueryRow("SELECT count(*) FROM (" + query + ")").Scan(&count))
+	require.NoError(db.QueryRowContext(t.Context(), "SELECT count(*) FROM ("+query+")").Scan(&count))
 	assert.Zero(t, count, "an owner-authored unsent chat contributes no daily contact activity")
 }
 
@@ -90,14 +90,14 @@ func TestRelationshipTemperatureCurrentHalfLifeKeepsOlderSignalsInWholeGraph(t *
 	assert := assert.New(t)
 	require := require.New(t)
 	_, db := writeRelationshipBaseFixture(t, true)
-	_, err := db.Exec(`
-		CREATE TEMP TABLE ` + temperatureBuildRelation + ` (
+	_, err := db.ExecContext(t.Context(), `
+		CREATE TEMP TABLE `+temperatureBuildRelation+` (
 			canonical_id BIGINT, event_date DATE, sent_count BIGINT,
 			received_count BIGINT, meeting_count BIGINT, email_count BIGINT,
 			chat_count BIGINT, total_count BIGINT, modality_mask UTINYINT,
 			last_at TIMESTAMP
 		);
-		INSERT INTO ` + temperatureBuildRelation + ` VALUES
+		INSERT INTO `+temperatureBuildRelation+` VALUES
 			(2, DATE '2025-01-01', 10, 0, 0, 10, 0, 10, 1, TIMESTAMP '2025-01-01 12:00:00'),
 			(3, DATE '2026-01-01', 1, 0, 0, 1, 0, 1, 1, TIMESTAMP '2026-01-01 12:00:00')
 	`)
@@ -106,7 +106,7 @@ func TestRelationshipTemperatureCurrentHalfLifeKeepsOlderSignalsInWholeGraph(t *
 	query := `WITH anchor AS (SELECT 1)` + relationshipTemperatureCTEs(
 		time.Date(2026, time.January, 1, 23, 59, 59, 0, time.UTC),
 	) + ` SELECT canonical_id, population, raw_score FROM current_ranked ORDER BY canonical_id`
-	rows, err := db.Query(query)
+	rows, err := db.QueryContext(t.Context(), query)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	require.True(rows.Next())
@@ -129,14 +129,14 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	_, db := writeRelationshipBaseFixture(t, true)
-	_, err := db.Exec(`
-		CREATE TEMP TABLE ` + temperatureBuildRelation + ` (
+	_, err := db.ExecContext(t.Context(), `
+		CREATE TEMP TABLE `+temperatureBuildRelation+` (
 			canonical_id BIGINT, event_date DATE, sent_count BIGINT,
 			received_count BIGINT, meeting_count BIGINT, email_count BIGINT,
 			chat_count BIGINT, total_count BIGINT, modality_mask UTINYINT,
 			last_at TIMESTAMP
 		);
-		INSERT INTO ` + temperatureBuildRelation + ` VALUES
+		INSERT INTO `+temperatureBuildRelation+` VALUES
 			(2, DATE '1969-12-31', 1, 0, 0, 1, 0, 1, 1, TIMESTAMP '1969-12-31 23:59:59'),
 			(2, DATE '1970-01-01', 1, 0, 0, 1, 0, 1, 1, TIMESTAMP '1970-01-01 00:00:00'),
 			(3, DATE '1904-01-04', 0, 1, 0, 1, 0, 1, 1, TIMESTAMP '1904-01-04 09:00:00')
@@ -148,7 +148,7 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 	)
 
 	func() {
-		rows, err := db.Query(query + ` SELECT canonical_id,
+		rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id,
 			CAST(to_json(list_transform(annual_temperatures, lambda x: x.year)) AS VARCHAR)
 			FROM annual_rollups ORDER BY canonical_id`)
 		require.NoError(err)
@@ -164,7 +164,7 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 	}()
 
 	func() {
-		rows, err := db.Query(query + ` SELECT canonical_id, peak_year
+		rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id, peak_year
 			FROM peaks ORDER BY canonical_id`)
 		require.NoError(err)
 		defer func() { require.NoError(rows.Close()) }()
@@ -178,7 +178,7 @@ func TestRelationshipTemperatureAnnualRollupsStartAtFirstYear(t *testing.T) {
 	}()
 
 	func() {
-		rows, err := db.Query(query + ` SELECT canonical_id, population, raw_score
+		rows, err := db.QueryContext(t.Context(), query+` SELECT canonical_id, population, raw_score
 			FROM current_ranked ORDER BY canonical_id`)
 		require.NoError(err)
 		defer func() { require.NoError(rows.Close()) }()

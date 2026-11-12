@@ -95,7 +95,7 @@ func (r *singleInt64Rows) Next(dest []driver.Value) error {
 
 func TestStartSyncContextRollbackOutlivesRequestCancellation(t *testing.T) {
 	require := require.New(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	rollbackCtx := make(chan error, 1)
 	db := sql.OpenDB(&canceledStartSyncConnector{

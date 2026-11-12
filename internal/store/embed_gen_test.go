@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -56,7 +55,7 @@ func seedEmbedScopeFixture(t *testing.T, st *store.Store) embedScopeFixture {
 
 	// One soft-deleted message in source A: live predicates must exclude it.
 	fx.deletedA = seed(fx.srcA, "alice-deleted", 1)[0]
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), fx.deletedA)
 	require.NoError(t, err, "soft-delete message")
 	return fx
@@ -67,7 +66,7 @@ func TestScanForEmbeddingScopedFiltersBySource(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	fx := seedEmbedScopeFixture(t, st)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	scoped, err := st.ScanForEmbeddingScoped(ctx, 1, 0, 100, nil, []int64{fx.srcA.ID})
 	require.NoError(err, "ScanForEmbeddingScoped")
@@ -92,7 +91,7 @@ func TestCoverageCountsScopedVariantsFilterBySource(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	fx := seedEmbedScopeFixture(t, st)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	require.NoError(st.SetEmbedGen(ctx, fx.msgsA[:2], 7), "stamp two of A's messages")
 
@@ -115,10 +114,10 @@ func TestCoverageCountsScopedVariantsFilterBySource(t *testing.T) {
 func TestScopedFiltersComposeMessageTypesAndSources(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	fx := seedEmbedScopeFixture(t, st)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Reclassify one of A's messages as a different type.
-	_, err := st.DB().Exec(st.Rebind(
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE messages SET message_type = 'sms' WHERE id = ?`), fx.msgsA[0])
 	require.NoError(t, err, "reclassify message type")
 
@@ -133,7 +132,7 @@ func TestScanEmbeddingCoverageStreamsStampedLiveIDsInBatches(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	fx := seedEmbedScopeFixture(t, st)
-	ctx := context.Background()
+	ctx := t.Context()
 	require.NoError(st.SetEmbedGen(ctx, append([]int64{fx.deletedA}, fx.msgsA...), 7), "stamp A, including its deleted row")
 	require.NoError(st.SetEmbedGen(ctx, fx.msgsB, 7), "stamp B outside the scope")
 
@@ -156,7 +155,7 @@ func TestScanEmbeddingCoverageStreamsStampedLiveIDsInBatches(t *testing.T) {
 func TestScanEmbeddingCoverageStopsOnVisitError(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	fx := seedEmbedScopeFixture(t, st)
-	ctx := context.Background()
+	ctx := t.Context()
 	require.NoError(t, st.SetEmbedGen(ctx, fx.msgsA, 7))
 	visitErr := errors.New("vector database unavailable")
 
@@ -169,7 +168,7 @@ func TestScanEmbeddingCoverageStopsOnVisitError(t *testing.T) {
 
 func TestScanEmbeddingCoverageRejectsNonPositiveBatchSize(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	_, _, err := st.ScanEmbeddingCoverage(context.Background(), 7, store.EmbeddingCoverageScan{
+	_, _, err := st.ScanEmbeddingCoverage(t.Context(), 7, store.EmbeddingCoverageScan{
 		VisitStamped: func([]int64) error { return nil },
 	})
 	require.ErrorContains(t, err, "batch size must be positive")
@@ -182,7 +181,7 @@ func TestSetEmbedGenIfUnchanged(t *testing.T) {
 	id := seedMessageForLM(t, st)
 	tokenAtRead := baselineLM(t, st, id)
 
-	_, err := st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "corrected body", id)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "corrected body", id)
 	require.NoError(err)
 	missed, covered, err := st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead}}, 7)
 	require.NoError(err)
@@ -191,7 +190,8 @@ func TestSetEmbedGenIfUnchanged(t *testing.T) {
 	assert.False(readEmbedGen(t, st, id).Valid, "a stale token must not stamp the row")
 	tokenAtRead = baselineLM(t, st, id)
 
-	missed, covered, err = st.SetEmbedGenIfUnchanged(context.Background(),
+	missed, covered, err = st.SetEmbedGenIfUnchanged(
+		t.Context(),
 		[]store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead}}, 7)
 	require.NoError(err)
 	assert.Empty(missed)

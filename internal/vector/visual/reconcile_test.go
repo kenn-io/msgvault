@@ -71,7 +71,7 @@ func TestReplayReclaimsMessageTextRevisionThenTombstonesRoleChange(t *testing.T)
 	require.Empty(completed.Work)
 	initialRevision := initial.Work[0].Document.Revision
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET subject = ? WHERE id = ?`), "changed synthetic subject", messageID)
 	require.NoError(err)
 	replayed, err := reconciler.Replay(t.Context())
@@ -87,7 +87,7 @@ func TestReplayReclaimsMessageTextRevisionThenTombstonesRoleChange(t *testing.T)
 	_, err = reconciler.Replay(t.Context())
 	require.NoError(err)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET attachment_role = 'inline' WHERE message_id = ?`), messageID)
 	require.NoError(err)
 	_, err = reconciler.Replay(t.Context())
@@ -149,7 +149,7 @@ func TestReplayDoesNotAdvanceCursorBeforeDurableDecision(t *testing.T) {
 	require.NoError(err)
 	require.Empty(completed.Work)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET subject = ? WHERE id = ?`), "new subject", messageID)
 	require.NoError(err)
 	before, err := f.Store.GetAttachmentChangeConsumer(t.Context(), consumerKey)
@@ -182,7 +182,7 @@ func TestReplayRestoresSameRevisionWithoutProviderWork(t *testing.T) {
 	require.Empty(initial.Work)
 	before := visualPublicationForMessage(t, f, generation.ID, messageID)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET filename = ? WHERE message_id = ?`), "renamed.png", messageID)
 	require.NoError(err)
 	stale := visualPublicationForMessage(t, f, generation.ID, messageID)
@@ -216,7 +216,7 @@ func TestFullReconcileRepairsDeliberatelyMissedEvent(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(initial.Work)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET attachment_role = 'standalone' WHERE message_id = ?`), messageID)
 	require.NoError(err)
 	changes, err := f.Store.ListAttachmentChanges(t.Context(), consumerKey, 10)
@@ -358,7 +358,7 @@ func TestReplayDoesNotConsumePagesWhileForeignClaimsAreActive(t *testing.T) {
 	})
 	require.NoError(err)
 	require.True(acquired)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE attachments SET filename = ? WHERE message_id = ?`), "renamed.png", messageID)
 	require.NoError(err)
 
@@ -587,7 +587,7 @@ func TestMessageTypeScopeEntryIsDiscoveredWithoutRebuild(t *testing.T) {
 	// A re-import corrects the message type into scope. No attachment
 	// journal event fires, so the seeded placeholder is the only signal;
 	// the sweep must discover and index the owner without a full rebuild.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET message_type = 'chat' WHERE id = ?`), messageID)
 	require.NoError(err)
 	result, err = reconciler.Replay(t.Context())
@@ -597,7 +597,7 @@ func TestMessageTypeScopeEntryIsDiscoveredWithoutRebuild(t *testing.T) {
 	publishReconciledWork(t, f, result.Work[0])
 
 	// Scope exit tombstones the publication...
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET message_type = 'email' WHERE id = ?`), messageID)
 	require.NoError(err)
 	result, err = reconciler.Replay(t.Context())
@@ -608,7 +608,7 @@ func TestMessageTypeScopeEntryIsDiscoveredWithoutRebuild(t *testing.T) {
 	// the tombstoned row back to stale. The retained vector token and
 	// unchanged revision then let the sweep RESTORE the publication in
 	// place — searchable again with zero provider work, no rebuild.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET message_type = 'chat' WHERE id = ?`), messageID)
 	require.NoError(err)
 	result, err = reconciler.Replay(t.Context())

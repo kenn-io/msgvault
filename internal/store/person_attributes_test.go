@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -26,7 +25,7 @@ func mustAttributePerson(t *testing.T, st *store.Store) int64 {
 
 func TestSetPersonAttributeValueStoresEveryTypedColumn(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	person := mustAttributePerson(t, st)
 	timestamp := time.Date(2026, 7, 30, 9, 30, 0, 0, time.UTC)
 
@@ -91,7 +90,7 @@ func TestSetPersonAttributeValueStoresEveryTypedColumn(t *testing.T) {
 func TestDeletePersonRejectsStoredRecordReferences(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	sourceParticipant, err := st.EnsureParticipant(
 		"source@example.com", "source", "example.com")
 	require.NoError(err)
@@ -138,7 +137,7 @@ func TestDeletePersonRejectsStoredRecordReferences(t *testing.T) {
 
 func TestSetPersonAttributeValueRejectsInvalidShapes(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	person := mustAttributePerson(t, st)
 
 	tests := []store.PersonAttributeValueInput{
@@ -188,7 +187,7 @@ func TestPersonAttributeSupersedeHistoryCASAndDryRun(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	person := mustAttributePerson(t, st)
 
 	first, err := st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
@@ -250,7 +249,7 @@ func TestPersonAttributeSupersedeHistoryCASAndDryRun(t *testing.T) {
 func TestInactiveDefinitionBlocksSetButAllowsSupersede(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	person := mustAttributePerson(t, st)
 
 	definition := personTextDefinition("retired_field")
@@ -289,7 +288,7 @@ func TestBackdatedReplacementSeparatesValidityAndAuditTimes(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	person := mustAttributePerson(t, st)
 	originalActiveFrom := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 	replacementActiveFrom := time.Date(2021, 2, 3, 4, 5, 6, 0, time.UTC)
@@ -324,7 +323,7 @@ func TestPersonAttributePublicDryRunAndCASDoNotPersistPins(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	person := mustAttributePerson(t, st)
 
 	preview, err := st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
@@ -360,7 +359,7 @@ func TestMultiCardinalityAppendsPerOrdinalAndDerivedConfidenceIsAllowed(t *testi
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	person := mustAttributePerson(t, st)
 
 	first, err := st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{

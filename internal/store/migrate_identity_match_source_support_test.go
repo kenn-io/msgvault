@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"path/filepath"
 	"testing"
 
@@ -30,7 +29,7 @@ func TestInitSchemaBackfillsLegacyIdentityMatchSourceSupport(t *testing.T) {
 	)
 	require.NoError(err)
 	candidate, created, err := st.UpsertIdentityMatchCandidateContext(
-		context.Background(), IdentityMatchCandidateInput{
+		t.Context(), IdentityMatchCandidateInput{
 			LeftKind: IdentityMatchParticipant, LeftID: left,
 			RightKind: IdentityMatchParticipant, RightID: right,
 			Basis:           IdentityMatchStableProviderID,
@@ -43,7 +42,7 @@ func TestInitSchemaBackfillsLegacyIdentityMatchSourceSupport(t *testing.T) {
 	require.NoError(err)
 	require.True(created)
 	evidence, err := st.AddIdentityMatchEvidenceContext(
-		context.Background(), candidate.ID, IdentityMatchEvidenceInput{
+		t.Context(), candidate.ID, IdentityMatchEvidenceInput{
 			EvidenceKind: "stable_provider_id",
 			Detail:       new("legacy-provider-id"),
 			Source:       ProvenanceArchiveObservation,
@@ -54,28 +53,29 @@ func TestInitSchemaBackfillsLegacyIdentityMatchSourceSupport(t *testing.T) {
 
 	// Recreate the pre-migration shape: generated rows exist, the new support
 	// tables do not, and the one-shot sentinel has not been written.
-	_, err = st.DB().Exec(`DROP TABLE identity_match_evidence_sources`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TABLE identity_match_evidence_sources`)
 	require.NoError(err)
-	_, err = st.DB().Exec(`DROP TABLE identity_match_candidate_sources`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TABLE identity_match_candidate_sources`)
 	require.NoError(err)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		`DELETE FROM applied_migrations WHERE name = ?`, migrationIdentityMatchSourceSupport,
 	)
 	require.NoError(err)
 	require.NoError(st.InitSchema(), "upgrade legacy identity support")
 
 	var candidateSupport, evidenceSupport, conservativeCandidate, conservativeEvidence int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*)
 		FROM identity_match_candidate_sources WHERE candidate_id = ?`, candidate.ID).
 		Scan(&candidateSupport))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*)
 		FROM identity_match_evidence_sources WHERE evidence_id = ?`, evidence.ID).
 		Scan(&evidenceSupport))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*)
 		FROM identity_match_candidate_sources
 		WHERE candidate_id = ? AND is_conservative = TRUE`, candidate.ID).
 		Scan(&conservativeCandidate))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*)
 		FROM identity_match_evidence_sources
 		WHERE evidence_id = ? AND is_conservative = TRUE`, evidence.ID).
 		Scan(&conservativeEvidence))
@@ -91,10 +91,10 @@ func TestInitSchemaBackfillsLegacyIdentityMatchSourceSupport(t *testing.T) {
 	// A later exact observation upgrades the conservative placeholder instead
 	// of leaving the source permanently hidden from safe subset exports.
 	require.NoError(st.AttachIdentityMatchCandidateSourceContext(
-		context.Background(), candidate.ID, firstSource.ID,
+		t.Context(), candidate.ID, firstSource.ID,
 	))
 	require.NoError(st.AttachIdentityMatchEvidenceSourceContext(
-		context.Background(), evidence.ID, firstSource.ID,
+		t.Context(), evidence.ID, firstSource.ID,
 	))
 	assert.Equal(1, countConservativeSupport(t, st,
 		`identity_match_candidate_sources`, `candidate_id`, candidate.ID),
@@ -110,7 +110,7 @@ func TestInitSchemaBackfillsLegacyIdentityMatchSourceSupport(t *testing.T) {
 	_, err = st.GetOrCreateSource("beeper", "account-c")
 	require.NoError(err)
 	require.NoError(st.InitSchema(), "repeat schema initialization")
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*)
 		FROM identity_match_candidate_sources WHERE candidate_id = ?`, candidate.ID).
 		Scan(&candidateSupport))
 	assert.Equal(2, candidateSupport,
@@ -122,7 +122,8 @@ func countConservativeSupport(
 ) int {
 	t.Helper()
 	var count int
-	require.NoError(t, st.DB().QueryRow(
+	require.NoError(t, st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM `+table+` WHERE `+ownerColumn+` = ? AND is_conservative = TRUE`,
 		ownerID,
 	).Scan(&count))

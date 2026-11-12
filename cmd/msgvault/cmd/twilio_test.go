@@ -128,7 +128,7 @@ func TestTwilioAddRegistersPrimaryIdentity(t *testing.T) {
 	st, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(st.Close()) })
-	source, err := st.GetSourceByTypeAndIdentifier("twilio", "work")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "twilio", "work")
 	require.NoError(err)
 	identities, err := st.ListAccountIdentitiesContext(t.Context(), source.ID)
 	require.NoError(err)
@@ -392,13 +392,20 @@ func TestTwilioDaemonDispatchesRegisteredScheduledSource(t *testing.T) {
 	waitForServeHealth(t, cfg.Server.APIPort, errCh)
 	base := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.APIPort)
 	client := &http.Client{Timeout: serveLifecycleTestTimeout}
-	response, err := client.Post(base+"/api/v1/sync/work?source_type=twilio", "application/json", nil)
+	syncRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, base+"/api/v1/sync/work?source_type=twilio", nil)
+	require.NoError(err)
+	syncRequest.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(syncRequest)
 	require.NoError(err)
 	require.NoError(response.Body.Close())
 	require.Equal(http.StatusAccepted, response.StatusCode)
 	var status api.SourceStatusResponse
 	require.Eventually(func() bool {
-		response, err := client.Get(base + "/api/v1/sources/status?source_type=twilio")
+		statusRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/api/v1/sources/status?source_type=twilio", nil)
+		if err != nil {
+			return false
+		}
+		response, err := client.Do(statusRequest)
 		if err != nil {
 			return false
 		}
@@ -425,6 +432,6 @@ func TestTwilioRemovalDoesNotRecreateScheduledSource(t *testing.T) {
 	t.Cleanup(func() { require.NoError(check.Close()) })
 	err = runConfiguredTwilioSync(t.Context(), check, config.TwilioSource{Identifier: "work"})
 	require.ErrorContains(err, "add-twilio work")
-	_, err = check.GetSourceByTypeAndIdentifier("twilio", "work")
+	_, err = check.GetSourceByTypeAndIdentifier(t.Context(), "twilio", "work")
 	require.ErrorIs(err, store.ErrSourceNotFound)
 }

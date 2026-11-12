@@ -80,6 +80,10 @@ func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("apply pgvector schema: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS document_vector_embeddings;
+		DROP TABLE IF EXISTS document_vector_backend_generations`); err != nil {
+		return fmt.Errorf("drop retired document vectors: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		ALTER TABLE embedding_document_progress
 		ADD COLUMN IF NOT EXISTS journal_cursor TEXT NOT NULL DEFAULT ''`); err != nil {
@@ -126,9 +130,6 @@ func Migrate(ctx context.Context, db migrateExecer, defaultDim int, skipExtensio
 			return err
 		}
 		if err := EnsurePersonVectorIndex(ctx, db, defaultDim); err != nil {
-			return err
-		}
-		if err := EnsureDocumentVectorIndex(ctx, db, defaultDim); err != nil {
 			return err
 		}
 	}
@@ -185,39 +186,4 @@ func EnsureVectorIndex(ctx context.Context, db migrateExecer, dim int) error {
 // Exposed mainly for diagnostic purposes.
 func VectorIndexName(dim int) string {
 	return fmt.Sprintf("idx_embeddings_hnsw_d%d", dim)
-}
-
-// EnsureDocumentVectorIndex creates the dedicated per-dimension cosine HNSW
-// index for attachment-document vectors. It never indexes message embeddings.
-func EnsureDocumentVectorIndex(ctx context.Context, db migrateExecer, dim int) error {
-	if dim <= 0 {
-		return fmt.Errorf("invalid document vector dimension %d", dim)
-	}
-	stmt := fmt.Sprintf(
-		`CREATE INDEX IF NOT EXISTS %s
-		   ON document_vector_embeddings
-		USING hnsw ((embedding::vector(%d)) vector_cosine_ops)
-		   WHERE dimension = %d`,
-		DocumentVectorIndexName(dim), dim, dim,
-	)
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin document hnsw index tx for dim %d: %w", dim, err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
-		return fmt.Errorf("disable statement_timeout for document hnsw index: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, stmt); err != nil {
-		return fmt.Errorf("create document hnsw index for dim %d: %w", dim, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit document hnsw index for dim %d: %w", dim, err)
-	}
-	return nil
-}
-
-// DocumentVectorIndexName returns the dedicated dimension-specific HNSW name.
-func DocumentVectorIndexName(dim int) string {
-	return fmt.Sprintf("idx_document_vector_embeddings_hnsw_d%d", dim)
 }

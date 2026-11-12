@@ -180,7 +180,7 @@ func createCalendarSource(
 		"calendar_id":   identifier,
 	})
 	require.NoError(t, err)
-	require.NoError(t, f.Store.UpdateSourceSyncConfig(source.ID, string(config)))
+	require.NoError(t, f.Store.UpdateSourceSyncConfig(t.Context(), source.ID, string(config)))
 	return source
 }
 

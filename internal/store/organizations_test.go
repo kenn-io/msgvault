@@ -16,7 +16,7 @@ import (
 func TestCreateGetAndListOrganizations(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	description := "Synthetic fixture organization."
@@ -64,7 +64,7 @@ func TestCreateGetAndListOrganizations(t *testing.T) {
 }
 
 func TestCreateOrganizationRejectsInvalidInput(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	tests := []struct {
@@ -105,7 +105,7 @@ func TestCreateOrganizationDefaultsKindToOther(t *testing.T) {
 	st := testutil.NewTestStore(t)
 
 	created, err := st.CreateOrganizationContext(
-		context.Background(), store.OrganizationInput{Name: "Example Org"})
+		t.Context(), store.OrganizationInput{Name: "Example Org"})
 	require.NoError(err)
 	assert.Equal(store.OrganizationKindOther, created.Kind)
 }
@@ -113,7 +113,7 @@ func TestCreateOrganizationDefaultsKindToOther(t *testing.T) {
 func TestUpdateOrganizationBumpsRevisionAndRejectsStaleWrites(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	created, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
@@ -141,7 +141,7 @@ func TestUpdateOrganizationBumpsRevisionAndRejectsStaleWrites(t *testing.T) {
 func TestRetireAndUnretireOrganizationHidesItFromDefaultListing(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	created, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
@@ -175,7 +175,7 @@ func TestRetireAndUnretireOrganizationHidesItFromDefaultListing(t *testing.T) {
 
 func TestDeleteOrganizationSucceedsOnlyWithoutEmploymentHistory(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	created, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
@@ -238,7 +238,7 @@ func TestNormalizeDomainMatchesStoreNormalization(t *testing.T) {
 func TestMergeOrganizationsRejectsSelfWithoutChangingTheRoot(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
@@ -261,7 +261,7 @@ func TestMergeOrganizationsRejectsSelfWithoutChangingTheRoot(t *testing.T) {
 func TestMergedOrganizationRedirectCannotBeRemergedOrDeleted(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	firstSurvivor := mustOrganization(t, st, "Example Org")
 	secondSurvivor := mustOrganization(t, st, "Another Org")
@@ -339,7 +339,7 @@ func TestMergedOrganizationRedirectRejectsRootAndProfileMutations(t *testing.T) 
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			ctx := context.Background()
+			ctx := t.Context()
 			st := testutil.NewTestStore(t)
 			survivor := mustOrganization(t, st, "Immutable Survivor")
 			losing := mustOrganization(t, st, "Immutable Redirect")
@@ -363,7 +363,7 @@ func TestMergedOrganizationRedirectRejectsRootAndProfileMutations(t *testing.T) 
 
 func TestOrganizationKindVocabularyIsOpenAtTheDatabaseBoundary(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	var organizationID int64
@@ -379,7 +379,7 @@ func TestOrganizationKindVocabularyIsOpenAtTheDatabaseBoundary(t *testing.T) {
 
 func TestOrganizationNameKindVocabularyIsOpenAtTheDatabaseBoundary(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	organization := mustOrganization(t, st, "Open Vocabulary Names")
 
@@ -398,7 +398,7 @@ func TestOrganizationNameKindVocabularyIsOpenAtTheDatabaseBoundary(t *testing.T)
 func TestMergeRetiresLosingProfileValuesAndAttributes(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 
 	survivor, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
@@ -507,7 +507,7 @@ func TestOrganizationReplacementRetriesEmploymentDeadlock(t *testing.T) {
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			t.Cleanup(cancel)
 			organization, err := st.CreateOrganizationContext(ctx, store.OrganizationInput{
 				Name: fmt.Sprintf("Example Org %d", i), Kind: store.OrganizationKindCompany,

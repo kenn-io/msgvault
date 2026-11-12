@@ -27,7 +27,7 @@ func testBackupDocumentDisclosure(t *testing.T, chunks bool) {
 	databasePath, attachmentsDirectory := seedCompatArchive(t, archive)
 	database, err := sql.Open("sqlite3", databasePath)
 	require.NoError(err)
-	_, err = database.Exec(`
+	_, err = database.ExecContext(t.Context(), `
 		CREATE TABLE document_chunks (
 			id INTEGER PRIMARY KEY,
 			text TEXT NOT NULL,
@@ -50,7 +50,7 @@ func testBackupDocumentDisclosure(t *testing.T, chunks bool) {
 		INSERT INTO document_extraction_ranges(extraction_id, evidence, char_count) VALUES ('three', 'checkpoint sentinel', 19)`)
 	require.NoError(err)
 	if !chunks {
-		_, err = database.Exec(`DELETE FROM document_chunks; DELETE FROM document_extraction_heads`)
+		_, err = database.ExecContext(t.Context(), `DELETE FROM document_chunks; DELETE FROM document_extraction_heads`)
 		require.NoError(err)
 	}
 	require.NoError(database.Close())
@@ -94,21 +94,21 @@ func testBackupDocumentDisclosure(t *testing.T, chunks bool) {
 		assert.Equal(int64(2), disclosure.CurrentHeads)
 		assert.Equal(int64(1), disclosure.Chunks)
 		assert.Equal(int64(40), disclosure.Characters)
-		require.NoError(restored.QueryRow(`SELECT text FROM document_chunks`).Scan(&text))
+		require.NoError(restored.QueryRowContext(t.Context(), `SELECT text FROM document_chunks`).Scan(&text))
 		assert.Equal("synthetic normalized attachment evidence", text)
 	} else {
 		assert.Zero(disclosure.Chunks)
 		assert.Zero(disclosure.CurrentHeads)
 		assert.Equal(int64(1), disclosure.StagedRanges)
 		assert.Equal(int64(19), disclosure.StagedCharacters)
-		require.NoError(restored.QueryRow(`SELECT evidence FROM document_extraction_ranges`).Scan(&text))
+		require.NoError(restored.QueryRowContext(t.Context(), `SELECT evidence FROM document_extraction_ranges`).Scan(&text))
 		assert.Equal("checkpoint sentinel", text)
 	}
 }
 
 func TestDocumentAuxiliaryTargetRejectsUndisclosedArtifacts(t *testing.T) {
 	target := backupapp.NewDocumentAuxiliaryTarget()
-	_, err := target.StageAuxiliary(context.Background(), []backup.RestoredAuxiliary{{
+	_, err := target.StageAuxiliary(t.Context(), []backup.RestoredAuxiliary{{
 		Name: "unexpected", Format: "application/json", Data: []byte(`{}`),
 	}})
 	require.ErrorContains(t, err, "unsupported")

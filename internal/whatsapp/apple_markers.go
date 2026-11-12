@@ -218,7 +218,7 @@ func (imp *Importer) previousAppleChatMarkers(
 	if !decoded || state.Version != appleChatMarkerVersion || state.Context != importContext {
 		return none, nil
 	}
-	last, err := imp.store.GetLatestSyncContext(ctx, source.ID, currentSyncID)
+	last, err := imp.store.GetLatestStartedSyncContext(ctx, source.ID, currentSyncID)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return nil, fmt.Errorf("read latest sync: %w", err)
 	}
@@ -248,7 +248,7 @@ func (imp *Importer) saveAppleChatMarkers(
 	if err != nil {
 		return fmt.Errorf("encode Apple chat markers: %w", err)
 	}
-	if err := imp.store.UpdateSourceSyncState(sourceID, string(encoded)); err != nil {
+	if err := imp.store.UpdateSourceSyncState(ctx, sourceID, string(encoded)); err != nil {
 		return fmt.Errorf("save Apple chat markers: %w", err)
 	}
 	return nil

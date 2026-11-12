@@ -22,13 +22,13 @@ func FuzzMetadataSearchParity(f *testing.F) {
 		data = data[:min(len(data), 2048)]
 		term = term[:min(len(term), 128)]
 		db := metadataSearchDB(t)
-		_, err := db.Exec(`DELETE FROM messages; DELETE FROM participants; DELETE FROM conversations; DELETE FROM sources; INSERT INTO sources(id,source_type,identifier) VALUES(1,'gmail','archive@example.org'), (2,'gmail','other@example.org');
+		_, err := db.ExecContext(t.Context(), `DELETE FROM messages; DELETE FROM participants; DELETE FROM conversations; DELETE FROM sources; INSERT INTO sources(id,source_type,identifier) VALUES(1,'gmail','archive@example.org'), (2,'gmail','other@example.org');
   INSERT INTO conversations(id,source_id,source_conversation_id,conversation_type) VALUES(1,1,'synthetic-thread','email_thread'), (2,2,'other-thread','email_thread');`)
 		require.NoError(t, err)
 		values := strings.Split(string(data), "|")
 		at := func(n int) string { return values[n%len(values)] }
 		for i := range 12 {
-			_, err = db.Exec(`INSERT INTO participants(id,email_address,display_name,phone_number) VALUES(?,?,?,?)`, i+1, fmt.Sprintf("person%d@example.org", i), at(i+2), at(i+3)+fmt.Sprintf("-%d", i))
+			_, err = db.ExecContext(t.Context(), `INSERT INTO participants(id,email_address,display_name,phone_number) VALUES(?,?,?,?)`, i+1, fmt.Sprintf("person%d@example.org", i), at(i+2), at(i+3)+fmt.Sprintf("-%d", i))
 			require.NoError(t, err)
 		}
 		for i := range 12 {
@@ -45,7 +45,7 @@ func FuzzMetadataSearchParity(f *testing.F) {
 			if i == 2 {
 				snippet = term
 			}
-			_, err = db.Exec(`INSERT INTO messages(id,conversation_id,source_id,message_type,source_message_id,subject,snippet,sent_at,sender_id,deleted_from_source_at)
+			_, err = db.ExecContext(t.Context(), `INSERT INTO messages(id,conversation_id,source_id,message_type,source_message_id,subject,snippet,sent_at,sender_id,deleted_from_source_at)
     VALUES(?,?,?,'email',?,?,?, ?,?,?)`, i+1, i%2+1, i%2+1, fmt.Sprintf("synthetic-%d", i), subject, snippet, fmt.Sprintf("2024-01-%02d", i+1), i+1, func() any {
 				if i%3 == 0 {
 					return "2024-02-01"
@@ -53,10 +53,10 @@ func FuzzMetadataSearchParity(f *testing.F) {
 				return nil
 			}())
 			require.NoError(t, err)
-			_, err = db.Exec(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(?,?,'to',?), (?,?,'cc',?)`, i+1, (i+1)%12+1, at(i+4), i+1, (i+1)%12+1, at(i+5))
+			_, err = db.ExecContext(t.Context(), `INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name) VALUES(?,?,'to',?), (?,?,'cc',?)`, i+1, (i+1)%12+1, at(i+4), i+1, (i+1)%12+1, at(i+5))
 			require.NoError(t, err)
 		}
-		_, err = db.Exec(`UPDATE messages SET deleted_at='2024-02-01' WHERE id%4=0`)
+		_, err = db.ExecContext(t.Context(), `UPDATE messages SET deleted_at='2024-02-01' WHERE id%4=0`)
 		require.NoError(t, err)
 		q := &search.Query{TextTerms: []string{term}, HideDeleted: flags&1 != 0}
 		if flags&2 != 0 {

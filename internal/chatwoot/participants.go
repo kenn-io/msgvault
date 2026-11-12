@@ -62,7 +62,7 @@ func (imp *Importer) resolveActor(ctx context.Context, sourceID int64, a Actor) 
 	if pid, ok := imp.resolvedActors[cacheKey]; ok {
 		return pid, nil
 	}
-	pid, _, err := imp.store.ParticipantByIdentifier(SourceType, identifier)
+	pid, _, err := imp.store.ParticipantByIdentifierContext(ctx, SourceType, identifier)
 	if err != nil {
 		return 0, err
 	}
@@ -72,25 +72,25 @@ func (imp *Importer) resolveActor(ctx context.Context, sourceID int64, a Actor) 
 		// and bot identities remain provider-scoped; names are never identities.
 		switch {
 		case actorKind(a) == "contact" && strings.HasPrefix(a.PhoneNumber, "+"):
-			pid, err = imp.store.EnsureParticipantByPhone(a.PhoneNumber, actorName(a), SourceType)
+			pid, err = imp.store.EnsureParticipantByPhone(ctx, a.PhoneNumber, actorName(a), SourceType)
 		case actorKind(a) == "contact" && strings.Contains(a.Email, "@"):
 			email := strings.ToLower(strings.TrimSpace(a.Email))
 			pid, err = imp.store.EnsureParticipantContext(ctx, email, actorName(a), email[strings.LastIndex(email, "@")+1:])
 		default:
-			pid, err = imp.store.EnsureParticipantByIdentifier(SourceType, identifier, actorName(a))
+			pid, err = imp.store.EnsureParticipantByIdentifierContext(ctx, SourceType, identifier, actorName(a))
 			bindIdentifier = false
 		}
 		if err != nil {
 			return 0, err
 		}
 		if bindIdentifier {
-			if err = imp.store.SetParticipantIdentifier(pid, SourceType, identifier); err != nil {
+			if err = imp.store.SetParticipantIdentifierContext(ctx, pid, SourceType, identifier); err != nil {
 				return 0, err
 			}
 		}
 	} else if actorName(a) != "" {
 		// An actor first seen without a name gets one from a later sighting.
-		if _, err = imp.store.EnsureParticipantByIdentifier(SourceType, identifier, actorName(a)); err != nil {
+		if _, err = imp.store.EnsureParticipantByIdentifierContext(ctx, SourceType, identifier, actorName(a)); err != nil {
 			return 0, err
 		}
 	}

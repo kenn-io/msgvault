@@ -3,7 +3,6 @@
 package pgvector
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,7 +16,8 @@ import (
 func countEmbeddingRows(t *testing.T, b *Backend, gen vector.GenerationID) int {
 	t.Helper()
 	var n int
-	require.NoError(t, b.db.QueryRowContext(context.Background(),
+	require.NoError(t, b.db.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = $1`, int64(gen)).Scan(&n),
 		"count embedding rows for generation %d", gen)
 	return n
@@ -27,7 +27,8 @@ func countEmbeddingRows(t *testing.T, b *Backend, gen vector.GenerationID) int {
 func genMessageCount(t *testing.T, b *Backend, gen vector.GenerationID) int {
 	t.Helper()
 	var n int
-	require.NoError(t, b.db.QueryRowContext(context.Background(),
+	require.NoError(t, b.db.QueryRowContext(
+		t.Context(),
 		`SELECT message_count FROM index_generations WHERE id = $1`, int64(gen)).Scan(&n),
 		"read message_count for generation %d", gen)
 	return n
@@ -106,7 +107,8 @@ func TestBackend_Upsert_AcceptsBuildingGeneration(t *testing.T) {
 func genState(t *testing.T, b *Backend, gen vector.GenerationID) string {
 	t.Helper()
 	var s string
-	require.NoError(t, b.db.QueryRowContext(context.Background(),
+	require.NoError(t, b.db.QueryRowContext(
+		t.Context(),
 		`SELECT state FROM index_generations WHERE id = $1`, int64(gen)).Scan(&s),
 		"read state for generation %d", gen)
 	return s
@@ -119,7 +121,7 @@ func genState(t *testing.T, b *Backend, gen vector.GenerationID) string {
 // explicitly.
 func buildGenWithVectors(t *testing.T, b *Backend, model string, dim int, vecs map[int64][]float32) vector.GenerationID {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	for id := range vecs {
 		_, err := b.db.ExecContext(ctx,
 			`INSERT INTO messages (id) VALUES ($1) ON CONFLICT DO NOTHING`, id)
@@ -229,7 +231,8 @@ func TestBackend_ActivateGeneration_AutoRetireDeletesPrevious(t *testing.T) {
 func singleRetiredGen(t *testing.T, b *Backend) vector.GenerationID {
 	t.Helper()
 	var id int64
-	require.NoError(t, b.db.QueryRowContext(context.Background(),
+	require.NoError(t, b.db.QueryRowContext(
+		t.Context(),
 		`SELECT id FROM index_generations WHERE state = 'retired'`).Scan(&id),
 		"expected exactly one retired generation")
 	return vector.GenerationID(id)

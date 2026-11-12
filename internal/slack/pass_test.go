@@ -31,7 +31,7 @@ func TestInterruptedPublicSyncCompletesPass(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	now := tsBase.Add(24 * time.Hour)
 	imp.now = func() time.Time { return now }
-	initial, err := imp.Import(context.Background(), opts)
+	initial, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	baseline, err := imp.store.GetLastSuccessfulSync(initial.SourceID)
 	require.NoError(err)
@@ -43,7 +43,7 @@ func TestInterruptedPublicSyncCompletesPass(t *testing.T) {
 	now = tsBase.Add(26 * time.Hour)
 	completed := false
 	for range 4 {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		opts.Progress = func(line string) {
 			if strings.HasPrefix(line, "conversation ") {
 				cancel()
@@ -66,7 +66,7 @@ func TestInterruptedPublicSyncCompletesPass(t *testing.T) {
 	require.NoError(err)
 	assert.Greater(last.ID, baseline.ID)
 	var count int
-	require.NoError(imp.store.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&count))
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&count))
 	assert.Equal(6, count, "the completed pass includes the late reply in every channel")
 
 	// Completing a pass must release its visited set: the next pass discovers
@@ -77,9 +77,9 @@ func TestInterruptedPublicSyncCompletesPass(t *testing.T) {
 	f.mu.Unlock()
 	now = tsBase.Add(28 * time.Hour)
 	opts.Progress = nil
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
-	require.NoError(imp.store.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&count))
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&count))
 	assert.Equal(7, count)
 }
 
@@ -89,7 +89,7 @@ func TestScheduledYieldKeepsRecoverableCheckpoint(t *testing.T) {
 	assert := assert.New(t)
 	f := testWorkspace(t)
 	imp, opts := testImporter(t, f)
-	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, cancel := context.WithCancelCause(t.Context())
 	defer cancel(nil)
 	opts.Progress = func(line string) {
 		if strings.HasPrefix(line, "conversation ") {
@@ -129,7 +129,7 @@ func TestInterruptedPublicPassHonorsNewWorkOptions(t *testing.T) {
 			} else {
 				opts.NoThreads = true
 			}
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			opts.Progress = func(line string) {
 				if strings.HasPrefix(line, "conversation ") {
@@ -139,10 +139,10 @@ func TestInterruptedPublicPassHonorsNewWorkOptions(t *testing.T) {
 			_, err := imp.Import(ctx, opts)
 			require.ErrorIs(err, context.Canceled)
 			opts.Limit, opts.NoThreads, opts.Progress = 0, false, nil
-			_, err = imp.Import(context.Background(), opts)
+			_, err = imp.Import(t.Context(), opts)
 			require.NoError(err)
 			var count int
-			require.NoError(imp.store.DB().QueryRow("SELECT COUNT(*) FROM messages").Scan(&count))
+			require.NoError(imp.store.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&count))
 			assert.Equal(3, count, "the wider request must finish work left by the earlier visit")
 		})
 	}
@@ -157,7 +157,7 @@ func TestScheduledYieldPreservesFetchFailure(t *testing.T) {
 	f.convs = append(f.convs, &fakeConv{ID: "C03", Name: "other", Kind: "public", Members: []string{"UME"}})
 	f.failReplies[ts(5)] = true
 	imp, opts := testImporter(t, f)
-	ctx, cancel := context.WithCancelCause(context.Background())
+	ctx, cancel := context.WithCancelCause(t.Context())
 	defer cancel(nil)
 	opts.Progress = func(line string) {
 		if strings.HasPrefix(line, "conversation ") {
@@ -175,12 +175,12 @@ func TestScheduledYieldPreservesFetchFailure(t *testing.T) {
 	delete(f.failReplies, ts(5))
 	f.mu.Unlock()
 	opts.Progress = nil
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.ErrorContains(err, "partial Slack sync", "the interrupted pass retains its earlier failure")
-	_, err = imp.Import(context.Background(), opts)
+	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var count int
-	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
 		"SELECT COUNT(*) FROM messages WHERE source_message_id = ?"), "C01:"+ts(100)).Scan(&count))
 	assert.Equal(1, count, "the next pass must retry failed channel visits")
 }
@@ -217,7 +217,7 @@ func TestInterruptedPublicPassWithFetchFailureStillRefreshesHealthyChannels(t *t
 		f.mu.Unlock()
 		finished := false
 		for range 4 {
-			ctx, cancel := context.WithCancelCause(context.Background())
+			ctx, cancel := context.WithCancelCause(t.Context())
 			opts.Progress = func(line string) {
 				if strings.HasPrefix(line, "conversation ") {
 					cancel(jobctx.ErrYieldedToWaiter)
@@ -243,11 +243,11 @@ func TestInterruptedPublicPassWithFetchFailureStillRefreshesHealthyChannels(t *t
 		}
 		require.True(finished, "a failed pass must finish so healthy channels can refresh next pass")
 		var count int
-		require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
+		require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
 			"SELECT COUNT(*) FROM messages WHERE source_message_id = ?"), "C02:"+messageTS).Scan(&count))
 		assert.Equal(1, count)
 		if pass > 0 {
-			require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
+			require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
 				"SELECT COUNT(*) FROM messages WHERE source_message_id = ?"), "C02:"+ts(1501)).Scan(&count))
 			assert.Equal(1, count, "late replies must also refresh despite the persistent failure")
 		}
@@ -292,7 +292,7 @@ func TestFinalCheckpointYieldPreservesEarlierFetchFailure(t *testing.T) {
 	require.NoError(conn.Close())
 	// The first and per-channel checkpoints still contain history_pass.
 	// Cancel only when the final checkpoint clears it after a failed pass.
-	_, err = imp.store.DB().Exec(`CREATE TEMP TRIGGER yield_final_checkpoint
+	_, err = imp.store.DB().ExecContext(t.Context(), `CREATE TEMP TRIGGER yield_final_checkpoint
 		BEFORE UPDATE OF cursor_before ON sync_runs
 		WHEN NEW.status = 'running' AND json_extract(NEW.cursor_before, '$.history_pass') IS NULL
 		BEGIN SELECT yield_final_checkpoint(); END`)
@@ -376,7 +376,7 @@ func TestScheduledYieldDuringFTSWrite(t *testing.T) {
 				_, err = imp.Import(t.Context(), opts)
 				require.NoError(err)
 				var matches int
-				require.NoError(imp.store.DB().QueryRow(`SELECT COUNT(*) FROM messages_fts
+				require.NoError(imp.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages_fts
 					WHERE messages_fts MATCH 'recoverable'`).Scan(&matches))
 				assert.Equal(1, matches, "the continuation must index the interrupted message")
 			}

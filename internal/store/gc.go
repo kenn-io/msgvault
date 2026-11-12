@@ -165,6 +165,26 @@ func (s *Store) ExecuteGCContext(
 			return fmt.Errorf("clear replies to source-deleted messages: %w", err)
 		}
 
+		// Retire acquisition work only for the identities this transaction
+		// permanently purges. Keep the original diagnostics, and include older
+		// fetch/ingest errors so none can reappear as the latest retry outcome.
+		// A failed purge rolls this change back with the message deletion.
+		if _, err := q.Exec(`
+			UPDATE sync_run_items SET status = 'skipped'
+			WHERE status = 'error' AND phase IN ('fetch', 'ingest')
+			  AND EXISTS (
+				SELECT 1 FROM messages
+				WHERE messages.source_message_id = sync_run_items.source_message_id
+				  AND messages.source_id = (
+					SELECT source_id FROM sync_runs WHERE id = sync_run_items.sync_run_id
+				  )
+				  AND deleted_from_source_at IS NOT NULL
+				  AND NOT (` + managedDraftRetainedMessageSQL + `)
+			  )
+		`); err != nil {
+			return fmt.Errorf("clear retries for messages deleted at source: %w", err)
+		}
+
 		result, err := q.Exec(`
 		DELETE FROM messages
 		WHERE deleted_from_source_at IS NOT NULL
@@ -201,7 +221,7 @@ func (s *Store) ExecuteGCContext(
 			}
 		}
 		if deleted > 0 {
-			if err := s.bumpDerivedDataRevision(tx); err != nil {
+			if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 				return fmt.Errorf("invalidate caches after archive GC: %w", err)
 			}
 		}

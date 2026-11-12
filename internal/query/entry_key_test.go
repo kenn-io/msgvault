@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -29,7 +28,7 @@ func TestEntryKeyFactsMatchSQLProducedEntryKeys(t *testing.T) {
 	})
 	b.AddAttachmentWithMIME(42, chat, 10, "photo.png", "image/png")
 
-	result, err := b.BuildEngine().SearchFiles(context.Background(), FileSearchRequest{
+	result, err := b.BuildEngine().SearchFiles(t.Context(), FileSearchRequest{
 		Sort: SortSpec{Field: "occurred_at", Direction: "asc"}, Page: PageSpec{Limit: 25},
 	})
 	requirements.NoError(err)

@@ -39,7 +39,7 @@ func TestImportEmlxDir_DiscoveryPermissions(t *testing.T) {
 				})
 			}
 			var logs bytes.Buffer
-			summary, err := ImportEmlxDir(context.Background(), st, root, EmlxImportOptions{
+			summary, err := ImportEmlxDir(t.Context(), st, root, EmlxImportOptions{
 				Identifier: "user@example.com",
 				Logger:     slog.New(slog.NewTextHandler(&logs, nil)),
 			})
@@ -56,7 +56,7 @@ func TestImportEmlxDir_DiscoveryPermissions(t *testing.T) {
 			assert.Contains(logs.String(), "WARN")
 			assert.Contains(logs.String(), blocked)
 			var errorsCount int64
-			require.NoError(st.DB().QueryRow("SELECT errors_count FROM sync_runs WHERE source_id = ?", summary.SourceID).Scan(&errorsCount))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT errors_count FROM sync_runs WHERE source_id = ?", summary.SourceID).Scan(&errorsCount))
 			assert.Equal(int64(1), errorsCount)
 		})
 	}
@@ -91,7 +91,7 @@ func TestImportEmlxDir_DiscoveryErrorsOnResume(t *testing.T) {
 					Subject("Resume fixture").Body("Synthetic message.").Bytes(),
 			})
 			opts := EmlxImportOptions{Identifier: "user@example.com"}
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 			first, err := ImportEmlxDir(ctx, st, root, opts)
 			require.ErrorIs(err, context.Canceled)
@@ -103,7 +103,7 @@ func TestImportEmlxDir_DiscoveryErrorsOnResume(t *testing.T) {
 			assert.Equal(firstErrors, first.Errors)
 			deny()
 
-			resumed, err := ImportEmlxDir(context.Background(), st, root, opts)
+			resumed, err := ImportEmlxDir(t.Context(), st, root, opts)
 			require.NoError(err)
 			require.NotNil(resumed)
 			assert.True(resumed.WasResumed)
@@ -112,7 +112,7 @@ func TestImportEmlxDir_DiscoveryErrorsOnResume(t *testing.T) {
 			// path failed before or permissions changed during the interruption.
 			assert.Equal(int64(1), resumed.Errors)
 			var totalErrors int64
-			require.NoError(st.DB().QueryRow("SELECT errors_count FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1", resumed.SourceID).Scan(&totalErrors))
+			require.NoError(st.DB().QueryRowContext(t.Context(), "SELECT errors_count FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1", resumed.SourceID).Scan(&totalErrors))
 			// Persistent progress includes failed attempts, like ingestion and
 			// checkpoint errors, rather than unique paths across invocations.
 			assert.Equal(firstErrors+1, totalErrors)

@@ -26,7 +26,7 @@ func newResolveFixture(t *testing.T, cards ...fixtureCard) resolveFixture {
 	f := newImporterFixture(t)
 	root := filepath.Join(t.TempDir(), "AddressBook")
 	newAddressBookStore(t, filepath.Join(root, "Sources", "A", "AddressBook-v22.abcddb"), cards...)
-	phoneID, err := f.st.EnsureParticipantByPhone("+16045550100", "Alex Chat", "imessage")
+	phoneID, err := f.st.EnsureParticipantByPhone(t.Context(), "+16045550100", "Alex Chat", "imessage")
 	require.NoError(t, err)
 	person, _, err := f.st.CreatePersonFromParticipantContext(t.Context(), phoneID)
 	require.NoError(t, err)
@@ -54,7 +54,7 @@ func (f resolveFixture) project(t *testing.T) {
 
 func (f resolveFixture) meetingPersons(t *testing.T) []int64 {
 	t.Helper()
-	rows, err := f.st.DB().Query(f.st.Rebind(`
+	rows, err := f.st.DB().QueryContext(t.Context(), f.st.Rebind(`
 		SELECT aep.person_id FROM activity_event_persons aep
 		JOIN messages m ON m.id = aep.message_id WHERE m.source_id = ?`), f.source.ID)
 	require.NoError(t, err)
@@ -104,7 +104,7 @@ func TestPartialContactsKeepsEvidenceWithoutLinking(t *testing.T) {
 	})
 	// An unsupported store can hide another card with the same address.
 	db := newFixtureDB(t, path, "")
-	_, err := db.Exec(`ALTER TABLE Z_PRIMARYKEY RENAME COLUMN Z_NAME TO Z_FUTURE_NAME`)
+	_, err := db.ExecContext(t.Context(), `ALTER TABLE Z_PRIMARYKEY RENAME COLUMN Z_NAME TO Z_FUTURE_NAME`)
 	require.NoError(err)
 	meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(nil))
 	f.addContactParticipant(t, meetingID, "contact:CARD-A:ABPerson", "Alice Example")
@@ -120,7 +120,7 @@ func TestPartialContactsKeepsEvidenceWithoutLinking(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(observations, "partial Contacts evidence must not assert ownership")
 	var messageID int64
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT id FROM messages WHERE source_id=?`), f.source.ID).Scan(&messageID))
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT id FROM messages WHERE source_id=?`), f.source.ID).Scan(&messageID))
 	raw, err := f.st.GetMessageRaw(messageID)
 	require.NoError(err)
 	var evidence rawEvidence
@@ -130,9 +130,9 @@ func TestPartialContactsKeepsEvidenceWithoutLinking(t *testing.T) {
 	assert.Equal([]string{"+16045550100"}, evidence.Participants[0].Phones)
 
 	// Once every store is readable and the phone is unshared, linking resumes.
-	_, err = db.Exec(`ALTER TABLE Z_PRIMARYKEY RENAME COLUMN Z_FUTURE_NAME TO Z_NAME`)
+	_, err = db.ExecContext(t.Context(), `ALTER TABLE Z_PRIMARYKEY RENAME COLUMN Z_FUTURE_NAME TO Z_NAME`)
 	require.NoError(err)
-	_, err = db.Exec(`DELETE FROM ZABCDPHONENUMBER`)
+	_, err = db.ExecContext(t.Context(), `DELETE FROM ZABCDPHONENUMBER`)
 	require.NoError(err)
 	summary = f.sync(t, ImportOptions{})
 	assert.Equal(ContactsComplete, summary.ContactsState)
@@ -150,7 +150,7 @@ func TestPhoneOnlyContactBecomesPhoneAttendee(t *testing.T) {
 	f.project(t)
 
 	var recipients int
-	require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(`
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`
 		SELECT count(*) FROM message_recipients mr JOIN messages m ON m.id = mr.message_id
 		WHERE m.source_id = ? AND mr.participant_id = ?`), f.source.ID, f.phoneID).Scan(&recipients))
 	assert.Equal(t, 1, recipients)
@@ -174,7 +174,7 @@ func TestContactEnrichmentShapesRawAndMetadata(t *testing.T) {
 	f.sync(t, ImportOptions{})
 
 	var messageID int64
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(
 		`SELECT id FROM messages WHERE source_id = ?`), f.source.ID).Scan(&messageID))
 	raw, err := f.st.GetMessageRaw(messageID)
 	require.NoError(err)
@@ -194,7 +194,7 @@ func TestContactEnrichmentShapesRawAndMetadata(t *testing.T) {
 
 	var metadata map[string]any
 	var metadataText string
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(
 		`SELECT metadata FROM messages WHERE id = ?`), messageID).Scan(&metadataText))
 	require.NoError(json.Unmarshal([]byte(metadataText), &metadata))
 	assert.Equal("complete", metadata["contacts"])
@@ -236,7 +236,7 @@ func TestContactsOutageKeepsAttendees(t *testing.T) {
 func messageMetadata(t *testing.T, f resolveFixture) map[string]any {
 	t.Helper()
 	var text string
-	require.NoError(t, f.st.DB().QueryRow(f.st.Rebind(
+	require.NoError(t, f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(
 		`SELECT metadata FROM messages WHERE source_id = ?`), f.source.ID).Scan(&text))
 	var metadata map[string]any
 	require.NoError(t, json.Unmarshal([]byte(text), &metadata))
@@ -318,8 +318,8 @@ func TestSharedContactsAddressesStayInMeetingEvidenceWithoutLinking(t *testing.T
 				assert.Empty(observations, "shared addresses must not assert ownership of this card")
 			}
 			var messageID, recipient int64
-			require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT id FROM messages WHERE source_id=?`), f.source.ID).Scan(&messageID))
-			require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id=? AND recipient_type='to'`), messageID).Scan(&recipient))
+			require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT id FROM messages WHERE source_id=?`), f.source.ID).Scan(&messageID))
+			require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT participant_id FROM message_recipients WHERE message_id=? AND recipient_type='to'`), messageID).Scan(&recipient))
 			assert.Equal(alice, recipient, "shared primary emails remain meeting evidence")
 			raw, err := f.st.GetMessageRaw(messageID)
 			require.NoError(err)
@@ -343,7 +343,7 @@ func TestDeletedContactsCardKeepsPresentAttendeeHistory(t *testing.T) {
 	f.project(t)
 	require.Contains(f.meetingPersons(t), f.personID)
 	var messageID int64
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT id FROM messages WHERE source_id=?`), f.source.ID).Scan(&messageID))
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`SELECT id FROM messages WHERE source_id=?`), f.source.ID).Scan(&messageID))
 	beforeRaw, err := f.st.GetMessageRaw(messageID)
 	require.NoError(err)
 	alice, err := f.st.EnsureParticipant("alice@example.com", "", "example.com")
@@ -354,7 +354,7 @@ func TestDeletedContactsCardKeepsPresentAttendeeHistory(t *testing.T) {
 	require.Len(observations, 1)
 	require.NoError(f.st.SupersedeParticipantObservationContext(t.Context(), alice, observations[0].Envelope.ID, nil))
 	contactsDB := newFixtureDB(t, filepath.Join(f.contacts, "Sources", "A", addressBookFile), "")
-	_, err = contactsDB.Exec(`DELETE FROM ZABCDRECORD WHERE ZUNIQUEID='CARD-A:ABPerson'`)
+	_, err = contactsDB.ExecContext(t.Context(), `DELETE FROM ZABCDRECORD WHERE ZUNIQUEID='CARD-A:ABPerson'`)
 	require.NoError(err)
 
 	summary := f.sync(t, ImportOptions{})
@@ -368,7 +368,7 @@ func TestDeletedContactsCardKeepsPresentAttendeeHistory(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(observations, "carried evidence makes no fresh ownership assertion")
 
-	_, err = f.muesli.Exec(`DELETE FROM meeting_participants WHERE meeting_id=?`, meetingID)
+	_, err = f.muesli.ExecContext(t.Context(), `DELETE FROM meeting_participants WHERE meeting_id=?`, meetingID)
 	require.NoError(err)
 	f.sync(t, ImportOptions{})
 	f.project(t)
@@ -383,7 +383,7 @@ func TestPreviouslyObservedSharedPhoneDoesNotGainNewLinks(t *testing.T) {
 	f.sync(t, ImportOptions{})
 
 	contactsDB := newFixtureDB(t, filepath.Join(f.contacts, "Sources", "A", addressBookFile), "")
-	_, err := contactsDB.Exec(`INSERT INTO ZABCDEMAILADDRESS (ZOWNER, ZADDRESS) SELECT Z_PK, 'alice@example.com' FROM ZABCDRECORD WHERE ZUNIQUEID='CARD-A:ABPerson'`)
+	_, err := contactsDB.ExecContext(t.Context(), `INSERT INTO ZABCDEMAILADDRESS (ZOWNER, ZADDRESS) SELECT Z_PK, 'alice@example.com' FROM ZABCDRECORD WHERE ZUNIQUEID='CARD-A:ABPerson'`)
 	require.NoError(err)
 	newAddressBookStore(t, filepath.Join(f.contacts, "Sources", "B", addressBookFile),
 		fixtureCard{uniqueID: "CARD-B:ABPerson", phones: []string{"+1 604 555 0100"}})
@@ -406,7 +406,7 @@ func TestImportCountsIdentityOnlyChanges(t *testing.T) {
 	first := f.sync(t, ImportOptions{})
 	assert.Equal(int64(1), first.MeetingsAdded)
 	duplicate := newFixtureDB(t, duplicatePath, "")
-	_, err := duplicate.Exec(`DELETE FROM ZABCDPHONENUMBER`)
+	_, err := duplicate.ExecContext(t.Context(), `DELETE FROM ZABCDPHONENUMBER`)
 	require.NoError(t, err)
 	second := f.sync(t, ImportOptions{})
 	assert.Equal(int64(1), second.MeetingsUpdated, "identity-only link must refresh cache policy")

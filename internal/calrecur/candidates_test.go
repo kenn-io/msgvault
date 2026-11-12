@@ -8,6 +8,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTimedRecurrenceAcrossLeapYearEnd(t *testing.T) {
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("America/New_York")
+	requirements.NoError(err)
+	s, err := ParseSet(instant(t, "2040-12-27T15:00:00Z"), false, "", zone, []string{"RRULE:FREQ=DAILY;COUNT=7"})
+	requirements.NoError(err)
+	var got []string
+	err = testIter(t.Context(), s, instant(t, "2041-01-03T00:00:00Z"), 100, func(i instance) bool {
+		got = append(got, i.Identity.Key())
+		return true
+	})
+	requirements.NoError(err)
+	assert.Equal(t, []string{"20401227T150000Z", "20401228T150000Z", "20401229T150000Z", "20401230T150000Z", "20401231T150000Z", "20410101T150000Z", "20410102T150000Z"}, got)
+}
+
 func TestTimedRecurrenceFoldBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name, start, until string

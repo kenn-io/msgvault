@@ -191,10 +191,10 @@ type contextWorkerFixture struct {
 
 func newContextWorkerFixture(t *testing.T, mutate func(*ContextWorkerDeps)) *contextWorkerFixture {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
-	st, err := store.OpenForTest(mainPath)
+	st, err := store.OpenForTest(t.Context(), mainPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(t, st.InitSchema())
@@ -277,7 +277,8 @@ func latestContextSequence(t *testing.T, st *store.Store) int64 {
 func (f *contextWorkerFixture) missing() int {
 	f.t.Helper()
 	var count int
-	require.NoError(f.t, f.store.DB().QueryRow(
+	require.NoError(f.t, f.store.DB().QueryRowContext(
+		f.t.Context(),
 		`SELECT COUNT(*) FROM messages WHERE deleted_at IS NULL AND deleted_from_source_at IS NULL AND (embed_gen IS NULL OR embed_gen <> ?)`,
 		int64(f.gen)).Scan(&count))
 	return count
@@ -359,7 +360,8 @@ func TestContextWorker_BackstopTimestampOnlyChatChangeDoesNotCallProvider(t *tes
 	require.Len(t, documents, 1)
 	beforeRevision := documents[0].PublishedRevision
 
-	_, err = f.store.DB().Exec(
+	_, err = f.store.DB().ExecContext(
+		t.Context(),
 		`UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = ?`, messageID)
 	require.NoError(t, err)
 	result, err = f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
@@ -394,7 +396,7 @@ func TestContextWorker_BuildScopeNeverSubmitsExcludedBody(t *testing.T) {
 	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
 		deps.BuildScope = vector.NewBuildScope([]string{"beeper"}, nil)
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "excluded-mail", "Excluded")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "excluded-mail", "Excluded")
 	require.NoError(err)
 	excludedID := f.seed("email", conversationID, time.Now().UTC(), "excluded-synthetic-body")
 	f.seed("beeper", f.chatID, time.Now().UTC(), "included chat")
@@ -404,7 +406,7 @@ func TestContextWorker_BuildScopeNeverSubmitsExcludedBody(t *testing.T) {
 	require.NoError(err)
 	assert.True(result.Contextual.Converged)
 	assert.Equal(1, f.client.Documents(), "only the in-scope chat document reaches the client")
-	_, err = f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", excludedID))
+	_, err = f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", excludedID))
 	assert.Error(err)
 }
 
@@ -437,7 +439,7 @@ func TestContextWorker_SourceScopeNeverSubmitsExcludedAccountBody(t *testing.T) 
 	require.NoError(err, "excluded-account text reaching the client fails the run")
 	assert.True(result.Contextual.Converged, "a source-only scope must converge, not reject everything")
 	assert.Equal(1, f.client.Documents(), "only the in-scope chat document reaches the client")
-	_, err = f.backend.GetDocument(context.Background(), f.gen,
+	_, err = f.backend.GetDocument(t.Context(), f.gen,
 		fmt.Sprintf("message:%d", excludedMail))
 	require.Error(err, "excluded ordinary message must publish no document")
 	_ = excludedChat
@@ -454,7 +456,7 @@ func TestContextWorker_SourceScopeNeverSubmitsExcludedAccountBody(t *testing.T) 
 	require.NoError(err, "journal-delivered excluded-account text must not reach the client")
 	assert.True(result.Contextual.Converged)
 	assert.Equal(1, f.client.Documents(), "journal drain must add no excluded documents")
-	_, err = f.backend.GetDocument(context.Background(), f.gen,
+	_, err = f.backend.GetDocument(t.Context(), f.gen,
 		fmt.Sprintf("message:%d", journalMail))
 	require.Error(err, "journal-delivered excluded message must publish no document")
 	_ = journalChat
@@ -466,14 +468,14 @@ func TestContextWorker_BuildScopeTombstonesOrdinaryMoveOutWithoutSubmitting(t *t
 	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
 		deps.BuildScope = vector.NewBuildScope([]string{"sms"}, nil)
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "scoped-text", "Scoped")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "scoped-text", "Scoped")
 	require.NoError(err)
 	messageID := f.seed("sms", conversationID, time.Now().UTC(), "included text")
 	_, err = f.run()
 	require.NoError(err)
 	before := f.client.Documents()
 
-	_, err = f.store.DB().Exec(`UPDATE messages SET message_type = 'email' WHERE id = ?`, messageID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET message_type = 'email' WHERE id = ?`, messageID)
 	require.NoError(err)
 	changes, err := f.store.ScanEmbeddingChanges(t.Context(), f.progress().ChangeSequence, 10)
 	require.NoError(err)
@@ -488,7 +490,7 @@ func TestContextWorker_BuildScopeTombstonesOrdinaryMoveOutWithoutSubmitting(t *t
 	require.NoError(err)
 	assert.True(result.Contextual.Converged)
 	assert.Equal(before, f.client.Documents(), "moving out of scope must not submit replacement content")
-	doc, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", messageID))
+	doc, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", messageID))
 	require.NoError(err)
 	assert.Equal(vector.DocumentTombstoned, doc.State)
 }
@@ -635,7 +637,7 @@ func TestContextWorker_BodylessOrdinaryLifecycleConverges(t *testing.T) {
 	assert.Equal(t, vector.DocumentTombstoned, record.State,
 		"clearing a bodyless subject must retire its stale ordinary document")
 
-	_, err = f.store.DB().Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
 	require.NoError(t, err)
 	_, err = f.run()
 	require.NoError(t, err)
@@ -736,7 +738,8 @@ func TestContextWorker_RepairedBodylessMessageConvergesAfterReconciliation(t *te
 	require.NoError(t, err)
 	beforeDocuments := f.client.Documents()
 
-	_, err = f.store.DB().Exec(
+	_, err = f.store.DB().ExecContext(
+		t.Context(),
 		`UPDATE messages SET subject = 'After repair' WHERE id = ?`, id)
 	require.NoError(t, err)
 	require.NoError(t, f.store.ResetEmbedGen(t.Context(), []int64{id}))
@@ -770,9 +773,9 @@ func TestContextWorker_CoalescesConsecutiveMetadataFanout(t *testing.T) {
 	counted.selectors = make(map[AffectedScope]int)
 	beforeCalls := f.client.Calls()
 	beforeDocuments := f.client.Documents()
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'First rename' WHERE id = ?`, f.chatID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'First rename' WHERE id = ?`, f.chatID)
 	require.NoError(t, err)
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Final rename' WHERE id = ?`, f.chatID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'Final rename' WHERE id = ?`, f.chatID)
 	require.NoError(t, err)
 
 	result, err := f.run()
@@ -818,9 +821,9 @@ func TestContextWorker_MetadataFanoutBudgetsPreservedScopes(t *testing.T) {
 	counted.calls = 0
 	counted.selectors = make(map[AffectedScope]int)
 	beforeDocuments := f.client.Documents()
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Temporary title' WHERE id = ?`, f.chatID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'Temporary title' WHERE id = ?`, f.chatID)
 	require.NoError(t, err)
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Team' WHERE id = ?`, f.chatID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'Team' WHERE id = ?`, f.chatID)
 	require.NoError(t, err)
 
 	runs := 0
@@ -876,7 +879,7 @@ func TestContextWorker_MetadataFanoutUsesBoundedResumablePages(t *testing.T) {
 	require.NoError(err)
 	publisher.batches, publisher.scopes, publisher.maxScopes = 0, 0, 0
 
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Paged title' WHERE id = ?`, f.chatID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'Paged title' WHERE id = ?`, f.chatID)
 	require.NoError(err)
 	wantSequence := latestContextSequence(t, f.store)
 	crashAfterPublish = true
@@ -925,7 +928,7 @@ func TestContextWorker_MetadataFanoutNewestBlockIsOneAtomicBudgetUnit(t *testing
 		assert.LessOrEqual(len(docs[0].Members), chatScopeMaxMessages)
 	}
 
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Bounded title' WHERE id = ?`, f.chatID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'Bounded title' WHERE id = ?`, f.chatID)
 	require.NoError(err)
 	wantSequence := latestContextSequence(t, f.store)
 	f.worker.deps.MaxRunUTF8Bytes = 1
@@ -977,7 +980,7 @@ func TestContextWorker_ChatBlockBoundaryRefreshesPreviousAndCurrentMetadataModes
 	require.NoError(t, err)
 	require.Len(t, newDocuments, 1)
 
-	_, err = f.store.DB().Exec(`DELETE FROM messages WHERE id = ?`, boundaryID)
+	_, err = f.store.DB().ExecContext(t.Context(), `DELETE FROM messages WHERE id = ?`, boundaryID)
 	require.NoError(t, err)
 	beforeDelete := f.client.Documents()
 	result, err = f.run()
@@ -1018,7 +1021,7 @@ func TestContextWorker_ChatBlockBoundaryRefreshesMetadataModesOnSoftDeleteAndRes
 	require.NoError(t, err)
 	require.Len(t, newBefore, 1)
 
-	_, err = f.store.DB().Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, ids[len(ids)-1])
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, ids[len(ids)-1])
 	require.NoError(t, err)
 	beforeDelete := f.client.Documents()
 	result, err := f.run()
@@ -1035,7 +1038,7 @@ func TestContextWorker_ChatBlockBoundaryRefreshesMetadataModesOnSoftDeleteAndRes
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentTombstoned, newAfterDelete.State)
 
-	_, err = f.store.DB().Exec(`UPDATE messages SET deleted_at = NULL WHERE id = ?`, ids[len(ids)-1])
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_at = NULL WHERE id = ?`, ids[len(ids)-1])
 	require.NoError(t, err)
 	beforeRestore := f.client.Documents()
 	result, err = f.run()
@@ -1078,7 +1081,7 @@ func TestContextWorker_MetadataFanoutEmbedsOnlyNewestStableChatBlock(t *testing.
 	require.Len(t, recentBefore, 1)
 	beforeDocuments := f.client.Documents()
 
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Bounded metadata title' WHERE id = ?`, f.chatID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'Bounded metadata title' WHERE id = ?`, f.chatID)
 	require.NoError(t, err)
 	result, err := f.run()
 	require.NoError(t, err)
@@ -1142,7 +1145,7 @@ func TestContextWorker_MetadataFanoutHonorsPerRunByteBudgetAndResumes(t *testing
 	counted.calls = 0
 	counted.selectors = make(map[AffectedScope]int)
 
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Budgeted title' WHERE id = ?`, f.chatID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'Budgeted title' WHERE id = ?`, f.chatID)
 	require.NoError(err)
 	snapshot, err := BeginSourceSnapshot(t.Context(), f.store)
 	require.NoError(err)
@@ -1197,7 +1200,7 @@ func TestContextWorker_ReconcileAssemblesChatDayOnceAcrossSourcePages(t *testing
 	counted.calls = 0
 	counted.selectors = make(map[AffectedScope]int)
 
-	result, err := f.worker.RunBackstop(context.Background(), f.gen, testEmbeddingPassScope())
+	result, err := f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(err)
 	require.NotNil(result.Contextual)
 	assert.True(result.Contextual.Converged)
@@ -1224,7 +1227,7 @@ func TestContextWorker_DocumentTooLargeKeepsValidSiblingInSameScope(t *testing.T
 	assert.GreaterOrEqual(result.Succeeded, 1)
 	assert.Equal(1, f.client.Documents(), "the valid sibling vector should be reused while the oversized sibling is quarantined")
 	assert.Equal(1, f.missing())
-	docs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen,
+	docs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen,
 		fmt.Sprintf("chat:%d:2026-08-08", f.chatID))
 	require.NoError(err)
 	require.Len(docs, 1)
@@ -1264,7 +1267,7 @@ func TestContextWorker_OrdinaryBodyEditReembedsOnNextNormalRun(t *testing.T) {
 	_, err := f.run()
 	require.NoError(err)
 	beforeDocuments := f.client.Documents()
-	before, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", id))
+	before, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", id))
 	require.NoError(err)
 
 	require.NoError(f.store.UpsertMessageBody(id,
@@ -1274,7 +1277,7 @@ func TestContextWorker_OrdinaryBodyEditReembedsOnNextNormalRun(t *testing.T) {
 	require.NotNil(result.Contextual)
 	assert.True(result.Contextual.Converged)
 	assert.Equal(beforeDocuments+1, f.client.Documents())
-	after, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", id))
+	after, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", id))
 	require.NoError(err)
 	assert.NotEqual(before.PublishedRevision, after.PublishedRevision)
 }
@@ -1369,7 +1372,7 @@ func TestContextWorker_NonemptyToBlankJournalChangeStampsTerminalCoverage(t *tes
 			beforeDocuments := f.client.Documents()
 
 			if tt.kind == "email" {
-				_, err = f.store.DB().Exec(`UPDATE messages SET subject = NULL WHERE id = ?`, id)
+				_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = NULL WHERE id = ?`, id)
 				require.NoError(err)
 			}
 			require.NoError(f.store.UpsertMessageBody(id,
@@ -1387,7 +1390,7 @@ func TestContextWorker_NonemptyToBlankJournalChangeStampsTerminalCoverage(t *tes
 			if tt.kind == "beeper" {
 				key = fmt.Sprintf("chat:%d:%s:%d", f.chatID, chatDocumentPolicyVersion, id)
 			}
-			record, err := f.backend.GetDocument(context.Background(), f.gen, key)
+			record, err := f.backend.GetDocument(t.Context(), f.gen, key)
 			require.NoError(err)
 			assert.Equal(vector.DocumentTombstoned, record.State)
 		})
@@ -1402,9 +1405,9 @@ func TestContextWorker_DeduplicatesJournalAndRepairsEditMoveAndMetadata(t *testi
 	require.NoError(t, err)
 	before := f.client.Documents()
 	require.NoError(t, f.store.UpsertMessageBody(id, sql.NullString{String: "after", Valid: true}, sql.NullString{}))
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Renamed' WHERE id = ?`, f.chatID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'Renamed' WHERE id = ?`, f.chatID)
 	require.NoError(t, err)
-	_, err = f.store.DB().Exec(`UPDATE participants SET display_name = 'Alicia' WHERE id = ?`, f.personID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE participants SET display_name = 'Alicia' WHERE id = ?`, f.personID)
 	require.NoError(t, err)
 	result, err := f.run()
 	require.NoError(t, err)
@@ -1434,7 +1437,7 @@ func TestContextWorker_ConversationTitleChangeRepublishesChatScope(t *testing.T)
 	_, err := f.run()
 	require.NoError(t, err)
 	before := f.client.Documents()
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Renamed alone' WHERE id = ?`, f.chatID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'Renamed alone' WHERE id = ?`, f.chatID)
 	require.NoError(t, err)
 
 	result, err := f.run()
@@ -1449,7 +1452,7 @@ func TestContextWorker_ParticipantNameChangeRepublishesChatScope(t *testing.T) {
 	_, err := f.run()
 	require.NoError(t, err)
 	before := f.client.Documents()
-	_, err = f.store.DB().Exec(`UPDATE participants SET display_name = 'Alicia alone' WHERE id = ?`, f.personID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE participants SET display_name = 'Alicia alone' WHERE id = ?`, f.personID)
 	require.NoError(t, err)
 
 	result, err := f.run()
@@ -1481,7 +1484,7 @@ func TestContextWorker_TimestampAndConversationMoveRepairsOldAndNewScopes(t *tes
 	_, err := f.run()
 	require.NoError(t, err)
 	oldScope := fmt.Sprintf("chat:%d:2026-08-08", f.chatID)
-	oldDocs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, oldScope)
+	oldDocs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, oldScope)
 	require.NoError(t, err)
 	require.Len(t, oldDocs, 1)
 
@@ -1489,15 +1492,15 @@ func TestContextWorker_TimestampAndConversationMoveRepairsOldAndNewScopes(t *tes
 	require.NoError(t, err)
 	require.NoError(t, f.store.EnsureConversationParticipant(newConversation, f.personID, "member"))
 	newTime := oldTime.Add(20 * time.Minute)
-	_, err = f.store.DB().Exec(`UPDATE messages SET conversation_id = ?, sent_at = ? WHERE id = ?`, newConversation, newTime, id)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET conversation_id = ?, sent_at = ? WHERE id = ?`, newConversation, newTime, id)
 	require.NoError(t, err)
 	result, err := f.run()
 	require.NoError(t, err)
 	assert.True(t, result.Contextual.Converged)
-	oldDocs, err = f.backend.ListDocumentsForScope(context.Background(), f.gen, oldScope)
+	oldDocs, err = f.backend.ListDocumentsForScope(t.Context(), f.gen, oldScope)
 	require.NoError(t, err)
 	assert.Empty(t, oldDocs)
-	newDocs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen,
+	newDocs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen,
 		fmt.Sprintf("chat:%d:2026-08-09", newConversation))
 	require.NoError(t, err)
 	require.Len(t, newDocs, 1)
@@ -1513,7 +1516,7 @@ func TestContextWorker_MultiDayEditDoesNotRepairUnrelatedChatDay(t *testing.T) {
 	require.NoError(t, err)
 	firstScope := fmt.Sprintf("chat:%d:2026-08-08", f.chatID)
 	tamperSequence := f.progress().ChangeSequence
-	require.NoError(t, f.backend.PublishScope(context.Background(), f.gen, firstScope, tamperSequence,
+	require.NoError(t, f.backend.PublishScope(t.Context(), f.gen, firstScope, tamperSequence,
 		[]vector.DocumentPublication{{Key: firstScope + ":tampered", Kind: "chat-window", Revision: "tampered", SourceSequence: tamperSequence, Members: []int64{firstID}}},
 		[]vector.Chunk{{MessageID: firstID, Vector: []float32{1, 2, 3, 4}}}))
 
@@ -1521,7 +1524,7 @@ func TestContextWorker_MultiDayEditDoesNotRepairUnrelatedChatDay(t *testing.T) {
 		sql.NullString{String: "second day edited", Valid: true}, sql.NullString{}))
 	_, err = f.run()
 	require.NoError(t, err)
-	firstDocs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, firstScope)
+	firstDocs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, firstScope)
 	require.NoError(t, err)
 	require.Len(t, firstDocs, 1)
 	assert.Equal(t, "tampered", firstDocs[0].PublishedRevision,
@@ -1565,15 +1568,15 @@ func TestContextWorker_UndatedDeleteTombstonesOldChatScope(t *testing.T) {
 	_, err := f.run()
 	require.NoError(t, err)
 	scope := fmt.Sprintf("chat:%d:undated", f.chatID)
-	docs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, scope)
+	docs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, scope)
 	require.NoError(t, err)
 	require.Len(t, docs, 1)
 
-	_, err = f.store.DB().Exec(`DELETE FROM messages WHERE id = ?`, id)
+	_, err = f.store.DB().ExecContext(t.Context(), `DELETE FROM messages WHERE id = ?`, id)
 	require.NoError(t, err)
 	_, err = f.run()
 	require.NoError(t, err)
-	doc, err := f.backend.GetDocument(context.Background(), f.gen, docs[0].Key)
+	doc, err := f.backend.GetDocument(t.Context(), f.gen, docs[0].Key)
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentTombstoned, doc.State)
 }
@@ -1584,21 +1587,21 @@ func TestContextWorker_UndatedMoveTombstonesOldAndPublishesNewChatScope(t *testi
 	_, err := f.run()
 	require.NoError(t, err)
 	oldScope := fmt.Sprintf("chat:%d:undated", f.chatID)
-	oldDocs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, oldScope)
+	oldDocs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, oldScope)
 	require.NoError(t, err)
 	require.Len(t, oldDocs, 1)
 	newConversation, err := f.store.EnsureConversationWithType(f.sourceID, "undated-moved", "beeper", "Moved")
 	require.NoError(t, err)
 	require.NoError(t, f.store.EnsureConversationParticipant(newConversation, f.personID, "member"))
-	_, err = f.store.DB().Exec(`UPDATE messages SET conversation_id = ? WHERE id = ?`, newConversation, id)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET conversation_id = ? WHERE id = ?`, newConversation, id)
 	require.NoError(t, err)
 
 	_, err = f.run()
 	require.NoError(t, err)
-	oldDoc, err := f.backend.GetDocument(context.Background(), f.gen, oldDocs[0].Key)
+	oldDoc, err := f.backend.GetDocument(t.Context(), f.gen, oldDocs[0].Key)
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentTombstoned, oldDoc.State)
-	newDocs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen,
+	newDocs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen,
 		fmt.Sprintf("chat:%d:undated", newConversation))
 	require.NoError(t, err)
 	require.Len(t, newDocs, 1)
@@ -1614,7 +1617,7 @@ func TestContextWorker_UndatedEditDoesNotRepairDatedSiblingScope(t *testing.T) {
 	require.NoError(t, err)
 	datedScope := fmt.Sprintf("chat:%d:2026-08-08", f.chatID)
 	tamperSequence := f.progress().ChangeSequence
-	require.NoError(t, f.backend.PublishScope(context.Background(), f.gen, datedScope, tamperSequence,
+	require.NoError(t, f.backend.PublishScope(t.Context(), f.gen, datedScope, tamperSequence,
 		[]vector.DocumentPublication{{Key: datedScope + ":tampered", Kind: "chat-window", Revision: "tampered", SourceSequence: tamperSequence, Members: []int64{datedID}}},
 		[]vector.Chunk{{MessageID: datedID, Vector: []float32{1, 2, 3, 4}}}))
 
@@ -1622,7 +1625,7 @@ func TestContextWorker_UndatedEditDoesNotRepairDatedSiblingScope(t *testing.T) {
 		sql.NullString{String: "undated edited", Valid: true}, sql.NullString{}))
 	_, err = f.run()
 	require.NoError(t, err)
-	datedDocs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, datedScope)
+	datedDocs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, datedScope)
 	require.NoError(t, err)
 	require.Len(t, datedDocs, 1)
 	assert.Equal(t, "tampered", datedDocs[0].PublishedRevision,
@@ -1638,7 +1641,7 @@ func TestContextWorker_MeetingBodyEditDoesNotRepairBeeperSharedDay(t *testing.T)
 	require.NoError(t, err)
 	chatScope := fmt.Sprintf("chat:%d:2026-08-08", f.chatID)
 	tamperSequence := f.progress().ChangeSequence
-	require.NoError(t, f.backend.PublishScope(context.Background(), f.gen, chatScope, tamperSequence,
+	require.NoError(t, f.backend.PublishScope(t.Context(), f.gen, chatScope, tamperSequence,
 		[]vector.DocumentPublication{{Key: chatScope + ":tampered", Kind: "chat-window", Revision: "tampered", SourceSequence: tamperSequence, Members: []int64{beeperID}}},
 		[]vector.Chunk{{MessageID: beeperID, Vector: []float32{1, 2, 3, 4}}}))
 
@@ -1646,7 +1649,7 @@ func TestContextWorker_MeetingBodyEditDoesNotRepairBeeperSharedDay(t *testing.T)
 		sql.NullString{String: assemblyMeetingBody() + "\nEdited", Valid: true}, sql.NullString{}))
 	_, err = f.run()
 	require.NoError(t, err)
-	chatDocs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, chatScope)
+	chatDocs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, chatScope)
 	require.NoError(t, err)
 	require.Len(t, chatDocs, 1)
 	assert.Equal(t, "tampered", chatDocs[0].PublishedRevision,
@@ -1661,7 +1664,7 @@ func TestContextWorker_BeeperToOrdinaryRepairsOldScopeWithoutReembeddingSibling(
 	_, err := f.run()
 	require.NoError(t, err)
 	chatScope := fmt.Sprintf("chat:%d:2026-08-08", f.chatID)
-	beforeDocs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, chatScope)
+	beforeDocs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, chatScope)
 	require.NoError(t, err)
 	require.Len(t, beforeDocs, 2)
 	var targetKey string
@@ -1673,20 +1676,20 @@ func TestContextWorker_BeeperToOrdinaryRepairsOldScopeWithoutReembeddingSibling(
 	require.NotEmpty(t, targetKey)
 	beforeEmbedded := f.client.Documents()
 
-	_, err = f.store.DB().Exec(`UPDATE messages SET message_type = 'email', subject = 'ordinary now' WHERE id = ?`, targetID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET message_type = 'email', subject = 'ordinary now' WHERE id = ?`, targetID)
 	require.NoError(t, err)
 	result, err := f.run()
 	require.NoError(t, err)
 	assert.True(t, result.Contextual.Converged)
 	assert.Equal(t, beforeEmbedded+1, f.client.Documents(),
 		"the remaining Beeper sibling keeps its cached unchanged revision")
-	oldTarget, err := f.backend.GetDocument(context.Background(), f.gen, targetKey)
+	oldTarget, err := f.backend.GetDocument(t.Context(), f.gen, targetKey)
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentTombstoned, oldTarget.State)
-	ordinary, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", targetID))
+	ordinary, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", targetID))
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentCurrent, ordinary.State)
-	chatDocs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, chatScope)
+	chatDocs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, chatScope)
 	require.NoError(t, err)
 	require.Len(t, chatDocs, 1)
 	assert.Equal(t, []int64{siblingID}, chatDocs[0].Members)
@@ -1703,7 +1706,7 @@ func TestContextWorker_OrdinaryToBeeperRepairsOldAndBoundedNewScopes(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentCurrent, ordinaryBefore.State)
 
-	_, err = f.store.DB().Exec(`UPDATE messages SET message_type = 'beeper', subject = NULL WHERE id = ?`, id)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET message_type = 'beeper', subject = NULL WHERE id = ?`, id)
 	require.NoError(t, err)
 	result, err := f.run()
 	require.NoError(t, err)
@@ -1728,7 +1731,8 @@ func TestContextWorker_TypeTransitionRejectionKeepsCanonicalScopeUncovered(t *te
 	ordinaryKey := fmt.Sprintf("message:%d", id)
 
 	meetingBody := strings.Replace(assemblyMeetingBody(), "Decision summary.", "reject-type-transition", 1)
-	_, err = f.store.DB().Exec(
+	_, err = f.store.DB().ExecContext(
+		t.Context(),
 		`UPDATE messages SET message_type = 'meeting_transcript', subject = NULL WHERE id = ?`, id)
 	require.NoError(t, err)
 	require.NoError(t, f.store.UpsertMessageBody(id,
@@ -1747,7 +1751,7 @@ func TestContextWorker_TypeTransitionRejectionKeepsCanonicalScopeUncovered(t *te
 	_, err = f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("meeting:%d", id))
 	require.Error(t, err)
 	var embedGen sql.NullInt64
-	require.NoError(t, f.store.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = ?`, id).Scan(&embedGen))
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id = ?`, id).Scan(&embedGen))
 	assert.False(t, embedGen.Valid)
 
 	f.client.rejectText = ""
@@ -1761,7 +1765,7 @@ func TestContextWorker_TypeTransitionRejectionKeepsCanonicalScopeUncovered(t *te
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentCurrent, good.State)
 	assert.Equal(t, latestContextSequence(t, f.store), f.progress().ChangeSequence)
-	require.NoError(t, f.store.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = ?`, id).Scan(&embedGen))
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id = ?`, id).Scan(&embedGen))
 	assert.False(t, embedGen.Valid)
 }
 
@@ -1772,12 +1776,12 @@ func TestContextWorker_BeeperToMeetingMoveRepairsExactOldAndNewKinds(t *testing.
 	_, err := f.run()
 	require.NoError(t, err)
 	oldScope := fmt.Sprintf("chat:%d:2026-08-08", f.chatID)
-	oldDocs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, oldScope)
+	oldDocs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, oldScope)
 	require.NoError(t, err)
 	require.Len(t, oldDocs, 1)
-	meetingConversation, err := f.store.EnsureConversation(f.sourceID, "type-move-meeting", "Meeting")
+	meetingConversation, err := f.store.EnsureConversation(t.Context(), f.sourceID, "type-move-meeting", "Meeting")
 	require.NoError(t, err)
-	_, err = f.store.DB().Exec(`UPDATE messages SET message_type = 'meeting_transcript', conversation_id = ?, sent_at = ? WHERE id = ?`,
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET message_type = 'meeting_transcript', conversation_id = ?, sent_at = ? WHERE id = ?`,
 		meetingConversation, oldTime.Add(24*time.Hour), id)
 	require.NoError(t, err)
 	require.NoError(t, f.store.UpsertMessageBody(id,
@@ -1786,27 +1790,27 @@ func TestContextWorker_BeeperToMeetingMoveRepairsExactOldAndNewKinds(t *testing.
 	result, err := f.run()
 	require.NoError(t, err)
 	assert.True(t, result.Contextual.Converged)
-	oldDoc, err := f.backend.GetDocument(context.Background(), f.gen, oldDocs[0].Key)
+	oldDoc, err := f.backend.GetDocument(t.Context(), f.gen, oldDocs[0].Key)
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentTombstoned, oldDoc.State)
-	meetingDoc, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("meeting:%d", id))
+	meetingDoc, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("meeting:%d", id))
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentCurrent, meetingDoc.State)
 }
 
 func TestContextWorker_MeetingDeletePublishesTombstoneImmediately(t *testing.T) {
 	f := newContextWorkerFixture(t, nil)
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "meeting", "Meeting")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "meeting", "Meeting")
 	require.NoError(t, err)
 	id := f.seed("meeting_transcript", conversationID,
 		time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC), assemblyMeetingBody())
 	_, err = f.run()
 	require.NoError(t, err)
-	_, err = f.store.DB().Exec(`DELETE FROM messages WHERE id = ?`, id)
+	_, err = f.store.DB().ExecContext(t.Context(), `DELETE FROM messages WHERE id = ?`, id)
 	require.NoError(t, err)
 	result, err := f.run()
 	require.NoError(t, err)
-	record, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("meeting:%d", id))
+	record, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("meeting:%d", id))
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentTombstoned, record.State)
 	assert.True(t, result.Contextual.Converged)
@@ -1815,7 +1819,7 @@ func TestContextWorker_MeetingDeletePublishesTombstoneImmediately(t *testing.T) 
 func TestContextWorker_MixedOrdinaryContextualAndSizeRecovery(t *testing.T) {
 	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {})
 	day := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
-	otherConversation, err := f.store.EnsureConversation(f.sourceID, "ordinary", "Ordinary")
+	otherConversation, err := f.store.EnsureConversation(t.Context(), f.sourceID, "ordinary", "Ordinary")
 	require.NoError(t, err)
 	f.seed("email", otherConversation, day, "mail")
 	f.seed("sms", otherConversation, day, "text")
@@ -1958,7 +1962,7 @@ func TestContextWorker_LaterPackedFailurePublishesAndResumesSuccessfulScopePrefi
 			Limits: RequestLimits{MaxDocuments: 1, MaxChunks: 16_000, MaxUTF8Bytes: 100_000},
 		})
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "ordinary", "Ordinary")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "ordinary", "Ordinary")
 	require.NoError(t, err)
 	firstID := f.seed("email", conversationID, time.Now().UTC(), "first prefix")
 	secondID := f.seed("email", conversationID, time.Now().UTC().Add(time.Minute), "second retry")
@@ -2090,7 +2094,7 @@ func TestContextWorker_DocumentTooLargeLeavesOnlyItsScopeUncovered(t *testing.T)
 	})
 	_, err := f.run()
 	require.NoError(t, err)
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "ordinary", "Ordinary")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "ordinary", "Ordinary")
 	require.NoError(t, err)
 	badID := f.seed("email", conversationID, time.Now().UTC(), "reject-this-document")
 	goodID := f.seed("email", conversationID, time.Now().UTC().Add(time.Minute), "keep-this-document")
@@ -2103,9 +2107,9 @@ func TestContextWorker_DocumentTooLargeLeavesOnlyItsScopeUncovered(t *testing.T)
 	assert.GreaterOrEqual(t, result.Failed, 1)
 	assert.GreaterOrEqual(t, result.Succeeded, 1)
 	assert.Equal(t, 1, f.missing())
-	_, err = f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", badID))
+	_, err = f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", badID))
 	require.Error(t, err)
-	good, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", goodID))
+	good, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", goodID))
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentCurrent, good.State)
 	assert.Equal(t, latestContextSequence(t, f.store), f.progress().ChangeSequence)
@@ -2118,12 +2122,12 @@ func TestContextWorker_DocumentTooLargeLeavesOnlyItsScopeUncovered(t *testing.T)
 	assert.Equal(t, 1, f.missing())
 
 	f.client.rejectText = ""
-	result, err = f.worker.RunBackstop(context.Background(), f.gen, testEmbeddingPassScope())
+	result, err = f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	require.NotNil(t, result.Contextual)
 	assert.True(t, result.Contextual.Converged)
 	assert.Zero(t, f.missing())
-	bad, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", badID))
+	bad, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", badID))
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentCurrent, bad.State)
 }
@@ -2133,7 +2137,7 @@ func TestContextWorker_TokenDenseDocumentTruncatesInsteadOfBlockingActivation(t 
 		policy := AssemblyPolicy{MaxChunkRunes: 16384, ChatGap: 30 * time.Minute}
 		deps.Assembler = CompositeAssembler{Policy: policy, Chat: ChatWindowAssembler{Policy: policy}}
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "ordinary", "Ordinary")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "ordinary", "Ordinary")
 	require.NoError(t, err)
 	// The provider rejects on a marker in the document tail; a byte-truncated
 	// retry no longer contains it, standing in for a token-dense document that
@@ -2150,7 +2154,7 @@ func TestContextWorker_TokenDenseDocumentTruncatesInsteadOfBlockingActivation(t 
 	assert.Zero(t, result.Failed)
 	assert.Equal(t, 1, result.Truncated)
 	assert.Zero(t, f.missing())
-	doc, err := f.backend.GetDocument(context.Background(), f.gen, fmt.Sprintf("message:%d", id))
+	doc, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", id))
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentCurrent, doc.State)
 
@@ -2158,7 +2162,8 @@ func TestContextWorker_TokenDenseDocumentTruncatesInsteadOfBlockingActivation(t 
 	// actually embedded, not the original full chunk.
 	var start, end int
 	var truncated bool
-	require.NoError(t, f.backend.DB().QueryRow(
+	require.NoError(t, f.backend.DB().QueryRowContext(
+		t.Context(),
 		`SELECT chunk_char_start, chunk_char_end, truncated FROM embeddings WHERE message_id = ?`, id).
 		Scan(&start, &end, &truncated))
 	assert.Zero(t, start)
@@ -2184,7 +2189,7 @@ func TestContextWorker_DocumentTooLargeClearsStaleCoverageAfterMetadataChange(t 
 	assert.Zero(t, f.missing())
 
 	f.client.rejectText = "reject-after-title-change"
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Changed title' WHERE id = ?`, f.chatID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'Changed title' WHERE id = ?`, f.chatID)
 	require.NoError(t, err)
 	result, err = f.run()
 	require.NoError(t, err)
@@ -2198,7 +2203,7 @@ func TestContextWorker_DocumentTooLargeClearsStaleCoverageAfterMetadataChange(t 
 		"complete-scope publication may remove the stale vector only when coverage is also reset")
 
 	var embedGen sql.NullInt64
-	require.NoError(t, f.store.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = ?`, messageID).Scan(&embedGen))
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id = ?`, messageID).Scan(&embedGen))
 	assert.False(t, embedGen.Valid)
 }
 
@@ -2208,7 +2213,7 @@ func TestContextWorker_DocumentTooLargeDoesNotStarveLaterDiscovery(t *testing.T)
 		deps.ReconcileBatchSize = 4
 		deps.MaxRunUTF8Bytes = 1
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "ordinary", "Ordinary")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "ordinary", "Ordinary")
 	require.NoError(t, err)
 	day := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
 	f.seed("email", conversationID, day, "reject-first")
@@ -2239,9 +2244,9 @@ func TestContextWorker_GroupCASMissLeavesScopeUncoveredAndWatermarkHeld(t *testi
 	pinnedSequence := latestContextSequence(t, f.store)
 	f.client.before = func() {
 		f.client.before = nil
-		_, err := f.store.DB().Exec(`UPDATE message_bodies SET body_text = 'raced' WHERE message_id = ?`, id)
+		_, err := f.store.DB().ExecContext(t.Context(), `UPDATE message_bodies SET body_text = 'raced' WHERE message_id = ?`, id)
 		require.NoError(t, err)
-		_, err = f.store.DB().Exec(`UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = ?`, id)
+		_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET last_modified = '2099-01-01 00:00:00' WHERE id = ?`, id)
 		require.NoError(t, err)
 	}
 	_, err := f.run()
@@ -2258,7 +2263,7 @@ func TestContextWorker_MetadataCASMissLeavesWholeScopeUncovered(t *testing.T) {
 	pinnedSequence := latestContextSequence(t, f.store)
 	f.client.before = func() {
 		f.client.before = nil
-		_, err := f.store.DB().Exec(`UPDATE conversations SET title = 'raced title' WHERE id = ?`, f.chatID)
+		_, err := f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'raced title' WHERE id = ?`, f.chatID)
 		require.NoError(t, err)
 	}
 	_, err := f.run()
@@ -2278,14 +2283,14 @@ func TestContextWorker_BlankRowCASMissLeavesCoverageUnchanged(t *testing.T) {
 			if snapshots != 1 {
 				return nil
 			}
-			_, err := f.store.DB().Exec(`UPDATE messages SET subject = 'raced blank', last_modified = '2099-01-01 00:00:00' WHERE source_message_id = 'email-1'`)
+			_, err := f.store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'raced blank', last_modified = '2099-01-01 00:00:00' WHERE source_message_id = 'email-1'`)
 			return err
 		}
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "blank", "Blank")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "blank", "Blank")
 	require.NoError(t, err)
 	id := f.seed("email", conversationID, time.Now().UTC(), "")
-	_, err = f.store.DB().Exec(`UPDATE messages SET subject = NULL WHERE id = ?`, id)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = NULL WHERE id = ?`, id)
 	require.NoError(t, err)
 
 	_, err = f.run()
@@ -2307,11 +2312,11 @@ func TestContextWorker_SkippedRowCASMissLeavesCoverageUnchanged(t *testing.T) {
 			if snapshots != 1 {
 				return nil
 			}
-			_, err := f.store.DB().Exec(`UPDATE messages SET subject = 'raced skip', last_modified = '2099-01-01 00:00:00' WHERE source_message_id = 'email-1'`)
+			_, err := f.store.DB().ExecContext(t.Context(), `UPDATE messages SET subject = 'raced skip', last_modified = '2099-01-01 00:00:00' WHERE source_message_id = 'email-1'`)
 			return err
 		}
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "skip", "Skip")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "skip", "Skip")
 	require.NoError(t, err)
 	f.seed("email", conversationID, time.Now().UTC(), "skipped")
 
@@ -2355,23 +2360,23 @@ func TestContextWorker_CrashBoundariesReplayIdempotently(t *testing.T) {
 
 func TestContextWorker_BackstopReconcilesBelowWatermarkAndOrphanWithBoundedCursor(t *testing.T) {
 	f := newContextWorkerFixture(t, nil)
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "mail", "Mail")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "mail", "Mail")
 	require.NoError(t, err)
 	first := f.seed("email", conversationID, time.Now().UTC(), "first")
 	f.seed("email", conversationID, time.Now().UTC(), "second")
 	_, err = f.run()
 	require.NoError(t, err)
-	_, err = f.store.DB().Exec(`UPDATE messages SET embed_gen = NULL WHERE id = ?`, first)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET embed_gen = NULL WHERE id = ?`, first)
 	require.NoError(t, err)
 	orphanSequence := f.progress().ChangeSequence
-	require.NoError(t, f.backend.PublishScope(context.Background(), f.gen, "message:999999", orphanSequence,
+	require.NoError(t, f.backend.PublishScope(t.Context(), f.gen, "message:999999", orphanSequence,
 		[]vector.DocumentPublication{{Key: "message:999999", Kind: "ordinary-message", Revision: "orphan", SourceSequence: orphanSequence, Members: []int64{999999}}},
 		[]vector.Chunk{{MessageID: 999999, Vector: []float32{1, 2, 3, 4}}}))
-	result, err := f.worker.RunBackstop(context.Background(), f.gen, testEmbeddingPassScope())
+	result, err := f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	assert.True(t, result.Contextual.Converged)
 	assert.Zero(t, f.missing())
-	orphan, err := f.backend.GetDocument(context.Background(), f.gen, "message:999999")
+	orphan, err := f.backend.GetDocument(t.Context(), f.gen, "message:999999")
 	require.NoError(t, err)
 	assert.Equal(t, vector.DocumentTombstoned, orphan.State)
 	assert.Contains(t, f.progress().ReconcileCursor, "done:")
@@ -2386,7 +2391,7 @@ func TestContextWorker_ReconcileSourceUsesBoundedRowPagesDespiteCurrentCoverage(
 			return nil
 		}
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "bounded-source", "Bounded")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "bounded-source", "Bounded")
 	require.NoError(t, err)
 	for i := range 5 {
 		f.seed("email", conversationID, time.Date(2026, 8, 8, 9, i, 0, 0, time.UTC), fmt.Sprintf("mail %d", i))
@@ -2395,7 +2400,7 @@ func TestContextWorker_ReconcileSourceUsesBoundedRowPagesDespiteCurrentCoverage(
 	require.NoError(t, err)
 	pageRows = nil
 
-	result, err := f.worker.RunBackstop(context.Background(), f.gen, testEmbeddingPassScope())
+	result, err := f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	assert.True(t, result.Contextual.Converged)
 	require.GreaterOrEqual(t, len(pageRows), 3)
@@ -2416,7 +2421,7 @@ func TestContextWorker_BackstopPreservesIncompleteReconciliationCursor(t *testin
 			return nil
 		}
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "resume-source", "Resume")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "resume-source", "Resume")
 	require.NoError(t, err)
 	ids := make([]int64, 0, 3)
 	for i := range 3 {
@@ -2439,7 +2444,7 @@ func TestContextWorker_BackstopPreservesIncompleteReconciliationCursor(t *testin
 
 func TestContextWorker_PrunesJournalThroughMinimumLiveContextCursor(t *testing.T) {
 	f := newContextWorkerFixture(t, nil)
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "retention-source", "Retention")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "retention-source", "Retention")
 	require.NoError(t, err)
 	messageID := f.seed("email", conversationID,
 		time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC), "initial body")
@@ -2474,7 +2479,7 @@ func TestContextWorker_ReconcileSourceResumesInsideBudgetLimitedPage(t *testing.
 	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
 		deps.ReconcileBatchSize = 64
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "budget-source", "Budget source")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "budget-source", "Budget source")
 	require.NoError(t, err)
 	for i := range 3 {
 		f.seed("email", conversationID, time.Date(2026, 8, 8, 9, i, 0, 0, time.UTC), fmt.Sprintf("mail %d", i))
@@ -2496,7 +2501,7 @@ func TestContextWorker_ReconcileOrphansResumeInsideBudgetLimitedPage(t *testing.
 	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
 		deps.ReconcileBatchSize = 64
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "budget-orphan", "Budget orphan")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "budget-orphan", "Budget orphan")
 	require.NoError(t, err)
 	f.seed("email", conversationID, time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC), "live")
 	_, err = f.run()
@@ -2530,7 +2535,7 @@ func TestContextWorker_ReconcileOrphansDoesNotSkipPulledForwardScopeWhenOrdersDi
 	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
 		deps.ReconcileBatchSize = 2
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "ordered-orphans", "Ordered orphans")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "ordered-orphans", "Ordered orphans")
 	require.NoError(t, err)
 	f.seed("email", conversationID, time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC), "live")
 	_, err = f.run()
@@ -2577,7 +2582,7 @@ func TestContextWorker_ReconciliationRepairsLedgerWhileEmbedGenIsCurrent(t *test
 			name: "changed revision",
 			mutate: func(t *testing.T, f *contextWorkerFixture, key string) {
 				t.Helper()
-				_, err := f.backend.DB().Exec(`UPDATE embedding_documents SET published_revision = 'tampered' WHERE generation_id = ? AND document_key = ?`, int64(f.gen), key)
+				_, err := f.backend.DB().ExecContext(t.Context(), `UPDATE embedding_documents SET published_revision = 'tampered' WHERE generation_id = ? AND document_key = ?`, int64(f.gen), key)
 				require.NoError(t, err)
 			},
 		},
@@ -2585,7 +2590,7 @@ func TestContextWorker_ReconciliationRepairsLedgerWhileEmbedGenIsCurrent(t *test
 			name: "deleted record",
 			mutate: func(t *testing.T, f *contextWorkerFixture, key string) {
 				t.Helper()
-				_, err := f.backend.DB().Exec(`DELETE FROM embedding_documents WHERE generation_id = ? AND document_key = ?`, int64(f.gen), key)
+				_, err := f.backend.DB().ExecContext(t.Context(), `DELETE FROM embedding_documents WHERE generation_id = ? AND document_key = ?`, int64(f.gen), key)
 				require.NoError(t, err)
 			},
 		},
@@ -2593,7 +2598,7 @@ func TestContextWorker_ReconciliationRepairsLedgerWhileEmbedGenIsCurrent(t *test
 			name: "tombstoned record",
 			mutate: func(t *testing.T, f *contextWorkerFixture, key string) {
 				t.Helper()
-				_, err := f.backend.DB().Exec(`UPDATE embedding_documents SET state = 'tombstoned' WHERE generation_id = ? AND document_key = ?`, int64(f.gen), key)
+				_, err := f.backend.DB().ExecContext(t.Context(), `UPDATE embedding_documents SET state = 'tombstoned' WHERE generation_id = ? AND document_key = ?`, int64(f.gen), key)
 				require.NoError(t, err)
 			},
 		},
@@ -2601,7 +2606,7 @@ func TestContextWorker_ReconciliationRepairsLedgerWhileEmbedGenIsCurrent(t *test
 	for _, mutation := range mutations {
 		t.Run(mutation.name, func(t *testing.T) {
 			f := newContextWorkerFixture(t, nil)
-			conversationID, err := f.store.EnsureConversation(f.sourceID, "repair-ledger", "Repair")
+			conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "repair-ledger", "Repair")
 			require.NoError(t, err)
 			id := f.seed("email", conversationID, time.Now().UTC(), "repair me")
 			_, err = f.run()
@@ -2610,10 +2615,10 @@ func TestContextWorker_ReconciliationRepairsLedgerWhileEmbedGenIsCurrent(t *test
 			mutation.mutate(t, f, key)
 			assert.Zero(t, f.missing(), "embed_gen stays current before reconciliation")
 
-			result, err := f.worker.RunBackstop(context.Background(), f.gen, testEmbeddingPassScope())
+			result, err := f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
 			require.NoError(t, err)
 			assert.True(t, result.Contextual.Converged)
-			record, err := f.backend.GetDocument(context.Background(), f.gen, key)
+			record, err := f.backend.GetDocument(t.Context(), f.gen, key)
 			require.NoError(t, err)
 			assert.Equal(t, vector.DocumentCurrent, record.State)
 			assert.NotEqual(t, "tampered", record.PublishedRevision)
@@ -2624,7 +2629,7 @@ func TestContextWorker_ReconciliationRepairsLedgerWhileEmbedGenIsCurrent(t *test
 func TestContextWorker_RetiredGenerationCancelsPass(t *testing.T) {
 	f := newContextWorkerFixture(t, nil)
 	f.seed("email", f.chatID, time.Now().UTC(), "mail")
-	require.NoError(t, f.backend.RetireGeneration(context.Background(), f.gen, false))
+	require.NoError(t, f.backend.RetireGeneration(t.Context(), f.gen, false))
 	result, err := f.run()
 	require.ErrorIs(t, err, context.Canceled)
 	assert.False(t, result.Contextual.Converged)
@@ -2639,7 +2644,7 @@ func TestContextWorker_ClosesSourceSnapshotBeforeSemanticCall(t *testing.T) {
 		}
 	})
 	f.client.before = func() {
-		_, _, err := observed.Message(context.Background(), 1)
+		_, _, err := observed.Message(t.Context(), 1)
 		assert.ErrorIs(t, err, ErrSourceSnapshotClosed)
 	}
 	f.seed("email", f.chatID, time.Now().UTC(), "mail")
@@ -2683,13 +2688,13 @@ func TestContextWorkerCleansCheckpointForDeletedUnpublishedDocument(t *testing.T
 	_, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
 	require.ErrorIs(t, err, context.Canceled, "publication must stop after saving the provider response")
 	var checkpoints int
-	require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE generation_id = ?`, int64(f.gen)).Scan(&checkpoints))
+	require.NoError(t, f.backend.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints WHERE generation_id = ?`, int64(f.gen)).Scan(&checkpoints))
 	require.Positive(t, checkpoints, "the completed provider response remains available for resumption")
 	var documents int
-	require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_documents WHERE generation_id = ?`, int64(f.gen)).Scan(&documents))
+	require.NoError(t, f.backend.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_documents WHERE generation_id = ?`, int64(f.gen)).Scan(&documents))
 	assert.Zero(t, documents, "the interrupted pass has not published a document")
 
-	_, err = f.store.DB().Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, messageID)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, messageID)
 	require.NoError(t, err)
 	f.deps.Hooks.BeforePublish = nil
 	f.restartWorker()
@@ -2698,7 +2703,7 @@ func TestContextWorkerCleansCheckpointForDeletedUnpublishedDocument(t *testing.T
 	require.NotNil(t, result.Contextual)
 	assert.True(t, result.Contextual.Converged)
 	assert.Equal(t, 1, f.client.Calls(), "resumption must not embed a document deleted before publication")
-	require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE generation_id = ?`, int64(f.gen)).Scan(&checkpoints))
+	require.NoError(t, f.backend.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints WHERE generation_id = ?`, int64(f.gen)).Scan(&checkpoints))
 	assert.Zero(t, checkpoints, "reconciliation removes the checkpoint owner that no longer has a source document")
 }
 
@@ -2769,7 +2774,7 @@ func TestContextWorker_StoppedPassReusesCompletedRequest(t *testing.T) {
 			assert.True(t, result.Contextual.Converged)
 			assert.Zero(t, f.missing())
 			var saved int
-			require.NoError(f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
+			require.NoError(f.backend.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
 			assert.Zero(t, saved, "publication releases all checkpoint owners")
 		})
 	}

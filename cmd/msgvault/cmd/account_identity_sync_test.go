@@ -81,7 +81,11 @@ func TestAddServiceAccountDefaultIdentityScheduledSync(t *testing.T) {
 			args = append(args, flag)
 		}
 		cmd.SetArgs(args)
-		require.NoError(cmd.ExecuteContext(ctx))
+		stop := captureStdout(t)
+		err := cmd.ExecuteContext(ctx)
+		output := stop()
+		require.NoError(err)
+		assert.Contains(output, "msgvault sync-full -- user@example.com")
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -173,10 +177,10 @@ func TestScheduledSyncResolvesGmailAliasToCanonicalIdentifier(t *testing.T) {
 		"missing sources retain the token-first selector")
 	require.NoError(runScheduledSync(ctx, selector, st, nil, invocationFromContext(ctx)))
 	assert.Equal([]string{selector}, rebuiltSelectors, "cache rebuild logging keeps the supplied selector")
-	resolved, err := st.GetSourceByTypeAndIdentifier(sourceTypeGmail, canonicalEmail)
+	resolved, err := st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeGmail, canonicalEmail)
 	require.NoError(err)
 	assert.Equal(source.ID, resolved.ID)
-	_, err = st.GetSourceByTypeAndIdentifier(sourceTypeGmail, selector)
+	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeGmail, selector)
 	assert.ErrorIs(err, store.ErrSourceNotFound, "scheduled sync must not create a source under the alias")
 }
 
@@ -206,7 +210,11 @@ func TestAddIMAPDefaultIdentityScheduledSync(t *testing.T) {
 			args = append(args, flag)
 		}
 		cmd.SetArgs(args)
-		require.NoError(cmd.ExecuteContext(ctx))
+		stop := captureStdout(t)
+		err := cmd.ExecuteContext(ctx)
+		output := stop()
+		require.NoError(err)
+		assert.Contains(output, "msgvault sync-full -- imap://"+testutil.IMAPTestUsername+"@"+net.JoinHostPort(host, port))
 		st, err := store.Open(cfg.DatabaseDSN())
 		require.NoError(err)
 		t.Cleanup(func() { _ = st.Close() })
@@ -245,10 +253,11 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 		name       string
 		newCommand func() *cobra.Command
 		args       []string
+		output     string
 	}{
-		{"o365", newAddO365LocalCmd, nil},
-		{"graph", newAddO365LocalCmd, []string{"--graph"}},
-		{"teams", newAddTeamsLocalCmd, nil},
+		{"o365", newAddO365LocalCmd, nil, "msgvault sync-full -- user@example.com"},
+		{"graph", newAddO365LocalCmd, []string{"--graph"}, "msgvault sync -- user@example.com"},
+		{"teams", newAddTeamsLocalCmd, nil, "msgvault sync-teams user@example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -267,7 +276,11 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 					args = append(args, flag)
 				}
 				cmd.SetArgs(args)
-				require.NoError(cmd.ExecuteContext(ctx))
+				stop := captureStdout(t)
+				err := cmd.ExecuteContext(ctx)
+				output := stop()
+				require.NoError(err)
+				assert.Contains(output, tc.output)
 				st, err := store.Open(cfg.DatabaseDSN())
 				require.NoError(err)
 				t.Cleanup(func() { _ = st.Close() })
@@ -280,7 +293,7 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 					err := runScheduledMSMailSync(ctx, sources[0], st, invocationFromContext(ctx))
 					require.ErrorContains(err, "no valid token")
 				} else {
-					confirmDefaultIdentity(io.Discard, st, sources[0].ID, email, email, "account-identifier", testDiscardLogger())
+					confirmDefaultIdentity(t.Context(), io.Discard, st, sources[0].ID, email, email, "account-identifier", testDiscardLogger())
 				}
 				ids, err := st.ListAccountIdentities(sources[0].ID)
 				require.NoError(err)

@@ -26,9 +26,15 @@ func seedMessageDetailSenderFixture(t *testing.T) (string, *sql.DB) {
 	require.NoError(t, err, "open sqlite fixture")
 	schema, err := os.ReadFile("../store/schema.sql")
 	require.NoError(t, err, "read schema")
-	_, err = db.Exec(string(schema))
+	_, err = db.ExecContext(t.Context(), string(schema))
 	require.NoError(t, err, "create schema")
-	_, err = db.Exec(`
+	seedMessageDetailSenderRows(t, db)
+	return dbPath, db
+}
+
+func seedMessageDetailSenderRows(t *testing.T, db *sql.DB) {
+	t.Helper()
+	_, err := db.ExecContext(t.Context(), `
 		INSERT INTO sources (id, source_type, identifier) VALUES
 			(1, 'beeper', 'synthetic-network');
 		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES
@@ -52,12 +58,11 @@ func seedMessageDetailSenderFixture(t *testing.T) (string, *sql.DB) {
 			(3, 5, 'mention', 'Mentioned User');
 	`)
 	require.NoError(t, err, "seed sender fixture")
-	return dbPath, db
 }
 
 func assertMessageDetailSenderFallback(t *testing.T, reader messageDetailReader) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	byID, err := reader.GetMessage(ctx, 1)
 	require.NoError(t, err, "GetMessage sender-only")
@@ -87,8 +92,9 @@ func assertMessageDetailSenderFallback(t *testing.T, reader messageDetailReader)
 
 func TestSQLiteMessageDetailUsesDirectSenderFallback(t *testing.T) {
 	t.Parallel()
-	_, db := seedMessageDetailSenderFixture(t)
-	t.Cleanup(func() { _ = db.Close() })
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	db := dbtest.NewTestDB(t, "../store/schema.sql").DB
+	seedMessageDetailSenderRows(t, db)
 	assertMessageDetailSenderFallback(t, NewSQLiteEngine(db))
 }
 
@@ -97,7 +103,7 @@ func TestDuckDBMessageDetailUsesDirectSenderFallback(t *testing.T) {
 	dbPath, db := seedMessageDetailSenderFixture(t)
 	require.NoError(t, db.Close(), "close SQLite writer")
 
-	engine, err := NewDuckDBEngine("", dbPath, nil)
+	engine, err := NewDuckDBEngine(t.Context(), "", dbPath, nil)
 	require.NoError(t, err, "NewDuckDBEngine")
 	t.Cleanup(func() { _ = engine.Close() })
 	if !engine.hasSQLite() {
@@ -108,17 +114,18 @@ func TestDuckDBMessageDetailUsesDirectSenderFallback(t *testing.T) {
 
 func TestMessageDetailExposesRFCMessageID(t *testing.T) {
 	t.Parallel()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	db := dbtest.NewTestDB(t, "../store/schema.sql").DB
+	seedMessageDetailSenderRows(t, db)
+	_, err := db.ExecContext(t.Context(), `UPDATE messages SET rfc822_message_id = 'Case-ID@example.test' WHERE id = 1`)
+	require.NoError(t, err)
 	for _, backend := range []string{"sqlite", "duckdb"} {
 		t.Run(backend, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			dbPath, db := seedMessageDetailSenderFixture(t)
-			t.Cleanup(func() { _ = db.Close() })
-			_, err := db.Exec(`UPDATE messages SET rfc822_message_id = 'Case-ID@example.test' WHERE id = 1`)
-			requirements.NoError(err)
 			var reader messageDetailReader = NewSQLiteEngine(db)
 			if backend == "duckdb" {
-				engine, err := NewDuckDBEngine("", dbPath, db, DuckDBOptions{DisableSQLiteScanner: true})
+				engine, err := NewDuckDBEngine(t.Context(), "", "", db)
 				requirements.NoError(err)
 				t.Cleanup(func() { _ = engine.Close() })
 				reader = engine

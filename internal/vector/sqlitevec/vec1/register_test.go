@@ -21,17 +21,18 @@ func TestAutoRegistersVec1OnSQLiteConnections(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
 	var version string
-	require.NoError(t, db.QueryRow(`SELECT vec1_info()`).Scan(&version))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT vec1_info()`).Scan(&version))
 	assert.Contains(t, version, "version "+Version)
 
-	_, err = db.Exec(`CREATE VIRTUAL TABLE items USING vec1(embedding)`)
+	_, err = db.ExecContext(t.Context(), `CREATE VIRTUAL TABLE items USING vec1(embedding)`)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO items(rowid, embedding) VALUES (?, ?), (?, ?)`,
+	_, err = db.ExecContext(t.Context(), `INSERT INTO items(rowid, embedding) VALUES (?, ?), (?, ?)`,
 		int64(7), float32Blob(1, 0), int64(9), float32Blob(0, 1))
 	require.NoError(t, err)
 
 	var rowID int64
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, db.QueryRowContext(
+		t.Context(),
 		`SELECT rowid FROM items(?) LIMIT 1`, float32Blob(0.9, 0.1)).Scan(&rowID))
 	assert.Equal(t, int64(7), rowID)
 }

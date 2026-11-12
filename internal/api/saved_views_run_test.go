@@ -15,6 +15,8 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/explorecatalog"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/savedview"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -35,13 +37,14 @@ func newSavedViewRunTestServer(t *testing.T) (*Server, *store.Store) {
 		Engine:         newExploreDuckDBFixture(t),
 		Logger:         testLogger(),
 	})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	return srv, st
 }
 
 func createRunTestView(t *testing.T, st *store.Store, name, state string) *store.SavedView {
 	t.Helper()
-	view, err := st.CreateSavedView(context.Background(), store.SavedViewInput{
+	view, err := st.CreateSavedView(t.Context(), store.SavedViewInput{
 		Name: name, CanonicalState: json.RawMessage(state), SchemaVersion: store.CurrentSavedViewSchemaVersion,
 	})
 	require.NoError(t, err)
@@ -100,7 +103,8 @@ func TestRunSavedViewPreservesVersionedPipeMeaning(t *testing.T) {
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: st, SavedViewStore: st,
 		Engine: engine, Logger: testLogger(),
 	})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	view, err := st.CreateSavedView(t.Context(), store.SavedViewInput{
 		Name: "v1 literal AND", SchemaVersion: 1,
 		CanonicalState: json.RawMessage(`{"query":"alpha | gamma","search_mode":"full_text"}`),
@@ -131,6 +135,35 @@ func TestRunSavedViewExecutesGroupsAtTheFirstChainLevel(t *testing.T) {
 	requirements.NotNil(page.TotalCount)
 	assertions.Equal(int64(2), *page.TotalCount)
 	assertions.Empty(page.Rows)
+}
+
+func TestRunSavedViewCalendarGroupsUseRequestedTimezoneAndNewestFirst(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}, groupResult: &query.ExploreGroupResponse{
+		Rows: []query.ExploreGroupRow{{Key: "2026-07", Count: 1}}, TotalCount: 2, CacheRevision: "cache-1",
+	}}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: &mockStore{}, SavedViewStore: st, Engine: engine, Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	for _, dimension := range []string{"month", "year"} {
+		t.Run(dimension, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			view := createRunTestView(t, st, dimension, `{"grouping":["`+dimension+`"]}`)
+			response, page := runSavedView(t, srv, view.ID, `{"limit":1,"timezone":"America/New_York"}`)
+			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+			assertions.Equal("America/New_York", engine.groupRequest.Timezone)
+			assertions.Equal(query.SortSpec{Field: "key", Direction: "desc"}, engine.groupRequest.Sort)
+			requirements.NotEmpty(page.NextCursor)
+			response, _ = runSavedView(t, srv, view.ID, `{"limit":1,"timezone":"America/New_York","cursor":"`+page.NextCursor+`"}`)
+			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+			assertions.Equal(1, engine.groupRequest.Page.Offset)
+			response, _ = runSavedView(t, srv, view.ID, `{"limit":1,"timezone":"UTC","cursor":"`+page.NextCursor+`"}`)
+			assertions.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+			response, _ = runSavedView(t, srv, view.ID, `{"limit":1}`)
+			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+			assertions.Empty(engine.groupRequest.Timezone, "the engine defaults an omitted timezone to UTC")
+		})
+	}
 }
 
 func TestRunSavedViewExecutesFilesPresentation(t *testing.T) {
@@ -182,7 +215,7 @@ func TestRunSavedViewRelaysSavedViewAndExploreErrors(t *testing.T) {
 	assertions.Contains(badCursor.Body.String(), "invalid_cursor", "Explore errors pass through unchanged")
 
 	srv.savedViewStore = &staleSavedViewStore{view: store.SavedView{
-		ID: 1, Name: "Stale", SchemaVersion: 3, CanonicalState: json.RawMessage(`{}`), Revision: 1,
+		ID: 1, Name: "Stale", SchemaVersion: 4, CanonicalState: json.RawMessage(`{}`), Revision: 1,
 	}}
 	stale, _ := runSavedView(t, srv, 1, `{}`)
 	assertions.Equal(http.StatusBadRequest, stale.Code, stale.Body.String())
@@ -269,7 +302,7 @@ func TestSavedViewLifecycleThroughDaemonClient(t *testing.T) {
 	_, err = client.UpdateSavedView(ctx, created.ID, created.Revision, savedview.Patch{Name: &name})
 	requirements.ErrorIs(err, store.ErrSavedViewRevisionConflict)
 
-	page, err := client.RunSavedView(ctx, created.ID, 10, "")
+	page, err := client.RunSavedView(ctx, created.ID, 10, "", "")
 	requirements.NoError(err)
 	assertions.Equal("Receipts", page.View.Name)
 	assertions.Equal(savedview.ResultEntries, page.ResultKind)
@@ -281,7 +314,7 @@ func TestSavedViewLifecycleThroughDaemonClient(t *testing.T) {
 	requirements.NoError(client.DeleteSavedView(ctx, created.ID, updated.Revision))
 	_, err = client.GetSavedView(ctx, created.ID)
 	requirements.ErrorIs(err, store.ErrSavedViewNotFound)
-	_, err = client.RunSavedView(ctx, created.ID, 10, "")
+	_, err = client.RunSavedView(ctx, created.ID, 10, "", "")
 	requirements.ErrorIs(err, store.ErrSavedViewNotFound)
 }
 
@@ -321,7 +354,8 @@ func TestRunSavedViewFilesDeclaresSemanticDeletionScope(t *testing.T) {
 		Store:          &mockStore{messages: []APIMessage{{ID: 1}}, total: 1, stats: &StoreStats{}},
 		SavedViewStore: st, Engine: engine, HybridEngine: hybridEngine, Backend: backend, Logger: testLogger(),
 	})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	view := createRunTestView(t, st, "Semantic files", `{"query":"alpha","search_mode":"semantic","presentation":"files"}`)
 
 	response, page := runSavedView(t, srv, view.ID, `{}`)

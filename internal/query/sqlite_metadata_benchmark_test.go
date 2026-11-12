@@ -12,9 +12,9 @@ import (
 // outside the timed loops; results are checked without imposing latency limits.
 func BenchmarkMetadataSubstring(b *testing.B) {
 	db := metadataSearchDB(b)
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(b.Context(), nil)
 	require.NoError(b, err)
-	insert, err := tx.Prepare(`INSERT INTO messages(conversation_id,source_id,message_type,source_message_id,subject,snippet,sent_at,sender_id) VALUES(1,1,'email',?,?,?,'2023-01-01',1)`)
+	insert, err := tx.PrepareContext(b.Context(), `INSERT INTO messages(conversation_id,source_id,message_type,source_message_id,subject,snippet,sent_at,sender_id) VALUES(1,1,'email',?,?,?,'2023-01-01',1)`)
 	require.NoError(b, err)
 	defer func() { require.NoError(b, insert.Close()) }()
 	for i := range 20000 {
@@ -22,10 +22,10 @@ func BenchmarkMetadataSubstring(b *testing.B) {
 		if i == 10000 {
 			subject += " rare-marker"
 		}
-		_, err = insert.Exec(fmt.Sprintf("benchmark-%d", i), subject, "generated preview")
+		_, err = insert.ExecContext(b.Context(), fmt.Sprintf("benchmark-%d", i), subject, "generated preview")
 		require.NoError(b, err)
 	}
-	_, err = tx.Exec(`INSERT INTO participants(id,email_address,display_name) VALUES(2,'benchmark@example.org','Rare-Contact');
+	_, err = tx.ExecContext(b.Context(), `INSERT INTO participants(id,email_address,display_name) VALUES(2,'benchmark@example.org','Rare-Contact');
  UPDATE messages SET sender_id=2 WHERE source_message_id='benchmark-19999';
  INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name)
  SELECT id,1,'to','Generated Alias' FROM messages WHERE source_message_id LIKE 'benchmark-%';

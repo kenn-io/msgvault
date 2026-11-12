@@ -5,14 +5,18 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
+	"go.kenn.io/kit/agenthook"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
@@ -21,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/update"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -36,6 +41,8 @@ const (
 	runtimeShutdownToken            = "shutdown_token"
 	runtimeStartupPhase             = "startup_phase"
 	runtimeBackground               = "background"
+	runtimePersistent               = "persistent"
+	runtimeIdleTimeout              = "idle_timeout"
 	runtimeBackgroundValue          = "true"
 	minimumDaemonAPISchemaVersion   = "3.0.0"
 	runtimeStartupCacheBuildOutcome = "startup_cache_build_outcome"
@@ -76,7 +83,7 @@ func daemonRuntimeStore(dataDir string) daemon.RuntimeStore {
 	return daemon.RuntimeStore{Dir: dataDir}
 }
 
-func writeDaemonRuntime(dataDir string, host string, port int, version string, apiKey string) (daemon.RuntimeRecord, string, error) {
+func writeDaemonRuntime(dataDir string, host string, port int, version string, apiKey string, idleTimeout time.Duration) (daemon.RuntimeRecord, string, error) {
 	shutdownToken, err := newDaemonShutdownToken()
 	if err != nil {
 		return daemon.RuntimeRecord{}, "", fmt.Errorf("create shutdown token: %w", err)
@@ -87,6 +94,7 @@ func writeDaemonRuntime(dataDir string, host string, port int, version string, a
 	}
 	rec := daemon.NewRuntimeRecord(daemonService, version, ep)
 	rec.Metadata = map[string]string{
+		runtimeIdleTimeout:      idleTimeout.String(),
 		runtimeHost:             host,
 		runtimePort:             strconv.Itoa(port),
 		runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
@@ -100,6 +108,7 @@ func writeDaemonRuntime(dataDir string, host string, port int, version string, a
 	}
 	if os.Getenv(serveBackgroundChildEnv) == "1" {
 		rec.Metadata[runtimeBackground] = runtimeBackgroundValue
+		rec.Metadata[runtimePersistent] = strconv.FormatBool(os.Getenv(servePersistentChildEnv) == runtimeBackgroundValue)
 	}
 	if _, err := daemonRuntimeStore(dataDir).Write(rec); err != nil {
 		return daemon.RuntimeRecord{}, "", fmt.Errorf("write daemon runtime record: %w", err)
@@ -130,16 +139,12 @@ func removeDaemonRuntime(dataDir string) {
 	}
 }
 
-func findDaemonRuntime(dataDir string) *DaemonRuntime {
-	rt, err := findCompatibleDaemonRuntime(dataDir)
+func findDaemonRuntime(ctx context.Context, dataDir string) *DaemonRuntime {
+	rt, err := findCompatibleDaemonRuntimeContext(ctx, dataDir)
 	if err != nil {
 		return nil
 	}
 	return rt
-}
-
-func findCompatibleDaemonRuntime(dataDir string) (*DaemonRuntime, error) {
-	return findCompatibleDaemonRuntimeContext(context.Background(), dataDir)
 }
 
 func findCompatibleDaemonRuntimeContext(ctx context.Context, dataDir string) (*DaemonRuntime, error) {
@@ -177,8 +182,8 @@ func findAnyDaemonRuntimeContext(ctx context.Context, dataDir string) *DaemonRun
 	return rt
 }
 
-func findIncompatibleDaemonRuntime(dataDir string) (*DaemonRuntime, bool, error) {
-	rt, found, err := findRespondingDaemonRuntime(context.Background(), dataDir, func(_ *DaemonRuntime, compatErr error) bool {
+func findIncompatibleDaemonRuntime(ctx context.Context, dataDir string) (*DaemonRuntime, bool, error) {
+	rt, found, err := findRespondingDaemonRuntime(ctx, dataDir, func(_ *DaemonRuntime, compatErr error) bool {
 		return compatErr != nil
 	})
 	if err != nil {
@@ -192,7 +197,7 @@ func findIncompatibleDaemonRuntime(dataDir string) (*DaemonRuntime, bool, error)
 // to lifecycle decisions: the ownership lock and a matching public ping show
 // that a daemon still owns the data directory, but do not authorize sending an
 // API key or signaling its PID.
-func findLegacyDaemonRuntimeForLifecycle(dataDir string) (*DaemonRuntime, bool, error) {
+func findLegacyDaemonRuntimeForLifecycle(ctx context.Context, dataDir string) (*DaemonRuntime, bool, error) {
 	ownershipHeld, err := daemonOwnerLockHeld(dataDir)
 	if err != nil {
 		return nil, false, fmt.Errorf("inspect daemon ownership: %w", err)
@@ -200,11 +205,10 @@ func findLegacyDaemonRuntimeForLifecycle(dataDir string) (*DaemonRuntime, bool, 
 	if !ownershipHeld {
 		return nil, false, nil
 	}
-	records, err := listLiveDaemonRuntimeRecords(dataDir)
+	records, err := listLiveDaemonRuntimeRecordsContext(ctx, dataDir)
 	if err != nil {
 		return nil, false, err
 	}
-	ctx := context.Background()
 	for _, rec := range records {
 		identity := runtimeRecordIdentity(rec)
 		if identity != createTimeSkew && identity != createTimeUnknown {
@@ -296,6 +300,11 @@ func listLiveDaemonRuntimeRecordsContext(ctx context.Context, dataDir string) ([
 	records, err := store.List()
 	if err != nil {
 		return nil, fmt.Errorf("list daemon runtimes: %w", err)
+	}
+	if len(records) == 0 {
+		// Probing takes the ownership lock briefly. Leave startup free to claim
+		// it while there are no runtime records to validate.
+		return records, nil
 	}
 	ownershipHeld, err := daemonOwnerLockHeld(dataDir)
 	if err != nil {
@@ -635,7 +644,62 @@ func shouldUpgradeDaemonRuntimeToNewer(rt *DaemonRuntime, currentVersion string)
 	if rt.Record.Version == "" {
 		return !update.IsDevBuildVersion(currentVersion)
 	}
+	if cli, daemon, source := sourceBuildVersions(rt, currentVersion); source {
+		release := !update.IsDevBuildVersion(rt.Record.Version) && !strings.HasSuffix(rt.Record.Version, "-dirty")
+		return semver.IsValid(cli) && semver.IsValid(daemon) && (update.IsNewer(cli, daemon) || release && !update.IsNewer(daemon, cli))
+	}
 	return update.IsNewer(currentVersion, rt.Record.Version)
+}
+
+// sourceBuildVersions reports whether currentVersion is a source build, a dirty
+// build of a tag included, and returns both versions in semver form without
+// their dirty suffixes.
+func sourceBuildVersions(rt *DaemonRuntime, currentVersion string) (cli, daemon string, source bool) {
+	if rt == nil || !update.IsDevBuildVersion(currentVersion) && !strings.HasSuffix(currentVersion, "-dirty") {
+		return "", "", false
+	}
+	cli = "v" + strings.TrimPrefix(strings.TrimSuffix(currentVersion, "-dirty"), "v")
+	daemon = "v" + strings.TrimPrefix(strings.TrimSuffix(rt.Record.Version, "-dirty"), "v")
+	return cli, daemon, true
+}
+
+// shouldReportRetainedDaemonVersion covers a kept daemon the default policy
+// would replace, and another source build of this CLI's release, which is kept
+// because version strings can't tell which of two source builds is newer.
+func shouldReportRetainedDaemonVersion(rt *DaemonRuntime, currentVersion string) bool {
+	if shouldUpgradeDaemonRuntimeWithPolicy(rt, currentVersion, config.DaemonAutoRestartNewer) {
+		return true
+	}
+	cli, daemon, source := sourceBuildVersions(rt, currentVersion)
+	return source && semver.IsValid(cli) && semver.IsValid(daemon) && rt.Record.Version != currentVersion &&
+		!update.IsNewer(cli, daemon) && !update.IsNewer(daemon, cli)
+}
+
+func reportRetainedDaemonVersion(ctx context.Context, w io.Writer, rt *DaemonRuntime) bool {
+	if shouldReportRetainedDaemonVersion(rt, Version) {
+		consequence := "use this version"
+		if rt.Record.Metadata[runtimePersistent] != runtimeBackgroundValue && rt.Record.Metadata[runtimeBackground] == runtimeBackgroundValue {
+			consequence += " and keep it running until stopped"
+		}
+		_, _ = fmt.Fprintf(w, "msgvault: daemon %s is running; this CLI is %s. Run %s to %s.\n", rt.Record.Version, Version, daemonRestartCommand(ctx), consequence)
+		return true
+	}
+	return false
+}
+
+func daemonRestartCommand(ctx context.Context) string {
+	options := optionsFromContext(ctx)
+	args := invocationGlobalArgs(invocationOptions{cfgFile: options.cfgFile, homeDir: options.homeDir})
+	executable, err := daemonCLIExecutableResolver()
+	if err != nil {
+		executable = os.Args[0]
+	}
+	commands, _ := agenthook.BuildCommand(executable, append(args, "daemon", "restart")...)
+	restart := commands.POSIX
+	if runtime.GOOS == "windows" {
+		restart = commands.PowerShell
+	}
+	return restart
 }
 
 func shouldUpgradeIncompatibleDaemonRuntimeWithPolicy(rt *DaemonRuntime, currentVersion string, policy string) bool {

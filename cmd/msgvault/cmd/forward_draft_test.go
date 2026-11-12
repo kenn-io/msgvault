@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"testing"
@@ -68,7 +67,7 @@ func TestPrepareIMAPDraftAttachmentWritesKeepsOccurrences(t *testing.T) {
 		{Filename: "one.txt", ContentHash: hash, State: attachmentpolicy.StateStored},
 		{Filename: "two.txt", ContentHash: hash, State: attachmentpolicy.StateStored},
 	}
-	writes, err := prepareIMAPDraftAttachmentWrites(context.Background(), draft.Parsed, refs)
+	writes, err := prepareIMAPDraftAttachmentWrites(t.Context(), draft.Parsed, refs)
 	requirements.NoError(err)
 	requirements.Len(writes, 2)
 	assertions.NotEmpty(writes[0].SourcePartKey)

@@ -62,6 +62,9 @@ func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) 
 	assertions.NotContains(string(got), `typesValidator.Var(m.ProviderChatID, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(p.AliasReason, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
+	assertions.Contains(string(got), "Address       string `json:\"address\"`\n")
+	assertions.Contains(string(got), "DisplayName   string `json:\"display_name\"`\n")
+	assertions.NotContains(string(got), `typesValidator.Var(l.Summary, "required")`)
 }
 
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
@@ -210,7 +213,7 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture()
+` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() + loopCounterpartyEmptyStringValidatorFixture()
 }
 
 func contactRouteEmptyStringValidatorFixture() string {
@@ -229,6 +232,16 @@ func contactCandidateEmptyStringValidatorFixture() string {
 	return "type ContactCandidate struct {\n\tDisplayName string\n}\n" +
 		"func (c ContactCandidate) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
 		"\tif err := typesValidator.Var(c.DisplayName, \"required\"); err != nil {\n\t\terrors = errors.Append(\"DisplayName\", err)\n\t}\n" +
+		"\tif len(errors) == 0 {\n\t\treturn nil\n\t}\n\treturn errors\n}\n"
+}
+
+func loopCounterpartyEmptyStringValidatorFixture() string {
+	return "type LoopCounterparty struct {\n\tAddress       string `json:\"address\" validate:\"required\"`\n" +
+		"\tDisplayName   string `json:\"display_name\" validate:\"required\"`\n\tParticipantID int64  `json:\"participant_id\"`\n}\n" +
+		"func (l LoopCounterparty) Validate() error {\n\treturn runtime.ConvertValidatorError(typesValidator.Struct(l))\n}\n" +
+		"type LoopItem struct {\n\tSummary string\n}\n" +
+		"func (l LoopItem) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(l.Summary, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Summary\", err)\n\t}\n" +
 		"\tif len(errors) == 0 {\n\t\treturn nil\n\t}\n\treturn errors\n}\n"
 }
 

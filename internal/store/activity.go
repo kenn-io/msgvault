@@ -790,11 +790,11 @@ func (s *Store) CompareAndSetActivityReconciledRevisionsContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		identity, err := s.currentIdentityRevisionTx(tx)
+		identity, err := s.currentIdentityRevisionTxContext(ctx, tx)
 		if err != nil {
 			return err
 		}
-		account, err := readAccountIdentityRevision(tx)
+		account, err := readAccountIdentityRevision(boundQuerier{ctx: ctx, q: tx})
 		if err != nil {
 			return err
 		}
@@ -940,11 +940,11 @@ func (s *Store) StaleContactStatePersonsContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		identityRevision, err := s.currentIdentityRevisionTx(tx)
+		identityRevision, err := s.currentIdentityRevisionTxContext(ctx, tx)
 		if err != nil {
 			return err
 		}
-		accountRevision, err := readAccountIdentityRevision(tx)
+		accountRevision, err := readAccountIdentityRevision(boundQuerier{ctx: ctx, q: tx})
 		if err != nil {
 			return err
 		}
@@ -1230,11 +1230,11 @@ func (s *Store) projectActivityBatchOnce(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		currentIdentity, err := s.currentIdentityRevisionTx(tx)
+		currentIdentity, err := s.currentIdentityRevisionTxContext(ctx, tx)
 		if err != nil {
 			return err
 		}
-		currentAccount, err := readAccountIdentityRevision(tx)
+		currentAccount, err := readAccountIdentityRevision(boundQuerier{ctx: ctx, q: tx})
 		if err != nil {
 			return err
 		}
@@ -2105,11 +2105,11 @@ func (s *Store) RecomputeContactStateContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		identity, err := s.currentIdentityRevisionTx(tx)
+		identity, err := s.currentIdentityRevisionTxContext(ctx, tx)
 		if err != nil {
 			return err
 		}
-		account, err := readAccountIdentityRevision(tx)
+		account, err := readAccountIdentityRevision(boundQuerier{ctx: ctx, q: tx})
 		if err != nil {
 			return err
 		}

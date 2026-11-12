@@ -1,3 +1,4 @@
+import { sourceDisplayName } from './labels';
 import { describe, expect, it } from 'vitest';
 import { syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
@@ -9,13 +10,15 @@ const run = (status: string, errors = 0) => ({
 describe('source labels', () => {
   it.each([
     ['gmail', 'Gmail'], ['imap', 'IMAP'], ['msmail', 'Microsoft mail'], ['teams', 'Teams'],
-    ['discord', 'Discord'], ['meeting_import', 'Meeting import'], ['synctech_sms', 'SMS backup'],
+    ['discord', 'Discord'], ['meeting_import', 'Meeting import'], ['message_import', 'Message import'], ['synctech_sms', 'SMS backup'],
     ['imazing_csv', 'iMazing CSV'], ['circleback', 'Circleback'], ['gcal', 'Google Calendar'],
     ['plaud', 'Plaud'], ['muesli', 'Muesli'], ['granola', 'Granola'], ['notion_meetings', 'Notion meetings'], ['twilio', 'Twilio'], ['twenty', 'Twenty'],
     ['pst', 'PST import'], ['apple-mail', 'Apple Mail'], ['mbox', 'Mbox import'],
     ['beeper', 'Beeper'], ['slack', 'Slack'], ['matrix', 'Matrix'], ['eml', 'EML import'], ['maildir', 'Maildir import'],
     ['whatsapp', 'WhatsApp'], ['apple_messages', 'Apple Messages'],
     ['facebook_messenger', 'Facebook Messenger'], ['google-groups', 'Google Groups'],
+    ['facebook_comments', 'Facebook Page comments'],
+    ['instagram_comments', 'Instagram comments'],
     ['', ''], ['future_source', 'Future source'], ['constructor', 'Constructor']
   ])('names source type %j', (code, want) => {
     expect(sourceTypeLabel(code)).toBe(want);
@@ -62,4 +65,15 @@ it.each([
   ['msmail', 'sync_not_configured', null, 'msgvault sync --source-id 4'],
 ] as const)('offers a manual sync command for %s with reason %s and last successful sync %j', (source_type, sync_unavailable_reason, last_successful_sync, want) => {
   expect(syncCommand({ id: 4, source_type, sync_unavailable_reason, last_successful_sync })).toBe(want);
+});
+
+describe('sourceDisplayName', () => {
+  it.each([
+    ['granola', 'fixture-granola', 'Granola'],
+    ['gmail', 'person@example.com', 'person@example.com'],
+    ['imap', 'imap://person%40example.com@imap.example.com/INBOX', 'person@example.com'],
+    [undefined, 'fixture-source', 'fixture-source']
+  ])('formats a %s source', (type, identifier, name) => {
+    expect(sourceDisplayName(type, identifier!)).toBe(name);
+  });
 });

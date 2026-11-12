@@ -254,7 +254,7 @@ func TestRateLimiter_Acquire_ContextCancelled(t *testing.T) {
 	f := newRLFixture()
 	f.drain()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := f.rl.Acquire(ctx, OpMessagesGet)
@@ -271,7 +271,7 @@ func TestRateLimiter_Acquire_ContextTimeout(t *testing.T) {
 
 	// Use context.WithCancel and cancel via the mock clock to avoid
 	// mixing real-time deadlines with mock clock advancement.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	// Schedule cancellation when the mock clock advances past 50ms
@@ -320,7 +320,7 @@ func TestRateLimiter_Concurrent(t *testing.T) {
 	// Use real clock for concurrency test since goroutine scheduling is inherent
 	rl := NewRateLimiter(5.0)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -429,7 +429,7 @@ func TestRateLimiter_Acquire_WaitsForThrottle(t *testing.T) {
 
 	f.rl.Throttle(100 * time.Millisecond)
 
-	done := f.acquireAsync(context.Background(), t, OpProfile)
+	done := f.acquireAsync(t.Context(), t, OpProfile)
 
 	// Advance past throttle — Acquire should complete
 	f.clk.Advance(150 * time.Millisecond)

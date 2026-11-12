@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,7 +13,7 @@ func TestPersonDatesRoundTripPartialPrecision(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	tests := []struct {
 		kind     store.PersonDateKind
@@ -46,7 +45,7 @@ func TestPersonDateDayOnlyRoundTrips(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	dayOnly := partialDate(0, 0, 12)
 
@@ -71,7 +70,7 @@ func TestPersonDateAcceptsTextValueAndCalendarScale(t *testing.T) {
 	assert := assert.New(t)
 	st := storetest.New(t).Store
 	personID := newTestPerson(t, st)
-	stored, err := st.AddPersonDateContext(context.Background(), personID, store.PersonDateInput{
+	stored, err := st.AddPersonDateContext(t.Context(), personID, store.PersonDateInput{
 		DateKind: store.PersonDateBirthday, DateText: new("circa 1800"),
 		CalendarScale: new("gregorian"), OriginalValue: "circa 1800",
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceVCardImport},
@@ -84,7 +83,7 @@ func TestPersonDateAcceptsTextValueAndCalendarScale(t *testing.T) {
 func TestPersonDateValidation(t *testing.T) {
 	require := require.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	_, err := st.AddPersonDateContext(ctx, personID, store.PersonDateInput{
 		DateKind: "graduation", Date: partialDate(2001, 5, 1),
@@ -106,7 +105,7 @@ func TestPersonDateValidation(t *testing.T) {
 func TestPersonDateComponentChecksAreEnforcedBySQL(t *testing.T) {
 	require := require.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	insert := "INSERT INTO person_dates " +
 		"(person_id, date_kind, date_year, date_month, date_day, original_value, source, confidence) VALUES "

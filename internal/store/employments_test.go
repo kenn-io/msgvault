@@ -17,9 +17,9 @@ import (
 func TestConcurrentAndHistoricalEmploymentsStayIndependentlyQueryable(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	dayJob := mustOrganization(t, st, "Example Org")
 	sideJob := mustOrganization(t, st, "Another Org")
 	pastJob := mustOrganization(t, st, "Former Org")
@@ -54,9 +54,9 @@ func TestConcurrentAndHistoricalEmploymentsStayIndependentlyQueryable(t *testing
 func TestAtMostOnePrimaryCurrentEmploymentIsEnforced(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "bob@example.com", "bob")
+	person := mustPromotedPerson(t.Context(), t, st, "bob@example.com", "bob")
 	first := mustOrganization(t, st, "Example Org")
 	second := mustOrganization(t, st, "Another Org")
 	primary, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: first.ID, Title: new("Engineer"), Source: store.ProvenanceUser, IsPrimary: new(true)})
@@ -80,12 +80,12 @@ func TestAtMostOnePrimaryCurrentEmploymentIsEnforced(t *testing.T) {
 func TestConcurrentPrimaryRotationDoesNotLeakDatabaseConflicts(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL row locks are required for this race regression")
 	}
-	person := mustPromotedPerson(t, st, "primary-race@example.com", "primary-race")
+	person := mustPromotedPerson(t.Context(), t, st, "primary-race@example.com", "primary-race")
 	firstOrg := mustOrganization(t, st, "Primary Race A")
 	secondOrg := mustOrganization(t, st, "Primary Race B")
 	first, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
@@ -165,9 +165,9 @@ func TestConcurrentPrimaryRotationDoesNotLeakDatabaseConflicts(t *testing.T) {
 func TestEndEmploymentClearsCurrentAndPrimaryWithoutDeletingHistory(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	organization := mustOrganization(t, st, "Example Org")
 	replacement := mustOrganization(t, st, "Another Org")
 	employment, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: organization.ID, Title: new("Engineer"), StartDate: mustPartialDate(t, "2019-04"), Source: store.ProvenanceUser})
@@ -191,9 +191,9 @@ func TestEndEmploymentClearsCurrentAndPrimaryWithoutDeletingHistory(t *testing.T
 }
 
 func TestEmploymentValidationRejectsBadInput(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	organization := mustOrganization(t, st, "Example Org")
 	tests := []struct {
 		name    string
@@ -225,9 +225,9 @@ func TestEmploymentValidationRejectsBadInput(t *testing.T) {
 }
 
 func TestConfidenceIsAcceptedOnEveryDerivedProvenance(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	derived := []store.Provenance{store.ProvenanceArchiveObservation, store.ProvenanceExtraction, store.ProvenanceEnrichment, store.ProvenanceSystem}
 	for i, source := range derived {
 		t.Run(string(source), func(t *testing.T) {
@@ -245,9 +245,9 @@ func TestConfidenceIsAcceptedOnEveryDerivedProvenance(t *testing.T) {
 
 func TestEmploymentColumnChecksAreEnforcedBySQL(t *testing.T) {
 	req := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	organization := mustOrganization(t, st, "Example Org")
 	insert := func(t *testing.T, title, columns string, args ...any) error {
 		t.Helper()
@@ -311,9 +311,9 @@ func TestEmploymentColumnChecksAreEnforcedBySQL(t *testing.T) {
 
 func TestDuplicateCurrentEmploymentAtTheSameOrganizationAndTitleIsRejected(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	organization := mustOrganization(t, st, "Example Org")
 	_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: organization.ID, Title: new("Engineer"), Source: store.ProvenanceUser})
 	require.NoError(err)
@@ -327,9 +327,9 @@ func TestDuplicateCurrentEmploymentAtTheSameOrganizationAndTitleIsRejected(t *te
 func TestOrganizationDeletionCannotEraseEmploymentHistory(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	organization := mustOrganization(t, st, "Example Org")
 	employment, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: organization.ID, Title: new("Engineer"), Source: store.ProvenanceUser})
 	require.NoError(err)
@@ -351,9 +351,9 @@ func TestOrganizationDeletionCannotEraseEmploymentHistory(t *testing.T) {
 
 func TestEmploymentCannotTargetAMergedOrganizationRedirect(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	survivor := mustOrganization(t, st, "Example Org")
 	losing := mustOrganization(t, st, "Former Org")
 
@@ -372,12 +372,12 @@ func TestEmploymentCannotTargetAMergedOrganizationRedirect(t *testing.T) {
 
 func TestEmploymentWaitingBehindMergeCannotTargetRedirect(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL row locks are required for this race regression")
 	}
-	person := mustPromotedPerson(t, st, "merge-race@example.com", "merge-race")
+	person := mustPromotedPerson(t.Context(), t, st, "merge-race@example.com", "merge-race")
 	survivor := mustOrganization(t, st, "Merge Race Survivor")
 	losing := mustOrganization(t, st, "Merge Race Losing")
 
@@ -445,9 +445,9 @@ func TestEmploymentWaitingBehindMergeCannotTargetRedirect(t *testing.T) {
 func TestDeletingAPersonRemovesTheirEmploymentsButNotTheOrganization(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	organization := mustOrganization(t, st, "Example Org")
 	_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: organization.ID, Title: new("Engineer"), Source: store.ProvenanceUser})
 	require.NoError(err)
@@ -464,9 +464,9 @@ func TestDeletingAPersonRemovesTheirEmploymentsButNotTheOrganization(t *testing.
 func TestUpdateAndDeleteEmploymentEnforceRevisions(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	organization := mustOrganization(t, st, "Example Org")
 	employment, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: organization.ID, Title: new("Engineer"), Source: store.ProvenanceUser})
 	require.NoError(err)
@@ -489,9 +489,9 @@ func TestUpdateAndDeleteEmploymentEnforceRevisions(t *testing.T) {
 
 func TestUpdateEmploymentClassifiesAnActiveTitleConflict(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	organization := mustOrganization(t, st, "Example Org")
 
 	_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{
@@ -517,9 +517,9 @@ func TestUpdateEmploymentClassifiesAnActiveTitleConflict(t *testing.T) {
 func TestMergeOrganizationsClearsRepointedEmploymentAddressAndBumpsRevision(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	person := mustPromotedPerson(t.Context(), t, st, "alice@example.com", "alice")
 	survivor := mustOrganization(t, st, "Example Org")
 	losing := mustOrganization(t, st, "Another Org")
 
@@ -551,7 +551,7 @@ func TestMergeOrganizationsClearsRepointedEmploymentAddressAndBumpsRevision(t *t
 
 func mustOrganization(t *testing.T, st *store.Store, name string) *store.Organization {
 	t.Helper()
-	organization, err := st.CreateOrganizationContext(context.Background(), store.OrganizationInput{Name: name, Kind: store.OrganizationKindCompany})
+	organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: name, Kind: store.OrganizationKindCompany})
 	require.NoError(t, err)
 	return organization
 }
@@ -568,11 +568,11 @@ func employmentIDs(employments []store.Employment) []int64 {
 	}
 	return ids
 }
-func mustPromotedPerson(t *testing.T, st *store.Store, email, name string) *store.Person {
+func mustPromotedPerson(ctx context.Context, t *testing.T, st *store.Store, email, name string) *store.Person {
 	t.Helper()
-	participant, err := st.EnsureParticipant(email, name, "example.com")
+	participant, err := st.EnsureParticipantContext(ctx, email, name, "example.com")
 	require.NoError(t, err)
-	person, _, err := st.CreatePersonFromParticipant(participant)
+	person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
 	require.NoError(t, err)
 	return person
 }
@@ -580,9 +580,9 @@ func mustPromotedPerson(t *testing.T, st *store.Store, email, name string) *stor
 func TestUpdateEmploymentDoesNotPromoteToPrimaryWhenFlagOmitted(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "no-promote@example.com", "no-promote")
+	person := mustPromotedPerson(t.Context(), t, st, "no-promote@example.com", "no-promote")
 	firstOrg := mustOrganization(t, st, "Omitted Flag A")
 	secondOrg := mustOrganization(t, st, "Omitted Flag B")
 	first, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: firstOrg.ID, Title: new("Engineer"), Source: store.ProvenanceUser, IsPrimary: new(false)})
@@ -609,9 +609,9 @@ func TestUpdateEmploymentDoesNotPromoteToPrimaryWhenFlagOmitted(t *testing.T) {
 
 func TestEmploymentRejectsCurrentWithEndDate(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "current-end@example.com", "current-end")
+	person := mustPromotedPerson(t.Context(), t, st, "current-end@example.com", "current-end")
 	organization := mustOrganization(t, st, "Current End Org")
 	_, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: organization.ID, Title: new("Engineer"), EndDate: mustPartialDate(t, "2020-01"), IsCurrent: new(true), Source: store.ProvenanceUser})
 	require.Error(err)
@@ -620,12 +620,12 @@ func TestEmploymentRejectsCurrentWithEndDate(t *testing.T) {
 
 func TestConcurrentEmploymentWritesRetryOnSQLiteBusy(t *testing.T) {
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	if st.IsPostgreSQL() {
 		t.Skip("exercises the SQLite snapshot-upgrade retry path")
 	}
-	person := mustPromotedPerson(t, st, "busy-retry@example.com", "busy-retry")
+	person := mustPromotedPerson(t.Context(), t, st, "busy-retry@example.com", "busy-retry")
 	organizations := make([]*store.Organization, 4)
 	for i := range organizations {
 		organizations[i] = mustOrganization(t, st, fmt.Sprintf("Busy Retry Org %d", i))
@@ -648,9 +648,9 @@ func TestConcurrentEmploymentWritesRetryOnSQLiteBusy(t *testing.T) {
 func TestUpdateEmploymentPreservesHistoricalStateWhenFlagsOmitted(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "stay-historical@example.com", "stay-historical")
+	person := mustPromotedPerson(t.Context(), t, st, "stay-historical@example.com", "stay-historical")
 	organization := mustOrganization(t, st, "Stay Historical Org")
 	past, err := st.AddEmploymentContext(ctx, store.EmploymentInput{PersonID: person.ID, OrganizationID: organization.ID, Title: new("Engineer"), StartDate: mustPartialDate(t, "2015"), EndDate: mustPartialDate(t, "2018-06"), IsCurrent: new(false), Source: store.ProvenanceUser})
 	require.NoError(err)
@@ -666,9 +666,9 @@ func TestUpdateEmploymentPreservesHistoricalStateWhenFlagsOmitted(t *testing.T) 
 func TestEmploymentManualWritesRepinTarget(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
-	person := mustPromotedPerson(t, st, "manual-pin@example.com", "manual-pin")
+	person := mustPromotedPerson(t.Context(), t, st, "manual-pin@example.com", "manual-pin")
 	firstOrganization := mustOrganization(t, st, "Manual Pin One")
 	secondOrganization := mustOrganization(t, st, "Manual Pin Two")
 

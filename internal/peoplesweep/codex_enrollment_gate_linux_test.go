@@ -25,12 +25,12 @@ func TestCodexEnrollmentPinAllowsOnlyModelLessEnrollment(t *testing.T) {
 	requireChecks.NoError(err)
 	enrollment, ok := client.(*codexEnrollmentClient)
 	requireChecks.True(ok)
-	attestation, err := enrollment.driver.attest(context.Background())
+	attestation, err := enrollment.driver.attest(t.Context())
 	requireChecks.NoError(err)
 	assertChecks.Equal("codex-cli 0.156.0", attestation.Version)
 	requireChecks.NoError(attestation.Close())
 	assertChecks.Empty(releasedCodexAttestations)
-	_, err = NewReleasedCodexIsolationGate().Verify(context.Background(), artifact, CodexExecutionBoundaryV1)
+	_, err = NewReleasedCodexIsolationGate().Verify(t.Context(), artifact, CodexExecutionBoundaryV1)
 	requireChecks.ErrorIs(err, ErrCodexIsolationUnreleased)
 }
 

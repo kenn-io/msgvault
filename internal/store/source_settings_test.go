@@ -14,7 +14,7 @@ import (
 func TestSourceSettingsAliasLifecycleAtomic(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("beeper", "recovered-example")
 	require.NoError(err)
@@ -172,7 +172,7 @@ func FuzzSourceAliasResolution(f *testing.F) {
 		require.NoError(err)
 		other, err := st.GetOrCreateSource("beeper", "provider-two.example.test")
 		require.NoError(err)
-		_, err = st.UpdateSourceSettingsContext(context.Background(), source.ID, store.SourceSettingsUpdate{Alias: &alias})
+		_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{Alias: &alias})
 		if err != nil {
 			return
 		}
@@ -180,7 +180,7 @@ func FuzzSourceAliasResolution(f *testing.F) {
 		require.NoError(err)
 		require.Len(matches, 1)
 		assert.Equal(source.ID, matches[0].ID)
-		_, err = st.UpdateSourceSettingsContext(context.Background(), other.ID, store.SourceSettingsUpdate{Alias: &alias})
+		_, err = st.UpdateSourceSettingsContext(t.Context(), other.ID, store.SourceSettingsUpdate{Alias: &alias})
 		require.Error(err)
 	})
 }
@@ -192,15 +192,15 @@ func TestSourceSettingsRejectInvalidUpdates(t *testing.T) {
 	checks.NoError(err)
 	for _, value := range []string{"", " ", "a\nb", "a\x00b", "archive@example.test "} {
 		t.Run(value, func(t *testing.T) {
-			_, err := st.UpdateSourceSettingsContext(context.Background(), source.ID, store.SourceSettingsUpdate{Alias: &value})
+			_, err := st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{Alias: &value})
 			require.New(t).Error(err)
 		})
 	}
-	_, err = st.UpdateSourceSettingsContext(context.Background(), source.ID, store.SourceSettingsUpdate{AcceptReanchor: true})
+	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{AcceptReanchor: true})
 	checks.Error(err)
-	_, err = st.UpdateSourceSettingsContext(context.Background(), source.ID, store.SourceSettingsUpdate{})
+	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{})
 	checks.Error(err)
-	_, err = st.GetSourceSettingsContext(context.Background(), 99999)
+	_, err = st.GetSourceSettingsContext(t.Context(), 99999)
 	checks.ErrorIs(err, store.ErrSourceNotFound)
 }
 
@@ -215,9 +215,9 @@ func TestUpdateSourceIdentifierCannotShadowArchiveAlias(t *testing.T) {
 	alias := "Archive-Example"
 	_, err = st.UpdateSourceSettingsContext(t.Context(), owner.ID, store.SourceSettingsUpdate{Alias: &alias})
 	require.NoError(err)
-	require.ErrorIs(st.UpdateSourceIdentifier(renamed.ID, "archive-example"), store.ErrSourceSettingsInvalid)
+	require.ErrorIs(st.UpdateSourceIdentifier(t.Context(), renamed.ID, "archive-example"), store.ErrSourceSettingsInvalid)
 	source, err := st.GetSourceByID(renamed.ID)
 	require.NoError(err)
 	assert.Equal("renamed@example.test", source.Identifier)
-	require.NoError(st.UpdateSourceIdentifier(owner.ID, "archive-example"), "a source can retain its own alias")
+	require.NoError(st.UpdateSourceIdentifier(t.Context(), owner.ID, "archive-example"), "a source can retain its own alias")
 }

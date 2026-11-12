@@ -53,7 +53,7 @@ func TestClientQueryMeetingNotesUsesDocumentedReadContract(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "ntn_test_secret")
-	result, err := client.QueryMeetingNotes(context.Background(), 50)
+	result, err := client.QueryMeetingNotes(t.Context(), 50)
 	require.NoError(err)
 	require.Len(result.Results, 1)
 	assert.True(result.HasMore)
@@ -95,28 +95,28 @@ func TestClientReadEndpointsPreserveRawResponses(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL, "ntn_test")
-	block, err := client.RetrieveBlock(context.Background(), "block-1")
+	block, err := client.RetrieveBlock(t.Context(), "block-1")
 	require.NoError(err)
 	assert.Equal("Hello", block.PlainText())
 	assert.Contains(string(block.Raw), `"paragraph"`)
 
-	children, err := client.RetrieveBlockChildren(context.Background(), "block-1", "cursor-1")
+	children, err := client.RetrieveBlockChildren(t.Context(), "block-1", "cursor-1")
 	require.NoError(err)
 	require.Len(children.Results, 1)
 	assert.Equal("cursor-2", children.NextCursor)
 	assert.Contains(string(children.Raw), `"child-1"`)
 
-	markdown, err := client.RetrievePageMarkdown(context.Background(), "page-1", true)
+	markdown, err := client.RetrievePageMarkdown(t.Context(), "page-1", true)
 	require.NoError(err)
 	assert.Contains(markdown.Markdown, "Transcript: Ready")
 	assert.Contains(string(markdown.Raw), `"page_markdown"`)
 
-	users, err := client.ListUsers(context.Background(), "users-1")
+	users, err := client.ListUsers(t.Context(), "users-1")
 	require.NoError(err)
 	require.Len(users.Results, 1)
 	assert.Equal("user@example.com", users.Results[0].Person.Email)
 	assert.True(users.Results[0].Person.EmailVerified)
-	guest, err := client.RetrieveUser(context.Background(), "guest")
+	guest, err := client.RetrieveUser(t.Context(), "guest")
 	require.NoError(err)
 	assert.Equal("guest@example.com", guest.Person.Email)
 	assert.Contains(string(guest.Raw), `"guest"`)
@@ -173,13 +173,13 @@ func TestClientClassifiesAndSanitizesProviderErrors(t *testing.T) {
 			var err error
 			switch tc.path {
 			case "/query":
-				_, err = client.QueryMeetingNotes(context.Background(), 1)
+				_, err = client.QueryMeetingNotes(t.Context(), 1)
 			case "/block":
-				_, err = client.RetrieveBlock(context.Background(), "block-1")
+				_, err = client.RetrieveBlock(t.Context(), "block-1")
 			case "/user":
-				_, err = client.RetrieveUser(context.Background(), "guest")
+				_, err = client.RetrieveUser(t.Context(), "guest")
 			case "/users":
-				_, err = client.ListUsers(context.Background(), "")
+				_, err = client.ListUsers(t.Context(), "")
 			}
 			require.Error(err)
 			require.ErrorIs(err, tc.wantError)
@@ -211,7 +211,7 @@ func TestClientRetriesRateLimitThenReturnsQuery(t *testing.T) {
 		waits = append(waits, duration)
 		return nil
 	}
-	result, err := client.QueryMeetingNotes(context.Background(), 50)
+	result, err := client.QueryMeetingNotes(t.Context(), 50)
 	require.NoError(err)
 	assert.Empty(result.Results)
 	assert.Equal(3, attempts)
@@ -227,7 +227,7 @@ func TestClientRejectsMalformedSuccessWithoutLeakingBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := NewClient(server.URL, "ntn_test").QueryMeetingNotes(context.Background(), 50)
+	_, err := NewClient(server.URL, "ntn_test").QueryMeetingNotes(t.Context(), 50)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMalformedResponse)
 	assert.NotContains(t, err.Error(), "private meeting content")
@@ -253,7 +253,7 @@ func TestClientQueryMeetingNotesRejectsMalformedListEnvelopes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client := newStaticNotionClient(t, tc.body)
 
-			result, err := client.QueryMeetingNotes(context.Background(), 50)
+			result, err := client.QueryMeetingNotes(t.Context(), 50)
 
 			require.ErrorIs(t, err, ErrMalformedResponse)
 			assert.Nil(t, result)
@@ -287,7 +287,7 @@ func TestClientQueryMeetingNotesAcceptsCompleteListEnvelopes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client := newStaticNotionClient(t, tc.body)
 
-			result, err := client.QueryMeetingNotes(context.Background(), 50)
+			result, err := client.QueryMeetingNotes(t.Context(), 50)
 
 			require.NoError(t, err)
 			assert.Len(t, result.Results, tc.wantResult)
@@ -322,7 +322,7 @@ func TestClientQueryMeetingNotesRejectsNonMeetingBlocks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			client := newStaticNotionClient(t, `{"results":[`+tt.block+`],"has_more":false}`)
 
-			result, err := client.QueryMeetingNotes(context.Background(), 50)
+			result, err := client.QueryMeetingNotes(t.Context(), 50)
 
 			require.ErrorIs(t, err, ErrMalformedResponse)
 			assert.Nil(t, result)
@@ -334,7 +334,7 @@ func TestClientOtherListEndpointsRejectMalformedEnvelopes(t *testing.T) {
 	t.Run("block children", func(t *testing.T) {
 		client := newStaticNotionClient(t, `{}`)
 
-		result, err := client.RetrieveBlockChildren(context.Background(), "block-1", "")
+		result, err := client.RetrieveBlockChildren(t.Context(), "block-1", "")
 
 		require.ErrorIs(t, err, ErrMalformedResponse)
 		assert.Nil(t, result)
@@ -343,7 +343,7 @@ func TestClientOtherListEndpointsRejectMalformedEnvelopes(t *testing.T) {
 	t.Run("users", func(t *testing.T) {
 		client := newStaticNotionClient(t, `null`)
 
-		result, err := client.ListUsers(context.Background(), "")
+		result, err := client.ListUsers(t.Context(), "")
 
 		require.ErrorIs(t, err, ErrMalformedResponse)
 		assert.Nil(t, result)
@@ -354,7 +354,7 @@ func TestClientOtherListEndpointsAllowOptionalNextCursor(t *testing.T) {
 	t.Run("block children without next cursor", func(t *testing.T) {
 		client := newStaticNotionClient(t, `{"results":[],"has_more":false}`)
 
-		result, err := client.RetrieveBlockChildren(context.Background(), "block-1", "")
+		result, err := client.RetrieveBlockChildren(t.Context(), "block-1", "")
 
 		require.NoError(t, err)
 		assert.Empty(t, result.NextCursor)
@@ -363,7 +363,7 @@ func TestClientOtherListEndpointsAllowOptionalNextCursor(t *testing.T) {
 	t.Run("users with null next cursor", func(t *testing.T) {
 		client := newStaticNotionClient(t, `{"results":[],"next_cursor":null,"has_more":false}`)
 
-		result, err := client.ListUsers(context.Background(), "")
+		result, err := client.ListUsers(t.Context(), "")
 
 		require.NoError(t, err)
 		assert.Empty(t, result.NextCursor)
@@ -382,7 +382,7 @@ func TestClientRejectsMalformedBlockResponses(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := newStaticNotionClient(t, tc.body).RetrieveBlock(context.Background(), "block-1")
+			result, err := newStaticNotionClient(t, tc.body).RetrieveBlock(t.Context(), "block-1")
 
 			require.ErrorIs(t, err, ErrMalformedResponse)
 			assert.Nil(t, result)
@@ -396,7 +396,7 @@ func TestClientRejectsMalformedBlockChildren(t *testing.T) {
 		"has_more":false
 	}`)
 
-	result, err := client.RetrieveBlockChildren(context.Background(), "block-1", "")
+	result, err := client.RetrieveBlockChildren(t.Context(), "block-1", "")
 
 	require.ErrorIs(t, err, ErrMalformedResponse)
 	assert.Nil(t, result)
@@ -414,7 +414,7 @@ func TestClientRejectsMalformedPageMarkdownResponses(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := newStaticNotionClient(t, tc.body).RetrievePageMarkdown(context.Background(), "page-1", true)
+			result, err := newStaticNotionClient(t, tc.body).RetrievePageMarkdown(t.Context(), "page-1", true)
 
 			require.ErrorIs(t, err, ErrMalformedResponse)
 			assert.Nil(t, result)

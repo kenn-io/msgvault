@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -15,7 +14,7 @@ func TestObservationsAttachManyAddressesToOneParticipant(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	participantID, err := st.EnsureParticipantByIdentifier(
 		"beeper", "@alice:example.org", "Alice Example",
 	)
@@ -32,11 +31,13 @@ func TestObservationsAttachManyAddressesToOneParticipant(t *testing.T) {
 			ProviderUserID: new("wa-1"), OriginalValue: "Alice",
 			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}},
 	}
-	for _, input := range inputs {
+	wantKeys := []string{`["whatsapp","","","+12025550123"]`, `["google-chat","","","alice@example.com"]`, `["slack","workspace","T0EXAMPLE","alice"]`}
+	for index, input := range inputs {
 		result, err := st.RecordContactObservationContext(ctx, participantID, input)
 		require.NoError(err)
 		assert.True(result.Created)
 		assert.False(result.Conflicting)
+		assert.Equal(wantKeys[index], result.Observation.IdentityKey)
 	}
 	observations, err := st.ListParticipantObservationsContext(ctx, participantID, true)
 	require.NoError(err)
@@ -47,7 +48,7 @@ func TestRecordingTheSameObservationTwiceIsIdempotent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	participantID, err := st.EnsureParticipantByIdentifier(
 		"beeper", "@alice:example.org", "Alice Example",
 	)
@@ -203,7 +204,7 @@ func TestMergeParticipantsPreservesContactObservations(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		st := storetest.New(t).Store
-		ctx := context.Background()
+		ctx := t.Context()
 		absorbed, err := st.EnsureParticipantByIdentifier(
 			"beeper", "@absorbed:example.org", "Absorbed",
 		)
@@ -244,7 +245,7 @@ func TestMergeParticipantsPreservesContactObservations(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		st := storetest.New(t).Store
-		ctx := context.Background()
+		ctx := t.Context()
 		absorbed, err := st.EnsureParticipantByIdentifier(
 			"beeper", "@absorbed:example.org", "Absorbed",
 		)
@@ -331,7 +332,7 @@ func TestDuplicateUsernameUnderDifferentStableIDsBecomesAConflict(t *testing.T) 
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	left, err := st.EnsureParticipantByIdentifier("beeper", "@alice:example.org", "Alice Example")
 	require.NoError(err)
 	right, err := st.EnsureParticipantByIdentifier("beeper", "@bob:example.org", "Bob Example")
@@ -606,7 +607,7 @@ func TestSameUsernameOnDifferentScopesIsNotAConflict(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	left, err := st.EnsureParticipantByIdentifier("beeper", "@alice:example.org", "Alice Example")
 	require.NoError(err)
 	right, err := st.EnsureParticipantByIdentifier("beeper", "@bob:example.org", "Bob Example")
@@ -629,7 +630,7 @@ func TestRenameSupersedesWithoutMovingHistoryBetweenParticipants(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	participantID, err := st.EnsureParticipantByIdentifier(
 		"beeper", "@alice:example.org", "Alice Example",
 	)
@@ -791,7 +792,7 @@ func TestObservationMutationReconcilesGeneratedIdentityMatches(t *testing.T) {
 				}
 				assert.Equal(test.wantLink, linkedPair(t, f.Store, left, right))
 				var evidenceCount int
-				require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 					`SELECT COUNT(*) FROM identity_match_evidence WHERE id = ?`),
 					evidence.ID,
 				).Scan(&evidenceCount))
@@ -891,7 +892,7 @@ func TestObservationMutationReconcilesGeneratedIdentityMatches(t *testing.T) {
 		require.ErrorIs(err, store.ErrIdentityMatchNotFound)
 		assert.False(linkedPair(t, f.Store, survivor, third))
 		var evidenceCount int
-		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 			`SELECT COUNT(*) FROM identity_match_evidence WHERE id = ?`),
 			evidence.ID,
 		).Scan(&evidenceCount))

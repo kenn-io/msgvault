@@ -80,7 +80,7 @@ func newKeywordTestClientFor(t *testing.T, session keywordTestSession) (*Client,
 		session.Session = mem.NewSession()
 		return &session, nil, nil
 	}})
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(err)
 	go func() { _ = srv.Serve(listener) }()
 	t.Cleanup(func() { _ = srv.Close() })

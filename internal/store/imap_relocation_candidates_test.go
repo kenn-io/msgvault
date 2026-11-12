@@ -19,7 +19,7 @@ func TestIMAPRelocationCandidates(t *testing.T) {
 	for i := range 2 {
 		source, err := st.GetOrCreateSource("imap", fmt.Sprintf("candidate-%d@example.test", i))
 		require.NoError(err)
-		conv, err := st.EnsureConversation(source.ID, "thread", "thread")
+		conv, err := st.EnsureConversation(t.Context(), source.ID, "thread", "thread")
 		require.NoError(err)
 		id, err := st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: source.ID, SourceMessageID: "Drafts|1", RFC822MessageID: sql.NullString{String: "same@example.test", Valid: true}, MessageType: "email"})
 		require.NoError(err)
@@ -27,17 +27,17 @@ func TestIMAPRelocationCandidates(t *testing.T) {
 			sourceID, targetID = source.ID, id
 		}
 		for _, mailbox := range []string{"Drafts", "Sent", "Archive"} {
-			_, err = st.DB().Exec(st.Rebind(`INSERT INTO imap_message_memberships (source_id, mailbox, uidvalidity, uid, message_id, flags) VALUES (?, ?, ?, ?, ?, ?)`), source.ID, mailbox, 77+i, 1, id, "[]")
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO imap_message_memberships (source_id, mailbox, uidvalidity, uid, message_id, flags) VALUES (?, ?, ?, ?, ?, ?)`), source.ID, mailbox, 77+i, 1, id, "[]")
 			require.NoError(err)
 		}
 	}
-	conv, err := st.EnsureConversation(sourceID, "other-thread", "Other")
+	conv, err := st.EnsureConversation(t.Context(), sourceID, "other-thread", "Other")
 	require.NoError(err)
 	for _, sourceMessageID := range []string{"Drafts|2", "Drafts|3"} {
 		rfc822 := sql.NullString{String: "unrequested@example.test", Valid: sourceMessageID == "Drafts|2"}
 		id, err := st.UpsertMessage(&store.Message{ConversationID: conv, SourceID: sourceID, SourceMessageID: sourceMessageID, RFC822MessageID: rfc822, MessageType: "email"})
 		require.NoError(err)
-		_, err = st.DB().Exec(st.Rebind(`INSERT INTO imap_message_memberships (source_id, mailbox, uidvalidity, uid, message_id, flags) VALUES (?, ?, ?, ?, ?, ?)`), sourceID, sourceMessageID, 77, 1, id, "[]")
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO imap_message_memberships (source_id, mailbox, uidvalidity, uid, message_id, flags) VALUES (?, ?, ?, ?, ?, ?)`), sourceID, sourceMessageID, 77, 1, id, "[]")
 		require.NoError(err)
 	}
 	unidentified, err := st.GetIMAPRelocationCandidatesContext(t.Context(), sourceID, []string{"Drafts|3"})

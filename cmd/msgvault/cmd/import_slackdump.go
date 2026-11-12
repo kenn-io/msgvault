@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -42,7 +43,7 @@ func newImportSlackdumpCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 			}
 			return runImportSlackdump(cmd, args[0], opts)
 		},
@@ -70,7 +71,7 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 	}
 
 	dbPath := cfg.DatabaseDSN()
-	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -91,7 +92,7 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 	})
 	var postImportErr error
 	if summary != nil {
-		postImportErr = runExportPostImportMigrations(cmd.OutOrStdout(), st, summary.SourceID, opts.NoDefaultIdentity, state)
+		postImportErr = runExportPostImportMigrations(ctx, cmd.OutOrStdout(), st, summary.SourceID, opts.NoDefaultIdentity, state)
 	}
 	if importErr != nil {
 		if ctx.Err() != nil {
@@ -100,11 +101,11 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 		return errors.Join(
 			fmt.Errorf("import Slackdump: %w", importErr),
 			postImportErr,
-			rebuildCacheAfterWrite(dbPath, state),
+			rebuildCacheAfterWrite(ctx, dbPath, state),
 		)
 	}
 	if postImportErr != nil {
-		return errors.Join(postImportErr, rebuildCacheAfterWrite(dbPath, state))
+		return errors.Join(postImportErr, rebuildCacheAfterWrite(ctx, dbPath, state))
 	}
 
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport complete!")
@@ -117,30 +118,35 @@ func runImportSlackdump(cmd *cobra.Command, sourcePath string, opts slackdumpCLI
 	if summary.Errors > 0 {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Errors:        %d\n", summary.Errors)
 	}
-	return rebuildCacheAfterWrite(dbPath, state)
+	return rebuildCacheAfterWrite(ctx, dbPath, state)
 }
 
-func runExportPostImportMigrations(out io.Writer, st *store.Store, sourceID int64, noDefaultIdentity bool, state *invocation) error {
+func runExportPostImportMigrations(ctx context.Context, out io.Writer, st *store.Store, sourceID int64, noDefaultIdentity bool, state *invocation) error {
 	if sourceID == 0 {
 		return nil
 	}
 	if state == nil || state.logger == nil {
 		return errors.New("invocation state is required")
 	}
+	// An interrupted import has already created the source and committed
+	// messages, so the identity and migration steps run on an uncancelled
+	// context.
+	ctx = context.WithoutCancel(ctx)
 	var identityErr error
 	if !noDefaultIdentity {
-		source, err := st.GetSourceByID(sourceID)
+		source, err := st.GetSourceByIDContext(ctx, sourceID)
 		if err != nil {
 			identityErr = fmt.Errorf("read import source: %w", err)
 		} else {
 			confirmDefaultIdentity(
+				ctx,
 				out, st, source.ID,
 				source.Identifier, source.Identifier, "account-identifier",
 				state.logger,
 			)
 		}
 	}
-	migrationErr := runPostSourceCreateMigrationsForInvocation(st, state)
+	migrationErr := runPostSourceCreateMigrationsForInvocation(ctx, st, state)
 	if migrationErr != nil {
 		migrationErr = fmt.Errorf("post-source-create migrations: %w", migrationErr)
 	}

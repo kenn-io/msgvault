@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
@@ -36,7 +37,7 @@ func TestImportEMLDirMergesDuplicateMessageLabels(t *testing.T) {
 	require.NoError(os.WriteFile(filepath.Join(aDir, "first.eml"), raw, 0o600))
 	require.NoError(os.WriteFile(filepath.Join(bDir, "duplicate.eml"), raw, 0o600))
 
-	summary, err := ImportEMLDir(context.Background(), st, root, EMLImportOptions{
+	summary, err := ImportEMLDir(t.Context(), st, root, EMLImportOptions{
 		Identifier: "alice@example.com",
 		NoResume:   true,
 	})
@@ -45,10 +46,10 @@ func TestImportEMLDirMergesDuplicateMessageLabels(t *testing.T) {
 	assert.Equal(int64(1), summary.MessagesSkipped)
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
 	assert.Equal(1, messageCount)
 
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT l.name
 		FROM message_labels ml
 		JOIN labels l ON l.id = ml.label_id
@@ -65,7 +66,7 @@ func TestImportEMLDirMergesDuplicateMessageLabels(t *testing.T) {
 	assert.Equal([]string{"A", "A/B"}, labels)
 
 	var sourceType, rawFormat string
-	require.NoError(st.DB().QueryRow(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), `
 		SELECT s.source_type, mr.raw_format
 		FROM messages m
 		JOIN sources s ON s.id = m.source_id
@@ -82,7 +83,7 @@ func TestImportEMLDirRequiresIdentifier(t *testing.T) {
 	require.NoError(os.Mkdir(root, 0o700))
 	require.NoError(os.WriteFile(filepath.Join(root, "message.eml"), []byte("Subject: test\r\n\r\nbody"), 0o600))
 
-	summary, err := ImportEMLDir(context.Background(), st, root, EMLImportOptions{})
+	summary, err := ImportEMLDir(t.Context(), st, root, EMLImportOptions{})
 
 	assert.Nil(summary)
 	assert.ErrorContains(err, "identifier is required")
@@ -137,7 +138,7 @@ func TestImportEMLDirResumesAfterInterruptedFileBoundary(t *testing.T) {
 			err := IngestRawMessage(
 				ctx, st, sourceID, identifier, attachmentsDir,
 				labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log,
-			)
+				nil)
 			if err == nil && ingestCalls == 1 {
 				cancel()
 			}
@@ -165,13 +166,14 @@ func TestImportEMLDirResumesAfterInterruptedFileBoundary(t *testing.T) {
 	assert.NotEqual(interrupted.ID, completed.ID,
 		"a resumed import must use a new sync generation")
 	var interruptedStatus string
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT status FROM sync_runs WHERE id = ?`, interrupted.ID,
 	).Scan(&interruptedStatus))
 	assert.Equal(store.SyncStatusFailed, interruptedStatus)
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
 	assert.Equal(2, messageCount)
 }
 
@@ -296,7 +298,7 @@ func TestImportEMLDirResumeRescansFilesBeforeCheckpoint(t *testing.T) {
 			err := IngestRawMessage(
 				ctx, st, sourceID, identifier, attachmentsDir,
 				labelIDs, sourceMsgID, rawHash, raw, fallbackDate, log,
-			)
+				nil)
 			if err == nil {
 				cancel()
 			}
@@ -318,7 +320,7 @@ func TestImportEMLDirResumeRescansFilesBeforeCheckpoint(t *testing.T) {
 		"new files before the checkpoint must still be imported")
 
 	var messageCount int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messageCount))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messageCount))
 	assert.Equal(2, messageCount)
 }
 
@@ -414,4 +416,44 @@ func writeTestEML(t *testing.T, path, subject string) {
 		Body("Imported from an EML tree.\n").
 		Bytes()
 	require.NoError(t, os.WriteFile(path, raw, 0o600))
+}
+
+func TestImportEMLDirCustomRelayedSender(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, root := openTestStore(t)
+	raw := []byte("From: Alice <relay@example.test>\r\nTo: reader@example.test\r\nX-Author: alice\r\nSubject: Notice\r\n\r\nHello")
+	mailbox := filepath.Join(root, "Inbox.mailbox")
+	requirements.NoError(os.Mkdir(mailbox, 0o700))
+	requirements.NoError(os.WriteFile(filepath.Join(mailbox, "message.eml"), raw, 0o600))
+	_, err := ImportEMLDir(t.Context(), st, root, EMLImportOptions{Identifier: "reader@example.test", RelayedSenders: []mime.RelayedSenderRule{{Address: "relay@example.test", Header: "X-Author", IdentifierType: "example"}}})
+	requirements.NoError(err)
+	var identifier, envelope string
+	var relayed bool
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT pi.identifier_value, mr.email_address, mr.is_relayed FROM messages m JOIN participant_identifiers pi ON pi.participant_id=m.sender_id AND pi.identifier_type='example' JOIN message_recipients mr ON mr.message_id=m.id AND mr.recipient_type='from'`).Scan(&identifier, &envelope, &relayed))
+	assertions.Equal("alice", identifier)
+	assertions.Equal("relay@example.test", envelope)
+	assertions.True(relayed)
+}
+
+func TestRelayedSenderNamesAfterImport(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st, _ := openTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "reader@example.test")
+	requirements.NoError(err)
+	for _, message := range []struct{ id, from, header string }{
+		{"unnamed", "notifications@github.com", "X-GitHub-Sender: bob\r\n"},
+		{"named", "Bob Author <notifications@github.com>", "X-GitHub-Sender: bob\r\n"},
+		{"first", "Alice Author <notifications@github.com>", "X-GitHub-Sender: alice\r\n"},
+		{"fallback", "Relay Service <notifications@github.com>", ""},
+	} {
+		raw := []byte("From: " + message.from + "\r\nTo: reader@example.test\r\n" + message.header + "Subject: Notice\r\n\r\nHello")
+		requirements.NoError(IngestRawMessage(t.Context(), st, source.ID, source.Identifier, "", nil, message.id, message.id, raw, time.Time{}, slog.Default(), nil))
+	}
+	for id, want := range map[string]string{"unnamed": "Bob Author", "named": "Bob Author", "first": "Alice Author", "fallback": "Relay Service"} {
+		var name string
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT p.display_name FROM messages m JOIN participants p ON p.id=m.sender_id WHERE m.source_message_id=?`, id).Scan(&name))
+		assertions.Equal(want, name, id)
+	}
 }

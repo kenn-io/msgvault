@@ -44,7 +44,7 @@ func TestRecordingReferenceJob(t *testing.T) {
 		f := storetest.New(t)
 		id := f.CreateMessage("recording")
 		require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "https://loom.com/share/abc", Valid: true}, sql.NullString{}))
-		_, err := f.Store.DB().Exec(`UPDATE messages SET content_changed_at='2000-01-01 00:00:00.000'`)
+		_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET content_changed_at='2000-01-01 00:00:00.000'`)
 		require.NoError(err)
 		requests := make(chan string, 2)
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

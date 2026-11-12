@@ -103,16 +103,16 @@ func TestForEachTeamsIncompleteHostedContentBody(t *testing.T) {
 	oneRef := `<img src="https://g/v1.0/chats/x/messages/a/hostedContents/1/$value">`
 	// Complete: one hostedContents ref, one stored on-disk image.
 	complete := mk("m_complete", oneRef)
-	require.NoError(st.UpsertAttachment(complete, "", "", "ab/abc", "abc123", 10))
+	require.NoError(st.UpsertAttachment(t.Context(), complete, "", "", "ab/abc", "abc123", 10))
 	// Complete with duplicate HTML references to the same hostedContent URL:
 	// the repair path should compare distinct hosted refs, not raw occurrences.
 	duplicateComplete := mk("m_duplicate_complete", oneRef+oneRef)
-	require.NoError(st.UpsertAttachment(duplicateComplete, "", "", "de/def", "def456", 10))
+	require.NoError(st.UpsertAttachment(t.Context(), duplicateComplete, "", "", "de/def", "def456", 10))
 	// Incomplete: one hostedContents ref, no stored image.
 	incomplete := mk("m_incomplete", oneRef)
 
 	var seen []int64
-	require.NoError(st.ForEachTeamsIncompleteHostedContentBody(src.ID, attachmentpolicy.Policy{}, func(id int64, _ string) error {
+	require.NoError(st.ForEachTeamsIncompleteHostedContentBody(t.Context(), src.ID, attachmentpolicy.Policy{}, func(id int64, _ string) error {
 		seen = append(seen, id)
 		return nil
 	}))
@@ -136,7 +136,7 @@ func TestForEachTeamsIncompleteHostedContentBodyReevaluatesPolicySkips(t *testin
 	require.NoError(err)
 	body := `<img src="https://g/v1.0/chats/x/messages/a/hostedContents/1/$value">`
 	require.NoError(st.UpsertMessageBody(messageID, sql.NullString{}, sql.NullString{String: body, Valid: true}))
-	require.NoError(st.ReplaceMessageInlineAttachments(messageID, []store.AttachmentRef{{
+	require.NoError(st.ReplaceMessageInlineAttachments(t.Context(), messageID, []store.AttachmentRef{{
 		SourceAttachmentID: "teams:inline:/chats/x/messages/a/hostedContents/1/$value",
 		StoragePath:        "excluded:teams:inline:/chats/x/messages/a/hostedContents/1/$value",
 		Size:               10,
@@ -145,7 +145,7 @@ func TestForEachTeamsIncompleteHostedContentBodyReevaluatesPolicySkips(t *testin
 	}}, false))
 
 	var unchanged []int64
-	require.NoError(st.ForEachTeamsIncompleteHostedContentBody(src.ID, attachmentpolicy.Policy{
+	require.NoError(st.ForEachTeamsIncompleteHostedContentBody(t.Context(), src.ID, attachmentpolicy.Policy{
 		Scope: attachmentpolicy.ScopeNone,
 	}, func(id int64, _ string) error {
 		unchanged = append(unchanged, id)
@@ -154,7 +154,7 @@ func TestForEachTeamsIncompleteHostedContentBodyReevaluatesPolicySkips(t *testin
 	assert.Empty(unchanged)
 
 	var relaxed []int64
-	require.NoError(st.ForEachTeamsIncompleteHostedContentBody(src.ID, attachmentpolicy.Policy{}, func(id int64, _ string) error {
+	require.NoError(st.ForEachTeamsIncompleteHostedContentBody(t.Context(), src.ID, attachmentpolicy.Policy{}, func(id int64, _ string) error {
 		relaxed = append(relaxed, id)
 		return nil
 	}))
@@ -175,7 +175,7 @@ func TestForEachTeamsIncompleteHostedContentBodyYieldsUnresolvedRosterSkips(t *t
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(src.ID, "team/channel", "channel", "Releases")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), 20, conversationID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), 20, conversationID)
 	require.NoError(err)
 	require.NoError(st.MarkConversationMemberCountUnknown(conversationID))
 	messageID, err := st.UpsertMessage(&store.Message{
@@ -186,7 +186,7 @@ func TestForEachTeamsIncompleteHostedContentBodyYieldsUnresolvedRosterSkips(t *t
 	body := `<img src="https://g/v1.0/teams/t/channels/c/messages/a/hostedContents/1/$value">`
 	require.NoError(st.UpsertMessageBody(messageID, sql.NullString{}, sql.NullString{String: body, Valid: true}))
 	skipped := func(reason attachmentpolicy.SkipReason) {
-		require.NoError(st.ReplaceMessageInlineAttachments(messageID, []store.AttachmentRef{{
+		require.NoError(st.ReplaceMessageInlineAttachments(t.Context(), messageID, []store.AttachmentRef{{
 			SourceAttachmentID: "teams:inline:/teams/t/channels/c/messages/a/hostedContents/1/$value",
 			StoragePath:        "excluded:teams:inline:/teams/t/channels/c/messages/a/hostedContents/1/$value",
 			Size:               10,
@@ -196,7 +196,7 @@ func TestForEachTeamsIncompleteHostedContentBodyYieldsUnresolvedRosterSkips(t *t
 	}
 	yielded := func(policy attachmentpolicy.Policy) []int64 {
 		var ids []int64
-		require.NoError(st.ForEachTeamsIncompleteHostedContentBody(src.ID, policy, func(id int64, _ string) error {
+		require.NoError(st.ForEachTeamsIncompleteHostedContentBody(t.Context(), src.ID, policy, func(id int64, _ string) error {
 			ids = append(ids, id)
 			return nil
 		}))
@@ -242,8 +242,8 @@ func TestForEachTeamsIncompleteHostedContentBodyFindsMarkersBesideLegacyMedia(t 
 		})
 		require.NoError(seedErr)
 		require.NoError(st.UpsertMessageBody(messageID, sql.NullString{}, sql.NullString{String: body, Valid: true}))
-		require.NoError(st.UpsertAttachment(messageID, "", "", "legacy/"+sourceMessageID, "legacy-"+sourceMessageID, 12))
-		require.NoError(st.ReplaceMessageInlineAttachments(messageID, []store.AttachmentRef{{
+		require.NoError(st.UpsertAttachment(t.Context(), messageID, "", "", "legacy/"+sourceMessageID, "legacy-"+sourceMessageID, 12))
+		require.NoError(st.ReplaceMessageInlineAttachments(t.Context(), messageID, []store.AttachmentRef{{
 			SourceAttachmentID: "teams:inline:/chats/x/messages/a/hostedContents/1/$value",
 			StoragePath:        "https://g/v1.0/chats/x/messages/a/hostedContents/1/$value",
 			State:              state,
@@ -255,7 +255,7 @@ func TestForEachTeamsIncompleteHostedContentBodyFindsMarkersBesideLegacyMedia(t 
 	skippedID := seed("skipped", attachmentpolicy.StateSkipped, attachmentpolicy.SkipPolicyScope)
 
 	var seen []int64
-	require.NoError(st.ForEachTeamsIncompleteHostedContentBody(src.ID, attachmentpolicy.Policy{}, func(id int64, _ string) error {
+	require.NoError(st.ForEachTeamsIncompleteHostedContentBody(t.Context(), src.ID, attachmentpolicy.Policy{}, func(id int64, _ string) error {
 		seen = append(seen, id)
 		return nil
 	}))
@@ -291,7 +291,7 @@ func TestReplaceMessageLinkAttachmentsPreservesTeamsInlineMarkers(t *testing.T) 
 	require.NoError(st.ReplaceMessageLinkAttachments(messageID, []store.AttachmentRef{{
 		Filename: "old.pdf", StoragePath: "https://example.com/old.pdf",
 	}}))
-	require.NoError(st.ReplaceMessageInlineAttachments(messageID, []store.AttachmentRef{{
+	require.NoError(st.ReplaceMessageInlineAttachments(t.Context(), messageID, []store.AttachmentRef{{
 		SourceAttachmentID: markerID,
 		StoragePath:        hostedURL,
 		Size:               4096,
@@ -303,14 +303,14 @@ func TestReplaceMessageLinkAttachmentsPreservesTeamsInlineMarkers(t *testing.T) 
 		Filename: "new.pdf", StoragePath: "https://example.com/new.pdf",
 	}}))
 
-	markers, err := st.MessageTeamsInlineAttachments(messageID)
+	markers, err := st.MessageTeamsInlineAttachments(t.Context(), messageID)
 	require.NoError(err)
 	require.Contains(markers, markerID, "the inline marker must survive link replacement")
 	assert.Equal(attachmentpolicy.StateSkipped, markers[markerID].State)
 	assert.Equal(attachmentpolicy.SkipSizeCap, markers[markerID].SkipReason)
 	assert.Equal(4096, markers[markerID].Size, "the observed size must survive so the skip stays decidable")
 
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT storage_path FROM attachments WHERE message_id = ? ORDER BY storage_path
 	`), messageID)
 	require.NoError(err)
@@ -362,13 +362,14 @@ func TestForEachTeamsHostedContentBody_WriteInsideCallback(t *testing.T) {
 		// Write inside the callback — must not error/deadlock. Use the message
 		// id in the content hash so each row is distinct.
 		hash := fmt.Sprintf("hash-%d", messageID)
-		return st.UpsertAttachment(messageID, "img", "image/png", "abc/"+hash, hash, 1)
+		return st.UpsertAttachment(t.Context(), messageID, "img", "image/png", "abc/"+hash, hash, 1)
 	})
 	require.NoError(err)
 
 	for _, id := range ids {
 		var n int
-		require.NoError(st.DB().QueryRow(
+		require.NoError(st.DB().QueryRowContext(
+			t.Context(),
 			st.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
 			id,
 		).Scan(&n))

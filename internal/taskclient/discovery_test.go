@@ -1,7 +1,6 @@
 package taskclient
 
 import (
-	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -24,7 +23,7 @@ func TestDiscoverFailsClosedWithoutPlatformFileSecurity(t *testing.T) {
 		Endpoint:        "http://127.0.0.1:32145",
 	}, 0o600)
 
-	_, err := Discover(context.Background(), DiscoveryOptions{
+	_, err := Discover(t.Context(), DiscoveryOptions{
 		DescriptorPath: path,
 		APIKey:         "test-key",
 		platformSecurityCheck: func() error {
@@ -36,7 +35,7 @@ func TestDiscoverFailsClosedWithoutPlatformFileSecurity(t *testing.T) {
 }
 
 func TestDiscoverReportsMissingDescriptorBeforePlatformSecurityLimit(t *testing.T) {
-	_, err := Discover(context.Background(), DiscoveryOptions{
+	_, err := Discover(t.Context(), DiscoveryOptions{
 		DescriptorPath: filepath.Join(t.TempDir(), "missing-descriptor.json"),
 		platformSecurityCheck: func() error {
 			return ErrDescriptorFileSecurityLimit
@@ -60,13 +59,13 @@ func TestDiscoverNativeWindowsSecurity(t *testing.T) {
 		Endpoint:        "http://127.0.0.1:32145",
 	}, 0o600)
 
-	_, err := Discover(context.Background(), DiscoveryOptions{
+	_, err := Discover(t.Context(), DiscoveryOptions{
 		DescriptorPath: path,
 		APIKey:         "test-key",
 	})
 	requirements.ErrorIs(err, ErrDescriptorFileSecurityLimit)
 
-	_, err = Discover(context.Background(), DiscoveryOptions{
+	_, err = Discover(t.Context(), DiscoveryOptions{
 		DescriptorPath: filepath.Join(t.TempDir(), "missing-descriptor.json"),
 	})
 	requirements.ErrorIs(err, ErrNotFound)
@@ -92,7 +91,7 @@ func TestDiscoverUnixSocket(t *testing.T) {
 	dir := t.TempDir()
 	requirements.NoError(os.Chmod(dir, 0o700))
 	socketPath := filepath.Join(dir, "task.sock")
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	requirements.NoError(err)
 	requirements.NoError(os.Chmod(socketPath, 0o600))
 	server := &http.Server{
@@ -115,11 +114,11 @@ func TestDiscoverUnixSocket(t *testing.T) {
 		Endpoint:        "unix://" + socketPath,
 	}, 0o600)
 
-	client, err := Discover(context.Background(), DiscoveryOptions{DescriptorPath: descriptorPath})
+	client, err := Discover(t.Context(), DiscoveryOptions{DescriptorPath: descriptorPath})
 
 	requirements.NoError(err)
 	assertions.Equal(EndpointUnix, client.EndpointKind())
-	capabilities, err := client.Capabilities(context.Background())
+	capabilities, err := client.Capabilities(t.Context())
 	requirements.NoError(err)
 	assertions.True(capabilities.Compatible())
 	if !peerCredentialsSupported() {
@@ -133,7 +132,7 @@ func TestDiscoverStaleUnixSocketIsUnreachable(t *testing.T) {
 	}
 	descriptorPath := writeStaleUnixDescriptor(t)
 
-	_, err := Discover(context.Background(), DiscoveryOptions{DescriptorPath: descriptorPath})
+	_, err := Discover(t.Context(), DiscoveryOptions{DescriptorPath: descriptorPath})
 
 	require.ErrorIs(t, err, ErrUnreachable)
 }
@@ -162,12 +161,12 @@ func TestClientTransportBounds(t *testing.T) {
 		}))
 		t.Cleanup(target.Close)
 		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Redirect(w, httptest.NewRequest(http.MethodGet, target.URL, nil), target.URL, http.StatusFound)
+			http.Redirect(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target.URL, nil), target.URL, http.StatusFound)
 		}))
 		t.Cleanup(origin.Close)
 		client := newLoopbackClient(t, origin.URL, "redirect-test-key", nil)
 
-		_, err := client.Capabilities(context.Background())
+		_, err := client.Capabilities(t.Context())
 
 		require.ErrorIs(t, err, ErrRedirect)
 		assert.Empty(t, receivedAuthorization)
@@ -186,7 +185,7 @@ func TestClientTransportBounds(t *testing.T) {
 			options.Timeout = 20 * time.Millisecond //nolint:kennlint // deadlinetest: the blocked capabilities request must expire and report ErrUnreachable
 		})
 
-		_, err := client.Capabilities(context.Background())
+		_, err := client.Capabilities(t.Context())
 
 		assert.ErrorIs(t, err, ErrUnreachable)
 	})
@@ -201,7 +200,7 @@ func TestClientTransportBounds(t *testing.T) {
 			options.MaxResponseBytes = 64
 		})
 
-		_, err := client.Capabilities(context.Background())
+		_, err := client.Capabilities(t.Context())
 
 		assert.ErrorIs(t, err, ErrResponseTooLarge)
 	})
@@ -223,7 +222,7 @@ func writeStaleUnixDescriptor(t *testing.T) string {
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
 	require.NoError(t, os.Chmod(dir, 0o700))
 	socketPath := filepath.Join(dir, "stale.sock")
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", socketPath)
 	require.NoError(t, err)
 	require.NoError(t, listener.Close())
 	descriptorPath := filepath.Join(dir, "descriptor.json")

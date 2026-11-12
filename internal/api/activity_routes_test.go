@@ -106,7 +106,7 @@ func activityRequest(
 	authenticated bool,
 ) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(body))
 	if authenticated {
 		req.Header.Set("X-Api-Key", activityTestAPIKey)
 	}
@@ -228,7 +228,7 @@ func TestDayEntriesHTTPCreateListDeleteAndValidation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost,
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost,
 				fmt.Sprintf("/api/v1/days/%s/entries", f.date), bytes.NewReader(test.body))
 			req.Header.Set("X-Api-Key", activityTestAPIKey)
 			req.Header.Set("Content-Type", test.contentType)
@@ -317,7 +317,8 @@ func TestActivityHTTPIndependentPagingPreviewAndNoteOnlyTargets(t *testing.T) {
 }
 
 type failingActivityStore struct {
-	*store.Store
+	MessageStore
+	ActivityStore
 
 	err error
 }
@@ -342,7 +343,7 @@ func TestActivityHTTPUnavailableAndRedactedStoreErrors(t *testing.T) {
 	const sensitive = "driver failed for private@example.com id=991"
 	failing := NewServer(
 		&config.Config{Server: config.ServerConfig{APIKey: activityTestAPIKey}},
-		&failingActivityStore{Store: f.store, err: errors.New(sensitive)},
+		&failingActivityStore{MessageStore: f.store, ActivityStore: f.store, err: errors.New(sensitive)},
 		nil, testLogger())
 	response = activityRequest(t, failing, http.MethodGet,
 		fmt.Sprintf("/api/v1/people/%d/contact-state", f.personID), nil, true)
@@ -352,7 +353,7 @@ func TestActivityHTTPUnavailableAndRedactedStoreErrors(t *testing.T) {
 
 	canceled := NewServer(
 		&config.Config{Server: config.ServerConfig{APIKey: activityTestAPIKey}},
-		&failingActivityStore{Store: f.store, err: context.Canceled},
+		&failingActivityStore{MessageStore: f.store, ActivityStore: f.store, err: context.Canceled},
 		nil, testLogger())
 	response = activityRequest(t, canceled, http.MethodGet,
 		fmt.Sprintf("/api/v1/people/%d/contact-state", f.personID), nil, true)
@@ -430,7 +431,7 @@ func TestActivityHTTPInvalidAPIKeyAndSessionCSRF(t *testing.T) {
 		{http.MethodGet, "/api/v1/days/" + f.date},
 		{http.MethodDelete, fmt.Sprintf("/api/v1/days/entries/%d", f.noteID)},
 	} {
-		req := httptest.NewRequest(test.method, test.path, nil)
+		req := httptest.NewRequestWithContext(t.Context(), test.method, test.path, nil)
 		req.Header.Set("X-Api-Key", "invalid-activity-key")
 		response := httptest.NewRecorder()
 		f.server.Router().ServeHTTP(response, req)

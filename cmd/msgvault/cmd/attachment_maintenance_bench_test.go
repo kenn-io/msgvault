@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -27,12 +26,12 @@ type attachmentMaintenanceBenchmark struct {
 func newAttachmentMaintenanceBenchmark(b *testing.B) *attachmentMaintenanceBenchmark {
 	b.Helper()
 	root := b.TempDir()
-	s, err := store.OpenForTest(filepath.Join(root, "archive.db"))
+	s, err := store.OpenForTest(b.Context(), filepath.Join(root, "archive.db"))
 	require.NoError(b, err)
 	require.NoError(b, s.InitSchema())
 	source, err := s.GetOrCreateSource("gmail", "benchmark@example.com")
 	require.NoError(b, err)
-	conversationID, err := s.EnsureConversation(source.ID, "benchmark-thread", "Benchmark")
+	conversationID, err := s.EnsureConversation(b.Context(), source.ID, "benchmark-thread", "Benchmark")
 	require.NoError(b, err)
 	messageID, err := s.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
@@ -61,6 +60,7 @@ func (f *attachmentMaintenanceBenchmark) addLoose(content []byte) string {
 	require.NoError(f.b, os.MkdirAll(filepath.Dir(path), 0o700))
 	require.NoError(f.b, os.WriteFile(path, content, 0o600))
 	require.NoError(f.b, f.store.UpsertAttachment(
+		f.b.Context(),
 		f.messageID, fmt.Sprintf("blob-%d.bin", f.sequence),
 		"application/octet-stream", hash[:2]+"/"+hash, hash, len(content),
 	))
@@ -76,7 +76,7 @@ func BenchmarkAttachmentMaintenancePack(b *testing.B) {
 		addMaintenanceBenchmarkPackCorpus(fixture, i)
 		require.NoError(b, os.MkdirAll(filepath.Join(fixture.dir, "packs"), 0o700))
 		b.StartTimer()
-		stats, err := fixture.maintenance.pack(context.Background(), 0)
+		stats, err := fixture.maintenance.pack(b.Context(), 0)
 		b.StopTimer()
 		require.NoError(b, err)
 		require.Equal(b, 259, stats.BlobsPacked)
@@ -100,20 +100,20 @@ func BenchmarkAttachmentMaintenanceRepack(b *testing.B) {
 		liveHash := fixture.addLoose(maintenanceBenchmarkBytes(1<<20, uint64(i*1000+401)))
 		deadHash := fixture.addLoose(maintenanceBenchmarkBytes((8<<20)+(256<<10), uint64(i*1000+402)))
 		deadSmallHash := fixture.addLoose(maintenanceBenchmarkBytes(4<<10, uint64(i*1000+403)))
-		_, err := fixture.maintenance.pack(context.Background(), 0)
+		_, err := fixture.maintenance.pack(b.Context(), 0)
 		require.NoError(b, err)
-		entry, err := fixture.store.GetAttachmentPackEntry(liveHash)
+		entry, err := fixture.store.GetAttachmentPackEntry(b.Context(), liveHash)
 		require.NoError(b, err)
 		require.NotNil(b, entry)
-		_, err = fixture.store.DB().Exec(fixture.store.Rebind(
+		_, err = fixture.store.DB().ExecContext(b.Context(), fixture.store.Rebind(
 			`DELETE FROM attachments WHERE content_hash IN (?, ?)`), deadHash, deadSmallHash)
 		require.NoError(b, err)
-		_, err = fixture.store.DB().Exec(fixture.store.Rebind(
+		_, err = fixture.store.DB().ExecContext(b.Context(), fixture.store.Rebind(
 			`UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
 			time.Now().UTC().Add(-48*time.Hour).Format(time.RFC3339), entry.PackID)
 		require.NoError(b, err)
 		b.StartTimer()
-		stats, err := fixture.maintenance.repack(context.Background(), 0)
+		stats, err := fixture.maintenance.repack(b.Context(), 0)
 		b.StopTimer()
 		require.NoError(b, err)
 		require.Equal(b, 1, stats.BlobsRepacked)

@@ -17,7 +17,7 @@ func TestCardDAVPublicationStateSourceDoesNotCopyMutationEvidence(t *testing.T) 
 	assert := assert.New(t)
 	st, _, book := newCardDAVResourceStore(t)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
 		VALUES ('safe-source-person', 'Safe Source Person') RETURNING id`).Scan(&personID))
 	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 	require.NoError(err)
@@ -44,7 +44,7 @@ func TestCardDAVPublicationPreparePersistsExactCreateIntent(t *testing.T) {
 
 	st, account, book := newCardDAVResourceStore(t)
 	var personID int64
-	require.NoError(st.DB().QueryRow(`INSERT INTO persons (vcard_uid, display_name)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `INSERT INTO persons (vcard_uid, display_name)
 		VALUES ('local-person', 'Local Person') RETURNING id`).Scan(&personID))
 	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
 	require.NoError(err)
@@ -166,10 +166,10 @@ func TestCardDAVPublicationCommitMarksExistingLocalResourceByOrderingEvidence(t 
 	})
 	require.NoError(err)
 	require.Equal(store.CardDAVMutationUpdate, pending.PendingOperation)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_publications SET created_at = ? WHERE person_id = ?`),
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_publications SET created_at = ? WHERE person_id = ?`),
 		"2020-01-01 00:00:00", *resource.PersonID)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE carddav_resources SET created_at = ? WHERE id = ?`),
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE carddav_resources SET created_at = ? WHERE id = ?`),
 		"2020-01-02 00:00:00", resource.ID)
 	require.NoError(err)
 	updated := remote

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
+  import { Disclosure, Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
 
   import { tick, untrack } from 'svelte';
   import type { IdentityMatchCandidate } from '../../api/generated/models';
@@ -152,10 +152,10 @@
             {/if}
           </div>
           {#if !decided && controller.lastMerge?.candidateID === candidate.id}<p class="status" role="status">Profiles merged into {controller.lastMerge.survivor.display_name || `Person ${controller.lastMerge.survivor.id}`}. Choose Merge to record this pair.</p>{/if}
-          <details><summary>Evidence and notes</summary>
+          <Disclosure variant="plain">{#snippet summary()}Evidence and notes{/snippet}
             <IdentityCandidateCard {candidate} pending={controller.isDecisionPending(candidate.id)} />
             {#if !decided}<label>Decision notes<textarea value={controller.getDecisionDraft(candidate.id)} oninput={(event) => controller.setDecisionDraft(candidate.id, event.currentTarget.value)}></textarea></label>{/if}
-          </details>
+          </Disclosure>
         </li>
       {/each}
     </ul>
@@ -168,7 +168,7 @@
 
 <style>
   nav { display: flex; align-items: center; gap: var(--control-gap); }
-  details, label { display: grid; gap: var(--control-gap); }
+  .duplicates :global(.kit-disclosure), label { display: grid; gap: var(--control-gap); }
   .duplicates {
     display: flex;
     min-height: 0;

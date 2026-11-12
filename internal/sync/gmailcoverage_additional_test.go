@@ -13,14 +13,19 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+func gmailTransportClient(t *testing.T, transport http.RoundTripper) *gmail.Client {
+	t.Helper()
+	old := http.DefaultClient
+	http.DefaultClient = &http.Client{Transport: transport}
+	t.Cleanup(func() { http.DefaultClient = old })
+	return gmail.NewClient(nil, gmail.WithConcurrency(1))
+}
+
 func gmailCoverageTransportEnv(t *testing.T) (*TestEnv, *gmailCoverageTransport) {
 	t.Helper()
 	e := gmailCoverageEnv(t)
 	f := &gmailCoverageTransport{history: 1000}
-	old := http.DefaultClient
-	http.DefaultClient = &http.Client{Transport: f}
-	t.Cleanup(func() { http.DefaultClient = old })
-	e.Syncer = New(gmail.NewClient(nil, gmail.WithConcurrency(1)), e.Store, nil)
+	e.Syncer = New(gmailTransportClient(t, f), e.Store, nil)
 	return e, f
 }
 
@@ -36,7 +41,7 @@ func TestGmailCoverageBackfillAndQuery(t *testing.T) {
 	gmailCoverageAbsent(t, e, "trash")
 	f.omitSpecial = false
 	gmailCoverageReopen(t, e)
-	idle, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t, e))
+	idle, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t.Context(), t, e))
 	require.NoError(err)
 	require.Zero(idle.MessagesAdded)
 	full, err := e.Syncer.Full(e.Context, testEmail)
@@ -79,14 +84,14 @@ func TestGmailCoverageIncrementalAndReplay(t *testing.T) {
 		if id == "spam" {
 			f.failGet = true
 		}
-		first, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t, e))
+		first, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t.Context(), t, e))
 		require.NoError(err)
 		if id == "spam" {
 			require.Equal(int64(1), first.Errors)
 			f.failGet = false
 			f.event = ""
 			gmailCoverageReopen(t, e)
-			retry, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t, e))
+			retry, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t.Context(), t, e))
 			require.NoError(err)
 			require.Equal(int64(1), retry.MessagesAdded)
 		} else {
@@ -96,27 +101,29 @@ func TestGmailCoverageIncrementalAndReplay(t *testing.T) {
 	}
 	f.event = ""
 	gmailCoverageReopen(t, e)
-	idle, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t, e))
+	idle, err := e.Syncer.Incremental(e.Context, gmailCoverageSource(t.Context(), t, e))
 	require.NoError(err)
 	require.Zero(idle.MessagesAdded)
 }
 
 func TestGmailCoverageRejectsOldCheckpoint(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		t.Run(map[bool]string{false: "fingerprinted", true: "untyped"}[legacy], func(t *testing.T) {
+	for _, scenario := range []struct {
+		name        string
+		fingerprint any
+	}{
+		{name: "fingerprinted", fingerprint: "full:v1:864b224bbaf1812b29969fde37ac8c7bb08b34ded81e0bc47e35023e9d480d18"},
+		{name: "untyped"},
+		{name: "previous_release", fingerprint: "full:v2-spam-trash:864b224bbaf1812b29969fde37ac8c7bb08b34ded81e0bc47e35023e9d480d18"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
 			require := require.New(t)
 
 			e, f := gmailCoverageTransportEnv(t)
 			f.failPage = true
 			_, err := e.Syncer.Full(e.Context, testEmail)
 			require.Error(err)
-			// Model an interrupted pre-coverage traversal whose next-page token is unsafe.
-			// This is the pre-coverage fingerprint for an unfiltered, unlimited Gmail full.
-			fingerprint := any("full:v1:864b224bbaf1812b29969fde37ac8c7bb08b34ded81e0bc47e35023e9d480d18")
-			if legacy {
-				fingerprint = nil
-			}
-			_, err = e.Store.DB().Exec("UPDATE sync_runs SET request_fingerprint=?", fingerprint)
+			// Model an older unfiltered, unlimited Gmail full request.
+			_, err = e.Store.DB().ExecContext(t.Context(), "UPDATE sync_runs SET request_fingerprint=?, cursor_after=NULL", scenario.fingerprint)
 			require.NoError(err)
 			f.requests = nil
 			gmailCoverageReopen(t, e)
@@ -142,11 +149,11 @@ func TestGmailCoverageInterruptedLegacyRecoveryRestartsAndCatchesUp(t *testing.T
 	require := require.New(t)
 
 	env, source, prior := setupInterruptedHistoryRecoveryWithPrefixChange(t)
-	_, err := env.Store.DB().Exec("UPDATE sync_runs SET request_fingerprint=? WHERE id=?", store.GmailHistoryRecoveryRequestFingerprint, prior.ID)
+	_, err := env.Store.DB().ExecContext(t.Context(), "UPDATE sync_runs SET request_fingerprint=? WHERE id=?", store.GmailHistoryRecoveryRequestFingerprint, prior.ID)
 	require.NoError(err)
 	// The prior run's page token was generated before Spam/Trash were included.
 	var oldToken sql.NullString
-	require.NoError(env.Store.DB().QueryRow("SELECT cursor_before FROM sync_runs WHERE id=?", prior.ID).Scan(&oldToken))
+	require.NoError(env.Store.DB().QueryRowContext(t.Context(), "SELECT cursor_before FROM sync_runs WHERE id=?", prior.ID).Scan(&oldToken))
 	require.True(oldToken.Valid)
 
 	listed := env.Mock.ListMessagesCalls

@@ -185,11 +185,11 @@ func TestCalendarAddOAuthAppDecisionInheritsStoredBinding(t *testing.T) {
 	st := newCalendarDecisionStore(t)
 	src, err := st.GetOrCreateSource(sourceTypeCalendar, "user@acme.com/primary")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(src.ID,
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID,
 		`{"account_email":"user@acme.com","calendar_id":"primary"}`))
-	require.NoError(st.UpdateSourceOAuthApp(src.ID, sql.NullString{String: "acme", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), src.ID, sql.NullString{String: "acme", Valid: true}))
 
-	decision, err := calendarAddOAuthAppDecision(st, "user@acme.com", "", false)
+	decision, err := calendarAddOAuthAppDecision(t.Context(), st, "user@acme.com", "", false)
 	require.NoError(err)
 
 	assert.Equal("acme", decision.OAuthApp)
@@ -204,9 +204,9 @@ func TestCalendarAddOAuthAppDecisionFallsBackToGmailBinding(t *testing.T) {
 	st := newCalendarDecisionStore(t)
 	src, err := st.GetOrCreateSource(sourceTypeGmail, "User@example.com")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceOAuthApp(src.ID, sql.NullString{String: "acme", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), src.ID, sql.NullString{String: "acme", Valid: true}))
 
-	decision, err := calendarAddOAuthAppDecision(st, "user@example.com", "", false)
+	decision, err := calendarAddOAuthAppDecision(t.Context(), st, "user@example.com", "", false)
 	require.NoError(err)
 
 	assert.Equal("acme", decision.OAuthApp)
@@ -221,13 +221,13 @@ func TestCalendarAddOAuthAppDecisionKeepsCalendarDefaultOverGmailBinding(t *test
 	st := newCalendarDecisionStore(t)
 	gmailSrc, err := st.GetOrCreateSource(sourceTypeGmail, "User@Acme.com")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceOAuthApp(gmailSrc.ID, sql.NullString{String: "acme", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), gmailSrc.ID, sql.NullString{String: "acme", Valid: true}))
 	calendarSrc, err := st.GetOrCreateSource(sourceTypeCalendar, "user@acme.com/primary")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(calendarSrc.ID,
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), calendarSrc.ID,
 		`{"account_email":"user@acme.com","calendar_id":"primary"}`))
 
-	decision, err := calendarAddOAuthAppDecision(st, "user@acme.com", "", false)
+	decision, err := calendarAddOAuthAppDecision(t.Context(), st, "user@acme.com", "", false)
 	require.NoError(err)
 
 	assert.Empty(decision.OAuthApp)
@@ -283,11 +283,11 @@ func TestCalendarAddOAuthAppDecisionDetectsExplicitRebind(t *testing.T) {
 	st := newCalendarDecisionStore(t)
 	src, err := st.GetOrCreateSource(sourceTypeCalendar, "user@acme.com/primary")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(src.ID,
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID,
 		`{"account_email":"user@acme.com","calendar_id":"primary"}`))
-	require.NoError(st.UpdateSourceOAuthApp(src.ID, sql.NullString{String: "old-app", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), src.ID, sql.NullString{String: "old-app", Valid: true}))
 
-	decision, err := calendarAddOAuthAppDecision(st, "user@acme.com", "new-app", true)
+	decision, err := calendarAddOAuthAppDecision(t.Context(), st, "user@acme.com", "new-app", true)
 	require.NoError(err)
 
 	assert.Equal("new-app", decision.OAuthApp)
@@ -304,7 +304,7 @@ func TestCalendarSyncOAuthAppDecisionRespectsExplicitDefault(t *testing.T) {
 		{OAuthApp: sql.NullString{String: "old-app", Valid: true}},
 	}
 
-	decision, err := calendarSyncOAuthAppDecision(st, "user@acme.com", existing, "", true)
+	decision, err := calendarSyncOAuthAppDecision(t.Context(), st, "user@acme.com", existing, "", true)
 	require.NoError(err)
 
 	assert.Empty(decision.OAuthApp)
@@ -318,9 +318,9 @@ func TestCalendarSyncOAuthAppDecisionFallsBackToGmailBinding(t *testing.T) {
 	st := newCalendarDecisionStore(t)
 	src, err := st.GetOrCreateSource(sourceTypeGmail, "User@example.com")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceOAuthApp(src.ID, sql.NullString{String: "acme", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), src.ID, sql.NullString{String: "acme", Valid: true}))
 
-	decision, err := calendarSyncOAuthAppDecision(st, "user@example.com", nil, "", false)
+	decision, err := calendarSyncOAuthAppDecision(t.Context(), st, "user@example.com", nil, "", false)
 	require.NoError(err)
 
 	assert.Equal("acme", decision.OAuthApp)
@@ -334,15 +334,15 @@ func TestCalendarSyncOAuthAppDecisionKeepsCalendarDefaultOverGmailBinding(t *tes
 	st := newCalendarDecisionStore(t)
 	gmailSrc, err := st.GetOrCreateSource(sourceTypeGmail, "User@Acme.com")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceOAuthApp(gmailSrc.ID, sql.NullString{String: "acme", Valid: true}))
+	require.NoError(st.UpdateSourceOAuthApp(t.Context(), gmailSrc.ID, sql.NullString{String: "acme", Valid: true}))
 	calendarSrc, err := st.GetOrCreateSource(sourceTypeCalendar, "user@acme.com/primary")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(calendarSrc.ID,
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), calendarSrc.ID,
 		`{"account_email":"user@acme.com","calendar_id":"primary"}`))
 	existing, err := st.GetSourcesByTypeAndAccount(sourceTypeCalendar, "user@acme.com")
 	require.NoError(err)
 
-	decision, err := calendarSyncOAuthAppDecision(st, "user@acme.com", existing, "", false)
+	decision, err := calendarSyncOAuthAppDecision(t.Context(), st, "user@acme.com", existing, "", false)
 	require.NoError(err)
 
 	assert.Empty(decision.OAuthApp)
@@ -354,7 +354,7 @@ func TestRunConfiguredGCalSyncSkipsRetiredSourcesBeforeCredentials(t *testing.T)
 	st := testutil.NewTestStore(t)
 	retired, err := st.GetOrCreateSource(sourceTypeCalendar, "user@example.com/primary")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(retired.ID,
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), retired.ID,
 		`{"account_email":"user@example.com","calendar_id":"primary"}`))
 	require.NoError(st.AddAccountIdentity(retired.ID, "user@example.com", "account-email"))
 	active, err := st.GetOrCreateSource(sourceTypeCalendar, "archive@example.net/primary")
@@ -405,7 +405,7 @@ func TestSyncCalendarExplicitDiscoveryWithOnlyRetiredSources(t *testing.T) {
 			seed := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 			retired, err := seed.GetOrCreateSource(sourceTypeCalendar, "user@example.test/primary")
 			require.NoError(err)
-			require.NoError(seed.UpdateSourceSyncConfig(retired.ID,
+			require.NoError(seed.UpdateSourceSyncConfig(t.Context(), retired.ID,
 				`{"account_email":"user@example.test","calendar_id":"primary"}`))
 			active, err := seed.GetOrCreateSource(sourceTypeCalendar, "archive@example.test/primary")
 			require.NoError(err)
@@ -441,7 +441,7 @@ func TestSyncCalendarExplicitDiscoveryWithOnlyRetiredSources(t *testing.T) {
 			check, err := store.Open(cfg.DatabaseDSN())
 			require.NoError(err)
 			defer func() { _ = check.Close() }()
-			discovered, err := check.GetSourceByTypeAndIdentifier(sourceTypeCalendar, "user@example.test/discovered")
+			discovered, err := check.GetSourceByTypeAndIdentifier(t.Context(), sourceTypeCalendar, "user@example.test/discovered")
 			require.NoError(err)
 			assert.Zero(discovered.MergedIntoSourceID)
 		})
@@ -546,7 +546,7 @@ func TestCalendarTokenExpiredOrRevoked(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := calendarTokenExpiredOrRevoked(context.Background(), tt.prber, "user@example.com")
+			got := calendarTokenExpiredOrRevoked(t.Context(), tt.prber, "user@example.com")
 			assert.Equal(t, tt.want, got)
 		})
 	}

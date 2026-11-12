@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,24 +116,24 @@ func TestSourceSnapshot_HoldsOneReadTransactionAndRejectsReadsAfterClose(t *test
 	st := testutil.NewSQLiteTestStore(t)
 	id := seedAssemblyMessage(t, st, "email", "subject", "before")
 	var conversationID int64
-	require.NoError(st.DB().QueryRow(st.Rebind("SELECT conversation_id FROM messages WHERE id = ?"), id).Scan(&conversationID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT conversation_id FROM messages WHERE id = ?"), id).Scan(&conversationID))
 	participantID, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
 	require.NoError(err)
 	require.NoError(st.EnsureConversationParticipant(conversationID, participantID, "member"))
 	wantSequence, err := st.LatestEmbeddingChangeSequence(t.Context())
 	require.NoError(err)
 
-	snapshot, err := BeginSourceSnapshot(context.Background(), st)
+	snapshot, err := BeginSourceSnapshot(t.Context(), st)
 	require.NoError(err)
 	t.Cleanup(func() { _ = snapshot.Close() })
 	assert.Equal(wantSequence, snapshot.SourceSequence())
 
-	first, found, err := snapshot.Message(context.Background(), id)
+	first, found, err := snapshot.Message(t.Context(), id)
 	require.NoError(err)
 	require.True(found)
 	assert.Equal("before", first.Body)
 
-	rows, err := snapshot.Messages(context.Background(), AffectedScope{
+	rows, err := snapshot.Messages(t.Context(), AffectedScope{
 		Kind: "email", ConversationID: conversationID,
 		UTCStart: time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC),
 		UTCEnd:   time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC),
@@ -141,7 +142,7 @@ func TestSourceSnapshot_HoldsOneReadTransactionAndRejectsReadsAfterClose(t *test
 	require.Len(rows, 1)
 	assert.Equal(id, rows[0].ID)
 
-	conversation, found, err := snapshot.Conversation(context.Background(), conversationID)
+	conversation, found, err := snapshot.Conversation(t.Context(), conversationID)
 	require.NoError(err)
 	require.True(found)
 	assert.Equal("Synthetic conversation", conversation.Title)
@@ -151,13 +152,13 @@ func TestSourceSnapshot_HoldsOneReadTransactionAndRejectsReadsAfterClose(t *test
 
 	require.NoError(st.UpsertMessageBody(id,
 		sql.NullString{String: "after", Valid: true}, sql.NullString{}))
-	second, found, err := snapshot.Message(context.Background(), id)
+	second, found, err := snapshot.Message(t.Context(), id)
 	require.NoError(err)
 	require.True(found)
 	assert.Equal("before", second.Body, "all source rows must come from the same SQLite read transaction")
 
 	require.NoError(snapshot.Close())
-	_, _, err = snapshot.Message(context.Background(), id)
+	_, _, err = snapshot.Message(t.Context(), id)
 	require.ErrorIs(err, ErrSourceSnapshotClosed)
 	assert.NoError(snapshot.Close(), "closing a snapshot must be idempotent")
 }
@@ -168,9 +169,9 @@ func TestSourceSnapshot_SQLiteNormalizesOffsetTimestampsForUTCDayScopes(t *testi
 	st := testutil.NewSQLiteTestStore(t)
 	firstID := seedAssemblyMessage(t, st, "beeper", "", "offset message")
 	var conversationID, sourceID int64
-	require.NoError(st.DB().QueryRow(`SELECT conversation_id, source_id FROM messages WHERE id = ?`, firstID).
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT conversation_id, source_id FROM messages WHERE id = ?`, firstID).
 		Scan(&conversationID, &sourceID))
-	_, err := st.DB().Exec(`UPDATE messages SET sent_at = '2026-08-08T23:30:00-02:00' WHERE id = ?`, firstID)
+	_, err := st.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = '2026-08-08T23:30:00-02:00' WHERE id = ?`, firstID)
 	require.NoError(err)
 	secondID, err := st.UpsertMessage(&store.Message{
 		ConversationID: conversationID, SourceID: sourceID, SourceMessageID: "utc-earlier",
@@ -214,7 +215,7 @@ func TestCompositeAssembler_RoutesSpecializedTypesAndKeepsOrdinaryBehavior(t *te
 	blankID := seedAssemblyMessage(t, st, "discord", "", "   ")
 	skippedID := seedAssemblyMessage(t, st, "calendar_event", "Skipped", "must not embed")
 
-	snapshot, err := BeginSourceSnapshot(context.Background(), st)
+	snapshot, err := BeginSourceSnapshot(t.Context(), st)
 	require.NoError(err)
 	t.Cleanup(func() { _ = snapshot.Close() })
 	assembler := CompositeAssembler{
@@ -237,7 +238,7 @@ func TestCompositeAssembler_RoutesSpecializedTypesAndKeepsOrdinaryBehavior(t *te
 		{Kind: "duplicate-other-kind", MessageID: emailID},
 		{Kind: "duplicate-meeting", MessageID: meetingID},
 	}
-	docs, err := assembler.AssembleScopes(context.Background(), snapshot, scopes)
+	docs, err := assembler.AssembleScopes(t.Context(), snapshot, scopes)
 	require.NoError(err)
 
 	assert.Equal([]string{
@@ -265,12 +266,12 @@ func TestCompositeAssembler_BeeperUsesOrdinarySingletonUntilChatAssemblerIsInjec
 	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	id := seedAssemblyMessage(t, st, "beeper", "", "fallback chat text")
-	snapshot, err := BeginSourceSnapshot(context.Background(), st)
+	snapshot, err := BeginSourceSnapshot(t.Context(), st)
 	require.NoError(err)
 	t.Cleanup(func() { _ = snapshot.Close() })
 
 	docs, err := (CompositeAssembler{Policy: AssemblyPolicy{MaxChunkRunes: 100}}).
-		AssembleScopes(context.Background(), snapshot, []AffectedScope{{MessageID: id}})
+		AssembleScopes(t.Context(), snapshot, []AffectedScope{{MessageID: id}})
 	require.NoError(err)
 	require.Len(docs, 1)
 	assert.Equal(fmt.Sprintf("message:%d", id), docs[0].Key)
@@ -281,12 +282,12 @@ func TestCompositeAssembler_MessageScopeDedupIgnoresStalePayloadFields(t *testin
 	require := require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
 	id := seedAssemblyMessage(t, st, "email", "One", "one body")
-	snapshot, err := BeginSourceSnapshot(context.Background(), st)
+	snapshot, err := BeginSourceSnapshot(t.Context(), st)
 	require.NoError(err)
 	t.Cleanup(func() { _ = snapshot.Close() })
 
 	docs, err := (CompositeAssembler{Policy: AssemblyPolicy{MaxChunkRunes: 100}}).AssembleScopes(
-		context.Background(), snapshot, []AffectedScope{
+		t.Context(), snapshot, []AffectedScope{
 			{
 				Kind: "email", MessageID: id, ConversationID: 11,
 				UTCStart: time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC),
@@ -321,7 +322,7 @@ func TestSourceSnapshot_UndatedScopeExcludesDatedConversationRows(t *testing.T) 
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("test", fmt.Sprintf("undated-source-%d", time.Now().UnixNano()))
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID,
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID,
 		fmt.Sprintf("undated-conversation-%d", time.Now().UnixNano()), "Undated scope")
 	require.NoError(err)
 	insert := func(sourceID string, sentAt sql.NullTime) int64 {
@@ -337,10 +338,10 @@ func TestSourceSnapshot_UndatedScopeExcludesDatedConversationRows(t *testing.T) 
 	undatedID := insert("undated", sql.NullTime{})
 	insert("dated", sql.NullTime{Time: time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC), Valid: true})
 
-	snapshot, err := BeginSourceSnapshot(context.Background(), st)
+	snapshot, err := BeginSourceSnapshot(t.Context(), st)
 	require.NoError(err)
 	t.Cleanup(func() { _ = snapshot.Close() })
-	rows, err := snapshot.Messages(context.Background(), AffectedScope{
+	rows, err := snapshot.Messages(t.Context(), AffectedScope{
 		Kind: "beeper", ConversationID: conversationID, Undated: true,
 	})
 	require.NoError(err)
@@ -354,16 +355,22 @@ func TestSourceSnapshot_UndatedScopeExcludesDatedConversationRows(t *testing.T) 
 	assert.Len(deduplicated, 2, "undated and unbounded selectors have different identities")
 }
 
+// testSeedSequence gives each seeded row a distinct identifier. Wall-clock
+// nanoseconds repeat between consecutive calls on Windows, which made two
+// seeds upsert the same message.
+var testSeedSequence atomic.Uint64
+
 func seedAssemblyMessage(t *testing.T, st *store.Store, messageType, subject, body string) int64 {
 	t.Helper()
-	source, err := st.GetOrCreateSource("test", fmt.Sprintf("source-%d", time.Now().UnixNano()))
+	seq := testSeedSequence.Add(1)
+	source, err := st.GetOrCreateSource("test", fmt.Sprintf("source-%d", seq))
 	require.NoError(t, err)
-	conversationID, err := st.EnsureConversation(source.ID, fmt.Sprintf("conversation-%d", time.Now().UnixNano()), "Synthetic conversation")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, fmt.Sprintf("conversation-%d", seq), "Synthetic conversation")
 	require.NoError(t, err)
 	id, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
 		SourceID:        source.ID,
-		SourceMessageID: fmt.Sprintf("message-%d", time.Now().UnixNano()),
+		SourceMessageID: fmt.Sprintf("message-%d", seq),
 		MessageType:     messageType,
 		SentAt:          sql.NullTime{Time: time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC), Valid: true},
 		Subject:         sql.NullString{String: subject, Valid: subject != ""},

@@ -14,8 +14,8 @@ func TestGenerateMaintainsMetadataTrigrams(t *testing.T) {
 	db := openVaultDB(t, dir)
 	for table, index := range map[string]string{"messages": "messages_metadata_fts", "participants": "participants_metadata_fts", "message_recipients": "recipients_metadata_fts"} {
 		var want, got int
-		require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&want))
-		require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+index).Scan(&got))
+		require.NoError(t, db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&want))
+		require.NoError(t, db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+index).Scan(&got))
 		assert.Equal(t, want, got, table+" stays indexed during generation and append")
 	}
 }

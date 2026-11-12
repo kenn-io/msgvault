@@ -9,8 +9,8 @@ import (
 )
 
 // ActivityProjectionCursorContext reads a resumable pass's last committed
-// message. A changed token (identity epoch or configuration generation)
-// starts a new pass, without trusting progress from the previous target.
+// message. An empty token reads the saved position regardless of its token.
+// A nonempty token must match, so changed configuration starts a new pass.
 func (s *Store) ActivityProjectionCursorContext(ctx context.Context, pass, token string) (int64, error) {
 	var value string
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT value FROM archive_metadata WHERE key = ?`), "activity_spine_cursor_"+pass).Scan(&value)
@@ -27,7 +27,7 @@ func (s *Store) ActivityProjectionCursorContext(ctx context.Context, pass, token
 	if progress.AfterID < 0 {
 		return 0, fmt.Errorf("%w: negative activity %s cursor", ErrInvalidActivity, pass)
 	}
-	if progress.Token != token {
+	if token != "" && progress.Token != token {
 		return 0, nil
 	}
 	return progress.AfterID, nil

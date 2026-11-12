@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func assertInlineMessageSize(t *testing.T, imp *Importer, messageID, wantSize int64) {
@@ -100,10 +101,10 @@ func TestMediaSizeTracksDeferredCaptureBackfillAndRetainedReplay(t *testing.T) {
 	assertInlineMessageSize(t, imp, id, bodySize+actualSize)
 	assertInlineMessageSize(t, imp, secondID, secondBodySize+actualSize)
 	assertInlineSizeStats(t, imp, 2, bodySize+secondBodySize+2*actualSize, 2*actualSize, 2)
-	refs, err := imp.store.MessageInlineProviderAttachments(id)
+	refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), id)
 	requires.NoError(err)
 	requires.Len(refs, 1)
-	secondRefs, err := imp.store.MessageInlineProviderAttachments(secondID)
+	secondRefs, err := imp.store.MessageInlineProviderAttachments(t.Context(), secondID)
 	requires.NoError(err)
 	requires.Len(secondRefs, 1)
 	assertions.NotEmpty(refs["inline:document:1"].ContentHash)
@@ -175,10 +176,57 @@ func TestMediaSizeIncludesPendingExcludedAndFailedOccurrences(t *testing.T) {
 			id := archivedMessage(t, imp.store, summary.SourceID, 1, 1)
 			assertInlineMessageSize(t, imp, id, int64(len(message.Text))+tc.wantSize)
 			assertInlineSizeStats(t, imp, 1, int64(len(message.Text))+tc.wantSize, tc.wantSize, 1)
-			refs, err := imp.store.MessageInlineProviderAttachments(id)
+			refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), id)
 			requires.NoError(err)
 			assertions.Equal(tc.state, refs["inline:document:1"].State)
 			assertions.Equal(tc.wantSize, int64(refs["inline:document:1"].Size))
 		})
 	}
+}
+
+// A cancel that lands after a backfill commits the downloaded attachment row
+// must still leave the message size counting the downloaded bytes. Later
+// backfills skip the message because its media is complete.
+//
+// Not parallel: it replaces the process-wide slog default and SQL log options.
+func TestMediaBackfillCancelAfterStoredRowKeepsMessageSize(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	imp, client, opts := importerFixture(t)
+	message := syntheticMessage(1, 1, "note")
+	message.Media = []Media{{ID: "document:1", ChatID: 1, MessageID: 1, Role: "document", Size: 40}}
+	client.messages[1] = []Message{message}
+	opts.NoMedia = true
+	first, err := imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	id := archivedMessage(t, imp.store, first.SourceID, 1, 1)
+	assertInlineMessageSize(t, imp, id, int64(len(message.Text))+40)
+
+	content := "downloaded"
+	client.files = func(_ context.Context, _ int64, _ []int64) ([]Media, error) {
+		return []Media{{ID: "document:1", ChatID: 1, MessageID: 1, Role: "document", Size: 40, URL: "https://api.inline.chat/file"}}, nil
+	}
+	imp.mediaTransport = mediaRoundTripper(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, ContentLength: int64(len(content)), Body: io.NopCloser(strings.NewReader(content)), Request: request}, nil
+	})
+	queryCtx := context.WithoutCancel(t.Context())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var stored int
+		requires.NoError(imp.store.DB().QueryRowContext(queryCtx, imp.store.Rebind(`SELECT COUNT(*) FROM attachments
+			WHERE message_id = ? AND content_hash IS NOT NULL AND content_hash <> ''`), id).Scan(&stored))
+		return stored > 0
+	})
+
+	opts.NoMedia = false
+	_, err = imp.BackfillMedia(ctx, opts)
+	requires.ErrorIs(err, context.Canceled)
+	requires.True(canceled(), "the cancel must land after the downloaded row commits")
+
+	refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), id)
+	requires.NoError(err)
+	requires.Len(refs, 1)
+	assertions.Equal(attachmentpolicy.StateStored, refs["inline:document:1"].State)
+	assertInlineMessageSize(t, imp, id, int64(len(message.Text)+len(content)))
 }

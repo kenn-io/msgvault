@@ -3,6 +3,7 @@
   import type {
     EntryRow,
     ExploreGroupDimension,
+    ExploreGroupOverview,
     ExplorePredicate
   } from '../../explore/models';
 
@@ -17,6 +18,7 @@
         count?: number;
         estimatedBytes?: number;
         latestAt?: string;
+        overview?: ExploreGroupOverview;
         /** Authority from this group detail result, never the outer list. */
         meetingScope?: MeetingExploreScope;
       };
@@ -26,9 +28,14 @@
 </script>
 
 <script lang="ts">
+  import { formatDate } from '../../util/format';
+  import GroupOverview from './GroupOverview.svelte';
+  import { groupedByLabel } from '../../explore/labels';
   import { messageTitle } from '../../archive/message-title';
+  import { parseRecordingSelection } from '../../archive/recording-selection';
   import { Button, EmptyState, IconButton } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
+  import ArrowLeft from '@lucide/svelte/icons/arrow-left';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -38,7 +45,6 @@
   import { filtersForGroup } from '../../explore/group-context';
   import type { ExploreCacheUnavailable, ExploreFileFact, ExploreFilter } from '../../explore/models';
   import { isEmailMessageType } from '../../explore/models';
-  import { formatBytes } from '../../util/format';
   import IdentityBadge from '../explore/IdentityBadge.svelte';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
   import AttachmentRail from './AttachmentRail.svelte';
@@ -53,6 +59,7 @@
     unavailable = undefined,
     predicate,
     onClose = undefined,
+    back = false,
     onRetry = undefined,
     conversationAnchorId = undefined,
     conversationStart = undefined,
@@ -72,6 +79,7 @@
     unavailable?: ExploreCacheUnavailable;
     predicate: ExplorePredicate;
     onClose?: () => void;
+    back?: boolean;
     onRetry?: () => void;
     /** Overrides the entry's own anchor when the reader navigated within the
      * thread (URL-carried, so Back/Forward restore the same message). */
@@ -97,7 +105,7 @@
   let requestController: AbortController | undefined;
   const title = $derived(selection
     ? selection.kind === 'entry' ? selection.row.title || '(untitled)' : selection.kind === 'archive' ? messageTitle(selection.message.subject, selection.message.conversation_title) || '(untitled)' : selection.label
-    : targetKey || 'Selected result');
+    : parseRecordingSelection(targetKey) !== undefined ? 'Message' : targetKey || 'Selected result');
   const showFiles = $derived(selection?.kind === 'group' &&
     (selection.dimension === 'participant' || selection.dimension === 'domain'));
   const conversationRow = $derived(selection?.kind === 'entry' && selection.row.conversation_id &&
@@ -117,17 +125,15 @@
       if (row.attachment_count > 0) parts.push(`${row.attachment_count.toLocaleString()} ${row.attachment_count === 1 ? 'file' : 'files'}`);
       return parts.filter(Boolean).join(' · ');
     }
-    const parts = [`Grouped by ${selection.dimension}`];
-    if (selection.count !== undefined) parts.push(`${selection.count.toLocaleString()} items`);
-    if (selection.estimatedBytes !== undefined) parts.push(formatBytes(selection.estimatedBytes));
-    if (selection.latestAt) parts.push(`latest ${formatDate(selection.latestAt)}`);
-    return parts.join(' · ');
+    return groupedByLabel([selection.dimension]);
   });
 
   const filesPredicateFingerprint = $derived(JSON.stringify(predicate));
+  const filesSelectionKey = $derived(selection?.kind === 'group' ? JSON.stringify([selection.dimension, selection.key]) : '');
 
   $effect(() => {
-    const selected = selection;
+    void filesSelectionKey;
+    const selected = untrack(() => selection);
     void filesPredicateFingerprint;
     const currentPredicate = untrack(() => predicate);
     requestGeneration += 1;
@@ -179,18 +185,18 @@
   });
 
   onDestroy(() => { requestGeneration += 1; requestController?.abort(); });
-
-  function formatDate(value: string): string {
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.valueOf())
-      ? value
-      : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(parsed);
+  function markDismissButton(button: HTMLButtonElement) {
+    button.dataset.readerDismiss = '';
   }
-
 </script>
 
-<aside class="reading-pane" aria-label={`Reading pane: ${title}`}>
+<aside class="reading-pane" class:reading-pane--back={back} aria-label={`Reading pane: ${title}`}>
   <header class="pane-header">
+    {#if back}
+      <IconButton {@attach markDismissButton} ariaLabel="Back to results" onclick={() => onClose?.()}>
+        <ArrowLeft size={16} />
+      </IconButton>
+    {/if}
     <div class="pane-heading">
       <strong class="pane-title">{title}</strong>
       {#if metaStrip}<span class="pane-meta" data-mono>{metaStrip}</span>{/if}
@@ -205,9 +211,11 @@
       {#if onOpenPerson && counterpartParticipantId !== undefined}
         <Button size="sm" surface="outline" label="Open person" onclick={() => { if (counterpartParticipantId !== undefined) onOpenPerson?.(counterpartParticipantId); }} />
       {/if}
-      <IconButton size="sm" ariaLabel="Close reading pane" onclick={() => onClose?.()}>
-        <X size={14} />
-      </IconButton>
+      {#if !back}
+        <IconButton {@attach markDismissButton} size="sm" ariaLabel="Close reading pane" onclick={() => onClose?.()}>
+          <X size={14} />
+        </IconButton>
+      {/if}
     </div>
   </header>
 
@@ -248,15 +256,19 @@
       </section>
     {:else}
       <div class="group-scroll" aria-label="Group details">
+        {#if selection.overview}<GroupOverview {selection} />{/if}
         {#if showFiles}
           {#if selection.meetingScope}
-            <MeetingPanel {client} scope={{ kind: 'explore', explore: selection.meetingScope }}
+            <MeetingPanel hideWhenEmpty {client} scope={{ kind: 'explore', explore: selection.meetingScope }}
               onReloadScope={onReloadMeetings} {onOpenMeeting} />
           {:else}
-            <p class="pane-status" role="status">Reload this group to load meeting activity with its current search scope.</p>
+            <div class="pane-status" role="status">
+              <p>Reload this group to load meeting activity with its current search scope.</p>
+              {#if onReloadMeetings}<Button label="Reload meeting activity" size="sm" surface="soft" onclick={onReloadMeetings} />{/if}
+            </div>
           {/if}
           <AttachmentRail files={files} totalCount={totalFiles} loading={filesLoading} error={filesError} />
-        {:else}
+        {:else if !selection.overview}
           <section class="pane-status">
             <p>No further detail is available for this group.</p>
           </section>
@@ -340,6 +352,20 @@
     gap: var(--control-gap);
   }
 
+  .reading-pane--back .pane-heading {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .reading-pane--back .pane-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .pane-body {
     display: flex;
     min-height: 0;
@@ -351,6 +377,12 @@
     min-height: 0;
     flex: 1;
     overflow: auto;
+  }
+
+  .group-scroll :global(.meeting-panel-card .panel-heading),
+  .group-scroll :global(.meeting-panel-card .overview-section),
+  .group-scroll :global(.meeting-panel-card .actions-section) {
+    padding-inline: calc(var(--pane-pad-x) - 1px);
   }
 
   .pane-status {

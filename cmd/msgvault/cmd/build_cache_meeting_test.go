@@ -67,14 +67,14 @@ func TestBuildCache_IncludesMeetingTranscripts(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(meetingID, "from", []int64{daveID}, []string{""}))
 	require.NoError(st.ReplaceMessageRecipients(meetingID, "to", []int64{bobID}, []string{""}))
-	meetingLabelID, err := st.EnsureLabel(meetSrc.ID, "MEETING", "Meeting", "system")
+	meetingLabelID, err := st.EnsureLabel(t.Context(), meetSrc.ID, "MEETING", "Meeting", "system")
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageLabels(meetingID, []int64{meetingLabelID}))
-	require.NoError(st.UpsertAttachment(meetingID, "transcript.txt", "text/plain", "", "", 42))
+	require.NoError(st.UpsertAttachment(t.Context(), meetingID, "transcript.txt", "text/plain", "", "", 42))
 
 	require.NoError(st.Close())
 
-	result, err := buildCache(dbPath, analyticsDir, false)
+	result, err := buildCache(t.Context(), dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache")
 	require.False(result.Skipped, "buildCache unexpectedly skipped")
 
@@ -85,13 +85,15 @@ func TestBuildCache_IncludesMeetingTranscripts(t *testing.T) {
 	// Both messages are searchable from the cache.
 	msgPattern := filepath.Join(analyticsDir, "messages", "**", "*.parquet")
 	var msgCount int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?, hive_partitioning=true)`, msgPattern).Scan(&msgCount))
 	assert.Equal(2, msgCount, "email and meeting transcript should be exported")
 
 	var meetCount int64
 	var cachedConversationID sql.NullInt64
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*), MAX(conversation_id) FROM read_parquet(?, hive_partitioning=true) WHERE message_type = 'meeting_transcript'`,
 		msgPattern).Scan(&meetCount, &cachedConversationID))
 	assert.Equal(int64(1), meetCount, "meeting_transcript row in messages Parquet")
@@ -100,29 +102,34 @@ func TestBuildCache_IncludesMeetingTranscripts(t *testing.T) {
 	// Meeting attendee and email recipient junction rows are both searchable.
 	recPattern := filepath.Join(analyticsDir, "message_recipients", "*.parquet")
 	var bobRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = ?`, recPattern, bobID).Scan(&bobRows))
 	assert.Equal(1, bobRows, "meeting attendee should be exported")
 
 	var carolRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE participant_id = ?`, recPattern, carolID).Scan(&carolRows))
 	assert.Equal(1, carolRows, "email recipient must still be exported")
 
 	var meetingConversationRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE id = ? AND conversation_type = 'meeting'`,
 		filepath.Join(analyticsDir, "conversations", "*.parquet"), meetConvID).Scan(&meetingConversationRows))
 	assert.Equal(1, meetingConversationRows, "meeting conversation should be exported")
 
 	var meetingLabelRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE message_id = ? AND label_id = ?`,
 		filepath.Join(analyticsDir, "message_labels", "*.parquet"), meetingID, meetingLabelID).Scan(&meetingLabelRows))
 	assert.Equal(1, meetingLabelRows, "meeting label junction should be exported")
 
 	var meetingAttachmentRows int
-	require.NoError(duckdb.QueryRow(
+	require.NoError(duckdb.QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM read_parquet(?) WHERE message_id = ?`,
 		filepath.Join(analyticsDir, "attachments", "*.parquet"), meetingID).Scan(&meetingAttachmentRows))
 	assert.Equal(1, meetingAttachmentRows, "meeting attachment junction should be exported")

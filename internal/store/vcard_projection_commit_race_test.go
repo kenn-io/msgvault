@@ -130,7 +130,7 @@ func TestPostgreSQLVCardResourceCommitRejectsSemanticWriteCommittedAfterSnapshot
 	writerDone := make(chan error, 1)
 	gate.run(func() {
 		_, writeErr := st.AddPersonCategoryContext(
-			context.Background(), person.ID, store.PersonCategoryInput{
+			t.Context(), person.ID, store.PersonCategoryInput{
 				OriginalValue: "Changed After The Snapshot",
 				Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 			})
@@ -143,7 +143,7 @@ func TestPostgreSQLVCardResourceCommitRejectsSemanticWriteCommittedAfterSnapshot
 	commitDone := make(chan error, 1)
 	gate.run(func() {
 		_, commitErr := st.CommitVCardResourceEnvelopeContext(
-			context.Background(), "book", "pg-projection-race", created.Revision,
+			t.Context(), "book", "pg-projection-race", created.Revision,
 			snapshot.Fingerprint, prepared,
 		)
 		commitDone <- commitErr
@@ -154,7 +154,7 @@ func TestPostgreSQLVCardResourceCommitRejectsSemanticWriteCommittedAfterSnapshot
 	// way the assertions below, not this wait, decide the test.
 	waitForPostgreSQLBlockedBy(ctx, t, st, writerPID, "FOR UPDATE")
 
-	gate.release()
+	gate.release(t.Context())
 	requirements.NoError(<-writerDone, "semantic write")
 	commitErr := <-commitDone
 
@@ -211,7 +211,7 @@ func TestPostgreSQLVCardResourceCommitReportsEnvelopeReplacedAfterSnapshotAsWrit
 	gate.run(func() {
 		expected := created.Revision
 		_, writeErr := st.PutVCardResourceEnvelopeContext(
-			context.Background(), store.VCardResourceEnvelopeInput{
+			t.Context(), store.VCardResourceEnvelopeInput{
 				PersonID: person.ID, ExpectedRevision: &expected,
 				Envelope: rawReplacement,
 			})
@@ -224,7 +224,7 @@ func TestPostgreSQLVCardResourceCommitReportsEnvelopeReplacedAfterSnapshotAsWrit
 	commitDone := make(chan error, 1)
 	gate.run(func() {
 		_, commitErr := st.CommitVCardResourceEnvelopeContext(
-			context.Background(), "book", "pg-envelope-race", created.Revision,
+			t.Context(), "book", "pg-envelope-race", created.Revision,
 			snapshot.Fingerprint, rendered,
 		)
 		commitDone <- commitErr
@@ -236,7 +236,7 @@ func TestPostgreSQLVCardResourceCommitReportsEnvelopeReplacedAfterSnapshotAsWrit
 		"commit did not reach the envelope UPDATE behind the raw writer",
 	)
 
-	gate.release()
+	gate.release(t.Context())
 	requirements.NoError(<-writerDone, "raw envelope write")
 	commitErr := <-commitDone
 
@@ -325,8 +325,9 @@ func openPostgreSQLUpdateGate(
 	holder, err := st.DB().Conn(ctx)
 	requirements.NoError(err, "reserve advisory-lock connection")
 	gate := &postgreSQLUpdateGate{t: t, holder: holder, key: key, locked: true}
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		gate.release()
+		gate.release(context.WithoutCancel(t.Context()))
 		for _, finished := range gate.finished {
 			waitForPostgreSQLTestGoroutine(t, finished)
 		}
@@ -364,12 +365,13 @@ func (g *postgreSQLUpdateGate) run(fn func()) {
 }
 
 // release opens the gate; it is idempotent so cleanup can call it again.
-func (g *postgreSQLUpdateGate) release() {
+func (g *postgreSQLUpdateGate) release(ctx context.Context) {
 	if !g.locked {
 		return
 	}
 	g.locked = false
-	_, err := g.holder.ExecContext(context.Background(),
+	_, err := g.holder.ExecContext(
+		ctx,
 		`SELECT pg_advisory_unlock($1)`, g.key)
 	assert.NoError(g.t, err, "release update gate")
 }

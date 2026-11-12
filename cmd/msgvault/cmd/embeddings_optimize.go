@@ -74,13 +74,13 @@ func runEmbeddingsOptimizeManaged(cmd *cobra.Command, args []string, afterBatch 
 		return errors.New("embeddings optimize is only needed for SQLite; PostgreSQL uses its native vector index")
 	}
 	if afterBatch == nil {
-		release, err := acquireDirectSQLiteWriteLock(cfg, state)
+		release, err := acquireDirectSQLiteWriteLock(cmd.Context(), cfg, state)
 		if err != nil {
 			return err
 		}
 		defer release()
 	}
-	if err := ensureMainSchema(state); err != nil {
+	if err := ensureMainSchema(cmd.Context(), state); err != nil {
 		return err
 	}
 	backend, closeBackend, err := openEmbeddingsBackend(cmd.Context())

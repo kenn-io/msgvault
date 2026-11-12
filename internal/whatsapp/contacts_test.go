@@ -60,7 +60,7 @@ func TestImportContactsPhoneCountryCodePolicy(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
-			participantID, err := st.EnsureParticipantByPhone(tt.participantPhone, "", "whatsapp")
+			participantID, err := st.EnsureParticipantByPhone(t.Context(), tt.participantPhone, "", "whatsapp")
 			require.NoError(err)
 
 			path := filepath.Join(t.TempDir(), "contacts.vcf")
@@ -71,7 +71,7 @@ func TestImportContactsPhoneCountryCodePolicy(t *testing.T) {
 				"END:VCARD\r\n"
 			require.NoError(os.WriteFile(path, []byte(vcf), 0o600))
 
-			matched, total, err := ImportContacts(st, path)
+			matched, total, err := ImportContacts(t.Context(), st, path)
 			require.NoError(err)
 			assert.Equal(1, total)
 			assert.Equal(tt.wantMatched, matched)

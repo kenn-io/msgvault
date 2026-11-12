@@ -36,7 +36,7 @@ func seedDiscoveryChat(tb testing.TB, st *store.Store, sourceID int64, name, kin
 func BenchmarkChatDiscoveryRepeatedRecipientAlias(b *testing.B) {
 	for _, fixture := range []struct{ aliases, unrelated int }{{1, 0}, {1000, 0}, {1, 1000}, {1000, 1000}} {
 		b.Run(strconv.Itoa(fixture.aliases)+"/mail-"+strconv.Itoa(fixture.unrelated), func(b *testing.B) {
-			st, err := store.OpenForTest(filepath.Join(b.TempDir(), "discovery.db"))
+			st, err := store.OpenForTest(b.Context(), filepath.Join(b.TempDir(), "discovery.db"))
 			require.NoError(b, err)
 			b.Cleanup(func() { _ = st.Close() })
 			require.NoError(b, st.InitSchema())
@@ -110,7 +110,7 @@ func TestChatDiscoveryFindsDifferentNamesAcrossNetworks(t *testing.T) {
 	for _, result := range page.Results {
 		assertions.Positive(result.MessageID)
 		var visible int64
-		requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM messages WHERE id = ? AND conversation_id = ? AND deleted_at IS NULL"),
+		requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM messages WHERE id = ? AND conversation_id = ? AND deleted_at IS NULL"),
 			result.MessageID, result.ConversationID).Scan(&visible), "the anchor must be a visible message in its chat")
 	}
 }
@@ -150,7 +150,7 @@ func TestChatDiscoveryUnicodeLimitsAndArchiveScope(t *testing.T) {
 	source, err := st.GetOrCreateSource("apple_messages", "archive@example.test")
 	requirements.NoError(err)
 	first, firstHidden := seedDiscoveryChat(t, st, source.ID, "Émile Example", "direct_chat", time.Unix(100, 0))
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), firstHidden)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), firstHidden)
 	requirements.NoError(err)
 	peer, err := st.EnsureParticipant("Émile Example@example.test", "Émile Example", "example.test")
 	requirements.NoError(err)
@@ -160,7 +160,7 @@ func TestChatDiscoveryUnicodeLimitsAndArchiveScope(t *testing.T) {
 	second, _ := seedDiscoveryChat(t, st, source.ID, "Émile Other", "group_chat", time.Unix(200, 0))
 	seedDiscoveryChat(t, st, source.ID, "Émile Email", "email_thread", time.Unix(300, 0))
 	_, hidden := seedDiscoveryChat(t, st, source.ID, "Émile Hidden", "channel", time.Unix(400, 0))
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), hidden)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), hidden)
 	requirements.NoError(err)
 	// Source tombstones preserve archived content; dedup tombstones hide it.
 	requirements.NoError(st.MarkMessageDeleted(source.ID, "first-live"))
@@ -220,14 +220,14 @@ func TestChatDiscoveryUsesMembersRecipientAliasesAndCuratedNames(t *testing.T) {
 	label := "Curated Friend"
 	person, _, err := st.CreatePersonFromParticipantWithDisplayNameContext(t.Context(), member, &label)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO person_names
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_names
 		(person_id, name_kind, formatted, original_value, source) VALUES (?, 'nickname', ?, ?, 'user')`),
 		person.ID, "Alternate Friend", "Alternate Friend")
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO person_names
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_names
 		(person_id, name_kind, original_value, source, active_until) VALUES (?, 'nickname', 'Retired Friend', 'user', CURRENT_TIMESTAMP)`), person.ID)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO participant_identifiers
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers
 		(participant_id, identifier_type, identifier_value) VALUES (?, 'username', 'HandleToken')`), member)
 	requirements.NoError(err)
 	other, err := st.GetOrCreateSource("beeper", "other-account")
@@ -363,7 +363,7 @@ func TestChatDiscoveryFiltersSourceOwners(t *testing.T) {
 				proof, err := st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "proof", ConversationID: proofChat,
 					MessageType: "beeper", SenderID: sql.NullInt64{Int64: owner, Valid: true}, IsFromMe: true})
 				requirements.NoError(err)
-				_, err = st.DB().Exec(st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), proof)
+				_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), proof)
 				requirements.NoError(err)
 			}
 			if tc.removed {
@@ -450,7 +450,7 @@ func TestBeeperFallbackIDSQLMatchesProducer(t *testing.T) {
 			var got string
 			statement := `WITH input AS (SELECT CAST(? AS TEXT) AS account, CAST(? AS TEXT) AS user_id) SELECT ` +
 				beeperidentity.FallbackSQL(driver, "account", "user_id") + ` FROM input`
-			require.NoError(t, st.DB().QueryRow(st.Rebind(statement), tc.account, tc.user).Scan(&got))
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(statement), tc.account, tc.user).Scan(&got))
 			assert.Equal(t, beeperidentity.Fallback(tc.account, tc.user), got)
 		})
 	}
@@ -550,7 +550,7 @@ func TestChatDiscoveryRanksLiveActivityAndStableTies(t *testing.T) {
 	second, _ := seedDiscoveryChat(t, st, source.ID, "Taylor Two", "direct_chat", time.Unix(100, 0))
 	hidden, err := st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "hidden-newest", ConversationID: first, MessageType: "beeper", SentAt: sql.NullTime{Time: time.Unix(500, 0), Valid: true}})
 	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), hidden)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), hidden)
 	requirements.NoError(err)
 	recent, _ := seedDiscoveryChat(t, st, source.ID, "Taylor Three", "direct_chat", time.Unix(200, 0))
 	page, err := st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "Taylor", Limit: 2})
@@ -595,7 +595,7 @@ func TestChatDiscoveryAnchorsNewestVisibleMessage(t *testing.T) {
 	insert(dated, "middle", at(200))
 	insert(dated, "undated", nil)
 	hidden := insert(dated, "hidden", at(400))
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), hidden)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?"), hidden)
 	requirements.NoError(err)
 	undated, err := st.EnsureConversationWithType(source.ID, "undated", "direct_chat", "Anchor Undated")
 	requirements.NoError(err)
@@ -634,7 +634,7 @@ func TestChatDiscoveryAnchorsNewestInstantAcrossOffsets(t *testing.T) {
 	requirements.Equal(newest, page.Results[0].MessageID)
 
 	// A date repair that makes the other message newest moves the anchor.
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET sent_at = ? WHERE id = ?"),
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET sent_at = ? WHERE id = ?"),
 		time.Date(2026, 3, 1, 12, 0, 0, 0, time.FixedZone("plus-two", 2*60*60)), older)
 	requirements.NoError(err)
 	page, err = st.SearchChatsContext(t.Context(), store.ChatDiscoveryQuery{Query: "Offset"})

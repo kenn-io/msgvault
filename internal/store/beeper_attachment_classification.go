@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -17,10 +18,11 @@ type BeeperAttachmentClassification struct {
 // and roles without replacing rows or touching occurrence identity. Attachments
 // absent from the archived payload become unknown so stale rows fail closed.
 func (s *Store) SetBeeperAttachmentClassifications(
+	ctx context.Context,
 	messageID int64, classifications map[string]BeeperAttachmentClassification,
 ) (int64, error) {
 	var changed int64
-	err := s.withTx(func(tx *loggedTx) error {
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		resetQuery := fmt.Sprintf(`
 			UPDATE attachments
 			SET attachment_metadata = %s,
@@ -48,7 +50,7 @@ func (s *Store) SetBeeperAttachmentClassifications(
 				resetArgs = append(resetArgs, sourceAttachmentID)
 			}
 		}
-		result, err := tx.Exec(resetQuery, resetArgs...)
+		result, err := tx.ExecContext(ctx, resetQuery, resetArgs...)
 		if err != nil {
 			return fmt.Errorf("clear stale Beeper attachment classifications: %w", err)
 		}
@@ -67,7 +69,7 @@ func (s *Store) SetBeeperAttachmentClassifications(
 			} else if classification.IsPreview {
 				role = AttachmentRolePreview
 			}
-			result, err := tx.Exec(fmt.Sprintf(`
+			result, err := tx.ExecContext(ctx, fmt.Sprintf(`
 				UPDATE attachments
 				SET attachment_metadata = %s,
 				    attachment_role = ?,
@@ -95,7 +97,7 @@ func (s *Store) SetBeeperAttachmentClassifications(
 			changed += n
 		}
 		if changed > 0 {
-			if err := s.bumpDerivedDataRevision(tx); err != nil {
+			if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
 				return fmt.Errorf("advance Beeper attachment cache revision: %w", err)
 			}
 		}

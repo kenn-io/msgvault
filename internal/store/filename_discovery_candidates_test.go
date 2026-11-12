@@ -21,7 +21,7 @@ func filenameCandidateFixture(t *testing.T, names []string) (*storetest.Fixture,
 	var ids []int64
 	for _, name := range names {
 		var id int64
-		require.NoError(t, tx.QueryRow(f.Store.Rebind(`INSERT INTO attachments
+		require.NoError(t, tx.QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments
 			(message_id, filename, storage_path) VALUES(?,?, '') RETURNING id`), message, name).Scan(&id))
 		ids = append(ids, id)
 	}

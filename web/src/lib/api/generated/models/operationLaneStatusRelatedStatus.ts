@@ -7,8 +7,6 @@ export type OperationLaneStatusRelatedStatus =
 
 export const OperationLaneStatusRelatedStatus = {
   listSourceStatus: "listSourceStatus",
-  getDocumentIndexStatus: "getDocumentIndexStatus",
-  getDocumentVectorStatus: "getDocumentVectorStatus",
   getVisualAttachmentStatus: "getVisualAttachmentStatus",
   getCardDAVStatus: "getCardDAVStatus",
 } as const;

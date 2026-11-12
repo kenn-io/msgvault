@@ -220,7 +220,7 @@ func seedGmailAuditSnapshotMessage(
 ) int64 {
 	t.Helper()
 	require := require.New(t)
-	conversationID, err := st.EnsureConversation(sourceID, "thread-"+sourceMessageID, sourceMessageID)
+	conversationID, err := st.EnsureConversation(t.Context(), sourceID, "thread-"+sourceMessageID, sourceMessageID)
 	require.NoError(err)
 	participantID, err := st.EnsureParticipant(fromAddress, "Snapshot Sender", "example.test")
 	require.NoError(err)

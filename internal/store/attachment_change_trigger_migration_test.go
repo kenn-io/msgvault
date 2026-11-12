@@ -76,7 +76,7 @@ func TestInitSchemaUpgradesAttachmentStateChangeTrigger(t *testing.T) {
 	f := storetest.New(t)
 	messageID := f.CreateMessage("attachment-state-upgrade")
 	attachmentID := createJournalAttachment(t, f, messageID, "part:1", "a")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = 'pending' WHERE id = ?`), attachmentID)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET attachment_state = 'pending' WHERE id = ?`), attachmentID)
 	require.NoError(err)
 
 	consumer, _, err := f.Store.RegisterAttachmentChangeConsumer(t.Context(), "document-index/v1")
@@ -89,27 +89,27 @@ func TestInitSchemaUpgradesAttachmentStateChangeTrigger(t *testing.T) {
 		drop += " ON attachments"
 		previousTrigger = previousPostgresAttachmentChangeUpdateTrigger
 	}
-	_, err = f.Store.DB().Exec(drop)
+	_, err = f.Store.DB().ExecContext(t.Context(), drop)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(previousTrigger)
+	_, err = f.Store.DB().ExecContext(t.Context(), previousTrigger)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(`DELETE FROM applied_migrations WHERE name = 'message_and_attachment_triggers_v12'`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM applied_migrations WHERE name = 'message_and_attachment_triggers_v12'`)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(`UPDATE archive_metadata SET value = '9' WHERE key = 'schema_version'`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value = '9' WHERE key = 'schema_version'`)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(`INSERT INTO applied_migrations (name) VALUES ('message_and_attachment_triggers_v10') ON CONFLICT (name) DO NOTHING`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `INSERT INTO applied_migrations (name) VALUES ('message_and_attachment_triggers_v10') ON CONFLICT (name) DO NOTHING`)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(`INSERT INTO applied_migrations (name) VALUES ('message_and_attachment_triggers_v11') ON CONFLICT (name) DO NOTHING`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `INSERT INTO applied_migrations (name) VALUES ('message_and_attachment_triggers_v11') ON CONFLICT (name) DO NOTHING`)
 	require.NoError(err)
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = 'stored' WHERE id = ?`), attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET attachment_state = 'stored' WHERE id = ?`), attachmentID)
 	require.NoError(err)
 	assert.Zero(attachmentChangeCount(t, f), "the previous trigger misses state-only changes")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = 'pending' WHERE id = ?`), attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET attachment_state = 'pending' WHERE id = ?`), attachmentID)
 	require.NoError(err)
 
 	require.NoError(f.Store.InitSchema())
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = 'stored' WHERE id = ?`), attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET attachment_state = 'stored' WHERE id = ?`), attachmentID)
 	require.NoError(err)
 	changes, err := f.Store.ListAttachmentChanges(t.Context(), consumer.ConsumerKey, 10)
 	require.NoError(err)
@@ -119,7 +119,7 @@ func TestInitSchemaUpgradesAttachmentStateChangeTrigger(t *testing.T) {
 	assert.Equal(attachmentID, requireInt64Pointer(t, changes[0].NewAttachmentID))
 	assert.Equal(messageID, requireInt64Pointer(t, changes[0].NewMessageID))
 
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET attachment_state = 'stored' WHERE id = ?`), attachmentID)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET attachment_state = 'stored' WHERE id = ?`), attachmentID)
 	require.NoError(err)
 	assert.Equal(1, attachmentChangeCount(t, f), "an unchanged state emits no extra event")
 }

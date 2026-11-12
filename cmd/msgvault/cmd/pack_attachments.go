@@ -39,7 +39,7 @@ func runPackAttachmentsLocal(cmd *cobra.Command) error {
 		return errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
-	s, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}

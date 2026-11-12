@@ -69,7 +69,7 @@ func TestPersonAndRelationshipWritesRetryDeadlock(t *testing.T) {
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			t.Cleanup(cancel)
 			low := createEnvelopePerson(t, st, fmt.Sprintf("low%d@example.com", i))
 			high := createEnvelopePerson(t, st, fmt.Sprintf("high%d@example.com", i))

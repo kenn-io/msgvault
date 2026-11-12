@@ -17,7 +17,7 @@ func newIMAPIdentityFixture(t *testing.T) imapMembershipFixture {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "imap://identity@example.com:143")
 	require.NoError(t, err)
-	convID, err := st.EnsureConversation(source.ID, "identity-thread", "Identity thread")
+	convID, err := st.EnsureConversation(t.Context(), source.ID, "identity-thread", "Identity thread")
 	require.NoError(t, err)
 	return imapMembershipFixture{store: st, source: source, convID: convID}
 }
@@ -33,7 +33,7 @@ func TestIMAPIdentity_CanonicalIdentitySkipsRawPriming(t *testing.T) {
 			Mailbox: "INBOX", UIDValidity: 17, UID: 1, SourceMessageID: "canonical",
 		}},
 	}}))
-	_, err := f.store.DB().Exec(f.store.Rebind(`
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
 		INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
 		VALUES (?, ?, 'mime', 'zlib')
 	`), messageID, []byte("invalid zlib"))
@@ -80,7 +80,7 @@ func TestIMAPIdentity_ResetSameUIDIdentityMismatchSelectsIncomingMessage(t *test
 	assertions.True(messageTombstoned(t, f.store, oldID))
 
 	var oldSourceID string
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
 		"SELECT source_message_id FROM messages WHERE id = ?"), oldID).Scan(&oldSourceID))
 	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceID)
 }
@@ -134,7 +134,7 @@ func TestIMAPIdentity_ResetPreservesCanonicalIdentity(t *testing.T) {
 	gotMessageID, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 20, 1)
 	assertions.Equal(newID, gotMessageID)
 	var archiveMessageID int64
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		SELECT message_id FROM imap_message_memberships
 		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
 	`), f.source.ID, "Archive", 30, 1).Scan(&archiveMessageID))
@@ -167,7 +167,7 @@ func TestIMAPIdentity_ResetKeepsLiveIncumbentWithoutIndependentIdentity(t *testi
 			gotID, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 20, 1)
 			assertions.Equal(incumbentID, gotID)
 			assertions.False(messageTombstoned(t, f.store, incumbentID))
-			key, err := f.store.GetMessageSourceID(incumbentID)
+			key, err := f.store.GetMessageSourceID(t.Context(), incumbentID)
 			requirements.NoError(err)
 			assertions.Equal("INBOX|1", key)
 			states, err := f.store.GetIMAPFolderStates(f.source.ID)
@@ -215,7 +215,7 @@ func TestIMAPIdentity_ResetResolvesUntrackedLiveHolder(t *testing.T) {
 			assertions.Equal(wantID, gotID)
 			assertions.False(messageTombstoned(t, f.store, wantID))
 			assertions.Equal(mode == "different", messageTombstoned(t, f.store, oldID))
-			key, err := f.store.GetMessageSourceID(oldID)
+			key, err := f.store.GetMessageSourceID(t.Context(), oldID)
 			requirements.NoError(err)
 			assertions.Equal(wantKey, key)
 		})
@@ -258,7 +258,7 @@ func TestIMAPIdentity_RekeysRemovedDraftKeyWithOtherMembership(t *testing.T) {
 	}))
 
 	var sourceMessageID string
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		SELECT source_message_id FROM messages WHERE id = ?
 	`), oldID).Scan(&sourceMessageID))
 	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), sourceMessageID)
@@ -327,13 +327,13 @@ func TestIMAPIdentity_UIDValidityResetRekeysOrphanedDraftBeforeUpsert(t *testing
 	}}))
 
 	var gotID int64
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		SELECT message_id FROM imap_message_memberships
 		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
 	`), f.source.ID, "Drafts", 20, 1).Scan(&gotID))
 	assertions.Equal(newID, gotID)
 	var sourceMessageID string
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
 		"SELECT source_message_id FROM messages WHERE id = ?"), draftID).Scan(&sourceMessageID))
 	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", draftID), sourceMessageID)
 }
@@ -372,7 +372,7 @@ func TestIMAPIdentity_RetiredMailboxRekeysOrphanedDraftSourceKey(t *testing.T) {
 		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 30, UIDNext: 1},
 	}}))
 	var sourceMessageID string
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
 		"SELECT source_message_id FROM messages WHERE id = ?"), draftID).Scan(&sourceMessageID))
 	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", draftID), sourceMessageID)
 
@@ -386,7 +386,7 @@ func TestIMAPIdentity_RetiredMailboxRekeysOrphanedDraftSourceKey(t *testing.T) {
 		}},
 	}}))
 	var gotID int64
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		SELECT message_id FROM imap_message_memberships
 		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
 	`), f.source.ID, "Drafts", 20, 1).Scan(&gotID))
@@ -426,7 +426,7 @@ func TestIMAPIdentity_ResolvesQueuedCanonicalKeyAfterMailboxRetirement(t *testin
 	}}))
 
 	var gotMessageID int64
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`
 		SELECT message_id FROM imap_message_memberships
 		WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?
 	`), f.source.ID, "Archive", 20, 7).Scan(&gotMessageID))
@@ -486,7 +486,7 @@ func TestIMAPIdentity_UnobservedUIDLaterReuse(t *testing.T) {
 	delta.Memberships = []store.IMAPMembershipObservation{{Mailbox: "Old", UIDValidity: 20, UID: 2, SourceMessageID: "Old|2", RFC822MessageID: "<new@example.com>"}}
 	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
 	var actualID int64
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Old", 20, 2).Scan(&actualID))
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Old", 20, 2).Scan(&actualID))
 	assertions.Equal(newID, actualID)
 	assertions.True(messageTombstoned(t, f.store, oldID))
 	assertions.False(messageTombstoned(t, f.store, keptID))
@@ -519,7 +519,7 @@ func TestIMAPIdentity_NewPublishedCopyKeepsKey(t *testing.T) {
 				err = persistErr
 				newID = newDraft.CurrentMessageID
 			} else {
-				changed, rekeyErr := f.store.RekeyMessageSourceID(oldID, "Drafts|1", fmt.Sprintf("msgvault-invalidated:%d", oldID))
+				changed, rekeyErr := f.store.RekeyMessageSourceID(t.Context(), oldID, "Drafts|1", fmt.Sprintf("msgvault-invalidated:%d", oldID))
 				requirements.NoError(rekeyErr)
 				requirements.True(changed)
 				newID, err = f.store.PersistMessage(build(nil))
@@ -535,11 +535,11 @@ func TestIMAPIdentity_NewPublishedCopyKeepsKey(t *testing.T) {
 				Mailbox: "Drafts", Reset: true, State: store.IMAPFolderState{Mailbox: "Drafts", UIDValidity: 20, UIDNext: 2},
 				Memberships: []store.IMAPMembershipObservation{{Mailbox: "Drafts", UIDValidity: 20, UID: 1, SourceMessageID: "Drafts|1", RFC822MessageID: "<generation-20@example.com>"}},
 			}}))
-			key, err := f.store.GetMessageSourceID(newID)
+			key, err := f.store.GetMessageSourceID(t.Context(), newID)
 			requirements.NoError(err)
 			assertions.Equal("Drafts|1", key)
 			var currentID int64
-			requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&currentID))
+			requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&currentID))
 			assertions.Equal(newID, currentID)
 			retainedRaw, err := f.store.GetMessageRaw(oldID)
 			requirements.NoError(err)
@@ -559,7 +559,7 @@ func TestIMAPIdentity_AmbiguousLiveAppendKeyRefuses(t *testing.T) {
 		return &store.MessagePersistData{Message: &store.Message{SourceID: f.source.ID, SourceMessageID: "Drafts|1", ConversationID: f.convID, MessageType: store.MessageTypeEmail}}
 	})
 	requirements.ErrorContains(err, "source_key_conflict")
-	key, err := f.store.GetMessageSourceID(oldID)
+	key, err := f.store.GetMessageSourceID(t.Context(), oldID)
 	requirements.NoError(err)
 	assertions.Equal("Drafts|1", key)
 	assertions.Zero(membershipCount(t, f.store, f.source.ID))
@@ -601,7 +601,7 @@ func TestIMAPIdentity_LegacyOrphanIdentity(t *testing.T) {
 				states, stateErr := f.store.GetIMAPFolderStates(f.source.ID)
 				requirements.NoError(stateErr)
 				assertions.ElementsMatch(beforeStates, states)
-				key, keyErr := f.store.GetMessageSourceID(oldID)
+				key, keyErr := f.store.GetMessageSourceID(t.Context(), oldID)
 				requirements.NoError(keyErr)
 				assertions.Equal("Drafts|1", key)
 				assertions.True(messageTombstoned(t, f.store, oldID))
@@ -609,7 +609,7 @@ func TestIMAPIdentity_LegacyOrphanIdentity(t *testing.T) {
 			}
 			requirements.NoError(err)
 			var currentID int64
-			requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&currentID))
+			requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&currentID))
 			assertions.Equal(newID, currentID)
 			if mode == "same" {
 				assertions.False(messageTombstoned(t, f.store, oldID))
@@ -637,10 +637,10 @@ func TestIMAPIdentity_OrphanRetirementMailboxBoundary(t *testing.T) {
 		{Mailbox: nested, State: store.IMAPFolderState{Mailbox: nested, UIDValidity: 30, UIDNext: 2}},
 	}))
 	var currentID int64
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, mailbox, 20, 1).Scan(&currentID))
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, mailbox, 20, 1).Scan(&currentID))
 	assertions.Equal(newID, currentID)
 	assertions.True(messageTombstoned(t, f.store, oldID))
-	nestedKey, err := f.store.GetMessageSourceID(nestedID)
+	nestedKey, err := f.store.GetMessageSourceID(t.Context(), nestedID)
 	requirements.NoError(err)
 	assertions.Equal(nested+"|1", nestedKey)
 }
@@ -673,9 +673,9 @@ func TestIMAPIdentity_MovedCopyMembershipBeforeSync(t *testing.T) {
 	archive.Memberships = nil
 	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{drafts, archive}))
 	var currentID, archiveID int64
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&currentID))
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&currentID))
 	assertions.Equal(newID, currentID)
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Archive", 30, 7).Scan(&archiveID))
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Archive", 30, 7).Scan(&archiveID))
 	assertions.Equal(oldID, archiveID)
 	retainedRaw, err := f.store.GetMessageRaw(oldID)
 	requirements.NoError(err)
@@ -722,7 +722,7 @@ func TestIMAPIdentity_SameEpochResetRemovalReleasesSourceKeyForLaterEpoch(t *tes
 	requirements.NoError(err)
 	newID := newDraft.CurrentMessageID
 	assertions.NotEqual(oldID, newID)
-	oldSourceMessageID, err := f.store.GetMessageSourceID(oldID)
+	oldSourceMessageID, err := f.store.GetMessageSourceID(t.Context(), oldID)
 	requirements.NoError(err)
 	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
 }
@@ -733,7 +733,7 @@ func TestIMAPIdentity_RekeysOrphanedSourceDeletedMessage(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "imap://legacy@example.com:143")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "legacy-draft", "Legacy draft")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "legacy-draft", "Legacy draft")
 	requirements.NoError(err)
 	oldID, err := st.PersistMessage(&store.MessagePersistData{
 		Message: &store.Message{
@@ -753,7 +753,7 @@ func TestIMAPIdentity_RekeysOrphanedSourceDeletedMessage(t *testing.T) {
 	}
 	_, err = st.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData { return nil })
 	requirements.ErrorContains(err, "persist message requires a message")
-	key, err := st.GetMessageSourceID(oldID)
+	key, err := st.GetMessageSourceID(t.Context(), oldID)
 	requirements.NoError(err)
 	assertions.Equal("Drafts|1", key)
 	assertions.Zero(membershipCount(t, st, source.ID))
@@ -777,7 +777,7 @@ func TestIMAPIdentity_RekeysOrphanedSourceDeletedMessage(t *testing.T) {
 	retainedRaw, err := st.GetMessageRaw(oldID)
 	requirements.NoError(err)
 	assertions.Equal(oldRaw, retainedRaw)
-	oldSourceMessageID, err := st.GetMessageSourceID(oldID)
+	oldSourceMessageID, err := st.GetMessageSourceID(t.Context(), oldID)
 	requirements.NoError(err)
 	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", oldID), oldSourceMessageID)
 }
@@ -823,7 +823,7 @@ func TestIMAPIdentity_MovedCopyAppendBeforeSync(t *testing.T) {
 	assertions.ElementsMatch(states, retainedStates)
 	assertions.Equal([]string{"Archive"}, messageLabels(t, f.store, oldID))
 	var archiveID int64
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Archive", 30, 7).Scan(&archiveID))
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Archive", 30, 7).Scan(&archiveID))
 	assertions.Equal(oldID, archiveID)
 }
 
@@ -838,13 +838,13 @@ func TestIMAPIdentity_DeletedKeyOwnerBesideOldCanonicalMembership(t *testing.T) 
 	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
 	requirements.True(messageTombstoned(t, f.store, oldID))
 	var got int64
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 10, 1).Scan(&got))
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 10, 1).Scan(&got))
 	requirements.Equal(canonicalID, got)
 	newID := f.createMessage(t, "incoming", "<incoming@example.com>")
 	delta.State.UIDValidity = 20
 	delta.Memberships = []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Drafts|1", RFC822MessageID: "<incoming@example.com>"}}
 	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&got))
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&got))
 	assertions.Equal(newID, got)
 	assertions.True(messageTombstoned(t, f.store, oldID))
 }
@@ -896,7 +896,7 @@ func TestIMAPIdentity_LiveKeyOwnerBesideOldCanonicalMembership(t *testing.T) {
 	archive.Memberships = nil
 	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{drafts, archive}))
 	var got int64
-	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&got))
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ? AND uidvalidity = ? AND uid = ?`), f.source.ID, "Drafts", 20, 1).Scan(&got))
 	assertions.Equal(newID, got)
 	assertions.Equal([]string{"Archive"}, messageLabels(t, f.store, oldID))
 }

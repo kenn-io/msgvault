@@ -1,0 +1,54 @@
+<script lang="ts">
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import { appShortcuts, Menu, MenuContent, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuTrigger } from '@kenn-io/kit-ui';
+
+  let { presentation, presentationOptions, groupOptions, sort, sortOptions, selectPresentation, selectGrouping, selectSort }: {
+    presentation: string;
+    presentationOptions: { value: string; label: string }[];
+    groupOptions: { value: string; label: string; disabled?: boolean }[];
+    sort?: { value: string };
+    sortOptions: { value: string; label: string; disabled?: boolean }[];
+    selectPresentation: (value: string) => void;
+    selectGrouping: (value: string) => void;
+    selectSort: (value: string) => void;
+  } = $props();
+
+  let open = $state(false);
+  $effect(() => {
+    if (open) return appShortcuts.pushScope('view-menu');
+  });
+</script>
+
+<div data-group-picker data-sort-menu>
+  <Menu align="start" bind:open>
+    <MenuTrigger>View <ChevronDown size={12} aria-hidden="true" /></MenuTrigger>
+    <MenuContent ariaLabel="View">
+      <div data-section-label aria-hidden="true">Show as</div>
+      <MenuRadioGroup ariaLabel="Show as" value={presentation} onchange={selectPresentation}>
+        {#each presentationOptions as option (option.value)}
+          <MenuRadioItem value={option.value} closeOnSelect>{option.label}</MenuRadioItem>
+        {/each}
+      </MenuRadioGroup>
+      <MenuSeparator />
+      <div data-section-label aria-hidden="true">Group by</div>
+      {#each groupOptions as option (option.value)}
+        <MenuItem disabled={option.disabled} onselect={() => selectGrouping(option.value)}>{option.label}</MenuItem>
+      {/each}
+      {#if sort}
+        <MenuSeparator />
+        <div data-section-label aria-hidden="true">Sort</div>
+        <MenuRadioGroup ariaLabel="Sort" value={sort.value} onchange={selectSort}>
+          {#each sortOptions as option (option.value)}
+            <MenuRadioItem value={option.value} disabled={option.disabled} closeOnSelect>{option.label}</MenuRadioItem>
+          {/each}
+        </MenuRadioGroup>
+      {/if}
+    </MenuContent>
+  </Menu>
+</div>
+
+<style>
+  div[data-section-label] {
+    padding: var(--space-2) var(--space-4) var(--space-1);
+  }
+</style>

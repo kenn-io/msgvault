@@ -44,7 +44,7 @@ func newCLIOriginalFixture(t *testing.T, configure ...func(*ServerOptions)) *cli
 	srv := NewServerWithOptions(options)
 	src, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	require.NoError(t, err)
-	convID, err := st.EnsureConversation(src.ID, "thread-original", "Original")
+	convID, err := st.EnsureConversation(t.Context(), src.ID, "thread-original", "Original")
 	require.NoError(t, err)
 	raw := []byte("From: owner@example.com\r\nSubject: Original\r\n\r\nbody \xe9\n")
 	persist := func(sourceMessageID string, sentAt time.Time, rawMIME []byte) int64 {
@@ -70,7 +70,7 @@ func newCLIOriginalFixture(t *testing.T, configure ...func(*ServerOptions)) *cli
 func (f *cliOriginalFixture) get(t *testing.T, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	w := httptest.NewRecorder()
-	f.srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+	f.srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
 	return w
 }
 
@@ -112,7 +112,7 @@ func TestHandleCLIMessageOriginal(t *testing.T) {
 
 	other, err := f.st.GetOrCreateSource("gmail", "second@example.com")
 	must.NoError(err)
-	otherConv, err := f.st.EnsureConversation(other.ID, "thread-original", "Other")
+	otherConv, err := f.st.EnsureConversation(t.Context(), other.ID, "thread-original", "Other")
 	must.NoError(err)
 	_, err = f.st.PersistMessage(&store.MessagePersistData{Message: &store.Message{
 		SourceID: other.ID, ConversationID: otherConv, SourceMessageID: "provider-original", MessageType: "email",
@@ -145,7 +145,7 @@ func TestHandleCLIMessageOriginalByteLimit(t *testing.T) {
 
 func TestHandleCLIMessageOriginalUnsupportedBackend(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	engine, err := query.NewDuckDBEngine("", "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), "", "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	srv := NewServerWithOptions(ServerOptions{
@@ -155,7 +155,7 @@ func TestHandleCLIMessageOriginalUnsupportedBackend(t *testing.T) {
 		Logger: testLogger(),
 	})
 	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/cli/message/original?id=1", nil))
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/message/original?id=1", nil))
 
 	requireErrorCode(t, w, http.StatusServiceUnavailable, "original_export_unavailable")
 }
@@ -205,7 +205,7 @@ func TestHandleCLIMessageThreadAll(t *testing.T) {
 	must := require.New(t)
 	t.Parallel()
 	f := newCLIOriginalFixture(t)
-	convID, err := f.st.EnsureConversation(f.sourceID, f.threadKey, "Original")
+	convID, err := f.st.EnsureConversation(t.Context(), f.sourceID, f.threadKey, "Original")
 	must.NoError(err)
 	for i := range 99 {
 		_, err := f.st.UpsertMessage(&store.Message{
@@ -242,7 +242,7 @@ func TestHandleCLIMessageRawVisibility(t *testing.T) {
 	f := newCLIOriginalFixture(t)
 	other, err := f.st.GetOrCreateSource("gmail", "other@example.com")
 	must.NoError(err)
-	convID, err := f.st.EnsureConversation(other.ID, "other-thread", "Other")
+	convID, err := f.st.EnsureConversation(t.Context(), other.ID, "other-thread", "Other")
 	must.NoError(err)
 	_, err = f.st.UpsertMessage(&store.Message{SourceID: other.ID, ConversationID: convID, SourceMessageID: "provider-original", MessageType: "email"})
 	must.NoError(err)

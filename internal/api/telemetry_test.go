@@ -44,8 +44,8 @@ func newTelemetryTestServer(t *testing.T, apiKey string) (*Server, *countingHand
 	return srv, capture
 }
 
-func telemetryRequest(contentType string) *http.Request {
-	req := httptest.NewRequest(http.MethodPost, telemetryEventsPath, strings.NewReader(appOpenedBody))
+func telemetryRequest(ctx context.Context, contentType string) *http.Request {
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, telemetryEventsPath, strings.NewReader(appOpenedBody))
 	req.RemoteAddr = "127.0.0.1:4242"
 	req.Header.Set("Content-Type", contentType)
 	return req
@@ -63,14 +63,14 @@ func TestTelemetryEventRouteKeylessLoopback(t *testing.T) {
 	require := require.New(t)
 	srv, capture := newTelemetryTestServer(t, "")
 
-	accepted := serveTelemetry(srv, telemetryRequest("application/json"))
+	accepted := serveTelemetry(srv, telemetryRequest(t.Context(), "application/json"))
 	require.Equal(http.StatusAccepted, accepted.Code, accepted.Body.String())
 	var status TelemetryEventResponse
 	require.NoError(json.Unmarshal(accepted.Body.Bytes(), &status))
 	assert.Equal("disabled", status.Status)
 
 	before := capture.calls.Load()
-	plain := serveTelemetry(srv, telemetryRequest("text/plain"))
+	plain := serveTelemetry(srv, telemetryRequest(t.Context(), "text/plain"))
 	assert.Equal(http.StatusUnsupportedMediaType, plain.Code, plain.Body.String())
 	assert.Equal(before, capture.calls.Load(), "a non-JSON content type must never reach the capture handler")
 }
@@ -83,17 +83,17 @@ func TestTelemetryEventRouteAuthentication(t *testing.T) {
 	reg := agentgrant.NewRegistry()
 	srv.agentGrants = reg
 
-	none := serveTelemetry(srv, telemetryRequest("application/json"))
+	none := serveTelemetry(srv, telemetryRequest(t.Context(), "application/json"))
 	assert.Equal(http.StatusUnauthorized, none.Code, none.Body.String())
 
-	keyed := telemetryRequest("application/json")
+	keyed := telemetryRequest(t.Context(), "application/json")
 	keyed.Header.Set("X-Api-Key", "owner-key")
 	assert.Equal(http.StatusAccepted, serveTelemetry(srv, keyed).Code)
 
 	src := agentgrant.SourceRef{ID: 1, Type: "imap", Identifier: "alice@example.com"}
 	_, secret, _, err := reg.Issue("telemetry-test", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 	require.NoError(err)
-	delegated := telemetryRequest("application/json")
+	delegated := telemetryRequest(t.Context(), "application/json")
 	delegated.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	resp := serveTelemetry(srv, delegated)
 	assert.Equal(http.StatusUnauthorized, resp.Code, resp.Body.String())
@@ -108,7 +108,7 @@ func TestTelemetryEventRouteBypassesHeldOperationGate(t *testing.T) { //nolint:p
 	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
 
 	gate := NewSerialOperationGate()
-	release, ok := gate.BeginLabeledWorkContext(context.Background(), "msgvault sync")
+	release, ok := gate.BeginLabeledWorkContext(t.Context(), "msgvault sync")
 	require.True(ok, "occupy gate")
 	defer release()
 
@@ -121,7 +121,7 @@ func TestTelemetryEventRouteBypassesHeldOperationGate(t *testing.T) { //nolint:p
 		TelemetryCapture: telemetry.CaptureHandler(reporter, t.TempDir()),
 	})
 
-	resp := serveTelemetry(srv, telemetryRequest("application/json"))
+	resp := serveTelemetry(srv, telemetryRequest(t.Context(), "application/json"))
 	assert.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
 	assert.False(gate.HasRequestWaiters(), "telemetry must not queue on the gate")
 }

@@ -39,11 +39,12 @@ func seedRelocationFixtureWithSourceType(
 	source, err := st.GetOrCreateSource(sourceType, "imap-relocation@example.test")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversation(
+		t.Context(),
 		source.ID, "imap-relocation-thread", "Draft conversation")
 	require.NoError(err)
-	oldLabelID, err := st.EnsureLabel(source.ID, "DRAFT", "Drafts", "system")
+	oldLabelID, err := st.EnsureLabel(t.Context(), source.ID, "DRAFT", "Drafts", "system")
 	require.NoError(err)
-	sentLabelID, err := st.EnsureLabel(source.ID, "SENT", "Sent", "system")
+	sentLabelID, err := st.EnsureLabel(t.Context(), source.ID, "SENT", "Sent", "system")
 	require.NoError(err)
 
 	targetID, err := st.PersistMessageWithParticipantsContext(
@@ -305,7 +306,7 @@ func TestPersistIMAPRelocationHistoricalNULIdentity(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			fixture := seedIMAPRelocationFixture(t)
-			_, err := fixture.Store.DB().Exec(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, "historical\x00id@example.org", fixture.TargetID)
+			_, err := fixture.Store.DB().ExecContext(t.Context(), `UPDATE messages SET rfc822_message_id = ? WHERE id = ?`, "historical\x00id@example.org", fixture.TargetID)
 			require.NoError(err)
 			before := readSiblingMessageSnapshot(t, fixture.Store, fixture.TargetID)
 			var data *store.MessagePersistData
@@ -335,7 +336,7 @@ func TestPersistIMAPRelocationHistoricalNULIdentity(t *testing.T) {
 			message, err := fixture.Store.GetMessage(fixture.TargetID)
 			require.NoError(err)
 			var storedID sql.NullString
-			require.NoError(fixture.Store.DB().QueryRow(`SELECT rfc822_message_id FROM messages WHERE id = ?`, fixture.TargetID).Scan(&storedID))
+			require.NoError(fixture.Store.DB().QueryRowContext(t.Context(), `SELECT rfc822_message_id FROM messages WHERE id = ?`, fixture.TargetID).Scan(&storedID))
 			assert.False(storedID.Valid)
 			assert.Equal("Sent|2", message.SourceMessageID)
 			assert.Equal(incoming, data.Message.RFC822MessageID.String, "the guard must not mutate caller evidence")
@@ -520,7 +521,7 @@ func TestPersistIMAPRelocationRejectsNewSourceIDCollisionWithoutChangingEitherRo
 	)
 	require.ErrorContains(err, "rekey IMAP relocation target")
 	assert.Equal(beforeTarget, readSiblingMessageSnapshot(t, fixture.Store, fixture.TargetID))
-	collisionSourceID, sourceErr := fixture.Store.GetMessageSourceID(collisionID)
+	collisionSourceID, sourceErr := fixture.Store.GetMessageSourceID(t.Context(), collisionID)
 	require.NoError(sourceErr)
 	assert.Equal("Sent|2", collisionSourceID)
 }

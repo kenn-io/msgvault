@@ -41,14 +41,14 @@ func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testi
 			source, err := st.GetOrCreateSource("gmail", "alice@example.com")
 			require.NoError(err, "create source")
 
-			_, err = st.DB().Exec(`
+			_, err = st.DB().ExecContext(t.Context(), `
 				INSERT INTO archive_metadata (key, value)
 				VALUES ($1, '0'), ($2, '0')
 				ON CONFLICT (key) DO NOTHING`,
 				identityRevisionKey, accountIdentityRevisionKey)
 			require.NoError(err, "seed revision rows")
 
-			blocker, err := st.DB().BeginTx(context.Background(), nil)
+			blocker, err := st.DB().BeginTx(t.Context(), nil)
 			require.NoError(err, "begin blocker transaction")
 			blockerOpen := true
 			t.Cleanup(func() {
@@ -59,16 +59,17 @@ func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testi
 
 			var blockerPID int
 			require.NoError(
-				blocker.QueryRow(`SELECT pg_backend_pid()`).Scan(&blockerPID),
+				blocker.QueryRowContext(t.Context(), `SELECT pg_backend_pid()`).Scan(&blockerPID),
 				"read blocker backend pid",
 			)
 			var revisionValue string
-			require.NoError(blocker.QueryRow(
+			require.NoError(blocker.QueryRowContext(
+				t.Context(),
 				`SELECT value FROM archive_metadata WHERE key = $1 FOR UPDATE`,
 				tt.revisionKey,
 			).Scan(&revisionValue), "lock revision row")
 
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			migrationDone := make(chan error, 1)
 			go func() {
 				_, _, _, _, migrationErr := st.MigrateLegacyIdentityConfigContext(
@@ -80,7 +81,7 @@ func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testi
 
 			require.Eventually(func() bool {
 				var waiting bool
-				queryErr := st.DB().QueryRow(`
+				queryErr := st.DB().QueryRowContext(t.Context(), `
 					SELECT EXISTS (
 						SELECT 1
 						FROM pg_stat_activity
@@ -107,7 +108,8 @@ func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testi
 			}
 
 			var identityCount int
-			require.NoError(st.DB().QueryRow(
+			require.NoError(st.DB().QueryRowContext(
+				t.Context(),
 				`SELECT COUNT(*) FROM account_identities
 				 WHERE source_id = $1 AND address = $2`,
 				source.ID, "legacy@example.com",
@@ -115,7 +117,8 @@ func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testi
 			assert.Zero(identityCount, "migration identity insert must roll back")
 
 			var markerCount int
-			require.NoError(st.DB().QueryRow(
+			require.NoError(st.DB().QueryRowContext(
+				t.Context(),
 				`SELECT COUNT(*) FROM applied_migrations WHERE name = $1`,
 				migrationLegacyIdentity,
 			).Scan(&markerCount), "count rolled-back migration marker")

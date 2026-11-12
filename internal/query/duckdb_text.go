@@ -121,11 +121,7 @@ func (e *DuckDBEngine) buildTextFilterConditions(
 				(SELECT mr_fb.participant_id FROM mr mr_fb
 				 WHERE mr_fb.message_id = msg.id AND mr_fb.recipient_type = 'from'
 				 LIMIT 1))
-			  AND COALESCE(
-				NULLIF(TRIM(p_filter.display_name), ''),
-				NULLIF(p_filter.phone_number, ''),
-				p_filter.email_address
-			  ) = ?
+			  AND `+participantNameExpr("p_filter")+` = ?
 		)`)
 		args = append(args, filter.ContactName)
 	}
@@ -487,7 +483,7 @@ func (e *DuckDBEngine) listConversationMessages(
 		msg_sender AS (
 			SELECT mr.message_id,
 				FIRST(p.email_address) AS from_email,
-				FIRST(COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), ''), NULLIF(p.phone_number, ''), p.email_address, '')) AS from_name,
+				FIRST(`+recipientNameExpr("mr", "p")+`) AS from_name,
 				FIRST(COALESCE(p.phone_number, '')) AS from_phone
 			FROM mr
 			JOIN p ON p.id = mr.participant_id
@@ -498,7 +494,7 @@ func (e *DuckDBEngine) listConversationMessages(
 		direct_sender AS (
 			SELECT msg.id AS message_id,
 				COALESCE(p.email_address, '') AS from_email,
-				COALESCE(p.display_name, '') AS from_name,
+				`+directSenderNameExpr("p", "")+` AS from_name,
 				COALESCE(p.phone_number, '') AS from_phone
 			FROM msg
 			JOIN filtered_msgs fm ON fm.id = msg.id

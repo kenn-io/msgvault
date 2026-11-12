@@ -2,7 +2,6 @@ package logging
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -198,7 +197,7 @@ func TestMultiHandler_FansOutAndFiltersByLevel(t *testing.T) {
 	logger := slog.New(m.WithAttrs(
 		[]slog.Attr{slog.String("run_id", "abc123")},
 	))
-	logger.DebugContext(context.Background(), "dbg")
+	logger.DebugContext(t.Context(), "dbg")
 	logger.Warn("warned")
 
 	// Text handler ignores debug, JSON handler keeps it.

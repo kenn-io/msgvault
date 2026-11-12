@@ -146,7 +146,7 @@ func fixtureImporter(t *testing.T) (*store.Store, *importSource, *Importer, Impo
 
 func loadState(t *testing.T, st *store.Store) callsync.State {
 	t.Helper()
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "work")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
 	require.NoError(t, err)
 	var state callsync.State
 	require.NoError(t, json.Unmarshal([]byte(source.SyncCursor.String), &state))
@@ -158,7 +158,7 @@ func onlyAttachment(t *testing.T, st *store.Store) store.AttachmentRef {
 	messages, _, err := st.ListMessages(0, 10)
 	require.NoError(t, err)
 	require.Len(t, messages, 1)
-	rows, err := st.MessageProviderAttachments(messages[0].ID, "twilio:")
+	rows, err := st.MessageProviderAttachments(t.Context(), messages[0].ID, "twilio:")
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	for _, row := range rows {
@@ -247,7 +247,7 @@ func TestImporterRetainedRecordingSurvivesMissingCallMetadata(t *testing.T) {
 	assert.EqualValues(1, sum.MeetingsAdded)
 	assert.EqualValues(1, sum.AttachmentsStored)
 	assert.Contains(sum.Diagnostics, "call_metadata_unavailable")
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "work")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
 	require.NoError(err)
 	archive, err := loadArchive(t.Context(), st, source.ID, testCA)
 	require.NoError(err)
@@ -335,12 +335,12 @@ func TestImporterAfterSkipsOlderRecordingsOfTheCall(t *testing.T) {
 	opts.CreatedAfter = time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
 	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
-	rows, err := st.MessageProviderAttachments(onlyMessageID(t, st), "twilio:")
+	rows, err := st.MessageProviderAttachments(t.Context(), onlyMessageID(t, st), "twilio:")
 	require.NoError(err)
 	assert.Len(rows, 1)
 	assert.Contains(rows, "twilio:"+testRE)
 	assert.Equal(time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC), loadState(t, st).Watermark)
-	source, err := st.GetSourceByTypeAndIdentifier(SourceType, "work")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "work")
 	require.NoError(err)
 	assert.True(source.LastSyncAt.Valid)
 }
@@ -378,7 +378,7 @@ func TestImporterLocalStoreFailureStopsRun(t *testing.T) {
 	opts.AttachmentsDir = blocked
 	_, err := imp.Import(t.Context(), opts)
 	require.Error(err)
-	rows, err := st.MessageProviderAttachments(onlyMessageID(t, st), "twilio:")
+	rows, err := st.MessageProviderAttachments(t.Context(), onlyMessageID(t, st), "twilio:")
 	require.NoError(err)
 	assert.Empty(rows, "no failed row is written for a local failure")
 
@@ -547,7 +547,7 @@ func TestImporterRelistWindowWalk(t *testing.T) {
 	msg, err := st.GetMessage(onlyMessageID(t, st))
 	require.NoError(err)
 	assert.Contains(msg.Body, "Synthetic budget discussion")
-	rows, err := st.MessageProviderAttachments(msg.ID, "twilio:")
+	rows, err := st.MessageProviderAttachments(t.Context(), msg.ID, "twilio:")
 	require.NoError(err)
 	assert.Equal(attachmentpolicy.StateStored, rows["twilio:"+testRE].State)
 	assert.Equal(attachmentpolicy.StatePending, rows["twilio:"+never].State)
@@ -565,7 +565,7 @@ func TestImporterRelistWindowWalk(t *testing.T) {
 	after, err := st.DerivedDataRevision()
 	require.NoError(err)
 	assert.Equal(revision, after)
-	rows, err = st.MessageProviderAttachments(msg.ID, "twilio:")
+	rows, err = st.MessageProviderAttachments(t.Context(), msg.ID, "twilio:")
 	require.NoError(err)
 	assert.Equal(attachmentpolicy.StatePending, rows["twilio:"+never].State)
 
@@ -576,7 +576,7 @@ func TestImporterRelistWindowWalk(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]string{testCA}, f.getCalls)
 	assert.Equal([]string{"1 recording(s) no longer retried: the call is older than the 7-day relist window; run sync-twilio --full to retry"}, sum.Diagnostics)
-	rows, err = st.MessageProviderAttachments(msg.ID, "twilio:")
+	rows, err = st.MessageProviderAttachments(t.Context(), msg.ID, "twilio:")
 	require.NoError(err)
 	assert.Equal(attachmentpolicy.StateUnavailable, rows["twilio:"+never].State, "Twilio never produced it")
 	assert.Equal(1, f.audioCalls, "stored audio isn't downloaded again")
@@ -609,7 +609,7 @@ func TestImporterRecordingOnLaterPageImports(t *testing.T) {
 	require.NoError(err)
 	assert.EqualValues(1, sum.MeetingsProcessed)
 	assert.False(sum.DiscoveryPending)
-	rows, err := st.MessageProviderAttachments(onlyMessageID(t, st), "twilio:")
+	rows, err := st.MessageProviderAttachments(t.Context(), onlyMessageID(t, st), "twilio:")
 	require.NoError(err)
 	require.Len(rows, 2)
 	assert.Equal(attachmentpolicy.StateStored, rows["twilio:"+testRE].State)
@@ -820,7 +820,7 @@ func TestImporterQueuedRetriesRespectLimitAndSurviveCancellation(t *testing.T) {
 	messages, _, err := st.ListMessages(0, 10)
 	require.NoError(err)
 	for _, msg := range messages {
-		rows, err := st.MessageProviderAttachments(msg.ID, "twilio:")
+		rows, err := st.MessageProviderAttachments(t.Context(), msg.ID, "twilio:")
 		require.NoError(err)
 		for _, row := range rows {
 			want := attachmentpolicy.StatePending
@@ -883,13 +883,13 @@ func TestImporterBoundedSyncKeepsUnresolvedRetry(t *testing.T) {
 			_, err = imp.Import(t.Context(), full)
 			require.NoError(err)
 			assert.Equal([]string{testCA}, loadState(t, st).RetryIDs)
-			rows, err := st.MessageProviderAttachments(onlyMessageID(t, st), "twilio:")
+			rows, err := st.MessageProviderAttachments(t.Context(), onlyMessageID(t, st), "twilio:")
 			require.NoError(err)
 			assert.Equal(attachmentpolicy.StatePending, rows["twilio:"+testRE].State)
 
 			_, err = imp.Import(t.Context(), opts)
 			require.NoError(err)
-			rows, err = st.MessageProviderAttachments(onlyMessageID(t, st), "twilio:")
+			rows, err = st.MessageProviderAttachments(t.Context(), onlyMessageID(t, st), "twilio:")
 			require.NoError(err)
 			assert.Equal(attachmentpolicy.StateStored, rows["twilio:"+testRE].State)
 			assert.Empty(loadState(t, st).RetryIDs)
@@ -913,7 +913,7 @@ func TestImporterLimitedDiscoveryProgressesWithPersistentRetry(t *testing.T) {
 	assert.EqualValues(1, sum.MeetingsAdded)
 	assert.EqualValues(1, sum.MeetingsProcessed)
 	assert.True(sum.DiscoveryPending, "the failed first call still needs a retry")
-	messages, err := st.MessageMetadataBatch(sum.SourceID, []string{second})
+	messages, err := st.MessageMetadataBatch(t.Context(), sum.SourceID, []string{second})
 	require.NoError(err)
 	require.Contains(messages, second, "discovery reaches the next call despite the queued retry")
 	msg, err := st.GetMessage(messages[second].ID)

@@ -20,7 +20,7 @@ func TestFetchChatsOldSchema(t *testing.T) {
 	resetColumnCache()
 
 	// Create old-style chat table without group_type.
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE jid (
 			_id INTEGER PRIMARY KEY,
 			user TEXT,
@@ -47,7 +47,7 @@ func TestFetchChatsOldSchema(t *testing.T) {
 	`)
 	require.NoError(err)
 
-	chats, err := fetchChats(db)
+	chats, err := fetchChats(t.Context(), db)
 	require.NoError(err, "fetchChats with old schema")
 
 	require.Len(chats, 2)
@@ -71,7 +71,7 @@ func TestFetchChatsNewSchema(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetColumnCache()
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE jid (
 			_id INTEGER PRIMARY KEY,
 			user TEXT,
@@ -94,7 +94,7 @@ func TestFetchChatsNewSchema(t *testing.T) {
 	`)
 	require.NoError(err)
 
-	chats, err := fetchChats(db)
+	chats, err := fetchChats(t.Context(), db)
 	require.NoError(err, "fetchChats with new schema")
 
 	require.Len(chats, 1)
@@ -110,7 +110,7 @@ func TestFetchMediaOldSchema(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	resetColumnCache()
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE message_media (
 			message_row_id INTEGER PRIMARY KEY,
 			mime_type TEXT,
@@ -126,7 +126,7 @@ func TestFetchMediaOldSchema(t *testing.T) {
 	`)
 	require.NoError(err)
 
-	mediaMap, err := fetchMedia(db, []int64{100})
+	mediaMap, err := fetchMedia(t.Context(), db, []int64{100})
 	require.NoError(err, "fetchMedia with old schema")
 
 	m, ok := mediaMap[100]
@@ -147,7 +147,7 @@ func TestColumnCacheScopedPerDB(t *testing.T) {
 	oldDB, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(err)
 	defer func() { _ = oldDB.Close() }()
-	_, err = oldDB.Exec(`
+	_, err = oldDB.ExecContext(t.Context(), `
 		CREATE TABLE jid (_id INTEGER PRIMARY KEY, user TEXT, server TEXT, raw_string TEXT);
 		CREATE TABLE chat (_id INTEGER PRIMARY KEY, jid_row_id INTEGER UNIQUE, hidden INTEGER, subject TEXT, sort_timestamp INTEGER);
 		INSERT INTO jid VALUES (1, '441234567890', 's.whatsapp.net', '441234567890@s.whatsapp.net');
@@ -159,7 +159,7 @@ func TestColumnCacheScopedPerDB(t *testing.T) {
 	newDB, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(err)
 	defer func() { _ = newDB.Close() }()
-	_, err = newDB.Exec(`
+	_, err = newDB.ExecContext(t.Context(), `
 		CREATE TABLE jid (_id INTEGER PRIMARY KEY, user TEXT, server TEXT, raw_string TEXT);
 		CREATE TABLE chat (_id INTEGER PRIMARY KEY, jid_row_id INTEGER UNIQUE, hidden INTEGER, subject TEXT, sort_timestamp INTEGER, group_type INTEGER);
 		INSERT INTO jid VALUES (1, '120363009999', 'g.us', '120363009999@g.us');
@@ -168,21 +168,21 @@ func TestColumnCacheScopedPerDB(t *testing.T) {
 	require.NoError(err)
 
 	// Query old DB first — should NOT cache "no group_type" for new DB.
-	oldChats, err := fetchChats(oldDB)
+	oldChats, err := fetchChats(t.Context(), oldDB)
 	require.NoError(err, "old DB")
 	assert.Equal(0, oldChats[0].GroupType, "old DB: GroupType")
 
 	// Query new DB — must see group_type despite old DB being queried first.
-	newChats, err := fetchChats(newDB)
+	newChats, err := fetchChats(t.Context(), newDB)
 	require.NoError(err, "new DB")
 	assert.Equal(3, newChats[0].GroupType, "new DB: GroupType")
 
 	// Reverse: query new DB again then old DB again — still correct.
-	newChats2, err := fetchChats(newDB)
+	newChats2, err := fetchChats(t.Context(), newDB)
 	require.NoError(err, "new DB (2nd)")
 	assert.Equal(3, newChats2[0].GroupType, "new DB (2nd): GroupType")
 
-	oldChats2, err := fetchChats(oldDB)
+	oldChats2, err := fetchChats(t.Context(), oldDB)
 	require.NoError(err, "old DB (2nd)")
 	assert.Equal(0, oldChats2[0].GroupType, "old DB (2nd): GroupType")
 }
@@ -197,7 +197,7 @@ func TestFetchLidMap(t *testing.T) {
 	// Create the jid and jid_map tables matching WhatsApp's actual schema.
 	// In WhatsApp: jid_map.lid_row_id is PK (= jid._id for the lid entry),
 	// jid_map.jid_row_id points to the phone jid._id.
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE jid (
 			_id INTEGER PRIMARY KEY,
 			user TEXT,
@@ -223,7 +223,7 @@ func TestFetchLidMap(t *testing.T) {
 	`)
 	require.NoError(err)
 
-	lidMap, err := fetchLidMap(db)
+	lidMap, err := fetchLidMap(t.Context(), db)
 	require.NoError(err)
 
 	require.Len(lidMap, 2)
@@ -244,7 +244,7 @@ func TestFetchLidMapMissingTable(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	// No jid_map table — should return empty map, not error.
-	lidMap, err := fetchLidMap(db)
+	lidMap, err := fetchLidMap(t.Context(), db)
 	require.NoError(t, err, "expected no error for missing table")
 	assert.Empty(t, lidMap, "expected empty map")
 }
@@ -256,14 +256,14 @@ func TestFetchGroupParticipantsMissingTable(t *testing.T) {
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE jid (
 			_id INTEGER PRIMARY KEY, user TEXT, server TEXT, raw_string TEXT
 		);
 	`)
 	require.NoError(err)
 
-	members, err := fetchGroupParticipants(db, "120255501234567-987654321@g.us")
+	members, err := fetchGroupParticipants(t.Context(), db, "120255501234567-987654321@g.us")
 	require.NoError(err)
 	assert.Empty(members)
 }
@@ -275,7 +275,7 @@ func TestFetchGroupParticipantsPresent(t *testing.T) {
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE jid (
 			_id INTEGER PRIMARY KEY, user TEXT, server TEXT, raw_string TEXT
 		);
@@ -292,7 +292,7 @@ func TestFetchGroupParticipantsPresent(t *testing.T) {
 	`)
 	require.NoError(err)
 
-	members, err := fetchGroupParticipants(db, "120255501234567-987654321@g.us")
+	members, err := fetchGroupParticipants(t.Context(), db, "120255501234567-987654321@g.us")
 	require.NoError(err)
 	require.Len(members, 2)
 	assert.Equal(waGroupMember{
@@ -310,7 +310,7 @@ func TestFetchGroupParticipantsPresent(t *testing.T) {
 		Admin:        0,
 	}, members[1])
 
-	empty, err := fetchGroupParticipants(db, "120255501234567-222222222@g.us")
+	empty, err := fetchGroupParticipants(t.Context(), db, "120255501234567-222222222@g.us")
 	require.NoError(err)
 	assert.Empty(empty)
 }
@@ -358,10 +358,10 @@ func TestFetchGroupParticipantsOtherErrorPropagates(t *testing.T) {
 			require.NoError(err)
 			defer func() { _ = db.Close() }()
 
-			_, err = db.Exec(tt.setup)
+			_, err = db.ExecContext(t.Context(), tt.setup)
 			require.NoError(err)
 
-			members, err := fetchGroupParticipants(db, "120255501234567-987654321@g.us")
+			members, err := fetchGroupParticipants(t.Context(), db, "120255501234567-987654321@g.us")
 			assert.Nil(members)
 			require.Error(err)
 			require.ErrorContains(err, "fetch group participants")

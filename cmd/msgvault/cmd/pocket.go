@@ -80,7 +80,7 @@ as a meeting source. The identifier may be omitted when exactly one
 		if account.Email != email {
 			return errors.New("pocket account email does not match configuration")
 		}
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -88,7 +88,7 @@ as a meeting source. The identifier may be omitted when exactly one
 		if _, err = pocket.RegisterSource(st, src.Identifier, account); err != nil {
 			return err
 		}
-		if err = runPostSourceCreateMigrationsForInvocation(st, state); err != nil {
+		if err = runPostSourceCreateMigrationsForInvocation(cmd.Context(), st, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pocket source %s registered. Run msgvault sync-pocket %s.\n", src.Identifier, src.Identifier)
@@ -154,7 +154,7 @@ The daemon reads API keys from the configured environment variables.`, Args: cob
 		if err != nil {
 			return err
 		}
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}
@@ -227,7 +227,7 @@ func finishPocketImport(ctx context.Context, sum *pocket.ImportSummary, importEr
 }
 
 func runConfiguredPocketSync(ctx context.Context, st *store.Store, src config.PocketSource) error {
-	if _, err := st.GetSourceByTypeAndIdentifier(pocket.SourceType, src.Identifier); err != nil {
+	if _, err := st.GetSourceByTypeAndIdentifier(ctx, pocket.SourceType, src.Identifier); err != nil {
 		return recordSyncAttempt(ctx, pocket.SourceType, src.Identifier, fmt.Errorf("register Pocket with add-pocket first: %w", err))
 	}
 	email, err := src.EffectiveAccountEmail()

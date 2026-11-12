@@ -164,13 +164,20 @@ func TestServeTwentySyncNowCompletes(t *testing.T) {
 	waitForServeHealth(t, cfg.Server.APIPort, errCh)
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.APIPort)
 	client := &http.Client{Timeout: serveLifecycleTestTimeout}
-	response, err := client.Post(baseURL+"/api/v1/sync/work?source_type=twenty", "application/json", nil)
+	syncRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, baseURL+"/api/v1/sync/work?source_type=twenty", nil)
+	require.NoError(err)
+	syncRequest.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(syncRequest)
 	require.NoError(err)
 	require.NoError(response.Body.Close())
 	require.Equal(http.StatusAccepted, response.StatusCode)
 	var status api.SourceStatusResponse
 	require.Eventually(func() bool {
-		response, err := client.Get(baseURL + "/api/v1/sources/status?source_type=twenty")
+		statusRequest, err := http.NewRequestWithContext(t.Context(), http.MethodGet, baseURL+"/api/v1/sources/status?source_type=twenty", nil)
+		if err != nil {
+			return false
+		}
+		response, err := client.Do(statusRequest)
 		if err != nil {
 			return false
 		}
@@ -210,13 +217,13 @@ func TestTwentyManualMultipleSourcesRefreshesEarlierWritesOnFailure(t *testing.T
 	require.NoError(addTwentyCmd.RunE(cmd, []string{"second"}))
 	require.ErrorContains(syncTwentyCmd.RunE(cmd, nil), "discovery unavailable")
 	assert.Equal(1, refreshed)
-	source, err := st.GetSourceByTypeAndIdentifier("twenty", "first")
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "twenty", "first")
 	require.NoError(err)
 	run, err := st.GetLatestSync(source.ID)
 	require.NoError(err)
 	assert.Equal(int64(1), run.MessagesAdded)
 	require.NoError(st.RemoveSource(source.ID))
-	_, err = st.GetSourceByTypeAndIdentifier("twenty", "first")
+	_, err = st.GetSourceByTypeAndIdentifier(t.Context(), "twenty", "first")
 	require.ErrorIs(err, store.ErrSourceNotFound)
 }
 
@@ -264,7 +271,7 @@ func TestSyncTwentyContinuesAfterSourceImportFailure(t *testing.T) {
 	assert.Equal(1, secondClient.listCalls)
 	assert.Contains(out.String(), "Syncing Twenty meetings for first")
 	assert.Contains(out.String(), "Syncing Twenty meetings for second")
-	secondSource, err := st.GetSourceByTypeAndIdentifier(twenty.SourceType, "second")
+	secondSource, err := st.GetSourceByTypeAndIdentifier(t.Context(), twenty.SourceType, "second")
 	require.NoError(err)
 	run, err := st.GetLatestSync(secondSource.ID)
 	require.NoError(err)
@@ -320,13 +327,13 @@ func TestSyncTwentyStopsAfterCanceledSource(t *testing.T) {
 	assert.Equal(2, firstClient.listCalls)
 	assert.Zero(secondClient.listCalls)
 	assert.Equal(1, refreshes)
-	firstSource, err := st.GetSourceByTypeAndIdentifier(twenty.SourceType, "first")
+	firstSource, err := st.GetSourceByTypeAndIdentifier(t.Context(), twenty.SourceType, "first")
 	require.NoError(err)
 	run, err := st.GetLatestSync(firstSource.ID)
 	require.NoError(err)
 	assert.Equal(store.SyncStatusFailed, run.Status)
 	assert.Equal(int64(1), run.MessagesAdded)
-	secondSource, err := st.GetSourceByTypeAndIdentifier(twenty.SourceType, "second")
+	secondSource, err := st.GetSourceByTypeAndIdentifier(t.Context(), twenty.SourceType, "second")
 	require.NoError(err)
 	_, err = st.GetLatestSync(secondSource.ID)
 	require.Error(err, "a canceled command must not start the next source")
@@ -369,7 +376,7 @@ func TestSyncTwentyContinuesWhenOneSourceHasNoAPIKey(t *testing.T) {
 	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 	err := syncTwentyCmd.RunE(cmd, nil)
 
-	readySource, lookupErr := st.GetSourceByTypeAndIdentifier(twenty.SourceType, "ready")
+	readySource, lookupErr := st.GetSourceByTypeAndIdentifier(t.Context(), twenty.SourceType, "ready")
 	require.NoError(lookupErr)
 	run, runErr := st.GetLatestSync(readySource.ID)
 	require.NoError(runErr, "the later configured source must still be attempted")

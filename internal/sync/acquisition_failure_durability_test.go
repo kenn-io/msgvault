@@ -28,7 +28,7 @@ func reopenAcquisitionStore(t *testing.T, e *TestEnv) {
 	var location string
 	if e.Store.IsPostgreSQL() {
 		var database, schema string
-		require.NoError(t, e.Store.DB().QueryRow("SELECT current_database(), current_schema()").Scan(&database, &schema))
+		require.NoError(t, e.Store.DB().QueryRowContext(t.Context(), "SELECT current_database(), current_schema()").Scan(&database, &schema))
 		u, err := url.Parse(os.Getenv("MSGVAULT_TEST_DB"))
 		require.NoError(t, err)
 		u.Path = "/" + database
@@ -39,10 +39,10 @@ func reopenAcquisitionStore(t *testing.T, e *TestEnv) {
 	} else {
 		var sequence int
 		var name string
-		require.NoError(t, e.Store.DB().QueryRow("PRAGMA database_list").Scan(&sequence, &name, &location))
+		require.NoError(t, e.Store.DB().QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &location))
 	}
 	require.NoError(t, e.Store.Close())
-	st, err := store.OpenForTest(location)
+	st, err := store.OpenForTest(t.Context(), location)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
 	e.Store, e.Syncer = st, New(e.Mock, st, nil)
@@ -54,15 +54,15 @@ func acquisitionWriteFault(t *testing.T, e *TestEnv, table, event, condition str
 	t.Helper()
 	name := "f1_reject_" + table
 	if e.Store.IsPostgreSQL() {
-		_, err := e.Store.DB().Exec("CREATE FUNCTION " + name + `() RETURNS trigger LANGUAGE plpgsql AS $$
+		_, err := e.Store.DB().ExecContext(t.Context(), "CREATE FUNCTION "+name+`() RETURNS trigger LANGUAGE plpgsql AS $$
 			BEGIN RAISE EXCEPTION 'synthetic acquisition write failure'; END $$`)
 		require.NoError(t, err)
-		_, err = e.Store.DB().Exec("CREATE TRIGGER " + name + " BEFORE " + event + " ON " + table +
-			" FOR EACH ROW WHEN (" + condition + ") EXECUTE FUNCTION " + name + "()")
+		_, err = e.Store.DB().ExecContext(t.Context(), "CREATE TRIGGER "+name+" BEFORE "+event+" ON "+table+
+			" FOR EACH ROW WHEN ("+condition+") EXECUTE FUNCTION "+name+"()")
 		require.NoError(t, err)
 	} else {
-		_, err := e.Store.DB().Exec("CREATE TRIGGER " + name + " BEFORE " + event + " ON " + table +
-			" WHEN " + condition + " BEGIN SELECT RAISE(ABORT, 'synthetic acquisition write failure'); END")
+		_, err := e.Store.DB().ExecContext(t.Context(), "CREATE TRIGGER "+name+" BEFORE "+event+" ON "+table+
+			" WHEN "+condition+" BEGIN SELECT RAISE(ABORT, 'synthetic acquisition write failure'); END")
 		require.NoError(t, err)
 	}
 	// Use the fixture's current Store so the fault can be removed after reopen.
@@ -71,10 +71,10 @@ func acquisitionWriteFault(t *testing.T, e *TestEnv, table, event, condition str
 		if e.Store.IsPostgreSQL() {
 			query += " ON " + table
 		}
-		_, err := e.Store.DB().Exec(query)
+		_, err := e.Store.DB().ExecContext(t.Context(), query)
 		require.NoError(t, err)
 		if e.Store.IsPostgreSQL() {
-			_, err = e.Store.DB().Exec("DROP FUNCTION " + name + "()")
+			_, err = e.Store.DB().ExecContext(t.Context(), "DROP FUNCTION "+name+"()")
 			require.NoError(t, err)
 		}
 	}
@@ -129,7 +129,7 @@ func acquisitionPrimaryFault(t *testing.T, e *TestEnv, kind string) func() {
 
 func assertAcquisitionPresent(t *testing.T, e *TestEnv, ids ...string) {
 	t.Helper()
-	source := gmailCoverageSource(t, e)
+	source := gmailCoverageSource(t.Context(), t, e)
 	existing, err := e.Store.MessageExistsBatch(source.ID, ids)
 	require.NoError(t, err)
 	for _, id := range ids {
@@ -162,7 +162,7 @@ func TestAcquisitionFailureDurabilityIncremental(t *testing.T) {
 						runIncrementalSync(t, e)
 						delete(e.Mock.GetMessageError, "lost")
 						e.SetHistory(1001) // Idle replay, with no new provider event.
-						source = gmailCoverageSource(t, e)
+						source = gmailCoverageSource(t.Context(), t, e)
 					}
 					api := &acquisitionDurabilityAPI{MockAPI: e.Mock, catchup: route == "catchup", historyPages: route == "history" || route == "label"}
 					e.Syncer = New(api, e.Store, nil)
@@ -190,7 +190,7 @@ func TestAcquisitionFailureDurabilityIncremental(t *testing.T) {
 						run, readErr := e.Store.GetLatestSync(source.ID)
 						require.NoError(readErr)
 						assert.Equal(store.SyncStatusFailed, run.Status)
-						assert.Equal(source.SyncCursor.String, gmailCoverageSource(t, e).SyncCursor.String)
+						assert.Equal(source.SyncCursor.String, gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 						if route == "history" || route == "label" {
 							assert.Equal("history_1", run.CursorBefore.String, "failed page must not replace the previous checkpoint")
 						}
@@ -203,7 +203,7 @@ func TestAcquisitionFailureDurabilityIncremental(t *testing.T) {
 					} else {
 						require.NoError(err)
 						assert.Equal(int64(1), summary.Errors)
-						assert.Equal("1001", gmailCoverageSource(t, e).SyncCursor.String)
+						assert.Equal("1001", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 					}
 					assertAcquisitionPresent(t, e, "good")
 					missing, readErr := e.Store.MessageExistsBatch(source.ID, []string{"lost"})
@@ -226,7 +226,7 @@ func TestAcquisitionFailureDurabilityIncremental(t *testing.T) {
 					// No new event is introduced: failed History reads from its old
 					// cursor, recovery resumes H, and idle replay uses its old debt.
 					lists := e.Mock.ListMessagesCalls
-					_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
+					_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t.Context(), t, e))
 					require.NoError(err)
 					if route == "catchup" {
 						assert.Equal(lists, e.Mock.ListMessagesCalls, "catch-up resumes without re-enumeration")
@@ -275,7 +275,7 @@ func TestAcquisitionFailureDurabilityFullCheckpoint(t *testing.T) {
 				} else {
 					assert.Equal("page_1", run.CursorBefore.String)
 				}
-				assert.Equal("999", gmailCoverageSource(t, e).SyncCursor.String)
+				assert.Equal("999", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 				assertAcquisitionPresent(t, e, "good")
 				reopenAcquisitionStore(t, e)
 				allowRecord()
@@ -309,7 +309,7 @@ func TestAcquisitionFailureDurabilityFullAllowsRecordedErrors(t *testing.T) {
 	reopenAcquisitionStore(t, e)
 	delete(e.Mock.GetMessageError, "lost")
 	e.SetHistory(1000) // No History event for this old full-sync acquisition.
-	_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
+	_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t.Context(), t, e))
 	require.NoError(err)
 	assertAcquisitionPresent(t, e, "lost")
 	items, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
@@ -333,12 +333,12 @@ func TestAcquisitionFailureDurabilityFailedStatusWrite(t *testing.T) {
 	run, err := e.Store.GetLatestSync(source.ID)
 	require.NoError(err)
 	assert.Equal(store.SyncStatusRunning, run.Status)
-	assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
+	assert.Equal("1000", gmailCoverageSource(t.Context(), t, e).SyncCursor.String)
 	reopenAcquisitionStore(t, e)
 	allowRecord()
 	allowFailure()
 	delete(e.Mock.GetMessageError, "lost")
-	_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
+	_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t.Context(), t, e))
 	require.NoError(err, "next owner recovers the abandoned run")
 	assertAcquisitionPresent(t, e, "lost")
 }

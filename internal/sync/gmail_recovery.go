@@ -51,12 +51,12 @@ type recoveryCounts struct {
 
 func (state *syncState) durableCheckpoint() *store.Checkpoint {
 	cp := *state.checkpoint
+	cp.HandoffCursor = state.handoffCursor
 	if state.recoveryPhase != "" {
 		encoded, _ := json.Marshal(recoveryCheckpoint{
 			Phase: state.recoveryPhase, PageToken: cp.PageToken, Acquisition: state.acquisition,
 		})
 		cp.PageToken = recoveryCheckpointPrefix + string(encoded)
-		cp.HandoffCursor = state.handoffCursor
 		cp.InheritFromSyncID = state.predecessorID
 	}
 	return &cp
@@ -92,7 +92,7 @@ func decodeRecoveryCheckpoint(token string) (recoveryCheckpoint, error) {
 func restoreRecoveryCheckpoint(state *syncState, run *store.SyncRun) error {
 	state.recoveryPhase = recoveryEnumerate
 	if !checkpointMatchesRequest(run, gmailHistoryRecoveryCoverageFingerprint) {
-		return nil // The narrower legacy listing must restart, keeping H.
+		return nil // Legacy scans did not reconcile all memberships; restart, keeping H.
 	}
 	cp, err := decodeRecoveryCheckpoint(run.CursorBefore.String)
 	if err != nil {

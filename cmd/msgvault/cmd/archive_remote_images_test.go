@@ -42,7 +42,7 @@ func TestArchivedRemoteImagesThroughDaemonAdapter(t *testing.T) {
 	configuration.Data.DataDir = t.TempDir()
 	src, err := st.GetOrCreateSource("eml", "user@example.com")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(src.ID, "remote-images", "Images")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "remote-images", "Images")
 	require.NoError(err)
 	target := "https://images.example/chart.png"
 	key := fmt.Sprintf("remote-image:%x", sha256.Sum256([]byte(target)))
@@ -52,7 +52,7 @@ func TestArchivedRemoteImagesThroughDaemonAdapter(t *testing.T) {
 	})
 	require.NoError(err)
 	content := []byte("\x89PNG\r\n\x1a\nimage")
-	receipt, err := export.StoreAttachmentFileDurable(configuration.AttachmentsDir(), &mime.Attachment{ContentType: "image/png", Content: content})
+	receipt, err := export.StoreAttachmentFileDurable(t.Context(), configuration.AttachmentsDir(), &mime.Attachment{ContentType: "image/png", Content: content})
 	require.NoError(err)
 	require.NoError(st.UpsertAttachmentRecord(t.Context(), id, store.AttachmentWrite{
 		Filename: "image.png", MIMEType: "image/png", StoragePath: receipt.StoragePath, ContentHash: receipt.ContentHash,
@@ -61,11 +61,11 @@ func TestArchivedRemoteImagesThroughDaemonAdapter(t *testing.T) {
 	}))
 	daemon := api.NewServerWithOptions(api.ServerOptions{Config: configuration, Store: &storeAPIAdapter{store: st}, Logger: slog.Default()})
 	response := httptest.NewRecorder()
-	daemon.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil))
+	daemon.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil))
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	assert.Contains(response.Body.String(), "cid:"+key)
 	response = httptest.NewRecorder()
-	daemon.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/inline?cid=%s", id, key), nil))
+	daemon.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/inline?cid=%s", id, key), nil))
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	assert.Equal(content, response.Body.Bytes())
 }
@@ -89,7 +89,7 @@ func TestArchiveRemoteImagesRefreshesExistingCacheOnReuse(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, configuration.DatabaseDSN())
 	src, err := st.GetOrCreateSource("eml", "user@example.com")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(src.ID, "remote-images", "Images")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "remote-images", "Images")
 	require.NoError(err)
 	target := "https://images.example/chart.png"
 	key := fmt.Sprintf("remote-image:%x", sha256.Sum256([]byte(target)))
@@ -102,7 +102,7 @@ func TestArchiveRemoteImagesRefreshesExistingCacheOnReuse(t *testing.T) {
 	})
 	require.NoError(err)
 	require.NoError(st.Close())
-	_, err = buildCache(configuration.DatabaseDSN(), configuration.AnalyticsDir(), true)
+	_, err = buildCache(t.Context(), configuration.DatabaseDSN(), configuration.AnalyticsDir(), true)
 	require.NoError(err)
 
 	// Model an interrupted backfill: bytes and rows exist, but the cache
@@ -110,7 +110,7 @@ func TestArchiveRemoteImagesRefreshesExistingCacheOnReuse(t *testing.T) {
 	st, err = store.Open(configuration.DatabaseDSN())
 	require.NoError(err)
 	content := []byte("\x89PNG\r\n\x1a\nimage")
-	receipt, err := export.StoreAttachmentFileDurable(configuration.AttachmentsDir(), &mime.Attachment{ContentType: "image/png", Content: content})
+	receipt, err := export.StoreAttachmentFileDurable(t.Context(), configuration.AttachmentsDir(), &mime.Attachment{ContentType: "image/png", Content: content})
 	require.NoError(err)
 	require.NoError(st.UpsertRemoteImageAttachment(testCtx, id, store.AttachmentWrite{
 		Filename: "image.png", MIMEType: "image/png", StoragePath: receipt.StoragePath, ContentHash: receipt.ContentHash,
@@ -128,7 +128,7 @@ func TestArchiveRemoteImagesRefreshesExistingCacheOnReuse(t *testing.T) {
 	require.Same(configuration, invocationFromCommand(command).cfg)
 	require.NoError(command.ExecuteContext(testCtx))
 
-	engine, err := query.NewDuckDBEngine(configuration.AnalyticsDir(), "", nil)
+	engine, err := query.NewDuckDBEngine(t.Context(), configuration.AnalyticsDir(), "", nil)
 	require.NoError(err)
 	result, queryErr := engine.QuerySQL(testCtx, `
 		SELECT m.attachment_count, m.has_attachments, COUNT(a.attachment_id)

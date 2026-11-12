@@ -328,7 +328,7 @@ func (s *Store) EnsureVisualGeneration(
 		return VisualGeneration{}, errors.New("visual generation fingerprint already has different immutable settings")
 	}
 	if generation.State == VisualGenerationRetired {
-		if err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 			q := boundQuerier{ctx: ctx, q: tx}
 			// Deleting the ledger while rows still reference backend vectors
 			// would make those vectors untraceable if the retirement's token
@@ -413,7 +413,8 @@ func (s *Store) ClaimVisualWork(
 		expiresAt, request.SourceFence}
 	args = append(args, stampArgs...)
 	args = append(args, request.Owner.MessageID, request.Now)
-	err := s.db.QueryRowContext(ctx, `
+	err := s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
+		return tx.QueryRowContext(ctx, `
 		INSERT INTO visual_work_claims
 			(generation_id, message_id, blob_hash, media_input_key,
 			 proposed_revision, lease_owner, lease_expires_at, fencing_token,
@@ -431,9 +432,10 @@ func (s *Store) ClaimVisualWork(
 		WHERE visual_work_claims.lease_expires_at <= ?
 		RETURNING lease_owner, lease_expires_at, fencing_token, source_fence, claimed_content_stamp
 	`, args...).Scan(
-		&claim.LeaseOwner, &claim.LeaseExpiresAt, &claim.FencingToken, &claim.SourceFence,
-		&claim.ContentStamp,
-	)
+			&claim.LeaseOwner, &claim.LeaseExpiresAt, &claim.FencingToken, &claim.SourceFence,
+			&claim.ContentStamp,
+		)
+	})
 	if err == nil {
 		return claim, true, nil
 	}
@@ -494,7 +496,7 @@ func (s *Store) PrepareVisualPublication(
 		return "", err
 	}
 	sourceChanged := false
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err = s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := verifyVisualGenerationLive(q, prepared.Claim.GenerationID); err != nil {
 			return err
@@ -578,7 +580,7 @@ func (s *Store) CommitVisualPublication(
 		return errors.New("visual vector token is required")
 	}
 	sourceChanged := false
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := verifyVisualGenerationLive(q, claim.GenerationID); err != nil {
 			return err
@@ -691,7 +693,7 @@ func (s *Store) RestoreVisualPublication(
 		!authoritativeVisualRoleSource(prepared.RoleSource) {
 		return errors.New("restored visual publication requires an existing vector and authoritative standalone role")
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := verifyVisualClaim(q, prepared.Claim, time.Now().UTC()); err != nil {
 			return err
@@ -750,7 +752,7 @@ func (s *Store) RejectVisualPublication(
 		return errors.New("visual outcome kind and reason are required")
 	}
 	sourceChanged := false
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := verifyVisualClaim(q, claim, time.Now().UTC()); err != nil {
 			return err
@@ -833,7 +835,8 @@ func (s *Store) TombstoneVisualOwner(
 	if err := validateVisualOwner(owner); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `
+	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO visual_publications
 			(generation_id, message_id, blob_hash, media_input_key,
 			 source_fence, attachment_role, role_source, state)
@@ -845,7 +848,8 @@ func (s *Store) TombstoneVisualOwner(
 			state = 'tombstoned',
 			updated_at = `+s.dialect.Now()+`
 	`, generationID, owner.MessageID, owner.BlobHash, owner.MediaInputKey, sourceFence)
-	return err
+		return err
+	})
 }
 
 func (s *Store) GetVisualPublication(

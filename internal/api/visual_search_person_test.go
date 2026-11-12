@@ -22,7 +22,7 @@ func TestResolveVisualPersonScopeUsesDurableBindingsAndLegacySenderAlias(t *test
 	catalog.personContextFunc = func(_ context.Context, id int64) (*store.Person, error) {
 		return &store.Person{ID: id, ParticipantIDs: []int64{4, 9}}, nil
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/search/attachments/visual", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/attachments/visual", nil)
 	response := httptest.NewRecorder()
 	query := visual.SearchQuery{}
 	require.True(server.resolveVisualPersonScope(response, request, &query, 0, 0, 40, nil))
@@ -37,7 +37,7 @@ func TestResolveVisualLegacySenderAliasReportsMissingDurablePerson(t *testing.T)
 	catalog.personContextFunc = func(context.Context, int64) (*store.Person, error) {
 		return nil, store.ErrPersonNotFound
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/search/attachments/visual", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/attachments/visual", nil)
 	response := httptest.NewRecorder()
 
 	ok := server.resolveVisualPersonScope(response, request, &visual.SearchQuery{}, 0, 0, 40, nil)
@@ -54,7 +54,7 @@ func TestResolveVisualPersonScopeRejectsInvalidDirectionBeforeResolution(t *test
 		t.Fatal("invalid directions must not dispatch person resolution")
 		return nil, store.ErrPersonNotFound
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/search/attachments/visual", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/search/attachments/visual", nil)
 	response := httptest.NewRecorder()
 
 	ok := server.resolveVisualPersonScope(response, request, &visual.SearchQuery{}, 40, 0, 0,

@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"math"
 	"testing"
 	"time"
@@ -152,7 +151,7 @@ func TestRelationshipsReceivedCreditsOnlyAuthors(t *testing.T) {
 	b.AddTo(replyID, listID, "Dev List")
 
 	engine := b.BuildEngine()
-	result, err := engine.Relationships(context.Background(), RelationshipsRequest{Now: now, Limit: 10})
+	result, err := engine.Relationships(t.Context(), RelationshipsRequest{Now: now, Limit: 10})
 	require.NoError(err)
 	require.Len(result.Rows, 1, "only the list passes the gate; the authors have no sent/meeting signal")
 
@@ -189,7 +188,8 @@ func TestRelationshipsReceivedCountsAuthoredMessages(t *testing.T) {
 	}
 
 	engine := b.BuildEngine()
-	result, err := engine.Relationships(context.Background(),
+	result, err := engine.Relationships(
+		t.Context(),
 		RelationshipsRequest{Now: now, Limit: 10, ShowAll: true})
 	require.NoError(err)
 	require.Len(result.Rows, 1)
@@ -233,7 +233,8 @@ func TestRelationshipsChatReceivedCreditUnchanged(t *testing.T) {
 	b.AddConversationParticipant(convID, silentID)
 
 	engine := b.BuildEngine()
-	result, err := engine.Relationships(context.Background(),
+	result, err := engine.Relationships(
+		t.Context(),
 		RelationshipsRequest{Now: now, Limit: 10, ShowAll: true})
 	require.NoError(err)
 	require.Len(result.Rows, 2)

@@ -32,7 +32,7 @@ afterEach(() => {
 it.each([
   { workspace: 'Settings Contacts', url: '/?workspace=settings', action: 'Sync now', contacts: true, build: false },
   { workspace: 'Sources', url: '/?workspace=sources', action: 'Sync now Example archive', contacts: false, build: false },
-  { workspace: 'Settings Overview', url: '/?workspace=settings', action: 'Build index, Message search', contacts: false, build: true },
+  { workspace: 'Settings Overview', url: '/?workspace=settings', action: 'Build index, Search by meaning', contacts: false, build: true },
   { workspace: 'Messages', url: '/?workspace=everything&mode=hybrid', action: 'Build index', contacts: false, build: true },
 ])('refreshes shell status after an action in $workspace', async ({ workspace, url, action, contacts, build }) => {
   window.history.replaceState(null, '', url);

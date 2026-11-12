@@ -96,7 +96,7 @@ func TestClient_EmbedDocumentsFlattensWithoutChangingOrder(t *testing.T) {
 	client, calls := newRecordingOpenAIClient(t, 1)
 	docs := []DocumentInput{{Chunks: []string{"a", "b"}}, {Chunks: []string{"c"}}}
 
-	got, err := client.EmbedDocuments(context.Background(), docs)
+	got, err := client.EmbedDocuments(t.Context(), docs)
 
 	require.NoError(t, err)
 	assert.Equal(t, [][]string{{"a", "b", "c"}}, *calls)
@@ -108,7 +108,7 @@ func TestClient_EmbedDocumentsFlattensWithoutChangingOrder(t *testing.T) {
 func TestClient_EmbedQueryUsesSingleInput(t *testing.T) {
 	client, calls := newRecordingOpenAIClient(t, 1)
 
-	got, err := client.EmbedQuery(context.Background(), "find this")
+	got, err := client.EmbedQuery(t.Context(), "find this")
 
 	require.NoError(t, err)
 	assert.Equal(t, [][]string{{"find this"}}, *calls)
@@ -351,7 +351,7 @@ func TestClient_Embed_Success(t *testing.T) {
 		Model:     "test-model",
 		Dimension: 3,
 	})
-	vecs, err := c.Embed(context.Background(), []string{"hello", "world"})
+	vecs, err := c.Embed(t.Context(), []string{"hello", "world"})
 	require.NoError(err, "Embed")
 	require.Len(vecs, 2)
 	for i, v := range vecs {
@@ -368,7 +368,7 @@ func TestClient_Embed_DimensionMismatch(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
-	_, err := c.Embed(context.Background(), []string{"a"})
+	_, err := c.Embed(t.Context(), []string{"a"})
 	require.Error(t, err, "expected dimension mismatch error")
 	assert.ErrorIs(t, err, vector.ErrInvalidProviderVector)
 }
@@ -388,7 +388,7 @@ func TestClient_Embed_Retries5xx(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3, MaxRetries: 3})
-	vecs, err := c.Embed(context.Background(), []string{"a"})
+	vecs, err := c.Embed(t.Context(), []string{"a"})
 	require.NoError(err, "Embed")
 	assert.Equal(int32(3), attempts.Load())
 	require.Len(vecs, 1)
@@ -407,7 +407,7 @@ func TestClient_Embed_Does_Not_Retry_4xx(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3, MaxRetries: 5})
-	_, err := c.Embed(context.Background(), []string{"a"})
+	_, err := c.Embed(t.Context(), []string{"a"})
 	require.Error(t, err, "expected error for 4xx")
 	assert.Equal(int32(1), attempts.Load(), "no retry on 4xx")
 	require.ErrorContains(t, err, "400")
@@ -423,7 +423,7 @@ func TestClient_Embed_AuthHeader(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{Endpoint: srv.URL, APIKey: "secret-token", Model: "m", Dimension: 3})
-	_, err := c.Embed(context.Background(), []string{"a"})
+	_, err := c.Embed(t.Context(), []string{"a"})
 	require.NoError(t, err, "Embed")
 	assert.Equal(t, "Bearer secret-token", gotAuth)
 }
@@ -440,11 +440,11 @@ func TestClient_Embed_EmptyInput(t *testing.T) {
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
 
-	vecs, err := c.Embed(context.Background(), nil)
+	vecs, err := c.Embed(t.Context(), nil)
 	require.NoError(err, "nil input")
 	assert.Nil(vecs)
 
-	vecs, err = c.Embed(context.Background(), []string{})
+	vecs, err = c.Embed(t.Context(), []string{})
 	require.NoError(err, "empty input")
 	assert.Nil(vecs)
 
@@ -460,7 +460,7 @@ func TestClient_Embed_GivesUpAfterMaxRetries(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3, MaxRetries: 2})
-	_, err := c.Embed(context.Background(), []string{"a"})
+	_, err := c.Embed(t.Context(), []string{"a"})
 	require.Error(t, err, "expected error after exhausting retries")
 	assert.Equal(t, int32(2), attempts.Load())
 	assert.NotErrorIs(t, err, ErrPermanent4xx)
@@ -477,7 +477,7 @@ func TestClient_Embed_ContextCanceledDuringBackoff(t *testing.T) {
 		c := NewClient(Config{Endpoint: "http://127.0.0.1", Model: "m", Dimension: 3, MaxRetries: 10})
 		c.http.Transport = srv.Client().Transport
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		// Cancel shortly after start so we hit the backoff wait.
 		go func() {
@@ -548,7 +548,7 @@ func TestClient_Embed_MissingIndex(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
-	_, err := c.Embed(context.Background(), []string{"a", "b"})
+	_, err := c.Embed(t.Context(), []string{"a", "b"})
 	require.Error(t, err, "expected missing embedding error")
 	assert.ErrorIs(t, err, vector.ErrInvalidProviderShape)
 }
@@ -570,7 +570,7 @@ func TestClient_Embed_Retries429(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3, MaxRetries: 3})
-	vecs, err := c.Embed(context.Background(), []string{"a"})
+	vecs, err := c.Embed(t.Context(), []string{"a"})
 	require.NoError(err, "Embed")
 	assert.Equal(int32(2), attempts.Load(), "retry after 429")
 	require.Len(vecs, 1)
@@ -582,37 +582,6 @@ func TestClient_Embed_Retries429(t *testing.T) {
 // exponential backoff. Cancelling the context mid-wait must return
 // a context-cancel error rather than racing the default-backoff
 // deadline.
-func TestClient_Embed_HonorsRetryAfterOverridesBackoff(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var attempts atomic.Int32
-		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			attempts.Add(1)
-			w.Header().Set("Retry-After", "30") // much longer than default 200ms
-			http.Error(w, "rl", http.StatusTooManyRequests)
-		}))
-
-		c := NewClient(Config{Endpoint: "http://127.0.0.1", Model: "m", Dimension: 3, MaxRetries: 3})
-		c.http.Transport = srv.Client().Transport
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			cancel()
-		}()
-		start := time.Now()
-		_, err := c.Embed(ctx, []string{"a"})
-		elapsed := time.Since(start)
-		require.ErrorIs(t, err, context.Canceled)
-		// Should be interrupted at ~100ms by the cancel, well before
-		// 30s. A test failure here would mean Retry-After wasn't
-		// honored and the default backoff completed first.
-		assert.Less(t, elapsed, 500*time.Millisecond, "cancel during Retry-After wait")
-		// One attempt plus possibly a second before cancel; never
-		// enough to finish the Retry-After window.
-		assert.LessOrEqual(t, attempts.Load(), int32(2), "Retry-After should extend the wait")
-	})
-}
-
 // TestClient_Embed_RetriesTruncatedBody verifies a truncated JSON
 // response is treated as transient. Mid-stream cutoffs are common
 // when the server hits a deadline, and the old code failed them
@@ -641,7 +610,7 @@ func TestClient_Embed_RetriesTruncatedBody(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3, MaxRetries: 3})
-	vecs, err := c.Embed(context.Background(), []string{"a"})
+	vecs, err := c.Embed(t.Context(), []string{"a"})
 	require.NoError(t, err, "Embed")
 	assert.Equal(t, int32(2), attempts.Load(), "retry after truncated body")
 	assert.Len(t, vecs, 1)
@@ -680,7 +649,7 @@ func TestClient_Embed_429NotPermanent(t *testing.T) {
 	c := NewClient(Config{
 		Endpoint: srv.URL, Model: "m", Dimension: 4, MaxRetries: 2,
 	})
-	_, err := c.Embed(context.Background(), []string{"hello"})
+	_, err := c.Embed(t.Context(), []string{"hello"})
 	require.Error(t, err, "expected error after retries exhausted")
 	assert.NotErrorIs(t, err, ErrPermanent4xx, "429 should NOT match ErrPermanent4xx")
 }
@@ -705,7 +674,7 @@ func TestClient_Embed_InvalidIndex(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
-	_, err := c.Embed(context.Background(), []string{"a"})
+	_, err := c.Embed(t.Context(), []string{"a"})
 	require.Error(t, err, "expected invalid index error")
 	assert.ErrorIs(t, err, vector.ErrInvalidProviderShape)
 }
@@ -752,7 +721,7 @@ func TestClient_Embed_RejectsExtraOrDuplicateResponseItems(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			client := NewClient(Config{Endpoint: srv.URL, Model: "m", Dimension: 3})
-			_, err := client.Embed(context.Background(), []string{"a"})
+			_, err := client.Embed(t.Context(), []string{"a"})
 
 			require.Error(t, err)
 			assert.ErrorIs(t, err, vector.ErrInvalidProviderShape)

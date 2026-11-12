@@ -170,7 +170,7 @@ func TestCardDAVMultipleConnectionsAggregateSyncReportsActiveAndUnavailable(t *t
 	assertions.Equal(1, selected.Books)
 	server := cardDAVReadServer(t, controller.cfg, controller, nil)
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/carddav/sync", strings.NewReader(`{}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/carddav/sync", strings.NewReader(`{}`))
 	request.Header.Set("Content-Type", "application/json")
 	server.Router().ServeHTTP(response, request)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
@@ -379,7 +379,7 @@ func TestCardDAVMultipleConnectionsGoogleAuthorizationSelection(t *testing.T) {
 	controller, err := NewCardDAVController(cfg, st, testLogger())
 	require.NoError(err)
 	server := cardDAVReadServer(t, cfg, controller, nil)
-	request := httptest.NewRequest(http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize",
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "https://archive.example/api/v1/carddav/google/authorize",
 		strings.NewReader(`{"connection":"work","email":"person@example.com","redirect_uri":"https://archive.example/"}`))
 	request.Header.Set("Origin", "https://archive.example")
 	request.Header.Set("Content-Type", "application/json")
@@ -483,7 +483,7 @@ func TestCardDAVMultipleConnectionsSelectedRetryHeader(t *testing.T) {
 	require.NoError(controller.store.SetCardDAVRetryAfterContext(t.Context(), time.Now().Add(5*time.Minute), store.DefaultCardDAVAccountID))
 	require.NoError(controller.store.SetCardDAVRetryAfterContext(t.Context(), time.Now().Add(90*time.Second), work.ID))
 	server := cardDAVReadServer(t, controller.cfg, controller, nil)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/carddav/sync", strings.NewReader(`{"connection":"work"}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/carddav/sync", strings.NewReader(`{"connection":"work"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	server.Router().ServeHTTP(response, request)

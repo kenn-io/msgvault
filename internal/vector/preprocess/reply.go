@@ -27,9 +27,28 @@ var (
 // StripReplyQuotes removes quoted history for open-loop detection.
 // It keeps authored text above and below marked quotations.
 func StripReplyQuotes(body string) string {
-	body = quotedReply.ReplaceAllString(body, "")
+	return dropReplyQuotes(body, func(string) string { return "" })
+}
+
+// MaskReplyQuotes blanks quoted history while preserving byte offsets and line endings.
+// It applies the shared quote rules without deleting text. Later matches see
+// blanked text rather than the adjacent lines StripReplyQuotes can create.
+func MaskReplyQuotes(body string) string {
+	return dropReplyQuotes(body, func(quote string) string {
+		masked := []byte(quote)
+		for i, b := range masked {
+			if b != '\r' && b != '\n' {
+				masked[i] = ' '
+			}
+		}
+		return string(masked)
+	})
+}
+
+func dropReplyQuotes(body string, drop func(string) string) string {
+	body = quotedReply.ReplaceAllStringFunc(body, drop)
 	if loc := quotedStart.FindStringIndex(body); loc != nil {
-		body = body[:loc[0]]
+		body = body[:loc[0]] + drop(body[loc[0]:])
 	}
-	return quotedLine.ReplaceAllString(body, "")
+	return quotedLine.ReplaceAllStringFunc(body, drop)
 }

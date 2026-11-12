@@ -4,7 +4,6 @@ package beeper
 // archived-sample arbiter, and re-arming.
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -25,7 +24,7 @@ func TestImportAnchorMismatchFailsFast(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	src, err := st.GetOrCreateSource("beeper", "signal")
@@ -48,9 +47,9 @@ func TestImportAnchorMismatchFailsFast(t *testing.T) {
 	}
 
 	var before int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&before))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&before))
 
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.Error(err)
 	assert.Contains(err.Error(), "re-assigned")
 	assert.Contains(err.Error(), "re-add")
@@ -64,7 +63,7 @@ func TestImportAnchorMismatchFailsFast(t *testing.T) {
 	// checkpointed before the anchor check so no progress is lost.
 	var status string
 	var cursorBefore sql.NullString
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT status, cursor_before FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), src.ID).Scan(&status, &cursorBefore))
 	assert.Equal("failed", status)
 	require.True(cursorBefore.Valid)
@@ -74,12 +73,12 @@ func TestImportAnchorMismatchFailsFast(t *testing.T) {
 
 	// --full must not bypass the check: it exists precisely so a repair run
 	// against a reinstalled Beeper cannot silently duplicate the archive.
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal", Full: true})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", Full: true})
 	require.Error(err)
 	assert.Contains(err.Error(), "re-assigned")
 
 	var after int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&after))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&after))
 	assert.Equal(before, after, "no rows may be written after an anchor mismatch")
 
 	// A manual run that verifies the anchors again is the only path that clears
@@ -89,7 +88,7 @@ func TestImportAnchorMismatchFailsFast(t *testing.T) {
 			ch.Msgs[i].Timestamp = anchorTimestamp
 		}
 	}
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	_, marked, err = st.GetArchiveMarker(t.Context(), markerKey)
 	require.NoError(err)
@@ -105,7 +104,7 @@ func TestImportAnchorLostMessageReanchors(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	src, err := st.GetOrCreateSource("beeper", "signal")
@@ -127,7 +126,7 @@ func TestImportAnchorLostMessageReanchors(t *testing.T) {
 		}
 	}
 
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err, "a lost anchor message with a live chat must not fail the sync")
 
 	// The run must re-arm a replacement anchor: persisting a nil anchor would
@@ -154,7 +153,7 @@ func TestRearmAnchorFallsBackToKnownChats(t *testing.T) {
 
 	state := NewSyncState()
 	state.EnsureChat("!e2e:beeper.local").Done = true
-	imp.rearmAnchors(context.Background(), nil, state)
+	imp.rearmAnchors(t.Context(), nil, state)
 	require.NotEmpty(state.Anchors, "re-arm must probe chats known from state when none were enumerated")
 	require.Equal("!e2e:beeper.local", state.Anchors[0].ChatID)
 }
@@ -179,7 +178,7 @@ func TestVerifyAnchorsChatChurnVsReinstall(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	src, err := st.GetOrCreateSource("beeper", "signal")
@@ -195,14 +194,14 @@ func TestVerifyAnchorsChatChurnVsReinstall(t *testing.T) {
 	f.mu.Lock()
 	f.chats = f.chats[:1] // drop !second
 	f.mu.Unlock()
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err, "deleting one anchored chat is churn, not a reinstall")
 
 	// Reinstall: every anchor message and its chat are gone.
 	f.mu.Lock()
 	f.chats = nil
 	f.mu.Unlock()
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.Error(err)
 	require.Contains(err.Error(), "re-add")
 }
@@ -219,7 +218,7 @@ func TestVerifyAnchorsZeroAnchorsFallsBackToArchivedSample(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
 	// Fabricate the zero-anchor baseline a failed re-arm would leave behind.
@@ -238,7 +237,7 @@ func TestVerifyAnchorsZeroAnchorsFallsBackToArchivedSample(t *testing.T) {
 
 	// Intact installation: the archived sample verifies and the run passes
 	// (and re-arms).
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	run, err = st.GetLastSuccessfulSync(src.ID)
 	require.NoError(err)
@@ -255,7 +254,7 @@ func TestVerifyAnchorsZeroAnchorsFallsBackToArchivedSample(t *testing.T) {
 	for i := range ch.Msgs {
 		ch.Msgs[i].Timestamp = ch.Msgs[i].Timestamp.Add(2 * time.Hour)
 	}
-	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.Error(err)
 	require.Contains(err.Error(), "re-add")
 }
@@ -264,7 +263,7 @@ func TestVerifyAnchorsZeroAnchorsFallsBackToArchivedSample(t *testing.T) {
 // message's timestamp, as a Beeper reinstall would.
 func reassignFirstAnchor(t *testing.T, f *fakeBeeper, imp *Importer, st *store.Store) int64 {
 	t.Helper()
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(t, err)
 	src, err := st.GetOrCreateSource("beeper", "signal")
 	require.NoError(t, err)

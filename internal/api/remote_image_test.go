@@ -46,7 +46,7 @@ func (s *remoteImageSeams) lookup(_ context.Context, host string) ([]netip.Addr,
 	return addrs, nil
 }
 
-func (s *remoteImageSeams) dial(_ context.Context, network, address string) (net.Conn, error) {
+func (s *remoteImageSeams) dial(ctx context.Context, network, address string) (net.Conn, error) {
 	s.mu.Lock()
 	s.dials = append(s.dials, address)
 	upstream := s.upstream
@@ -54,7 +54,7 @@ func (s *remoteImageSeams) dial(_ context.Context, network, address string) (net
 	if upstream == "" {
 		return nil, fmt.Errorf("test dial to %s refused: no upstream configured", address)
 	}
-	conn, err := net.Dial(network, upstream)
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, upstream)
 	if err != nil {
 		return nil, fmt.Errorf("dialing test upstream: %w", err)
 	}
@@ -91,7 +91,7 @@ func remoteImageBody(t *testing.T, target string) []byte {
 
 func postRemoteImage(t *testing.T, srv *Server, target string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, remoteImagePath,
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, remoteImagePath,
 		bytes.NewReader(remoteImageBody(t, target)))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
@@ -175,7 +175,7 @@ func TestRemoteImageRejectsMissingOrInvalidBody(t *testing.T) {
 			seams := &remoteImageSeams{answers: map[string][]netip.Addr{}}
 			srv := newRemoteImageTestServer(t, seams)
 
-			req := httptest.NewRequest(http.MethodPost, remoteImagePath, strings.NewReader(tc.body))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, remoteImagePath, strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 			resp := httptest.NewRecorder()
 			srv.Router().ServeHTTP(resp, req)
@@ -200,7 +200,7 @@ func TestRemoteImageGetIsNotServed(t *testing.T) {
 	}}
 	srv := newRemoteImageTestServer(t, seams)
 
-	req := httptest.NewRequest(http.MethodGet,
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet,
 		remoteImagePath+"?url=http%3A%2F%2Fimages.example%2Fchart.png", nil)
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)

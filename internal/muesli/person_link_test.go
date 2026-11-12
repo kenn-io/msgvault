@@ -41,7 +41,7 @@ func TestImportedMeetingReachesExistingPerson(t *testing.T) {
 	require.NoError(err)
 
 	var role, refKind string
-	require.NoError(f.st.DB().QueryRow(f.st.Rebind(`
+	require.NoError(f.st.DB().QueryRowContext(t.Context(), f.st.Rebind(`
 		SELECT aep.role, ae.ref_kind
 		FROM activity_event_persons aep
 		JOIN activity_events ae ON ae.message_id = aep.message_id

@@ -40,9 +40,9 @@ func TestSuggestPersonFilesTransport(t *testing.T) {
 	} {
 		mid := f.CreateMessage(fmt.Sprintf("transport-%d", i))
 		require.NoError(f.Store.ReplaceMessageRecipients(mid, tc.role, []int64{pid}, []string{"Member Example"}))
-		_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), tc.when, mid)
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), tc.when, mid)
 		require.NoError(err)
-		_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,storage_path) VALUES(?,?,?,'')`), mid, tc.name, tc.mime)
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO attachments(message_id,filename,mime_type,storage_path) VALUES(?,?,?,'')`), mid, tc.name, tc.mime)
 		require.NoError(err)
 	}
 	ready := false
@@ -80,7 +80,7 @@ func TestSuggestPersonFilesTransport(t *testing.T) {
 		require.Error(err, "invalid limit must not be silently omitted")
 	}
 	request.Limit = 0
-	_, err = f.Store.DB().Exec(`DELETE FROM filename_discovery_state`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM filename_discovery_state`)
 	require.NoError(err)
 	_, err = client.SuggestPersonFiles(t.Context(), request)
 	require.Error(err)

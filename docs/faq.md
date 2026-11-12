@@ -51,7 +51,7 @@ The daemon also sends anonymous usage telemetry without archive content; see
 
 The documentation follows current `main`; your installed binary may be older.
 Check `msgvault version` and the installed command's `--help`, then consult the
-[0.20.0 changelog](changelog.md#0200). Upgrade the CLI and a configured remote
+[latest release notes](https://github.com/kenn-io/msgvault/releases/latest). Upgrade the CLI and a configured remote
 daemon together.
 
 <p class="faq-question">What is the web server for?</p>

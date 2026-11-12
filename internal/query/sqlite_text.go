@@ -354,7 +354,7 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 				COALESCE(m.subject, ''),
 				COALESCE(m.snippet, ''),
 				COALESCE(p_sender.email_address, ''),
-				COALESCE(p_sender.display_name, ''),
+				`+directSenderNameExpr("p_sender", "")+`,
 				COALESCE(p_sender.phone_number, ''),
 				m.sent_at,
 				COALESCE(m.size_estimate, 0),
@@ -528,11 +528,7 @@ func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []an
 				(SELECT mr_fb.participant_id FROM message_recipients mr_fb
 				 WHERE mr_fb.message_id = m.id AND mr_fb.recipient_type = 'from'
 				 LIMIT 1))
-			  AND COALESCE(
-				NULLIF(TRIM(p_cn.display_name), ''),
-				NULLIF(p_cn.phone_number, ''),
-				p_cn.email_address
-			  ) = ?
+			  AND `+participantNameExpr("p_cn")+` = ?
 		)`)
 		args = append(args, filter.ContactName)
 	}
@@ -788,7 +784,7 @@ func (e *SQLiteEngine) sqliteConversationMessagesQuery(convID int64, filter Text
 			COALESCE(m.subject, '') AS subject,
 			COALESCE(m.snippet, '') AS snippet,
 			COALESCE(p_sender.email_address, '') AS from_email,
-			COALESCE(p_sender.display_name, '') AS from_name,
+			`+directSenderNameExpr("p_sender", "")+` AS from_name,
 			COALESCE(p_sender.phone_number, '') AS from_phone,
 			m.sent_at,
 			COALESCE(m.size_estimate, 0) AS size_estimate,
@@ -845,7 +841,7 @@ func sqliteFTSTextSearch(
 			COALESCE(m.subject, '') AS subject,
 			COALESCE(m.snippet, '') AS snippet,
 			COALESCE(p.email_address, '') AS from_email,
-			COALESCE(p.display_name, '') AS from_name,
+			`+directSenderNameExpr("p", "")+` AS from_name,
 			COALESCE(p.phone_number, '') AS from_phone,
 			m.sent_at,
 			COALESCE(m.size_estimate, 0) AS size_estimate,

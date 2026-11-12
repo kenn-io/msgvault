@@ -27,14 +27,14 @@ func TestMeetingActionImportPresenceAndReplacement(t *testing.T) {
 	result, err := importer.Import(t.Context(), req)
 	requirements.NoError(err)
 	var title, email, status, sourceStatus, due string
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT title, assignee_email, status, source_status, due_date FROM meeting_action_items WHERE message_id = ?`), result.MessageID).Scan(&title, &email, &status, &sourceStatus, &due))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT title, assignee_email, status, source_status, due_date FROM meeting_action_items WHERE message_id = ?`), result.MessageID).Scan(&title, &email, &status, &sourceStatus, &due))
 	assertions.Equal("Send launch brief", title)
 	assertions.Equal("owner@example.com", email)
 	assertions.Equal("unknown", status)
 	assertions.Equal("Awaiting review", sourceStatus)
 	assertions.Equal("next Friday", due)
 	var body string
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), result.MessageID).Scan(&body))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), result.MessageID).Scan(&body))
 	assertions.Contains(body, "Action items:")
 	assertions.Contains(body, "Review deliverables")
 	assertions.Less(strings.Index(body, "Action items:"), strings.Index(body, "Transcript:"))
@@ -47,7 +47,7 @@ func TestMeetingActionImportPresenceAndReplacement(t *testing.T) {
 	_, err = importer.Import(t.Context(), req)
 	requirements.NoError(err)
 	var count int
-	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM meeting_action_items`).Scan(&count))
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM meeting_action_items`).Scan(&count))
 	assertions.Equal(1, count)
 
 	for _, tc := range []struct {
@@ -63,9 +63,9 @@ func TestMeetingActionImportPresenceAndReplacement(t *testing.T) {
 			_, err := importer.Import(t.Context(), tc.req)
 			requirements.NoError(err)
 			var coverage string
-			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT action_coverage FROM meeting_details WHERE message_id = ?`), result.MessageID).Scan(&coverage))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT action_coverage FROM meeting_details WHERE message_id = ?`), result.MessageID).Scan(&coverage))
 			assertions.Equal(tc.coverage, coverage)
-			requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM meeting_action_items`).Scan(&count))
+			requirements.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM meeting_action_items`).Scan(&count))
 			assertions.Zero(count)
 			normalized, err := tc.req.Normalize()
 			requirements.NoError(err)

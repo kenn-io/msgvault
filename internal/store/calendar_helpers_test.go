@@ -26,7 +26,8 @@ func TestSetMessageMetadata_RoundTrip(t *testing.T) {
 	require.NoError(f.Store.SetMessageMetadata(msgID, sql.NullString{String: meta, Valid: true}))
 
 	var got sql.NullString
-	err := f.Store.DB().QueryRow(
+	err := f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT metadata FROM messages WHERE id = ?"), msgID,
 	).Scan(&got)
 	require.NoError(err)
@@ -57,7 +58,8 @@ func TestSetMessageMetadata_Clear(t *testing.T) {
 	require.NoError(f.Store.SetMessageMetadata(msgID, sql.NullString{}))
 
 	var got sql.NullString
-	err := f.Store.DB().QueryRow(
+	err := f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind("SELECT metadata FROM messages WHERE id = ?"), msgID,
 	).Scan(&got)
 	require.NoError(err)
@@ -82,7 +84,7 @@ func TestGetSourcesByTypeAndAccount(t *testing.T) {
 			"calendar_id":   identifier,
 		})
 		require.NoError(err)
-		require.NoError(st.UpdateSourceSyncConfig(src.ID, string(cfg)))
+		require.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID, string(cfg)))
 		return src
 	}
 
@@ -127,7 +129,7 @@ func TestGetSourcesByTypeAndAccount_EmailCaseInsensitive(t *testing.T) {
 		"calendar_id":   "primary",
 	})
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(src.ID, string(cfg)))
+	require.NoError(st.UpdateSourceSyncConfig(t.Context(), src.ID, string(cfg)))
 
 	got, err := st.GetSourcesByTypeAndAccount("gcal", "mixed.case@example.com")
 	require.NoError(err)

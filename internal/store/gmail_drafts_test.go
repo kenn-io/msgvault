@@ -39,7 +39,7 @@ func TestManagedGmailDraftLifecycleAndRetention(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "thread-1", "Draft thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Draft thread")
 	require.NoError(err)
 	participants := []store.ParticipantPersistData{
 		{EmailAddress: "alice@example.com", Domain: "example.com"},
@@ -56,7 +56,7 @@ func TestManagedGmailDraftLifecycleAndRetention(t *testing.T) {
 	require.NotEmpty(draft.DraftID)
 
 	var labelCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM message_labels ml
 		JOIN labels l ON l.id = ml.label_id
 		WHERE ml.message_id = ? AND l.source_label_id = 'DRAFT'
@@ -79,7 +79,7 @@ func TestManagedGmailDraftLifecycleAndRetention(t *testing.T) {
 	assert.Equal(int64(2), published.Revision)
 	assert.Equal(replacement.GmailMessageID, published.CurrentReceipt.GmailMessageID)
 	var deleted sql.NullTime
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id = ?`), draft.CurrentMessageID).Scan(&deleted))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id = ?`), draft.CurrentMessageID).Scan(&deleted))
 	assert.True(deleted.Valid)
 
 	_, err = st.ClaimGmailDraftContext(t.Context(), draft.DraftID, 2, store.GmailDraftOperationDelete, nil)
@@ -109,7 +109,7 @@ func TestGmailDraftAdoptObservationReusesOrInsertsMessage(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "adopt@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "adopt-thread", "Adopt thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "adopt-thread", "Adopt thread")
 	require.NoError(err)
 	participants := []store.ParticipantPersistData{
 		{EmailAddress: "adopt@example.com", Domain: "example.com"},
@@ -150,7 +150,7 @@ func TestGmailDraftAdoptObservationReusesOrInsertsMessage(t *testing.T) {
 	assert.Equal(int64(2), adopted.Revision)
 	assert.Equal(observed.GmailMessageID, adopted.CurrentReceipt.GmailMessageID)
 	var predecessorDeleted sql.NullTime
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT deleted_from_source_at FROM messages WHERE id = ?
 	`), draft.CurrentMessageID).Scan(&predecessorDeleted))
 	assert.True(predecessorDeleted.Valid)
@@ -172,7 +172,7 @@ func TestGmailDraftAdoptObservationReusesOrInsertsMessage(t *testing.T) {
 	assert.Equal(adopted.CurrentMessageID, unchanged.CurrentMessageID)
 	assert.Equal(adopted.Revision, unchanged.Revision)
 	var currentDeleted sql.NullTime
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT deleted_from_source_at FROM messages WHERE id = ?
 	`), unchanged.CurrentMessageID).Scan(&currentDeleted))
 	assert.False(currentDeleted.Valid)
@@ -184,7 +184,7 @@ func TestGmailDraftAbortClearsClaim(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "abort@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "abort-thread", "Abort thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "abort-thread", "Abort thread")
 	require.NoError(err)
 	receipt := store.GmailDraftReceipt{
 		SourceID: source.ID, GmailDraftID: "gmail-draft-abort",
@@ -213,7 +213,7 @@ func TestGmailDraftPendingOriginalRetainedByGC(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "pending@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "pending-thread", "Pending thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "pending-thread", "Pending thread")
 	require.NoError(err)
 	participants := []store.ParticipantPersistData{
 		{EmailAddress: "pending@example.com", Domain: "example.com"},
@@ -231,7 +231,7 @@ func TestGmailDraftPendingOriginalRetainedByGC(t *testing.T) {
 	require.NoError(err)
 
 	// A sync deletion can arrive while the local replacement is pending.
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?
 	`), draft.CurrentMessageID)
 	require.NoError(err)
@@ -253,7 +253,7 @@ func TestGmailDraftRefusesInvalidTransitions(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "alice@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "thread-refusals", "Draft thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread-refusals", "Draft thread")
 	require.NoError(err)
 	participants := []store.ParticipantPersistData{{EmailAddress: "alice@example.com"}, {EmailAddress: "user@example.com"}}
 	receipt := store.GmailDraftReceipt{SourceID: source.ID, GmailDraftID: "gmail-draft-refusals", GmailMessageID: "gmail-message-refusals", ThreadID: "thread-refusals"}
@@ -288,7 +288,7 @@ func TestGmailDraftRefusesInvalidTransitions(t *testing.T) {
 	require.NotNil(loaded.Pending)
 	assert.Equal([]byte("candidate"), loaded.Pending.Raw)
 	var replacementCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT COUNT(*) FROM messages WHERE source_id = ? AND source_message_id = ?
 	`), source.ID, observed.GmailMessageID).Scan(&replacementCount))
 	assert.Zero(replacementCount)

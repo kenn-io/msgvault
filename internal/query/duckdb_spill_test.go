@@ -45,7 +45,7 @@ func TestDuckDBEngineCloseRemovesOnlyOwnedSpillDirectory(t *testing.T) {
 	requirementsForTest.NoError(os.MkdirAll(owned, 0o700))
 	requirementsForTest.NoError(os.MkdirAll(foreign, 0o700))
 
-	engine, err := NewDuckDBEngine("", "", nil, DuckDBOptions{
+	engine, err := NewDuckDBEngine(t.Context(), "", "", nil, DuckDBOptions{
 		TempDirectory:    owned,
 		OwnTempDirectory: true,
 	})

@@ -204,10 +204,10 @@ func TestCacheLocksAllowReadersDuringStagingAndMaintenanceWhileExcludingBuilders
 	analyticsDir := filepath.Join(t.TempDir(), "analytics")
 	requirements.NoError(os.MkdirAll(analyticsDir, 0o755))
 
-	builderLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
+	builderLock, err := acquireCacheBuildLock(t.Context(), analyticsDir)
 	requirements.NoError(err, "acquire builder lock")
 
-	readCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	readCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	release, err := query.AcquireCacheReadLock(readCtx, analyticsDir)
 	requirements.NoError(err, "readers must not block while a build stages under the builder lock")

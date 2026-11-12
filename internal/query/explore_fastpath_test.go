@@ -1,7 +1,6 @@
 package query
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -117,10 +116,10 @@ type fastPathFixtureIDs struct {
 func runExploreBothPaths(t *testing.T, engine *DuckDBEngine, request ExploreRequest) (fast, legacy *ExploreResponse) {
 	t.Helper()
 	engine.exploreFastPathDisabled = false
-	fast, err := engine.Explore(context.Background(), request)
+	fast, err := engine.Explore(t.Context(), request)
 	require.NoError(t, err)
 	engine.exploreFastPathDisabled = true
-	legacy, err = engine.Explore(context.Background(), request)
+	legacy, err = engine.Explore(t.Context(), request)
 	require.NoError(t, err)
 	engine.exploreFastPathDisabled = false
 	return fast, legacy
@@ -228,13 +227,13 @@ func TestExploreListingFastPathPagesTileFullListing(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	engine, _ := buildFastPathEquivalenceEngine(t)
-	full, err := engine.Explore(context.Background(), ExploreRequest{Page: PageSpec{Limit: 100}})
+	full, err := engine.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 100}})
 	require.NoError(err)
 	require.NotEmpty(full.Rows)
 
 	var tiled []EntryRow
 	for offset := 0; ; offset += 3 {
-		page, err := engine.Explore(context.Background(), ExploreRequest{Page: PageSpec{Limit: 3, Offset: offset}})
+		page, err := engine.Explore(t.Context(), ExploreRequest{Page: PageSpec{Limit: 3, Offset: offset}})
 		require.NoError(err)
 		if len(page.Rows) == 0 {
 			break
@@ -250,10 +249,10 @@ func TestExploreListingFastPathPagesTileFullListing(t *testing.T) {
 func runSearchFilesBothPaths(t *testing.T, engine *DuckDBEngine, request FileSearchRequest) (fast, legacy *FileSearchResponse) {
 	t.Helper()
 	engine.exploreFastPathDisabled = false
-	fast, err := engine.SearchFiles(context.Background(), request)
+	fast, err := engine.SearchFiles(t.Context(), request)
 	require.NoError(t, err)
 	engine.exploreFastPathDisabled = true
-	legacy, err = engine.SearchFiles(context.Background(), request)
+	legacy, err = engine.SearchFiles(t.Context(), request)
 	require.NoError(t, err)
 	engine.exploreFastPathDisabled = false
 	return fast, legacy
@@ -374,11 +373,29 @@ func TestExploreFastPathBoundsParticipantEnrichment(t *testing.T) {
 
 // A participant filter matches the participant as sender, as recipient, and
 // as a conversation roster member, and nothing else.
+func TestExploreRelayedSenderDomain(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("owner@example.test")
+	author := b.AddParticipant("alice@work.test", "work.test", "Alice")
+	id := b.AddMessage(MessageOpt{Subject: "Relay", SenderID: &author})
+	b.AddRecipientWithEnvelope(id, author, "from", "Alice", "notifications@github.com")
+	b.recipients[len(b.recipients)-1].IsRelayed = true
+	engine := b.BuildEngine()
+	for _, tc := range []struct {
+		domain string
+		want   int64
+	}{{"github.com", 1}, {"work.test", 0}} {
+		result, err := engine.Explore(t.Context(), ExploreRequest{Context: Context{Domains: []string{tc.domain}}, Page: PageSpec{Limit: 50}})
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, result.TotalCount, tc.domain)
+	}
+}
+
 func TestExploreParticipantFilterMatchesSenderRecipientAndRoster(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	engine, ids := buildFastPathEquivalenceEngine(t)
-	response, err := engine.Explore(context.Background(), ExploreRequest{
+	response, err := engine.Explore(t.Context(), ExploreRequest{
 		Context: Context{ParticipantIDs: []int64{ids.alice}},
 		Page:    PageSpec{Limit: 50},
 	})

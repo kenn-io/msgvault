@@ -7,11 +7,13 @@ import type { HybridSearchTimings } from "./hybridSearchTimings";
 
 export interface HybridSearchResponse {
   accelerator?: string;
+  candidate_limit_reached?: number;
   generation: HybridGenerationSummary;
   has_more: boolean;
   mode: string;
   pool_saturated: boolean;
   query: string;
+  ranking_limit_reached?: number;
   results: HybridSearchItem[];
   returned: number;
   scope_label?: string;

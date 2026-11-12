@@ -45,6 +45,7 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(
 		source.ID, "activity-cli@example.com", "manual"))
 	conversationID, err := st.EnsureConversation(
+		t.Context(),
 		source.ID, "activity-cli-thread", "Activity CLI")
 	require.NoError(err)
 	ownerID, err := st.EnsureParticipant(
@@ -101,7 +102,7 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 	require.NoError(command.Execute())
 	assert.Contains(output.String(), "Projected 2 event(s) in 2 batch(es)")
 
-	st, err = store.OpenForTest(cfg.DatabaseDSN())
+	st, err = store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err)
 	var timezone, localDate string
 	require.NoError(st.DB().QueryRowContext(testCtx, st.Rebind(`
@@ -143,7 +144,7 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 	command.SetOut(&output)
 	command.SetArgs([]string{"build"})
 	require.NoError(command.Execute())
-	st, err = store.OpenForTest(cfg.DatabaseDSN())
+	st, err = store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err)
 	var count int
 	require.NoError(st.DB().QueryRowContext(testCtx, st.Rebind(
@@ -160,7 +161,7 @@ func TestRunActivityBuildLocalUsesConfigAndBackstop(t *testing.T) {
 	command.SetArgs([]string{"build", "--backstop"})
 	require.NoError(command.Execute())
 	assert.Contains(output.String(), "Projected 1 event(s)")
-	st, err = store.OpenForTest(cfg.DatabaseDSN())
+	st, err = store.OpenForTest(t.Context(), cfg.DatabaseDSN())
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.DB().QueryRowContext(testCtx, st.Rebind(
@@ -247,28 +248,48 @@ func TestRegisterActivityProjectionJobHonorsDisabledSchedule(t *testing.T) {
 }
 
 func TestScheduledProjectionYieldsToSyncBetweenPasses(t *testing.T) {
-	// The process-wide PostgreSQL pool must outlive the synctest bubble.
+	f := newScheduledProjectionFixture(t)
+	synctest.Test(t, func(t *testing.T) {
+		_, waitIdle := startScheduledProjectionWithQueuedSync(t, f, nil)
+		waitIdle()
+		var count int
+		require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_events`).Scan(&count))
+		assert.Equal(t, 23, count, "follow-up passes finish without another cron tick")
+	})
+}
+
+// Create the store outside synctest: the process-wide PostgreSQL pool must
+// outlive the bubble in which the scheduler runs.
+func newScheduledProjectionFixture(t *testing.T) *storetest.Fixture {
+	t.Helper()
 	f := storetest.New(t)
 	for i := range 23 {
 		f.NewMessage().WithSourceMessageID(fmt.Sprintf("scheduled-projection-%d", i)).
 			WithSentAt(time.Date(2026, 10, 1, 12, i, 0, 0, time.UTC)).Create(t, f.Store)
 	}
-	synctest.Test(t, func(t *testing.T) {
-		testScheduledProjectionYieldsToSyncBetweenPasses(t, f)
-	})
+	return f
 }
 
-func testScheduledProjectionYieldsToSyncBetweenPasses(t *testing.T, f *storetest.Fixture) {
+func startScheduledProjectionWithQueuedSync(
+	t *testing.T, f *storetest.Fixture, syncWork func(context.Context) error,
+) (*scheduler.Scheduler, func()) {
 	t.Helper()
 	assert := assert.New(t)
 	require := require.New(t)
 	gate := &projectionAdmissionTracker{SerialOperationGate: api.NewSerialOperationGate(), acquired: make(chan struct{}), release: make(chan struct{})}
-	syncObserved := make(chan int, 1)
+	type syncResult struct {
+		count int
+		err   error
+	}
+	syncObserved := make(chan syncResult, 1)
 	sched := scheduler.New(func(ctx context.Context, _ string) error {
-		var count int
-		err := f.Store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM activity_events`).Scan(&count)
-		syncObserved <- count
-		return err
+		var result syncResult
+		result.err = f.Store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM activity_events`).Scan(&result.count)
+		if result.err == nil && syncWork != nil {
+			result.err = syncWork(ctx)
+		}
+		syncObserved <- result
+		return result.err
 	}).WithWorkTracker(gate).WithLogger(testDiscardLogger())
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(gate.release) }) }
@@ -290,19 +311,19 @@ func testScheduledProjectionYieldsToSyncBetweenPasses(t *testing.T, f *storetest
 	require.True(sched.Status()[0].Queued)
 	release()
 	select {
-	case count := <-syncObserved:
-		assert.Equal(activityProjectionMaxBatches, count, "sync runs before the next projection pass")
+	case result := <-syncObserved:
+		require.NoError(result.err)
+		assert.Equal(activityProjectionMaxBatches, result.count, "sync runs before the next projection pass")
 	case <-time.After(10 * time.Second):
 		require.FailNow("sync was starved behind projection")
 	}
-	require.Eventually(func() bool {
-		status := sched.JobStatus()[0]
-		return !status.Running && !status.Queued && !status.Pending && !status.LastRun.IsZero()
-	}, 10*time.Second, 10*time.Millisecond)
-	var count int
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM activity_events`).Scan(&count))
-	assert.Equal(23, count, "follow-up passes finish without another cron tick")
-	assert.Empty(sched.JobStatus()[0].LastError)
+	return sched, func() {
+		require.Eventually(func() bool {
+			status := sched.JobStatus()[0]
+			return !status.Running && !status.Queued && !status.Pending && !status.LastRun.IsZero()
+		}, 10*time.Second, 10*time.Millisecond)
+		assert.Empty(sched.JobStatus()[0].LastError)
+	}
 }
 
 type projectionAdmissionTracker struct {

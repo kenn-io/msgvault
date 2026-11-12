@@ -31,16 +31,16 @@ func TestCardDAVLocalPublicationOriginMigrationUsesOrderingEvidence(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			var personID int64
-			require.NoError(st.DB().QueryRow(st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`INSERT INTO persons (vcard_uid, display_name)
 				VALUES (?, ?) RETURNING id`), "origin-"+tc.name, "Origin Example").Scan(&personID))
 			href := fmt.Sprintf("%s%s.vcf", book.CanonicalURL, tc.name)
-			_, err := st.DB().Exec(st.Rebind(`INSERT INTO carddav_resources (
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_resources (
 				address_book_id, href, remote_uid, remote_etag, remote_body, remote_semantic_hash,
 				local_hash, mapping_status, governance, person_id, created_at, updated_at
 			) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`), book.ID, href, tc.cardUID, `"etag"`, []byte("card"), "semantic",
 				"local", CardDAVMappingMapped, CardDAVGovernanceLocal, personID, tc.resourceCreatedAt, tc.resourceCreatedAt)
 			require.NoError(err)
-			_, err = st.DB().Exec(st.Rebind(`INSERT INTO carddav_publications (
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_publications (
 				person_id, desired, address_book_id, href, pending_operation, local_hash,
 				connection_generation, book_sync_revision, mapping_revision, created_at, updated_at
 			) VALUES (?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, 0), NULLIF(?, 0), NULLIF(?, 0), ?, ?)`),
@@ -55,14 +55,14 @@ func TestCardDAVLocalPublicationOriginMigrationUsesOrderingEvidence(t *testing.T
 	for _, tc := range cases {
 		var locallyPublished bool
 		href := fmt.Sprintf("%s%s.vcf", book.CanonicalURL, tc.name)
-		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT locally_published FROM carddav_resources
+		require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT locally_published FROM carddav_resources
 			WHERE address_book_id = ? AND href = ?`), book.ID, href).Scan(&locallyPublished))
 		assert.Equal(t, tc.want, locallyPublished, tc.name)
 	}
 }
 
 func rerunCardDAVLocalPublicationOriginMigration(ctx context.Context, st *Store) error {
-	_, err := st.DB().Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), migrationCardDAVLocalPublicationOrigin)
+	_, err := st.DB().ExecContext(ctx, st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), migrationCardDAVLocalPublicationOrigin)
 	if err != nil {
 		return err
 	}

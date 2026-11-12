@@ -28,6 +28,7 @@ var mcpNoSQLiteScanner bool
 var mcpHTTPAddr string
 var mcpHTTPAllowInsecure bool
 var mcpHTTPAllowWrites bool
+var mcpConfirmSensitiveDrafts bool
 var mcpAllowProfileWrites bool
 var mcpAllowIdentityDecisions bool
 var mcpAllowIdentityScoring bool
@@ -37,6 +38,7 @@ var mcpAllowKataWrites bool
 var mcpAllowCalendarWrites bool
 var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 var mcpAllowSourceWrites bool
+var mcpAllowLoopWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
 var mcpCmd = &cobra.Command{
@@ -45,7 +47,7 @@ var mcpCmd = &cobra.Command{
 	Long: `Start an MCP (Model Context Protocol) server over stdio.
 
 This allows Claude Desktop (or any MCP client) to query your archive
-using tools like search_metadata, search_message_bodies, search_document_attachments, semantic_search_messages, get_message, list_messages, list_thread, export_eml, get_stats,
+using tools like search_metadata, search_message_bodies, search_media, semantic_search_messages, get_message, list_messages, list_thread, export_eml, get_stats,
 aggregate, get_person_agenda, list_saved_views, run_saved_view, stage_deletion,
 draft_reply, draft_compose, draft_forward, draft_get, draft_edit, draft_delete,
 draft_recover, and draft_send_as.
@@ -173,7 +175,7 @@ const identityScoringMinAPISchemaVersion = "3.0.0"
 const draftsMinAPISchemaVersion = "3.0.0"
 
 // delegatedMCPServeOptions offers only the tools an agent grant can use.
-// Draft tools are the floor, so an older daemon fails instead of serving an empty msgvault.
+// Source inventory is required to select tools within the grant.
 func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcpserver.ServeOptions, error) {
 	health, err := st.Health(ctx)
 	if err != nil {
@@ -183,23 +185,21 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	if health != nil && health.APISchemaVersion != nil {
 		schemaVersion = *health.APISchemaVersion
 	}
-	if !daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
-		return mcpserver.ServeOptions{}, fmt.Errorf("MCP draft tools require daemon API schema %s or newer (daemon reports %q); upgrade the daemon", draftsMinAPISchemaVersion, schemaVersion)
+	if !daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentReadMinAPISchemaVersion) {
+		return mcpserver.ServeOptions{}, fmt.Errorf("delegated MCP requires daemon API schema %s or newer (daemon reports %q); upgrade the daemon", daemonclient.AgentReadMinAPISchemaVersion, schemaVersion)
+	}
+	grant, err := st.AgentTokenSelf(ctx)
+	if err != nil {
+		return mcpserver.ServeOptions{}, fmt.Errorf("read agent grant: %w", err)
+	}
+	families := &mcpserver.ArchiveFamilies{}
+	for _, source := range grant.Sources {
+		addMCPSourceFamilies(families, source.Type)
 	}
 	opts := mcpserver.ServeOptions{
 		Drafts: daemonMCPDraftRunner{client: st}, DraftCommands: mcpDraftCommands(true), DelegatedOnly: true,
-	}
-	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.AgentReadMinAPISchemaVersion) {
-		grant, err := st.AgentTokenSelf(ctx)
-		if err != nil {
-			return mcpserver.ServeOptions{}, fmt.Errorf("read agent grant: %w", err)
-		}
-		opts.Engine = daemonclient.NewEngineAdapter(st)
-		opts.AttachmentReader = st
-		opts.GrantPermissions = grant.Permissions
-	}
-	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
-		opts.Calendar = st
+		Engine: daemonclient.NewEngineAdapter(st), AttachmentReader: st,
+		Calendar: st, GrantPermissions: grant.Permissions, Families: families,
 	}
 	return opts, nil
 }
@@ -249,10 +249,10 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	engine := daemonclient.NewEngineAdapter(st)
 	opts := mcpserver.ServeOptions{
+		DiscoverFamilies:   func(ctx context.Context) *mcpserver.ArchiveFamilies { return discoverMCPFamilies(ctx, st, log) },
 		Engine:             engine,
 		AttachmentReader:   st,
 		ManifestSaver:      daemonMCPManifestSaver{client: st},
-		DocumentSearcher:   st,
 		MediaSearcher:      st,
 		PersonFileSearcher: daemonMCPPersonFileSearcher{client: st},
 		Drafts:             daemonMCPDraftRunner{client: st},
@@ -274,18 +274,17 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if health != nil && health.APISchemaVersion != nil {
 		schemaVersion = *health.APISchemaVersion
 	}
-	if capabilityErr == nil && health != nil && health.Vector != nil &&
-		daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion) {
-		if health.Vector.TextEnabled != nil && *health.Vector.TextEnabled {
-			opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
-			opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
-		}
-		if health.Vector.VisualEnabled != nil && *health.Vector.VisualEnabled &&
-			daemonclient.APISchemaVersionAtLeast(schemaVersion, visualSearchMinAPISchemaVersion) {
-			opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
-		}
+	// Turn on can enable text search after this server starts.
+	activatable := mcpRequestPropertiesPresent(capabilities, "enableLocalEmbeddings")
+	lanes := capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion)
+	if activatable || lanes && health.Vector.TextEnabled != nil && *health.Vector.TextEnabled {
+		opts.HybridSearcher = daemonMCPHybridSearcher{client: st}
+		opts.SimilarSearcher = daemonMCPSimilarSearcher{client: st}
 	}
-	if capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, embeddingsStatusMinAPISchemaVersion) {
+	if lanes && health.Vector.VisualEnabled != nil && *health.Vector.VisualEnabled && daemonclient.APISchemaVersionAtLeast(schemaVersion, visualSearchMinAPISchemaVersion) {
+		opts.VisualSearcher = daemonMCPVisualSearcher{client: st}
+	}
+	if activatable || capabilityErr == nil && health != nil && health.Vector != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, embeddingsStatusMinAPISchemaVersion) {
 		opts.EmbeddingStatus = st
 	}
 	if capabilityErr != nil {
@@ -619,6 +618,8 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		}
 		return new(bool)
 	}
+	flags.BoolVar(bind(&mcpConfirmSensitiveDrafts), prefix+"confirm-sensitive-drafts", false,
+		"Require MCP client confirmation before creating or editing drafts with likely sensitive content.")
 	flags.BoolVar(bind(&mcpAllowProfileWrites), prefix+"allow-profile-writes", false,
 		"Expose person promotion, display-name editing, and private Notes writes. Model tool calls "+
 			"can persist profile data, so enable this only for sessions where the user "+
@@ -635,11 +636,14 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	flags.BoolVar(bind(&mcpAllowCalendarWrites), prefix+"allow-calendar-writes", false,
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
+	flags.BoolVar(bind(&mcpAllowLoopWrites), prefix+"allow-loop-writes", false,
+		"Allow approved open-loop done, snooze, and reopen decisions")
 	flags.BoolVar(bind(&mcpAllowSourceWrites), prefix+"allow-source-writes", false,
 		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires the general write opt-in.")
 }
 
 func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.ServeOptions) {
+	opts.ConfirmSensitiveDrafts, _ = cmd.Flags().GetBool(prefix + "confirm-sensitive-drafts")
 	opts.AllowProfileWrites, _ = cmd.Flags().GetBool(prefix + "allow-profile-writes")
 	opts.AllowIdentityDecisions, _ = cmd.Flags().GetBool(prefix + "allow-identity-decisions")
 	opts.AllowIdentityScoring, _ = cmd.Flags().GetBool(prefix + "allow-identity-scoring")
@@ -649,6 +653,9 @@ func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.Serve
 	opts.AllowCalendarWrites, _ = cmd.Flags().GetBool(prefix + "allow-calendar-writes")
 	if opts.AllowProfileWrites {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyRecords)
+	}
+	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-loop-writes"); enabled {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyLoops)
 	}
 	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-source-writes"); enabled {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)

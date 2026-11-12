@@ -105,7 +105,7 @@ func TestFrozenMsgvaultV1Pack(t *testing.T) {
 		sum := sha256.Sum256(want)
 		assert.Equal(blob.Hash, hex.EncodeToString(sum[:]), blob.Name)
 
-		r, size, err := blobs.Open(blob.Hash)
+		r, size, err := blobs.Open(t.Context(), blob.Hash)
 		require.NoError(err, blob.Name)
 		got, readErr := io.ReadAll(r)
 		closeErr := r.Close()

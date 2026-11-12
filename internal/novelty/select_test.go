@@ -41,7 +41,7 @@ func keys(r Result) []string {
 }
 func selectOK(t *testing.T, in Input) Result {
 	t.Helper()
-	r, err := Select(context.Background(), in)
+	r, err := Select(t.Context(), in)
 	require.NoError(t, err)
 	return r
 }
@@ -222,7 +222,7 @@ func TestSelectIneligibleNeverInNoveltyLane(t *testing.T) {
 	}
 }
 func TestSelectHonorsCancelledContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err := Select(ctx, tenAxes())
 	assert.ErrorIs(t, err, context.Canceled)
@@ -242,7 +242,7 @@ func TestSelectRejectsInvalidInput(t *testing.T) {
 			in := tenAxes()
 			tc.change(&in)
 			t.Run("select", func(t *testing.T) {
-				_, err := Select(context.Background(), in)
+				_, err := Select(t.Context(), in)
 				assert.ErrorIs(t, err, ErrInvalidInput)
 			})
 			t.Run("recency", func(t *testing.T) {

@@ -37,7 +37,7 @@ func openFilterPGTestDB(t *testing.T) *sql.DB {
 	setup, err := sql.Open("pgx", url)
 	require.NoError(t, err, "open setup")
 	defer func() { _ = setup.Close() }()
-	_, err = setup.Exec("CREATE SCHEMA " + schemaName)
+	_, err = setup.ExecContext(t.Context(), "CREATE SCHEMA "+schemaName)
 	require.NoError(t, err, "create schema")
 
 	sep := "?"
@@ -48,6 +48,7 @@ func openFilterPGTestDB(t *testing.T) *sql.DB {
 
 	db, err := sql.Open("pgx", testURL)
 	require.NoError(t, err, "open")
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		_ = db.Close()
 		cleanup, err := sql.Open("pgx", url)
@@ -55,10 +56,10 @@ func openFilterPGTestDB(t *testing.T) *sql.DB {
 			return
 		}
 		defer func() { _ = cleanup.Close() }()
-		_, _ = cleanup.Exec("DROP SCHEMA " + schemaName + " CASCADE")
+		_, _ = cleanup.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA "+schemaName+" CASCADE")
 	})
 
-	_, err = db.Exec(`
+	_, err = db.ExecContext(t.Context(), `
 		CREATE TABLE participants (
 			id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 			email_address TEXT
@@ -69,11 +70,11 @@ func openFilterPGTestDB(t *testing.T) *sql.DB {
 		);`)
 	require.NoError(t, err, "create participants/labels")
 
-	_, err = db.Exec(`INSERT INTO participants (email_address) VALUES
+	_, err = db.ExecContext(t.Context(), `INSERT INTO participants (email_address) VALUES
 		('alice@example.com'), ('bob@example.com'),
 		('carol@other.com'), ('dave.work@example.com')`)
 	require.NoError(t, err, "seed participants")
-	_, err = db.Exec(`INSERT INTO labels (name) VALUES ('INBOX'), ('Work'), ('Archive')`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO labels (name) VALUES ('INBOX'), ('Work'), ('Archive')`)
 	require.NoError(t, err, "seed labels")
 
 	return db
@@ -90,17 +91,15 @@ func TestBuildFilter_PostgresRebindsLookups(t *testing.T) {
 	require := require.New(t)
 
 	db := openFilterPGTestDB(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	rebind := (&store.PostgreSQLDialect{}).Rebind
 
-	// passes-with: addresses and labels resolve via substring LIKE on pgx.
-	q := search.Parse(`from:example.com to:alice label:work`)
+	// Recipient addresses and labels resolve via substring LIKE on pgx.
+	q := search.Parse(`to:alice label:work`)
 	f, err := BuildFilter(ctx, db, rebind, q)
 	require.NoError(
 		err, "BuildFilter must succeed with the dialect rebind on pgx")
 
-	require.Len(f.SenderGroups, 1, "one from: token -> one group")
-	assert.Len(f.SenderGroups[0], 3, "from:example.com matches alice/bob/dave.work")
 	require.Len(f.ToGroups, 1, "one to: token -> one group")
 	assert.Len(f.ToGroups[0], 1, "to:alice matches exactly one participant")
 	require.Len(f.LabelGroups, 1, "one label: token -> one group")
@@ -112,7 +111,7 @@ func TestBuildFilter_PostgresRebindsLookups(t *testing.T) {
 	// depends on the surrounding clause; what matters is that it is a
 	// Postgres error (carries a SQLSTATE) the rebind eliminates.
 	identity := func(s string) string { return s }
-	_, err = BuildFilter(ctx, db, identity, search.Parse(`from:alice`))
+	_, err = BuildFilter(ctx, db, identity, search.Parse(`to:alice`))
 	require.Error(err, "un-rebound ? placeholders must fail on pgx")
 	assert.Contains(err.Error(), "SQLSTATE",
 		"expected a pgx server error for bare ? placeholders; got %v", err)

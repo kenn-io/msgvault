@@ -13,7 +13,7 @@ func TestAttachmentPackLivenessQueriesUseExpressionIndexes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dir := t.TempDir()
-	st, err := OpenForTest(filepath.Join(dir, "liveness.db"))
+	st, err := OpenForTest(t.Context(), filepath.Join(dir, "liveness.db"))
 	require.NoError(err)
 	defer func() { require.NoError(st.Close()) }()
 	require.NoError(st.InitSchema())

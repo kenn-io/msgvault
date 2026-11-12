@@ -23,13 +23,13 @@ func TestListUnresolvedConversationIDs(t *testing.T) {
 		{"empty", `{"member_count":0}`},
 		{"known", `{"member_count":5}`},
 	} {
-		id, err := st.EnsureConversation(source.ID, tc.id, "Synthetic room")
+		id, err := st.EnsureConversation(t.Context(), source.ID, tc.id, "Synthetic room")
 		requirements.NoError(err)
 		requirements.NoError(st.SetConversationMetadata(id, sql.NullString{String: tc.metadata, Valid: true}))
 	}
 	other, err := st.GetOrCreateSource("beeper", "other-roster-test")
 	requirements.NoError(err)
-	_, err = st.EnsureConversation(other.ID, "other-room", "Other room")
+	_, err = st.EnsureConversation(t.Context(), other.ID, "other-room", "Other room")
 	requirements.NoError(err)
 	ids, err := st.ListUnresolvedConversationIDs(t.Context(), source.ID)
 	requirements.NoError(err)

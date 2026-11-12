@@ -66,7 +66,7 @@ func runGCLocal(cmd *cobra.Command, options gcOptions) error {
 	}
 	cfg := state.cfg
 	ctx := cmd.Context()
-	st, cleanup, err := openWritableStoreAndInitForInvocation(state)
+	st, cleanup, err := openWritableStoreAndInitForInvocation(ctx, state)
 	if err != nil {
 		return err
 	}

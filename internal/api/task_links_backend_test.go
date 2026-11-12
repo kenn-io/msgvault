@@ -103,22 +103,22 @@ func TestTaskLinkBackendReusesFreshReverseIndex(t *testing.T) {
 	backend := &taskLinkBackend{config: config.TaskIntegrationConfig{Enabled: true, Endpoint: server.server.URL,
 		APIKey: "test-key", DefaultProject: "project"}, index: index}
 
-	first := backend.Lookup(context.Background(), identity)
+	first := backend.Lookup(t.Context(), identity)
 	requirements.Len(first.Tasks, 1)
 	assertions.EqualValues(1, server.listCalls.Load(), "first lookup scans the remote tasks")
 
-	second := backend.Lookup(context.Background(), identity)
+	second := backend.Lookup(t.Context(), identity)
 	requirements.Len(second.Tasks, 1)
 	assertions.EqualValues(1, server.listCalls.Load(), "fresh index serves the second lookup without a remote scan")
 	assertions.Equal(tasklinks.StateReady, second.State)
 
 	server.setRevision("project-r2")
-	third := backend.Lookup(context.Background(), identity)
+	third := backend.Lookup(t.Context(), identity)
 	requirements.Len(third.Tasks, 1)
 	assertions.EqualValues(2, server.listCalls.Load(), "remote project revision change forces a rebuild")
 
 	now = now.Add(tasklinks.DefaultFreshFor + time.Second)
-	fourth := backend.Lookup(context.Background(), identity)
+	fourth := backend.Lookup(t.Context(), identity)
 	requirements.Len(fourth.Tasks, 1)
 	assertions.EqualValues(3, server.listCalls.Load(), "expired freshness window forces a rebuild")
 }
@@ -140,7 +140,7 @@ func TestTaskLinkBackendConcurrentLookupsShareOneRebuild(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range lookups {
 		wg.Go(func() {
-			results[i] = backend.Lookup(context.Background(), identity)
+			results[i] = backend.Lookup(t.Context(), identity)
 		})
 	}
 	wg.Wait()
@@ -170,7 +170,7 @@ func TestTaskLinkBackendSurfacesCachePersistenceFailuresWithoutIdentityRelabelin
 		})
 		backend := &taskLinkBackend{config: config.TaskIntegrationConfig{Enabled: true, Endpoint: readyServer.URL, APIKey: "test-key", DefaultProject: "project"}, index: index}
 
-		result := backend.Lookup(context.Background(), identity)
+		result := backend.Lookup(t.Context(), identity)
 
 		assertions.Equal(tasklinks.StateReady, result.State)
 		assertions.Equal(tasklinks.ReasonCachePersistenceUnsupported, result.Reason)
@@ -186,7 +186,7 @@ func TestTaskLinkBackendSurfacesCachePersistenceFailuresWithoutIdentityRelabelin
 		})
 		backend := &taskLinkBackend{config: config.TaskIntegrationConfig{Enabled: true, Endpoint: readyServer.URL, APIKey: "test-key", DefaultProject: "project"}, index: index}
 
-		result := backend.Lookup(context.Background(), identity)
+		result := backend.Lookup(t.Context(), identity)
 
 		assertions.Equal(tasklinks.StateStale, result.State)
 		assertions.Equal(tasklinks.ReasonPersistenceFailure, result.Reason)
@@ -208,12 +208,12 @@ func TestTaskLinkBackendSurfacesCachePersistenceFailuresWithoutIdentityRelabelin
 			},
 		})
 		cacheIdentity := tasklinks.CacheIdentity{Project: "project", ArchiveUID: "archive-a", ArchiveRevision: "1"}
-		_, err := index.Rebuild(context.Background(), backendListClient{tasks: []taskclient.Task{linkedTask("old", "Last-good title")}}, cacheIdentity, "project-r0", 100)
+		_, err := index.Rebuild(t.Context(), backendListClient{tasks: []taskclient.Task{linkedTask("old", "Last-good title")}}, cacheIdentity, "project-r0", 100)
 		requirements.NoError(err)
 		persistenceSupported = false
 		backend := &taskLinkBackend{config: config.TaskIntegrationConfig{Enabled: true, Endpoint: readyServer.URL, APIKey: "test-key", DefaultProject: "project"}, index: index}
 
-		result := backend.Lookup(context.Background(), identity)
+		result := backend.Lookup(t.Context(), identity)
 
 		assertions.Equal(tasklinks.StateReady, result.State)
 		assertions.Equal(tasklinks.ReasonCachePersistenceUnsupported, result.Reason)
@@ -260,7 +260,7 @@ func TestTaskLinkBackendSurfacesCachePersistenceFailuresWithoutIdentityRelabelin
 				assertions := assert.New(t)
 				backend.config.Endpoint = test.endpoint
 
-				degraded := backend.Lookup(context.Background(), identity)
+				degraded := backend.Lookup(t.Context(), identity)
 
 				assertions.Equal(test.state, degraded.State)
 				assertions.Equal(test.reason, degraded.Reason)
@@ -286,14 +286,14 @@ func TestTaskLinkBackendDegradedStatesUseOnlySafeCache(t *testing.T) {
 		index := tasklinks.NewIndex(filepath.Join(t.TempDir(), "cache", "tasks.json"), time.Now)
 		linked := taskclient.Task{ID: "task-1", Project: "project", Title: "Cached title", Revision: "r1",
 			Metadata: tasklinks.MetadataWithLink(nil, tasklinks.NewMailLink(identity, time.Now()))}
-		_, err := index.Rebuild(context.Background(), backendListClient{tasks: []taskclient.Task{linked}}, cacheIdentity, "remote-1", 100)
+		_, err := index.Rebuild(t.Context(), backendListClient{tasks: []taskclient.Task{linked}}, cacheIdentity, "remote-1", 100)
 		require.NoError(t, err)
 		return &taskLinkBackend{config: cfg, index: index}
 	}
 
 	t.Run("disabled retains identity-safe titles", func(t *testing.T) {
 		backend := newBackend(t, config.TaskIntegrationConfig{Enabled: false, DefaultProject: "project"})
-		result := backend.Lookup(context.Background(), identity)
+		result := backend.Lookup(t.Context(), identity)
 		assert.Equal(t, tasklinks.StateDisabled, result.State)
 		require.Len(t, result.Tasks, 1)
 		assert.Equal(t, "Cached title", result.Tasks[0].Title)
@@ -305,7 +305,7 @@ func TestTaskLinkBackendDegradedStatesUseOnlySafeCache(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		backend := newBackend(t, config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: "bad-key", DefaultProject: "project"})
-		result := backend.Lookup(context.Background(), identity)
+		result := backend.Lookup(t.Context(), identity)
 		assert.Equal(t, tasklinks.StateAuthenticationRequired, result.State)
 		assert.Empty(t, result.Tasks)
 	})
@@ -317,7 +317,7 @@ func TestTaskLinkBackendDegradedStatesUseOnlySafeCache(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		backend := newBackend(t, config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: "test-key", DefaultProject: "project"})
-		result := backend.Lookup(context.Background(), identity)
+		result := backend.Lookup(t.Context(), identity)
 		assert.Equal(t, tasklinks.StateIncompatible, result.State)
 		require.Len(t, result.Tasks, 1)
 	})
@@ -336,7 +336,7 @@ func TestTaskLinkBackendDegradedStatesUseOnlySafeCache(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		backend := newBackend(t, config.TaskIntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: "test-key", DefaultProject: "project"})
-		result := backend.Lookup(context.Background(), identity)
+		result := backend.Lookup(t.Context(), identity)
 		assert.Equal(t, tasklinks.StateWrongProject, result.State)
 		require.Len(t, result.Tasks, 1)
 	})

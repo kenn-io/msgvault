@@ -30,11 +30,11 @@ func TestFusedSearchCollapsesChunksAndExcludesDeletedMessages(t *testing.T) {
 		}
 	}
 	requirements.NoError(backend.Upsert(ctx, generation, chunks))
-	_, err := backend.mainDB.Exec(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = 1`)
+	_, err := backend.mainDB.ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = 1`)
 	requirements.NoError(err)
-	_, err = backend.mainDB.Exec(`DELETE FROM messages WHERE id = 5`)
+	_, err = backend.mainDB.ExecContext(t.Context(), `DELETE FROM messages WHERE id = 5`)
 	requirements.NoError(err)
-	_, err = backend.mainDB.Exec(`INSERT INTO messages_fts (rowid, subject, body)
+	_, err = backend.mainDB.ExecContext(t.Context(), `INSERT INTO messages_fts (rowid, subject, body)
 		VALUES (4, 'schedule', 'meeting with several other unrelated filler words')`)
 	requirements.NoError(err)
 

@@ -25,10 +25,16 @@ func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":"invalid_media_search","message":"invalid media search"}`))
 			return
 		}
-		assert.Equal("quarterly numbers", r.URL.Query().Get("q"))
 		assert.Equal("7", r.URL.Query().Get("person_id"))
 		assert.Equal([]string{"from_person"}, r.URL.Query()["direction"])
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("q") == "project decision" {
+			assert.Equal("semantic", r.URL.Query().Get("mode"))
+			_, _ = w.Write([]byte(`{"coverage":{"state":"unknown","binding_required":false,"scoped_documents":0,"complete_documents":0},"pending_occurrences":0,"unavailable_occurrences":0,"attribution_unavailable":0,"partial":true,"truncated":false,"results":[],"recordings_error":{"error":"media_search_mode_unavailable","message":"Recordings require lexical mode"},"attachments":{"requested_mode":"semantic","actual_mode":"semantic","coverage":{"state":"complete","binding_required":true,"scoped_documents":1,"complete_documents":1},"partial":false,"degradations":[],"truncated":false,"results":[{"message_id":11,"conversation_id":12,"attachment_id":13,"filename":"notes.pdf","containing_title":"Planning","excerpt":""}]}}`))
+			return
+		}
+		assert.Equal("quarterly numbers", r.URL.Query().Get("q"))
+		assert.Equal("lexical", r.URL.Query().Get("mode"))
 		_, _ = w.Write([]byte(`{"coverage":{"binding_required":false,"scoped_documents":1,"complete_documents":1,"state":"complete"},"pending_occurrences":0,"unavailable_occurrences":0,"attribution_unavailable":0,"partial":false,"truncated":false,"results":[{"message_id":11,"conversation_id":12,"attachment_id":13,"origin":"supplied","excerpt":"quarterly numbers"}]}`))
 	}))
 	t.Cleanup(daemon.Close)
@@ -40,6 +46,12 @@ func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 	require.Len(response.Results, 1)
 	assert.Equal(int64(11), response.Results[0].MessageID)
 	assert.Equal(generated.MediaSearchResultOriginSupplied, response.Results[0].Origin)
+	semantic := runTool[generated.MediaSearchResponse](t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "project decision", "person_id": float64(7), "directions": []any{"from_person"}, "mode": "semantic"})
+	require.NotNil(semantic.Attachments)
+	require.Len(semantic.Attachments.Results, 1)
+	assert.Empty(semantic.Attachments.Results[0].Excerpt)
+	tools := toolsByName(t, rawListTools(t, ServeOptions{MediaSearcher: client}, false))
+	assert.ElementsMatch([]any{"lexical", "semantic", "hybrid"}, toolInputProperty(t, tools[ToolSearchMedia], "mode")["enum"])
 	delegated := runToolExpectError(t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "words", "limit": float64(101), "directions": []any{"from_person"}})
 	assert.Contains(resultText(t, delegated), "API error (400): invalid media search")
 	assert.True(searchMediaDefinition().availability(capabilitiesFor(ServeOptions{MediaSearcher: client})))

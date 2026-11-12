@@ -54,7 +54,8 @@ func TestStore_GetSourcesByIdentifierOrDisplayNameIgnoresCase(t *testing.T) {
 
 	source, err := st.GetOrCreateSource("gmail", "Archive@Example.com")
 	require.NoError(err)
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE sources SET display_name = ? WHERE id = ?`),
 		"Primary Archive", source.ID,
 	)
@@ -96,7 +97,7 @@ func TestStore_RemoveSource(t *testing.T) {
 	require.NoError(err, "RemoveSource")
 
 	// Verify source is gone
-	src, err := f.Store.GetSourceByIdentifier("test@example.com")
+	src, err := f.Store.GetSourceByIdentifier(t.Context(), "test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "source should be nil after removal")
 
@@ -107,7 +108,8 @@ func TestStore_RemoveSource(t *testing.T) {
 
 	// Verify labels are gone
 	var labelCount int
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT COUNT(*) FROM labels WHERE source_id = ?`), f.Source.ID,
 	).Scan(&labelCount)
 	require.NoError(err, "count labels")
@@ -118,7 +120,8 @@ func TestStore_RemoveSource(t *testing.T) {
 	// dialect-level FTSDeleteSQL test).
 	if f.Store.FTS5Available() && !f.Store.IsPostgreSQL() {
 		var ftsCount int
-		err = f.Store.DB().QueryRow(
+		err = f.Store.DB().QueryRowContext(
+			t.Context(),
 			`SELECT COUNT(*) FROM messages_fts`,
 		).Scan(&ftsCount)
 		require.NoError(err, "count FTS")
@@ -229,8 +232,9 @@ func TestStore_RemoveSourceRemovesObservationIdentityCandidates(t *testing.T) {
 				"identity_match_evidence":          0,
 			} {
 				var got int
-				err := f.Store.DB().QueryRow(
-					"SELECT COUNT(*) FROM " + table,
+				err := f.Store.DB().QueryRowContext(
+					t.Context(),
+					"SELECT COUNT(*) FROM "+table,
 				).Scan(&got)
 				require.NoError(err, "count %s", table)
 				assert.Equal(want, got, table)
@@ -295,7 +299,8 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 				require.NoError(err)
 				assert.Empty(candidates)
 				var evidenceCount int
-				require.NoError(f.Store.DB().QueryRow(
+				require.NoError(f.Store.DB().QueryRowContext(
+					t.Context(),
 					`SELECT COUNT(*) FROM identity_match_evidence`,
 				).Scan(&evidenceCount))
 				assert.Zero(evidenceCount)
@@ -383,7 +388,7 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 				require.NoError(err)
 				require.NoError(test.remove(ctx, f.Store, f.Source.ID))
 				var linkCount int
-				require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 					`SELECT COUNT(*) FROM participant_links WHERE participant_a = ? AND participant_b = ?`,
 				), min(left, right), max(left, right),
 				).Scan(&linkCount))
@@ -416,7 +421,7 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 				require.NoError(err)
 				assert.Equal(store.IdentityMatchStateAccepted, remaining.State)
 				var userLinkCount int
-				require.NoError(userFixture.Store.DB().QueryRow(userFixture.Store.Rebind(
+				require.NoError(userFixture.Store.DB().QueryRowContext(t.Context(), userFixture.Store.Rebind(
 					`SELECT COUNT(*) FROM participant_links WHERE participant_a = ? AND participant_b = ?`,
 				), min(userLeft, userRight), max(userLeft, userRight),
 				).Scan(&userLinkCount))
@@ -465,7 +470,7 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 
 				require.NoError(test.remove(ctx, f.Store, f.Source.ID))
 				var owner int64
-				require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 					`SELECT identity_match_candidate_id FROM participant_links
 					 WHERE participant_a = ? AND participant_b = ?`),
 					min(left, right), max(left, right)).Scan(&owner))
@@ -513,7 +518,7 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 				crossing := makeAccepted(b, c, "provider:forest-crossing", thirdSource.ID)
 				assert.True(linkedPair(t, f.Store, b, c), "precondition: all three participants linked")
 				var directCrossing int
-				require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 					`SELECT COUNT(*) FROM participant_links
 					 WHERE participant_a = ? AND participant_b = ?`),
 					min(b, c), max(b, c)).Scan(&directCrossing))
@@ -526,7 +531,7 @@ func TestStore_RemoveSourceRecomputesGeneratedIdentityMatchSupport(t *testing.T)
 				assert.True(linkedPair(t, f.Store, b, c),
 					"cleanup must reapply an accepted assertion that crosses the split")
 				var owner int64
-				require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 					`SELECT identity_match_candidate_id FROM participant_links
 					 WHERE participant_a = ? AND participant_b = ?`),
 					min(b, c), max(b, c)).Scan(&owner))
@@ -847,7 +852,8 @@ func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
 
 	// Verify conversations are gone
 	var convCount int
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT COUNT(*) FROM conversations WHERE source_id = ?`),
 		f.Source.ID,
 	).Scan(&convCount)
@@ -856,7 +862,8 @@ func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
 
 	// Verify message_bodies are gone (cascaded via messages)
 	var bodyCount int
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT COUNT(*) FROM message_bodies WHERE message_id = ?`), msgID,
 	).Scan(&bodyCount)
 	require.NoError(err, "count message_bodies")
@@ -864,7 +871,8 @@ func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
 
 	// Verify message_raw is gone (cascaded via messages)
 	var rawCount int
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT COUNT(*) FROM message_raw WHERE message_id = ?`), msgID,
 	).Scan(&rawCount)
 	require.NoError(err, "count message_raw")
@@ -872,7 +880,8 @@ func TestStore_RemoveSource_CascadesConversations(t *testing.T) {
 
 	// Verify message_recipients are gone (cascaded via messages)
 	var recipCount int
-	err = f.Store.DB().QueryRow(
+	err = f.Store.DB().QueryRowContext(
+		t.Context(),
 		f.Store.Rebind(`SELECT COUNT(*) FROM message_recipients WHERE message_id = ?`), msgID,
 	).Scan(&recipCount)
 	require.NoError(err, "count message_recipients")
@@ -885,12 +894,12 @@ func TestStore_RemoveSourceSerialized_NoActiveSync(t *testing.T) {
 	f := storetest.New(t)
 	f.CreateMessage("msg-1")
 
-	had, removed, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+	had, removed, err := f.Store.RemoveSourceSerialized(t.Context(), f.Source.ID)
 	require.NoError(err, "RemoveSourceSerialized")
 	assert.False(had, "hadActiveSync")
 	assert.Zero(removed, "no packed mappings")
 
-	src, err := f.Store.GetSourceByIdentifier("test@example.com")
+	src, err := f.Store.GetSourceByIdentifier(t.Context(), "test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "source should be removed")
 }
@@ -917,7 +926,7 @@ func TestStore_RemoveSourceSerialized_PreservesPendingOperation(t *testing.T) {
 	operation, err := fixture.Store.GetSyncOperation(operationID)
 	requirements.NoError(err)
 	checks.Equal("pending", operation.Status)
-	requirements.NoError(fixture.Store.FinishSyncOperation(operationID, "failed"))
+	requirements.NoError(fixture.Store.FinishSyncOperation(t.Context(), operationID, "failed"))
 }
 
 func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
@@ -927,7 +936,7 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 
 	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
 	require.NoError(err)
-	otherConv, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other")
+	otherConv, err := f.Store.EnsureConversation(t.Context(), other.ID, "other-thread", "Other")
 	require.NoError(err)
 	otherMsg, err := f.Store.UpsertMessage(&store.Message{
 		ConversationID: otherConv, SourceID: other.ID,
@@ -944,11 +953,11 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 	sharedThumbnailContent := hash("ff06")
 
 	add := func(msgID int64, filename, contentHash string) {
-		require.NoError(f.Store.UpsertAttachment(msgID, filename, "application/octet-stream",
+		require.NoError(f.Store.UpsertAttachment(t.Context(), msgID, filename, "application/octet-stream",
 			contentHash[:2]+"/"+contentHash, contentHash, 10))
 	}
 	setThumbnail := func(msgID int64, contentHash, thumbnailHash string) {
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 			UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ?
 			WHERE message_id = ? AND content_hash = ?`),
 			thumbnailHash, thumbnailHash[:2]+"/"+thumbnailHash, msgID, contentHash)
@@ -988,7 +997,7 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 			StoredLen: 10, RawLen: 10,
 		})
 	}
-	require.NoError(f.Store.RecordPackedBlobs(store.PackRecord{
+	require.NoError(f.Store.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: packID, EntryCount: int64(len(entries)), StoredBytes: int64(len(entries) * 10),
 		CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
 	}, entries))
@@ -998,17 +1007,17 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 	require.NoError(os.MkdirAll(filepath.Dir(loosePath), 0o700))
 	require.NoError(os.WriteFile(loosePath, []byte("crash leftover"), 0o600))
 
-	had, removed, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+	had, removed, err := f.Store.RemoveSourceSerialized(t.Context(), f.Source.ID)
 	require.NoError(err)
 	assert.False(had)
 	assert.Equal(int64(2), removed, "unique content and thumbnail mappings are deleted")
 
-	src, err := f.Store.GetSourceByIdentifier(f.Source.Identifier)
+	src, err := f.Store.GetSourceByIdentifier(t.Context(), f.Source.Identifier)
 	require.ErrorIs(err, store.ErrSourceNotFound)
 	assert.Nil(src)
 
 	for _, removedHash := range []string{uniqueContent, uniqueThumbnail} {
-		entry, err := f.Store.GetAttachmentPackEntry(removedHash)
+		entry, err := f.Store.GetAttachmentPackEntry(t.Context(), removedHash)
 		require.NoError(err)
 		assert.Nil(entry, "%s is logically deleted", removedHash)
 	}
@@ -1016,7 +1025,7 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 		sharedContentContent, sharedThumbnailThumbnail,
 		sharedContentThumbnail, sharedThumbnailContent,
 	} {
-		entry, err := f.Store.GetAttachmentPackEntry(sharedHash)
+		entry, err := f.Store.GetAttachmentPackEntry(t.Context(), sharedHash)
 		require.NoError(err)
 		assert.NotNil(entry, "%s remains shared through either hash column", sharedHash)
 	}
@@ -1024,7 +1033,7 @@ func TestStore_RemoveSourceSerialized_PackedLogicalGC(t *testing.T) {
 	bs, err := attachmentstore.New(store.NewPackCatalog(f.Store), attachmentsDir)
 	require.NoError(err)
 	defer func() { require.NoError(bs.Close()) }()
-	_, _, err = bs.Open(uniqueContent)
+	_, _, err = bs.Open(t.Context(), uniqueContent)
 	require.ErrorIs(err, fs.ErrNotExist,
 		"logical deletion rejects even a canonical loose crash leftover")
 	assert.FileExists(loosePath, "file cleanup remains best effort and separate from logical GC")
@@ -1047,19 +1056,20 @@ func TestStore_RemoveSourceSerialized_PreservesPackedCaseAliasReferences(t *test
 			if !f.Store.IsPostgreSQL() {
 				f.Store.DB().SetMaxOpenConns(1)
 				f.Store.DB().SetMaxIdleConns(1)
-				_, err := f.Store.DB().Exec(`PRAGMA case_sensitive_like = ON`)
+				_, err := f.Store.DB().ExecContext(t.Context(), `PRAGMA case_sensitive_like = ON`)
 				require.NoError(err)
 			}
 
 			hash := "ab" + strings.Repeat("1", 62)
 			uppercase := strings.ToUpper(hash)
 			removedMessage := f.CreateMessage("msg-packed-case-alias-removed")
-			require.NoError(f.Store.UpsertAttachment(removedMessage, "removed.bin",
+			require.NoError(f.Store.UpsertAttachment(t.Context(), removedMessage, "removed.bin",
 				"application/octet-stream", hash[:2]+"/"+hash, hash, 10))
 
 			survivor, err := f.Store.GetOrCreateSource("gmail", "survivor@example.com")
 			require.NoError(err)
 			survivorConversation, err := f.Store.EnsureConversation(
+				t.Context(),
 				survivor.ID, "case-alias-thread", "Case Alias Thread")
 			require.NoError(err)
 			survivorMessage, err := f.Store.UpsertMessage(&store.Message{
@@ -1070,23 +1080,23 @@ func TestStore_RemoveSourceSerialized_PreservesPackedCaseAliasReferences(t *test
 				SizeEstimate:    10,
 			})
 			require.NoError(err)
-			require.NoError(f.Store.UpsertAttachment(survivorMessage, "survivor.bin",
+			require.NoError(f.Store.UpsertAttachment(t.Context(), survivorMessage, "survivor.bin",
 				"application/octet-stream", tc.path(uppercase), uppercase, 10))
 
 			const packID = "01hzy3v7q8r9s0t1a2v3w4x5r3"
-			require.NoError(f.Store.RecordPackedBlobs(store.PackRecord{
+			require.NoError(f.Store.RecordPackedBlobs(t.Context(), store.PackRecord{
 				PackID: packID, EntryCount: 1, StoredBytes: 10,
 				CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
 			}, []store.PackIndexEntry{{
 				BlobHash: hash, PackID: packID, StoredLen: 10, RawLen: 10,
 			}}))
 
-			had, removed, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+			had, removed, err := f.Store.RemoveSourceSerialized(t.Context(), f.Source.ID)
 
 			require.NoError(err)
 			assert.False(had)
 			assert.Zero(removed, "the surviving uppercase alias keeps the canonical mapping live")
-			entry, err := f.Store.GetAttachmentPackEntry(hash)
+			entry, err := f.Store.GetAttachmentPackEntry(t.Context(), hash)
 			require.NoError(err)
 			require.NotNil(entry)
 			assert.Equal(packID, entry.PackID)
@@ -1107,29 +1117,29 @@ func TestStore_RemoveSourceSerialized_PackedRollbackOnSourceDeleteFailure(t *tes
 	f := storetest.New(t)
 	hash := "aa" + strings.Repeat("1", 62)
 	msgID := f.CreateMessage("msg-packed-rollback")
-	require.NoError(f.Store.UpsertAttachment(msgID, "a.pdf", "application/pdf",
+	require.NoError(f.Store.UpsertAttachment(t.Context(), msgID, "a.pdf", "application/pdf",
 		hash[:2]+"/"+hash, hash, 10))
 	const packID = "01hzy3v7q8r9s0t1a2v3w4x5r2"
-	require.NoError(f.Store.RecordPackedBlobs(store.PackRecord{
+	require.NoError(f.Store.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: packID, EntryCount: 1, StoredBytes: 10,
 		CreatedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC),
 	}, []store.PackIndexEntry{{BlobHash: hash, PackID: packID, StoredLen: 10, RawLen: 10}}))
 
 	if f.Store.IsPostgreSQL() {
-		_, err := f.Store.DB().Exec(`
+		_, err := f.Store.DB().ExecContext(t.Context(), `
 			CREATE FUNCTION force_source_delete_failure() RETURNS trigger AS $$
 			BEGIN
 			    RAISE EXCEPTION 'forced source delete failure';
 			END;
 			$$ LANGUAGE plpgsql`)
 		require.NoError(err)
-		_, err = f.Store.DB().Exec(`
+		_, err = f.Store.DB().ExecContext(t.Context(), `
 			CREATE TRIGGER force_source_delete_failure
 			BEFORE DELETE ON sources FOR EACH ROW
 			EXECUTE FUNCTION force_source_delete_failure()`)
 		require.NoError(err)
 	} else {
-		_, err := f.Store.DB().Exec(`
+		_, err := f.Store.DB().ExecContext(t.Context(), `
 			CREATE TRIGGER force_source_delete_failure
 			BEFORE DELETE ON sources
 			BEGIN
@@ -1138,12 +1148,12 @@ func TestStore_RemoveSourceSerialized_PackedRollbackOnSourceDeleteFailure(t *tes
 		require.NoError(err)
 	}
 
-	_, _, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+	_, _, err := f.Store.RemoveSourceSerialized(t.Context(), f.Source.ID)
 	require.ErrorContains(err, "forced source delete failure")
-	src, err := f.Store.GetSourceByIdentifier(f.Source.Identifier)
+	src, err := f.Store.GetSourceByIdentifier(t.Context(), f.Source.Identifier)
 	require.NoError(err, "failed transaction retains source")
 	assert.NotNil(src)
-	entry, err := f.Store.GetAttachmentPackEntry(hash)
+	entry, err := f.Store.GetAttachmentPackEntry(t.Context(), hash)
 	require.NoError(err)
 	assert.NotNil(entry, "failed transaction retains every packed mapping")
 }
@@ -1157,12 +1167,12 @@ func TestStore_RemoveSourceSerialized_ActiveSyncSameSource(t *testing.T) {
 	// by the DELETE. The serialized check must still observe it.
 	f.StartSync()
 
-	had, removed, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+	had, removed, err := f.Store.RemoveSourceSerialized(t.Context(), f.Source.ID)
 	require.NoError(err, "RemoveSourceSerialized")
 	assert.True(had, "hadActiveSync should be true for sync on removed source")
 	assert.Zero(removed)
 
-	src, err := f.Store.GetSourceByIdentifier("test@example.com")
+	src, err := f.Store.GetSourceByIdentifier(t.Context(), "test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "source should still be removed even when sync was active")
 }
@@ -1178,18 +1188,18 @@ func TestStore_RemoveSourceSerialized_ActiveSyncOtherSource(t *testing.T) {
 	_, err = f.Store.StartSync(otherSrc.ID, "full")
 	require.NoError(err, "start other sync")
 
-	had, removed, err := f.Store.RemoveSourceSerialized(context.Background(), f.Source.ID)
+	had, removed, err := f.Store.RemoveSourceSerialized(t.Context(), f.Source.ID)
 	require.NoError(err, "RemoveSourceSerialized")
 	assert.True(had, "hadActiveSync should be true for sync on another source")
 	assert.Zero(removed)
 
 	// Original source is gone.
-	src, err := f.Store.GetSourceByIdentifier("test@example.com")
+	src, err := f.Store.GetSourceByIdentifier(t.Context(), "test@example.com")
 	require.ErrorIs(err, store.ErrSourceNotFound, "GetSourceByIdentifier")
 	assert.Nil(src, "test source should be removed")
 
 	// Other source (with the active sync) is untouched.
-	other, err := f.Store.GetSourceByIdentifier("other@example.com")
+	other, err := f.Store.GetSourceByIdentifier(t.Context(), "other@example.com")
 	require.NoError(err, "GetSourceByIdentifier other")
 	assert.NotNil(other, "other source should remain")
 }
@@ -1201,7 +1211,7 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	// Create a second source with its own conversation.
 	otherSrc, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
 	require.NoError(err, "create other source")
-	otherConv, err := f.Store.EnsureConversation(otherSrc.ID, "other-thread", "Other")
+	otherConv, err := f.Store.EnsureConversation(t.Context(), otherSrc.ID, "other-thread", "Other")
 	require.NoError(err, "ensure other conv")
 	otherMsgID, err := f.Store.UpsertMessage(&store.Message{
 		ConversationID:  otherConv,
@@ -1213,10 +1223,10 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 
 	// Attachment unique to the default source.
 	uniqueMsg := f.CreateMessage("msg-unique")
-	err = f.Store.UpsertAttachment(uniqueMsg, "u.pdf", "application/pdf",
+	err = f.Store.UpsertAttachment(t.Context(), uniqueMsg, "u.pdf", "application/pdf",
 		"aa/uniquehash", "uniquehash", 10)
 	require.NoError(err, "upsert unique attachment")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE attachments
 		SET thumbnail_hash = ?, thumbnail_path = ?
 		WHERE message_id = ? AND content_hash = ?`),
@@ -1225,25 +1235,26 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 
 	// Attachment shared with another source (same content_hash).
 	sharedMsg := f.CreateMessage("msg-shared")
-	err = f.Store.UpsertAttachment(sharedMsg, "s.pdf", "application/pdf",
+	err = f.Store.UpsertAttachment(t.Context(), sharedMsg, "s.pdf", "application/pdf",
 		"bb/sharedhash", "sharedhash", 20)
 	require.NoError(err, "upsert shared attachment in default source")
-	err = f.Store.UpsertAttachment(otherMsgID, "s.pdf", "application/pdf",
+	err = f.Store.UpsertAttachment(t.Context(), otherMsgID, "s.pdf", "application/pdf",
 		"bb/sharedhash", "sharedhash", 20)
 	require.NoError(err, "upsert shared attachment in other source")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE attachments
 		SET thumbnail_hash = ?, thumbnail_path = ?
 		WHERE message_id = ? AND content_hash = ?`),
 		"crosshash", "ee/crosshash", sharedMsg, "sharedhash")
 	require.NoError(err, "set cross-type shared thumbnail")
-	err = f.Store.UpsertAttachment(otherMsgID, "cross.pdf", "application/pdf",
+	err = f.Store.UpsertAttachment(t.Context(), otherMsgID, "cross.pdf", "application/pdf",
 		"ee/crosshash", "crosshash", 20)
 	require.NoError(err, "share default-source thumbnail as other-source content")
 
 	// Attachment with NULL content_hash (must be excluded).
 	nullHashMsg := f.CreateMessage("msg-null-hash")
-	_, err = f.Store.DB().Exec(
+	_, err = f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind(`INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
 		 VALUES (?, 'n.pdf', 'application/pdf', 'cc/x', NULL, 30, CURRENT_TIMESTAMP)`),
 		nullHashMsg,
@@ -1252,13 +1263,14 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 
 	// Attachment with empty storage_path (must be excluded).
 	emptyPathMsg := f.CreateMessage("msg-empty-path")
-	err = f.Store.UpsertAttachment(emptyPathMsg, "e.pdf", "application/pdf",
+	err = f.Store.UpsertAttachment(t.Context(), emptyPathMsg, "e.pdf", "application/pdf",
 		"", "emptypathhash", 40)
 	require.NoError(err, "upsert empty-path attachment")
 
 	// URL-backed attachment rows are links, not local files to clean up.
 	urlBackedMsg := f.CreateMessage("msg-url-backed")
-	_, err = f.Store.DB().Exec(
+	_, err = f.Store.DB().ExecContext(
+		t.Context(),
 		f.Store.Rebind(`INSERT INTO attachments (message_id, filename, mime_type, storage_path, content_hash, size, created_at)
 		 VALUES (?, 'deck.pptx', 'reference', 'https://sp/deck.pptx', '', 0, CURRENT_TIMESTAMP)`),
 		urlBackedMsg,
@@ -1268,7 +1280,7 @@ func TestStore_AttachmentPathsUniqueToSource(t *testing.T) {
 	// Two messages in the default source referencing the same unique hash
 	// should collapse to a single storage_path in the result.
 	dupMsg := f.CreateMessage("msg-dup-hash")
-	err = f.Store.UpsertAttachment(dupMsg, "u.pdf", "application/pdf",
+	err = f.Store.UpsertAttachment(t.Context(), dupMsg, "u.pdf", "application/pdf",
 		"aa/uniquehash", "uniquehash", 10)
 	require.NoError(err, "upsert duplicate-of-unique attachment")
 
@@ -1307,23 +1319,23 @@ func TestStore_IsAttachmentPathReferenced(t *testing.T) {
 	f := storetest.New(t)
 
 	msgID := f.CreateMessage("msg-ref-1")
-	err := f.Store.UpsertAttachment(msgID, "a.pdf", "application/pdf",
+	err := f.Store.UpsertAttachment(t.Context(), msgID, "a.pdf", "application/pdf",
 		"aa/hash1", "hash1", 10)
 	require.NoError(err, "UpsertAttachment")
 
-	referenced, err := f.Store.IsAttachmentPathReferenced("aa/hash1")
+	referenced, err := f.Store.IsAttachmentPathReferenced(t.Context(), "aa/hash1")
 	require.NoError(err, "IsAttachmentPathReferenced (hit)")
 	assert.True(referenced, "expected true for referenced path")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE attachments SET thumbnail_path = ?
 		WHERE message_id = ? AND content_hash = ?`),
 		"thumbs/hash1", msgID, "hash1")
 	require.NoError(err, "set thumbnail path")
-	referenced, err = f.Store.IsAttachmentPathReferenced("thumbs/hash1")
+	referenced, err = f.Store.IsAttachmentPathReferenced(t.Context(), "thumbs/hash1")
 	require.NoError(err, "IsAttachmentPathReferenced (thumbnail hit)")
 	assert.True(referenced, "expected thumbnail path to count as referenced")
 
-	referenced, err = f.Store.IsAttachmentPathReferenced("zz/nothere")
+	referenced, err = f.Store.IsAttachmentPathReferenced(t.Context(), "zz/nothere")
 	require.NoError(err, "IsAttachmentPathReferenced (miss)")
 	assert.False(referenced, "expected false for unreferenced path")
 }
@@ -1339,7 +1351,7 @@ func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
 
 	// Create the sources table WITHOUT the oauth_app column,
 	// matching the schema as it existed before this feature.
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TABLE IF NOT EXISTS sources (
 			id INTEGER PRIMARY KEY,
 			source_type TEXT NOT NULL,
@@ -1357,7 +1369,7 @@ func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
 	require.NoError(err, "create legacy sources table")
 
 	// Insert a row into the legacy table.
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO sources (source_type, identifier, display_name)
 		VALUES ('gmail', 'legacy@example.com', 'Legacy User')
 	`)
@@ -1379,7 +1391,8 @@ func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
 	require.Len(sources, 1)
 
 	// Verify oauth_app can be written and read back.
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		st.Rebind(`UPDATE sources SET oauth_app = ? WHERE identifier = ?`),
 		"acme", "legacy@example.com",
 	)
@@ -1412,7 +1425,7 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 	// Approximates a legacy DB just before this branch landed.
 	// metadata and is_sent predate this migration and the activity queue
 	// trigger names them, so a legacy table must carry them too.
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TABLE messages (
 			id INTEGER PRIMARY KEY,
 			source_id INTEGER NOT NULL,
@@ -1439,7 +1452,7 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 	`)
 	require.NoError(err, "create legacy messages table")
 
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO messages (id, source_id, source_message_id, sent_at)
 		VALUES (1, 1, 'msg1', datetime('now'))
 	`)
@@ -1454,14 +1467,16 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 	// "no such column": this is the failure mode codex flagged. The
 	// query uses both deleted_at and deleted_from_source_at.
 	var n int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		"SELECT COUNT(*) FROM messages WHERE "+store.LiveMessagesWhere("", true),
 	).Scan(&n), "post-migration live count")
 	assert.Equal(t, 1, n, "post-migration live count")
 
 	// Confirm delete_batch_id is also queryable post-migration so
 	// DeleteAllDeduped's distinct-batch count works on upgraded DBs.
-	_, err = st.DB().Exec(
+	_, err = st.DB().ExecContext(
+		t.Context(),
 		"SELECT COUNT(DISTINCT delete_batch_id) FROM messages",
 	)
 	require.NoError(err, "post-migration delete_batch_id query")

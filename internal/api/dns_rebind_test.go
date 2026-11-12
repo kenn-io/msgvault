@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,8 +14,8 @@ import (
 // dnsRebindRequest builds a request against srv's router for
 // /api/v1/settings with the given method and Host header, optionally setting
 // an Origin header (empty origin omits the header entirely).
-func dnsRebindRequest(srv *Server, method, host, origin string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, "/api/v1/settings", nil)
+func dnsRebindRequest(ctx context.Context, srv *Server, method, host, origin string) *httptest.ResponseRecorder {
+	req := httptest.NewRequestWithContext(ctx, method, "/api/v1/settings", nil)
 	req.Host = host
 	if origin != "" {
 		req.Header.Set("Origin", origin)
@@ -52,7 +53,7 @@ func TestDNSRebind_AttackerMutationRejected(t *testing.T) {
 	srv.listenerBound = true
 	srv.listenPort = 8080
 
-	w := dnsRebindRequest(srv, http.MethodPatch, "evil.com:8080", "http://evil.com:8080")
+	w := dnsRebindRequest(t.Context(), srv, http.MethodPatch, "evil.com:8080", "http://evil.com:8080")
 
 	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 	assert.Equal(t, "untrusted_host", decodeError(t, w).Error)
@@ -67,7 +68,7 @@ func TestDNSRebind_AttackerReadRejected(t *testing.T) {
 	srv.listenerBound = true
 	srv.listenPort = 8080
 
-	w := dnsRebindRequest(srv, http.MethodGet, "attacker.example:8080", "")
+	w := dnsRebindRequest(t.Context(), srv, http.MethodGet, "attacker.example:8080", "")
 
 	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 	assert.Equal(t, "untrusted_host", decodeError(t, w).Error)
@@ -81,7 +82,7 @@ func TestDNSRebind_LegitimateLoopbackAllowed(t *testing.T) {
 	srv.listenerBound = true
 	srv.listenPort = 8080
 
-	w := dnsRebindRequest(srv, http.MethodPatch, "127.0.0.1:8080", "http://127.0.0.1:8080")
+	w := dnsRebindRequest(t.Context(), srv, http.MethodPatch, "127.0.0.1:8080", "http://127.0.0.1:8080")
 
 	assertNotRejectedAsUntrustedHost(t, w)
 }
@@ -94,7 +95,7 @@ func TestDNSRebind_LegitimateLocalhostAllowed(t *testing.T) {
 	srv.listenerBound = true
 	srv.listenPort = 8080
 
-	w := dnsRebindRequest(srv, http.MethodPatch, "localhost:8080", "http://localhost:8080")
+	w := dnsRebindRequest(t.Context(), srv, http.MethodPatch, "localhost:8080", "http://localhost:8080")
 
 	assertNotRejectedAsUntrustedHost(t, w)
 }
@@ -109,7 +110,7 @@ func TestDNSRebind_WrongPortRejected(t *testing.T) {
 	srv.listenerBound = true
 	srv.listenPort = 8080
 
-	w := dnsRebindRequest(srv, http.MethodPatch, "127.0.0.1:9999", "http://127.0.0.1:9999")
+	w := dnsRebindRequest(t.Context(), srv, http.MethodPatch, "127.0.0.1:9999", "http://127.0.0.1:9999")
 
 	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 	assert.Equal(t, "untrusted_host", decodeError(t, w).Error)
@@ -123,7 +124,7 @@ func TestDNSRebind_InertWithoutBoundListener(t *testing.T) {
 	t.Parallel()
 	srv, _ := newTestServerWithMockStore(t)
 
-	w := dnsRebindRequest(srv, http.MethodGet, "evil.com", "")
+	w := dnsRebindRequest(t.Context(), srv, http.MethodGet, "evil.com", "")
 
 	assertNotRejectedAsUntrustedHost(t, w)
 }
@@ -145,7 +146,7 @@ func TestDNSRebind_TrustedLoopbackProxyDoesNotExemptRebind(t *testing.T) {
 	// RemoteAddr is the very address listed in trusted_proxies — the daemon
 	// cannot tell it apart from a same-host reverse proxy.
 	rebound := func(method, host, origin string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, "/api/v1/settings", nil)
+		req := httptest.NewRequestWithContext(t.Context(), method, "/api/v1/settings", nil)
 		req.RemoteAddr = "127.0.0.1:54321"
 		req.Host = host
 		if origin != "" {

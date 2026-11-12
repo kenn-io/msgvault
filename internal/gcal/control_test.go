@@ -132,7 +132,7 @@ func TestEventControlDoesNotReplayAmbiguousWrites(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(http.StatusInternalServerError) }))
 	defer srv.Close()
 	client := NewClient(nil, WithBaseURL(srv.URL), WithHTTPClient(srv.Client()))
-	_, err := client.InsertEvent(context.Background(), "primary", EventInput{}, MutationOptions{})
+	_, err := client.InsertEvent(t.Context(), "primary", EventInput{}, MutationOptions{})
 	requirements.Error(err)
 	requirements.ErrorIs(err, ErrOutcomeUnknown)
 	assertions.Equal(1, calls)

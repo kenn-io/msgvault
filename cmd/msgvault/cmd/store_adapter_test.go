@@ -39,30 +39,11 @@ func TestStoreAPIAdapterServesAttributeDefinitions(t *testing.T) {
 		Logger: slog.New(slog.DiscardHandler),
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/attribute-definitions", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/attribute-definitions", nil)
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, req)
 
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-}
-
-func TestStoreAPIAdapterServesDocumentVectorStatus(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	c := config.NewDefaultConfig()
-	c.Vector.Enabled = true
-	c.Attachments.Documents.Index.Embeddings.Enabled = true
-	srv := api.NewServerWithOptions(api.ServerOptions{
-		Config: c,
-		Store:  &storeAPIAdapter{store: st},
-		Logger: slog.New(slog.DiscardHandler),
-	})
-
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/documents/vectors/status", nil)
-	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, request)
-
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	require.JSONEq(t, `{"enabled":true,"configured":false}`, response.Body.String())
 }
 
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
@@ -74,7 +55,7 @@ func TestStoreAPIAdapterPassesThroughMessageIdentityOperations(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "primary@example.test")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "thread-identity", "Identity")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread-identity", "Identity")
 	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
@@ -190,8 +171,9 @@ func TestMarkedCLIScopedStatsCancellationReachesProductionAdapter(t *testing.T) 
 		Logger: slog.New(slog.DiscardHandler),
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequest(
+	ctx, cancel := context.WithCancel(t.Context())
+	req := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		"/api/v1/cli/stats?account=alice@example.com",
 		nil,
@@ -253,8 +235,9 @@ func TestMarkedCLISearchCancellationReturnsFromProductionQuickFTSProbe(t *testin
 		Logger: slog.New(slog.DiscardHandler),
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequest(
+	ctx, cancel := context.WithCancel(t.Context())
+	req := httptest.NewRequestWithContext(
+		t.Context(),
 		http.MethodGet,
 		"/api/v1/cli/search?q=hello",
 		nil,
@@ -399,7 +382,7 @@ func TestMarkedCLIRequestCancellationStopsProductionStoreWork(t *testing.T) {
 				} else {
 					body = strings.NewReader(tt.body)
 				}
-				req := httptest.NewRequest(tt.method, tt.path, body).WithContext(ctx)
+				req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.path, body).WithContext(ctx)
 				req.Header.Set("X-Api-Key", "secret-key")
 				req.Header.Set(apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
 				if tt.body != "" {
@@ -437,12 +420,12 @@ func TestStoreAPIAdapterContextReadsHonorCancellation(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	_, err = st.EnsureConversation(source.ID, "thread-1", "Thread")
+	_, err = st.EnsureConversation(t.Context(), source.ID, "thread-1", "Thread")
 	require.NoError(err, "EnsureConversation")
 
 	adapter := &storeAPIAdapter{store: st}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err = adapter.GetStatsContext(ctx)
@@ -479,7 +462,7 @@ func TestStoreAPIAdapterMeetingImport(t *testing.T) {
 		meetingImporter: meetingimport.NewImporter(st, meetingimport.Hooks{}),
 	}
 
-	result, err := adapter.ImportMeeting(context.Background(), req)
+	result, err := adapter.ImportMeeting(t.Context(), req)
 	require.NoError(err)
 	require.Equal(meetingimport.StatusCreated, result.Status)
 	require.NotZero(result.MessageID)
@@ -506,7 +489,7 @@ func TestStoreAPIAdapterConversationWindowContext(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(err, "GetOrCreateSource")
-	conversationID, err := st.EnsureConversation(source.ID, "thread-1", "Thread")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "thread-1", "Thread")
 	require.NoError(err, "EnsureConversation")
 
 	sentAt := time.Date(2015, 1, 7, 12, 0, 0, 0, time.UTC)
@@ -520,7 +503,7 @@ func TestStoreAPIAdapterConversationWindowContext(t *testing.T) {
 	require.NoError(err, "UpsertMessage")
 
 	adapter := &storeAPIAdapter{store: st}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	exists, err := adapter.ConversationExistsContext(ctx, conversationID)
 	require.NoError(err, "ConversationExistsContext")

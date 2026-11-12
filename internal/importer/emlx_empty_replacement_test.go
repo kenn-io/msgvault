@@ -34,7 +34,7 @@ func TestImportEmlxEmptyReplacementUpdatesExportedAttachment(t *testing.T) {
 			r.NoError(err)
 			r.False(first.HardErrors)
 			var messageID int64
-			r.NoError(st.DB().QueryRow("SELECT id FROM messages").Scan(&messageID))
+			r.NoError(st.DB().QueryRowContext(t.Context(), "SELECT id FROM messages").Scan(&messageID))
 			engine := query.NewSQLiteEngine(st.DB())
 			before, err := engine.GetMessage(t.Context(), messageID)
 			r.NoError(err)

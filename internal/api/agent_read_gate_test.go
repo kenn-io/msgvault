@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/config"
 	msgexport "go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/matrix"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -81,9 +82,9 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			st := testutil.NewTestStore(t)
-			src, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message", "glacier allowed", "allowed body")
+			src, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.com", "message", "glacier allowed", "allowed body")
 			requirements.NoError(err)
-			participant, err := st.EnsureParticipant(src.Identifier, "Synthetic", "example.test")
+			participant, err := st.EnsureParticipant(src.Identifier, "Synthetic", "example.com")
 			requirements.NoError(err)
 			requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
 			ready, resume := make(chan struct{}), make(chan struct{})
@@ -101,9 +102,9 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			t.Cleanup(srv.agentGrants.Close)
 			_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 			requirements.NoError(err)
-			path := map[string]string{"cached search": "/api/v1/search/fast?q=glacier", "domain": "/api/v1/search/domains?domains=example.test", "stats": "/api/v1/stats/total", "subaggregate": "/api/v1/aggregates/sub?view_type=labels&sender=reader%40example.test", "list": "/api/v1/messages", "search": "/api/v1/search/fast?q=glacier", "aggregate": "/api/v1/aggregates", "message": fmt.Sprintf("/api/v1/messages/%d", id), "store message": fmt.Sprintf("/api/v1/messages/%d", id), "thread": fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id)}[route]
+			path := map[string]string{"cached search": "/api/v1/search/fast?q=glacier", "domain": "/api/v1/search/domains?domains=example.com", "stats": "/api/v1/stats/total", "subaggregate": "/api/v1/aggregates/sub?view_type=labels&sender=reader%40example.com", "list": "/api/v1/messages", "search": "/api/v1/search/fast?q=glacier", "aggregate": "/api/v1/aggregates", "message": fmt.Sprintf("/api/v1/messages/%d", id), "store message": fmt.Sprintf("/api/v1/messages/%d", id), "thread": fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id)}[route]
 			get := func() *httptest.ResponseRecorder {
-				r := httptest.NewRequest(http.MethodGet, path, nil)
+				r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 				r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 				w := httptest.NewRecorder()
 				srv.Router().ServeHTTP(w, r)
@@ -124,14 +125,14 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 				if err == nil {
 					var outside *store.Source
 					if st.IsPostgreSQL() {
-						_, err = st.DB().Exec(st.Rebind("INSERT INTO sources (id, source_type, identifier) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?)"), src.ID, "test", "outside@example.test")
+						_, err = st.DB().ExecContext(t.Context(), st.Rebind("INSERT INTO sources (id, source_type, identifier) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?)"), src.ID, "test", "outside@example.test")
 						outside = &store.Source{ID: src.ID}
 					} else {
 						outside, err = st.GetOrCreateSource("test", "outside@example.test")
 					}
 					if err == nil {
 						var conv int64
-						conv, err = st.EnsureConversation(outside.ID, "thread", "Synthetic")
+						conv, err = st.EnsureConversation(t.Context(), outside.ID, "thread", "Synthetic")
 						if err == nil {
 							_, err = st.UpsertMessage(&store.Message{SourceID: outside.ID, ConversationID: conv, SourceMessageID: "message", MessageType: "email", Subject: sql.NullString{String: "glacier private", Valid: true}})
 						}
@@ -155,7 +156,7 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 				assertions.Contains(response.Body.String(), "allowed body")
 			}
 			if !st.IsPostgreSQL() {
-				replacement, err := st.GetSourceByIdentifier("outside@example.test")
+				replacement, err := st.GetSourceByIdentifier(t.Context(), "outside@example.test")
 				requirements.NoError(err)
 				requirements.Equal(src.ID, replacement.ID)
 			}
@@ -164,6 +165,49 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			assertions.NotContains(response.Body.String(), "outside@example.test")
 		})
 	}
+}
+
+func TestAgentMatrixMediaCannotExposeOtherSourceBlob(t *testing.T) {
+	req, check := require.New(t), assert.New(t)
+	st := testutil.NewTestStore(t)
+	_, messageID, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "outside@example.test", "message", "private", "private body")
+	req.NoError(err)
+	hash := strings.Repeat("d", 64)
+	storagePath := "dd/" + hash
+	req.NoError(st.UpsertAttachment(t.Context(), messageID, "private.bin", "application/octet-stream", storagePath, "", 7))
+	cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	blob, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
+	req.NoError(err)
+	req.NoError(os.MkdirAll(filepath.Dir(blob), 0700))
+	req.NoError(os.WriteFile(blob, []byte("private"), 0600))
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /_matrix/client/v3/sync", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"next_batch":"next","rooms":{"join":{"!room:example.org":{"timeline":{"events":[{"type":"m.room.message","event_id":"$media","sender":"@member:example.org","content":{"msgtype":"m.file","body":"file","url":%q}}]}}}}}`, storagePath)
+	})
+	mux.HandleFunc("GET /_matrix/client/v3/user/{user}/account_data/m.direct", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	})
+	mux.HandleFunc("GET /_matrix/client/v3/rooms/{room}/joined_members", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"joined":{"@member:example.org":{}}}`))
+	})
+	homeserver := httptest.NewServer(mux)
+	t.Cleanup(homeserver.Close)
+	runtime, err := matrix.Open(matrix.Credentials{Homeserver: homeserver.URL, UserID: "@archive:example.org", AccessToken: "token"})
+	req.NoError(err)
+	source, err := st.GetOrCreateSource(matrix.SourceType, "@archive:example.org")
+	req.NoError(err)
+	_, err = matrix.NewImporter(st, runtime).Import(t.Context(), matrix.ImportOptions{UserID: "@archive:example.org", NoMedia: true, SkipKeyBackup: true})
+	req.NoError(err)
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	req.NoError(err)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
+	r.Header.Set(apiprotocol.AgentTokenHeader, secret)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	check.Equal(http.StatusNotFound, w.Code, w.Body.String())
+	check.NotContains(w.Body.String(), "private")
 }
 
 func TestAgentAttachmentReplacementSnapshot(t *testing.T) {
@@ -178,14 +222,14 @@ func TestAgentAttachmentReplacementSnapshot(t *testing.T) {
 			requirements.NoError(err)
 			var messages []int64
 			for _, source := range []*store.Source{allowed, outside} {
-				conv, err := st.EnsureConversation(source.ID, "thread", "Synthetic")
+				conv, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Synthetic")
 				requirements.NoError(err)
 				id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "message", MessageType: "email"})
 				requirements.NoError(err)
 				messages = append(messages, id)
 			}
 			hash := strings.Repeat("d", 64)
-			requirements.NoError(st.UpsertAttachment(messages[1], "private.bin", "application/octet-stream", "dd/"+hash, hash, 7))
+			requirements.NoError(st.UpsertAttachment(t.Context(), messages[1], "private.bin", "application/octet-stream", "dd/"+hash, hash, 7))
 			rows, err := query.NewEngine(st.DB(), st.IsPostgreSQL()).GetAttachmentsByHash(t.Context(), hash)
 			requirements.NoError(err)
 			requirements.Len(rows, 1)
@@ -205,7 +249,7 @@ func TestAgentAttachmentReplacementSnapshot(t *testing.T) {
 			path := map[string]string{"metadata": fmt.Sprintf("/api/v1/attachments/%d", rows[0].ID), "content": "/api/v1/attachments/" + hash + "/content", "cli": "/api/v1/cli/attachment?content_hash=" + hash}[route]
 			readDone := make(chan *httptest.ResponseRecorder, 1)
 			go func() {
-				r := httptest.NewRequest(http.MethodGet, path, nil)
+				r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 				r.Header.Set(apiprotocol.AgentTokenHeader, secret)
 				w := httptest.NewRecorder()
 				srv.Router().ServeHTTP(w, r)
@@ -222,7 +266,7 @@ func TestAgentAttachmentReplacementSnapshot(t *testing.T) {
 				defer done()
 				_, _, err := st.RemoveSourceSerialized(t.Context(), outside.ID)
 				if err == nil {
-					err = st.UpsertAttachment(messages[0], "allowed.bin", "application/octet-stream", "dd/"+hash, hash, 7)
+					err = st.UpsertAttachment(t.Context(), messages[0], "allowed.bin", "application/octet-stream", "dd/"+hash, hash, 7)
 				}
 				mutationDone <- err
 			}()
@@ -260,12 +304,12 @@ func TestAgentSlowDownloadAllowsOwnerMutation(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			src, err := st.GetOrCreateSource("test", "reader@example.test")
 			requirements.NoError(err)
-			conv, err := st.EnsureConversation(src.ID, "thread", "Synthetic")
+			conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Synthetic")
 			requirements.NoError(err)
 			id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "message", MessageType: "email"})
 			requirements.NoError(err)
 			hash := strings.Repeat("e", 64)
-			requirements.NoError(st.UpsertAttachment(id, "allowed.bin", "application/octet-stream", "ee/"+hash, hash, 7))
+			requirements.NoError(st.UpsertAttachment(t.Context(), id, "allowed.bin", "application/octet-stream", "ee/"+hash, hash, 7))
 			cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 			path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
 			requirements.NoError(err)
@@ -284,7 +328,7 @@ func TestAgentSlowDownloadAllowsOwnerMutation(t *testing.T) {
 			w := &agentStreamBarrier{ResponseRecorder: httptest.NewRecorder(), started: make(chan struct{}), resume: make(chan struct{})}
 			readDone := make(chan struct{})
 			go func() {
-				r := httptest.NewRequest(http.MethodGet, route, nil)
+				r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, route, nil)
 				r.Header.Set(apiprotocol.AgentTokenHeader, token)
 				srv.Router().ServeHTTP(w, r)
 				close(readDone)
@@ -347,7 +391,7 @@ func TestAgentSearchInputAndScopeMetadata(t *testing.T) {
 			{"/api/v1/cli/stats?collection=Selected", "Selected", 1, 200},
 			{"/api/v1/cli/stats?collection=Empty", "Empty", 0, 400},
 		} {
-			r := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, tc.path, nil)
 			if owner {
 				r.Header.Del(apiprotocol.AgentTokenHeader)
 				r.Header.Set("Authorization", "Bearer owner")
@@ -424,11 +468,11 @@ func TestAgentIndexProbeHasFiniteLifetime(t *testing.T) {
 				if arrival == "failed repair" {
 					source, err := st.GetOrCreateSource("test", "hole@example.test")
 					requirements.NoError(err)
-					conv, err := st.EnsureConversation(source.ID, "hole", "Synthetic")
+					conv, err := st.EnsureConversation(t.Context(), source.ID, "hole", "Synthetic")
 					requirements.NoError(err)
 					for i := range 3 {
 						if i != 1 {
-							_, _, err := testutil.CreateIndexedSourceMessage(st.Store, source.Identifier, strconv.Itoa(i), "glacier", "interior body")
+							_, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st.Store, source.Identifier, strconv.Itoa(i), "glacier", "interior body")
 							requirements.NoError(err)
 							continue
 						}
@@ -478,11 +522,11 @@ func TestAgentIndexProbeHasFiniteLifetime(t *testing.T) {
 					gate.StartDrain()
 				}
 				srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger(), OperationGate: gate})
-				defer func() { requirements.NoError(srv.Shutdown(context.Background())); synctest.Wait() }()
+				defer func() { requirements.NoError(srv.Shutdown(t.Context())); synctest.Wait() }()
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				if arrival == "owner probe failure" {
-					req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=glacier", nil)
+					req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/search?q=glacier", nil)
 					req.RemoteAddr = "127.0.0.1:1234"
 					w := httptest.NewRecorder()
 					srv.Router().ServeHTTP(w, req)
@@ -550,7 +594,7 @@ func TestAgentIndexProbeHasFiniteLifetime(t *testing.T) {
 					assertions.Zero(st.repairs)
 					if arrival == "owner probe failure" {
 						for range 2 {
-							req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=glacier", nil)
+							req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/search?q=glacier", nil)
 							req.RemoteAddr = "127.0.0.1:1234"
 							w := httptest.NewRecorder()
 							srv.Router().ServeHTTP(w, req)
@@ -562,7 +606,7 @@ func TestAgentIndexProbeHasFiniteLifetime(t *testing.T) {
 						close(resume)
 						synctest.Wait()
 						assertions.True(srv.ftsIndexComplete.Load())
-						req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=glacier", nil)
+						req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/search?q=glacier", nil)
 						req.RemoteAddr = "127.0.0.1:1234"
 						w := httptest.NewRecorder()
 						srv.Router().ServeHTTP(w, req)
@@ -577,7 +621,7 @@ func TestAgentIndexProbeHasFiniteLifetime(t *testing.T) {
 					if arrival == "agent only" {
 						requirements.ErrorIs(st.probeContext.Err(), context.DeadlineExceeded)
 						w := httptest.NewRecorder()
-						srv.handleCLIRebuildFTS(w, httptest.NewRequest(http.MethodPost, "/api/v1/cli/rebuild-fts", nil))
+						srv.handleCLIRebuildFTS(w, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/rebuild-fts", nil))
 						assertions.NotContains(w.Body.String(), `"type":"error"`)
 						assertions.True(srv.ftsIndexComplete.Load())
 						return
@@ -607,19 +651,20 @@ func TestAgentFTSResponsesReportIndexState(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("test", "reader@example.test")
 	requirements.NoError(err)
-	conv, err := st.EnsureConversation(source.ID, "thread", "Synthetic")
+	conv, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Synthetic")
 	requirements.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "unindexed", MessageType: "email", Subject: sql.NullString{String: "ordinary subject", Valid: true}})
 	requirements.NoError(err)
 	requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: "hiddenneedle body", Valid: true}, sql.NullString{}))
 	protected := &agentReadGateStore{Store: st}
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: protected, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	// Cleanup runs after t.Context() is canceled.
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	t.Cleanup(srv.agentGrants.Close)
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 	requirements.NoError(err)
 	get := func(path string, agent bool) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 		req.RemoteAddr = "127.0.0.1:1234"
 		if agent {
 			req.Header.Set(apiprotocol.AgentTokenHeader, token)
@@ -666,7 +711,7 @@ func TestAgentFTSResponsesReportIndexState(t *testing.T) {
 			requirements.FailNow("old snapshot did not reach admission")
 		}
 		if manual {
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/rebuild-fts", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/cli/rebuild-fts", nil)
 			req.Header.Set("Authorization", "Bearer owner")
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
@@ -718,14 +763,15 @@ func TestAgentSearchDeadlineReleasesSnapshot(t *testing.T) {
 					protected.onStats = func(ctx context.Context) { close(ready); <-ctx.Done() }
 				}
 				srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: protected, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger(), RequestTimeout: requestBudget})
-				t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+				// Cleanup runs after t.Context() is canceled.
+				t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 				t.Cleanup(srv.agentGrants.Close)
 				srv.ftsIndexComplete.Store(true)
 				_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 				requirements.NoError(err)
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				req := httptest.NewRequest(route.method, path, nil).WithContext(ctx)
+				req := httptest.NewRequestWithContext(t.Context(), route.method, path, nil).WithContext(ctx)
 				req.Header.Set(apiprotocol.AgentTokenHeader, token)
 				responses := make(chan *httptest.ResponseRecorder, 1)
 				go func() {
@@ -779,7 +825,7 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 			st.DB().SetMaxOpenConns(4)
 			source, err := st.GetOrCreateSource("test", "reader@example.test")
 			requirements.NoError(err)
-			conv, err := st.EnsureConversation(source.ID, "thread", "Synthetic")
+			conv, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Synthetic")
 			requirements.NoError(err)
 			id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "message", MessageType: "email"})
 			requirements.NoError(err)
@@ -801,7 +847,8 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 				engine = nil
 			}
 			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: barrier, Engine: engine, Logger: testLogger()})
-			t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+			// Cleanup runs after t.Context() is canceled.
+			t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 			t.Cleanup(srv.agentGrants.Close)
 			// Background index verification would race the snapshot connection counts.
 			srv.ftsIndexComplete.Store(true)
@@ -812,7 +859,7 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 			defer cancel()
 			for range 4 {
 				go func() {
-					req := httptest.NewRequest(http.MethodGet, path, nil).WithContext(ctx)
+					req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil).WithContext(ctx)
 					req.Header.Set(apiprotocol.AgentTokenHeader, token)
 					w := httptest.NewRecorder()
 					srv.Router().ServeHTTP(w, req)
@@ -832,7 +879,7 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 			if tc.name == "search" {
 				ownerPath = tc.path
 			}
-			ownerReq := httptest.NewRequest(http.MethodGet, ownerPath, nil).WithContext(ctx)
+			ownerReq := httptest.NewRequestWithContext(t.Context(), http.MethodGet, ownerPath, nil).WithContext(ctx)
 			ownerReq.Header.Set("Authorization", "Bearer owner")
 			ownerResponse := httptest.NewRecorder()
 			srv.Router().ServeHTTP(ownerResponse, ownerReq)
@@ -864,7 +911,7 @@ func TestAgentReadSnapshotPoolPressure(t *testing.T) {
 			requirements.Eventually(func() bool { return st.DB().Stats().InUse == 0 }, 10*time.Second, time.Millisecond)
 			canceled, cancel := context.WithCancel(t.Context())
 			cancel()
-			req := httptest.NewRequest(http.MethodGet, path, nil).WithContext(canceled)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil).WithContext(canceled)
 			req.Header.Set(apiprotocol.AgentTokenHeader, token)
 			srv.Router().ServeHTTP(httptest.NewRecorder(), req)
 			// database/sql settles pool counts asynchronously; a leaked connection never returns.
@@ -909,14 +956,20 @@ func (s *agentPackingStream) OpenStream(ctx context.Context, hash string) (io.Re
 
 func testAgentPackingSnapshot(t *testing.T) {
 	for _, route := range []string{"content", "cli", "cid"} {
-		for _, transition := range []string{"pack before open", "pack during retry", "repack before open", "repack during retry", "cancel"} {
-			t.Run(route+"/"+transition, func(t *testing.T) {
+		for _, transition := range []string{
+			"pack before open",
+			"pack during retry",
+			"repack before open",
+			"repack during retry",
+			"cancel",
+		} {
+			t.Run(route+"/masked/"+transition, func(t *testing.T) {
 				requirements := require.New(t)
 				assertions := assert.New(t)
 				st := testutil.NewTestStore(t)
 				source, err := st.GetOrCreateSource("test", "reader@example.test")
 				requirements.NoError(err)
-				conv, err := st.EnsureConversation(source.ID, "thread", "Synthetic")
+				conv, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Synthetic")
 				requirements.NoError(err)
 				id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "message", MessageType: "email"})
 				requirements.NoError(err)
@@ -934,7 +987,7 @@ func testAgentPackingSnapshot(t *testing.T) {
 				if route == "cid" {
 					requirements.NoError(st.UpsertRemoteImageAttachment(t.Context(), id, store.AttachmentWrite{SourcePartKey: cid, SourceAttachmentID: cid, ContentID: cid, StoragePath: loose, ContentHash: hash, MIMEType: "image/png"}))
 				} else {
-					requirements.NoError(st.UpsertAttachment(id, "allowed.bin", "application/octet-stream", loose, hash, len(content)))
+					requirements.NoError(st.UpsertAttachment(t.Context(), id, "allowed.bin", "application/octet-stream", loose, hash, len(content)))
 				}
 				record := func(entry store.PackIndexEntry) store.PackRecord {
 					return store.PackRecord{PackID: entry.PackID, EntryCount: 1, StoredBytes: entry.StoredLen, CreatedAt: time.Now()}
@@ -942,7 +995,7 @@ func testAgentPackingSnapshot(t *testing.T) {
 				var old store.PackIndexEntry
 				if strings.HasPrefix(transition, "repack") {
 					old = buildTestPack(t, cfg.AttachmentsDir(), content)
-					requirements.NoError(st.RecordPackedBlobs(record(old), []store.PackIndexEntry{old}))
+					requirements.NoError(st.RecordPackedBlobs(t.Context(), record(old), []store.PackIndexEntry{old}))
 					requirements.NoError(os.Remove(loose))
 				}
 				protected := &agentReadGateStore{Store: st}
@@ -954,18 +1007,24 @@ func testAgentPackingSnapshot(t *testing.T) {
 				ctx, cancel := context.WithTimeout(context.WithValue(t.Context(), readPackingValueKey{}, "request value"), 10*time.Second)
 				defer cancel()
 				migrate := func(readCtx context.Context) {
-					requirements.ErrorIs(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int)), sql.ErrTxDone)
+					assertions.Same(st.DB(), store.ReadDBContext(readCtx, st.DB()), "placement uses a connection outside the authorization snapshot")
+					if route == "cid" {
+						assertions.ErrorIs(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int)), sql.ErrTxDone) //nolint:testifylint // Snapshot lifetime is under test.
+						assertions.Zero(st.DB().Stats().InUse, "authorization connection released before placement")
+					} else {
+						// Downloads retain the snapshot until the byte sniff and parent classification.
+						assertions.NoError(store.ReadDBContext(protected.snapshotContext, st.DB()).QueryRowContext(t.Context(), "SELECT 1").Scan(new(int))) //nolint:testifylint // Snapshot lifetime is under test.
+					}
 					assertions.Equal("request value", readCtx.Value(readPackingValueKey{}))
 					_, deadline := readCtx.Deadline()
 					assertions.True(deadline)
-					assertions.Zero(st.DB().Stats().InUse, "authorization connection released before placement")
 					if transition == "cancel" {
 						cancel()
 						return
 					}
 					next := buildTestPack(t, cfg.AttachmentsDir(), content)
 					if old.PackID == "" {
-						requirements.NoError(st.RecordPackedBlobs(record(next), []store.PackIndexEntry{next}))
+						requirements.NoError(st.RecordPackedBlobs(readCtx, record(next), []store.PackIndexEntry{next}))
 						requirements.NoError(os.Remove(loose))
 					} else {
 						requirements.NoError(st.CommitRepack(t.Context(), []string{old.PackID}, []store.PackRecord{record(next)}, []store.RepackMove{{OldPackID: old.PackID, NewEntry: next}}))
@@ -980,8 +1039,10 @@ func testAgentPackingSnapshot(t *testing.T) {
 					stream.before = migrate
 				}
 				srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: protected, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), BlobStore: stream, Logger: testLogger()})
-				t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
-				_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead, agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+				// Cleanup runs after t.Context() is canceled.
+				t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
+				permissions := []agentgrant.Permission{agentgrant.PermissionAttachmentRead, agentgrant.PermissionMessageRead}
+				_, token, _, err := srv.agentGrants.Issue("reader", permissions, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 				requirements.NoError(err)
 				path := "/api/v1/attachments/" + hash + "/content"
 				if route == "cli" {
@@ -990,7 +1051,7 @@ func testAgentPackingSnapshot(t *testing.T) {
 				if route == "cid" {
 					path = fmt.Sprintf("/api/v1/messages/%d/inline?cid=%s", id, cid)
 				}
-				req := httptest.NewRequest(http.MethodGet, path, nil).WithContext(ctx)
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil).WithContext(ctx)
 				req.Header.Set(apiprotocol.AgentTokenHeader, token)
 				response := httptest.NewRecorder()
 				if route == "cid" {
@@ -1018,7 +1079,12 @@ func testAgentPackingSnapshot(t *testing.T) {
 					}
 					assertions.Equal(expectedCalls, resolver.calls)
 				}
-				assertions.Zero(st.DB().Stats().InUse)
+				if transition == "cancel" && (route == "content" || route == "cli") {
+					// Masked downloads retain the snapshot until classification; cancellation can release it asynchronously.
+					assertions.Eventually(func() bool { return st.DB().Stats().InUse == 0 }, 10*time.Second, time.Millisecond)
+				} else {
+					assertions.Zero(st.DB().Stats().InUse)
+				}
 			})
 		}
 	}
@@ -1041,7 +1107,7 @@ func TestAgentReadAtCapacityFailsWhenRequestEnds(t *testing.T) {
 
 	ended, cancel := context.WithCancel(t.Context())
 	cancel()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil).WithContext(ended)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/stats", nil).WithContext(ended)
 	req.Header.Set(apiprotocol.AgentTokenHeader, token)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)

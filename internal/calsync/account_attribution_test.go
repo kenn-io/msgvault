@@ -1,7 +1,6 @@
 package calsync
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,7 +26,7 @@ func calendarAccountIDs(t *testing.T, st *store.Store) []int64 {
 // them in: no account attribution.
 func simulateLegacyEvents(t *testing.T, st *store.Store, src *store.Source) {
 	t.Helper()
-	_, err := st.DB().Exec(st.Rebind(
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE messages SET account_address = NULL, account_path = NULL WHERE source_id = ?`), src.ID)
 	require.NoError(t, err)
 }
@@ -40,7 +39,7 @@ func TestIncrementalHealsCalendarAccountAttribution(t *testing.T) {
 	m.FullEvents["primary"] = [][]gcal.Event{{timedEvent("e1", "One"), timedEvent("e2", "Two")}}
 	m.FullSyncToken["primary"] = "T1"
 	s, st := newSyncer(t, m, Options{})
-	_, err := s.Full(context.Background())
+	_, err := s.Full(t.Context())
 	require.NoError(err)
 	require.Len(calendarAccountIDs(t, st), 2, "new events derive at ingest")
 
@@ -50,7 +49,7 @@ func TestIncrementalHealsCalendarAccountAttribution(t *testing.T) {
 
 	m.IncEvents["T1"] = [][]gcal.Event{{}}
 	m.IncNextToken["T1"] = "T2"
-	_, err = s.Incremental(context.Background())
+	_, err = s.Incremental(t.Context())
 	require.NoError(err)
 	assert.Len(calendarAccountIDs(t, st), 2, "the next incremental sync heals archived events")
 }

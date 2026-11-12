@@ -20,10 +20,10 @@ func TestDuckDBSearchFallbackHiddenTextPresent(t *testing.T) {
 	t.Parallel()
 	assert, require := assert.New(t), require.New(t)
 	dbPath, db := seedMessageDetailSenderFixture(t)
-	_, err := db.Exec(`UPDATE messages SET hidden_text_present = 1 WHERE id = 1`)
+	_, err := db.ExecContext(t.Context(), `UPDATE messages SET hidden_text_present = 1 WHERE id = 1`)
 	require.NoError(err)
 	require.NoError(db.Close())
-	engine, err := NewDuckDBEngine("", dbPath, nil)
+	engine, err := NewDuckDBEngine(t.Context(), "", dbPath, nil)
 	require.NoError(err)
 	t.Cleanup(func() { _ = engine.Close() })
 	if !engine.hasSQLite() {

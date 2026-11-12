@@ -39,7 +39,7 @@ func TestReaderScopedMCP(t *testing.T) {
 	for i := range fixtures {
 		source, err := a.Store().GetOrCreateSource("gmail", fmt.Sprintf("reader-%d@example.com", i))
 		requirements.NoError(err)
-		conv, err := a.Store().EnsureConversation(source.ID, "thread", "Telescope")
+		conv, err := a.Store().EnsureConversation(t.Context(), source.ID, "thread", "Telescope")
 		requirements.NoError(err)
 		id, err := a.Store().UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv,
 			SourceMessageID: "same-provider-id", MessageType: "email",
@@ -54,9 +54,9 @@ func TestReaderScopedMCP(t *testing.T) {
 		rel := filepath.Join(hash[:2], hash)
 		requirements.NoError(os.MkdirAll(filepath.Join(attachments, filepath.Dir(rel)), 0700))
 		requirements.NoError(os.WriteFile(filepath.Join(attachments, rel), []byte(body), 0600))
-		requirements.NoError(a.Store().UpsertAttachment(id, "example.txt", "text/plain", rel, hash, len(body)))
+		requirements.NoError(a.Store().UpsertAttachment(t.Context(), id, "example.txt", "text/plain", rel, hash, len(body)))
 		var attachment int64
-		requirements.NoError(a.Store().DB().QueryRow(a.Store().Rebind("SELECT id FROM attachments WHERE message_id=?"), id).Scan(&attachment))
+		requirements.NoError(a.Store().DB().QueryRowContext(t.Context(), a.Store().Rebind("SELECT id FROM attachments WHERE message_id=?"), id).Scan(&attachment))
 		fixtures[i] = readFixture{source.ID, id, attachment}
 	}
 	emptySource, err := a.Store().GetOrCreateSource("gmail", "empty@example.com")
@@ -214,8 +214,9 @@ func openReaderArchive(t *testing.T) *archive.Archive {
 		admin, openErr := sql.Open("pgx", dsn)
 		requirements.NoError(openErr)
 		schema := "mcp_reader_" + strings.ToLower(rand.Text())
+		// Cleanup runs after t.Context() is canceled.
 		t.Cleanup(func() {
-			_, err := admin.Exec("DROP SCHEMA IF EXISTS " + pgx.Identifier{schema}.Sanitize() + " CASCADE")
+			_, err := admin.ExecContext(context.WithoutCancel(t.Context()), "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 			assertions.NoError(err)
 			assertions.NoError(admin.Close())
 		})

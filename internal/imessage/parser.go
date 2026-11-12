@@ -2,6 +2,7 @@ package imessage
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math"
 	"strings"
 	"time"
@@ -107,15 +108,13 @@ func extractAttributedBodyTextWithStatus(data []byte) (string, bool) {
 
 // extractStreamtypedText extracts text from NSArchiver streamtyped format.
 // The format embeds an NSString with the text content. We scan for the
-// NSString class marker, skip past the variable-length encoding prefix,
-// and extract the UTF-8 text that follows.
+// NSString class marker, read the byte length that follows it, and extract
+// exactly that many UTF-8 bytes.
 //
-// After the marker (\x84\x01+), there is a length prefix:
-//   - Single-byte: bit 7 clear (0x00-0x7F), value is the text length
-//   - Multi-byte: bit 7 set, followed by length bytes and framing bytes
-//     (including 0x92 and other high bytes)
-//
-// The text content is always clean UTF-8 surrounded by binary framing.
+// The length after the marker (\x84\x01+) uses typedstream integer encoding:
+//   - 0x00-0x7F: the byte itself is the length
+//   - 0x81: a 2-byte little-endian length follows
+//   - 0x82: a 4-byte little-endian length follows
 func extractStreamtypedText(data []byte) (string, bool) {
 	marker := []byte("\x84\x01+")
 	idx := bytes.Index(data, marker)
@@ -127,75 +126,25 @@ func extractStreamtypedText(data []byte) (string, bool) {
 		return "", false
 	}
 
-	// Decode the length prefix.
-	//
-	// Format after the \x84\x01+ marker:
-	//   Single-byte: 0x00-0x7F = length, then text immediately follows.
-	//   Multi-byte:  0x81 <len_byte> [framing_bytes...] <text> 0x86
-	//     The 0x81 flag means "1 length byte follows". The length byte
-	//     can be any value (including printable ASCII). After the length
-	//     byte, skip remaining framing bytes (0x00, 0x92, etc.) until
-	//     valid text starts.
-	b := data[pos]
 	var textLen int
-	if b&0x80 == 0 {
-		// Single-byte length (0x00-0x7F)
+	switch b := data[pos]; {
+	case b&0x80 == 0:
 		textLen = int(b)
 		pos++
-	} else {
-		// Multi-byte: 0x81 means 1 length byte follows
-		pos++ // skip the 0x81 flag
-		if pos >= len(data) {
-			return "", false
-		}
-		textLen = int(data[pos])
-		pos++ // skip the length byte
-		// Skip remaining framing bytes (nulls, high bytes) before text
-		for pos < len(data) {
-			fb := data[pos]
-			if fb == 0x00 || (fb >= 0x80 && fb <= 0xBF) {
-				pos++
-				continue
-			}
-			break
-		}
-	}
-
-	if pos >= len(data) {
-		if textLen == 0 {
-			return "", true
-		}
+	case b == 0x81 && len(data)-pos > 2:
+		textLen = int(binary.LittleEndian.Uint16(data[pos+1:]))
+		pos += 3
+	case b == 0x82 && len(data)-pos > 4:
+		textLen = int(binary.LittleEndian.Uint32(data[pos+1:]))
+		pos += 5
+	default:
 		return "", false
 	}
 
-	// Use the decoded length to extract exactly the right bytes
-	if textLen > 0 {
-		if textLen > len(data)-pos {
-			return "", false
-		}
-		end := pos + textLen
-		text := string(data[pos:end])
-		if !utf8.ValidString(text) {
-			return "", false
-		}
-		return text, true
+	if textLen > len(data)-pos {
+		return "", false
 	}
-
-	// Fallback: extract until archiver control byte or end
-	end := pos
-	for end < len(data) {
-		ch := data[end]
-		if ch == 0x00 || ch == 0x86 {
-			break
-		}
-		end++
-	}
-
-	if end == pos {
-		return "", data[pos] == 0x86
-	}
-
-	text := string(data[pos:end])
+	text := string(data[pos : pos+textLen])
 	if !utf8.ValidString(text) {
 		return "", false
 	}

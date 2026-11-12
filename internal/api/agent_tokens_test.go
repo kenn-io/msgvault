@@ -39,7 +39,7 @@ func TestAgentTokensDoNotSurviveRestart(t *testing.T) {
 	// Second "instance": fresh registry with no knowledge of the previous grant.
 	srv2, _ := newAgentTokenTestServer(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 	req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 	w := httptest.NewRecorder()
 	srv2.Router().ServeHTTP(w, req)
@@ -80,14 +80,14 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 
 	// Hold the gate with a label so operationHealth() returns a labelled entry
 	// and operationBusyHealth() returns Busy only.
-	releaseGate, ok := gate.BeginLabeledWorkContext(context.Background(), "test-operation")
+	releaseGate, ok := gate.BeginLabeledWorkContext(t.Context(), "test-operation")
 	require.True(ok, "must acquire gate")
 	defer releaseGate()
 
 	srv.SetVectorInitError(errors.New("synthetic provider detail"))
 
 	// Owner caller.
-	reqO := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	reqO := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 	reqO.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 	wO := httptest.NewRecorder()
 	srv.Router().ServeHTTP(wO, reqO)
@@ -100,7 +100,7 @@ func TestDelegatedHealthUsesPublicProjection(t *testing.T) {
 		{apiprotocol.AgentTokenHeader, secret},
 		{"X-Api-Key", remoteClientTestReaderKey},
 	} {
-		reqD := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		reqD := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 		reqD.Header.Set(credential.header, credential.key)
 		wD := httptest.NewRecorder()
 		srv.Router().ServeHTTP(wD, reqD)
@@ -196,7 +196,7 @@ func TestAgentTokenSenderSelectionsSnapshotConfirmedIdentities(t *testing.T) {
 			SourceIDs: []int64{1}, SenderSelections: selections,
 		})
 		requirements.NoError(err)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(body))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 		resp := httptest.NewRecorder()
@@ -222,7 +222,7 @@ func TestAgentTokenSenderSelectionsSnapshotConfirmedIdentities(t *testing.T) {
 		SourceIDs: []int64{1}, SenderSelections: map[string][]string{"1": {"unknown@example.com"}},
 	})
 	requirements.NoError(err)
-	badReq := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(badBody))
+	badReq := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(badBody))
 	badReq.Header.Set("Content-Type", "application/json")
 	badReq.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 	badResp := httptest.NewRecorder()
@@ -245,7 +245,7 @@ func TestAgentTokenIssueRequiresOwnerKey(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("no auth gets 401", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
@@ -253,7 +253,7 @@ func TestAgentTokenIssueRequiresOwnerKey(t *testing.T) {
 	})
 
 	t.Run("owner API key gets 201", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 		w := httptest.NewRecorder()
@@ -267,7 +267,7 @@ func TestAgentTokenIssueRequiresOwnerKey(t *testing.T) {
 		_, secret, _, issuErr := reg.Issue("delegated-caller", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{src}, time.Time{})
 		require.NoError(t, issuErr)
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
 		w := httptest.NewRecorder()
@@ -306,7 +306,7 @@ func TestIssueAgentTokenUsesEffectiveRequestOrigin(t *testing.T) {
 		SourceIDs:   []int64{1},
 	})
 	require.NoError(err)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(body))
 	req.RemoteAddr = "127.0.0.1:12345"
 	req.Host = "127.0.0.1:8080"
 	req.Header.Set("Content-Type", "application/json")
@@ -328,14 +328,14 @@ func TestAgentTokenListRequiresOwnerKey(t *testing.T) {
 	srv, _ := newAgentTokenTestServer(t)
 
 	t.Run("no auth gets 401", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/agent-tokens", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/agent-tokens", nil)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
 	t.Run("owner API key gets 200", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/agent-tokens", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/agent-tokens", nil)
 		req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
@@ -349,14 +349,14 @@ func TestAgentTokenRevokeRequiresOwnerKey(t *testing.T) {
 	srv, _ := newAgentTokenTestServer(t)
 
 	t.Run("no auth gets 401", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/agent-tokens/nonexistent", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/agent-tokens/nonexistent", nil)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
 	t.Run("owner API key revoke nonexistent ID returns 204", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/agent-tokens/nonexistent-id", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/agent-tokens/nonexistent-id", nil)
 		req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
@@ -381,7 +381,7 @@ func TestAgentTokenSecretNotInListResponse(t *testing.T) {
 	require.NoError(err)
 
 	// Issue the token
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 	w := httptest.NewRecorder()
@@ -394,7 +394,7 @@ func TestAgentTokenSecretNotInListResponse(t *testing.T) {
 	assert.Greater(len(issueResp.Secret), 10, "secret must be non-trivial")
 
 	// List the tokens - secret must NOT appear
-	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/agent-tokens", nil)
+	req2 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/agent-tokens", nil)
 	req2.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 	w2 := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w2, req2)
@@ -447,7 +447,7 @@ func TestAgentTokenRoutesExemptFromOperationGate(t *testing.T) {
 	}
 	prereqBytes, err := json.Marshal(prereq)
 	require.NoError(err)
-	preReq := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(prereqBytes))
+	preReq := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(prereqBytes))
 	preReq.Header.Set("Content-Type", "application/json")
 	preReq.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 	preW := httptest.NewRecorder()
@@ -458,13 +458,13 @@ func TestAgentTokenRoutesExemptFromOperationGate(t *testing.T) {
 	require.NotEmpty(preIssued.ID)
 
 	// Hold the gate so all normal mutations would block.
-	release, ok := gate.BeginLabeledWorkContext(context.Background(), "msgvault sync alice@example.com")
+	release, ok := gate.BeginLabeledWorkContext(t.Context(), "msgvault sync alice@example.com")
 	require.True(ok, "must acquire gate")
 	defer release()
 
 	// Revoke must succeed (204) while gate is held.
 	t.Run("revoke succeeds under gate contention", func(t *testing.T) {
-		revokeReq := httptest.NewRequest(http.MethodDelete, "/api/v1/agent-tokens/"+preIssued.ID, nil)
+		revokeReq := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/agent-tokens/"+preIssued.ID, nil)
 		revokeReq.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 		revokeW := httptest.NewRecorder()
 		srv.Router().ServeHTTP(revokeW, revokeReq)
@@ -486,7 +486,7 @@ func TestAgentTokenRoutesExemptFromOperationGate(t *testing.T) {
 		}
 		issueBytes, marshalErr := json.Marshal(issueReq)
 		require.NoError(marshalErr)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(issueBytes))
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(issueBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 		w := httptest.NewRecorder()
@@ -667,7 +667,7 @@ func TestHandleIssueAgentTokenValidation(t *testing.T) {
 				require.NoError(t, marshalErr)
 			}
 
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 			w := httptest.NewRecorder()
@@ -702,7 +702,7 @@ func TestRevocationDeniesSubsequentAuthentication(t *testing.T) {
 	}
 	bodyBytes, err := json.Marshal(reqBody)
 	require.NoError(err)
-	issueReq := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
+	issueReq := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/agent-tokens", bytes.NewReader(bodyBytes))
 	issueReq.Header.Set("Content-Type", "application/json")
 	issueReq.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 	issueW := httptest.NewRecorder()
@@ -715,21 +715,21 @@ func TestRevocationDeniesSubsequentAuthentication(t *testing.T) {
 	require.NotEmpty(issued.Secret)
 
 	// Step 2: prove the token authenticates.
-	healthReq1 := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	healthReq1 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 	healthReq1.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
 	healthW1 := httptest.NewRecorder()
 	srv.Router().ServeHTTP(healthW1, healthReq1)
 	assert.Equal(http.StatusOK, healthW1.Code, "pre-revocation: token must authenticate")
 
 	// Step 3: revoke via HTTP.
-	revokeReq := httptest.NewRequest(http.MethodDelete, "/api/v1/agent-tokens/"+issued.ID, nil)
+	revokeReq := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/api/v1/agent-tokens/"+issued.ID, nil)
 	revokeReq.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 	revokeW := httptest.NewRecorder()
 	srv.Router().ServeHTTP(revokeW, revokeReq)
 	assert.Equal(http.StatusNoContent, revokeW.Code, "revoke: %s", revokeW.Body.String())
 
 	// Step 4: prove the token no longer authenticates.
-	healthReq2 := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	healthReq2 := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/health", nil)
 	healthReq2.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
 	healthW2 := httptest.NewRecorder()
 	srv.Router().ServeHTTP(healthW2, healthReq2)
@@ -747,7 +747,7 @@ func TestAgentTokenManagementDisabled(t *testing.T) {
 		{http.MethodDelete, agentTokensPath + "/nonexistent"},
 	} {
 		t.Run(tc.method, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), tc.method, tc.path, nil)
 			req.Header.Set("X-Api-Key", agentTokenTestAPIKey)
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)

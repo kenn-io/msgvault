@@ -32,7 +32,7 @@ func TestArchivedRemoteImagesRenderOfflineAndAreMessageScoped(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	src, err := st.GetOrCreateSource("eml", "user@example.com")
 	require.NoError(err)
-	conv, err := st.EnsureConversation(src.ID, "thread", "Images")
+	conv, err := st.EnsureConversation(t.Context(), src.ID, "thread", "Images")
 	require.NoError(err)
 	original := `<img src="http://images.example/chart.png">`
 	largeImage := append(append([]byte(nil), fakePNG...), make([]byte, 6<<20)...)
@@ -59,14 +59,14 @@ func TestArchivedRemoteImagesRenderOfflineAndAreMessageScoped(t *testing.T) {
 	upstream.Close() // The original image host is now unavailable.
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Logger: testLogger()})
 	detailResponse := httptest.NewRecorder()
-	srv.Router().ServeHTTP(detailResponse, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil))
+	srv.Router().ServeHTTP(detailResponse, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil))
 	require.Equal(http.StatusOK, detailResponse.Code, detailResponse.Body.String())
 	var detail MessageDetail
 	require.NoError(json.Unmarshal(detailResponse.Body.Bytes(), &detail))
 	assert.NotContains(detail.BodyHTML, "http://images.example")
 	assert.Contains(detail.BodyHTML, "cid:remote-image:")
 	conversationResponse := httptest.NewRecorder()
-	srv.Router().ServeHTTP(conversationResponse, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conv, id), nil))
+	srv.Router().ServeHTTP(conversationResponse, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/conversations/%d?anchor=%d", conv, id), nil))
 	require.Equal(http.StatusOK, conversationResponse.Code, conversationResponse.Body.String())
 	var conversation ConversationResponse
 	require.NoError(json.Unmarshal(conversationResponse.Body.Bytes(), &conversation))
@@ -77,12 +77,12 @@ func TestArchivedRemoteImagesRenderOfflineAndAreMessageScoped(t *testing.T) {
 	require.Len(refs, 1)
 	for cid := range refs {
 		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/inline?cid=%s", id, cid), nil))
+		srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/inline?cid=%s", id, cid), nil))
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
 		assert.Equal(largeImage, response.Body.Bytes())
 		assert.Equal("image/png", response.Header().Get("Content-Type"))
 		response = httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/inline?cid=%s", id+1, cid), nil))
+		srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/inline?cid=%s", id+1, cid), nil))
 		assert.Equal(http.StatusNotFound, response.Code)
 	}
 	saved, err := st.GetMessage(id)
@@ -92,7 +92,7 @@ func TestArchivedRemoteImagesRenderOfflineAndAreMessageScoped(t *testing.T) {
 	// Compact the same bytes into a real pack, then remove only the test's
 	// loose copy: the reader must resolve through the configured blob store.
 	entry := buildTestPack(t, cfg.AttachmentsDir(), largeImage)
-	require.NoError(st.RecordPackedBlobs(store.PackRecord{
+	require.NoError(st.RecordPackedBlobs(t.Context(), store.PackRecord{
 		PackID: entry.PackID, EntryCount: 1, StoredBytes: entry.StoredLen, CreatedAt: time.Now(),
 	}, []store.PackIndexEntry{entry}))
 	path, err := export.StoragePath(cfg.AttachmentsDir(), entry.BlobHash)
@@ -104,7 +104,7 @@ func TestArchivedRemoteImagesRenderOfflineAndAreMessageScoped(t *testing.T) {
 	srv = NewServerWithOptions(ServerOptions{Config: cfg, Store: st, BlobStore: bs, Logger: testLogger()})
 	for cid := range refs {
 		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/inline?cid=%s", id, cid), nil))
+		srv.Router().ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/inline?cid=%s", id, cid), nil))
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
 		assert.Equal(largeImage, response.Body.Bytes())
 	}

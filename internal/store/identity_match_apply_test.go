@@ -27,7 +27,7 @@ func upsertPairCandidate(
 	require := require.New(t)
 
 	candidate, _, err := st.UpsertIdentityMatchCandidateContext(
-		context.Background(), store.IdentityMatchCandidateInput{
+		t.Context(), store.IdentityMatchCandidateInput{
 			LeftKind: store.IdentityMatchParticipant, LeftID: left,
 			RightKind: store.IdentityMatchParticipant, RightID: right,
 			Basis:           basis,
@@ -53,7 +53,7 @@ func TestAcceptStableProviderIDCandidateLinksParticipants(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, err := st.EnsureParticipantByIdentifier("beeper", "@alice:beeper.local", "Alice Example")
 	require.NoError(err, "ensure alice")
@@ -77,7 +77,7 @@ func TestUserAcceptPromotesExistingSystemAcceptance(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	left, err := st.EnsureParticipantByIdentifier(
 		"beeper", "@promote-left:beeper.local", "Test User",
@@ -151,10 +151,10 @@ func TestAcceptStableProviderIDCandidateCancellationDoesNotCommitLink(t *testing
 	require.NoError(err, "ensure second alice")
 	candidate := upsertPairCandidate(t, st, alice, bob, store.IdentityMatchStableProviderID)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	linkStarted := make(chan struct{})
-	conn, err := st.DB().Conn(context.Background())
+	conn, err := st.DB().Conn(t.Context())
 	require.NoError(err, "get SQLite connection")
 	err = conn.Raw(func(driverConn any) error {
 		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
@@ -167,7 +167,7 @@ func TestAcceptStableProviderIDCandidateCancellationDoesNotCommitLink(t *testing
 	})
 	require.NoError(err, "register cancellation function")
 	require.NoError(conn.Close(), "return SQLite connection to pool")
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER wait_before_identity_match_link
 		BEFORE INSERT ON participant_links
 		BEGIN
@@ -207,7 +207,7 @@ func TestSQLiteSystemAcceptanceCannotOverwriteConcurrentRejection(t *testing.T) 
 	st := storetest.New(t).Store
 	st.DB().SetMaxOpenConns(4)
 	st.DB().SetMaxIdleConns(4)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	left, err := st.EnsureParticipantByIdentifier(
 		"beeper", "@race-left:beeper.local", "Test User")
@@ -395,7 +395,7 @@ func TestAcceptUsernameCandidateRequiresAUser(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, err := st.EnsureParticipantByIdentifier("beeper", "@alice:beeper.local", "Alice Example")
 	require.NoError(err, "ensure alice")
@@ -419,7 +419,7 @@ func TestAcceptAcrossDifferentPersonsBecomesAConflict(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, err := st.EnsureParticipantByIdentifier("beeper", "@alice:beeper.local", "Alice Example")
 	require.NoError(err, "ensure alice")
@@ -497,7 +497,7 @@ func TestAcceptRejectsUnsupportedEndpointKinds(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, err := st.EnsureParticipantByIdentifier("beeper", "@alice:beeper.local", "Alice Example")
 	require.NoError(err, "ensure alice")
@@ -525,7 +525,7 @@ func TestApplyAcceptedIdentityMatchesIsResumableAndIdempotent(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, err := st.EnsureParticipantByIdentifier("beeper", "@alice:beeper.local", "Alice Example")
 	require.NoError(err, "ensure alice")
@@ -558,7 +558,7 @@ func TestAcceptedIdentityMatchApplicationStateTracksInterruptedWork(t *testing.T
 
 	applicationPending := func(candidateID int64) bool {
 		var pending bool
-		require.NoError(st.DB().QueryRow(st.Rebind(`
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 			SELECT application_pending FROM identity_match_candidates WHERE id = ?`),
 			candidateID,
 		).Scan(&pending), "read candidate application state")
@@ -601,7 +601,7 @@ func TestUnlinkUserAcceptedIdentityMatchesSuppressReplay(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	left, err := st.EnsureParticipantByIdentifier(
 		"beeper", "@unlink-left:beeper.local", "Test User")
@@ -651,7 +651,7 @@ func TestUnlinkSystemAcceptedIdentityMatchSuppressesReplay(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	left, err := st.EnsureParticipantByIdentifier(
 		"beeper", "@system-unlink-left:beeper.local", "Test User")
@@ -664,7 +664,7 @@ func TestUnlinkSystemAcceptedIdentityMatchSuppressesReplay(t *testing.T) {
 	require.NoError(err, "accept system candidate")
 	lo, hi := normalizeEdgeForTest(left, right)
 	var owner int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT identity_match_candidate_id FROM participant_links
 		WHERE participant_a = ? AND participant_b = ?`), lo, hi).Scan(&owner),
 		"read system link ownership")
@@ -689,7 +689,7 @@ func TestUnlinkManualLinkLeavesUnrelatedCandidateAccepted(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	manualLeft, err := st.EnsureParticipantByIdentifier(
 		"beeper", "@manual-unlink-left:beeper.local", "Test User")
@@ -717,7 +717,7 @@ func TestUnlinkManualLinkLeavesUnrelatedCandidateAccepted(t *testing.T) {
 
 	var owner sql.NullInt64
 	lo, hi := normalizeEdgeForTest(manualLeft, manualRight)
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT identity_match_candidate_id FROM participant_links
 		WHERE participant_a = ? AND participant_b = ?`), lo, hi).Scan(&owner),
 		"read manual link ownership")
@@ -747,7 +747,7 @@ func TestUnlinkOwnedIdentityMatchRollsBackSuppressionAndEdge(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	left, err := st.EnsureParticipantByIdentifier(
 		"beeper", "@rollback-unlink-left:beeper.local", "Test User")
@@ -759,7 +759,7 @@ func TestUnlinkOwnedIdentityMatchRollsBackSuppressionAndEdge(t *testing.T) {
 	_, _, err = st.AcceptIdentityMatchCandidateContext(ctx, candidate.ID, "system", nil)
 	require.NoError(err, "accept system candidate")
 
-	_, err = st.DB().Exec(fmt.Sprintf(`
+	_, err = st.DB().ExecContext(t.Context(), fmt.Sprintf(`
 		CREATE TRIGGER fail_identity_unlink_suppression
 		BEFORE UPDATE OF state ON identity_match_candidates
 		WHEN OLD.id = %d AND OLD.state = 'accepted' AND NEW.state = 'rejected'
@@ -768,8 +768,9 @@ func TestUnlinkOwnedIdentityMatchRollsBackSuppressionAndEdge(t *testing.T) {
 		END
 	`, candidate.ID))
 	require.NoError(err, "create rollback trigger")
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
-		_, _ = st.DB().Exec(`DROP TRIGGER IF EXISTS fail_identity_unlink_suppression`)
+		_, _ = st.DB().ExecContext(context.WithoutCancel(t.Context()), `DROP TRIGGER IF EXISTS fail_identity_unlink_suppression`)
 	})
 
 	_, err = st.UnlinkParticipants(left, right)
@@ -786,7 +787,7 @@ func TestApplyAcceptedIdentityMatchesBoundsPendingWork(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Accepted candidates whose links already landed are not recovery work and
 	// must not consume the per-import bound.
@@ -832,7 +833,7 @@ func TestGetIdentityMatchCandidateLoadsEvidenceAndReportsMissing(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 
 	alice, err := st.EnsureParticipantByIdentifier("beeper", "@alice:beeper.local", "Alice Example")
 	require.NoError(err, "ensure alice")
@@ -866,7 +867,7 @@ func TestGetIdentityMatchCandidateApplicationHonorsCancellation(t *testing.T) {
 	require.NoError(err, "ensure second alice")
 	candidate := upsertPairCandidate(t, st, alice, bob, store.IdentityMatchStableProviderID)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	_, err = st.GetIdentityMatchCandidateContext(ctx, candidate.ID)

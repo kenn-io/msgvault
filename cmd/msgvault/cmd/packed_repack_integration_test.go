@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"archive/zip"
-	"context"
 	crand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -44,19 +43,19 @@ func TestPostRepackBlobReadsThroughAPIMCPAndExports(t *testing.T) {
 	deadHash := f.addLoose(dead)
 	deadSmallHash := f.addLoose([]byte("second dead entry makes the source pack sparse"))
 
-	_, err = f.maintenance.pack(context.Background(), 0)
+	_, err = f.maintenance.pack(t.Context(), 0)
 	require.NoError(err)
 	oldEntry := f.packedEntry(liveHash)
 	require.NotNil(oldEntry)
-	_, err = f.store.DB().Exec(f.store.Rebind(`
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
 		DELETE FROM attachments WHERE content_hash IN (?, ?)`), deadHash, deadSmallHash)
 	require.NoError(err)
-	_, err = f.store.DB().Exec(f.store.Rebind(`
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
 		UPDATE attachment_packs SET created_at = ? WHERE pack_id = ?`),
 		time.Now().UTC().Add(-48*time.Hour).Format(time.RFC3339), oldEntry.PackID)
 	require.NoError(err)
 
-	stats, err := f.maintenance.repack(context.Background(), 0)
+	stats, err := f.maintenance.repack(t.Context(), 0)
 	require.NoError(err)
 	assert.Equal(1, stats.PacksRewritten)
 	newEntry := f.packedEntry(liveHash)
@@ -73,7 +72,7 @@ func TestPackedRestoreReadsThroughAPIMCPAndExports(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gmail", "restore-reader@example.com")
 	require.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "restore-reader-thread", "Restore Reader")
+	conversationID, err := st.EnsureConversation(t.Context(), source.ID, "restore-reader-thread", "Restore Reader")
 	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID: conversationID, SourceID: source.ID,
@@ -87,7 +86,7 @@ func TestPackedRestoreReadsThroughAPIMCPAndExports(t *testing.T) {
 	loosePath := filepath.Join(attachmentsDir, hash[:2], hash)
 	require.NoError(os.MkdirAll(filepath.Dir(loosePath), 0o700))
 	require.NoError(os.WriteFile(loosePath, content, 0o600))
-	require.NoError(st.UpsertAttachment(messageID, "restored.bin", "application/octet-stream",
+	require.NoError(st.UpsertAttachment(t.Context(), messageID, "restored.bin", "application/octet-stream",
 		hash[:2]+"/"+hash, hash, len(content)))
 	sourceBlobs, err := attachmentstore.New(store.NewPackCatalog(st), attachmentsDir)
 	require.NoError(err)
@@ -95,19 +94,19 @@ func TestPackedRestoreReadsThroughAPIMCPAndExports(t *testing.T) {
 	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(err)
 	app := backupapp.New("test")
-	_, err = backup.Create(context.Background(), repo, app, backup.CreateOptions{
+	_, err = backup.Create(t.Context(), repo, app, backup.CreateOptions{
 		DBPath: dbPath, ContentDir: attachmentsDir, DataDir: dataDir,
 		ContentSource: backupapp.NewContentSource(sourceBlobs, attachmentsDir),
 	})
 	require.NoError(err)
 	target := filepath.Join(t.TempDir(), "restored")
-	res, err := backup.Restore(context.Background(), repo, app, backup.RestoreOptions{
+	res, err := backup.Restore(t.Context(), repo, app, backup.RestoreOptions{
 		TargetDir: target, PackedContent: backupapp.NewPackedRestoreTarget(packstore.DefaultLimits()),
 	})
 	require.NoError(err)
 	require.Equal(int64(1), res.PackedAttachmentBlobs)
 	require.Zero(res.LooseAttachmentBlobs)
-	restoredStore, err := store.OpenForTest(res.DBPath)
+	restoredStore, err := store.OpenForTest(t.Context(), res.DBPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = restoredStore.Close() })
 	restoredBlobs, err := attachmentstore.New(store.NewPackCatalog(restoredStore), filepath.Join(target, "attachments"))
@@ -140,7 +139,7 @@ func assertBlobReadSurfaces(
 	httpServer := httptest.NewServer(srv.Router())
 	t.Cleanup(httpServer.Close)
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
 		httpServer.URL+"/api/v1/cli/attachment?content_hash="+hash, nil)
 	require.NoError(err)
 	resp, err := http.DefaultClient.Do(req)
@@ -199,7 +198,7 @@ func assertBlobReadSurfaces(
 			Filename: filename, ContentHash: hash, Size: int64(len(content)),
 		}},
 		func(hash string) (io.ReadCloser, error) {
-			return client.OpenCLIAttachment(context.Background(), hash)
+			return client.OpenCLIAttachment(t.Context(), hash)
 		})
 	require.Empty(zipStats.Errors)
 	assert.Equal(1, zipStats.Count)

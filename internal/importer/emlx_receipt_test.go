@@ -74,7 +74,7 @@ func FuzzEmlxReceiptDecode(f *testing.F) {
 func countEmlxLedgerEntries(t *testing.T, st *store.Store, sourceID int64, provider, status string) int {
 	t.Helper()
 	var count int
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM source_import_items
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items
  WHERE source_id = ? AND provider = ? AND status = ?`), sourceID, provider, status).Scan(&count))
 	return count
 }

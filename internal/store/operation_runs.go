@@ -25,8 +25,6 @@ var _ operations.HistoryReader = (*Store)(nil)
 
 var durableOperationKinds = []operations.Kind{
 	operations.KindCardDAVSync,
-	operations.KindDocumentEmbedding,
-	operations.KindDocumentExtraction,
 	operations.KindMessageEmbedding,
 	operations.KindPersonEmbedding,
 	operations.KindPersonEnrichment,
@@ -908,8 +906,7 @@ func (s *Store) GetRun(ctx context.Context, id operations.StableID) (operations.
 	switch id.Kind() {
 	case operations.KindCardDAVSync:
 		return s.getCardDAVOperationRun(ctx, id)
-	case operations.KindDocumentEmbedding, operations.KindDocumentExtraction,
-		operations.KindMessageEmbedding, operations.KindPersonEmbedding,
+	case operations.KindMessageEmbedding, operations.KindPersonEmbedding,
 		operations.KindVisualEmbedding:
 		return s.getInvocationOperationRun(ctx, id)
 	case operations.KindPersonEnrichment:
@@ -935,8 +932,7 @@ func (s *Store) LaneStatus(
 	switch kind {
 	case operations.KindCardDAVSync:
 		return s.cardDAVOperationLaneStatus(ctx)
-	case operations.KindDocumentEmbedding, operations.KindDocumentExtraction,
-		operations.KindMessageEmbedding, operations.KindPersonEmbedding,
+	case operations.KindMessageEmbedding, operations.KindPersonEmbedding,
 		operations.KindPersonEnrichment, operations.KindVisualEmbedding:
 		return s.genericOperationLaneStatus(ctx, kind)
 	case operations.KindPersonSweep:

@@ -99,6 +99,10 @@ type EmbedJob struct {
 	Backend vector.Backend
 	Log     *slog.Logger
 
+	// RequestTimeout is the configured timeout for one embedding request.
+	RequestTimeout time.Duration
+	BatchSize      int
+
 	// Store provides the main-DB coverage count used for activation
 	// gating (how many live messages still need embedding for the
 	// building generation). May be nil; in that case the daemon will not
@@ -144,7 +148,7 @@ type EmbedJob struct {
 	// must be reinitialized before any embedding can resume. This prevents a
 	// reused database source ID from being treated as the formerly configured
 	// account.
-	ResolveBuildScope func() (vector.BuildScope, error)
+	ResolveBuildScope func(context.Context) (vector.BuildScope, error)
 
 	// OnScopeDrift is invoked (once per Run that detects it) when
 	// ResolveBuildScope returns a scope different from BuildScope, or fails
@@ -210,7 +214,7 @@ func (j *EmbedJob) Run(ctx context.Context) error {
 	occurrence := j.now().UTC()
 
 	if j.ResolveBuildScope != nil {
-		resolved, err := j.ResolveBuildScope()
+		resolved, err := j.ResolveBuildScope(ctx)
 		if err != nil {
 			log.Error("embed run skipped: configured scope could not be resolved", "error", err)
 			// A deterministic failure (a configured account removed or

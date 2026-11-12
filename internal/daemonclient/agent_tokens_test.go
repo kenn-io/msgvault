@@ -1,7 +1,6 @@
 package daemonclient
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -72,7 +71,7 @@ func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
 	c, err := New(Config{URL: srv.URL, APIKey: "owner-key", AllowInsecure: true})
 	require.NoError(err)
 
-	result, err := c.IssueAgentToken(context.Background(), "round-trip-test", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}}, time.Time{})
+	result, err := c.IssueAgentToken(t.Context(), "round-trip-test", []string{"draft.create"}, []int64{1}, map[int64][]string{1: {"alice@example.com"}}, time.Time{})
 	require.NoError(err)
 	require.NotNil(result)
 	assert.Equal("application/json", issueContentType, "issue requests must identify their JSON body")
@@ -81,7 +80,7 @@ func TestIssueAgentTokenRoundTripReadsIDForRevoke(t *testing.T) {
 	assert.Equal(wantID, result.ID, "id must be decoded from the 201 body")
 	assert.Equal(wantSecret, result.Secret)
 
-	err = c.RevokeAgentToken(context.Background(), result.ID)
+	err = c.RevokeAgentToken(t.Context(), result.ID)
 	require.NoError(err)
 	assert.Equal(wantID, revokedID, "revoke must use the id from the issue response")
 }
@@ -127,7 +126,7 @@ func TestAgentTokenBusyResponseRetriesAndNotifies(t *testing.T) {
 		notifyMsg = msg
 	})
 
-	err = c.RevokeAgentToken(context.Background(), "tok_abc")
+	err = c.RevokeAgentToken(t.Context(), "tok_abc")
 	require.New(t).NoError(err, "must succeed after retries")
 	assert.Equal(t, 3, callCount, "must have retried twice before succeeding")
 	assert.GreaterOrEqual(t, notifyCount, 1, "busy notifier must have fired at least once")

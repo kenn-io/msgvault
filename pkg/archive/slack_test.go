@@ -169,7 +169,7 @@ func exerciseSlackReplacement(t *testing.T, runtime *archive.Archive) {
 	searchIDs(t, runtime, "observatory", 1)
 	for _, id := range retainedIDs {
 		response := httptest.NewRecorder()
-		archiveAPI(t, runtime).Handler(func(http.ResponseWriter, *http.Request, archive.Operation) bool { return true }).ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil))
+		archiveAPI(t, runtime).Handler(func(http.ResponseWriter, *http.Request, archive.Operation) bool { return true }).ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil))
 		assert.Equal(http.StatusNotFound, response.Code, "purged detail cannot be fetched by retained ID")
 	}
 	opts.Options.ChannelIDs = []string{}
@@ -198,7 +198,7 @@ func searchIDs(t *testing.T, runtime *archive.Archive, query string, want int) [
 	t.Helper()
 	require := require.New(t)
 	response := httptest.NewRecorder()
-	archiveAPI(t, runtime).Handler(func(http.ResponseWriter, *http.Request, archive.Operation) bool { return true }).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/search?q="+url.QueryEscape(query), nil))
+	archiveAPI(t, runtime).Handler(func(http.ResponseWriter, *http.Request, archive.Operation) bool { return true }).ServeHTTP(response, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/search?q="+url.QueryEscape(query), nil))
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	var result struct {
 		Total    int64 `json:"total"`

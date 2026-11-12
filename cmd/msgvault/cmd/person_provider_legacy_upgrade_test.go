@@ -76,14 +76,14 @@ func TestPersonProviderUpgradeImportsLegacyKeyAndConsent(t *testing.T) {
 	require.NoError(err)
 	enrichmentProvider, enrichmentProfile, _ := scheduleWorkerProfile(t, fixture, "legacy-enrichment", "TEST_LEGACY_ENRICHMENT_KEY")
 
-	_, err = st.DB().Exec(legacyConsentSchema)
+	_, err = st.DB().ExecContext(t.Context(), legacyConsentSchema)
 	require.NoError(err)
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO person_inference_consents (id, profile_fingerprint, granted_by, granted_at, revoked_by, revoked_at)
 		VALUES (1, ?, 'cli', '2025-01-02 03:04:05', 'web', '2025-01-03 04:05:06'),
 		       (2, ?, 'cli', '2025-02-01 09:00:00', NULL, NULL)`, profile.Fingerprint, profile.Fingerprint)
 	require.NoError(err)
-	_, err = st.DB().Exec(`
+	_, err = st.DB().ExecContext(t.Context(), `
 		INSERT INTO person_enrichment_consents (id, profile_fingerprint, granted_by, granted_at)
 		VALUES (7, ?, 'cli', '2025-03-04 05:06:07')`, enrichmentProfile.Fingerprint)
 	require.NoError(err)

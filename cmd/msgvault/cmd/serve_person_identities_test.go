@@ -166,9 +166,9 @@ func TestPersonIdentitiesSaysWhenNothingIsArchived(t *testing.T) {
 	person, _, err := fixture.store.CreatePersonFromParticipantContext(t.Context(), participantID)
 	require.NoError(err)
 	// A participant with no email, phone, or identifier, such as a display-name-only sender.
-	_, err = fixture.store.DB().Exec(fixture.store.Rebind("UPDATE participants SET email_address = NULL WHERE id = ?"), participantID)
+	_, err = fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind("UPDATE participants SET email_address = NULL WHERE id = ?"), participantID)
 	require.NoError(err)
-	_, err = fixture.store.DB().Exec(fixture.store.Rebind("DELETE FROM participant_identifiers WHERE participant_id = ?"), participantID)
+	_, err = fixture.store.DB().ExecContext(t.Context(), fixture.store.Rebind("DELETE FROM participant_identifiers WHERE participant_id = ?"), participantID)
 	require.NoError(err)
 
 	output, err := runPersonIdentitiesCommand(t, fixture, strconv.FormatInt(person.ID, 10))
@@ -192,7 +192,7 @@ func TestPersonIdentitiesListImportedQuotedMailbox(t *testing.T) {
 				"Body\r\n")
 			require.NoError(importer.IngestRawMessage(t.Context(), fixture.store, fixture.source.ID,
 				testutil.IMAPTestUsername, "", nil, "INBOX|quoted", "quoted-hash", raw, time.Now(),
-				slog.New(slog.DiscardHandler)))
+				slog.New(slog.DiscardHandler), nil))
 			participantsBefore := countParticipants(t, fixture.store)
 			participantID, err := fixture.store.EnsureParticipant(strings.ReplaceAll(mailbox, `"`, ""), "", "example.com")
 			require.NoError(err)
@@ -226,6 +226,6 @@ func TestPersonIdentitiesListImportedQuotedMailbox(t *testing.T) {
 func countParticipants(t *testing.T, st *store.Store) int {
 	t.Helper()
 	var count int
-	require.NoError(t, st.DB().QueryRow("SELECT COUNT(*) FROM participants").Scan(&count))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM participants").Scan(&count))
 	return count
 }

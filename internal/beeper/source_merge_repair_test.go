@@ -25,14 +25,14 @@ func TestMergeSourcesRestartsBeeperRepairForMovedHistory(t *testing.T) {
 			require.NoError(err)
 			live, err := st.GetOrCreateSource("beeper", "signal-live")
 			require.NoError(err)
-			require.NoError(st.UpdateSourceSyncConfig(live.ID, `{"no_default_identity":true}`))
+			require.NoError(st.UpdateSourceSyncConfig(t.Context(), live.ID, `{"no_default_identity":true}`))
 			const providerProgress = `{"chats":{"!live:example.test":{"newest":"provider-newest","oldest":"provider-oldest","done":true}}}`
 			runID, err := st.StartSync(live.ID, "incremental")
 			require.NoError(err)
 			require.NoError(st.CompleteSync(runID, providerProgress))
 			runID, err = st.StartSync(live.ID, "incremental")
 			require.NoError(err)
-			require.NoError(st.PauseSyncWithCheckpoint(runID, &store.Checkpoint{
+			require.NoError(st.PauseSyncWithCheckpoint(t.Context(), runID, &store.Checkpoint{
 				PageToken: `{"chats":{"!live:example.test":{"newest":"provider-checkpoint","done":true}}}`,
 			}))
 			other, err := st.GetOrCreateSource("beeper", live.Identifier+":other")
@@ -41,9 +41,9 @@ func TestMergeSourcesRestartsBeeperRepairForMovedHistory(t *testing.T) {
 			require.NoError(err)
 			require.True(ran)
 
-			historyConv, err := st.EnsureConversation(history.ID, "!history:example.test", "History")
+			historyConv, err := st.EnsureConversation(t.Context(), history.ID, "!history:example.test", "History")
 			require.NoError(err)
-			liveConv, err := st.EnsureConversation(live.ID, "!live:example.test", "Live")
+			liveConv, err := st.EnsureConversation(t.Context(), live.ID, "!live:example.test", "Live")
 			require.NoError(err)
 			const historicalHTML = `<p>visit <a href="https://example.test/archive">link</a></p>`
 			timestamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -104,7 +104,7 @@ func TestMergeSourcesRestartsBeeperRepairForMovedHistory(t *testing.T) {
 			applied, err = st.IsMigrationAppliedContext(t.Context(), ledgerKey, 1)
 			require.NoError(err)
 			assert.False(applied, "committed merge invalidates completed repairs")
-			progress := NewImporter(st, nil).loadResumeState(live.ID)
+			progress := NewImporter(st, nil).loadResumeState(t.Context(), live.ID)
 			require.Contains(progress.Chats, "!live:example.test")
 			assert.Equal("provider-checkpoint", progress.Chats["!live:example.test"].Newest)
 			assert.Equal("provider-oldest", progress.Chats["!live:example.test"].Oldest)
@@ -122,7 +122,7 @@ func TestMergeSourcesRestartsBeeperRepairForMovedHistory(t *testing.T) {
 			}
 			assert.Equal(wantScanned, sum.MessagesScanned)
 			var html sql.NullString
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_html FROM message_bodies WHERE message_id = ?`), historicalID).Scan(&html))
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT body_html FROM message_bodies WHERE message_id = ?`), historicalID).Scan(&html))
 			assert.Equal(historicalHTML, html.String, "automatic repair restores moved history's link targets")
 			full, err := rederive.Run(t.Context(), st, "beeper", live.Identifier, live.ID, nil)
 			require.NoError(err)

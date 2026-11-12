@@ -1,7 +1,6 @@
 package daemonclient
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -22,7 +21,7 @@ func TestEmbeddingStatusUsesSharedAPIContract(t *testing.T) {
 	defer server.Close()
 	client, err := New(Config{URL: server.URL, AllowInsecure: true})
 	require.NoError(err)
-	status, err := client.EmbeddingStatus(context.Background(), 7)
+	status, err := client.EmbeddingStatus(t.Context(), 7)
 	require.NoError(err)
 	assert.Equal(int64(4), status.Pending)
 	assert.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), status.CoverageSampledAt)

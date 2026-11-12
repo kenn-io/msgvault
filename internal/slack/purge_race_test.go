@@ -19,7 +19,7 @@ func TestPurgeCannotInterleaveWithLoadedSlackResumeState(t *testing.T) {
 	opts.ChannelIDs = []string{"C01"}
 	_, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
-	source, err := imp.store.GetSourceByIdentifier("T01:UME")
+	source, err := imp.store.GetSourceByIdentifier(t.Context(), "T01:UME")
 	require.NoError(err)
 
 	var racedPurge error
@@ -35,7 +35,7 @@ func TestPurgeCannotInterleaveWithLoadedSlackResumeState(t *testing.T) {
 	_, err = imp.Import(t.Context(), opts)
 	require.NoError(err)
 	var count int
-	require.NoError(imp.store.DB().QueryRow(imp.store.Rebind(
+	require.NoError(imp.store.DB().QueryRowContext(t.Context(), imp.store.Rebind(
 		`SELECT count(*) FROM messages WHERE source_id=? AND source_message_id=?`), source.ID, "C01:"+ts(0)).Scan(&count))
 	assert.Equal(1, count, "a later import must restore purged history")
 }

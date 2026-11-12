@@ -40,7 +40,7 @@ func TestAccountScopesOnLiveEngine(t *testing.T) {
 	conflict := persist("conflict", "X-Original-To: work@example.org, other@example.org\r\n\r\nbody")
 	pending := persist("pending", "X-Delivered-To: work@example.org\r\n\r\nbody")
 	// Setup only: a row an older msgvault archived before attribution existed.
-	_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET account_address = NULL, account_path = NULL WHERE id = ?`), pending)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET account_address = NULL, account_path = NULL WHERE id = ?`), pending)
 	require.NoError(err)
 
 	engine := query.NewSQLiteEngine(st.DB())

@@ -31,7 +31,7 @@ func TestTokenSourceRefusesDifferentResource(t *testing.T) {
 		Resource: "https://example.com/mcp",
 	}))
 	other := newDefaultManager("https://other.example.com/mcp", dir)
-	_, err := other.TokenSource(context.Background(), "work")
+	_, err := other.TokenSource(t.Context(), "work")
 	require.Error(t, err, "credentials must never cross endpoint boundaries")
 }
 
@@ -44,11 +44,11 @@ func TestProviderCredentialsAndCallbacksStaySeparate(t *testing.T) {
 	m.tokensDir = dir
 	m.provider.Name = "plaud"
 	m.provider.CallbackPath = "/callback/plaud"
-	require.NoError(m.Authorize(context.Background(), "work"))
+	require.NoError(m.Authorize(t.Context(), "work"))
 	assert.Equal("http://localhost:"+m.redirectPort+"/callback/plaud", f.lastAuthorize.Get("redirect_uri"))
 	other := newDefaultManager(f.srv.URL+"/api/mcp", dir)
 	assert.False(other.HasToken("work"))
-	_, err := other.TokenSource(context.Background(), "work")
+	_, err := other.TokenSource(t.Context(), "work")
 	require.Error(err)
 	assert.Equal("plaud_work.json", filepath.Base(m.TokenPath("work")))
 }
@@ -154,7 +154,11 @@ func newTestManager(t *testing.T, f *fakeAS) *Manager {
 	m.redirectPort = freeLocalhostPort(t)
 	m.openBrowserFn = func(ctx context.Context, rawURL string) error {
 		go func() {
-			resp, err := http.Get(rawURL) //nolint:gosec // test hook fetching the fake AS authorize URL
+			request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, rawURL, nil)
+			if err != nil {
+				return
+			}
+			resp, err := http.DefaultClient.Do(request)
 			if err == nil {
 				_ = resp.Body.Close()
 			}
@@ -168,7 +172,7 @@ func newTestManager(t *testing.T, f *fakeAS) *Manager {
 // callback tests do not depend on a fixed port being available.
 func freeLocalhostPort(t *testing.T) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "localhost:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "localhost:0")
 	require.NoError(t, err)
 	addr, ok := listener.Addr().(*net.TCPAddr)
 	require.True(t, ok, "listener address must be TCP")
@@ -185,7 +189,7 @@ func TestAuthorize_FullFlow(t *testing.T) {
 	f := newFakeAS(t)
 	m := newTestManager(t, f)
 
-	require.NoError(m.Authorize(context.Background(), "alice@example.com"))
+	require.NoError(m.Authorize(t.Context(), "alice@example.com"))
 
 	// Discovery → DCR happened once.
 	assert.EqualValues(1, f.registrations.Load())
@@ -218,7 +222,7 @@ func TestAuthorize_FullFlow(t *testing.T) {
 	assert.Equal([]string{"meetings:read"}, tf.Scopes)
 
 	// Re-authorizing reuses the registered client instead of minting another.
-	require.NoError(m.Authorize(context.Background(), "alice@example.com"))
+	require.NoError(m.Authorize(t.Context(), "alice@example.com"))
 	assert.EqualValues(1, f.registrations.Load(), "re-auth must reuse the persisted client_id")
 }
 
@@ -252,7 +256,7 @@ func TestAuthorizeWithValidationPreservesStoredTokenUntilIdentityMatches(t *test
 				Resource:      m.endpoint,
 			}))
 
-			err := m.AuthorizeWithValidation(context.Background(), "work", func(ctx context.Context, handler auth.OAuthHandler) error {
+			err := m.AuthorizeWithValidation(t.Context(), "work", func(ctx context.Context, handler auth.OAuthHandler) error {
 				tokenSource, err := handler.TokenSource(ctx)
 				require.NoError(err)
 				token, err := tokenSource.Token()
@@ -296,7 +300,7 @@ func TestTokenSource_RefreshPersistsRotatedToken(t *testing.T) {
 		Resource:      m.endpoint,
 	}))
 
-	ts, err := m.TokenSource(context.Background(), "default")
+	ts, err := m.TokenSource(t.Context(), "default")
 	require.NoError(err)
 	tok, err := ts.Token()
 	require.NoError(err)
@@ -326,7 +330,7 @@ func TestTokenSource_RefreshPersistsRotatedToken(t *testing.T) {
 func TestTokenSource_MissingFileIsActionable(t *testing.T) {
 	require := require.New(t)
 	m := newDefaultManager("", t.TempDir())
-	_, err := m.TokenSource(context.Background(), "nobody")
+	_, err := m.TokenSource(t.Context(), "nobody")
 	require.Error(err)
 	require.Contains(err.Error(), "add-circleback")
 }
@@ -335,7 +339,7 @@ func TestHandlerAuthorizeIsActionable(t *testing.T) {
 	require := require.New(t)
 	m := newDefaultManager("", t.TempDir())
 	h := m.Handler("alice@example.com")
-	err := h.Authorize(context.Background(), nil, &http.Response{Status: "401 Unauthorized", Body: http.NoBody})
+	err := h.Authorize(t.Context(), nil, &http.Response{Status: "401 Unauthorized", Body: http.NoBody})
 	require.Error(err)
 	require.Contains(err.Error(), "add-circleback alice@example.com")
 }

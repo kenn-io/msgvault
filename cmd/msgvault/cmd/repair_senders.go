@@ -62,7 +62,7 @@ func runRepairSendersLocal(cmd *cobra.Command, apply bool) error {
 		err     error
 	)
 	if apply {
-		st, cleanup, err = openWritableStoreAndInitForInvocation(state)
+		st, cleanup, err = openWritableStoreAndInitForInvocation(ctx, state)
 	} else {
 		st, err = store.OpenReadOnly(cfg.DatabaseDSN())
 		cleanup = func() { _ = st.Close() }
@@ -108,7 +108,7 @@ func runRepairSendersLocal(cmd *cobra.Command, apply bool) error {
 		failures = append(failures, fmt.Errorf("write sender repair result: %w", err))
 	}
 	if repaired > 0 {
-		if err := rebuildCacheAfterWrite(cfg.DatabaseDSN(), state); err != nil {
+		if err := rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state); err != nil {
 			failures = append(failures, err)
 		}
 	}

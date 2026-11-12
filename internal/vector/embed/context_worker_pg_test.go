@@ -101,13 +101,13 @@ func newPGContextWorkerFixture(t *testing.T, mutate func(*ContextWorkerDeps)) *p
 	}
 	st := testutil.NewTestStore(t)
 	var schemaName string
-	require.NoError(t, st.DB().QueryRow(`SELECT current_schema()`).Scan(&schemaName))
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT current_schema()`).Scan(&schemaName))
 	st.DB().SetMaxOpenConns(1)
-	_, err := st.DB().Exec(`SELECT set_config('search_path', $1, false)`, schemaName+",public")
+	_, err := st.DB().ExecContext(t.Context(), `SELECT set_config('search_path', $1, false)`, schemaName+",public")
 	require.NoError(t, err)
-	backend, err := pgvector.Open(context.Background(), pgvector.Options{DB: st.DB(), Dimension: 4, SkipExtension: true})
+	backend, err := pgvector.Open(t.Context(), pgvector.Options{DB: st.DB(), Dimension: 4, SkipExtension: true})
 	require.NoError(t, err)
-	gen, err := backend.CreateGeneration(context.Background(), "synthetic", 4, "synthetic:4")
+	gen, err := backend.CreateGeneration(t.Context(), "synthetic", 4, "synthetic:4")
 	require.NoError(t, err)
 	client := &pgContextSemanticFake{dim: 4}
 	deps := ContextWorkerDeps{
@@ -146,10 +146,10 @@ func (f *pgContextWorkerFixture) seed(t *testing.T, sourceMessageID string) int6
 func TestContextWorker_PostgreSQLParity(t *testing.T) {
 	f := newPGContextWorkerFixture(t, nil)
 	messageID := f.seed(t, "pg-chat-1")
-	result, err := f.worker.RunOnce(context.Background(), f.gen, testEmbeddingPassScope())
+	result, err := f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
 	assert.True(t, result.Contextual.Converged)
-	docs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, fmt.Sprintf("chat:%d:2026-08-08", f.conversation))
+	docs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, fmt.Sprintf("chat:%d:2026-08-08", f.conversation))
 	require.NoError(t, err)
 	require.Len(t, docs, 1)
 	assert.Equal(t, []int64{messageID}, docs[0].Members)
@@ -169,7 +169,8 @@ func TestContextWorker_PostgreSQLBackstopTimestampOnlyChatChangeDoesNotCallProvi
 	beforeRevision := documents[0].PublishedRevision
 	beforeDocuments := f.client.docs
 
-	_, err = f.store.DB().Exec(
+	_, err = f.store.DB().ExecContext(
+		t.Context(),
 		`UPDATE messages SET last_modified = '2099-01-01 00:00:00+00' WHERE id = $1`, messageID)
 	require.NoError(t, err)
 	result, err = f.worker.RunBackstop(t.Context(), f.gen, testEmbeddingPassScope())
@@ -194,7 +195,7 @@ func TestContextWorker_PostgreSQLLaterPackedFailureRetainsSuccessfulDocumentWith
 	})
 	firstID := f.seed(t, "pg-chat-prefix-1")
 	secondID := f.seed(t, "pg-chat-prefix-2")
-	_, err := f.store.DB().Exec(`UPDATE messages SET sent_at = $1 WHERE id = $2`,
+	_, err := f.store.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = $1 WHERE id = $2`,
 		time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC), secondID)
 	require.NoError(t, err)
 
@@ -205,7 +206,8 @@ func TestContextWorker_PostgreSQLLaterPackedFailureRetainsSuccessfulDocumentWith
 	require.NoError(t, err)
 	assert.Len(documents, 1)
 	var covered int
-	require.NoError(t, f.store.DB().QueryRow(
+	require.NoError(t, f.store.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages WHERE id IN ($1, $2) AND embed_gen = $3`,
 		firstID, secondID, int64(f.gen)).Scan(&covered))
 	assert.Zero(covered, "an incomplete atomic scope must remain uncovered")
@@ -227,7 +229,7 @@ func TestContextWorker_PostgreSQLLaterPackedReplacementFailurePreservesUnresolve
 	f := newPGContextWorkerFixture(t, nil)
 	firstID := f.seed(t, "pg-chat-replacement-prefix-1")
 	secondID := f.seed(t, "pg-chat-replacement-prefix-2")
-	_, err := f.store.DB().Exec(`UPDATE messages SET sent_at = $1 WHERE id = $2`,
+	_, err := f.store.DB().ExecContext(t.Context(), `UPDATE messages SET sent_at = $1 WHERE id = $2`,
 		time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC), secondID)
 	require.NoError(t, err)
 	result, err := f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
@@ -284,7 +286,7 @@ func TestContextWorker_PostgreSQLRejectedReplacementClearsCoverage(t *testing.T)
 	require.True(t, result.Contextual.Converged)
 
 	f.client.rejectText = "hello from PostgreSQL"
-	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Changed title' WHERE id = $1`, f.conversation)
+	_, err = f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'Changed title' WHERE id = $1`, f.conversation)
 	require.NoError(t, err)
 	result, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(t, err)
@@ -294,7 +296,7 @@ func TestContextWorker_PostgreSQLRejectedReplacementClearsCoverage(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), missing)
 	var embedGen sql.NullInt64
-	require.NoError(t, f.store.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = $1`, messageID).Scan(&embedGen))
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id = $1`, messageID).Scan(&embedGen))
 	assert.False(t, embedGen.Valid)
 	docs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen,
 		chatDayContextScope(f.conversation, time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)).key)
@@ -308,7 +310,7 @@ func TestContextWorker_PostgreSQLRejectedDiscoveryDoesNotStarveLaterMessages(t *
 		deps.ReconcileBatchSize = 4
 		deps.MaxRunUTF8Bytes = 1
 	})
-	conversationID, err := f.store.EnsureConversation(f.sourceID, "ordinary", "Ordinary")
+	conversationID, err := f.store.EnsureConversation(t.Context(), f.sourceID, "ordinary", "Ordinary")
 	require.NoError(t, err)
 	seed := func(sourceID, body string, minute int) int64 {
 		id, seedErr := f.store.UpsertMessage(&store.Message{
@@ -362,16 +364,16 @@ func TestContextWorker_PostgreSQLReplaysAfterIndexCommit(t *testing.T) {
 	id := f.seed(t, "pg-replay")
 	pinnedSequence, err := f.store.LatestEmbeddingChangeSequence(t.Context())
 	require.NoError(err)
-	_, err = f.worker.RunOnce(context.Background(), f.gen, testEmbeddingPassScope())
+	_, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.Error(err)
-	progress, err := f.backend.GetDocumentProgress(context.Background(), f.gen)
+	progress, err := f.backend.GetDocumentProgress(t.Context(), f.gen)
 	require.NoError(err)
 	assert.Equal(pinnedSequence, progress.ChangeSequence)
 
-	result, err := f.worker.RunOnce(context.Background(), f.gen, testEmbeddingPassScope())
+	result, err := f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.NoError(err)
 	assert.True(result.Contextual.Converged)
-	docs, err := f.backend.ListDocumentsForScope(context.Background(), f.gen, fmt.Sprintf("chat:%d:2026-08-08", f.conversation))
+	docs, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, fmt.Sprintf("chat:%d:2026-08-08", f.conversation))
 	require.NoError(err)
 	require.Len(docs, 1)
 	assert.Equal([]int64{id}, docs[0].Members)
@@ -386,20 +388,20 @@ func TestContextWorker_PostgreSQLGroupCASMissHoldsWatermark(t *testing.T) {
 	require.NoError(err)
 	f.client.before = func() {
 		f.client.before = nil
-		_, err := f.store.DB().Exec(`UPDATE conversations SET title = 'raced in PostgreSQL' WHERE id = $1`, f.conversation)
+		_, err := f.store.DB().ExecContext(t.Context(), `UPDATE conversations SET title = 'raced in PostgreSQL' WHERE id = $1`, f.conversation)
 		require.NoError(err)
 	}
 
-	_, err = f.worker.RunOnce(context.Background(), f.gen, testEmbeddingPassScope())
+	_, err = f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
 	require.Error(err)
 	assert.Contains(err.Error(), "coverage CAS")
-	progress, err := f.backend.GetDocumentProgress(context.Background(), f.gen)
+	progress, err := f.backend.GetDocumentProgress(t.Context(), f.gen)
 	require.NoError(err)
 	assert.Equal(pinnedSequence, progress.ChangeSequence)
 	latestSequence, err := f.store.LatestEmbeddingChangeSequence(t.Context())
 	require.NoError(err)
 	assert.Greater(latestSequence, progress.ChangeSequence)
 	var missing int
-	require.NoError(f.store.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE embed_gen IS NULL`).Scan(&missing))
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE embed_gen IS NULL`).Scan(&missing))
 	assert.Equal(1, missing)
 }

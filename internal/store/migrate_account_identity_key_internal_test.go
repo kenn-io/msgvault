@@ -20,12 +20,12 @@ func TestConcurrentTwoStoreCaseVariantAdds(t *testing.T) {
 	assert := assert.New(t)
 	dbPath := filepath.Join(t.TempDir(), "race.db")
 
-	first, err := OpenForTest(dbPath)
+	first, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "open first store")
 	t.Cleanup(func() { _ = first.Close() })
 	require.NoError(first.InitSchema(), "init schema")
 
-	second, err := OpenForTest(dbPath)
+	second, err := OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "open second store")
 	t.Cleanup(func() { _ = second.Close() })
 

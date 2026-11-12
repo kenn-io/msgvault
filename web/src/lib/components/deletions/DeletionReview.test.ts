@@ -84,12 +84,14 @@ it('handles a pending stage when the review stays mounted', async () => {
   render(DeletionReview, { client, selection, onclose, onStaged });
   await fireEvent.click(await screen.findByRole('button', { name: 'Stage 2 messages' }));
   await waitFor(() => expect(finish).toBeTypeOf('function'));
+  expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true);
   await fireEvent.keyDown(document, { key: 'Escape' });
   expect(onclose).not.toHaveBeenCalled();
   finish(Response.json({ id: 'batch-pending', message_count: 2, matched_count: 3, dry_run: false }, { status: 201 }));
   await screen.findByText('batch-pending');
   expect(onStaged).toHaveBeenCalledExactlyOnceWith('batch-pending');
   expect(screen.getByText('Staged: Matched: 3 · Staged: 2 · Skipped: 1')).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Done' }));
   expect(onclose).toHaveBeenCalledOnce();
 });

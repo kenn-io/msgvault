@@ -41,7 +41,7 @@ func newArchiveRemoteImagesCmd() *cobra.Command {
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
-			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			st, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -58,7 +58,7 @@ func newArchiveRemoteImagesCmd() *cobra.Command {
 				err = errors.Join(err, st.AdvanceDerivedDataRevision())
 			}
 			// Partial success and cancellation can still leave new attachments.
-			return errors.Join(err, rebuildCacheAfterWrite(cfg.DatabaseDSN(), state))
+			return errors.Join(err, rebuildCacheAfterWrite(ctx, cfg.DatabaseDSN(), state))
 		},
 	}
 	command.Flags().BoolVar(&allowTracking, "allow-tracking", false, "Consent to sender-controlled image requests and tracking pixels")

@@ -1,7 +1,6 @@
 package calsync
 
 import (
-	"context"
 	"encoding/json/v2"
 	"testing"
 	"time"
@@ -18,13 +17,13 @@ func TestPersistControlledEventKeepsCursorAndArchivesImmediately(t *testing.T) {
 	cal := gcal.Calendar{ID: "team@example.com", AccessRole: "owner", TimeZone: "UTC"}
 	mock.Calendars = []gcal.Calendar{cal}
 	s, st := newSyncer(t, mock, Options{OAuthApp: "calendar-app", OAuthAppSet: true})
-	_, err := s.RegisterCalendars(context.Background())
+	_, err := s.RegisterCalendars(t.Context())
 	requirements.NoError(err)
-	src, err := st.GetSourceByIdentifier(testAccount + "/" + cal.ID)
+	src, err := st.GetSourceByIdentifier(t.Context(), testAccount+"/"+cal.ID)
 	requirements.NoError(err)
 	requirements.NoError(st.UpdateSourceSyncCursor(src.ID, "existing-cursor"))
 	event := gcal.Event{ID: "controlled", Summary: "Planning", Status: gcal.StatusConfirmed, Start: gcal.EventDateTime{DateTime: time.Now()}, Organizer: gcal.Person{Email: cal.ID}, Attendees: []gcal.Attendee{{Email: "guest@example.com"}}, Raw: []byte(`{"id":"controlled","summary":"Planning","extendedProperties":{"private":{"example":"preserved"}}}`)}
-	id, err := s.PersistEvent(context.Background(), cal, event)
+	id, err := s.PersistEvent(t.Context(), cal, event)
 	requirements.NoError(err)
 	requirements.Positive(id)
 	row, ok := getMsg(t, st, src.ID, event.ID)
@@ -41,11 +40,11 @@ func TestPersistControlledEventKeepsCursorAndArchivesImmediately(t *testing.T) {
 	assertions.Equal("existing-cursor", src.SyncCursor.String)
 	assertions.Equal("calendar-app", src.OAuthApp.String)
 	event.Summary = "Updated planning"
-	same, err := s.PersistEvent(context.Background(), cal, event)
+	same, err := s.PersistEvent(t.Context(), cal, event)
 	requirements.NoError(err)
 	assertions.Equal(id, same)
 	cancelled := gcal.Event{ID: event.ID, Status: gcal.StatusCancelled}
-	same, err = s.PersistEvent(context.Background(), cal, cancelled)
+	same, err = s.PersistEvent(t.Context(), cal, cancelled)
 	requirements.NoError(err)
 	assertions.Equal(id, same)
 	row, ok = getMsg(t, st, src.ID, event.ID)

@@ -47,7 +47,7 @@ Examples:
 
 		email := args[0]
 
-		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+		s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 		if err != nil {
 			return err
 		}

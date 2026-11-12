@@ -64,7 +64,7 @@ func TestPersonMatchConsentExactDisclosureAndRevocation(t *testing.T) {
 	assert.True(created)
 	assert.NotEqual(grant.ID, regrant.ID)
 	var preserved int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT 1 FROM person_match_consents WHERE id = ? AND revoked_at IS NOT NULL`), grant.ID).Scan(&preserved))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT 1 FROM person_match_consents WHERE id = ? AND revoked_at IS NOT NULL`), grant.ID).Scan(&preserved))
 	assert.Equal(1, preserved)
 }
 

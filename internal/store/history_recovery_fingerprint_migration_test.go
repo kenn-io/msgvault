@@ -145,7 +145,7 @@ func TestInitSchemaBackfillsLegacySyncResumeMetadata(t *testing.T) {
 		checks.Equal(run.wantFingerprint, got, run.name)
 		checks.Equal(run.wantSyncType, gotSyncType, run.name)
 		if run.wantResumable {
-			resumable, err := st.GetLatestCheckpointedSyncByType(run.sourceID, run.wantSyncType)
+			resumable, err := st.GetLatestCheckpointedSyncByType(t.Context(), run.sourceID, run.wantSyncType)
 			requirements.NoError(err, run.name)
 			checks.Equal(ids[index], resumable.ID, run.name)
 		}

@@ -129,7 +129,7 @@ func defaultPersonSweepCommandDeps() personSweepCommandDeps {
 				return newProductionPersonSweepWorker(&productionConfig, st)
 			}
 			deps.openStore = func() (personSweepCommandStore, func(), error) {
-				return openWritableStoreAndInitForInvocation(state)
+				return openWritableStoreAndInitForInvocation(ctx, state)
 			}
 			return deps
 		},

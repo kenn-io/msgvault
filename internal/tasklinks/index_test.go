@@ -37,7 +37,7 @@ func TestReverseIndexBuildPaginationPersistenceAndArchiveChange(t *testing.T) {
 		{Tasks: []taskclient.Task{indexedTask("two", "Second", otherIdentity)}},
 	}}
 	cacheIdentity := testCacheIdentity()
-	status, err := idx.Rebuild(context.Background(), client, cacheIdentity, "remote-1", 100)
+	status, err := idx.Rebuild(t.Context(), client, cacheIdentity, "remote-1", 100)
 	require.NoError(err)
 	assert.True(status.Complete)
 	assert.Equal(2, client.calls)
@@ -54,7 +54,7 @@ func TestReverseIndexBuildPaginationPersistenceAndArchiveChange(t *testing.T) {
 	changed := &listClient{pages: []taskclient.TaskList{{}}}
 	changedIdentity := cacheIdentity
 	changedIdentity.ArchiveUID = "archive-b"
-	_, err = reloaded.Rebuild(context.Background(), changed, changedIdentity, "remote-2", 100)
+	_, err = reloaded.Rebuild(t.Context(), changed, changedIdentity, "remote-2", 100)
 	require.NoError(err)
 	assert.Empty(reloaded.Lookup(changedIdentity, identity, true).Tasks, "archive identity change discards old entries")
 }
@@ -66,7 +66,7 @@ func TestReverseIndexReportsPartialStaleUnavailableAndHidesTitlesWithoutAuth(t *
 	identity := testIdentity()
 	partial := &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("one", "Secret title", identity)}, NextCursor: "more"}}}
 	cacheIdentity := testCacheIdentity()
-	status, err := idx.Rebuild(context.Background(), partial, cacheIdentity, "remote-1", 1)
+	status, err := idx.Rebuild(t.Context(), partial, cacheIdentity, "remote-1", 1)
 	require.NoError(t, err)
 	assert.False(status.Complete)
 	assert.Equal(ReasonSafetyLimit, status.Reason)
@@ -81,7 +81,7 @@ func TestReverseIndexReportsPartialStaleUnavailableAndHidesTitlesWithoutAuth(t *
 	assert.NotEmpty(stale.Tasks)
 
 	unavailable := &listClient{pages: []taskclient.TaskList{{}}, errAt: 1}
-	status, err = idx.Rebuild(context.Background(), unavailable, cacheIdentity, "remote-2", 100)
+	status, err = idx.Rebuild(t.Context(), unavailable, cacheIdentity, "remote-2", 100)
 	require.Error(t, err)
 	assert.Equal(ReasonUnavailable, status.Reason)
 	failed := idx.Lookup(cacheIdentity, identity, true)
@@ -100,7 +100,7 @@ func TestReverseIndexRetainsValidLinksButMarksMixedMetadataPartial(t *testing.T)
 	metadata[MailLinksKey] = append(raw, "incompatible-extension")
 	task := taskclient.Task{ID: "mixed", Project: "project", Title: "Valid target", Revision: "r1", Metadata: metadata}
 
-	status, err := idx.Rebuild(context.Background(), &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{task}}}}, testCacheIdentity(), "remote-1", 100)
+	status, err := idx.Rebuild(t.Context(), &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{task}}}}, testCacheIdentity(), "remote-1", 100)
 	require.NoError(err)
 	assert.Equal(StatePartial, status.State)
 	assert.Equal("incompatible_metadata", status.Reason)
@@ -116,11 +116,11 @@ func TestReverseIndexCancellationRetainsLastSuccessfulSnapshot(t *testing.T) {
 	idx := NewIndex(filepath.Join(t.TempDir(), "index.json"), func() time.Time { return now })
 	identity := testIdentity()
 	cacheIdentity := testCacheIdentity()
-	_, err := idx.Rebuild(context.Background(), &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("one", "Last good", identity)}}}}, cacheIdentity, "remote-1", 100)
+	_, err := idx.Rebuild(t.Context(), &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("one", "Last good", identity)}}}}, cacheIdentity, "remote-1", 100)
 	require.NoError(t, err)
 	lastGood := idx.Lookup(cacheIdentity, identity, true)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	now = now.Add(time.Minute)
 	status, err := idx.Rebuild(ctx, &listClient{}, cacheIdentity, "remote-2", 100)
@@ -142,14 +142,14 @@ func TestReverseIndexSaveFailureRetainsLastGoodAndMarksMemoryStale(t *testing.T)
 	idx := NewIndex(path, func() time.Time { return now })
 	identity := testIdentity()
 	cacheIdentity := testCacheIdentity()
-	_, err := idx.Rebuild(context.Background(), &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("one", "Last good", identity)}}}}, cacheIdentity, "remote-1", 100)
+	_, err := idx.Rebuild(t.Context(), &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("one", "Last good", identity)}}}}, cacheIdentity, "remote-1", 100)
 	require.NoError(err)
 	lastGood := idx.Lookup(cacheIdentity, identity, true)
 
 	require.NoError(os.Remove(path))
 	require.NoError(os.Mkdir(path, 0o700), "a directory at the target forces the production atomic rename to fail")
 	now = now.Add(time.Minute)
-	status, err := idx.Rebuild(context.Background(), &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("two", "Must not replace", identity)}}}}, cacheIdentity, "remote-2", 100)
+	status, err := idx.Rebuild(t.Context(), &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("two", "Must not replace", identity)}}}}, cacheIdentity, "remote-2", 100)
 	require.Error(err)
 	assert.Equal(StateStale, status.State)
 	assert.Equal("persistence_failure", status.Reason)
@@ -167,7 +167,7 @@ func TestReverseIndexRejectsIdentityMismatchBeforeReturningTitles(t *testing.T) 
 	idx := NewIndex(filepath.Join(t.TempDir(), "index.json"), time.Now)
 	identity := testIdentity()
 	cacheIdentity := testCacheIdentity()
-	_, err := idx.Rebuild(context.Background(), &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("one", "Must not leak", identity)}}}}, cacheIdentity, "remote-1", 100)
+	_, err := idx.Rebuild(t.Context(), &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("one", "Must not leak", identity)}}}}, cacheIdentity, "remote-1", 100)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -201,7 +201,7 @@ func TestReverseIndexBoundsOversizedPagesAndCyclicCursors(t *testing.T) {
 		},
 		NextCursor: "more",
 	}}}
-	status, err := idx.Rebuild(context.Background(), oversized, cacheIdentity, "remote-1", 2)
+	status, err := idx.Rebuild(t.Context(), oversized, cacheIdentity, "remote-1", 2)
 	require.NoError(t, err)
 	assert.Equal(StatePartial, status.State)
 	assert.Equal(ReasonSafetyLimit, status.Reason)
@@ -212,7 +212,7 @@ func TestReverseIndexBoundsOversizedPagesAndCyclicCursors(t *testing.T) {
 		{Tasks: []taskclient.Task{{ID: "unlinked-1", Project: "project", Title: "Unlinked", Revision: "r1"}}, NextCursor: "again"},
 		{Tasks: []taskclient.Task{{ID: "unlinked-2", Project: "project", Title: "Unlinked", Revision: "r1"}}, NextCursor: "again"},
 	}}
-	status, err = idx.Rebuild(context.Background(), cyclic, cacheIdentity, "remote-2", 100)
+	status, err = idx.Rebuild(t.Context(), cyclic, cacheIdentity, "remote-2", 100)
 	require.NoError(t, err)
 	assert.Equal(StatePartial, status.State)
 	assert.Equal(ReasonCursorCycle, status.Reason)
@@ -249,7 +249,7 @@ func TestReverseIndexFreshness(t *testing.T) {
 	assert.False(idx.Fresh(cacheIdentity, "remote-1", DefaultFreshFor), "empty index is never fresh")
 
 	client := &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("one", "First", testIdentity())}}}}
-	_, err := idx.Rebuild(context.Background(), client, cacheIdentity, "remote-1", 100)
+	_, err := idx.Rebuild(t.Context(), client, cacheIdentity, "remote-1", 100)
 	require.NoError(err)
 	assert.True(idx.Fresh(cacheIdentity, "remote-1", DefaultFreshFor))
 	assert.False(idx.Fresh(cacheIdentity, "remote-2", DefaultFreshFor), "remote revision change invalidates")
@@ -261,12 +261,12 @@ func TestReverseIndexFreshness(t *testing.T) {
 	assert.False(idx.Fresh(cacheIdentity, "remote-1", DefaultFreshFor), "freshness window expires")
 
 	partial := &listClient{pages: []taskclient.TaskList{{Tasks: []taskclient.Task{indexedTask("one", "First", testIdentity())}, NextCursor: "more"}}}
-	_, err = idx.Rebuild(context.Background(), partial, cacheIdentity, "remote-1", 1)
+	_, err = idx.Rebuild(t.Context(), partial, cacheIdentity, "remote-1", 1)
 	require.NoError(err)
 	assert.True(idx.Fresh(cacheIdentity, "remote-1", DefaultFreshFor), "partial scans stay fresh within the window")
 
 	unavailable := &listClient{errAt: 1}
-	_, err = idx.Rebuild(context.Background(), unavailable, cacheIdentity, "remote-2", 100)
+	_, err = idx.Rebuild(t.Context(), unavailable, cacheIdentity, "remote-2", 100)
 	require.Error(err)
 	assert.False(idx.Fresh(cacheIdentity, "remote-1", DefaultFreshFor), "failed rebuild leaves the index stale")
 }

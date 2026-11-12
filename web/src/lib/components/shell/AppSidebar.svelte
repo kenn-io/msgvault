@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { Chip, KbdBadge, Tooltip } from '@kenn-io/kit-ui';
+  import { Chip, IconButton, KbdBadge, Tooltip } from '@kenn-io/kit-ui';
   import CircleHelp from '@lucide/svelte/icons/circle-help';
   import PanelLeftClose from '@lucide/svelte/icons/panel-left-close';
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
+  import X from '@lucide/svelte/icons/x';
 
   import type { SavedView } from '../../api/generated/models';
   import type { ExploreWorkspace } from '../../explore/models';
@@ -28,6 +29,7 @@
     onNavigate: (id: ExploreWorkspace) => void;
     onToggleCollapsed: () => void;
     onOpenHelp: () => void;
+    onCloseNavigation?: () => void;
     onOpenView?: (view: SavedView) => void;
     onRenameView?: (view: SavedView, name: string) => Promise<string | undefined>;
     onDescribeView?: (view: SavedView, description: string) => Promise<string | undefined>;
@@ -49,6 +51,7 @@
     onNavigate,
     onToggleCollapsed,
     onOpenHelp,
+    onCloseNavigation = undefined,
     onOpenView = () => undefined,
     onRenameView = async () => undefined,
     onDescribeView = undefined,
@@ -76,7 +79,7 @@
 </script>
 
 <aside class="sidebar" class:sidebar--rail={collapsed} aria-label="Sidebar">
-  <div class="sidebar__brand">msgvault</div>
+  <div class="sidebar__brand">msgvault{#if onCloseNavigation}<IconButton ariaLabel="Close navigation" onclick={onCloseNavigation}><X size={18} /></IconButton>{/if}</div>
   <nav aria-label="Primary">
     <ul>
       {#each items as item (item.id)}
@@ -186,6 +189,9 @@
   }
 
   .sidebar__brand {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     padding: var(--space-2) var(--pane-pad-x);
     color: var(--text-primary);
     font-size: var(--font-size-md);
@@ -234,7 +240,7 @@
   .sidebar__item {
     display: flex;
     width: 100%;
-    min-height: var(--control-h-lg);
+    min-height: var(--nav-item-h);
     align-items: center;
     gap: var(--control-gap);
     padding: 0 var(--pane-pad-x);
@@ -248,13 +254,12 @@
   }
 
   .sidebar__item--footer {
-    min-height: var(--control-h);
     font-size: var(--font-size-sm);
   }
 
   .sidebar--rail .sidebar__item {
-    width: var(--control-h-lg);
-    min-height: var(--control-h-lg);
+    width: var(--nav-item-h);
+    min-height: var(--nav-item-h);
     justify-content: center;
     padding: 0;
   }

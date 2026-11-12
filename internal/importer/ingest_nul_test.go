@@ -22,7 +22,7 @@ func TestIngestRawMessageNUL(t *testing.T) {
 	raw, err := os.ReadFile("../mime/testdata/nul-projections.eml")
 	require.NoError(err)
 	err = IngestRawMessage(t.Context(), st, source.ID, source.Identifier, t.TempDir(), nil,
-		"nul", fmt.Sprintf("%x", sha256.Sum256(raw)), raw, time.Time{}, slog.Default())
+		"nul", fmt.Sprintf("%x", sha256.Sum256(raw)), raw, time.Time{}, slog.Default(), nil)
 	require.NoError(err)
 	ids, err := st.MessageExistsBatch(source.ID, []string{"nul"})
 	require.NoError(err)
@@ -35,7 +35,7 @@ func TestIngestRawMessageNUL(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("Report�tail", msg.Subject)
 	assert.Equal("beforetoken�aftertoken", msg.Snippet)
-	body, err := st.GetMessageBodyText(id)
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Equal("beforetoken�aftertoken", body)
 	for _, term := range []string{"beforetoken", "aftertoken"} {
@@ -44,6 +44,6 @@ func TestIngestRawMessageNUL(t *testing.T) {
 		assert.Equal(int64(1), total)
 	}
 	var filename string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT filename FROM attachments WHERE message_id = ?`), id).Scan(&filename))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT filename FROM attachments WHERE message_id = ?`), id).Scan(&filename))
 	assert.Equal("file�name.bin", filename)
 }

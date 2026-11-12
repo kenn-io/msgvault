@@ -49,7 +49,7 @@ Examples:
 				return errors.New("--limit must be non-negative")
 			}
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args)
 			}
 			return runImportTelegram(cmd, args[0], opts)
 		},
@@ -74,7 +74,7 @@ func runImportTelegram(cmd *cobra.Command, exportDir string, opts telegramCLIOpt
 	}
 
 	dbPath := cfg.DatabaseDSN()
-	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+	s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 	if err != nil {
 		return err
 	}
@@ -98,11 +98,11 @@ func runImportTelegram(cmd *cobra.Command, exportDir string, opts telegramCLIOpt
 		NoResume:       opts.NoResume,
 		Logger:         state.logger,
 	})
-	err = errors.Join(err, runExportPostImportMigrations(cmd.OutOrStdout(), s, summary.SourceID, opts.NoDefaultIdentity, state))
+	err = errors.Join(err, runExportPostImportMigrations(ctx, cmd.OutOrStdout(), s, summary.SourceID, opts.NoDefaultIdentity, state))
 	if err != nil {
 		var cacheErr error
 		if summary.SourceID != 0 {
-			cacheErr = rebuildCacheAfterWrite(dbPath, state)
+			cacheErr = rebuildCacheAfterWrite(ctx, dbPath, state)
 		}
 		if ctx.Err() != nil {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nImport interrupted. Re-run to continue.")
@@ -128,7 +128,7 @@ func runImportTelegram(cmd *cobra.Command, exportDir string, opts telegramCLIOpt
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Participants:     %d\n", summary.ParticipantsResolved)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Attachments:      %d stored, %d missing\n", summary.AttachmentsStored, summary.AttachmentsMissing)
-	return rebuildCacheAfterWrite(dbPath, state)
+	return rebuildCacheAfterWrite(ctx, dbPath, state)
 }
 
 func init() {

@@ -67,7 +67,7 @@ func (f *fakeBackend) Close() error { return nil }
 
 func TestResolveActiveForFingerprint_Matches(t *testing.T) {
 	b := &fakeBackend{active: &Generation{ID: 1, Fingerprint: "m:768:p1-111111"}}
-	g, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
+	g, err := ResolveActiveForFingerprint(t.Context(), b, "m:768:p1-111111")
 	require.NoError(t, err, "ResolveActiveForFingerprint")
 	assert.Equal(t, "m:768:p1-111111", g.Fingerprint)
 	assert.Equal(t, GenerationID(1), g.ID)
@@ -75,7 +75,7 @@ func TestResolveActiveForFingerprint_Matches(t *testing.T) {
 
 func TestResolveActiveForFingerprint_Stale(t *testing.T) {
 	b := &fakeBackend{active: &Generation{Fingerprint: "m:768:p1-111111"}}
-	generation, err := ResolveActiveForFingerprint(context.Background(), b, "m:1024:p1-111111")
+	generation, err := ResolveActiveForFingerprint(t.Context(), b, "m:1024:p1-111111")
 	require.ErrorIs(t, err, ErrIndexStale)
 	assert.Equal(t, "m:768:p1-111111", generation.Fingerprint)
 }
@@ -87,26 +87,26 @@ func TestResolveActiveForFingerprint_Stale(t *testing.T) {
 // built under the new sanitization policy.
 func TestResolveActiveForFingerprint_StaleOnPreprocessFlip(t *testing.T) {
 	b := &fakeBackend{active: &Generation{Fingerprint: "m:768:p1-111111"}}
-	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-101111")
+	_, err := ResolveActiveForFingerprint(t.Context(), b, "m:768:p1-101111")
 	assert.ErrorIs(t, err, ErrIndexStale)
 }
 
 func TestResolveActiveForFingerprint_NoneAndBuildingReturnsBuildingError(t *testing.T) {
 	b := &fakeBackend{building: &Generation{ID: 42, Fingerprint: "m:768:p1-111111"}}
-	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
+	_, err := ResolveActiveForFingerprint(t.Context(), b, "m:768:p1-111111")
 	assert.ErrorIs(t, err, ErrIndexBuilding)
 }
 
 func TestResolveActiveForFingerprint_NothingReturnsNotEnabled(t *testing.T) {
 	b := &fakeBackend{}
-	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
+	_, err := ResolveActiveForFingerprint(t.Context(), b, "m:768:p1-111111")
 	assert.ErrorIs(t, err, ErrNotEnabled)
 }
 
 func TestResolveActiveForFingerprint_BackendError(t *testing.T) {
 	wantErr := errors.New("db down")
 	b := &fakeBackend{activeErr: wantErr}
-	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
+	_, err := ResolveActiveForFingerprint(t.Context(), b, "m:768:p1-111111")
 	require.Error(t, err, "expected error wrapping db down")
 	assert.ErrorIs(t, err, wantErr)
 }
@@ -114,7 +114,7 @@ func TestResolveActiveForFingerprint_BackendError(t *testing.T) {
 func TestResolveActiveForFingerprint_BuildingBackendError(t *testing.T) {
 	wantErr := errors.New("building failed")
 	b := &fakeBackend{buildErr: wantErr}
-	_, err := ResolveActiveForFingerprint(context.Background(), b, "m:768:p1-111111")
+	_, err := ResolveActiveForFingerprint(t.Context(), b, "m:768:p1-111111")
 	require.Error(t, err, "expected error wrapping building failed")
 	assert.ErrorIs(t, err, wantErr)
 }

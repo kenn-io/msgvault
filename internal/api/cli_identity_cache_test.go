@@ -59,7 +59,7 @@ func newIdentityRebuildTestServer(t *testing.T) (*Server, *stubIdentityRebuildSt
 
 func doCLIIdentityRequest(t *testing.T, srv *Server, method, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, "/api/v1/cli/identities", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, "/api/v1/cli/identities", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)

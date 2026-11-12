@@ -16,7 +16,7 @@ func TestOperationTokenKeyConcurrentFirstUseCreatesOnePersistentActiveKey(t *tes
 	assert := assert.New(t)
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "archive.db")
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	require.NoError(st.InitSchema())
 
@@ -38,7 +38,7 @@ func TestOperationTokenKeyConcurrentFirstUseCreatesOnePersistentActiveKey(t *tes
 	assert.Len(keys[0].KeyBytes, 32)
 	require.NoError(st.Close())
 
-	reopened, err := store.OpenForTest(dbPath)
+	reopened, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	require.NoError(reopened.InitSchema())

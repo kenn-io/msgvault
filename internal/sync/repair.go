@@ -116,8 +116,7 @@ func (s *Syncer) RepairMessage(ctx context.Context, request RepairRequest) (_ *R
 	guard := target.MessageIdentityGuard
 	messageID, err := s.store.PersistRepairMessageWithParticipantsContext(
 		ctx, guard, participants, func(participantIDs []int64) *store.MessagePersistData {
-			persist := buildPreparedSnapshot(
-				prepared, participantIndex, participantIDs, attachmentWrites)
+			persist := buildPreparedSnapshot(prepared, participantIndex, participantIDs, attachmentWrites)
 			persist.LabelRefs = labelRefs
 			return persist
 		},
@@ -144,7 +143,7 @@ func (s *Syncer) cleanupRepairAttachments(
 	return s.store.WithExclusiveLock(ctx, func() error {
 		var cleanupErr error
 		for _, storagePath := range paths {
-			referenced, err := s.store.IsAttachmentPathReferenced(storagePath)
+			referenced, err := s.store.IsAttachmentPathReferenced(ctx, storagePath)
 			if err != nil {
 				cleanupErr = errors.Join(cleanupErr, fmt.Errorf("check attachment %q references: %w", storagePath, err))
 				continue

@@ -50,10 +50,10 @@ func TestVisualBackendStoresSearchesAndDeletesActivePublication(t *testing.T) {
 		VALUES (11, 1, 'diagram.png', 'image/png', 128, 'standalone')`,
 	}
 	for _, statement := range statements {
-		_, err := db.Exec(statement)
+		_, err := db.ExecContext(t.Context(), statement)
 		requirements.NoError(err)
 	}
-	_, err := db.Exec(`INSERT INTO visual_publications
+	_, err := db.ExecContext(t.Context(), `INSERT INTO visual_publications
 			(generation_id, message_id, blob_hash, media_input_key, representative_attachment_id, current_vector_token, state)
 		VALUES (7, 1, $1, 'original', 11, 'visual-token-1', 'current')`, strings.Repeat("a", 64))
 	requirements.NoError(err)
@@ -85,7 +85,7 @@ func TestVisualBackendStoresSearchesAndDeletesActivePublication(t *testing.T) {
 	hits, err = visualBackend.Search(ctx, personRequest)
 	requirements.NoError(err)
 	assertions.Empty(hits, "the direct sender is not also the inferred recipient")
-	_, err = db.Exec(`UPDATE conversations SET conversation_type = 'group_chat' WHERE id = 9`)
+	_, err = db.ExecContext(t.Context(), `UPDATE conversations SET conversation_type = 'group_chat' WHERE id = 9`)
 	requirements.NoError(err)
 	personRequest.Person.ParticipantIDs = []int64{50}
 	personRequest.Person.Directions = []personscope.Direction{personscope.Group}

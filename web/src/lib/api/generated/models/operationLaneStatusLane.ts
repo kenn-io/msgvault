@@ -7,7 +7,6 @@ export type OperationLaneStatusLane =
 
 export const OperationLaneStatusLane = {
   contacts: "contacts",
-  documents: "documents",
   messages: "messages",
   person_facts: "person_facts",
   visual_attachments: "visual_attachments",

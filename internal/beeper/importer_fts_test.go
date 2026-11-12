@@ -3,7 +3,6 @@
 package beeper
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,16 +25,18 @@ func TestImportIndexesFTS(t *testing.T) {
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	require.True(st.FTS5Available(), "fts5 build tag set but FTS5 unavailable")
 
 	var ftsHits int
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'tomorrow'`).Scan(&ftsHits))
 	assert.Equal(1, ftsHits, "voice transcription must be FTS-indexed")
 
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT COUNT(*) FROM messages_fts`).Scan(&ftsHits))
 	assert.Equal(43, ftsHits, "every persisted message must be FTS-indexed")
 }

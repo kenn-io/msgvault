@@ -91,11 +91,11 @@ func TestResolveBeeperSyncAccountsValidatesAndDeduplicatesExplicitIDs(t *testing
 	_, err = st.GetOrCreateSource(sourceTypeBeeper, "telegram")
 	require.NoError(err)
 
-	accounts, err := resolveBeeperSyncAccounts(st, []string{"signal", "signal", "telegram"}, testConfigValue())
+	accounts, err := resolveBeeperSyncAccounts(t.Context(), st, []string{"signal", "signal", "telegram"}, testConfigValue())
 	require.NoError(err)
 	assert.Equal([]string{"signal", "telegram"}, accounts)
 
-	_, err = resolveBeeperSyncAccounts(st, []string{"signal", "typo"}, testConfigValue())
+	_, err = resolveBeeperSyncAccounts(t.Context(), st, []string{"signal", "typo"}, testConfigValue())
 	require.ErrorContains(err, `beeper account "typo" is not registered`)
 }
 
@@ -109,7 +109,7 @@ func TestResolveBeeperSyncAccountsMatchesAliasCaseInsensitively(t *testing.T) {
 	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{Alias: &alias})
 	require.NoError(err)
 
-	accounts, err := resolveBeeperSyncAccounts(st, []string{"work chat"}, testConfigValue())
+	accounts, err := resolveBeeperSyncAccounts(t.Context(), st, []string{"work chat"}, testConfigValue())
 	require.NoError(err)
 	assert.Equal([]string{"signal"}, accounts)
 }
@@ -126,7 +126,7 @@ func TestOpenBeeperImporterExplainsFilteredAccountsWithoutBlamingHistoryOnly(t *
 	require.NoError(err)
 	require.NoError(st.Close())
 
-	importer, _, accountIDs, dbPath, cleanup, err := openBeeperImporter(nil, testInvocationWithConfig(cfg), false)
+	importer, _, accountIDs, dbPath, cleanup, err := openBeeperImporter(t.Context(), nil, testInvocationWithConfig(cfg), false)
 	if cleanup != nil {
 		cleanup()
 	}
@@ -168,7 +168,7 @@ func TestScheduledBeeperAttemptsRebuildAfterPartialFailure(t *testing.T) {
 	var attempted []string
 	rebuilds := 0
 	err := runScheduledBeeperAttempts(
-		context.Background(),
+		t.Context(),
 		[]string{"signal", "telegram"},
 		&beeperAccountRotation{},
 		nil,
@@ -195,7 +195,7 @@ func TestScheduledBeeperAttemptsReturnsRefreshError(t *testing.T) {
 	refreshErr := errors.New("refresh failed")
 
 	err := runScheduledBeeperAttempts(
-		context.Background(),
+		t.Context(),
 		[]string{"signal"},
 		&beeperAccountRotation{},
 		nil,
@@ -214,7 +214,7 @@ func TestScheduledBeeperAttemptsRotatesAfterStop(t *testing.T) {
 	noRebuild := func() error { return nil }
 
 	var first []string
-	require.NoError(t, runScheduledBeeperAttempts(context.Background(), accounts, rotation, nil,
+	require.NoError(t, runScheduledBeeperAttempts(t.Context(), accounts, rotation, nil,
 		func(id string) (bool, error) {
 			first = append(first, id)
 			return id == "b", nil
@@ -222,7 +222,7 @@ func TestScheduledBeeperAttemptsRotatesAfterStop(t *testing.T) {
 	assert.Equal([]string{"a", "b"}, first, "a stopped account ends the job")
 
 	var second []string
-	require.NoError(t, runScheduledBeeperAttempts(context.Background(), accounts, rotation, nil,
+	require.NoError(t, runScheduledBeeperAttempts(t.Context(), accounts, rotation, nil,
 		func(id string) (bool, error) {
 			second = append(second, id)
 			return false, nil
@@ -230,7 +230,7 @@ func TestScheduledBeeperAttemptsRotatesAfterStop(t *testing.T) {
 	assert.Equal([]string{"c", "a", "b"}, second, "the next run reaches accounts after the stopped account")
 
 	var third []string
-	require.NoError(t, runScheduledBeeperAttempts(context.Background(), accounts, rotation, nil,
+	require.NoError(t, runScheduledBeeperAttempts(t.Context(), accounts, rotation, nil,
 		func(id string) (bool, error) {
 			third = append(third, id)
 			return false, nil
@@ -243,7 +243,7 @@ func TestScheduledBeeperAttemptsStopBetweenAccounts(t *testing.T) {
 	rotation := &beeperAccountRotation{}
 	var attempted []string
 	stopped := false
-	require.NoError(t, runScheduledBeeperAttempts(context.Background(), []string{"a", "b", "c"}, rotation,
+	require.NoError(t, runScheduledBeeperAttempts(t.Context(), []string{"a", "b", "c"}, rotation,
 		func() bool { return stopped },
 		func(id string) (bool, error) {
 			attempted = append(attempted, id)
@@ -259,7 +259,7 @@ func TestScheduledBeeperAttemptsResumeAtAccountInterruptedByYield(t *testing.T) 
 	require := require.New(t)
 	assert := assert.New(t)
 	rotation := &beeperAccountRotation{}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	var attempted []string
 	err := runScheduledBeeperAttempts(ctx, []string{"a", "b", "c"}, rotation, nil,
 		func(id string) (bool, error) {
@@ -401,7 +401,7 @@ func TestScheduledBeeperHistoryOnlyDoesNotWarnOrClearMarker(t *testing.T) {
 	_, marked, err := st.GetArchiveMarker(t.Context(), store.BeeperReanchorMarkerKey(history.ID))
 	require.NoError(err)
 	assert.True(marked)
-	_, err = resolveBeeperSyncAccounts(st, []string{history.Identifier}, testConfigValue())
+	_, err = resolveBeeperSyncAccounts(t.Context(), st, []string{history.Identifier}, testConfigValue())
 	require.Error(err, "manual sync requires clearing history-only first")
 }
 
@@ -415,7 +415,7 @@ func TestBeeperBackfillIncludesHistoryOnlyAccounts(t *testing.T) {
 	_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{HistoryOnly: &historyOnly})
 	require.NoError(err)
 	for _, selection := range [][]string{nil, {source.Identifier}} {
-		accounts, err := resolveBeeperAccounts(st, selection, testConfigValue(), true)
+		accounts, err := resolveBeeperAccounts(t.Context(), st, selection, testConfigValue(), true)
 		require.NoError(err)
 		assert.Equal([]string{source.Identifier}, accounts)
 	}

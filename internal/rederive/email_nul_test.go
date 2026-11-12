@@ -15,7 +15,7 @@ func TestEmailNULRederive(t *testing.T) {
 	raw, err := os.ReadFile("../mime/testdata/nul-projections.eml")
 	require.NoError(err)
 	require.NoError(st.UpsertMessageRaw(id, raw))
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET snippet = ? WHERE id = ?`), "stale body", id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET snippet = ? WHERE id = ?`), "stale body", id)
 	require.NoError(err)
 	// An archive that completed the prior parser pass must still be refreshed.
 	require.NoError(st.MarkMigrationApplied(LedgerKey(source.SourceType, source.Identifier, "email-v1")))
@@ -23,7 +23,7 @@ func TestEmailNULRederive(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(sum.Errors)
 	assert.Equal(int64(1), sum.BodiesRewritten)
-	body, err := st.GetMessageBodyText(id)
+	body, err := st.GetMessageBodyText(t.Context(), id)
 	require.NoError(err)
 	assert.Equal("beforetoken�aftertoken", body)
 	msg, err := st.GetMessage(id)

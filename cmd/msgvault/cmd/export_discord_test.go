@@ -103,7 +103,7 @@ func insertDiscordCLIExportConversation(
 ) int64 {
 	t.Helper()
 	var conversationID int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO conversations (
 			source_id, source_conversation_id, conversation_type, title, metadata
 		) VALUES (?, ?, 'channel', 'general', ?)
@@ -123,7 +123,7 @@ func insertDiscordCLIExportMessage(
 ) {
 	t.Helper()
 	var messageID int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO messages (
 			conversation_id, source_id, source_message_id, message_type,
 			sent_at, received_at, metadata
@@ -133,7 +133,7 @@ func insertDiscordCLIExportMessage(
 		`{"author_display_name":"synthetic-user"}`,
 	).Scan(&messageID)
 	require.NoError(t, err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)
 	`), messageID, "A complete message body https://example.test/item")
 	require.NoError(t, err)

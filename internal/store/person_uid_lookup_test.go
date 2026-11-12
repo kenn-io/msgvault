@@ -61,7 +61,7 @@ func TestGetPersonByUIDResolvesRetiredAlias(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	personID := insertPerson(t, st, "current-person-uid", "Example Person")
-	_, err := st.DB().Exec(st.Rebind(`INSERT INTO person_uid_aliases
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_uid_aliases
 		(retired_uid, surviving_person_id, reason) VALUES (?, ?, ?)`),
 		"retired-person-uid", personID, "merge")
 	require.NoError(err)

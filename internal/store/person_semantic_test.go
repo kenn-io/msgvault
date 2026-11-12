@@ -405,7 +405,7 @@ func TestPersonSemanticScanFailsButResolverSkipsOneUnrenderablePerson(t *testing
 
 	goodDocument, err := f.Store.LoadPersonSemanticDocumentContext(ctx, goodID)
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE attribute_definitions
 		SET value_type = 'record_reference', field_type = 'person', record_target = 'person'
 		WHERE universal_id = ?

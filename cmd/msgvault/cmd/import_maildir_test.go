@@ -34,7 +34,7 @@ func TestImportMaildirCommandArchivesMail(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	var subject, sourceType string
-	require.NoError(st.DB().QueryRow(`SELECT m.subject,s.source_type FROM messages m JOIN sources s ON s.id=m.source_id`).Scan(&subject, &sourceType))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT m.subject,s.source_type FROM messages m JOIN sources s ON s.id=m.source_id`).Scan(&subject, &sourceType))
 	assert.Equal("Maildir CLI", subject)
 	assert.Equal("maildir", sourceType)
 }

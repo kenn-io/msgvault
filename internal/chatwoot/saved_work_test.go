@@ -132,7 +132,7 @@ func TestSavedWorkAccessFailuresKeepHealthyProgress(t *testing.T) {
 			archived := contractMessageIDs(t, st)
 			assert.Contains(archived, int64((tc.count+1)*10+2), "healthy saved history progresses")
 			assert.Contains(archived, int64(9001), "later listing pages progress")
-			state, err := NewImporter(st, api.client(t)).resumeState(source.ID)
+			state, err := NewImporter(st, api.client(t)).resumeState(t.Context(), source.ID)
 			require.NoError(err)
 			require.Contains(state.Conversations, "1")
 			assert.NotEmpty(state.Conversations["1"].Pending)
@@ -185,9 +185,9 @@ func TestSavedWorkFatalErrorsStopReads(t *testing.T) {
 					if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 						trigger = `CREATE FUNCTION reject_checkpoint() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status = 'failed' THEN RAISE EXCEPTION 'synthetic failed checkpoint'; END IF; RAISE EXCEPTION 'synthetic checkpoint failure'; END $$; CREATE TRIGGER reject_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs FOR EACH ROW EXECUTE FUNCTION reject_checkpoint()`
 					}
-					_, setupErr = st.DB().Exec(trigger)
+					_, setupErr = st.DB().ExecContext(t.Context(), trigger)
 				case "database":
-					_, setupErr = st.DB().Exec(`DROP TABLE message_bodies`)
+					_, setupErr = st.DB().ExecContext(t.Context(), `DROP TABLE message_bodies`)
 				case "cancellation":
 					cancel()
 				}
@@ -207,7 +207,7 @@ func TestSavedWorkFatalErrorsStopReads(t *testing.T) {
 				if kind == "cancellation" {
 					require.ErrorIs(err, context.Canceled)
 				}
-				state, stateErr := NewImporter(st, api.client(t)).resumeState(source.ID)
+				state, stateErr := NewImporter(st, api.client(t)).resumeState(t.Context(), source.ID)
 				require.NoError(stateErr)
 				assert.NotEmpty(state.Conversations["2"].Pending)
 			}

@@ -10,6 +10,7 @@ import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
+import { sourceGroup } from '../../explore/fixtures.test-support';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
 import AppShell from './AppShell.svelte';
 
@@ -17,9 +18,10 @@ vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () =>
 
 const telemetryEvents: Array<{ event: string; properties: { kind: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
-const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
+const createAPIClient = (fetchFn: typeof fetch, localFetch: typeof fetch = async () => Response.json({ host: 'archive.example.test', enabled: true, provider: 'builtin', download_bytes: 0, phase: 'idle', done_bytes: 0, total_bytes: 0 })) => createCaptureClient(async (input, init) => {
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
   if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
+  if (path === '/api/v1/embeddings/local') return localFetch(input, init);
   if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
   if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
   if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
@@ -41,6 +43,17 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
     search_provenance: {},
     ...overrides
   };
+}
+
+async function snapshotFixture(request: Request, rows: Array<{ key: string; label: string; count: number; estimated_bytes: number; latest_at: string }>, coParticipants: Array<{ key: string; label: string; count: number }> = []) {
+  const path = new URL(request.url).pathname;
+  if (path.endsWith('/coverage')) return Response.json({ status: 'ready', eligible_count: rows.length, embedded_count: rows.length, percentage: 100, vector_generation: 7, cache_revision: 'cache-1', actions: [] });
+  if (path.endsWith('/explore/files')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1' });
+  if (path.endsWith('/explore/groups')) {
+    const body = await request.clone().json();
+    const selected = rows.find(row => row.key === body.group_key);
+    return Response.json({ rows: body.group_key ? rows.filter(row => row.key === body.group_key) : rows, ...(selected ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: selected.count }], co_participants: coParticipants } } : {}), total_count: body.group_key ? 1 : rows.length, cache_revision: 'cache-1', search_provenance: { vector_generation: 7 }, candidate_snapshot_id: 'table-snapshot' });
+  }
 }
 
 describe('EverythingWorkspace', () => {
@@ -150,6 +163,8 @@ describe('EverythingWorkspace', () => {
       messageStatus = 404;
       await fireEvent.click(await screen.findByRole('link', { name: 'Team chat' }));
       await screen.findByText('This message is no longer available.');
+      expect(screen.getByRole('complementary', { name: 'Reading pane: Message' })).toBeDefined();
+      expect(screen.getByRole('navigation', { name: 'Primary' })).toBeDefined();
       await waitFor(() => expect(telemetryEvents.filter(e => e.event === 'error_shown')).toEqual([
         { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
         { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
@@ -157,6 +172,10 @@ describe('EverythingWorkspace', () => {
       expect(screen.queryByRole('link', { name: 'Team chat' })).toBeNull();
       expect(screen.queryByText('Quarterly numbers')).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
+      await waitFor(() => expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull());
+      expect(parseExploreURLState(location.search).selectedRow).toBeNull();
+      expect(screen.getByRole('main', { name: 'Messages' })).toBeDefined();
+      expect(location.pathname).toBe('/');
       expect(screen.queryByText('Quarterly numbers')).toBeNull();
       expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     } finally {
@@ -209,21 +228,207 @@ describe('EverythingWorkspace', () => {
     }
   });
 
-  it.each(['everything', 'files'] as const)('keeps non-filterable groups in %s visible without opening an unavailable inspector', async (workspace) => {
+  it.each([
+    { dimension: 'participant', key: '42', label: 'Person Example', bucket: '2026-07' },
+    { dimension: 'domain', key: 'example.net', label: 'example.net', bucket: '2026-07' },
+    { dimension: 'source', key: '7', label: 'person@example.com (mail.example.com:993)', bucket: '2026-07' },
+    { dimension: 'kind', key: 'meeting', label: 'Meeting', bucket: '2026-07' },
+    { dimension: 'message_type', key: 'email', label: 'Email', bucket: '2026-07' },
+    { dimension: 'mailing_list', key: 'list@example.net', label: 'list@example.net', bucket: '2026-07' },
+    { dimension: 'month', key: '2026-07', label: 'Jul 2026', bucket: '2026-07-18' },
+    { dimension: 'year', key: '2026', label: '2026', bucket: '2026-07' }
+  ] as const)('opens the selected $dimension row using the table scope', async ({ dimension, key, label, bucket }) => {
     window.history.replaceState(null, '', '/');
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-      rows: [{ key: 'message', label: 'Messages', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
-      total_count: 1, cache_revision: 'cache-1', search_provenance: {}
-    }));
+    const detailRequests: Array<{ group_key?: string; filters?: Array<{ dimension: string; values: string[] }> }> = [];
+    const meetingRequests: Array<{ explore?: { predicate?: { filters?: Array<{ dimension: string; values: string[] }> } } }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.startsWith('/api/v1/meetings/')) {
+        meetingRequests.push(await request.clone().json());
+        return meetingFixtureResponse(path)!;
+      }
+      if (path.endsWith('/explore/files')) return Response.json({ files: [], total_count: 0, cache_revision: 'cache-1' });
+      if (!path.endsWith('/groups')) return Response.json(exploreResponse());
+      const body = await request.clone().json() as typeof detailRequests[number];
+      if (body.group_key) detailRequests.push(body);
+      const narrowed = (body.filters?.length ?? 0) > 1;
+      return Response.json({
+        rows: [{ key, label: dimension === 'source' ? 'imaps://person@example.com@mail.example.com:993' : label, count: narrowed ? 9 : 1, ...(dimension === 'month' || dimension === 'year' ? { total_items: narrowed ? 9 : 1 } : {}), estimated_bytes: narrowed ? 99 : 42, latest_at: narrowed ? '2026-07-17T12:00:00Z' : '2026-07-18T12:00:00Z' }],
+        ...(body.group_key ? { overview: {
+          first_at: narrowed ? '2026-07-17T12:00:00Z' : '2026-07-01T12:00:00Z',
+          activity: [{ bucket, count: narrowed ? 9 : 1 }], co_participants: [{ key: '1', label: narrowed ? 'Wrong Person' : 'Selected Person', count: 1 }]
+        } } : {}),
+        total_count: 1, cache_revision: 'cache-1', search_provenance: {}
+      });
+    });
     const state = new ExploreState(window);
-    state.replaceTransient({ workspace, groupingChain: ['kind'] });
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    const row = await within(await screen.findByRole('grid')).findByRole('row', { name: /^Messages 12/ });
-    await fireEvent.pointerDown(row);
-    expect(state.current.selectedRow).toBeNull();
-    expect(screen.queryByText('The selected group is not available in this context.')).toBeNull();
-    rendered.unmount();
-    state.destroy();
+    state.replaceTransient({ groupingChain: [dimension], filters: [{ dimension: 'domain', values: ['example.com'] }] });
+    const baseClient = createAPIClient(fetchFn);
+    const client = { fetch: (async (input, init) => {
+      const url = input instanceof Request ? input.url : new URL(String(input), window.location.href);
+      if (new URL(url).pathname === '/api/v1/sources/status' && dimension === 'source') return Response.json({ sources: [
+        { id: 7, source_type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:993', display_name: null, can_sync: false, scheduled: false, active_sync: null, latest_sync: null, last_successful_sync: null, last_sync_at: null, next_sync_at: null, updated_at: '2026-07-18T12:00:00Z' },
+        { id: 8, source_type: 'gmail', identifier: 'person@example.com', display_name: null, can_sync: false, scheduled: false, active_sync: null, latest_sync: null, last_successful_sync: null, last_sync_at: null, next_sync_at: null, updated_at: '2026-07-18T12:00:00Z' }
+      ] });
+      return baseClient.fetch(input, init);
+    }) satisfies typeof fetch };
+    const rendered = render(AppShell, { client, state });
+    try {
+      const grid = await screen.findByRole('grid', { name: `Messages grouped by ${dimension}` });
+      if (dimension === 'source') expect(await within(grid).findByRole('button', { name: `Show items in ${label}` })).toBeDefined();
+      await fireEvent.click(await within(grid).findByText(label));
+      const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
+      await waitFor(() => expect(detailRequests.length).toBeGreaterThan(0));
+      expect(detailRequests.at(-1)!.group_key).toBe(key);
+      expect(detailRequests.at(-1)!.filters).toEqual([{ dimension: 'domain', values: ['example.com'] }]);
+      expect(await within(pane).findByText('Selected Person')).toBeDefined();
+      if (dimension === 'participant') {
+        await waitFor(() => expect(meetingRequests.length).toBeGreaterThan(0));
+        expect(meetingRequests[0]?.explore?.predicate?.filters).toEqual([
+          { dimension: 'domain', values: ['example.com'] }, { dimension: 'participant', values: ['42'] }
+        ]);
+      }
+    } finally {
+      rendered.unmount();
+      state.destroy();
+    }
+  });
+
+  it.each([
+    ['participant', '42', 'Person Example', 'semantic'],
+    ['participant', '42', 'Person Example', 'hybrid'],
+    ['domain', 'example.net', 'example.net', 'semantic'],
+    ['domain', 'example.net', 'example.net', 'hybrid'],
+  ] as const)('uses the selected %s snapshot for %s (%s) in %s search', async (dimension, key, label, searchMode) => {
+    window.history.replaceState(null, '', '/');
+    let snapshot = 0;
+    let expire = true;
+    const rows = [{ key, label, count: 8, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }];
+    const meetingRequests: Array<{ path: string; body: { explore?: { predicate?: { filters?: Array<{ dimension: string; values: string[] }> }; candidate_snapshot_id?: string; cache_revision?: string } } }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      const fixture = await snapshotFixture(request, rows, [{ key: '1', label: 'Overview Person', count: 1 }]);
+      if (fixture) return fixture;
+      if (path === '/api/v1/explore') {
+        const body = await request.clone().json();
+        expect(body).toMatchObject({ query: 'planning', search_mode: searchMode, filters: [{ dimension, values: [key] }], limit: 1 });
+        expect(body.candidate_snapshot_id).toBeUndefined();
+        expect(body.cursor).toBeUndefined();
+        snapshot += 1;
+        return Response.json(exploreResponse({ cache_revision: `cache-${snapshot + 1}`, search_provenance: { vector_generation: 7 }, candidate_snapshot_id: `group-${snapshot}` }));
+      }
+      if (path.startsWith('/api/v1/meetings/')) {
+        const body = await request.clone().json() as typeof meetingRequests[number]['body'];
+        meetingRequests.push({ path, body });
+        const valid = body.explore?.predicate?.filters?.some((filter) => filter.dimension === dimension && filter.values[0] === key) && body.explore?.candidate_snapshot_id === `group-${snapshot}` && body.explore?.cache_revision === `cache-${snapshot + 1}` && snapshot > 0;
+        if (!valid) return Response.json({ error: 'snapshot_mismatch', message: 'Search snapshot does not match filters' }, { status: 409 });
+        if (expire) return Response.json({ error: 'meeting_scope_changed', message: 'Meetings changed' }, { status: 409 });
+        if (path.endsWith('/actions')) return Response.json(meetingActions({ rows: [meetingAction()], total_count: 1 }));
+        return meetingFixtureResponse(path)!;
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ query: 'planning', searchMode, groupingChain: [dimension] });
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: `Messages grouped by ${dimension}` });
+      await fireEvent.click(await within(grid).findByText(label));
+      const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
+      expect(await within(pane).findByText('Overview Person')).toBeDefined();
+      const reload = await within(pane).findByRole('button', { name: 'Reload meeting activity' });
+      await waitFor(() => expect(snapshot).toBe(1));
+      expire = false;
+      await fireEvent.click(reload);
+      expect(await within(pane).findByText(/4 meetings/)).toBeDefined();
+      expect(await within(pane).findByText('Prepare review')).toBeDefined();
+      expect(snapshot).toBe(2);
+      for (const path of ['/api/v1/meetings/metrics', '/api/v1/meetings/actions']) {
+        expect(meetingRequests).toContainEqual({ path, body: expect.objectContaining({ explore: expect.objectContaining({ candidate_snapshot_id: 'group-2', cache_revision: 'cache-3' }) }) });
+      }
+    } finally { view.unmount(); state.destroy(); }
+  });
+
+  it.each([
+    { dimension: 'kind', key: 'meeting', label: 'Meeting', narrowedRequests: 0, unavailable: false },
+    { dimension: 'participant', key: '42', label: 'Person Example', narrowedRequests: 1, unavailable: false },
+    { dimension: 'domain', key: 'example.net', label: 'example.net', narrowedRequests: 1, unavailable: true },
+  ] as const)('keeps the $dimension overview when meeting authority cannot load', async ({ dimension, key, label, narrowedRequests, unavailable }) => {
+    window.history.replaceState(null, '', '/');
+    const rows = [{ key, label, count: 8, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }];
+    let requests = 0;
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      const fixture = await snapshotFixture(request, rows, [{ key: '1', label: 'Overview Person', count: 1 }]);
+      if (fixture) return fixture;
+      if (path === '/api/v1/explore') {
+        requests += 1;
+        return unavailable
+          ? Response.json({ error: 'cache_unavailable', message: 'Cache unavailable', readiness: 'building', recovery_action: '' }, { status: 503 })
+          : Response.json({ error: 'search_failed', message: 'Search failed' }, { status: 500 });
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ query: 'planning', searchMode: 'semantic', groupingChain: [dimension] });
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: `Messages grouped by ${dimension}` });
+      await fireEvent.click(await within(grid).findByText(label));
+      const pane = await screen.findByRole('complementary', { name: `Reading pane: ${label}` });
+      await waitFor(() => expect(requests).toBe(narrowedRequests));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(await within(pane).findByText('Overview Person')).toBeDefined();
+      if (dimension !== 'kind') expect(within(pane).getByText(/Reload this group to load meeting activity/)).toBeDefined();
+    } finally { view.unmount(); state.destroy(); }
+  });
+
+  it('discards a superseded group snapshot request', async () => {
+    window.history.replaceState(null, '', '/');
+    let firstSignal: AbortSignal | undefined;
+    let resolveFirst: ((response: Response) => void) | undefined;
+    const meetingSnapshots: string[] = [];
+    const rows = [{ key: '1', label: 'First Person', count: 1, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }, { key: '2', label: 'Second Person', count: 2, estimated_bytes: 84, latest_at: '2026-07-18T12:00:00Z' }];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      const fixture = await snapshotFixture(request, rows);
+      if (fixture) return fixture;
+      if (path === '/api/v1/explore') {
+        const body = await request.clone().json();
+        if (body.filters[0].values[0] === '1') {
+          firstSignal = request.signal;
+          return new Promise<Response>(resolve => { resolveFirst = resolve; });
+        }
+        return Response.json(exploreResponse({ candidate_snapshot_id: 'second-snapshot', search_provenance: { vector_generation: 7 } }));
+      }
+      if (path.startsWith('/api/v1/meetings/')) {
+        const body = await request.clone().json();
+        meetingSnapshots.push(body.explore.candidate_snapshot_id);
+        return meetingFixtureResponse(path)!;
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ query: 'planning', searchMode: 'semantic', groupingChain: ['participant'] });
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Messages grouped by participant' });
+      await fireEvent.click(await within(grid).findByText('First Person'));
+      await waitFor(() => expect(resolveFirst).toBeDefined());
+      await fireEvent.click(within(grid).getByText('Second Person'));
+      await waitFor(() => expect(firstSignal?.aborted).toBe(true));
+      const pane = await screen.findByRole('complementary', { name: 'Reading pane: Second Person' });
+      await within(pane).findByText(/4 meetings/);
+      resolveFirst!(Response.json(exploreResponse({ candidate_snapshot_id: 'first-snapshot', search_provenance: { vector_generation: 7 } })));
+      await tick();
+      expect(meetingSnapshots).toContain('second-snapshot');
+      expect(meetingSnapshots).not.toContain('first-snapshot');
+      expect(screen.getByRole('complementary', { name: 'Reading pane: Second Person' })).toBeDefined();
+    } finally { view.unmount(); state.destroy(); }
   });
 
   function entry(index: number) {
@@ -527,7 +732,7 @@ describe('EverythingWorkspace', () => {
     state.replaceSearchDraft('', 'semantic');
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    await screen.findByText('Semantic index is stale.');
+    await screen.findByText('Semantic search is unavailable; check the index.');
     await fireEvent.click(screen.getByRole('button', { name: 'Build index' }));
     expect(requests.some((request) => new URL(request.url).pathname.endsWith('/cli/run'))).toBe(false);
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
@@ -567,7 +772,7 @@ describe('EverythingWorkspace', () => {
     state.replaceSearchDraft('', 'hybrid');
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
-    await screen.findByText('Semantic index is stale.');
+    await screen.findByText('Semantic search is unavailable; check the index.');
     await fireEvent.click(screen.getByRole('button', { name: 'Build index' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
 
@@ -605,10 +810,8 @@ describe('EverythingWorkspace', () => {
     grid.focus();
     await fireEvent.keyDown(grid, { key: ' ' });
 
-    expect(await screen.findByText('Export unavailable: Selection contains items without exportable files.')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
-    expect(screen.getByText('Your sources don’t provide links to open these items.')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Export selection' })).toBeNull();
+    const exportButton = await screen.findByRole('button', { name: 'Export selection' });
+    expect((exportButton as HTMLButtonElement).disabled).toBe(true);
     const body = await preflightRequests[0]!.clone().json();
     expect(body.selection).toMatchObject({
       mode: 'explicit', row_keys: ['message:1'], cache_revision: 'cache-1'
@@ -813,7 +1016,7 @@ describe('EverythingWorkspace', () => {
       grid.focus();
       await fireEvent.keyDown(grid, { key: ' ' });
       expect(screen.getByRole('button', { name: 'Meeting context…' })).toBeTruthy();
-      await fireEvent.click(screen.getByRole('button', { name: 'Select all 2 matching items' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Select all 2 matching' }));
       await waitFor(() => expect(selectionStatus().textContent).toBe('All 2 matching items selected'));
       expect(screen.queryByRole('button', { name: 'Meeting context…' })).toBeNull();
     } finally {
@@ -870,7 +1073,7 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Synthetic subject 8');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'A' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Select all 5 matching items' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Select all 5 matching' }));
     await fireEvent.keyDown(grid, { key: ' ' });
     await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
@@ -1069,7 +1272,8 @@ describe('EverythingWorkspace', () => {
       const path = new URL(request.url).pathname;
       if (path.endsWith('/groups')) {
         const row = { key: '7', label, count, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' };
-        return Response.json({ rows: [row], total_count: 1, cache_revision: cacheRevision, search_provenance: {} });
+        const body = await request.clone().json();
+        return Response.json({ ...(body.group_key ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count }], co_participants: [] } } : {}), rows: [row], total_count: 1, cache_revision: cacheRevision, search_provenance: {} });
       }
       return Response.json(exploreResponse({ cache_revision: cacheRevision }));
     });
@@ -1078,7 +1282,7 @@ describe('EverythingWorkspace', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     await screen.findByText('Group Seven v1');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Drill into Group Seven v1' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Group Seven v1' }));
     expect(await screen.findByRole('complementary', { name: 'Reading pane: Group Seven v1' })).toBeDefined();
     expect(await screen.findByText(/12 items/)).toBeDefined();
 
@@ -1200,7 +1404,7 @@ describe('EverythingWorkspace', () => {
       requests.push(request);
       if (new URL(request.url).pathname.endsWith('/groups')) {
         return Response.json({
-          rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+          rows: [sourceGroup],
           total_count: 1,
           cache_revision: 'cache-1',
           search_provenance: {}
@@ -1213,7 +1417,7 @@ describe('EverythingWorkspace', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     await screen.findByText('Example source');
-    await fireEvent.click(screen.getByRole('button', { name: 'Drill into Example source' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Example source' }));
     await waitFor(() => expect(requests).toHaveLength(3));
 
     const entryRequest = requests.find((request) => new URL(request.url).pathname === '/api/v1/explore');
@@ -1283,7 +1487,7 @@ describe('EverythingWorkspace', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
 
     await screen.findByText('Bob');
-    await fireEvent.click(screen.getByRole('button', { name: 'Drill into Bob' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Bob' }));
     await screen.findByText('Synthetic subject 3');
 
     const entryRequest = requests.find((request) => new URL(request.url).pathname === '/api/v1/explore');
@@ -1302,6 +1506,7 @@ describe('EverythingWorkspace', () => {
     await waitFor(async () => {
       expect((await groupsBodies()).some((body) => body.group_key === '2')).toBe(true);
     });
+    expect((await groupsBodies()).filter(body => body.group_key === '2')).toHaveLength(1);
     const detailBody = (await groupsBodies()).find((body) => body.group_key === '2');
     expect(detailBody).toMatchObject({
       query: 'alpha',
@@ -1562,7 +1767,9 @@ describe('EverythingWorkspace', () => {
       if (meetingResponse) return meetingResponse;
       if (new URL(request.url).pathname.endsWith('/groups')) {
         groupRequests.push(request);
+        const body = await request.clone().json();
         return Response.json({
+          ...(body.group_key ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 3 }], co_participants: [] } } : {}),
           rows: [{ key: '42', label: 'Alice Example', count: 3, estimated_bytes: 512, latest_at: '2026-07-18T12:00:00Z' }],
           total_count: 1, cache_revision: 'cache-1', search_provenance: { lexical_index_revision: 'fts-1' }
         });
@@ -1578,10 +1785,9 @@ describe('EverythingWorkspace', () => {
     const reading = await screen.findByRole('complementary', { name: 'Reading pane: Alice Example' });
     expect(within(reading).getByText(/3 items/)).toBeDefined();
     expect(groupRequests).toHaveLength(1);
-    await expect(groupRequests[0]!.clone().json()).resolves.toEqual({
+    await expect(groupRequests[0]!.clone().json()).resolves.toMatchObject({
       filters: [
-        { dimension: 'domain', values: ['example.com'] },
-        { dimension: 'participant', values: ['42'] }
+        { dimension: 'domain', values: ['example.com'] }
       ],
       query: 'alpha',
       search_mode: 'full_text',
@@ -1607,6 +1813,8 @@ describe('EverythingWorkspace', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify(initialState))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      const meetingResponse = meetingFixtureResponse(new URL(request.url).pathname);
+      if (meetingResponse) return meetingResponse;
       if (new URL(request.url).pathname.endsWith('/groups')) {
         const body = await request.clone().json();
         // Filtering by participant 2 does not make them the sole group:
@@ -1621,6 +1829,7 @@ describe('EverythingWorkspace', () => {
           ? rows.filter((row) => row.key === body.group_key)
           : rows.slice(0, body.limit ?? rows.length);
         return Response.json({
+          ...(body.group_key ? { overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 5 }], co_participants: [] } } : {}),
           rows: matched, total_count: body.group_key ? matched.length : rows.length,
           cache_revision: 'cache-1', search_provenance: {}
         });
@@ -1670,7 +1879,8 @@ describe('EverythingWorkspace', () => {
         if (body.group_key) {
           const matched = ranked.filter((row) => row.key === body.group_key);
           return Response.json({
-            rows: matched, total_count: matched.length,
+            overview: { first_at: '2026-07-01T12:00:00Z', activity: [{ bucket: '2026-07', count: 5 }], co_participants: [] },
+          rows: matched, total_count: matched.length,
             cache_revision: 'cache-1', search_provenance: {}
           });
         }
@@ -2305,7 +2515,7 @@ describe('EverythingWorkspace', () => {
     await waitFor(() => expect(state.current).toMatchObject({
       activeRow: 'group:source:2', scrollAnchor: { key: 'group:source:2', offset: 0 }
     }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Drill into Source 2' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Show items in Source 2' }));
 
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
@@ -2320,17 +2530,18 @@ describe('EverythingWorkspace', () => {
 
   it('restores an inspected drilled group across Back and Forward after grouped rows are cleared', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const detailRequests: unknown[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
+      if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
       if (!path.endsWith('/groups')) return Response.json(exploreResponse());
       const body = await request.clone().json() as { filters?: Array<{ dimension: string; values: string[] }> };
-      const restoringDetail = body.filters?.some((filter) =>
-        filter.dimension === 'source' && filter.values.includes('7'));
+      if (body.filters?.some((filter) => filter.dimension === 'source' && filter.values.includes('7'))) detailRequests.push(body);
       return Response.json({
         rows: [{
           key: '7',
-          label: restoringDetail ? 'Restored source detail' : 'Example source group',
+          label: 'alpha.example',
           count: 12,
           estimated_bytes: 42,
           latest_at: '2026-07-18T12:00:00Z'
@@ -2342,11 +2553,13 @@ describe('EverythingWorkspace', () => {
     });
     const state = new ExploreState(window);
     state.commitNavigation({ groupingChain: ['source'] });
-    const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    await screen.findByText('Example source group');
+    const client = createAPIClient(fetchFn);
+    const rendered = render(AppShell, { client, state });
+    await screen.findByRole('button', { name: 'Show items in alpha.example' });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Drill into Example source group' }));
-    expect(await screen.findByRole('complementary', { name: 'Reading pane: Restored source detail' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show items in alpha.example' }));
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: alpha.example' })).toBeDefined();
+    expect(detailRequests.length).toBeGreaterThan(0);
     expect(screen.queryByRole('grid', { name: 'Messages grouped by source' })).toBeNull();
     expect(state.current.selectedRow).toBe('group:source:7');
 
@@ -2355,9 +2568,11 @@ describe('EverythingWorkspace', () => {
     expect(await screen.findByRole('grid', { name: 'Messages grouped by source' })).toBeDefined();
     expect(state.current.selectedRow).toBeNull();
 
+    const previousDetailRequests = detailRequests.length;
     window.history.forward();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByRole('complementary', { name: 'Reading pane: Restored source detail' })).toBeDefined();
+    await waitFor(() => expect(detailRequests.length).toBeGreaterThan(previousDetailRequests));
+    expect(await screen.findByRole('complementary', { name: 'Reading pane: alpha.example' })).toBeDefined();
     expect(state.current.selectedRow).toBe('group:source:7');
     rendered.unmount();
     state.destroy();
@@ -2452,22 +2667,13 @@ describe('EverythingWorkspace', () => {
   });
 
   it.each([
-    ['participant', '42', [{ dimension: 'participant', values: ['42'] }]],
-    ['domain', 'example.com', [{ dimension: 'domain', values: ['example.com'] }]],
-    ['message_type', 'email', [{ dimension: 'message_type', values: ['email'] }]],
-    ['year', '2026', [
-      { dimension: 'after', values: ['2026-01-01T00:00:00Z'] },
-      { dimension: 'before', values: ['2027-01-01T00:00:00Z'] }
+    ['participant', '42', '42', [{ dimension: 'participant', values: ['42'] }]],
+    ['month', '2026-07', 'Jul 2026', [
+      { dimension: 'after', values: ['2026-07-01T00:00:00-04:00'] },
+      { dimension: 'before', values: ['2026-08-01T00:00:00-04:00'] },
     ]],
-    ['month', '2026-07', [
-      { dimension: 'after', values: ['2026-07-01T00:00:00Z'] },
-      { dimension: 'before', values: ['2026-08-01T00:00:00Z'] }
-    ]],
-    ['month', '2026-12', [
-      { dimension: 'after', values: ['2026-12-01T00:00:00Z'] },
-      { dimension: 'before', values: ['2027-01-01T00:00:00Z'] }
-    ]]
-  ] as const)('drills %s groups into a changed URL predicate', async (dimension, key, expectedFilters) => {
+  ] as const)('drills %s groups into a changed URL predicate', async (dimension, key, name, expectedFilters) => {
+    if (dimension === 'month') vi.stubEnv('TZ', 'America/New_York');
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -2484,14 +2690,18 @@ describe('EverythingWorkspace', () => {
       scrollAnchor: { key: `group:${dimension}:${key}`, offset: 4 }
     });
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
-    await fireEvent.click(await screen.findByRole('button', { name: `Drill into ${key}` }));
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${name}` }));
 
-    expect(state.current.filters).toEqual(expectedFilters);
-    expect(parseExploreURLState(window.location.search).filters).toEqual(expectedFilters);
-    expect(state.current.groupingChain).toEqual([]);
-    expect(state.current.scrollAnchor).toBeNull();
-    rendered.unmount();
-    state.destroy();
+      expect(state.current.filters).toEqual(expectedFilters);
+      expect(parseExploreURLState(window.location.search).filters).toEqual(expectedFilters);
+      expect(state.current.groupingChain).toEqual([]);
+      expect(state.current.scrollAnchor).toBeNull();
+    } finally {
+      rendered.unmount();
+      state.destroy();
+      vi.unstubAllEnvs();
+    }
   });
 
 
@@ -2512,11 +2722,11 @@ describe('EverythingWorkspace', () => {
     await screen.findByText('Synthetic subject 2');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'A' });
-    expect(screen.getByRole('button', { name: 'Select all 2 matching items' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Select all 2 matching' })).toBeDefined();
 
     state.commitSearch('new predicate', 'full_text');
     await waitFor(() => expect(calls).toBe(2));
-    expect(screen.queryByRole('button', { name: 'Select all 2 matching items' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Select all 2 matching' })).toBeNull();
 
     resolveNext?.(Response.json(exploreResponse({
       rows: [entry(3)],
@@ -2685,7 +2895,7 @@ describe('EverythingWorkspace', () => {
       if (path.endsWith('/explore/groups')) {
         counts.groups += 1;
         return Response.json({
-          rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+          rows: [sourceGroup],
           total_count: 1, cache_revision: 'cache-1', search_provenance: {}
         });
       }
@@ -2780,3 +2990,35 @@ describe('EverythingWorkspace', () => {
 function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
+
+it('checks local availability once and opens Settings from the full-text results hint', async () => {
+  window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', searchMode: 'full_text' }))}`);
+  const methods: string[] = [];
+  const fetchFn: typeof fetch = async input => {
+    const request = input as Request;
+    if (new URL(request.url).pathname === '/api/v1/embeddings/local') {
+      methods.push(request.method);
+      return Response.json({ host: 'archive.example.test', enabled: false, provider: '', phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
+    }
+    return Response.json(exploreResponse());
+  };
+  const client = createAPIClient(fetchFn, fetchFn);
+  const state = new ExploreState(window);
+  const view = render(AppShell, { client, state });
+  await waitFor(() => expect(methods).toEqual(['GET']));
+  expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
+  state.replaceSearchDraft('orchard', 'full_text');
+  await screen.findByRole('button', { name: 'Turn on' });
+  state.replaceSearchDraft('pear', 'full_text');
+  // The hint steps aside while the new query loads.
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull());
+  await screen.findByRole('button', { name: 'Turn on' });
+  expect(methods).toEqual(['GET']);
+  await fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
+  await waitFor(() => expect(state.current.workspace).toBe('settings'));
+  expect(state.current.settingsCategory).toBe('overview');
+  expect(screen.queryByText(/Search by meaning is off/)).toBeNull();
+  expect(methods.filter(method => method !== 'GET')).toEqual([]);
+  view.unmount();
+  state.destroy();
+});

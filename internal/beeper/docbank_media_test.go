@@ -118,7 +118,7 @@ type occurrenceRow struct {
 
 func occurrenceRows(t *testing.T, st *store.Store, destination string) []occurrenceRow {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT occurrence_ref, revision, retention_state, retention_operation_id, error_code, source_type,
 		       source_id, source_version_id, content_version_id, occurrence_id, coverage_state,
 		       processing_key, source_message_id
@@ -146,7 +146,7 @@ type deliveryRow struct {
 
 func deliveryRows(t *testing.T, st *store.Store, destination string) []deliveryRow {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT phase, source_id, source_version_id, content_version_id, donor_occurrence_id,
 		       supplied_input_id, COALESCE(pending_operation_id, ''),
 		       COALESCE(processing_operation_id, ''), job_id, operation_state, coverage_state, error_code
@@ -285,7 +285,7 @@ func TestBeeperMediaGatedWrites(t *testing.T) {
 func mediaArchiveState(t *testing.T, st *store.Store) []string {
 	t.Helper()
 	state := tableSnapshot(t, st)
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT key || '=' || value FROM archive_metadata
 		UNION ALL
 		SELECT consumer_key || '|' || CAST(last_sequence AS TEXT) || '|' || CAST(reconciliation_complete AS TEXT)
@@ -347,7 +347,8 @@ func TestBeeperMediaSyncIsolation(t *testing.T) {
 			require.NoError(err)
 			assert.EqualValues(0, summary.Errors)
 			var added int
-			require.NoError(world.st.DB().QueryRow(
+			require.NoError(world.st.DB().QueryRowContext(
+				t.Context(),
 				`SELECT COUNT(*) FROM messages WHERE source_message_id = 'text-after-fault'`).Scan(&added))
 			assert.Equal(1, added)
 			src, err := world.st.GetOrCreateSource("beeper", "signal")
@@ -356,7 +357,7 @@ func TestBeeperMediaSyncIsolation(t *testing.T) {
 			require.NoError(err)
 			assert.True(run.CursorAfter.Valid)
 			var state, hash string
-			require.NoError(world.st.DB().QueryRow(`
+			require.NoError(world.st.DB().QueryRowContext(t.Context(), `
 				SELECT attachment_state, content_hash FROM attachments
 				WHERE source_attachment_id = 'beeper:mxc://beeper.local/voice1'`).Scan(&state, &hash))
 			assert.Equal("stored", state)
@@ -383,7 +384,7 @@ func TestBeeperMediaRestart(t *testing.T) {
 	assert.Equal("transport", rows[0].ErrorCode)
 
 	// A new worker stands in for a restarted daemon once the retry delay passes.
-	_, err := world.st.DB().Exec(`UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
+	_, err := world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	runPasses(t, world.submitter(t, server, "destination-restart"), 1)
 
@@ -520,7 +521,7 @@ func TestBeeperMediaCoverageAfterJob(t *testing.T) {
 	docbank.mu.Lock()
 	docbank.coverage = "transcribed"
 	docbank.mu.Unlock()
-	_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+	_, err := world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	runPasses(t, submitter, 1)
 	deliveries = deliveryRows(t, world.st, "destination-coverage")
@@ -553,7 +554,7 @@ func TestBeeperMediaProcessingFailure(t *testing.T) {
 	assert.Equal("processing_failed", deliveries[0].ErrorCode)
 	assert.Empty(deliveries[0].JobID)
 
-	_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+	_, err := world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	runPasses(t, submitter, 3)
 	docbank.mu.Lock()
@@ -600,7 +601,7 @@ func TestBeeperMediaCoverageOwnership(t *testing.T) {
 		assert.Equal("observing", row.Phase)
 	}
 	due := func() {
-		_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+		_, err := world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
 		require.NoError(err)
 	}
 
@@ -655,7 +656,7 @@ func TestBeeperMediaLargeUpload(t *testing.T) {
 
 	// Scale the rate so this file's allowance is at least ten seconds.
 	submitter.uploadRate = max(1, int64(len(wav))/10)
-	_, err := world.st.DB().Exec(`UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
+	_, err := world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	runPasses(t, submitter, 1)
 	rows = occurrenceRows(t, world.st, "destination-large")
@@ -685,9 +686,9 @@ func TestBeeperMediaHiddenPending(t *testing.T) {
 		assert.Equal("pending", row.State)
 	}
 	var hiddenID, liveID int64
-	require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'hidden'`).Scan(&hiddenID))
-	require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'live'`).Scan(&liveID))
-	_, err := world.st.MergeDuplicates(liveID, []int64{hiddenID}, "batch-hidden")
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id = 'hidden'`).Scan(&hiddenID))
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id = 'live'`).Scan(&liveID))
+	_, err := world.st.MergeDuplicates(t.Context(), liveID, []int64{hiddenID}, "batch-hidden")
 	require.NoError(err)
 
 	docbank := newFakeDocbank(t)
@@ -701,7 +702,7 @@ func TestBeeperMediaHiddenPending(t *testing.T) {
 	}
 	assert.Equal(map[string]string{"hidden": "revoked:no_live_occurrence", "live": "retained:"}, states)
 
-	_, err = world.st.DB().Exec(`UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
+	_, err = world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_occurrences SET next_action_at = '2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	docbank.mu.Lock()
 	requests := docbank.requests
@@ -712,7 +713,7 @@ func TestBeeperMediaHiddenPending(t *testing.T) {
 	assert.Equal([][]byte{live}, docbank.uploads)
 	docbank.mu.Unlock()
 
-	_, err = world.st.UndoDedup("batch-hidden")
+	_, err = world.st.UndoDedup(t.Context(), "batch-hidden")
 	require.NoError(err)
 	runPasses(t, submitter, 2)
 	for _, row := range occurrenceRows(t, world.st, "destination-hidden") {
@@ -730,22 +731,22 @@ func TestBeeperMediaRetainActionFence(t *testing.T) {
 		{name: "dedup-hide", code: "no_live_occurrence", apply: func(t *testing.T, world *mediaWorld, operation store.BeeperMediaOperation) {
 			t.Helper()
 			var survivor int64
-			require.NoError(t, world.st.DB().QueryRow(world.st.Rebind(
+			require.NoError(t, world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(
 				`SELECT id FROM messages WHERE id <> ? ORDER BY id LIMIT 1`), operation.MessageID).Scan(&survivor))
-			_, err := world.st.MergeDuplicates(survivor, []int64{operation.MessageID}, "retain-hide")
+			_, err := world.st.MergeDuplicates(t.Context(), survivor, []int64{operation.MessageID}, "retain-hide")
 			require.NoError(t, err)
 		}},
 		{name: "source-delete", code: "no_live_occurrence", apply: func(t *testing.T, world *mediaWorld, operation store.BeeperMediaOperation) {
 			t.Helper()
 			var sourceID int64
 			var sourceMessageID string
-			require.NoError(t, world.st.DB().QueryRow(world.st.Rebind(`SELECT source_id, source_message_id FROM messages WHERE id = ?`), operation.MessageID).
+			require.NoError(t, world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`SELECT source_id, source_message_id FROM messages WHERE id = ?`), operation.MessageID).
 				Scan(&sourceID, &sourceMessageID))
 			require.NoError(t, world.st.MarkMessageDeleted(sourceID, sourceMessageID))
 		}},
 		{name: "attachment-replacement", code: "source_changed", apply: func(t *testing.T, world *mediaWorld, operation store.BeeperMediaOperation) {
 			t.Helper()
-			_, err := world.st.DB().Exec(world.st.Rebind(
+			_, err := world.st.DB().ExecContext(t.Context(), world.st.Rebind(
 				`UPDATE attachments SET content_hash = ? WHERE id = ?`), strings.Repeat("f", 64), operation.AttachmentID)
 			require.NoError(t, err)
 		}},
@@ -790,7 +791,7 @@ func TestBeeperMediaRetainActionFence(t *testing.T) {
 				assert.Equal("revoked", selected.State)
 			}
 			if mutation.name == "dedup-hide" {
-				_, err := world.st.UndoDedup("retain-hide")
+				_, err := world.st.UndoDedup(t.Context(), "retain-hide")
 				require.NoError(err)
 				runPasses(t, NewMediaSubmitter(world.st, world.blobs, nil, "retain-fence", world.dir), 1)
 				restored := world.submitter(t, server, "retain-fence")
@@ -852,11 +853,11 @@ func TestBeeperMediaArtifactActionFence(t *testing.T) {
 				_, err := worker.RunBatch(t.Context())
 				require.NoError(err)
 				if shared {
-					_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2999-01-01 00:00:00.000'`)
+					_, err = world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2999-01-01 00:00:00.000'`)
 					require.NoError(err)
 					_, err = worker.RunBatch(t.Context())
 					require.NoError(err)
-					_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+					_, err = world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
 					require.NoError(err)
 				}
 				for range 4 {
@@ -882,20 +883,20 @@ func TestBeeperMediaArtifactActionFence(t *testing.T) {
 					surviving = mappings[1]
 				}
 				var otherMessage int64
-				require.NoError(world.st.DB().QueryRow(world.st.Rebind(`SELECT id FROM messages WHERE id <> ? ORDER BY id LIMIT 1`), donor.MessageID).Scan(&otherMessage))
+				require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`SELECT id FROM messages WHERE id <> ? ORDER BY id LIMIT 1`), donor.MessageID).Scan(&otherMessage))
 				apply := func() {
 					switch mutation {
 					case "dedup-hide":
-						_, err := world.st.MergeDuplicates(otherMessage, []int64{donor.MessageID}, "artifact-hide")
+						_, err := world.st.MergeDuplicates(t.Context(), otherMessage, []int64{donor.MessageID}, "artifact-hide")
 						require.NoError(err)
 					case "source-delete":
 						var sourceID int64
 						var sourceMessageID string
-						require.NoError(world.st.DB().QueryRow(world.st.Rebind(`SELECT source_id, source_message_id FROM messages WHERE id = ?`), donor.MessageID).
+						require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`SELECT source_id, source_message_id FROM messages WHERE id = ?`), donor.MessageID).
 							Scan(&sourceID, &sourceMessageID))
 						require.NoError(world.st.MarkMessageDeleted(sourceID, sourceMessageID))
 					case "attachment-replacement":
-						_, err := world.st.DB().Exec(world.st.Rebind(
+						_, err := world.st.DB().ExecContext(t.Context(), world.st.Rebind(
 							`UPDATE attachments SET content_hash = ? WHERE id = ?`), strings.Repeat("e", 64), donor.AttachmentID)
 						require.NoError(err)
 					}
@@ -953,7 +954,7 @@ func TestBeeperMediaProcessSupplierRace(t *testing.T) {
 	require.True(ok)
 	assert.Equal(store.BeeperMediaOperationProcess, operation.Kind)
 	var sourceID int64
-	require.NoError(world.st.DB().QueryRow(`SELECT source_id FROM messages WHERE source_message_id = 'voice1'`).Scan(&sourceID))
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT source_id FROM messages WHERE source_message_id = 'voice1'`).Scan(&sourceID))
 	archiveUID, err := world.st.ArchiveUIDContext(t.Context())
 	require.NoError(err)
 
@@ -962,7 +963,7 @@ func TestBeeperMediaProcessSupplierRace(t *testing.T) {
 		gateCalls++
 		if gateCalls == 1 {
 			return func() {
-				require.NoError(world.st.MarkMessageDeleted(sourceID, "voice1"))
+				require.NoError(world.st.MarkMessageDeletedContext(t.Context(), sourceID, "voice1"))
 			}, true
 		}
 		return func() {}, true
@@ -1021,7 +1022,7 @@ func TestBeeperMediaProcessRaceKeepsPendingSupplier(t *testing.T) {
 
 			// Keep the second source pending while the first reaches process.
 			future := time.Now().UTC().Add(24 * time.Hour)
-			_, err = world.st.DB().Exec(world.st.Rebind(`
+			_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`
 				UPDATE beeper_media_occurrences SET next_action_at = ?
 				WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?`),
 				future, "destination-race-shared", sibling.Ref, sibling.Revision)
@@ -1036,13 +1037,13 @@ func TestBeeperMediaProcessRaceKeepsPendingSupplier(t *testing.T) {
 			require.True(ok)
 			require.Equal(store.BeeperMediaOperationProcess, operation.Kind)
 			var sourceID int64
-			require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+			require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`
 				SELECT source_id FROM messages WHERE source_message_id = ?`), retained.MessageID).Scan(&sourceID))
 			errorCode := ""
 			if state == "source_unavailable" {
 				errorCode = state
 			}
-			_, err = world.st.DB().Exec(world.st.Rebind(`
+			_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`
 				UPDATE beeper_media_occurrences
 				SET retention_state = ?, next_action_at = ?, error_code = ?
 				WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?`),
@@ -1062,7 +1063,7 @@ func TestBeeperMediaProcessRaceKeepsPendingSupplier(t *testing.T) {
 			docbank.mu.Unlock()
 
 			// Once the other source can retain the audio, the saved operation runs.
-			_, err = world.st.DB().Exec(world.st.Rebind(`
+			_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`
 				UPDATE beeper_media_occurrences SET next_action_at = ?
 				WHERE destination_key = ? AND occurrence_ref = ? AND revision = ?`),
 				time.Now().UTC().Add(-time.Minute), "destination-race-shared", sibling.Ref, sibling.Revision)
@@ -1111,7 +1112,7 @@ func TestBeeperMediaStartedJobAfterRevocation(t *testing.T) {
 	requests := docbank.requests
 	docbank.mu.Unlock()
 	var sourceID int64
-	require.NoError(world.st.DB().QueryRow(`SELECT source_id FROM messages WHERE source_message_id = 'voice1'`).Scan(&sourceID))
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT source_id FROM messages WHERE source_message_id = 'voice1'`).Scan(&sourceID))
 	require.NoError(world.st.MarkMessageDeleted(sourceID, "voice1"))
 	require.NoError(world.st.UnregisterAttachmentChangeConsumer(t.Context(), store.BeeperMediaAttachmentConsumerKey))
 	result, err := NewMediaSubmitter(world.st, world.blobs, nil, "destination-revoked-job", world.dir).RunBatch(t.Context())
@@ -1132,7 +1133,7 @@ func TestBeeperMediaStartedJobAfterRevocation(t *testing.T) {
 	docbank.mu.Lock()
 	assert.Equal(requests, docbank.requests)
 	docbank.mu.Unlock()
-	_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+	_, err = world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
 	require.NoError(err)
 	docbank.mu.Lock()
 	docbank.coverage = "transcribed"
@@ -1176,9 +1177,9 @@ func TestBeeperMediaRevokedObservingVaultMismatch(t *testing.T) {
 			require.Equal("observing", deliveries[0].Phase)
 			before := len(docbank.processOps)
 			var sourceID int64
-			require.NoError(world.st.DB().QueryRow(`SELECT source_id FROM messages WHERE source_message_id = 'voice1'`).Scan(&sourceID))
+			require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT source_id FROM messages WHERE source_message_id = 'voice1'`).Scan(&sourceID))
 			require.NoError(world.st.MarkMessageDeleted(sourceID, "voice1"))
-			_, err := world.st.DB().Exec(`UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
+			_, err := world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET next_action_at = '2000-01-01 00:00:00.000'`)
 			require.NoError(err)
 			docbank.mu.Lock()
 			docbank.sourceVaultUID = tc.sourceVault
@@ -1289,7 +1290,7 @@ func TestBeeperMediaTranscriptBoundary(t *testing.T) {
 		mime: "audio/wav", fileName: "voice.wav", transcript: long, data: syntheticWAV(800, 5)})
 
 	var body, metadata string
-	require.NoError(world.st.DB().QueryRow(`
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), `
 		SELECT b.body_text, COALESCE(CAST(a.attachment_metadata AS TEXT), '')
 		FROM messages m JOIN message_bodies b ON b.message_id = m.id
 		JOIN attachments a ON a.message_id = m.id
@@ -1352,10 +1353,10 @@ func TestStoredMediaSharedLifecycle(t *testing.T) {
 	assert := assert.New(t)
 	wav := syntheticWAV(800, 7)
 	world := importVoiceChat(t)
-	addStoredMediaSource(t, world, "gmail", "rod@example.com", "mail-audio", wav,
+	addStoredMediaSource(t.Context(), t, world, "gmail", "rod@example.com", "mail-audio", wav,
 		"meeting.wav", "audio/wav", "", store.AttachmentRoleStandalone, "", nil,
 		"mail:attachment:1", "mime:1.2")
-	addStoredMediaSource(t, world, "whatsapp", "+15555550101", "whatsapp-audio", wav,
+	addStoredMediaSource(t.Context(), t, world, "whatsapp", "+15555550101", "whatsapp-audio", wav,
 		"voice.wav", "audio/wav", "", store.AttachmentRoleStandalone, "", nil,
 		"whatsapp:media", "whatsapp:media")
 	docbank := newFakeDocbank(t)
@@ -1383,14 +1384,14 @@ func TestStoredMediaSharedLifecycle(t *testing.T) {
 	docbank.mu.Unlock()
 
 	var donorType, donorMessage string
-	require.NoError(world.st.DB().QueryRow(world.st.Rebind(`
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`
 		SELECT s.source_type, m.source_message_id
 		FROM beeper_media_occurrences o
 		JOIN messages m ON m.id = o.message_id
 		JOIN sources s ON s.id = m.source_id
 		WHERE o.destination_key = ? AND o.occurrence_id = ?`),
 		"destination-shared", deliveries[0].Donor).Scan(&donorType, &donorMessage))
-	_, err := world.st.DB().Exec(world.st.Rebind(`
+	_, err := world.st.DB().ExecContext(t.Context(), world.st.Rebind(`
 		UPDATE messages SET deleted_at = ?
 		WHERE source_message_id = ? AND source_id = (SELECT id FROM sources WHERE source_type = ? AND identifier = ?)`),
 		time.Now().UTC(), donorMessage, donorType, map[string]string{
@@ -1411,7 +1412,7 @@ func TestStoredMediaSharedLifecycle(t *testing.T) {
 	docbank.mu.Lock()
 	docbank.coverage = "transcribed"
 	docbank.mu.Unlock()
-	_, err = world.st.DB().Exec(world.st.Rebind(`UPDATE beeper_media_deliveries
+	_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`UPDATE beeper_media_deliveries
 		SET next_action_at = '2000-01-01 00:00:00.000' WHERE destination_key = ?`), "destination-shared")
 	require.NoError(err)
 	runPasses(t, submitter, 1)
@@ -1421,9 +1422,9 @@ func TestStoredMediaSharedLifecycle(t *testing.T) {
 	docbank.mu.Unlock()
 
 	// A repeated complete backfill finds nothing to change or send.
-	_, err = world.st.DB().Exec(`UPDATE beeper_media_occurrences SET updated_at = '2001-02-03 04:05:06'`)
+	_, err = world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_occurrences SET updated_at = '2001-02-03 04:05:06'`)
 	require.NoError(err)
-	_, err = world.st.DB().Exec(`UPDATE beeper_media_deliveries SET updated_at = '2001-02-03 04:05:06'`)
+	_, err = world.st.DB().ExecContext(t.Context(), `UPDATE beeper_media_deliveries SET updated_at = '2001-02-03 04:05:06'`)
 	require.NoError(err)
 	before := tableSnapshot(t, world.st)
 	runPasses(t, submitter, 3)
@@ -1446,7 +1447,7 @@ func TestBeeperMediaEligibility(t *testing.T) {
 
 	other, err := world.st.GetOrCreateSource("whatsapp", "beeper-lookalike")
 	require.NoError(err)
-	conversation, err := world.st.EnsureConversation(other.ID, "whatsapp-thread", "Thread")
+	conversation, err := world.st.EnsureConversation(t.Context(), other.ID, "whatsapp-thread", "Thread")
 	require.NoError(err)
 	otherMessage, err := world.st.UpsertMessage(&store.Message{ConversationID: conversation, SourceID: other.ID,
 		SourceMessageID: "beeper-message", MessageType: "whatsapp", SizeEstimate: 10})
@@ -1458,7 +1459,7 @@ func TestBeeperMediaEligibility(t *testing.T) {
 		RoleSource: store.AttachmentRoleSourceImporterSemantics,
 	}))
 	var beeperMessage int64
-	require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'voice1'`).Scan(&beeperMessage))
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id = 'voice1'`).Scan(&beeperMessage))
 	require.NoError(world.st.UpsertAttachmentRecord(t.Context(), beeperMessage, store.AttachmentWrite{
 		Filename: "preview.wav", MIMEType: "audio/wav", StoragePath: sha256Hex(ordinary)[:2] + "/" + sha256Hex(ordinary),
 		ContentHash: sha256Hex(ordinary), Size: int64(len(ordinary)), SourceAttachmentID: "beeper:preview",
@@ -1483,7 +1484,7 @@ func TestBeeperMediaEligibility(t *testing.T) {
 		"beeper-message": "retained:",
 	}, states)
 	var messageType string
-	require.NoError(world.st.DB().QueryRow(`SELECT message_type FROM messages WHERE source_message_id = 'audio1'`).Scan(&messageType))
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT message_type FROM messages WHERE source_message_id = 'audio1'`).Scan(&messageType))
 	assert.Equal("beeper", messageType)
 }
 
@@ -1500,7 +1501,7 @@ func TestBeeperMediaAdmissionGaps(t *testing.T) {
 		voiceSpec{id: "gap", asset: "mxc://beeper.local/gap", mime: "audio/wav", fileName: "gap.wav",
 			transcript: "gap words", data: syntheticWAV(800, 11)})
 	var gapMessage int64
-	require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'gap'`).Scan(&gapMessage))
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id = 'gap'`).Scan(&gapMessage))
 	require.NoError(world.st.UpsertMessageRawWithFormat(gapMessage,
 		[]byte(`{"id":"gap","timestamp":"2026-01-01T00:00:00Z","attachments":[]}`), "beeper_json"))
 
@@ -1548,7 +1549,7 @@ func TestBeeperMediaAdmissionGaps(t *testing.T) {
 
 	// A new source revision of the same audio and transcript reopens its delivery.
 	var opusMessage int64
-	require.NoError(world.st.DB().QueryRow(`SELECT id FROM messages WHERE source_message_id = 'opus'`).Scan(&opusMessage))
+	require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE source_message_id = 'opus'`).Scan(&opusMessage))
 	raw, err := world.st.GetMessageRawContext(t.Context(), opusMessage)
 	require.NoError(err)
 	var envelope map[string]any
@@ -1661,7 +1662,7 @@ func TestBeeperMediaSpoolUnavailable(t *testing.T) {
 	require.True(ready)
 	assert.Equal(rows[0].OperationID, operation.OperationID)
 	submitter.spoolDir = spoolDir
-	_, err = world.st.DB().Exec(world.st.Rebind(`
+	_, err = world.st.DB().ExecContext(t.Context(), world.st.Rebind(`
 		UPDATE beeper_media_occurrences SET next_action_at = updated_at WHERE destination_key = ?`),
 		"destination-spool")
 	require.NoError(err)
@@ -1674,7 +1675,7 @@ func TestBeeperMediaSpoolUnavailable(t *testing.T) {
 
 func deliveryNextActions(t *testing.T, st *store.Store, destination string) []string {
 	t.Helper()
-	rows, err := st.DB().Query(st.Rebind(`
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`
 		SELECT processing_key FROM beeper_media_deliveries
 		WHERE destination_key = ? AND next_action_at IS NOT NULL`), destination)
 	require.NoError(t, err)
@@ -2201,7 +2202,7 @@ func tableSnapshot(t *testing.T, st *store.Store) []string {
 		 FROM beeper_media_deliveries ORDER BY processing_key`,
 	} {
 		func() {
-			rows, err := st.DB().Query(query)
+			rows, err := st.DB().QueryContext(t.Context(), query)
 			require.NoError(t, err)
 			defer func() { require.NoError(t, rows.Close()) }()
 			for rows.Next() {

@@ -41,7 +41,7 @@ func TestSenderAuthMessageReads(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Equal(int64(1), summary.MessagesAdded)
 	var id int64
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT id FROM messages WHERE source_id = ?`), summary.SourceID).Scan(&id))
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT id FROM messages WHERE source_id = ?`), summary.SourceID).Scan(&id))
 	noRaw := f.CreateMessage("no-raw")
 	const want = `{"verified":true,"domain":"example.test","authserv_id":"mx.google.com","spf":"pass","dkim":"pass","dmarc":"pass"}`
 	for _, withEngine := range []bool{false, true} {
@@ -59,7 +59,7 @@ func TestSenderAuthMessageReads(t *testing.T) {
 					}
 					srv := NewServerWithOptions(opts)
 					for _, messageType := range []string{"email", "google_chat"} {
-						_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), messageType, id)
+						_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), messageType, id)
 						require.NoError(t, err)
 						paths := []string{fmt.Sprintf("/api/v1/messages/%d", id)}
 						if withEngine {
@@ -67,7 +67,7 @@ func TestSenderAuthMessageReads(t *testing.T) {
 						}
 						for _, path := range paths {
 							w := httptest.NewRecorder()
-							srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+							srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 							require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 							var got map[string]json.RawMessage
 							require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
@@ -80,7 +80,7 @@ func TestSenderAuthMessageReads(t *testing.T) {
 					}
 					if pinned {
 						w := httptest.NewRecorder()
-						srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", noRaw), nil))
+						srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", noRaw), nil))
 						require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 						var got struct {
 							SenderAuth *senderauth.Verdict `json:"sender_auth"`
@@ -99,7 +99,7 @@ func TestSenderAuthReadFailureLogs(t *testing.T) {
 	f := storetest.New(t)
 	id := f.CreateMessage("corrupt-raw")
 	require.NoError(f.Store.UpsertMessageRaw(id, email.NewMessage().From("sender@example.test").Bytes()))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), []byte("corrupt zlib"), id)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), []byte("corrupt zlib"), id)
 	require.NoError(err)
 	var logs bytes.Buffer
 	cfg := &config.Config{SenderAuth: config.SenderAuthConfig{Sources: []config.SenderAuthSource{{SourceID: f.Source.ID, TrustedAuthservIDs: []string{"mx.google.com"}}}}}

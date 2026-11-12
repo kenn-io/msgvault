@@ -321,7 +321,7 @@ func (e *Engine) Scan(ctx context.Context) (*Report, error) {
 	data.rawMIME = nil
 
 	if e.config.ContentHashFallback {
-		if err := e.appendContentHashGroups(report); err != nil {
+		if err := e.appendContentHashGroups(ctx, report); err != nil {
 			return nil, err
 		}
 	}
@@ -349,11 +349,11 @@ func (e *Engine) loadScanData(ctx context.Context) (scanData, error) {
 	if err != nil {
 		return scanData{}, fmt.Errorf("plan RFC822 ID backfill: %w", err)
 	}
-	data.totalMessages, err = e.store.CountActiveMessages(e.config.AccountSourceIDs...)
+	data.totalMessages, err = e.store.CountActiveMessagesContext(ctx, e.config.AccountSourceIDs...)
 	if err != nil {
 		return scanData{}, fmt.Errorf("count active messages: %w", err)
 	}
-	data.groups, err = e.store.FindDuplicatesByRFC822ID(e.config.AccountSourceIDs...)
+	data.groups, err = e.store.FindDuplicatesByRFC822ID(ctx, e.config.AccountSourceIDs...)
 	if err != nil {
 		return scanData{}, fmt.Errorf("find duplicates: %w", err)
 	}
@@ -361,11 +361,11 @@ func (e *Engine) loadScanData(ctx context.Context) (scanData, error) {
 	if err != nil {
 		return scanData{}, err
 	}
-	data.rawMIME, err = e.inspectDuplicateRawMIME(rawMessageIDs(data.messages))
+	data.rawMIME, err = e.inspectDuplicateRawMIME(ctx, rawMessageIDs(data.messages))
 	if err != nil {
 		return scanData{}, fmt.Errorf("fingerprint duplicate raw MIME: %w", err)
 	}
-	if err := e.fingerprintApplePlaceholderGroups(data); err != nil {
+	if err := e.fingerprintApplePlaceholderGroups(ctx, data); err != nil {
 		return scanData{}, fmt.Errorf("fingerprint Apple Mail placeholder groups: %w", err)
 	}
 	return data, nil
@@ -456,7 +456,7 @@ func (e *Engine) duplicateMessage(
 	}
 }
 
-func (e *Engine) appendContentHashGroups(report *Report) error {
+func (e *Engine) appendContentHashGroups(ctx context.Context, report *Report) error {
 	excludeIDs := make(map[int64]bool, len(report.Groups)*2)
 	messageIDSurvivors := make(map[int64]bool, len(report.Groups))
 	for _, group := range report.Groups {
@@ -468,7 +468,7 @@ func (e *Engine) appendContentHashGroups(report *Report) error {
 			excludeIDs[message.ID] = true
 		}
 	}
-	groups, skipped, err := e.scanNormalizedHashGroups(excludeIDs)
+	groups, skipped, err := e.scanNormalizedHashGroups(ctx, excludeIDs)
 	if err != nil {
 		return fmt.Errorf("scan normalized content hashes: %w", err)
 	}
@@ -549,9 +549,11 @@ type hashResult struct {
 // Returns the duplicate groups plus a count of candidates skipped due to
 // zlib decompression failure.
 func (e *Engine) scanNormalizedHashGroups(
+	ctx context.Context,
 	excludeIDs map[int64]bool,
 ) ([]DuplicateGroup, int, error) {
 	candidates, err := e.store.GetAllRawMIMECandidates(
+		ctx,
 		e.config.AccountSourceIDs...,
 	)
 	if err != nil {
@@ -652,7 +654,8 @@ func (e *Engine) scanNormalizedHashGroups(
 		close(collectDone)
 	}()
 
-	readErr := e.store.StreamMessageRaw(
+	readErr := e.store.StreamMessageRawContext(
+		ctx,
 		ids,
 		func(messageID int64, rawData []byte, compression string) {
 			c, ok := candidateMap[messageID]
@@ -824,10 +827,12 @@ type duplicateRawMIMEInfo struct {
 }
 
 func (e *Engine) inspectDuplicateRawMIME(
+	ctx context.Context,
 	messageIDs []int64,
 ) (map[int64]duplicateRawMIMEInfo, error) {
 	infoByID := make(map[int64]duplicateRawMIMEInfo, len(messageIDs))
-	err := e.store.StreamMessageRaw(
+	err := e.store.StreamMessageRawContext(
+		ctx,
 		messageIDs,
 		func(messageID int64, rawData []byte, compression string) {
 			info := duplicateRawMIMEInfo{messageIDChecked: true}
@@ -855,7 +860,7 @@ func (e *Engine) inspectDuplicateRawMIME(
 
 // fingerprintApplePlaceholderGroups records MIME part fingerprints for every
 // raw copy in Message-ID groups where some copy has an Apple Mail placeholder.
-func (e *Engine) fingerprintApplePlaceholderGroups(data scanData) error {
+func (e *Engine) fingerprintApplePlaceholderGroups(ctx context.Context, data scanData) error {
 	var ids []int64
 	for _, rows := range data.messages {
 		if !slices.ContainsFunc(rows, func(row store.DuplicateMessageRow) bool {
@@ -873,7 +878,7 @@ func (e *Engine) fingerprintApplePlaceholderGroups(data scanData) error {
 		return nil
 	}
 	slices.Sort(ids)
-	return e.store.StreamMessageRaw(ids, func(messageID int64, rawData []byte, compression string) {
+	return e.store.StreamMessageRawContext(ctx, ids, func(messageID int64, rawData []byte, compression string) {
 		raw, err := decodeRawMIME(rawData, compression)
 		if err != nil {
 			e.logger.Warn("dedup: raw MIME part fingerprint failed",
@@ -1401,7 +1406,7 @@ func (e *Engine) mergeGroups(
 				duplicateIDs = append(duplicateIDs, message.ID)
 			}
 		}
-		result, err := e.store.MergeDuplicates(survivorID, duplicateIDs, batchID)
+		result, err := e.store.MergeDuplicates(ctx, survivorID, duplicateIDs, batchID)
 		if err != nil {
 			return fmt.Errorf("merge group %d (%s): %w", i, group.Key, err)
 		}
@@ -1543,11 +1548,11 @@ func dedupStrings(in []string) []string {
 // fails, the remaining manifests are still attempted, and any errors
 // are joined into a single returned error alongside the restored row
 // count and the list of manifests already in progress.
-func (e *Engine) Undo(batchID string) (int64, []string, error) {
+func (e *Engine) Undo(ctx context.Context, batchID string) (int64, []string, error) {
 	started := time.Now()
 	e.logger.Info("dedup undo start", "batch", batchID)
 
-	restored, err := e.store.UndoDedup(batchID)
+	restored, err := e.store.UndoDedup(ctx, batchID)
 	if err != nil {
 		e.logger.Warn("dedup undo failed",
 			"batch", batchID,

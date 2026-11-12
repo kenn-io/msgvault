@@ -51,10 +51,10 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	for range 3003 {
 		fixture.AddMessage(dbtest.MessageOpts{SourceID: source, ConversationID: conversation})
 	}
-	_, err := s.DB().Exec("PRAGMA analysis_limit=1000; ANALYZE messages")
+	_, err := s.DB().ExecContext(t.Context(), "PRAGMA analysis_limit=1000; ANALYZE messages")
 	require.NoError(err)
 	var stat string
-	require.NoError(s.DB().QueryRow("SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'").Scan(&stat))
+	require.NoError(s.DB().QueryRowContext(t.Context(), "SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'").Scan(&stat))
 	require.NotEqual("3003 3003", stat)
 	sampled := stat
 
@@ -67,7 +67,7 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 		return nil, ctx.Err()
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	cmd := &cobra.Command{Use: "serve"}
 	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))
@@ -96,7 +96,11 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 		} `json:"vector"`
 	}
 	require.Eventually(func() bool {
-		resp, err := http.Get(healthURL) //nolint:gosec // local test server
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, healthURL, nil)
+		if err != nil {
+			return false
+		}
+		resp, err := http.DefaultClient.Do(request)
 		if err != nil {
 			return false
 		}
@@ -110,7 +114,7 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	assert.Equal("initializing", health.Vector.Status)
 
 	require.Eventually(func() bool {
-		return s.DB().QueryRow("SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'").Scan(&stat) == nil && stat != sampled
+		return s.DB().QueryRowContext(t.Context(), "SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'").Scan(&stat) == nil && stat != sampled
 	}, serveLifecycleTestTimeout, 25*time.Millisecond, "daemon startup must replace sampled message statistics")
 }
 
@@ -146,7 +150,7 @@ func TestRunServeStartsVectorWhileAnalyticsInitializationBlocked(t *testing.T) {
 		return nil, ctx.Err()
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	cmd := &cobra.Command{Use: "serve"}
 	cmd.SetContext(testInvocationContext(ctx, cfg, invocationOptions{}))

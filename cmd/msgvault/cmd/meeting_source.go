@@ -154,9 +154,12 @@ func (r meetingSyncRun) finishScheduled(
 // requireRegisteredMeetingSource stops a scheduled sync before the importer's
 // GetOrCreateSource would create a source the user never added.
 func requireRegisteredMeetingSource(
+	ctx context.Context,
 	st *store.Store, sourceType, identifier string, missing error,
 ) (*store.Source, error) {
-	source, err := st.GetSourceByTypeAndIdentifier(sourceType, identifier)
+	// The lookup is a short local read. It ignores cancellation, as it did
+	// before, so a canceled run still reports a missing registration.
+	source, err := st.GetSourceByTypeAndIdentifier(context.WithoutCancel(ctx), sourceType, identifier)
 	if errors.Is(err, store.ErrSourceNotFound) {
 		return nil, missing
 	}

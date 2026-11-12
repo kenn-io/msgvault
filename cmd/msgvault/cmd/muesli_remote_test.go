@@ -47,7 +47,7 @@ func TestMuesliLocalReaderToRemoteArchive(t *testing.T) {
 	db, err := sql.Open("sqlite3", path)
 	require.NoError(err)
 	defer func() { _ = db.Close() }()
-	_, err = db.Exec(`CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, start_time TEXT, created_at TEXT, meeting_status TEXT, raw_transcript TEXT, manual_notes TEXT, deleted_at TEXT);
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT, start_time TEXT, created_at TEXT, meeting_status TEXT, raw_transcript TEXT, manual_notes TEXT, deleted_at TEXT);
  INSERT INTO meetings VALUES (42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','completed','Initial synthetic transcript','',NULL);
  INSERT INTO meetings VALUES (43,'Unfinished','2026-09-01T14:00:00Z','2026-09-01 14:00:04','processing','unfinished','',NULL)`)
 	require.NoError(err)
@@ -57,9 +57,9 @@ func TestMuesliLocalReaderToRemoteArchive(t *testing.T) {
 	require.NoError(os.WriteFile(audio, testWAV(), 0600))
 	old := time.Now().Add(-time.Minute)
 	require.NoError(os.Chtimes(audio, old, old))
-	_, err = db.Exec(`ALTER TABLE meetings ADD COLUMN saved_recording_path TEXT`)
+	_, err = db.ExecContext(t.Context(), `ALTER TABLE meetings ADD COLUMN saved_recording_path TEXT`)
 	require.NoError(err)
-	_, err = db.Exec(`UPDATE meetings SET saved_recording_path=? WHERE id=42`, audio)
+	_, err = db.ExecContext(t.Context(), `UPDATE meetings SET saved_recording_path=? WHERE id=42`, audio)
 	require.NoError(err)
 	options.Recordings = true
 	options.SendRecording = func(ctx context.Context, upload muesli.RecordingUpload, recording *muesli.Recording) error {
@@ -78,11 +78,11 @@ func TestMuesliLocalReaderToRemoteArchive(t *testing.T) {
 	unchanged := scan()
 	assert.Zero(unchanged.MeetingsUpdated)
 	assert.Equal(int64(1), unchanged.SkippedInProgress)
-	_, err = db.Exec(`UPDATE meetings SET raw_transcript='Edited synthetic transcript',manual_notes='Later notes' WHERE id=42`)
+	_, err = db.ExecContext(t.Context(), `UPDATE meetings SET raw_transcript='Edited synthetic transcript',manual_notes='Later notes' WHERE id=42`)
 	require.NoError(err)
 	assert.Equal(int64(1), scan().MeetingsUpdated)
 	var messageID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id=?`), registered.SourceID).Scan(&messageID))
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id=?`), registered.SourceID).Scan(&messageID))
 	detail, err := st.GetMessage(messageID)
 	require.NoError(err)
 	assert.Contains(detail.Body, "Edited synthetic transcript")
@@ -90,7 +90,7 @@ func TestMuesliLocalReaderToRemoteArchive(t *testing.T) {
 	require.Len(detail.Attachments, 1)
 	assert.True(detail.HasAttachments)
 	assert.Equal("audio/wav", detail.Attachments[0].MimeType)
-	request, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/v1/attachments/%s/content", server.URL, detail.Attachments[0].ContentHash), nil)
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/attachments/%s/content", server.URL, detail.Attachments[0].ContentHash), nil)
 	require.NoError(err)
 	request.Header.Set("X-Api-Key", cfg.Server.APIKey)
 	response, err := server.Client().Do(request)
@@ -101,7 +101,7 @@ func TestMuesliLocalReaderToRemoteArchive(t *testing.T) {
 	require.Equal(http.StatusOK, response.StatusCode, string(content))
 	assert.Equal(testWAV(), content)
 
-	_, err = db.Exec(`UPDATE meetings SET deleted_at='2026-09-02T00:00:00Z' WHERE id=42`)
+	_, err = db.ExecContext(t.Context(), `UPDATE meetings SET deleted_at='2026-09-02T00:00:00Z' WHERE id=42`)
 	require.NoError(err)
 	assert.Equal(int64(1), scan().SkippedDeleted)
 	detail, err = st.GetMessage(messageID)
@@ -126,9 +126,10 @@ func TestMuesliDuplicateContactsRemoteReview(t *testing.T) {
 	defer cancel()
 	modes := make(chan buildCacheMode, 10)
 	jobs := newCacheBuildJobs(ctx, nil, func(_ context.Context, mode buildCacheMode) error { modes <- mode; return nil })
+	// Cleanup runs after t.Context() is canceled.
 	t.Cleanup(func() {
 		cancel()
-		wait, stop := context.WithTimeout(context.Background(), serveLifecycleTestTimeout)
+		wait, stop := context.WithTimeout(context.WithoutCancel(t.Context()), serveLifecycleTestTimeout)
 		defer stop()
 		must.True(jobs.waitContext(wait))
 	})
@@ -145,7 +146,7 @@ func TestMuesliDuplicateContactsRemoteReview(t *testing.T) {
 	db, err := sql.Open("sqlite3", path)
 	must.NoError(err)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.Exec(`CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,meeting_status TEXT,raw_transcript TEXT);
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,meeting_status TEXT,raw_transcript TEXT);
  INSERT INTO meetings VALUES(42,'Planning','2026-09-01T14:00:00Z','2026-09-01 14:00:03','completed','Synthetic transcript');
  CREATE TABLE meeting_participants (meeting_id INTEGER,participant_identifier TEXT,display_name TEXT,email_address TEXT,source TEXT,insertion_order INTEGER);
  INSERT INTO meeting_participants VALUES(42,'email:attendee@example.com','Meeting Attendee','attendee@example.com','calendar',0)`)
@@ -155,7 +156,7 @@ func TestMuesliDuplicateContactsRemoteReview(t *testing.T) {
 	cdb, err := sql.Open("sqlite3", filepath.Join(contacts, "AddressBook-v22.abcddb"))
 	must.NoError(err)
 	t.Cleanup(func() { _ = cdb.Close() })
-	_, err = cdb.Exec(`CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER,Z_NAME TEXT);INSERT INTO Z_PRIMARYKEY VALUES(22,'ABCDContact');
+	_, err = cdb.ExecContext(t.Context(), `CREATE TABLE Z_PRIMARYKEY (Z_ENT INTEGER,Z_NAME TEXT);INSERT INTO Z_PRIMARYKEY VALUES(22,'ABCDContact');
  CREATE TABLE ZABCDRECORD (Z_PK INTEGER,Z_ENT INTEGER,ZUNIQUEID TEXT,ZLINKID TEXT);INSERT INTO ZABCDRECORD VALUES(1,22,'CARD-A:ABPerson',NULL),(2,22,'CARD-B:ABPerson',NULL);
  CREATE TABLE ZABCDEMAILADDRESS (Z_PK INTEGER,ZOWNER INTEGER,ZADDRESS TEXT,ZADDRESSNORMALIZED TEXT,ZORDERINGINDEX INTEGER);INSERT INTO ZABCDEMAILADDRESS VALUES(1,1,'attendee@example.com','attendee@example.com',0),(2,2,'attendee@example.com','attendee@example.com',0);
  CREATE TABLE ZABCDPHONENUMBER (Z_PK INTEGER,ZOWNER INTEGER,ZFULLNUMBER TEXT,ZORDERINGINDEX INTEGER);INSERT INTO ZABCDPHONENUMBER VALUES(1,1,'+16045550100',0),(2,2,'+16045550101',0)`)
@@ -167,7 +168,7 @@ func TestMuesliDuplicateContactsRemoteReview(t *testing.T) {
 		return sum
 	}
 	check.Equal(int64(1), scan().MeetingsAdded)
-	phoneID, err := st.EnsureParticipantByPhone("+16045550100", "Existing Chat", "imessage")
+	phoneID, err := st.EnsureParticipantByPhone(t.Context(), "+16045550100", "Existing Chat", "imessage")
 	must.NoError(err)
 	person, _, err := st.CreatePersonFromParticipantContext(t.Context(), phoneID)
 	must.NoError(err)
@@ -209,7 +210,7 @@ func TestMuesliDuplicateContactsRemoteReview(t *testing.T) {
 	_, err = projector.RunOnce(t.Context())
 	must.NoError(err)
 	var attributed int
-	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT count(*) FROM activity_event_persons WHERE person_id = ?`), person.ID).Scan(&attributed))
+	must.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT count(*) FROM activity_event_persons WHERE person_id = ?`), person.ID).Scan(&attributed))
 	check.Equal(1, attributed)
 	check.Zero(scan().MeetingsUpdated)
 	t.Run("daemon drops over-budget review evidence without rejecting", func(t *testing.T) {
@@ -226,19 +227,19 @@ func TestMuesliDuplicateContactsRemoteReview(t *testing.T) {
 			return client.ImportMuesli(ctx, r)
 		})
 		require.NoError(err)
-		registeredSource, err := st.GetSourceByTypeAndIdentifier("muesli", source.Identifier)
+		registeredSource, err := st.GetSourceByTypeAndIdentifier(t.Context(), "muesli", source.Identifier)
 		require.NoError(err)
 		var messageID int64
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), registeredSource.ID).Scan(&messageID))
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), registeredSource.ID).Scan(&messageID))
 		before, err := st.GetMessageRaw(messageID)
 		require.NoError(err)
-		_, err = cdb.Exec(`DELETE FROM ZABCDPHONENUMBER`)
+		_, err = cdb.ExecContext(t.Context(), `DELETE FROM ZABCDPHONENUMBER`)
 		require.NoError(err)
 		for i := 30; i < 60; i++ {
-			_, err = cdb.Exec(`INSERT INTO ZABCDPHONENUMBER VALUES(?,1,?,?)`, i, fmt.Sprintf("+1604555%04d", 100+i), i)
+			_, err = cdb.ExecContext(t.Context(), `INSERT INTO ZABCDPHONENUMBER VALUES(?,1,?,?)`, i, fmt.Sprintf("+1604555%04d", 100+i), i)
 			require.NoError(err)
 		}
-		_, err = db.Exec(`INSERT INTO meetings VALUES(43,'Later meeting','2026-09-02T14:00:00Z','2026-09-02 14:00:03','completed','Later synthetic transcript')`)
+		_, err = db.ExecContext(t.Context(), `INSERT INTO meetings VALUES(43,'Later meeting','2026-09-02T14:00:00Z','2026-09-02 14:00:03','completed','Later synthetic transcript')`)
 		require.NoError(err)
 		for _, wantAdded := range []int64{1, 0} {
 			sum, err := muesli.ScanRemote(t.Context(), options, client.ImportMuesli)

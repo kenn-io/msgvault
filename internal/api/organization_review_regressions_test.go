@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -57,7 +56,8 @@ func TestEmploymentHTTPMapsMergedOrganizationToBadRequest(t *testing.T) {
 	person := mustAPIPerson(t, st, "alice@example.com", "alice")
 	survivor := mustAPIOrganization(t, st, "Survivor Org")
 	losing := mustAPIOrganization(t, st, "Losing Org")
-	_, err := st.MergeOrganizationsContext(context.Background(),
+	_, err := st.MergeOrganizationsContext(
+		t.Context(),
 		survivor.ID, survivor.Revision, losing.ID, losing.Revision)
 	require.NoError(err)
 

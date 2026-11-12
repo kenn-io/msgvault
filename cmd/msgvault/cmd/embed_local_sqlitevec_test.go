@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -53,11 +54,19 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 
 	ping := daemon.NewPingHandler(daemon.PingHandlerOptions{Service: embedlocal.Service, Version: embedlocal.Version})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/embeddings" {
+		switch r.URL.Path {
+		case "/api/ping":
+			ping.ServeHTTP(w, r)
+		case "/v1/models":
+			// Discovery only selects a kennembed server that lists the text model.
+			assert.Equal(http.MethodGet, r.Method)
+			_, err := io.WriteString(w, `{"models":["`+embedlocal.TextModel+`"]}`)
+			assert.NoError(err)
+		case "/v1/embeddings":
 			assert.Empty(r.Header.Get("Authorization"))
 			oldServer.Config.Handler.ServeHTTP(w, r)
-		} else {
-			ping.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -76,7 +85,7 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 	st, err := store.Open(cfg.DatabaseDSN())
 	require.NoError(err)
 	defer func() { require.NoError(st.Close()) }()
-	_, err = st.DB().Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, subject) VALUES (3, 1, 1, 'a2', 'email', 'new message'); INSERT INTO message_bodies (message_id, body_text) VALUES (3, 'new body')`)
+	_, err = st.DB().ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, subject) VALUES (3, 1, 1, 'a2', 'email', 'new message'); INSERT INTO message_bodies (message_id, body_text) VALUES (3, 'new body')`)
 	require.NoError(err)
 	embedFullRebuild = false
 	require.NoError(runEmbeddingsBuildLocal(command))
@@ -89,8 +98,10 @@ func TestLocalEmbeddingsKeepsIncrementalMessageGeneration(t *testing.T) {
 
 func TestLocalEmbeddingStatusDiscoversWithoutInstallation(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	fixture, _, ctx := documentVectorCommandFixture(t)
+	fixture := storetest.New(t)
+	ctx := withTestConfig(t, config.NewDefaultConfig())
 	cfg := invocationFromContext(ctx).cfg
+	cfg.Vector.Enabled = true
 	cfg.Vector.Embeddings.LocalOnly = true
 	cfg.Vector.Embeddings.Endpoint = ""
 	cfg.Vector.Embeddings.Model, cfg.Vector.Embeddings.Dimension = "nomic-embed-text", 768
@@ -103,12 +114,8 @@ func TestLocalEmbeddingStatusDiscoversWithoutInstallation(t *testing.T) {
 		return "", embedlocal.ErrNotFound
 	}
 	t.Cleanup(func() { localEmbeddingsDir = original })
-	documents := documentsCommandDeps{openStore: func(context.Context) (*store.Store, func(), error) { return fixture.Store, func() {}, nil }}
-	status := newDocumentVectorStatusCmd(documents)
-	status.SetOut(io.Discard)
-	status.SetErr(io.Discard)
-	status.SetArgs([]string{"--json"})
-	require.NoError(status.ExecuteContext(ctx))
+	status := &cobra.Command{Use: "status"}
+	status.SetContext(ctx)
 	people := localPersonProviderDeps(cfg.People.Sweep, fixture.Store, nil)
 	people.vectorConfig = func() vector.Config { return cfg.Vector }
 	var output bytes.Buffer

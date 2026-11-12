@@ -38,7 +38,7 @@ func TestVisualStatusReportsConvergenceLagLeasesFormatsAndCostRisk(t *testing.T)
 			publishReconciledWork(t, f, work)
 		}
 	}
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET subject = ? WHERE id = ?`), "pending changed", second)
 	require.NoError(err)
 	usage := ProviderUsage{Requests: 7, InputBytes: 1234, BilledUnits: 2.5, UsageAvailable: true}
@@ -123,7 +123,7 @@ func TestVisualStatusHighWaterSurvivesJournalPruning(t *testing.T) {
 	initial, err = reconciler.FullReconcile(t.Context())
 	require.NoError(err)
 	require.Empty(initial.Work)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET subject = ? WHERE id = ?`), "changed", messageID)
 	require.NoError(err)
 	replayed, err := reconciler.Replay(t.Context())
@@ -229,7 +229,7 @@ func TestStatusIgnoresRetryableOutcomeOnTombstonedOwner(t *testing.T) {
 	// Deleting the message tombstones the publication while its retryable
 	// outcome remains recorded. Nothing live is left to retry, so status
 	// must not count it — it would block activation forever.
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), messageID)
 	require.NoError(err)
 	status, err := reconciler.Status(t.Context(), ProviderUsage{}, false, false)

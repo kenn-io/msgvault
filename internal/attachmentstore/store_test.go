@@ -132,7 +132,7 @@ func TestUppercaseHashReadsLooseAndPackedContent(t *testing.T) {
 			t.Cleanup(func() { require.NoError(blobs.Close()) })
 			uppercase := strings.ToUpper(hash.String())
 
-			reader, size, err := blobs.Open(uppercase)
+			reader, size, err := blobs.Open(t.Context(), uppercase)
 			require.NoError(err)
 			got := make([]byte, size)
 			_, err = reader.Read(got)
@@ -140,14 +140,14 @@ func TestUppercaseHashReadsLooseAndPackedContent(t *testing.T) {
 			require.NoError(reader.Close())
 			assert.Equal(content, got)
 
-			stream, streamSize, err := blobs.OpenStream(context.Background(), uppercase)
+			stream, streamSize, err := blobs.OpenStream(t.Context(), uppercase)
 			require.NoError(err)
 			streamed, readErr := io.ReadAll(stream)
 			require.NoError(errors.Join(readErr, stream.Close()))
 			assert.Equal(int64(len(content)), streamSize)
 			assert.Equal(content, streamed)
 
-			incomplete, _, err := blobs.OpenStream(context.Background(), uppercase)
+			incomplete, _, err := blobs.OpenStream(t.Context(), uppercase)
 			require.NoError(err)
 			_, err = incomplete.Read(make([]byte, 1))
 			require.NoError(err)

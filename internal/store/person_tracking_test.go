@@ -88,7 +88,7 @@ func TestPersonTrackingRejectsUnknownPersonAndCascadesOnDelete(t *testing.T) {
 	require.ErrorIs(err, store.ErrPersonNotFound)
 
 	var count int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM person_tracking WHERE person_id = ?`),
 		person.ID).Scan(&count))
 	assert.Zero(t, count)

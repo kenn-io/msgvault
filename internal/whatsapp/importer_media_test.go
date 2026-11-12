@@ -1,7 +1,6 @@
 package whatsapp
 
 import (
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -36,7 +35,7 @@ func TestHandleMediaFile(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
 		opts := newOpts(t)
-		rel, hash, size := imp.handleMediaFile(media("photo.jpg"), opts)
+		rel, hash, size := imp.handleMediaFile(t.Context(), media("photo.jpg"), opts)
 		// Storage paths are slash-separated on every platform.
 		assert.Equal(wantHash[:2]+"/"+wantHash, rel)
 		assert.Equal(wantHash, hash)
@@ -49,7 +48,7 @@ func TestHandleMediaFile(t *testing.T) {
 
 	t.Run("returns empty for missing media file", func(t *testing.T) {
 		opts := newOpts(t)
-		rel, hash, size := imp.handleMediaFile(media("nope.jpg"), opts)
+		rel, hash, size := imp.handleMediaFile(t.Context(), media("nope.jpg"), opts)
 		assert.Empty(t, rel)
 		assert.Empty(t, hash)
 		assert.Zero(t, size)
@@ -58,7 +57,7 @@ func TestHandleMediaFile(t *testing.T) {
 	t.Run("returns empty for oversized media file", func(t *testing.T) {
 		opts := newOpts(t)
 		opts.MaxMediaFileSize = 4
-		rel, hash, size := imp.handleMediaFile(media("photo.jpg"), opts)
+		rel, hash, size := imp.handleMediaFile(t.Context(), media("photo.jpg"), opts)
 		assert.Empty(t, rel)
 		assert.Empty(t, hash)
 		assert.Zero(t, size)
@@ -77,7 +76,7 @@ func TestImportClassifiesStoredMediaAttachments(t *testing.T) {
 	waDBPath := filepath.Join(t.TempDir(), "msgstore.db")
 	waDB, err := sql.Open("sqlite3", waDBPath)
 	require.NoError(err)
-	_, err = waDB.Exec(`
+	_, err = waDB.ExecContext(t.Context(), `
 		PRAGMA journal_mode=WAL;
 		CREATE TABLE jid (
 			_id INTEGER PRIMARY KEY, user TEXT, server TEXT, raw_string TEXT
@@ -110,14 +109,14 @@ func TestImportClassifiesStoredMediaAttachments(t *testing.T) {
 
 	st := testutil.NewTestStore(t)
 	imp := NewImporter(st, nil)
-	summary, err := imp.Import(context.Background(), waDBPath, ImportOptions{
+	summary, err := imp.Import(t.Context(), waDBPath, ImportOptions{
 		Phone: "+15555550100", MediaDir: mediaDir, AttachmentsDir: attachmentsDir,
 	})
 	require.NoError(err)
 	assert.Equal(int64(2), summary.AttachmentsFound)
 	assert.Equal(int64(2), summary.MediaCopied)
 
-	rows, err := st.DB().Query(`
+	rows, err := st.DB().QueryContext(t.Context(), `
 		SELECT a.filename, a.attachment_role, a.role_source, a.size,
 		       COALESCE(a.source_part_key, '')
 		FROM attachments a

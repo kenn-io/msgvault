@@ -15,6 +15,7 @@ import (
 // the only guard that the concurrent path actually creates them.
 var concurrentlyBuiltIndexes = []struct{ index, table string }{
 	{"idx_messages_source_id", "messages"},
+	{"idx_messages_source_sent_at", "messages"},
 	{"idx_messages_conversation_id", "messages"},
 	{"idx_messages_conversation_timeline", "messages"},
 	{"idx_messages_beeper_conversation", "messages"},
@@ -22,11 +23,13 @@ var concurrentlyBuiltIndexes = []struct{ index, table string }{
 	{"idx_messages_reply_to_message_id", "messages"},
 	{"idx_messages_account", "messages"},
 	{"idx_messages_account_pending", "messages"},
+	{"idx_messages_email_linkage_pending", "messages"},
 	{"idx_participants_email_lower", "participants"},
 	{"idx_participant_identifiers_value_lower", "participant_identifiers"},
 	{"idx_person_match_scoring_contact_lookup", "participant_contact_observations"},
 	{"idx_beeper_media_occurrences_source", "beeper_media_occurrences"},
 	{"idx_message_recipients_email_from", "message_recipients"},
+	{"idx_message_recipients_normalized_email", "message_recipients"},
 }
 
 // Both probes below check pg_index.indisvalid rather than just counting rows
@@ -39,7 +42,7 @@ var concurrentlyBuiltIndexes = []struct{ index, table string }{
 func probeValidIndex(t *testing.T, st *store.Store, index, table string) bool {
 	t.Helper()
 	var valid bool
-	require.NoError(t, st.DB().QueryRow(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `
 		SELECT EXISTS (
 			SELECT 1
 			FROM pg_class c
@@ -65,7 +68,7 @@ func TestInitSchema_PGCreatesIdentityDiscoveryIndexForFreshAndUpgradedStores(t *
 	for _, target := range concurrentlyBuiltIndexes {
 		require.True(probeValidIndex(t, st, target.index, target.table),
 			"fresh schema must concurrently build %s", target.index)
-		_, err := st.DB().Exec(`DROP INDEX ` + target.index)
+		_, err := st.DB().ExecContext(t.Context(), `DROP INDEX `+target.index)
 		require.NoError(err, "simulate a store created before %s existed", target.index)
 		require.False(probeValidIndex(t, st, target.index, target.table))
 	}

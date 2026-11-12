@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -22,29 +24,37 @@ import (
 // bare name. The store-backed API used to read only p.email_address,
 // which dropped phone-only and identifier-only participants (synctech
 // SMS/MMS, etc.). Standard SQL (CASE + ||) — works on SQLite and PG.
-const participantDisplaySQL = `COALESCE(
+var participantDisplaySQL = `COALESCE(
 		CASE
 			WHEN COALESCE(NULLIF(TRIM(mr.display_name), ''), NULLIF(TRIM(p.display_name), '')) <> ''
-			  AND COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, '')) <> ''
+			  AND COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), NULLIF(p.phone_number, '')) <> ''
 			THEN COALESCE(NULLIF(TRIM(mr.display_name), ''), TRIM(p.display_name))
 				|| ' <'
-				|| COALESCE(NULLIF(p.email_address, ''), p.phone_number)
+				|| COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), p.phone_number)
 				|| '>'
 			ELSE COALESCE(
-				NULLIF(p.email_address, ''),
+				NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''),
 				NULLIF(p.phone_number, ''),
 				NULLIF(TRIM(mr.display_name), ''),
 				NULLIF(TRIM(p.display_name), ''),
+				` + participantXUserIDSQL + `,
 				''
 			)
 		END,
 		''
 	)`
 
-const participantSenderEmailSQL = `COALESCE(NULLIF(p.email_address, ''), '')`
-const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), '')`
+// Numeric X IDs are display fallbacks, never persisted as observed names.
+const participantXUserIDSQL = `(SELECT pi.identifier_value FROM participant_identifiers pi
+    WHERE pi.participant_id = p.id AND pi.identifier_type = 'x_user'
+    ORDER BY pi.identifier_value LIMIT 1)`
+
+var participantSenderEmailSQL = `COALESCE(NULLIF(` + identityindex.SenderAddressExpr("mr", "p") + `, ''), '')`
+
+const participantSenderNameSQL = `COALESCE(NULLIF(TRIM(COALESCE(NULLIF(mr.display_name, ''), p.display_name)), ''), ` + participantXUserIDSQL + `, '')`
 const participantSenderPhoneSQL = `COALESCE(NULLIF(p.phone_number, ''), '')`
-const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
+
+var participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 			` + participantSenderEmailSQL + ` as from_email,
 			` + participantSenderNameSQL + ` as from_name,
 			` + participantSenderPhoneSQL + ` as from_phone`
@@ -547,8 +557,10 @@ func (s *Store) SearchMessagesQueryContext(
 type searchOperator struct {
 	condition int
 	matching  string
-	arg       string
+	args      []any
 }
+
+const messageSearchDateOrder = "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
 
 type messageSearchSQL struct {
 	operators  []searchOperator
@@ -556,6 +568,7 @@ type messageSearchSQL struct {
 	join       string
 	where      string
 	orderBy    string
+	rank       string
 	args       []any
 	orderArgs  []any
 	fts        bool
@@ -603,7 +616,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			plan := s.buildMessageSearchCriteria(branch, ftsAvailable, true)
 			return plan.conditions, plan.args
 		})
-		return messageSearchSQL{conditions: conditions, where: strings.Join(conditions, " AND "), args: args, orderBy: "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC", fts: ftsAvailable && q.HasTextTerms()}
+		return messageSearchSQL{conditions: conditions, where: strings.Join(conditions, " AND "), args: args, orderBy: messageSearchDateOrder, fts: ftsAvailable && q.HasTextTerms()}
 	}
 	var conditions []string
 	var args []any
@@ -825,16 +838,24 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 	// Operators come last so a condition before them identifies a search
 	// already narrowed by another filter.
 	var operators []searchOperator
+	for _, address := range q.FromAddrs {
+		condition, matching, senderArgs := search.SenderLookup(address, s.dialect.UnicodeLowerExpression, "messages", "message_recipients", "participants", "m")
+		if !rowIDs {
+			operators = append(operators, searchOperator{condition: len(conditions), matching: matching, args: senderArgs})
+		}
+		conditions = append(conditions, condition)
+		args = append(args, senderArgs...)
+	}
 	for _, group := range []struct {
 		role  string
 		addrs []string
-	}{{meetingSenderRole, q.FromAddrs}, {"to", q.ToAddrs}, {"cc", q.CcAddrs}, {"bcc", q.BccAddrs}} {
+	}{{"to", q.ToAddrs}, {"cc", q.CcAddrs}, {"bcc", q.BccAddrs}} {
 		for _, addr := range group.addrs {
 			arg := "%" + escapeLike(strings.ToLower(addr)) + "%"
 			if !rowIDs {
 				operators = append(operators, searchOperator{condition: len(conditions), matching: fmt.Sprintf(`SELECT mr2.message_id FROM message_recipients mr2 INDEXED BY idx_message_recipients_participant
 					WHERE mr2.recipient_type = '%s' AND mr2.participant_id IN
-					(SELECT p2.id FROM participants p2 WHERE LOWER(p2.email_address) LIKE ? ESCAPE '\')`, group.role), arg: arg})
+					(SELECT p2.id FROM participants p2 WHERE LOWER(p2.email_address) LIKE ? ESCAPE '\')`, group.role), args: []any{arg}})
 			}
 			conditions = append(conditions, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM message_recipients mr2
@@ -850,7 +871,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 		arg := "%" + escapeLike(strings.ToLower(lbl)) + "%"
 		if !rowIDs {
 			operators = append(operators, searchOperator{condition: len(conditions), matching: `SELECT ml2.message_id FROM message_labels ml2
-				WHERE ml2.label_id IN (SELECT l2.id FROM labels l2 WHERE LOWER(l2.name) LIKE ? ESCAPE '\')`, arg: arg})
+				WHERE ml2.label_id IN (SELECT l2.id FROM labels l2 WHERE LOWER(l2.name) LIKE ? ESCAPE '\')`, args: []any{arg}})
 		}
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM message_labels ml2
@@ -861,9 +882,11 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 		args = append(args, arg)
 	}
 
-	orderBy := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
+	orderBy := messageSearchDateOrder
 	var orderArgs []any
+	var rank string
 	if ftsEnabled {
+		rank = ftsOrder
 		orderBy = ftsOrder + ", " + orderBy
 		for range ftsOrderArgCount {
 			orderArgs = append(orderArgs, ftsExpr)
@@ -871,7 +894,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 	}
 	return messageSearchSQL{
 		operators: operators, conditions: conditions, join: ftsJoin, where: strings.Join(conditions, " AND "), orderBy: orderBy,
-		args: args, orderArgs: orderArgs, fts: ftsEnabled,
+		args: args, orderArgs: orderArgs, rank: rank, fts: ftsEnabled,
 	}
 }
 
@@ -892,7 +915,7 @@ func (s *Store) preferOperatorLookups(ctx context.Context, plan *messageSearchSQ
 	for i, operator := range plan.operators {
 		var count int64
 		if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM (SELECT DISTINCT message_id FROM ("+operator.matching+") LIMIT ?) AS matches",
-			operator.arg, limit+1).Scan(&count); err != nil {
+			append(append([]any(nil), operator.args...), limit+1)...).Scan(&count); err != nil {
 			return
 		}
 		if count <= limit {
@@ -904,6 +927,56 @@ func (s *Store) preferOperatorLookups(ctx context.Context, plan *messageSearchSQ
 		operator := plan.operators[best]
 		plan.conditions[operator.condition] = "m.id IN (" + operator.matching + ")"
 	}
+}
+
+func messageSearchPageSQL(plan messageSearchSQL, offset, limit int) (string, []any) {
+	rankColumn := ""
+	innerOrder := plan.orderBy
+	outerOrder := messageSearchDateOrder
+	if plan.rank != "" {
+		rankColumn = ", " + plan.rank + " AS search_rank"
+		innerOrder = "search_rank, " + messageSearchDateOrder
+		outerOrder = "page.search_rank, " + outerOrder
+	}
+	searchSQL := fmt.Sprintf(`
+		SELECT
+			m.id,
+			m.source_id,
+			COALESCE(m.source_message_id, '') as source_message_id,
+			COALESCE(m.conversation_id, 0) as conversation_id,
+			COALESCE(c.source_conversation_id, '') as source_conversation_id,
+			COALESCE(m.subject, '') as subject,
+			COALESCE(m.message_type, '') as message_type,
+			%s,
+			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
+			COALESCE(m.snippet, '') as snippet,
+			m.has_attachments,
+			m.hidden_text_present,
+			m.size_estimate
+		FROM (
+			SELECT m.id%s FROM messages m
+			%s
+			WHERE %s
+			ORDER BY %s
+			LIMIT ? OFFSET ?
+		) page
+		JOIN messages m ON m.id = page.id
+		LEFT JOIN message_recipients mr ON mr.id = (
+			SELECT mr2.id FROM message_recipients mr2
+			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
+			ORDER BY mr2.id LIMIT 1
+		)
+		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
+		LEFT JOIN conversations c ON c.id = m.conversation_id
+		ORDER BY %s
+	`, participantSummarySenderSQL, rankColumn, plan.join, plan.where, innerOrder, outerOrder)
+
+	// Bind rank in the SELECT list before WHERE; ORDER BY reuses its alias.
+	args := make([]any, 0, len(plan.args)+len(plan.orderArgs)+2)
+	args = append(args, plan.orderArgs...)
+	args = append(args, plan.args...)
+	args = append(args, limit, offset)
+	return searchSQL, args
 }
 
 // searchMessagesQueryImpl runs the actual query. The ftsAvailable flag lets
@@ -921,43 +994,7 @@ func (s *Store) searchMessagesQueryImpl(
 		WHERE %s
 	`, plan.join, plan.where)
 
-	// Results query.
-	searchSQL := fmt.Sprintf(`
-		SELECT
-			m.id,
-			m.source_id,
-			COALESCE(m.source_message_id, '') as source_message_id,
-			COALESCE(m.conversation_id, 0) as conversation_id,
-			COALESCE(c.source_conversation_id, '') as source_conversation_id,
-			COALESCE(m.subject, '') as subject,
-			COALESCE(m.message_type, '') as message_type,
-			%s,
-			COALESCE(m.sent_at, m.received_at, m.internal_date) as sent_at,
-			COALESCE(m.snippet, '') as snippet,
-			m.has_attachments,
-			m.hidden_text_present,
-			m.size_estimate
-		FROM messages m
-		%s
-		LEFT JOIN message_recipients mr ON mr.id = (
-			SELECT mr2.id FROM message_recipients mr2
-			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
-			ORDER BY mr2.id LIMIT 1
-		)
-		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
-		LEFT JOIN conversations c ON c.id = m.conversation_id
-		WHERE %s
-		ORDER BY %s
-		LIMIT ? OFFSET ?
-	`, participantSummarySenderSQL, plan.join, plan.where, plan.orderBy)
-
-	// If the dialect's order-by fragment has ? placeholders, bind the FTS
-	// expression that many extra times — right after the WHERE args and
-	// before LIMIT/OFFSET so Rebind assigns them the correct positions.
-	resultArgs := make([]any, 0, len(plan.args)+len(plan.orderArgs)+2)
-	resultArgs = append(resultArgs, plan.args...)
-	resultArgs = append(resultArgs, plan.orderArgs...)
-	resultArgs = append(resultArgs, limit, offset)
+	searchSQL, resultArgs := messageSearchPageSQL(plan, offset, limit)
 
 	var (
 		total              int64
@@ -1285,7 +1322,8 @@ func (s *Store) fetchRecipientsInto(
 	args = append(args, recipientType)
 
 	query := fmt.Sprintf(`
-		SELECT mr.message_id, p.id, %s
+		SELECT mr.message_id, p.id, %s, COALESCE(p.domain, ''),
+		       EXISTS (SELECT 1 FROM participant_links l WHERE l.participant_a = p.id OR l.participant_b = p.id)
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s) AND mr.recipient_type = ?
@@ -1300,8 +1338,13 @@ func (s *Store) fetchRecipientsInto(
 	for rows.Next() {
 		var msgID int64
 		var recipient ParticipantDisplay
-		if err := rows.Scan(&msgID, &recipient.ParticipantID, &recipient.Display); err != nil {
+		var domain string
+		var hasIdentityLink bool
+		if err := rows.Scan(&msgID, &recipient.ParticipantID, &recipient.Display, &domain, &hasIdentityLink); err != nil {
 			return fmt.Errorf("scan recipient: %w", err)
+		}
+		if !hasIdentityLink && calevent.IsRoomAttendee("@"+domain, false) {
+			recipient.ParticipantID = 0
 		}
 		if recipient.Display != "" {
 			result[msgID] = append(result[msgID], recipient)

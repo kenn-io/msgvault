@@ -15,7 +15,7 @@ func newLegacyIMAPMembershipFixture(t *testing.T) imapMembershipFixture {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("imap", "legacy-membership@example.test")
 	require.NoError(t, err)
-	conversation, err := st.EnsureConversation(source.ID, "legacy", "Legacy membership")
+	conversation, err := st.EnsureConversation(t.Context(), source.ID, "legacy", "Legacy membership")
 	require.NoError(t, err)
 	return imapMembershipFixture{store: st, source: source, convID: conversation}
 }
@@ -54,7 +54,7 @@ func TestApplyIMAPMailboxDeltas_LegacyMessageID(t *testing.T) {
 				assertions.ElementsMatch([]store.IMAPFolderState{deltas[0].State, deltas[1].State}, states)
 			}
 			var stored string
-			requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&stored))
+			requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT rfc822_message_id FROM messages WHERE id = ?`), id).Scan(&stored))
 			assertions.Equal(test.stored, stored)
 			assertions.Equal(3, membershipCount(t, f.store, f.source.ID))
 		})
@@ -153,7 +153,7 @@ func TestApplyIMAPMailboxDeltas_LegacyMessageIDIndependent(t *testing.T) {
 				states, err := f.store.GetIMAPFolderStates(f.source.ID)
 				requirements.NoError(err)
 				assertions.Equal([]store.IMAPFolderState{{Mailbox: "INBOX", UIDValidity: 10, UIDNext: 2}}, states)
-				key, err := f.store.GetMessageSourceID(oldID)
+				key, err := f.store.GetMessageSourceID(t.Context(), oldID)
 				requirements.NoError(err)
 				assertions.Equal("INBOX|1", key)
 				return

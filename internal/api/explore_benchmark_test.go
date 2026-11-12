@@ -24,7 +24,7 @@ import (
 // request are excluded. This is a measurement, not a wall-clock CI assertion.
 func BenchmarkExploreFullText(b *testing.B) {
 	const messageCount = 20_000
-	st, err := store.OpenForTest(filepath.Join(b.TempDir(), "archive.db"))
+	st, err := store.OpenForTest(b.Context(), filepath.Join(b.TempDir(), "archive.db"))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, st.Close()) })
 	require.NoError(b, st.InitSchema())
@@ -49,7 +49,7 @@ func BenchmarkExploreFullText(b *testing.B) {
 			SELECT id, 1, 'from', 'Alice', 'alice@example.com' FROM messages
 			UNION ALL SELECT id, 2, 'to', 'Bob', 'bob@members.example' FROM messages`,
 	} {
-		_, err := st.DB().Exec(statement)
+		_, err := st.DB().ExecContext(b.Context(), statement)
 		require.NoError(b, err)
 	}
 	indexed, err := st.BackfillFTS(nil)
@@ -83,7 +83,7 @@ func BenchmarkExploreFullText(b *testing.B) {
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			body := fmt.Sprintf(`{"query":%q,"search_mode":"full_text","limit":50}`, tc.term)
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/explore", strings.NewReader(body))
+			request := httptest.NewRequestWithContext(b.Context(), http.MethodPost, "/api/v1/explore", strings.NewReader(body))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
@@ -100,7 +100,7 @@ func BenchmarkExploreFullText(b *testing.B) {
 			}
 			b.ReportAllocs()
 			for b.Loop() {
-				request := httptest.NewRequest(http.MethodPost, "/api/v1/explore", strings.NewReader(body))
+				request := httptest.NewRequestWithContext(b.Context(), http.MethodPost, "/api/v1/explore", strings.NewReader(body))
 				request.Header.Set("Content-Type", "application/json")
 				response := httptest.NewRecorder()
 				router.ServeHTTP(response, request)

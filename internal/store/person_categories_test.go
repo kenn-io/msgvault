@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,7 +13,7 @@ func TestPersonCategoriesAreOneRowPerTagWithHistory(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := storetest.New(t).Store
-	ctx := context.Background()
+	ctx := t.Context()
 	personID := newTestPerson(t, st)
 	for _, tag := range []string{"Friends", "Book Club"} {
 		_, err := st.AddPersonCategoryContext(ctx, personID, store.PersonCategoryInput{
@@ -44,7 +43,7 @@ func TestAddPersonCategoryRejectsBlankValue(t *testing.T) {
 	require := require.New(t)
 	st := storetest.New(t).Store
 	personID := newTestPerson(t, st)
-	_, err := st.AddPersonCategoryContext(context.Background(), personID, store.PersonCategoryInput{
+	_, err := st.AddPersonCategoryContext(t.Context(), personID, store.PersonCategoryInput{
 		OriginalValue: "   ", Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 	})
 	require.ErrorIs(err, store.ErrPersonCategoryEmpty)

@@ -52,7 +52,7 @@ func (p codexHostServiceProxy) Attach(ctx context.Context, workRoot string) (Cod
 	if _, err := os.Lstat(socketPath); err == nil || !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("codex proxy socket path is occupied")
 	}
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "unix", socketPath)
 	if err != nil {
 		return nil, errors.New("create codex service proxy socket")
 	}

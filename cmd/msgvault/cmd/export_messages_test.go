@@ -315,7 +315,7 @@ func insertExportMessagesConversation(
 	t.Helper()
 	require := require.New(t)
 	var conversationID int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO conversations (
 			source_id, source_conversation_id, conversation_type, title
 		) VALUES (?, ?, 'direct_chat', ?)
@@ -336,7 +336,7 @@ func insertExportMessagesMessage(
 	t.Helper()
 	require := require.New(t)
 	var messageID int64
-	err := st.DB().QueryRow(st.Rebind(`
+	err := st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		INSERT INTO messages (
 			conversation_id, source_id, source_message_id, message_type,
 			sent_at, received_at
@@ -345,7 +345,7 @@ func insertExportMessagesMessage(
 	`), conversationID, sourceID, sourceMessageID, occurredAt, occurredAt).
 		Scan(&messageID)
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)
 	`), messageID, body)
 	require.NoError(err)
@@ -366,7 +366,7 @@ func TestExportMessagesCommandPersonScopeUsesBoundParticipants(t *testing.T) {
 	_, err = st.LinkParticipants(alice, bob)
 	requirements.NoError(err)
 	// Persist the permitted linked-but-unbound state independently of link-time binding.
-	_, err = st.DB().Exec(st.Rebind(`DELETE FROM person_participants WHERE participant_id = ?`), bob)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM person_participants WHERE participant_id = ?`), bob)
 	requirements.NoError(err)
 	live, err := st.GetPerson(person.ID)
 	requirements.NoError(err)
@@ -379,7 +379,7 @@ func TestExportMessagesCommandPersonScopeUsesBoundParticipants(t *testing.T) {
 		key := strconv.Itoa(i)
 		conv := insertExportMessagesConversation(t, st, source.ID, key, "Test Conversation")
 		insertExportMessagesMessage(t, st, source.ID, conv, key, start, "body")
-		_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ? AND source_message_id = ?`), id, source.ID, key)
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ? AND source_message_id = ?`), id, source.ID, key)
 		requirements.NoError(err)
 	}
 	personIDText := strconv.FormatInt(person.ID, 10)
@@ -479,7 +479,7 @@ func TestExportMessagesCommandConcurrentParticipantMerge(t *testing.T) {
 	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
 	conversationID := insertExportMessagesConversation(t, st, source.ID, "conversation", "Example Conversation")
 	insertExportMessagesMessage(t, st, source.ID, conversationID, "message", start, "body")
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), oldID, source.ID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), oldID, source.ID)
 	require.NoError(err)
 
 	cmd := newExportMessagesLocalCmd(exportMessagesDeps{openStore: func(context.Context) (*store.Store, func(), error) {

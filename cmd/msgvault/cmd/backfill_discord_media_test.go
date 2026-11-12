@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,9 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// cancelAfterFirstErrContext cancels on the command's second cancellation
+// check. It counts only checks made by backfillDiscordSourceMedia itself,
+// because database/sql also calls Err while it reads query results.
 type cancelAfterFirstErrContext struct {
 	context.Context
 
@@ -25,9 +29,12 @@ type cancelAfterFirstErrContext struct {
 }
 
 func (c *cancelAfterFirstErrContext) Err() error {
-	c.checks++
-	if c.checks > 1 {
-		c.cancel()
+	if pc, _, _, ok := runtime.Caller(1); ok &&
+		strings.HasSuffix(runtime.FuncForPC(pc).Name(), ".backfillDiscordSourceMedia") {
+		c.checks++
+		if c.checks > 1 {
+			c.cancel()
+		}
 	}
 	return c.Context.Err()
 }
@@ -51,7 +58,7 @@ func newDiscordPendingMediaMessage(t *testing.T, st *store.Store, sourceID int64
 
 func discordAttachmentOutcome(t *testing.T, st *store.Store, messageID int64) (state, reason string) {
 	t.Helper()
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT attachment_state, attachment_skip_reason FROM attachments WHERE message_id = ?
 	`), messageID).Scan(&state, &reason))
 	return state, reason
@@ -194,7 +201,7 @@ func TestBackfillDiscordMediaUsesArchivedParticipantCount(t *testing.T) {
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, testDiscordChannel, "channel", "general")
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), 20, conversationID)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE conversations SET participant_count = ? WHERE id = ?`), 20, conversationID)
 	require.NoError(err)
 	messageID, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversationID,
@@ -220,7 +227,7 @@ func TestBackfillDiscordMediaUsesArchivedParticipantCount(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), summary.Skipped)
 	var state, reason string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT attachment_state, attachment_skip_reason FROM attachments WHERE message_id = ?
 	`), messageID).Scan(&state, &reason))
 	assert.Equal(string(attachmentpolicy.StateSkipped), state)
@@ -376,7 +383,7 @@ func TestBackfillDiscordMediaReturnsCancellationAfterFinalMessage(t *testing.T) 
 		StoragePath: completedHash[:2] + "/" + completedHash, ContentHash: completedHash,
 		SourceAttachmentID: "discord:500000000000000001", MediaType: "document",
 	}}))
-	baseContext, cancel := context.WithCancel(context.Background())
+	baseContext, cancel := context.WithCancel(t.Context())
 	ctx := &cancelAfterFirstErrContext{Context: baseContext, cancel: cancel}
 	deps := testDiscordCommandDeps(t, st, tokensDir, newDiscordCLIServer(t).server.URL)
 

@@ -267,7 +267,7 @@ func TestIdentityDecisionConfirmationWorksAcrossAuthenticatedStatelessHTTPReques
 		maps.Copy(params, extra)
 		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params})
 		requires.NoError(err)
-		req := task3ModernRequest("tools/call", ToolAcceptIdentityMatch, string(body))
+		req := task3ModernRequest(t.Context(), "tools/call", ToolAcceptIdentityMatch, string(body))
 		req.Header.Set("Authorization", "Bearer fixture-api-key")
 		returnRecorder, response := task3Serve(handler, req)
 		task3RequireSuccess(t, returnRecorder, response)
@@ -310,7 +310,7 @@ func TestIdentityDecisionConfirmationWorksAcrossNoKeyStatelessHTTPRequests(t *te
 		maps.Copy(params, extra)
 		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params})
 		requires.NoError(err)
-		req := task3ModernRequest("tools/call", ToolAcceptIdentityMatch, string(body))
+		req := task3ModernRequest(t.Context(), "tools/call", ToolAcceptIdentityMatch, string(body))
 		recorder, response := task3Serve(handler, req)
 		task3RequireSuccess(t, recorder, response)
 		return response

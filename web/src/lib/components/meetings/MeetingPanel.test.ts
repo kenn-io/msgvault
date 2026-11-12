@@ -1,3 +1,4 @@
+import { tick } from 'svelte';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -18,7 +19,7 @@ describe('MeetingPanel', () => {
     await controller.setScope(scope);
     const view = render(MeetingPanel, { client, scope, controller, compact: true, showHeading: false });
     await screen.findByText('4 meetings');
-    expect((screen.getByText('Meeting metrics', { selector: 'summary' }).closest('details') as HTMLDetailsElement).open).toBe(false);
+    expect((screen.getByText('Meeting metrics').closest('details') as HTMLDetailsElement).open).toBe(false);
     view.unmount();
     controller.destroy();
   });
@@ -29,7 +30,7 @@ describe('MeetingPanel', () => {
       const request = input instanceof Request ? input : new Request(input); requests.push(request); return response(request);
     }), scope: { kind: 'direct', scope: { person_id: 7 } } });
     expect(await screen.findByText('4 meetings')).toBeDefined();
-    expect(await screen.findByText('Coverage: 1 available · 1 partial · 1 unsupported · 1 unavailable')).toBeDefined();
+    expect(await screen.findByText('Action item records by meeting: 1 complete · 1 partial · 1 not supported · 1 unavailable')).toBeDefined();
     expect(screen.getByRole('combobox', { name: 'Source status: All source statuses' })).toBeDefined();
     await fireEvent.input(screen.getByRole('textbox', { name: 'Assignee email' }), { target: { value: 'person@example.test' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Apply action filters' }));
@@ -81,5 +82,40 @@ describe('MeetingPanel', () => {
     expect(within(evidence).getByText('Send notes')).toBeDefined();
     expect(screen.queryByText('Prepare review')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Load more action items' })).toBeNull();
+  });
+});
+
+describe('MeetingPanel with hidden empty activity', () => {
+  it('hides meeting activity after an empty scope loads', async () => {
+    const scope = { kind: 'direct' as const, scope: { person_id: 7 } };
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/metrics')
+      ? meetingMetrics({ totals: { meeting_count: 0, known_duration_count: 0, unknown_duration_count: 0, total_known_seconds: 0, average_known_seconds: 0 }, months: [], duration_by_basis: [], first_meeting_at: null, last_meeting_at: null })
+      : meetingActions({ coverage: { meeting_count: 0, available: 0, partial: 0, unsupported: 0, unavailable: 0 } })));
+    const controller = new MeetingsController(createMeetingsAPI(client));
+    const view = render(MeetingPanel, { client, scope, controller, hideWhenEmpty: true });
+    await controller.setScope(scope);
+    await tick();
+    expect(screen.queryByRole('region', { name: 'Meeting activity' })).toBeNull();
+    view.unmount();
+    controller.destroy();
+  });
+
+  it('shows reload on a scope error even when empty activity is hidden', async () => {
+    const scope = { kind: 'direct' as const, scope: { person_id: 7 } };
+    render(MeetingPanel, { client: createAPIClient(async () => Response.json({ error: 'meeting_scope_changed', message: 'Scope changed.' }, { status: 409 })), scope, hideWhenEmpty: true });
+    expect(await screen.findByRole('button', { name: 'Reload meeting activity' })).toBeDefined();
+  });
+
+  it('shows action filters in a hidden-when-empty panel only when a filter is set', async () => {
+    const scope = { kind: 'direct' as const, scope: { person_id: 7 } };
+    const client = createAPIClient(async input => Response.json((input as Request).url.endsWith('/metrics') ? meetingMetrics() : meetingActions()));
+    const controller = new MeetingsController(createMeetingsAPI(client));
+    await controller.setScope(scope);
+    const view = render(MeetingPanel, { client, scope, controller, hideWhenEmpty: true });
+    expect(screen.queryByRole('button', { name: 'Apply action filters' })).toBeNull();
+    await controller.setFilters({ status: 'pending' });
+    expect(await screen.findByRole('button', { name: 'Apply action filters' })).toBeDefined();
+    view.unmount();
+    controller.destroy();
   });
 });

@@ -55,7 +55,7 @@ Examples:
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
-			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
+			s, cleanup, err := openWritableStoreAndInitForIngestInvocation(cmd.Context(), state)
 			if err != nil {
 				return err
 			}
@@ -66,7 +66,7 @@ Examples:
 				only = strings.TrimSpace(args[0])
 			}
 			repaired, rerr := repairIdentities(cmd.Context(), s, repairIdentityType, only, cmd.OutOrStdout())
-			cacheErr := rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
+			cacheErr := rebuildCacheAfterWrite(cmd.Context(), cfg.DatabaseDSN(), state)
 			if rerr != nil {
 				return errors.Join(rerr, cacheErr)
 			}

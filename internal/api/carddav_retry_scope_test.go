@@ -41,7 +41,7 @@ func TestCardDAVNamedDiscoveryRetryHeaderIgnoresDefaultGate(t *testing.T) {
 			require.NoError(err)
 			controller.factory = fixtureCardDAVFactory(t, target)
 			server := cardDAVReadServer(t, controller.cfg, controller, nil)
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/carddav/account/test", strings.NewReader(
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/carddav/account/test", strings.NewReader(
 				`{"connection":"work","base_url":"`+baseURL+`","username":"work","password":"work-synthetic-secret","enabled":true}`))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()

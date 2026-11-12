@@ -63,7 +63,7 @@ func TestSQLiteFixtureClonesTemplateWithoutReplayingDDL(t *testing.T) {
 	st := NewSQLiteTestStore(t)
 
 	var integrity string
-	require.NoError(st.DB().QueryRow("PRAGMA integrity_check").Scan(&integrity), "integrity check")
+	require.NoError(st.DB().QueryRowContext(t.Context(), "PRAGMA integrity_check").Scan(&integrity), "integrity check")
 	assert.Equal("ok", integrity, "cloned database is intact")
 	assert.Equal(0, countSources(t, st), "cloned fixture starts empty")
 

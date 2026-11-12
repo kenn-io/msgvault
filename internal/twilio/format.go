@@ -31,7 +31,7 @@ type archivePerson struct {
 
 func loadArchive(ctx context.Context, st *store.Store, sourceID int64, id string) (archivedCall, error) {
 	var previous archivedCall
-	rows, err := st.MessageMetadataBatch(sourceID, []string{id})
+	rows, err := st.MessageMetadataBatch(ctx, sourceID, []string{id})
 	if err != nil {
 		return previous, err
 	}

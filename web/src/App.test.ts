@@ -37,7 +37,7 @@ describe('application foundation', () => {
     }
   });
 
-  it('reports resolved workspaces and standalone messages', async () => {
+  it('reports resolved workspaces', async () => {
     const events: Array<{ event: string; properties?: { screen?: string; surface?: string } }> = [];
     const session = createSessionController(async (input) => {
       const request = input as Request;
@@ -61,9 +61,6 @@ describe('application foundation', () => {
       await fireEvent.click(await screen.findByRole('button', { name: label }));
       await waitFor(() => expect(events.some((event) => event.properties?.screen === name)).toBe(true));
     }
-    window.history.replaceState(null, '', '/messages/123');
-    await fireEvent(window, new PopStateEvent('popstate'));
-    await waitFor(() => expect(events.at(-1)?.properties?.screen).toBe('message'));
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -576,7 +573,7 @@ describe('application foundation', () => {
     const rendered = render(App, { session });
     await session.bootstrap();
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book…' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     const detailHeading = await screen.findByRole('heading', { name: 'Conflict comparison' });
     expect(screen.queryByRole('dialog', { name: 'Publish to address book' })).toBeNull();
@@ -587,7 +584,7 @@ describe('application foundation', () => {
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
     await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book…' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     const repeatedStatus = screen.getByRole('status', { name: 'Operation status' });
     await waitFor(() => expect(repeatedStatus.firstElementChild).not.toBe(firstAnnouncement));

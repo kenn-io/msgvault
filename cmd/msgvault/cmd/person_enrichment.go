@@ -77,7 +77,7 @@ func defaultPersonEnrichmentCommandDeps(contexts ...context.Context) personEnric
 				)
 			}
 			deps.openStore = func() (*store.Store, func(), error) {
-				return openWritableStoreAndInitForInvocation(state)
+				return openWritableStoreAndInitForInvocation(ctx, state)
 			}
 			return deps
 		},

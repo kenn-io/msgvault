@@ -45,7 +45,7 @@ func runMigrate(cmd *cobra.Command) (runErr error) {
 		writer, err := tryAcquireWriteOwnerLock(currentCfg.Data.DataDir)
 		if err != nil {
 			if errors.As(err, &writeOwnerLockHeldError{}) {
-				return archiveOwnedError(currentCfg.Data.DataDir)
+				return archiveOwnedError(cmd.Context(), currentCfg.Data.DataDir)
 			}
 			return fmt.Errorf("migrate: %w", err)
 		}

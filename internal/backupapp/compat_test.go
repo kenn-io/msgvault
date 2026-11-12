@@ -1,7 +1,6 @@
 package backupapp_test
 
 import (
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -47,7 +46,7 @@ func seedCompatArchive(t *testing.T, dir string) (string, string) {
 		`INSERT INTO account_identities DEFAULT VALUES`,
 		`INSERT INTO labels DEFAULT VALUES`,
 	} {
-		_, err := db.Exec(stmt)
+		_, err := db.ExecContext(t.Context(), stmt)
 		require.NoError(t, err, "seed statement: %s", stmt)
 	}
 
@@ -62,7 +61,7 @@ func seedCompatArchive(t *testing.T, dir string) (string, string) {
 	h1 := writeBlob("synthetic attachment one")
 	h2 := writeBlob("synthetic attachment two")
 	thumb := writeBlob("synthetic thumbnail bytes")
-	_, err = db.Exec(`INSERT INTO attachments
+	_, err = db.ExecContext(t.Context(), `INSERT INTO attachments
 		(content_hash, storage_path, thumbnail_hash, thumbnail_path, size) VALUES
 		(?, ?, ?, ?, 24), (?, ?, NULL, NULL, 24)`,
 		h1, h1[:2]+"/"+h1, thumb, thumb[:2]+"/"+thumb,
@@ -95,17 +94,17 @@ func TestGenerateCompatFixture(t *testing.T) {
 		DataDir:    archive,
 	}
 	app := backupapp.New("compat-fixture")
-	_, err = backup.Create(context.Background(), r, app, opts)
+	_, err = backup.Create(t.Context(), r, app, opts)
 	require.NoError(err)
 
 	// Second snapshot with a data change, so the fixture exercises the
 	// incremental path: page deltas, parent chain, inherited lists.
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err)
-	_, err = db.Exec(`INSERT INTO messages (sent_at) VALUES ('2024-12-01T00:00:00Z')`)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages (sent_at) VALUES ('2024-12-01T00:00:00Z')`)
 	require.NoError(err)
 	require.NoError(db.Close())
-	_, err = backup.Create(context.Background(), r, app, opts)
+	_, err = backup.Create(t.Context(), r, app, opts)
 	require.NoError(err)
 }
 
@@ -144,7 +143,7 @@ func TestRestoreCompatFixture(t *testing.T) {
 		snaps[1].SnapshotID)
 
 	target := t.TempDir()
-	res, err := backup.Restore(context.Background(), r, backupapp.New("test"), backup.RestoreOptions{
+	res, err := backup.Restore(t.Context(), r, backupapp.New("test"), backup.RestoreOptions{
 		TargetDir:     filepath.Join(target, "restored"),
 		PackedContent: backupapp.NewPackedRestoreTarget(packstore.DefaultLimits()),
 	})
@@ -175,9 +174,9 @@ func TestRestoreCompatFixture(t *testing.T) {
 	require.NoError(err)
 	defer func() { require.NoError(db.Close()) }()
 	var messages int64
-	require.NoError(db.QueryRow("SELECT COUNT(*) FROM messages").Scan(&messages))
+	require.NoError(db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM messages").Scan(&messages))
 	assert.Equal(int64(3), messages)
 	var packMappings int64
-	require.NoError(db.QueryRow("SELECT COUNT(*) FROM attachment_pack_index").Scan(&packMappings))
+	require.NoError(db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM attachment_pack_index").Scan(&packMappings))
 	assert.Equal(int64(3), packMappings)
 }

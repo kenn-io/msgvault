@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +15,7 @@ func TestInitSchemaSeedsTheSystemPersonCatalog(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	definitions, err := st.ListAttributeDefinitionsContext(ctx,
 		store.AttributeDefinitionFilter{ObjectType: store.AttributeObjectPerson})
@@ -169,7 +168,7 @@ func TestSeededDefinitionsCarryTheirDocumentedShape(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	primary, err := st.GetAttributeDefinitionBySlugContext(ctx,
 		store.AttributeObjectPerson, store.AttributeSlugPrimaryChannel)
@@ -207,7 +206,7 @@ func TestSeededLastContactedIsReadOnlyAndDerived(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	derived, err := st.GetAttributeDefinitionBySlugContext(ctx,
 		store.AttributeObjectPerson, store.AttributeSlugLastContacted)
@@ -226,7 +225,7 @@ func TestReSeedingPreservesUserLabelChangesAndRepairsStructure(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	original, err := st.GetAttributeDefinitionBySlugContext(ctx,
 		store.AttributeObjectPerson, store.AttributeSlugAskMeAbout)
@@ -241,7 +240,7 @@ func TestReSeedingPreservesUserLabelChangesAndRepairsStructure(t *testing.T) {
 			Label: &label, Description: &descriptionPtr, DisplayOrder: &displayOrder})
 	require.NoError(err)
 
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE attribute_definitions
 		SET field_type = 'textarea', is_sensitive = TRUE
 		WHERE universal_id = ?
@@ -295,7 +294,7 @@ func TestReSeedingWidensTextCapsOnExistingArchives(t *testing.T) {
 	for _, slug := range narrowed {
 		definition, err := st.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, slug)
 		require.NoError(err)
-		_, err = st.DB().Exec(st.Rebind(`
+		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 			UPDATE attribute_definitions
 			SET options = '{"max_length":120}'
 			WHERE universal_id = ?
@@ -351,7 +350,7 @@ func TestReSeedingRefusesValueTypeRepairWhenValuesExist(t *testing.T) {
 		Source: store.ProvenanceUser,
 	})
 	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE attribute_definitions
 		SET value_type = 'record_reference', field_type = 'person', record_target = 'person'
 		WHERE universal_id = ?
@@ -371,9 +370,9 @@ func TestInitSchemaPreservesLegacySeedSlugCollision(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM attribute_definitions
 		WHERE universal_id = ?
 	`), store.AttributeUniversalIDLocation)
@@ -462,7 +461,7 @@ func TestInitSchemaUsesNextFallbackWhenSeedFallbackSlugIsOccupied(t *testing.T) 
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
 
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM attribute_definitions WHERE universal_id = ?
 	`), store.AttributeUniversalIDLocation)
 	require.NoError(err)
@@ -502,7 +501,7 @@ func TestInitSchemaPreservesExistingSeedSlugByUniversalID(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE attribute_definitions
 		SET slug = 'location_custom'
 		WHERE universal_id = ?
@@ -525,7 +524,7 @@ func TestInitSchemaResolvesCombinedSeedSlugAndUniversalIDCollision(t *testing.T)
 	st := testutil.NewTestStore(t)
 	ctx := t.Context()
 
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE attribute_definitions
 		SET slug = 'location_custom'
 		WHERE universal_id = ?
@@ -555,7 +554,7 @@ func TestInitSchemaRejectsSeedUniversalIDOnWrongObjectType(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		UPDATE attribute_definitions
 		SET object_type = 'organization', slug = 'location_custom'
 		WHERE universal_id = ?
@@ -569,7 +568,7 @@ func TestInitSchemaRejectsSeedUniversalIDOnWrongObjectType(t *testing.T) {
 
 func TestSeededDefinitionsPassTheSameValidationAsUserDefinitions(t *testing.T) {
 	st := testutil.NewTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	for _, seed := range store.SeededAttributeDefinitions() {
 		t.Run(seed.Slug, func(t *testing.T) {
@@ -583,7 +582,7 @@ func TestEnsureSeededAttributeDefinitionsRetriesConcurrentMissingSeed(t *testing
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM attribute_definitions WHERE universal_id = ?
 	`), store.AttributeUniversalIDLocation)
 	require.NoError(err)
@@ -629,7 +628,7 @@ func TestEnsureSeededAttributeDefinitionsRetriesConcurrentFallbackSeed(t *testin
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 
-	_, err := st.DB().Exec(st.Rebind(`
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`
 		DELETE FROM attribute_definitions WHERE universal_id = ?
 	`), store.AttributeUniversalIDLocation)
 	require.NoError(err)

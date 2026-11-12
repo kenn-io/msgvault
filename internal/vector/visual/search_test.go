@@ -117,7 +117,7 @@ func TestSearchCursorSurvivesDeletionAndRejectsQueryMismatch(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(first.Results, 1)
 	requirements.NotEmpty(first.NextCursor)
-	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? RETURNING id`), firstMessage).Scan(&firstMessage))
 
 	second, err := service.Search(t.Context(), SearchQuery{Text: "diagram", Limit: 1, Cursor: first.NextCursor})
@@ -137,7 +137,7 @@ func TestSearchServicePassesResolvedPersonScopeAndHydratesProvenance(t *testing.
 	generation := testVisualGeneration(t, f)
 	messageID := testVisualCandidate(t, f, "search-person", strings.Repeat("93", 32))
 	participantID := f.EnsureParticipant("visual-person@example.test", "Visual Person", "example.test")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), participantID, messageID)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), participantID, messageID)
 	requirements.NoError(err)
 	reconciler := testReconciler(t, f, generation.ID, memoryOpener{data: encodedPNG(t, 2, 2)}, "visual-test/search-person")
 	for {

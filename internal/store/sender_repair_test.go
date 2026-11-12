@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"path/filepath"
 	"strconv"
@@ -93,11 +92,11 @@ func TestMissingMIMESenderRepair(t *testing.T) {
 		"sender repair must invalidate exported message facts")
 
 	var senderID int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT sender_id FROM messages WHERE id = ?
 	`), repairable).Scan(&senderID), "read repaired sender_id")
 	var email, displayName string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT p.email_address, COALESCE(mr.display_name, '')
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
@@ -146,7 +145,7 @@ func TestApplySenderRepairRejectsChangedCandidate(t *testing.T) {
 		"rejected repair must not invalidate derived data")
 
 	var senderID sql.NullInt64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT sender_id FROM messages WHERE id = ?`), messageID).Scan(&senderID))
 	assert.False(senderID.Valid, "stale repair must not set sender_id")
 	assert.Equal(participantID, f.GetSingleRecipientID(messageID, "from"),
@@ -177,7 +176,7 @@ func TestApplySenderRepairRejectsChangedRawMIME(t *testing.T) {
 	)
 	require.ErrorContains(err, "changed after sender repair planning")
 	var senderID sql.NullInt64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT sender_id FROM messages WHERE id = ?`), messageID).Scan(&senderID))
 	assert.False(t, senderID.Valid, "stale MIME evidence must not write a sender")
 }
@@ -185,17 +184,18 @@ func TestApplySenderRepairRejectsChangedRawMIME(t *testing.T) {
 func TestApplySenderRepairSerializesConcurrentFromWriter(t *testing.T) {
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "sender-repair-lock.db")
-	repairStore, err := store.OpenForTest(dbPath)
+	repairStore, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "open repair store")
 	t.Cleanup(func() { _ = repairStore.Close() })
 	require.NoError(repairStore.InitSchema(), "init repair store")
-	writerStore, err := store.OpenForTest(dbPath)
+	writerStore, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "open concurrent writer store")
 	t.Cleanup(func() { _ = writerStore.Close() })
 
 	source, err := repairStore.GetOrCreateSource("gmail", "sender-lock@example.test")
 	require.NoError(err)
 	conversationID, err := repairStore.EnsureConversation(
+		t.Context(),
 		source.ID, "sender-lock-thread", "Sender lock thread",
 	)
 	require.NoError(err)
@@ -247,7 +247,7 @@ func TestApplySenderRepairSerializesConcurrentFromWriter(t *testing.T) {
 	require.NoError(<-repairDone, "sender repair")
 	require.NoError(<-writerDone, "later From replacement")
 	var finalParticipant int64
-	require.NoError(repairStore.DB().QueryRow(repairStore.Rebind(`
+	require.NoError(repairStore.DB().QueryRowContext(t.Context(), repairStore.Rebind(`
 		SELECT participant_id FROM message_recipients
 		WHERE message_id = ? AND recipient_type = 'from'
 	`), messageID).Scan(&finalParticipant))
@@ -287,7 +287,8 @@ func TestApplySenderRepairRefreshesSQLiteFTS(t *testing.T) {
 		"preservedbodyneedle": 1,
 	} {
 		var got int
-		require.NoError(f.Store.DB().QueryRow(
+		require.NoError(f.Store.DB().QueryRowContext(
+			t.Context(),
 			`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`, term,
 		).Scan(&got), "search refreshed FTS for %s", term)
 		assert.Equal(t, want, got, "FTS match count for %s", term)
@@ -315,7 +316,7 @@ func TestApplySenderRepairPersistsEveryRecoveredFromAddress(t *testing.T) {
 	), "ApplySenderRepairContext")
 
 	var senderEmail string
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
 		SELECT p.email_address
 		FROM messages m JOIN participants p ON p.id = m.sender_id
 		WHERE m.id = ?
@@ -323,7 +324,7 @@ func TestApplySenderRepairPersistsEveryRecoveredFromAddress(t *testing.T) {
 	assert.Equal("first@example.test", senderEmail,
 		"sender_id must point at the first recovered address")
 
-	rows, err := f.Store.DB().Query(f.Store.Rebind(`
+	rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`
 		SELECT p.email_address
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
@@ -351,7 +352,7 @@ func TestMissingMIMESenderScanIncludesLegacyNullMessageType(t *testing.T) {
 		SourceMessageID: "sender-repair-null-type-scan", MessageType: store.MessageTypeEmail,
 	})
 	require.NoError(err, "create NULL-type scan candidate")
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE messages SET message_type = NULL WHERE id = ?`), messageID)
 	require.NoError(err, "clear legacy message type")
 	require.NoError(st.UpsertMessageRaw(messageID,
@@ -372,7 +373,7 @@ func TestApplySenderRepairAcceptsLegacyNullMessageType(t *testing.T) {
 		SourceMessageID: "sender-repair-null-type-apply", MessageType: store.MessageTypeEmail,
 	})
 	require.NoError(err, "create NULL-type apply candidate")
-	_, err = st.DB().Exec(st.Rebind(
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(
 		`UPDATE messages SET message_type = NULL WHERE id = ?`), messageID)
 	require.NoError(err, "clear legacy message type")
 	require.NoError(st.UpsertMessageRaw(messageID,
@@ -385,7 +386,7 @@ func TestApplySenderRepairAcceptsLegacyNullMessageType(t *testing.T) {
 			Email: "nullapply@example.test", Domain: "example.test",
 		}}), "ApplySenderRepairContext")
 	var senderID sql.NullInt64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT sender_id FROM messages WHERE id = ?`), messageID).Scan(&senderID))
 	assert.True(t, senderID.Valid, "legacy NULL email must receive its repaired sender")
 }
@@ -394,11 +395,11 @@ func newLegacyNullableMessageTypeStore(t *testing.T) (*store.Store, int64, int64
 	t.Helper()
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy-null-message-type.db")
-	seed, err := store.OpenForTest(dbPath)
+	seed, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "open seed store")
 	require.NoError(seed.InitSchema(), "init seed schema")
 
-	ctx := context.Background()
+	ctx := t.Context()
 	conn, err := seed.DB().Conn(ctx)
 	require.NoError(err, "pin schema rewrite connection")
 	var schema string
@@ -424,13 +425,14 @@ func newLegacyNullableMessageTypeStore(t *testing.T) (*store.Store, int64, int64
 	require.NoError(conn.Close(), "close schema rewrite connection")
 	require.NoError(seed.Close(), "close seed store")
 
-	st, err := store.OpenForTest(dbPath)
+	st, err := store.OpenForTest(t.Context(), dbPath)
 	require.NoError(err, "reopen legacy store")
 	t.Cleanup(func() { _ = st.Close() })
 	require.NoError(st.InitSchema(), "init legacy store")
 	source, err := st.GetOrCreateSource("gmail", "legacy-null@example.test")
 	require.NoError(err, "create legacy source")
 	conversationID, err := st.EnsureConversation(
+		t.Context(),
 		source.ID, "legacy-null-thread", "Legacy NULL thread",
 	)
 	require.NoError(err, "create legacy conversation")
@@ -473,7 +475,7 @@ func TestMissingMIMESenderScanSkipsCorruptCompressionWithoutBlockingLaterRows(t 
 		Create(t, f.Store)
 	require.NoError(f.Store.UpsertMessageRaw(corrupt,
 		[]byte("From: corrupt@example.test\r\n\r\nBody")))
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
 		UPDATE message_raw SET raw_data = ?, compression = 'zlib'
 		WHERE message_id = ? AND raw_format = 'mime'
 	`), []byte("not a zlib stream"), corrupt)
@@ -509,10 +511,10 @@ func TestApplySenderRepairRollsBackSenderWhenRecipientWriteFails(t *testing.T) {
 		[]byte("From: rollback@example.test\r\n\r\nBody\r\n")),
 		"UpsertMessageRaw rollback candidate")
 	candidate := senderRepairCandidateForMessage(t, f.Store, messageID)
-	_, err := f.Store.DB().Exec(`
+	_, err := f.Store.DB().ExecContext(t.Context(), `
 		CREATE TRIGGER fail_sender_repair_recipient
 		BEFORE INSERT ON message_recipients
-		WHEN NEW.message_id = ` + sqlLiteralInt64(messageID) + `
+		WHEN NEW.message_id = `+sqlLiteralInt64(messageID)+`
 		BEGIN
 			SELECT RAISE(ABORT, 'synthetic sender recipient failure');
 		END
@@ -532,7 +534,7 @@ func TestApplySenderRepairRollsBackSenderWhenRecipientWriteFails(t *testing.T) {
 		"rolled-back repair must not invalidate derived data")
 
 	var senderID sql.NullInt64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 		`SELECT sender_id FROM messages WHERE id = ?`), messageID).Scan(&senderID))
 	assert.False(senderID.Valid, "sender_id update must roll back")
 	f.AssertRecipientCount(messageID, "from", 0)

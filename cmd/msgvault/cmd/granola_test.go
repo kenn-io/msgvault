@@ -99,7 +99,7 @@ func TestConfiguredGranolaMissingRegisteredSourceStopsBeforeClient(t *testing.T)
 		return granola.NewClient(baseURL, apiKey)
 	}
 	t.Cleanup(func() { newGranolaClient = savedFactory })
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
 	err := runConfiguredGranolaSync(ctx, st, config.GranolaSource{
@@ -140,7 +140,7 @@ func TestManualGranolaPartialImportRefreshesCacheBeforeReturningError(t *testing
 		require.NoError(openErr)
 		defer func() { require.NoError(st.Close()) }()
 		var count int
-		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 		refreshSawWrite = count == 1
 		return nil
 	}
@@ -202,14 +202,14 @@ func TestConfiguredGranolaPartialImportRefreshesCacheBeforeReturningError(t *tes
 	savedRefresh := rebuildGranolaCacheAfterScheduledSync
 	refreshes := 0
 	refreshSawWrite := false
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	var refreshContextErr error
 	rebuildGranolaCacheAfterScheduledSync = func(refreshCtx context.Context, _ string) error {
 		refreshes++
 		cancel()
 		refreshContextErr = refreshCtx.Err()
 		var count int
-		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(refreshCtx, `SELECT COUNT(*) FROM messages`).Scan(&count))
 		refreshSawWrite = count == 1
 		return nil
 	}
@@ -246,7 +246,7 @@ func TestConfiguredGranolaPartialImportWithoutWritesSkipsCacheRefresh(t *testing
 	}
 	t.Cleanup(func() { rebuildGranolaCacheAfterScheduledSync = savedRefresh })
 
-	err = runConfiguredGranolaSync(context.Background(), st, config.GranolaSource{
+	err = runConfiguredGranolaSync(t.Context(), st, config.GranolaSource{
 		Identifier:   "work",
 		AccountEmail: "user-a@example.com",
 		APIKey:       "grn_test",
@@ -288,7 +288,7 @@ func TestManualGranolaLaterFailureRefreshesEarlierSourceWrites(t *testing.T) {
 		require.NoError(openErr)
 		defer func() { require.NoError(st.Close()) }()
 		var count int
-		require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&count))
 		refreshSawWrite = count == 1
 		return nil
 	}

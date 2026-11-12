@@ -20,10 +20,10 @@ func TestResolveUserPhoneRungDedupesAcrossSources(t *testing.T) {
 	r := newParticipantResolver(st)
 
 	// A native SMS/WhatsApp import already created this person by phone.
-	existing, err := st.EnsureParticipantByPhone("+15550100001", "Alice Native", "whatsapp")
+	existing, err := st.EnsureParticipantByPhone(t.Context(), "+15550100001", "Alice Native", "whatsapp")
 	require.NoError(err)
 
-	pid, err := r.resolveUser(&User{
+	pid, err := r.resolveUser(t.Context(), &User{
 		ID:          "@15550100001:local-whatsapp.localhost",
 		PhoneNumber: "+15550100001",
 		FullName:    "Alice",
@@ -42,7 +42,7 @@ func TestResolveUserEmailRung(t *testing.T) {
 	existing, err := st.EnsureParticipant("bob@example.com", "Bob Mail", "example.com")
 	require.NoError(err)
 
-	pid, err := r.resolveUser(&User{
+	pid, err := r.resolveUser(t.Context(), &User{
 		ID:       "@linkedin_bob:beeper.local",
 		Email:    "Bob@Example.com",
 		FullName: "Bob",
@@ -56,18 +56,18 @@ func TestResolveUserIdentifierFallback(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
-	r := newParticipantResolver(st)
+	r := newParticipantResolver(st, "account-a")
 
-	pid, err := r.resolveUser(&User{ID: "@signal_uuid:beeper.local", FullName: "Carol"})
+	pid, err := r.resolveUser(t.Context(), &User{ID: "@signal_uuid:beeper.local", FullName: "Carol"})
 	require.NoError(err)
 	require.NotZero(pid)
 
 	var identifierType, identifierValue string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT identifier_type, identifier_value FROM participant_identifiers WHERE participant_id = ?`), pid,
 	).Scan(&identifierType, &identifierValue))
 	assert.Equal("beeper", identifierType)
-	assert.Equal("@signal_uuid:beeper.local", identifierValue)
+	assert.Equal(beeperidentity.Fallback("account-a", "@signal_uuid:beeper.local"), identifierValue)
 }
 
 func TestResolveIDAdoptsLegacyUnscopedIdentifier(t *testing.T) {
@@ -83,7 +83,7 @@ func TestResolveIDAdoptsLegacyUnscopedIdentifier(t *testing.T) {
 	require.NoError(err)
 
 	resolver := newParticipantResolver(st, "account-a")
-	resolved, err := resolver.resolveID(rawID, "Legacy User")
+	resolved, err := resolver.resolveID(t.Context(), rawID, "Legacy User")
 	require.NoError(err)
 	assert.Equal(legacy, resolved,
 		"the first scoped import must retain the legacy participant and its history")
@@ -97,7 +97,7 @@ func TestResolveIDAdoptsLegacyUnscopedIdentifier(t *testing.T) {
 	assert.Zero(legacyOwner, "the reusable legacy key must be consumed by the first account")
 
 	secondResolver := newParticipantResolver(st, "account-b")
-	second, err := secondResolver.resolveID(rawID, "Legacy User")
+	second, err := secondResolver.resolveID(t.Context(), rawID, "Legacy User")
 	require.NoError(err)
 	assert.NotEqual(legacy, second,
 		"a second account with the same raw ID must not reuse the first account's participant")
@@ -108,7 +108,7 @@ func TestResolveIDAdoptsLegacyUnscopedIdentifier(t *testing.T) {
 	assert.Equal(second, secondOwner)
 
 	var participants int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participants`).Scan(&participants))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM participants`).Scan(&participants))
 	assert.Equal(2, participants, "the second account must get an isolated participant")
 }
 
@@ -128,7 +128,7 @@ func TestResolveIDRejectsAmbiguousLegacyIdentifier(t *testing.T) {
 	))
 
 	resolver := newParticipantResolver(st, "account-b")
-	resolved, err := resolver.resolveID(rawID, "Legacy User")
+	resolved, err := resolver.resolveID(t.Context(), rawID, "Legacy User")
 	require.NoError(err)
 	assert.NotEqual(legacy, resolved,
 		"an unscoped key with an existing scoped owner must not be adopted")
@@ -147,7 +147,7 @@ func TestResolveUserLadderIsExclusive(t *testing.T) {
 	// A phone-resolvable user resolves through the phone rung (phone wins
 	// over email), and the Beeper user ID is persisted as an identifier of
 	// that same participant so later runs cannot fork the person.
-	pid, err := r.resolveUser(&User{
+	pid, err := r.resolveUser(t.Context(), &User{
 		ID:          "@15550100002:local-whatsapp.localhost",
 		PhoneNumber: "+15550100002",
 		Email:       "dave@example.com", // phone wins over email
@@ -157,20 +157,21 @@ func TestResolveUserLadderIsExclusive(t *testing.T) {
 	require.NotZero(pid)
 
 	var matrixIDOwner int64
-	require.NoError(st.DB().QueryRow(
+	require.NoError(st.DB().QueryRowContext(
+		t.Context(),
 		`SELECT participant_id FROM participant_identifiers WHERE identifier_value = '@15550100002:local-whatsapp.localhost'`,
 	).Scan(&matrixIDOwner))
 	assert.Equal(pid, matrixIDOwner, "the Beeper user ID must map to the phone participant, not a fork")
 
 	var phone string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT phone_number FROM participants WHERE id = ?`), pid,
 	).Scan(&phone))
 	assert.Equal("+15550100002", phone)
 
 	// The phone rung records the phone under the beeper identifier namespace.
 	var phoneIdentRows int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM participant_identifiers WHERE participant_id = ? AND identifier_type = 'beeper' AND identifier_value = '+15550100002'`), pid,
 	).Scan(&phoneIdentRows))
 	assert.Equal(1, phoneIdentRows)
@@ -184,9 +185,9 @@ func TestResolveUserCache(t *testing.T) {
 	r := newParticipantResolver(st)
 
 	u := &User{ID: "@x:beeper.local", FullName: "X"}
-	first, err := r.resolveUser(u)
+	first, err := r.resolveUser(t.Context(), u)
 	require.NoError(err)
-	second, err := r.resolveUser(u)
+	second, err := r.resolveUser(t.Context(), u)
 	require.NoError(err)
 	assert.Equal(first, second)
 }
@@ -199,7 +200,7 @@ func TestResolveIDHitsSeededCache(t *testing.T) {
 	r := newParticipantResolver(st)
 
 	// Seeding from the chat participant list (phone rung)…
-	seeded, err := r.resolveUser(&User{
+	seeded, err := r.resolveUser(t.Context(), &User{
 		ID:          "@15550100003:local-whatsapp.localhost",
 		PhoneNumber: "+15550100003",
 		FullName:    "Eve",
@@ -207,7 +208,7 @@ func TestResolveIDHitsSeededCache(t *testing.T) {
 	require.NoError(err)
 
 	// …means a later bare sender ID resolves to the same person, not a fork.
-	pid, err := r.resolveID("@15550100003:local-whatsapp.localhost", "Eve")
+	pid, err := r.resolveID(t.Context(), "@15550100003:local-whatsapp.localhost", "Eve")
 	require.NoError(err)
 	assert.Equal(seeded, pid)
 }
@@ -220,17 +221,17 @@ func TestResolveUserUpgradesBareIDFallback(t *testing.T) {
 	r := newParticipantResolver(st)
 
 	// A departed member is first seen as a bare sender ID (fallback rung)…
-	weak, err := r.resolveID("@15550100004:local-whatsapp.localhost", "Fay")
+	weak, err := r.resolveID(t.Context(), "@15550100004:local-whatsapp.localhost", "Fay")
 	require.NoError(err)
 	require.NotZero(weak)
 
 	// …but the same user appears later in another chat's participant list
 	// with a phone number. The richer metadata must win (deduping across
 	// archives), not be blocked by the cached fallback.
-	native, err := st.EnsureParticipantByPhone("+15550100004", "Fay Native", "imessage")
+	native, err := st.EnsureParticipantByPhone(t.Context(), "+15550100004", "Fay Native", "imessage")
 	require.NoError(err)
 
-	rich, err := r.resolveUser(&User{
+	rich, err := r.resolveUser(t.Context(), &User{
 		ID:          "@15550100004:local-whatsapp.localhost",
 		PhoneNumber: "+15550100004",
 		FullName:    "Fay",
@@ -240,7 +241,7 @@ func TestResolveUserUpgradesBareIDFallback(t *testing.T) {
 	assert.NotEqual(weak, rich)
 
 	// Subsequent bare-ID lookups now resolve to the upgraded participant.
-	again, err := r.resolveID("@15550100004:local-whatsapp.localhost", "Fay")
+	again, err := r.resolveID(t.Context(), "@15550100004:local-whatsapp.localhost", "Fay")
 	require.NoError(err)
 	assert.Equal(rich, again)
 }
@@ -251,31 +252,27 @@ func TestRichResolutionPersistsAcrossRuns(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 
-	// Run 1 sees the user with a phone number in a chat's member list.
-	r1 := newParticipantResolver(st)
-	rich, err := r1.resolveUser(&User{
-		ID:          "@15550100005:local-whatsapp.localhost",
-		PhoneNumber: "+15550100005",
-		FullName:    "Gil",
-	})
-	require.NoError(err)
-
-	// Run 2 (fresh cache) sees the same user only as a bare sender ID (they
-	// left the group): the persisted identifier must unify, not fork.
-	r2 := newParticipantResolver(st)
-	pid, err := r2.resolveID("@15550100005:local-whatsapp.localhost", "Gil")
-	require.NoError(err)
-	assert.Equal(rich, pid, "bare-ID resolution in a later run must find the rich participant")
+	for _, user := range []User{
+		{ID: "@15550100005:local-whatsapp.localhost", PhoneNumber: "+15550100005", FullName: "Gil"},
+		{ID: "@reader:beeper.local", Email: "reader@example.org", FullName: "Reader"},
+	} {
+		// A later run must find rich metadata by the account-scoped sender ID.
+		rich, err := newParticipantResolver(st, "account-a").resolveUser(t.Context(), &user)
+		require.NoError(err)
+		pid, err := newParticipantResolver(st, "account-a").resolveID(t.Context(), user.ID, user.FullName)
+		require.NoError(err)
+		assert.Equal(rich, pid, "bare-ID resolution in a later run must find the rich participant")
+	}
 
 	// And the reverse order: a weak participant from run 1 is re-pointed
 	// when run 2 learns the phone number.
-	r3 := newParticipantResolver(st)
-	weak, err := r3.resolveID("@15550100006:beeper.local", "Hana")
+	r3 := newParticipantResolver(st, "account-a")
+	weak, err := r3.resolveID(t.Context(), "@15550100006:beeper.local", "Hana")
 	require.NoError(err)
-	r4 := newParticipantResolver(st)
-	native, err := st.EnsureParticipantByPhone("+15550100006", "Hana Native", "imessage")
+	r4 := newParticipantResolver(st, "account-a")
+	native, err := st.EnsureParticipantByPhone(t.Context(), "+15550100006", "Hana Native", "imessage")
 	require.NoError(err)
-	upgraded, err := r4.resolveUser(&User{
+	upgraded, err := r4.resolveUser(t.Context(), &User{
 		ID:          "@15550100006:beeper.local",
 		PhoneNumber: "+15550100006",
 		FullName:    "Hana",
@@ -283,8 +280,8 @@ func TestRichResolutionPersistsAcrossRuns(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(native, upgraded)
 	assert.NotEqual(weak, upgraded)
-	r5 := newParticipantResolver(st)
-	pid, err = r5.resolveID("@15550100006:beeper.local", "Hana")
+	r5 := newParticipantResolver(st, "account-a")
+	pid, err := r5.resolveID(t.Context(), "@15550100006:beeper.local", "Hana")
 	require.NoError(err)
 	assert.Equal(native, pid, "the identifier row must be re-pointed at the rich participant")
 }
@@ -298,7 +295,7 @@ func TestRichUpgradeMergesWeakHistory(t *testing.T) {
 	// Run 1: the user is only seen as a bare sender ID; messages, a reaction,
 	// a mention, and membership are written under the weak participant.
 	r1 := newParticipantResolver(st)
-	weak, err := r1.resolveID("@15550100007:beeper.local", "Ida")
+	weak, err := r1.resolveID(t.Context(), "@15550100007:beeper.local", "Ida")
 	require.NoError(err)
 
 	src, err := st.GetOrCreateSource("beeper", "merge-test")
@@ -312,13 +309,13 @@ func TestRichUpgradeMergesWeakHistory(t *testing.T) {
 		SenderID: sql.NullInt64{Int64: weak, Valid: true},
 	})
 	require.NoError(err)
-	require.NoError(st.UpsertReaction(msgID, weak, "emoji", "👍", time.Now()))
+	require.NoError(st.UpsertReaction(t.Context(), msgID, weak, "emoji", "👍", time.Now()))
 	require.NoError(st.ReplaceMessageRecipients(msgID, "mention", []int64{weak}, []string{""}))
 
 	// Run 2: the same user appears with a phone number. The weak history must
 	// fold into the rich participant, not stay split.
 	r2 := newParticipantResolver(st)
-	rich, err := r2.resolveUser(&User{
+	rich, err := r2.resolveUser(t.Context(), &User{
 		ID:          "@15550100007:beeper.local",
 		PhoneNumber: "+15550100007",
 		FullName:    "Ida",
@@ -327,27 +324,27 @@ func TestRichUpgradeMergesWeakHistory(t *testing.T) {
 	require.NotEqual(weak, rich)
 
 	var senderID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT sender_id FROM messages WHERE id = ?`), msgID).Scan(&senderID))
 	assert.Equal(rich, senderID, "messages must move to the rich participant")
 
 	var reactionOwner int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT participant_id FROM reactions WHERE message_id = ?`), msgID).Scan(&reactionOwner))
 	assert.Equal(rich, reactionOwner)
 
 	var mentionOwner int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT participant_id FROM message_recipients WHERE message_id = ? AND recipient_type = 'mention'`), msgID).Scan(&mentionOwner))
 	assert.Equal(rich, mentionOwner)
 
 	var memberOwner int64
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT participant_id FROM conversation_participants WHERE conversation_id = ?`), convID).Scan(&memberOwner))
 	assert.Equal(rich, memberOwner)
 
 	var weakRows int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM participants WHERE id = ?`), weak).Scan(&weakRows))
 	assert.Zero(weakRows, "the weak participant row must be deleted after the merge")
 }
@@ -360,7 +357,7 @@ func TestPhoneUpgradesEmailResolution(t *testing.T) {
 	r := newParticipantResolver(st)
 
 	// First seen with only an email (e.g. a LinkedIn chat)…
-	emailPID, err := r.resolveUser(&User{
+	emailPID, err := r.resolveUser(t.Context(), &User{
 		ID:       "@15550100008:beeper.local",
 		Email:    "kim@example.com",
 		FullName: "Kim",
@@ -370,9 +367,9 @@ func TestPhoneUpgradesEmailResolution(t *testing.T) {
 	// …later seen with an E.164 phone. Phone outranks email in the ladder:
 	// the cached email resolution must not block deduping with the native
 	// SMS archive, and the email participant's history folds into it.
-	native, err := st.EnsureParticipantByPhone("+15550100008", "Kim Native", "imessage")
+	native, err := st.EnsureParticipantByPhone(t.Context(), "+15550100008", "Kim Native", "imessage")
 	require.NoError(err)
-	phonePID, err := r.resolveUser(&User{
+	phonePID, err := r.resolveUser(t.Context(), &User{
 		ID:          "@15550100008:beeper.local",
 		PhoneNumber: "+15550100008",
 		Email:       "kim@example.com",
@@ -385,17 +382,17 @@ func TestPhoneUpgradesEmailResolution(t *testing.T) {
 	// The merge preserved the email and its analytics domain on the surviving
 	// participant.
 	var email, domain string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COALESCE(email_address, ''), COALESCE(domain, '') FROM participants WHERE id = ?`), phonePID).
 		Scan(&email, &domain))
 	assert.Equal("kim@example.com", email)
 	assert.Equal("example.com", domain)
 
 	// Cache and identifier now both point at the phone participant.
-	again, err := r.resolveUser(&User{ID: "@15550100008:beeper.local", Email: "kim@example.com"})
+	again, err := r.resolveUser(t.Context(), &User{ID: "@15550100008:beeper.local", Email: "kim@example.com"})
 	require.NoError(err)
 	assert.Equal(phonePID, again)
-	pid, err := r.resolveID("@15550100008:beeper.local", "Kim")
+	pid, err := r.resolveID(t.Context(), "@15550100008:beeper.local", "Kim")
 	require.NoError(err)
 	assert.Equal(phonePID, pid)
 }
@@ -407,7 +404,7 @@ func TestPhoneUpgradeSkipsMergeAcrossDurablePersons(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	r := newParticipantResolver(st)
 
-	emailPID, err := r.resolveUser(&User{
+	emailPID, err := r.resolveUser(t.Context(), &User{
 		ID:       "@user:beeper.local",
 		Email:    "user@example.com",
 		FullName: "Alice",
@@ -416,12 +413,12 @@ func TestPhoneUpgradeSkipsMergeAcrossDurablePersons(t *testing.T) {
 	emailPerson, _, err := st.CreatePersonFromParticipant(emailPID)
 	require.NoError(err)
 
-	phonePID, err := st.EnsureParticipantByPhone("+15550100020", "Bob", "imessage")
+	phonePID, err := st.EnsureParticipantByPhone(t.Context(), "+15550100020", "Bob", "imessage")
 	require.NoError(err)
 	phonePerson, _, err := st.CreatePersonFromParticipant(phonePID)
 	require.NoError(err)
 
-	resolved, err := r.resolveUser(&User{
+	resolved, err := r.resolveUser(t.Context(), &User{
 		ID:          "@user:beeper.local",
 		PhoneNumber: "+15550100020",
 		FullName:    "Alice",
@@ -443,7 +440,7 @@ func TestResolveIDEmpty(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	r := newParticipantResolver(st)
-	pid, err := r.resolveID("", "nobody")
+	pid, err := r.resolveID(t.Context(), "", "nobody")
 	require.NoError(err)
 	assert.Zero(pid)
 }
@@ -457,7 +454,7 @@ func TestPhoneUpgradesEmailResolutionAcrossRuns(t *testing.T) {
 	// Run 1 sees the user with only an email; the Beeper ID lands on the
 	// email participant.
 	r1 := newParticipantResolver(st)
-	emailPID, err := r1.resolveUser(&User{
+	emailPID, err := r1.resolveUser(t.Context(), &User{
 		ID:       "@15550100013:beeper.local",
 		Email:    "mia@example.com",
 		FullName: "Mia",
@@ -468,7 +465,7 @@ func TestPhoneUpgradesEmailResolutionAcrossRuns(t *testing.T) {
 	// Beeper user with weaker metadata — its history must fold into the
 	// phone-deduped participant, not stay split.
 	r2 := newParticipantResolver(st)
-	phonePID, err := r2.resolveUser(&User{
+	phonePID, err := r2.resolveUser(t.Context(), &User{
 		ID:          "@15550100013:beeper.local",
 		PhoneNumber: "+15550100013",
 		FullName:    "Mia",
@@ -477,18 +474,18 @@ func TestPhoneUpgradesEmailResolutionAcrossRuns(t *testing.T) {
 	require.NotEqual(emailPID, phonePID)
 
 	var gone int
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COUNT(*) FROM participants WHERE id = ?`), emailPID).Scan(&gone))
 	assert.Zero(gone, "the email participant must be merged away")
 	var email string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COALESCE(email_address, '') FROM participants WHERE id = ?`), phonePID).Scan(&email))
 	assert.Equal("mia@example.com", email, "the merge preserves the email")
 
 	// And the reverse across runs: an email-only sighting must not downgrade
 	// a phone-resolved identity.
 	r3 := newParticipantResolver(st)
-	again, err := r3.resolveUser(&User{
+	again, err := r3.resolveUser(t.Context(), &User{
 		ID:       "@15550100013:beeper.local",
 		Email:    "mia@example.com",
 		FullName: "Mia",
@@ -505,14 +502,14 @@ func TestRichUpgradeDoesNotAbsorbContactOwner(t *testing.T) {
 
 	// The Beeper user ID is already owned by a participant with its own
 	// contact metadata (e.g. the person's old number from another archive).
-	owner, err := st.EnsureParticipantByPhone("+15550100011", "Lea Old", "imessage")
+	owner, err := st.EnsureParticipantByPhone(t.Context(), "+15550100011", "Lea Old", "imessage")
 	require.NoError(err)
 	require.NoError(st.SetParticipantIdentifier(owner, "beeper", "@lea:beeper.local"))
 
 	// Resolving the same Beeper ID with a different phone must re-point the
 	// identifier, but never destructively merge a contact-bearing row.
 	r := newParticipantResolver(st)
-	pid, err := r.resolveUser(&User{
+	pid, err := r.resolveUser(t.Context(), &User{
 		ID:          "@lea:beeper.local",
 		PhoneNumber: "+15550100012",
 		FullName:    "Lea",
@@ -521,11 +518,11 @@ func TestRichUpgradeDoesNotAbsorbContactOwner(t *testing.T) {
 	require.NotEqual(owner, pid)
 
 	var oldPhone string
-	require.NoError(st.DB().QueryRow(st.Rebind(
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT COALESCE(phone_number, '') FROM participants WHERE id = ?`), owner).Scan(&oldPhone))
 	assert.Equal("+15550100011", oldPhone, "the previous owner must survive un-merged")
 
-	again, err := r.resolveID("@lea:beeper.local", "Lea")
+	again, err := r.resolveID(t.Context(), "@lea:beeper.local", "Lea")
 	require.NoError(err)
 	assert.Equal(pid, again, "the identifier now points at the new resolution")
 }
