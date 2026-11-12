@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -82,9 +81,6 @@ func (s *Store) FillPersonHowWeMetContext(ctx context.Context, request peopleswe
 			empty := &attributeValueWrite{}
 			var slug string
 			err := tx.QueryRowContext(ctx, `SELECT slug FROM attribute_definitions WHERE universal_id = ? AND object_type = ?`, AttributeUniversalIDHowWeMet, string(AttributeObjectPerson)).Scan(&slug)
-			if errors.Is(err, sql.ErrNoRows) {
-				return empty, nil
-			}
 			if err != nil {
 				return nil, err
 			}

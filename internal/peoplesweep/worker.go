@@ -404,18 +404,18 @@ type PersonRunResult struct {
 }
 
 type Worker struct {
-	HowWeMet HowWeMetStore
-	Config   Config
-	Store    WorkStore
-	Source   AssemblySource
-	Context  ContextRetriever
-	Sink     ClaimSink
-	Runner   StructuredRunner
-	Catalog  CatalogSource
+	Config  Config
+	Store   WorkStore
+	Source  AssemblySource
+	Context ContextRetriever
+	Sink    ClaimSink
+	Runner  StructuredRunner
+	Catalog CatalogSource
 	// Brief and Archive carry the person brief step. Both nil turns the step
 	// off entirely, which is what a caller that predates the brief gets.
 	Brief    BriefStore
 	Archive  BriefArchive
+	HowWeMet HowWeMetStore
 	Clock    func() time.Time
 	NewID    func() string
 	WorkerID string
