@@ -14,17 +14,17 @@ import (
 type record map[string]any
 
 // The allowlist also fixes the raw evidence keys when optional columns are absent.
-var columns = []struct{ name, kind string }{
-	{"ZUNIQUE_ID", "text"}, {"ZDATE", "number"}, {"ZDURATION", "number"},
-	{"ZORIGINATED", "integer"}, {"ZANSWERED", "integer"}, {"ZADDRESS", "text"},
-	{"ZNAME", "text"}, {"ZHANDLE_TYPE", "integer"}, {"ZSERVICE_PROVIDER", "text"},
-	{"ZCALLTYPE", "integer"}, {"ZPARTICIPANTGROUPUUID", "text"},
-	{"ZORIGINATINGDEVICENAME", "text"}, {"ZDISCONNECTED_CAUSE", "integer"},
+var columns = []struct{ name, kind, label string }{
+	{"ZUNIQUE_ID", "text", "identifier"}, {"ZDATE", "number", "date"}, {"ZDURATION", "number", "duration"},
+	{"ZORIGINATED", "integer", "direction"}, {"ZANSWERED", "integer", "answered status"}, {"ZADDRESS", "text", "address"},
+	{"ZNAME", "text", "name"}, {"ZHANDLE_TYPE", "integer", "handle type"}, {"ZSERVICE_PROVIDER", "text", "service provider"},
+	{"ZCALLTYPE", "integer", "type"}, {"ZPARTICIPANTGROUPUUID", "text", "participant group"},
+	{"ZORIGINATINGDEVICENAME", "text", "originating device name"}, {"ZDISCONNECTED_CAUSE", "integer", "disconnect cause"},
 }
 
 func (r record) observation(account string) (callhistory.Observation, error) {
 	fail := func(field string) (callhistory.Observation, error) {
-		return callhistory.Observation{}, fmt.Errorf("invalid macOS call field %s", field)
+		return callhistory.Observation{}, fmt.Errorf("Invalid call %s.", field)
 	}
 	for _, c := range columns {
 		v := r[c.name]
@@ -41,7 +41,7 @@ func (r record) observation(account string) (callhistory.Observation, error) {
 			valid = c.kind == "number"
 		}
 		if !valid {
-			return fail(c.name)
+			return fail(c.label)
 		}
 	}
 	number := func(v any) *float64 {
@@ -56,7 +56,7 @@ func (r record) observation(account string) (callhistory.Observation, error) {
 	}
 	date := number(r["ZDATE"])
 	if date == nil || math.IsNaN(*date) || math.IsInf(*date, 0) || *date < -63113904000 || *date >= 252423993600 {
-		return fail("ZDATE")
+		return fail("date")
 	}
 	whole, fraction := math.Modf(*date)
 	// Keep enough precision that a value just below a half-nanosecond
@@ -68,7 +68,7 @@ func (r record) observation(account string) (callhistory.Observation, error) {
 	at := time.Unix(int64(whole)+978307200, rounded).UTC()
 	duration := number(r["ZDURATION"])
 	if duration != nil && (*duration < 0 || math.IsNaN(*duration) || math.IsInf(*duration, 0)) {
-		return fail("ZDURATION")
+		return fail("duration")
 	}
 	raw := make(record, len(columns))
 	for _, c := range columns {

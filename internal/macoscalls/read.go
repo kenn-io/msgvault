@@ -43,7 +43,7 @@ func Read(ctx context.Context, path, account string, emit func(callhistory.Obser
 	}
 	for _, name := range []string{"Z_PK", "ZUNIQUE_ID", "ZDATE"} {
 		if !available[name] {
-			return fmt.Errorf("unsupported macOS call schema: missing %s", name)
+			return errors.New("Unsupported call database format.")
 		}
 	}
 	fields := make([]string, len(columns))
