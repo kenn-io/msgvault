@@ -129,9 +129,11 @@
   });
 
   const filesPredicateFingerprint = $derived(JSON.stringify(predicate));
+  const filesSelectionKey = $derived(selection?.kind === 'group' ? JSON.stringify([selection.dimension, selection.key]) : '');
 
   $effect(() => {
-    const selected = selection;
+    void filesSelectionKey;
+    const selected = untrack(() => selection);
     void filesPredicateFingerprint;
     const currentPredicate = untrack(() => predicate);
     requestGeneration += 1;
@@ -260,7 +262,10 @@
             <MeetingPanel hideWhenEmpty {client} scope={{ kind: 'explore', explore: selection.meetingScope }}
               onReloadScope={onReloadMeetings} {onOpenMeeting} />
           {:else}
-            <p class="pane-status" role="status">Reload this group to load meeting activity with its current search scope.</p>
+            <div class="pane-status" role="status">
+              <p>Reload this group to load meeting activity with its current search scope.</p>
+              {#if onReloadMeetings}<Button label="Reload meeting activity" size="sm" surface="soft" onclick={onReloadMeetings} />{/if}
+            </div>
           {/if}
           <AttachmentRail files={files} totalCount={totalFiles} loading={filesLoading} error={filesError} />
         {:else if !selection.overview}
