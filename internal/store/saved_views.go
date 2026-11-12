@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/jsonexact"
 )
 
-const CurrentSavedViewSchemaVersion = 2
+const CurrentSavedViewSchemaVersion = 3
 
 var (
 	ErrSavedViewNotFound                 = errors.New("saved view not found")

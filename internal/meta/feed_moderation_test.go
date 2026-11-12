@@ -32,6 +32,8 @@ func newMetaPage(t *testing.T) (*metaPage, *Client) {
 		case r.Method == http.MethodPost && id == "100_201/comments":
 			m.replied = true
 			_, _ = fmt.Fprint(w, `{"id":"100_202"}`)
+		case r.Method == http.MethodDelete:
+			_, _ = fmt.Fprint(w, `{"success":true}`)
 		case r.Method == http.MethodPost:
 			body, err := io.ReadAll(r.Body)
 			assert.NoError(t, err)
@@ -147,4 +149,90 @@ func TestWebhookAndModerationShareHiddenState(t *testing.T) {
 	require.NoError(ModerateComment(t.Context(), st, c, target, ActionUnhide))
 	assert.False(hidden(), "a moderated unhide after a webhook hide")
 	assert.False(m.hidden["100_201"])
+}
+
+// surface is where polling found an archived object on the Page.
+type surface struct{ Organic, Visitor, Ad bool }
+
+func surfaceOf(m objectMetadata) surface { return surface{m.Organic, m.Visitor, m.Ad} }
+
+// replyToWebhookComment replies to comment 100_201 and checks the reply is
+// the owner's reply to it, in the same source and conversation, and on the
+// same surface as the comment. It returns the reply's surface.
+func replyToWebhookComment(t *testing.T, st *store.Store, c *Client, src *store.Source) surface {
+	t.Helper()
+	assert, require := assert.New(t), require.New(t)
+	parent := message(t, st, src.ID, "100_201")
+	_, parentMeta := archivedComment(t, st, src, "100_201")
+	target, err := ResolveCommentTarget(t.Context(), st, parent.ID)
+	require.NoError(err)
+	_, err = ReplyToComment(t.Context(), st, c, target, "Thanks")
+	require.NoError(err)
+
+	reply := message(t, st, src.ID, "100_202")
+	assert.Equal(src.ID, reply.SourceID)
+	assert.Equal(parent.MessageType, reply.MessageType)
+	assert.Equal(parent.ConversationID, reply.ConversationID)
+	assert.Equal(parent.ID, reply.ReplyToMessageID.Int64)
+	fromMe, replyMeta := archivedComment(t, st, src, "100_202")
+	assert.True(fromMe)
+	assert.True(replyMeta.Outbound)
+	assert.Equal("100_201", replyMeta.ParentID)
+	assert.Equal(surfaceOf(parentMeta), surfaceOf(replyMeta), "a reply is on its parent's surface")
+
+	_, afterMeta := archivedComment(t, st, src, "100_201")
+	assert.Equal(parent, message(t, st, src.ID, "100_201"), "replying leaves the parent's row")
+	assert.Equal(parentMeta, afterMeta, "replying leaves the parent's metadata")
+	return surfaceOf(replyMeta)
+}
+
+// A comment only a webhook archived has no known surface, so a reply to it
+// claims none either.
+func TestReplyToWebhookCommentClaimsNoSurface(t *testing.T) {
+	st, _, c, src := setupMetaPage(t)
+	assert.Equal(t, surface{}, replyToWebhookComment(t, st, c, src))
+}
+
+// Once polling finds the webhook's comment on a surface, a reply carries it.
+func TestReplyToWebhookCommentAfterSyncKeepsSurface(t *testing.T) {
+	require := require.New(t)
+	st, _, c, src := setupMetaPage(t)
+	f, syncClient := newGraphFixture(t)
+	f.posts, f.visitors = nil, []Object{{ID: "100_200", Message: "Example post", From: &Actor{ID: "100", Name: "Example Page"}}}
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", "Example comment")}
+	_, err := NewImporter(st, syncClient).Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	_, meta := archivedComment(t, st, src, "100_201")
+	require.Equal(surface{Visitor: true}, surfaceOf(meta))
+
+	assert.Equal(t, surface{Visitor: true}, replyToWebhookComment(t, st, c, src))
+}
+
+// Moderating a comment only a webhook archived changes only its hidden state
+// or deleted mark.
+func TestModerateWebhookCommentKeepsItsRecord(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, _, c, src := setupMetaPage(t)
+	before := message(t, st, src.ID, "100_201")
+	_, beforeMeta := archivedComment(t, st, src, "100_201")
+	deleted := func() bool {
+		var marked bool
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id = ?`, before.ID).Scan(&marked))
+		return marked
+	}
+	for _, step := range []struct {
+		action  CommentAction
+		hidden  bool
+		deleted bool
+	}{{ActionHide, true, false}, {ActionUnhide, false, false}, {ActionDelete, false, true}} {
+		target, err := ResolveCommentTarget(t.Context(), st, before.ID)
+		require.NoError(err)
+		require.NoError(ModerateComment(t.Context(), st, c, target, step.action))
+		want := beforeMeta
+		want.Hidden = step.hidden
+		_, meta := archivedComment(t, st, src, "100_201")
+		assert.Equal(want, meta, step.action)
+		assert.Equal(before, message(t, st, src.ID, "100_201"), step.action)
+		assert.Equal(step.deleted, deleted(), step.action)
+	}
 }
