@@ -67,11 +67,12 @@ func TestSettingsViewportEndpointDetail(t *testing.T) {
 	}
 }
 
-func TestSettingsCategoryBoundaryResetsSelection(t *testing.T) {
+func TestSettingsCategoryBoundarySelectionAndPage(t *testing.T) {
 	snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
 	for i := range 2 {
 		snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("search.field%d", i), Group: "search", Label: fmt.Sprintf("Field %d", i), Kind: SettingKindString, Value: stringSettingValue("value")})
 	}
+	snapshot.Fields[0].Validation.Hint = strings.Repeat("example ", 100)
 	model := resizeModel(t, loadedSettingsModel(t, snapshot), 100, 12)
 	for _, direction := range []rune{'h', 'l'} {
 		model, _ = sendKey(t, model, key('j'))
@@ -88,6 +89,7 @@ func TestSettingsCategoryBoundaryResetsSelection(t *testing.T) {
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	first := screen.String()
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	before := screen.String()
 	require.NotEqual(t, first, before)
@@ -101,16 +103,20 @@ func TestSettingsCategoryBoundaryResetsSelection(t *testing.T) {
 func TestSettingsViewportExitEditorKeepsSelectionVisible(t *testing.T) {
 	for _, exit := range []tea.KeyPressMsg{keyEsc(), keyEnter()} {
 		t.Run(exit.String(), func(t *testing.T) {
-			snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
+			snapshot := SettingsSnapshot{PendingRestart: true, Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
 			for i := range 7 {
 				snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("search.field%d", i), Group: "search", Label: fmt.Sprintf("Field %d", i), Kind: SettingKindString, Value: stringSettingValue("value")})
 			}
+			snapshot.Fields[6].Validation.Hint = strings.Repeat("example ", 40)
 			model := resizeModel(t, loadedSettingsModel(t, snapshot), 40, 10)
 			model, _ = sendKey(t, model, keyEnter())
 			for range 6 {
 				model, _ = sendKey(t, model, key('j'))
 			}
 			model, _ = sendKey(t, model, keyEnter())
+			for range 5 {
+				model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+			}
 			model, _ = sendKey(t, model, exit)
 			screen := uv.NewScreenBuffer(40, 10)
 			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
@@ -140,79 +146,62 @@ func TestSettingsViewportResizeKeepsVisibleSelection(t *testing.T) {
 }
 
 func TestSettingsViewportDiscardConfirmationPaging(t *testing.T) {
-	model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 20, 6)
-	model, _ = sendKey(t, model, keyEnter())
-	model, _ = sendKey(t, model, keyEnter())
-	model, _ = sendKey(t, model, key('x'))
-	model, _ = sendKey(t, model, keyEnter())
-	model, _ = sendKey(t, model, keyEsc())
-	screen := uv.NewScreenBuffer(20, 6)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "[Y] Yes")
-	assert.Contains(t, screen.String(), "[N/Esc] No")
-	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "not been saved")
-	assert.Contains(t, screen.String(), "[Y] Yes")
-}
-
-func TestSettingsViewportDiscardConfirmationFourRows(t *testing.T) {
-	model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 20, 4)
-	model, _ = sendKey(t, model, keyEnter())
-	model, _ = sendKey(t, model, keyEnter())
-	model, _ = sendKey(t, model, key('x'))
-	model, _ = sendKey(t, model, keyEnter())
-	model, _ = sendKey(t, model, keyEsc())
-	screen := uv.NewScreenBuffer(20, 4)
-	var pages strings.Builder
-	for range 10 {
-		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-		assert.Contains(t, screen.String(), "[Y] Yes")
-		assert.Contains(t, screen.String(), "[N/Esc] No")
-		assert.Contains(t, screen.String(), "[PgUp/PgDn] Scroll")
-		pages.WriteString(screen.String())
-		before := screen.String()
-		model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-		if screen.String() == before {
-			break
-		}
+	for _, height := range []int{4, 6} {
+		t.Run(fmt.Sprint(height), func(t *testing.T) {
+			model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 20, height)
+			model, _ = sendKey(t, model, keyEnter())
+			model, _ = sendKey(t, model, keyEnter())
+			model, _ = sendKey(t, model, key('x'))
+			model, _ = sendKey(t, model, keyEnter())
+			model, _ = sendKey(t, model, keyEsc())
+			screen := uv.NewScreenBuffer(20, height)
+			var pages strings.Builder
+			for range 10 {
+				uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+				assert.Contains(t, screen.String(), "[Y] Yes")
+				assert.Contains(t, screen.String(), "[N/Esc] No")
+				assert.Contains(t, screen.String(), "[PgUp/PgDn] Scroll")
+				pages.WriteString(screen.String())
+				before := screen.String()
+				model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+				uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+				if screen.String() == before {
+					break
+				}
+			}
+			assert.Contains(t, pages.String(), "not been saved")
+		})
 	}
-	assert.Contains(t, pages.String(), "not been saved")
-}
-
-func TestSettingsViewportFingerprint(t *testing.T) {
-	backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{settingsFixture()}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64)}}
-	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 12)
-	model.settingsBackend = backend
-	model, load := sendKey(t, model, key('i'))
-	model = sendSettingsMsg(t, model, load())
-	model, _ = sendKey(t, model, keyEsc())
-	model, _ = sendKey(t, model, keyEnter())
-	screen := uv.NewScreenBuffer(40, 12)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
-	assert.Contains(t, screen.String(), "[j/k]")
-	assert.Contains(t, screen.String(), "[Esc]")
 }
 
 func TestSettingsViewportCategorySelectionAfterPeopleControls(t *testing.T) {
-	snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "archive", Label: "Archive"}, {ID: "daemon", Label: "Daemon"}}, Fields: []SettingField{{Key: "archive.enabled", Group: "archive", Label: "Archive", Kind: SettingKindBoolean, Value: boolSettingValue(true)}, {Key: "daemon.enabled", Group: "daemon", Label: "Daemon", Kind: SettingKindBoolean, Value: boolSettingValue(true)}}}
-	backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{snapshot}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64), PendingRestart: true}}
-	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 12)
-	model.settingsBackend = backend
-	model, load := sendKey(t, model, key('i'))
-	model = sendSettingsMsg(t, model, load())
-	model, _ = sendKey(t, model, keyEsc())
-	screen := uv.NewScreenBuffer(40, 12)
-	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
-	model, _ = sendKey(t, model, key('j'))
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "▶ Daemon")
-	assert.Contains(t, screen.String(), "[Esc]")
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pending_%t", pending), func(t *testing.T) {
+			snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "archive", Label: "Archive"}, {ID: "daemon", Label: "Daemon"}}, Fields: []SettingField{{Key: "archive.enabled", Group: "archive", Label: "Archive", Kind: SettingKindBoolean, Value: boolSettingValue(true)}, {Key: "daemon.enabled", Group: "daemon", Label: "Daemon", Kind: SettingKindBoolean, Value: boolSettingValue(true)}}}
+			backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{snapshot}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64), PendingRestart: pending}}
+			model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 12)
+			model.settingsBackend = backend
+			model, load := sendKey(t, model, key('i'))
+			model = sendSettingsMsg(t, model, load())
+			model, _ = sendKey(t, model, keyEsc())
+			screen := uv.NewScreenBuffer(40, 12)
+			if pending {
+				model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+			} else {
+				model, _ = sendKey(t, model, keyEnter())
+			}
+			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+			assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
+			if pending {
+				model, _ = sendKey(t, model, key('j'))
+				uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+				assert.Contains(t, screen.String(), "▶ Daemon")
+			} else {
+				assert.Contains(t, screen.String(), "[j/k]")
+			}
+			assert.Contains(t, screen.String(), "[Esc]")
+		})
+	}
 }
 
 func TestSettingsViewportSettingsRestartNotice(t *testing.T) {

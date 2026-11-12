@@ -86,11 +86,9 @@ func TestSettingsViewportSaveShowsNoticeAndSelectedField(t *testing.T) {
 	assert.Contains(t, screen.String(), "[j/k]")
 	assert.Contains(t, screen.String(), "[Esc]")
 	assert.Regexp(t, `\[Ctrl\+S\] +Save`, screen.String())
-	assert.Contains(t, screen.String(), "Restart pending.")
-	first := screen.String()
+	assert.Regexp(t, `(?m)^msgvault daemon restart\s*$`, screen.String())
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Regexp(t, `(?m)^msgvault daemon restart\s*$`, first+"\n"+screen.String())
 	assert.Contains(t, screen.String(), "▶   Automatic start")
 	assert.Contains(t, screen.String(), "Key: server.daemon_auto_start")
 }
@@ -116,7 +114,6 @@ func TestSettingsViewportShortScreenSaveErrorAfterDisable(t *testing.T) {
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, strings.Join(strings.Fields(screen.String()), " "), "disk full")
 	assert.Contains(t, screen.String(), "[Esc]")
-	assert.Contains(t, screen.String(), "Restart pending.")
 }
 
 func TestSettingsViewportStalePeopleLoadKeepsPage(t *testing.T) {

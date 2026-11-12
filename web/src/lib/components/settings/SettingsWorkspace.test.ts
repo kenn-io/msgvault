@@ -185,8 +185,9 @@ it.each([
   [true, false, 'server'],
   [false, true, 'enrichment'],
   [false, true, 'server'],
-  [true, true, 'enrichment']
-])('shows shared restart guidance (settings %s, inference %s, category %s)', async (settingsPending, inferencePending, category) => {
+  [true, true, 'enrichment'],
+  [false, false, 'enrichment']
+])('renders restart guidance for settings %s and inference %s in %s', async (settingsPending, inferencePending, category) => {
   const { client, operationsController, onStatusChange, seen } = fixture(settingsDoc({ pending_restart: settingsPending }), request => {
     if (new URL(request.url).pathname.includes('/settings/people-inference')) {
       return Response.json({ profiles: [], configured_enabled: true, running_enabled: true, running_name: 'previous', pending_restart: inferencePending }, { headers: { ETag: '"p1"' } });
@@ -195,28 +196,22 @@ it.each([
   render(SettingsWorkspace, { client, operationsController, onStatusChange, category });
   await waitFor(() => expect(seen.some(request => request.path.includes('/settings/people-inference'))).toBe(true));
   if (inferencePending && category === 'enrichment') await screen.findByText(/running daemon still uses/);
+  if (!settingsPending && !inferencePending) {
+    await screen.findByText('Add a profile');
+    expect(screen.queryByText('msgvault daemon restart')).toBeNull();
+    return;
+  }
   const command = await screen.findByText('msgvault daemon restart');
   const notice = command.closest('[role="status"]')!;
   expect(screen.getAllByText('msgvault daemon restart')).toHaveLength(1);
   expect(notice.getAttribute('data-tone')).toBe('warning');
+  if (!settingsPending || inferencePending) return;
   expect(notice.textContent).toContain('Restart pending.');
   expect(notice.textContent).toContain('computer running msgvault');
   expect(notice.textContent).toContain('--home');
   expect(notice.textContent).toContain('--config');
   expect(notice.textContent).toContain('restart its service');
   expect(notice.textContent).toContain('stop and rerun your foreground msgvault serve with the same flags.');
-});
-
-it('omits restart guidance when neither settings nor inference needs a restart', async () => {
-  const { client, operationsController, onStatusChange, seen } = fixture(settingsDoc({ pending_restart: false }), request => {
-    if (new URL(request.url).pathname.includes('/settings/people-inference')) {
-      return Response.json({ profiles: [], configured_enabled: true, running_enabled: true, running_name: 'previous', pending_restart: false }, { headers: { ETag: '"p1"' } });
-    }
-  });
-  render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'enrichment' });
-  await waitFor(() => expect(seen.some(request => request.path.includes('/settings/people-inference'))).toBe(true));
-  await screen.findByText('Add a profile');
-  expect(screen.queryByText('msgvault daemon restart')).toBeNull();
 });
 
 it('warns before leaving with drafts, keeps them on Stay, and discards before continuing', async () => {

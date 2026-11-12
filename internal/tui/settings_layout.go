@@ -65,7 +65,7 @@ func (m *Model) revealSettingsFocus() {
 }
 
 func (m Model) settingsFocusVisible() bool {
-	if !m.settings.active || m.settings.scrollOffset == 0 || m.settings.confirmDiscard || m.settings.peopleControls.active || m.settings.codex.active {
+	if !m.settings.active || m.settings.scrollOffset == 0 {
 		return false
 	}
 	title, body, actions, focus := m.settingsScreen()
