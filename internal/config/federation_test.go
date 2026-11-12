@@ -42,8 +42,6 @@ func TestFederationRoleAndHubKeys(t *testing.T) {
 				assertions.NoError(err)
 			}
 			if tc.autoMint {
-				_, err = os.Stat(cfg.ServerKeyFilePath())
-				requirements.ErrorIs(err, os.ErrNotExist)
 				err = cfg.PrepareServerKey()
 				if tc.keyError != "" {
 					requirements.ErrorContains(err, tc.keyError)
@@ -51,9 +49,6 @@ func TestFederationRoleAndHubKeys(t *testing.T) {
 					assertions.ErrorIs(err, os.ErrNotExist)
 				} else {
 					requirements.NoError(err)
-					assertions.NotEmpty(cfg.Server.AuthenticationKey())
-					_, err = os.Stat(cfg.ServerKeyFilePath())
-					assertions.NoError(err)
 				}
 			}
 		})

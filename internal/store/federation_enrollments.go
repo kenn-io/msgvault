@@ -117,15 +117,14 @@ func (s *Store) ConfigureFederationHubContext(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("check hub sources: %w", err)
 	}
-	if !exists {
-		return nil
-	}
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources`).Scan(&count); err != nil {
-		return fmt.Errorf("check hub sources: %w", err)
-	}
-	if count != 0 {
-		return fmt.Errorf("federation hub role needs a dedicated archive: it already has %d source(s)", count)
+	if exists {
+		var count int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources`).Scan(&count); err != nil {
+			return fmt.Errorf("check hub sources: %w", err)
+		}
+		if count != 0 {
+			return fmt.Errorf("federation hub role needs a dedicated archive: it already has %d source(s)", count)
+		}
 	}
 	s.federationHub = true
 	return nil

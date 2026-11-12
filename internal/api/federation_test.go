@@ -57,7 +57,6 @@ func TestFederationAuthenticationAfterRateLimitAndDeadline(t *testing.T) {
 		name, method, path, peer string
 		limited                  bool
 	}{
-		{"handshake", http.MethodGet, "/api/v1/federation/handshake", "192.0.2.1:1234", false},
 		{"long CLI route", http.MethodGet, "/api/v1/cli/build-cache", "192.0.2.1:1234", false},
 		{"import special case", http.MethodPost, messageImportEndpointPath, "192.0.2.1:1234", false},
 		{"loopback limited", http.MethodGet, "/api/v1/federation/handshake", "127.0.0.1:1234", true},

@@ -330,8 +330,13 @@ func (c *Config) ValidateServerKey() error {
 	if c.Server.AgentAccess && c.Server.AuthenticationKey() == "" {
 		return errors.New("server agent_access requires an effective API key")
 	}
-	if err := c.validateFederationHubKey(); err != nil {
-		return err
+	if c.Federation.Role == "hub" {
+		if c.Server.AuthenticationKey() == "" {
+			return errors.New("federation hub role requires an effective API key")
+		}
+		if strings.HasPrefix(c.Server.AuthenticationKey(), "mvf1_") {
+			return errors.New("federation hub owner key must not begin with mvf1_")
+		}
 	}
 	return c.Server.ValidateSecure()
 }
@@ -349,22 +354,7 @@ func (c *Config) PrepareServerKey() error {
 		}
 		c.Server.credential.value = key
 	}
-	if err := c.validateFederationHubKey(); err != nil {
-		return err
-	}
 	return c.loadRemoteClientKeys()
-}
-
-func (c *Config) validateFederationHubKey() error {
-	if c.Federation.Role == "hub" {
-		if c.Server.AuthenticationKey() == "" {
-			return errors.New("federation hub role requires an effective API key")
-		}
-		if strings.HasPrefix(c.Server.AuthenticationKey(), "mvf1_") {
-			return errors.New("federation hub owner key must not begin with mvf1_")
-		}
-	}
-	return nil
 }
 
 // loadRemoteClientKeys reads remote client keys once the owner key is final,
