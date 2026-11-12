@@ -222,7 +222,7 @@ func newPersonSweepRunCommand(deps personSweepCommandDeps) *cobra.Command {
 	}
 	command.Flags().Int64Var(&personID, "person", 0, "Run only the tracked durable person ID")
 	command.Flags().BoolVar(&backstop, "backstop", false, "Force the bounded backstop path")
-	command.Flags().IntVar(&limit, "limit", 25, "Maximum people to claim for extraction; deterministic maintenance covers all tracked people (use --person to limit)")
+	command.Flags().IntVar(&limit, "limit", 25, "Maximum people analyzed for new facts; other updates cover all tracked people (use --person to limit)")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	return command
 }
