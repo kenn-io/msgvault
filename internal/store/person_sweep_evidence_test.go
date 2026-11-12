@@ -480,7 +480,7 @@ func TestPersonSweepExcludesImazingCSVOutgoingMessagesFromPersonEvidence(t *test
 	requirements.NoError(err)
 
 	items, err := st.HydratePersonSweepMessages(t.Context(), person.ID, []int64{messageID}, 0)
-	requirements.NoError(err)
+	requirements.ErrorIs(err, peoplesweep.ErrPersonSweepMessageUnavailable)
 	checks.Empty(items)
 
 	candidates, err := st.ListPersonSweepHistoricalCandidates(t.Context(), peoplesweep.HistoricalCandidateRequest{

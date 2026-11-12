@@ -399,7 +399,7 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	require.NoError(t, st.EnsureConversationParticipantContext(t.Context(), journal.conversationID, journal.bobID, "member"))
 	require.NoError(t, st.SetConversationMemberCountContext(t.Context(), journal.conversationID, 2))
 	peerID := journal.insertMessage(t, "helped", "chat", journal.aliceID, f.now.Add(-2*time.Hour))
-	addSweepBody(t, journal, peerID, "I carried your boxes upstairs.")
+	addSweepBody(t, journal, peerID, "I carried your boxes upstairs. I assembled your shelf.")
 	ownerID := journal.insertMessage(t, "owner-thanks", "chat", journal.bobID, f.now.Add(-time.Hour))
 	addSweepBody(t, journal, ownerID, "Thanks for carrying my boxes upstairs!")
 	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET source_is_from_me = TRUE, is_sent = TRUE WHERE id = ?`), ownerID)
@@ -417,7 +417,7 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 		for _, value := range peers {
 			peer, ok := value.(map[string]any)
 			require.True(t, ok)
-			if peer["exact_excerpt"] == "I carried your boxes upstairs." {
+			if peer["exact_excerpt"] == "I carried your boxes upstairs. I assembled your shelf." {
 				anchor, ok = peer["anchor_id"].(string)
 				require.True(t, ok)
 			}
@@ -481,25 +481,64 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	retired, err := st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
 	require.NoError(t, err)
 	assert.True(t, retired[key], "a valid old proof frees the active slot before provider input")
+	// The same source key can describe another act in the same message.
+	later.Suggestion.Quote = "assembled your shelf"
+	otherJSON, err := json.Marshal(laterBoundary)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET boundary_json = ? WHERE person_id = ? AND version = 202`), string(otherJSON), journal.alicePersonID)
+	require.NoError(t, err)
+	projection, err = st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
+	require.NoError(t, err)
+	require.Len(t, projection.Appreciations, 1)
+	assert.Equal(t, key, projection.Appreciations[0].Suggestion.Key)
+	assert.Equal(t, "unknown", projection.Appreciations[0].Suggestion.PriorThanks)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET boundary_json = ? WHERE person_id = ? AND version = 202`), string(laterJSON), journal.alicePersonID)
+	require.NoError(t, err)
+
+	// Reject the proof itself, then restore a current later snapshot. A rejected
+	// immutable row cannot prove thanks, unlike the superseded control above.
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'superseded' WHERE person_id = ? AND version = 202`), journal.alicePersonID)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'current' WHERE id = ?`), proofID)
+	require.NoError(t, err)
+	_, err = st.RejectPersonBriefContext(t.Context(), journal.alicePersonID, "Incorrect proof", f.now)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'current' WHERE person_id = ? AND version = 202`), journal.alicePersonID)
+	require.NoError(t, err)
+	projection, err = st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
+	require.NoError(t, err)
+	require.Len(t, projection.Appreciations, 1)
+	assert.Equal(t, "unknown", projection.Appreciations[0].Suggestion.PriorThanks)
+	retired, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
+	require.NoError(t, err)
+	assert.False(t, retired[key])
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'superseded' WHERE id = ?`), proofID)
+	require.NoError(t, err)
 	// A malformed persisted boundary must be refused by readers.
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET boundary_json = ? WHERE id = ?`), `{"appreciation_memory":[{}, {}, {}, {}]}`, proofID)
 	require.NoError(t, err)
 	_, err = st.PersonSweepAppreciationRetired(t.Context(), journal.alicePersonID, []string{key}, profile)
-	assert.ErrorContains(t, err, "invalid appreciation proof boundary")
+	require.ErrorContains(t, err, "invalid appreciation proof boundary")
 	_, err = st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
-	assert.ErrorContains(t, err, "invalid appreciation proof boundary")
+	require.ErrorContains(t, err, "invalid appreciation proof boundary")
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET boundary_json = ? WHERE id = ?`), string(proofBoundary), proofID)
 	require.NoError(t, err)
 	// Simulate another apply publishing the proof while this provider call is
 	// in flight. The apply fence must suppress the re-admitted contribution.
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_appreciation_state SET thanks_brief_id = NULL WHERE contribution_key = ?`), key)
 	require.NoError(t, err)
+	raceQuote := "carried your boxes"
+	raceText := "carrying boxes"
 	f.runner.candidate = func(packet map[string]any) json.RawMessage {
-		for _, value := range packet["appreciation_peers"].([]any) {
-			peer := value.(map[string]any)
+		peers, ok := packet["appreciation_peers"].([]any)
+		require.True(t, ok)
+		for _, value := range peers {
+			peer, ok := value.(map[string]any)
+			require.True(t, ok)
 			if peer["contribution_key"] == key {
-				anchor := peer["anchor_id"].(string)
-				return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":{"evidence_id":%q,"summary":"they helped"},"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"carrying boxes","anchor_id":%q,"quote":"carried your boxes","thanked":null}],"uncertainties":[],"possible_attributes":[]}`, anchor, anchor))
+				anchor, ok := peer["anchor_id"].(string)
+				require.True(t, ok)
+				return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":{"evidence_id":%q,"summary":"they helped"},"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":%q,"anchor_id":%q,"quote":%q,"thanked":null}],"uncertainties":[],"possible_attributes":[]}`, anchor, raceText, anchor, raceQuote))
 			}
 		}
 		require.FailNow(t, "expected contribution before proof is restored")
@@ -511,6 +550,32 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	}
 	var raceID int
 	f.worker.NewID = func() string { raceID++; return fmt.Sprintf("proof-race-%d", raceID) }
+	// During inference, the ledger gains proof for another act from the same
+	// message. Applying that proof must leave this different quote unknown.
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET boundary_json = ? WHERE person_id = ? AND version = 202`), string(otherJSON), journal.alicePersonID)
+	require.NoError(t, err)
+	raceQuote = "assembled your shelf"
+	raceText = "assembling the shelf"
+	run, err = f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
+		PersonID: journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
+	require.NoError(t, err)
+	require.Equal(t, 1, run.PeopleSucceeded)
+	mismatch, err := st.GetPersonBriefContext(t.Context(), journal.alicePersonID, 0)
+	require.NoError(t, err)
+	var mismatchBoundary peoplesweep.BriefBoundary
+	require.NoError(t, json.Unmarshal(mismatch.Boundary, &mismatchBoundary))
+	require.Len(t, mismatchBoundary.AppreciationMemory, 1)
+	assert.Equal(t, key, mismatchBoundary.AppreciationMemory[0].Suggestion.Key)
+	assert.Equal(t, "assembled your shelf", mismatchBoundary.AppreciationMemory[0].Suggestion.Quote)
+	assert.Equal(t, "unknown", mismatchBoundary.AppreciationMemory[0].Suggestion.PriorThanks)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'superseded' WHERE id = ?`), mismatch.ID)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_briefs SET status = 'current', boundary_json = ? WHERE person_id = ? AND version = 202`), string(laterJSON), journal.alicePersonID)
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_appreciation_state SET thanks_brief_id = NULL WHERE contribution_key = ?`), key)
+	require.NoError(t, err)
+	raceQuote = "carried your boxes"
+	raceText = "carrying boxes"
 	run, err = f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
 		PersonID: journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
 	require.NoError(t, err)
@@ -544,16 +609,24 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	require.NoError(t, err)
 	f.runner.candidate = func(packet map[string]any) json.RawMessage {
 		var anchor, owner string
-		for _, value := range packet["appreciation_peers"].([]any) {
-			peer := value.(map[string]any)
+		peers, ok := packet["appreciation_peers"].([]any)
+		require.True(t, ok)
+		for _, value := range peers {
+			peer, ok := value.(map[string]any)
+			require.True(t, ok)
 			if peer["contribution_key"] == key {
-				anchor = peer["anchor_id"].(string)
+				anchor, ok = peer["anchor_id"].(string)
+				require.True(t, ok)
 			}
 		}
-		for _, value := range packet["appreciation_owners"].([]any) {
-			entry := value.(map[string]any)
+		owners, ok := packet["appreciation_owners"].([]any)
+		require.True(t, ok)
+		for _, value := range owners {
+			entry, ok := value.(map[string]any)
+			require.True(t, ok)
 			if entry["exact_excerpt"] == "Thank you for carrying the boxes!" {
-				owner = entry["evidence_id"].(string)
+				owner, ok = entry["evidence_id"].(string)
+				require.True(t, ok)
 			}
 		}
 		require.NotEmpty(t, anchor)
@@ -579,6 +652,11 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 	projection, err = st.ProjectPersonAppreciationsContext(t.Context(), journal.alicePersonID, profile)
 	require.NoError(t, err)
 	assert.Empty(t, projection.Appreciations)
+	_, err = st.RejectPersonBriefContext(t.Context(), journal.alicePersonID, "Reject after dismissal", f.now)
+	require.NoError(t, err)
+	states, err = st.GetPersonAppreciationStatesContext(t.Context(), []string{key})
+	require.NoError(t, err)
+	assert.NotNil(t, states[key].DismissedAt, "rejecting a proof must preserve dismissal")
 }
 
 // The status-only case: no changed seed, so extraction runs no batch, and the
@@ -1210,12 +1288,15 @@ func TestPersonAppreciationDismissalSerializesWithSourceIDMigration(t *testing.T
 			newKey, err := peoplesweep.AppreciationContributionKey("slack", "person-sweep-journal", newID)
 			require.NoError(t, err)
 			f.runner.candidate = func(packet map[string]any) json.RawMessage {
-				peers := packet["appreciation_peers"].([]any)
+				peers, ok := packet["appreciation_peers"].([]any)
+				require.True(t, ok)
 				var anchor string
 				for _, value := range peers {
-					peer := value.(map[string]any)
+					peer, ok := value.(map[string]any)
+					require.True(t, ok)
 					if peer["contribution_key"] == oldKey {
-						anchor = peer["anchor_id"].(string)
+						anchor, ok = peer["anchor_id"].(string)
+						require.True(t, ok)
 					}
 				}
 				require.NotEmpty(t, anchor)
@@ -1289,10 +1370,14 @@ func TestAppreciationDismissalDoesNotAuthorizeRetryAfterPersonSplit(t *testing.T
 	require.NoError(t, err)
 	f.runner.candidate = func(packet map[string]any) json.RawMessage {
 		var anchor string
-		for _, value := range packet["appreciation_peers"].([]any) {
-			peer := value.(map[string]any)
+		peers, ok := packet["appreciation_peers"].([]any)
+		require.True(t, ok)
+		for _, value := range peers {
+			peer, ok := value.(map[string]any)
+			require.True(t, ok)
 			if peer["contribution_key"] == key {
-				anchor = peer["anchor_id"].(string)
+				anchor, ok = peer["anchor_id"].(string)
+				require.True(t, ok)
 			}
 		}
 		require.NotEmpty(t, anchor)
@@ -1312,7 +1397,7 @@ func TestAppreciationDismissalDoesNotAuthorizeRetryAfterPersonSplit(t *testing.T
 		ParticipantIDs: []int64{journal.bobID}, ExpectedSourceRevision: current.Revision, IdempotencyKey: "appreciation-scope-split", Actor: "owner"})
 	require.NoError(t, err)
 	_, err = st.DismissPersonAppreciationContext(t.Context(), merged.Person.ID, key, "owner", f.now.Add(time.Hour), profile)
-	assert.ErrorIs(t, err, store.ErrPersonAppreciationNotFound)
+	require.ErrorIs(t, err, store.ErrPersonAppreciationNotFound)
 	states, err := st.GetPersonAppreciationStatesContext(t.Context(), []string{key})
 	require.NoError(t, err)
 	assert.Equal(t, first, states[key])
@@ -1393,7 +1478,7 @@ func TestAppreciationOwnerDowngradePreservesBriefAndRetries(t *testing.T) {
 			require.NoError(t, st.EnsureConversationParticipantContext(t.Context(), journal.conversationID, journal.bobID, "member"))
 			require.NoError(t, st.SetConversationMemberCountContext(t.Context(), journal.conversationID, 2))
 			texts := []string{"I carried your boxes.", "I repaired your chair.", "I delivered your parcel.", "I reviewed your draft."}
-			for i := 0; i < 3; i++ {
+			for i := range 3 {
 				id := journal.insertMessage(t, fmt.Sprintf("bound-peer-%d", i), "chat", journal.aliceID, f.now.Add(time.Duration(-6+i)*time.Hour))
 				addSweepBody(t, journal, id, texts[i])
 			}
@@ -1440,13 +1525,20 @@ func TestAppreciationOwnerDowngradePreservesBriefAndRetries(t *testing.T) {
 					require.True(t, ok)
 					anchor, ok := peer["anchor_id"].(string)
 					require.True(t, ok)
-					anchors[peer["exact_excerpt"].(string)] = anchor
+					excerpt, ok := peer["exact_excerpt"].(string)
+					require.True(t, ok)
+					anchors[excerpt] = anchor
 				}
 				require.NotEmpty(t, anchors[texts[0]])
 				require.NotEmpty(t, anchors[texts[3]])
-				owners := packet["appreciation_owners"].([]any)
+				owners, ok := packet["appreciation_owners"].([]any)
+				require.True(t, ok)
 				require.NotEmpty(t, owners)
-				return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"new help","anchor_id":%q,"quote":%q,"thanked":null},{"text":"carrying boxes","anchor_id":%q,"quote":%q,"thanked":{"evidence_id":%q,"quote":"Thanks for carrying my boxes!"}}],"uncertainties":[],"possible_attributes":[]}`, anchors[texts[3]], texts[3], anchors[texts[0]], texts[0], owners[0].(map[string]any)["evidence_id"].(string)))
+				owner, ok := owners[0].(map[string]any)
+				require.True(t, ok)
+				ownerID, ok := owner["evidence_id"].(string)
+				require.True(t, ok)
+				return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":null,"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"new help","anchor_id":%q,"quote":%q,"thanked":null},{"text":"carrying boxes","anchor_id":%q,"quote":%q,"thanked":{"evidence_id":%q,"quote":"Thanks for carrying my boxes!"}}],"uncertainties":[],"possible_attributes":[]}`, anchors[texts[3]], texts[3], anchors[texts[0]], texts[0], ownerID))
 			}
 			if invalidate {
 				f.runner.afterBrief = func() {

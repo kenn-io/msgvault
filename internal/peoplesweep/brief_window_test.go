@@ -97,7 +97,7 @@ func TestBriefAppreciationReplayProtectsActiveEvidence(t *testing.T) {
 
 func TestAppreciationMemoryBound(t *testing.T) {
 	var entries []BriefAppreciationMemory
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		entries = append(entries, BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "suggested"}},
 			BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "already_thanked"}})
 	}
@@ -774,7 +774,7 @@ func briefMessageIDs(items []EvidenceItem) []int64 {
 
 func TestBriefWindowExcludesDismissedContributionsBeforeModelCap(t *testing.T) {
 	archive := &briefFakeArchive{dismissedAppreciations: map[string]bool{}}
-	for index := 0; index < 4; index++ {
+	for index := range 4 {
 		item := briefWindowItem(int64(40+index), SourceConversationText, 10+index, "I carried your boxes upstairs.")
 		key := fmt.Sprintf("%064x", index+1)
 		archive.items = append(archive.items, item)
