@@ -375,9 +375,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
         run: |
-          if [ "$BASE_SHA" != "$(git rev-parse HEAD)" ]; then
-            kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          fi
+          [ "$BASE_SHA" = "$(git rev-parse HEAD)" ] || kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
           echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
 
       - name: Install test dependencies
@@ -854,9 +852,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
         run: |
-          if [ "$BASE_SHA" != "$(git rev-parse HEAD)" ]; then
-            kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          fi
+          [ "$BASE_SHA" = "$(git rev-parse HEAD)" ] || kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
           echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
 
       - name: Install SQLite development headers
@@ -1258,9 +1254,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
         run: |
-          if [ "$BASE_SHA" != "$(git rev-parse HEAD)" ]; then
-            kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          fi
+          [ "$BASE_SHA" = "$(git rev-parse HEAD)" ] || kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
           echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
 
       - name: Install test dependencies

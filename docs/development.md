@@ -564,26 +564,22 @@ ignored.
 
 When the HTTP API contract changes, bump `APISchemaVersion` in `internal/api/openapi.go`.
 `TestAPISchemaVersionContract` hashes both generated documents, including routes, parameters,
-requests, responses, tags, schemas, constraints, defaults, and extensions. It ignores wording,
-including descriptions, summaries, titles, examples, and external documentation. Handler changes
-that alter the contract without changing the documents still need a version bump.
+requests, responses, tags, schemas, constraints, defaults, and extensions, but not descriptions,
+summaries, titles, examples, or external documentation. Handler changes the documents don't show
+still need a bump.
 
-Add the marker path printed by the test under `internal/api/testdata/api-version-contracts/`.
-Put a one-line summary in the file and replace `<summary-sha256>` in the path with the hash from
-`printf '%s' 'Your summary' | sha256sum | cut -d ' ' -f 1`. Different summaries produce separate
-markers for the same contract. You can correct a summary without renaming its marker.
+Add the marker path the test prints under `internal/api/testdata/api-version-contracts/`, with a
+one-line summary as its contents. Replace `<summary-sha256>` with the output of
+`printf '%s' 'Your summary' | sha256sum | cut -d ' ' -f 1`, so each change gets its own marker even
+when its contract matches another. You can correct a summary without renaming its marker.
 
-Keep every contract recorded on the base. If your contract changes and main has no marker for
-that version, replace your marker. If another change has used that version, keep its marker,
-remove yours, and take the next minor above the greatest recorded version. Move feature minimum
-constants introduced by your change to that version. Add a separate marker for each change, even
-when the contract matches an existing marker.
-
-Do not add version entries to the comment above `APISchemaVersion`. Local tests compare markers
-with the common ancestor of `HEAD` and `origin/main`. Fetch `origin/main` and its history if the
-base cannot be found. CI uses the exact pull request or merge group base, or the checked-out SHA
-for main and dispatch runs. Set `MSGVAULT_API_CONTRACT_BASE` to a local SHA or ref to override the
-local base.
+Keep every marker on the base. If your contract changes and the base has no marker for that
+version, replace your marker. If another change used that version, remove your marker, take the
+next minor above the greatest recorded version, and move feature minimum constants your change
+introduced to it. Local tests read the base from the common ancestor of `HEAD` and `origin/main`;
+if that fails, fetch `origin/main` with its history, or set `MSGVAULT_API_CONTRACT_BASE` to a SHA
+or ref. CI uses the exact pull request or merge group base, or the checked-out SHA on main and
+dispatch runs.
 
 ## Archive schema version maintenance
 
