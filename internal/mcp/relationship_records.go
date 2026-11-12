@@ -26,7 +26,7 @@ func relationshipRecordDefinitions() []operationalDefinition {
 	typeCreate := map[string]*jsonschema.Schema{"slug": stringSchema("Unique slug"), "forward_label": stringSchema("Forward label"), "reverse_label": stringSchema("Reverse label"), "is_symmetric": booleanSchema("Symmetric relationship"), "vcard_related_type": stringSchema("vCard type"), "color": stringSchema("Color"), "icon": stringSchema("Icon"), "description": stringSchema("Description")}
 	typeFields["id"] = id
 	typeFields["etag"] = stringSchema("Exact current ETag")
-	recordCreate := map[string]*jsonschema.Schema{"source_person_id": person, "target_person_id": person, "relationship_type_slug": stringSchema("Exact relationship type slug"), "start_date": stringSchema("Partial date"), "end_date": stringSchema("Partial date"), "notes": stringSchema("Notes")}
+	recordCreate := map[string]*jsonschema.Schema{"source_person_id": person, "target_person_id": safeIDSchema("Positive durable person ID"), "relationship_type_slug": stringSchema("Exact relationship type slug"), "start_date": stringSchema("Partial date"), "end_date": stringSchema("Partial date"), "notes": stringSchema("Notes")}
 	notes := &jsonschema.Schema{AnyOf: []*jsonschema.Schema{stringSchema("Notes"), {Type: "null"}}}
 	recordPatch := map[string]*jsonschema.Schema{"id": id, "etag": stringSchema("Exact current ETag"), "end_date": stringSchema("Nonempty partial date"), "notes": notes}
 	return []operationalDefinition{
