@@ -46,7 +46,7 @@ func apiBaseMarkers(ctx context.Context, base string, explicit bool) ([]string, 
 		}
 		return nil, fmt.Errorf("read API contract markers at %q: %w", base, err)
 	}
-	var markers []string
+	markers := []string{}
 	for path := range strings.SplitSeq(string(out), "\x00") {
 		if path != "" {
 			markers = append(markers, strings.TrimPrefix(path, "internal/api/"+apiContractsDir+"/"))
@@ -60,6 +60,7 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 	greatest := ""
 	contracts := make(map[string][]string)
 	candidate := make(map[string]bool)
+	baseVersions := make(map[string]bool)
 	for i, list := range [][]string{markers, base} {
 		for _, marker := range list {
 			v, hash, ok := strings.Cut(marker, "_")
@@ -70,29 +71,38 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 			if i == 0 {
 				candidate[marker] = true
 				contracts[v] = append(contracts[v], hash)
+			} else {
+				baseVersions[v] = true
 			}
 			if semver.Compare(v, greatest) > 0 {
 				greatest = v
 			}
 		}
 	}
+	for v, hashes := range contracts {
+		if v != current && len(hashes) > 1 {
+			return fmt.Errorf("remove the superseded API contract marker for %s; keep the marker recorded on the base", strings.TrimPrefix(v, "v"))
+		}
+	}
 	problem := ""
 	for _, marker := range base {
 		if !candidate[marker] {
-			problem = "restore removed API contract marker " + marker
-			break
+			return fmt.Errorf("restore removed API contract marker %s", marker)
 		}
 	}
 	if problem == "" && semver.Compare(current, greatest) < 0 {
 		problem = fmt.Sprintf("API schema version %s is older than recorded version %s", version, strings.TrimPrefix(greatest, "v"))
 	}
 	if problem == "" && semver.Compare(current, greatest) > 0 {
-		return fmt.Errorf("record the API contract with an empty marker at %s", filepath.Join(apiContractsDir, version+"_"+digest))
+		return fmt.Errorf("record the API contract with a marker at %s", filepath.Join(apiContractsDir, version+"_"+digest))
 	}
 	if problem == "" && (len(contracts[current]) != 1 || contracts[current][0] != digest) {
 		problem = "API contract changed or has multiple markers for " + version
 	}
 	if problem != "" {
+		if base != nil && !baseVersions[current] && semver.Compare(current, greatest) >= 0 {
+			return fmt.Errorf("%s; replace your unreleased marker with %s", problem, filepath.Join(apiContractsDir, version+"_"+digest))
+		}
 		major, minor, _ := strings.Cut(strings.TrimPrefix(semver.MajorMinor(greatest), "v"), ".")
 		n, _ := strconv.Atoi(minor)
 		return fmt.Errorf("%s; use %s.%d.0 and move feature minimum constants introduced by your change", problem, major, n+1)
@@ -116,6 +126,9 @@ func TestAPISchemaVersionContract(t *testing.T) {
 	}
 	baseMarkers, err := apiBaseMarkers(t.Context(), base, explicit)
 	require.NoError(err)
+	if baseMarkers == nil {
+		t.Log("API contract base unavailable; skipping history comparison")
+	}
 	require.NoError(checkAPIContract(APISchemaVersion, digest, markers, baseMarkers))
 }
 
@@ -126,12 +139,14 @@ func TestCheckAPIContract(t *testing.T) {
 		markers, base               []string
 	}{
 		{"collision", "5.1.0", a, "5.2.0", []string{"5.1.0_" + a, "5.1.0_" + b}, []string{"5.1.0_" + b}},
+		{"unreleased edit", "5.1.0", b, "replace your unreleased marker", []string{"5.0.0_" + a, "5.1.0_" + a}, []string{"5.0.0_" + a}},
+		{"superseded", "5.2.0", b, "remove the superseded", []string{"5.1.0_" + a, "5.1.0_" + b, "5.2.0_" + b}, []string{"5.1.0_" + a}},
 		{"matching", "5.0.0", a, "", []string{"5.0.0_" + a}, []string{"5.0.0_" + a}},
 		{"stale", "5.0.0", b, "5.1.0", []string{"5.0.0_" + a}, nil},
 		{"new", "5.1.0", b, "5.1.0_" + b, []string{"5.0.0_" + a}, nil},
 		{"older", "4.0.0", b, "older than recorded version", []string{"5.0.0_" + a}, nil},
 		{"occupied", "5.1.0", b, "5.3.0", []string{"5.1.0_" + a, "5.1.0_" + b, "5.2.0_" + a}, []string{"5.1.0_" + a, "5.2.0_" + a}},
-		{"removed", "5.1.0", b, "5.2.0", []string{"5.1.0_" + b}, []string{"5.1.0_" + a}},
+		{"removed", "5.1.0", b, "restore removed API contract marker", []string{"5.1.0_" + b}, []string{"5.1.0_" + a}},
 		{"malformed", "5.0.0", a, "<version>_<sha256>", []string{"bad"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

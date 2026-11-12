@@ -565,15 +565,17 @@ ignored.
 When the generated HTTP API documents change, bump `APISchemaVersion` in
 `internal/api/openapi.go` and run `make api-generate` and `make web-generate`.
 `TestAPISchemaVersionContract` hashes both complete documents, except for
-`info.version`, and prints the path of an empty marker to add under
-`internal/api/testdata/api-version-contracts/`. Keep existing markers. If two
-changes use the same version, take the next minor version and move any feature
+`info.version`, and prints the path of a marker to add under
+`internal/api/testdata/api-version-contracts/`. Write the API version history
+entry in that marker. Keep markers recorded on the base. Replace your unreleased
+marker when your contract changes. If two changes use the same version, remove
+your superseded marker, take the next minor version, and move any feature
 minimum constants introduced by your change to that version. Handler changes
 that leave the documents unchanged still need an explicit version bump when they
 change the API contract.
 
-Add each API version change to the history comment above `APISchemaVersion`. To
-reproduce the CI history check, set `MSGVAULT_API_CONTRACT_BASE` to a local base
+Earlier version history is in the comment above `APISchemaVersion`. To reproduce
+the CI history check, set `MSGVAULT_API_CONTRACT_BASE` to a local base
 SHA or ref.
 
 ## Archive schema version maintenance
