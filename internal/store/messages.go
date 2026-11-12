@@ -3965,13 +3965,14 @@ func (s *Store) GetRandomMessageIDs(sourceID int64, limit int) ([]int64, error) 
 }
 
 // UpsertFTS inserts or updates the FTS index for a message.
+// Callers must also store text needed by future index rebuilds.
 // Indexing is a no-op if FTS is not available, but sync-scoped views still
 // enforce the generation fence and message ownership before skipping the write.
 func (s *Store) UpsertFTS(messageID int64, subject, bodyText, fromAddr, toAddrs, ccAddrs string) error {
 	return s.UpsertFTSContext(context.Background(), messageID, subject, bodyText, fromAddr, toAddrs, ccAddrs)
 }
 
-// UpsertFTSContext honors cancellation during UpsertFTS.
+// UpsertFTSContext honors cancellation during UpsertFTS and has the same storage requirement.
 func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, bodyText, fromAddr, toAddrs, ccAddrs string) error {
 	doc := FTSDoc{
 		MessageID: messageID,
