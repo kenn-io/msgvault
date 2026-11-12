@@ -138,6 +138,21 @@ func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	assert.Zero(count)
 }
 
+func TestSchemaVersionVoiceTranscriptUpgrade(t *testing.T) {
+	f := storetest.New(t)
+	ctx := t.Context()
+	_, err := f.Store.DB().ExecContext(ctx, "DROP TABLE voice_transcripts")
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(ctx, "UPDATE archive_metadata SET value='42' WHERE key='schema_version'")
+	require.NoError(t, err)
+	require.NoError(t, f.Store.InitSchemaContext(ctx))
+	require.NoError(t, f.Store.InitSchemaContext(ctx))
+	require.NoError(t, f.Store.ValidateSchemaContext(ctx))
+	var count int
+	require.NoError(t, f.Store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM voice_transcripts").Scan(&count))
+	assert.Zero(t, count)
+}
+
 func TestSchemaVersionSQLiteFailedUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -340,6 +355,7 @@ var (
 		40: "a26d72acc985ec3ca25ab69f8173b6fc2fb050f26298e162a0cc1358abeda0f9",
 		41: "87805b27cac30a9b23f779a8bec0c9d5bf5d5cc463b286fb63f645e60567aa56",
 		42: "d59c2905aca47c18220182ebf5ada7a8e781f5bda3d2cb65d6bdd6d66fd2d936",
+		43: "7bbadd35865f46c40cc7a0c9aa9891fd9f27714c620c7f69c57111352364c7dd",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -379,6 +395,7 @@ var (
 		40: "fd168ca80dd687aba404bf05be9a932eb5530303b9ac0cd73f91cc7ee01c14f2",
 		41: "f5438190c64d99d1f9d8f85e6a2d0508a8296aae5dfc5b389c5a1dc3e16c59d6",
 		42: "f3cc0baedce3bb1638cc4a4ecf5443039c176fd069c25975397bb35c41c26167",
+		43: "bfd6e92938df1ac4abab31ce7f449b8a0ed7e74def25a88119bb8ebbbc68833b",
 	}
 )
 

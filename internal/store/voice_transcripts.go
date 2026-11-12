@@ -114,7 +114,18 @@ func (s *Store) reindexVoiceMessages(ctx context.Context, tx *loggedTx, ids []in
 		if _, err := tx.ExecContext(ctx, "SAVEPOINT derived_fts"); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, s.dialect.FTSBackfillBatchSQL(), id, id+1)
+		var err error
+		if s.IsPostgreSQL() {
+			q := boundQuerier{ctx: ctx, q: tx}
+			var row derivedEmailText
+			row, err = s.loadDerivedEmailText(q, id)
+			if err == nil {
+				row.fts.Body = row.body
+				err = s.dialect.FTSUpsert(q, row.fts)
+			}
+		} else {
+			_, err = tx.ExecContext(ctx, s.dialect.FTSBackfillBatchSQL(), id, id+1)
+		}
 		if s.dialect.IsFTSValueTooLargeError(err) {
 			_, err = markFTSOverflowUnsearchable(boundQuerier{ctx: ctx, q: tx}, id)
 		}

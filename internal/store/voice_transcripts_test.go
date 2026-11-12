@@ -46,6 +46,11 @@ func TestVoiceTranscriptSearchLifecycle(t *testing.T) {
 		return ids
 	}
 	assert.Equal(t, []int64{audio.messageID}, find())
+	phrase := func() []int64 {
+		ids, _, err := st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"dinner Thursday"}}, 10)
+		require.NoError(t, err)
+		return ids
+	}
 	metadata, err := st.GetSearchMetadata(t.Context(), []int64{audio.messageID}, search.Parse("caption"), true)
 	require.NoError(t, err)
 	if !st.IsPostgreSQL() {
@@ -60,9 +65,11 @@ func TestVoiceTranscriptSearchLifecycle(t *testing.T) {
 	require.NoError(t, st.UpsertMessageBodyContext(t.Context(), audio.messageID, sql.NullString{String: longBody, Valid: true}, sql.NullString{}))
 	require.NoError(t, st.IndexStoredMessageContext(t.Context(), audio.messageID))
 	assert.Equal(t, []int64{audio.messageID}, find())
+	assert.Equal(t, []int64{audio.messageID}, phrase())
 	_, err = st.RebuildFTSContext(t.Context(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, []int64{audio.messageID}, find())
+	assert.Equal(t, []int64{audio.messageID}, phrase())
 	require.NoError(t, st.SetVoiceTranscriptSearch(t.Context(), false))
 	assert.Empty(t, find())
 	require.NoError(t, st.SaveVoiceTranscript(t.Context(), mappings[0], "dinner Thursday"))
