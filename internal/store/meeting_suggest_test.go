@@ -61,12 +61,17 @@ func TestMeetingSuggestionsWithheldTitle(t *testing.T) {
 	r.NoError(err)
 	ref := MeetingLinkRef{Kind: "msg", MessageID: note}
 	for _, id := range []int64{-1, 0, note, event} {
+		seen := map[int64]bool{}
 		var classify func(context.Context, []int64) (map[int64]bool, error)
 		if id == -1 {
 			classify = func(context.Context, []int64) (map[int64]bool, error) { return map[int64]bool{}, nil }
 		} else if id != 0 {
 			classify = func(_ context.Context, ids []int64) (map[int64]bool, error) {
 				r.Contains(ids, id)
+				for _, classified := range ids {
+					r.False(seen[classified])
+					seen[classified] = true
+				}
 				return map[int64]bool{id: true}, nil
 			}
 		}
