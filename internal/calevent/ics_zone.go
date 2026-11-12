@@ -24,12 +24,9 @@ func icsEventZones(event *ical.Component) map[string]bool {
 }
 
 // customICSZones resolves only the definitions in used.
-func customICSZones(cal *ical.Calendar, used map[string]bool) (map[string]string, error) {
+func customICSZones(components []*ical.Component, used map[string]bool) (map[string]string, error) {
 	zones := make(map[string]string)
-	for _, zone := range cal.Children {
-		if zone.Name != "VTIMEZONE" {
-			continue
-		}
+	for _, zone := range components {
 		id := normalizeICSZone(zone.Props.Get("TZID").Value)
 		if _, err := time.LoadLocation(id); err == nil || !used[id] {
 			continue
@@ -72,17 +69,14 @@ func customICSZones(cal *ical.Calendar, used map[string]bool) (map[string]string
 
 // eventICSZones resolves an event's custom zones. A POSIX rule applies to every
 // year, so a zone with an observance that starts after a referenced date is unsupported.
-func eventICSZones(cal *ical.Calendar, event *ical.Component, calendarZone string) (map[string]string, error) {
+func eventICSZones(components []*ical.Component, event *ical.Component, calendarZone string) (map[string]string, error) {
 	used := icsEventZones(event)
 	used[calendarZone] = true
-	zones, err := customICSZones(cal, used)
+	zones, err := customICSZones(components, used)
 	if err != nil {
 		return zones, err
 	}
-	for _, zone := range cal.Children {
-		if zone.Name != ical.CompTimezone {
-			continue
-		}
+	for _, zone := range components {
 		id := normalizeICSZone(zone.Props.Get("TZID").Value)
 		if zones[id] == "" {
 			continue
