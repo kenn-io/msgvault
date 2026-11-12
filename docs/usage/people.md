@@ -52,7 +52,7 @@ introduction cannot be merged into another source. If its source is retired,
 the record reports `source_retired`; you can cancel it to clear the body.
 
 If a person merge combines both people, the record remains visible with a
-`same_person` blocker. Splitting the merge restores its person references.
+`same_person` blocker. An exact split of the merge restores its person references.
 Merge snapshots do not retain introduction body text.
 
 Preflight reports `no_identity_on_account` when a person has no saved Beeper
