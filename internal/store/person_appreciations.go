@@ -69,7 +69,7 @@ func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, person
 			if err != nil {
 				return PersonAppreciationProjection{}, err
 			}
-			if ok {
+			if ok && proof.Suggestion.Quote == memory.Suggestion.Quote {
 				memory.Suggestion.State, memory.Suggestion.PriorThanks = "already_thanked", "evidenced"
 				memory.Suggestion.Thanked, memory.OwnerRef, memory.OwnerRawSHA256 = proof.Suggestion.Thanked, proof.OwnerRef, proof.OwnerRawSHA256
 			}
@@ -84,9 +84,9 @@ func (s *Store) currentAppreciationsTx(ctx context.Context, tx *loggedTx, person
 // snapshot or locks. Unsupported evidence is not proof; corrupt boundaries and
 // operational failures are returned to the caller.
 func (s *Store) validAppreciationProofTx(ctx context.Context, tx *loggedTx, personID int64, key string, proofID int64, profile peoplesweep.ProviderProfile, lock bool) (peoplesweep.BriefAppreciationMemory, bool, error) {
-	var raw, version string
-	err := tx.QueryRowContext(ctx, `SELECT CAST(boundary_json AS TEXT), program_version FROM person_briefs WHERE id = ?`, proofID).Scan(&raw, &version)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && version != "v3" {
+	var raw, version, status string
+	err := tx.QueryRowContext(ctx, `SELECT CAST(boundary_json AS TEXT), program_version, status FROM person_briefs WHERE id = ?`, proofID).Scan(&raw, &version, &status)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (version != "v3" || status == PersonBriefStatusRejected) {
 		return peoplesweep.BriefAppreciationMemory{}, false, nil
 	}
 	if err != nil {

@@ -391,7 +391,7 @@ func (s *Store) applyPersonSweepWithAligner(
 				if err != nil {
 					return err
 				}
-				if valid {
+				if valid && proof.Suggestion.Quote == memory.Suggestion.Quote {
 					if resolved == 3 {
 						delete(current, memory.Suggestion.Key)
 						continue

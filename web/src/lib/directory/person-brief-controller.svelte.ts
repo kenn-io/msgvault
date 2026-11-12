@@ -781,7 +781,7 @@ function structuredItem(
     const state = event?.state;
     const eventState = (state === 'upcoming' || state === 'follow_up' || state === 'resolved') &&
       text(event?.anchor_id) && text(event?.quote) && text(event?.question);
-    const detail = eventState ? null : text(item?.text);
+    const detail = eventState ? null : (text(item?.text) ?? null);
     if (!item || (!eventState && !detail)) return undefined;
     const meta: string[] = [];
     const speaker = speakerLabels[String(item.speaker)];
