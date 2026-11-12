@@ -15,6 +15,11 @@ live events when you opt in to write consent and source permissions.
 
 ## List archived events
 
+This list also includes events imported from iCalendar files and invitations
+extracted from archived email. Import a file with
+`msgvault import-ics calendar.ics --identifier personal-calendar`; see the
+[import reference](../cli-reference.md#import-ics) for details.
+
 ```bash
 msgvault calendar events --from 2027-03-01 --to 2027-04-01
 msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
