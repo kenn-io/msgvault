@@ -18,6 +18,7 @@ import (
 
 type meetingDecisionTestStore struct {
 	*mockStore
+
 	err         error
 	calls       int
 	left, right store.MeetingLinkRef
