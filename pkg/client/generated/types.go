@@ -6874,9 +6874,6 @@ func (i IntroductionPage) Validate() error {
 			}
 		}
 	}
-	if err := typesValidator.Var(i.NextAfterID, "required"); err != nil {
-		errors = errors.Append("NextAfterID", err)
-	}
 	if len(errors) == 0 {
 		return nil
 	}
@@ -6912,9 +6909,6 @@ func (i IntroductionRecord) Validate() error {
 			}
 		}
 	}
-	if err := typesValidator.Var(i.Body, "required"); err != nil {
-		errors = errors.Append("Body", err)
-	}
 	if i.CancelledAt != nil {
 		if err := typesValidator.Var(i.CancelledAt, "required"); err != nil {
 			errors = errors.Append("CancelledAt", err)
@@ -6941,9 +6935,6 @@ func (i IntroductionRecord) Validate() error {
 	}
 	if err := typesValidator.Var(i.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
-	}
-	if err := typesValidator.Var(i.Title, "required"); err != nil {
-		errors = errors.Append("Title", err)
 	}
 	if err := typesValidator.Var(i.UpdatedAt, "required"); err != nil {
 		errors = errors.Append("UpdatedAt", err)
