@@ -28,50 +28,16 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 	if err != nil {
 		return fmt.Errorf("inspect restored token directory: %w", err)
 	}
+	if !info.IsDir() {
+		return nil
+	}
 	snapshot, err := repo.OpenSnapshot(ctx, snapshotID, backupapp.New(Version).PackFileExtension())
 	if err != nil {
 		return fmt.Errorf("open restored snapshot: %w", err)
 	}
 	defer snapshot.Close() //nolint:errcheck // membership lookup is authoritative
 	strict := false
-	for _, name := range []string{providercredentials.Filename, providercredentials.ServerKeyFilename} {
-		_, err := snapshot.Extra("tokens/" + name)
-		if err == nil {
-			strict = true
-			continue
-		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("inspect restored token membership: %w", err)
-		}
-	}
-	if !strict && info.IsDir() {
-		entries, readErr := os.ReadDir(dir)
-		if readErr != nil {
-			// Without a known strict member, an unreadable directory may be
-			// unrelated to this snapshot; keep non-token restores working.
-			return nil
-		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if !strings.EqualFold(name, providercredentials.Filename) && !strings.EqualFold(name, providercredentials.ServerKeyFilename) {
-				continue
-			}
-			_, err := snapshot.Extra("tokens/" + name)
-			if err == nil {
-				strict = true
-				break
-			}
-			if !errors.Is(err, fs.ErrNotExist) {
-				return fmt.Errorf("inspect restored token membership: %w", err)
-			}
-		}
-	}
-	if !strict {
-		return nil
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("restored token path %s is not a directory", dir)
-	}
+	var nonRegular string
 	var selected []string
 	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -91,14 +57,23 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 		if err != nil {
 			return fmt.Errorf("inspect restored token membership: %w", err)
 		}
-		if !entry.Type().IsRegular() {
-			return fmt.Errorf("restored token %q is not a regular file", rel)
+		if !entry.Type().IsRegular() && nonRegular == "" {
+			nonRegular = rel
+		}
+		if strings.EqualFold(rel, providercredentials.Filename) || strings.EqualFold(rel, providercredentials.ServerKeyFilename) {
+			strict = true
 		}
 		selected = append(selected, rel)
 		return nil
 	})
 	if err != nil {
 		return fmt.Errorf("inspect restored tokens: %w", err)
+	}
+	if !strict {
+		return nil
+	}
+	if nonRegular != "" {
+		return fmt.Errorf("inspect restored tokens: restored token %q is not a regular file", nonRegular)
 	}
 	err = providercredentials.SecureRestored(dir, selected)
 	if errors.Is(err, providercredentials.ErrRestorePermissionsConflict) {
