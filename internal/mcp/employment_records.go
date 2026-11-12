@@ -21,15 +21,15 @@ func employmentOperationalDefinitions() []operationalDefinition {
 	for _, source := range store.AllProvenances {
 		sources = append(sources, string(source))
 	}
-	body := closedObject(map[string]*jsonschema.Schema{
-		"person_id": safeIDSchema("Durable person ID"), "organization_id": safeIDSchema("Organization ID"),
-		"source": stringSchema("Native provenance", sources...),
-		"title":  stringSchema("Title"), "role": stringSchema("Role"), "department": stringSchema("Department"), "location": stringSchema("Location"),
-		"address_id": safeIDSchema("Address ID"), "description": stringSchema("Description"),
-		"start_date": stringSchema("Partial ISO date: YYYY, YYYY-MM, or YYYY-MM-DD"), "end_date": stringSchema("Partial ISO date"),
-		"is_current": booleanSchema("Explicit current state"), "is_primary": booleanSchema("Explicit primary state"),
-		"source_ref": stringSchema("Provenance reference"), "confidence": scoreSchema("Derived confidence from 0 to 1"),
-	}, "person_id", "organization_id", "source")
+	body := outputSchemaFor[generated.EmploymentBody]()
+	body.Schema = ""
+	body.Properties["person_id"] = safeIDSchema("Durable person ID")
+	body.Properties["organization_id"] = safeIDSchema("Organization ID")
+	body.Properties["address_id"] = safeIDSchema("Address ID")
+	body.Properties["source"] = stringSchema("Native provenance", sources...)
+	body.Properties["confidence"] = scoreSchema("Derived confidence from 0 to 1")
+	body.Properties["start_date"] = stringSchema("Partial ISO date: YYYY, YYYY-MM, or YYYY-MM-DD")
+	body.Properties["end_date"] = stringSchema("Partial ISO date")
 	// Native nullable fields use omission and null equivalently for replacement.
 	for key := range body.Properties {
 		if slices.Contains(body.Required, key) {

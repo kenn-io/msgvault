@@ -147,6 +147,14 @@ func TestMCPEmploymentSDKApprovalAndReadOnly(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "employment_revision_conflict", loopToolFailure(t, result)["error"])
 	assert.Equal(t, 2, approvals)
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "replace_employment", Arguments: map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "source": "user", "title": "Stale", "is_primary": false}}})
+	require.NoError(t, err)
+	assert.Equal(t, "employment_revision_conflict", loopToolFailure(t, result)["error"])
+	assert.Equal(t, 2, approvals)
+	unchanged, err := st.GetEmploymentContext(t.Context(), record.Employment.ID)
+	require.NoError(t, err)
+	require.NotNil(t, unchanged.Title)
+	assert.Equal(t, "Engineer", *unchanged.Title)
 	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "delete_employment", Arguments: map[string]any{"employment_id": record.Employment.ID, "etag": replaced.ETag}})
 	require.NoError(t, err)
 	require.False(t, result.IsError)
@@ -162,6 +170,15 @@ func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
 	first, err := b.ExecuteOperation(t.Context(), "create_employment", map[string]any{"employment": map[string]any{"person_id": person, "organization_id": org, "source": "user", "is_primary": true}})
 	require.NoError(t, err)
 	record := operationOutput[mcpserver.EmploymentRecord](t, first)
+	end, err := b.OperationDisclosure(t.Context(), "end_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag, "end_date": "2024-05"})
+	require.NoError(t, err)
+	assert.Contains(t, end, `"operation":"end_employment"`)
+	assert.Contains(t, end, `"end_date":"2024-05"`)
+	assert.Contains(t, end, "End this employment on the given date; it is no longer current or primary.")
+	primary, err := b.OperationDisclosure(t.Context(), "set_primary_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag})
+	require.NoError(t, err)
+	assert.Contains(t, primary, `"operation":"set_primary_employment"`)
+	assert.Contains(t, primary, "Make this employment primary; the person's other primary employment is demoted.")
 	args := map[string]any{"employment": map[string]any{"person_id": person, "organization_id": other.ID, "source": "user", "is_primary": true}}
 	conflict, err := b.ExecuteOperation(t.Context(), "create_employment", args)
 	require.NoError(t, err)
@@ -203,25 +220,36 @@ func TestMCPEmploymentCapabilityRequiresNativeRoute(t *testing.T) {
 // contract, which the real store cannot deterministically produce after a write.
 func TestMCPEmploymentUncertainAndBoundedResponse(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		status int
-		body   string
-		code   string
+		name      string
+		status    int
+		body      string
+		code      string
+		operation string
 	}{
-		{"unknown daemon failure", http.StatusInternalServerError, `{"error":"private details"}`, "operation_refused"},
-		{"oversized response", http.StatusCreated, strings.Repeat("x", (1<<20)+1), "operation_response_limit_exceeded"},
+		{"unknown daemon failure", http.StatusInternalServerError, `{"error":"private details"}`, "operation_refused", "create_employment"},
+		{"oversized response", http.StatusCreated, strings.Repeat("x", (1<<20)+1), "operation_response_limit_exceeded", "create_employment"},
+		{"delete daemon failure", http.StatusInternalServerError, `{"error":"private details"}`, "operation_refused", "delete_employment"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.operation == "delete_employment" {
+					assert.Equal(t, http.MethodDelete, r.Method)
+					assert.Equal(t, "/api/v1/employments/1", r.URL.Path)
+				}
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			t.Cleanup(server.Close)
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 			require.NoError(t, err)
-			b := &daemonMCPOperations{client: client, supported: []string{"create_employment"}}
-			result, err := b.ExecuteOperation(t.Context(), "create_employment", map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user"}})
+			b := &daemonMCPOperations{client: client, supported: []string{tc.operation}}
+			args := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user"}}
+			if tc.operation == "delete_employment" {
+				args = map[string]any{"employment_id": 1, "etag": `"employment-1-r1"`}
+			}
+			result, err := b.ExecuteOperation(t.Context(), tc.operation, args)
 			require.NoError(t, err)
+			assertLoopRefusal(t, result, tc.code, true)
 			require.True(t, result.IsError)
 			data, err := json.Marshal(result.Output)
 			require.NoError(t, err)
