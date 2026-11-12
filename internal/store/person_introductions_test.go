@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/beeperidentity"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -172,9 +173,13 @@ func TestIntroductionPaginationAndScope(t *testing.T) {
 	req.NoError(err)
 	two, err := f.Store.GetOrCreateSource("beeper", "two")
 	req.NoError(err)
-	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, f.EnsureParticipant("page-a@example.com", "A", "example.com"))
+	pa := f.EnsureParticipant("page-a@example.com", "A", "example.com")
+	pb := f.EnsureParticipant("page-b@example.com", "B", "example.com")
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("one", "a"), pb, beeperidentity.Fallback("one", "b"))
 	req.NoError(err)
-	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, f.EnsureParticipant("page-b@example.com", "B", "example.com"))
+	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
+	req.NoError(err)
+	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
 	req.NoError(err)
 	ids := map[string]bool{}
 	var ordered []string

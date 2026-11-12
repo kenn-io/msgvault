@@ -100,6 +100,15 @@ func (s Service) Prepare(ctx context.Context, g *agentgrant.Grant, in store.Pers
 	return projectedRecord(g, row, p), nil
 }
 func (s Service) Get(ctx context.Context, g *agentgrant.Grant, id string) (Record, error) {
+	if g != nil {
+		var release func()
+		var err error
+		ctx, release, err = s.Store.BeginReadSnapshotContext(ctx)
+		if err != nil {
+			return Record{}, err
+		}
+		defer release()
+	}
 	row, err := s.Store.GetPersonIntroductionContext(ctx, id)
 	if err != nil {
 		if g != nil && errors.Is(err, store.ErrIntroductionNotFound) {
@@ -115,6 +124,13 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 		if !g.HasPermission(agentgrant.PermissionDraftCreate) {
 			return Page{}, ErrForbidden
 		}
+		var release func()
+		var err error
+		ctx, release, err = s.Store.BeginReadSnapshotContext(ctx)
+		if err != nil {
+			return Page{}, err
+		}
+		defer release()
 		ids = []int64{}
 		sources, err := s.Store.ListSourcesContext(ctx, "")
 		if err != nil {
@@ -125,7 +141,6 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 				ids = append(ids, src.ID)
 			}
 		}
-		return s.listDelegated(ctx, g, q, ids)
 	}
 	rows, err := s.Store.ListPersonIntroductionsContext(ctx, q, ids)
 	if err != nil {
@@ -133,6 +148,9 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 	}
 	inputs := make([]store.PersonIntroductionPrepare, 0, len(rows.Items))
 	for _, row := range rows.Items {
+		if !allowed(g, row) {
+			return Page{}, ErrForbidden
+		}
 		inputs = append(inputs, store.PersonIntroductionPrepare{SourceID: row.SourceID, PersonAID: row.PersonAID, PersonBID: row.PersonBID})
 	}
 	preflights, err := s.Store.GetPersonIntroductionPreflightsContext(ctx, inputs)
@@ -146,49 +164,6 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 	return out, nil
 }
 
-// Walk at most 100 candidates and share the owner lookup across their preflights.
-func (s Service) listDelegated(ctx context.Context, g *agentgrant.Grant, q store.PersonIntroductionQuery, ids []int64) (Page, error) {
-	limit := q.Limit
-	if limit == 0 {
-		limit = 20
-	}
-	if limit < 1 || limit > 100 {
-		return Page{}, store.ErrIntroductionInvalid
-	}
-	q.Limit = 100
-	rows, err := s.Store.ListPersonIntroductionsContext(ctx, q, ids)
-	if err != nil {
-		return Page{}, err
-	}
-	inputs := make([]store.PersonIntroductionPrepare, 0, len(rows.Items))
-	for _, row := range rows.Items {
-		inputs = append(inputs, store.PersonIntroductionPrepare{SourceID: row.SourceID, PersonAID: row.PersonAID, PersonBID: row.PersonBID})
-	}
-	preflights, err := s.Store.GetPersonIntroductionPreflightsContext(ctx, inputs)
-	if err != nil {
-		return Page{}, err
-	}
-	out := Page{Items: []Record{}}
-	var afterVisible string
-	for i, row := range rows.Items {
-		if !visible(preflights[i]) {
-			continue
-		}
-		if len(out.Items) == limit {
-			out.HasMore, out.NextAfterID = true, afterVisible
-			return out, nil
-		}
-		out.Items = append(out.Items, projectedRecord(g, row, preflights[i]))
-		afterVisible, err = store.IntroductionCursor(row)
-		if err != nil {
-			return Page{}, err
-		}
-	}
-	if rows.HasMore {
-		out.HasMore, out.NextAfterID = true, rows.NextAfterID
-	}
-	return out, nil
-}
 func (s Service) Edit(ctx context.Context, g *agentgrant.Grant, id string, in store.PersonIntroductionEdit) (Record, error) {
 	if g != nil {
 		return Record{}, ErrForbidden

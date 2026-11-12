@@ -397,6 +397,23 @@ type loopOwners struct {
 	persons      map[int64]struct{}
 }
 
+// loopOwnerParticipantsSQL is the shared archive-wide owner participant source.
+func (s *Store) loopOwnerParticipantsSQL() string {
+	return `
+		SELECT p.id FROM account_identities ai
+		JOIN participants p ON ` + ownerEmailMatch("p.email_address", "ai.address") + `
+		UNION ALL
+		SELECT pi.participant_id FROM account_identities ai
+		JOIN participant_identifiers pi ON ` + ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", identifierWithoutPrimaryEmail) + `
+		UNION ALL
+		SELECT pi.participant_id FROM account_identities ai
+		JOIN sources src ON src.id = ai.source_id AND src.source_type = 'beeper'
+		JOIN participant_identifiers pi ON pi.identifier_type = 'beeper' AND pi.identifier_value = ` + beeperidentity.FallbackSQL(s.dialect.DriverName(), "src.identifier", "ai.address") + `
+		UNION ALL
+		SELECT m.sender_id FROM messages m JOIN sources src ON src.id = m.source_id
+		WHERE src.source_type = 'beeper' AND m.source_is_from_me = TRUE AND m.sender_id IS NOT NULL`
+}
+
 // loopOwnerIdentities loads the owners once per request. A participant that
 // matches any account address or sends a Beeper from-me message is you across
 // the whole archive, whether or not
@@ -404,19 +421,7 @@ type loopOwners struct {
 // accounts is never a loop. The match starts from the few account addresses,
 // so the lower-case indexes on participants and identifiers serve it.
 func (s *Store) loopOwnerIdentities(ctx context.Context) (loopOwners, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.id FROM account_identities ai
-		JOIN participants p ON `+ownerEmailMatch("p.email_address", "ai.address")+`
-		UNION ALL
-		SELECT pi.participant_id FROM account_identities ai
-		JOIN participant_identifiers pi ON `+ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", identifierWithoutPrimaryEmail)+`
-		UNION ALL
-		SELECT pi.participant_id FROM account_identities ai
-		JOIN sources src ON src.id = ai.source_id AND src.source_type = 'beeper'
-		JOIN participant_identifiers pi ON pi.identifier_type = 'beeper' AND pi.identifier_value = `+beeperidentity.FallbackSQL(s.dialect.DriverName(), "src.identifier", "ai.address")+`
-		UNION ALL
-		SELECT m.sender_id FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE src.source_type = 'beeper' AND m.source_is_from_me = TRUE AND m.sender_id IS NOT NULL`)
+	rows, err := s.db.QueryContext(ctx, s.loopOwnerParticipantsSQL())
 	if err != nil {
 		return loopOwners{}, fmt.Errorf("load owner identities: %w", err)
 	}

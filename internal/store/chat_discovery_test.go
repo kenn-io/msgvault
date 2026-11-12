@@ -456,6 +456,37 @@ func TestBeeperFallbackIDSQLMatchesProducer(t *testing.T) {
 	}
 }
 
+func TestBeeperScopedUserSQLMatchesProducer(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	driver := "sqlite3"
+	if st.IsPostgreSQL() {
+		driver = "pgx"
+	}
+	cases := []struct{ account, key, want string }{
+		{"account:a", beeperidentity.Fallback("account:a", "user:雪"), "user:雪"},
+		{" 账户 ", beeperidentity.Fallback("账户", " 雪:é "), "雪:é"},
+		{"account:b", beeperidentity.Fallback("account:a", "user"), ""},
+		{"account", beeperidentity.Fallback("", "user"), ""},
+		{"a", "beeper:1:a:01:b", ""},
+		{"a", "beeper:1:a:4:b", ""},
+		{"a", beeperidentity.Fallback("a", "b") + ":x", ""},
+		{"", beeperidentity.Fallback("", "user"), ""},
+		{"a", "beeper:1:a:1: ", ""},
+	}
+	if !st.IsPostgreSQL() {
+		cases = append(cases, struct{ account, key, want string }{"a\x00:b", beeperidentity.Fallback("a\x00:b", "u\x00:雪"), "u\x00:雪"})
+	}
+	for _, tc := range cases {
+		t.Run(strconv.Quote(tc.key), func(t *testing.T) {
+			var got sql.NullString
+			query := `WITH input AS (SELECT CAST(? AS TEXT) AS account, CAST(? AS TEXT) AS key) SELECT ` + beeperidentity.ScopedUserSQL(driver, "account", "key") + ` FROM input`
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(query), tc.account, tc.key).Scan(&got))
+			assert.Equal(t, tc.want != "", got.Valid)
+			assert.Equal(t, tc.want, got.String)
+		})
+	}
+}
+
 func TestChatDiscoveryLiteralTokensTitlesAndBoundedEvidence(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

@@ -75,3 +75,46 @@ func TestIntroductionPreflightAmbiguityAndOwner(t *testing.T) {
 	check.Equal(a.ID, got.Members[0].PersonID)
 	check.Equal("member", got.Members[0].UserID)
 }
+
+func TestIntroductionListPreflightEligibilityParity(t *testing.T) {
+	f := storetest.New(t)
+	ctx := t.Context()
+	src, err := f.Store.GetOrCreateSource("beeper", "parity")
+	require.NoError(t, err)
+	makePerson := func(name, account string) int64 {
+		t.Helper()
+		id := f.EnsureParticipant(name+"@example.test", name, "example.test")
+		p, _, err := f.Store.CreatePersonFromParticipantContext(ctx, id)
+		require.NoError(t, err)
+		if account != "" {
+			_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?)`), id, beeperidentity.Fallback(account, name))
+			require.NoError(t, err)
+		}
+		return p.ID
+	}
+	a := makePerson("parity-a", "parity")
+	b := makePerson("parity-b", "parity")
+	missing := makePerson("parity-missing", "")
+	cross := makePerson("parity-cross", "other")
+	owner := makePerson("parity-owner", "parity")
+	require.NoError(t, f.Store.AddAccountIdentityContext(ctx, src.ID, "parity-owner@example.test", "manual"))
+	for _, person := range []int64{b, missing, cross, owner} {
+		pre, err := f.Store.GetPersonIntroductionPreflightContext(ctx, src.ID, a, person)
+		require.NoError(t, err)
+		row, err := f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a, PersonBID: person}, "owner")
+		require.NoError(t, err)
+		page, err := f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{}, []int64{src.ID})
+		require.NoError(t, err)
+		visible := true
+		for _, blocker := range pre.Blockers {
+			if blocker.Code == "owner_selected" || blocker.Code == "no_identity_on_account" {
+				visible = false
+			}
+		}
+		found := false
+		for _, item := range page.Items {
+			found = found || item.IntroID == row.IntroID
+		}
+		assert.Equal(t, visible, found)
+	}
+}

@@ -153,6 +153,22 @@ func (s *Store) ListPersonIntroductionsContext(ctx context.Context, q PersonIntr
 		for _, id := range allowed {
 			args = append(args, id)
 		}
+
+		owners, err := s.loopOwnerIdentities(ctx)
+		if err != nil {
+			return page, err
+		}
+		for _, person := range []string{"i.person_a_id", "i.person_b_id"} {
+			query += ` AND EXISTS (` + s.introductionIdentitySQL(person, "s.identifier") + `)`
+			if len(owners.persons) > 400 {
+				query += ` AND NOT EXISTS (SELECT 1 FROM person_participants owner_pp WHERE owner_pp.person_id = ` + person + ` AND owner_pp.participant_id IN (` + s.loopOwnerParticipantsSQL() + `))`
+			} else if len(owners.persons) > 0 {
+				query += ` AND ` + person + ` NOT IN (` + strings.TrimRight(strings.Repeat("?,", len(owners.persons)), ",") + `)`
+				for id := range owners.persons {
+					args = append(args, id)
+				}
+			}
+		}
 	}
 	if q.AfterID != "" {
 		if len(q.AfterID) > base64.RawURLEncoding.EncodedLen(introductionCursorBytes) {

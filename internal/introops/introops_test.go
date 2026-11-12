@@ -1,6 +1,10 @@
 package introops_test
 
 import (
+	"context"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -82,22 +86,23 @@ func TestDelegatedListContinuesPastScanLimit(t *testing.T) {
 	req.NoError(err)
 	svc := introops.Service{Store: f.Store}
 	in := store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}
-	visible, err := svc.Prepare(ctx, nil, in)
+	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "account"}}}
+	empty, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
 	req.NoError(err)
 	in.PersonBID = c.ID
 	for range 101 {
 		_, err = svc.Prepare(ctx, nil, in)
 		req.NoError(err)
 	}
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_introductions SET created_at = ? WHERE intro_id = ?`), time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), visible.IntroID)
-	req.NoError(err)
-	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "account"}}}
 	page, err := svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
 	req.NoError(err)
-	check.Empty(page.Items)
-	check.True(page.HasMore)
-	req.NotEmpty(page.NextAfterID)
-	page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1, AfterID: page.NextAfterID})
+	assert.Equal(t, empty, page)
+	in.PersonBID = b.ID
+	visible, err := svc.Prepare(ctx, nil, in)
+	req.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_introductions SET created_at = ? WHERE intro_id = ?`), time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), visible.IntroID)
+	req.NoError(err)
+	page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 1})
 	req.NoError(err)
 	req.Len(page.Items, 1)
 	check.Equal(visible.IntroID, page.Items[0].IntroID)
@@ -126,6 +131,28 @@ func TestDelegatedListContinuesPastScanLimit(t *testing.T) {
 	req.NoError(err)
 	req.Len(page.Items, 1)
 	check.Equal(visible.IntroID, page.Items[0].IntroID)
+
+	// More than one full page of eligible rows remains traversable without repeats.
+	for range 101 {
+		_, err = svc.Prepare(ctx, nil, in)
+		require.NoError(t, err)
+	}
+	seen := map[string]bool{}
+	cursor := ""
+	for {
+		page, err = svc.List(ctx, g, store.PersonIntroductionQuery{Limit: 20, AfterID: cursor})
+		req.NoError(err)
+		for _, row := range page.Items {
+			assert.False(t, seen[row.IntroID])
+			seen[row.IntroID] = true
+		}
+		if !page.HasMore {
+			break
+		}
+		req.NotEmpty(page.NextAfterID)
+		cursor = page.NextAfterID
+	}
+	assert.Len(t, seen, 104)
 }
 
 func TestListFiltersSourcesBeforePagination(t *testing.T) {
@@ -243,4 +270,108 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 	all, err := svc.List(ctx, nil, store.PersonIntroductionQuery{})
 	req.NoError(err)
 	check.Len(all.Items, 3)
+}
+
+// catalogPause pauses the real catalog read after its rows have been consumed.
+type catalogPause struct {
+	ready, resume chan struct{}
+	once          sync.Once
+}
+
+func (h *catalogPause) Enabled(context.Context, slog.Level) bool { return true }
+func (h *catalogPause) Handle(_ context.Context, r slog.Record) error {
+	var stmt string
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "stmt" {
+			stmt = a.Value.String()
+		}
+		return true
+	})
+	if (r.Message == "sql" || r.Message == "sql slow") && strings.Contains(stmt, "FROM sources WHERE 1=1") {
+		h.once.Do(func() { close(h.ready); <-h.resume })
+	}
+	return nil
+}
+func (h *catalogPause) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *catalogPause) WithGroup(string) slog.Handler      { return h }
+
+func TestDelegatedListSnapshotSourceReplacement(t *testing.T) {
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("SQLite source IDs are reused after deletion")
+	}
+	ctx := t.Context()
+	src, err := f.Store.GetOrCreateSource("beeper", "account-a")
+	require.NoError(t, err)
+	pa := f.EnsureParticipant("race-a@example.test", "A", "example.test")
+	pb := f.EnsureParticipant("race-b@example.test", "B", "example.test")
+	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
+	require.NoError(t, err)
+	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
+	require.NoError(t, err)
+	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: "account-a"}}}
+	h := &catalogPause{ready: make(chan struct{}), resume: make(chan struct{})}
+	old := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	var resume sync.Once
+	defer resume.Do(func() { close(h.resume) })
+	type result struct {
+		page introops.Page
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		page, err := (introops.Service{Store: f.Store}).List(ctx, g, store.PersonIntroductionQuery{})
+		done <- result{page, err}
+	}()
+	<-h.ready
+	_, _, err = f.Store.RemoveSourceSerialized(ctx, src.ID)
+	require.NoError(t, err)
+	replacement, err := f.Store.GetOrCreateSource("beeper", "account-b")
+	require.NoError(t, err)
+	require.Equal(t, src.ID, replacement.ID)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("account-b", "a"), pb, beeperidentity.Fallback("account-b", "b"))
+	require.NoError(t, err)
+	_, err = f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: replacement.ID, PersonAID: a.ID, PersonBID: b.ID, Title: "outside"}, "owner")
+	require.NoError(t, err)
+	resume.Do(func() { close(h.resume) })
+	got := <-done
+	require.NoError(t, got.err)
+	assert.Empty(t, got.page.Items)
+	assert.False(t, got.page.HasMore)
+}
+
+func TestDelegatedListSameReferenceReimport(t *testing.T) {
+	f := storetest.New(t)
+	ctx := t.Context()
+	src, err := f.Store.GetOrCreateSource("beeper", "reimport")
+	require.NoError(t, err)
+	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: src.ID, Type: "beeper", Identifier: "reimport"}}}
+	_, _, err = f.Store.RemoveSourceSerialized(ctx, src.ID)
+	require.NoError(t, err)
+	_, err = f.Store.GetOrCreateSource("beeper", "intervening")
+	require.NoError(t, err)
+	reimported, err := f.Store.GetOrCreateSource("beeper", "reimport")
+	require.NoError(t, err)
+	require.NotEqual(t, src.ID, reimported.ID)
+	pa := f.EnsureParticipant("reimport-a@example.test", "A", "example.test")
+	pb := f.EnsureParticipant("reimport-b@example.test", "B", "example.test")
+	a, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pa)
+	require.NoError(t, err)
+	b, _, err := f.Store.CreatePersonFromParticipantContext(ctx, pb)
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("reimport", "a"), pb, beeperidentity.Fallback("reimport", "b"))
+	require.NoError(t, err)
+	svc := introops.Service{Store: f.Store}
+	row, err := svc.Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: reimported.ID, PersonAID: a.ID, PersonBID: b.ID, Body: "private"})
+	require.NoError(t, err)
+	page, err := svc.List(ctx, g, store.PersonIntroductionQuery{})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, row.IntroID, page.Items[0].IntroID)
+	assert.Empty(t, page.Items[0].Body)
+	for _, member := range page.Items[0].Members {
+		assert.Empty(t, member.UserID)
+	}
 }
