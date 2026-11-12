@@ -43,15 +43,7 @@ func RebindPostgreSQL(query string) string {
 
 // PostgreSQLSearchArg builds the unordered candidate query for the index.
 func PostgreSQLSearchArg(terms []string) string {
-	var groups []string
-	for _, term := range terms {
-		parts := EscapeTSQueryTerm(strings.ToLower(term))
-		if len(parts) > 0 {
-			parts[len(parts)-1] += ":*"
-		}
-		groups = append(groups, parts...)
-	}
-	return strings.Join(groups, " & ")
+	return tsQuery(terms, "", " & ")
 }
 
 // CanonicalFTSText prepares text for collation-independent phrase matching.
@@ -102,10 +94,6 @@ func PostgreSQLBodyPredicate(arg string, terms []string) string {
 // (whitespace-only, all punctuation, or all metacharacters). Each
 // returned lexeme is safe to suffix with `:*` for prefix matching and
 // join with ` & `.
-//
-// Both PG FTS code paths share this allowlist tokenizer:
-// query.PostgreSQLQueryDialect.BuildFTSTerm and SanitizeFTSQuery both
-// call it, so they produce the same lexeme set for the same input.
 func EscapeTSQueryTerm(s string) []string {
 	var lexemes []string
 	var cur strings.Builder
@@ -154,6 +142,10 @@ func FoldFTSText(s string) (string, []int) {
 
 // TSQuery builds ordered phrases, with a prefix on each final token.
 func TSQuery(terms []string, weight string) string {
+	return tsQuery(terms, weight, " <-> ")
+}
+
+func tsQuery(terms []string, weight, separator string) string {
 	var groups []string
 	for _, term := range terms {
 		parts := EscapeTSQueryTerm(strings.ToLower(term))
@@ -167,7 +159,11 @@ func TSQuery(terms []string, weight string) string {
 		if len(parts) == 1 {
 			groups = append(groups, parts[0])
 		} else if len(parts) > 1 {
-			groups = append(groups, "("+strings.Join(parts, " <-> ")+")")
+			group := strings.Join(parts, separator)
+			if separator != " & " {
+				group = "(" + group + ")"
+			}
+			groups = append(groups, group)
 		}
 	}
 	return strings.Join(groups, " & ")

@@ -466,7 +466,7 @@ func preparePostgresFTSDoc(doc FTSDoc, liveWrite bool) (FTSDoc, []string) {
 	positions := 4 // Separator lexemes between the five fields.
 	saturated := false
 	for _, field := range fields {
-		for _, token := range strings.Fields(field) {
+		for token := range strings.FieldsSeq(field) {
 			positions++
 			counts[token]++
 			if positions > 16000 || counts[token] > 200 {

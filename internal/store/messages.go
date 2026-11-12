@@ -4047,7 +4047,7 @@ func (s *Store) BackfillFTSContext(
 	if err != nil {
 		return 0, err
 	}
-	return s.backfillFTSRangeContext(ctx, batchSQL, minID, maxID, progress)
+	return s.backfillFTSRangeContext(ctx, batchSQL, minID, maxID, true, progress)
 }
 
 // RebuildFTS fully recreates the FTS index from the underlying message
@@ -4089,7 +4089,7 @@ func (s *Store) RebuildFTSContext(
 		return 0, nil
 	}
 
-	indexed, err := s.backfillFTSRangeContext(ctx, s.dialect.FTSBackfillBatchSQL(), minID, maxID, progress)
+	indexed, err := s.backfillFTSRangeContext(ctx, s.dialect.FTSBackfillBatchSQL(), minID, maxID, false, progress)
 	if err != nil {
 		return indexed, err
 	}
@@ -4117,6 +4117,7 @@ func (s *Store) backfillFTSRangeContext(
 	ctx context.Context,
 	batchSQL string,
 	minID, maxID int64,
+	onlyStale bool,
 	progress func(done, total int64),
 ) (int64, error) {
 	const batchSize = 5000
@@ -4126,7 +4127,7 @@ func (s *Store) backfillFTSRangeContext(
 
 	for cursor <= maxID {
 		batchEnd := cursor + batchSize
-		n, err := s.backfillFTSBatchContext(ctx, batchSQL, cursor, batchEnd)
+		n, err := s.backfillFTSBatchContext(ctx, batchSQL, cursor, batchEnd, onlyStale)
 		if err != nil {
 			// Only the specific PG tsvector-overflow error (a single
 			// pathological row whose body exceeds PostgreSQL's tsvector
@@ -4138,7 +4139,7 @@ func (s *Store) backfillFTSRangeContext(
 			if !s.dialect.IsFTSValueTooLargeError(err) {
 				return indexed, err
 			}
-			n, err = s.backfillFTSRowByRowContext(ctx, batchSQL, cursor, batchEnd)
+			n, err = s.backfillFTSRowByRowContext(ctx, batchSQL, cursor, batchEnd, onlyStale)
 			if err != nil {
 				return indexed, err
 			}
@@ -4173,10 +4174,11 @@ func (s *Store) backfillFTSRowByRowContext(
 	ctx context.Context,
 	batchSQL string,
 	fromID, toID int64,
+	onlyStale bool,
 ) (int64, error) {
 	var indexed int64
 	for id := fromID; id < toID; id++ {
-		n, err := s.backfillFTSBatchContext(ctx, batchSQL, id, id+1)
+		n, err := s.backfillFTSBatchContext(ctx, batchSQL, id, id+1, onlyStale)
 		if err != nil {
 			if !s.dialect.IsFTSValueTooLargeError(err) {
 				return indexed, err
@@ -4216,6 +4218,7 @@ func (s *Store) backfillFTSBatchContext(
 	ctx context.Context,
 	batchSQL string,
 	fromID, toID int64,
+	onlyStale bool,
 ) (int64, error) {
 	if s.backfillFTSBatchErrHook != nil {
 		if err := s.backfillFTSBatchErrHook(fromID, toID); err != nil {
@@ -4226,7 +4229,7 @@ func (s *Store) backfillFTSBatchContext(
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		if s.IsPostgreSQL() {
 			var err error
-			affected, err = s.backfillPostgresFTS(ctx, tx, batchSQL, fromID, toID)
+			affected, err = s.backfillPostgresFTS(ctx, tx, batchSQL, fromID, toID, onlyStale)
 			return err
 		}
 		result, err := tx.ExecContext(ctx, batchSQL, fromID, toID)
@@ -6990,16 +6993,16 @@ func (s *Store) writeDerivedEmailTextPendingRevision(ctx context.Context, tx *lo
 }
 
 // backfillPostgresFTS locks and indexes bounded pages inside the batch transaction.
-func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query string, fromID, toID int64) (int64, error) {
+func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query string, fromID, toID int64, onlyStale bool) (int64, error) {
 	env := storedFTSEnvelopeSQL("STRING_AGG")
 	lockSQL := `SELECT m.id FROM messages m WHERE m.id IN (` + query + `) ORDER BY m.id LIMIT 64 FOR UPDATE OF m`
 	charCap := strconv.Itoa(maxFTSBodyChars)
 	stale := `m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM ` + strconv.Itoa(CurrentFTSIndexingVersion)
-	if query == s.dialect.FTSBackfillBatchSQL() {
+	if !onlyStale {
 		stale = "TRUE"
 	}
-	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `)
-		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ANY(?::bigint[]) AND (` + stale + `) ORDER BY m.id`
+	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), r.raw_data, r.compression
+		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id LEFT JOIN message_raw r ON r.message_id = m.id AND r.raw_format = 'beeper_json' WHERE m.id = ANY(?::bigint[]) AND (` + stale + `) ORDER BY m.id`
 	vector := pgFTSVectorFields("u.subject", "u.body", "u.sender", "u.to_addrs", "u.cc_addrs")
 	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, fields)) UPDATE messages m SET search_fts = ` + vector + `, search_fts_fields = CASE WHEN u.fields::jsonb = 'null'::jsonb THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u.fields::jsonb)) END, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM u WHERE m.id = u.id`
 	var affected int64
@@ -7038,9 +7041,26 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 		bytes := 0
 		for rows.Next() {
 			var doc FTSDoc
-			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs); err != nil {
+			var raw []byte
+			var compression sql.NullString
+			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &raw, &compression); err != nil {
 				_ = rows.Close()
 				return 0, err
+			}
+			if len(raw) > 0 {
+				decoded, err := decodeMessageRaw(raw, compression)
+				if err != nil {
+					_ = rows.Close()
+					return 0, fmt.Errorf("decode message %d for FTS: %w", doc.MessageID, err)
+				}
+				var message struct {
+					SenderName string `json:"senderName"`
+				}
+				if err := json.Unmarshal(decoded, &message); err != nil {
+					_ = rows.Close()
+					return 0, fmt.Errorf("parse message %d for FTS: %w", doc.MessageID, err)
+				}
+				doc.FromAddr = message.SenderName
 			}
 			doc, fields := preparePostgresFTSDoc(doc, false)
 			encoded, err := json.Marshal(fields, json.FormatNilSliceAsNull(true))
@@ -7048,7 +7068,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 				_ = rows.Close()
 				return 0, err
 			}
-			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs) + len(encoded)
+			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs) + len(encoded) + len(raw)
 			if len(ids) > 0 && bytes+size > 4*1024*1024 {
 				break
 			}

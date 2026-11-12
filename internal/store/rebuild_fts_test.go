@@ -174,3 +174,54 @@ func TestStore_RebuildFTS_ReportsProgress(t *testing.T) {
 	assert.NotZero(calls, "progress callback never invoked")
 	assert.Equal(lastTotal, lastDone, "final progress should have done == total")
 }
+
+func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
+	f := storetest.New(t)
+	if !f.Store.FTS5Available() {
+		t.Skip("FTS unavailable")
+	}
+	for _, tc := range []struct {
+		kind, term string
+	}{
+		{"slack", "slacksnapshot"},
+		{"teams", "teamssnapshot"},
+		{"fbmessenger", "messengertitle"},
+		{"imessage", "15550100777"},
+		{"beeper", "beepersnapshot"},
+	} {
+		if tc.kind == "beeper" && !f.Store.IsPostgreSQL() {
+			continue
+		}
+		t.Run(tc.kind, func(t *testing.T) {
+			id := f.CreateMessage(tc.kind)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), tc.kind, id)
+			require.NoError(t, err)
+			switch tc.kind {
+			case "slack", "teams":
+				pid := f.EnsureParticipant(tc.kind+"@example.test", "Participant", "example.test")
+				require.NoError(t, f.Store.ReplaceMessageRecipients(id, "from", []int64{pid}, []string{tc.term}))
+			case "fbmessenger":
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET title = ? WHERE id = ?`), tc.term, f.ConvID)
+				require.NoError(t, err)
+			case "imessage":
+				pid := f.EnsureParticipant("phone@example.test", "Phone", "example.test")
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE participants SET email_address = NULL, phone_number = ? WHERE id = ?`), tc.term, pid)
+				require.NoError(t, err)
+				require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", []int64{pid}, []string{"Phone"}))
+			case "beeper":
+				require.NoError(t, f.Store.UpsertMessageRawWithFormat(id, []byte(`{"senderName":"beepersnapshot"}`), "beeper_json"))
+			}
+			require.NoError(t, f.Store.UpsertFTS(id, "", "", tc.term, "", ""))
+			assertFTSContains(t, f.Store, tc.term, 1)
+			if f.Store.IsPostgreSQL() {
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET indexing_version = 2 WHERE id = ?`), id)
+			} else {
+				_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM messages_fts WHERE rowid = ?`, id)
+			}
+			require.NoError(t, err)
+			_, err = f.Store.BackfillFTS(nil)
+			require.NoError(t, err)
+			assertFTSContains(t, f.Store, tc.term, 1)
+		})
+	}
+}

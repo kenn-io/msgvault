@@ -341,7 +341,7 @@ func (s *Store) ApplySenderRepairContext(
 		}
 		if s.fts5Available {
 			if s.IsPostgreSQL() {
-				if _, err := s.backfillPostgresFTS(ctx, tx, s.dialect.FTSBackfillBatchSQL(), messageID, messageID+1); err != nil {
+				if _, err := s.backfillPostgresFTS(ctx, tx, s.dialect.FTSBackfillBatchSQL(), messageID, messageID+1, false); err != nil {
 					return fmt.Errorf("refresh message %d FTS after sender repair: %w", messageID, err)
 				}
 			} else if _, err := q.Exec(s.dialect.FTSBackfillBatchSQL(), messageID, messageID+1); err != nil {

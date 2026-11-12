@@ -47,11 +47,6 @@ type Dialect interface {
 	// the Time aggregate view.
 	TimeTruncExpression(column string, granularity string) string
 
-	// FTSSearchExpression returns the SQL boolean expression (with a ?
-	// placeholder for the search term) to use in a WHERE clause for
-	// full-text search. SQLite: messages_fts MATCH; PostgreSQL: tsvector @@.
-	FTSSearchExpression() string
-
 	// HasFTSTableSQL returns SQL to probe whether the FTS index exists.
 	// Returns a single-row, single-column integer: 1 if present, 0 if absent.
 	HasFTSTableSQL() string
@@ -76,7 +71,7 @@ type Dialect interface {
 	FTSLivenessSQL() string
 
 	// FTSJoin returns a JOIN clause that must be added to the FROM clause
-	// when using FTSSearchExpression. Empty string if no join is needed
+	// for full-text search. Empty string if no join is needed
 	// (PostgreSQL has the tsvector column on messages directly).
 	FTSJoin() string
 
@@ -95,11 +90,6 @@ type Dialect interface {
 	// needed. PostgreSQL uses messages.indexing_version; SQLite's FTS5 table
 	// has a durable body column and needs no separate version watermark.
 	FTSBodySearchReadinessSQL() string
-
-	// SanitizeFTSQuery converts a raw user search string to a form safe to
-	// pass to FTSSearchExpression. Returns "" if the result is empty after
-	// sanitization (caller should treat as no-match).
-	SanitizeFTSQuery(query string) string
 
 	// BoolTrueExpr returns a SQL boolean expression that is true when col
 	// holds a "true" value. SQLite stores booleans as 0/1 INTEGER so we
@@ -167,10 +157,6 @@ func (SQLiteQueryDialect) TimeTruncExpression(column string, granularity string)
 	}
 }
 
-func (SQLiteQueryDialect) FTSSearchExpression() string {
-	return "messages_fts MATCH ?"
-}
-
 func (SQLiteQueryDialect) HasFTSTableSQL() string {
 	return `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='messages_fts'`
 }
@@ -206,25 +192,6 @@ func (d SQLiteQueryDialect) BuildFTSBodyTerm(terms []string) (expr string, arg s
 }
 
 func (SQLiteQueryDialect) FTSBodySearchReadinessSQL() string { return "" }
-
-// SanitizeFTSQuery strips FTS5 metacharacters from a single query string
-// and wraps it in quotes for literal phrase interpretation with prefix match.
-func (SQLiteQueryDialect) SanitizeFTSQuery(query string) string {
-	var b strings.Builder
-	for _, r := range query {
-		switch r {
-		case '"', '*', ':', '-', '(', ')', '.':
-			continue
-		default:
-			b.WriteRune(r)
-		}
-	}
-	clean := strings.TrimSpace(b.String())
-	if clean == "" {
-		return ""
-	}
-	return `"` + clean + `"*`
-}
 
 // PostgreSQLQueryDialect implements Dialect for PostgreSQL.
 type PostgreSQLQueryDialect struct{}
@@ -270,11 +237,6 @@ func (PostgreSQLQueryDialect) TimeTruncExpression(column string, granularity str
 	}
 }
 
-// FTSSearchExpression returns the indexed candidate predicate.
-func (PostgreSQLQueryDialect) FTSSearchExpression() string {
-	return "m.search_fts @@ to_tsquery('simple', ?)"
-}
-
 func (PostgreSQLQueryDialect) HasFTSTableSQL() string {
 	// Scope to the connection's current schema (matching the store dialect's
 	// postgresColumnExistsSQL). Without this, a schema-scoped connection would
@@ -317,15 +279,6 @@ func (PostgreSQLQueryDialect) FTSBodySearchReadinessSQL() string {
 		"SELECT NOT EXISTS (SELECT 1 FROM messages WHERE search_fts IS NULL OR indexing_version IS DISTINCT FROM %d)",
 		store.CurrentFTSIndexingVersion,
 	)
-}
-
-// SanitizeFTSQuery builds a safe search argument for one term.
-func (PostgreSQLQueryDialect) SanitizeFTSQuery(query string) string {
-	var parts []string
-	for _, lex := range sqldialect.EscapeTSQueryTerm(query) {
-		parts = append(parts, lex+":*")
-	}
-	return strings.Join(parts, " & ")
 }
 
 func (SQLiteQueryDialect) DateOrderExpression(column string) string {

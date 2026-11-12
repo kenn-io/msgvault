@@ -36,12 +36,12 @@ type ftsEnvelopeExpressions struct {
 // The enclosing query must alias messages as m.
 func storedFTSEnvelopeSQL(aggregate string) ftsEnvelopeExpressions {
 	recipients := func(kind string) string {
-		address := identityindex.SenderAddressExpr("mr", "p")
+		address := "COALESCE(NULLIF(mr.email_address, ''), " + identityindex.SenderAddressExpr("mr", "p") + ", p.phone_number)"
 		return fmt.Sprintf("COALESCE((SELECT %s(%s, ' ') FROM message_recipients mr JOIN participants p ON p.id = mr.participant_id WHERE mr.message_id = m.id AND mr.recipient_type = '%s'), '')", aggregate, address, kind)
 	}
 	return ftsEnvelopeExpressions{
-		subject: "COALESCE(m.subject, '')",
-		fromAddr: `COALESCE(CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
+		subject: "COALESCE(m.subject, CASE WHEN m.message_type = 'fbmessenger' THEN (SELECT c.title FROM conversations c WHERE c.id = m.conversation_id) END, '')",
+		fromAddr: `COALESCE(CASE WHEN m.message_type IN ('slack', 'teams') THEN (SELECT NULLIF(mr.display_name, '') FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' LIMIT 1) END, CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
 			THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id) END, ` + recipients("from") + `)`,
 		toAddrs: recipients("to"),
 		ccAddrs: recipients("cc"),

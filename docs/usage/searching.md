@@ -263,7 +263,7 @@ msgvault search --collection Work
 
 The two flags are mutually exclusive. Collection filters work in full-text, vector, and hybrid local search modes.
 
-PostgreSQL full-text search splits punctuation into ordered word pieces within a single field. For example, `both@exam` finds `both@example.com` in a subject, sender, recipient, or body, including late matches in long fields. The final piece can match a prefix. After an upgrade, the daemon starts a resumable rebuild of older PostgreSQL search entries. Results can be incomplete until it finishes. Terms found only in the older index can stop matching after the rebuild.
+PostgreSQL full-text search splits punctuation into ordered word pieces within a single field. For example, `both@exam` finds `both@example.com` in a subject, sender, recipient, or body, including late matches in long fields. The final piece can match a prefix. After an upgrade, the daemon starts a resumable rebuild of older PostgreSQL search entries. Results can be incomplete until it finishes. The rebuild retains importer-provided search terms stored in the archive.
 
 For very long or repetitive messages, body search checks their order within its bounded body scan.
 
