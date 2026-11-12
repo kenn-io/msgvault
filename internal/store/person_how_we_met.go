@@ -17,10 +17,7 @@ func renderHowWeMet(first *firstAppearance) string {
 		return ""
 	}
 	month := first.event.OccurredAt.UTC().Format("January 2006")
-	channel := "chat"
-	if first.candidate.ConversationType == "email_thread" {
-		channel = "email"
-	}
+	channel := string(activityChannelFor(first.candidate.ConversationType, false))
 	switch first.kind {
 	case FirstContactEmailIntro:
 		name := "Someone"

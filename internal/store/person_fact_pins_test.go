@@ -42,13 +42,33 @@ func TestPersonFactImplicitPinUnpinRerunsAndManualSetRepins(t *testing.T) {
 	assert.True(pins[0].Pinned)
 	assert.Nil(pins[0].EventID)
 
+	ref := personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}
+	pinned, err := st.SetPersonFactPinContext(t.Context(), personID, ref, true, "test")
+	require.NoError(err)
+	assert.True(pinned.State.Pinned)
+	require.NotNil(pinned.State.EventID)
+	assert.Equal(int64(1), personFactProjectionRowCount(t, st, "person_fact_pin_events"))
+	pins, err = st.ListPersonFactPinsContext(t.Context(), personID)
+	require.NoError(err)
+	require.Len(pins, 1)
+	assert.Equal(pinned.State.EventID, pins[0].EventID)
+	values, err := st.ListPersonAttributeValuesContext(t.Context(), personID,
+		PersonAttributeQuery{DefinitionSlug: AttributeSlugPrimaryChannel})
+	require.NoError(err)
+	require.Len(values, 1)
+	assert.Equal(manual.Value.ID, values[0].ID)
+	again, err := st.SetPersonFactPinContext(t.Context(), personID, ref, true, "test")
+	require.NoError(err)
+	assert.Equal(pinned.State.EventID, again.State.EventID)
+	assert.Equal(int64(1), personFactProjectionRowCount(t, st, "person_fact_pin_events"))
+
 	unpinned, err := st.SetPersonFactPinContext(t.Context(), personID,
 		personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, false, "test")
 	require.NoError(err)
 	assert.False(unpinned.State.Pinned)
 	assert.NotNil(unpinned.State.EventID)
 	assert.NotEmpty(unpinned.Projections)
-	values, err := st.ListPersonAttributeValuesContext(t.Context(), personID,
+	values, err = st.ListPersonAttributeValuesContext(t.Context(), personID,
 		PersonAttributeQuery{DefinitionSlug: AttributeSlugPrimaryChannel})
 	require.NoError(err)
 	require.Len(values, 1)
