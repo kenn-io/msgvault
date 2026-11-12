@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json/v2"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -21,6 +25,35 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+func TestOrganizationCapabilities(t *testing.T) {
+	all := []string{"get_organization", "get_organization_history", "list_organization_attributes", "get_organization_media", "create_organization", "update_organization", "delete_organization", "merge_organization", "replace_organization_profile", "set_organization_attribute", "clear_organization_attribute"}
+	properties := []string{"name", "kind", "primary_domain", "description", "retired", "losing_organization_id", "losing_revision", "names", "identifiers", "addresses", "contact_points", "media", "categories", "definition_slug", "value", "source", "ordinal", "expected_value_id", "dry_run"}
+	for _, tc := range []struct {
+		name                                string
+		missingReads, missingUpdateProperty bool
+		want                                []string
+	}{
+		{"all", false, false, all},
+		{"no reads", true, false, []string{"get_organization_media", "create_organization"}},
+		{"missing update property", false, true, []string{"get_organization", "get_organization_history", "list_organization_attributes", "get_organization_media", "create_organization", "delete_organization", "merge_organization", "replace_organization_profile", "set_organization_attribute", "clear_organization_attribute"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caps := &apiprotocol.MCPCapabilities{}
+			for _, id := range []string{"createOrganization", "patchOrganization", "mergeOrganization", "putOrganizationProfile", "setOrganizationAttribute"} {
+				props := properties
+				if tc.missingUpdateProperty && id == "patchOrganization" {
+					props = []string{"name", "kind", "primary_domain", "description"}
+				}
+				caps.Routes = append(caps.Routes, apiprotocol.MCPRouteDescriptor{OperationID: id, RequestProperties: props})
+			}
+			hasRoute := func(id, _, _ string, _ ...string) bool {
+				return !tc.missingReads || (id != "getOrganization" && id != "getOrganizationHistory" && id != "listOrganizationAttributes")
+			}
+			assert.Equal(t, tc.want, organizationMCPCapabilities(hasRoute, caps))
+		})
+	}
+}
 
 func TestOrganizationReadsUseNativeStore(t *testing.T) {
 	st := testutil.NewTestStore(t)
@@ -105,6 +138,25 @@ func TestOrganizationProfileMediaAndAttributesThroughNativeRoutes(t *testing.T) 
 	profile := operationOutput[mcpserver.OrganizationRecord](t, result)
 	t.Run("media", func(t *testing.T) {
 		require.Len(t, profile.Profile.Media, 2)
+		disclosureArgs := map[string]any{"organization_id": org.ID, "etag": profile.ETag, "body": map[string]any{"media": []any{map[string]any{"media_kind": "logo", "source": "user", "data": "YWJjZGVm"}}}}
+		disclosure, err := backend.OperationDisclosure(t.Context(), "replace_organization_profile", disclosureArgs)
+		require.NoError(t, err)
+		digest := sha256.Sum256([]byte("abcdef"))
+		assert.Contains(t, disclosure, `"bytes":6`)
+		assert.Contains(t, disclosure, fmt.Sprintf(`"sha256":"%x"`, digest))
+		assert.NotContains(t, disclosure, "YWJjZGVm")
+		badArgs := map[string]any{"organization_id": org.ID, "etag": profile.ETag, "body": map[string]any{"media": []any{map[string]any{"media_kind": "logo", "source": "user", "data": "!!!"}}}}
+		_, err = backend.OperationDisclosure(t.Context(), "replace_organization_profile", badArgs)
+		var refusal *mcpserver.OperationRefusalError
+		require.ErrorAs(t, err, &refusal)
+		assert.Equal(t, "invalid_arguments", refusal.Code)
+		oversized := base64.StdEncoding.EncodeToString(make([]byte, store.MaxPersonMediaBytes+1))
+		tooLarge, err := backend.ExecuteOperation(t.Context(), "replace_organization_profile", map[string]any{"organization_id": org.ID, "etag": profile.ETag, "body": map[string]any{"media": []any{map[string]any{"media_kind": "logo", "source": "user", "data": oversized}}}})
+		require.NoError(t, err)
+		assertLoopRefusal(t, tooLarge, "invalid_organization", false)
+		unchanged, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": org.ID})
+		require.NoError(t, err)
+		assert.Equal(t, profile, operationOutput[mcpserver.OrganizationRecord](t, unchanged))
 		var mediaID, uriID int64
 		for _, media := range profile.Profile.Media {
 			if media.HasData {
@@ -165,6 +217,15 @@ func TestOrganizationProfileMediaAndAttributesThroughNativeRoutes(t *testing.T) 
 		clear, err := backend.ExecuteOperation(t.Context(), "clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry", "expected_value_id": write.Value.ID})
 		require.NoError(t, err)
 		require.NotNil(t, operationOutput[generated.OrganizationAttributeWrite](t, clear).Superseded)
+		active, err := backend.ExecuteOperation(t.Context(), "list_organization_attributes", map[string]any{"organization_id": org.ID})
+		require.NoError(t, err)
+		assert.Empty(t, operationOutput[generated.OrganizationAttributesResponse](t, active).Values)
+		historical, err := backend.ExecuteOperation(t.Context(), "list_organization_attributes", map[string]any{"organization_id": org.ID, "include_superseded": true})
+		require.NoError(t, err)
+		assert.Len(t, operationOutput[generated.OrganizationAttributesResponse](t, historical).Values, 1)
+		filtered, err := backend.ExecuteOperation(t.Context(), "list_organization_attributes", map[string]any{"organization_id": org.ID, "include_superseded": true, "definition_slug": "nonexistent"})
+		require.NoError(t, err)
+		assert.Empty(t, operationOutput[generated.OrganizationAttributesResponse](t, filtered).Values)
 	})
 }
 
@@ -178,7 +239,22 @@ func TestOrganizationMergeThroughNativeRoutes(t *testing.T) {
 	read, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": first.ID})
 	require.NoError(t, err)
 	etag := operationOutput[mcpserver.OrganizationRecord](t, read).ETag
-	merged, err := backend.ExecuteOperation(t.Context(), "merge_organization", map[string]any{"organization_id": first.ID, "etag": etag, "body": map[string]any{"losing_organization_id": second.ID, "losing_revision": second.Revision}})
+	losingRead, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": second.ID})
+	require.NoError(t, err)
+	losingETag := operationOutput[mcpserver.OrganizationRecord](t, losingRead).ETag
+	updated, err := backend.ExecuteOperation(t.Context(), "update_organization", map[string]any{"organization_id": second.ID, "etag": losingETag, "body": map[string]any{"name": "Updated Losing", "kind": "company"}})
+	require.NoError(t, err)
+	updatedLosing := operationOutput[mcpserver.OrganizationMutation](t, updated)
+	stale, err := backend.ExecuteOperation(t.Context(), "merge_organization", map[string]any{"organization_id": first.ID, "etag": etag, "body": map[string]any{"losing_organization_id": second.ID, "losing_revision": second.Revision}})
+	require.NoError(t, err)
+	assertLoopRefusal(t, stale, "organization_revision_conflict", false)
+	stillFirst, err := st.GetOrganizationContext(t.Context(), first.ID)
+	require.NoError(t, err)
+	assert.Nil(t, stillFirst.MergedIntoID)
+	stillSecond, err := st.GetOrganizationContext(t.Context(), second.ID)
+	require.NoError(t, err)
+	assert.Nil(t, stillSecond.MergedIntoID)
+	merged, err := backend.ExecuteOperation(t.Context(), "merge_organization", map[string]any{"organization_id": first.ID, "etag": etag, "body": map[string]any{"losing_organization_id": second.ID, "losing_revision": updatedLosing.Organization.Revision}})
 	require.NoError(t, err)
 	survivor := operationOutput[mcpserver.OrganizationMutation](t, merged)
 	assert.Greater(t, survivor.Organization.Revision, first.Revision)
