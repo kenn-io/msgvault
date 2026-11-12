@@ -479,3 +479,54 @@ func TestSetupInitializesOtherEntriesAfterStateLoadError(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(invalid, after)
 }
+
+// linkBeforeWakeupPage commits the link and arrival at the real page boundary.
+type linkBeforeWakeupPage struct {
+	*store.Store
+	before func()
+}
+
+func (s *linkBeforeWakeupPage) ListChangedMessages(ctx context.Context, cursor store.ChangedMessagesCursor, limit int) (store.ChangedMessagePage, error) {
+	if limit == changefeed.ScanBudget+1 && s.before != nil {
+		before := s.before
+		s.before = nil
+		before()
+	}
+	return s.Store.ListChangedMessages(ctx, cursor, limit)
+}
+
+func TestWakeupPersonIncludesIdentityLinkedBeforePage(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	st := testutil.NewTestStore(t)
+	now := time.Now().UTC()
+	first, err := st.EnsureParticipant("first@example.test", "First", "example.test")
+	require.NoError(err)
+	second, err := st.EnsureParticipant("second@example.test", "Second", "example.test")
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(first)
+	require.NoError(err)
+	initializedWakeup(t, st, "person", now.Add(-time.Hour))
+	var id int64
+	wrapped := &linkBeforeWakeupPage{Store: st, before: func() {
+		_, err := st.LinkParticipants(first, second)
+		require.NoError(err)
+		id = seedWakeup(t, st, "linked@example.test", second, 1, now)
+	}}
+	var deliveries []payload
+	var decodeErr error
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body payload
+		decodeErr = json.NewDecoder(r.Body).Decode(&body)
+		deliveries = append(deliveries, body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	engine := Engine{Store: wrapped, Subscriptions: []Subscription{testSubscription(t, "person", server, changefeed.Filter{PersonID: person.ID})}, Now: func() time.Time { return now }}
+	require.NoError(engine.RunPass(t.Context()))
+	require.Len(deliveries, 1)
+	require.NoError(decodeErr)
+	assert.Equal([]int64{id}, deliveries[0].Matched.MessageIDs)
+	require.NoError(engine.RunPass(t.Context()))
+	assert.Len(deliveries, 1)
+}
