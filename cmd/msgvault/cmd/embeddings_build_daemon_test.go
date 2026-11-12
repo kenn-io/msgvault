@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,7 @@ import (
 
 type embeddingGateWaitRecorder struct {
 	*httptest.ResponseRecorder
+
 	wrote chan struct{}
 }
 
@@ -43,7 +45,10 @@ func (w *embeddingGateWaitRecorder) Write(p []byte) (int, error) {
 	case w.wrote <- struct{}{}:
 	default:
 	}
-	return n, err
+	if err != nil {
+		return n, fmt.Errorf("record CLI response: %w", err)
+	}
+	return n, nil
 }
 
 func TestManagedEmbeddingsHTTPWaitsForGateWithoutContentLease(t *testing.T) {
