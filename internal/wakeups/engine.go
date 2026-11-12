@@ -399,10 +399,8 @@ func (e *Engine) RunPass(ctx context.Context) error {
 			logger.Warn("wakeup failed", "name", sub.Name, "category", "invalid_callback")
 			continue
 		}
-		if sub.GrantID != "" {
-			if _, ok := sub.Grants.LookupID(sub.GrantID, agentgrant.PermissionSearchRead); !ok {
-				continue
-			}
+		if _, live := sub.Grants.LookupID(sub.GrantID, agentgrant.PermissionSearchRead); (sub.GrantID != "" && !live) || (!sub.Expires.IsZero() && !e.now().Before(sub.Expires)) {
+			continue
 		}
 		category, status, _ := sub.Client.request(ctx, sub.URL, id, subscriptionID, sub.Secret, body, false)
 
