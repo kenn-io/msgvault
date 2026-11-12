@@ -188,8 +188,8 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 
 // employmentDisclosureContext reads the record an operation acts on and, for
 // set_primary_employment, the person's current primary it would demote. Failed
-// reads refuse as a definite read failure. Only replace_employment shows the
-// stored description it clears.
+// reads refuse as a definite read failure. Only replace_employment and
+// delete_employment show the stored description they erase.
 func (b *daemonMCPOperations) employmentDisclosureContext(ctx context.Context, name string, id int64) (*mcpserver.EmploymentRecord, *generated.Employment, error) {
 	if name == "create_employment" {
 		return nil, nil, nil
@@ -206,7 +206,7 @@ func (b *daemonMCPOperations) employmentDisclosureContext(ctx context.Context, n
 	if !ok {
 		return nil, nil, unavailable
 	}
-	if name != "replace_employment" {
+	if name != "replace_employment" && name != "delete_employment" {
 		current.Employment.Description = nil
 	}
 	if name != "set_primary_employment" {

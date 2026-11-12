@@ -236,6 +236,7 @@ func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(staleDisclosure, `"etag":"stale"`)
 	assert.Contains(staleDisclosure, `"operation":"delete_employment"`)
+	assert.Contains(staleDisclosure, "Synthetic employment note")
 	_, err = b.OperationDisclosure(t.Context(), "set_primary_employment", map[string]any{"employment_id": int64(999999), "etag": `"employment-999999-r1"`})
 	var refusal *mcpserver.OperationRefusalError
 	require.ErrorAs(err, &refusal)
