@@ -450,12 +450,12 @@ func TestCallReadersCompareWindowInstants(t *testing.T) {
 }
 
 func TestCallReadersWindowBetweenMicroseconds(t *testing.T) {
-	require := require.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 	peer, err := f.Store.EnsureParticipantByPhone(t.Context(), "+12025550101", "Example", "signal")
-	require.NoError(err)
+	requirements.NoError(err)
 	person, _, err := f.Store.CreatePersonFromParticipant(peer)
-	require.NoError(err)
+	requirements.NoError(err)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 999999000, time.UTC)
 	next := at.Add(time.Microsecond)
 
@@ -464,14 +464,14 @@ func TestCallReadersWindowBetweenMicroseconds(t *testing.T) {
 	o.EndedAt = new(at.Add(time.Minute))
 	o.Participants = []callhistory.Participant{{ID: peer, Participation: "joined"}}
 	normalizedID, err := f.Store.PutCallObservationContext(t.Context(), sourceID, o)
-	require.NoError(err)
+	requirements.NoError(err)
 	message := f.NewMessage().Build()
 	message.MessageType = store.MessageTypeSynctechCall
 	message.SentAt = sql.NullTime{Time: next, Valid: true}
 	legacyID, err := f.Store.UpsertMessage(message)
-	require.NoError(err)
-	require.NoError(f.Store.ReplaceMessageRecipients(legacyID, "from", []int64{peer}, nil))
-	require.NoError(f.Store.SetMessageMetadata(legacyID, store.CallConnectedMetadata(60)))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.ReplaceMessageRecipients(legacyID, "from", []int64{peer}, nil))
+	requirements.NoError(f.Store.SetMessageMetadata(legacyID, store.CallConnectedMetadata(60)))
 
 	fractional := at.Add(500 * time.Nanosecond).In(time.FixedZone("offset", 7*3600))
 	aligned := next.In(time.FixedZone("offset", -5*3600))
