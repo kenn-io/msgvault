@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,13 +9,18 @@ import (
 )
 
 func TestFederationRoleAndHubKeys(t *testing.T) {
-	for _, tc := range []struct{ name, config, role, loadError, keyError string }{
+	for _, tc := range []struct {
+		name, config, role, loadError, keyError string
+		autoMint                                bool
+	}{
 		{name: "default", role: "off"},
 		{name: "case normalization", config: "[federation]\nrole = \"SPOKE\"", role: "spoke"},
 		{name: "hub keyless", config: "[federation]\nrole = \"hub\"", role: "hub", keyError: "federation hub role requires an effective API key"},
 		{name: "hub owner", config: "[federation]\nrole = \"hub\"\n[server]\napi_key = \"owner-key\"", role: "hub"},
 		{name: "reserved owner", config: "[federation]\nrole = \"hub\"\n[server]\napi_key = \"mvf1_reserved\"", role: "hub", keyError: "federation hub owner key must not begin with mvf1_"},
 		{name: "hub remote readers", config: "[federation]\nrole = \"hub\"\n[server]\napi_key = \"owner-key\"\n[[server.remote_clients]]\nclient_id = \"reader\"\napi_key_file = \"reader\"", role: "hub", keyError: "federation hub role refuses [[server.remote_clients]]"},
+		{name: "hub keyless network remote readers", config: "[federation]\nrole = \"hub\"\n[server]\nbind_addr = \"0.0.0.0\"\n[[server.remote_clients]]\nclient_id = \"reader\"\napi_key_file = \"reader\"", role: "hub", keyError: "federation hub role refuses [[server.remote_clients]]", autoMint: true},
+		{name: "hub keyless network auto mint", config: "[federation]\nrole = \"hub\"\n[server]\nbind_addr = \"0.0.0.0\"", role: "hub", autoMint: true},
 		{name: "invalid", config: "[federation]\nrole = \"other\"", loadError: "invalid [federation] role"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -34,6 +40,21 @@ func TestFederationRoleAndHubKeys(t *testing.T) {
 				assertions.ErrorContains(err, tc.keyError)
 			} else {
 				assertions.NoError(err)
+			}
+			if tc.autoMint {
+				_, err = os.Stat(cfg.ServerKeyFilePath())
+				requirements.ErrorIs(err, os.ErrNotExist)
+				err = cfg.PrepareServerKey()
+				if tc.keyError != "" {
+					requirements.ErrorContains(err, tc.keyError)
+					_, err = os.Stat(cfg.ServerKeyFilePath())
+					assertions.ErrorIs(err, os.ErrNotExist)
+				} else {
+					requirements.NoError(err)
+					assertions.NotEmpty(cfg.Server.AuthenticationKey())
+					_, err = os.Stat(cfg.ServerKeyFilePath())
+					assertions.NoError(err)
+				}
 			}
 		})
 	}

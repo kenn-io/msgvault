@@ -321,6 +321,9 @@ func (c *Config) ValidateServerKey() error {
 	if err := c.ResolveServerKey(); err != nil {
 		return err
 	}
+	if c.Federation.Role == "hub" && len(c.Server.RemoteClients) != 0 {
+		return errors.New("federation hub role refuses [[server.remote_clients]] keys, which read the whole archive")
+	}
 	if c.Server.shouldAutoMintKey() {
 		return nil
 	}
@@ -356,9 +359,6 @@ func (c *Config) validateFederationHubKey() error {
 	if c.Federation.Role == "hub" {
 		if c.Server.AuthenticationKey() == "" {
 			return errors.New("federation hub role requires an effective API key")
-		}
-		if len(c.Server.RemoteClients) != 0 {
-			return errors.New("federation hub role refuses [[server.remote_clients]] keys, which read the whole archive")
 		}
 		if strings.HasPrefix(c.Server.AuthenticationKey(), "mvf1_") {
 			return errors.New("federation hub owner key must not begin with mvf1_")
