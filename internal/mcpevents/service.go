@@ -206,10 +206,8 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, v
 	}
 	_, err = providercredentials.PutIfRevision(s.TokensDir, revision, providercredentials.EventsID(id), origin, string(private))
 	if err != nil {
-		if initial != nil {
-			if removed, cleanupErr := s.removeEntry(ctx, entries, next, len(entries)-1); cleanupErr != nil || !removed {
-				return out, failure(Unavailable, "store_unavailable")
-			}
+		if !s.rollbackSubscribe(ctx, entries, raw, next, initial != nil) {
+			return out, failure(Unavailable, "store_unavailable")
 		}
 		return out, failure(Unavailable, "credential_unavailable")
 	}
@@ -222,6 +220,21 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, v
 		status.FailedSince = nil
 	}
 	return MCPEventsSubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: status}, nil
+}
+
+// rollbackSubscribe undoes the catalog write after the credential write failed:
+// a new entry is removed, and a refresh gets the catalog bytes it replaced. Both
+// are one compare-and-swap on the bytes this call published, so a catalog changed
+// meanwhile is left alone. It reports whether the swap took effect; positions stay.
+func (s *Service) rollbackSubscribe(ctx context.Context, entries []entry, raw, next []byte, created bool) bool {
+	var ok bool
+	var err error
+	if created {
+		ok, err = s.removeEntry(ctx, entries, next, len(entries)-1)
+	} else {
+		ok, err = s.Store.SwapMCPEventsCatalog(ctx, next, raw, "", nil, "")
+	}
+	return err == nil && ok
 }
 
 // Unsubscribe requires a request returned by DecodeUnsubscribe.
