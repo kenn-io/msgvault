@@ -121,7 +121,7 @@
         retryUntil = Date.now() + retryWindowMs;
       }
       const delay = waiting ? retryDelaysMs[Math.min(attempt++, retryDelaysMs.length - 1)] : 30000;
-      retrying = waiting && Date.now() + delay <= retryUntil;
+      retrying = waiting && ((!failed && !unavailable) || Date.now() + delay <= retryUntil);
       if (retrying || !waiting) timer = setTimeout(load, delay);
     };
     const load = (): void => {
@@ -151,6 +151,7 @@
           requested = requested.filter((id) => read.pending.some((source) => source.id === id));
           shown = read.options.length;
         }
+        if (!unavailable) retryUntil = Date.now() + retryWindowMs;
         scheduleRetry();
       }).catch((cause: unknown) => {
         if (signal.aborted) return;

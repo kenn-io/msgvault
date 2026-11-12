@@ -316,7 +316,6 @@ type Server struct {
 	operationGate             OperationGate
 	operationHistoryReader    operations.HistoryReader
 	accountRepairs            map[int64]*accountAttributionRepairJob
-	accountRecoveryOnce       sync.Once
 	importContext             context.Context
 	cancelImports             context.CancelFunc
 	importMu                  sync.Mutex

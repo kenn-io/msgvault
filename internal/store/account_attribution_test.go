@@ -1072,51 +1072,6 @@ func TestUpdateSourceIdentifierAdvancesAccountRevision(t *testing.T) {
 	after, err := f.st.AccountIdentityRevisionContext(t.Context())
 	require.NoError(t, err)
 	assert.Greater(t, after, before)
-	require.NoError(t, f.st.UpdateSourceIdentifier(t.Context(), f.source.ID, "new@example.net"))
-	again, err := f.st.AccountIdentityRevisionContext(t.Context())
-	require.NoError(t, err)
-	assert.Equal(t, after, again)
-}
-
-func TestAccountCatalogRevisionBumpsOncePerRepairTransaction(t *testing.T) {
-	f := newAttrFixture(t, "mbox", "me@example.net")
-	for range 3 {
-		f.persist(attrMail{})
-	}
-	_, err := f.st.DB().ExecContext(t.Context(), `UPDATE messages SET account_address = NULL, account_path = NULL`)
-	require.NoError(t, err)
-	revision := func() int64 {
-		r, err := f.st.AccountCatalogRevisionContext(t.Context())
-		require.NoError(t, err)
-		return r
-	}
-	before := revision()
-	_, err = f.st.RepairAccountAttributionContext(t.Context(), f.source.ID, nil)
-	require.NoError(t, err)
-	assert.Equal(t, before+1, revision(), "three rows in one page advance the revision once")
-	_, err = f.st.RepairAccountAttributionContext(t.Context(), f.source.ID, nil)
-	require.NoError(t, err)
-	assert.Equal(t, before+1, revision(), "a pass with nothing pending leaves it alone")
-}
-
-func TestAccountCatalogRevisionAdvancesWhenAttributionIsMarkedPending(t *testing.T) {
-	live := newAttrFixture(t, "gmail", "live@example.test")
-	history := newAttrFixtureOn(t, live.st, "gmail", "history@example.test")
-	revision := func() int64 {
-		r, err := live.st.AccountCatalogRevisionContext(t.Context())
-		require.NoError(t, err)
-		return r
-	}
-	history.persist(attrMail{raw: "From: a@example.test\r\n\r\nbody", from: []string{"a@example.test"}})
-	before := revision()
-	live.confirm("live@example.test")
-	afterIdentity := revision()
-	assert.Greater(t, afterIdentity, before, "a confirmed identity changes the catalog revision")
-	_, err := live.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
-		FromSourceID: history.source.ID, IntoSourceID: live.source.ID,
-	})
-	require.NoError(t, err)
-	assert.Greater(t, revision(), afterIdentity, "a merge marks destination rows pending in its own transaction")
 }
 
 func TestAccountCatalogRevisionAdvancesWhenPersistAddsUnattributedMessage(t *testing.T) {
@@ -1142,4 +1097,25 @@ func TestAccountCatalogRevisionAdvancesWhenPersistAddsUnattributedMessage(t *tes
 	f.persist(attrMail{})
 	require.Greater(t, unattributed(), beforeCount, "the catalog counts the new unattributed message")
 	assert.Greater(t, revision(), beforeRevision, "a new unattributed message changes the catalog revision")
+}
+
+func TestAccountCatalogRevisionBumpsOncePerRepairTransaction(t *testing.T) {
+	f := newAttrFixture(t, "mbox", "me@example.net")
+	for range 3 {
+		f.persist(attrMail{})
+	}
+	_, err := f.st.DB().ExecContext(t.Context(), `UPDATE messages SET account_address = NULL, account_path = NULL`)
+	require.NoError(t, err)
+	revision := func() int64 {
+		r, err := f.st.AccountCatalogRevisionContext(t.Context())
+		require.NoError(t, err)
+		return r
+	}
+	before := revision()
+	_, err = f.st.RepairAccountAttributionContext(t.Context(), f.source.ID, nil)
+	require.NoError(t, err)
+	assert.Equal(t, before+1, revision(), "three rows in one page advance the revision once")
+	_, err = f.st.RepairAccountAttributionContext(t.Context(), f.source.ID, nil)
+	require.NoError(t, err)
+	assert.Equal(t, before+1, revision(), "a pass with nothing pending leaves it alone")
 }

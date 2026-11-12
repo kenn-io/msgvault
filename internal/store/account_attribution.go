@@ -1410,35 +1410,36 @@ func (s *Store) derivePagesContext(
 			return scanned, flagged, err
 		}
 		var pageScanned, pageFlagged, last int64
-		runPage := func() error {
-			return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
-				pageScanned, pageFlagged, last = 0, 0, 0
-				ids, err := page(tx, after, limit)
+		pageTx := func(tx *loggedTx) error {
+			pageScanned, pageFlagged, last = 0, 0, 0
+			ids, err := page(tx, after, limit)
+			if err != nil {
+				return err
+			}
+			for _, id := range ids {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				flag, err := derive(tx, id)
 				if err != nil {
 					return err
 				}
-				for _, id := range ids {
-					if err := ctx.Err(); err != nil {
-						return err
-					}
-					flag, err := derive(tx, id)
-					if err != nil {
-						return err
-					}
-					pageScanned++
-					if flag {
-						pageFlagged++
-					}
-					last = id
+				pageScanned++
+				if flag {
+					pageFlagged++
 				}
-				return nil
-			})
+				last = id
+			}
+			return nil
+		}
+		attempt := func() error {
+			return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, pageTx)
 		}
 		var err error
 		if retry {
-			err = retryBusyWriteErr(ctx, s, what, runPage)
+			err = retryBusyWriteErr(ctx, s, what, attempt)
 		} else {
-			err = runPage()
+			err = attempt()
 		}
 		if err != nil {
 			return scanned, flagged, fmt.Errorf("%s for source %d: %w", what, sourceID, err)
