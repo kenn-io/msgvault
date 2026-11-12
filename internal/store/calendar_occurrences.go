@@ -201,8 +201,8 @@ type calendarShift struct {
 }
 
 // calendarRangeScope reports unsupported RANGE edits. An edit without a master is skipped. A series
-// keeps the occurrences before its earliest edit, moves later ones when that edit sets a new timed start,
-// and omits them otherwise; it is skipped only when that edit cannot be placed.
+// keeps the occurrences before its earliest edit, cancels or moves later ones when every edit cancels or
+// sets a new start, and omits them otherwise; it is skipped only when an edit cannot be placed.
 func calendarRangeScope(row CalendarEventRow, hasMaster bool, seriesExceptions []CalendarEventRow, report func(int64, string)) (*calrecur.Identity, calendarShift, bool) {
 	e := row.Event
 	if e.Kind == "exception" {
@@ -269,15 +269,50 @@ func calendarRangeBoundary(master calevent.Event, exceptions []CalendarEventRow)
 	return boundary, calendarRangeShift(master, edits), id
 }
 
-// calendarRangeShift follows the one RANGE edit that sets a timed start by its change in wall-clock time,
-// so a later occurrence keeps its zone's local time across daylight saving changes. Several edits, a
-// cancellation, or one that leaves the start alone cannot be followed.
+// calendarRangeShift follows each RANGE edit, in original-start order, and applies to a later occurrence
+// the latest edit that does not start after it. The edits are sorted in place. One edit that cannot be
+// followed leaves the whole series unfollowed.
 func calendarRangeShift(master calevent.Event, edits []CalendarEventRow) calendarShift {
 	zone, err := calendarEventZone(master)
-	if len(edits) != 1 || err != nil || master.AllDay || edits[0].Event.Start == nil || edits[0].Event.Status == "cancelled" {
-		return calendarShift{}
+	slices.SortStableFunc(edits, func(a, b CalendarEventRow) int { return cmp.Compare(a.Event.Original.Key(), b.Event.Original.Key()) })
+	shifts := make([]calendarShift, len(edits))
+	var pad time.Duration
+	for i, row := range edits {
+		if shifts[i] = calendarEditShift(master, row.Event, zone); shifts[i].move == nil || err != nil {
+			return calendarShift{}
+		}
+		pad = max(pad, shifts[i].pad)
 	}
-	edit := edits[0].Event
+	return calendarShift{pad: pad, move: func(o *calrecur.Occurrence) {
+		for i := len(edits) - 1; i >= 0; i-- {
+			if edits[i].Event.Original.Key() <= o.Original.Key() {
+				shifts[i].move(o)
+				return
+			}
+		}
+	}}
+}
+
+// calendarEditShift follows one RANGE edit: a cancellation cancels the later occurrences, and a new start
+// moves them by its change in the series zone's wall-clock time (civil days for an all-day series).
+// A cancellation that retains an earlier edit's details may have replaced a move, and an edit that leaves
+// the start alone, cannot be followed.
+func calendarEditShift(master, edit calevent.Event, zone *time.Location) calendarShift {
+	switch {
+	case edit.Status == "cancelled" && edit.Start == nil:
+		return calendarShift{move: func(o *calrecur.Occurrence) { o.Cancelled = true }}
+	case edit.Status == "cancelled":
+	case master.AllDay && edit.StartDate != "":
+		return calendarAllDayShift(edit, zone)
+	case !master.AllDay && edit.Start != nil:
+		return calendarTimedShift(master, edit, zone)
+	}
+	return calendarShift{}
+}
+
+// calendarTimedShift moves later occurrences so they keep the zone's local time across daylight saving
+// changes, and gives them the edit's duration.
+func calendarTimedShift(master, edit calevent.Event, zone *time.Location) calendarShift {
 	wall := func(t time.Time) time.Time {
 		t = t.In(zone)
 		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, time.UTC)
@@ -295,6 +330,33 @@ func calendarRangeShift(master calevent.Event, edits []CalendarEventRow) calenda
 		w := wall(o.Start).Add(delta)
 		o.Start = time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second(), 0, zone).UTC()
 		o.End = o.Start.Add(length)
+	}}
+}
+
+// calendarAllDayShift moves later all-day occurrences by the edit's change in civil days and gives them
+// the edit's length when it sets an end date. An edit that keeps its start day cannot be followed.
+func calendarAllDayShift(edit calevent.Event, zone *time.Location) calendarShift {
+	start, startErr := time.Parse(time.DateOnly, edit.StartDate)
+	was, wasErr := time.Parse(time.DateOnly, edit.Original.Date)
+	end, endErr := time.Parse(time.DateOnly, edit.EndDate)
+	if startErr != nil || wasErr != nil || start.Equal(was) {
+		return calendarShift{}
+	}
+	delta, span := start.Sub(was), end.Sub(start)
+	return calendarShift{pad: max(delta, -delta) + span, move: func(o *calrecur.Occurrence) {
+		first, firstErr := time.Parse(time.DateOnly, o.StartDate)
+		last, lastErr := time.Parse(time.DateOnly, o.EndDate)
+		if !o.AllDay || firstErr != nil || lastErr != nil {
+			return
+		}
+		if first = first.Add(delta); endErr == nil {
+			last = first.Add(span)
+		} else {
+			last = last.Add(delta)
+		}
+		o.StartDate, o.EndDate = first.Format(time.DateOnly), last.Format(time.DateOnly)
+		o.Start, _, _ = calrecur.CivilDateBoundary(o.StartDate, zone)
+		o.End, _, _ = calrecur.CivilDateBoundary(o.EndDate, zone)
 	}}
 }
 
