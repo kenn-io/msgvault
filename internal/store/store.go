@@ -1296,8 +1296,6 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
 		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
 		{"idx_message_recipients_normalized_email", messageRecipientsNormalizedEmailIndexDefinition},
-		{"idx_source_merge_messages_original_message", "ON source_merge_messages(original_message_id)"},
-		{"idx_source_merge_conversations_original_conversation", "ON source_merge_conversations(original_conversation_id)"},
 		{"idx_source_merge_archive_only_original", "ON source_merge_archive_only_messages(original_source_message_id)"},
 		{"idx_calendar_events_series_id", "ON calendar_events(series_provider_id, message_id)"},
 	}
