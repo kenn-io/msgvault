@@ -12,7 +12,7 @@ function accountsResponse(virtualAccounts: unknown[]) {
   );
 }
 
-// One source with count messages awaiting account matching.
+// One source with count messages to match.
 function pendingCatalog(count: number) {
   return Response.json({ accounts: [{ id: 7, email: 'inbox@example.net', virtual_accounts: [
     { key: 'unattributed:7', source_id: 7, unattributed: true, message_count: 0, source_deleted_count: 0, pending_count: count },
@@ -41,7 +41,7 @@ describe('AccountFilter', () => {
     const onChange = vi.fn();
     const filters = [{ dimension: 'source' as const, values: [' +07'] }];
     render(AccountFilter, { client: createAPIClient(fetchFn), filters, onChange });
-    expect((await screen.findByRole('status')).textContent).toContain('inbox@example.net: 1 message awaiting account matching.');
+    expect((await screen.findByRole('status')).textContent).toContain('inbox@example.net: 1 message to match.');
     const select = await screen.findByRole('combobox', { name: /^Account:/ });
     await waitFor(() => expect(select).toHaveProperty('disabled', false));
     await chooseSelectOption(select, 'inbox@example.net / work@example.org (3)');
@@ -156,12 +156,12 @@ describe('AccountFilter', () => {
         });
       });
       render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
-      await screen.findByText('inbox@example.net: 2 messages awaiting account matching.');
+      await screen.findByText('inbox@example.net: 2 messages to match.');
       const retry = await screen.findByRole('button', { name: 'Retry' });
       await fireEvent.click(retry);
       expect(retry).toHaveProperty('disabled', true);
       accept();
-      await screen.findByText('inbox@example.net: 1 message awaiting account matching.');
+      await screen.findByText('inbox@example.net: 1 message to match.');
       expect(screen.getByText('Retry requested')).toBeTruthy();
       expect(retry).toHaveProperty('disabled', false);
       expect(screen.queryByRole('alert')).toBeNull();
@@ -214,7 +214,7 @@ describe('AccountFilter', () => {
       await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
       count = 2;
       await vi.advanceTimersByTimeAsync(30000);
-      expect(screen.getByText('inbox@example.net: 2 messages awaiting account matching.')).toBeTruthy();
+      expect(screen.getByText('inbox@example.net: 2 messages to match.')).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
       view.unmount();
       const calls = fetchFn.mock.calls.length;
@@ -248,7 +248,7 @@ describe('AccountFilter', () => {
         return pendingCatalog(retried ? 0 : 2);
       });
       render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
-      await screen.findByText('inbox@example.net: 2 messages awaiting account matching.');
+      await screen.findByText('inbox@example.net: 2 messages to match.');
       expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
       holdNext = true;
       await vi.advanceTimersByTimeAsync(2000);
@@ -257,7 +257,7 @@ describe('AccountFilter', () => {
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull());
       releaseBody();
       await vi.advanceTimersByTimeAsync(1);
-      expect(screen.queryByText('inbox@example.net: 2 messages awaiting account matching.')).toBeNull();
+      expect(screen.queryByText('inbox@example.net: 2 messages to match.')).toBeNull();
       expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     } finally {
       vi.useRealTimers();
@@ -275,11 +275,11 @@ describe('AccountFilter', () => {
         return pendingCatalog(2);
       });
       render(AccountFilter, { client: createAPIClient(fetchFn), filters: [], onChange: vi.fn() });
-      await screen.findByText('inbox@example.net: 2 messages awaiting account matching.');
+      await screen.findByText('inbox@example.net: 2 messages to match.');
       unavailable = true;
       await fireEvent.click(await screen.findByRole('button', { name: 'Retry' }));
       expect((await screen.findByRole('alert')).textContent).toContain('Unable to retry account matching.');
-      expect(screen.getByText('inbox@example.net: 2 messages awaiting account matching.')).toBeTruthy();
+      expect(screen.getByText('inbox@example.net: 2 messages to match.')).toBeTruthy();
       const calls = fetchFn.mock.calls.length;
       await vi.advanceTimersByTimeAsync(30000);
       expect(fetchFn.mock.calls.length).toBeGreaterThan(calls);
