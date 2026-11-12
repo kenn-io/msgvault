@@ -144,8 +144,6 @@ type SnoozeLoopBody = SnoozeLoopRequest
 
 type McpEventsSubscribeBody = MCPEventsSubscribeRequest
 
-type McpEventsUnsubscribeBody = MCPEventsUnsubscribeRequest
-
 type ListMeetingActionItemsBody = MeetingActionsRequest
 
 type GetMeetingContextBody = MeetingContextRequest

@@ -280,11 +280,11 @@ import type {
   MCPEventsListResult,
   MCPEventsSubscribeRequest,
   MCPEventsSubscribeResult,
-  MCPEventsUnsubscribeRequest,
   MCPEventsUnsubscribeResult,
   Manifest,
   MarkLoopDoneParams,
   MarkLoopDonePathParameters,
+  McpEventsUnsubscribeBody,
   MediaSearchResponse,
   MediaSearchStatusResponse,
   MeetingImportRequest,
@@ -2306,7 +2306,7 @@ export const mcpEventsSubscribe = (
  * @summary Unsubscribe from owner MCP Events
  */
 export const mcpEventsUnsubscribe = (
-  mCPEventsUnsubscribeRequest: MCPEventsUnsubscribeRequest,
+  mcpEventsUnsubscribeBody: McpEventsUnsubscribeBody,
   options?: SecondParameter<typeof orvalFetch<MCPEventsUnsubscribeResult>>,
 ) => {
   return orvalFetch<MCPEventsUnsubscribeResult>(
@@ -2314,7 +2314,7 @@ export const mcpEventsUnsubscribe = (
       url: `/api/v1/mcp-events/unsubscribe`,
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      data: mCPEventsUnsubscribeRequest,
+      data: mcpEventsUnsubscribeBody,
     },
     options,
   );

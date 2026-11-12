@@ -15,8 +15,20 @@ import (
 func (s *Server) registerMCPEventsRoutes(api huma.API) {
 	registerAPIV1RawHumaJSONRoute[mcpevents.MCPEventsListResult](api, "mcpEventsList", http.MethodGet, "/mcp-events/list", "List owner MCP Events", s.handleMCPEventsList)
 	registerMCPEventsMutation[mcpevents.MCPEventsSubscribeRequest, mcpevents.MCPEventsSubscribeResult](api, "mcpEventsSubscribe", http.MethodPost, "/mcp-events/subscribe", "Subscribe to owner MCP Events", s.handleMCPEventsSubscribe)
-	registerMCPEventsMutation[mcpevents.MCPEventsUnsubscribeRequest, mcpevents.MCPEventsUnsubscribeResult](api, "mcpEventsUnsubscribe", http.MethodPost, "/mcp-events/unsubscribe", "Unsubscribe from owner MCP Events", s.handleMCPEventsUnsubscribe)
+	registerMCPEventsMutation[mcpEventsUnsubscribeBody, mcpevents.MCPEventsUnsubscribeResult](api, "mcpEventsUnsubscribe", http.MethodPost, "/mcp-events/unsubscribe", "Unsubscribe from owner MCP Events", s.handleMCPEventsUnsubscribe)
 }
+
+// mcpEventsUnsubscribeBody describes the URL-only unsubscribe wire contract.
+type mcpEventsUnsubscribeBody struct {
+	Name      string                       `json:"name"`
+	Arguments mcpevents.MCPEventsArguments `json:"arguments"`
+	Delivery  struct {
+		Mode   string `json:"mode,omitempty"`
+		URL    string `json:"url"`
+		Secret string `json:"secret,omitempty"`
+	} `json:"delivery"`
+}
+
 func registerMCPEventsMutation[Req any, Resp any](api huma.API, operationID, method, path, summary string, handler http.HandlerFunc) {
 	op := rawAPIV1Operation(operationID, method, path, summary)
 	op.RequestBody = jsonRequestBodyFor[Req](api)

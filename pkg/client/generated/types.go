@@ -7397,33 +7397,6 @@ func (m MCPEventsSubscribeResult) Validate() error {
 	return errors
 }
 
-type MCPEventsUnsubscribeRequest struct {
-	Arguments MCPEventsArguments `json:"arguments"`
-	Delivery  MCPEventsDelivery  `json:"delivery"`
-	Name      string             `json:"name" validate:"required"`
-}
-
-func (m MCPEventsUnsubscribeRequest) Validate() error {
-	var errors runtime.ValidationErrors
-	if v, ok := any(m.Arguments).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Arguments", err)
-		}
-	}
-	if v, ok := any(m.Delivery).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Delivery", err)
-		}
-	}
-	if err := typesValidator.Var(m.Name, "required"); err != nil {
-		errors = errors.Append("Name", err)
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
 type MCPEventsUnsubscribeResult = map[string]any
 
 type MCPRouteDescriptor struct {
@@ -7516,6 +7489,43 @@ type MatchSummary struct {
 	LexicalMatchCount *int64   `json:"lexical_match_count,omitempty"`
 	SemanticScore     *float64 `json:"semantic_score,omitempty"`
 	StrongestExcerpt  *string  `json:"strongest_excerpt,omitzero"`
+}
+
+type McpEventsUnsubscribeBody struct {
+	Arguments MCPEventsArguments                     `json:"arguments"`
+	Delivery  McpEventsUnsubscribeBodyDeliveryStruct `json:"delivery"`
+	Name      string                                 `json:"name" validate:"required"`
+}
+
+func (m McpEventsUnsubscribeBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Arguments).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Arguments", err)
+		}
+	}
+	if v, ok := any(m.Delivery).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Delivery", err)
+		}
+	}
+	if err := typesValidator.Var(m.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type McpEventsUnsubscribeBodyDeliveryStruct struct {
+	Mode   *string `json:"mode,omitzero"`
+	Secret *string `json:"secret,omitzero"`
+	URL    string  `json:"url" validate:"required"`
+}
+
+func (m McpEventsUnsubscribeBodyDeliveryStruct) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
 type MediaAttachmentResult struct {

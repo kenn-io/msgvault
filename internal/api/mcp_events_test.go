@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
@@ -248,7 +249,7 @@ func TestGeneratedEventsMutationErrorsDecode(t *testing.T) {
 	requirements.Equal(http.StatusBadRequest, invalidSubscribe.StatusCode)
 	assertions.Equal(map[string]any{"code": float64(mcpevents.InvalidParams), "reason": "invalid_arguments"}, decodedEventsError(t, invalidSubscribe))
 
-	missingBody := generated.McpEventsUnsubscribeBody{Name: mcpevents.Name, Arguments: arguments, Delivery: delivery}
+	missingBody := generated.McpEventsUnsubscribeBody{Name: mcpevents.Name, Arguments: arguments, Delivery: generated.McpEventsUnsubscribeBodyDeliveryStruct{URL: delivery.URL}}
 	missing, err := client.McpEventsUnsubscribeWithResponse(t.Context(), &generated.McpEventsUnsubscribeRequestOptions{Body: &missingBody})
 	requirements.Error(err)
 	requirements.NotNil(missing)
@@ -267,4 +268,34 @@ func TestGeneratedEventsMutationErrorsDecode(t *testing.T) {
 	requirements.NotNil(limited)
 	requirements.Equal(http.StatusTooManyRequests, limited.StatusCode)
 	assertions.Equal(map[string]any{"error": "rate_limit_exceeded", "message": "Too many requests. Please slow down."}, decodedEventsError(t, limited))
+}
+
+func TestMCPEventsDeliverySchemas(t *testing.T) {
+	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		for _, tc := range []struct {
+			path         string
+			modeRequired bool
+		}{
+			{"/api/v1/mcp-events/subscribe", true},
+			{"/api/v1/mcp-events/unsubscribe", false},
+		} {
+			path := doc.Paths[tc.path]
+			requirements.NotNil(path)
+			body := operationBodySchema(t, doc, path.Post)
+			delivery := body.Properties["delivery"]
+			requirements.NotNil(delivery)
+			if delivery.Ref != "" {
+				delivery = doc.Components.Schemas.Map()[strings.TrimPrefix(delivery.Ref, "#/components/schemas/")]
+				requirements.NotNil(delivery)
+			}
+			assertions.Contains(delivery.Required, "url")
+			if tc.modeRequired {
+				assertions.Contains(delivery.Required, "mode")
+			} else {
+				assertions.NotContains(delivery.Required, "mode")
+			}
+		}
+	}
 }

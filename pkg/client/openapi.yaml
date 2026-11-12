@@ -7461,20 +7461,6 @@ components:
         - truncated
         - deliveryStatus
       type: object
-    MCPEventsUnsubscribeRequest:
-      additionalProperties: false
-      properties:
-        arguments:
-          $ref: "#/components/schemas/MCPEventsArguments"
-        delivery:
-          $ref: "#/components/schemas/MCPEventsDelivery"
-        name:
-          type: string
-      required:
-        - name
-        - arguments
-        - delivery
-      type: object
     MCPEventsUnsubscribeResult:
       type: object
     MCPRouteDescriptor:
@@ -7553,6 +7539,32 @@ components:
           type: number
         strongest_excerpt:
           type: string
+      type: object
+    McpEventsUnsubscribeBody:
+      additionalProperties: false
+      properties:
+        arguments:
+          $ref: "#/components/schemas/MCPEventsArguments"
+        delivery:
+          $ref: "#/components/schemas/McpEventsUnsubscribeBodyDeliveryStruct"
+        name:
+          type: string
+      required:
+        - name
+        - arguments
+        - delivery
+      type: object
+    McpEventsUnsubscribeBodyDeliveryStruct:
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+        secret:
+          type: string
+        url:
+          type: string
+      required:
+        - url
       type: object
     MediaAttachmentResult:
       properties:
@@ -24538,7 +24550,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/MCPEventsUnsubscribeRequest"
+              $ref: "#/components/schemas/McpEventsUnsubscribeBody"
         required: true
       responses:
         "200":
