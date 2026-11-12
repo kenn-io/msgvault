@@ -36,7 +36,7 @@ type Operation struct {
 func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Operation) bool) http.Handler {
 	mux := http.NewServeMux()
 	api := s.setupHumaAPI(mux)
-	gate := operationGateMiddleware(s.operationGate, nil)
+	gate := operationGateMiddleware(s.operationGate, s.requestGateEligible)
 	api.UseMiddleware(func(ctx huma.Context, next func(huma.Context)) {
 		r, w := humago.Unwrap(ctx)
 		op := ctx.Operation()

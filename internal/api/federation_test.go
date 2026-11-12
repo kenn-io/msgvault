@@ -286,14 +286,16 @@ func TestFederationOperationGate(t *testing.T) {
 				return
 			}
 			for _, tc := range []struct{ method, path string }{{http.MethodPost, "/api/v1/federation/enrollments"}, {http.MethodDelete, "/api/v1/federation/enrollments/fixture"}} {
-				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-				r := httptest.NewRequestWithContext(ctx, tc.method, tc.path, nil)
-				r.Header.Set("X-Api-Key", "owner-fixture")
-				w := httptest.NewRecorder()
-				srv.Router().ServeHTTP(w, r)
-				requirements.NoError(ctx.Err(), "%s %s waited on the gate", tc.method, tc.path)
-				cancel()
-				assertions.False(gate.HasRequestWaiters())
+				for _, handler := range []http.Handler{srv.Router(), srv.Handler(func(http.ResponseWriter, *http.Request, Operation) bool { return true })} {
+					ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+					r := httptest.NewRequestWithContext(ctx, tc.method, tc.path, nil)
+					r.Header.Set("X-Api-Key", "owner-fixture")
+					w := httptest.NewRecorder()
+					handler.ServeHTTP(w, r)
+					requirements.NoError(ctx.Err(), "%s %s waited on the gate", tc.method, tc.path)
+					cancel()
+					assertions.False(gate.HasRequestWaiters())
+				}
 			}
 		})
 	}
