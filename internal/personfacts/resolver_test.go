@@ -1281,3 +1281,14 @@ func TestResolverScoreMaximaMatchesMaximumClaim(t *testing.T) {
 	assert.Equal(t, *maxima, decision.Score)
 	assert.Equal(t, 1550, decision.Score.Total)
 }
+
+func TestDecisionOutcomeWhenSavedValueDidNotBlockClaim(t *testing.T) {
+	for _, decision := range []Decision{
+		{Action: DecisionRetained, Reason: ReasonBelowThreshold},
+		{Action: DecisionConflictRejected, Reason: ReasonInsufficientMargin, CompetingClaimKey: "leader"},
+	} {
+		outcome, known := DecisionOutcomeFor(OutcomeFacts{Decision: decision, Relation: RelationSupport, HasCurrent: true})
+		require.True(t, known)
+		assert.Equal(t, OutcomeNotUsed, outcome)
+	}
+}

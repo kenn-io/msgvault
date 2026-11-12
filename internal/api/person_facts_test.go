@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 var personFactAPINow = time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
@@ -461,6 +462,9 @@ func TestPersonFactSummaryAndFilteredDecisionsHTTP(t *testing.T) {
 	response := doRequest(t, srv.Router(), http.MethodGet, path+"/fact-summary", nil, nil)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
 	assert.JSONEq(`{"claimed_fields":0,"latest_claim_at":null,"has_stored_facts":false}`, response.Body.String())
+	var emptySummary generated.FactSummary
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &emptySummary))
+	require.NoError(emptySummary.Validate())
 
 	target := targets[store.AttributeSlugPrimaryChannel]
 	applyPersonFactAPIGeneration(t, st, personID, target, "first-summary", `"chat"`)

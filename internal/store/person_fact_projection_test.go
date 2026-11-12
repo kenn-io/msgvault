@@ -1769,6 +1769,7 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 		{"saved", personfacts.OutcomeSaved},
 		{"retired", personfacts.OutcomeValueRetired},
 		{"current", personfacts.OutcomeCurrentValueKept},
+		{"current removal", personfacts.OutcomeCurrentValueKept},
 		{"pinned", personfacts.OutcomePinnedValueKept},
 		{"pinned empty", personfacts.OutcomeNotUsed},
 		{"fact current", personfacts.OutcomeNotUsed},
@@ -1781,13 +1782,17 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 			require := require.New(t)
 			st, personID, targets := newPersonFactProjectionStore(t)
 			target := targets[AttributeSlugPrimaryChannel]
-			if test.name == "current" || test.name == "pinned" {
+			if test.name == "current" || test.name == "current removal" || test.name == "pinned" {
+				value := "email"
+				if test.name == "current removal" {
+					value = "chat"
+				}
 				_, err := st.SetPersonAttributeValueContext(t.Context(), PersonAttributeValueInput{
 					PersonID: personID, DefinitionSlug: AttributeSlugPrimaryChannel,
-					Value: AttributeValue{Type: AttributeValueText, Text: new("email")}, Source: ProvenanceUser,
+					Value: AttributeValue{Type: AttributeValueText, Text: &value}, Source: ProvenanceUser,
 				})
 				require.NoError(err)
-				if test.name == "current" {
+				if test.name == "current" || test.name == "current removal" {
 					_, err = st.SetPersonFactPinContext(t.Context(), personID, personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}, false, "test")
 					require.NoError(err)
 				}
@@ -1812,11 +1817,14 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 			case "retired", "absent retirement":
 				claim.Relation = personfacts.RelationSupersede
 				claim.Confidence.ReportedScore = 1000
-			case "current", "fact current":
+			case "current", "current removal", "fact current":
 				claim.Evidence[0].Authority = personfacts.AuthorityOrdinary
 				claim.Confidence.ReportedScore = 200
 			case "invalid":
 				claim.SubmittedValue = json.RawMessage(`42`)
+			}
+			if test.name == "current removal" {
+				claim.Relation = personfacts.RelationContradict
 			}
 			claims := []personfacts.ProposedClaim{claim}
 			if test.name == "tie" {
