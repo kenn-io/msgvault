@@ -122,7 +122,7 @@ func TestMergePersons_DefersMemberOnlyActivity(t *testing.T) {
 				state, err = f.Store.ContactStateContext(ctx, third.ID, time.Now())
 				require.NoError(err)
 				assert.False(state.Stale)
-				assert.Equal(fmt.Sprintf("message:%d", roomIDs[0]), state.FirstSeenRef)
+				assert.Empty(state.FirstSeenRef, "untimed group membership does not establish first appearance")
 				wantCount := int64(len(roomIDs))
 				if splitBeforeProjection && limit == 2 && !scenario.owner {
 					wantCount = 0
