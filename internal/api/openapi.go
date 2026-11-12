@@ -1178,6 +1178,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
+	nullableSchemaProperty(schemas["FactSummary"], "latest_claim_at")
 	for schemaName, property := range map[string]string{
 		"MeetingPerson":       emailProperty,
 		"Source":              "account_email",

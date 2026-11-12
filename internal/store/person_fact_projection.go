@@ -822,7 +822,8 @@ func (s *Store) resolvePersonFactTargetWithOrganizationLocksTx(
 			difference := decision.Score.Total - resolution.Decisions[competingIndex].Score.Total
 			closeCompetition = difference > -resolver.Policy.ReplacementMargin && difference < resolver.Policy.ReplacementMargin
 		}
-		outcome, _ := personfacts.DecisionOutcomeFor(personfacts.OutcomeFacts{Decision: decision, Relation: claim.Claim.Relation, HasCurrent: hasCurrent, MatchesCurrent: matchesCurrent, Retired: retiredClaims[decision.ClaimKey], CloseCompetition: closeCompetition, Duplicate: duplicate})
+		blockedRemoval := descriptor.Cardinality == personfacts.CardinalitySingle && matchesCurrent && claim.Claim.Relation != personfacts.RelationSupport && decision.Score.Total >= resolver.Policy.ApplyThreshold
+		outcome, _ := personfacts.DecisionOutcomeFor(personfacts.OutcomeFacts{Decision: decision, Relation: claim.Claim.Relation, HasCurrent: hasCurrent, MatchesCurrent: matchesCurrent, Retired: retiredClaims[decision.ClaimKey], CloseCompetition: closeCompetition, Duplicate: duplicate, BlockedRemoval: blockedRemoval})
 		decision.Outcome = &outcome
 		if err := s.insertPersonFactDecisionTx(ctx, tx, generation.PersonID, shell.ID,
 			resolution.InputFingerprint, decision); err != nil {

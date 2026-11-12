@@ -485,6 +485,7 @@ type OutcomeFacts struct {
 	Retired          bool
 	CloseCompetition bool
 	Duplicate        bool
+	BlockedRemoval   bool
 }
 
 // DecisionOutcomeFor returns false when an old row lacks the state needed to classify it.
@@ -517,7 +518,7 @@ func DecisionOutcomeFor(f OutcomeFacts) (DecisionOutcome, bool) {
 	if f.CloseCompetition {
 		return OutcomeTooCloseToChoose, true
 	}
-	if f.HasCurrent && !f.MatchesCurrent && !f.Duplicate && (d.Action == DecisionRetained || d.Action == DecisionConflictRejected) {
+	if f.HasCurrent && !f.Duplicate && d.CompetingClaimKey == "" && (d.Action == DecisionRetained || d.Action == DecisionConflictRejected) && ((!f.MatchesCurrent && d.Reason == ReasonInsufficientMargin) || f.BlockedRemoval) {
 		return OutcomeCurrentValueKept, true
 	}
 	return OutcomeNotUsed, true
