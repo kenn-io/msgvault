@@ -147,7 +147,6 @@ type handlers struct {
 	similarSearcher      SimilarSearcher
 	dataDir              string
 	mediaSearcher        MediaSearcher
-	collectionScopes     bool
 	personFileSearcher   PersonFileSearcher
 	peopleBackend        peoplebrowser.Backend
 	directoryBackend     peoplebrowser.DirectoryLister
@@ -1569,9 +1568,6 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 	selection, err := h.resolveReadSelection(ctx, "", args)
 	if err != nil {
 		return dependencyError("resolve message collection", err)
-	}
-	if selection.sourceIDs != nil && len(selection.sourceIDs) == 0 {
-		return toolErrorResult("message not found"), nil
 	}
 	msg, err := h.engine.GetMessage(ctx, id)
 	if err != nil {
