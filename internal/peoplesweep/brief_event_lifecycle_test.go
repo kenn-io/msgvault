@@ -146,15 +146,17 @@ func TestBriefEventReplayNeverReintroducesEvictedOrEditedAnchors(t *testing.T) {
 }
 
 func TestBriefEventFutureSourceDoesNotPoisonAdmission(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 20.")
 	future := briefWindowItem(11, SourceConversationText, 25, "I start a course in September.")
 	archive := &briefFakeArchive{items: []EvidenceItem{anchor, future}}
 	window := eventWindow(t, archive, nil, "2026-08-14T12:00:00Z")
 	first := eventResult(t, window, eventCandidate(t, eventHighlight(anchor, "2026-08-20"),
 		eventHighlight(future, "2026-09-01")))
-	require.Len(t, first.Boundary.EventMemory, 1)
-	assert.Equal(t, packetEvidenceID(anchor), first.Boundary.EventMemory[0].Highlight.LifeEvent.AnchorID)
-	assert.Equal(t, window.Request.AsOf, first.Boundary.AdmissionThroughEventTime)
+	require.Len(first.Boundary.EventMemory, 1)
+	assert.Equal(packetEvidenceID(anchor), first.Boundary.EventMemory[0].Highlight.LifeEvent.AnchorID)
+	assert.Equal(window.Request.AsOf, first.Boundary.AdmissionThroughEventTime)
 
 	next := briefWindowItem(12, SourceConversationText, 15, "I have an interview next week.")
 	archive.items = append(archive.items, next)
@@ -163,16 +165,18 @@ func TestBriefEventFutureSourceDoesNotPoisonAdmission(t *testing.T) {
 	request.OverlapItems = 2
 	request.AsOf = time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 	window, err := BuildBriefWindow(t.Context(), archive, request)
-	require.NoError(t, err)
+	require.NoError(err)
 	second := eventResult(t, window, eventCandidate(t, eventHighlight(next, "2026-08-22"),
 		eventHighlight(future, "2026-09-01")))
-	require.Len(t, second.Boundary.EventMemory, 2)
-	assert.Equal(t, packetEvidenceID(next), second.Boundary.EventMemory[1].Highlight.LifeEvent.AnchorID)
-	assert.Equal(t, BriefEventUpcoming, second.Boundary.EventMemory[1].Highlight.LifeEvent.State)
-	assert.Equal(t, request.AsOf, second.Boundary.AdmissionThroughEventTime)
+	require.Len(second.Boundary.EventMemory, 2)
+	assert.Equal(packetEvidenceID(next), second.Boundary.EventMemory[1].Highlight.LifeEvent.AnchorID)
+	assert.Equal(BriefEventUpcoming, second.Boundary.EventMemory[1].Highlight.LifeEvent.State)
+	assert.Equal(request.AsOf, second.Boundary.AdmissionThroughEventTime)
 }
 
 func TestBriefEventRetainedFutureSourceKeepsPriorWatermark(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	anchor := briefWindowItem(10, SourceConversationText, 25, "I start a course in September.")
 	resolution := briefWindowItem(11, SourceConversationText, 26, "I cancelled the course.")
 	archive := &briefFakeArchive{items: []EvidenceItem{anchor}}
@@ -184,15 +188,15 @@ func TestBriefEventRetainedFutureSourceKeepsPriorWatermark(t *testing.T) {
 	update.EvidenceIDs = append(update.EvidenceIDs, packetEvidenceID(resolution))
 	update.LifeEvent.Resolution = &BriefEventResolution{EvidenceID: packetEvidenceID(resolution), Quote: resolution.Excerpt}
 	resolved := eventResult(t, window, eventCandidate(t, update))
-	require.Len(t, resolved.Boundary.EventMemory, 1)
-	assert.Equal(t, BriefEventResolved, resolved.Boundary.EventMemory[0].Highlight.LifeEvent.State)
-	assert.Equal(t, first.Boundary.AdmissionThroughEventTime, resolved.Boundary.AdmissionThroughEventTime)
+	require.Len(resolved.Boundary.EventMemory, 1)
+	assert.Equal(BriefEventResolved, resolved.Boundary.EventMemory[0].Highlight.LifeEvent.State)
+	assert.Equal(first.Boundary.AdmissionThroughEventTime, resolved.Boundary.AdmissionThroughEventTime)
 
 	window = eventWindow(t, archive, &resolved.Boundary, "2026-08-17T00:00:00Z")
 	replayed := eventResult(t, window, eventCandidate(t, eventHighlight(anchor, "2026-09-01")))
-	require.Len(t, replayed.Boundary.EventMemory, 1)
-	assert.Equal(t, BriefEventResolved, replayed.Boundary.EventMemory[0].Highlight.LifeEvent.State)
-	assert.Equal(t, first.Boundary.AdmissionThroughEventTime, replayed.Boundary.AdmissionThroughEventTime)
+	require.Len(replayed.Boundary.EventMemory, 1)
+	assert.Equal(BriefEventResolved, replayed.Boundary.EventMemory[0].Highlight.LifeEvent.State)
+	assert.Equal(first.Boundary.AdmissionThroughEventTime, replayed.Boundary.AdmissionThroughEventTime)
 
 	// A resolved event can be evicted while its admission watermark survives.
 	evicted := replayed.Boundary
@@ -202,28 +206,33 @@ func TestBriefEventRetainedFutureSourceKeepsPriorWatermark(t *testing.T) {
 	request.OverlapItems = 2
 	request.AsOf = time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	window, err := BuildBriefWindow(t.Context(), archive, request)
-	require.NoError(t, err)
+	require.NoError(err)
 	parsed, err := ParseBrief(eventCandidate(t, eventHighlight(anchor, "2026-09-01")), window, request.Profile)
-	require.NoError(t, err)
-	assert.Empty(t, parsed.Output.Highlights)
+	require.NoError(err)
+	assert.Empty(parsed.Output.Highlights)
 }
 
 func TestBriefEventRevisionSourceLossRemovesMemory(t *testing.T) {
-	anchor, later, window, _, _, replayed := revisedBriefEventFixture(t)
+	fixture := revisedBriefEventFixture(t)
+	anchor, later, window, replayed := fixture.anchor, fixture.later, fixture.window, fixture.replayed
+	ordinary := briefWindowItem(12, SourceConversationText, 11, "An ordinary update.")
 	for _, loss := range []string{"deleted", "excluded"} {
 		t.Run(loss, func(t *testing.T) {
 			checks, required := assert.New(t), require.New(t)
-			items := []EvidenceItem{anchor, later}
+			items := []EvidenceItem{anchor, later, ordinary}
 			request := window.Request
 			request.Previous = &replayed.Boundary
+			request.OverlapItems = 2
 			switch loss {
 			case "deleted":
-				items = []EvidenceItem{anchor}
+				items = []EvidenceItem{anchor, ordinary}
 			case "excluded":
 				request.Profile.SourceUntil = "2026-08-11"
 			}
 			next, err := BuildBriefWindow(t.Context(), &briefFakeArchive{items: items}, request)
 			required.NoError(err)
+			checks.Contains(briefMessageIDs(next.Items), anchor.Ref.MessageID)
+			checks.Contains(briefMessageIDs(next.Items), ordinary.Ref.MessageID)
 			checks.Empty(next.Batch.Packet.BriefContext.Events)
 		})
 	}
