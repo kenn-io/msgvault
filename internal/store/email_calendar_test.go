@@ -378,13 +378,13 @@ func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
 func TestEmailCalendarConflictingMethodPreservesEvent(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	initial := inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Meeting"))
+	initial := inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Meeting\r\nORGANIZER:mailto:organizer@example.com"))
 	first, source := persistInviteEmail(t, st, "request", initial)
 	var logs bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
-	conflict := []byte(strings.Replace(string(inviteEmail(calendarDocument("CANCEL", "SEQUENCE:2"))), "text/calendar", "text/calendar; method=REPLY", 1))
+	conflict := []byte(strings.Replace(string(inviteEmail(calendarDocument("CANCEL", "SEQUENCE:2\r\nORGANIZER:mailto:organizer@example.com"))), "text/calendar", "text/calendar; method=REPLY", 1))
 	second := persistInviteEmailForSource(t, st, source, "reply", conflict)
 	ids := emailEvents(t, st, source)
 	requirements.Len(ids, 1)
@@ -506,7 +506,7 @@ func TestEmailCalendarChangedOrganizerCreatesEvent(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, source := persistInviteEmail(t, st, "original", emailFrom("first@example.com", calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original\r\nORGANIZER:mailto:first@example.com")))
-	persistInviteEmailForSource(t, st, source, "update", emailFrom("FIRST@example.com", calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:other@example.com")))
+	persistInviteEmailForSource(t, st, source, "update", emailFrom("other@example.com", calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:other@example.com")))
 	ids := emailEvents(t, st, source)
 	r.Len(ids, 2)
 	r.Equal("Original", calendarRows(t, st, ids[0])[0].Subject)
@@ -516,6 +516,13 @@ func TestEmailCalendarChangedOrganizerCreatesEvent(t *testing.T) {
 }
 
 func TestEmailCalendarRejectsOtherSenders(t *testing.T) {
+	t.Run("occurrence before series", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		edit := calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nORGANIZER:mailto:organizer@example.com")
+		_, source := persistInviteEmail(t, st, "edit", emailFrom("attendee@example.org", edit))
+		r.Empty(emailEvents(t, st, source))
+	})
 	for _, method := range []string{"REQUEST", "CANCEL"} {
 		t.Run(method, func(t *testing.T) {
 			r := require.New(t)

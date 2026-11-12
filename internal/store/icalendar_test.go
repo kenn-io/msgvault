@@ -265,7 +265,7 @@ func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
-			_, source := persistInviteEmail(t, st, "master", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Team meeting\r\nATTENDEE:mailto:guest@example.org\r\nORGANIZER:mailto:owner@example.com")))
+			_, source := persistInviteEmail(t, st, "master", emailFrom("owner@example.com", calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Team meeting\r\nATTENDEE:mailto:guest@example.org\r\nORGANIZER:mailto:owner@example.com")))
 			cancel := []byte(strings.ReplaceAll(string(calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\n"+tc.props+"ORGANIZER:mailto:owner@example.com")), "METHOD:CANCEL\r\n", ""))
 			mail := []byte(strings.Replace(string(emailFrom("owner@example.com", cancel)), "text/calendar", "text/calendar; method=CANCEL", 1))
 			persistInviteEmailForSource(t, st, source, "sparse-cancel", mail)
@@ -393,14 +393,22 @@ func TestICalendarRejectsInvalidZoneAtomically(t *testing.T) {
 }
 
 func TestICalendarNominalDurationUnexpandable(t *testing.T) {
-	r := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	_, err := importICalendarForTest(t, st, source, calendarDocument("REQUEST", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:P1D\r\nRRULE:FREQ=DAILY;COUNT=3"))
-	r.NoError(err)
-	from := time.Date(2027, 3, 13, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 4))
-	r.NoError(err)
-	r.Len(page.Unexpandable, 1)
-	r.Contains(page.Unexpandable[0].Reason, "unsupported")
+	for _, tc := range []struct{ name, props string }{
+		{"nominal duration", "DTSTART;TZID=America/New_York:20270313T090000\r\nDURATION:P1D"},
+		{"spring gap", "DTSTART;TZID=America/New_York:20270314T023000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			_, err := importICalendarForTest(t, st, source, calendarDocument("REQUEST", tc.props+"\r\nRRULE:FREQ=DAILY;COUNT=3"))
+			r.NoError(err)
+			from := time.Date(2027, 3, 13, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 4))
+			r.NoError(err)
+			r.Len(page.Unexpandable, 1)
+			r.Empty(page.Occurrences)
+			r.Contains(page.Unexpandable[0].Reason, "unsupported")
+		})
+	}
 }
