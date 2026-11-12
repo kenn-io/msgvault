@@ -17,6 +17,7 @@ import (
 var ErrMeetingOccurrenceRequired = errors.New("copy the full occurrence reference from calendar events")
 
 type MeetingLink struct {
+	occurrence        CalendarOccurrence
 	MessageID         int64      `json:"-"`
 	SubjectOriginID   int64      `json:"-"`
 	Ref               string     `json:"ref"`
@@ -449,7 +450,7 @@ func (s *Store) meetingAutomaticRecordContext(ctx context.Context, ref MeetingLi
 		}
 	}
 	for _, o := range uniqueMeetingOccurrences(copies) {
-		record.Links = append(record.Links, MeetingLink{MessageID: o.MessageID, SubjectOriginID: o.row.SubjectOriginID, Ref: o.Ref, Subject: o.Subject, Start: meetingBound(o.Start), End: meetingBound(o.End), Status: o.Status, DeletedFromSource: o.DeletedFromSource})
+		record.Links = append(record.Links, MeetingLink{occurrence: o, MessageID: o.MessageID, SubjectOriginID: o.row.SubjectOriginID, Ref: o.Ref, Subject: o.Subject, Start: meetingBound(o.Start), End: meetingBound(o.End), Status: o.Status, DeletedFromSource: o.DeletedFromSource})
 	}
 	slices.Sort(record.MessageIDs)
 	record.MessageIDs = slices.Compact(record.MessageIDs)

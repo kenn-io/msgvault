@@ -31,16 +31,20 @@ func TestMeetingSuggestionsRankingSignals(t *testing.T) {
 func TestMeetingSuggestionsEventWithManyOtherSeries(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	data, event := calendarFixture(t, st, "seed-event", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	data, event := calendarFixture(t, st, "seed-event", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"attendees":[{"email":"guest@example.com"}]}`)
 	noteData, note := projectionFixture(t, st, "matching-note", "meeting_json", `{}`)
 	noteData.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
 	_, err := st.UpsertMessage(noteData.Message)
 	r.NoError(err)
+	participant, err := st.EnsureParticipant("guest@example.com", "", "")
+	r.NoError(err)
+	r.NoError(st.ReplaceMessageRecipients(note, "to", []int64{participant}, nil))
 	ref := MeetingLinkRef{Kind: "evt", MessageID: event}
 	page, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10, nil)
 	r.NoError(err)
 	r.Len(page.Suggestions, 1)
 	r.Equal(note, page.Suggestions[0].MemberMessageID)
+	r.Equal(1, page.Suggestions[0].SharedAttendees)
 	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", 2001)
 	_, err = st.db.ExecContext(t.Context(), `UPDATE calendar_events SET start_at='2027-03-01 00:00:00+00:00', end_at='2027-03-02 00:00:00+00:00', start_date='2027-03-01', end_date='2027-03-02', recurrence_json='["RRULE:FREQ=DAILY"]' WHERE kind='series'`)
 	r.NoError(err)
@@ -48,6 +52,7 @@ func TestMeetingSuggestionsEventWithManyOtherSeries(t *testing.T) {
 	r.NoError(err)
 	r.Len(page.Suggestions, 1)
 	r.Equal(note, page.Suggestions[0].MemberMessageID)
+	r.Equal(1, page.Suggestions[0].SharedAttendees)
 }
 
 func TestMeetingSuggestionsWithheldTitle(t *testing.T) {
@@ -92,7 +97,7 @@ func TestMeetingSuggestionsBackfilledScheduledStart(t *testing.T) {
 	r.NoError(err)
 	_, err = st.db.ExecContext(t.Context(), `UPDATE messages SET metadata='{}' WHERE id=?`, note)
 	r.NoError(err)
-	_, err = st.db.ExecContext(t.Context(), `UPDATE meeting_details SET projection_version=2 WHERE message_id=?`, note)
+	_, err = st.db.ExecContext(t.Context(), `UPDATE meeting_details SET projection_version=2, scheduled_start=NULL WHERE message_id=?`, note)
 	r.NoError(err)
 	r.NoError(st.backfillMeetingProjectionsContext(t.Context()))
 	for _, ref := range []MeetingLinkRef{{Kind: "msg", MessageID: note}, {Kind: "evt", MessageID: first}} {
@@ -109,6 +114,48 @@ func TestMeetingSuggestionsBackfilledScheduledStart(t *testing.T) {
 	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: next}, 10, nil)
 	r.NoError(err)
 	r.Empty(page.Suggestions)
+}
+
+func TestMeetingSuggestionsScheduledIntervals(t *testing.T) {
+	for _, tc := range []struct {
+		name, format, raw, end, nextEnd string
+		minute, nextOverlap             int
+	}{
+		{"short", "granola_json", `{"calendar_event":{"scheduled_start_time":"2027-03-14T10:00:00Z","scheduled_end_time":"2027-03-14T10:15:00Z"}}`, "10:15", "10:45", 0, 0},
+		{"long", "granola_json", `{"calendar_event":{"scheduled_start_time":"2027-03-14T10:00:00Z","scheduled_end_time":"2027-03-14T11:30:00Z"}}`, "11:00", "11:30", 0, 30},
+		{"late recording", "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2027-03-14T10:50:00Z","summary":{"markdown":"Summary"}},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z","endsAt":"2027-03-14T11:00:00Z"}}`, "11:00", "11:30", 50, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, first := calendarFixture(t, st, "first-event", fmt.Sprintf(`{"id":"first","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T%s:00Z"}}`, tc.end))
+			_, next := calendarFixture(t, st, "next-event", fmt.Sprintf(`{"id":"next","start":{"dateTime":"2027-03-14T%s:00Z"},"end":{"dateTime":"2027-03-14T%s:00Z"}}`, tc.end, tc.nextEnd))
+			data, note := projectionFixture(t, st, "interval-note", tc.format, tc.raw)
+			data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, tc.minute, 0, 0, time.UTC), Valid: true}
+			_, err := st.UpsertMessage(data.Message)
+			r.NoError(err)
+			page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10, nil)
+			r.NoError(err)
+			count := 1
+			if tc.nextOverlap > 0 {
+				count++
+			}
+			r.Len(page.Suggestions, count)
+			r.Equal(fmt.Sprintf("evt:%d", first), page.Suggestions[0].Ref)
+			if tc.nextOverlap > 0 {
+				r.Equal(fmt.Sprintf("evt:%d", next), page.Suggestions[1].Ref)
+				r.Equal(tc.nextOverlap, page.Suggestions[1].OverlapMinutes)
+			}
+			page, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: next}, 10, nil)
+			r.NoError(err)
+			if tc.nextOverlap > 0 {
+				r.Len(page.Suggestions, 1)
+				r.Equal(tc.nextOverlap, page.Suggestions[0].OverlapMinutes)
+			} else {
+				r.Empty(page.Suggestions)
+			}
+		})
+	}
 }
 
 func TestMeetingSuggestionsScheduledStartWithProviderDuration(t *testing.T) {
@@ -249,18 +296,22 @@ func TestMeetingSuggestionsRankingAndSavedChoices(t *testing.T) {
 func TestMeetingSuggestionsOccurrences(t *testing.T) {
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, master := calendarFixture(t, st, "suggest-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
-	calendarFixture(t, st, "suggest-moved", `{"id":"moved","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"start":{"dateTime":"2027-03-21T13:00:00Z"},"end":{"dateTime":"2027-03-21T14:00:00Z"}}`)
+	_, master := calendarFixture(t, st, "suggest-series", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"],"attendees":[{"email":"guest@example.com"}]}`)
+	calendarFixture(t, st, "suggest-moved", `{"id":"moved","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"start":{"dateTime":"2027-03-21T13:00:00Z"},"end":{"dateTime":"2027-03-21T14:00:00Z"},"attendees":[{"email":"guest@example.com"}]}`)
 	data, note := projectionFixture(t, st, "suggest-moved-note", "meeting_json", `{}`)
 	data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 21, 13, 0, 0, 0, time.UTC), Valid: true}
 	_, err := st.UpsertMessage(data.Message)
 	r.NoError(err)
+	participant, err := st.EnsureParticipant("guest@example.com", "", "")
+	r.NoError(err)
+	r.NoError(st.ReplaceMessageRecipients(note, "to", []int64{participant}, nil))
 	ref, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270321T100000Z", master))
 	r.NoError(err)
 	page, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10, nil)
 	r.NoError(err)
 	r.Len(page.Suggestions, 1)
 	r.Equal(note, page.Suggestions[0].MemberMessageID)
+	r.Equal(1, page.Suggestions[0].SharedAttendees)
 }
 
 func TestMeetingSuggestionsOldNotes(t *testing.T) {
@@ -350,6 +401,13 @@ func TestMeetingSuggestionsAllDayAndPartialExpansion(t *testing.T) {
 	r.NoError(err)
 	r.Len(reverse.Suggestions, 1)
 	r.Equal(note, reverse.Suggestions[0].MemberMessageID)
+	ref, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270314T160000Z", unsupported))
+	r.NoError(err)
+	reverse, err = st.SuggestMeetingLinksContext(t.Context(), ref, 10, nil)
+	r.NoError(err)
+	r.Len(reverse.Suggestions, 1)
+	r.Equal(note, reverse.Suggestions[0].MemberMessageID)
+	r.NotEmpty(reverse.Unexpandable)
 	_, err = st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, MeetingLinkRef{Kind: "evt", MessageID: event}, "link")
 	r.NoError(err)
 	page, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10, nil)

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
@@ -164,7 +163,8 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		}
 		var seed *MeetingLink
 		for i := range record.Links {
-			if record.Links[i].Ref == endpointFromRef(ref).ref() {
+			occurrence := record.Links[i].occurrence
+			if record.Links[i].Ref == endpointFromRef(ref).ref() || ref.Identity != (calrecur.Identity{}) && occurrence.SeriesMessageID == ref.MessageID && occurrence.original.AllDay == ref.Identity.AllDay && (ref.Identity.AllDay && occurrence.original.Date == ref.Identity.Date || !ref.Identity.AllDay && occurrence.original.Instant.Equal(ref.Identity.Instant)) {
 				seed = &record.Links[i]
 				break
 			}
@@ -182,18 +182,8 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		if seed.SubjectOriginID != 0 {
 			seedIDs = append(seedIDs, seed.SubjectOriginID)
 		}
-		events, err := s.listCalendarOccurrences(ctx, *seed.Start, *seed.End, false)
-		if err != nil {
-			return page, err
-		}
-		page.Unexpandable = events.Unexpandable
-		event := CalendarOccurrence{Ref: seed.Ref, Subject: seed.Subject, Start: *seed.Start, End: *seed.End, Status: seed.Status, Attendees: []calevent.Attendee{}}
-		for _, candidate := range events.Occurrences {
-			if candidate.Ref == seed.Ref {
-				event = candidate
-				break
-			}
-		}
+		page.Unexpandable = record.Unexpandable
+		event := seed.occurrence
 		r := s.db
 		scope, args := sourceScopeClause(ctx, "m.source_id")
 		startExpr, duration := s.suggestionIntervalExpressions()
