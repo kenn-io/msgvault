@@ -306,15 +306,17 @@ func TestDisabledUnsubscribeThenSubscribeReusesIDAndStartsAtCurrentBound(t *test
 func TestSubscriptionChallengeKeepsOwnerHeadAndRefreshesGrantHead(t *testing.T) {
 	for _, delegated := range []bool{false, true} {
 		t.Run(fmt.Sprintf("delegated=%t", delegated), func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			st := testutil.NewTestStore(t)
 			source, err := st.GetOrCreateSource("test", "events@example.test")
-			require.NoError(t, err)
+			requirements.NoError(err)
 			registry := agentgrant.NewRegistry()
 			t.Cleanup(registry.Close)
 			owner := "owner"
 			if delegated {
 				id, _, _, issueErr := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-				require.NoError(t, issueErr)
+				requirements.NoError(issueErr)
 				owner = agentgrant.Owner(id)
 			}
 			service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry}
@@ -323,30 +325,30 @@ func TestSubscriptionChallengeKeepsOwnerHeadAndRefreshesGrantHead(t *testing.T) 
 			var messageID int64
 			result, err := service.Subscribe(t.Context(), in, owner, func(ctx context.Context, _ string, _ string, _ []byte) error {
 				before, readErr := st.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
-				require.NoError(t, readErr)
+				requirements.NoError(readErr)
 				beforeWrite = before.CompleteThrough
 				_, messageID, readErr = testutil.CreateIndexedSourceMessage(ctx, st, "events@example.test", "challenge", "challenge", "")
-				require.NoError(t, readErr)
+				requirements.NoError(readErr)
 				after, readErr := st.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
-				require.NoError(t, readErr)
+				requirements.NoError(readErr)
 				afterWrite = after.CompleteThrough
 				return nil
 			}, nil)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			state, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
-			require.NoError(t, err)
-			require.NotNil(t, raw)
+			requirements.NoError(err)
+			requirements.NotNil(raw)
 			if delegated {
-				assert.False(t, state.At.Before(afterWrite))
+				assertions.False(state.At.Before(afterWrite))
 			} else {
-				assert.False(t, state.At.After(beforeWrite))
+				assertions.False(state.At.After(beforeWrite))
 				page, readErr := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(state.At), 100)
-				require.NoError(t, readErr)
+				requirements.NoError(readErr)
 				var ids []int64
 				for _, message := range page.Messages {
 					ids = append(ids, message.ID)
 				}
-				assert.Contains(t, ids, messageID)
+				assertions.Contains(ids, messageID)
 			}
 		})
 	}
@@ -1416,30 +1418,31 @@ func TestCatalogIdentityRequiresExactWidth(t *testing.T) {
 }
 
 func TestNativeRejectsSuffixedOwnerIdentity(t *testing.T) {
+	requirements := require.New(t)
 	st := newEventsTestStore(t)
 	service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true}
 	in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	created, err := service.Subscribe(t.Context(), in, "owner", acceptCallback, nil)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	credentials, err := providercredentials.ReadEvents(service.TokensDir)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	value, _, err := credentials.Resolve(providercredentials.EventsID(created.ID), "https://example.com", "", nil)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	badID := created.ID + "0123456789abcdef0123456789abcdef"
 	revision, err := credentials.Revision(providercredentials.EventsID(badID))
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, err = providercredentials.PutIfRevision(service.TokensDir, revision, providercredentials.EventsID(badID), "https://example.com", value)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	entries, raw, err := service.catalog(t.Context())
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
+	requirements.NoError(err)
+	requirements.Len(entries, 1)
 	entries[0].ID = badID
 	next, err := json.Marshal(entries)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	ok, err := st.SwapMCPEventsCatalog(t.Context(), raw, next, "", nil, "")
-	require.NoError(t, err)
-	require.True(t, ok)
+	requirements.NoError(err)
+	requirements.True(ok)
 	targets, err := service.Native(t.Context())
-	require.NoError(t, err)
+	requirements.NoError(err)
 	assert.Empty(t, targets)
 }

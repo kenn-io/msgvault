@@ -326,16 +326,18 @@ func TestDelegatedSourceScopeAdmission(t *testing.T) {
 }
 
 func TestDelegatedSourceIdentityChangesDuringChallenge(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
 	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "allowed@example.test", "allowed", "allowed", "")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
 	registry := agentgrant.NewRegistry()
 	t.Cleanup(registry.Close)
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true, Grants: registry}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, AgentGrants: registry, Logger: testLogger()})
 	_, token, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	calls := 0
 	srv.verifyEventsCallback = func(ctx context.Context, _ string, _ string, _ []byte) error {
 		calls++
@@ -348,12 +350,12 @@ func TestDelegatedSourceIdentityChangesDuringChallenge(t *testing.T) {
 	r.Header.Set(apiprotocol.AgentTokenHeader, token)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, r)
-	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "permission_denied")
-	assert.Equal(t, 1, calls)
+	assertions.Equal(http.StatusForbidden, w.Code)
+	assertions.Contains(w.Body.String(), "permission_denied")
+	assertions.Equal(1, calls)
 	raw, err := st.LoadMCPEventsCatalog(t.Context())
-	require.NoError(t, err)
-	assert.Empty(t, raw)
+	requirements.NoError(err)
+	assertions.Empty(raw)
 }
 
 func TestMCPEventsRequireSearchPermission(t *testing.T) {
@@ -372,32 +374,33 @@ func TestMCPEventsRequireSearchPermission(t *testing.T) {
 }
 
 func TestDelegatedPersonRefusalsHaveSameReason(t *testing.T) {
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	allowed, insideMessage, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "allowed@example.test", "inside", "inside", "")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	_, outsideMessage, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "outside@example.test", "outside", "outside", "")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	inside, err := st.EnsureParticipant("inside@example.test", "Inside", "example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	outside, err := st.EnsureParticipant("outside-person@example.test", "Outside", "example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	both, err := st.EnsureParticipant("both@example.test", "Both", "example.test")
-	require.NoError(t, err)
-	require.NoError(t, st.ReplaceMessageRecipients(insideMessage, "to", []int64{inside, both}, nil))
-	require.NoError(t, st.ReplaceMessageRecipients(outsideMessage, "to", []int64{outside, both}, nil))
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(insideMessage, "to", []int64{inside, both}, nil))
+	requirements.NoError(st.ReplaceMessageRecipients(outsideMessage, "to", []int64{outside, both}, nil))
 	inPerson, _, err := st.CreatePersonFromParticipant(inside)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	outPerson, _, err := st.CreatePersonFromParticipant(outside)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	bothPerson, _, err := st.CreatePersonFromParticipant(both)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
 	registry := agentgrant.NewRegistry()
 	t.Cleanup(registry.Close)
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true, Grants: registry}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, AgentGrants: registry, Logger: testLogger()})
 	_, token, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: allowed.ID, Type: allowed.SourceType, Identifier: allowed.Identifier}}, time.Time{})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	calls := 0
 	srv.verifyEventsCallback = func(context.Context, string, string, []byte) error { calls++; return nil }
 	for _, tc := range []struct {
@@ -412,8 +415,10 @@ func TestDelegatedPersonRefusalsHaveSameReason(t *testing.T) {
 		{"inside", inPerson.ID, http.StatusOK, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
 			before, err := st.LoadMCPEventsCatalog(t.Context())
-			require.NoError(t, err)
+			requirements.NoError(err)
 			body := fmt.Sprintf(`{"name":"msgvault.messages.changed","arguments":{"person_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, tc.id)
 			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
 			r.Header.Set("Content-Type", "application/json")
@@ -421,20 +426,20 @@ func TestDelegatedPersonRefusalsHaveSameReason(t *testing.T) {
 			w := httptest.NewRecorder()
 			previousCalls := calls
 			srv.Router().ServeHTTP(w, r)
-			assert.Equal(t, tc.status, w.Code, w.Body.String())
+			assertions.Equal(tc.status, w.Code, w.Body.String())
 			if tc.reason == "" {
-				assert.Equal(t, previousCalls+1, calls)
+				assertions.Equal(previousCalls+1, calls)
 			} else {
-				assert.Equal(t, previousCalls, calls)
+				assertions.Equal(previousCalls, calls)
 			}
 			after, err := st.LoadMCPEventsCatalog(t.Context())
-			require.NoError(t, err)
+			requirements.NoError(err)
 			if tc.reason != "" {
-				assert.Contains(t, w.Body.String(), tc.reason)
-				assert.Equal(t, before, after)
+				assertions.Contains(w.Body.String(), tc.reason)
+				assertions.Equal(before, after)
 			} else {
-				assert.NotEqual(t, before, after)
-				require.NoError(t, st.ReplaceMessageRecipients(outsideMessage, "to", []int64{outside, both, inside}, nil))
+				assertions.NotEqual(before, after)
+				requirements.NoError(st.ReplaceMessageRecipients(outsideMessage, "to", []int64{outside, both, inside}, nil))
 				body := fmt.Sprintf(`{"name":"msgvault.messages.changed","arguments":{"person_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, inPerson.ID)
 				r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
 				r.Header.Set("Content-Type", "application/json")
@@ -442,17 +447,19 @@ func TestDelegatedPersonRefusalsHaveSameReason(t *testing.T) {
 				w := httptest.NewRecorder()
 				previousCalls := calls
 				srv.Router().ServeHTTP(w, r)
-				assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
-				assert.Equal(t, previousCalls+1, calls)
+				assertions.Equal(http.StatusOK, w.Code, w.Body.String())
+				assertions.Equal(previousCalls+1, calls)
 			}
 		})
 	}
 }
 
 func TestEventsInitialSourceAdmissionPreservesDaemonClientReason(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("test", "events@example.test")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	wrapped := &agentReadGateStore{Store: st, sourceErr: errors.New("fixture source failure")}
 	registry := agentgrant.NewRegistry()
 	t.Cleanup(registry.Close)
@@ -460,15 +467,15 @@ func TestEventsInitialSourceAdmissionPreservesDaemonClientReason(t *testing.T) {
 	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true, Grants: registry}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: wrapped, MCPEvents: events, AgentGrants: registry, Logger: testLogger()})
 	_, token, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	server := httptest.NewServer(srv.Router())
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: token, AllowInsecure: true})
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, client.Close()) })
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(client.Close()) })
 	_, err = client.MCPEventsSubscribe(t.Context(), mcpevents.MCPEventsSubscribeRequest{Name: mcpevents.Name, Arguments: mcpevents.MCPEventsArguments{SourceID: source.ID}, Delivery: mcpevents.MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
 	var eventErr *mcpevents.Error
-	require.ErrorAs(t, err, &eventErr)
-	assert.Equal(t, mcpevents.Unavailable, eventErr.Code)
-	assert.Equal(t, "source_scope_unavailable", eventErr.Reason)
+	requirements.ErrorAs(err, &eventErr)
+	assertions.Equal(mcpevents.Unavailable, eventErr.Code)
+	assertions.Equal("source_scope_unavailable", eventErr.Reason)
 }
