@@ -521,7 +521,7 @@ func TestSearchMessageBodies_PostgreSQLSaturatedPagination(t *testing.T) {
 	if !f.Store.IsPostgreSQL() {
 		t.Skip("PostgreSQL indexing")
 	}
-	id := createSearchScopeMessage(t, f, "exact-candidate", strings.Repeat("alpha ", 300), "ordinary", "alpha@beta.example marker", 0, 0)
+	id := createSearchScopeMessage(t, f, "exact-candidate", strings.Repeat("alpha ", 300), "ordinary", "alpha@beta.example.com marker", 0, 0)
 	falseID := createSearchScopeMessage(t, f, "false-candidate", "ordinary", "ordinary", strings.Repeat("alpha ", 300)+"middle beta marker", 0, 0)
 	var firstID int64
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE id IN ($1, $2) ORDER BY sent_at DESC, id DESC LIMIT 1`, id, falseID).Scan(&firstID))
@@ -540,7 +540,7 @@ func TestSearchMessageBodies_PostgreSQLSaturatedPagination(t *testing.T) {
 	require.NoError(err)
 	require.Len(result.Messages, 1)
 	assert.Equal(id, result.Messages[0].ID)
-	assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "alpha@beta.example")
+	assert.Contains(strings.Join(result.Messages[0].BodyContextSnippets, " "), "alpha@beta.example.com")
 	result, err = searcher.SearchMessageBodies(t.Context(), &search.Query{TextTerms: []string{"beta@alpha"}}, 10, 0)
 	require.NoError(err)
 	assert.Empty(result.Messages)
