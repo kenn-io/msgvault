@@ -15,7 +15,7 @@ func TestBriefProgramFingerprintStable(t *testing.T) {
 	checks.Equal("v3", BriefProgramVersion)
 	checks.Equal("msgvault_person_brief_v3", BriefSchemaName)
 	checks.Equal(2048, briefMaxOutputTokens)
-	checks.Len(BriefProgramFingerprint(), 64)
+	checks.Equal("6beb307435ba3ad1f068aa32c2e8a530ee98dae2cb97b7a58c716b3add1806f5", BriefProgramFingerprint())
 	checks.NotEqual(ProgramFingerprint(), BriefProgramFingerprint())
 }
 
