@@ -291,7 +291,7 @@ WITH subject_facts AS (
     SELECT a.entry_key, min(selected.message_id) AS message_id,
         any_value(a.conversation_id) FILTER (WHERE a.message_id=selected.message_id) AS conversation_id,
         any_value(a.source_id) FILTER (WHERE a.message_id=selected.message_id) AS source_id,
-        min(a.occurred_at) AS occurred_at,
+        min(a.occurred_at) FILTER (WHERE a.message_id=selected.message_id) AS occurred_at,
         any_value(a.entry_kind) FILTER (WHERE a.message_id=selected.message_id) AS entry_kind,
         any_value(a.is_chat) FILTER (WHERE a.message_id=selected.message_id) AS is_chat,
         any_value(a.has_attachments) FILTER (WHERE a.message_id=selected.message_id) AS has_attachments,

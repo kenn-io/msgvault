@@ -53,7 +53,7 @@ type MeetingEvidence struct {
 	occurrences     map[string]CalendarOccurrence
 	notes           []occurrenceNote
 	choices         []meetingDecisionEdge
-	seriesAttendees map[int64][]string
+	seriesAttendees map[int64][]seriesAttendee
 	suppressed      []int64
 	unexpandable    map[int64]bool
 	tooBroadYears   []int
@@ -371,7 +371,7 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 			seriesIDs[occurrence.SeriesMessageID] = true
 		}
 	}
-	seriesAttendees := map[int64][]string{}
+	seriesAttendees := map[int64][]seriesAttendee{}
 	ids := make([]int64, 0, len(seriesIDs))
 	for id := range seriesIDs {
 		ids = append(ids, id)
@@ -382,18 +382,18 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 		for i, id := range batch {
 			args[i] = id
 		}
-		rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT message_id, email FROM calendar_event_attendees WHERE message_id IN (`+placeholders(len(batch))+`)`, args...)
+		rows, err := s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT message_id, email, rsvp='declined' FROM calendar_event_attendees WHERE message_id IN (`+placeholders(len(batch))+`)`, args...)
 		if err != nil {
 			return nil, fmt.Errorf("read series attendees: %w", err)
 		}
 		for rows.Next() {
 			var id int64
-			var email string
-			if err := rows.Scan(&id, &email); err != nil {
+			var attendee seriesAttendee
+			if err := rows.Scan(&id, &attendee.email, &attendee.declined); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
-			seriesAttendees[id] = append(seriesAttendees[id], strings.ToLower(strings.TrimSpace(email)))
+			seriesAttendees[id] = append(seriesAttendees[id], attendee)
 		}
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return nil, err
@@ -449,6 +449,40 @@ func readFallbackAttendees(ctx context.Context, reader SQLReader, fallbacks map[
 		}
 	}
 	return nil
+}
+
+type seriesAttendee struct {
+	email    string
+	declined bool
+}
+
+func occurrenceDeclines(event CalendarOccurrence, series []seriesAttendee) map[string]bool {
+	current, declined := map[string]bool{}, map[string]bool{}
+	for _, attendee := range event.Attendees {
+		email := strings.ToLower(strings.TrimSpace(attendee.Email))
+		current[email] = true
+		if attendee.RSVP == "declined" {
+			declined[email] = true
+		}
+	}
+	if event.SeriesMessageID != 0 && event.MessageID != event.SeriesMessageID {
+		for _, attendee := range series {
+			email := strings.ToLower(strings.TrimSpace(attendee.email))
+			if !current[email] && (!event.row.Event.AttendeesOmitted || attendee.declined) {
+				declined[email] = true
+			}
+		}
+	}
+	return declined
+}
+
+func sortedDeclines(declined map[string]bool) []string {
+	emails := make([]string, 0, len(declined))
+	for email := range declined {
+		emails = append(emails, email)
+	}
+	slices.Sort(emails)
+	return emails
 }
 
 // Reduce derives occurrence rows without reading the archive again.
@@ -574,26 +608,15 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 		cancelled := false
 		var startDate string
 		declined := map[string]bool{}
+		eventDeclines := map[string]map[string]bool{}
 		for _, event := range unit.events {
 			if key == "" || event.Ref < key {
 				key = event.Ref
 			}
 			cancelled = cancelled || event.Status == "cancelled"
-			currentAttendees := map[string]bool{}
-			for _, attendee := range event.Attendees {
-				currentAttendees[strings.ToLower(strings.TrimSpace(attendee.Email))] = true
-				if attendee.RSVP != "declined" {
-					continue
-				}
-				email := strings.ToLower(strings.TrimSpace(attendee.Email))
+			eventDeclines[event.Ref] = occurrenceDeclines(event, seriesAttendees[event.SeriesMessageID])
+			for email := range eventDeclines[event.Ref] {
 				declined[email] = true
-			}
-			if event.SeriesMessageID != 0 && event.MessageID != event.SeriesMessageID && !event.row.Event.AttendeesOmitted {
-				for _, email := range seriesAttendees[event.SeriesMessageID] {
-					if !currentAttendees[email] {
-						declined[email] = true
-					}
-				}
 			}
 		}
 		if len(unit.events) > 0 && (!unit.events[0].DeletedFromSource || len(unit.notes) == 0) {
@@ -619,8 +642,8 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 		slices.Sort(declinedEmails)
 		for _, event := range unit.events {
 			ownerDeclined := false
-			for _, attendee := range event.Attendees {
-				ownerDeclined = ownerDeclined || attendee.RSVP == "declined" && owners[strings.ToLower(strings.TrimSpace(attendee.Email))]
+			for email := range eventDeclines[event.Ref] {
+				ownerDeclined = ownerDeclined || owners[email]
 			}
 			for _, id := range []int64{event.MessageID, event.SeriesMessageID} {
 				if id != 0 {
@@ -633,7 +656,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 					if event.AllDay {
 						eventDate = event.StartDate
 					}
-					result = append(result, MeetingOccurrence{MessageID: id, OccurrenceKey: key, OccurredAt: event.Start, StartDate: eventDate, Counted: !event.Start.After(through) && !cancelled && !event.DeletedFromSource && !ownerDeclined, DeclinedEmails: declinedEmails, ScheduledSeconds: duration})
+					result = append(result, MeetingOccurrence{MessageID: id, OccurrenceKey: key, OccurredAt: event.Start, StartDate: eventDate, Counted: !event.Start.After(through) && !cancelled && !event.DeletedFromSource && !ownerDeclined, DeclinedEmails: sortedDeclines(eventDeclines[event.Ref]), ScheduledSeconds: duration})
 				}
 			}
 		}

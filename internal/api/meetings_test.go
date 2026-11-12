@@ -501,11 +501,12 @@ func TestMeetingScopeResolvesDurablePersonAndPreservesExactPluralIDs(t *testing.
 	response = httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, meetingRouteRequest(
 		t.Context(),
-		"/api/v1/meetings/metrics", `{"scope":{"participant_ids":[11]}}`,
+		"/api/v1/meetings/metrics", `{"scope":{"participant_ids":[11],"message_types":["calendar_event"]}}`,
 	))
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	assertions.Nil(st.metricsScope.Person)
 	assertions.Equal([]int64{11}, st.metricsScope.ParticipantIDs)
+	assertions.Equal([]string{"calendar_event"}, st.metricsScope.MessageTypes)
 }
 
 func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *testing.T) {
@@ -541,6 +542,17 @@ func TestMeetingExploreScopeRejectsMixedSelectionsAndBindsExactAuthority(t *test
 	assertions.Equal([]int64{41}, *st.actionsQuery.Scope.MessageIDs)
 	assertions.NotEmpty(st.actionsQuery.Scope.Authority)
 	assertions.Equal(10_000, engine.limit)
+}
+
+func TestMeetingExploreMetricsPreserveSourceAndParticipantFilters(t *testing.T) {
+	st := &meetingRouteStore{mockStore: &mockStore{}, metricsResult: &meetingcontent.Metrics{DurationByBasis: []meetingcontent.BasisTotals{}, Months: []meetingcontent.MonthTotals{}}}
+	engine := &meetingRouteEngine{MockEngine: &querytest.MockEngine{}, result: &query.ExploreMeetingSelection{SelectedCount: 1, MeetingCount: 1, MessageIDs: []int64{41}, CacheRevision: "r"}}
+	response := httptest.NewRecorder()
+	newMeetingRouteTestServer(t, st, engine).Router().ServeHTTP(response, meetingRouteRequest(t.Context(), "/api/v1/meetings/metrics", `{"explore":{"predicate":{"filters":[{"dimension":"source","values":["2"]},{"dimension":"participant","values":["7"]},{"dimension":"participant","values":["8"]}]},"cache_revision":"r","search_provenance":{}}}`))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, []int64{2}, st.metricsScope.SourceIDs)
+	assert.Equal(t, []int64{7}, st.metricsScope.ParticipantIDs)
+	assert.Equal(t, [][]int64{{8}}, st.metricsScope.AdditionalParticipantGroups)
 }
 
 func TestMeetingExploreScopeUsesSemanticSnapshotAndRejectsSaturatedPool(t *testing.T) {

@@ -193,6 +193,11 @@ func TestMeetingActionsCursorCanonicalizesScopePopulation(t *testing.T) {
 		Limit: 1, Cursor: first.NextCursor,
 	})
 	requirements.ErrorIs(err, ErrMeetingInvalidCursor)
+	_, err = fixture.store.ListMeetingActionsContext(t.Context(), MeetingActionsQuery{
+		Scope: MeetingQueryScope{MessageIDs: &secondIDs, MessageTypes: []string{"calendar_event"}},
+		Limit: 1, Cursor: first.NextCursor,
+	})
+	requirements.ErrorIs(err, ErrMeetingInvalidCursor)
 	empty := []int64{}
 	_, err = fixture.store.ListMeetingActionsContext(t.Context(), MeetingActionsQuery{
 		Scope: MeetingQueryScope{MessageIDs: &empty}, Limit: 1, Cursor: first.NextCursor,

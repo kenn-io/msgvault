@@ -417,7 +417,8 @@ import (
 // 5.1.0 adds keyed group overviews, time-group item totals, saved view schema 3, and saved view run timezones.
 // 5.2.0 adds meeting records.
 // 5.3.0 adds owner meeting link decisions.
-const APISchemaVersion = "5.3.0"
+// 5.4.0 adds meeting evidence type filters.
+const APISchemaVersion = "5.4.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

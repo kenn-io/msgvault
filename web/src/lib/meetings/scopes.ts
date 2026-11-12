@@ -26,6 +26,17 @@ export const restrictsToMeetingTranscripts = (predicate: ExplorePredicate): bool
 
 const unsupportedFilters = () => new Error('Meeting activity cannot represent these relationship filters exactly. Adjust the filters to load meeting activity.');
 
+function constrainMeetingTypes(scope: MeetingScopeRequest, values: string[], dimension: string): void {
+  if (scope.message_ids?.length === 0) return;
+  const selected = dimension === 'kind'
+    ? [values.includes('event') && 'calendar_event', values.includes('meeting') && 'meeting_transcript'].filter((value): value is string => !!value)
+    : values.filter((value) => value === 'calendar_event' || value === 'meeting_transcript');
+  const current = scope.message_types ?? ['calendar_event', 'meeting_transcript'];
+  const intersection = current.filter((type) => selected.includes(type));
+  if (intersection.length === 0) scope.message_ids = [];
+  else scope.message_types = intersection;
+}
+
 /** Relationships intentionally ignores URL text search. Convert only constraints
  * that its direct meeting scope can preserve; never broaden a contextual filter. */
 export function relationshipMeetingScope(identity: Pick<MeetingScopeRequest, 'participant_id' | 'domains'>, predicate: ExplorePredicate): MeetingPanelScope {
@@ -43,10 +54,8 @@ export function relationshipMeetingScope(identity: Pick<MeetingScopeRequest, 'pa
       const key = filter.dimension;
       const previous = scope[key];
       if (!previous || (key === 'after' ? Date.parse(values[0]!) > Date.parse(previous) : Date.parse(values[0]!) < Date.parse(previous))) scope[key] = values[0];
-    } else if (filter.dimension === 'message_type') {
-      if (!values.includes('meeting_transcript')) scope.message_ids = [];
-    } else if (filter.dimension === 'kind') {
-      if (!values.includes('meeting')) scope.message_ids = [];
+    } else if (filter.dimension === 'message_type' || filter.dimension === 'kind') {
+      constrainMeetingTypes(scope, values, filter.dimension);
     } else if (filter.dimension === 'deletion') {
       if (values.length !== 1 || !['any', 'active', 'deleted'].includes(values[0]!)) throw unsupportedFilters();
       const deletion = values[0] as MeetingScopeRequest['deletion'];

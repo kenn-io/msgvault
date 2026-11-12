@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { exploreMeetingScope, relationshipMeetingScope, restrictsToMeetingTranscripts } from './scopes';
 
 describe('meeting scopes', () => {
+  it('retains calendar-only and transcript-only meeting filters', () => {
+    expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [{ dimension: 'message_type', values: ['calendar_event'] }] })).toEqual({ kind: 'direct', scope: { participant_id: 7, message_types: ['calendar_event'] } });
+    expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }] })).toEqual({ kind: 'direct', scope: { participant_id: 7, message_types: ['meeting_transcript'] } });
+  });
   it.each([
     { name: 'no filters', filters: undefined, want: false },
     { name: 'meetings only', filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }], want: true },
@@ -40,8 +44,9 @@ describe('meeting scopes', () => {
   });
 
   it.each([
-    { kinds: ['meeting'], scope: { participant_id: 7 } },
-    { kinds: ['meeting', 'email'], scope: { participant_id: 7 } },
+    { kinds: ['meeting'], scope: { participant_id: 7, message_types: ['meeting_transcript'] } },
+    { kinds: ['meeting', 'email'], scope: { participant_id: 7, message_types: ['meeting_transcript'] } },
+    { kinds: ['event'], scope: { participant_id: 7, message_types: ['calendar_event'] } },
     { kinds: ['email'], scope: { participant_id: 7, message_ids: [] } },
   ])('preserves the meeting intersection of kind filters $kinds', ({ kinds, scope }) => {
     expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [
@@ -81,7 +86,7 @@ describe('meeting scopes', () => {
 });
 
  it('recognizes guaranteed meeting type and preserves contradictory date bounds as match-none', () => {
-   expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [{ dimension: 'message_type', values: ['meeting_transcript', 'email'] }] })).toEqual({ kind: 'direct', scope: { participant_id: 7 } });
+   expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [{ dimension: 'message_type', values: ['meeting_transcript', 'email'] }] })).toEqual({ kind: 'direct', scope: { participant_id: 7, message_types: ['meeting_transcript'] } });
    expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [{ dimension: 'message_type', values: ['email'] }] })).toEqual({ kind: 'direct', scope: { participant_id: 7, message_ids: [] } });
    expect(relationshipMeetingScope({ domains: ['exact.example'] }, { filters: [
      { dimension: 'after', values: ['2026-02-01T00:00:00Z'] }, { dimension: 'before', values: ['2026-01-01T00:00:00Z'] }

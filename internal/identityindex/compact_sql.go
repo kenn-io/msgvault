@@ -15,12 +15,12 @@ const (
 func buildRelationshipPeopleSQL(effectiveAt time.Time, activity string) string {
 	return `
 WITH file_messages AS (
-	SELECT DISTINCT message_id, canonical_id, source_id, attachment_count
+	SELECT DISTINCT message_id, canonical_id, source_id, source_type, attachment_count
 	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND NOT unsent AND (is_direct OR is_conversation_member)
 ), file_totals AS (
 	SELECT canonical_id, sum(attachment_count)::BIGINT AS file_count FROM file_messages GROUP BY canonical_id
 ), source_file_totals AS (
-	SELECT canonical_id, source_id, sum(attachment_count)::BIGINT AS file_count FROM file_messages GROUP BY canonical_id, source_id
+	SELECT canonical_id, source_id, source_type, sum(attachment_count)::BIGINT AS file_count FROM file_messages GROUP BY canonical_id, source_id, source_type
 ), logical_people AS (
 	SELECT entry_key, source_id, source_type, occurred_at, message_type, entry_kind, attachment_count,
 	       canonical_id, with_owner
@@ -43,7 +43,7 @@ WITH file_messages AS (
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
 	FROM logical_people
-	GROUP BY canonical_id, source_id, source_type
+	GROUP BY canonical_id, source_id, source_type UNION ALL SELECT f.canonical_id, f.source_id, f.source_type, 0, 0, 0, NULL::TIMESTAMP, NULL::TIMESTAMP FROM source_file_totals f WHERE f.file_count > 0 AND NOT EXISTS (SELECT 1 FROM logical_people p WHERE p.canonical_id=f.canonical_id AND p.source_id=f.source_id)
 ), source_type_rows AS (
 	SELECT canonical_id, source_type,
 	       sum(activity_count)::BIGINT AS source_count

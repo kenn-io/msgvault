@@ -62,6 +62,7 @@ type meetingActionsFilter struct {
 	MessageIDs     *[]int64           `json:"message_ids"`
 	SourceIDs      []int64            `json:"source_ids"`
 	ParticipantIDs []int64            `json:"participant_ids"`
+	MessageTypes   []string           `json:"message_types"`
 	Person         *personscope.Scope `json:"person"`
 	Domains        []string           `json:"domains"`
 	After          string             `json:"after,omitempty"`
@@ -301,13 +302,13 @@ func (s *Store) meetingActionPosition(cursor *meetingActionsCursor) (string, []a
 func meetingActionsFilterHash(query MeetingActionsQuery) (string, error) {
 	filter := meetingActionsFilter{
 		SourceIDs:      normalizedSignedIDs(query.Scope.SourceIDs),
-		ParticipantIDs: normalizedSignedIDs(query.Scope.ParticipantIDs),
-		Domains:        normalizedMeetingDomains(query.Scope.Domains),
-		Deletion:       normalizedMeetingDeletion(query.Scope.Deletion),
-		Authority:      query.Scope.Authority,
-		AssigneeEmail:  strings.ToLower(strings.TrimSpace(query.AssigneeEmail)),
-		Status:         string(query.Status),
-		Query:          strings.ToLower(query.Query),
+		ParticipantIDs: normalizedSignedIDs(query.Scope.ParticipantIDs), MessageTypes: normalizedMeetingDomains(query.Scope.MessageTypes),
+		Domains:       normalizedMeetingDomains(query.Scope.Domains),
+		Deletion:      normalizedMeetingDeletion(query.Scope.Deletion),
+		Authority:     query.Scope.Authority,
+		AssigneeEmail: strings.ToLower(strings.TrimSpace(query.AssigneeEmail)),
+		Status:        string(query.Status),
+		Query:         strings.ToLower(query.Query),
 	}
 	if query.Scope.MessageIDs != nil {
 		values := normalizedSignedIDs(*query.Scope.MessageIDs)

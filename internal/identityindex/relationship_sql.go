@@ -138,27 +138,27 @@ WITH filtered_facts AS (
 	SELECT DISTINCT entry_key, canonical_id, domain
 	FROM logical_person_domain_candidates
 ), logical_domain_candidates AS (
-	SELECT u.entry_key, f.participant_domain AS domain
+	SELECT u.entry_key, u.source_id, f.participant_domain AS domain
 	FROM nonchat_units u
 	JOIN %[1]s f ON f.entry_key = u.entry_key AND f.source_id = u.source_id
 	WHERE f.canonical_id IS NOT NULL
 
 	UNION ALL
 
-	SELECT u.entry_key, f.participant_domain AS domain
+	SELECT u.entry_key, u.source_id, f.participant_domain AS domain
 	FROM chat_units u
 	JOIN %[1]s f ON f.message_id = u.anchor_message_id
 	WHERE f.canonical_id IS NOT NULL
 
 	UNION ALL
 
-	SELECT c.entry_key, f.participant_domain AS domain
-	FROM chat_unit_fragments c
+	SELECT c.entry_key, u.source_id, f.participant_domain AS domain
+	FROM chat_unit_fragments c JOIN chat_units u ON u.entry_key = c.entry_key
 	JOIN %[1]s f ON f.message_id = c.message_id
 	WHERE f.canonical_id IS NOT NULL
 	  AND f.is_direct
 ), logical_domain_keys AS (
-	SELECT DISTINCT entry_key, domain
+	SELECT DISTINCT entry_key, source_id, domain
 	FROM logical_domain_candidates
 ), logical_domains AS (
 	SELECT u.*, k.domain,
@@ -168,7 +168,7 @@ WITH filtered_facts AS (
 	           []::BIGINT[]
 	       ) AS canonical_ids
 	FROM logical_domain_keys k
-	JOIN logical_units u USING (entry_key)
+	JOIN logical_units u USING (entry_key, source_id)
 	LEFT JOIN logical_person_domains pd
 	  ON pd.entry_key = k.entry_key AND pd.domain = k.domain
 	GROUP BY ALL
@@ -196,7 +196,7 @@ SELECT 2::UTINYINT AS relation_kind,
        NULL::BOOLEAN AS is_author, NULL::BOOLEAN AS is_owner,
        NULL::BOOLEAN AS with_owner, k.domain
 FROM logical_domain_keys k
-JOIN logical_units u USING (entry_key)
+JOIN logical_units u USING (entry_key, source_id)
 WHERE k.domain <> ''
 
 UNION ALL

@@ -34,15 +34,14 @@ func (s *Server) resolveDirectMeetingScope(
 	}
 	if !validateOptionalMeetingIDs(w, "message_ids", request.MessageIDs, fields, true) ||
 		!validateMeetingIDList(w, "source_ids", request.SourceIDs, fields, false) ||
-		!validateMeetingIDList(w, "participant_ids", request.ParticipantIDs, fields, false) {
+		!validateMeetingIDList(w, "participant_ids", request.ParticipantIDs, fields, false) ||
+		!resolveDirectMeetingEvidence(w, request, fields, &resolved.Scope) {
 		return meetingScopeResolution{}, false
 	}
 	if request.MessageIDs != nil {
 		ids := normalizedPublicMeetingIDs(*request.MessageIDs)
 		resolved.Scope.MessageIDs = &ids
 	}
-	resolved.Scope.SourceIDs = normalizedPublicMeetingIDs(request.SourceIDs)
-	resolved.Scope.ParticipantIDs = normalizedPublicMeetingIDs(request.ParticipantIDs)
 
 	personProvided := meetingPositiveField(w, "person_id", request.PersonID, fields)
 	if personProvided.invalid {
@@ -115,6 +114,25 @@ func (s *Server) resolveDirectMeetingScope(
 type meetingOptionalPositive struct {
 	present bool
 	invalid bool
+}
+
+func resolveDirectMeetingEvidence(w http.ResponseWriter, request *MeetingScopeRequest, fields map[string]jsontext.Value, scope *store.MeetingQueryScope) bool {
+	scope.SourceIDs = normalizedPublicMeetingIDs(request.SourceIDs)
+	scope.ParticipantIDs = normalizedPublicMeetingIDs(request.ParticipantIDs)
+	if raw, present := fields["message_types"]; present {
+		if isJSONNull(raw) || len(request.MessageTypes) == 0 || len(request.MessageTypes) > 2 {
+			writeError(w, http.StatusBadRequest, "invalid_meeting_scope", "message_types must contain one or two meeting types")
+			return false
+		}
+		for _, kind := range request.MessageTypes {
+			if kind != "calendar_event" && kind != "meeting_transcript" {
+				writeError(w, http.StatusBadRequest, "invalid_meeting_scope", "unknown meeting message type")
+				return false
+			}
+		}
+		scope.MessageTypes = slices.Clone(request.MessageTypes)
+	}
+	return true
 }
 
 func meetingPositiveField(
@@ -311,11 +329,7 @@ func (s *Server) resolveMeetingExploreScope(
 		CandidateSnapshotID string                 `json:"candidate_snapshot_id,omitempty"`
 	}{prepared.request, result.CacheRevision, result.SearchProvenance, resolvedSnapshotID}, false)
 	return meetingScopeResolution{
-		Scope: store.MeetingQueryScope{
-			MessageIDs: &ids,
-			Deletion:   string(prepared.query.Context.Deletion),
-			Authority:  authority,
-		},
+		Scope: meetingScopeForExplore(prepared.query.Context, ids, authority),
 		Provenance: meetingcontent.ScopeProvenance{
 			Kind:                 "explore",
 			CacheRevision:        result.CacheRevision,
@@ -324,6 +338,19 @@ func (s *Server) resolveMeetingExploreScope(
 			CandidateSnapshotID:  resolvedSnapshotID,
 		},
 	}, true
+}
+
+func meetingScopeForExplore(ctx query.Context, ids []int64, authority string) store.MeetingQueryScope {
+	sources := slices.Clone(ctx.SourceIDs)
+	if ctx.Identity != nil && len(sources) == 0 {
+		sources = []int64{ctx.Identity.SourceID}
+	}
+	return store.MeetingQueryScope{
+		MessageIDs: &ids, SourceIDs: sources, ParticipantIDs: slices.Clone(ctx.ParticipantIDs),
+		AdditionalParticipantGroups: slices.Clone(ctx.AdditionalParticipantGroups),
+		Domains:                     slices.Clone(ctx.Domains), AdditionalDomainGroups: slices.Clone(ctx.AdditionalDomainGroups),
+		Deletion: string(ctx.Deletion), Authority: authority,
+	}
 }
 
 func fieldPresent(fields map[string]jsontext.Value, name string) bool {

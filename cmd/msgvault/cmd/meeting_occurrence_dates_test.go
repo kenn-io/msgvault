@@ -55,6 +55,10 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 	require.NoError(t, err)
 	defer engine.Close()
 	after := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	timeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Context: query.Context{SourceIDs: []int64{second.ID}}})
+	require.NoError(t, err)
+	require.Len(t, timeline.Rows, 1)
+	assert.Equal(t, jan, timeline.Rows[0].OccurredAt)
 	for _, tc := range []struct {
 		name  string
 		scope query.Context

@@ -124,7 +124,7 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 			units[row.OccurrenceKey] = unit
 		}
 		counted := row.Counted
-		if counted && len(row.DeclinedEmails) > 0 && (len(scope.ParticipantIDs) > 0 || scope.Person != nil || len(scope.Domains) > 0) {
+		if counted && len(row.DeclinedEmails) > 0 && (len(scope.ParticipantIDs) > 0 || len(scope.AdditionalParticipantGroups) > 0 || scope.Person != nil || len(scope.Domains) > 0 || len(scope.AdditionalDomainGroups) > 0) {
 			key := strings.Join(row.DeclinedEmails, "\x00")
 			matching, ok := eligible[key]
 			if !ok {
@@ -322,6 +322,23 @@ func (s *Store) meetingMetricOwners(ctx context.Context) (map[string]bool, map[i
 	return owners, clusters, emailClusters, nil
 }
 
+func filterMeetingScopeParticipants(scope MeetingQueryScope, keep func([]int64) []int64) (MeetingQueryScope, bool) {
+	if len(scope.ParticipantIDs) > 0 {
+		scope.ParticipantIDs = keep(scope.ParticipantIDs)
+		if len(scope.ParticipantIDs) == 0 {
+			return scope, false
+		}
+	}
+	scope.AdditionalParticipantGroups = slices.Clone(scope.AdditionalParticipantGroups)
+	for i, group := range scope.AdditionalParticipantGroups {
+		scope.AdditionalParticipantGroups[i] = keep(group)
+		if len(scope.AdditionalParticipantGroups[i]) == 0 {
+			return scope, false
+		}
+	}
+	return scope, true
+}
+
 func (s *Store) meetingMetricEligibleMembers(ctx context.Context, scope MeetingQueryScope, declined []string, clusters map[int64]int64, emails map[string][]int64) (map[int64]bool, error) {
 	declinedClusters := map[int64]bool{}
 	for _, email := range declined {
@@ -345,11 +362,10 @@ func (s *Store) meetingMetricEligibleMembers(ctx context.Context, scope MeetingQ
 		return result
 	}
 	result := map[int64]bool{}
-	if len(scope.ParticipantIDs) > 0 {
-		scope.ParticipantIDs = keep(scope.ParticipantIDs)
-		if len(scope.ParticipantIDs) == 0 {
-			return result, nil
-		}
+	var matches bool
+	scope, matches = filterMeetingScopeParticipants(scope, keep)
+	if !matches {
+		return result, nil
 	}
 	if scope.Person != nil {
 		person := *scope.Person

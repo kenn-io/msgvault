@@ -319,6 +319,68 @@ func TestMeetingMetricsEditedOccurrenceWithOmittedAttendees(t *testing.T) {
 	assert.EqualValues(t, 1, metrics.Totals.MeetingCount)
 }
 
+func TestMeetingMetricsPartialUpdateInheritsDecline(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "series-declined", `{"id":"series","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person@example.com","responseStatus":"declined"}],"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	edit, _ := calendarFixture(t, st, "partial-edit", `{"id":"edited","recurringEventId":"series","originalStartTime":{"dateTime":"2024-01-09T10:00:00Z"},"start":{"dateTime":"2024-01-09T10:00:00Z"},"end":{"dateTime":"2024-01-09T11:00:00Z"},"attendeesOmitted":true}`)
+	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceMessageRecipients(master, "to", []int64{person}, []string{""}))
+	metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{ParticipantIDs: []int64{person}})
+	require.NoError(t, err)
+	assert.Zero(t, metrics.Totals.MeetingCount)
+	edit.RawMIME = []byte(`{"id":"edited","recurringEventId":"series","originalStartTime":{"dateTime":"2024-01-09T10:00:00Z"},"start":{"dateTime":"2024-01-09T10:00:00Z"},"end":{"dateTime":"2024-01-09T11:00:00Z"},"attendeesOmitted":true,"attendees":[{"email":"person@example.com","responseStatus":"accepted"}]}`)
+	_, err = st.PersistMessage(edit)
+	require.NoError(t, err)
+	metrics, err = st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{ParticipantIDs: []int64{person}})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, metrics.Totals.MeetingCount)
+}
+
+func TestMeetingMetricsCopyResponsesRemainScoped(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	var acceptedSource int64
+	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+	require.NoError(t, err)
+	for _, tc := range []struct{ owner, response string }{{"first@example.com", "declined"}, {"second@example.com", "accepted"}} {
+		data, id := calendarFixture(t, st, tc.owner, fmt.Sprintf(`{"id":"event","iCalUID":"shared@example.org","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person@example.com","responseStatus":%q}]}`, tc.response), tc.owner)
+		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
+		if tc.response == "accepted" {
+			acceptedSource = data.Message.SourceID
+		}
+	}
+	metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{SourceIDs: []int64{acceptedSource}, ParticipantIDs: []int64{person}})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, metrics.Totals.MeetingCount)
+}
+
+func TestMeetingMetricsEvidenceTypes(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, _ = calendarFixture(t, st, "type-event", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
+	_, _ = projectionFixture(t, st, "type-note", "meeting_json", `{"transcript":"Notes"}`)
+	for _, kind := range []string{"calendar_event", "meeting_transcript"} {
+		metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageTypes: []string{kind}})
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, metrics.Totals.MeetingCount, kind)
+	}
+}
+
+func TestMeetingMetricsAdditionalParticipantGroups(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "groups-event", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person@example.com","responseStatus":"accepted"},{"email":"other@other.test","responseStatus":"declined"}]}`)
+	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
+	require.NoError(t, err)
+	other, err := st.EnsureParticipant("other@other.test", "Other", "other.test")
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceMessageRecipients(event, "to", []int64{person, other}, []string{"", ""}))
+	metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{ParticipantIDs: []int64{person}, AdditionalParticipantGroups: [][]int64{{other}}})
+	require.NoError(t, err)
+	assert.Zero(t, metrics.Totals.MeetingCount)
+	metrics, err = st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{Domains: []string{"example.com"}, AdditionalDomainGroups: [][]string{{"other.test"}}})
+	require.NoError(t, err)
+	assert.Zero(t, metrics.Totals.MeetingCount)
+}
+
 func TestMeetingOccurrenceFutureLinkedNote(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
