@@ -94,9 +94,6 @@ func (s *Service) deleteCredential(id string) error {
 	_, err = providercredentials.DeleteIfRevision(s.TokensDir, revision, credentialID, func() error { return nil })
 	return err
 }
-func same(a, b MCPEventsArguments) bool {
-	return a.IncomingOnly != nil && b.IncomingOnly != nil && a.PersonID == b.PersonID && a.SourceID == b.SourceID && *a.IncomingOnly == *b.IncomingOnly
-}
 func subscriptionID(owner string, args MCPEventsArguments, url string) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%t\x00%s", owner, Name, args.PersonID, args.SourceID, *args.IncomingOnly, url)))
 	return hex.EncodeToString(sum[:16])
@@ -105,7 +102,7 @@ func subscriptionID(owner string, args MCPEventsArguments, url string) string {
 func find(entries []entry, args MCPEventsArguments, url string) int {
 	id := subscriptionID("owner", args, url)
 	for i, e := range entries {
-		if e.Owner == "owner" && e.ID == id && same(e.Arguments, args) {
+		if e.Owner == "owner" && e.ID == id {
 			return i
 		}
 	}
