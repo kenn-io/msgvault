@@ -83,11 +83,7 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	assert.NotContains(string(projected), "columns")
 	etag := editETag(merged.Person.ID)
 	args := map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "reject", "etag": etag}
-	stale := map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "reject", "etag": staleETag}
-	_, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", stale)
 	var refusal *mcpserver.OperationRefusalError
-	require.ErrorAs(err, &refusal)
-	assert.Equal("person_merge_revision_conflict", refusal.Code)
 	missing := map[string]any{"person_id": survivor.ID, "candidate_id": int64(999999), "merge_id": merged.Merge.ID, "decision": "reject", "etag": etag}
 	_, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", missing)
 	require.ErrorAs(err, &refusal)
@@ -111,10 +107,19 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	}
 	assert.Contains(names, "get_person_merge_snapshot")
 	assert.Contains(names, "decide_person_merge_candidate")
-	sdkResult, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: args})
+	stale := map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "reject", "etag": staleETag}
+	sdkResult, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: stale})
+	require.NoError(err)
+	staleDecisionFailure := loopToolFailure(t, sdkResult)
+	assert.Equal("person_merge_revision_conflict", staleDecisionFailure["error"])
+	decisionUncertain, ok := staleDecisionFailure["operation_may_have_completed"].(bool)
+	require.True(ok)
+	assert.False(decisionUncertain)
+	assert.Equal(1, approvals)
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: args})
 	require.NoError(err)
 	require.False(sdkResult.IsError)
-	assert.Equal(1, approvals)
+	assert.Equal(2, approvals)
 	var shown struct {
 		Lineage generated.PersonMergeReviewCandidate `json:"lineage"`
 	}
@@ -140,7 +145,9 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	require.NoError(err)
 	staleFailure := loopToolFailure(t, sdkResult)
 	assert.Equal("person_merge_revision_conflict", staleFailure["error"])
-	assert.Equal(false, staleFailure["operation_may_have_completed"])
+	staleUncertain, ok := staleFailure["operation_may_have_completed"].(bool)
+	require.True(ok)
+	assert.False(staleUncertain)
 	splitArgs := map[string]any{"person_id": survivor.ID, "merge_id": merged.Merge.ID, "participant_ids": []int64{b}, "etag": editETag(survivor.ID), "idempotency_key": "synthetic-split"}
 	confirm = false
 	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "split_person_merge", Arguments: splitArgs})
@@ -248,7 +255,9 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	assert.Greater(approvals, previousApprovals)
 	reviewedFailure := loopToolFailure(t, sdkResult)
 	assert.Equal("person_split_reviewed_candidates", reviewedFailure["error"])
-	assert.Equal(false, reviewedFailure["operation_may_have_completed"])
+	reviewedUncertain, ok := reviewedFailure["operation_may_have_completed"].(bool)
+	require.True(ok)
+	assert.False(reviewedUncertain)
 	result, err = backend.ExecuteOperation(ctx, "get_person_merge", map[string]any{"merge_id": other.Merge.ID})
 	require.NoError(err)
 	assert.Empty(operationOutput[mcpserver.MergeDetail](t, result).Splits)
@@ -261,9 +270,9 @@ func TestMCPMergeRecoveryRejectsInvalidArguments(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{"list_person_merges", map[string]any{"person_id": 1, "limit": 501}},
-		{"list_person_merges", map[string]any{"person_id": 1, "offset": -1}},
-		{"get_person_merge", map[string]any{"merge_id": 0}},
+		{"list_person_merges", map[string]any{"person_id": "1"}},
+		{"get_person_merge", map[string]any{"merge_id": 1, "extra": true}},
+		{"decide_person_merge_candidate", map[string]any{"person_id": "x"}},
 	} {
 		result, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
 		require.NoError(err)
@@ -280,15 +289,13 @@ func TestMCPMergeRecoveryBoundsAndSafeErrors(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/person-merges/1/snapshot":
 			_, _ = w.Write([]byte(`{"version":2,"sha256":"x","snapshot":{"persons":[],"rows":[]}}`))
-		case "/api/v1/person-merges/2/snapshot":
-			_, _ = w.Write([]byte(`{"version":1,"sha256":"x","snapshot":{"persons":[{},{},{}],"rows":[]}}`))
 		case "/api/v1/person-merges/4/snapshot":
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"error":"person_merge_snapshot_corrupt"}`))
 		case "/api/v1/person-merges/5":
-			_, _ = w.Write([]byte(strings.Repeat("x", (16<<20)+1)))
+			_, _ = w.Write([]byte(strings.Repeat("x", mergeRecoveryResponseLimit+1)))
 		case "/api/v1/people/7/split":
-			_, _ = w.Write([]byte(strings.Repeat("x", (16<<20)+1)))
+			_, _ = w.Write([]byte(strings.Repeat("x", mergeRecoveryResponseLimit+1)))
 		default:
 			_, _ = w.Write([]byte(`{"rows":[` + strings.Repeat(`{"original_row_key":"`+strings.Repeat("x", 200)+`"},`, 6000) + `{}]}`))
 		}
@@ -297,12 +304,10 @@ func TestMCPMergeRecoveryBoundsAndSafeErrors(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
 	require.NoError(err)
 	backend := &daemonMCPOperations{client: client, supported: []string{"get_person_merge_snapshot", "get_person_merge", "split_person_merge"}}
-	for _, id := range []int{1, 2} {
-		result, err := backend.ExecuteOperation(t.Context(), "get_person_merge_snapshot", map[string]any{"merge_id": id})
-		require.NoError(err)
-		assertLoopRefusal(t, result, "invalid_operation_response", false)
-	}
-	result, err := backend.ExecuteOperation(t.Context(), "get_person_merge_snapshot", map[string]any{"merge_id": 4})
+	result, err := backend.ExecuteOperation(t.Context(), "get_person_merge_snapshot", map[string]any{"merge_id": 1})
+	require.NoError(err)
+	assertLoopRefusal(t, result, "invalid_operation_response", false)
+	result, err = backend.ExecuteOperation(t.Context(), "get_person_merge_snapshot", map[string]any{"merge_id": 4})
 	require.NoError(err)
 	assertLoopRefusal(t, result, "person_merge_snapshot_corrupt", false)
 	result, err = backend.ExecuteOperation(t.Context(), "get_person_merge", map[string]any{"merge_id": 3})

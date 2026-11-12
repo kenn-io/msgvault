@@ -949,10 +949,16 @@ the patch committed but its response exceeds the limit, completion is uncertain.
 If its result says the operation may have completed, read the record again
 before retrying.
 
-Owner merge recovery reads include merge history, detail with a row count, and
-verified snapshot lineage. Detail and snapshot reads accept up to 16 MiB from
-the daemon; the other recovery reads accept up to 1 MiB. Candidate records
-identify attribute values by ID.
+Owner merge recovery reads are `list_person_merges`, `get_person_merge` with a
+row count, and `get_person_merge_snapshot` with verified lineage. Detail and
+snapshot reads accept up to 16 MiB from the daemon; the other recovery reads
+accept up to 1 MiB. Candidate records identify attribute values by ID. With
+merge recovery writes enabled, `decide_person_merge_candidate` and
+`split_person_merge` each need the person's current ETag from
+`get_person_edit_context`. Pick one stable `idempotency_key` per split and
+reuse it when retrying that split. Accepting a candidate makes the exact
+split unavailable. If a result says the operation may have completed, read
+`get_person_merge` and the person's edit context again before retrying.
 
 Enable only the writes intended for the assistant's session:
 
