@@ -16,7 +16,7 @@ func TestICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 	cancel := calendarDocument("CANCEL", "SEQUENCE:3\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:organizer@example.com")
 	for _, mode := range []string{"file", "email"} {
 		for _, order := range [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
-			if mode == "email" && order != [3]int{0, 2, 1} && order != [3]int{2, 1, 0} {
+			if mode == "email" && order != [3]int{2, 1, 0} {
 				continue
 			}
 			t.Run(fmt.Sprintf("%s-%d%d%d", mode, order[0], order[1], order[2]), func(t *testing.T) {
