@@ -126,6 +126,7 @@ import type {
   EndEmploymentBody,
   EndEmploymentPathParameters,
   ExplainPersonTierPathParameters,
+  FactSummary,
   FastSearchParams,
   FileMetadataResponse,
   FilterMessagesParams,
@@ -180,6 +181,7 @@ import type {
   GetPersonBriefPathParameters,
   GetPersonByUIDParams,
   GetPersonContactStatePathParameters,
+  GetPersonFactSummaryPathParameters,
   GetPersonMergePathParameters,
   GetPersonMergeSnapshotPathParameters,
   GetPersonMessagingRoutesParams,
@@ -3397,6 +3399,21 @@ export const setPersonFactPin = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: setPersonFactPinRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get person fact summary
+ */
+export const getPersonFactSummary = (
+  { id }: GetPersonFactSummaryPathParameters,
+  options?: SecondParameter<typeof orvalFetch<FactSummary>>,
+) => {
+  return orvalFetch<FactSummary>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/fact-summary`,
+      method: "GET",
     },
     options,
   );

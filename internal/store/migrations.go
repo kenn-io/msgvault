@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/mime"
+	"go.kenn.io/msgvault/internal/personfacts"
 )
 
 // One-time data migrations run by InitSchema and gated on the
@@ -22,6 +23,7 @@ import (
 // last_modified backfill alone is a full messages-table scan — seconds of
 // startup on a large archive).
 const (
+	migrationPersonFactOutcomes             = "person_fact_outcomes_v1"
 	migrationCalendarEventProjectionV1      = "calendar_event_projection_v1"
 	migrationMeetingProjectionV1            = "meeting_projection_v1"
 	migrationAttachmentsContentHashUnique   = "attachments_content_hash_unique_index"
@@ -826,4 +828,51 @@ func (s *Store) ForgetMigrationsContext(ctx context.Context, name string) error 
 		return fmt.Errorf("forget migration %q: %w", name, err)
 	}
 	return nil
+}
+
+// backfillPersonFactOutcomes records only outcomes proved by the old ledger.
+func (s *Store) backfillPersonFactOutcomes(ctx context.Context) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT d.id, d.action, d.reason, c.relation, d.competing_claim_id, d.projection_row_id
+			FROM person_fact_decisions d LEFT JOIN person_fact_claims c ON c.id = d.claim_id WHERE d.outcome IS NULL`)
+		if err != nil {
+			return fmt.Errorf("read old fact decisions: %w", err)
+		}
+		type update struct {
+			id      int64
+			outcome personfacts.DecisionOutcome
+		}
+		var updates []update
+		for rows.Next() {
+			var id int64
+			var decision personfacts.Decision
+			var relation sql.NullString
+			var competing, projection sql.NullInt64
+			if err := rows.Scan(&id, &decision.Action, &decision.Reason, &relation, &competing, &projection); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if competing.Valid {
+				decision.CompetingClaimKey = "present"
+			}
+			retired := projection.Valid && (decision.Action != personfacts.DecisionApplied || personfacts.ClaimRelation(relation.String) != personfacts.RelationSupport)
+			outcome, known := personfacts.DecisionOutcomeFor(personfacts.OutcomeFacts{Decision: decision, Relation: personfacts.ClaimRelation(relation.String), Historical: true, Retired: retired})
+			if known {
+				updates = append(updates, update{id, outcome})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		for _, item := range updates {
+			if _, err := tx.ExecContext(ctx, `UPDATE person_fact_decisions SET outcome = ? WHERE id = ? AND outcome IS NULL`, item.outcome, item.id); err != nil {
+				return fmt.Errorf("backfill fact decision %d: %w", item.id, err)
+			}
+		}
+		return nil
+	})
 }

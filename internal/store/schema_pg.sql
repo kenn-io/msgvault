@@ -1044,6 +1044,7 @@ CREATE TABLE IF NOT EXISTS person_fact_decisions (
                            'competing-tie', 'explicit-contradiction', 'explicit-supersession',
                            'organization-ambiguous', 'applied-projection', 'evidence-unsupported',
                            'outside-validity')),
+    outcome            TEXT,
     score_json         JSONB NOT NULL,
     competing_claim_id BIGINT REFERENCES person_fact_claims(id) ON DELETE SET NULL,
     projection_kind    TEXT,
