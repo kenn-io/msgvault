@@ -55,7 +55,6 @@ func (s *Store) VoiceTranscriptMappings(ctx context.Context, destination string,
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+beeperMediaOccurrenceColumns("o")+` FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
 		AND o.destination_key=? AND o.source_type='beeper' AND a.media_type='voice_note' AND o.retention_state='retained'
 		AND o.transcript_sha256='' AND o.attachment_id>?
-		AND EXISTS (SELECT 1 FROM beeper_media_deliveries d WHERE d.destination_key=o.destination_key AND d.processing_key=o.processing_key AND d.phase='done' AND d.coverage_state='transcribed')
 		AND NOT EXISTS (SELECT 1 FROM voice_transcripts v WHERE v.message_id=o.message_id AND v.attachment_id=o.attachment_id) ORDER BY o.attachment_id LIMIT ?`), destination, after, limit)
 	if err != nil {
 		return nil, err
@@ -116,6 +115,13 @@ func (s *Store) reindexVoiceMessages(ctx context.Context, tx *loggedTx, ids []in
 		if err != nil {
 			return fmt.Errorf("load voice transcript message: %w", err)
 		}
+		var raw []byte
+		var compression sql.NullString
+		err = q.QueryRow(`SELECT raw_data, compression FROM message_raw WHERE message_id=? AND raw_format='beeper_json'`, id).Scan(&raw, &compression)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("load voice message sender: %w", err)
+		}
+		row.fts.FromAddr = beeperFTSSender(raw, compression, row.fts.FromAddr)
 		row.fts.Body = row.body
 		if _, err := s.upsertFTSOrUnsearchable(q, row.fts); err != nil {
 			return fmt.Errorf("index voice transcript: %w", err)

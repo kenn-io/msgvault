@@ -12,10 +12,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/docbankmedia"
+	"go.kenn.io/msgvault/internal/search"
 )
 
 func TestVoiceTranscriptSearchReadsReadyEvidence(t *testing.T) {
-	for _, scenario := range []string{"pending to ready", "late provider", "supplied origin"} {
+	for _, scenario := range []string{"pending to ready", "late provider", "supplied origin", "profile cleared"} {
 		t.Run(scenario, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			world := importVoiceChat(t, voiceSpec{id: "voice", asset: "mxc://beeper.local/voice", mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(1600, 1)})
@@ -56,9 +57,29 @@ func TestVoiceTranscriptSearchReadsReadyEvidence(t *testing.T) {
 				_, _ = fmt.Fprint(w, `{"vault_uid":"vault-1","source_id":"source-1","source_version_id":"audio-version-1","content_version_id":"audio-content-1","evidence_state":"ready","coverage_state":"transcribed","transcript":{"origin":"generated","completeness":"complete","units":[{"text":"dinner\u0000 Thursday"}]}}`)
 			}))
 			defer server.Close()
-			require.NoError(world.st.SetVoiceTranscriptSearch(t.Context(), true))
 			submitter := world.submitter(t, server, "destination")
-			submitter.WithASRProfile("asr").WithVoiceTranscriptSearch(submitter.client)
+			submitter.WithASRProfile("asr")
+			if scenario == "profile cleared" {
+				runPasses(t, submitter, 6)
+				submitter.WithASRProfile("")
+				var attachmentID int64
+				require.NoError(world.st.DB().QueryRowContext(t.Context(), world.st.Rebind(`SELECT id FROM attachments WHERE message_id=?`), messageID).Scan(&attachmentID))
+				candidate, err := world.st.GetBeeperMediaCandidate(t.Context(), attachmentID)
+				require.NoError(err)
+				archiveUID, err := world.st.ArchiveUIDContext(t.Context())
+				require.NoError(err)
+				mapping, err := submitter.reconcileCandidate(t.Context(), archiveUID, candidate)
+				require.NoError(err)
+				assert.Empty(mapping.ProcessingKey)
+			}
+			require.NoError(world.st.SetVoiceTranscriptSearch(t.Context(), true))
+			submitter.WithVoiceTranscriptSearch(submitter.client)
+			sender := func() []int64 {
+				ids, _, err := world.st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"Ann"}}, 10)
+				require.NoError(err)
+				return ids
+			}
+			assert.Contains(sender(), messageID)
 			runPasses(t, submitter, 7)
 			if scenario == "late provider" {
 				assert.Positive(reads.Load())
@@ -69,9 +90,17 @@ func TestVoiceTranscriptSearchReadsReadyEvidence(t *testing.T) {
 			}
 			var text string
 			require.NoError(world.st.DB().QueryRowContext(t.Context(), `SELECT transcript_text FROM voice_transcripts`).Scan(&text))
-			if scenario == "pending to ready" {
+			if scenario == "pending to ready" || scenario == "profile cleared" {
 				assert.Equal("dinner\uFFFD Thursday", text)
-				assert.GreaterOrEqual(reads.Load(), int32(2))
+				ids, _, err := world.st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"dinner", "Thursday"}}, 10)
+				require.NoError(err)
+				assert.Contains(ids, messageID)
+				if scenario == "pending to ready" {
+					assert.GreaterOrEqual(reads.Load(), int32(2))
+				}
+				assert.Contains(sender(), messageID)
+				require.NoError(world.st.SetVoiceTranscriptSearch(t.Context(), false))
+				assert.Contains(sender(), messageID)
 			} else {
 				assert.Empty(text)
 				assert.Equal(int32(1), reads.Load())

@@ -7031,17 +7031,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 				_ = rows.Close()
 				return 0, err
 			}
-			if len(raw) > 0 {
-				decoded, err := decodeMessageRaw(raw, compression)
-				if err == nil {
-					var message struct {
-						SenderName string `json:"senderName"`
-					}
-					if json.Unmarshal(decoded, &message) == nil {
-						doc.FromAddr = message.SenderName
-					}
-				}
-			}
+			doc.FromAddr = beeperFTSSender(raw, compression, doc.FromAddr)
 			doc, fields := preparePostgresFTSDoc(doc)
 			encoded, err := json.Marshal(fields, json.FormatNilSliceAsNull(true))
 			if err != nil {
@@ -7080,6 +7070,23 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 		fromID = ids[len(ids)-1] + 1
 	}
 	return affected, nil
+}
+
+func beeperFTSSender(raw []byte, compression sql.NullString, fallback string) string {
+	if len(raw) == 0 {
+		return fallback
+	}
+	decoded, err := decodeMessageRaw(raw, compression)
+	if err != nil {
+		return fallback
+	}
+	var message struct {
+		SenderName string `json:"senderName"`
+	}
+	if json.Unmarshal(decoded, &message) != nil {
+		return fallback
+	}
+	return message.SenderName
 }
 
 // derivedEmailText is a retained email's stored text and the search document

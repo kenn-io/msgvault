@@ -22,7 +22,7 @@ func TestVoiceTranscriptEligibilitySearchRebuildDisableAndDelete(t *testing.T) {
 	require.NoError(st.SetVoiceTranscriptSearch(t.Context(), true))
 	pending, err := st.VoiceTranscriptMappings(t.Context(), "destination", 0, 8)
 	require.NoError(err)
-	assert.Empty(pending)
+	assert.Len(pending, 1)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE beeper_media_deliveries SET phase='done', coverage_state='transcribed' WHERE processing_key=?`), "processing")
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE beeper_media_occurrences SET transcript_sha256=? WHERE attachment_id=?`), strings.Repeat("b", 64), audio.attachmentID)
