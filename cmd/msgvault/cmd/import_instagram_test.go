@@ -144,13 +144,15 @@ func TestImportInstagramReportsPossibleDuplicates(t *testing.T) {
 		{"different content", `{"sender_name":"Lumen Example","timestamp_ms":1730500000123,"content":"different"}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			root := t.TempDir()
 			dir := filepath.Join(root, "your_instagram_activity", "messages", "inbox", "circle")
-			require.NoError(t, os.MkdirAll(dir, 0700))
+			require.NoError(os.MkdirAll(dir, 0700))
 			shard := filepath.Join(dir, "message_1.json")
 			write := func(records string) {
 				t.Helper()
-				require.NoError(t, os.WriteFile(shard, []byte(`{"thread_path":"inbox/circle","messages":[`+records+`]}`), 0600))
+				require.NoError(os.WriteFile(shard, []byte(`{"thread_path":"inbox/circle","messages":[`+records+`]}`), 0600))
 			}
 			write(`{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"hello"}`)
 			command := &cobra.Command{Use: "import-instagram"}
@@ -159,15 +161,15 @@ func TestImportInstagramReportsPossibleDuplicates(t *testing.T) {
 			command.SetOut(&output)
 			command.SetErr(io.Discard)
 			opts := instagramCLIOptions{Account: "example", SelfName: "Nova Example"}
-			require.NoError(t, runImportInstagram(command, root, opts))
+			require.NoError(runImportInstagram(command, root, opts))
 			write(tc.records)
 			for range 2 {
 				output.Reset()
-				require.NoError(t, runImportInstagram(command, root, opts))
+				require.NoError(runImportInstagram(command, root, opts))
 				if tc.wantWarning {
-					assert.Contains(t, output.String(), "possible duplicate")
+					assert.Contains(output.String(), "possible duplicate")
 				} else {
-					assert.NotContains(t, output.String(), "possible duplicate")
+					assert.NotContains(output.String(), "possible duplicate")
 				}
 			}
 		})

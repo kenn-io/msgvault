@@ -850,6 +850,8 @@ func TestInstagramReplaySurplusPreservesDistinctMetadata(t *testing.T) {
 }
 
 func TestInstagramReplayChangedMetadataPreservesDistinctReactionEvidence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	root := t.TempDir()
 	a, b := instagramTestRecord("same"), instagramTestRecord("same")
@@ -858,18 +860,18 @@ func TestInstagramReplayChangedMetadataPreservesDistinctReactionEvidence(t *test
 	instagramTestShard(t, root, "circle", "message_1.json", a, b)
 	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
 	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
+	require.NoError(err)
 	before, _ := instagramSnapshot(t, st)
 	a["is_geoblocked_for_viewer"], b["is_geoblocked_for_viewer"] = false, false
 	a["reactions"], b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "a"}}, []map[string]string{{"actor": "Nova Example", "reaction": "a"}}
 	instagramTestShard(t, root, "circle", "message_1.json", b, a)
 	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.MessagesAdded)
+	require.NoError(err)
+	assert.Zero(summary.MessagesAdded)
 	after, _ := instagramSnapshot(t, st)
-	assert.Len(t, after, 2)
+	assert.Len(after, 2)
 	for id, raw := range before {
-		assert.Equal(t, raw, after[id])
+		assert.Equal(raw, after[id])
 	}
 }
 
@@ -1530,6 +1532,8 @@ func TestInstagramMixedMetadataReactionsPreserveArchivedCopies(t *testing.T) {
 		{"partial distinct", []string{"A", "A", "B", "B"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			st, root := testutil.NewTestStore(t), t.TempDir()
 			var records []map[string]any
 			for _, value := range tc.old {
@@ -1540,7 +1544,7 @@ func TestInstagramMixedMetadataReactionsPreserveArchivedCopies(t *testing.T) {
 			instagramTestShard(t, root, "circle", "message_1.json", records...)
 			opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
 			_, err := ImportDYI(t.Context(), st, opts)
-			require.NoError(t, err)
+			require.NoError(err)
 			before, _ := instagramSnapshot(t, st)
 			for i, record := range records[:3] {
 				if i > 0 {
@@ -1551,67 +1555,71 @@ func TestInstagramMixedMetadataReactionsPreserveArchivedCopies(t *testing.T) {
 			instagramTestShard(t, root, "circle", "message_1.json", records[:3]...)
 			for range 2 {
 				summary, err := ImportDYI(t.Context(), st, opts)
-				require.NoError(t, err)
-				assert.True(t, summary.Incomplete)
-				assert.Zero(t, summary.MessagesAdded)
+				require.NoError(err)
+				assert.True(summary.Incomplete)
+				assert.Zero(summary.MessagesAdded)
 				after, _ := instagramSnapshot(t, st)
-				assert.Equal(t, before, after)
+				assert.Equal(before, after)
 			}
 		})
 	}
 }
 
 func TestInstagramMixedMetadataKeepsUnambiguousMatches(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st, root := testutil.NewTestStore(t), t.TempDir()
 	a, b := instagramTestRecord("same"), instagramTestRecord("same")
 	a["extra_field"], b["extra_field"] = "A", "B"
 	instagramTestShard(t, root, "circle", "message_1.json", a, b)
 	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
 	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
+	require.NoError(err)
 	before, _ := instagramSnapshot(t, st)
 	b["extra_field"] = "C"
 	a["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "like"}}
 	b["reactions"] = []map[string]string{{"actor": "Nova Example", "reaction": "love"}}
 	instagramTestShard(t, root, "circle", "message_1.json", a, b)
 	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.False(t, summary.Incomplete)
-	assert.Zero(t, summary.MessagesAdded)
+	require.NoError(err)
+	assert.False(summary.Incomplete)
+	assert.Zero(summary.MessagesAdded)
 	_, reactions := instagramSnapshot(t, st)
 	for id, raw := range before {
 		if strings.Contains(raw, `"extra_field":"A"`) {
-			assert.Equal(t, "like", reactions[id])
+			assert.Equal("like", reactions[id])
 		} else {
-			assert.Equal(t, "love", reactions[id])
+			assert.Equal("love", reactions[id])
 		}
 	}
 }
 
 func TestInstagramReportsPossibleSenderDuplicates(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st, root := testutil.NewTestStore(t), t.TempDir()
 	record := instagramTestRecord("same")
 	record["sender_name"] = "Mira Example"
 	instagramTestShard(t, root, "circle", "message_1.json", record)
 	opts := ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"}
 	_, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
+	require.NoError(err)
 	before, _ := instagramSnapshot(t, st)
 	record["sender_name"] = "Lumen Example"
 	instagramTestShard(t, root, "circle", "message_1.json", record)
 	for i := range 2 {
 		summary, err := ImportDYI(t.Context(), st, opts)
-		require.NoError(t, err)
-		assert.Equal(t, 1, summary.PossibleDuplicates)
-		assert.Equal(t, int64(1-i), summary.MessagesAdded)
+		require.NoError(err)
+		assert.Equal(1, summary.PossibleDuplicates)
+		assert.Equal(int64(1-i), summary.MessagesAdded)
 		after, _ := instagramSnapshot(t, st)
-		assert.Len(t, after, 2)
+		assert.Len(after, 2)
 		for id, raw := range before {
-			assert.Equal(t, raw, after[id])
+			assert.Equal(raw, after[id])
 		}
 		var senders int
-		require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT count(DISTINCT sender_id) FROM messages`).Scan(&senders))
-		assert.Equal(t, 2, senders)
+		require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(DISTINCT sender_id) FROM messages`).Scan(&senders))
+		assert.Equal(2, senders)
 	}
 	other := instagramTestRecord("same")
 	other["sender_name"] = "Another Example"
@@ -1620,19 +1628,21 @@ func TestInstagramReportsPossibleSenderDuplicates(t *testing.T) {
 	later["sender_name"], later["timestamp_ms"] = "Another Example", int64(1730500001123)
 	instagramTestShard(t, root, "circle", "message_1.json", later)
 	summary, err := ImportDYI(t.Context(), st, opts)
-	require.NoError(t, err)
-	assert.Zero(t, summary.PossibleDuplicates)
-	assert.Equal(t, 4, countMessages(t, st, ""))
+	require.NoError(err)
+	assert.Zero(summary.PossibleDuplicates)
+	assert.Equal(4, countMessages(t, st, ""))
 }
 
 func TestInstagramSkipsOverflowShardAndImportsOtherThreads(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st, root := testutil.NewTestStore(t), t.TempDir()
 	instagramTestShard(t, root, "a", "message_999999999999999999999.json", instagramTestRecord("unsupported"))
 	instagramTestShard(t, root, "b", "message_1.json", instagramTestRecord("valid"))
 	instagramTestShard(t, root, "b", "message_999999999999999999999.json", instagramTestRecord("also unsupported"))
 	summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), summary.FilesSkipped)
-	assert.True(t, summary.Incomplete)
-	assert.Equal(t, 1, countMessages(t, st, ""))
+	require.NoError(err)
+	assert.Equal(int64(2), summary.FilesSkipped)
+	assert.True(summary.Incomplete)
+	assert.Equal(1, countMessages(t, st, ""))
 }

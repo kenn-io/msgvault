@@ -191,12 +191,14 @@ func TestDiscover_IgnoresDSStore(t *testing.T) {
 }
 
 func TestDiscoverMessengerKeepsOverflowingNumberedThread(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	root := t.TempDir()
 	thread := filepath.Join(root, "your_activity_across_facebook", "messages", "inbox", "thread")
-	require.NoError(t, os.MkdirAll(thread, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(thread, "message_999999999999999999999.json"), []byte(`{}`), 0600))
+	require.NoError(os.MkdirAll(thread, 0700))
+	require.NoError(os.WriteFile(filepath.Join(thread, "message_999999999999999999999.json"), []byte(`{}`), 0600))
 	dirs, err := Discover(root)
-	require.NoError(t, err)
-	require.Len(t, dirs, 1)
-	assert.Equal(t, "json", dirs[0].Format)
+	require.NoError(err)
+	require.Len(dirs, 1)
+	assert.Equal("json", dirs[0].Format)
 }
