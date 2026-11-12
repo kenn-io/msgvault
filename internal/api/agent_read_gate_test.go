@@ -1128,28 +1128,29 @@ func TestAgentReadAtCapacityFailsWhenRequestEnds(t *testing.T) {
 }
 
 func TestPostgresStartupRepairsAgentSearch(t *testing.T) {
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	if !st.IsPostgreSQL() {
 		t.Skip("PostgreSQL indexing")
 	}
 	source, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "message", "visiblemarker", "startupneedle body")
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'legacy'), indexing_version = 2 WHERE id = $1`, id)
-	require.NoError(t, err)
+	require.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), true), Logger: testLogger()})
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(srv.agentGrants.Close)
 	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(t, err)
+	require.NoError(err)
 	done := make(chan error, 1)
 	go func() { done <- srv.StartOnListener(listener) }()
 	t.Cleanup(func() {
-		require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context())))
-		require.ErrorIs(t, <-done, http.ErrServerClosed)
+		require.NoError(srv.Shutdown(context.WithoutCancel(t.Context())))
+		require.ErrorIs(<-done, http.ErrServerClosed)
 	})
-	require.NoError(t, srv.WaitStarted(t.Context()))
-	require.Eventually(t, func() bool {
+	require.NoError(srv.WaitStarted(t.Context()))
+	require.Eventually(func() bool {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/cli/search?q=startupneedle", nil)
 		req.RemoteAddr = "127.0.0.1:1234"
 		req.Header.Set(apiprotocol.AgentTokenHeader, token)

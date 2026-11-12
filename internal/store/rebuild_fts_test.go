@@ -197,33 +197,34 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 			continue
 		}
 		t.Run(tc.kind, func(t *testing.T) {
+			require := require.New(t)
 			id := f.CreateMessage(tc.kind)
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), tc.kind, id)
-			require.NoError(t, err)
+			require.NoError(err)
 			switch tc.kind {
 			case "slack", "teams", "inline", "facebook_comments", "instagram_comments", "discord":
 				pid := f.EnsureParticipant(tc.kind+"@example.test", "Participant", "example.test")
-				require.NoError(t, f.Store.ReplaceMessageRecipients(id, "from", []int64{pid}, []string{tc.term}))
+				require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{pid}, []string{tc.term}))
 				if tc.kind == "discord" {
 					mentioned := f.EnsureParticipant("mention@example.test", "Mention", "example.test")
-					require.NoError(t, f.Store.ReplaceMessageRecipients(id, "mention", []int64{mentioned}, []string{"discordmention"}))
+					require.NoError(f.Store.ReplaceMessageRecipients(id, "mention", []int64{mentioned}, []string{"discordmention"}))
 				}
 			case "fbmessenger":
 				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET title = ? WHERE id = ?`), tc.term, f.ConvID)
-				require.NoError(t, err)
+				require.NoError(err)
 			case "imessage":
 				pid := f.EnsureParticipant("phone@example.test", "Phone", "example.test")
 				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE participants SET email_address = NULL, phone_number = ? WHERE id = ?`), tc.term, pid)
-				require.NoError(t, err)
-				require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", []int64{pid}, []string{"Phone"}))
+				require.NoError(err)
+				require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{pid}, []string{"Phone"}))
 			case "beeper":
-				require.NoError(t, f.Store.UpsertMessageRawWithFormat(id, []byte(`{"senderName":"beepersnapshot"}`), "beeper_json"))
+				require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"senderName":"beepersnapshot"}`), "beeper_json"))
 			}
 			to := ""
 			if tc.kind == "discord" {
 				to = "discordmention"
 			}
-			require.NoError(t, f.Store.UpsertFTS(id, "", "", tc.term, to, ""))
+			require.NoError(f.Store.UpsertFTS(id, "", "", tc.term, to, ""))
 			assertFTSContains(t, f.Store, tc.term, 1)
 			if tc.kind == "discord" {
 				assertFTSContains(t, f.Store, "discordmention", 1)
@@ -233,9 +234,9 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 			} else {
 				_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM messages_fts WHERE rowid = ?`, id)
 			}
-			require.NoError(t, err)
+			require.NoError(err)
 			_, err = f.Store.BackfillFTS(nil)
-			require.NoError(t, err)
+			require.NoError(err)
 			assertFTSContains(t, f.Store, tc.term, 1)
 			if tc.kind == "discord" {
 				assertFTSContains(t, f.Store, "discordmention", 1)
@@ -244,6 +245,7 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 	}
 	if f.Store.IsPostgreSQL() {
 		t.Run("damaged beeper payloads", func(t *testing.T) {
+			require := require.New(t)
 			for _, tc := range []struct{ key, compression, raw string }{
 				{"brokenzlib", "zlib", "invalid compressed data"},
 				{"brokenjson", "none", "{"},
@@ -251,20 +253,20 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 				id := f.CreateMessage(tc.key)
 				pid := f.EnsureParticipant(tc.key+"@example.test", "Sender", "example.test")
 				_, err := f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET message_type = 'beeper', sender_id = $1 WHERE id = $2`, pid, id)
-				require.NoError(t, err)
-				require.NoError(t, f.Store.UpsertMessageRawWithFormat(id, []byte(`{"senderName":"original"}`), "beeper_json"))
+				require.NoError(err)
+				require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"senderName":"original"}`), "beeper_json"))
 				_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE message_raw SET raw_data = $1, compression = $2 WHERE message_id = $3`, []byte(tc.raw), tc.compression, id)
-				require.NoError(t, err)
+				require.NoError(err)
 			}
 			later := f.NewMessage().WithSourceMessageID("later").WithSubject("latersearchable").Create(t, f.Store)
 			_, err := f.Store.BackfillFTS(nil)
-			require.NoError(t, err)
+			require.NoError(err)
 			assertFTSContains(t, f.Store, "brokenzlib", 1)
 			assertFTSContains(t, f.Store, "brokenjson", 1)
 			matches, total, err := f.Store.SearchMessages("latersearchable", 0, 10)
-			require.NoError(t, err)
-			require.EqualValues(t, 1, total)
-			require.Len(t, matches, 1)
+			require.NoError(err)
+			require.EqualValues(1, total)
+			require.Len(matches, 1)
 			assert.Equal(t, later, matches[0].ID)
 		})
 	}
