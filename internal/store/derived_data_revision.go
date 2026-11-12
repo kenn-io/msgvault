@@ -65,10 +65,13 @@ func (s *Store) advanceDerivedRevisionWithEmailReceiptContext(ctx context.Contex
 // email writes before recording a pass whose current rows are unchanged.
 func (s *Store) MarkMigrationAppliedWithPendingDerivedRevisionContext(ctx context.Context, name string) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.markMigrationCompleteContext(ctx, tx, name); err != nil {
+			return err
+		}
 		if err := s.publishPendingDerivedEmailRevisionContext(ctx, tx); err != nil {
 			return err
 		}
-		return s.markMigrationCompleteContext(ctx, tx, name)
+		return nil
 	})
 }
 
@@ -130,9 +133,12 @@ func (s *Store) MarkMigrationAppliedWithDerivedDataRevision(name string) error {
 // MarkMigrationAppliedWithDerivedDataRevisionContext records a completed repair within ctx.
 func (s *Store) MarkMigrationAppliedWithDerivedDataRevisionContext(ctx context.Context, name string) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.markMigrationCompleteContext(ctx, tx, name); err != nil {
+			return err
+		}
 		if err := s.advanceDerivedRevisionWithEmailReceiptContext(ctx, tx); err != nil {
 			return err
 		}
-		return s.markMigrationCompleteContext(ctx, tx, name)
+		return nil
 	})
 }

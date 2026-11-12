@@ -288,6 +288,8 @@ func TestEmailRederivationRetriesInviteDuringFirstCompletion(t *testing.T) {
 		t.Skip("requires PostgreSQL concurrent transactions")
 	}
 	base := LedgerKey(src.SourceType, src.Identifier, emailVersion)
+	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO archive_metadata (key, value) VALUES ('derived_data_revision', '0'), ('pending_derived_email_revision', '1') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`)
+	requirements.NoError(err)
 	applied, err := st.IsMigrationApplied(base)
 	requirements.NoError(err)
 	requirements.False(applied)
@@ -322,6 +324,8 @@ func TestEmailRederivationRetriesInviteDuringFirstCompletion(t *testing.T) {
 		var waiting bool
 		return st.DB().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting) == nil && waiting
 	}, 5*time.Second, 10*time.Millisecond)
+	_, err = blocker.ExecContext(ctx, `UPDATE archive_metadata SET value = '1' WHERE key = 'derived_data_revision'`)
+	requirements.NoError(err, "a writer holding the pass lock must be able to update the revision")
 	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:retry@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Retry invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
 	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, raw, "mime"))
 	requirements.NoError(blocker.Rollback())
