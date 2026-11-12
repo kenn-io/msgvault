@@ -91,32 +91,41 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 	}))
 	t.Cleanup(httpServer.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: httpServer.URL, AllowInsecure: true}})
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/people/%d/contact-state", httpServer.URL, person.ID), nil)
-	req.NoError(err)
-	response, err := http.DefaultClient.Do(request)
-	req.NoError(err)
-	defer func() { _ = response.Body.Close() }()
-	req.Equal(http.StatusOK, response.StatusCode)
-	var state map[string]any
-	req.NoError(json.NewDecoder(response.Body).Decode(&state))
-	check.Equal(fmt.Sprintf("message:%d", id), state["first_seen_ref"])
-	check.Equal("email_intro", state["first_contact_kind"])
-
 	savedJSON := personJSON
 	personJSON = true
 	t.Cleanup(func() { personJSON = savedJSON })
-	for _, args := range [][]string{{strconv.FormatInt(person.ID, 10)}, {"--vcard-uid", person.VCardUID}} {
-		get := &cobra.Command{Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE}
-		get.Flags().String("vcard-uid", "", "")
-		var got bytes.Buffer
-		get.SetOut(&got)
-		get.SetArgs(args)
-		req.NoError(get.ExecuteContext(ctx))
-		var profile map[string]any
-		req.NoError(json.Unmarshal(got.Bytes(), &profile))
-		contact, ok := profile["contact_state"].(map[string]any)
-		req.True(ok)
-		check.Equal(state["first_seen_ref"], contact["first_seen_ref"])
+	for phase := 0; phase < 2; phase++ {
+		if phase == 1 {
+			id = f.NewMessage().WithSourceMessageID("older-intro-cli").WithSentAt(at.Add(-time.Hour)).Create(t, f.Store)
+			req.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Sender Example"}))
+			req.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner, target}, []string{"Owner", "Target Example"}))
+			_, err = projector.RunOnce(t.Context())
+			req.NoError(err)
+		}
+		wantRef := fmt.Sprintf("message:%d", id)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/people/%d/contact-state", httpServer.URL, person.ID), nil)
+		req.NoError(err)
+		response, err := http.DefaultClient.Do(request)
+		req.NoError(err)
+		req.Equal(http.StatusOK, response.StatusCode)
+		var state map[string]any
+		req.NoError(json.NewDecoder(response.Body).Decode(&state))
+		req.NoError(response.Body.Close())
+		check.Equal(wantRef, state["first_seen_ref"])
+		check.Equal("email_intro", state["first_contact_kind"])
+		for _, args := range [][]string{{strconv.FormatInt(person.ID, 10)}, {"--vcard-uid", person.VCardUID}} {
+			get := &cobra.Command{Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE}
+			get.Flags().String("vcard-uid", "", "")
+			var got bytes.Buffer
+			get.SetOut(&got)
+			get.SetArgs(args)
+			req.NoError(get.ExecuteContext(ctx))
+			var profile map[string]any
+			req.NoError(json.Unmarshal(got.Bytes(), &profile))
+			contact, ok := profile["contact_state"].(map[string]any)
+			req.True(ok)
+			check.Equal(wantRef, contact["first_seen_ref"])
+		}
 	}
 	for _, scenario := range []struct {
 		name      string

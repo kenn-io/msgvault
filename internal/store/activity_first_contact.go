@@ -76,9 +76,6 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirect
 	}
 	targetSender := sender != nil && sender.PersonID != nil && *sender.PersonID == personID
 	introducer := func(c *ActivityCounterpart) *FirstContactIntroducer {
-		if c == nil {
-			return nil
-		}
 		return &FirstContactIntroducer{ParticipantID: c.ParticipantID, PersonID: c.PersonID}
 	}
 	if email && classification.Direction == DirectionInbound && sender != nil && !ownerLinked(*sender) && !targetSender && introAddressed && len(others) <= maxIntroCounterparts {
@@ -121,9 +118,6 @@ func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state 
 	candidates, err := s.loadActivityCandidatesByIDQueryerContext(ctx, tx, []int64{messageID})
 	if err != nil {
 		return fmt.Errorf("load first-contact candidate: %w", err)
-	}
-	if len(candidates) == 0 {
-		return nil
 	}
 	candidate := candidates[0]
 	state.FirstContactKind, state.Introducer = ClassifyFirstContact(candidate, state.PersonID, candidate.DirectLimitTransition.Target)
