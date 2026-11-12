@@ -99,6 +99,26 @@ func TestSettingsCategoryBoundarySelectionAndPage(t *testing.T) {
 	}
 }
 
+func TestSettingsCategoryBoundaryClearsStatusAndShowsSelection(t *testing.T) {
+	snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "server", Label: "Server"}}, Fields: []SettingField{
+		{Key: "server.bind_addr", Group: "server", Label: "Bind address", Kind: SettingKindString, Value: stringSettingValue("127.0.0.1"), ReadOnly: true},
+		{Key: "server.other", Group: "server", Label: "Other setting", Kind: SettingKindString, Value: stringSettingValue("value")},
+	}}
+	snapshot.Fields[0].Validation.Hint = strings.Repeat("example ", 100)
+	for _, direction := range []rune{'h', 'l'} {
+		t.Run(string(direction), func(t *testing.T) {
+			model := resizeModel(t, loadedSettingsModel(t, snapshot), 100, 10)
+			for _, msg := range []tea.KeyPressMsg{keyEnter(), key('j'), key('k'), key(direction)} {
+				model, _ = sendKey(t, model, msg)
+			}
+			screen := uv.NewScreenBuffer(100, 10)
+			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+			assert.Contains(t, screen.String(), "▶   Bind address")
+			assert.NotContains(t, screen.String(), "This setting is read-only")
+		})
+	}
+}
+
 func TestSettingsViewportExitEditorKeepsSelectionVisible(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
