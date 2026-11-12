@@ -11,14 +11,14 @@ import (
 func zoomTokenCommand(text string) ([]string, error) {
 	var argv []string
 	if err := json.Unmarshal([]byte(text), &argv); err != nil || len(argv) == 0 || argv[0] == "" {
-		return nil, errors.New("zoom --token-command must be a nonempty JSON argv array")
+		return nil, errors.New("zoom --token-command must be a nonempty JSON array containing a command and its arguments")
 	}
 	return argv, nil
 }
 
 func addZoomFetchMode(cmd *cobra.Command, o *zoomOptions, open callOpener, write callWriter) {
 	var tokenCommand string
-	cmd.Flags().StringVar(&tokenCommand, "token-command", "", "JSON argv of a command that prints a Zoom access token; requires meeting:read:list_past_participants")
+	cmd.Flags().StringVar(&tokenCommand, "token-command", "", "JSON array: command and arguments to print a Zoom access token; requires meeting:read:list_past_participants")
 	cmd.Short = "Import Zoom meeting attendance"
 	cmd.Long = "Import Zoom meeting attendance from a supplied roster or fetch an exact past meeting instance."
 	cmd.Flags().Lookup("roster").Usage = "Complete participant API JSON file; omit to fetch from Zoom"
