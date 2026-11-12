@@ -95,7 +95,7 @@ func TestMeetingSuggestionsBackfilledScheduledStart(t *testing.T) {
 	data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC), Valid: true}
 	_, err := st.UpsertMessage(data.Message)
 	r.NoError(err)
-	_, err = st.db.ExecContext(t.Context(), `UPDATE meeting_details SET projection_version=2, scheduled_start=NULL WHERE message_id=?`, note)
+	_, err = st.db.ExecContext(t.Context(), `UPDATE meeting_details SET projection_version=1, scheduled_start=NULL WHERE message_id=?`, note)
 	r.NoError(err)
 	r.NoError(st.backfillMeetingProjectionsContext(t.Context()))
 	for _, ref := range []MeetingLinkRef{{Kind: "msg", MessageID: note}, {Kind: "evt", MessageID: first}} {
