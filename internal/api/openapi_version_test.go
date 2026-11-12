@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -68,7 +69,7 @@ func normalizeAPIContract(value any, namedMap bool) {
 					continue
 				}
 				switch key {
-				case "paths", "schemas", "properties", "patternProperties", "responses", "content", "headers", "parameters", "requestBodies", "securitySchemes", "callbacks", "links", "encoding", "mapping", "variables":
+				case "paths", "schemas", "properties", "patternProperties", "responses", "content", "headers", "parameters", "requestBodies", "securitySchemes", "callbacks", "links", "encoding", "variables", "webhooks":
 					normalizeAPIContract(item, true)
 				default:
 					normalizeAPIContract(item, false)
@@ -78,13 +79,10 @@ func normalizeAPIContract(value any, namedMap bool) {
 	}
 }
 
-func apiBaseMarkers(ctx context.Context, base string, explicit bool) ([]string, error) {
+func apiBaseMarkers(ctx context.Context, base string) ([]string, error) {
 	cmd := exec.CommandContext(ctx, "git", "ls-tree", "-z", "--name-only", "--full-tree", base, "--", "internal/api/"+apiContractsDir+"/")
 	out, err := cmd.Output()
 	if err != nil {
-		if !explicit {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("read API contract markers at %q: %w", base, err)
 	}
 	markers := []string{}
@@ -99,19 +97,22 @@ func apiBaseMarkers(ctx context.Context, base string, explicit bool) ([]string, 
 func checkAPIContract(version, digest string, markers, base []string) error {
 	current := "v" + version
 	greatest := ""
-	contracts := make(map[string][]string)
+	contracts := make(map[string]map[string]bool)
 	candidate := make(map[string]bool)
 	baseVersions := make(map[string]bool)
 	for i, list := range [][]string{markers, base} {
 		for _, marker := range list {
-			v, hash, ok := strings.Cut(marker, "_")
-			if !ok || semver.Canonical("v"+v) != "v"+v || len(hash) != 64 || strings.Trim(hash, "0123456789abcdef") != "" {
-				return fmt.Errorf("invalid API contract marker %q; use <version>_<sha256> in %s", marker, apiContractsDir)
+			parts := strings.Split(marker, "_")
+			if len(parts) != 3 || semver.Canonical("v"+parts[0]) != "v"+parts[0] || len(parts[1]) != 64 || strings.Trim(parts[1], "0123456789abcdef") != "" || len(parts[2]) != 64 || strings.Trim(parts[2], "0123456789abcdef") != "" {
+				return fmt.Errorf("invalid API contract marker %q; use <version>_<sha256>_<summary-sha256> in %s", marker, apiContractsDir)
 			}
-			v = "v" + v
+			v, hash := "v"+parts[0], parts[1]
 			if i == 0 {
-				candidate[marker] = true
-				contracts[v] = append(contracts[v], hash)
+				candidate[parts[0]+"_"+hash] = true
+				if contracts[v] == nil {
+					contracts[v] = make(map[string]bool)
+				}
+				contracts[v][hash] = true
 			} else {
 				baseVersions[v] = true
 			}
@@ -135,7 +136,8 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 	}
 	problem := ""
 	for _, marker := range base {
-		if !candidate[marker] {
+		identity := marker[:strings.LastIndex(marker, "_")]
+		if !candidate[identity] {
 			return fmt.Errorf("restore removed API contract marker %s", marker)
 		}
 	}
@@ -143,14 +145,14 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 		problem = fmt.Sprintf("API schema version %s is older than recorded version %s", version, strings.TrimPrefix(greatest, "v"))
 	}
 	if problem == "" && semver.Compare(current, greatest) > 0 {
-		return fmt.Errorf("record the API contract with a marker at %s", filepath.Join(apiContractsDir, version+"_"+digest))
+		return fmt.Errorf("record the API contract with a marker at %s", filepath.Join(apiContractsDir, version+"_"+digest+"_<summary-sha256>"))
 	}
-	if problem == "" && (len(contracts[current]) != 1 || contracts[current][0] != digest) {
+	if problem == "" && (len(contracts[current]) != 1 || !contracts[current][digest]) {
 		problem = "API contract changed or has multiple markers for " + version
 	}
 	if problem != "" {
 		if len(contracts[current]) == 1 && base != nil && !baseVersions[current] && semver.Compare(current, greatest) >= 0 {
-			return fmt.Errorf("%s; replace your unreleased marker with %s", problem, filepath.Join(apiContractsDir, version+"_"+digest))
+			return fmt.Errorf("%s; replace your unreleased marker with %s", problem, filepath.Join(apiContractsDir, version+"_"+digest+"_<summary-sha256>"))
 		}
 		return nextMinor(problem)
 	}
@@ -167,14 +169,12 @@ func TestAPISchemaVersionContract(t *testing.T) {
 	for _, entry := range entries {
 		markers = append(markers, entry.Name())
 	}
-	base, explicit := os.LookupEnv("MSGVAULT_API_CONTRACT_BASE")
-	if !explicit {
-		base = "origin/main"
-	}
-	baseMarkers, err := apiBaseMarkers(t.Context(), base, explicit)
-	require.NoError(err)
-	if baseMarkers == nil {
-		t.Log("API contract base unavailable; skipping history comparison")
+	var baseMarkers []string
+	if base, ok := os.LookupEnv("MSGVAULT_API_CONTRACT_BASE"); ok {
+		baseMarkers, err = apiBaseMarkers(t.Context(), base)
+		require.NoError(err)
+	} else {
+		t.Log("MSGVAULT_API_CONTRACT_BASE is unset; skipping history comparison")
 	}
 	require.NoError(checkAPIContract(APISchemaVersion, digest, markers, baseMarkers))
 }
@@ -185,9 +185,12 @@ func TestAPIVersionMarkerSummary(t *testing.T) {
 	for _, entry := range entries {
 		content, err := os.ReadFile(filepath.Join(apiContractsDir, entry.Name()))
 		require.NoError(t, err)
-		summary := strings.TrimSpace(string(content))
-		assert.NotEmpty(t, summary, entry.Name())
+		summary := strings.TrimSuffix(strings.TrimSuffix(string(content), "\n"), "\r")
+		assert.NotEmpty(t, strings.TrimSpace(summary), entry.Name())
 		assert.NotContains(t, summary, "\n", entry.Name())
+		assert.NotContains(t, summary, "\r", entry.Name())
+		hash := sha256.Sum256([]byte(summary))
+		assert.True(t, strings.HasSuffix(entry.Name(), "_"+hex.EncodeToString(hash[:])), entry.Name())
 	}
 }
 
@@ -197,6 +200,8 @@ func TestCheckAPIContract(t *testing.T) {
 		name, version, digest, want string
 		markers, base               []string
 	}{
+		{"matching contracts with different summaries", "5.1.0", a, "", []string{"5.1.0_" + a + "_" + b, "5.1.0_" + a + "_" + c}, []string{"5.1.0_" + a + "_" + b}},
+		{"corrected summary", "5.1.0", a, "", []string{"5.1.0_" + a + "_" + c}, []string{"5.1.0_" + a + "_" + b}},
 		{"combined collision", "5.1.0", c, "5.2.0", []string{"5.0.0_" + a, "5.1.0_" + a, "5.1.0_" + b}, []string{"5.0.0_" + a}},
 		{"combined collision reversed", "5.1.0", c, "5.2.0", []string{"5.0.0_" + a, "5.1.0_" + b, "5.1.0_" + a}, []string{"5.0.0_" + a}},
 		{"combined collision occupied", "5.1.0", c, "5.3.0", []string{"5.0.0_" + a, "5.1.0_" + a, "5.1.0_" + b, "5.2.0_" + a}, []string{"5.0.0_" + a}},
@@ -214,6 +219,13 @@ func TestCheckAPIContract(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
+			for _, list := range [][]string{tc.markers, tc.base} {
+				for i, marker := range list {
+					if strings.Count(marker, "_") == 1 {
+						list[i] += "_" + c
+					}
+				}
+			}
 			err := checkAPIContract(tc.version, tc.digest, tc.markers, tc.base)
 			if tc.want == "" {
 				require.NoError(err)
@@ -224,14 +236,28 @@ func TestCheckAPIContract(t *testing.T) {
 	}
 }
 
+func TestMatchingContractSummaries(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	dir := t.TempDir()
+	var markers []string
+	for _, summary := range []string{"First summary", "Second summary"} {
+		hash := sha256.Sum256([]byte(summary))
+		name := fmt.Sprintf("5.1.0_%s_%x", digest, hash)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(summary+"\n"), 0o644))
+		markers = append(markers, name)
+	}
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	assert.NotEqual(t, markers[0], markers[1])
+	require.NoError(t, checkAPIContract("5.1.0", digest, markers, markers[:1]))
+}
+
 func TestAPIBaseMarkers(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	_, err := apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base", true)
+	_, err := apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base")
 	require.ErrorContains(err, "read API contract markers")
-	markers, err := apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base", false)
-	require.NoError(err)
-	assert.Empty(markers)
 	for _, env := range os.Environ() {
 		key, _, _ := strings.Cut(env, "=")
 		if strings.HasPrefix(key, "GIT_") {
@@ -248,7 +274,7 @@ func TestAPIBaseMarkers(t *testing.T) {
 	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"}} {
 		require.NoError(exec.CommandContext(t.Context(), "git", args...).Run())
 	}
-	markers, err = apiBaseMarkers(t.Context(), "HEAD", true)
+	markers, err := apiBaseMarkers(t.Context(), "HEAD")
 	require.NoError(err)
 	assert.Equal([]string{marker}, markers)
 }
@@ -279,6 +305,9 @@ func TestAPIContractDigest(t *testing.T) {
 			op.RequestBody.Content["application/json"].Schema.Title = "new"
 			op.RequestBody.Content["application/json"].Schema.Examples = []any{"example"}
 		}, true},
+		{"webhook named description", func(d *huma.OpenAPI) {
+			d.Webhooks = map[string]*huma.PathItem{"description": {Post: &huma.Operation{OperationID: "hook"}}}
+		}, false},
 		{"route", func(d *huma.OpenAPI) {
 			d.Paths["/api/v1/another"] = &huma.PathItem{Get: &huma.Operation{OperationID: "another"}}
 		}, false},

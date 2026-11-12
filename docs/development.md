@@ -570,19 +570,24 @@ extensions. It ignores wording such as descriptions, summaries, titles, examples
 and external documentation. Handler changes that leave the documents unchanged
 still need an explicit version bump when they change the API contract.
 
-Add the marker path printed by the test under
-`internal/api/testdata/api-version-contracts/`. Put a one-line summary of the
-change in the marker file. Each marker records its version and digest in its
-filename and its history in its contents. Keep every marker recorded on the base.
-If your unreleased contract changes and the base has no marker for that version,
-replace your marker with the new path and summary. If another change has already
-used that version, keep its marker, remove yours, and take the next minor above
-the greatest recorded version. Move any feature minimum constants introduced by
-your change to that version.
+Add a marker under `internal/api/testdata/api-version-contracts/` using the path
+printed by the test. Replace `<summary-sha256>` with the SHA-256 of the one-line
+summary, without its trailing newline. For example, calculate it with
+`printf '%s' 'Your summary' | sha256sum`, then put that summary in the marker
+file. Each marker has its own summary. Different summaries for the same contract
+produce different paths; the guard treats them as the same contract.
+
+Keep every contract recorded on the base. To correct a summary, rename its marker
+with the new summary hash. If your unreleased contract changes and the base has no
+marker for that version, replace your marker with the new path and summary. If
+another change has already used that version, keep its marker, remove yours, and
+take the next minor above the greatest recorded version. Move any feature minimum
+constants introduced by your change to that version.
 
 The comment above `APISchemaVersion` preserves earlier version history. Do not
-add new version entries to that shared comment. To reproduce the CI history
-check, set `MSGVAULT_API_CONTRACT_BASE` to a local base SHA or ref.
+add new version entries to that shared comment. CI compares markers with its exact
+base. Local tests skip that history comparison unless `MSGVAULT_API_CONTRACT_BASE`
+is set to a local base SHA or ref.
 
 ## Archive schema version maintenance
 
