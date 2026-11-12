@@ -224,7 +224,7 @@ func relationshipWriteInput(name string, args map[string]any) (relationshipWrite
 
 func relationshipRefusal(code string) bool {
 	switch code {
-	case "invalid_relationship", "invalid_relationship_type", "invalid_partial_date", "invalid_status", "invalid_if_match", "relationship_revision_conflict", "relationship_type_not_found", "person_relationship_not_found", "person_not_found", "relationship_type_slug_conflict", "relationship_type_related_type_conflict", "relationship_type_not_deletable", "relationship_type_in_use", "person_relationship_duplicate", "person_relationships_unavailable":
+	case "server_busy", "invalid_relationship", "invalid_relationship_type", "invalid_partial_date", "invalid_status", "invalid_if_match", "relationship_revision_conflict", "relationship_type_not_found", "person_relationship_not_found", "person_not_found", "relationship_type_slug_conflict", "relationship_type_related_type_conflict", "relationship_type_not_deletable", "relationship_type_in_use", "person_relationship_duplicate", "person_relationships_unavailable":
 		return true
 	}
 	return false

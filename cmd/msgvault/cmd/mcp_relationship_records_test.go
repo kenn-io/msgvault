@@ -104,6 +104,13 @@ func TestMCPRelationshipRecordPresenceAndDirection(t *testing.T) {
 	importedRecord := operationOutput[mcpserver.PersonRelationshipRecord](t, got)
 	assert.Nil(t, importedRecord.Relationship.SourceRef)
 	assert.Nil(t, importedRecord.Relationship.SourceResourceUID)
+	listed, err = backend.ExecuteOperation(t.Context(), "list_person_relationships", map[string]any{"person_id": source.ID, "include_ended": true})
+	require.NoError(t, err)
+	views = operationOutput[generated.PersonRelationshipsResponse](t, listed)
+	require.Len(t, views.Relationships, 1)
+	assert.Equal(t, imported.Relationship.ID, views.Relationships[0].Relationship.ID)
+	assert.Nil(t, views.Relationships[0].Relationship.SourceRef)
+	assert.Nil(t, views.Relationships[0].Relationship.SourceResourceUID)
 	disclosure, err = backend.OperationDisclosure(t.Context(), "delete_person_relationship", map[string]any{"id": imported.Relationship.ID, "etag": importedRecord.ETag})
 	require.NoError(t, err)
 	assert.NotContains(t, disclosure, "source_ref")
@@ -198,6 +205,13 @@ func TestMCPRelationshipNetworkReviewsAndRefusalCodes(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, rejected.IsError)
 	assert.Equal(t, "relationship_type_in_use", operationOutputError(t, rejected))
+	gate := api.NewSerialOperationGate()
+	gate.StartDrain()
+	busy := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, OperationGate: gate, Logger: slog.New(slog.DiscardHandler)}))
+	rejected, err = busy.ExecuteOperation(t.Context(), "create_relationship_type", map[string]any{"slug": "busy", "forward_label": "busy", "reverse_label": "busy"})
+	require.NoError(t, err)
+	assert.Equal(t, "server_busy", operationOutputError(t, rejected))
+	assertLoopRefusal(t, rejected, "server_busy", false)
 }
 
 func operationOutputError(t *testing.T, result *mcpserver.OperationResult) string {
