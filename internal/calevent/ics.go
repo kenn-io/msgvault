@@ -396,6 +396,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location, reta
 			if !strings.EqualFold(value, "THISANDFUTURE") {
 				return ICSComponent{}, errors.New("RECURRENCE-ID: invalid RANGE")
 			}
+			e.Recurrence = append(e.Recurrence, "RECURRENCE-ID;RANGE=THISANDFUTURE:"+rid.Value)
 		}
 		original, date, err := icsTime(rid, loc)
 		if err != nil {

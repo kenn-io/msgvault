@@ -112,31 +112,57 @@ func TestICalendarCancelledSeriesOccurrences(t *testing.T) {
 	}
 }
 
-func TestICalendarRangeAppliesOnlyToItsOccurrence(t *testing.T) {
-	for _, tc := range []struct {
-		method, properties, status string
-		hour                       int
-	}{
-		{"REQUEST", "DTSTART:20270303T140000Z\r\nDURATION:PT1H", "confirmed", 14},
-		{"CANCEL", "", "cancelled", 12},
-	} {
-		t.Run(tc.method, func(t *testing.T) {
-			r := require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			source := icsSource(t, st)
-			_, err := importICalendarForTest(t, st, source, calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=3"))
-			r.NoError(err)
-			_, err = importICalendarForTest(t, st, source, calendarDocument(tc.method, "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\n"+tc.properties))
-			r.NoError(err)
-			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
-			r.NoError(err)
-			r.Len(page.Occurrences, 3)
-			r.Equal(tc.status, page.Occurrences[1].Status)
-			r.Equal(tc.hour, page.Occurrences[1].Start.Hour())
-			r.Equal("confirmed", page.Occurrences[2].Status)
-			r.Equal(12, page.Occurrences[2].Start.Hour())
-		})
+func TestICalendarRangeMakesSeriesUnexpandable(t *testing.T) {
+	for _, mode := range []string{"file", "email"} {
+		for _, tc := range []struct{ method, properties string }{
+			{"REQUEST", "DTSTART:20270303T140000Z\r\nDURATION:PT1H"},
+			{"CANCEL", ""},
+		} {
+			t.Run(mode+"/"+tc.method, func(t *testing.T) {
+				r := require.New(t)
+				st := newRFC822IDBackfillBackendStore(t)
+				var source int64
+				if mode == "email" {
+					src, err := st.GetOrCreateSource("mbox", "owner@example.com")
+					r.NoError(err)
+					source = src.ID
+				} else {
+					source = icsSource(t, st)
+				}
+				master := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=20\r\nORGANIZER:mailto:organizer@example.com")
+				edit := calendarDocument(tc.method, "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\n"+tc.properties+"\r\nORGANIZER:mailto:organizer@example.com")
+				if mode == "email" {
+					persistInviteEmailForSource(t, st, source, "range-master", inviteEmail(master))
+					persistInviteEmailForSource(t, st, source, "range-edit", inviteEmail(edit))
+				} else {
+					_, err := importICalendarForTest(t, st, source, master)
+					r.NoError(err)
+					_, err = importICalendarForTest(t, st, source, edit)
+					r.NoError(err)
+				}
+				from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+				for _, day := range []int{0, 8} {
+					start := from.AddDate(0, 0, day)
+					page, err := st.ListCalendarOccurrencesContext(t.Context(), start, start.AddDate(0, 0, 1))
+					r.NoError(err)
+					r.Empty(page.Occurrences)
+					r.Len(page.Unexpandable, 1)
+					r.Equal("unsupported recurrence: RANGE=THISANDFUTURE", page.Unexpandable[0].Reason)
+				}
+				replacement := calendarDocument("REQUEST", "SEQUENCE:1\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T150000Z\r\nDURATION:PT1H\r\nORGANIZER:mailto:organizer@example.com")
+				if mode == "email" {
+					persistInviteEmailForSource(t, st, source, "range-replacement", inviteEmail(replacement))
+				} else {
+					_, err := importICalendarForTest(t, st, source, replacement)
+					r.NoError(err)
+				}
+				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+				r.NoError(err)
+				r.Empty(page.Unexpandable)
+				r.Len(page.Occurrences, 3)
+				r.Equal(15, page.Occurrences[1].Start.Hour())
+			})
+		}
 	}
 }
 

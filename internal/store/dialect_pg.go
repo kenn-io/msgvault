@@ -2297,7 +2297,7 @@ var exclusiveLockTables = []string{
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
 	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
-	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
+	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw", "email_calendar_pending",
 	// Recording reconciliation and visual publication transactions take the
 	// sync_runs gate before child writes (including FK checks on messages).
 	// Publication commit writes publications then claims; generation cleanup

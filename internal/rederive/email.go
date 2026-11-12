@@ -260,13 +260,16 @@ func (w *emailWalk) repairRow(ctx context.Context, item *store.ArchivedRawMessag
 		sum.Errors++
 		return true, nil
 	}
-	calendarChanged, err := w.s.RefreshArchivedEmailCalendarContext(ctx, w.sourceID, item, parsed)
-	if err != nil {
-		if ctx.Err() != nil {
-			return false, ctx.Err()
+	var calendarChanged bool
+	if len(parsed.CalendarParts) > 0 {
+		calendarChanged, err = w.s.RefreshArchivedEmailCalendarContext(ctx, w.sourceID, item, parsed)
+		if err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			sum.Errors++
+			return true, nil
 		}
-		sum.Errors++
-		return true, nil
 	}
 	sum.unchanged = sum.unchanged && !changed && !calendarChanged
 	if changed && item.BodyText != body {

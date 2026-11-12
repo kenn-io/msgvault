@@ -3366,6 +3366,8 @@ func TestParentArchivedRequiresRawCompletionMarker(t *testing.T) {
 	assert.True(archived,
 		"row plus raw archive is a complete parent snapshot")
 
+	_, err = st.DB().ExecContext(t.Context(), "DROP TABLE email_calendar_pending")
+	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), `DROP TABLE message_raw`)
 	require.NoError(err)
 	_, err = imp.parentArchived(t.Context(), src.ID, "C80", "123.000100")

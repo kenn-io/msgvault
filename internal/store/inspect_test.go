@@ -69,7 +69,9 @@ func TestInspectMessage_DBError(t *testing.T) {
 	f.CreateMessage("inspect-db-error-msg")
 
 	// Drop the message_raw table to cause a DB error during the raw check
-	_, err := f.Store.DB().ExecContext(t.Context(), "DROP TABLE message_raw")
+	_, err := f.Store.DB().ExecContext(t.Context(), "DROP TABLE email_calendar_pending")
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(t.Context(), "DROP TABLE message_raw")
 	require.NoError(t, err, "DROP TABLE message_raw")
 
 	// InspectMessage should now return an error when checking raw data existence
@@ -115,7 +117,9 @@ func TestInspectRawDataExists_DBError(t *testing.T) {
 	f.CreateMessage("raw-exists-db-error-msg")
 
 	// Drop the message_raw table to cause a DB error
-	_, err := f.Store.DB().ExecContext(t.Context(), "DROP TABLE message_raw")
+	_, err := f.Store.DB().ExecContext(t.Context(), "DROP TABLE email_calendar_pending")
+	require.NoError(t, err)
+	_, err = f.Store.DB().ExecContext(t.Context(), "DROP TABLE message_raw")
 	require.NoError(t, err, "DROP TABLE message_raw")
 
 	_, err = f.Store.InspectRawDataExists("raw-exists-db-error-msg")
