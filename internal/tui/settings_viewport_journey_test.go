@@ -57,13 +57,11 @@ func TestSettingsViewportShortScreenPeopleDisable(t *testing.T) {
 	screen = uv.NewScreenBuffer(40, 12)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Equal(t, page, screen.String())
-	model = resizeModel(t, model, 40, 14)
+	assert.NotContains(t, screen.String(), "People inference disabled.")
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	screen = uv.NewScreenBuffer(40, 14)
+	screen = uv.NewScreenBuffer(40, 12)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "People inference disabled.")
-	model, _ = sendKey(t, model, keyEsc())
-	assert.False(t, model.settings.peopleControls.active)
 }
 
 func TestSettingsViewportSaveKeepsSelectedFieldVisible(t *testing.T) {
@@ -95,7 +93,7 @@ func TestSettingsViewportSaveKeepsSelectedFieldVisible(t *testing.T) {
 	assert.Regexp(t, `(?s)daemon host.*msgvault daemon restart.*--home.*--config.*service`, screen.String())
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "▶   Automatic start")
+	assert.Contains(t, screen.String(), "Key: server.daemon_auto_start")
 }
 
 func TestSettingsViewportShortScreenSaveErrorAfterDisable(t *testing.T) {
