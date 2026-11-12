@@ -177,11 +177,6 @@ func calendarEventSeriesLimit(t *testing.T, future bool) {
 				fmt.Sprintf("RECURRENCE-ID;RANGE=THISANDFUTURE:%s\r\nDTSTART:%s\r\nDURATION:PT1H", startText, editText),
 			} {
 				messageID := int64(100000 + 2*i + part)
-				providerID, seriesID, kind, original, eventStart, recurrence, end := masterID, masterID, "series", any(nil), start, fmt.Sprintf(`["RRULE:FREQ=DAILY;COUNT=%d"]`, count), any(start.AddDate(0, 0, count-1).Add(time.Hour))
-				if part == 1 {
-					providerID, kind, original, eventStart, recurrence = calevent.ICSMessageID(uid, startText), "exception", start, start.Add(2*time.Hour), `["RECURRENCE-ID;RANGE=THISANDFUTURE"]`
-					end = nil
-				}
 				raw := strings.Replace(string(calendarDocument("REQUEST", props)), "family@example.com", uid, 1)
 				prepared, err := PrepareICalendar([]byte(raw))
 				r.NoError(err)
@@ -195,10 +190,16 @@ func calendarEventSeriesLimit(t *testing.T, future bool) {
 				canonical, err := json.Marshal(decoded)
 				r.NoError(err)
 				hash := sha256.Sum256(canonical)
+				recurrence, err := json.Marshal(decoded.Recurrence)
+				r.NoError(err)
+				var original *time.Time
+				if decoded.Original != nil {
+					original = &decoded.Original.Instant
+				}
 				messages = append(messages, "(?,?,?,?,?,?)")
-				messageArgs = append(messageArgs, messageID, source, conversationID, providerID, "calendar_event", string(metadataJSON))
+				messageArgs = append(messageArgs, messageID, source, conversationID, decoded.ProviderEventID, "calendar_event", string(metadataJSON))
 				events = append(events, "(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-				eventArgs = append(eventArgs, messageID, calendarEventProjectionVersion, hex.EncodeToString(hash[:]), providerID, seriesID, kind, original, eventStart, eventStart.Add(time.Hour), "confirmed", false, "UTC", recurrence, end)
+				eventArgs = append(eventArgs, messageID, calendarEventProjectionVersion, hex.EncodeToString(hash[:]), decoded.ProviderEventID, decoded.SeriesProviderID, decoded.Kind, original, decoded.Start, decoded.End, decoded.Status, decoded.AllDay, decoded.CalendarTimeZone, string(recurrence), calendarRecurrenceEnd(t.Context(), decoded))
 				var compressed bytes.Buffer
 				writer := zlib.NewWriter(&compressed)
 				_, err = writer.Write([]byte(raw))

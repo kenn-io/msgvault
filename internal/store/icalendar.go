@@ -120,15 +120,23 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			if err := json.Unmarshal([]byte(metadata.String), &old); err != nil {
 				return fmt.Errorf("decode retained ICS metadata: %w", err)
 			}
-			if item.fromEmail {
-				var organizer string
-				if err := q.QueryRow(`SELECT COALESCE((SELECT email FROM calendar_event_attendees WHERE message_id=? AND role='organizer' ORDER BY ordinal LIMIT 1), '')`, id).Scan(&organizer); err != nil {
-					return fmt.Errorf("read retained ICS organizer: %w", err)
-				}
-				if organizer == "" || !strings.EqualFold(organizer, item.sender) {
-					summary.Unchanged++
-					continue
-				}
+		}
+		organizerID := id
+		if item.fromEmail && !exists && e.Original != nil {
+			seriesID := calevent.ICSMessageID(item.component.UID, "")
+			err := q.QueryRow(`SELECT m.id FROM messages m WHERE m.source_id=? AND m.id IN (SELECT id FROM messages WHERE source_id=? AND source_message_id=? UNION ALL SELECT message_id FROM source_merge_archive_only_messages WHERE original_source_message_id=?) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, sourceID, seriesID, seriesID, seriesID).Scan(&organizerID)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("read prior ICS series identity: %w", err)
+			}
+		}
+		if item.fromEmail && organizerID != 0 {
+			var organizer string
+			if err := q.QueryRow(`SELECT COALESCE((SELECT email FROM calendar_event_attendees WHERE message_id=? AND role='organizer' ORDER BY ordinal LIMIT 1), '')`, organizerID).Scan(&organizer); err != nil {
+				return fmt.Errorf("read retained ICS organizer: %w", err)
+			}
+			if organizer == "" || !strings.EqualFold(organizer, item.sender) {
+				summary.Unchanged++
+				continue
 			}
 		}
 		familyKey, err := s.icsFamily(ctx, tx, sourceID, id, calevent.ICSMessageID(item.component.UID, ""))
