@@ -54,17 +54,15 @@ func (s *Server) StartAccountAttributionRecovery() {
 	if !ok {
 		return
 	}
-	s.accountRecoveryOnce.Do(func() {
-		s.importMu.Lock()
-		defer s.importMu.Unlock()
-		if s.importsClosed {
-			return
-		}
-		s.importWG.Go(func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			s.observeAccountAttribution(st, ticker.C)
-		})
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	if s.importsClosed {
+		return
+	}
+	s.importWG.Go(func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		s.observeAccountAttribution(st, ticker.C)
 	})
 }
 
