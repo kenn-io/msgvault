@@ -447,7 +447,7 @@ func TestRestorePreflightAllowsOmittedFileWithoutInheritedAccess(t *testing.T) {
 	assertions.Equal(before.String(), after.String())
 }
 
-func TestSecureRestoredEventsCredentialAndReadOnlySecret(t *testing.T) {
+func TestSecureRestoredEventsCredentialAndSecret(t *testing.T) {
 	user := currentWindowsProviderCredentialSID(t)
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -464,7 +464,7 @@ func TestSecureRestoredEventsCredentialAndReadOnlySecret(t *testing.T) {
 	secretPath := filepath.Join(dir, "ordinary-secret")
 	requirements.NoError(os.WriteFile(secretPath, []byte("ordinary-secret"), 0600))
 	access := []windows.EXPLICIT_ACCESS{providerCredentialTestAccess(user, windows.GENERIC_READ, windows.TRUSTEE_IS_USER)}
-	setProviderCredentialTestACL(t, eventsPath, access, true)
+	eventsHandle := setProviderCredentialTestACL(t, eventsPath, access, true)
 	secretHandle := setProviderCredentialTestACL(t, secretPath, access, true)
 	_, err = ReadEvents(dir)
 	requirements.Error(err)
@@ -477,10 +477,8 @@ func TestSecureRestoredEventsCredentialAndReadOnlySecret(t *testing.T) {
 	secret, err := ReadSecretFile(secretPath)
 	requirements.NoError(err)
 	assertions.Equal("ordinary-secret", secret)
-	dacl, _ := readProviderCredentialTestACL(t, secretHandle)
-	var ace *windows.ACCESS_ALLOWED_ACE
-	requirements.NoError(windows.GetAce(dacl, 0, &ace))
-	assertions.Equal(uint32(windows.FILE_GENERIC_READ), uint32(ace.Mask))
+	requirements.NoError(verifyOwnerOnlyHandle(eventsHandle, false))
+	requirements.NoError(verifyOwnerOnlyHandle(secretHandle, false))
 }
 
 func TestSecureRestoredRefusesInheritedOmittedACLBeforeChanges(t *testing.T) {

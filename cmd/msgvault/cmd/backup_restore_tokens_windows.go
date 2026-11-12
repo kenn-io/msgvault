@@ -56,7 +56,7 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 		if err != nil {
 			return fmt.Errorf("inspect restored token membership: %w", err)
 		}
-		if strings.EqualFold(rel, providercredentials.Filename) || strings.EqualFold(rel, providercredentials.ServerKeyFilename) {
+		if strings.EqualFold(rel, providercredentials.Filename) || strings.EqualFold(rel, providercredentials.ServerKeyFilename) || strings.EqualFold(rel, providercredentials.EventsFilename) {
 			strict = true
 		}
 		selected = append(selected, rel)
