@@ -54,6 +54,27 @@ func TestBuildExcludesRooms(t *testing.T) {
 	assertions.Positive(aliceCount)
 }
 
+func TestBuildCountsEarlierGroupAttachmentsForSilentMembers(t *testing.T) {
+	root, db := writeRelationshipBaseFixture(t, true)
+	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
+		firstMessageID: 1, messageCount: 2, memberCount: 3,
+		startDate: "2026-01-01", messageType: "imessage", conversationType: "group_chat",
+	})
+	_, err := db.ExecContext(t.Context(), `CREATE TEMP TABLE group_messages AS SELECT * REPLACE ((id = 1)::INTEGER AS attachment_count, (id = 1) AS has_attachments) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"))
+	require.NoError(t, err)
+	replaceRelationshipParquet(t, db, root, "messages", `SELECT * FROM group_messages`)
+	_, err = db.ExecContext(t.Context(), `CREATE TEMP TABLE group_people AS SELECT * REPLACE (CASE WHEN id = 3 THEN 'silent.test' ELSE domain END AS domain) FROM read_parquet(?)`, parquetDatasetGlob(root, "participants"))
+	require.NoError(t, err)
+	replaceRelationshipParquet(t, db, root, "participants", `SELECT * FROM group_people`)
+	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
+	require.NoError(t, err)
+	var count int64
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file_count FROM read_parquet(?) WHERE canonical_id = 3`, relationshipParquetGlob(root, DatasetPeople)).Scan(&count))
+	assert.Equal(t, int64(1), count)
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT file_count FROM read_parquet(?) WHERE domain = 'silent.test'`, relationshipParquetGlob(root, DatasetDomains)).Scan(&count))
+	assert.Equal(t, int64(1), count)
+}
+
 func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

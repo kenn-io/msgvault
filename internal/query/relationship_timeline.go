@@ -124,7 +124,7 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	args := make([]any, 0, len(owners)+len(factArgs)+5)
 	args = append(args, request.CanonicalID)
 	args = append(args, factArgs...)
-	args = append(args, request.CanonicalID, request.CanonicalID)
+	args = append(args, request.CanonicalID, request.CanonicalID, request.CanonicalID)
 	for _, owner := range owners {
 		args = append(args, owner)
 	}
@@ -299,7 +299,7 @@ WITH subject_facts AS (
     FROM relationship_counting_activity a
     JOIN (
         SELECT f.entry_key, arg_min(f.message_id, struct_pack(occurred_at := f.occurred_at, message_id := f.message_id)) AS message_id, min(f.scoped_at) AS scoped_at
-        FROM (SELECT f.*, min(f.occurred_at) OVER (PARTITION BY f.entry_key) AS scoped_at FROM relationship_counting_activity f WHERE NOT f.unsent AND f.entry_key IN (SELECT entry_key FROM relationship_counting_activity WHERE canonical_id = ?) AND (` + conditions + `)) f
+        FROM (SELECT f.*, min(f.occurred_at) OVER (PARTITION BY f.entry_key) AS scoped_at FROM relationship_counting_activity f WHERE NOT f.unsent AND f.entry_key IN (SELECT entry_key FROM relationship_counting_activity WHERE canonical_id = ?) AND (` + conditions + `) AND (f.entry_kind IN ('event','meeting') OR f.canonical_id = ?)) f
         WHERE f.canonical_id = ?
         GROUP BY f.entry_key
     ) selected ON selected.entry_key=a.entry_key

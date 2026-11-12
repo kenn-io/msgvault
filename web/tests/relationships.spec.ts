@@ -837,6 +837,7 @@ test('People calendar day survives an Action items archived-meeting round trip',
   });
   await page.route('**/api/v1/meetings/actions', route => route.fulfill({ json: meetingActions({ rows: [meetingAction()], total_count: 1 }) }));
   await page.route('**/api/v1/meetings/metrics', route => route.fulfill({ json: meetingMetrics({ totals: { meeting_count: 1, known_duration_count: 0, unknown_duration_count: 1, total_known_seconds: 0, average_known_seconds: 0 } }) }));
+  await page.route('**/api/v1/meetings/record?ref=msg%3A42', route => route.fulfill({ json: { message_ids: [42], links: [], unexpandable: [] } }));
   await page.route('**/api/v1/messages/42', route => route.fulfill({ json: {
     id: 42, conversation_id: 8, subject: 'Archived review', message_type: 'meeting_transcript',
     from: 'Alice Example', to: [], sent_at: '2026-07-18T10:00:00Z', body: 'Review transcript', attachments: []

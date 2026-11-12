@@ -282,7 +282,7 @@ func TestBuildUnsentTailKeepsSentAnchor(t *testing.T) {
 			var messageID int64
 			var occurredAt time.Time
 			var fromMe bool
-			require.NoError(db.QueryRowContext(t.Context(), logicalActivitySQL(relationshipParquetGlob(root, DatasetActivity), "true")+
+			require.NoError(db.QueryRowContext(t.Context(), logicalActivitySQL(testExpandedActivity(root, root), "true")+
 				" SELECT anchor_message_id, occurred_at, is_from_me FROM logical_units").Scan(&messageID, &occurredAt, &fromMe))
 			assert.Equal(int64(1), messageID)
 			assert.Equal(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), occurredAt.UTC())

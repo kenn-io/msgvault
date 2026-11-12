@@ -16,7 +16,7 @@ func buildRelationshipPeopleSQL(effectiveAt time.Time, activity string) string {
 	return `
 WITH file_messages AS (
 	SELECT DISTINCT message_id, canonical_id, source_id, source_type, attachment_count
-	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND NOT unsent AND (is_direct OR is_conversation_member)
+	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND attachment_count > 0 AND NOT unsent AND (is_direct OR is_conversation_member)
 ), file_totals AS (
 	SELECT canonical_id, sum(attachment_count)::BIGINT AS file_count FROM file_messages GROUP BY canonical_id
 ), source_file_totals AS (
@@ -107,7 +107,7 @@ func buildRelationshipDomainsSQL(activity string) string {
 	return `
 WITH domain_file_messages AS (
 	SELECT DISTINCT message_id, participant_domain AS domain, attachment_count
-	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND participant_domain <> '' AND NOT unsent AND (is_direct OR is_conversation_member)
+	FROM ` + activity + ` WHERE canonical_id IS NOT NULL AND participant_domain <> '' AND attachment_count > 0 AND NOT unsent AND (is_direct OR is_conversation_member)
 ), domain_file_totals AS (
 	SELECT domain, sum(attachment_count)::BIGINT AS file_count FROM domain_file_messages GROUP BY domain
 ), domain_entries AS (
