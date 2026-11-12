@@ -22,6 +22,18 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	for _, name := range names {
 		assert.Contains(t, listed, name)
 	}
+	for _, name := range []string{"list_person_employments", "list_organization_employments"} {
+		input, ok := listed[name]["inputSchema"].(map[string]any)
+		require.True(t, ok)
+		properties, ok := input["properties"].(map[string]any)
+		require.True(t, ok)
+		limit, ok := properties["limit"].(map[string]any)
+		require.True(t, ok)
+		description, ok := limit["description"].(string)
+		require.True(t, ok)
+		assert.Contains(t, description, "operation_response_limit_exceeded")
+		assert.Contains(t, description, "offset")
+	}
 	for name, destructive := range map[string]bool{"create_employment": false, "replace_employment": true, "delete_employment": true} {
 		annotations, ok := listed[name]["annotations"].(map[string]any)
 		require.True(t, ok)
