@@ -116,8 +116,8 @@ func TestSlackCallsRequireNewerDaemon(t *testing.T) {
 		return cmd.ExecuteContext(t.Context())
 	}
 	slack := `{"format":"slack_huddle","account":"T:U","record":{"type":"message","subtype":"huddle_thread","ts":"1","room":{"id":"R","date_start":1}}}`
-	require.ErrorContains(run(slack, "import", "-"), "calls require daemon API 5.2.0 or newer")
-	require.ErrorContains(run("", "import-slack", "1"), "calls require daemon API 5.2.0 or newer")
+	require.ErrorContains(run(slack, "import", "-"), "calls require daemon API 5.3.0 or newer")
+	require.ErrorContains(run("", "import-slack", "1"), "calls require daemon API 5.3.0 or newer")
 	assert.Empty(client.imports)
 	assert.Empty(client.slackImports)
 	client.version = slackCallsMinAPIVersion

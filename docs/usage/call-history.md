@@ -44,7 +44,7 @@ Supported formats:
 | Format | Record and binding contract |
 | --- | --- |
 | `signal_desktop` | One supplied `callsHistory` JSON row. Signal `Deleted` rows are rejected. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
-| `slack_huddle` | Requires daemon API 5.2.0 or newer. One huddle message JSON; account is `<workspace_id>:<owner_user_id>`. Bindings may name roster peers other than the owner. Attendance remains unknown. |
+| `slack_huddle` | Requires daemon API 5.3.0 or newer. One huddle message JSON; account is `<workspace_id>:<owner_user_id>`. Bindings may name roster peers other than the owner. Attendance remains unknown. |
 | `normalized` | A version-1 observation with provider/account, record ID, direction, outcome, owner participation, occurrence time, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. Reimporting the same `record_id` replaces its evidence. See the example below. |
 
 This normalized request binds the call to existing archive participant `42`. Timestamps use RFC3339; `ended_at` is optional.
@@ -81,7 +81,7 @@ changes connected account bindings, or requests additional platform permissions.
 
 ## Import an archived Slack huddle
 
-With daemon API 5.2.0 or newer, derive one huddle from a message already
+With daemon API 5.3.0 or newer, derive one huddle from a message already
 archived by the native Slack or Slack export importer:
 
 ```sh
