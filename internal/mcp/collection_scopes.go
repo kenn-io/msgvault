@@ -54,7 +54,7 @@ func (h *handlers) resolveReadSelection(ctx context.Context, account string, arg
 	if collection == "" {
 		return accountSelection{}, &expectedHandlerError{message: "collection name is required"}
 	}
-	if !h.collectionScopesAvailable {
+	if !h.collectionScopes {
 		return accountSelection{}, &expectedHandlerError{message: "message collections are unavailable"}
 	}
 	lister, ok := h.engine.(query.CollectionScopeLister)
