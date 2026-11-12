@@ -3456,11 +3456,7 @@ func TestHandleCLIAttachmentReturnsContentAddressedBytes(t *testing.T) {
 }
 
 // buildTestPack seals content into a single-blob pack under
-// attachmentsDir/packs/ and returns the resulting store index entry. Not a
-// Test-prefixed function, so testify-helper-check does not require a local
-// assert/require helper here — and critically, keeping "require" unshadowed
-// in the caller lets each t.Run subtest below declare its own
-// require.New(t)/assert.New(t) bound to the subtest's own *testing.T.
+// attachmentsDir/packs/ and returns the resulting store index entry.
 func buildTestPack(t *testing.T, attachmentsDir string, content []byte) store.PackIndexEntry {
 	t.Helper()
 	require := require.New(t)

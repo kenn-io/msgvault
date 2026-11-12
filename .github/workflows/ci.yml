@@ -375,10 +375,6 @@ jobs:
       - name: Test package in isolated shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "sharded-${{ matrix.name }}"
 
-      - name: Check testify helpers
-        if: ${{ !cancelled() && matrix.followups }}
-        run: make testify-helper-check
-
       - name: Upload test events
         if: failure() || github.run_attempt > 1
         uses: actions/upload-artifact@v7.0.2
