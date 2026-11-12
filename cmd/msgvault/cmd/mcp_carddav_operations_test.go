@@ -136,19 +136,19 @@ func TestCardDAVSelectorProofUsesNativeDiscovery(t *testing.T) {
 	assert.Contains(prompts[1], "Account details unavailable.")
 	assert.NotContains(prompts[1], "private-app")
 	assert.NotContains(prompts[1], "contacts.example")
-	status, err := named.GetCardDAVConnectionStatus(t.Context(), new("work"))
+	status, err := named.GetCardDAVSyncStatus(t.Context(), new("work"))
 	require.NoError(err)
 	require.NotNil(status)
 	require.NotNil(status.Account)
 	assert.Equal("work@example.com", status.Account.Username)
-	all, err := named.GetCardDAVConnectionStatus(t.Context(), nil)
+	all, err := named.GetCardDAVSyncStatus(t.Context(), nil)
 	require.NoError(err)
 	assert.Nil(all.Account)
 	// Neither disabled connection has a sync runtime; aggregate sync has no
 	// eligible connections and the named sync also returns unavailable.
-	_, err = named.SyncCardDAVConnection(t.Context(), false, nil)
+	_, err = named.SyncCardDAV(t.Context(), false, nil)
 	require.ErrorContains(err, "API error (503)")
-	_, err = named.SyncCardDAVConnection(t.Context(), false, new("work"))
+	_, err = named.SyncCardDAV(t.Context(), false, new("work"))
 	require.ErrorContains(err, "API error (503)")
 	for i := range caps.Routes {
 		if caps.Routes[i].OperationID == "syncCardDAV" {

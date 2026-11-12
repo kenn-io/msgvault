@@ -77,13 +77,7 @@ type cardDAVArguments struct {
 }
 
 func validCardDAVArguments(name string, a cardDAVArguments) bool {
-	switch name {
-	case "list_carddav_connections", "list_carddav_conflicts", "list_carddav_books", "list_carddav_runs", "get_carddav_conflict", "unpublish_carddav_person", "resolve_carddav_conflict":
-		return true
-	case "update_carddav_book_roles":
-		return a.WriteTarget != nil && a.Subscribed != nil && a.LookupSource != nil
-	}
-	return false
+	return name != "update_carddav_book_roles" || (a.WriteTarget != nil && a.Subscribed != nil && a.LookupSource != nil)
 }
 
 func cardDAVRoleRefusal(code string) bool {
