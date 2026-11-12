@@ -411,10 +411,11 @@ import (
 // registered service labels to current contact points, and identity keys to observations.
 // 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
 // 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
-// 5.1.0 adds meeting records.
-// 5.2.0 adds owner meeting link decisions.
-// 5.3.0 adds meeting link suggestions.
-const APISchemaVersion = "5.3.0"
+// 5.1.0 adds keyed group overviews, time-group item totals, saved view schema 3, and saved view run timezones.
+// 5.2.0 adds meeting records.
+// 5.3.0 adds owner meeting link decisions.
+// 5.4.0 adds meeting link suggestions.
+const APISchemaVersion = "5.4.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

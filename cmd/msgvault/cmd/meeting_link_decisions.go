@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const meetingDecisionsMinAPISchemaVersion = "5.2.0"
+const meetingDecisionsMinAPISchemaVersion = "5.3.0"
 
 type meetingDecisionClientBackend interface {
 	DecideMeetingLink(ctx context.Context, left, right, decision string) (store.MeetingLinkDecisionResult, error)

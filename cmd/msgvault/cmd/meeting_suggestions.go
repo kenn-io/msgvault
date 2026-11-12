@@ -12,7 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const meetingSuggestionsMinAPISchemaVersion = "5.3.0"
+const meetingSuggestionsMinAPISchemaVersion = "5.4.0"
 
 type meetingSuggestionClient interface {
 	SuggestMeetingLinks(ctx context.Context, ref string, limit int) (store.MeetingSuggestionPage, error)

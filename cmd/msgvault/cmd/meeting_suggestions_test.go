@@ -31,8 +31,8 @@ func TestMeetingSuggestionsCLI(t *testing.T) {
 		failure bool
 		limit   string
 	}{
-		{"5.3.0", false, "Planning", false, ""}, {"5.3.0", true, `"title":"Planning"`, false, ""}, {"5.2.0", false, "5.3.0", true, ""},
-		{"5.3.0", false, "limit must be between 1 and 100", true, "0"}, {"5.3.0", false, "limit must be between 1 and 100", true, "-1"}, {"5.3.0", false, "limit must be between 1 and 100", true, "101"},
+		{"5.4.0", false, "Planning", false, ""}, {"5.4.0", true, `"title":"Planning"`, false, ""}, {"5.3.0", false, "5.4.0", true, ""},
+		{"5.4.0", false, "limit must be between 1 and 100", true, "0"}, {"5.4.0", false, "limit must be between 1 and 100", true, "-1"}, {"5.4.0", false, "limit must be between 1 and 100", true, "101"},
 	} {
 		t.Run(tc.version+tc.want+tc.limit, func(t *testing.T) {
 			r := require.New(t)
