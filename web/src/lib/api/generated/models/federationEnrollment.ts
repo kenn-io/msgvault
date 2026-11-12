@@ -5,7 +5,6 @@
 export interface FederationEnrollment {
   created_at: string;
   enrollment_uid: string;
-  last_seen_at?: string;
   member: string;
   revoked_at?: string;
   spoke_archive_uid: string;

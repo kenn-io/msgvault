@@ -5486,9 +5486,6 @@ components:
           type: string
         enrollment_uid:
           type: string
-        last_seen_at:
-          format: date-time
-          type: string
         member:
           type: string
         revoked_at:

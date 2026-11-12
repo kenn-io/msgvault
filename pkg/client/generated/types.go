@@ -5296,7 +5296,6 @@ func (f FederationCreateResponse) Validate() error {
 type FederationEnrollment struct {
 	CreatedAt       time.Time  `json:"created_at" validate:"required"`
 	EnrollmentUID   string     `json:"enrollment_uid" validate:"required"`
-	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
 	Member          string     `json:"member" validate:"required"`
 	RevokedAt       *time.Time `json:"revoked_at,omitempty"`
 	SpokeArchiveUID string     `json:"spoke_archive_uid" validate:"required"`
