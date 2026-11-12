@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,6 +42,70 @@ func TestVoiceTranscriptSearchPendingToReady(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, ids, 1)
 	assert.GreaterOrEqual(t, reads.Load(), int32(2))
+}
+
+func TestVoiceTranscriptSearchDisabledDuringRead(t *testing.T) {
+	world := importVoiceChat(t, voiceSpec{id: "voice", asset: "mxc://beeper.local/voice", mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(1600, 1)})
+	docbank := newFakeDocbank(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/transcript") {
+			close(started)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"vault_uid":"vault-1","source_id":"source-1","source_version_id":"audio-version-1","content_version_id":"audio-content-1","evidence_state":"ready","coverage_state":"transcribed","transcript":{"build_id":"build","origin":"generated","completeness":"complete","units":[{"text":"dinner Thursday"}]}}`)
+			return
+		}
+		docbank.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	require.NoError(t, world.st.SetVoiceTranscriptSearch(t.Context(), true))
+	submitter := world.submitter(t, server, "destination")
+	submitter.WithASRProfile("asr")
+	runPasses(t, submitter, 5)
+	deliveries := deliveryRows(t, world.st, "destination")
+	require.Len(t, deliveries, 1)
+	require.Equal(t, "done", deliveries[0].Phase)
+	require.Equal(t, "transcribed", deliveries[0].Coverage)
+	submitter.WithVoiceTranscriptSearch(submitter.client)
+	done := make(chan error, 1)
+	go func() {
+		_, err := submitter.RunBatch(t.Context())
+		done <- err
+	}()
+	finished := false
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		if !finished {
+			<-done
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "transcript request did not start")
+	}
+	require.NoError(t, world.st.SetVoiceTranscriptSearch(t.Context(), false))
+	close(release)
+	select {
+	case err := <-done:
+		finished = true
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "transcript read did not finish")
+	}
+	ids, _, err := world.st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"dinner", "Thursday"}}, 10)
+	require.NoError(t, err)
+	assert.Empty(t, ids)
 }
 
 func TestGeneratedVoiceTextRequiresReadyGeneratedEvidence(t *testing.T) {
