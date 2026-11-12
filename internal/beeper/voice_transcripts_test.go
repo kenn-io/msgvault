@@ -52,7 +52,7 @@ func TestVoiceTranscriptSearchReadsReadyEvidence(t *testing.T) {
 					_, _ = fmt.Fprint(w, `{"vault_uid":"vault-1","source_id":"source-1","source_version_id":"audio-version-1","content_version_id":"audio-content-1","evidence_state":"ready","coverage_state":"transcribed","transcript":{"build_id":"build","origin":"supplied","supplied_input_id":"input","completeness":"complete","units":[{"text":"provider words"}]}}`)
 					return
 				}
-				_, _ = fmt.Fprint(w, `{"vault_uid":"vault-1","source_id":"source-1","source_version_id":"audio-version-1","content_version_id":"audio-content-1","evidence_state":"ready","coverage_state":"transcribed","transcript":{"origin":"generated","completeness":"complete","units":[{"text":"dinner Thursday"}]}}`)
+				_, _ = fmt.Fprint(w, `{"vault_uid":"vault-1","source_id":"source-1","source_version_id":"audio-version-1","content_version_id":"audio-content-1","evidence_state":"ready","coverage_state":"transcribed","transcript":{"origin":"generated","completeness":"complete","units":[{"text":"dinner\u0000 Thursday"}]}}`)
 			}))
 			defer server.Close()
 			require.NoError(t, world.st.SetVoiceTranscriptSearch(t.Context(), true))
@@ -69,7 +69,7 @@ func TestVoiceTranscriptSearchReadsReadyEvidence(t *testing.T) {
 			var text string
 			require.NoError(t, world.st.DB().QueryRowContext(t.Context(), `SELECT transcript_text FROM voice_transcripts`).Scan(&text))
 			if scenario == "pending to ready" {
-				assert.Equal(t, "dinner Thursday", text)
+				assert.Equal(t, "dinner\uFFFD Thursday", text)
 				assert.GreaterOrEqual(t, reads.Load(), int32(2))
 			} else {
 				assert.Empty(t, text)
