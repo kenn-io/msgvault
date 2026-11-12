@@ -660,6 +660,8 @@ func TestPersonFactEmploymentSameGenerationCompetitionHonorsTieAndReplacementMar
 					summary := make([]decisionSummary, 0, len(result.Decisions))
 					for _, decision := range result.Decisions {
 						actions = append(actions, decision.Action)
+						require.NotNil(decision.Outcome)
+						assert.Equal(personfacts.OutcomeTooCloseToChoose, *decision.Outcome)
 						assert.NotEmpty(decision.CompetingClaimKey)
 						assert.Nil(decision.Projection)
 						summary = append(summary, decisionSummary{
@@ -1635,8 +1637,10 @@ func TestPersonFactEmploymentExpiresOwnedProjectionAtExclusiveValidityEnd(t *tes
 	requirements.NoError(err)
 	foundExpired := false
 	for _, decision := range result.Decisions {
-		if decision.Reason == personfacts.ReasonOutsideValidity {
+		if decision.Reason == personfacts.ReasonOutsideValidity && decision.Projection != nil {
 			foundExpired = true
+			requirements.NotNil(decision.Outcome)
+			assertions.Equal(personfacts.OutcomeValueRetired, *decision.Outcome)
 		}
 	}
 	assertions.True(foundExpired)

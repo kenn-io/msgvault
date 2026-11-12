@@ -1096,6 +1096,9 @@ type ListPersonFactDecisionsQuery struct {
 
 	// Offset Zero-based row offset
 	Offset *int64 `json:"offset,omitempty"`
+
+	// ClaimKey Restrict to one claim key
+	ClaimKey *string `json:"claim_key,omitempty"`
 }
 
 type ListPersonFactEvidenceQuery struct {

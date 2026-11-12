@@ -64,6 +64,26 @@ func DefaultPolicyV1() Policy {
 	}
 }
 
+// ScoreMaxima returns the limits of a known frozen resolver policy.
+func ScoreMaxima(version string) *ScoreBreakdown {
+	if version != ResolverVersionV1 {
+		return nil
+	}
+	policy := DefaultPolicyV1()
+	maxima := ScoreBreakdown{Confidence: 100, Freshness: 100, Corroboration: policy.MaxCorroborationBonus}
+	for _, weight := range policy.SourceClassWeights {
+		maxima.SourceClass = max(maxima.SourceClass, weight)
+	}
+	for _, weight := range policy.DirectnessWeights {
+		maxima.Directness = max(maxima.Directness, weight)
+	}
+	for _, weight := range policy.AuthorityWeights {
+		maxima.Authority = max(maxima.Authority, weight)
+	}
+	maxima.Total = maxima.SourceClass + maxima.Directness + maxima.Authority + maxima.Confidence + maxima.Freshness + maxima.Corroboration
+	return &maxima
+}
+
 func NewResolver(policy Policy) (Resolver, error) {
 	if err := validateResolverPolicy(policy); err != nil {
 		return Resolver{}, err
