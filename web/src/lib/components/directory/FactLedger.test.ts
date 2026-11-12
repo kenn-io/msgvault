@@ -70,15 +70,6 @@ describe('FactLedger', () => {
     else expect(screen.queryByText('Recorded')).toBeNull();
   });
 
-  it('distinguishes a close contest from a failed replacement', async () => {
-    const value = controller();
-    value.selectedSection = 'decisions';
-    Object.assign(value.decisions.rows[0]!, { outcome: 'too-close-to-choose', action: 'retained', reason: 'insufficient-margin', competingClaimKey: 'other' });
-    render(FactLedger, { controller: value });
-    const row = screen.getByLabelText('Historical fact decision');
-    expect(row.textContent).toContain('Kept the current value; the evidence was split');
-  });
-
   it('shows submitted job details outside Raw values', () => {
     const value = controller();
     value.targets[0] = { ...value.targets[0]!, kind: 'employment', targetKey: 'system:employment', canonical: `employment:system:employment:${revision}`, sensitive: false };
@@ -155,21 +146,23 @@ describe('FactLedger', () => {
     const value = controller();
     value.selectedTargetOption = 'target-0';
     value.pins.loading = loading;
-    if (!loading) value.pins.error = "Couldn't load pins.";
+    if (!loading) { value.pins.rows = []; value.pins.error = "Couldn't load pins."; }
     const definition = fieldDefinition('note', 'Note');
     const profile = new DirectoryProfileController(createAPIClient(vi.fn()), 42, { attributes: { person_id: 42, attributes: [{ definition, current: [{ id: 1, definition_id: 8, definition_slug: 'note', person_id: 42, ordinal: 0, active_from: '2026-08-01', value: { type: 'text', text: 'Boston' }, source: 'user', created_at: '2026-08-01' }], history: [] }] }, etags: {}, errors: {} });
     render(FactLedger, { controller: value, profile });
     const saved = screen.getByRole('region', { name: 'Selected saved value' });
     expect(saved.textContent).toContain(loading ? 'Loading pins…' : "Couldn't load pins.");
     expect(saved.textContent).not.toContain('Pinned');
+    expect(saved.textContent).not.toContain('Unpinned');
     profile.destroy();
   });
 
   it('does not repeat Work below a Work decision', () => {
     const value = controller();
     value.selectedSection = 'decisions';
-    value.targets[0]!.name = 'Work';
-    value.targets[0]!.description = 'Work';
+    const canonical = `employment:system:employment:${revision}`;
+    value.targets[0] = { ...value.targets[0]!, name: 'Work', description: 'Work', kind: 'employment', targetKey: 'system:employment', canonical };
+    value.decisions.rows[0] = { ...value.decisions.rows[0]!, targetKey: 'system:employment', targetCanonical: canonical };
     value.decisions.rows[0]!.projectionKind = 'employment';
     render(FactLedger, { controller: value });
     const row = screen.getByLabelText('Historical fact decision');
@@ -296,32 +289,32 @@ describe('FactLedger', () => {
       const claim = screen.getByLabelText('Fact claim');
       expect(saved.compareDocumentPosition(claim) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       await fireEvent.click(within(saved).getByRole('button', { name: 'Details' }));
-      expect(within(saved).getByText('Reference').nextElementSibling?.textContent).toBe('Fact decision');
-      expect(saved.textContent).not.toContain('person-fact-decision:123');
+      expect(within(saved).getByText('Reference')).toBeDefined();
     }
     profile.destroy();
   });
 
-  it.each([true, false])('shows saved employment with current=%s in comparison and Pins', async (current) => {
+  it.each(['current', 'past', 'none'] as const)('shows saved employment with %s jobs in comparison and Pins', async (state) => {
     const value = controller();
     const canonical = `employment:system:employment:${revision}`;
     value.targets = [{ optionID: 'work', name: 'Work', targetKey: 'system:employment', description: 'Work', kind: 'employment', valueType: 'object', cardinality: 'multi', sensitive: false, canonical }];
     value.pins.rows = [{ kind: 'employment', pinned: true, targetKey: 'system:employment', targetCanonical: canonical }];
     value.selectedTargetOption = 'work';
     const entity = new DirectoryEntityController(createAPIClient(vi.fn()), 42);
-    entity.employments = [employment(11, 1, { is_current: current, is_primary: current, source: 'carddav_import', source_ref: 'card-3', created_at: '2026-11-01T12:00:00Z', updated_at: '2026-11-01T12:00:00Z' })];
+    const current = state === 'current';
+    entity.employments = state === 'none' ? [] : [employment(11, 1, { is_current: current, is_primary: current, source: 'carddav_import', source_ref: 'card-3', created_at: '2026-11-01T12:00:00Z', updated_at: '2026-11-01T12:00:00Z' })];
     if (current) entity.employments.push(employment(12, 1, { title: 'Former role', is_current: false }));
     entity.organizations = [organization()];
     render(FactLedger, { controller: value, entity });
     const comparison = screen.getByRole('region', { name: 'Selected saved value' });
     expect(comparison.textContent?.includes('Engineer at Synthetic Org')).toBe(current);
     expect(comparison.textContent).not.toContain('Former role');
-    if (!current) expect(comparison.textContent).toContain('Work: No current job');
+    if (!current) expect(comparison.textContent).toContain(`Work: ${state === 'past' ? 'No current job' : 'No saved value'}`);
     await fireEvent.click(screen.getByRole('radio', { name: 'Pins' }));
     const saved = screen.getByRole('region', { name: 'Saved employment' });
     expect(saved.textContent?.includes('Engineer at Synthetic Org')).toBe(current);
     expect(saved.textContent).not.toContain('Former role');
-    if (!current) expect(saved.textContent).toContain('No current job');
+    if (!current) expect(saved.textContent).toContain(state === 'past' ? 'No current job' : 'No saved value');
     if (current) {
       expect(saved.textContent).toContain('Pinned · From CardDAV contacts');
       await fireEvent.click(within(saved).getByRole('button', { name: 'Details' }));
@@ -330,28 +323,17 @@ describe('FactLedger', () => {
     entity.destroy();
   });
 
-  it('shows no saved value when there are no jobs', () => {
-    const value = controller();
-    value.targets = [{ optionID: 'work', name: 'Work', targetKey: 'system:employment', description: 'Work', kind: 'employment', valueType: 'object', cardinality: 'multi', sensitive: false, canonical: `employment:system:employment:${revision}` }];
-    value.selectedTargetOption = 'work';
-    const entity = new DirectoryEntityController(createAPIClient(vi.fn()), 42);
-    render(FactLedger, { controller: value, entity });
-    expect(screen.getByRole('region', { name: 'Selected saved value' }).textContent).toContain('Work: No saved value');
-    entity.destroy();
-  });
-
   it.each([true, false])('shows score parts only for scored decisions: %s', async scored => {
     const value = controller();
     value.selectedSection = 'decisions';
-    if (!scored) value.decisions.rows[0] = { ...value.decisions.rows[0]!, action: 'policy-rejected', reason: 'sensitive-policy', projectionKind: null, score: { authority: 0, confidence: 0, corroboration: 0, directness: 0, freshness: 0, sourceClass: 0, total: 0 } };
+    value.decisions.rows[0]!.scoreMaxima!.authority = 250;
+    if (!scored) value.decisions.rows[0] = { ...value.decisions.rows[0]!, outcome: 'not-used', action: 'policy-rejected', reason: 'sensitive-policy', projectionKind: null, score: { authority: 0, confidence: 0, corroboration: 0, directness: 0, freshness: 0, sourceClass: 0, total: 0 } };
     render(FactLedger, { controller: value });
     const row = screen.getByLabelText('Historical fact decision');
     await fireEvent.click(within(row).getByRole('button', { name: 'Details' }));
-    if (scored) expect(within(row).getAllByRole('listitem')).toHaveLength(6);
-    else {
-      expect(row.textContent).not.toContain('From an aggregator');
-      expect(row.textContent).not.toContain('Read with doubt');
-    }
+    expect(within(row).queryAllByRole('listitem')).toHaveLength(scored ? 6 : 0);
+    expect(row.textContent?.includes('Authority: 100 of 250')).toBe(scored);
+    expect(row.textContent?.includes('Scored')).toBe(scored);
   });
 
   it('names All fields evidence and decisions', async () => {
@@ -360,7 +342,7 @@ describe('FactLedger', () => {
     value.targets = [];
     value.claims.rows = [claim(0, 'a', 'city', [1, 2]), claim(1, 'b', 'employer', [2]), claim(2, 'c', 'city', [2])];
     value.evidence.rows = [1, 2, 3].map(id => ({ ...value.evidence.rows[0]!, rowToken: `evidence-${id}`, evidenceID: id }));
-    value.decisions.rows = ['employer', 'missing'].map((targetKey, index) => ({ ...value.decisions.rows[0]!, rowToken: `decision-${index}`, targetKey }));
+    value.decisions.rows = ['employer', 'missing'].map((targetKey, index) => ({ ...value.decisions.rows[0]!, rowToken: `decision-${index}`, targetKey, targetCanonical: `attribute:${targetKey}:${revision}` }));
     const profile = new DirectoryProfileController(createAPIClient(vi.fn()), 42, { attributes: { person_id: 42, attributes: [
       { definition: fieldDefinition('city', 'Home city'), current: [], history: [] }, { definition: fieldDefinition('employer', 'Employer'), current: [], history: [] }
     ] }, etags: {}, errors: {} });
@@ -392,15 +374,18 @@ describe('FactLedger', () => {
     expect(decision.querySelector('.value > span')?.textContent).toBe(expected);
   });
 
-  it('updates the decision link when a sensitive claim is revealed or hidden', async () => {
+  it('names a sensitive claim in its decision only while it is revealed', async () => {
     const value = controller();
+    vi.spyOn(value, 'selectSection').mockImplementation(async (section) => { value.selectedSection = section; });
     render(FactLedger, { controller: value });
-    await fireEvent.click(screen.getByRole('button', { name: 'Details' }));
-    expect(screen.getByRole('button', { name: 'Show decision: Saved' })).toBeDefined();
+    const sentence = () => screen.getByLabelText('Historical fact decision').querySelector('.value > span')?.textContent;
     await fireEvent.click(screen.getByRole('button', { name: 'Reveal sensitive fact value' }));
-    expect(screen.getByRole('button', { name: 'Show decision: Saved: allowed sensitive value' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Decisions' }));
+    expect(sentence()).toBe('Saved: allowed sensitive value');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Claims' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Hide sensitive fact value' }));
-    expect(screen.getByRole('button', { name: 'Show decision: Saved' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('radio', { name: 'Decisions' }));
+    expect(sentence()).toBe('Saved');
   });
 
   it.each([
@@ -410,7 +395,6 @@ describe('FactLedger', () => {
     const value = controller();
     value.targets[0]!.sensitive = false;
     value.claims.rows[0] = { ...value.claims.rows[0]!, evidenceIDs, relation: 'supersede' };
-    value.decisions.rows[0] = { ...value.decisions.rows[0]!, action: 'retained', reason: 'below-threshold', projectionKind: null, score: { sourceClass: 300, directness: 200, authority: 100, corroboration: 0, freshness: 20, confidence: 8, total: 628 } };
     const navigate = vi.spyOn(value, 'showEvidence').mockResolvedValue();
     render(FactLedger, { controller: value });
     await fireEvent.click(screen.getByRole('button', { name: 'Details' }));

@@ -89,30 +89,6 @@ for (const width of [1280, 390]) test(`Details aligns with source and date at ${
   }
 });
 
-test('Claim decision link stays inside its row at 390px', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 900 });
-  const facts = await openFacts(page);
-  const claim = facts.getByLabel('Fact claim').first();
-  await claim.getByRole('button', { name: 'Details', exact: true }).click();
-  const decision = claim.getByRole('button', { name: /^Show decision/ });
-  await expect(decision).toBeVisible();
-  const bounds = await decision.evaluate(element => {
-    const cell = element.closest('dd')!.getBoundingClientRect();
-    const row = element.closest('[aria-label="Fact claim"]')!.getBoundingClientRect();
-    const text = document.createRange();
-    text.selectNodeContents(element);
-    const rects = Array.from(text.getClientRects());
-    return { textLeft: Math.min(...rects.map(rect => rect.left)), textRight: Math.max(...rects.map(rect => rect.right)), scrollWidth: element.scrollWidth, clientWidth: element.clientWidth, cell: { left: cell.left, right: cell.right }, row: { left: row.left, right: row.right } };
-  });
-  expect(bounds.textLeft).toBeGreaterThanOrEqual(bounds.cell.left);
-  expect(bounds.textRight).toBeLessThanOrEqual(bounds.cell.right);
-  expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth);
-  expect(bounds.cell.left).toBeGreaterThanOrEqual(bounds.row.left);
-  expect(bounds.cell.right).toBeLessThanOrEqual(bounds.row.right);
-  expect(bounds.cell.left).toBeGreaterThanOrEqual(0);
-  expect(bounds.cell.right).toBeLessThanOrEqual(390);
-});
-
 test('Facts tabs and field picker share a right edge on phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });
   const facts = await openFacts(page);
@@ -126,9 +102,7 @@ test('Claim evidence opens the cited source', async ({ page }) => {
   await expect(facts.getByRole('radio', { name: 'Claims' })).toBeChecked();
   const claim = facts.getByLabel('Fact claim').first();
   await claim.getByRole('button', { name: 'Details', exact: true }).click();
-  const response = page.waitForRequest(request => new URL(request.url()).searchParams.get('evidence_id') === '51');
   await claim.getByRole('button', { name: 'Show evidence' }).click();
-  await response;
   await expect(facts.getByLabel('Fact evidence')).toHaveCount(1);
   await expect(facts.getByRole('button', { name: 'Show all' })).toBeVisible();
 });

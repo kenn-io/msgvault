@@ -45,7 +45,8 @@ it('opens Facts after the first saved job with lookups off', async () => {
   await screen.findByRole('button', { name: /Set up/ });
   hasStored = true;
   entity.employments = [employment(11, 1)];
-  await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Facts' }).closest('summary')).not.toBeNull());
+  await screen.findByText('No claims yet');
+  expect(screen.getByRole('heading', { name: 'Facts' }).closest('summary')).not.toBeNull();
   entity.destroy();
 });
 

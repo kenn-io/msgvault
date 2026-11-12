@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authorityWords, decisionSentence, evidenceSourceWords, lostSupportWords, originWords, projectionWords, partWords, relationWords, scoreWords, statusEventWords } from './fact-words';
+import { authorityWords, decisionSentence, evidenceSourceWords, lostSupportWords, originWords, projectionWords, relationWords, scoreWords, statusEventWords } from './fact-words';
 
 describe('fact words', () => {
   it('names evidence sources in words', () => {
@@ -49,10 +49,8 @@ describe('fact words', () => {
     expect(lostSupportWords(undefined)).toBe('Source removed');
   });
 
-  it('uses each decision’s score maxima', () => {
+  it('names where a saved decision put its value', () => {
     expect(projectionWords('person_attribute')).toBe('Field');
-    expect(partWords(100, 300)).toBe('100 of 300');
-    expect(partWords(100, 500)).toBe('100 of 500');
   });
 
   it('names confidence strength at the 600 and 800 boundaries', () => {
