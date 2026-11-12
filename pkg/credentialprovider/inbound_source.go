@@ -2,9 +2,9 @@ package credentialprovider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 	"uuid"
 )
@@ -12,6 +12,11 @@ import (
 // renewMargin is how long before expiry a held credential stops being used, so
 // a request does not reach the endpoint just after its credential expires.
 const renewMargin = 30 * time.Second
+
+// ErrCredentialExpired reports a credential whose usable lifetime ended during
+// its own exchange, for example behind a slow helper or a sleeping host. The
+// next Token or Renew renews it.
+var ErrCredentialExpired = errors.New("credential expired before it could be used")
 
 // RefusalError reports a helper's refusal. Status and Reason are fixed codes.
 type RefusalError struct {
@@ -37,7 +42,8 @@ type InboundSource struct {
 	argv  []string
 	scope InboundScope
 
-	mu   sync.Mutex
+	// turn holds one value while a caller owns held, so waiting can be canceled.
+	turn chan struct{}
 	held *heldCredential
 }
 
@@ -48,6 +54,7 @@ type heldCredential struct {
 	bearer     string
 	started    time.Time
 	usable     time.Duration
+	rejected   bool
 }
 
 // NewInboundSource checks argv and scope without starting the helper.
@@ -55,30 +62,53 @@ func NewInboundSource(argv []string, scope InboundScope) (*InboundSource, error)
 	if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" || !validInboundScope(scope) {
 		return nil, ErrInvalidRequest
 	}
-	return &InboundSource{argv: argv, scope: scope}, nil
+	return &InboundSource{argv: argv, scope: scope, turn: make(chan struct{}, 1)}, nil
 }
 
 // Token returns the held credential while it is usable and otherwise renews or
 // authorizes one.
 func (s *InboundSource) Token(ctx context.Context) (InboundToken, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.held != nil && s.held.valid(time.Now()) {
+	if err := s.acquire(ctx); err != nil {
+		return InboundToken{}, err
+	}
+	defer s.release()
+	if s.held.valid(time.Now()) {
 		return s.held.token(), nil
 	}
 	return s.exchangeLocked(ctx)
 }
 
-// Renew replaces a credential the endpoint rejected. If another caller already
-// replaced it, Renew returns the held successor without starting the helper.
+// Renew replaces a credential the endpoint rejected. The rejected credential is
+// never returned again; a usable successor that another caller already obtained
+// is returned without starting the helper.
 func (s *InboundSource) Renew(ctx context.Context, rejected InboundToken) (InboundToken, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.held != nil && s.held.id != rejected.credentialID && s.held.valid(time.Now()) {
+	if err := s.acquire(ctx); err != nil {
+		return InboundToken{}, err
+	}
+	defer s.release()
+	if s.held != nil && s.held.id == rejected.credentialID {
+		s.held.rejected = true
+	}
+	if s.held.valid(time.Now()) {
 		return s.held.token(), nil
 	}
 	return s.exchangeLocked(ctx)
 }
+
+func (s *InboundSource) acquire(ctx context.Context) error {
+	select {
+	case s.turn <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		s.release()
+		return err
+	}
+	return nil
+}
+
+func (s *InboundSource) release() { <-s.turn }
 
 func (s *InboundSource) exchangeLocked(ctx context.Context) (InboundToken, error) {
 	request := InboundRequest{InboundScope: s.scope, Version: 1, Operation: "authorize", RequestID: uuid.New()}
@@ -106,13 +136,19 @@ func (s *InboundSource) exchangeLocked(ctx context.Context) (InboundToken, error
 		started:    started,
 		usable:     lifetime - min(lifetime/2, renewMargin),
 	}
+	if !s.held.valid(time.Now()) {
+		return InboundToken{}, ErrCredentialExpired
+	}
+	if err := ctx.Err(); err != nil {
+		return InboundToken{}, err
+	}
 	return s.held.token(), nil
 }
 
 // valid bounds both monotonic and wall-clock elapsed time. The monotonic clock
 // may stop while the host sleeps; the wall clock does not.
 func (h *heldCredential) valid(now time.Time) bool {
-	return now.Sub(h.started) < h.usable && now.Round(0).Sub(h.started.Round(0)) < h.usable
+	return h != nil && !h.rejected && now.Sub(h.started) < h.usable && now.Round(0).Sub(h.started.Round(0)) < h.usable
 }
 
 func (h *heldCredential) token() InboundToken {

@@ -3,8 +3,11 @@ package credentialprovider_test
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -185,7 +188,7 @@ func TestExchangeInboundHelper(t *testing.T) {
 	}
 }
 
-func TestInboundSourceReusesCredentialUntilExpiry(t *testing.T) {
+func TestInboundSourceReusesUsableCredential(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	executable, err := os.Executable()
@@ -205,16 +208,23 @@ func TestInboundSourceReusesCredentialUntilExpiry(t *testing.T) {
 		assertions.Equal("synthetic-token-1", tokens[i].Bearer)
 	}
 	assertions.Len(helperRequests(t, argv), 1)
+}
 
-	argv = inboundHelper(t, executable, "ready", time.Nanosecond)
-	source, err = credentialprovider.NewInboundSource(argv, inboundScope)
+func TestInboundSourceRefusesCredentialExpiredDuringExchange(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	executable, err := os.Executable()
 	requirements.NoError(err)
-	first, err := source.Token(t.Context())
+	// Starting the helper takes longer than this lifetime, so every credential
+	// is spent before the exchange returns.
+	argv := inboundHelper(t, executable, "ready", time.Nanosecond)
+	source, err := credentialprovider.NewInboundSource(argv, inboundScope)
 	requirements.NoError(err)
-	second, err := source.Token(t.Context())
-	requirements.NoError(err)
-	assertions.Equal("synthetic-token-1", first.Bearer)
-	assertions.Equal("synthetic-token-2", second.Bearer)
+	for range 2 {
+		token, err := source.Token(t.Context())
+		requirements.ErrorIs(err, credentialprovider.ErrCredentialExpired)
+		assertions.Empty(token.Bearer)
+	}
 	requests := helperRequests(t, argv)
 	requirements.Len(requests, 2)
 	assertions.Equal("authorize", requests[0].Operation)
@@ -244,6 +254,73 @@ func TestInboundSourceRenewsRejectedCredentialOnce(t *testing.T) {
 	assertions.Equal("renew", requests[1].Operation)
 }
 
+func TestInboundSourceNeverReusesRejectedCredential(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	executable, err := os.Executable()
+	requirements.NoError(err)
+	argv := inboundHelper(t, executable, "renew-fails", time.Hour)
+	source, err := credentialprovider.NewInboundSource(argv, inboundScope)
+	requirements.NoError(err)
+	rejected, err := source.Token(t.Context())
+	requirements.NoError(err)
+	_, err = source.Renew(t.Context(), rejected)
+	requirements.ErrorIs(err, credentialprovider.ErrProviderFailed)
+	token, err := source.Token(t.Context())
+	requirements.ErrorIs(err, credentialprovider.ErrProviderFailed)
+	assertions.Empty(token.Bearer)
+	requests := helperRequests(t, argv)
+	requirements.Len(requests, 3)
+	for _, request := range requests[1:] {
+		assertions.Equal("renew", request.Operation)
+		assertions.Equal(requests[0].RequestID, request.PreviousRequestID)
+	}
+}
+
+func TestInboundSourceHonorsCancellation(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	executable, err := os.Executable()
+	requirements.NoError(err)
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = listener.Close() })
+	requirements.NoError(listener.SetDeadline(time.Now().Add(30 * time.Second)))
+	argv := append(inboundHelper(t, executable, "block", time.Hour), listener.Addr().String())
+	source, err := credentialprovider.NewInboundSource(argv, inboundScope)
+	requirements.NoError(err)
+	type result struct {
+		token credentialprovider.InboundToken
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		token, err := source.Token(t.Context())
+		done <- result{token, err}
+	}()
+	// The helper connects only once the first caller is mid-exchange.
+	conn, err := listener.Accept()
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = conn.Close() })
+	requirements.NoError(conn.SetDeadline(time.Now().Add(30 * time.Second)))
+	var ready [1]byte
+	_, err = io.ReadFull(conn, ready[:])
+	requirements.NoError(err)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = source.Token(canceled)
+	requirements.ErrorIs(err, context.Canceled)
+	_, err = source.Renew(canceled, credentialprovider.InboundToken{})
+	requirements.ErrorIs(err, context.Canceled)
+	requirements.NoError(conn.Close())
+	first := <-done
+	requirements.NoError(first.err)
+	assertions.Equal("synthetic-token-1", first.token.Bearer)
+	_, err = source.Token(canceled)
+	requirements.ErrorIs(err, context.Canceled)
+	assertions.Len(helperRequests(t, argv), 1)
+}
+
 func TestInboundSourceAuthorizesAfterRefusal(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -271,9 +348,18 @@ func inboundHelper(t *testing.T, executable, mode string, lifetime time.Duration
 	return []string{executable, "-test.run=^TestInboundProviderProcess$", "--", mode, log, lifetime.String()}
 }
 
+func helperLog(argv []string) string {
+	for i, arg := range argv {
+		if arg == "--" {
+			return argv[i+2]
+		}
+	}
+	return ""
+}
+
 func helperRequests(t *testing.T, argv []string) []credentialprovider.InboundRequest {
 	t.Helper()
-	file, err := os.Open(argv[len(argv)-2])
+	file, err := os.Open(helperLog(argv))
 	require.NoError(t, err)
 	defer func() { _ = file.Close() }()
 	var requests []credentialprovider.InboundRequest
@@ -317,6 +403,18 @@ func TestInboundProviderProcess(t *testing.T) {
 	_, err = log.Write(append(data, '\n'))
 	if err != nil || log.Close() != nil {
 		os.Exit(1)
+	}
+	if mode == "renew-fails" && r.Operation == "renew" {
+		os.Exit(1)
+	}
+	if mode == "block" {
+		conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", args[4])
+		if err != nil {
+			os.Exit(1)
+		}
+		_, _ = conn.Write([]byte("1"))
+		_, _ = io.Copy(io.Discard, conn)
+		_ = conn.Close()
 	}
 	if mode == "refuse" {
 		err := credentialprovider.WriteInboundResponse(os.Stdout, r, credentialprovider.InboundResponse{Version: r.Version, Operation: r.Operation, RequestID: r.RequestID, Status: credentialprovider.StatusSignInRequired, Reason: "no_current_sign_in"})
