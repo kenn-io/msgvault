@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -16,6 +18,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/beeperidentity"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/introops"
@@ -45,6 +49,7 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 	remote := configureRemoteDaemonForTest(t, server.URL)
 	run := func(args ...string) (string, error) {
 		root := &cobra.Command{Use: "msgvault"}
+		clirun.AddLoggingFlags(root.PersistentFlags())
 		root.AddCommand(newIntroCommand(runDaemonCLICommandHTTPFromCobra))
 		silenceUsageInRunE(root)
 		var out, stderr bytes.Buffer
@@ -72,6 +77,10 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 	req.NoError(json.Unmarshal([]byte(data), &page))
 	req.Len(page.Items, 1)
 	check.Equal(row.IntroID, page.Items[0].IntroID)
+	for _, flag := range [][]string{{"--verbose"}, {"--log-level", "debug"}, {"--log-sql"}, {"--log-sql-slow-ms", "5"}} {
+		_, err = run(append([]string{"intro", "list", "--json"}, flag...)...)
+		req.NoError(err)
+	}
 	stored, err := st.GetPersonIntroductionContext(ctx, row.IntroID)
 	req.NoError(err)
 	check.Equal("Private", stored.Body)
@@ -95,6 +104,8 @@ func TestIntroDelegatedThroughRunner(t *testing.T) {
 	a, _, err := st.CreatePersonFromParticipantContext(ctx, pa)
 	req.NoError(err)
 	b, _, err := st.CreatePersonFromParticipantContext(ctx, pb)
+	req.NoError(err)
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?), (?, 'beeper', ?)`), pa, beeperidentity.Fallback("grant-account", "a"), pb, beeperidentity.Fallback("grant-account", "b"))
 	req.NoError(err)
 	cfg := config.NewDefaultConfig()
 	cfg.HomeDir = t.TempDir()
@@ -147,6 +158,32 @@ func TestIntroDelegatedThroughRunner(t *testing.T) {
 	req.Len(missing, 1)
 	check.Equal("not_permitted", denied[0].Error)
 	check.Equal(denied[0].Error, missing[0].Error)
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	req.NoError(os.WriteFile(tokenFile, []byte(create), 0600))
+	for _, tc := range []struct {
+		args   []string
+		denied bool
+	}{
+		{[]string{"intro", "list", "--json"}, false},
+		{[]string{"intro", "show", row.IntroID, "--json"}, false},
+		{[]string{"intro", "prepare", "--source-id", strconv.FormatInt(src.ID, 10), "--person", strconv.FormatInt(a.ID, 10), "--person", strconv.FormatInt(b.ID, 10), "--title", "title", "--body", "body", "--json"}, false},
+		{[]string{"intro", "edit", row.IntroID, "--revision", "1", "--title", "no"}, true},
+		{[]string{"intro", "cancel", row.IntroID, "--revision", "1", "--json"}, false},
+	} {
+		root := newRootCommand()
+		root.AddCommand(newIntroCommand(runDaemonCLICommandHTTPFromCobra))
+		root.SetArgs(append([]string{"--agent-url", server.URL, "--agent-token-file", tokenFile, "--agent-allow-insecure"}, tc.args...))
+		var stderr bytes.Buffer
+		root.SetErr(&stderr)
+		done := captureStdout(t)
+		err := executeRootContext(ctx, root)
+		_ = done()
+		if tc.denied {
+			req.ErrorContains(err, "not available in agent-delegated mode")
+		} else {
+			req.NoError(err)
+		}
+	}
 }
 
 func TestIntroRunnerSanitizesText(t *testing.T) {

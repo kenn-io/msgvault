@@ -33,6 +33,18 @@ func (s Service) project(ctx context.Context, g *agentgrant.Grant, row store.Per
 	if !allowed(g, row) {
 		return Record{}, ErrForbidden
 	}
+	if g != nil {
+		if row.SourceType != "beeper" {
+			return Record{}, ErrForbidden
+		}
+		visible, err := s.Store.IntroductionPeopleVisibleContext(ctx, row.SourceIdentifier, row.PersonAID, row.PersonBID)
+		if err != nil {
+			return Record{}, err
+		}
+		if !visible {
+			return Record{}, ErrForbidden
+		}
+	}
 	p, err := s.Store.GetPersonIntroductionPreflightContext(ctx, row.SourceID, row.PersonAID, row.PersonBID)
 	if err != nil {
 		return Record{}, err
@@ -58,6 +70,18 @@ func (s Service) Prepare(ctx context.Context, g *agentgrant.Grant, in store.Pers
 	}
 	if g != nil && !g.Allows(agentgrant.PermissionDraftCreate, agentgrant.SourceRef{Type: src.SourceType, Identifier: src.Identifier}) {
 		return Record{}, ErrForbidden
+	}
+	if g != nil {
+		if src.SourceType != "beeper" {
+			return Record{}, ErrForbidden
+		}
+		visible, err := s.Store.IntroductionPeopleVisibleContext(ctx, src.Identifier, in.PersonAID, in.PersonBID)
+		if err != nil {
+			return Record{}, err
+		}
+		if !visible {
+			return Record{}, ErrForbidden
+		}
 	}
 	p, err := s.Store.GetPersonIntroductionPreflightContext(ctx, in.SourceID, in.PersonAID, in.PersonBID)
 	if err != nil {
@@ -100,6 +124,9 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 			}
 		}
 	}
+	if g != nil {
+		return s.listDelegated(ctx, g, q, ids)
+	}
 	rows, err := s.Store.ListPersonIntroductionsContext(ctx, q, ids)
 	if err != nil {
 		return Page{}, err
@@ -120,6 +147,61 @@ func (s Service) List(ctx context.Context, g *agentgrant.Grant, q store.PersonIn
 		out.Items = append(out.Items, projectedRecord(g, row, preflights[i]))
 	}
 	return out, nil
+}
+
+// Walk the existing cursor one row at a time so invisible rows cannot consume
+// a page or change its continuation point.
+func (s Service) listDelegated(ctx context.Context, g *agentgrant.Grant, q store.PersonIntroductionQuery, ids []int64) (Page, error) {
+	limit := q.Limit
+	if limit == 0 {
+		limit = 20
+	}
+	if limit < 1 || limit > 100 {
+		return Page{}, store.ErrIntroductionInvalid
+	}
+	q.Limit = 1
+	out := Page{Items: []Record{}}
+	var afterVisible string
+	for {
+		rows, err := s.Store.ListPersonIntroductionsContext(ctx, q, ids)
+		if err != nil {
+			return Page{}, err
+		}
+		if len(rows.Items) == 0 {
+			return out, nil
+		}
+		row := rows.Items[0]
+		if !allowed(g, row) {
+			return Page{}, ErrForbidden
+		}
+		if row.SourceType != "beeper" {
+			if !rows.HasMore {
+				return out, nil
+			}
+			q.AfterID = rows.NextAfterID
+			continue
+		}
+		visible, err := s.Store.IntroductionPeopleVisibleContext(ctx, row.SourceIdentifier, row.PersonAID, row.PersonBID)
+		if err != nil {
+			return Page{}, err
+		}
+		if visible {
+			if len(out.Items) == limit {
+				out.HasMore, out.NextAfterID = true, afterVisible
+				return out, nil
+			}
+			record, err := s.project(ctx, g, row)
+			if err != nil {
+				return Page{}, err
+			}
+			out.Items = append(out.Items, record)
+			afterVisible = rows.NextAfterID
+		}
+		if !rows.HasMore {
+			return out, nil
+		}
+		q.AfterID = rows.NextAfterID
+	}
 }
 func (s Service) Edit(ctx context.Context, g *agentgrant.Grant, id string, in store.PersonIntroductionEdit) (Record, error) {
 	if g != nil {

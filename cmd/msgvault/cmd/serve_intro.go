@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/introops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -111,6 +112,7 @@ func (a *storeAPIAdapter) runCLIIntro(ctx context.Context, req api.CLIRunRequest
 		return nil
 	}
 	root := newIntroCommand(execute)
+	clirun.AddLoggingFlags(root.PersistentFlags())
 	root.SilenceErrors = true
 	root.SilenceUsage = true
 	root.SetOut(io.Discard)
