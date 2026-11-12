@@ -23,7 +23,7 @@ func TestEmailCalendarGmailAuditExcludesDerivedEvents(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	source, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	requirements.NoError(err)
-	id := persistInviteEmailForSource(t, st, source.ID, "audit-invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
+	id := persistInviteEmailForSource(t, st, source.ID, "audit-invite", inviteEmail(emailCalendarDocument("DTSTART:20270302T120000Z")))
 	requirements.Len(emailEvents(t, st, source.ID), 1)
 	for _, sourceID := range []int64{source.ID, 0} {
 		var ids []int64
@@ -39,7 +39,7 @@ func TestEmailCalendarGmailAuditExcludesDerivedEvents(t *testing.T) {
 
 func TestEmailCalendarOctetStreamAttachment(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
-	calendar := calendarDocument("REQUEST", "DTSTART:20270302T120000Z")
+	calendar := emailCalendarDocument("DTSTART:20270302T120000Z")
 	raw := "From: organizer@example.com\r\nMIME-Version: 1.0\r\nContent-Type: application/octet-stream; name=invite.ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar)
 	_, source := persistInviteEmail(t, st, "encoded-invite", []byte(raw))
 	require.Len(t, emailEvents(t, st, source), 1)
@@ -96,7 +96,7 @@ func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 			return &MessagePersistData{
 				Message:      &Message{SourceID: source.ID, SourceMessageID: "single-invite", MessageType: "email", SenderID: sql.NullInt64{Int64: ids[0], Valid: true}},
 				Conversation: &ConversationPersistData{SourceConversationID: "single-invite"},
-				RawMIME:      inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")),
+				RawMIME:      inviteEmail(emailCalendarDocument("DTSTART:20270302T120000Z")),
 			}
 		}, nil, nil)
 		done <- persistErr
@@ -129,6 +129,10 @@ func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 // emailFrom wraps a calendar part in an email with a plain-text alternative.
 func emailFrom(from string, calendar []byte) []byte {
 	return []byte("From: " + from + "\r\nTo: guest@example.org\r\nSubject: Original email\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=invite\r\n\r\n--invite\r\nContent-Type: text/plain\r\n\r\nEmail body stays intact\r\n--invite\r\nContent-Type: text/calendar\r\n\r\n" + string(calendar) + "\r\n--invite--\r\n")
+}
+
+func emailCalendarDocument(props string) []byte {
+	return calendarDocument("REQUEST", props+"\r\nORGANIZER:mailto:organizer@example.com")
 }
 
 func inviteEmail(calendar []byte) []byte {
@@ -166,7 +170,7 @@ func emailEvents(t *testing.T, st *Store, source int64) []int64 {
 func TestEmailCalendarSourceCountsAndActivityCandidates(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	raw := calendarDocument("REQUEST", "DTSTART:20270302T120000Z")
+	raw := emailCalendarDocument("DTSTART:20270302T120000Z")
 	_, mailSource := persistInviteEmail(t, st, "activity-invite", inviteEmail(raw))
 	mailEvents := emailEvents(t, st, mailSource)
 	requirements.Len(mailEvents, 1)
@@ -251,7 +255,7 @@ func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 			if tc.confirmed {
 				requirements.NoError(st.AddAccountIdentityContext(t.Context(), source.ID, "owner@example.com", "manual"))
 			}
-			persistInviteEmailForSource(t, st, source.ID, "calendar-account-scope", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
+			persistInviteEmailForSource(t, st, source.ID, "calendar-account-scope", inviteEmail(emailCalendarDocument("DTSTART:20270302T120000Z")))
 			if tc.confirmLater {
 				requirements.NoError(st.AddAccountIdentityContext(t.Context(), source.ID, "owner@example.com", "manual"))
 			}
@@ -340,7 +344,7 @@ func TestEmailCalendarMaterializesOnRawMIMEUpsert(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	parent, source := persistInviteEmail(t, st, "raw-upsert", []byte("Subject: ordinary\r\n\r\nBody"))
-	raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z"))
+	raw := inviteEmail(emailCalendarDocument("DTSTART:20270302T120000Z"))
 	requirements.NoError(st.UpsertMessageRawWithFormat(parent, raw, "mime"))
 	assertions.Len(emailEvents(t, st, source), 1)
 }
@@ -433,7 +437,7 @@ func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 		st := newRFC822IDBackfillBackendStore(t)
 		unrelated, err := st.GetOrCreateSource("mbox", "unrelated@example.com")
 		requirements.NoError(err)
-		persistInviteEmailForSource(t, st, unrelated.ID, "other-source", inviteEmail(calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T130000Z\r\nORGANIZER:mailto:other@example.com")))
+		persistInviteEmailForSource(t, st, unrelated.ID, "other-source", emailFrom("other@example.com", calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T130000Z\r\nORGANIZER:mailto:other@example.com")))
 		other, err := st.GetOrCreateSource("mbox", "other-destination@example.com")
 		requirements.NoError(err)
 		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: unrelated.ID, IntoSourceID: other.ID})
@@ -523,6 +527,24 @@ func TestEmailCalendarRejectsOtherSenders(t *testing.T) {
 		_, source := persistInviteEmail(t, st, "edit", emailFrom("attendee@example.org", edit))
 		r.Empty(emailEvents(t, st, source))
 	})
+	t.Run("no sender or organizer", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, source := persistInviteEmail(t, st, "anonymous", emailFrom("", calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
+		r.Empty(emailEvents(t, st, source))
+	})
+	t.Run("missing sender", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, source := persistInviteEmail(t, st, "missing-sender", emailFrom("", emailCalendarDocument("DTSTART:20270302T120000Z")))
+		r.Empty(emailEvents(t, st, source))
+	})
+	t.Run("missing organizer", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, source := persistInviteEmail(t, st, "missing-organizer", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
+		r.Empty(emailEvents(t, st, source))
+	})
 	for _, method := range []string{"REQUEST", "CANCEL"} {
 		t.Run(method, func(t *testing.T) {
 			r := require.New(t)
@@ -556,8 +578,8 @@ func TestEmailCalendarRejectsOtherSenders(t *testing.T) {
 func TestEmailCalendarDuplicateParts(t *testing.T) {
 	assertions := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	calendar := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Invite")
-	raw := "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/calendar\r\n\r\n" + string(calendar) + "\r\n--x\r\nContent-Type: application/ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
+	calendar := emailCalendarDocument("DTSTART:20270302T120000Z\r\nSUMMARY:Invite")
+	raw := "From: organizer@example.com\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=x\r\n\r\n--x\r\nContent-Type: text/calendar\r\n\r\n" + string(calendar) + "\r\n--x\r\nContent-Type: application/ics\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString(calendar) + "\r\n--x--\r\n"
 	_, source := persistInviteEmail(t, st, "duplicate-parts", []byte(raw))
 	assertions.Len(emailEvents(t, st, source), 1)
 }

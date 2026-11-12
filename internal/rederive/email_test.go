@@ -281,6 +281,10 @@ func TestEmailUnchangedRetryPublishesPendingRevisionWithRowErrors(t *testing.T) 
 	assert.False(t, applied, "unresolved row failures keep the pass retryable")
 }
 
+func calendarInviteEmail(uid, summary string) []byte {
+	return []byte("From: organizer@example.com\r\nContent-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:" + uid + "\r\nDTSTART:20270302T120000Z\r\nSUMMARY:" + summary + "\r\nORGANIZER:mailto:organizer@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+}
+
 func TestEmailRederivationRetriesInviteDuringFirstCompletion(t *testing.T) {
 	requirements := require.New(t)
 	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
@@ -326,7 +330,7 @@ func TestEmailRederivationRetriesInviteDuringFirstCompletion(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 	_, err = blocker.ExecContext(ctx, `UPDATE archive_metadata SET value = '1' WHERE key = 'derived_data_revision'`)
 	requirements.NoError(err, "a writer holding the pass lock must be able to update the revision")
-	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:retry@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Retry invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	raw := calendarInviteEmail("retry@example.org", "Retry invite")
 	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, raw, "mime"))
 	requirements.NoError(blocker.Rollback())
 	err = <-done
@@ -350,7 +354,7 @@ func TestEmailRederivationRetriesInviteWrittenDuringScan(t *testing.T) {
 	}
 	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
 	requirements.NoError(err)
-	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:retry@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Retry invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	raw := calendarInviteEmail("retry@example.org", "Retry invite")
 	written := false
 	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, func(string) {
 		if !written {
@@ -376,7 +380,7 @@ func TestEmailRederivationDoesNotRescanAfterSuccessfulInvite(t *testing.T) {
 	archiveEmail(t, st, src, "other", "Other email")
 	_, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	requirements.NoError(err)
-	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:invite@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	raw := calendarInviteEmail("invite@example.org", "Invite")
 	requirements.NoError(st.UpsertMessageRawWithFormatContext(t.Context(), id, raw, "mime"))
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
@@ -399,7 +403,7 @@ func TestEmailRederivationRetriesInviteBeforeCompletedCursor(t *testing.T) {
 			requirements.NoError(err)
 			_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
 			requirements.NoError(err)
-			raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:retry@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Retry invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+			raw := calendarInviteEmail("retry@example.org", "Retry invite")
 			requirements.NoError(st.UpsertMessageRawWithFormatContext(t.Context(), id, raw, "mime"))
 			if recomplete {
 				requirements.NoError(st.MarkMigrationAppliedWithPendingDerivedRevisionContext(t.Context(), LedgerKey(src.SourceType, src.Identifier, emailVersion)))
@@ -432,7 +436,7 @@ func TestEmailRederivationRetriesPostCommitInvite(t *testing.T) {
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
-	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:retry@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Retry invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	raw := calendarInviteEmail("retry@example.org", "Retry invite")
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	requirements.NoError(st.UpsertMessageRawWithFormatContext(ctx, id, raw, "mime"))
@@ -449,7 +453,7 @@ func TestEmailRederivationRetriesPostCommitInvite(t *testing.T) {
 func TestEmailRederivationExtractsMissingInvites(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
-	raw := []byte("Content-Type: multipart/alternative; boundary=invite\r\n\r\n--invite\r\nContent-Type: text/plain\r\n\r\nInvitation\r\n--invite\r\nContent-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:backfill@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Archived invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n--invite--\r\n")
+	raw := []byte("From: organizer@example.com\r\nContent-Type: multipart/alternative; boundary=invite\r\n\r\n--invite\r\nContent-Type: text/plain\r\n\r\nInvitation\r\n--invite\r\nContent-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:backfill@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Archived invite\r\nORGANIZER:mailto:organizer@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n--invite--\r\n")
 	// Represent retained MIME written before invitation extraction existed.
 	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE message_raw SET raw_data=?, compression=NULL WHERE message_id=?`), raw, id)
 	requirements.NoError(err)

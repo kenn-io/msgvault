@@ -122,7 +122,7 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			}
 		}
 		// Only the organizer's own email creates or changes an event under its ID.
-		if item.fromEmail && !strings.EqualFold(item.sender, item.component.OrganizerEmail) {
+		if item.fromEmail && (item.sender == "" || !strings.EqualFold(item.sender, item.component.OrganizerEmail)) {
 			summary.Unchanged++
 			continue
 		}
