@@ -284,8 +284,8 @@ func calendarRangeShift(master calevent.Event, edits []CalendarEventRow) calenda
 		pad = max(pad, shifts[i].pad)
 	}
 	return calendarShift{pad: pad, move: func(o *calrecur.Occurrence) {
-		for i := len(edits) - 1; i >= 0; i-- {
-			if edits[i].Event.Original.Key() <= o.Original.Key() {
+		for i, edit := range slices.Backward(edits) {
+			if edit.Event.Original.Key() <= o.Original.Key() {
 				shifts[i].move(o)
 				return
 			}
