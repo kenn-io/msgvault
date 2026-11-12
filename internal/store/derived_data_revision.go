@@ -62,7 +62,7 @@ func (s *Store) advanceDerivedRevisionWithEmailReceiptContext(ctx context.Contex
 }
 
 // MarkMigrationAppliedWithPendingDerivedRevisionContext publishes interrupted
-// email writes before recording a pass whose current rows are unchanged.
+// email writes and records a pass whose current rows are unchanged.
 func (s *Store) MarkMigrationAppliedWithPendingDerivedRevisionContext(ctx context.Context, name string) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.markMigrationCompleteContext(ctx, tx, name); err != nil {

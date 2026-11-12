@@ -32,6 +32,7 @@ type PreparedICS struct {
 	component calevent.ICSComponent
 	meta      calevent.ICSMetadata
 	fromEmail bool
+	sender    string
 }
 
 // PrepareICalendar parses a calendar and checks retained event sizes.
@@ -118,6 +119,16 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			}
 			if err := json.Unmarshal([]byte(metadata.String), &old); err != nil {
 				return fmt.Errorf("decode retained ICS metadata: %w", err)
+			}
+			if item.fromEmail {
+				var organizer string
+				if err := q.QueryRow(`SELECT COALESCE((SELECT email FROM calendar_event_attendees WHERE message_id=? AND role='organizer' ORDER BY ordinal LIMIT 1), '')`, id).Scan(&organizer); err != nil {
+					return fmt.Errorf("read retained ICS organizer: %w", err)
+				}
+				if organizer == "" || !strings.EqualFold(organizer, item.sender) {
+					summary.Unchanged++
+					continue
+				}
 			}
 		}
 		familyKey, err := s.icsFamily(ctx, tx, sourceID, id, calevent.ICSMessageID(item.component.UID, ""))
