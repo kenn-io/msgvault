@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"encoding/base64"
-	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -14,15 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestPersonIntroductionLifecycle(t *testing.T) { checkPersonIntroductionLifecycle(t) }
-func TestPostgresPersonIntroductionLifecycle(t *testing.T) {
-	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		t.Skip("PostgreSQL test database not configured")
-	}
-	checkPersonIntroductionLifecycle(t)
-}
-func checkPersonIntroductionLifecycle(t *testing.T) {
-	t.Helper()
+func TestPersonIntroductionLifecycle(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -66,15 +57,7 @@ func checkPersonIntroductionLifecycle(t *testing.T) {
 	req.ErrorIs(err, store.ErrIntroductionSamePerson)
 }
 
-func TestIntroductionMergeAndSplit(t *testing.T) { checkIntroductionMergeAndSplit(t) }
-func TestPostgresIntroductionMergeAndSplit(t *testing.T) {
-	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		t.Skip("PostgreSQL test database not configured")
-	}
-	checkIntroductionMergeAndSplit(t)
-}
-func checkIntroductionMergeAndSplit(t *testing.T) {
-	t.Helper()
+func TestIntroductionMergeAndSplit(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -180,15 +163,7 @@ func checkIntroductionMergeAndSplit(t *testing.T) {
 	})
 }
 
-func TestIntroductionPaginationAndScope(t *testing.T) { checkIntroductionPaginationAndScope(t) }
-func TestPostgresIntroductionPaginationAndScope(t *testing.T) {
-	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		t.Skip("PostgreSQL test database not configured")
-	}
-	checkIntroductionPaginationAndScope(t)
-}
-func checkIntroductionPaginationAndScope(t *testing.T) {
-	t.Helper()
+func TestIntroductionPaginationAndScope(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -257,15 +232,7 @@ func checkIntroductionPaginationAndScope(t *testing.T) {
 	req.ErrorIs(err, store.ErrIntroductionInvalid)
 }
 
-func TestIntroductionPersonDeleteCascades(t *testing.T) { checkIntroductionPersonDeleteCascades(t) }
-func TestPostgresIntroductionPersonDeleteCascades(t *testing.T) {
-	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		t.Skip("PostgreSQL test database not configured")
-	}
-	checkIntroductionPersonDeleteCascades(t)
-}
-func checkIntroductionPersonDeleteCascades(t *testing.T) {
-	t.Helper()
+func TestIntroductionPersonDeleteCascades(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -285,15 +252,7 @@ func checkIntroductionPersonDeleteCascades(t *testing.T) {
 	check.Empty(page.Items)
 }
 
-func TestIntroductionRefusesRetiredSource(t *testing.T) { checkIntroductionRefusesRetiredSource(t) }
-func TestPostgresIntroductionRefusesRetiredSource(t *testing.T) {
-	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		t.Skip("PostgreSQL test database not configured")
-	}
-	checkIntroductionRefusesRetiredSource(t)
-}
-func checkIntroductionRefusesRetiredSource(t *testing.T) {
-	t.Helper()
+func TestIntroductionRefusesRetiredSource(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
