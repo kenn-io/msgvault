@@ -55,7 +55,7 @@ func normalizeAPIContract(value any, namedMap bool) {
 				continue
 			}
 			switch key {
-			case "description", "summary", "title", "example", "examples", "externalDocs", "patternDescription":
+			case "description", "summary", "title", "example", "examples", "externalDocs", "patternDescription", "tags":
 				delete(v, key)
 			case "default", "enum", "const", "dependentRequired", "security", "mapping":
 				continue
@@ -75,11 +75,17 @@ func apiBaseMarkers(t *testing.T, base string) []string {
 	t.Helper()
 	if base == "" {
 		out, err := exec.CommandContext(t.Context(), "git", "merge-base", "HEAD", "origin/main").Output()
+		if err != nil && os.Getenv("CI") == "" {
+			t.Skip("API contract base unavailable; fetch origin/main or set MSGVAULT_API_CONTRACT_BASE")
+		}
 		require.NoError(t, err, "find API contract base; fetch origin/main and its history or set MSGVAULT_API_CONTRACT_BASE to a base SHA")
 		base = strings.TrimSpace(string(out))
 	}
 	cmd := exec.CommandContext(t.Context(), "git", "ls-tree", "-z", "--name-only", "--full-tree", base, "--", "internal/api/"+apiContractsDir+"/") // #nosec G702 -- base is a Git ref supplied by the test runner.
 	out, err := cmd.Output()
+	if err != nil && os.Getenv("CI") == "" {
+		t.Skipf("API contract base %q unavailable; fetch it or set MSGVAULT_API_CONTRACT_BASE", base)
+	}
 	require.NoError(t, err, "read API contract markers at %q", base)
 	markers := []string{}
 	for path := range strings.SplitSeq(string(out), "\x00") {
@@ -99,6 +105,19 @@ func parseAPIMarker(name string) (string, string, bool) {
 		return "", "", false
 	}
 	return "v" + m[1], m[2], true
+}
+
+func checkAPIMarkerSummary(name string, content []byte) error {
+	summary := string(content)
+	if strings.HasSuffix(summary, "\r\n") {
+		summary = strings.TrimSuffix(summary, "\r\n")
+	} else {
+		summary = strings.TrimSuffix(summary, "\n")
+	}
+	if strings.TrimSpace(summary) == "" || strings.ContainsAny(summary, "\r\n") {
+		return fmt.Errorf("API contract marker %q needs a nonempty one-line summary", name)
+	}
+	return nil
 }
 
 func checkAPIContract(version, digest string, markers, base []string) error {
@@ -163,6 +182,9 @@ func TestAPISchemaVersionContract(t *testing.T) {
 	markers := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		markers = append(markers, entry.Name())
+		content, err := os.ReadFile(filepath.Join(apiContractsDir, entry.Name()))
+		require.NoError(err)
+		require.NoError(checkAPIMarkerSummary(entry.Name(), content))
 	}
 	baseMarkers := apiBaseMarkers(t, os.Getenv("MSGVAULT_API_CONTRACT_BASE"))
 	assert.NoError(t, checkAPIContract(APISchemaVersion, digest, markers, baseMarkers))
@@ -222,13 +244,37 @@ func TestAPIBaseMarkers(t *testing.T) {
 	t.Setenv("MSGVAULT_API_CONTRACT_BASE", "refs/remotes/upstream/main")
 	require.NoError(os.Remove(dir + marker))
 	assert.Equal(t, []string{marker}, apiBaseMarkers(t, os.Getenv("MSGVAULT_API_CONTRACT_BASE")))
+	t.Setenv("CI", "")
+	run := false
+	assert.True(t, t.Run("missing base", func(t *testing.T) {
+		apiBaseMarkers(t, "")
+		run = true
+	}))
+	assert.False(t, run)
+}
+
+func TestAPIMarkerSummary(t *testing.T) {
+	name := "5.0.0_digest_12ea12eace7d655f471ce55e34f89b1b77a3d9d05a445ca82877dd2235beaa51"
+	for _, tc := range []struct {
+		name, content string
+		valid         bool
+	}{
+		{"valid", "change\n", true},
+		{"empty", "", false},
+		{"multiline", "change\nanother\n", false},
+		{"different summary", "different\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.valid, checkAPIMarkerSummary(name, []byte(tc.content)) == nil)
+		})
+	}
 }
 
 func TestAPIContractDigest(t *testing.T) {
 	makeDoc := func() *huma.OpenAPI {
 		doc := &huma.OpenAPI{Info: &huma.Info{}, Paths: map[string]*huma.PathItem{}}
 		doc.Paths["/api/v1/contract-test"] = &huma.PathItem{Post: &huma.Operation{
-			OperationID: "contract-test", Summary: "original", Description: "original",
+			OperationID: "contract-test", Summary: "original", Description: "original", Tags: []string{"original"},
 			Parameters:  []*huma.Param{{Name: "query", In: "query"}},
 			RequestBody: &huma.RequestBody{Content: map[string]*huma.MediaType{"application/json": {Schema: &huma.Schema{Type: "object", Properties: map[string]*huma.Schema{"description": {Type: "string"}}}}}},
 			Responses:   map[string]*huma.Response{"200": {Content: map[string]*huma.MediaType{"application/json": {Schema: &huma.Schema{Type: "string"}}}}},
@@ -251,6 +297,7 @@ func TestAPIContractDigest(t *testing.T) {
 			op(d).RequestBody.Content["application/json"].Schema.Examples = []any{"example"}
 		}, true},
 		{"version", func(d, _ *huma.OpenAPI) { d.Info.Version = "9.0.0" }, true},
+		{"tag", func(d, _ *huma.OpenAPI) { op(d).Tags = []string{"renamed"} }, true},
 		{"client request", func(_, d *huma.OpenAPI) { op(d).RequestBody.Required = true }, false},
 		{"route", func(d, _ *huma.OpenAPI) {
 			d.Paths["/api/v1/another"] = &huma.PathItem{Get: &huma.Operation{OperationID: "another"}}
