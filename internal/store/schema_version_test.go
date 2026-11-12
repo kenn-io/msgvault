@@ -125,7 +125,7 @@ func TestSchemaVersionCalendarSeriesIndexUpgrade(t *testing.T) {
 	f := storetest.New(t)
 	_, err := f.Store.DB().ExecContext(t.Context(), "DROP INDEX idx_calendar_events_series_id")
 	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value='40' WHERE key='schema_version'")
+	_, err = f.Store.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value='41' WHERE key='schema_version'")
 	require.NoError(err)
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
 	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
@@ -359,6 +359,7 @@ var (
 		41: "87805b27cac30a9b23f779a8bec0c9d5bf5d5cc463b286fb63f645e60567aa56",
 		42: "d59c2905aca47c18220182ebf5ada7a8e781f5bda3d2cb65d6bdd6d66fd2d936",
 		43: "81541e5c85e1846374020de19a42c4a481af1554161331bb68890c3d0975057b",
+		44: "a9713e7417a814df102a9f6943f6bcba699e09c8f5b8bcf5ebf057066cb4ebcf",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -399,6 +400,7 @@ var (
 		41: "f5438190c64d99d1f9d8f85e6a2d0508a8296aae5dfc5b389c5a1dc3e16c59d6",
 		42: "f3cc0baedce3bb1638cc4a4ecf5443039c176fd069c25975397bb35c41c26167",
 		43: "663fab118e92dbefaf81cd6b9fe01b91643048581f26a756ed3607993c9d1de6",
+		44: "cb37174744625ceba662b0442eb1f142fe091d428bbd833a79bbf0d3a1237c2d",
 	}
 )
 
