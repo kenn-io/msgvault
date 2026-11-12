@@ -366,10 +366,6 @@ func exploreMeetingTypes(ctx query.Context) []string {
 			result = append(result, candidate.messageType)
 		}
 	}
-	if len(result) == 0 {
-		// A non-meeting type makes the store's evidence predicate match nothing.
-		return []string{"email"}
-	}
 	return result
 }
 

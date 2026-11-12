@@ -119,14 +119,6 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 		if !counted {
 			continue
 		}
-		if row.ScheduledSeconds != nil && (!unit.hasCalendar || row.OccurredAt.Before(unit.at)) {
-			unit.at = row.OccurredAt
-			unit.month = ""
-			if len(row.StartDate) >= 7 {
-				unit.month = row.StartDate[:7]
-			}
-			unit.hasCalendar = true
-		}
 		if member.duration.Valid {
 			unit.choose(member.duration.Float64, meetingcontent.DurationBasis(member.basis), member.id)
 		}

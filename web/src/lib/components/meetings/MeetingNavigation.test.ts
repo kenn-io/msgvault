@@ -251,7 +251,7 @@ describe('meeting archive reader navigation', () => {
     const scopeMetrics = metricRequests.filter((body) => body.explore);
     expect(scopeMetrics.length).toBeGreaterThan(0);
     for (const body of scopeMetrics) expect(body.explore.predicate.filters).toEqual(filters);
-    expect(requests.filter((request) => new URL(request.url).pathname.endsWith('/meetings/record')).map((request) => new URL(request.url).searchParams.get('ref'))).toContain('msg:42');
+    expect(requests.filter((request) => new URL(request.url).pathname.endsWith('/meetings/record')).map((request) => new URL(request.url).searchParams.get('ref'))).toEqual(['msg:42']);
     const actionRequests = await Promise.all(requests.filter((request) => request.url.endsWith('/meetings/actions')).map((request) => request.clone().json()));
     expect(actionRequests).toContainEqual(expect.objectContaining({ scope: { message_ids: [42] } }));
     view.unmount(); state.destroy();

@@ -566,7 +566,6 @@ func TestMeetingExploreMetricsPreserveMessageType(t *testing.T) {
 	}{
 		{`[{"dimension":"message_type","values":["meeting_transcript"]}]`, []string{"meeting_transcript"}},
 		{`[{"dimension":"kind","values":["meeting"]}]`, []string{"meeting_transcript"}},
-		{`[{"dimension":"message_type","values":["meeting_transcript"]},{"dimension":"kind","values":["event"]}]`, []string{"email"}},
 		{`[]`, nil},
 	} {
 		t.Run(tc.filters, func(t *testing.T) {
@@ -588,6 +587,7 @@ func TestMeetingExploreMetricsExpandLinkedParticipant(t *testing.T) {
 	selection, err := engine.ResolveExploreMeetings(t.Context(), query.ExploreSelectionRequest{Explore: query.ExploreRequest{Context: query.Context{ParticipantIDs: []int64{1}}}}, meetingExploreMaxIDs)
 	require.NoError(t, err)
 	require.Equal(t, []int64{1}, selection.MessageIDs)
+	assert.ElementsMatch(t, []int64{1, 2}, selection.ParticipantIDs)
 	st := &meetingRouteStore{mockStore: &mockStore{}, metricsResult: &meetingcontent.Metrics{DurationByBasis: []meetingcontent.BasisTotals{}, Months: []meetingcontent.MonthTotals{}}}
 	response := httptest.NewRecorder()
 	body := fmt.Sprintf(`{"explore":{"predicate":{"filters":[{"dimension":"participant","values":["1"]}]},"cache_revision":%q,"search_provenance":{}}}`, selection.CacheRevision)
