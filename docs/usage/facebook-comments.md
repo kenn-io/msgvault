@@ -1,12 +1,13 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-10"
 title: Facebook Page Comments
 description: Archive comments on a selected Facebook Page and link commenters to existing people.
 ---
 
 Connect a selected Facebook Page to search its returned posts, comments, and
 nested replies in msgvault. This unreleased integration reads public comment
-conversations. It does not publish replies or send private messages.
+conversations, and can hide, delete, or publicly reply to comments you choose.
+It does not send private messages.
 
 ## Connect a Page
 
@@ -96,11 +97,98 @@ display names or usernames never merge customers. Use the existing
 [participant linking and people tools](people.md) to link the observed identity
 to a person you already maintain. No separate customer database is created.
 
+## Hide or delete comments
+
+You can hide, unhide, or delete an archived comment on Meta from msgvault. This
+works for Facebook Page comments and [Instagram comments](instagram-comments.md).
+
+1. Allow the actions on the comment's profile. `"hide"` also allows unhiding.
+
+   ```toml
+   [[facebook_comments]]
+   identifier = "example-page"
+   # ...
+   actions = ["hide", "delete"]
+   ```
+
+2. Find the comment's message ID with `msgvault search` or the Web UI.
+3. Preview the change. `--dry-run` shows the comment and its author without
+   calling Meta.
+
+   ```bash
+   msgvault comment moderate 42 --hide --dry-run
+   msgvault comment moderate 42 --hide
+   msgvault comment moderate 42 --unhide
+   ```
+
+4. Deleting cannot be undone on Meta, so it also needs `--yes`:
+
+   ```bash
+   msgvault comment moderate 42 --delete --dry-run
+   msgvault comment moderate 42 --delete --yes
+   ```
+
+After Meta accepts the change, msgvault records it. msgvault remembers a hide
+made with this command and shows it as `[hidden]` in `--dry-run`, but the
+comment still appears in search and the Web UI. Hides and unhides made on
+Facebook or Instagram are not synced. A deleted comment stays in the
+archive, marked as deleted from its source, like other messages removed from a
+provider. Its archived replies are marked deleted with it. A comment already
+deleted from Meta cannot be changed. Posts and media captions cannot be changed
+with this command.
+
+The token needs Meta's `pages_manage_engagement` permission for Facebook
+comments, or `instagram_manage_comments` for Instagram comments. When Meta
+refuses a change, msgvault shows Meta's error code and leaves the archive as it
+was. If the comment's source is syncing, the command fails; run it again when
+the sync finishes.
+
+See [`comment moderate`](../cli-reference.md#comment-moderate) for all flags.
+
+## Reply to comments
+
+You can post a public reply to an archived comment as the Page, or as the
+Instagram account for [Instagram comments](instagram-comments.md). The reply
+usually appears in the archive straight away, marked as sent by you. When
+msgvault cannot read the new reply back from Meta, or Meta does not say which
+comment a reply to a reply belongs to, the command says so and the next sync
+archives the reply.
+
+1. Add `"reply"` to the profile's `actions`.
+2. Preview the reply, then send it:
+
+   ```bash
+   msgvault comment reply 42 --body "Thanks, we have fixed it." --dry-run
+   msgvault comment reply 42 --body "Thanks, we have fixed it."
+   ```
+
+msgvault records each reply before it sends it, so it refuses to post the same
+text to the same comment twice. Sending the same reply again fails; change the
+text to post another reply.
+
+Sometimes msgvault cannot tell whether Meta posted a reply, for example when
+the connection drops. Then the same reply is refused until you check:
+
+1. Open the comment on Facebook or Instagram.
+2. If the reply is there, do nothing. The next sync archives it, but
+   msgvault cannot prove you sent it. On Instagram it is not marked as sent
+   by you; on Facebook it is only when Meta names the Page as its author.
+3. If it is not there, clear the record, then send the reply again:
+
+   ```bash
+   msgvault comment reply 42 --body "Thanks, we have fixed it." --clear-unknown
+   msgvault comment reply 42 --body "Thanks, we have fixed it."
+   ```
+
+When Meta refuses a reply, nothing was posted and you can send it again.
+Replies need the same permissions as hiding and deleting. See
+[`comment reply`](../cli-reference.md#comment-reply) for all flags.
+
 ## Limits
 
 This integration archives returned text and identity/context metadata. It does
 not download post/comment media, manage Facebook personal-profile comments,
 or promise complete coverage of every ad variant. Use [Instagram comments](instagram-comments.md)
-for linked professional accounts. Ad-creative discovery and public replies
+for linked professional accounts. Ad-creative discovery and private replies
 remain separate work. Threads uses its own authorization and source; a Page
 token does not authorize Threads.

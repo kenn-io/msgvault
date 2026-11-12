@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const facebookCommentFields = "id,message,created_time,from,parent"
+
 func (c *Client) VerifyPage(ctx context.Context, id string) (Page, error) {
 	var page Page
 	if !ValidAccountID(id) {
@@ -39,7 +41,7 @@ func (c *Client) Comments(ctx context.Context, object, after string) (ObjectPage
 		return ObjectPage{}, errors.New("invalid Graph object ID")
 	}
 	return c.objects(ctx, url.PathEscape(object)+"/comments", after, url.Values{
-		"fields": {"id,message,created_time,from,parent"}, "order": {"chronological"}, "filter": {"toplevel"}, "limit": {"100"},
+		"fields": {facebookCommentFields}, "order": {"chronological"}, "filter": {"toplevel"}, "limit": {"100"},
 	})
 }
 
