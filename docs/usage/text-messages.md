@@ -365,8 +365,9 @@ Multipart ZIP containers are not assembled by this importer.
 The summary reports sent records, skipped records/files, and missing or rejected media.
 The command can exit successfully with incomplete coverage; scripts should check
 the summary for `Incomplete coverage`.
-If no sender matches `--self-name`, re-run with the exact exported display name
-to repair direction. Deleted, unsent, encrypted and unexported history cannot
+If no sender matches `--self-name`, re-import affected messages with the exact
+exported sender name to update direction where records can be matched. Omitted
+records keep their previous direction. Deleted, unsent, encrypted and unexported history cannot
 be recovered. No official versioned message schema or exhaustive real-account
 sent/received coverage has been verified.
 

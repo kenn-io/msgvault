@@ -42,7 +42,7 @@ func runImportInstagram(cmd *cobra.Command, exportDir string, opts instagramCLIO
 		_, _ = fmt.Fprintf(out, "%d possible duplicate messages have different sender names; both copies were kept.\n", summary.PossibleDuplicates)
 	}
 	if importErr == nil && !summary.LimitReached && (!summary.Incomplete || (summary.FilesSkipped == 0 && summary.RecordsUnsupported == 0 && summary.Errors == 0 && (summary.MediaMissing > 0 || summary.MediaRejected > 0))) && summary.MessagesProcessed > summary.RecordsUnsupported && summary.FromMeCount == 0 {
-		_, _ = fmt.Fprintln(out, "No sender exactly matched --self-name. Re-run with the exact exported display name to repair sent/received direction.")
+		_, _ = fmt.Fprintln(out, "No sender exactly matched --self-name. Re-import affected messages with the exact exported sender name to update direction where records can be matched.")
 	}
 	if summary.LimitReached {
 		_, _ = fmt.Fprintln(out, "Import paused at --limit. Re-run to add more messages.")
