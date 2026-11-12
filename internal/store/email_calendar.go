@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
-	"time"
 
 	"go.kenn.io/msgvault/internal/mime"
 )
@@ -29,9 +28,7 @@ func (s *Store) deriveEmailCalendarAfterCommit(ctx context.Context, id int64, ra
 		return
 	}
 	if err == nil {
-		if err = s.refreshCommittedEmailCalendar(ctx, id, raw, parsed); err != nil {
-			err = errors.Join(err, s.reopenEmailRepairContext(ctx, id))
-		}
+		err = s.refreshCommittedEmailCalendar(ctx, id, raw, parsed)
 	}
 	if err != nil {
 		slog.Warn("derive email calendar after commit failed", "message_id", id, "error", err)
@@ -60,14 +57,12 @@ func (s *Store) refreshCommittedEmailCalendar(ctx context.Context, id int64, raw
 	return err
 }
 
-// reopenEmailRepairContext forgets the completion of a message's source's email
-// repair pass, so the next sync's stale check retries invitations that
-// failed after their message committed. It outlives ctx, whose expiry may be
-// what failed the write.
-func (s *Store) reopenEmailRepairContext(ctx context.Context, messageID int64) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	_, err := s.db.ExecContext(ctx, s.Rebind(`DELETE FROM applied_migrations WHERE EXISTS (
+// reopenEmailRepair marks the message's source's email repair pass incomplete
+// in the transaction that stores the message, so a failed invitation write
+// after the commit still leaves the pass stale for the next sync. It lowers the
+// ledger version instead of deleting the row, which the pass raises on completion.
+func reopenEmailRepair(q querier, messageID int64) error {
+	_, err := q.Exec(`UPDATE applied_migrations SET version = 0 WHERE EXISTS (
 		SELECT 1 FROM (
 			SELECT 'rederive:' || source_type || ':' || identifier || ':email-v' AS prefix
 			FROM sources WHERE id = (SELECT source_id FROM messages WHERE id = ?)
@@ -75,7 +70,7 @@ func (s *Store) reopenEmailRepairContext(ctx context.Context, messageID int64) e
 		WHERE SUBSTR(name, 1, LENGTH(prefix)) = prefix
 		  AND SUBSTR(name, LENGTH(prefix) + 1) NOT LIKE '%:%'
 		  AND SUBSTR(name, LENGTH(prefix) + 1) NOT LIKE '%#%'
-	)`), messageID)
+	)`, messageID)
 	return err
 }
 
