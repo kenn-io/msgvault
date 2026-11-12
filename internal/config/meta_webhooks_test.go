@@ -36,3 +36,44 @@ func TestMetaWebhooksRejectsInvalidConfig(t *testing.T) {
 		})
 	}
 }
+
+// relinkedInstagramProfiles is the same app and Instagram account under two
+// Pages, as left behind when an account is relinked to another Page.
+const relinkedInstagramProfiles = `[[instagram_comments]]
+identifier="old-page"
+app_id="9"
+page_id="100"
+instagram_account_id="200"
+token_env="EXAMPLE_OLD_PAGE_TOKEN"
+enabled=true
+
+[[instagram_comments]]
+identifier="new-page"
+app_id="9"
+page_id="101"
+instagram_account_id="200"
+token_env="EXAMPLE_NEW_PAGE_TOKEN"
+enabled=true
+`
+
+func TestMetaWebhooksRejectsTwoInstagramProfilesForOneAccount(t *testing.T) {
+	require := require.New(t)
+	err := loadConfigTextError(t, metaWebhooksSection+relinkedInstagramProfiles)
+	require.ErrorContains(err, "instagram_comments[1] and instagram_comments[0] both receive webhooks for app 9 and Instagram account 200")
+
+	// A repeated Page is the profile section's own error, not this one.
+	err = loadConfigTextError(t, metaWebhooksSection+strings.Replace(relinkedInstagramProfiles, `page_id="101"`, `page_id="100"`, 1))
+	require.ErrorContains(err, "instagram_comments[1] duplicates an app/Page/Instagram tuple")
+}
+
+func TestMetaWebhooksAllowsInstagramProfilesThatCannotCollide(t *testing.T) {
+	for name, text := range map[string]string{
+		"no receiver":    relinkedInstagramProfiles,
+		"one disabled":   metaWebhooksSection + strings.Replace(relinkedInstagramProfiles, "enabled=true", "enabled=false", 1),
+		"app not listed": strings.Replace(metaWebhooksSection, `app_id="9"`, `app_id="8"`, 1) + relinkedInstagramProfiles,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Len(t, loadConfigText(t, text).InstagramComments, 2)
+		})
+	}
+}
