@@ -29,11 +29,13 @@ Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-da
 
 ### Local introductions
 
-On unreleased `main`, the existing daemon CLI runner carries the local
-[initial introduction workflow](usage/people.md#prepare-an-introduction).
-The `intro` commands use the runner's source-scoped agent grants and return the
-same JSON records to CLI clients. Dedicated introduction HTTP routes are not
-available yet.
+On unreleased `main`, `GET /api/v1/intros` lists local introductions and
+`GET /api/v1/intros/{id}` returns one record. They return the same JSON as the
+[introduction CLI](usage/people.md#prepare-an-introduction). The list accepts
+`source_id`, `limit` (1–100, default 20), and the opaque `after_id` cursor
+returned as `next_after_id`. Responses use `Cache-Control: no-store`.
+Source-scoped agent grants need `draft.create` to read eligible records;
+`draft.edit` also reveals the body. Network user IDs are hidden from agents.
 
 ### Filename suggestions
 
@@ -174,7 +176,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.1.0**.
+it is separate from the binary release version. The current schema is **5.2.0**.
+
+Schema 5.2.0 adds typed introduction list and detail reads.
 
 Schema 5.1.0 adds time-zone-aware Month and Year grouping, group overviews, and item totals for time groups.
 

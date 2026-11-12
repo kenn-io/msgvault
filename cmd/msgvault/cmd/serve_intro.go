@@ -9,12 +9,23 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/introops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
+
+var _ api.IntroductionOperations = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) ListIntroductionsContext(ctx context.Context, grant *agentgrant.Grant, q store.PersonIntroductionQuery) (introops.Page, error) {
+	return (introops.Service{Store: a.store}).List(ctx, grant, q)
+}
+
+func (a *storeAPIAdapter) GetIntroductionContext(ctx context.Context, grant *agentgrant.Grant, id string) (introops.Record, error) {
+	return (introops.Service{Store: a.store}).Get(ctx, grant, id)
+}
 
 func introError(err error) error {
 	// Never log an underlying error that could contain caller-supplied text.

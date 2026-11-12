@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/introops"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -76,6 +77,32 @@ func TestIntroThroughDaemonCLI(t *testing.T) {
 	req.NoError(json.Unmarshal([]byte(data), &page))
 	req.Len(page.Items, 1)
 	check.Equal(row.IntroID, page.Items[0].IntroID)
+	for _, tc := range []struct{ path, cli string }{
+		{"/api/v1/intros", data},
+		{"/api/v1/intros/" + row.IntroID, ""},
+	} {
+		if tc.cli == "" {
+			tc.cli, err = run("intro", "show", row.IntroID, "--json")
+			req.NoError(err)
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+tc.path, nil)
+		req.NoError(err)
+		response, err := http.DefaultClient.Do(request)
+		req.NoError(err)
+		var got, want any
+		req.NoError(json.NewDecoder(response.Body).Decode(&got))
+		req.NoError(response.Body.Close())
+		req.NoError(json.Unmarshal([]byte(tc.cli), &want))
+		check.Equal(http.StatusOK, response.StatusCode)
+		check.Equal("no-store", response.Header.Get("Cache-Control"))
+		check.Equal(want, got)
+	}
+	missing, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/v1/intros/missing", nil)
+	req.NoError(err)
+	missingResponse, err := http.DefaultClient.Do(missing)
+	req.NoError(err)
+	check.Equal(http.StatusNotFound, missingResponse.StatusCode)
+	req.NoError(missingResponse.Body.Close())
 	_, err = run("intro", "list", "--json", "--verbose")
 	req.NoError(err)
 	_, err = run("intro", "cancel", row.IntroID, "--revision", "99")
@@ -155,6 +182,49 @@ func TestIntroDelegatedThroughRunner(t *testing.T) {
 	var row introops.Record
 	req.NoError(json.Unmarshal([]byte(events[0].Data), &row))
 	check.Equal(grantID, row.CreatedBy)
+	read := func(secret, path string) *httptest.ResponseRecorder {
+		t.Helper()
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+path, nil)
+		req.NoError(err)
+		request.Header.Set("X-Msgvault-Agent-Token", secret)
+		response := httptest.NewRecorder()
+		resp, err := http.DefaultClient.Do(request)
+		req.NoError(err)
+		defer func() { _ = resp.Body.Close() }()
+		response.Code = resp.StatusCode
+		response.HeaderMap = resp.Header
+		_, err = response.Body.ReadFrom(resp.Body)
+		req.NoError(err)
+		return response
+	}
+	visible := read(create, "/api/v1/intros/"+row.IntroID)
+	check.Equal(http.StatusOK, visible.Code)
+	check.Equal("no-store", visible.Header().Get("Cache-Control"))
+	check.NotContains(visible.Body.String(), "secret")
+	check.NotContains(visible.Body.String(), `"user_id":"a"`)
+	check.NotContains(visible.Body.String(), `"user_id":"b"`)
+	check.Equal(http.StatusForbidden, read(outsider, "/api/v1/intros/"+row.IntroID).Code)
+	check.Equal(http.StatusForbidden, read(create, "/api/v1/intros/missing").Code)
+	emptyPage := read(outsider, "/api/v1/intros?limit=1").Body.String()
+	for _, query := range []string{"after_id=invalid", "limit=0", "limit=101", "source_id=0", "limit=1&limit=2"} {
+		check.Equal(http.StatusBadRequest, read(create, "/api/v1/intros?"+query).Code)
+	}
+	check.Equal(http.StatusOK, read(create, "/api/v1/intros?source_id="+strconv.FormatInt(src.ID, 10)+"&limit=1").Code)
+	pc, err := st.EnsureParticipant("hidden@example.test", "Hidden", "example.test")
+	req.NoError(err)
+	c, _, err := st.CreatePersonFromParticipantContext(ctx, pc)
+	req.NoError(err)
+	hidden, err := (introops.Service{Store: st}).Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: c.ID})
+	req.NoError(err)
+	_, err = (introops.Service{Store: st}).Prepare(ctx, nil, store.PersonIntroductionPrepare{SourceID: other.ID, PersonAID: a.ID, PersonBID: c.ID})
+	req.NoError(err)
+	check.Equal(emptyPage, read(outsider, "/api/v1/intros?limit=1").Body.String())
+	hiddenResponse := read(create, "/api/v1/intros/"+hidden.IntroID)
+	check.Equal(read(create, "/api/v1/intros/missing").Body.String(), hiddenResponse.Body.String())
+	check.Equal(http.StatusForbidden, hiddenResponse.Code)
+	check.NotContains(read(create, "/api/v1/intros?limit=1").Body.String(), hidden.IntroID)
+	edit, _ := issue([]string{"draft.create", "draft.edit"}, src.ID)
+	check.Contains(read(edit, "/api/v1/intros/"+row.IntroID).Body.String(), "secret")
 	denied := run(outsider, "intro", "show", row.IntroID, "--json")
 	req.Len(denied, 1)
 	check.Equal("not_permitted", denied[0].Error)
