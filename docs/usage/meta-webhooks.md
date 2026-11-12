@@ -74,8 +74,10 @@ A message lands in the same chat that inbox sync uses; a chat that first
 appears through a webhook gets the customer's name on the next sync. A
 webhook only adds messages that are not archived yet, so a late event never
 replaces text that a sync updated. Messages without text are skipped. A
-message the daemon skips after an hour of failures is lost if it has already
-left the 20 most recent messages that sync can read.
+message is missed if the daemon skips its change after an hour of failures,
+or if the receiver stays unreachable for longer than Meta keeps retrying. The
+next sync archives a missed message only if it is still among the 20 most
+recent of its chat.
 
 ## How deliveries are applied
 

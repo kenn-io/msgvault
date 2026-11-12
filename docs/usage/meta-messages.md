@@ -72,10 +72,16 @@ configured Page or account. That means the Page is now linked to another
 account; check which account the Page is linked to.
 
 Meta returns only the **20 most recent messages** of each conversation, so a
-sync cannot reach older history. To keep every new message, set up
-[Meta webhooks](meta-webhooks.md#inbox-messages): each message, including
-the ones the Page or account sends, is then archived as it arrives. Each sync reads every conversation again and
-updates messages already archived in place. Each request reads up to 25
+sync cannot reach older history. To archive new messages as they arrive, set
+up [Meta webhooks](meta-webhooks.md#inbox-messages). Each new message with
+text is then archived, including the ones the Page or account sends. A
+message without text is skipped. A message is missed if the daemon skips its
+webhook change after an hour of failures, or if it arrives while the receiver
+is unreachable for longer than Meta keeps retrying. A missed message is
+archived only if it is still among the 20 most recent when the next sync runs.
+
+Each sync reads every conversation again and updates messages already
+archived in place. Each request reads up to 25
 conversations, and `--max-requests` limits a run; an unfinished run resumes
 from its saved position, and `--full` starts again from the most recent
 conversations. A saved position can stop working. If a sync fails with
