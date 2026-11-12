@@ -61,7 +61,7 @@ func instagramMediaEvidence(record rawJSONMessage) string {
 			entry.CreationTimestamp = 0
 			entry.Extra = nil
 			encoded, _ := json.Marshal(entry)
-			encodedKinds[k] = append(encodedKinds[k], instagramCanonical(encoded))
+			encodedKinds[k] = append(encodedKinds[k], string(encoded))
 		}
 		sort.Strings(encodedKinds[k])
 	}
