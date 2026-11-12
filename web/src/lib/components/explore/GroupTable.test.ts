@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import GroupTable from './GroupTable.svelte';
@@ -8,6 +8,25 @@ describe('GroupTable', () => {
     { key: '7', label: 'Example source', count: 12, estimated_bytes: 2048, latest_at: '2026-07-18T12:00:00Z' },
     { key: '8', label: 'Second source', count: 5, estimated_bytes: 512, latest_at: '2026-07-17T12:00:00Z' }
   ];
+
+  it.each([
+    { dimension: 'source', inspected: false, expected: 5 },
+    { dimension: 'source', inspected: true, expected: 3 },
+    { dimension: 'month', inspected: false, expected: 6 },
+    { dimension: 'month', inspected: true, expected: 4 },
+  ] as const)('keeps $dimension grid tracks aligned with cells when inspected=$inspected', ({ dimension, inspected, expected }) => {
+    const clientWidth = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000);
+    try {
+      const row = { key: dimension === 'month' ? '2026-07' : '7', label: 'Example', count: 1, estimated_bytes: 1, latest_at: '2026-07-18T12:00:00Z', ...(dimension === 'month' ? { total_items: 2 } : {}) };
+      render(GroupTable, { rows: [row], dimension, inspectedKey: inspected ? `group:${dimension}:${row.key}` : null, onDrill: vi.fn() });
+      const grid = screen.getByRole('grid', { name: `Messages grouped by ${dimension}` });
+      const tracks = grid.style.getPropertyValue('--group-columns').split(/\s+(?![^()]*\))/);
+      const dataRow = within(grid).getAllByRole('row')[1]!;
+      expect(Number(grid.getAttribute('aria-colcount'))).toBe(expected);
+      expect(within(dataRow).getAllByRole('gridcell')).toHaveLength(expected);
+      expect(tracks).toHaveLength(expected);
+    } finally { clientWidth.mockRestore(); }
+  });
 
   it('owns headers, virtual rows, and named states in one focusable grid', async () => {
     const rendered = render(GroupTable, { rows, dimension: 'source', onDrill: vi.fn() });

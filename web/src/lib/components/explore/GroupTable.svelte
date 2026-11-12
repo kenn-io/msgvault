@@ -76,8 +76,8 @@
   const timeGroup = $derived((dimension === 'month' || dimension === 'year') && rows.some((row) => row.total_items !== undefined));
   const columnCount = $derived((narrow ? 3 : 5) + (timeGroup ? 1 : 0));
   const template = $derived(narrow
-    ? `minmax(0,480px) 80px ${timeGroup ? '96px ' : ''}minmax(0,1fr) 40px`
-    : 'minmax(200px,480px) 88px 96px 128px minmax(96px,1fr) 40px');
+    ? `minmax(0,480px) 80px ${timeGroup ? 'minmax(96px,1fr) 40px' : 'minmax(40px,1fr)'}`
+    : `minmax(200px,480px) 88px 96px 128px ${timeGroup ? 'minmax(96px,1fr) 40px' : 'minmax(40px,1fr)'}`);
   let gridElement = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();
   let scrollTop = $state(0);
@@ -466,7 +466,7 @@
     white-space: nowrap;
   }
 
-  .group-header > :last-child { grid-column: -2; }
+  .group-header > :last-child { grid-column: -2; justify-self: end; width: 40px; }
 
   .group-body {
     position: relative;
@@ -543,7 +543,7 @@
   .group-name { display: flex; align-items: center; gap: var(--space-2); }
   .group-name strong { overflow: hidden; text-overflow: ellipsis; }
   .group-name :global(.group-icon) { flex-shrink: 0; color: var(--artifact-ink); }
-  .group-row > .group-action { grid-column: -2; display: flex; justify-content: center; padding: 0; }
+  .group-row > .group-action { grid-column: -2; justify-self: end; width: 40px; display: flex; justify-content: center; padding: 0; }
   .share-track { height: 6px; border-radius: var(--radius-sm); background: var(--bg-inset); overflow: hidden; }
   .share-fill { height: 100%; background: var(--accent-blue); }
 
