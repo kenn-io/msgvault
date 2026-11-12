@@ -27,6 +27,9 @@ var ErrSyncInterrupted = errors.New("sync interrupted")
 // ExitCodeSyncPaused carries a paused outcome from the CLI child to the daemon.
 const ExitCodeSyncPaused = 75
 
+// ExitCodeInterrupted follows the shell convention for an interrupted command.
+const ExitCodeInterrupted = 130
+
 var daemonCLIExecutableResolver = os.Executable
 
 func isDaemonCLISubprocess() bool {
@@ -109,7 +112,7 @@ func classifyDaemonCLIWaitErr(waitErr error, args []string, emit func(string, st
 	}
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) && exitErr.Exited() {
-		if exitErr.ExitCode() == 130 && len(args) > 0 && args[0] == "sync-full" {
+		if exitErr.ExitCode() == ExitCodeInterrupted && len(args) > 0 && args[0] == "sync-full" {
 			if emit != nil {
 				if err := emit("outcome", "interrupted"); err != nil {
 					return err

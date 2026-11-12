@@ -69,12 +69,12 @@ func runSyncFullHTTP(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return runSyncFullWithHint(cmd, resume, func() (bool, error) {
+	return runSyncFullWithHint(cmd, resume, req.NoResume, func() (bool, error) {
 		return runSyncHTTPWithOutcome(cmd, req)
 	})
 }
 
-func runSyncFullWithHint(cmd *cobra.Command, resume string, run func() (bool, error)) error {
+func runSyncFullWithHint(cmd *cobra.Command, resume string, noResume bool, run func() (bool, error)) error {
 	interrupted, err := run()
 	if !interrupted && !errors.Is(err, context.Canceled) {
 		return err
@@ -89,6 +89,11 @@ func runSyncFullWithHint(cmd *cobra.Command, resume string, run func() (bool, er
 		err = errors.Join(ErrSyncInterrupted, err)
 	}
 	cmd.SilenceErrors = true
+	if noResume {
+		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "The --noresume flag restarts enumeration; already-imported messages are skipped."); err != nil {
+			writeErr = errors.Join(writeErr, fmt.Errorf("write sync restart explanation: %w", err))
+		}
+	}
 	return errors.Join(err, writeErr, printSyncResumeCommand(cmd.ErrOrStderr(), resume, runtime.GOOS))
 }
 

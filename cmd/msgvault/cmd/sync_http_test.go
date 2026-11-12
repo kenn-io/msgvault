@@ -70,11 +70,11 @@ func TestSyncUsesConfiguredRemoteHTTPAndPreservesOutput(t *testing.T) {
 }
 
 func TestSyncFullInterruptionHint(t *testing.T) {
-	for _, mode := range []string{"child", "child-extra", "error"} {
+	for _, mode := range []string{"child", "child-extra", "child-noresume", "error"} {
 		t.Run(mode, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/x-ndjson")
-				if mode == "child" || mode == "child-extra" {
+				if mode != "error" {
 					_, _ = w.Write([]byte("{\"type\":\"outcome\",\"data\":\"interrupted\"}\n"))
 					message := cliSubprocessExitSentinel
 					if mode == "child-extra" {
@@ -92,10 +92,15 @@ func TestSyncFullInterruptionHint(t *testing.T) {
 			command := &cobra.Command{Use: syncFullCmd.Use, Args: syncFullCmd.Args, RunE: syncFullCmd.RunE}
 			command.SetContext(ctx)
 			command.SetErr(&stderr)
-			command.SetArgs([]string{"reader@example.test"})
+			command.Flags().BoolVar(&syncNoResume, "noresume", false, "")
+			args := []string{"reader@example.test"}
+			if mode == "child-noresume" {
+				args = append(args, "--noresume")
+			}
+			command.SetArgs(args)
 			err := command.Execute()
 			switch mode {
-			case "child", "child-extra":
+			case "child", "child-extra", "child-noresume":
 				require.ErrorIs(t, err, ErrSyncInterrupted)
 			default:
 				require.Error(t, err)
@@ -106,6 +111,14 @@ func TestSyncFullInterruptionHint(t *testing.T) {
 				assert.Equal(t, 1, strings.Count(stderr.String(), "Sync interrupted."))
 				assert.Contains(t, stderr.String(), "reader@example.test")
 				assert.NotContains(t, stderr.String(), cliSubprocessExitSentinel)
+				if mode == "child-noresume" {
+					assert.Contains(t, stderr.String(), "--noresume flag restarts enumeration; already-imported messages are skipped")
+					lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
+					require.Len(t, lines, 3)
+					assert.Contains(t, lines[2], "--noresume")
+				} else {
+					assert.NotContains(t, stderr.String(), "restarts enumeration")
+				}
 				if mode == "child-extra" {
 					assert.Equal(t, 1, strings.Count(stderr.String(), "cache refresh failed"))
 				}
@@ -171,7 +184,7 @@ func TestSyncFullHintCancellationPhases(t *testing.T) {
 			command := &cobra.Command{}
 			command.SetContext(ctx)
 			command.SetErr(&stderr)
-			err := runSyncFullWithHint(command, "msgvault sync-full", func() (bool, error) {
+			err := runSyncFullWithHint(command, "msgvault sync-full", false, func() (bool, error) {
 				if phase == "connection" {
 					return runSyncHTTPWithOutcome(command, daemonclient.CLISyncRequest{Full: true})
 				}
@@ -193,7 +206,7 @@ func TestSyncFullHintWriteFailurePreservesInterruption(t *testing.T) {
 	want := errors.New("write failed")
 	command := &cobra.Command{}
 	command.SetErr(credentialsTestErrorWriter{err: want})
-	err := runSyncFullWithHint(command, "msgvault sync-full", func() (bool, error) { return true, nil })
+	err := runSyncFullWithHint(command, "msgvault sync-full", false, func() (bool, error) { return true, nil })
 	require.ErrorIs(t, err, ErrSyncInterrupted)
 	require.ErrorIs(t, err, want)
 }

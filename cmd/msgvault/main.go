@@ -12,10 +12,7 @@ import (
 	"go.kenn.io/msgvault/cmd/msgvault/cmd"
 )
 
-const (
-	exitCodeError       = 1
-	exitCodeInterrupted = 130 // 128 + SIGINT, mirrors shell convention
-)
+const exitCodeError = 1
 
 func main() {
 	os.Exit(run())
@@ -33,7 +30,7 @@ func run() int {
 			return cmd.ExitCodeSyncPaused
 		}
 		if errors.Is(err, cmd.ErrSyncInterrupted) || isSignalCanceled(ctx, err) {
-			return exitCodeInterrupted
+			return cmd.ExitCodeInterrupted
 		}
 		return exitCodeError
 	}
