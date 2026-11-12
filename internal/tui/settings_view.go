@@ -12,9 +12,6 @@ import (
 const settingsRestartNotice = "Restart pending. On the daemon host, restart its service, or stop and rerun your foreground msgvault serve with the same flags. Otherwise, run msgvault daemon restart with the same options:\n--home and --config."
 
 func (m Model) renderSettingsView() string {
-	if m.settings.confirmDiscard {
-		return strings.Join([]string{m.styles.titleBar.Render("Settings *"), "", m.styles.modalTitle.Render("Discard unsaved changes?"), "", "Your settings drafts have not been saved.", "", "[Y] Discard and return    [N/Esc] Keep editing"}, "\n")
-	}
 	title, body, actions, _ := m.settingsScreen()
 	v, footer := m.settingsViewport(title, body, actions)
 	return strings.Join([]string{ansi.Wrap(title, max(m.width, 20), ""), v.View(), footer}, "\n")

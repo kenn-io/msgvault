@@ -15,7 +15,7 @@ func (m Model) settingsIsNarrow() bool {
 }
 
 func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if !m.settings.confirmDiscard && (msg.String() == keyNamePageUp || msg.String() == keyNamePageDown) {
+	if msg.String() == keyNamePageUp || msg.String() == keyNamePageDown {
 		title, body, actions, _ := m.settingsScreen()
 		v, _ := m.settingsViewport(title, body, actions)
 		if msg.String() == keyNamePageUp {
@@ -50,6 +50,7 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			m.settings = newSettingsState()
 		case "n", "N", keyNameEsc:
 			m.settings.confirmDiscard = false
+			m.revealSettingsFocus()
 		}
 		return m, nil
 	}
@@ -69,6 +70,7 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		if m.settings.dirty() {
 			m.settings.confirmDiscard = true
 			m.settings.status = ""
+			m.settings.scrollOffset = 0
 			return m, nil
 		}
 		m.settings = newSettingsState()
@@ -282,6 +284,7 @@ func (m *Model) cancelSettingsEdit() {
 	m.settings.editKey = ""
 	m.settings.editOptions = nil
 	m.settings.editOption = 0
+	m.revealSettingsFocus()
 }
 
 func (m *Model) toggleSelectedBooleanSetting() {

@@ -25,8 +25,12 @@ func (m Model) settingsViewportContent(title, body, actions string) (int, int, s
 	footer := wrapActions(actions, width)
 	titleRows := strings.Count(ansi.Wrap(title, width, ""), "\n") + 1
 	wrapped := ansi.Wrap(body, width, "")
-	if len(footer) > m.height-titleRows-2 {
-		wrapped = ansi.Wrap(body+"\n\n"+strings.ReplaceAll(strings.TrimSuffix(actions, "  [Esc] Back"), "  [", "\n["), width, "")
+	if !m.settings.confirmDiscard && len(footer) > m.height-titleRows-2 {
+		bodyActions := strings.TrimSuffix(actions, "  [Esc] Back")
+		if i := strings.LastIndex(bodyActions, "  [Esc] Cancel"); i >= 0 {
+			bodyActions = bodyActions[:i]
+		}
+		wrapped = ansi.Wrap(body+"\n\n"+strings.ReplaceAll(bodyActions, "  [", "\n["), width, "")
 		footer = nil
 		if strings.Contains(actions, "Esc] Cancel") {
 			footer = wrapActions("[Esc] Cancel", width)
@@ -72,6 +76,9 @@ func (m Model) settingsListHeight(notices []string) int {
 }
 
 func (m Model) settingsScreen() (string, string, string, int) {
+	if m.settings.confirmDiscard {
+		return m.styles.titleBar.Render("Settings *"), m.styles.modalTitle.Render("Discard unsaved changes?") + "\n\nYour settings drafts have not been saved.", "[Y] Discard  [N/Esc] Keep editing", 0
+	}
 	if m.settings.peopleControls.active {
 		return m.peopleControlsParts()
 	}

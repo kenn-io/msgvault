@@ -39,6 +39,45 @@ func TestSettingsViewportEndpointDetail(t *testing.T) {
 	}
 }
 
+func TestSettingsViewportExitEditorKeepsSelectionVisible(t *testing.T) {
+	for _, exit := range []tea.KeyPressMsg{keyEsc(), keyEnter()} {
+		t.Run(exit.String(), func(t *testing.T) {
+			snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
+			for i := range 7 {
+				snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("search.field%d", i), Group: "search", Label: fmt.Sprintf("Field %d", i), Kind: SettingKindString, Value: stringSettingValue("value")})
+			}
+			model := resizeModel(t, loadedSettingsModel(t, snapshot), 40, 10)
+			model, _ = sendKey(t, model, keyEnter())
+			for range 6 {
+				model, _ = sendKey(t, model, key('j'))
+			}
+			model, _ = sendKey(t, model, keyEnter())
+			model, _ = sendKey(t, model, exit)
+			screen := uv.NewScreenBuffer(40, 10)
+			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+			assert.Contains(t, screen.String(), "▶   Field 6")
+		})
+	}
+}
+
+func TestSettingsViewportDiscardConfirmationPaging(t *testing.T) {
+	model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 20, 6)
+	model, _ = sendKey(t, model, keyEnter())
+	model, _ = sendKey(t, model, keyEnter())
+	model, _ = sendKey(t, model, key('x'))
+	model, _ = sendKey(t, model, keyEnter())
+	model, _ = sendKey(t, model, keyEsc())
+	screen := uv.NewScreenBuffer(20, 6)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "[Y] Discard")
+	assert.Contains(t, screen.String(), "[N/Esc] Keep")
+	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "not been saved")
+	assert.Contains(t, screen.String(), "[Y] Discard")
+}
+
 func TestSettingsViewportFingerprint(t *testing.T) {
 	for _, tc := range []struct {
 		name          string

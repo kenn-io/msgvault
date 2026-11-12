@@ -205,6 +205,15 @@ func TestSettingsViewportTinyScreenEscapeCancels(t *testing.T) {
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "[Esc] Cancel")
 	assert.NotContains(t, screen.String(), "[Esc] Back")
+	for range 20 {
+		before := screen.String()
+		model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+		if screen.String() == before {
+			break
+		}
+	}
+	assert.Equal(t, 1, strings.Count(screen.String(), "[Esc] Cancel"))
 	model, _ = sendKey(t, model, keyEsc())
 	assert.False(t, model.settings.editing)
 	model, _ = sendKey(t, model, key('p'))
