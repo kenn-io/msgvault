@@ -127,8 +127,7 @@ func TestApplyFeedHiddenStateFollowsGraph(t *testing.T) {
 		require.NoError(err)
 		var meta objectMetadata
 		require.NoError(json.Unmarshal([]byte(saved.String), &meta))
-		require.NotNil(meta.Hidden, "hidden state is recorded")
-		return *meta.Hidden
+		return meta.Hidden
 	}
 
 	hide, unhide := change("hide"), change("unhide")

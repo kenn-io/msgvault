@@ -171,6 +171,11 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 		}
 		retErr = finishSync(ctx, imp.store, source.ID, syncID, checkpoint, sum.Partial, retErr)
 	}()
+	if _, err = run.dropDeletedFrames(func(id string) (bool, error) {
+		return scoped.store.MessageDeletedFromSourceContext(ctx, source.ID, id)
+	}); err != nil {
+		return sum, err
+	}
 	// Publish the inherited state before any new request, so a crash cannot
 	// conceal a newer failed/paused checkpoint behind this run.
 	if err = run.save(ctx); err != nil {
@@ -206,6 +211,69 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 		}
 	}
 	return sum, phaseErr
+}
+
+// dropDeletedFrames removes saved traversal of comments deleted through
+// msgvault since the checkpoint was saved: frames reading their replies and
+// saved copies still waiting to be archived, including those that declare a
+// deleted or dropped parent. Meta has no replies left to read
+// there, so asking would fail on every run. The run holds the source lock, so
+// no comment is deleted while it traverses. It reports whether it dropped
+// anything.
+func (r *importRun) dropDeletedFrames(deleted func(id string) (bool, error)) (bool, error) {
+	changed := false
+	dropped := map[string]bool{}
+	for more := true; more; {
+		more = false
+		for _, p := range r.state.Phases {
+			for i := range p.Stack {
+				f := &p.Stack[i]
+				if f.Parent != f.Root {
+					gone, err := deleted(f.Parent)
+					if err != nil {
+						return changed, err
+					}
+					if gone {
+						for _, cut := range p.Stack[i:] {
+							for _, child := range cut.Pending {
+								dropped[child.ID] = true
+							}
+						}
+						// Each frame's comment was already taken from the frame
+						// below, so cutting here loses only its own subtree.
+						p.Stack = p.Stack[:i]
+						changed, more = true, true
+						break
+					}
+				}
+				// A new slice keeps the saved list intact if a lookup fails.
+				pending := make([]Object, 0, len(f.Pending))
+				for _, child := range f.Pending {
+					gone := child.Parent != nil && dropped[child.Parent.ID]
+					var err error
+					if !gone {
+						gone, err = deleted(child.ID)
+					}
+					if err == nil && !gone && child.Parent != nil {
+						gone, err = deleted(child.Parent.ID)
+					}
+					if err != nil {
+						return changed, err
+					}
+					if gone {
+						dropped[child.ID] = true
+					} else {
+						pending = append(pending, child)
+					}
+				}
+				if len(pending) != len(f.Pending) {
+					changed, more = true, true
+				}
+				f.Pending = pending
+			}
+		}
+	}
+	return changed, nil
 }
 
 func (r *importRun) verify(ctx context.Context) error {

@@ -32,9 +32,21 @@ type objectMetadata struct {
 	Organic            bool   `json:"organic,omitempty"`
 	Visitor            bool   `json:"visitor,omitempty"`
 	Ad                 bool   `json:"ad,omitempty"`
-	// Hidden is read from Graph when a webhook reports a hide or unhide;
-	// polling keeps it.
-	Hidden *bool `json:"hidden,omitempty"`
+	// Hidden records a hide made through msgvault, or the state Graph
+	// reported when a webhook named a hide or unhide. Sync keeps it because
+	// it starts from the stored metadata and Graph reads do not return it.
+	Hidden bool `json:"hidden,omitempty"`
+	// Outbound marks a reply msgvault posted. Meta may omit or not identify
+	// its author, so sync keeps this instead.
+	Outbound bool `json:"outbound,omitempty"`
+}
+
+// root is the post, or for Instagram the media, the comment belongs to.
+func (m objectMetadata) root() string {
+	if m.InstagramAccountID != "" {
+		return m.MediaID
+	}
+	return m.PostID
 }
 
 func (m objectMetadata) matches(app, page, account, root string) bool {
@@ -143,6 +155,18 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	sender, fromName, self, err := r.messageActor(ctx, obj)
 	if err != nil {
 		return err
+	}
+	// A reply msgvault posted stays the owner's when Meta omits or does not
+	// identify its author.
+	if !self {
+		if !meta.Outbound && !exists {
+			sent, err := r.imp.store.SentMetaCommentReplyContext(ctx, r.source.ID, obj.ID)
+			if err != nil {
+				return err
+			}
+			meta.Outbound = sent
+		}
+		self = meta.Outbound
 	}
 	metadata, err := json.Marshal(meta)
 	if err != nil {

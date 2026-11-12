@@ -2,7 +2,6 @@ package meta
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -221,15 +220,11 @@ func (r *importRun) setHidden(ctx context.Context, id string, hidden bool) error
 	if err := json.Unmarshal([]byte(saved.String), &meta); err != nil {
 		return fmt.Errorf("%w: %w", invariantError("decode comment metadata"), err)
 	}
-	if meta.Hidden != nil && *meta.Hidden == hidden {
+	if meta.Hidden == hidden {
 		return nil
-	}
-	meta.Hidden = &hidden
-	data, err := json.Marshal(meta)
-	if err != nil {
-		return err
 	}
 	r.sum.MessagesProcessed++
 	r.sum.MessagesUpdated++
-	return r.imp.store.SetMessageMetadataContext(ctx, rows[id].ID, sql.NullString{String: string(data), Valid: true})
+	// The same write `comment moderate` uses, so both record one field.
+	return setCommentHidden(ctx, r.imp.store, rows[id].ID, hidden)
 }
