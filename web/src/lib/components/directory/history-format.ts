@@ -98,7 +98,6 @@ export function historySource(source: string): string {
 /** Everything a stored value's record says about where it came from, as label and text pairs for its Details. */
 export function provenanceDetails(value: HistoryValue): [label: string, text: string][] {
   const rows: [string, string | undefined][] = [
-    ['Source', sourceWho(value.source)],
     ['Actor', value.actor ? actorName(value.actor) : undefined],
     ['Reference', referenceWords(value.source_ref)],
     ['Confidence', value.confidence !== undefined ? `${Math.round(value.confidence * 100)}%` : undefined],

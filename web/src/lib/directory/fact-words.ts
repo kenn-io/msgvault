@@ -76,7 +76,6 @@ export const SCORE_PARTS = [
 
 /** Where a saved decision put its value: a person's field, or their work. */
 export function projectionWords(kind: string | null): string | null {
-  if (kind === 'person_attribute') return 'Field';
   if (kind === 'employment') return 'Work';
   return null;
 }
