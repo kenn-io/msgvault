@@ -16,9 +16,9 @@ func TestMeetingOccurrencesMatchRecords(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "series", `{"id":"series","iCalUID":"uid@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	_, moved := calendarFixture(t, st, "moved", `{"id":"moved","recurringEventId":"series","iCalUID":"uid@example.org","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T12:00:00Z"},"end":{"dateTime":"2027-03-15T13:00:00Z"}}`)
-	_, first := projectionFixture(t, st, "first", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	_, first := projectionFixture(t, st, "first", "twenty_json", `{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"Hello"}]}]},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	_, cancelled := calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"status":"cancelled"}`)
-	_, second := projectionFixture(t, st, "second", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
+	_, second := projectionFixture(t, st, "second", "twenty_json", `{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"Hello"}]}]},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-21T10:00:00Z"}}`)
 	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	for _, tc := range []struct {
@@ -141,7 +141,6 @@ func TestMeetingOccurrenceCountsYearBoundaryAndUnexpandable(t *testing.T) {
 	assert.Zero(t, warning.SkippedChoices)
 	var dates, earlierDates []time.Time
 	for _, row := range rows {
-		assert.NotEqual(t, unsupported, row.MessageID)
 		if row.MessageID == future {
 			assert.False(t, row.Counted)
 		}
@@ -155,10 +154,12 @@ func TestMeetingOccurrenceCountsYearBoundaryAndUnexpandable(t *testing.T) {
 	}
 	assert.Equal(t, []time.Time{time.Date(2026, 12, 31, 23, 30, 0, 0, time.UTC), time.Date(2027, 1, 1, 23, 30, 0, 0, time.UTC)}, dates)
 	assert.Equal(t, []time.Time{time.Date(2025, 6, 1, 10, 0, 0, 0, time.UTC), time.Date(2027, 2, 1, 10, 0, 0, 0, time.UTC)}, earlierDates)
-	assert.Contains(t, rows, MeetingOccurrence{MessageID: future, OccurrenceKey: fmt.Sprintf("evt:%d", future)})
+	duration := float64(3600)
+	assert.Contains(t, rows, MeetingOccurrence{MessageID: unsupported, OccurrenceKey: fmt.Sprintf("fallback:%d", unsupported), OccurredAt: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Counted: true, ScheduledSeconds: &duration})
+	assert.Contains(t, rows, MeetingOccurrence{MessageID: future, OccurrenceKey: fmt.Sprintf("evt:%d", future), OccurredAt: time.Date(2028, 1, 1, 10, 0, 0, 0, time.UTC), ScheduledSeconds: &duration})
 	rows, _, err = st.MeetingOccurrencesContext(t.Context(), time.Date(2028, 1, 2, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
-	assert.Contains(t, rows, MeetingOccurrence{MessageID: future, OccurrenceKey: fmt.Sprintf("evt:%d", future), OccurredAt: time.Date(2028, 1, 1, 10, 0, 0, 0, time.UTC), Counted: true})
+	assert.Contains(t, rows, MeetingOccurrence{MessageID: future, OccurrenceKey: fmt.Sprintf("evt:%d", future), OccurredAt: time.Date(2028, 1, 1, 10, 0, 0, 0, time.UTC), Counted: true, ScheduledSeconds: &duration})
 }
 
 func TestMeetingOccurrenceCountsOwnerDeclineAndNoteAvailability(t *testing.T) {
@@ -286,13 +287,14 @@ func TestMeetingOccurrencesMatchRecordsSavedSplit(t *testing.T) {
 	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
+	duration := float64(3600)
 	for _, ref := range []MeetingLinkRef{left, right} {
 		record, err := st.MeetingRecordContext(t.Context(), ref)
 		require.NoError(t, err)
 		require.Len(t, record.Links, 1)
 		assert.Empty(t, record.MessageIDs)
 		assert.Equal(t, fmt.Sprintf("evt:%d", ref.MessageID), record.Links[0].Ref)
-		assert.Contains(t, rows, MeetingOccurrence{MessageID: ref.MessageID, OccurrenceKey: record.Links[0].Ref, OccurredAt: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Counted: true})
+		assert.Contains(t, rows, MeetingOccurrence{MessageID: ref.MessageID, OccurrenceKey: record.Links[0].Ref, OccurredAt: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Counted: true, ScheduledSeconds: &duration})
 	}
 }
 
