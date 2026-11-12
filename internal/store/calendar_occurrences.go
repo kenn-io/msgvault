@@ -154,7 +154,7 @@ func (s *Store) expandCalendarRows(ctx context.Context, rows []CalendarEventRow,
 				report(row.MessageID, calendarMissingBoundsReason(e))
 			}
 			// A record keeps an identifiable copy whose effective bounds are unavailable.
-			if e.Start != nil && e.End != nil || !filterOverlap && (e.Start != nil || e.Kind == "exception" && e.Original != nil) {
+			if e.Start != nil && e.End != nil || !filterOverlap && (e.Start != nil || e.End != nil || e.Kind == "exception" && e.Original != nil) {
 				add(row, 0, calendarEventOccurrence(e, row.MessageID), time.Time{})
 			}
 			if e.Kind == "exception" || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
