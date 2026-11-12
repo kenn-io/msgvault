@@ -307,7 +307,7 @@ func TestRunServeHubRefusesPopulatedArchiveBeforeUpgrade(t *testing.T) {
 	c.Server.APIKey = "owner-fixture"
 
 	st := testutil.NewSQLiteTestStoreAt(t, c.DatabaseDSN())
-	_, err := st.GetOrCreateSource("gmail", "fixture@example.com")
+	_, err := st.GetOrCreateSourceContext(t.Context(), "gmail", "fixture@example.com")
 	require.NoError(t, err)
 	_, err = st.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value = '41' WHERE key = 'schema_version'`)
 	require.NoError(t, err)
@@ -315,9 +315,9 @@ func TestRunServeHubRefusesPopulatedArchiveBeforeUpgrade(t *testing.T) {
 
 	cmd := &cobra.Command{Use: serveCmd.Use}
 	cmd.SetContext(testInvocationContext(t.Context(), c, invocationOptions{}))
-	assert.ErrorContains(t, runServe(cmd, nil), "dedicated archive")
+	require.ErrorContains(t, runServe(cmd, nil), "dedicated archive")
 
-	observer, err := store.Open(c.DatabaseDSN())
+	observer, err := store.OpenContext(t.Context(), c.DatabaseDSN())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, observer.Close()) })
 	version, err := observer.SchemaVersionContext(t.Context())
