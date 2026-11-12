@@ -117,12 +117,13 @@ func TestICalendarRangeKeepsSiblings(t *testing.T) {
 		requirements.NoError(err)
 		requirements.Len(boundaryPage.Occurrences, 1)
 		requirements.Equal("cancelled", boundaryPage.Occurrences[0].Status)
-		requirements.Len(boundaryPage.Unexpandable, 1)
+		requirements.Empty(boundaryPage.Unexpandable)
 		from := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
 		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 		requirements.NoError(err)
-		assert.Empty(t, page.Occurrences)
-		requirements.Len(page.Unexpandable, 1)
+		requirements.Len(page.Occurrences, 1)
+		requirements.Equal("cancelled", page.Occurrences[0].Status)
+		requirements.Empty(page.Unexpandable)
 		_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:2\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"))
 		requirements.NoError(err)
 		page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
@@ -138,7 +139,7 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 		want                   []string
 	}{
 		{"timed", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z", "2027-03-04T12:00:00Z", "2027-03-04T14:00:00Z", "2027-03-05T13:00:00Z", "2027-03-07T13:00:00Z", "2027-03-08T12:00:00Z", "2027-03-08T13:00:00Z"}},
-		{"all day", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20270305\r\nDTSTART;VALUE=DATE:20270305", []string{"2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z", "2027-03-04T00:00:00Z", "2027-03-05T00:00:00Z"}},
+		{"all day", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20270305\r\nDTSTART;VALUE=DATE:20270305\r\nSUMMARY:Updated", []string{"2027-03-02T00:00:00Z", "2027-03-03T00:00:00Z", "2027-03-04T00:00:00Z", "2027-03-05T00:00:00Z", "2027-03-06T00:00:00Z", "2027-03-07T00:00:00Z", "2027-03-08T00:00:00Z"}},
 		{"mismatched", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", nil},
 		{"single", "DTSTART:20270302T120000Z\r\nDURATION:PT1H", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z", []string{"2027-03-02T12:00:00Z", "2027-03-05T13:00:00Z"}},
 		{"long occurrence", "DTSTART:20270302T120000Z\r\nDURATION:P7D\r\nRRULE:FREQ=WEEKLY", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T130000Z", []string{"2027-03-02T12:00:00Z"}},
@@ -171,14 +172,10 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 				starts = append(starts, occurrence.Start.Format(time.RFC3339))
 			}
 			requirements.Equal(tc.want, starts)
-			if tc.name == "all day" || tc.name == "mismatched" {
+			if tc.name == "mismatched" {
 				requirements.NotEmpty(page.Unexpandable)
 			} else {
 				requirements.Empty(page.Unexpandable)
-			}
-			if tc.name == "all day" {
-				requirements.Len(page.Unexpandable, 1)
-				requirements.Equal("unsupported recurrence range: later occurrences omitted", page.Unexpandable[0].Reason)
 			}
 			if tc.name == "timed" {
 				requirements.Equal("cancelled", page.Occurrences[1].Status)
@@ -225,7 +222,7 @@ func TestICalendarRangeMovesAroundLaterEdits(t *testing.T) {
 		{"cancelled occurrence", [][]byte{calendarDocument("CANCEL", "RECURRENCE-ID:20270304T120000Z")},
 			[]string{"2027-03-03T14:00:00Z", "2027-03-04T14:00:00Z cancelled", "2027-03-05T14:00:00Z"}, ""},
 		{"cancelled range", [][]byte{calendarDocument("CANCEL", "SEQUENCE:1\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z")},
-			[]string{"2027-03-03T14:00:00Z cancelled"}, "unsupported recurrence range: later occurrences omitted"},
+			[]string{"2027-03-03T14:00:00Z cancelled", "2027-03-04T14:00:00Z cancelled", "2027-03-05T14:00:00Z cancelled"}, ""},
 		{"exception with its own start", [][]byte{calendarDocument("REQUEST", "RECURRENCE-ID:20270304T120000Z\r\nDTSTART:20270304T180000Z\r\nDURATION:PT1H")},
 			[]string{"2027-03-03T14:00:00Z", "2027-03-04T18:00:00Z", "2027-03-05T14:00:00Z"}, ""},
 	} {
