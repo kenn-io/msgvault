@@ -31,7 +31,7 @@ func cardDAVSelector(args map[string]any, backend PersonCardDAVBackend) (*string
 		return nil, nil
 	}
 	connection, ok := value.(string)
-	if !ok {
+	if !ok || connection == "" {
 		return nil, errors.New("invalid CardDAV connection")
 	}
 	if !backend.SupportsCardDAVSelector() {

@@ -49,52 +49,6 @@ func cardDAVOperationFixture(t *testing.T) (*daemonMCPOperations, int64, *store.
 	return backend, books[0].ID, st
 }
 
-// cardDAVFixtureResolver supplies a public test address while the dialer routes
-// the external CardDAV contract to the in-process upstream.
-func cardDAVFixtureResolver(t *testing.T) *net.Resolver {
-	t.Helper()
-	listener, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
-	go func() {
-		buffer := make([]byte, 512)
-		for {
-			n, remote, err := listener.ReadFrom(buffer)
-			if err != nil {
-				return
-			}
-			request := buffer[:n]
-			end := 12
-			for end < len(request) && request[end] != 0 {
-				end += int(request[end]) + 1
-			}
-			end += 5
-			if end > len(request) {
-				continue
-			}
-			response := append([]byte{}, request[:2]...)
-			response = append(response, 0x81, 0x80, 0, 1)
-			isA := request[end-4] == 0 && request[end-3] == 1
-			if isA {
-				response = append(response, 0, 1)
-			} else {
-				response = append(response, 0, 0)
-			}
-			response = append(response, 0, 0, 0, 0)
-			response = append(response, request[12:end]...)
-			if isA {
-				response = append(response, 0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 0x3c, 0, 4)
-				response = append(response, netip.MustParseAddr("203.0.113.9").AsSlice()...)
-			}
-			_, _ = listener.WriteTo(response, remote)
-		}
-	}()
-	dialer := net.Dialer{}
-	return &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-		return dialer.DialContext(ctx, network, listener.LocalAddr().String())
-	}}
-}
-
 func TestCardDAVWritesSucceedThroughMCP(t *testing.T) {
 	newRequirements := require.New
 	newAssertions := assert.New
@@ -140,7 +94,7 @@ func TestCardDAVWritesSucceedThroughMCP(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	controller, err := api.NewCardDAVController(cfg, st, slog.New(slog.DiscardHandler))
 	require.NoError(err)
-	resolver := cardDAVFixtureResolver(t)
+	resolver := testutil.FixtureResolver(t, netip.MustParseAddr("203.0.113.9"))
 	dialer := net.Dialer{}
 	controller.AdjustCardDAVClientOptions(func(options *carddav.ClientOptions) {
 		options.Resolver = resolver

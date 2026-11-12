@@ -76,4 +76,9 @@ func TestCardDAVSelectorRefusesLegacyBackend(t *testing.T) {
 		assert.Equal(true, result["isError"])
 		assert.Contains(fmt.Sprint(result), "named CardDAV connection is not supported")
 	}
+	for _, name := range []string{ToolSyncCardDAV, ToolGetCardDAVSyncStatus} {
+		result := rawCallTool(t, opts, name, map[string]any{"connection": ""})
+		assert.Equal(true, result["isError"])
+		assert.Contains(fmt.Sprint(result), "invalid CardDAV connection")
+	}
 }
