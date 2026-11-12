@@ -94,7 +94,6 @@ func TestFederationEnrollmentValidation(t *testing.T) {
 		{"bad", "alice", "", "spoke_instance"},
 		{strings.Repeat("a", 64), "   ", "", "member"},
 		{strings.Repeat("a", 64), "ali\nce", "", "member"},
-		{strings.Repeat("a", 64), "alice", strings.Repeat("x", 129), "spoke_name"},
 		{strings.Repeat("a", 64), "alice", "name\nother", "spoke_name"},
 		{strings.Repeat("a", 64), "alice", "name\u009b", "spoke_name"},
 	} {

@@ -1154,7 +1154,7 @@ func (s *Server) CloseAnalyticsEngine() error {
 }
 
 func (s *Server) requestUsesCLITimeoutPolicy(r *http.Request) bool {
-	if r.Header.Get(apiprotocol.ClientClassHeader) != apiprotocol.ClientClassCLI || s.federationClaim(r) {
+	if r.Header.Get(apiprotocol.ClientClassHeader) != apiprotocol.ClientClassCLI {
 		return false
 	}
 	return s.requestAuthentication(r).trustedForCLIDuration

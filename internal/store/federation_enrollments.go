@@ -58,8 +58,8 @@ func (s *Store) CreateFederationEnrollmentContext(ctx context.Context, spokeUID,
 	if strings.TrimSpace(member) == "" || strings.IndexFunc(member, unicode.IsControl) >= 0 {
 		return nil, "", fmt.Errorf("member must not be blank or contain control characters: %w", ErrFederationValidation)
 	}
-	if len(name) > 128 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
-		return nil, "", fmt.Errorf("spoke_name must be at most 128 bytes and contain no control characters: %w", ErrFederationValidation)
+	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return nil, "", fmt.Errorf("spoke_name must not contain control characters: %w", ErrFederationValidation)
 	}
 	if name == "" {
 		name = member

@@ -5789,8 +5789,7 @@ Set `[federation] role = "spoke"` on a personal archive and run
 you change the role; with `role = "off"` the command fails with 404. On a dedicated hub,
 run `msgvault federation enroll --spoke-instance <uid> --member <handle>`.
 The UID is 64 lowercase hexadecimal digits. The member handle must not be blank
-or contain control characters. Optionally supply `--spoke-name` (at most 128 bytes, without
-control characters).
+or contain control characters. Optionally supply `--spoke-name` without control characters.
 The command prints the one-time token to standard output and a token-free join
 command for the upcoming `federation join` to standard error. Save the token
 securely; it cannot be retrieved again.

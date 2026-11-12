@@ -51,7 +51,7 @@ func init() {
 	}}
 	enroll.Flags().StringVar(&spoke, "spoke-instance", "", "Spoke archive UID (64 lowercase hexadecimal digits)")
 	enroll.Flags().StringVar(&member, "member", "", "Member handle (any non-blank name without control characters)")
-	enroll.Flags().StringVar(&name, "spoke-name", "", "Spoke display name (up to 128 bytes; no control characters)")
+	enroll.Flags().StringVar(&name, "spoke-name", "", "Spoke display name (no control characters)")
 	enroll.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	var listJSON bool
 	list := &cobra.Command{Use: "list", Short: "List spoke enrollments", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
