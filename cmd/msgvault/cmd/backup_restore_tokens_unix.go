@@ -7,4 +7,4 @@ import (
 	"go.kenn.io/kit/backup"
 )
 
-func secureRestoredTokens(context.Context, *backup.Repo, string, string) error { return nil }
+func secureRestoredTokens(context.Context, *backup.Repo, string, string, int) error { return nil }

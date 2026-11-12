@@ -31,8 +31,14 @@ func SecureRestored(dir string, restored []string) error {
 		if err := verifyHandleOwner(directory); err != nil {
 			return fmt.Errorf("inspect restored token directory: %w", err)
 		}
-		if err := restorePreflight(dir, selected, ancestors); err != nil {
+		directories, err := restorePreflight(dir, selected, ancestors)
+		if err != nil {
 			return err
+		}
+		for i := len(directories) - 1; i >= 0; i-- {
+			if err := secureRestoredDirectory(filepath.Join(dir, directories[i])); err != nil {
+				return fmt.Errorf("secure restored token directory %q: %w", directories[i], err)
+			}
 		}
 		for _, name := range restored {
 			if err := secureRestoredFile(filepath.Join(dir, name)); err != nil {
@@ -43,8 +49,10 @@ func SecureRestored(dir string, restored []string) error {
 	})
 }
 
-func restorePreflight(dir string, selected, ancestors map[string]struct{}) error {
-	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
+func restorePreflight(dir string, selected, ancestors map[string]struct{}) ([]string, error) {
+	var directories []string
+	affected := map[string]bool{".": true}
+	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("%w: inspect tokens: %w", ErrRestorePermissionsConflict, walkErr)
 		}
@@ -63,21 +71,66 @@ func restorePreflight(dir string, selected, ancestors map[string]struct{}) error
 			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
 		}
 		defer windows.CloseHandle(h) //nolint:errcheck // inspection result is authoritative
-		if _, ok := selected[rel]; ok && !entry.IsDir() {
+		parentAffected := affected[filepath.Dir(rel)]
+		if entry.IsDir() {
+			protected, err := protectedDACL(h)
+			if err != nil {
+				return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+			}
+			_, selectedAncestor := ancestors[rel]
+			if protected {
+				affected[rel] = false
+				if !selectedAncestor {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if selectedAncestor {
+				directories = append(directories, rel)
+				affected[rel] = true
+				return nil
+			}
+			affected[rel] = parentAffected
+		} else if _, ok := selected[rel]; ok {
 			return nil
 		}
-		if _, ok := ancestors[rel]; ok && entry.IsDir() {
+		if !parentAffected {
 			return nil
 		}
-		affected, err := inheritedAccess(h)
+		inherited, err := inheritedAccess(h)
 		if err != nil {
 			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
 		}
-		if affected {
+		if inherited {
 			return fmt.Errorf("%w: tokens/%s", ErrRestorePermissionsConflict, rel)
 		}
 		return nil
 	})
+	return directories, err
+}
+
+func protectedDACL(h windows.Handle) (bool, error) {
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return false, fmt.Errorf("read token permissions: %w", err)
+	}
+	control, _, err := sd.Control()
+	if err != nil {
+		return false, fmt.Errorf("read token protection: %w", err)
+	}
+	return control&windows.SE_DACL_PROTECTED != 0, nil
+}
+
+func secureRestoredDirectory(path string) error {
+	h, err := openSecurityHandle(path, true, windows.READ_CONTROL|windows.WRITE_DAC)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h) //nolint:errcheck // security result is authoritative
+	if err := verifyHandleOwner(h); err != nil {
+		return err
+	}
+	return secureOwnerOnlyHandle(h)
 }
 
 func inheritedAccess(h windows.Handle) (bool, error) {
