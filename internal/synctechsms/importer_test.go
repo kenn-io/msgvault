@@ -7,10 +7,34 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestImportSenderAvailableAfterPostgresFTSBackfill(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL indexing")
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="1"><sms address="+15551234567" date="1717214400000" type="1" body="smsmarker" read="1" status="-1" contact_name="Alice" /></smses>`)
+	imp := NewImporter(f.Store, ImportOptions{OwnerPhone: "+15550000001", IncludeSMS: true})
+	summary, err := imp.ImportPath(t.Context(), dir)
+	require.NoError(err)
+	require.Equal(1, summary.SMSImported)
+	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE messages SET indexing_version = 2, search_fts_fields = NULL`)
+	require.NoError(err)
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	for _, term := range []string{"15551234567", "smsmarker"} {
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err)
+		require.Len(ids, 1, term)
+	}
+}
 
 func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
 	require := require.New(t)
