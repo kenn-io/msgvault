@@ -1,25 +1,20 @@
 package cmd
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
+	"context"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"path/filepath"
-	"strings"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/metawebhook"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 type metaWebhookErrorCase struct {
@@ -99,81 +94,76 @@ func TestMetaWebhookErrorRetriesOnlyRecoverableFailures(t *testing.T) {
 	}
 }
 
-// TestMetaWebhookOnlyStoredDeliveriesPostponeIdle checks that rejected
-// requests leave the idle deadline alone and a stored delivery moves it.
-func TestMetaWebhookOnlyStoredDeliveriesPostponeIdle(t *testing.T) {
-	const timeout = 100 * time.Millisecond
-	body := `{"object":"page","entry":[]}`
-	t.Run("rejected requests", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			handler, fired := newIdleMetaWebhook(t, timeout)
-			synctest.Sleep(60 * time.Millisecond)
-			wrong := strings.Repeat("0", 64)
-			require.Equal(http.StatusUnauthorized, postMetaWebhook(t, handler, body, "sha256="+wrong))
-			require.Equal(http.StatusUnauthorized, postMetaWebhook(t, handler, body, ""))
-			synctest.Sleep(50 * time.Millisecond)
-			assert.True(idleFired(fired), "rejected requests postponed idle shutdown")
-		})
-	})
-	t.Run("stored delivery", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			handler, fired := newIdleMetaWebhook(t, timeout)
-			synctest.Sleep(60 * time.Millisecond)
-			require.Equal(http.StatusOK, postMetaWebhook(t, handler, body, metaWebhookSignature(body)))
-			synctest.Sleep(50 * time.Millisecond)
-			assert.False(idleFired(fired), "idle fired despite a stored delivery")
-			synctest.Sleep(60 * time.Millisecond)
-			assert.True(idleFired(fired), "idle did not fire after the postponed deadline")
-		})
-	})
-}
-
 const (
-	testMetaWebhookApp    = "1234567890"
-	testMetaWebhookSecret = "synthetic-app-secret"
+	testMetaWebhookSecretEnv = "MSGVAULT_TEST_META_APP_SECRET"
+	testMetaWebhookVerifyEnv = "MSGVAULT_TEST_META_VERIFY_TOKEN"
 )
 
-// newIdleMetaWebhook builds the receiver's handler around a running idle
-// tracker. The returned channel receives once the tracker goes idle.
-func newIdleMetaWebhook(t *testing.T, timeout time.Duration) (http.Handler, <-chan struct{}) {
-	t.Helper()
-	fired := make(chan struct{}, 1)
-	idle := api.NewIdleTracker(timeout, func() { fired <- struct{}{} })
-	pending := filepath.Join(t.TempDir(), "pending")
-	apps := map[string]metawebhook.App{
-		testMetaWebhookApp: {Secret: []byte(testMetaWebhookSecret), VerifyToken: "synthetic-verify-token"},
+// TestMetaWebhookReceiverHoldsOffIdleShutdown checks that a listening
+// receiver keeps an automatic daemon up, and that idle shutdown works as
+// before once it stops or when it does not start. A real listener cannot run
+// under synctest, so the waits use real time.
+func TestMetaWebhookReceiverHoldsOffIdleShutdown(t *testing.T) {
+	const timeout = 100 * time.Millisecond
+	t.Run("listening", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		t.Setenv(testMetaWebhookSecretEnv, "synthetic-app-secret")
+		t.Setenv(testMetaWebhookVerifyEnv, "synthetic-verify-token")
+		receiver, fired := startIdleMetaWebhooks(t, "127.0.0.1:0", timeout) //nolint:kennlint // deadlinetest: the idle timeout expiring is the asserted result
+		require.NotNil(receiver.server, "receiver did not start")
+		select {
+		case <-fired:
+			assert.Fail("idle shutdown fired while the receiver was listening")
+		case <-time.After(5 * timeout): //nolint:kennlint // deadlinetest: absence check: the listening receiver holds off idle shutdown
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+		require.NoError(receiver.Shutdown(ctx))
+		select {
+		case <-fired:
+		case <-time.After(30 * time.Second):
+			assert.Fail("idle shutdown did not fire after the receiver stopped")
+		}
+	})
+	for _, tc := range []struct{ name, listen string }{
+		{"not configured", ""},
+		{"app secret unset", "127.0.0.1:0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(testMetaWebhookSecretEnv, "")
+			t.Setenv(testMetaWebhookVerifyEnv, "synthetic-verify-token")
+			receiver, fired := startIdleMetaWebhooks(t, tc.listen, timeout) //nolint:kennlint // deadlinetest: the idle timeout expiring is the asserted result
+			assert.Nil(t, receiver.server, "receiver started")
+			select {
+			case <-fired:
+			case <-time.After(30 * time.Second):
+				assert.Fail(t, "idle shutdown did not fire without a listening receiver")
+			}
+		})
 	}
-	handler, err := metaWebhookHandler(apps, pending, idle, metawebhook.NewWorker(pending, nil))
+}
+
+// startIdleMetaWebhooks starts the receiver for one synthetic app, then runs
+// an idle tracker the way the daemon does. The returned channel closes once
+// the tracker goes idle.
+func startIdleMetaWebhooks(t *testing.T, listen string, timeout time.Duration) (*metaWebhookRuntime, <-chan struct{}) {
+	t.Helper()
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.MetaWebhooks.ListenAddr = listen
+	if listen != "" {
+		cfg.MetaWebhooks.Apps = []config.MetaWebhookApp{{AppID: "1234567890", AppSecretEnv: testMetaWebhookSecretEnv, VerifyTokenEnv: testMetaWebhookVerifyEnv}}
+	}
+	fired := make(chan struct{})
+	idle := api.NewIdleTracker(timeout, func() { close(fired) })
+	receiver, err := startMetaWebhooks(t.Context(), cfg, testutil.NewTestStore(t), idle, idle)
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 30*time.Second)
+		defer cancel()
+		assert.NoError(t, receiver.Shutdown(ctx))
+	})
+	idle.Touch()
 	go idle.Run(t.Context())
-	return handler, fired
-}
-
-func metaWebhookSignature(body string) string {
-	mac := hmac.New(sha256.New, []byte(testMetaWebhookSecret))
-	_, _ = mac.Write([]byte(body))
-	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
-}
-
-// postMetaWebhook posts body to the test app and returns the status.
-func postMetaWebhook(t *testing.T, handler http.Handler, body, signature string) int {
-	t.Helper()
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/meta/webhook/"+testMetaWebhookApp, strings.NewReader(body))
-	if signature != "" {
-		req.Header.Set("X-Hub-Signature-256", signature)
-	}
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	return rec.Code
-}
-
-func idleFired(fired <-chan struct{}) bool {
-	select {
-	case <-fired:
-		return true
-	default:
-		return false
-	}
+	return receiver, fired
 }

@@ -27,9 +27,6 @@ type ImportSummary struct {
 	MessagesUpdated   int
 	Requests          int
 	Partial           bool
-	// removed lists the Meta IDs a webhook run removed, so applyWebhook can
-	// prune a paused sync's saved traversal once the run is finished.
-	removed []string
 }
 
 type Importer struct {
@@ -371,7 +368,16 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 			if err != nil {
 				return err
 			}
-			p.Posts, p.postsRead = keepSaved(p.Posts, page.Data), true
+			if kept := keepSaved(p.Posts, page.Data); len(kept) == len(p.Posts) {
+				p.Posts, p.postsRead = kept, true
+			} else {
+				// The page no longer lists every saved post, or the cursor
+				// that read it is missing, as in checkpoints saved before
+				// posts_after existed. Continuing at After would skip the
+				// missing posts and still report complete coverage, so the
+				// phase starts over from the first page.
+				*p = phaseState{}
+			}
 		} else if len(p.Posts) > 0 {
 			post := p.Posts[0]
 			if err := r.persist(ctx, post, post.ID, "", edge); err != nil {

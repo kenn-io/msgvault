@@ -24,10 +24,11 @@ import (
 
 // metaWebhookRuntime is the daemon's Meta webhook listener and worker.
 type metaWebhookRuntime struct {
-	server *http.Server
-	cancel context.CancelFunc
-	done   chan struct{}
-	errs   chan error
+	server  *http.Server
+	cancel  context.CancelFunc
+	release func() // ends the receiver's hold on idle shutdown
+	done    chan struct{}
+	errs    chan error
 }
 
 // startMetaWebhooks starts the receiver when [meta_webhooks] sets a listen
@@ -56,7 +57,7 @@ func startMetaWebhooks(ctx context.Context, cfg *config.Config, st *store.Store,
 		{Object: "instagram", Name: "live_comments"}: instagramCommentsHandler(cfg, st, work),
 		{Object: "instagram", Name: "mentions"}:      instagramMentionsHandler(cfg, st, work),
 	})
-	handler, err := metaWebhookHandler(apps, pending, idle, worker)
+	handler, err := metawebhook.NewHandler(apps, pending, worker.Wake)
 	if err != nil {
 		return nil, err
 	}
@@ -65,19 +66,32 @@ func startMetaWebhooks(ctx context.Context, cfg *config.Config, st *store.Store,
 	if err != nil {
 		return nil, fmt.Errorf("listen for Meta webhooks: %w", err)
 	}
+	// Meta cannot start a daemon, so a daemon that would idle out would lose
+	// every delivery Meta gives up on. The listener holds the daemon up
+	// instead of any request, so unsigned requests do not count as activity.
+	release, ok := idle.BeginMaintenanceWorkContext(ctx)
+	if !ok {
+		_ = listener.Close()
+		return nil, errors.New("meta webhook receiver: daemon is stopping")
+	}
+	if idle != nil {
+		slog.Info("Meta webhook receiver keeps the daemon from idle shutdown while it listens")
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	r := &metaWebhookRuntime{
 		server: &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second},
-		cancel: cancel, done: make(chan struct{}), errs: make(chan error, 2),
+		cancel: cancel, release: release, done: make(chan struct{}), errs: make(chan error, 2),
 	}
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		if err := r.server.Serve(listener); !errors.Is(err, http.ErrServerClosed) {
+			release()
 			r.errs <- fmt.Errorf("meta webhook listener: %w", err)
 		}
 	})
 	wg.Go(func() {
 		if err := worker.Run(runCtx); runCtx.Err() == nil {
+			release()
 			r.errs <- fmt.Errorf("meta webhook worker: %w", err)
 		}
 	})
@@ -87,16 +101,6 @@ func startMetaWebhooks(ctx context.Context, cfg *config.Config, st *store.Store,
 	}()
 	slog.Info("Meta webhook receiver listening", "addr", listener.Addr().String())
 	return r, nil
-}
-
-// metaWebhookHandler returns the handler the receiver serves. Only a stored
-// delivery counts as activity, so unsigned requests cannot keep the daemon
-// from idle shutdown.
-func metaWebhookHandler(apps map[string]metawebhook.App, pending string, idle *api.IdleTracker, worker *metawebhook.Worker) (http.Handler, error) {
-	return metawebhook.NewHandler(apps, pending, func() {
-		idle.Touch()
-		worker.Wake()
-	})
 }
 
 // Errors reports a listener or worker failure. The channel is nil, so it
@@ -116,6 +120,7 @@ func (r *metaWebhookRuntime) Shutdown(ctx context.Context) error {
 	}
 	err := r.server.Shutdown(ctx)
 	r.cancel()
+	r.release()
 	select {
 	case <-r.done:
 		return err

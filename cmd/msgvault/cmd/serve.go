@@ -3934,8 +3934,8 @@ func (a *storeAPIAdapter) GetActiveSyncReadOnly(ctx context.Context, sourceID in
 	return a.store.GetActiveSyncReadOnly(ctx, sourceID)
 }
 
-func (a *storeAPIAdapter) GetLatestSyncContext(ctx context.Context, sourceID, excludeID int64) (*store.SyncRun, error) {
-	return a.store.GetLatestSyncContext(ctx, sourceID, excludeID)
+func (a *storeAPIAdapter) GetLatestSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error) {
+	return a.store.GetLatestSyncExcludingTypeContext(ctx, sourceID, syncType)
 }
 
 func (a *storeAPIAdapter) GetSyncOperation(operationID string) (*store.SyncOperation, error) {
@@ -3946,8 +3946,8 @@ func (a *storeAPIAdapter) CreateSyncOperation(sourceID int64, operationID string
 	return a.store.CreateSyncOperation(sourceID, operationID)
 }
 
-func (a *storeAPIAdapter) GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*store.SyncRun, error) {
-	return a.store.GetLastSuccessfulSyncContext(ctx, sourceID)
+func (a *storeAPIAdapter) GetLastSuccessfulSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*store.SyncRun, error) {
+	return a.store.GetLastSuccessfulSyncExcludingTypeContext(ctx, sourceID, syncType)
 }
 
 func (a *storeAPIAdapter) CountSyncRunItemsContext(ctx context.Context, syncRunID int64, status string) (int64, error) {
