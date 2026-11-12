@@ -54,12 +54,7 @@ func startMetaWebhooks(ctx context.Context, cfg *config.Config, st *store.Store,
 		{Object: "instagram", Name: "live_comments"}: instagramCommentsHandler(cfg, st, work),
 		{Object: "instagram", Name: "mentions"}:      instagramMentionsHandler(cfg, st, work),
 	})
-	// Only a stored delivery counts as activity, so unsigned requests cannot
-	// keep the daemon from idle shutdown.
-	handler, err := metawebhook.NewHandler(apps, pending, func() {
-		idle.Touch()
-		worker.Wake()
-	})
+	handler, err := metaWebhookHandler(apps, pending, idle, worker)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +85,16 @@ func startMetaWebhooks(ctx context.Context, cfg *config.Config, st *store.Store,
 	}()
 	slog.Info("Meta webhook receiver listening", "addr", listener.Addr().String())
 	return r, nil
+}
+
+// metaWebhookHandler returns the handler the receiver serves. Only a stored
+// delivery counts as activity, so unsigned requests cannot keep the daemon
+// from idle shutdown.
+func metaWebhookHandler(apps map[string]metawebhook.App, pending string, idle *api.IdleTracker, worker *metawebhook.Worker) (http.Handler, error) {
+	return metawebhook.NewHandler(apps, pending, func() {
+		idle.Touch()
+		worker.Wake()
+	})
 }
 
 // Errors reports a listener or worker failure. The channel is nil, so it
