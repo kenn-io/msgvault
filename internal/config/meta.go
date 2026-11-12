@@ -19,6 +19,8 @@ type FacebookCommentsSource struct {
 	TokenEnv   string `toml:"token_env"`
 	Enabled    bool   `toml:"enabled"`
 	Schedule   string `toml:"schedule"`
+	// Actions opts the profile in to changing comments on Meta.
+	Actions []string `toml:"actions"`
 }
 
 func (c *Config) GetFacebookCommentsSource(identifier string) *FacebookCommentsSource {
@@ -73,6 +75,9 @@ func validateFacebookPageProfiles(section string, profiles []FacebookCommentsSou
 		if !envutil.ValidName(source.TokenEnv) {
 			return fmt.Errorf("%s[%d].token_env must name an explicit environment variable", section, i)
 		}
+		if err := validateCommentActions(source.Actions); err != nil {
+			return fmt.Errorf("%s[%d].actions: %w", section, i, err)
+		}
 		if source.Schedule != "" {
 			if _, err := cronexpr.Parser.Parse(source.Schedule); err != nil {
 				return fmt.Errorf("%s[%d].schedule: %w", section, i, err)
@@ -95,6 +100,8 @@ type InstagramCommentsSource struct {
 	Enabled            bool   `toml:"enabled"`
 	Schedule           string `toml:"schedule"`
 	Mentions           bool   `toml:"mentions"` // also archive tagged media as an instagram_mentions source
+	// Actions opts the profile in to changing comments on Meta.
+	Actions []string `toml:"actions"`
 }
 
 func (c *Config) GetInstagramCommentsSource(identifier string) *InstagramCommentsSource {
@@ -154,10 +161,25 @@ func validateInstagramProfiles(section string, profiles []InstagramCommentsSourc
 		if !envutil.ValidName(source.TokenEnv) {
 			return fmt.Errorf("%s[%d].token_env must name an explicit environment variable", section, i)
 		}
+		if err := validateCommentActions(source.Actions); err != nil {
+			return fmt.Errorf("%s[%d].actions: %w", section, i, err)
+		}
 		if source.Schedule != "" {
 			if _, err := cronexpr.Parser.Parse(source.Schedule); err != nil {
 				return fmt.Errorf("%s[%d].schedule: %w", section, i, err)
 			}
+		}
+	}
+	return nil
+}
+
+// validateCommentActions accepts the comment changes a profile can opt in to.
+func validateCommentActions(actions []string) error {
+	for _, action := range actions {
+		switch meta.CommentAction(action) {
+		case meta.ActionHide, meta.ActionDelete, meta.ActionReply:
+		default:
+			return fmt.Errorf("unknown action %q; use \"hide\", \"delete\" or \"reply\"", action)
 		}
 	}
 	return nil
