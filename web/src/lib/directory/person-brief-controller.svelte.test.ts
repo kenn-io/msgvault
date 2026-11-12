@@ -497,6 +497,40 @@ describe('PersonBriefController', () => {
     controller.destroy();
   });
 
+  it('refreshes a retired current brief and its visible history after a run with no new version', async () => {
+    let retired = false;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'POST' && path === '/api/v1/people/7/brief/generate') {
+        retired = true;
+        return Response.json({ run_id: 'run-1', attempt_id: 'attempt-1', brief_version: 0, brief_failure_class: '' });
+      }
+      if (path === '/api/v1/people/7/brief-enrollment') return Response.json(enrollment(true));
+      if (path === '/api/v1/people/7/brief/versions') {
+        return Response.json({ versions: [brief(retired ? { status: 'superseded', superseded_at: '2026-08-30T00:00:00Z' } : {})] });
+      }
+      if (path === '/api/v1/people/7/brief') {
+        return retired ? Response.json({ error: 'person_brief_not_found' }, { status: 404 }) : Response.json(brief());
+      }
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    const controller = new PersonBriefController(createAPIClient(fetchFn));
+    await controller.setPerson(7);
+    await controller.showVersions();
+    expect(controller.brief?.version).toBe(2);
+    expect(controller.versions[0]?.status).toBe('current');
+
+    const outcome = await controller.generate();
+
+    expect(outcome.kind).toBe('confirmed');
+    expect(controller.runOutcome).toBe('No new brief version.');
+    expect(controller.brief).toBeUndefined();
+    expect(controller.briefMissing).toBe(true);
+    expect(controller.versions[0]?.status).toBe('superseded');
+    controller.destroy();
+  });
+
   it('maps person_brief_not_enrolled on generate without inventing a version', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);

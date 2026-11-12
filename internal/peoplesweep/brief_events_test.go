@@ -45,7 +45,7 @@ func TestBriefEventStateUsesTheWholeUTCDay(t *testing.T) {
 	require.Error(err)
 }
 
-func TestBriefEventRequiresExactAuthoredQuotesAndLaterResolution(t *testing.T) {
+func TestBriefEventRequiresExactQuotesAndLaterResolution(t *testing.T) {
 	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
 	later := briefWindowItem(11, SourceConversationText, 12, "I cancelled the move.")
 	anchorID, laterID := packetEvidenceID(anchor), packetEvidenceID(later)

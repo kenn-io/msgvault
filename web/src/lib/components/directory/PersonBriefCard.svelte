@@ -348,7 +348,7 @@
             />
           </div>
         {:else if controller.briefMissing}
-          <p>No brief yet.</p>
+          <p>No current brief.</p>
           <div class="actions">
             <Button
               size="sm"

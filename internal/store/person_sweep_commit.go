@@ -9,6 +9,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -1094,6 +1095,8 @@ func preparePersonSweepBriefEvidence(
 			}
 		}
 	}
+	// A source can have multiple cited versions; every one must still align.
+	pending := maps.Clone(mandatory)
 	prepared := make([]preparedBriefEvidence, 0, len(request.Brief.Evidence))
 	seen := make(map[string]struct{}, len(request.Brief.Evidence))
 	for _, input := range request.Brief.Evidence {
@@ -1124,7 +1127,7 @@ func preparePersonSweepBriefEvidence(
 		if mandatory[input.SourceRef] && !result.Accepted {
 			return nil, errors.Join(peoplesweep.ErrBriefEventEvidenceChanged, peoplesweep.ErrInvalidStructuredOutput)
 		}
-		delete(mandatory, input.SourceRef)
+		delete(pending, input.SourceRef)
 		if !result.Accepted {
 			continue
 		}
@@ -1140,7 +1143,7 @@ func preparePersonSweepBriefEvidence(
 		seen[key] = struct{}{}
 		prepared = append(prepared, preparedBriefEvidence{key: key, input: input})
 	}
-	if len(mandatory) != 0 {
+	if len(pending) != 0 {
 		return nil, errors.Join(peoplesweep.ErrBriefEventEvidenceChanged, peoplesweep.ErrInvalidStructuredOutput)
 	}
 	return prepared, nil
