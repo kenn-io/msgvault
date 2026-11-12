@@ -124,8 +124,35 @@ func TestHowWeMetFirstAppearanceHistoryAndPolicy(t *testing.T) {
 	require.NoError(t, f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT vcard_projection_revision FROM persons WHERE id = ?`), person.ID).Scan(&revisionAfter))
 	assert.Equal(t, revisionBefore, revisionAfter)
 	require.Len(t, values(true), 1)
+	var target personfacts.TargetRef
+	var descriptor personfacts.TargetDescriptor
+	for _, item := range catalogAfter.Targets {
+		if item.Key == store.AttributeUniversalIDHowWeMet {
+			target = personfacts.TargetRef{Kind: item.Kind, Key: item.Key, Revision: item.Revision}
+			descriptor = item
+		}
+	}
+	require.NotEmpty(t, target.Key)
+	pinned, err := f.Store.SetPersonFactPinContext(ctx, person.ID, target, true, "test")
+	require.NoError(t, err)
+	require.NotNil(t, pinned.State.EventID)
 	older := add("older-intro", at.Add(-24*time.Hour))
 	project()
+	require.NoError(t, f.Store.FillPersonHowWeMetContext(ctx, request))
+	require.Len(t, values(true), 1)
+	require.Len(t, values(false), 1)
+	assert.Equal(t, initial[0].ID, values(false)[0].ID, "changed evidence preserves the explicit pin")
+	require.NoError(t, f.Store.MarkMessageDeletedBySourceMessageID(ctx, f.Source.ID, false, "older-intro"))
+	require.NoError(t, f.Store.MarkMessageDeletedBySourceMessageID(ctx, f.Source.ID, false, "first-intro"))
+	project()
+	require.NoError(t, f.Store.FillPersonHowWeMetContext(ctx, request))
+	require.Len(t, values(false), 1)
+	assert.Equal(t, initial[0].ID, values(false)[0].ID, "missing evidence preserves the explicit pin")
+	require.NoError(t, f.Store.ClearMessageDeletedFromSourceContext(ctx, f.Source.ID, "older-intro"))
+	require.NoError(t, f.Store.ClearMessageDeletedFromSourceContext(ctx, f.Source.ID, "first-intro"))
+	project()
+	_, err = f.Store.SetPersonFactPinContext(ctx, person.ID, target, false, "test")
+	require.NoError(t, err)
 	require.NoError(t, f.Store.FillPersonHowWeMetContext(ctx, request))
 	rows = values(true)
 	require.Len(t, rows, 2)
@@ -151,17 +178,6 @@ func TestHowWeMetFirstAppearanceHistoryAndPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, f.Store.FillPersonHowWeMetContext(ctx, request))
 	assert.Empty(t, values(false), "a manual clear remains pinned")
-	catalog, err := f.Store.BuildPersonFactCatalogContext(ctx, profile.AllowSensitive)
-	require.NoError(t, err)
-	var target personfacts.TargetRef
-	var descriptor personfacts.TargetDescriptor
-	for _, item := range catalog.Targets {
-		if item.Key == store.AttributeUniversalIDHowWeMet {
-			target = personfacts.TargetRef{Kind: item.Kind, Key: item.Key, Revision: item.Revision}
-			descriptor = item
-		}
-	}
-	require.NotEmpty(t, target.Key)
 	_, err = f.Store.SetPersonFactPinContext(ctx, person.ID, target, false, "test")
 	require.NoError(t, err)
 	require.NoError(t, f.Store.FillPersonHowWeMetContext(ctx, request))
