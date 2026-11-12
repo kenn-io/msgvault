@@ -54,11 +54,11 @@ or newer.
 
 ## See a person's first archived appearance
 
-Run `msgvault person contact-state <person-id> --json` to see the earliest
+Run `msgvault person get <person-id> --json` to see the earliest
 archived event linked to a saved person, including messages where they were
 copied. `first_seen_at` and `first_seen_ref` describe that appearance;
 `first_contact_at` and interaction counts still describe direct contact.
-The HTTP contact-state route, assembled profiles, and `person get --json` carry the same fields. These JSON reads and the contact-state command require daemon API schema 5.1.0 or newer. The Web UI and TUI do not yet show first appearance.
+The HTTP contact-state route, assembled profiles, and `person get --json` carry the same fields. `person get` includes them when daemon API schema 5.1.0 or newer is available; older daemons still return the person. The Web UI and TUI do not yet show first appearance.
 
 `first_contact_kind` describes the envelope evidence, not a verified introduction: `email_intro` is an inbound email
 from a third party to you and the person with at most four other non-owner

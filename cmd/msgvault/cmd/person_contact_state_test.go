@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestPersonContactStateCommandRealProjection(t *testing.T) {
+func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 	f := storetest.New(t)
 	require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
 	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
@@ -41,40 +42,32 @@ func TestPersonContactStateCommandRealProjection(t *testing.T) {
 	_, err = projector.RunOnce(t.Context())
 	require.NoError(t, err)
 	srv := api.NewServer(&config.Config{}, &storeAPIAdapter{store: f.Store}, nil, slog.New(slog.DiscardHandler))
-	httpServer := httptest.NewServer(srv.Router())
+	var oldDaemon, failState atomic.Bool
+	router := srv.Router()
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if oldDaemon.Load() && r.URL.Path == "/api/v1/health" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"5.0.0"}`))
+			return
+		}
+		if failState.Load() && r.URL.Path == fmt.Sprintf("/api/v1/people/%d/contact-state", person.ID) {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		router.ServeHTTP(w, r)
+	}))
 	t.Cleanup(httpServer.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: httpServer.URL, AllowInsecure: true}})
-	command := newPersonContactStateCommand()
-	var output bytes.Buffer
-	command.SetOut(&output)
-	command.SetArgs([]string{strconv.FormatInt(person.ID, 10), "--json"})
-	require.NoError(t, command.ExecuteContext(ctx))
-	var state map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &state))
-	assert.Equal(t, fmt.Sprintf("message:%d", id), state["first_seen_ref"])
-	assert.Equal(t, "email_intro", state["first_contact_kind"])
-	assert.NotContains(t, state, "first_contact_at")
-	intro, ok := state["introducer"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, float64(sender), intro["participant_id"])
-	assert.Equal(t, "Saved Sender", intro["display_name"])
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/people/%d/contact-state", httpServer.URL, person.ID), nil)
 	require.NoError(t, err)
 	response, err := http.DefaultClient.Do(request)
 	require.NoError(t, err)
 	defer func() { _ = response.Body.Close() }()
 	require.Equal(t, http.StatusOK, response.StatusCode)
-	var apiState map[string]any
-	require.NoError(t, json.NewDecoder(response.Body).Decode(&apiState))
-	assert.Equal(t, apiState, state)
-
-	textCommand := newPersonContactStateCommand()
-	var plain bytes.Buffer
-	textCommand.SetOut(&plain)
-	textCommand.SetArgs([]string{strconv.FormatInt(person.ID, 10)})
-	require.NoError(t, textCommand.ExecuteContext(ctx))
-	assert.Contains(t, plain.String(), fmt.Sprintf("Evidence: message:%d", id))
-	assert.Contains(t, plain.String(), "Introducer: Saved Sender")
+	var state map[string]any
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&state))
+	assert.Equal(t, fmt.Sprintf("message:%d", id), state["first_seen_ref"])
+	assert.Equal(t, "email_intro", state["first_contact_kind"])
 
 	savedJSON := personJSON
 	personJSON = true
@@ -92,19 +85,25 @@ func TestPersonContactStateCommandRealProjection(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, state["first_seen_ref"], contact["first_seen_ref"])
 	}
-}
-
-func TestPersonContactStateRequiresCurrentDaemon(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/health", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.0.0"}`))
-		assert.NoError(t, err)
-	}))
-	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	command := newPersonContactStateCommand()
-	command.SetArgs([]string{"1"})
-	err := command.ExecuteContext(ctx)
-	require.ErrorContains(t, err, "5.1.0 or newer")
+	for _, scenario := range []struct {
+		name      string
+		old, fail bool
+	}{{"older daemon", true, false}, {"optional subresource unavailable", false, true}} {
+		t.Run(scenario.name, func(t *testing.T) {
+			oldDaemon.Store(scenario.old)
+			failState.Store(scenario.fail)
+			for _, args := range [][]string{{strconv.FormatInt(person.ID, 10)}, {"--vcard-uid", person.VCardUID}} {
+				get := &cobra.Command{Use: personGetCmd.Use, Args: personGetCmd.Args, RunE: personGetCmd.RunE}
+				get.Flags().String("vcard-uid", "", "")
+				var got bytes.Buffer
+				get.SetOut(&got)
+				get.SetArgs(args)
+				require.NoError(t, get.ExecuteContext(ctx))
+				var profile map[string]any
+				require.NoError(t, json.Unmarshal(got.Bytes(), &profile))
+				assert.Equal(t, float64(person.ID), profile["id"])
+				assert.NotContains(t, profile, "contact_state")
+			}
+		})
+	}
 }

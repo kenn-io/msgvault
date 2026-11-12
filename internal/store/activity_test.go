@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -28,9 +29,6 @@ var activityTableColumns = map[string][]string{
 	},
 	"activity_event_persons": {
 		"message_id", "person_id", "role", "evidence", "local_date",
-	},
-	"person_first_contacts": {
-		"person_id", "first_seen_at", "first_seen_message_id",
 	},
 	"person_contact_state": {
 		"person_id", "first_contact_at", "first_contact_message_id",
@@ -3477,7 +3475,7 @@ func TestClaimActivityTimezoneTransitionRejectsHostDependentZone(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrInvalidActivity)
 }
 
-func TestFirstSeenProjectionAndCascadeFallback(t *testing.T) {
+func TestFirstSeenProjectionAndCascadeDeletion(t *testing.T) {
 	f, personID := activityProjectionFixture(t)
 	at := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	first := f.NewMessage().WithSourceMessageID("first-seen-first").WithSentAt(at).Create(t, f.Store)
@@ -3494,31 +3492,16 @@ func TestFirstSeenProjectionAndCascadeFallback(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("message:%d", low), state.FirstSeenRef)
 	assert.Nil(t, state.FirstContactAt)
 	assert.Zero(t, state.InteractionCount)
-	// A linked but superseded cache entry must not hide the earlier event.
-	_, err = activityExec(t.Context(), f.Store, `UPDATE person_first_contacts SET first_seen_message_id = ? WHERE person_id = ?`, high, personID)
-	require.NoError(t, err)
-	state, err = f.Store.ContactStateContext(t.Context(), personID, at)
-	require.NoError(t, err)
-	assert.Equal(t, fmt.Sprintf("message:%d", low), state.FirstSeenRef)
-	_, err = activityExec(t.Context(), f.Store, `UPDATE person_first_contacts SET first_seen_message_id = ? WHERE person_id = ?`, low, personID)
-	require.NoError(t, err)
 	_, err = activityExec(t.Context(), f.Store, `DELETE FROM messages WHERE id = ?`, low)
 	require.NoError(t, err)
 	state, err = f.Store.ContactStateContext(t.Context(), personID, at)
 	require.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("message:%d", high), state.FirstSeenRef)
-	var storedID int64
-	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT first_seen_message_id FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&storedID))
-	assert.Equal(t, low, storedID, "snapshot fallback must not write the cache")
-	third := f.NewMessage().WithSourceMessageID("first-seen-third").WithSentAt(at.Add(time.Hour)).Create(t, f.Store)
-	c := activityProjectionForMessage(t, f, third, personID, at.Add(time.Hour))
-	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{c})
-	require.NoError(t, err)
-	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT first_seen_message_id FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&storedID))
-	assert.Equal(t, third, storedID, "a subsequent writer replaces a missing target")
 }
 
 func TestFirstSeenReplacementAndRetraction(t *testing.T) {
+	t.Run("date changes", firstSeenDateChangesRecomputeWinner)
+
 	f, oldID := activityProjectionFixture(t)
 	participant := f.EnsureParticipant("new-first@example.test", "New First", "example.test")
 	person, created, err := f.Store.CreatePersonFromParticipant(participant)
@@ -3554,36 +3537,7 @@ func TestFirstSeenReplacementAndRetraction(t *testing.T) {
 	assert.Nil(t, state.FirstSeenAt)
 }
 
-func TestFirstSeenBackfillsDrainedProjectionOnce(t *testing.T) {
-	f, personID := activityProjectionFixture(t)
-	at := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	id := f.NewMessage().WithSourceMessageID("first-seen-upgrade").WithSentAt(at).Create(t, f.Store)
-	projection := activityProjectionForMessage(t, f, id, personID, at)
-	projection.Event.Persons[0].Evidence = store.EvidenceCoPresence
-	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{projection})
-	require.NoError(t, err)
-	revision := activityQueueRevision(t, f.Store, id)
-	_, err = activityExec(t.Context(), f.Store, `DELETE FROM person_first_contacts WHERE person_id = ?`, personID)
-	require.NoError(t, err)
-	_, err = activityExec(t.Context(), f.Store, `DELETE FROM applied_migrations WHERE name = ?`, "person_first_contacts_v1")
-	require.NoError(t, err)
-	require.NoError(t, f.Store.InitSchemaContext(t.Context()))
-	var got int64
-	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT first_seen_message_id FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&got))
-	assert.Equal(t, id, got)
-	assert.Equal(t, revision, activityQueueRevision(t, f.Store, id))
-	_, err = activityExec(t.Context(), f.Store, `DELETE FROM person_first_contacts WHERE person_id = ?`, personID)
-	require.NoError(t, err)
-	require.NoError(t, f.Store.InitSchemaContext(t.Context()))
-	var count int
-	require.NoError(t, activityQueryRow(t.Context(), f.Store, `SELECT COUNT(*) FROM person_first_contacts WHERE person_id = ?`, personID).Scan(&count))
-	assert.Zero(t, count, "the completed backfill does not run again")
-	state, err := f.Store.ContactStateContext(t.Context(), personID, at)
-	require.NoError(t, err)
-	assert.Equal(t, fmt.Sprintf("message:%d", id), state.FirstSeenRef)
-}
-
-func TestFirstSeenDateChangesRecomputeWinner(t *testing.T) {
+func firstSeenDateChangesRecomputeWinner(t *testing.T) {
 	f, personID := activityProjectionFixture(t)
 	earlier := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	later := earlier.Add(24 * time.Hour)
@@ -3615,4 +3569,36 @@ func TestFirstSeenDateChangesRecomputeWinner(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fmt.Sprintf("message:%d", first), state.FirstSeenRef)
 	assert.Zero(t, state.InteractionCount)
+}
+
+func TestFirstSeenIntroductionContactState(t *testing.T) {
+	f := storetest.New(t)
+	require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	sender := f.EnsureParticipant("sender@example.test", "Sender", "example.test")
+	senderPerson, _, err := f.Store.CreatePersonFromParticipant(sender)
+	require.NoError(t, err)
+	_, err = f.Store.UpdatePersonDisplayNameContext(t.Context(), senderPerson.ID, senderPerson.Revision, new("Saved Sender"))
+	require.NoError(t, err)
+	target := f.EnsureParticipant("target@example.test", "Target", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(target)
+	require.NoError(t, err)
+	at := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	id := f.NewMessage().WithSourceMessageID("intro-store").WithSentAt(at).Create(t, f.Store)
+	require.NoError(t, f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Sender"}))
+	require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", []int64{owner, target}, []string{"Owner", "Target"}))
+	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
+	require.NoError(t, err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(t, err)
+	state, err := f.Store.ContactStateContext(t.Context(), person.ID, at)
+	require.NoError(t, err)
+	assert.Equal(t, store.FirstContactEmailIntro, state.FirstContactKind)
+	assert.Equal(t, fmt.Sprintf("message:%d", id), state.FirstSeenRef)
+	assert.Nil(t, state.FirstContactAt)
+	require.NotNil(t, state.Introducer)
+	assert.Equal(t, sender, state.Introducer.ParticipantID)
+	assert.Equal(t, "Saved Sender", state.Introducer.DisplayName)
+	require.NotNil(t, state.Introducer.PersonID)
+	assert.Equal(t, senderPerson.ID, *state.Introducer.PersonID)
 }

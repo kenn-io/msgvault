@@ -3592,7 +3592,6 @@ msgvault person directory [flags]
 msgvault person get <person-id> [--json]
 msgvault person get --vcard-uid <uid> [--json]
 msgvault person identities <person-id> [--json]
-msgvault person contact-state <person-id> [--json]
 msgvault person set-display-name <person-id> <display-name> [--json]
 msgvault person set-display-name <person-id> --clear [--json]
 msgvault person delete <person-id>
@@ -3607,8 +3606,8 @@ msgvault person attributes set <person-id> <slug> (--value <scalar> | --value-js
 msgvault person attributes clear <person-id> <slug> [flags]
 ```
 
-`contact-state` shows first archived appearance and the first direct contact.
-JSON includes the appearance reference, kind and introducer when known. See
+`person get --json` includes first archived appearance and the first direct contact
+when the daemon supports them. JSON includes the appearance reference, kind and introducer when known. See
 [first archived appearance](usage/people.md#see-a-persons-first-archived-appearance)
 for evidence rules and limitations.
 

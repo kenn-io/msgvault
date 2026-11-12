@@ -3943,12 +3943,6 @@ CREATE INDEX IF NOT EXISTS idx_activity_event_persons_person_date
 CREATE INDEX IF NOT EXISTS idx_activity_event_persons_date_person
     ON activity_event_persons(local_date, person_id, message_id);
 
-CREATE TABLE IF NOT EXISTS person_first_contacts (
-    person_id INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
-    first_seen_at DATETIME NOT NULL,
-    first_seen_message_id INTEGER NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS person_contact_state (
     person_id                 INTEGER PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
     first_contact_at          DATETIME,

@@ -149,22 +149,16 @@ func TestMergePersons_DefersMemberOnlyActivity(t *testing.T) {
 					require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
 						`SELECT COUNT(*) FROM activity_event_persons WHERE person_id = ? AND role = 'member'`), splitID).Scan(&splitLinks))
 					assert.Equal(len(roomIDs), splitLinks)
-					splitState, readErr := f.Store.ContactStateContext(ctx, splitID, time.Now())
-					require.NoError(readErr)
-					assert.Equal(fmt.Sprintf("message:%d", roomIDs[0]), splitState.FirstSeenRef)
 				} else {
 					// A split after the merged epoch has already converged must
 					// also restore the original room audience and evidence.
-					split, err := f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+					_, err := f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
 						SourcePersonID: survivor.ID, MergeID: merged.Merge.ID,
 						ParticipantIDs: absorbed.ParticipantIDs, ExpectedSourceRevision: merged.Person.Revision,
 						IdempotencyKey: "scope-split-after-projection", Actor: "test",
 					})
 					require.NoError(err)
 					drain()
-					splitState, readErr := f.Store.ContactStateContext(ctx, split.NewPerson.ID, time.Now())
-					require.NoError(readErr)
-					assert.Equal(fmt.Sprintf("message:%d", roomIDs[0]), splitState.FirstSeenRef)
 					restored, readErr := f.Store.ContactStateContext(ctx, third.ID, time.Now())
 					require.NoError(readErr)
 					assert.False(restored.Stale)

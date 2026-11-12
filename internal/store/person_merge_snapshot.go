@@ -362,10 +362,6 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		KeyColumns: []string{"message_id", "person_id"}, Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
 	},
-	"person_first_contacts": {
-		TableName: "person_first_contacts", KeyColumn: "person_id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
-	},
 	"person_contact_state": {
 		TableName: "person_contact_state", KeyColumn: "person_id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
@@ -861,7 +857,7 @@ func personMergeRowOrigin(
 
 func personMergeTableProvenance(table string) personMergeProvenanceKind {
 	switch table {
-	case "activity_event_persons", "person_contact_state", "person_first_contacts":
+	case "activity_event_persons", "person_contact_state":
 		return personMergeProvenanceDerived
 	case "organization_attribute_values", "person_uid_aliases", personRelationshipsTableName,
 		personRelationshipReviewsTableName, identityMatchCandidatesTableName,

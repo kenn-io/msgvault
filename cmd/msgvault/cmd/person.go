@@ -737,14 +737,15 @@ func writeCLIGetPerson(cmd *cobra.Command, client *daemonclient.Client, person *
 	if !personJSON || person == nil {
 		return writeCLIPerson(cmd, person)
 	}
-	if err := requireFirstAppearanceSchema(cmd, client); err != nil {
-		return err
+	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), "5.1.0")
+	if err != nil || !supported {
+		return writeCLIPerson(cmd, person)
 	}
 	response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.GetPersonContactStateResp, error) {
 		return api.GetPersonContactStateWithResponse(cmd.Context(), &generated.GetPersonContactStateRequestOptions{PathParams: &generated.GetPersonContactStatePath{ID: person.ID}})
 	})
-	if err != nil {
-		return err
+	if err != nil || response.JSON200 == nil {
+		return writeCLIPerson(cmd, person)
 	}
 	return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), struct {
 		*generated.Person `json:",inline"`
@@ -792,7 +793,6 @@ func init() {
 	personCmd.AddCommand(newPersonTiersCommand(defaultPersonTiersCommandDeps()))
 	personCmd.AddCommand(newPersonEnrichmentCommand(defaultPersonEnrichmentCommandDeps()))
 	personCmd.AddCommand(newPersonBriefCommand())
-	personCmd.AddCommand(newPersonContactStateCommand())
 	personCmd.AddCommand(newPersonAgendaCommand())
 	personCmd.AddCommand(newPersonScoringCommand())
 	personCmd.AddCommand(personPromoteCmd, personGetCmd, personListCmd,

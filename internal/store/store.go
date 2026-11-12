@@ -2091,22 +2091,6 @@ func (s *Store) initSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure activity projection triggers: %w", err)
 	}
 
-	// Existing projections may be drained, so populate first appearances independently
-	// of event replay.
-	if err := s.runOnceMigration(ctx, "person_first_contacts_v1", 1, false, func(ctx context.Context) error {
-		return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-			_, err := tx.ExecContext(ctx, `INSERT INTO person_first_contacts
-				(person_id, first_seen_at, first_seen_message_id)
-				SELECT person_id, occurred_at, message_id FROM (
-					SELECT aep.person_id, ae.occurred_at, ae.message_id,
-					ROW_NUMBER() OVER (PARTITION BY aep.person_id ORDER BY ae.occurred_at, ae.message_id) AS rank
-					FROM activity_event_persons aep JOIN activity_events ae ON ae.message_id = aep.message_id
-				) ranked WHERE rank = 1 ON CONFLICT(person_id) DO NOTHING`)
-			return err
-		})
-	}); err != nil {
-		return fmt.Errorf("backfill first contacts: %w", err)
-	}
 	if err := s.runOnceMigration(ctx, migrationMessagesHiddenTextBackfill, 1, false, s.backfillMessagesHiddenText); err != nil {
 		return fmt.Errorf("backfill messages hidden text flags: %w", err)
 	}

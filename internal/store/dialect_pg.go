@@ -2291,7 +2291,7 @@ var exclusiveLockTables = []string{
 	// Activity projection rows are written from and cascade with the sync
 	// archive. The queue is trigger-written by every message/participant
 	// mutation, so it belongs to the same exclusive write set.
-	"activity_events", "activity_event_persons", "person_contact_state", "person_first_contacts",
+	"activity_events", "activity_event_persons", "person_contact_state",
 	"activity_projection_queue", "activity_projection_conversation_queue",
 	// The chat member queue is trigger-written by message and recipient
 	// mutations; the projection cascades with conversations and participants.

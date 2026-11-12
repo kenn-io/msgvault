@@ -1327,7 +1327,7 @@ func (s *Store) projectActivityBatchOnce(
 			}
 			if attempt.item.Event == nil {
 				if attempt.old != nil {
-					if err := s.retractActivityEventTx(ctx, tx, attempt.item.Token.MessageID); err != nil {
+					if _, err := tx.ExecContext(ctx, `DELETE FROM activity_events WHERE message_id = ?`, attempt.item.Token.MessageID); err != nil {
 						return fmt.Errorf("retract activity event %d: %w",
 							attempt.item.Token.MessageID, err)
 					}
@@ -1698,11 +1698,7 @@ func (s *Store) replaceActivityEventTx(
 	tx *loggedTx,
 	event ActivityEvent,
 ) error {
-	winners, err := s.firstContactWinnersTx(ctx, tx, event.MessageID)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, `
 		INSERT INTO activity_events (
 			message_id, ref_kind, source_id, conversation_id, channel,
 			occurred_at, date_origin, date_precision, timezone,
@@ -1754,14 +1750,6 @@ func (s *Store) replaceActivityEventTx(
 			string(link.Evidence), event.LocalDate); err != nil {
 			return fmt.Errorf("write activity link for message %d person %d: %w",
 				event.MessageID, link.PersonID, err)
-		}
-		if err := s.notePersonFirstContactTx(ctx, tx, link.PersonID, event); err != nil {
-			return err
-		}
-	}
-	for _, personID := range winners {
-		if err := s.recomputePersonFirstContactTx(ctx, tx, personID); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -2397,7 +2385,7 @@ func (s *Store) reclassifyPersonActivityTx(
 	}
 	for _, rewrite := range rewrites {
 		if rewrite.next == nil {
-			if err := s.retractActivityEventTx(ctx, tx, rewrite.old.MessageID); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM activity_events WHERE message_id = ?`, rewrite.old.MessageID); err != nil {
 				return nil, fmt.Errorf("retract person activity event: %w", err)
 			}
 			continue
