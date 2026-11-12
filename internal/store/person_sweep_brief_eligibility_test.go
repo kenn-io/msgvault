@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json/jsontext"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -45,4 +46,29 @@ func TestPersonSweepBriefEligibilityReportsEnrollmentAndBoundary(t *testing.T) {
 	_, enrolled, err = f.store.PersonSweepBriefEligibility(t.Context(), f.personID)
 	requirements.NoError(err)
 	checks.False(enrolled, "unenrolling stops the scheduler from spending on the person")
+}
+
+func TestPersonSweepBriefEligibilityRejectsUnknownEventMemoryVersion(t *testing.T) {
+	f := newPersonBriefFixture(t, "future-event-memory")
+	_, err := f.store.SetPersonBriefEnrollmentContext(t.Context(), f.personID, true, "test", false)
+	require.NoError(t, err)
+	input := f.briefInsert(7700, personBriefNow)
+	input.Boundary = jsontext.Value(`{"event_memory_version":2,"through_sequence":7700}`)
+	f.applyBrief(t, input)
+	_, _, err = f.store.PersonSweepBriefEligibility(t.Context(), f.personID)
+	assert.Error(t, err)
+}
+
+func TestPersonSweepBriefEligibilityRejectsFutureProgramWithoutRetiringHistory(t *testing.T) {
+	f := newPersonBriefFixture(t, "future-program")
+	_, err := f.store.SetPersonBriefEnrollmentContext(t.Context(), f.personID, true, "test", false)
+	require.NoError(t, err)
+	input := f.briefInsert(7700, personBriefNow)
+	input.ProgramVersion = "v99"
+	f.applyBrief(t, input)
+	_, _, err = f.store.PersonSweepBriefEligibility(t.Context(), f.personID)
+	require.ErrorContains(t, err, "unsupported program version")
+	brief, err := f.store.GetPersonBriefContext(t.Context(), f.personID, 0)
+	require.NoError(t, err)
+	assert.Equal(t, "v99", brief.ProgramVersion)
 }

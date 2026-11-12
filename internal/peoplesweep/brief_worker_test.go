@@ -23,23 +23,35 @@ var briefLaneOff = false
 
 // briefFakeStore is the durable brief state a worker run reads.
 type briefFakeStore struct {
-	enrolled       bool
-	eligibility    BriefEligibility
-	highWater      int64
-	changedAfter   int64
-	cadenceDueAt   *time.Time
-	ensuredWork    []int64
-	trackedWork    bool
-	eligibilityErr error
+	enrolled            bool
+	eligibility         BriefEligibility
+	highWater           int64
+	changedAfter        int64
+	cadenceDueAt        *time.Time
+	ensuredWork         []int64
+	trackedWork         bool
+	eligibilityErr      error
+	highWaterErr        error
+	activityErr         error
+	cadenceErr          error
+	eligibilityFailures map[int64]error
+	unenrolledPeople    map[int64]bool
+	eligibilityReads    []int64
+	retireErr           error
+	retireCalls         []briefRetireCall
 }
 
 func (s *briefFakeStore) PersonSweepBriefEligibility(
 	_ context.Context, personID int64,
 ) (BriefEligibility, bool, error) {
+	s.eligibilityReads = append(s.eligibilityReads, personID)
+	if err := s.eligibilityFailures[personID]; err != nil {
+		return BriefEligibility{}, false, err
+	}
 	if s.eligibilityErr != nil {
 		return BriefEligibility{}, false, s.eligibilityErr
 	}
-	if !s.enrolled {
+	if !s.enrolled || s.unenrolledPeople[personID] {
 		return BriefEligibility{}, false, nil
 	}
 	eligibility := s.eligibility
@@ -50,6 +62,9 @@ func (s *briefFakeStore) PersonSweepBriefEligibility(
 func (s *briefFakeStore) PersonSweepCadenceDueAt(
 	_ context.Context, _ int64, _ time.Time,
 ) (time.Time, bool, error) {
+	if s.cadenceErr != nil {
+		return time.Time{}, false, s.cadenceErr
+	}
 	if s.cadenceDueAt == nil {
 		return time.Time{}, false, nil
 	}
@@ -59,16 +74,27 @@ func (s *briefFakeStore) PersonSweepCadenceDueAt(
 func (s *briefFakeStore) HasPersonSweepChangesAfter(
 	_ context.Context, _ int64, sequence int64,
 ) (bool, error) {
-	return s.changedAfter > sequence, nil
+	return s.changedAfter > sequence, s.activityErr
 }
 
 func (s *briefFakeStore) LatestPersonSweepChangeSequence(context.Context) (int64, error) {
-	return s.highWater, nil
+	return s.highWater, s.highWaterErr
 }
 
 func (s *briefFakeStore) EnsurePersonSweepWork(_ context.Context, personID int64, _ bool) (bool, error) {
 	s.ensuredWork = append(s.ensuredWork, personID)
 	return s.trackedWork, nil
+}
+
+type briefRetireCall struct {
+	lease   Lease
+	version int
+	at      time.Time
+}
+
+func (s *briefFakeStore) RetirePersonSweepBrief(_ context.Context, lease Lease, version int, at time.Time) error {
+	s.retireCalls = append(s.retireCalls, briefRetireCall{lease: lease, version: version, at: at})
+	return s.retireErr
 }
 
 // briefWorkerArchiveItems is the recent stretch of conversation every brief
@@ -120,8 +146,10 @@ type briefWorkerCase struct {
 	runRequest *RunRequest
 	// leaseHeld makes the store refuse every claim, which is how another
 	// worker holding the person's lease looks to this one.
-	leaseHeld  bool
-	gapResults []GapResult
+	leaseHeld     bool
+	renewExpiry   *time.Time
+	gapResults    []GapResult
+	applyBriefErr error
 }
 
 type briefWorkerOutcome struct {
@@ -159,14 +187,14 @@ func runBriefWorkerCase(t *testing.T, testCase briefWorkerCase) briefWorkerOutco
 
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	store := &workerFailureStore{cursor: Cursor{ReconciliationComplete: true, LastBackstopAt: &now},
-		reserveErrAt: testCase.denyReservation, gapResults: testCase.gapResults}
+		reserveErrAt: testCase.denyReservation, gapResults: testCase.gapResults, renewExpiry: testCase.renewExpiry}
 	seed := packetTestEvidence(71, SourceConversationText, "changed seed")
 	source := &workerProductionSource{windows: map[GenerationCursorMode]PersonWindow{
 		GenerationCursorOptimistic: {Seeds: []EvidenceItem{seed}, Changes: []ArchiveChange{{
 			Sequence: 1, PersonID: 7, SourceLane: SourceConversationText}}, NextSequence: 1},
 	}}
 	driver := &workerRepairDriver{responses: testCase.responses}
-	sink := &workerProductionSink{}
+	sink := &workerProductionSink{briefErr: testCase.applyBriefErr}
 	archive := testCase.archive
 	if archive == nil {
 		archive = &briefFakeArchive{items: briefWorkerArchiveItems()}
@@ -226,7 +254,7 @@ func TestPersonSweepWorkerAppendsBriefAfterExtractionBatches(t *testing.T) {
 	require.NotNil(applied.Brief)
 	assert.Equal(BriefProgramID, applied.Brief.ProgramID)
 	assert.Equal(BriefProgramFingerprint(), applied.Brief.ProgramFingerprint)
-	assert.Equal(BriefRendererPolicyV1, applied.Brief.Rendered.Policy)
+	assert.Equal(BriefRendererPolicyV3, applied.Brief.Rendered.Policy)
 	assert.NotEmpty(applied.Brief.Rendered.Text)
 	assert.Equal(int64(90), applied.Brief.Boundary.ThroughSequence,
 		"the boundary records the archive high water the plan captured")
@@ -236,15 +264,100 @@ func TestPersonSweepWorkerAppendsBriefAfterExtractionBatches(t *testing.T) {
 }
 
 func TestPersonSweepWorkerReportsBriefSchedulingEligibilityFailure(t *testing.T) {
-	cause := errors.New("archive read failed")
-	outcome := runBriefWorkerCase(t, briefWorkerCase{
-		brief:      &briefFakeStore{eligibilityErr: cause},
-		gapResults: []GapResult{{PeopleScanned: 1, PersonIDs: []int64{7}, NextPersonID: 7}},
-		runRequest: &RunRequest{Kind: RunScheduled, Mode: RunIncremental, Limit: 1},
+	for _, stage := range []string{"eligibility", "high water", "activity", "cadence"} {
+		t.Run(stage, func(t *testing.T) {
+			checks := assert.New(t)
+			required := require.New(t)
+			cause := errors.New("brief read failed")
+			now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+			brief := &briefFakeStore{enrolled: true, unenrolledPeople: map[int64]bool{8: true},
+				changedAfter: 2, eligibility: BriefEligibility{Version: 1, Status: BriefStatusCurrent,
+					Boundary: &BriefBoundary{ThroughSequence: 1}, GeneratedAt: &now}}
+			switch stage {
+			case "eligibility":
+				brief.eligibilityFailures = map[int64]error{7: cause}
+			case "high water":
+				brief.highWaterErr = cause
+			case "activity":
+				brief.activityErr = cause
+			case "cadence":
+				brief.cadenceErr = cause
+			}
+			outcome := runBriefWorkerCase(t, briefWorkerCase{brief: brief,
+				gapResults: []GapResult{{PeopleScanned: 2, PersonIDs: []int64{7, 8}, NextPersonID: 8}},
+				responses:  []DriverResponse{briefDriverResponse(json.RawMessage(`{"claims":[]}`), "request-extraction")},
+				runRequest: &RunRequest{Kind: RunScheduled, Mode: RunIncremental, Limit: 1}})
+			required.NoError(outcome.err)
+			checks.Contains(brief.eligibilityReads, int64(8))
+			checks.Equal([]RunStatus{RunSucceeded}, outcome.store.finished)
+			required.Len(outcome.sink.requests, 1)
+			applied := outcome.sink.requests[0]
+			checks.Equal(FailureInternal, applied.BriefFailureClass)
+			checks.False(applied.BriefRetryAt.IsZero())
+			checks.Nil(applied.Brief)
+			checks.NotEmpty(applied.CursorAdvances)
+			checks.Equal(1, applied.Usage.Requests)
+			checks.Equal(1, outcome.driver.calls)
+			checks.Empty(brief.retireCalls)
+			checks.Empty(outcome.archive.candidateCalls)
+			checks.Empty(outcome.archive.hydrateCalls)
+		})
+	}
+
+	t.Run("lost lease remains fatal", func(t *testing.T) {
+		brief := &briefFakeStore{enrolled: true, highWaterErr: ErrLeaseLost}
+		worker := Worker{Config: mustDefaultedBriefConfig(t),
+			Brief:   brief,
+			Archive: &briefFakeArchive{}}
+		_, err := worker.planPersonBrief(t.Context(), 7, BriefModeAuto, briefWindowProfile(), time.Now())
+		require.ErrorIs(t, err, ErrLeaseLost)
+		brief.highWaterErr = errors.New("read failed")
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err = worker.planPersonBrief(ctx, 7, BriefModeAuto, briefWindowProfile(), time.Now())
+		require.ErrorIs(t, err, context.Canceled)
 	})
-	require.ErrorIs(t, outcome.err, cause)
-	assert.Equal(t, []RunStatus{RunFailed}, outcome.store.finished)
-	assert.Empty(t, outcome.sink.requests)
+	t.Run("forced person refuses", func(t *testing.T) {
+		cause := errors.New("unsupported event memory version")
+		outcome := runBriefWorkerCase(t, briefWorkerCase{brief: &briefFakeStore{enrolled: true, eligibilityErr: cause},
+			runRequest: &RunRequest{Kind: RunManual, Mode: RunIncremental, PersonID: 7, Limit: 1, Brief: BriefModeForce}})
+		require.ErrorIs(t, outcome.err, cause)
+		assert.Empty(t, outcome.store.finished)
+		assert.Empty(t, outcome.sink.requests)
+	})
+}
+
+func TestPersonSweepWorkerRetriesEventAlignmentFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause error
+		want  FailureClass
+	}{
+		{"operational", fmt.Errorf("%w: database unavailable", ErrBriefEventEvidenceChanged), FailureInternal},
+		{"source changed", errors.Join(ErrBriefEventEvidenceChanged, ErrInvalidStructuredOutput), FailureInvalidOutput},
+		{"memory changed", errors.Join(ErrBriefEventMemoryChanged, ErrInvalidStructuredOutput), FailureInvalidOutput},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks, required := assert.New(t), require.New(t)
+			items := briefWorkerArchiveItems()
+			outcome := runBriefWorkerCase(t, briefWorkerCase{
+				brief: &briefFakeStore{enrolled: true}, applyBriefErr: tc.cause,
+				responses: []DriverResponse{
+					briefDriverResponse(json.RawMessage(`{"claims":[]}`), "request-extraction"),
+					briefDriverResponse(briefWorkerCandidate(items), "request-brief"),
+				},
+			})
+			required.NoError(outcome.err)
+			required.Len(outcome.sink.requests, 2)
+			checks.NotNil(outcome.sink.requests[0].Brief)
+			retry := outcome.sink.requests[1]
+			checks.Nil(retry.Brief)
+			checks.Equal(tc.want, retry.BriefFailureClass)
+			checks.Equal(2, retry.Usage.Requests)
+			checks.NotEmpty(retry.CursorAdvances)
+			checks.False(retry.BriefRetryAt.IsZero())
+		})
+	}
 }
 
 func TestPersonSweepWorkerRunsBriefOnStatusOnlyExtraction(t *testing.T) {
@@ -456,6 +569,150 @@ func TestPersonSweepWorkerRecordsBriefFailureAndStillAppliesExtraction(t *testin
 	}
 }
 
+func testPersonSweepWorkerRetiresLostEventAfterValidEmpty(t *testing.T) {
+	t.Helper()
+	for _, tc := range []struct {
+		name                                                                                              string
+		excluded, providerError, invalidOutput, capacity, readError, keepAnchor, mixed, budget, malformed bool
+		retireErr                                                                                         error
+		wantClass                                                                                         FailureClass
+		wantRetire                                                                                        bool
+	}{
+		{name: "deleted source", wantClass: FailureInvalidOutput, wantRetire: true},
+		{name: "date excluded", excluded: true, wantClass: FailureInvalidOutput, wantRetire: true},
+		{name: "retire lease lost", retireErr: ErrLeaseLost, wantRetire: true},
+		{name: "retire database error", retireErr: errors.New("retire person brief: database is locked"), wantClass: FailureInternal, wantRetire: true},
+		{name: "provider failure", providerError: true, wantClass: FailureInternal},
+		{name: "invalid output", invalidOutput: true, wantClass: FailureInvalidOutput},
+		{name: "malformed output", malformed: true, wantClass: FailureInvalidOutput},
+		{name: "budget denied", budget: true, wantClass: FailureBudget},
+		{name: "capacity failure", capacity: true, keepAnchor: true, wantClass: FailureInternal},
+		{name: "source read failure", readError: true, keepAnchor: true, wantClass: FailureInternal},
+		{name: "supported event carried", keepAnchor: true},
+		{name: "resolved eviction keeps active event", keepAnchor: true, mixed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checks := assert.New(t)
+			required := require.New(t)
+			now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+			renewedExpiry := now.Add(2 * time.Hour)
+			anchor := briefWindowItem(10, SourceConversationText, 10, "I move on September 15.")
+			ordinary := briefWindowItem(11, SourceConversationText, 20, "An ordinary update.")
+			highlight := eventHighlight(anchor, "2026-09-15")
+			boundary := &BriefBoundary{ThroughSequence: 40, ThroughEventTime: anchor.EventTime, EventMemoryVersion: 1,
+				EventMemory: []BriefEventMemory{{Highlight: highlight, Sources: []EvidenceRef{anchor.Ref}}}}
+			brief := &briefFakeStore{enrolled: true, highWater: 90, changedAfter: 90, retireErr: tc.retireErr,
+				eligibility: BriefEligibility{Version: 7, Status: BriefStatusCurrent, Boundary: boundary}}
+			archive := &briefFakeArchive{items: []EvidenceItem{ordinary}}
+			if tc.keepAnchor || tc.excluded {
+				archive.items = append(archive.items, anchor)
+			}
+			if tc.mixed {
+				old := briefWindowItem(12, SourceConversationText, 8, "I had an interview.")
+				outcome := briefWindowItem(13, SourceConversationText, 9, "I cancelled the interview.")
+				resolved := eventHighlight(old, "2026-08-09")
+				resolved.EvidenceIDs = append(resolved.EvidenceIDs, packetEvidenceID(outcome))
+				resolved.LifeEvent.Resolution = &BriefEventResolution{EvidenceID: packetEvidenceID(outcome), Quote: outcome.Excerpt}
+				boundary.EventMemory = append(boundary.EventMemory, BriefEventMemory{Highlight: resolved, Sources: []EvidenceRef{old.Ref, outcome.Ref}})
+				archive.items = append(archive.items, old, outcome)
+			}
+			if tc.readError {
+				archive.hydrateFailures = map[int64]error{anchor.Ref.MessageID: errors.New("source database unavailable")}
+			}
+			if tc.capacity {
+				archive.hasLastContact = true
+				archive.lastContact = BriefLastContact{MessageID: ordinary.Ref.MessageID, SourceID: ordinary.Ref.SourceID}
+			}
+			config := func(c *BriefConfig) {
+				if tc.capacity {
+					c.MaxItems, c.OverlapItems = 1, 0
+				} else if tc.mixed {
+					c.MaxItems, c.OverlapItems = 2, 0
+				}
+			}
+			provider := func(p *ProviderConfig) {
+				if tc.excluded {
+					p.SourceSince = "2026-08-11"
+				}
+			}
+			if tc.wantRetire || tc.mixed {
+				request := briefWindowRequest(t)
+				request.Previous, request.AsOf, request.OverlapItems = boundary, now, 0
+				if tc.excluded {
+					request.Profile.SourceSince = "2026-08-11"
+				}
+				if tc.mixed {
+					request.MaxItems = 2
+				}
+				window, err := BuildBriefWindow(t.Context(), archive, request)
+				required.NoError(err)
+				required.NotEmpty(window.Items)
+				if tc.mixed {
+					required.Len(window.Request.retainedEvents, 1)
+				} else {
+					required.Empty(window.Request.retainedEvents)
+				}
+			}
+			responses := []DriverResponse{briefDriverResponse(json.RawMessage(`{"claims":[]}`), "request-extraction")}
+			if !tc.providerError {
+				candidate := briefOutputJSON{}.raw()
+				if tc.malformed {
+					candidate = json.RawMessage(`{"highlights":"invalid"}`)
+				}
+				if tc.invalidOutput {
+					candidate = briefOutputJSON{Highlights: []string{briefHighlightJSON("unsupported", BriefSpeakerPerson, "", "evidence:missing")}}.raw()
+				}
+				responses = append(responses, briefDriverResponse(candidate, "request-brief"))
+				if tc.malformed {
+					responses = append(responses, briefDriverResponse(candidate, "request-repair"))
+				}
+			}
+			denyReservation := 0
+			if tc.budget {
+				denyReservation = 2
+			}
+			outcome := runBriefWorkerCase(t, briefWorkerCase{mode: BriefModeAuto, brief: brief, archive: archive,
+				briefConfig: config, provider: provider, responses: responses, renewExpiry: &renewedExpiry, denyReservation: denyReservation})
+			if tc.wantRetire {
+				required.Len(brief.retireCalls, 1)
+				call := brief.retireCalls[0]
+				checks.Equal(7, call.version)
+				checks.Equal(now, call.at)
+				checks.Equal(int64(1), call.lease.Fence)
+				checks.Equal(renewedExpiry, call.lease.ExpiresAt)
+				required.NotEmpty(outcome.store.markedLeases)
+				checks.Equal(outcome.store.markedLeases[len(outcome.store.markedLeases)-1], call.lease)
+			} else {
+				checks.Empty(brief.retireCalls)
+			}
+			if errors.Is(tc.retireErr, ErrLeaseLost) {
+				required.ErrorIs(outcome.err, ErrLeaseLost)
+				required.Len(outcome.store.finalized, 1)
+				checks.Equal(FailureLeaseLost, outcome.store.finalized[0].Class)
+				checks.Len(outcome.store.finalized[0].Reservations, 2)
+				checks.Len(outcome.store.finalized[0].Completed, 2)
+				checks.Empty(outcome.sink.requests)
+				return
+			}
+			required.NoError(outcome.err)
+			required.Len(outcome.sink.requests, 1)
+			applied := outcome.sink.requests[0]
+			if tc.keepAnchor && !tc.capacity && !tc.readError {
+				required.NotNil(applied.Brief)
+				required.Len(applied.Brief.Boundary.EventMemory, 1)
+			} else {
+				checks.Nil(applied.Brief)
+			}
+			checks.Equal(tc.wantClass, applied.BriefFailureClass)
+			checks.Contains(briefCallCoordinates(applied), ProviderCallCoordinate{BatchOrdinal: 0, CallOrdinal: 0, Purpose: ProviderCallPurposePrimary})
+			if tc.wantRetire {
+				checks.Equal(2, applied.Usage.Requests)
+				checks.Contains(briefCallCoordinates(applied), ProviderCallCoordinate{BatchOrdinal: 1, CallOrdinal: 0, Purpose: ProviderCallPurposeBrief})
+			}
+		})
+	}
+}
+
 type briefBlockingDriver struct {
 	workerRepairDriver
 
@@ -476,6 +733,7 @@ func (d *briefBlockingDriver) GeneratePrepared(
 }
 
 func TestPersonSweepWorkerBriefCallFailure(t *testing.T) {
+	t.Run("after source loss", testPersonSweepWorkerRetiresLostEventAfterValidEmpty)
 	for _, name := range []string{"request timeout", "parent cancellation", "parent deadline",
 		"heartbeat error", "heartbeat deadline", "heartbeat lease lost"} {
 		t.Run(name, func(t *testing.T) {

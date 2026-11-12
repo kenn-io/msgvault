@@ -6,10 +6,10 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -295,9 +295,28 @@ func (s *Store) applyPersonSweepWithAligner(
 	if err != nil {
 		return peoplesweep.ApplyResult{}, err
 	}
+	var sources []int64
+	if request.Brief != nil {
+		copyBrief := *request.Brief
+		request.Brief = &copyBrief
+		for _, memory := range copyBrief.Boundary.AppreciationMemory {
+			sources = append(sources, memory.PeerRef.SourceID)
+			if memory.OwnerRef != nil {
+				sources = append(sources, memory.OwnerRef.SourceID)
+			}
+		}
+	}
 
 	var result peoplesweep.ApplyResult
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	withApplyTx := s.withTxContext
+	if len(sources) > 0 {
+		withApplyTx = func(ctx context.Context, fn func(*loggedTx) error) error {
+			// SQLite fact identity checks need the writer lock before the sync fence.
+			lock := attributionLock{Sources: sources, Exclusive: !s.IsPostgreSQL()}
+			return s.withAttributionTxContext(ctx, lock, fn)
+		}
+	}
+	err = withApplyTx(ctx, func(tx *loggedTx) error {
 		attempt, err := s.lockPersonSweepBudgetAttempt(ctx, tx, request.AttemptID)
 		if err != nil {
 			return err
@@ -341,6 +360,72 @@ func (s *Store) applyPersonSweepWithAligner(
 				return err
 			}
 		}
+		if request.Brief != nil && len(request.Brief.Boundary.AppreciationMemory) > 0 {
+			current, validateErr := s.revalidateAppreciationMemoryTx(ctx, tx, request.Lease.PersonID, request.Brief, false, true, true)
+			if validateErr != nil {
+				return validateErr
+			}
+			keys := make([]string, 0, len(current))
+			for key := range current {
+				keys = append(keys, key)
+			}
+			states, err := getPersonAppreciationStates(ctx, tx, keys)
+			if err != nil {
+				return err
+			}
+			resolved := 0
+			for _, memory := range request.Brief.Boundary.AppreciationMemory {
+				if memory.Suggestion.State == "already_thanked" {
+					resolved++
+				}
+			}
+			for i, memory := range request.Brief.Boundary.AppreciationMemory {
+				if memory.Suggestion.State != "suggested" {
+					continue
+				}
+				proofID := states[memory.Suggestion.Key].ThanksBriefID
+				if proofID == nil {
+					continue
+				}
+				proof, valid, err := s.validAppreciationProofTx(ctx, tx, request.Lease.PersonID, memory.Suggestion.Key, *proofID, request.Brief.ValidationProfile, true)
+				if err != nil {
+					return err
+				}
+				if valid && proof.Suggestion.Quote == memory.Suggestion.Quote {
+					if resolved == 3 {
+						delete(current, memory.Suggestion.Key)
+						continue
+					}
+					memory.Suggestion.State, memory.Suggestion.PriorThanks = "already_thanked", "evidenced"
+					memory.Suggestion.Thanked, memory.OwnerRef, memory.OwnerRawSHA256 = proof.Suggestion.Thanked, proof.OwnerRef, proof.OwnerRawSHA256
+					request.Brief.Boundary.AppreciationMemory[i] = memory
+					current[memory.Suggestion.Key] = memory
+					resolved++
+				}
+			}
+			request.Brief.Boundary.AppreciationMemory = slices.DeleteFunc(request.Brief.Boundary.AppreciationMemory, func(memory peoplesweep.BriefAppreciationMemory) bool {
+				_, keep := current[memory.Suggestion.Key]
+				return !keep
+			})
+			if err := peoplesweep.FilterBriefAppreciations(request.Brief, current); err != nil {
+				return err
+			}
+			if request.Brief.Rendered.Text == "" {
+				return fmt.Errorf("%w: %w", peoplesweep.ErrInvalidStructuredOutput, peoplesweep.ErrEmptyBrief)
+			}
+			// Keep the aligned evidence in the filtered structure's citation order.
+			byRef := make(map[string]preparedBriefEvidence, len(briefEvidence))
+			for _, item := range briefEvidence {
+				byRef[item.input.SourceRef] = item
+			}
+			filtered := make([]preparedBriefEvidence, 0, len(request.Brief.Evidence))
+			for _, input := range request.Brief.Evidence {
+				if item, ok := byRef[input.SourceRef]; ok {
+					filtered = append(filtered, item)
+				}
+			}
+			briefEvidence = filtered
+		}
 
 		generation, facts, err := s.applyPreparedPersonFactGenerationDetailedTx(
 			ctx, tx, prepared, func(stage string) error { return personSweepApplyStage(ctx, stage) })
@@ -364,10 +449,16 @@ func (s *Store) applyPersonSweepWithAligner(
 			if evidenceErr != nil {
 				return evidenceErr
 			}
-			brief, briefErr := s.applyPersonBriefTx(ctx, tx, personBriefInsertFromResult(
-				request, generation.GenerationID, briefIDs))
+			insert, briefErr := personBriefInsertFromResult(request, generation.GenerationID, briefIDs)
 			if briefErr != nil {
 				return briefErr
+			}
+			brief, briefErr := s.applyPersonBriefTx(ctx, tx, insert)
+			if briefErr != nil {
+				return briefErr
+			}
+			if err := recordAppreciationProofsTx(ctx, tx, brief.ID, request.Brief.Boundary.AppreciationMemory); err != nil {
+				return err
 			}
 			result.Mutations.BriefVersion = brief.Version
 			result.Mutations.BriefEvidenceRowsInserted = len(briefIDs)
@@ -574,6 +665,10 @@ func (s *Store) verifyPersonSweepAttemptBindingTx(
 	}
 	if allowSensitive != request.Generation.Policy.AllowSensitive {
 		return errors.New("person sweep generation policy does not match durable profile")
+	}
+	if request.Brief != nil && len(request.Brief.Boundary.AppreciationMemory) > 0 &&
+		(request.Brief.ValidationProfile.Fingerprint != attempt.providerFingerprint || request.Brief.ValidationProfile.AllowSensitive != allowSensitive) {
+		return errors.New("person brief appreciation policy does not match durable profile")
 	}
 	if len(request.Batches) > 0 {
 		if provider != request.Generation.Provider || model != request.Generation.Model ||
@@ -977,6 +1072,33 @@ func preparePersonSweepBriefEvidence(
 	if aligner == nil {
 		return nil, errors.New("apply person sweep brief: archive evidence aligner is required")
 	}
+	mandatory := make(map[string]bool)
+	for _, memory := range request.Brief.Boundary.EventMemory {
+		for _, ref := range memory.Sources {
+			encoded, err := peoplesweep.EncodePersonSweepEvidenceRef(ref)
+			if err != nil {
+				return nil, err
+			}
+			mandatory[encoded] = true
+		}
+	}
+	// An appreciation that survived paragraph trimming must retain its cited
+	// peer evidence. Unrendered memory is independently checked by raw ref and
+	// hash inside the apply transaction.
+	for _, memory := range request.Brief.Boundary.AppreciationMemory {
+		encoded, err := peoplesweep.EncodePersonSweepEvidenceRef(memory.PeerRef)
+		if err != nil {
+			return nil, err
+		}
+		for _, input := range request.Brief.Evidence {
+			if input.SourceRef == encoded {
+				mandatory[encoded] = true
+				break
+			}
+		}
+	}
+	// A source can have multiple cited versions; every one must still align.
+	pending := maps.Clone(mandatory)
 	prepared := make([]preparedBriefEvidence, 0, len(request.Brief.Evidence))
 	seen := make(map[string]struct{}, len(request.Brief.Evidence))
 	for _, input := range request.Brief.Evidence {
@@ -987,11 +1109,27 @@ func preparePersonSweepBriefEvidence(
 		input.RecordedTime = personFactPortableTime(input.RecordedTime)
 		result, err := aligner.Align(ctx, input)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if errors.Is(err, peoplesweep.ErrLeaseLost) {
+				return nil, err
+			}
 			if errors.Is(err, peoplesweep.ErrSourceTextUnavailable) {
+				if mandatory[input.SourceRef] {
+					return nil, errors.Join(peoplesweep.ErrBriefEventEvidenceChanged, peoplesweep.ErrInvalidStructuredOutput)
+				}
 				continue
+			}
+			if mandatory[input.SourceRef] {
+				return nil, fmt.Errorf("%w: %w", peoplesweep.ErrBriefEventEvidenceChanged, err)
 			}
 			return nil, fmt.Errorf("align person brief evidence: %w", err)
 		}
+		if mandatory[input.SourceRef] && !result.Accepted {
+			return nil, errors.Join(peoplesweep.ErrBriefEventEvidenceChanged, peoplesweep.ErrInvalidStructuredOutput)
+		}
+		delete(pending, input.SourceRef)
 		if !result.Accepted {
 			continue
 		}
@@ -1006,6 +1144,9 @@ func preparePersonSweepBriefEvidence(
 		}
 		seen[key] = struct{}{}
 		prepared = append(prepared, preparedBriefEvidence{key: key, input: input})
+	}
+	if len(pending) != 0 {
+		return nil, errors.Join(peoplesweep.ErrBriefEventEvidenceChanged, peoplesweep.ErrInvalidStructuredOutput)
 	}
 	return prepared, nil
 }
@@ -1029,8 +1170,12 @@ func (s *Store) insertPersonSweepBriefEvidenceTx(
 
 func personBriefInsertFromResult(
 	request peoplesweep.ApplyRequest, generationID int64, evidenceIDs []int64,
-) PersonBriefInsert {
+) (PersonBriefInsert, error) {
 	brief := request.Brief
+	boundary, err := json.Marshal(brief.Boundary.Canonical(), json.Deterministic(true))
+	if err != nil {
+		return PersonBriefInsert{}, fmt.Errorf("marshal person brief boundary: %w", err)
+	}
 	return PersonBriefInsert{
 		PersonID: request.Lease.PersonID, GenerationID: generationID,
 		ProgramID: brief.ProgramID, ProgramVersion: brief.ProgramVersion,
@@ -1040,24 +1185,15 @@ func personBriefInsertFromResult(
 		Model:                     request.Generation.Model,
 		ModelVersion:              request.Generation.ModelVersion,
 		ProviderPolicyFingerprint: request.Generation.Policy.ProviderPolicyFingerprint,
-		Boundary:                  personBriefBoundaryJSON(brief.Boundary),
+		EventMemorySourceVersion:  brief.EventMemorySourceVersion,
+		Boundary:                  boundary,
 		Structured:                brief.Structured,
 		RenderedText:              brief.Rendered.Text,
 		RendererPolicy:            brief.Rendered.Policy,
 		DroppedItemCount:          brief.DroppedItemCount,
 		GeneratedAt:               brief.GeneratedAt,
 		EvidenceIDs:               evidenceIDs,
-	}
-}
-
-func personBriefBoundaryJSON(boundary peoplesweep.BriefBoundary) jsontext.Value {
-	encoded, err := json.Marshal(boundary.Canonical(), json.Deterministic(true))
-	if err != nil {
-		// BriefBoundary holds only strings, integers, and times, so marshalling
-		// cannot fail; an empty object keeps the column valid JSON if it ever does.
-		return jsontext.Value(`{}`)
-	}
-	return encoded
+	}, nil
 }
 
 // failPersonSweepBriefBatchTx terminalizes a brief reservation whose call never

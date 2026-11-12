@@ -57,14 +57,19 @@ func newPersonBriefTestDaemon(t *testing.T, response string) *personBriefTestDae
 
 func runPersonBriefCommand(ctx context.Context, t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	return runPersonCommand(ctx, t, "brief", args...)
+}
+
+func runPersonCommand(ctx context.Context, t *testing.T, group string, args ...string) (string, error) {
+	t.Helper()
 	root := &cobra.Command{Use: "msgvault"}
 	person := &cobra.Command{Use: personValue}
-	person.AddCommand(newPersonBriefCommand())
+	person.AddCommand(newPersonBriefCommand(), newPersonAppreciationsCommand())
 	root.AddCommand(person)
 	var output bytes.Buffer
 	root.SetOut(&output)
 	root.SetErr(&output)
-	root.SetArgs(append([]string{personValue, "brief"}, args...))
+	root.SetArgs(append([]string{personValue, group}, args...))
 	err := root.ExecuteContext(ctx)
 	return output.String(), err
 }
@@ -280,4 +285,29 @@ func TestPersonBriefRejectsInvalidPersonIDBeforeNetwork(t *testing.T) {
 		require.ErrorContains(t, err, "positive integer", name)
 	}
 	assert.Zero(t, daemon.requests.Load())
+}
+
+func TestPersonBriefEnrollmentsPagesAndBounds(t *testing.T) {
+	daemon := newPersonBriefTestDaemon(t, `{"enrollments":[{"person_id":7,"enrolled":true,"enabled_at":null,"actor":"owner"},{"person_id":9,"enrolled":true,"enabled_at":"2026-01-02T03:04:05Z","actor":"owner"}],"future":true}`)
+	out, err := runPersonBriefCommand(daemon.ctx, t, "enrollments", "--json")
+	require.NoError(t, err)
+	assert.Equal(t, "/api/v1/people/brief-enrollments?after_id=0&limit=20", daemon.path)
+	assert.Contains(t, out, `"future":true`)
+	out, err = runPersonBriefCommand(daemon.ctx, t, "enrollments", "--limit", "2")
+	require.NoError(t, err)
+	assert.Less(t, strings.Index(out, "Person 7"), strings.Index(out, "Person 9"))
+	daemon.response = `{"enrollments":[]}`
+	out, err = runPersonBriefCommand(daemon.ctx, t, "enrollments", "--after-id", "9", "--limit", "2", "--json")
+	require.NoError(t, err)
+	assert.JSONEq(t, daemon.response, out)
+	assert.Equal(t, "/api/v1/people/brief-enrollments?after_id=9&limit=2", daemon.path)
+	out, err = runPersonBriefCommand(daemon.ctx, t, "enrollments", "--after-id", "9")
+	require.NoError(t, err)
+	assert.Contains(t, out, "No enrolled people on this page.")
+	before := daemon.requests.Load()
+	for _, args := range [][]string{{"enrollments", "extra"}, {"enrollments", "--after-id", "-1"}, {"enrollments", "--after-id", "999999999999999999999"}, {"enrollments", "--limit", "0"}, {"enrollments", "--limit", "1001"}} {
+		_, err := runPersonBriefCommand(daemon.ctx, t, args...)
+		require.Error(t, err)
+	}
+	assert.Equal(t, before, daemon.requests.Load())
 }

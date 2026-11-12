@@ -116,6 +116,7 @@ import type {
   DirectoryPeopleResponse,
   DiscoverEvent,
   DiscoverRequest,
+  DismissPersonAppreciationPathParameters,
   DocbankAttachmentBackfillResponse,
   DocbankAttachmentStatus,
   DomainSummary,
@@ -245,8 +246,10 @@ import type {
   ListPersonActivityDaysParams,
   ListPersonActivityDaysPathParameters,
   ListPersonAgendaPathParameters,
+  ListPersonAppreciationsPathParameters,
   ListPersonAttributesParams,
   ListPersonAttributesPathParameters,
+  ListPersonBriefEnrollmentsParams,
   ListPersonBriefVersionsParams,
   ListPersonBriefVersionsPathParameters,
   ListPersonEmploymentsParams,
@@ -341,10 +344,13 @@ import type {
   PersonAgendaMutationResponse,
   PersonAgendaResult,
   PersonAgendaUpdateRequest,
+  PersonAppreciationState,
+  PersonAppreciationsResponse,
   PersonAttributeWrite,
   PersonAttributesResponse,
   PersonBrief,
   PersonBriefEnrollment,
+  PersonBriefEnrollmentsResponse,
   PersonBriefRun,
   PersonBriefVersionsResponse,
   PersonDayPage,
@@ -2872,6 +2878,18 @@ export const createPerson = (
   );
 };
 /**
+ * @summary List people enrolled in briefs
+ */
+export const listPersonBriefEnrollments = (
+  params?: ListPersonBriefEnrollmentsParams,
+  options?: SecondParameter<typeof orvalFetch<PersonBriefEnrollmentsResponse>>,
+) => {
+  return orvalFetch<PersonBriefEnrollmentsResponse>(
+    { url: `/api/v1/people/brief-enrollments`, method: "GET", params },
+    options,
+  );
+};
+/**
  * Resolves the person's current vCard UID, a retired UID that still aliases the person, or the UID of a CardDAV resource mapped to the person. Returns a conflict when one remote UID maps to different people.
  * @summary Look up a durable person by vCard or CardDAV UID
  */
@@ -3076,6 +3094,36 @@ export const updatePersonAgendaItem = (
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       data: personAgendaUpdateRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary List supported appreciation suggestions
+ */
+export const listPersonAppreciations = (
+  { id }: ListPersonAppreciationsPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonAppreciationsResponse>>,
+) => {
+  return orvalFetch<PersonAppreciationsResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/appreciations`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Dismiss an appreciation suggestion
+ */
+export const dismissPersonAppreciation = (
+  { id, key }: DismissPersonAppreciationPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonAppreciationState>>,
+) => {
+  return orvalFetch<PersonAppreciationState>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/appreciations/${encodeURIComponent(String(key))}/dismiss`,
+      method: "POST",
     },
     options,
   );

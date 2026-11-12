@@ -814,6 +814,43 @@ components:
       required:
         - message_id
       type: object
+    BriefThanksEvidence:
+      properties:
+        evidence_id:
+          type: string
+        quote:
+          type: string
+      required:
+        - evidence_id
+        - quote
+      type: object
+    BriefThanksSuggestion:
+      properties:
+        anchor_id:
+          type: string
+        key:
+          type: string
+        prior_thanks:
+          type: string
+        quote:
+          type: string
+        state:
+          type: string
+        text:
+          type: string
+        thanked:
+          allOf:
+            - $ref: "#/components/schemas/BriefThanksEvidence"
+          nullable: true
+          type: object
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+      required:
+        - text
+        - anchor_id
+        - quote
+      type: object
     BuildingSummary:
       properties:
         dimension:
@@ -4794,6 +4831,42 @@ components:
         - excerpt
         - display
         - content_trust
+      type: object
+    EvidenceRef:
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        chunk_key:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        occurrence_key:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_lane:
+          type: string
+        source_message_id:
+          type: string
+        span_end:
+          format: int64
+          type: integer
+        span_start:
+          format: int64
+          type: integer
+      required:
+        - source_lane
+        - source_id
+        - message_id
+        - attachment_id
+        - source_message_id
+        - occurrence_key
+        - chunk_key
+        - span_start
+        - span_end
       type: object
     Execution:
       additionalProperties: false
@@ -10900,6 +10973,44 @@ components:
       required:
         - list
       type: object
+    PersonAppreciation:
+      properties:
+        owner:
+          $ref: "#/components/schemas/EvidenceRef"
+        peer:
+          $ref: "#/components/schemas/EvidenceRef"
+        suggestion:
+          $ref: "#/components/schemas/BriefThanksSuggestion"
+      required:
+        - suggestion
+        - peer
+      type: object
+    PersonAppreciationState:
+      properties:
+        contribution_key:
+          type: string
+        dismissed_at:
+          format: date-time
+          type: string
+        dismissed_by:
+          type: string
+        dismissed_person_uid:
+          type: string
+        thanks_brief_id:
+          format: int64
+          type: integer
+      required:
+        - contribution_key
+      type: object
+    PersonAppreciationsResponse:
+      properties:
+        appreciations:
+          items:
+            $ref: "#/components/schemas/PersonAppreciation"
+          type: array
+      required:
+        - appreciations
+      type: object
     PersonAttributeConflictResponse:
       properties:
         current_value:
@@ -11006,6 +11117,10 @@ components:
       type: object
     PersonBrief:
       properties:
+        appreciation_dismissal_keys:
+          items:
+            type: string
+          type: array
         boundary:
           x-go-type: jsontext.Value
           x-go-type-import:
@@ -11020,6 +11135,8 @@ components:
         generated_at:
           format: date-time
           type: string
+        historical_snapshot:
+          type: boolean
         model:
           type: string
         program_id:
@@ -11101,6 +11218,15 @@ components:
         - enrolled
         - enabled_at
         - actor
+      type: object
+    PersonBriefEnrollmentsResponse:
+      properties:
+        enrollments:
+          items:
+            $ref: "#/components/schemas/PersonBriefEnrollment"
+          type: array
+      required:
+        - enrollments
       type: object
     PersonBriefEvidencePointer:
       properties:
@@ -16902,7 +17028,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 5.1.0
+  version: 5.2.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -27074,6 +27200,54 @@ paths:
       summary: Promote a participant cluster to a durable person
       tags:
         - API
+  /api/v1/people/brief-enrollments:
+    get:
+      operationId: listPersonBriefEnrollments
+      parameters:
+        - in: query
+          name: after_id
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            default: 20
+            format: int64
+            maximum: 1000
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonBriefEnrollmentsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List people enrolled in briefs
+      tags:
+        - API
   /api/v1/people/by-uid:
     get:
       description: Resolves the person's current vCard UID, a retired UID that still aliases the person, or the UID of a CardDAV resource mapped to the person. Returns a conflict when one remote UID maps to different people.
@@ -28000,6 +28174,106 @@ paths:
       security:
         - apiKey: []
       summary: Move a linked Kata item to another list
+      tags:
+        - API
+  /api/v1/people/{id}/appreciations:
+    get:
+      operationId: listPersonAppreciations
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAppreciationsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List supported appreciation suggestions
+      tags:
+        - API
+  /api/v1/people/{id}/appreciations/{key}/dismiss:
+    post:
+      operationId: dismissPersonAppreciation
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: "Contribution key: exactly 64 lowercase hexadecimal characters"
+          in: path
+          name: key
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAppreciationState"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Dismiss an appreciation suggestion
       tags:
         - API
   /api/v1/people/{id}/attributes:

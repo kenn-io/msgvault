@@ -442,7 +442,7 @@ func TestPersonSweepAuthenticatedChatSenderCanBeDirectSelf(t *testing.T) {
 	}
 }
 
-func TestPersonSweepAttributesImazingCSVOutgoingMessagesToPerson(t *testing.T) {
+func TestPersonSweepExcludesImazingCSVOutgoingMessagesFromPersonEvidence(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -480,18 +480,14 @@ func TestPersonSweepAttributesImazingCSVOutgoingMessagesToPerson(t *testing.T) {
 	requirements.NoError(err)
 
 	items, err := st.HydratePersonSweepMessages(t.Context(), person.ID, []int64{messageID}, 0)
-	requirements.NoError(err)
-	requirements.Len(items, 1)
-	requirements.NotNil(items[0].SubjectPersonID)
-	checks.Equal(person.ID, *items[0].SubjectPersonID)
-	checks.Equal(personfacts.DirectSelf, items[0].Directness)
+	requirements.ErrorIs(err, peoplesweep.ErrPersonSweepMessageUnavailable)
+	checks.Empty(items)
 
 	candidates, err := st.ListPersonSweepHistoricalCandidates(t.Context(), peoplesweep.HistoricalCandidateRequest{
 		PersonID: person.ID, AuthoredByPerson: true, Limit: 10,
 	})
 	requirements.NoError(err)
-	checks.Equal([]int64{messageID}, candidates,
-		"outgoing imazing_csv messages must count as person authorship")
+	checks.Empty(candidates, "native owner messages must not enter person evidence")
 }
 
 func TestPersonSweepEvidenceStatusChangesCoalesceToTerminalEffect(t *testing.T) {

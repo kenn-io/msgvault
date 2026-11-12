@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,10 +28,107 @@ type briefFakeArchive struct {
 	// journal is the sequence at which the person's change journal first saw
 	// each message. A message absent from it has no journal row and is always
 	// visible, as in the store.
-	journal        map[int64]int64
-	candidateCalls []HistoricalCandidateRequest
-	searchCalls    []ContextRequest
-	hydrateCalls   []int64
+	journal                map[int64]int64
+	candidateCalls         []HistoricalCandidateRequest
+	searchCalls            []ContextRequest
+	hydrateCalls           []int64
+	peerCalls              int
+	ownerCalls             int
+	appreciationPeers      []BriefAppreciationPeer
+	appreciationOwners     []BriefAppreciationOwner
+	dismissedAppreciations map[string]bool
+}
+
+func (a *briefFakeArchive) PersonSweepAppreciationPeers(_ context.Context, _ int64, items []EvidenceItem, _ int64) ([]BriefAppreciationPeer, error) {
+	a.peerCalls++
+	refs := make(map[EvidenceRef]bool, len(items))
+	for _, item := range items {
+		refs[item.Ref] = true
+	}
+	var peers []BriefAppreciationPeer
+	for _, peer := range a.appreciationPeers {
+		if refs[peer.Ref] {
+			peers = append(peers, peer)
+		}
+	}
+	return peers, nil
+}
+
+func (a *briefFakeArchive) PersonSweepAppreciationOwners(_ context.Context, _ int64, _ []BriefAppreciationPeer, _ ProviderProfile, _ int64, _ int) ([]BriefAppreciationOwner, error) {
+	a.ownerCalls++
+	return a.appreciationOwners, nil
+}
+
+func (a *briefFakeArchive) PersonSweepAppreciationRetired(_ context.Context, _ int64, _ []string, _ map[string]string, _ ProviderProfile) (map[string]bool, error) {
+	return a.dismissedAppreciations, nil
+}
+
+func TestBriefAppreciationReplayProtectsActiveEvidence(t *testing.T) {
+	old := briefWindowItem(11, SourceConversationText, 10, "I carried your boxes upstairs.")
+	newer := briefWindowItem(12, SourceConversationText, 14, "A later conversation")
+	key, hash := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	memory := BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{Text: "carrying the boxes", Quote: "carried your boxes",
+		Key: key, State: "suggested", PriorThanks: "unknown"}, PeerRef: old.Ref, PeerRawSHA256: hash, ConversationID: 42}
+	archive := &briefFakeArchive{items: []EvidenceItem{old, newer},
+		appreciationPeers: []BriefAppreciationPeer{{Ref: old.Ref, ConversationID: 42, ContributionKey: key,
+			RawSHA256: hash, ExactExcerpt: old.Excerpt, EventTime: old.EventTime}},
+		lastContact: BriefLastContact{MessageID: newer.Ref.MessageID, SourceID: newer.Ref.SourceID}, hasLastContact: true}
+	request := briefWindowRequest(t)
+	request.Previous = &BriefBoundary{AppreciationMemory: []BriefAppreciationMemory{memory}}
+	request.MaxItems = 1
+	_, err := BuildBriefWindow(t.Context(), archive, request)
+	require.ErrorIs(t, err, ErrEvidenceItemTooLarge)
+
+	request.MaxItems = 2
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	parsed, err := ParseBrief(briefOutputJSON{}.raw(), window, request.Profile)
+	require.NoError(t, err)
+	require.Len(t, parsed.Output.ThanksSuggestions, 1)
+	assert.Equal(t, key, parsed.Output.ThanksSuggestions[0].Key, "a model omission preserves the original contribution")
+
+	archive.dismissedAppreciations = map[string]bool{key: true}
+	window, err = BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	parsed, err = ParseBrief(briefOutputJSON{}.raw(), window, request.Profile)
+	require.NoError(t, err)
+	assert.Empty(t, parsed.Output.ThanksSuggestions)
+}
+
+func TestAppreciationMemoryBound(t *testing.T) {
+	var entries []BriefAppreciationMemory
+	for range 3 {
+		entries = append(entries, BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "suggested"}},
+			BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "already_thanked"}})
+	}
+	assert.True(t, ValidBriefAppreciationMemory(entries))
+	entries = append(entries, BriefAppreciationMemory{Suggestion: BriefThanksSuggestion{State: "suggested"}})
+	assert.False(t, ValidBriefAppreciationMemory(entries))
+}
+
+func TestBriefWindowLoadsSidecarsOnceWhenTrimming(t *testing.T) {
+	peer := briefWindowItem(10, SourceConversationText, 10, "I carried your boxes upstairs.")
+	archive := &briefFakeArchive{items: []EvidenceItem{peer}, appreciationPeers: []BriefAppreciationPeer{{
+		Ref: peer.Ref, ConversationID: 42, ContributionKey: strings.Repeat("a", 64), RawSHA256: strings.Repeat("b", 64),
+		ExactExcerpt: peer.Excerpt, EventTime: peer.EventTime,
+	}}, appreciationOwners: []BriefAppreciationOwner{{
+		EvidenceID: "owner:test", Ref: EvidenceRef{SourceLane: SourceConversationText, SourceID: peer.Ref.SourceID, MessageID: 99},
+		ConversationID: 42, RawSHA256: strings.Repeat("c", 64), ExactExcerpt: strings.Repeat("thanks ", 100), EventTime: peer.EventTime.Add(time.Hour),
+	}}}
+	request := briefWindowRequest(t)
+	request.MaxItems = 3
+	full, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	require.Len(t, full.Batch.Packet.BriefOwners, 1)
+	archive.peerCalls, archive.ownerCalls = 0, 0
+	request.MaxBytes = full.Boundary.InputBytes - 1
+	trimmed, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	assert.Empty(t, trimmed.Batch.Packet.BriefOwners)
+	assert.Len(t, trimmed.Items, 1)
+	assert.LessOrEqual(t, trimmed.Boundary.InputBytes, request.MaxBytes)
+	assert.Equal(t, 1, archive.peerCalls)
+	assert.Equal(t, 1, archive.ownerCalls)
 }
 
 // visibleAt mirrors the store's journal bound: a positive sequence hides a
@@ -672,4 +770,46 @@ func briefMessageIDs(items []EvidenceItem) []int64 {
 		ids = append(ids, item.Ref.MessageID)
 	}
 	return ids
+}
+
+func TestBriefWindowExcludesDismissedContributionsBeforeModelCap(t *testing.T) {
+	archive := &briefFakeArchive{dismissedAppreciations: map[string]bool{}}
+	for index := range 4 {
+		item := briefWindowItem(int64(40+index), SourceConversationText, 10+index, "I carried your boxes upstairs.")
+		key := fmt.Sprintf("%064x", index+1)
+		archive.items = append(archive.items, item)
+		archive.appreciationPeers = append(archive.appreciationPeers, BriefAppreciationPeer{Ref: item.Ref,
+			ConversationID: 42, ContributionKey: key, RawSHA256: strings.Repeat("b", 64), ExactExcerpt: item.Excerpt, EventTime: item.EventTime})
+		if index < 3 {
+			archive.dismissedAppreciations[key] = true
+		}
+	}
+	request := briefWindowRequest(t)
+	request.MaxItems = 6
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	require.Len(t, window.Batch.Packet.BriefPeers, 1)
+	assert.Equal(t, fmt.Sprintf("%064x", 4), window.Batch.Packet.BriefPeers[0].ContributionKey)
+}
+
+func TestFullBriefWindowLeavesOwnerThanksUnknown(t *testing.T) {
+	peer := briefWindowItem(10, SourceConversationText, 10, "I carried your boxes upstairs.")
+	optional := briefWindowItem(11, SourceConversationText, 12, "An unrelated update.")
+	key, hash := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	archive := &briefFakeArchive{items: []EvidenceItem{peer, optional}, appreciationPeers: []BriefAppreciationPeer{{
+		Ref: peer.Ref, ConversationID: 42, ContributionKey: key, RawSHA256: hash, ExactExcerpt: peer.Excerpt, EventTime: peer.EventTime,
+	}}, appreciationOwners: []BriefAppreciationOwner{{
+		EvidenceID: "owner:test", Ref: EvidenceRef{SourceLane: SourceConversationText, SourceID: peer.Ref.SourceID, MessageID: 99},
+		ConversationID: 42, RawSHA256: strings.Repeat("c", 64), ExactExcerpt: "Thanks for carrying my boxes!", EventTime: peer.EventTime.Add(time.Hour),
+	}}}
+	request := briefWindowRequest(t)
+	request.MaxItems = 2
+	request.Previous = &BriefBoundary{AppreciationMemory: []BriefAppreciationMemory{{
+		Suggestion: BriefThanksSuggestion{Text: "carrying boxes", Quote: "carried your boxes", Key: key, State: "suggested", PriorThanks: "unknown"},
+		PeerRef:    peer.Ref, PeerRawSHA256: hash, ConversationID: 42,
+	}}}
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	assert.Len(t, window.Items, 2)
+	assert.Empty(t, window.Batch.Packet.BriefOwners)
 }

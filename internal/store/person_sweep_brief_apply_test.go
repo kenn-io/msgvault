@@ -55,7 +55,7 @@ func briefApplyResult(personID int64, refs ...string) *peoplesweep.BriefResult {
 		evidence = append(evidence, briefApplyEvidence(personID, ref))
 	}
 	structured := json.RawMessage(`{"last_meaningful_interaction":null,"highlights":[],` +
-		`"follow_ups":[],"appreciations":[],"uncertainties":[],"possible_attributes":[]}`)
+		`"follow_ups":[],"appreciations":[],"thanks_suggestions":[],"uncertainties":[],"possible_attributes":[]}`)
 	return &peoplesweep.BriefResult{
 		ProgramID: peoplesweep.BriefProgramID, ProgramVersion: peoplesweep.BriefProgramVersion,
 		ProgramFingerprint: peoplesweep.BriefProgramFingerprint(),
@@ -68,7 +68,7 @@ func briefApplyResult(personID int64, refs ...string) *peoplesweep.BriefResult {
 		},
 		Structured: structured,
 		Rendered: peoplesweep.RenderedBrief{
-			Policy: peoplesweep.BriefRendererPolicyV1,
+			Policy: peoplesweep.BriefRendererPolicyV3,
 			Text:   "Last time you talked (Aug 22): they start a new role.",
 			Sentences: []peoplesweep.RenderedSentence{{
 				Kind: "last_interaction", Index: 0,
@@ -135,7 +135,7 @@ func TestApplyPersonSweepStoresBriefWithExtractionBatches(t *testing.T) {
 	checks.Equal("fixture-model", stored.Model)
 	checks.Equal("model-v1", stored.ModelVersion)
 	checks.Equal(2, stored.DroppedItemCount)
-	checks.Equal(peoplesweep.BriefRendererPolicyV1, stored.RendererPolicy)
+	checks.Equal(peoplesweep.BriefRendererPolicyV3, stored.RendererPolicy)
 	checks.Equal(f.request.Generation.PersonID, stored.PersonID)
 
 	var boundary peoplesweep.BriefBoundary
@@ -158,6 +158,22 @@ func TestApplyPersonSweepStoresBriefWithExtractionBatches(t *testing.T) {
 		`SELECT brief_failure_class FROM person_sweep_attempts WHERE id = ?`,
 		f.attemptID).Scan(&attemptBriefClass))
 	checks.Empty(attemptBriefClass)
+}
+
+func TestApplyPersonSweepRejectsUnencodableBoundary(t *testing.T) {
+	f := newPersonSweepApplyFixture(t, "unencodable-boundary", true)
+	brief := reserveBriefCall(t, f, strings.Repeat("1", 64))
+	f.request.Batches = append(f.request.Batches, brief)
+	f.request.Usage = addBriefUsage(f.request.Usage, peoplesweep.Usage{Requests: 1,
+		InputTokens: 3, OutputTokens: 2, EstimatedCostMicroUSD: 5})
+	f.request.Brief = briefApplyResult(f.personID, "person-sweep/v1:brief-a")
+	due := time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+	f.request.Brief.Boundary.NextEventAt = &due
+
+	_, err := f.store.applyPersonSweepWithAligner(t.Context(), f.request, &stubBriefAligner{})
+	require.ErrorContains(t, err, "marshal person brief boundary")
+	_, err = f.store.GetPersonBriefContext(t.Context(), f.personID, 0)
+	assert.ErrorIs(t, err, ErrPersonBriefNotFound)
 }
 
 func TestApplyPersonSweepDropsBriefEvidenceThatNoLongerAligns(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -88,6 +89,8 @@ func ParseBrief(
 	// keptHighlights maps a submitted highlight index onto its index after
 	// drops so a surviving follow-up still points at the highlight it explains.
 	keptHighlights := make(map[int]int, len(candidate.Highlights))
+	valid := make([]BriefHighlight, 0, len(candidate.Highlights))
+	originalIndexes := make([]int, 0, len(candidate.Highlights))
 	for index, highlight := range candidate.Highlights {
 		items, ok := cited.resolve(highlight.EvidenceIDs)
 		if !ok || !briefSpeakerSupported(highlight.Speaker, items, packet.PersonID) ||
@@ -95,15 +98,31 @@ func ParseBrief(
 			parsed.DroppedItemCount++
 			continue
 		}
+		valid = append(valid, highlight)
+		originalIndexes = append(originalIndexes, index)
+	}
+	var dropped int
+	var reindexed map[int]int
+	parsed.Output.Highlights, reindexed, dropped = mergeBriefEvents(
+		valid, packet.BriefContext, evidence, packet.PersonID, window.Boundary.ThroughEventTime)
+	parsed.DroppedItemCount += dropped
+	for index, original := range originalIndexes {
+		if final, ok := reindexed[index]; ok {
+			keptHighlights[original] = final
+		}
+	}
+	for _, highlight := range parsed.Output.Highlights {
+		items, ok := cited.resolve(highlight.EvidenceIDs)
+		if !ok {
+			return ParsedBrief{}, errors.New("retained event cites unavailable evidence")
+		}
 		cited.keep(items)
-		keptHighlights[index] = len(parsed.Output.Highlights)
-		parsed.Output.Highlights = append(parsed.Output.Highlights, highlight)
 	}
 
 	for _, followUp := range candidate.FollowUps {
 		reindexed, referenced := keptHighlights[followUp.HighlightIndex]
 		items, ok := cited.resolve(followUp.EvidenceIDs)
-		if !referenced || !ok {
+		if !referenced || !ok || parsed.Output.Highlights[reindexed].LifeEvent != nil {
 			parsed.DroppedItemCount++
 			continue
 		}
@@ -116,6 +135,83 @@ func ParseBrief(
 	// owner-authored evidence can reach a v1 packet, so every appreciation is
 	// unevidenced and is dropped rather than attributed to the person.
 	parsed.DroppedItemCount += len(candidate.Appreciations)
+
+	peers := make(map[string]BriefAppreciationPeer, len(packet.BriefPeers))
+	for _, peer := range packet.BriefPeers {
+		peers[peer.AnchorID] = peer
+	}
+	owners := make(map[string]BriefAppreciationOwner, len(packet.BriefOwners))
+	for _, owner := range packet.BriefOwners {
+		owners[owner.EvidenceID] = owner
+	}
+	seenKeys := make(map[string]int)
+	for _, suggestion := range window.Request.retainedAppreciations {
+		peer, ok := peers[suggestion.AnchorID]
+		items, citedOK := cited.resolve([]string{suggestion.AnchorID})
+		if !ok || !citedOK || peer.ContributionKey != suggestion.Key || peer.Ref != items[0].Ref ||
+			!strings.Contains(peer.ExactExcerpt, suggestion.Quote) {
+			return ParsedBrief{}, errors.New("retained appreciation evidence unavailable")
+		}
+		seenKeys[suggestion.Key] = len(parsed.Output.ThanksSuggestions)
+		parsed.Output.ThanksSuggestions = append(parsed.Output.ThanksSuggestions, suggestion)
+		cited.keep(items)
+	}
+	retainedKeys := make(map[string]bool, len(seenKeys))
+	for key := range seenKeys {
+		retainedKeys[key] = true
+	}
+	// Resolve retained updates first so a newly evidenced thank-you frees an
+	// active slot even when a new contribution appeared earlier in the output.
+	for pass := range 2 {
+		for _, suggestion := range candidate.ThanksSuggestions {
+			peer, ok := peers[suggestion.AnchorID]
+			if (pass == 0) != retainedKeys[peer.ContributionKey] {
+				continue
+			}
+			items, citedOK := cited.resolve([]string{suggestion.AnchorID})
+			if !ok || !citedOK || len(items) != 1 || peer.Ref != items[0].Ref ||
+				!briefSpeakerSupported(BriefSpeakerPerson, items, packet.PersonID) ||
+				peer.ContributionKey == "" ||
+				strings.TrimSpace(suggestion.Text) == "" || strings.TrimSpace(suggestion.Quote) == "" ||
+				!strings.Contains(peer.ExactExcerpt, suggestion.Quote) {
+				parsed.DroppedItemCount++
+				continue
+			}
+			suggestion.Key = peer.ContributionKey
+			suggestion.State, suggestion.PriorThanks = "suggested", "unknown"
+			if suggestion.Thanked != nil {
+				owner, exists := owners[suggestion.Thanked.EvidenceID]
+				if !exists || owner.ConversationID != peer.ConversationID || owner.Ref.SourceID != peer.Ref.SourceID ||
+					!owner.EventTime.After(peer.EventTime) || strings.TrimSpace(suggestion.Thanked.Quote) == "" ||
+					!strings.Contains(owner.ExactExcerpt, suggestion.Thanked.Quote) {
+					suggestion.Thanked = nil
+				} else {
+					suggestion.State, suggestion.PriorThanks = "already_thanked", "evidenced"
+				}
+			}
+			if index, exists := seenKeys[peer.ContributionKey]; exists {
+				old := parsed.Output.ThanksSuggestions[index]
+				if suggestion.Thanked != nil && suggestion.Quote == old.Quote {
+					old.Thanked, old.State, old.PriorThanks = suggestion.Thanked, suggestion.State, suggestion.PriorThanks
+					parsed.Output.ThanksSuggestions[index] = old
+				}
+				continue
+			}
+			count := 0
+			for _, existing := range parsed.Output.ThanksSuggestions {
+				if existing.State == suggestion.State {
+					count++
+				}
+			}
+			if count >= 3 {
+				parsed.DroppedItemCount++
+				continue
+			}
+			seenKeys[peer.ContributionKey] = len(parsed.Output.ThanksSuggestions)
+			cited.keep(items)
+			parsed.Output.ThanksSuggestions = append(parsed.Output.ThanksSuggestions, suggestion)
+		}
+	}
 
 	for _, uncertainty := range candidate.Uncertainties {
 		items, ok := cited.resolve(uncertainty.EvidenceIDs)
@@ -160,6 +256,9 @@ func ParseBrief(
 	}
 	if parsed.Output.Appreciations == nil {
 		parsed.Output.Appreciations = []BriefAppreciation{}
+	}
+	if parsed.Output.ThanksSuggestions == nil {
+		parsed.Output.ThanksSuggestions = []BriefThanksSuggestion{}
 	}
 	if parsed.Output.Uncertainties == nil {
 		parsed.Output.Uncertainties = []BriefUncertainty{}

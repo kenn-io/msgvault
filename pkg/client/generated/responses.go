@@ -2611,6 +2611,14 @@ type CreatePersonErrorResponseJSON = ErrorResponse
 
 type CreatePersonErrorResponseJSONDefault = ErrorResponse
 
+type ListPersonBriefEnrollmentsResponse = PersonBriefEnrollmentsResponse
+
+type ListPersonBriefEnrollmentsErrorResponse = ErrorResponse
+
+type ListPersonBriefEnrollmentsErrorResponseJSON = ErrorResponse
+
+type ListPersonBriefEnrollmentsErrorResponseJSONDefault = ErrorResponse
+
 type GetPersonByUIDResponse = Person
 
 type GetPersonByUIDErrorResponse = ErrorResponse
@@ -2784,6 +2792,26 @@ type UpdatePersonAgendaItemErrorResponseJSON422 = ErrorResponse
 type UpdatePersonAgendaItemErrorResponseJSON503 = ErrorResponse
 
 type UpdatePersonAgendaItemErrorResponseJSONDefault = ErrorResponse
+
+type ListPersonAppreciationsResponse = PersonAppreciationsResponse
+
+type ListPersonAppreciationsErrorResponse = ErrorResponse
+
+type ListPersonAppreciationsErrorResponseJSON = ErrorResponse
+
+type ListPersonAppreciationsErrorResponseJSON503 = ErrorResponse
+
+type ListPersonAppreciationsErrorResponseJSONDefault = ErrorResponse
+
+type DismissPersonAppreciationResponse = PersonAppreciationState
+
+type DismissPersonAppreciationErrorResponse = ErrorResponse
+
+type DismissPersonAppreciationErrorResponseJSON = ErrorResponse
+
+type DismissPersonAppreciationErrorResponseJSON503 = ErrorResponse
+
+type DismissPersonAppreciationErrorResponseJSONDefault = ErrorResponse
 
 type ListPersonAttributesResponse = PersonAttributesResponse
 
@@ -6395,6 +6423,16 @@ type CreatePersonResp struct {
 	JSONDefault  *CreatePersonErrorResponseJSONDefault
 }
 
+type ListPersonBriefEnrollmentsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonBriefEnrollmentsResponse
+	JSON400      *ListPersonBriefEnrollmentsErrorResponse
+	JSON503      *ListPersonBriefEnrollmentsErrorResponseJSON
+	JSONDefault  *ListPersonBriefEnrollmentsErrorResponseJSONDefault
+}
+
 type GetPersonByUIDResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -6574,6 +6612,28 @@ type UpdatePersonAgendaItemResp struct {
 	JSON422      *UpdatePersonAgendaItemErrorResponseJSON422
 	JSON503      *UpdatePersonAgendaItemErrorResponseJSON503
 	JSONDefault  *UpdatePersonAgendaItemErrorResponseJSONDefault
+}
+
+type ListPersonAppreciationsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonAppreciationsResponse
+	JSON400      *ListPersonAppreciationsErrorResponse
+	JSON404      *ListPersonAppreciationsErrorResponseJSON
+	JSON503      *ListPersonAppreciationsErrorResponseJSON503
+	JSONDefault  *ListPersonAppreciationsErrorResponseJSONDefault
+}
+
+type DismissPersonAppreciationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *DismissPersonAppreciationResponse
+	JSON400      *DismissPersonAppreciationErrorResponse
+	JSON404      *DismissPersonAppreciationErrorResponseJSON
+	JSON503      *DismissPersonAppreciationErrorResponseJSON503
+	JSONDefault  *DismissPersonAppreciationErrorResponseJSONDefault
 }
 
 type ListPersonAttributesResp struct {

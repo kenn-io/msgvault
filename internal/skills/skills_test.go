@@ -43,7 +43,7 @@ func TestRender_AllSkills(t *testing.T) {
 	require.NoError(err)
 
 	wantNames := []string{
-		"msgvault-analytics", "msgvault-attachments", "msgvault-feedback", "msgvault-search",
+		"msgvault-analytics", "msgvault-appreciations", "msgvault-attachments", "msgvault-feedback", "msgvault-search",
 	}
 	var gotNames []string
 	for _, sk := range rendered {

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-11-06
+last_edited: 2026-11-11
 title: Agent Skills
 description: Teach coding agents the msgvault CLI with installable skills
 ---
@@ -17,11 +17,13 @@ session.
 | `msgvault-search` | Query syntax, search modes (fts/vector/hybrid), reading messages, exporting raw email |
 | `msgvault-attachments` | Finding attachments, filtering by type/size, exporting by content hash or message |
 | `msgvault-analytics` | Built-in aggregates, raw SQL over the analytics views, time-series queries |
+| `msgvault-appreciations` | Review supported appreciation suggestions and owner-chosen dismissals |
 | `msgvault-feedback` | Record heard, accepted or declined feedback, link accepted actions, and keep change evidence and report-back reminders in Kata |
 
-Search, attachments and analytics cover read-only workflows. Feedback also
-guides task writes within your explicit request. All skills require your
-direction before archive mutations such as sync, import, dedup or deletion.
+Search, attachments and analytics cover read-only workflows. Feedback guides
+task writes within your explicit request. Appreciations dismisses only with your
+choice and generates only on an explicit refresh request. All skills require
+your direction before archive mutations such as sync, import, dedup or deletion.
 
 ## Install
 
@@ -53,6 +55,14 @@ coexist: MCP suits chat apps (Claude Desktop), while skills suit
 terminal coding agents that already run shell commands and can pipe
 `--json` output through `jq`. Skill content is validated against the
 CLI's command tree in CI, so examples stay correct as the CLI evolves.
+
+## Review appreciation suggestions
+
+The appreciation skill is newer than the latest release. After upgrading
+msgvault, run `msgvault skills install` again. It reads saved suggestions,
+dismisses only at your direction, and refreshes only on explicit request using
+provider budget. See [person briefs](../usage/people-briefs.md#review-reasons-to-say-thanks)
+for the review workflow.
 
 ## Follow through on feedback
 

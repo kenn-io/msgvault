@@ -44,6 +44,9 @@ type PersonBriefStore interface {
 	GetPersonBriefEnrollmentContext(
 		ctx context.Context, personID int64,
 	) (*store.PersonBriefEnrollment, error)
+	ListPersonBriefEnrollmentsContext(
+		ctx context.Context, afterID int64, limit int,
+	) ([]store.PersonBriefEnrollment, error)
 	SetPersonBriefEnrollmentContext(
 		ctx context.Context, personID int64, enabled bool, actor string, track bool,
 	) (*store.PersonBriefEnrollment, error)
@@ -80,25 +83,27 @@ type PersonBriefSentence struct {
 
 // PersonBrief is one immutable brief version. It carries the paragraph, the
 // sentence-to-item map, the validated structure, and the cited archive items —
-// never an excerpt of the archive text the brief was derived from.
+// including short evidence-backed event quotes when present.
 type PersonBrief struct {
-	Version          int                                `json:"version"`
-	Status           string                             `json:"status"`
-	GeneratedAt      time.Time                          `json:"generated_at"`
-	RenderedText     string                             `json:"rendered_text"`
-	RendererPolicy   string                             `json:"renderer_policy"`
-	Sentences        []PersonBriefSentence              `json:"sentences"`
-	Structured       jsontext.Value                     `json:"structured"`
-	Evidence         []store.PersonBriefEvidencePointer `json:"evidence"`
-	Boundary         jsontext.Value                     `json:"boundary"`
-	DroppedItemCount int                                `json:"dropped_item_count"`
-	ProgramID        string                             `json:"program_id"`
-	ProgramVersion   string                             `json:"program_version"`
-	Provider         string                             `json:"provider"`
-	Model            string                             `json:"model"`
-	RejectedAt       *time.Time                         `json:"rejected_at"`
-	RejectedReason   string                             `json:"rejected_reason"`
-	SupersededAt     *time.Time                         `json:"superseded_at"`
+	Version                   int                                `json:"version"`
+	Status                    string                             `json:"status"`
+	GeneratedAt               time.Time                          `json:"generated_at"`
+	RenderedText              string                             `json:"rendered_text"`
+	RendererPolicy            string                             `json:"renderer_policy"`
+	Sentences                 []PersonBriefSentence              `json:"sentences"`
+	Structured                jsontext.Value                     `json:"structured"`
+	Evidence                  []store.PersonBriefEvidencePointer `json:"evidence"`
+	Boundary                  jsontext.Value                     `json:"boundary"`
+	DroppedItemCount          int                                `json:"dropped_item_count"`
+	ProgramID                 string                             `json:"program_id"`
+	ProgramVersion            string                             `json:"program_version"`
+	Provider                  string                             `json:"provider"`
+	Model                     string                             `json:"model"`
+	RejectedAt                *time.Time                         `json:"rejected_at"`
+	RejectedReason            string                             `json:"rejected_reason"`
+	SupersededAt              *time.Time                         `json:"superseded_at"`
+	HistoricalSnapshot        bool                               `json:"historical_snapshot,omitempty"`
+	AppreciationDismissalKeys []string                           `json:"appreciation_dismissal_keys,omitzero"`
 }
 
 // PersonBriefVersionsResponse is the newest-first version history.
@@ -121,7 +126,20 @@ type PutPersonBriefEnrollmentRequest struct {
 	Track    bool `json:"track" required:"false"`
 }
 
+// PersonBriefEnrollmentsResponse is one ascending page of enrolled people.
+type PersonBriefEnrollmentsResponse struct {
+	Enrollments []store.PersonBriefEnrollment `json:"enrollments"`
+}
+
 func (s *Server) registerPersonBriefRoutes(api huma.API) {
+	s.registerPersonAppreciationRoutes(api)
+	listEnrollment := rawAPIV1Operation("listPersonBriefEnrollments", http.MethodGet,
+		"/people/brief-enrollments", "List people enrolled in briefs")
+	listEnrollment.Parameters = []*huma.Param{contactIntegerParam("after_id", 0, 0), contactIntegerParam("limit", 1, 1000)}
+	listEnrollment.Responses = jsonResponsesFor[PersonBriefEnrollmentsResponse](api)
+	addErrorResponses(api, listEnrollment.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, listEnrollment, s.handleListPersonBriefEnrollments)
+
 	current := rawAPIV1Operation("getPersonBrief", http.MethodGet,
 		"/people/{id}/brief", "Get a person's current brief version")
 	addPersonIDParameter(&current)
@@ -175,6 +193,34 @@ func (s *Server) registerPersonBriefRoutes(api huma.API) {
 	registerRawHumaRoute(api, setEnrollment, s.handleSetPersonBriefEnrollment)
 }
 
+func (s *Server) handleListPersonBriefEnrollments(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	afterID, err := contactQueryInteger(r, "after_id", 0, 0)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid after_id")
+		return
+	}
+	limit, err := contactQueryInteger(r, "limit", 1, 1000)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid limit")
+		return
+	}
+	if limit == 0 {
+		limit = 20
+	}
+	briefs, ok := s.store.(PersonBriefStore)
+	if !ok {
+		writeError(w, http.StatusServiceUnavailable, "briefs_unavailable", "Person briefs are unavailable")
+		return
+	}
+	enrollments, err := briefs.ListPersonBriefEnrollmentsContext(r.Context(), afterID, int(limit))
+	if err != nil {
+		s.writePersonBriefError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, PersonBriefEnrollmentsResponse{Enrollments: enrollments})
+}
+
 func (s *Server) handleGetPersonBrief(w http.ResponseWriter, r *http.Request) {
 	briefs, personID, ok := s.personBriefRequestStore(w, r)
 	if !ok {
@@ -185,8 +231,24 @@ func (s *Server) handleGetPersonBrief(w http.ResponseWriter, r *http.Request) {
 		s.writePersonBriefError(w, err)
 		return
 	}
+	var appreciationProjection *store.PersonAppreciationProjection
+	if brief.ProgramVersion == "v3" {
+		projection := store.PersonAppreciationProjection{Brief: *brief}
+		if _, err := s.cfg.People.Sweep.Profile(); err == nil {
+			var ok bool
+			projection, ok = s.loadPersonAppreciations(w, r, personID)
+			if !ok {
+				return
+			}
+			brief = &projection.Brief
+		}
+		appreciationProjection = &projection
+	}
 	response, ok := s.personBriefDTO(w, r, briefs, *brief)
 	if !ok {
+		return
+	}
+	if appreciationProjection != nil && !s.projectCurrentBrief(w, &response, *appreciationProjection) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -223,6 +285,9 @@ func (s *Server) handleListPersonBriefVersions(w http.ResponseWriter, r *http.Re
 		if !ok {
 			return
 		}
+		if !s.addBriefHistoryOverlay(w, r, &version, row) {
+			return
+		}
 		response.Versions = append(response.Versions, version)
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -246,6 +311,9 @@ func (s *Server) handleRejectPersonBrief(w http.ResponseWriter, r *http.Request)
 	}
 	response, ok := s.personBriefDTO(w, r, briefs, *brief)
 	if !ok {
+		return
+	}
+	if !s.addBriefHistoryOverlay(w, r, &response, *brief) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -363,7 +431,7 @@ func (s *Server) personBriefDTO(
 		Sentences:        sentences,
 		Structured:       s.sanitizedPersonBriefStructure(brief),
 		Evidence:         pointers,
-		Boundary:         personBriefJSON(brief.Boundary),
+		Boundary:         sanitizedPersonBriefBoundary(brief.Boundary, brief.ProgramVersion),
 		DroppedItemCount: brief.DroppedItemCount,
 		ProgramID:        brief.ProgramID,
 		ProgramVersion:   brief.ProgramVersion,
@@ -386,6 +454,9 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext
 	}
 	var output peoplesweep.BriefOutput
 	if err := json.Unmarshal(brief.Structured, &output); err != nil {
+		if brief.ProgramVersion == "v3" {
+			return jsontext.Value(`{}`)
+		}
 		return personBriefJSON(brief.Structured)
 	}
 	if output.LastMeaningfulInteraction != nil {
@@ -393,7 +464,7 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext
 			textutil.SanitizeTerminal(output.LastMeaningfulInteraction.Summary)
 	}
 	for index := range output.Highlights {
-		output.Highlights[index].Text = textutil.SanitizeTerminal(output.Highlights[index].Text)
+		sanitizeBriefHighlight(&output.Highlights[index])
 	}
 	for index := range output.FollowUps {
 		output.FollowUps[index].Question = textutil.SanitizeTerminal(output.FollowUps[index].Question)
@@ -402,6 +473,14 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext
 	for index := range output.Appreciations {
 		output.Appreciations[index].Text = textutil.SanitizeTerminal(output.Appreciations[index].Text)
 	}
+	for index := range output.ThanksSuggestions {
+		suggestion := &output.ThanksSuggestions[index]
+		suggestion.Text = textutil.SanitizeTerminal(suggestion.Text)
+		suggestion.Quote = textutil.SanitizeTerminal(suggestion.Quote)
+		if suggestion.Thanked != nil {
+			suggestion.Thanked.Quote = textutil.SanitizeTerminal(suggestion.Thanked.Quote)
+		}
+	}
 	for index := range output.Uncertainties {
 		output.Uncertainties[index].Text = textutil.SanitizeTerminal(output.Uncertainties[index].Text)
 	}
@@ -409,7 +488,49 @@ func (s *Server) sanitizedPersonBriefStructure(brief store.PersonBrief) jsontext
 	if err != nil {
 		s.logger.Error("person brief structure could not be re-encoded",
 			"person_id", brief.PersonID, "version", brief.Version)
+		if brief.ProgramVersion == "v3" {
+			return jsontext.Value(`{}`)
+		}
 		return personBriefJSON(brief.Structured)
+	}
+	return encoded
+}
+
+// sanitizeBriefHighlight leaves evidence identifiers untouched.
+func sanitizeBriefHighlight(highlight *peoplesweep.BriefHighlight) {
+	highlight.Text = textutil.SanitizeTerminal(highlight.Text)
+	if event := highlight.LifeEvent; event != nil {
+		event.Quote = textutil.SanitizeTerminal(event.Quote)
+		event.Question = textutil.SanitizeTerminal(event.Question)
+		if event.Resolution != nil {
+			event.Resolution.Quote = textutil.SanitizeTerminal(event.Resolution.Quote)
+		}
+	}
+}
+
+// sanitizedPersonBriefBoundary sanitizes event prose in the response only.
+func sanitizedPersonBriefBoundary(raw jsontext.Value, programVersion string) jsontext.Value {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return personBriefJSON(raw)
+	}
+	var boundary peoplesweep.BriefBoundary
+	if err := json.Unmarshal(raw, &boundary); err != nil {
+		if programVersion == "v3" {
+			return jsontext.Value(`{}`)
+		}
+		return personBriefJSON(raw)
+	}
+	for index := range boundary.EventMemory {
+		sanitizeBriefHighlight(&boundary.EventMemory[index].Highlight)
+	}
+	// Owner evidence is exposed only through the eligibility-checked projection.
+	boundary.AppreciationMemory = nil
+	encoded, err := json.Marshal(boundary, json.Deterministic(true))
+	if err != nil {
+		if programVersion == "v3" {
+			return jsontext.Value(`{}`)
+		}
+		return personBriefJSON(raw)
 	}
 	return encoded
 }
@@ -443,7 +564,7 @@ func (s *Server) personBriefSentences(
 	brief store.PersonBrief, pointerCount int,
 ) []PersonBriefSentence {
 	empty := []PersonBriefSentence{}
-	if brief.RendererPolicy != peoplesweep.BriefRendererPolicyV1 {
+	if brief.RendererPolicy != peoplesweep.BriefRendererPolicyV1 && brief.RendererPolicy != peoplesweep.BriefRendererPolicyV2 && brief.RendererPolicy != peoplesweep.BriefRendererPolicyV3 {
 		return empty
 	}
 	var output peoplesweep.BriefOutput
@@ -451,6 +572,13 @@ func (s *Server) personBriefSentences(
 		s.logger.Error("person brief structure could not be decoded",
 			"person_id", brief.PersonID, "version", brief.Version)
 		return empty
+	}
+	if brief.RendererPolicy == peoplesweep.BriefRendererPolicyV1 {
+		for _, highlight := range output.Highlights {
+			if highlight.LifeEvent != nil {
+				return empty
+			}
+		}
 	}
 	rendered, err := peoplesweep.RenderBrief(
 		peoplesweep.ParsedBrief{Output: output}, peoplesweep.BriefWindow{})

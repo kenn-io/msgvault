@@ -3298,6 +3298,18 @@ func (a *storeAPIAdapter) GetPersonBriefContext(
 	return a.store.GetPersonBriefContext(ctx, personID, version)
 }
 
+func (a *storeAPIAdapter) ProjectPersonAppreciationsContext(ctx context.Context, personID int64, profile peoplesweep.ProviderProfile) (store.PersonAppreciationProjection, error) {
+	return a.store.ProjectPersonAppreciationsContext(ctx, personID, profile)
+}
+
+func (a *storeAPIAdapter) DismissPersonAppreciationContext(ctx context.Context, personID int64, key, actor string, at time.Time, profile peoplesweep.ProviderProfile) (store.PersonAppreciationState, error) {
+	return a.store.DismissPersonAppreciationContext(ctx, personID, key, actor, at, profile)
+}
+
+func (a *storeAPIAdapter) GetPersonAppreciationStatesContext(ctx context.Context, keys []string) (map[string]store.PersonAppreciationState, error) {
+	return a.store.GetPersonAppreciationStatesContext(ctx, keys)
+}
+
 func (a *storeAPIAdapter) ListPersonBriefVersionsContext(
 	ctx context.Context, personID int64, limit int,
 ) ([]store.PersonBrief, error) {
@@ -3320,6 +3332,12 @@ func (a *storeAPIAdapter) GetPersonBriefEnrollmentContext(
 	ctx context.Context, personID int64,
 ) (*store.PersonBriefEnrollment, error) {
 	return a.store.GetPersonBriefEnrollmentContext(ctx, personID)
+}
+
+func (a *storeAPIAdapter) ListPersonBriefEnrollmentsContext(
+	ctx context.Context, afterID int64, limit int,
+) ([]store.PersonBriefEnrollment, error) {
+	return a.store.ListPersonBriefEnrollmentsContext(ctx, afterID, limit)
 }
 
 func (a *storeAPIAdapter) SetPersonBriefEnrollmentContext(

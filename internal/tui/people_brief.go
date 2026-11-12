@@ -517,6 +517,7 @@ func (m Model) peopleBriefStructuredLines() []string {
 		{"Highlights", peoplebrowser.PersonBriefHighlight},
 		{"Follow-ups", peoplebrowser.PersonBriefFollowUp},
 		{"Appreciations", peoplebrowser.PersonBriefAppreciation},
+		{"Thanks suggestions", peoplebrowser.PersonBriefThanksSuggestion},
 		{"Uncertainties", peoplebrowser.PersonBriefUncertainty},
 	} {
 		lines = append(lines, "", " "+section.heading)

@@ -16,6 +16,9 @@ func TestCLIRunCommandAllowedRefusesPersonBrief(t *testing.T) {
 	for _, args := range [][]string{
 		{"person", "brief"},
 		{"person", "brief", "show", "7"},
+		{"person", "brief", "enrollments"},
+		{"person", "appreciations", "list", "7"},
+		{"person", "appreciations", "dismiss", "7", "key"},
 		{"person", "brief", "history", "7"},
 		{"person", "brief", "generate", "7"},
 		{"person", "brief", "reject", "7", "--reason", "wrong thread"},

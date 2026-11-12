@@ -366,6 +366,8 @@ func (s *Store) hydratePersonSweepMessageSet(
 	}
 	args = append(args, scopeArgs...)
 	args = append(args, boundArgs...)
+	// A native owner direction is positive evidence that this text cannot
+	// support facts about the tracked person, even if the owner is tracked.
 	rows, err := s.db.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
 		SELECT m.id, m.source_id, s.source_type, COALESCE(m.source_message_id, ''),
 		       COALESCE(m.subject, ''), COALESCE(mb.body_text, ''), COALESCE(m.snippet, ''),
@@ -374,6 +376,7 @@ func (s *Store) hydratePersonSweepMessageSet(
 		JOIN sources s ON s.id = m.source_id
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.id IN (%s) AND %s AND %s AND (%s)%s
+		  AND COALESCE(m.source_is_from_me, FALSE) = FALSE
 		ORDER BY m.id`, placeholders, LiveMessagesWhere("m", true), laneSQL, predicate,
 		boundSQL)), args...)
 	if err != nil {
@@ -549,8 +552,11 @@ func (s *Store) personSweepHistoricalCandidatesQuery(
 	boundSQL, boundArgs := personSweepJournalBoundPredicate(request.PersonID, request.ThroughSequence)
 	args = append(args, boundArgs...)
 	args = append(args, request.Limit)
+	// Match hydration before applying the limit so owner messages cannot crowd
+	// eligible evidence out of the candidate page.
 	return s.Rebind(fmt.Sprintf(`SELECT m.id FROM messages m
 		JOIN conversations c ON c.id=m.conversation_id WHERE %s AND (%s) AND (%s)%s%s%s
+		AND COALESCE(m.source_is_from_me, FALSE) = FALSE
 		ORDER BY %s DESC,m.id DESC LIMIT ?`, LiveMessagesWhere("m", true), predicate,
 		lanePredicate, authorshipPredicate, datePredicate, boundSQL, eventTime)), args, nil
 }
