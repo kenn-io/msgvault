@@ -1514,6 +1514,7 @@ enabled = true
 url = "http://127.0.0.1:8080"     # your Docbank daemon; the port is an example
 api_key_env = "DOCBANK_API_KEY"   # daemon environment variable with the key
 all_sources_upload_consent = true # allow audio from every captured source to leave msgvault
+# voice_transcript_search = true  # include generated Beeper voice transcripts in keyword search
 # asr_profile = "asr"             # optional Docbank profile for audio without source text
 ```
 

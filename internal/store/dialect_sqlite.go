@@ -399,36 +399,33 @@ func (d *SQLiteDialect) InsertOrIgnoreSuffix() string { return "" }
 func (d *SQLiteDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	_, err := q.Exec(
 		`INSERT OR REPLACE INTO messages_fts(rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
-		VALUES (?, ?, ?, ?, ?, ?, ? || CASE WHEN `+voiceSearchSQL(false, "?")+` = '' THEN '' ELSE char(10) || `+voiceSearchSQL(false, "?")+` END)`,
+		VALUES (?, ?, ?, ?, ?, ?, ? || COALESCE(char(10) || NULLIF(`+voiceSearchSQL(false, "?")+`, ''), ''))`,
 		doc.MessageID, doc.MessageID, doc.Subject, doc.Body,
-		doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.MessageID, doc.MessageID,
+		doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.MessageID,
 	)
 	return err
 }
 
 // FTSMatches compares the stored FTS5 columns with doc.
 func (d *SQLiteDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
-	var subject, body, fromAddr, toAddrs, ccAddrs sql.NullString
+	var subject, body, fromAddr, toAddrs, ccAddrs, speech sql.NullString
 	err := q.QueryRow(
-		`SELECT subject, body, from_addr, to_addr, cc_addr FROM messages_fts WHERE rowid = ?`,
+		`SELECT subject, body, from_addr, to_addr, cc_addr, `+voiceSearchSQL(false, "messages_fts.rowid")+` FROM messages_fts WHERE rowid = ?`,
 		doc.MessageID,
-	).Scan(&subject, &body, &fromAddr, &toAddrs, &ccAddrs)
+	).Scan(&subject, &body, &fromAddr, &toAddrs, &ccAddrs, &speech)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	var speech string
-	if err := q.QueryRow(`SELECT `+voiceSearchSQL(false, "?"), doc.MessageID).Scan(&speech); err != nil {
-		return false, err
-	}
-	if speech != "" {
-		speech = "\n" + speech
+	voice := speech.String
+	if voice != "" {
+		voice = "\n" + voice
 	}
 	return subject.String == doc.Subject && body.String == doc.Body &&
 		fromAddr.String == doc.FromAddr && toAddrs.String == doc.ToAddrs &&
-		ccAddrs.String == doc.CcAddrs+speech, nil
+		ccAddrs.String == doc.CcAddrs+voice, nil
 }
 
 // FTSSearchClause returns SQL fragments for FTS5 full-text search.
@@ -447,7 +444,8 @@ func (d *SQLiteDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 // PostgreSQL applies setweight 'A'=1.0 to subject and 'B'=0.4 to sender,
 // with explicit C/D rank weights of 0.1 for recipients/body — a 10:4:1 ratio,
 // which bm25 reproduces as 10/1/4/1/1 across (subject, body, from, to,
-// cc). bm25 returns lower (more negative) scores for more relevant rows,
+// cc). Generated voice transcripts share cc_addr to keep body-only search
+// scoped to source text. bm25 returns lower (more negative) scores for more relevant rows,
 // so callers ORDER BY this expression ascending (the default).
 //
 // Known divergence: SQLite's bm25() applies Okapi BM25 document-length
@@ -497,7 +495,7 @@ func (d *SQLiteDialect) FTSBackfillBatchSQL() string {
 	envelope := storedFTSEnvelopeSQL("GROUP_CONCAT")
 	return `INSERT OR REPLACE INTO messages_fts (rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
 		SELECT m.id, m.id, ` + envelope.subject + `, COALESCE(mb.body_text, ''), ` +
-		envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs + ` || CASE WHEN ` + voiceSearchSQL(false, "m.id") + ` = '' THEN '' ELSE char(10) || ` + voiceSearchSQL(false, "m.id") + ` END` + `
+		envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs + ` || COALESCE(char(10) || NULLIF(` + voiceSearchSQL(false, "m.id") + `, ''), '')` + `
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.id >= ? AND m.id < ?`
