@@ -60,7 +60,7 @@ func PhoneObservation(account, owner string, raw []byte, bindings map[string]int
 	callEvidence := callhistory.Evidence{Version: 1, Provider: "zoom_phone", Account: AccountNamespace(account, owner),
 		Outcome: "unknown", OwnerParticipation: "unknown", Direction: "unknown",
 		OccurredAt: row.Start, EndedAt: row.End.value}
-	o = callhistory.Observation{Evidence: callEvidence, RecordID: row.ElementID, Raw: jsontext.Value(raw)}
+	o = callhistory.Observation{Evidence: callEvidence, SourceLabel: "Zoom Phone — " + account, RecordID: row.ElementID, Raw: jsontext.Value(raw)}
 	peer, number, owned := "", "", false
 	switch row.Direction {
 	case "inbound":
