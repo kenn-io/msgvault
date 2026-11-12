@@ -369,7 +369,7 @@ func calendarAllDayShift(edit calevent.Event, zone *time.Location) calendarShift
 		return calendarShift{}
 	}
 	delta, span := start.Sub(was), end.Sub(start)
-	return calendarShift{pad: max(delta, -delta) + span, move: func(o *calrecur.Occurrence) {
+	return calendarShift{pad: max(delta, -delta) + max(0, span), move: func(o *calrecur.Occurrence) {
 		first, firstErr := time.Parse(time.DateOnly, o.StartDate)
 		last, lastErr := time.Parse(time.DateOnly, o.EndDate)
 		if !o.AllDay || firstErr != nil || lastErr != nil {
