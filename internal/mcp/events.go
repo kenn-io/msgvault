@@ -106,8 +106,6 @@ func rpcEventError(err error) error {
 		name = "ResourceExhausted"
 	case mcpevents.Unsupported:
 		name = "Unsupported"
-	case mcpevents.CallbackEndpoint:
-		name = "CallbackEndpointError"
 	case mcpevents.Unavailable:
 	default:
 		e.Code = mcpevents.Unavailable

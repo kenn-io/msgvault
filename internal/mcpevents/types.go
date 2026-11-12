@@ -42,8 +42,6 @@ func (e *Error) Status() int {
 		return http.StatusNotFound
 	case ResourceExhausted:
 		return http.StatusTooManyRequests
-	case CallbackEndpoint:
-		return http.StatusBadGateway
 	default:
 		return http.StatusServiceUnavailable
 	}
