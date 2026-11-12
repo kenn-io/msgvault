@@ -10,7 +10,7 @@ env:
   # Compile without absolute source paths, like the Makefile does.
   GOFLAGS: -trimpath
   PG_MOVED_PKGS: ./internal/matrix ./internal/beeper ./internal/rederive ./internal/chatwoot
-  API_CONTRACT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.ref == 'refs/heads/main' && github.sha) || 'refs/heads/main' }}
+  API_CONTRACT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.before) || '' }}
 
 on:
   workflow_call:
@@ -374,8 +374,12 @@ jobs:
         if: ${{ matrix.name == 'api' }}
         shell: bash
         run: &set-api-contract-base |
-          BASE_SHA=$(git rev-parse HEAD)
-          if [ "$API_CONTRACT_BASE_REF" != "$BASE_SHA" ]; then
+          if [ -z "$API_CONTRACT_BASE_REF" ]; then
+            kit-retry 3 5 git fetch --no-tags --unshallow origin +refs/heads/main:refs/remotes/origin/main
+            BASE_SHA=$(git merge-base HEAD refs/remotes/origin/main)
+          elif [ "$API_CONTRACT_BASE_REF" = "$(git rev-parse HEAD)" ]; then
+            BASE_SHA=$API_CONTRACT_BASE_REF
+          else
             kit-retry 3 5 git fetch --no-tags --depth=1 origin "$API_CONTRACT_BASE_REF"
             BASE_SHA=$(git rev-parse FETCH_HEAD)
           fi
