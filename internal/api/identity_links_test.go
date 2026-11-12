@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -167,11 +168,17 @@ func TestRefreshIdentityCache(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, refresh(missing).Code)
 }
 
-type delayedIdentityCacheStore struct{ *store.Store }
+type delayedIdentityCacheStore struct {
+	*store.Store
+
+	started chan struct{}
+	release chan struct{}
+}
 
 func (s *delayedIdentityCacheStore) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
+	close(s.started)
 	select {
-	case <-time.After(100 * time.Millisecond):
+	case <-s.release:
 		return 1, nil
 	case <-ctx.Done():
 		return 0, ctx.Err()
@@ -180,13 +187,25 @@ func (s *delayedIdentityCacheStore) RefreshIdentityDatasets(ctx context.Context)
 
 func TestRefreshIdentityCacheOutlastsOrdinaryRequestDeadline(t *testing.T) {
 	t.Parallel()
-	wrapped := &delayedIdentityCacheStore{Store: testutil.NewTestStore(t)}
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: wrapped, Logger: testLogger(), RequestTimeout: 10 * time.Millisecond})
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/identity/cache-refresh", nil)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
-	assert.Equal(t, identityCacheStateReady, decodeIdentityLinkResponse(t, w).CacheState)
+	st := testutil.NewTestStore(t)
+	synctest.Test(t, func(t *testing.T) {
+		wrapped := &delayedIdentityCacheStore{Store: st, started: make(chan struct{}), release: make(chan struct{})}
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: wrapped, Logger: testLogger(), RequestTimeout: time.Second})
+		defer func() { require.NoError(t, srv.Shutdown(t.Context())) }()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/identity/cache-refresh", nil)
+		w := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() {
+			srv.Router().ServeHTTP(w, req)
+			close(done)
+		}()
+		<-wrapped.started
+		synctest.Sleep(2 * time.Second)
+		close(wrapped.release)
+		<-done
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		assert.Equal(t, identityCacheStateReady, decodeIdentityLinkResponse(t, w).CacheState)
+	})
 }
 
 func TestLinkIdentity_RepeatedExactEdgeIsIdempotent(t *testing.T) {
