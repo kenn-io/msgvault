@@ -149,6 +149,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 	}
 	var challengedID string
 	var challengedRefresh bool
+	var ownerHead *store.WakeupState
 	for {
 		if challengedID != "" {
 			if err := s.purgeExpired(ctx); err != nil {
@@ -214,12 +215,10 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 			if len(entries)+s.ConfigTargets >= 32 || (owner != "owner" && owned >= 4) {
 				return out, failure(ResourceExhausted, "subscriptions")
 			}
-			if challengedID != "" || owner == "owner" {
-				page, err := s.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
-				if err != nil || page.CompleteThrough.IsZero() {
-					return out, failure(Unavailable, "head_unavailable")
+			if initial = ownerHead; initial == nil && (challengedID != "" || owner == "owner") {
+				if initial, err = s.feedHead(ctx); err != nil {
+					return out, err
 				}
-				initial = &store.WakeupState{At: page.CompleteThrough}
 			}
 		}
 		if challengedID == "" {
@@ -234,7 +233,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 				}
 				return out, failure(CallbackEndpoint, reason)
 			}
-			challengedID, challengedRefresh = id, refresh
+			challengedID, challengedRefresh, ownerHead = id, refresh, initial
 			continue
 		}
 		origin, err := callbackOrigin(in.Delivery.URL)
@@ -290,6 +289,15 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 		}
 		return MCPEventsSubscribeResult{ID: id, RefreshBefore: expires, DeliveryStatus: status}, nil
 	}
+}
+
+// feedHead reads the change-feed head a new subscription position starts from.
+func (s *Service) feedHead(ctx context.Context) (*store.WakeupState, error) {
+	page, err := s.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
+	if err != nil || page.CompleteThrough.IsZero() {
+		return nil, failure(Unavailable, "head_unavailable")
+	}
+	return &store.WakeupState{At: page.CompleteThrough}, nil
 }
 
 // rollbackSubscribe undoes the catalog write after the credential write failed:

@@ -46,6 +46,16 @@ func registerMCPEventsMutation[Req any, Resp any](api huma.API, operationID, met
 	}
 	registerRawHumaRoute(api, op, handler)
 }
+
+// eventsAdmissionError keeps the safe source-scope reason of a pre-service
+// admission failure inside the Events error envelope; other API errors pass
+// through unchanged.
+func eventsAdmissionError(err *apiHTTPError) error {
+	if err.ErrorResponse.Error == "source_scope_unavailable" {
+		return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "source_scope_unavailable"}
+	}
+	return err
+}
 func eventsError(w http.ResponseWriter, err error) {
 	var e *mcpevents.Error
 	if !errors.As(err, &e) {
@@ -76,7 +86,7 @@ func (s *Server) handleMCPEventsSubscribe(w http.ResponseWriter, r *http.Request
 		if grant != nil {
 			release, apiErr := s.beginAgentRead(r, "listChangedMessages", grant, agentgrant.PermissionSearchRead)
 			if apiErr != nil {
-				return mcpevents.MCPEventsSubscribeResult{}, apiErr
+				return mcpevents.MCPEventsSubscribeResult{}, eventsAdmissionError(apiErr)
 			}
 			ids := agentReadSourceIDs(r)
 			if in.Arguments.SourceID != 0 && !slices.Contains(ids, in.Arguments.SourceID) {
