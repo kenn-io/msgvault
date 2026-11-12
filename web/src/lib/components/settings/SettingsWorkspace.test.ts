@@ -160,14 +160,14 @@ it('shows the restart cue before saving only while a restart-required draft is p
   render(SettingsWorkspace, { client, operationsController, onStatusChange, category: 'advanced' });
   await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
   const footer = screen.getByText('1 unsaved change').parentElement!;
-  expect(within(footer).queryByText('Restart msgvault to apply these changes.')).toBeNull();
+  expect(within(footer).queryByText('Restart required after saving.')).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Server' }));
   await fireEvent.click(await screen.findByRole('switch', { name: 'Keep logs' }));
-  expect(within(footer).getByText('Restart msgvault to apply these changes.')).toBeDefined();
+  expect(within(footer).getByText('Restart required after saving.')).toBeDefined();
   expect(within(footer).getByText('2 unsaved changes.')).toBeDefined();
   expect(seen.some(request => request.method === 'PATCH')).toBe(false);
   await fireEvent.click(screen.getByRole('switch', { name: 'Keep logs' }));
-  expect(within(footer).queryByText('Restart msgvault to apply these changes.')).toBeNull();
+  expect(within(footer).queryByText('Restart required after saving.')).toBeNull();
   expect(within(footer).getByText('1 unsaved change')).toBeDefined();
 });
 

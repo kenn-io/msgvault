@@ -101,14 +101,18 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			m.revealSettingsFocus()
 			return m, nil
 		}
-		if m.settings.groupCursor > 0 {
-			m.changeSettingsGroup(-1)
+		changed := m.settings.groupCursor > 0 || m.settings.rowCursor > 0
+		m.changeSettingsGroup(-1)
+		if changed {
 			m.revealSettingsFocus()
 		}
 	case keyNameRight, "l":
-		if !m.settingsIsNarrow() && m.settings.groupCursor+1 < len(m.settings.groups) {
+		if !m.settingsIsNarrow() {
+			changed := m.settings.groupCursor+1 < len(m.settings.groups) || m.settings.rowCursor > 0
 			m.changeSettingsGroup(1)
-			m.revealSettingsFocus()
+			if changed {
+				m.revealSettingsFocus()
+			}
 		}
 	case keyNameEnter:
 		return m.beginSettingsEdit()

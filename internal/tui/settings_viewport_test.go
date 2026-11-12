@@ -39,6 +39,23 @@ func TestSettingsViewportEndpointDetail(t *testing.T) {
 	}
 }
 
+func TestSettingsCategoryBoundaryResetsSelection(t *testing.T) {
+	snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
+	for i := range 2 {
+		snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("search.field%d", i), Group: "search", Label: fmt.Sprintf("Field %d", i), Kind: SettingKindString, Value: stringSettingValue("value")})
+	}
+	model := resizeModel(t, loadedSettingsModel(t, snapshot), 100, 12)
+	for _, direction := range []rune{'h', 'l'} {
+		model, _ = sendKey(t, model, key('j'))
+		model.settings.status = "Earlier status"
+		model, _ = sendKey(t, model, key(direction))
+		screen := uv.NewScreenBuffer(100, 12)
+		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+		assert.Contains(t, screen.String(), "▶   Field 0")
+		assert.NotContains(t, screen.String(), "Earlier status")
+	}
+}
+
 func TestSettingsViewportExitEditorKeepsSelectionVisible(t *testing.T) {
 	for _, exit := range []tea.KeyPressMsg{keyEsc(), keyEnter()} {
 		t.Run(exit.String(), func(t *testing.T) {

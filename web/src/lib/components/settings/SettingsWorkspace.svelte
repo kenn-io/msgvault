@@ -510,7 +510,7 @@
   {:else}
     <span class="unsaved" role="status">
       {`${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}${incompleteDrafts > 0 ? '. Enter a number to save.' : draftNeedsRestart ? '.' : ''}`}
-      {#if draftNeedsRestart}<span>Restart msgvault to apply these changes.</span>{/if}
+      {#if draftNeedsRestart}<span>Restart required after saving.</span>{/if}
     </span>
     <Button label="Discard" disabled={saving} onclick={discard} />
     <Button
@@ -644,7 +644,7 @@
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
           {#if buildError && activeId === 'overview'}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
           {#if pendingRestart || inference.status?.pending_restart}
-            <InlineNotice tone="warning" message="Restart pending."><span class="restart-guidance">On the computer running msgvault, restart its service, or stop and rerun your foreground <code>msgvault serve</code> with the same flags. Otherwise, run <code>msgvault daemon restart</code> with the same custom <code>--home</code> and <code>--config</code> options.</span></InlineNotice>
+            <div class="restart-notice"><InlineNotice tone="warning" message="Restart pending."><span>On the computer running msgvault, restart its service, or stop and rerun your foreground <code>msgvault serve</code> with the same flags. Otherwise, run <code>msgvault daemon restart</code> with the same custom <code>--home</code> and <code>--config</code> options.</span></InlineNotice></div>
           {/if}
         </div>
 
@@ -823,6 +823,9 @@
   .notices :global(.kit-notice) {
     padding: var(--space-box);
     gap: var(--control-gap);
+  }
+  .restart-notice :global(.kit-notice.kit-notice) {
+    border-color: var(--status-warning-ink);
   }
   .notice {
     margin: 0;
