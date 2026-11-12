@@ -54,13 +54,14 @@ Muesli, Notion, Twenty, Twilio). Meeting IDs are message IDs; find them with
 		newMeetingContextCommand(deps),
 		newMeetingActionsCommand(deps),
 		newMeetingMetricsCommand(deps),
+		newMeetingLinksCommand(deps),
 	)
 	return command
 }
 
 func openMeetingCommandClient(
 	ctx context.Context,
-	deps meetingCommandDeps,
+	deps meetingCommandDeps, minVersion string,
 ) (meetingCommandClient, func(), error) {
 	if deps.open == nil {
 		return nil, func() {}, errors.New("meeting daemon client is unavailable")
@@ -77,11 +78,11 @@ func openMeetingCommandClient(
 		cleanup()
 		return nil, func() {}, fmt.Errorf("check daemon meeting capability: %w", err)
 	}
-	if !daemonclient.APISchemaVersionAtLeast(version, meetingsMinAPISchemaVersion) {
+	if !daemonclient.APISchemaVersionAtLeast(version, minVersion) {
 		cleanup()
 		return nil, func() {}, fmt.Errorf(
 			"meeting commands require daemon API schema %s or newer (daemon reports %q); upgrade the daemon",
-			meetingsMinAPISchemaVersion, version,
+			minVersion, version,
 		)
 	}
 	return client, cleanup, nil
@@ -114,7 +115,7 @@ default 131072). Meeting IDs come from the search in 'msgvault meetings'.`,
 			if maxBytes < 4096 || maxBytes > 1048576 {
 				return usageErr(command, errors.New("--max-bytes must be between 4096 and 1048576"))
 			}
-			client, cleanup, err := openMeetingCommandClient(command.Context(), deps)
+			client, cleanup, err := openMeetingCommandClient(command.Context(), deps, meetingsMinAPISchemaVersion)
 			if err != nil {
 				return err
 			}
@@ -288,7 +289,7 @@ func newMeetingActionsCommand(deps meetingCommandDeps) *cobra.Command {
 			if utf8.RuneCountInString(queryText) > 256 {
 				return usageErr(command, errors.New("--query must be at most 256 characters"))
 			}
-			client, cleanup, err := openMeetingCommandClient(command.Context(), deps)
+			client, cleanup, err := openMeetingCommandClient(command.Context(), deps, meetingsMinAPISchemaVersion)
 			if err != nil {
 				return err
 			}
@@ -382,7 +383,7 @@ func newMeetingMetricsCommand(deps meetingCommandDeps) *cobra.Command {
 			if err != nil {
 				return usageErr(command, err)
 			}
-			client, cleanup, err := openMeetingCommandClient(command.Context(), deps)
+			client, cleanup, err := openMeetingCommandClient(command.Context(), deps, meetingsMinAPISchemaVersion)
 			if err != nil {
 				return err
 			}

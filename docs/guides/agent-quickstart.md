@@ -250,6 +250,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_kata_issue_context` | read | — | owner-only |
 | `get_meeting_context` | read | — | owner-only |
 | `get_meeting_metrics` | read | — | owner-only |
+| `get_meeting_record` | read | — | message.read |
 | `get_message` | read | — | message.read |
 | `get_message_tags` | read | — | owner-only |
 | `get_participant_identity` | read | — | owner-only |

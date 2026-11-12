@@ -3,9 +3,11 @@
  */
 import type {
   ActionsPage,
+  GetMeetingRecordParams,
   MeetingActionsRequest,
   MeetingContextRequest,
   MeetingMetricsRequest,
+  MeetingRecord,
   Metrics,
   PacketResult,
 } from "../models";
@@ -62,6 +64,18 @@ export const getMeetingMetrics = (
       headers: { "Content-Type": "application/json" },
       data: meetingMetricsRequest,
     },
+    options,
+  );
+};
+/**
+ * @summary Read an archived meeting from a note or event
+ */
+export const getMeetingRecord = (
+  params: GetMeetingRecordParams,
+  options?: SecondParameter<typeof orvalFetch<MeetingRecord>>,
+) => {
+  return orvalFetch<MeetingRecord>(
+    { url: `/api/v1/meetings/record`, method: "GET", params },
     options,
   );
 };

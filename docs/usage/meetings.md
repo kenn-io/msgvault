@@ -48,6 +48,32 @@ matches. Meetings mode does not offer selection or deletion.
 Unscoped search includes meetings and chats. Email-specific CLI and TUI
 aggregates remain email-only unless you choose another message type.
 
+## Link calendar events and notes
+
+Use `msgvault meetings links <note-id>` to see the calendar copies and notes
+that share an exact occurrence. You can also pass `msg:<id>` or an event `ref`
+from the `REF` column of `msgvault calendar events`, for example
+`msgvault meetings links evt:23@20270321T100000Z`. The API and MCP expose the same record.
+Twenty notes use their iCalendar UID and scheduled time. Granola notes use the
+Google event ID only when their owner matches the archived calendar's mailbox.
+Twenty notes with the same UID and time and Granola notes with the same
+instance-suffixed Google ID can link before a calendar is imported. A bare
+Google series ID cannot identify one week, so those notes remain separate.
+A calendar single or exception can prove that a bare ID names one event,
+including after a reschedule. Other note formats remain separate unless they supply supported evidence.
+
+Records show whether a calendar copy was cancelled or deleted at its source.
+When a recurrence cannot be expanded, the record keeps the copies it found and
+reports the affected message IDs and reasons in `unexpandable`. The CLI table
+prints those warnings to stderr; JSON and MCP return them with the record.
+
+An archived cancellation stays in the record even when its series master hasn't
+been archived. Its `start` and `end` are `null` in JSON and `unknown` in the
+CLI table, and `unexpandable` reports the missing series and bounds. A known
+bound is kept even if the other is missing. Importing the master later fills
+in the times. Note matches, calendar candidate reads, and recurrence steps share
+one request work limit; exceeding it returns `query_too_broad`.
+
 ## Export context and read follow-ups
 
 In Messages, select meeting rows and choose **Meeting context…** in the

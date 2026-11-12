@@ -126,7 +126,7 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 			return nil, fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
 		}
 	}
-	// Required strings a response may send empty keep presence but lose their non-empty check.
+	// Required fields a response may send empty or null keep presence but lose their non-empty check.
 	for _, target := range [][3]string{
 		{"Attendee", "Email", "a"},
 		{"Attendee", "DisplayName", "a"},
@@ -144,6 +144,8 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		{"LoopCounterparty", "DisplayName", "l"},
 		{"LoopCounterparty", "Address", "l"},
 		{"LoopItem", "Summary", "l"},
+		{"MeetingLink", "Start", "m"},
+		{"MeetingLink", "End", "m"},
 	} {
 		typeName, field, receiver := target[0], target[1], target[2]
 		shapeErr := fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
@@ -164,10 +166,10 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 			result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
 		case 0:
 			// Types without other validators check required fields through struct tags.
-			tagged := regexp.MustCompile(`(?m)(^type ` + typeName + ` struct \{\n(?:\t[^\n]*\n)*?\t` + field + `\s+string\s+` + "`" + `json:"[^"]+")\s+validate:"required"` + "`")
+			tagged := regexp.MustCompile(`(?m)(^type ` + typeName + ` struct \{\n(?:\t[^\n]*\n)*?\t` + field + `\s+(?:string|\*time\.Time)\s+` + "`" + `json:"[^"]+")\s+validate:"required"` + "`")
 			if loc := tagged.FindSubmatchIndex(result); loc != nil {
 				result = append(append(append([]byte(nil), result[:loc[3]]...), '`'), result[loc[1]:]...)
-			} else if !regexp.MustCompile(`\b` + field + `\s+string\b`).Match(result) {
+			} else if !regexp.MustCompile(`(?m)^type ` + typeName + ` struct \{\n(?:\t[^\n]*\n)*?\t` + field + `\s+(?:string|\*time\.Time)`).Match(result) {
 				return nil, shapeErr
 			}
 		default:
