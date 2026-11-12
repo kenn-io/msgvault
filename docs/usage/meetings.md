@@ -58,8 +58,7 @@ refresh, and a future meeting counts at the first cache check after it starts.
 An all-day meeting starts at midnight in its own time zone and keeps its date
 on the heat calendar.
 If a series can't be expanded, it counts once per calendar message and the
-cache build logs a warning naming those messages. Meeting records explain
-unsupported rules.
+cache build logs a warning naming those messages.
 
 Use `msgvault meetings links <note-id>` to see the calendar copies and notes
 that share an exact occurrence. You can also pass `msg:<id>` or an event `ref`

@@ -1097,10 +1097,10 @@ func TestMeetingOccurrenceCountsInRelationshipIndex(t *testing.T) {
 	replaceRelationshipParquet(t, db, root, "messages", `SELECT * FROM meeting_messages`)
 	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, '' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 101, 1, 'from', '' UNION ALL SELECT 101, 2, 'to', ''`)
 	replaceRelationshipParquet(t, db, root, DatasetMeetingOccurrences, `SELECT * FROM (VALUES
-		(100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
-		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
-		(100::BIGINT, 'second'::VARCHAR, TIMESTAMP '2026-07-27', true, []::VARCHAR[], -9223372036854775810::DECIMAL(38,0))
-	) AS t(message_id, occurrence_key, occurred_at, counted, declined_emails, occurrence_id)`)
+		(100::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
+		(101::BIGINT, 'first'::VARCHAR, TIMESTAMP '2026-07-20', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0)),
+		(100::BIGINT, 'second'::VARCHAR, TIMESTAMP '2026-07-27', NULL::DATE, true, []::VARCHAR[], -9223372036854775810::DECIMAL(38,0))
+	) AS t(message_id, occurrence_key, occurred_at, start_date, counted, declined_emails, occurrence_id)`)
 	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root, EffectiveAt: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)})
 	require.NoError(t, err)
 	var meetings, dailyMeetings int64

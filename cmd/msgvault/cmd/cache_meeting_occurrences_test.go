@@ -44,9 +44,9 @@ func TestMeetingCountsCalendarHistoryAndAvailableTranscripts(t *testing.T) {
 		return id
 	}
 	makeMessage(source.ID, "series", "calendar_event", "gcal_json", `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=4"]}`)
-	makeMessage(source.ID, "granola", "meeting_transcript", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"series_20240109T100000Z"},"transcript":[{"text":"Hello"}]}`)
+	makeMessage(notesSource.ID, "granola", "meeting_transcript", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"series_20240109T100000Z"},"transcript":[{"text":"Hello"}]}`)
 	makeMessage(notesSource.ID, "twenty", "meeting_transcript", "twenty_json", `{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"Hello"}]}]},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2024-01-09T10:00:00Z"}}`)
-	makeMessage(source.ID, "pending", "meeting_transcript", "meeting_json", `{}`)
+	makeMessage(notesSource.ID, "pending", "meeting_transcript", "meeting_json", `{}`)
 	_, err = buildCache(t.Context(), dbPath, analytics, true)
 	require.NoError(t, err)
 	engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
@@ -143,6 +143,9 @@ func TestMeetingCountsRefresh(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gcal", "owner@example.com")
 	require.NoError(t, err)
+	notesSource, err := st.GetOrCreateSource("meeting_import", "owner@example.com")
+	require.NoError(t, err)
+	require.NoError(t, st.AddAccountIdentity(notesSource.ID, "owner@example.com", "manual"))
 	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"owner@example.com","time_zone":"UTC"}`))
 	require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
 	owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
@@ -154,10 +157,10 @@ func TestMeetingCountsRefresh(t *testing.T) {
 	_, err = st.LinkParticipants(person, alias)
 	require.NoError(t, err)
 	start := time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC)
-	makeMessage := func(key, typ, format, raw string) int64 {
+	makeMessage := func(sourceID int64, key, typ, format, raw string) int64 {
 		t.Helper()
 		id, err := st.PersistMessage(&store.MessagePersistData{
-			Message:      &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: typ, SentAt: sql.NullTime{Time: start, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
+			Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: typ, SentAt: sql.NullTime{Time: start, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
 			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"},
 			RawMIME:      []byte(raw), RawFormat: format,
 			Metadata: &sql.NullString{String: `{"calendar_id":"owner@example.com"}`, Valid: true},
@@ -167,8 +170,8 @@ func TestMeetingCountsRefresh(t *testing.T) {
 		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
 		return id
 	}
-	event := makeMessage("event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person-alias@example.com","responseStatus":"accepted"}]}`)
-	note := makeMessage("note", "meeting_transcript", "meeting_json", `{"transcript":"Notes"}`)
+	event := makeMessage(source.ID, "event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person-alias@example.com","responseStatus":"accepted"}]}`)
+	note := makeMessage(notesSource.ID, "note", "meeting_transcript", "meeting_json", `{"transcript":"Notes"}`)
 	eventRef, noteRef := store.MeetingLinkRef{Kind: "evt", OccurrenceRef: store.OccurrenceRef{MessageID: event}}, store.MeetingLinkRef{Kind: "msg", OccurrenceRef: store.OccurrenceRef{MessageID: note}}
 	_, err = st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
 	require.NoError(t, err)
@@ -194,11 +197,9 @@ func TestMeetingCountsRefresh(t *testing.T) {
 
 	_, err = st.DecideMeetingLinkContext(t.Context(), eventRef, noteRef, "link")
 	require.NoError(t, err)
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE meeting_details SET transcript_state='pending' WHERE message_id=?`, note)
+	assert.Equal(t, note, makeMessage(notesSource.ID, "note", "meeting_transcript", "meeting_json", `{}`))
+	_, err = buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
-	result, err = buildCache(t.Context(), dbPath, analytics, false)
-	require.NoError(t, err)
-	assert.True(t, result.IdentityOnly)
 	assert.EqualValues(t, 1, count())
 	tx, err := st.DB().BeginTx(t.Context(), nil)
 	require.NoError(t, err)
@@ -213,13 +214,24 @@ func TestMeetingCountsRefresh(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.IdentityOnly)
 	assert.EqualValues(t, 0, count())
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE meeting_details SET transcript_state='available' WHERE message_id=?`, note)
+	assert.Equal(t, note, makeMessage(notesSource.ID, "note", "meeting_transcript", "meeting_json", `{"transcript":"Notes"}`))
+	_, err = buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
-	result, err = buildCache(t.Context(), dbPath, analytics, false)
-	require.NoError(t, err)
-	assert.True(t, result.IdentityOnly)
 	assert.EqualValues(t, 1, count())
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE meeting_details SET transcript_state='pending' WHERE message_id=?`, note)
+	assert.Equal(t, note, makeMessage(notesSource.ID, "note", "meeting_transcript", "meeting_json", `{}`))
+	tx, err = st.DB().BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(t.Context(), `UPDATE calendar_events SET content_hash='accepted-evidence' WHERE message_id=?`, event)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(t.Context(), `DELETE FROM calendar_event_attendees WHERE message_id=?`, event)
+	require.NoError(t, err)
+	_, err = tx.ExecContext(t.Context(), `INSERT INTO calendar_event_attendees (message_id, ordinal, email, role, rsvp) VALUES (?, 0, 'person-alias@example.com', 'required', 'accepted')`, event)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	_, err = buildCache(t.Context(), dbPath, analytics, false)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, count())
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET status='tentative' WHERE message_id=?`, event)
 	require.NoError(t, err)
 	derivedRefreshBeforeSnapshotHook = func() {
 		_, hookErr := st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET status='cancelled' WHERE message_id=?`, event)
@@ -454,6 +466,9 @@ func TestMeetingCountsDeletedAndSourceScope(t *testing.T) {
 			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 			source, err := st.GetOrCreateSource("gcal", "owner@example.com")
 			require.NoError(t, err)
+			notesSource, err := st.GetOrCreateSource("meeting_import", "owner@example.com")
+			require.NoError(t, err)
+			require.NoError(t, st.AddAccountIdentity(notesSource.ID, "owner@example.com", "manual"))
 			require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"owner@example.com","time_zone":"UTC"}`))
 			require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
 			owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
@@ -461,10 +476,10 @@ func TestMeetingCountsDeletedAndSourceScope(t *testing.T) {
 			person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
 			require.NoError(t, err)
 			at := time.Date(2024, 1, 2, 10, 0, 0, 0, time.UTC)
-			makeMessage := func(key, typ, format, raw string) int64 {
+			makeMessage := func(sourceID int64, key, typ, format, raw string) int64 {
 				t.Helper()
 				id, err := st.PersistMessage(&store.MessagePersistData{
-					Message:      &store.Message{SourceID: source.ID, SourceMessageID: key, MessageType: typ, SentAt: sql.NullTime{Time: at, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
+					Message:      &store.Message{SourceID: sourceID, SourceMessageID: key, MessageType: typ, SentAt: sql.NullTime{Time: at, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
 					Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"},
 					RawMIME:      []byte(raw), RawFormat: format, Metadata: &sql.NullString{String: `{"calendar_id":"owner@example.com"}`, Valid: true},
 				})
@@ -473,12 +488,12 @@ func TestMeetingCountsDeletedAndSourceScope(t *testing.T) {
 				require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{person}, []string{""}))
 				return id
 			}
-			event := makeMessage("event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
+			event := makeMessage(source.ID, "event", "calendar_event", "gcal_json", `{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
 			if tc.deleted {
 				_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`, event)
 				require.NoError(t, err)
 			} else {
-				makeMessage("note", "meeting_transcript", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"event"},"transcript":[{"text":"Notes"}]}`)
+				makeMessage(notesSource.ID, "note", "meeting_transcript", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"event"},"transcript":[{"text":"Notes"}]}`)
 			}
 			_, err = buildCache(t.Context(), dbPath, analytics, true)
 			require.NoError(t, err)

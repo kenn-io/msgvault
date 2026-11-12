@@ -93,10 +93,13 @@ func TestMeetingOccurrenceCountsTwoDatesLinkedToOneNote(t *testing.T) {
 	assert.Equal(t, eventKeys, noteKeys)
 }
 
-func TestMeetingOccurrenceCountsCancelledSeriesAndAvailableNote(t *testing.T) {
+func TestMeetingOccurrenceCountsCancelledSeriesLeavesAvailableNoteIndependent(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "cancelled-series", `{"id":"series","status":"cancelled","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
 	_, note := projectionFixture(t, st, "available-note", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270314T100000Z"},"transcript":[{"text":"Notes"}]}`)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	require.NoError(t, err)
+	assert.Empty(t, record.Links)
 	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	counts := map[int64]bool{}
@@ -162,7 +165,7 @@ func TestMeetingOccurrenceCountsOwnerDeclineAndNoteAvailability(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	data, event := calendarFixture(t, st, "declined", `{"id":"declined","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"attendees":[{"email":"calendar@example.com","responseStatus":"declined"}]}`, "delegate@example.com")
 	require.NoError(t, st.AddAccountIdentity(data.Message.SourceID, "calendar@example.com", "manual"))
-	_, note := projectionFixture(t, st, "note", "meeting_json", `{}`)
+	noteData, note := projectionFixture(t, st, "note", "meeting_json", `{}`)
 	_, err := st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
 	require.NoError(t, err)
 	read := func() map[int64]bool {
@@ -176,7 +179,8 @@ func TestMeetingOccurrenceCountsOwnerDeclineAndNoteAvailability(t *testing.T) {
 		return counts
 	}
 	assert.Equal(t, map[int64]bool{event: false, note: false}, read())
-	_, err = st.db.ExecContext(t.Context(), `UPDATE meeting_details SET transcript_state='available' WHERE message_id=?`, note)
+	noteData.RawMIME = []byte(`{"transcript":"Notes"}`)
+	_, err = st.PersistMessage(noteData)
 	require.NoError(t, err)
 	assert.Equal(t, map[int64]bool{event: false, note: true}, read())
 }
