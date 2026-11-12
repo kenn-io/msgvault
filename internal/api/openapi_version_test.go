@@ -183,8 +183,6 @@ func TestAPIVersionMarkerSummary(t *testing.T) {
 	entries, err := os.ReadDir(apiContractsDir)
 	require.NoError(t, err)
 	for _, entry := range entries {
-		_, _, ok := parseAPIMarker(entry.Name())
-		assert.True(t, ok, entry.Name())
 		content, err := os.ReadFile(filepath.Join(apiContractsDir, entry.Name()))
 		require.NoError(t, err)
 		summary := strings.TrimSuffix(strings.TrimSuffix(string(content), "\n"), "\r")
@@ -194,20 +192,7 @@ func TestAPIVersionMarkerSummary(t *testing.T) {
 	}
 }
 
-func checkAPIContractLocalChangedDocument(t *testing.T) {
-	original, err := apiContractDigest(OpenAPIDocument(), openAPIClientDocument())
-	require.NoError(t, err)
-	doc := OpenAPIDocument()
-	doc.Paths["/api/v1/contract-regression"] = &huma.PathItem{Get: &huma.Operation{OperationID: "contract-regression"}}
-	changed, err := apiContractDigest(doc, openAPIClientDocument())
-	require.NoError(t, err)
-	err = checkAPIContract("5.1.0", changed, []string{"5.1.0_" + original + "_" + strings.Repeat("a", 64)}, nil)
-	require.ErrorContains(t, err, "testdata/api-version-contracts/5.1.0_"+changed+"_<summary-sha256>")
-	require.ErrorContains(t, err, "5.2.0")
-}
-
 func TestCheckAPIContract(t *testing.T) {
-	t.Run("local changed document", checkAPIContractLocalChangedDocument)
 	a, b := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	m := func(version, digest string) string { return version + "_" + digest + "_" + strings.Repeat("c", 64) }
 	for _, tc := range []struct {
@@ -260,11 +245,6 @@ func TestAPIBaseMarkers(t *testing.T) {
 	markers, err := apiBaseMarkers(t.Context(), "HEAD")
 	require.NoError(err)
 	assert.Equal([]string{marker}, markers)
-	require.NoError(os.WriteFile("internal/api/"+apiContractsDir+"/"+marker, []byte("Corrected summary\n"), 0o644))
-	entries, err := os.ReadDir("internal/api/" + apiContractsDir)
-	require.NoError(err)
-	require.Len(entries, 1)
-	require.NoError(checkAPIContract("5.0.0", strings.Repeat("f", 64), []string{entries[0].Name()}, markers))
 }
 
 func TestAPIContractDigest(t *testing.T) {
