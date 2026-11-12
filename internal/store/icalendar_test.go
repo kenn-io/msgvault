@@ -3,7 +3,6 @@ package store
 import (
 	"bytes"
 	"compress/zlib"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -17,12 +16,13 @@ import (
 	"go.kenn.io/msgvault/internal/calevent"
 )
 
-func importICalendarForTest(st *Store, ctx context.Context, sourceID int64, raw []byte) (ICalendarImportSummary, error) {
+func importICalendarForTest(t *testing.T, st *Store, sourceID int64, raw []byte) (ICalendarImportSummary, error) {
+	t.Helper()
 	prepared, err := PrepareICalendar(raw)
 	if err != nil {
 		return ICalendarImportSummary{}, err
 	}
-	return st.PersistICalendarContext(ctx, sourceID, prepared)
+	return st.PersistICalendarContext(t.Context(), sourceID, prepared)
 }
 
 func calendarDocument(method, props string) []byte {
@@ -48,7 +48,7 @@ func TestICalendarDeclaredTimeZone(t *testing.T) {
 	text = strings.Replace(text, "BEGIN:VEVENT", "X-WR-TIMEZONE:America/New_York\r\nBEGIN:VEVENT", 1)
 	text = strings.Replace(text, "END:VCALENDAR", "BEGIN:VEVENT\r\nUID:second@example.com\r\nDTSTAMP:20270101T000000Z\r\nDTSTART:20270115T090000\r\nEND:VEVENT\r\nEND:VCALENDAR", 1)
 	source := icsSource(t, st)
-	_, err := importICalendarForTest(st, t.Context(), source, []byte(text))
+	_, err := importICalendarForTest(t, st, source, []byte(text))
 	requirements.NoError(err)
 	ids := emailEvents(t, st, source)
 	requirements.Len(ids, 2)
@@ -67,7 +67,7 @@ func TestICalendarInvalidFloatingRecurrenceDate(t *testing.T) {
 			source := icsSource(t, st)
 			property := name + ":20270303T090000,invalid"
 			raw := calendarDocument("REQUEST", "DTSTART:20270302T090000Z\r\nRRULE:FREQ=DAILY;COUNT=2\r\n"+property)
-			_, err := importICalendarForTest(st, t.Context(), source, raw)
+			_, err := importICalendarForTest(t, st, source, raw)
 			requirements.NoError(err)
 			ids := emailEvents(t, st, source)
 			requirements.Len(ids, 1)
@@ -101,7 +101,7 @@ func TestICalendarCancelledSeriesOccurrences(t *testing.T) {
 				if mode == "email" {
 					persistInviteEmailForSource(t, st, source, fmt.Sprintf("cancelled-series-%d", i), inviteEmail(event))
 				} else {
-					_, err := importICalendarForTest(st, t.Context(), source, event)
+					_, err := importICalendarForTest(t, st, source, event)
 					r.NoError(err)
 				}
 			}
@@ -132,7 +132,7 @@ func TestICalendarRangeKeepsSiblings(t *testing.T) {
 				items[0], items[1] = items[1], items[0]
 			}
 			for _, item := range items {
-				_, err := importICalendarForTest(st, t.Context(), source, item)
+				_, err := importICalendarForTest(t, st, source, item)
 				requirements.NoError(err)
 			}
 			before := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
@@ -177,7 +177,7 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 					calendarDocument("CANCEL", "RECURRENCE-ID:20270304T120000Z"))
 			}
 			for _, event := range events {
-				_, err := importICalendarForTest(st, t.Context(), source, event)
+				_, err := importICalendarForTest(t, st, source, event)
 				requirements.NoError(err)
 			}
 			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
@@ -234,7 +234,7 @@ func TestICalendarRangeMovesAroundLaterEdits(t *testing.T) {
 				initialMove = strings.Replace(move, ";RANGE=THISANDFUTURE", "", 1)
 			}
 			for _, event := range append([][]byte{calendarDocument("REQUEST", master), calendarDocument("REQUEST", initialMove)}, tc.events...) {
-				_, err := importICalendarForTest(st, t.Context(), source, event)
+				_, err := importICalendarForTest(t, st, source, event)
 				requirements.NoError(err)
 			}
 			from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
@@ -257,7 +257,7 @@ func TestICalendarRangeMovesAroundLaterEdits(t *testing.T) {
 				requirements.Len(page.Occurrences, 1)
 				requirements.Equal("cancelled", page.Occurrences[0].Status)
 				requirements.Empty(page.Unexpandable)
-				_, err = importICalendarForTest(st, t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:2\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"))
+				_, err = importICalendarForTest(t, st, source, calendarDocument("REQUEST", "SEQUENCE:2\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"))
 				requirements.NoError(err)
 				page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 				requirements.NoError(err)
@@ -283,7 +283,7 @@ func TestICalendarRangeLoadsDistantIndividualEdits(t *testing.T) {
 				calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270310T140000Z\r\nDURATION:PT1H"),
 				calendarDocument(tc.method, tc.edit),
 			} {
-				_, err := importICalendarForTest(st, t.Context(), source, event)
+				_, err := importICalendarForTest(t, st, source, event)
 				r.NoError(err)
 			}
 			from := time.Date(2027, 3, 11, 0, 0, 0, 0, time.UTC)
@@ -317,7 +317,7 @@ func TestICalendarRangeCancellationInheritsEarlierMove(t *testing.T) {
 			st := newRFC822IDBackfillBackendStore(t)
 			source := icsSource(t, st)
 			for _, event := range [][]byte{calendarDocument("REQUEST", tc.master+"\r\nSUMMARY:Old\r\nATTENDEE:mailto:old@example.org"), calendarDocument("REQUEST", tc.move+"\r\nSUMMARY:New\r\nATTENDEE:mailto:new@example.org"), calendarDocument("CANCEL", tc.cancel), calendarDocument("REQUEST", tc.resume)} {
-				_, err := importICalendarForTest(st, t.Context(), source, event)
+				_, err := importICalendarForTest(t, st, source, event)
 				r.NoError(err)
 			}
 			from := time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC)
@@ -355,7 +355,7 @@ func TestICalendarRangeCancellationInheritsEarlierMove(t *testing.T) {
 			calendarDocument("CANCEL", "RECURRENCE-ID:20270306T120000Z\r\nSUMMARY:Special\r\nATTENDEE:mailto:special@example.org\r\nORGANIZER:mailto:special-owner@example.org"),
 			calendarDocument("CANCEL", "RECURRENCE-ID:20270307T120000Z"),
 		} {
-			_, err := importICalendarForTest(st, t.Context(), source, event)
+			_, err := importICalendarForTest(t, st, source, event)
 			r.NoError(err)
 		}
 		from := time.Date(2027, 3, 5, 0, 0, 0, 0, time.UTC)
@@ -381,6 +381,7 @@ func TestICalendarRangeCancellationInheritsEarlierMove(t *testing.T) {
 }
 
 func calendarEventSeriesLimit(t *testing.T, future bool) {
+	t.Helper()
 	r := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
@@ -455,7 +456,7 @@ func calendarEventSeriesLimit(t *testing.T, future bool) {
 			calendarDocument("REQUEST", "DTSTART:20300301T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Shifted"),
 			calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20300301T120000Z\r\nDTSTART:20270302T140000Z\r\nDURATION:PT1H\r\nSUMMARY:Shifted"),
 		} {
-			_, err := importICalendarForTest(st, t.Context(), source, event)
+			_, err := importICalendarForTest(t, st, source, event)
 			r.NoError(err)
 		}
 	}
@@ -488,7 +489,7 @@ func TestICalendarRangeMovesEndedSeriesIntoWindow(t *testing.T) {
 		calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=1"),
 		calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270302T120000Z\r\nDTSTART:20270312T140000Z\r\nDURATION:PT1H"),
 	} {
-		_, err := importICalendarForTest(st, t.Context(), source, event)
+		_, err := importICalendarForTest(t, st, source, event)
 		r.NoError(err)
 	}
 	from := time.Date(2027, 3, 12, 0, 0, 0, 0, time.UTC)
@@ -507,7 +508,7 @@ func TestICalendarRangeCancelsLaterOccurrences(t *testing.T) {
 		calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=4"),
 		calendarDocument("CANCEL", "SEQUENCE:1\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z"),
 	} {
-		_, err := importICalendarForTest(st, t.Context(), source, event)
+		_, err := importICalendarForTest(t, st, source, event)
 		requirements.NoError(err)
 	}
 	from := time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC)
@@ -529,7 +530,7 @@ func TestICalendarAllDayRangeMovesLaterOccurrences(t *testing.T) {
 		calendarDocument("REQUEST", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=4"),
 		calendarDocument("REQUEST", "RECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20270303\r\nDTSTART;VALUE=DATE:20270304"),
 	} {
-		_, err := importICalendarForTest(st, t.Context(), source, event)
+		_, err := importICalendarForTest(t, st, source, event)
 		requirements.NoError(err)
 	}
 	from := time.Date(2027, 3, 5, 0, 0, 0, 0, time.UTC)
@@ -550,7 +551,7 @@ func TestICalendarSuccessiveRangeMoves(t *testing.T) {
 		calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"),
 		calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270304T120000Z\r\nDTSTART:20270304T160000Z\r\nDURATION:PT1H"),
 	} {
-		_, err := importICalendarForTest(st, t.Context(), source, event)
+		_, err := importICalendarForTest(t, st, source, event)
 		requirements.NoError(err)
 	}
 	from := time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC)
@@ -575,11 +576,11 @@ func TestICalendarRangeReportsIncompletePrefix(t *testing.T) {
 				calendarDocument("REQUEST", tc.master),
 				calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270305T120000Z\r\nDTSTART:20270305T130000Z"),
 			} {
-				_, err := importICalendarForTest(st, t.Context(), source, event)
+				_, err := importICalendarForTest(t, st, source, event)
 				requirements.NoError(err)
 			}
 			if tc.exception != "" {
-				_, err := importICalendarForTest(st, t.Context(), source, calendarDocument("REQUEST", tc.exception))
+				_, err := importICalendarForTest(t, st, source, calendarDocument("REQUEST", tc.exception))
 				requirements.NoError(err)
 			}
 			from := time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC)
@@ -627,13 +628,13 @@ func testICalendarEqualRevisionIgnored(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
 	raw := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nSUMMARY:First")
-	first, err := importICalendarForTest(st, t.Context(), source, raw)
+	first, err := importICalendarForTest(t, st, source, raw)
 	requirements.NoError(err)
 	requirements.Equal(1, first.Changed)
 	ids := emailEvents(t, st, source)
 	requirements.Len(ids, 1)
 	changed := []byte(strings.Replace(string(raw), "SUMMARY:First", "SUMMARY:Changed", 1))
-	duplicate, err := importICalendarForTest(st, t.Context(), source, changed)
+	duplicate, err := importICalendarForTest(t, st, source, changed)
 	requirements.NoError(err)
 	assertions.Zero(duplicate.Changed)
 	assertions.Equal(1, duplicate.Unchanged)
@@ -641,7 +642,7 @@ func testICalendarEqualRevisionIgnored(t *testing.T) {
 	before, err := st.DerivedDataRevisionContext(t.Context())
 	requirements.NoError(err)
 	later := strings.Replace(string(changed), "20270301T120000Z", "20270301T130000Z", 1)
-	_, err = importICalendarForTest(st, t.Context(), source, []byte(later))
+	_, err = importICalendarForTest(t, st, source, []byte(later))
 	requirements.NoError(err)
 	after, err := st.DerivedDataRevisionContext(t.Context())
 	requirements.NoError(err)
@@ -655,14 +656,14 @@ func testICalendarCancellationWinsRevisionTie(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
 	raw := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nSUMMARY:First\r\nRRULE:FREQ=DAILY;COUNT=2\r\nATTENDEE;PARTSTAT=ACCEPTED:mailto:guest@example.org")
-	_, err := importICalendarForTest(st, t.Context(), source, raw)
+	_, err := importICalendarForTest(t, st, source, raw)
 	requirements.NoError(err)
 	ids := emailEvents(t, st, source)
 	requirements.Len(ids, 1)
 	cancel := calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nDTSTAMP:20270301T120000Z")
 	before, err := st.DerivedDataRevisionContext(t.Context())
 	requirements.NoError(err)
-	_, err = importICalendarForTest(st, t.Context(), source, cancel)
+	_, err = importICalendarForTest(t, st, source, cancel)
 	requirements.NoError(err)
 	after, err := st.DerivedDataRevisionContext(t.Context())
 	requirements.NoError(err)
@@ -670,7 +671,7 @@ func testICalendarCancellationWinsRevisionTie(t *testing.T) {
 	row := calendarRows(t, st, ids[0])[0]
 	assertions.Equal("cancelled", row.Event.Status)
 	assertions.Equal("series", row.Event.Kind)
-	_, err = importICalendarForTest(st, t.Context(), source, raw)
+	_, err = importICalendarForTest(t, st, source, raw)
 	requirements.NoError(err)
 	assertions.Equal("cancelled", calendarRows(t, st, ids[0])[0].Event.Status)
 }
@@ -683,7 +684,7 @@ func TestICalendarRawIsNotEmailDedupEvidence(t *testing.T) {
 	first := string(calendarDocument("REQUEST", "DTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z"))
 	event := "BEGIN:VEVENT\r\nUID:other@example.com\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270303T120000Z\r\nEND:VEVENT\r\n"
 	raw := []byte(strings.Replace(first, "END:VCALENDAR\r\n", event+"END:VCALENDAR\r\n", 1))
-	_, err := importICalendarForTest(st, t.Context(), source, raw)
+	_, err := importICalendarForTest(t, st, source, raw)
 	requirements.NoError(err)
 	requirements.Len(emailEvents(t, st, source), 2)
 	candidates, err := st.GetAllRawMIMECandidates(t.Context(), source)
@@ -696,9 +697,9 @@ func TestICalendarCancelledExceptionOccurrenceAndConversationStats(t *testing.T)
 	assertions := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
-	_, err := importICalendarForTest(st, t.Context(), source, calendarFamilyDocument())
+	_, err := importICalendarForTest(t, st, source, calendarFamilyDocument())
 	requirements.NoError(err)
-	_, err = importICalendarForTest(st, t.Context(), source, calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nRECURRENCE-ID:20270303T120000Z"))
+	_, err = importICalendarForTest(t, st, source, calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nRECURRENCE-ID:20270303T120000Z"))
 	requirements.NoError(err)
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
@@ -721,7 +722,7 @@ func TestICalendarAllDayRangeCancellationMovesLaterOccurrence(t *testing.T) {
 		calendarDocument("REQUEST", "DTSTART;VALUE=DATE:20270301\r\nRRULE:FREQ=DAILY;COUNT=31"),
 		calendarDocument("CANCEL", "SEQUENCE:1\r\nRECURRENCE-ID;VALUE=DATE;RANGE=THISANDFUTURE:20270310\r\nDTSTART;VALUE=DATE:20270303"),
 	} {
-		_, err := importICalendarForTest(st, t.Context(), source, event)
+		_, err := importICalendarForTest(t, st, source, event)
 		requirements.NoError(err)
 	}
 	from := time.Date(2027, 3, 20, 0, 0, 0, 0, time.UTC)
@@ -741,7 +742,7 @@ func TestICalendarRangeChangesDetails(t *testing.T) {
 		calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:Old\r\nATTENDEE:mailto:old@example.org"),
 		calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nSUMMARY:New\r\nATTENDEE:mailto:new@example.org"),
 	} {
-		_, err := importICalendarForTest(st, t.Context(), source, event)
+		_, err := importICalendarForTest(t, st, source, event)
 		requirements.NoError(err)
 	}
 	from := time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC)
@@ -805,9 +806,9 @@ func TestICalendarCancellationEnd(t *testing.T) {
 			requirements := require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			source := icsSource(t, st)
-			_, err := importICalendarForTest(st, t.Context(), source, calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2"))
+			_, err := importICalendarForTest(t, st, source, calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2"))
 			requirements.NoError(err)
-			_, err = importICalendarForTest(st, t.Context(), source, calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T120000Z\r\n"+tc.duration))
+			_, err = importICalendarForTest(t, st, source, calendarDocument("CANCEL", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T120000Z\r\n"+tc.duration))
 			requirements.NoError(err)
 			from := time.Date(2027, 3, 3, 12, 30, 0, 0, time.UTC)
 			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(15*time.Minute))
@@ -823,9 +824,9 @@ func TestICalendarCancellationEnd(t *testing.T) {
 		st := newRFC822IDBackfillBackendStore(t)
 		source := icsSource(t, st)
 		raw := strings.Replace(string(calendarDocument("REQUEST", "DTSTART;VALUE=DATE:20270310")), "METHOD:REQUEST\r\n", "", 1)
-		_, err := importICalendarForTest(st, t.Context(), source, []byte(raw))
+		_, err := importICalendarForTest(t, st, source, []byte(raw))
 		requirements.NoError(err)
-		_, err = importICalendarForTest(st, t.Context(), source, calendarDocument("CANCEL", "SEQUENCE:1\r\nSTATUS:CANCELLED"))
+		_, err = importICalendarForTest(t, st, source, calendarDocument("CANCEL", "SEQUENCE:1\r\nSTATUS:CANCELLED"))
 		requirements.NoError(err)
 		from := time.Date(2027, 3, 10, 0, 0, 0, 0, time.UTC)
 		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
@@ -842,7 +843,7 @@ func TestICalendarImportsLargeFileWithSmallEvents(t *testing.T) {
 	source := icsSource(t, st)
 	padding := strings.Repeat("a", maxMeetingRawBytes/2)
 	raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:first@example.com\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nX-PADDING:" + padding + "\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:second@example.com\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T130000Z\r\nX-PADDING:" + padding + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	summary, err := importICalendarForTest(st, t.Context(), source, []byte(raw))
+	summary, err := importICalendarForTest(t, st, source, []byte(raw))
 	requirements.NoError(err)
 	requirements.Equal(2, summary.Changed)
 }
@@ -852,10 +853,10 @@ func TestICalendarOversizedRevisionPreservesEvent(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
 	initial := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Original")
-	_, err := importICalendarForTest(st, t.Context(), source, initial)
+	_, err := importICalendarForTest(t, st, source, initial)
 	requirements.NoError(err)
 	revision := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Updated\r\nDESCRIPTION:"+strings.Repeat("x", maxMeetingRawBytes))
-	_, err = importICalendarForTest(st, t.Context(), source, revision)
+	_, err = importICalendarForTest(t, st, source, revision)
 	requirements.ErrorIs(err, errMeetingRawTooLarge)
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
@@ -870,7 +871,7 @@ func TestICalendarRoomAttendeesAreNotParticipants(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
 	raw := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com\r\nATTENDEE:mailto:guest@example.org\r\nATTENDEE;CUTYPE=ROOM:mailto:conference@example.org")
-	_, err := importICalendarForTest(st, t.Context(), source, raw)
+	_, err := importICalendarForTest(t, st, source, raw)
 	requirements.NoError(err)
 	for _, tc := range []struct {
 		email string
@@ -889,7 +890,7 @@ func TestICalendarRejectsInvalidZoneAtomically(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
 	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VTIMEZONE\r\nTZID:Custom/Test\r\nBEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:sibling@example.com\r\nDTSTAMP:20260701T120000Z\r\nDTSTART:20270706T090000Z\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:old@example.com\r\nDTSTAMP:20260701T120000Z\r\nDTSTART;TZID=Custom/Test:20260706T090000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
-	_, err := importICalendarForTest(st, t.Context(), source, raw)
+	_, err := importICalendarForTest(t, st, source, raw)
 	require.ErrorContains(t, err, "Custom/Test")
 	var count int
 	require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_id=?`, source).Scan(&count))

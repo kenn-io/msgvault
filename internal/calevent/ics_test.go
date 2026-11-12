@@ -232,7 +232,7 @@ func TestICSStatus(t *testing.T) {
 		requirements.NoError(err)
 		requirements.Len(components, 1)
 		assertions.Equal("cancelled", components[0].Event.Status)
-		components, err = ParseICS([]byte(icsExample), "CANCEL", "")
+		_, err = ParseICS([]byte(icsExample), "CANCEL", "")
 		requirements.Error(err)
 		components, err = ParseICS([]byte(icsExample), "request", "")
 		requirements.NoError(err)

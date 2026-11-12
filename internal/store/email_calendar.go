@@ -253,8 +253,8 @@ func (s *Store) persistEmailCalendarPartsWith(ctx context.Context, tx *loggedTx,
 	return summary, nil
 }
 
-func prepareEmailCalendarParts(ctx context.Context, parts []mime.CalendarPart) ([]preparedICS, []string, error) {
-	var prepared []preparedICS
+func prepareEmailCalendarParts(ctx context.Context, parts []mime.CalendarPart) ([]PreparedICS, []string, error) {
+	var prepared []PreparedICS
 	var diagnostics []string
 	for _, part := range parts {
 		if err := ctx.Err(); err != nil {

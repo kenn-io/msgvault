@@ -291,13 +291,13 @@ func TestEmailRederivationRetriesInviteDuringFirstCompletion(t *testing.T) {
 	applied, err := st.IsMigrationApplied(base)
 	requirements.NoError(err)
 	requirements.False(applied)
-	_, err = st.DB().Exec(`CREATE FUNCTION block_email_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.name LIKE '%:email-v3' THEN PERFORM pg_advisory_xact_lock(746120307); END IF; RETURN NEW; END $$`)
+	_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION block_email_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.name LIKE '%:email-v3' THEN PERFORM pg_advisory_xact_lock(746120307); END IF; RETURN NEW; END $$`)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`CREATE TRIGGER block_email_completion BEFORE INSERT ON applied_migrations FOR EACH ROW EXECUTE FUNCTION block_email_completion()`)
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER block_email_completion BEFORE INSERT ON applied_migrations FOR EACH ROW EXECUTE FUNCTION block_email_completion()`)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`CREATE FUNCTION fail_calendar_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.message_type = 'calendar_event' THEN RAISE EXCEPTION 'database unavailable'; END IF; RETURN NEW; END $$`)
+	_, err = st.DB().ExecContext(t.Context(), `CREATE FUNCTION fail_calendar_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.message_type = 'calendar_event' THEN RAISE EXCEPTION 'database unavailable'; END IF; RETURN NEW; END $$`)
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`CREATE TRIGGER fail_calendar_insert BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION fail_calendar_insert()`)
+	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_calendar_insert BEFORE INSERT ON messages FOR EACH ROW EXECUTE FUNCTION fail_calendar_insert()`)
 	requirements.NoError(err)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
@@ -328,7 +328,7 @@ func TestEmailRederivationRetriesInviteDuringFirstCompletion(t *testing.T) {
 	err = <-done
 	joined = true
 	requirements.NoError(err)
-	_, err = st.DB().Exec(`DROP TRIGGER fail_calendar_insert ON messages`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_calendar_insert ON messages`)
 	requirements.NoError(err)
 	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	requirements.NoError(err)
@@ -344,7 +344,7 @@ func TestEmailRederivationRetriesInviteWrittenDuringScan(t *testing.T) {
 	if st.IsPostgreSQL() {
 		t.Skip("uses a SQLite trigger to interrupt calendar writes")
 	}
-	_, err := st.DB().Exec(`CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
+	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
 	requirements.NoError(err)
 	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:retry@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Retry invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
 	written := false
@@ -356,7 +356,7 @@ func TestEmailRederivationRetriesInviteWrittenDuringScan(t *testing.T) {
 	})
 	requirements.NoError(err)
 	requirements.True(written)
-	_, err = st.DB().Exec(`DROP TRIGGER fail_invite_write`)
+	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_invite_write`)
 	requirements.NoError(err)
 	_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 	requirements.NoError(err)
@@ -393,14 +393,14 @@ func TestEmailRederivationRetriesInviteBeforeCompletedCursor(t *testing.T) {
 			}
 			_, _, err := RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 			requirements.NoError(err)
-			_, err = st.DB().Exec(`CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
+			_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_invite_write BEFORE INSERT ON messages WHEN NEW.message_type = 'calendar_event' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END`)
 			requirements.NoError(err)
 			raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:retry@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Retry invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
 			requirements.NoError(st.UpsertMessageRawWithFormatContext(t.Context(), id, raw, "mime"))
 			if recomplete {
 				requirements.NoError(st.MarkMigrationAppliedWithPendingDerivedRevisionContext(t.Context(), LedgerKey(src.SourceType, src.Identifier, emailVersion)))
 			}
-			_, err = st.DB().Exec(`DROP TRIGGER fail_invite_write`)
+			_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_invite_write`)
 			requirements.NoError(err)
 			_, _, err = RunIfStale(t.Context(), st, src.SourceType, src.Identifier, src.ID, nil)
 			requirements.NoError(err)
