@@ -3,6 +3,7 @@ package meta
 import (
 	"database/sql"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -121,6 +122,40 @@ func TestWebhookRemovalOfPendingComment(t *testing.T) {
 			ids, err := st.MessageExistsBatchContext(t.Context(), src.ID, []string{"100_203"})
 			require.NoError(err)
 			assert.Empty(ids, "the removed comment is not archived")
+		})
+	}
+}
+
+// A removal whose post ID is missing or invalid is rejected before it prunes
+// the paused sync, so the resumed sync still archives the comment Graph lists.
+func TestWebhookInvalidRemovalLeavesPausedSyncAlone(t *testing.T) {
+	for _, postID := range []string{"", "100/200"} {
+		t.Run("post_id "+strconv.Quote(postID), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, f, imp, src := setupImport(t)
+			f.comments["100_200"] = []Object{*comment("100_201", "100_200", "First comment"), *comment("100_203", "100_200", "Second comment")}
+			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 3})
+			require.NoError(err)
+			require.True(sum.Partial)
+			require.Equal([]string{"100_200: 100_203", "100_201:"}, savedFrames(t, st, src))
+			runs := syncRuns(t, st, src)
+			saved, err := st.GetLatestCheckpointedSyncContext(t.Context(), src.ID)
+			require.NoError(err)
+
+			client, ok := imp.api.(*Client)
+			require.True(ok)
+			removal := `{"item":"comment","verb":"remove","post_id":"` + postID + `","comment_id":"100_203"}`
+			require.ErrorIs(ApplyFeed(t.Context(), st, client, "9", "100", feedValues(removal)), ErrInvalidChange)
+
+			assert.Equal(runs, syncRuns(t, st, src), "no run was recorded")
+			after, err := st.GetLatestCheckpointedSyncContext(t.Context(), src.ID)
+			require.NoError(err)
+			assert.Equal(saved.ID, after.ID)
+			assert.Equal(saved.CursorBefore.String, after.CursorBefore.String, "the saved checkpoint is unchanged")
+			sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err)
+			assert.False(sum.Partial)
+			message(t, st, src.ID, "100_203")
 		})
 	}
 }

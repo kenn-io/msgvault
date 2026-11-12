@@ -44,6 +44,19 @@ func (c feedChange) isPost() bool {
 	return slices.Contains([]string{"status", "post", "photo", "video", "share", "link"}, c.Item)
 }
 
+// objectIDs returns the object the change names and the post it belongs to.
+// Both must be valid Graph IDs, or the change is invalid.
+func (c feedChange) objectIDs() (id, root string, err error) {
+	id, root = c.CommentID, c.PostID
+	if c.isPost() {
+		id = c.PostID
+	}
+	if !safeObjectID(id) || !safeObjectID(root) {
+		return "", "", fmt.Errorf("%w: invalid object identity", ErrInvalidChange)
+	}
+	return id, root, nil
+}
+
 // ApplyFeed applies Page feed changes for one Page's comment source. New and
 // edited comments are archived through the polling write path, reading a
 // missing post or parent comment first. A hide or unhide reads the comment's
@@ -59,6 +72,11 @@ func ApplyFeed(ctx context.Context, st *store.Store, reader ObjectReader, app, p
 		}
 		comment := change.Item == "comment" && slices.Contains([]string{"add", "edited", "edit", "hide", "unhide", "remove", "delete"}, change.Verb)
 		if comment || (change.isPost() && (change.Verb == "remove" || change.Verb == "delete")) {
+			// Reject before anything runs: a removal prunes a paused sync's
+			// saved traversal before the changes apply.
+			if _, _, err := change.objectIDs(); err != nil {
+				return fmt.Errorf("feed %s %s: %w", change.Item, change.Verb, err)
+			}
 			changes = append(changes, change)
 		}
 	}
@@ -149,12 +167,9 @@ func applyWebhookRemoving(ctx context.Context, st *store.Store, sourceType, iden
 }
 
 func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, change feedChange) error {
-	id, root := change.CommentID, change.PostID
-	if change.isPost() {
-		id = change.PostID
-	}
-	if !safeObjectID(id) || !safeObjectID(root) {
-		return fmt.Errorf("%w: invalid object identity", ErrInvalidChange)
+	id, root, err := change.objectIDs()
+	if err != nil {
+		return err
 	}
 	archived, err := r.archived(ctx, id)
 	if err != nil {
