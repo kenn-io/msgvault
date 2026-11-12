@@ -158,6 +158,7 @@ describe('PersonBriefController', () => {
       index: 0,
       text: 'They were preparing for a role change.',
       detail: 'They were preparing for a role change.',
+      itemPresent: true,
       meta: ['Said by this person', 'Observed 2026-08-29'],
       evidence: [citedEvidence.first]
     });
@@ -179,7 +180,7 @@ describe('PersonBriefController', () => {
     ['null', null, 'Old sentence.', 'They were preparing for a role change.'],
     ['malformed', { state: 'follow_up' }, 'Old sentence.', 'They were preparing for a role change.'],
     ['empty sentence', { state: 'follow_up', anchor_id: 'e1', quote: 'moving', question: 'How did it go?' }, '', null],
-  ] as const)('uses saved event sentence for %s with the same citations', async (_name, event, sentenceText, expected) => {
+  ] as const)('projects %s metadata without repeating event prose', async (_name, event, sentenceText, expected) => {
     const data = structured();
     const highlights = data.highlights.map((item, index) => index === 0 ? { ...item, life_event: event } : item);
     const values = sentences();
@@ -192,6 +193,7 @@ describe('PersonBriefController', () => {
     const controller = new PersonBriefController(createAPIClient(fetchFn));
     await controller.setPerson(7);
     expect(controller.brief?.sentences[1]?.detail).toBe(expected);
+    expect(controller.brief?.sentences[1]?.itemPresent).toBe(true);
     expect(controller.brief?.sentences[1]?.text).toBe(sentenceText);
     expect(controller.brief?.sentences[1]?.evidence).toEqual([citedEvidence.first]);
     controller.destroy();
@@ -695,7 +697,7 @@ describe('PersonBriefController', () => {
 
     expect(controller.brief?.sentences).toEqual([{
       key: 'highlight:4', kind: 'highlight', index: 4,
-      text: 'Sentence without a structured item.', detail: null, meta: [], evidence: []
+      text: 'Sentence without a structured item.', detail: null, itemPresent: false, meta: [], evidence: []
     }]);
     controller.destroy();
   });

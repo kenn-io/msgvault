@@ -28,9 +28,9 @@ export type PersonBriefEnrollmentState = {
   enabled_at: string | null;
 };
 
-/** One rendered sentence with the structured item it came from. `detail` is
- * null when this renderer's map cannot reach an item, which keeps the
- * paragraph readable without inventing an expansion. `evidence` is the archive
+/** One rendered sentence with the structured item it came from. `itemPresent`
+ * distinguishes a known item with no extra detail from a missing item, keeping
+ * the paragraph readable without inventing an expansion. `evidence` is the archive
  * items this sentence itself cites, resolved from the response's
  * `evidence_ordinals`; it is empty when the daemon could not supply the join,
  * and the card falls back to the whole brief's citations. */
@@ -40,6 +40,7 @@ export type PersonBriefSentenceView = {
   index: number;
   text: string;
   detail: string | null;
+  itemPresent: boolean;
   meta: string[];
   evidence: PersonBriefEvidenceView[];
 };
@@ -713,6 +714,7 @@ function safeSentences(
       index: value.index,
       text: value.text,
       detail: item?.detail ?? null,
+      itemPresent: item !== undefined,
       meta: item?.meta ?? [],
       evidence: cited,
     });
