@@ -25,13 +25,17 @@ func (nativePermissions) prepareDirectory(path string) error {
 		return err
 	}
 	defer windows.CloseHandle(handle) //nolint:errcheck // ownership check is authoritative
+	return verifyHandleOwner(handle)
+}
+
+func verifyHandleOwner(handle windows.Handle) error {
 	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
-		return fmt.Errorf("read credential directory owner: %w", err)
+		return fmt.Errorf("read credential object owner: %w", err)
 	}
 	owner, _, err := descriptor.Owner()
 	if err != nil || owner == nil {
-		return errors.New("credential directory owner is unavailable")
+		return errors.New("credential object owner is unavailable")
 	}
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
@@ -216,7 +220,7 @@ func verifySecretFile(file *os.File) error {
 	return verifyOwnerOnlyHandle(windows.Handle(file.Fd()), true)
 }
 
-func withStoreLock(tokenDir string, fn func() error) error {
+func withDirectoryMutex(tokenDir string, fn func(windows.Handle) error) error {
 	// Directory ACL updates can propagate to a writer's unfinished candidate.
 	// Serialize repair and writes before opening the lock file, since creating
 	// that file may itself require repairing the directory's write access.
@@ -251,24 +255,30 @@ func withStoreLock(tokenDir string, fn func() error) error {
 		return fmt.Errorf("unexpected provider credential mutex wait result: %d", status)
 	}
 	defer windows.ReleaseMutex(mutex) //nolint:errcheck // lock result is authoritative
-	if err := secureOwnerOnlyHandle(directory); err != nil {
-		return fmt.Errorf("secure provider credential directory: %w", err)
-	}
+	return fn(directory)
+}
 
-	path := filepath.Join(tokenDir, ".provider-credentials.lock")
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		return fmt.Errorf("open provider credential lock: %w", err)
-	}
-	defer file.Close() //nolint:errcheck // lock result is authoritative
-	if err := (nativePermissions{}).secureFile(file); err != nil {
-		return fmt.Errorf("secure provider credential lock: %w", err)
-	}
-	var overlapped windows.Overlapped
-	if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK,
-		0, 1, 0, &overlapped); err != nil {
-		return fmt.Errorf("lock provider credential store: %w", err)
-	}
-	defer windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, &overlapped) //nolint:errcheck
-	return fn()
+func withStoreLock(tokenDir string, fn func() error) error {
+	return withDirectoryMutex(tokenDir, func(directory windows.Handle) error {
+		if err := secureOwnerOnlyHandle(directory); err != nil {
+			return fmt.Errorf("secure provider credential directory: %w", err)
+		}
+
+		path := filepath.Join(tokenDir, ".provider-credentials.lock")
+		file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+		if err != nil {
+			return fmt.Errorf("open provider credential lock: %w", err)
+		}
+		defer file.Close() //nolint:errcheck // lock result is authoritative
+		if err := (nativePermissions{}).secureFile(file); err != nil {
+			return fmt.Errorf("secure provider credential lock: %w", err)
+		}
+		var overlapped windows.Overlapped
+		if err := windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK,
+			0, 1, 0, &overlapped); err != nil {
+			return fmt.Errorf("lock provider credential store: %w", err)
+		}
+		defer windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, &overlapped) //nolint:errcheck
+		return fn()
+	})
 }

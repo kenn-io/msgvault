@@ -421,3 +421,167 @@ func readProviderCredentialTestACL(t *testing.T, handle windows.Handle) (*window
 	requirements.NoError(err)
 	return dacl, control
 }
+
+func TestRestorePreflightAllowsOmittedFileWithoutInheritedAccess(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	requirements.NoError((nativePermissions{}).secureDirectory(dir))
+	path := filepath.Join(dir, "omitted")
+	requirements.NoError(os.WriteFile(path, []byte("fixture"), 0600))
+	handle, err := openSecurityHandle(path, false, windows.READ_CONTROL)
+	requirements.NoError(err)
+	defer windows.CloseHandle(handle) //nolint:errcheck // test handle
+	before, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	requirements.NoError(err)
+	user := currentWindowsProviderCredentialSID(t)
+	setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{
+		providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER),
+		providerCredentialTestAccess(windowsProviderCredentialSID(t, "S-1-1-0"), windows.GENERIC_READ, windows.TRUSTEE_IS_WELL_KNOWN_GROUP),
+	}, true)
+	selected := filepath.Join(dir, "selected")
+	requirements.NoError(os.WriteFile(selected, []byte("selected"), 0600))
+	requirements.NoError(SecureRestored(dir, []string{"selected"}))
+	after, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	requirements.NoError(err)
+	assertions.Equal(before.String(), after.String())
+}
+
+func TestSecureRestoredRefusesInheritedOmittedACLBeforeChanges(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	requirements.NoError(os.Mkdir(dir, 0700))
+	user := currentWindowsProviderCredentialSID(t)
+	access := providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
+	access.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{access, providerCredentialTestAccess(windowsProviderCredentialSID(t, "S-1-1-0"), windows.GENERIC_READ, windows.TRUSTEE_IS_WELL_KNOWN_GROUP)}, true)
+	selected := filepath.Join(dir, "selected")
+	omitted := filepath.Join(dir, "omitted")
+	requirements.NoError(os.WriteFile(selected, []byte("selected"), 0600))
+	requirements.NoError(os.WriteFile(omitted, []byte("omitted"), 0600))
+	descriptor := func(path string, directory bool) string {
+		t.Helper()
+		h, err := openSecurityHandle(path, directory, windows.READ_CONTROL)
+		requirements.NoError(err)
+		defer windows.CloseHandle(h) //nolint:errcheck
+		sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+		requirements.NoError(err)
+		return sd.String()
+	}
+	beforeDir, beforeSelected, beforeOmitted := descriptor(dir, true), descriptor(selected, false), descriptor(omitted, false)
+	err := SecureRestored(dir, []string{"selected"})
+	requirements.ErrorIs(err, ErrRestorePermissionsConflict)
+	assertions.Equal(beforeDir, descriptor(dir, true))
+	assertions.Equal(beforeSelected, descriptor(selected, false))
+	assertions.Equal(beforeOmitted, descriptor(omitted, false))
+	_, err = os.Stat(filepath.Join(dir, ".provider-credentials.lock"))
+	assertions.ErrorIs(err, os.ErrNotExist)
+}
+
+func TestRestorePreflightRejectsReparseEntry(t *testing.T) {
+	requirements := require.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	requirements.NoError((nativePermissions{}).secureDirectory(dir))
+	target := filepath.Join(t.TempDir(), "target")
+	requirements.NoError(os.WriteFile(target, []byte("fixture"), 0600))
+	if err := os.Symlink(target, filepath.Join(dir, "link")); err != nil {
+		t.Skipf("creating a symlink requires Windows privileges: %v", err)
+	}
+	_, err := restorePreflight(dir, map[string]struct{}{}, map[string]struct{}{}, true)
+	requirements.ErrorIs(err, ErrRestorePermissionsConflict)
+	selected := filepath.Join(dir, "selected")
+	requirements.NoError(os.WriteFile(selected, []byte("selected"), 0o600))
+	requirements.NoError(SecureRestored(dir, []string{"selected"}))
+}
+
+func TestSecureRestoredPreservesProtectedMixedTree(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	requirements.NoError((nativePermissions{}).secureDirectory(dir))
+	user := currentWindowsProviderCredentialSID(t)
+	nested := filepath.Join(dir, "nested")
+	requirements.NoError(os.Mkdir(nested, 0700))
+	access := providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
+	access.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	setProviderCredentialTestACL(t, nested, []windows.EXPLICIT_ACCESS{access}, true)
+	setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{
+		providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER),
+		providerCredentialTestAccess(windowsProviderCredentialSID(t, "S-1-1-0"), windows.GENERIC_READ, windows.TRUSTEE_IS_WELL_KNOWN_GROUP),
+	}, true)
+	changedAncestor := filepath.Join(nested, "changed")
+	requirements.NoError(os.Mkdir(changedAncestor, 0700))
+	selectedBelow := filepath.Join(changedAncestor, "selected")
+	omittedBelow := filepath.Join(changedAncestor, "omitted")
+	requirements.NoError(os.WriteFile(selectedBelow, []byte("selected"), 0600))
+	requirements.NoError(os.WriteFile(omittedBelow, []byte("omitted"), 0600))
+	handle, err := openSecurityHandle(omittedBelow, false, windows.READ_CONTROL)
+	requirements.NoError(err)
+	defer windows.CloseHandle(handle) //nolint:errcheck // test handle
+	before, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	requirements.NoError(err)
+	requirements.NoError(SecureRestored(dir, []string{filepath.Join("nested", "changed", "selected")}))
+	after, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	requirements.NoError(err)
+	assertions.Equal(before.String(), after.String())
+}
+
+func TestWindowsDirectorySecurityRemovesInheritedChildAccess(t *testing.T) {
+	requirements := require.New(t)
+	dir := filepath.Join(t.TempDir(), "tokens")
+	requirements.NoError(os.Mkdir(dir, 0700))
+	user := currentWindowsProviderCredentialSID(t)
+	access := providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
+	access.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{access}, true)
+	path := filepath.Join(dir, "child")
+	requirements.NoError(os.WriteFile(path, []byte("fixture"), 0600))
+	handle, err := openSecurityHandle(path, false, windows.READ_CONTROL)
+	requirements.NoError(err)
+	defer windows.CloseHandle(handle) //nolint:errcheck // test handle
+	inherited, err := inheritedAccess(handle)
+	requirements.NoError(err)
+	requirements.True(inherited)
+	requirements.NoError((nativePermissions{}).secureDirectory(dir))
+	inherited, err = inheritedAccess(handle)
+	requirements.NoError(err)
+	requirements.False(inherited)
+}
+
+func TestSecureRestoredDoesNotTouchEmptySelection(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tokens")
+	require.NoError(t, os.Mkdir(dir, 0700))
+	user := currentWindowsProviderCredentialSID(t)
+	access := providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
+	access.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	root := setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{access, providerCredentialTestAccess(windowsProviderCredentialSID(t, "S-1-1-0"), windows.GENERIC_READ, windows.TRUSTEE_IS_WELL_KNOWN_GROUP)}, true)
+	path := filepath.Join(dir, "omitted")
+	require.NoError(t, os.WriteFile(path, []byte("fixture"), 0600))
+	child, err := openSecurityHandle(path, false, windows.READ_CONTROL)
+	require.NoError(t, err)
+	defer windows.CloseHandle(child) //nolint:errcheck // test handle
+	beforeRoot, err := windows.GetSecurityInfo(root, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	beforeChild, err := windows.GetSecurityInfo(child, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	require.NoError(t, SecureRestored(dir, nil))
+	afterRoot, err := windows.GetSecurityInfo(root, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	afterChild, err := windows.GetSecurityInfo(child, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	require.NoError(t, err)
+	assert.Equal(t, beforeRoot.String(), afterRoot.String())
+	assert.Equal(t, beforeChild.String(), afterChild.String())
+}
+
+func TestSecureRestoredCaseVariantProviderRequiresFullAccess(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tokens")
+	require.NoError(t, (nativePermissions{}).secureDirectory(dir))
+	name := "Provider-Credentials.json"
+	path := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(path, []byte("fixture"), 0o600))
+	user := currentWindowsProviderCredentialSID(t)
+	handle := setProviderCredentialTestACL(t, path, []windows.EXPLICIT_ACCESS{providerCredentialTestAccess(user, windows.GENERIC_READ, windows.TRUSTEE_IS_USER)}, true)
+	require.NoError(t, SecureRestored(dir, []string{name}))
+	require.NoError(t, verifyOwnerOnlyHandle(handle, false))
+}

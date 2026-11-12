@@ -40,7 +40,7 @@ Each snapshot is a complete, self-consistent picture of the archive at one insta
 
 - **Database.** The SQLite file is captured at 4 KB page granularity. The first snapshot stores every page; later snapshots store only pages whose content hash changed, typically a small fraction of the file. The database is briefly frozen (see below) so the captured pages are a transactionally consistent image, then verified snapshots materialize to a byte-identical copy of the original file.
 - **Attachments.** Every attachment is identified by its content SHA-256, re-hashed from disk during capture (a corrupted file fails the backup loudly rather than being stored wrong), and stored once regardless of how many messages or snapshots reference it. Unchanged attachments cost nothing in later snapshots.
-- **Extras (optional).** `--include-config` captures `config.toml` verbatim; the `deletions/` audit directory is captured automatically when present; `--include-tokens` captures OAuth token files. Because config and tokens contain live credentials, capturing either into an unencrypted repository requires the explicit `--allow-plaintext-secrets` flag — the backup fails otherwise rather than quietly leaking secrets.
+- **Extras (optional).** `--include-config` captures `config.toml` verbatim; the `deletions/` audit directory is captured automatically when present; `--include-tokens` captures tokens, provider credentials, and the server key. Because config and tokens contain live credentials, capturing either into an unencrypted repository requires the explicit `--allow-plaintext-secrets` flag — the backup fails otherwise rather than quietly leaking secrets.
 
 Attachment and page data is compressed with zstd (level 3 by default, configurable via `zstd_level`); content that does not compress — most images, video, and other already-compressed media — is detected and stored raw instead of wasting CPU.
 
@@ -58,7 +58,7 @@ Takes a snapshot. Flags:
 |------|--------|
 | `--repo DIR` | Repository path (overrides `[backup] repo`) |
 | `--include-config` | Capture `config.toml` verbatim (may contain API keys) |
-| `--include-tokens` | Capture OAuth token files |
+| `--include-tokens` | Capture OAuth tokens, provider credentials, and the server key |
 | `--allow-plaintext-secrets` | Permit config/tokens in an unencrypted repository |
 | `--tag STR` | Free-form label shown by `backup list` |
 | `--force-unlock` | Override a fresh repository lock (see Locking) |
@@ -103,6 +103,7 @@ compatibility fallback.
 Restore does not trust itself: every database page is checked against the snapshot's page-hash map as it is written, every blob read re-derives its SHA-256 identity, and after materialization the restored database must reproduce the manifest's recorded stats (message, conversation, and attachment counts, date range) through exactly the queries capture ran inside the freeze. Any mismatch fails the restore rather than reporting success.
 
 - The target must not exist or must be an empty directory; `--overwrite` permits restoring into a non-empty one. Overwrite **merges**: the database and its SQLite `-wal`/`-shm` sidecars are removed first (a stale WAL would otherwise be replayed over the restored database on its first open), restored files replace same-named ones, and unrelated loose files the snapshot does not carry are left in place. Packed authority is replaced by the snapshot's catalog, so normal maintenance can reclaim old packs containing only non-snapshot content. To guarantee the target contains exactly the snapshot and nothing else, restore into a fresh directory.
+- On Windows, when the snapshot includes provider credentials or the server key, restore secures the restored token files after publishing the snapshot. If omitted token entries cannot be safely preserved, restore reports a permissions conflict without applying the repair. The restored database and files are already in place. Move the affected omitted files somewhere safe, then retry with `--overwrite`; other permission errors may leave the repair partially applied. An interrupted or failed restore may also need a retry before credentials are usable.
 - `--loose-attachments` disables direct pack installation and materializes every attachment as an individual file. On an overwritten target, pre-existing pack files can remain uncataloged and can still be discovered by later maintenance; `unpack-attachments` processes only cataloged packs and does not remove those leftovers. A fresh target is therefore the only restore path that currently guarantees a fully loose archive.
 - Restoring into the live archive home of a *running* daemon is refused outright — stop the daemon first or restore elsewhere.
 - Restoring an old backup onto a newer msgvault goes through normal schema migration the first time the restored database is opened, the same path as any upgrade.
