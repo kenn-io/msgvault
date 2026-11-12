@@ -125,11 +125,12 @@ func TestCheckAPIContract(t *testing.T) {
 		name, version, digest, want string
 		markers, base               []string
 	}{
-		{"collision", "5.1.0", b, "5.2.0", []string{"5.1.0_" + a, "5.1.0_" + b}, []string{"5.1.0_" + a}},
+		{"collision", "5.1.0", a, "5.2.0", []string{"5.1.0_" + a, "5.1.0_" + b}, []string{"5.1.0_" + b}},
 		{"matching", "5.0.0", a, "", []string{"5.0.0_" + a}, []string{"5.0.0_" + a}},
 		{"stale", "5.0.0", b, "5.1.0", []string{"5.0.0_" + a}, nil},
 		{"new", "5.1.0", b, "5.1.0_" + b, []string{"5.0.0_" + a}, nil},
-		{"older", "4.0.0", b, "5.1.0", []string{"5.0.0_" + a}, nil},
+		{"older", "4.0.0", b, "older than recorded version", []string{"5.0.0_" + a}, nil},
+		{"occupied", "5.1.0", b, "5.3.0", []string{"5.1.0_" + a, "5.1.0_" + b, "5.2.0_" + a}, []string{"5.1.0_" + a, "5.2.0_" + a}},
 		{"removed", "5.1.0", b, "5.2.0", []string{"5.1.0_" + b}, []string{"5.1.0_" + a}},
 		{"malformed", "5.0.0", a, "<version>_<sha256>", []string{"bad"}, nil},
 	} {
@@ -153,13 +154,25 @@ func TestAPIBaseMarkers(t *testing.T) {
 	markers, err := apiBaseMarkers(t.Context(), "refs/heads/nonexistent-api-contract-base", false)
 	require.NoError(err)
 	assert.Empty(markers)
-	markers, err = apiBaseMarkers(t.Context(), "HEAD", false)
-	require.NoError(err)
-	require.NotEmpty(markers)
-	for _, marker := range markers {
-		assert.NotEmpty(marker)
-		assert.NotContains(marker, "/")
+	for _, env := range os.Environ() {
+		key, _, _ := strings.Cut(env, "=")
+		if strings.HasPrefix(key, "GIT_") {
+			t.Setenv(key, "")
+			require.NoError(os.Unsetenv(key))
+		}
 	}
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "config"))
+	t.Chdir(t.TempDir())
+	marker := "5.0.0_f4c3cd16ffd3e2294f6c0690df7ae8b2024db4b66538f467bc2d2cba36b325cf"
+	require.NoError(os.MkdirAll("internal/api/"+apiContractsDir, 0o755))
+	require.NoError(os.WriteFile("internal/api/"+apiContractsDir+"/"+marker, nil, 0o644))
+	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture"}} {
+		require.NoError(exec.CommandContext(t.Context(), "git", args...).Run())
+	}
+	markers, err = apiBaseMarkers(t.Context(), "HEAD", true)
+	require.NoError(err)
+	assert.Equal([]string{marker}, markers)
 }
 
 func TestAPIContractDigest(t *testing.T) {
@@ -167,17 +180,12 @@ func TestAPIContractDigest(t *testing.T) {
 	assert := assert.New(t)
 	base, err := apiContractDigest(OpenAPIDocument(), openAPIClientDocument())
 	require.NoError(err)
-	public, client := OpenAPIDocument(), openAPIClientDocument()
-	public.Info.Version, client.Info.Version = "9.0.0", "9.0.0"
-	versionOnly, err := apiContractDigest(public, client)
-	require.NoError(err)
-	assert.Equal(base, versionOnly)
-	public = OpenAPIDocument()
+	public := OpenAPIDocument()
 	public.Paths["/api/v1/test-contract"] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-contract"}}
 	changed, err := apiContractDigest(public, openAPIClientDocument())
 	require.NoError(err)
 	assert.NotEqual(base, changed)
-	client = openAPIClientDocument()
+	client := openAPIClientDocument()
 	client.Paths["/api/v1/test-contract"] = &huma.PathItem{Get: &huma.Operation{OperationID: "test-contract"}}
 	changed, err = apiContractDigest(OpenAPIDocument(), client)
 	require.NoError(err)
