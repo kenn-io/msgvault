@@ -1,12 +1,16 @@
 package metawebhook
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/atomicfile"
 )
 
 const testSecret = "synthetic-app-secret"
@@ -31,9 +36,14 @@ func sign(body string) string {
 func newTestHandler(t *testing.T) (*Handler, string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "pending")
+	return newHandlerIn(t, dir), dir
+}
+
+func newHandlerIn(t *testing.T, dir string) *Handler {
+	t.Helper()
 	h, err := NewHandler(map[string]App{"9": {Secret: []byte(testSecret), VerifyToken: "synthetic-verify"}}, dir, nil)
 	require.NoError(t, err)
-	return h, dir
+	return h
 }
 
 func pendingFiles(t *testing.T, dir string) []string {
@@ -45,6 +55,200 @@ func pendingFiles(t *testing.T, dir string) []string {
 		names = append(names, entry.Name())
 	}
 	return names
+}
+
+// post serves one POST and returns the status. It runs on any goroutine.
+func post(t *testing.T, h *Handler, signature string, body io.Reader) int {
+	t.Helper()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/meta/webhook/9", body)
+	req.Header.Set("X-Hub-Signature-256", signature)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// readRecorder records whether the handler read the request body.
+type readRecorder struct {
+	io.Reader
+
+	read bool
+}
+
+func (r *readRecorder) Read(p []byte) (int, error) {
+	r.read = true
+	return r.Reader.Read(p)
+}
+
+func TestHandlerRefusesMalformedSignatureBeforeReadingBody(t *testing.T) {
+	sum := strings.Repeat("ab", sha256.Size)
+	for _, tc := range []struct{ name, header string }{
+		{"missing", ""},
+		{"short", "sha256=00"},
+		{"long", "sha256=" + sum + "00"},
+		{"not hex", "sha256=" + strings.Repeat("zz", sha256.Size)},
+		{"other algorithm", "sha1=" + sum},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _ := newTestHandler(t)
+			body := &readRecorder{Reader: strings.NewReader(`{"object":"page","entry":[]}`)}
+			assert.Equal(t, http.StatusUnauthorized, post(t, h, tc.header, body))
+			assert.False(t, body.read, "the body is not read")
+		})
+	}
+}
+
+func TestHandlerRefusesPostsAboveTheBodyLimit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		h, dir := newTestHandler(t)
+		writers := make([]*io.PipeWriter, maxConcurrentBodies)
+		codes := make(chan int, len(writers))
+		for i := range writers {
+			r, w := io.Pipe()
+			writers[i] = w
+			go func() { codes <- post(t, h, sign("other"), r) }()
+		}
+		synctest.Wait() // every slot holds a request blocked reading its body
+
+		body := `{"object":"page","entry":[]}`
+		extra := &readRecorder{Reader: strings.NewReader(body)}
+		assert.Equal(http.StatusServiceUnavailable, post(t, h, sign(body), extra))
+		assert.False(extra.read, "a refused request's body is not read")
+
+		for _, w := range writers {
+			_ = w.Close()
+		}
+		for range writers {
+			assert.Equal(http.StatusUnauthorized, <-codes)
+		}
+		assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)), "released slots admit new deliveries")
+		assert.Len(pendingFiles(t, dir), 1)
+	})
+}
+
+func TestHandlerAnswersRejectedPostsWithoutWaitingForTheBody(t *testing.T) {
+	for _, tc := range []struct {
+		name, signature string
+		slotsTaken      bool
+		status          int
+	}{
+		{"no signature", "", false, http.StatusUnauthorized},
+		{"no free body slot", sign("withheld"), true, http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			h, _ := newTestHandler(t)
+			if tc.slotsTaken {
+				for range cap(h.bodies) {
+					h.bodies <- struct{}{}
+				}
+			}
+			srv := httptest.NewServer(h) // no read timeout: a server that waits for the body never answers
+			defer srv.Close()
+			var dialer net.Dialer
+			conn, err := dialer.DialContext(t.Context(), "tcp", srv.Listener.Addr().String())
+			require.NoError(err)
+			defer func() { _ = conn.Close() }()
+			// The deadline only bounds a failing run.
+			require.NoError(conn.SetDeadline(time.Now().Add(5 * time.Second)))
+
+			head := "POST /meta/webhook/9 HTTP/1.1\r\nHost: example.test\r\nContent-Length: 1024\r\n"
+			if tc.signature != "" {
+				head += "X-Hub-Signature-256: " + tc.signature + "\r\n"
+			}
+			_, err = io.WriteString(conn, head+"\r\n") // the body is withheld
+			require.NoError(err)
+			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			require.NoError(err, "the response arrives while the body is withheld")
+			defer func() { _ = resp.Body.Close() }()
+			assert.Equal(tc.status, resp.StatusCode)
+		})
+	}
+}
+
+func TestHandlerRefusesDeliveriesAtTheCountCap(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := filepath.Join(t.TempDir(), "pending")
+	require.NoError(os.MkdirAll(filepath.Join(dir, "sub"), 0o700))
+	existing := filepath.Join(dir, "00000000000000000001-9-OLD.json")
+	require.NoError(os.WriteFile(existing, []byte(`{}`), 0o600))
+	require.NoError(os.WriteFile(filepath.Join(dir, ".ignored.set-aside"), []byte(`{}`), 0o600))
+	h := newHandlerIn(t, dir)
+	h.maxFiles = 2 // the existing delivery counts; dot-names and directories do not
+
+	body := `{"object":"page","entry":[]}`
+	assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)))
+	before := pendingFiles(t, dir)
+	assert.Equal(http.StatusServiceUnavailable, post(t, h, sign(body), strings.NewReader(body)))
+	assert.Equal(before, pendingFiles(t, dir), "a refused delivery is not stored")
+
+	require.NoError(os.Remove(existing)) // the worker applied it
+	assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)))
+	assert.Len(pendingFiles(t, dir), len(before), "the new delivery takes the removed one's place")
+}
+
+func TestHandlerRefusesDeliveriesAtTheByteCap(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := filepath.Join(t.TempDir(), "pending")
+	require.NoError(os.MkdirAll(dir, 0o700))
+	body := `{"object":"page","entry":[]}`
+	existing := filepath.Join(dir, "00000000000000000001-9-OLD.json")
+	require.NoError(os.WriteFile(existing, []byte(body), 0o600))
+	h := newHandlerIn(t, dir)
+	h.maxBytes = int64(2*len(body) + len(body)/2) // room for the existing delivery and one more
+
+	assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)))
+	before := pendingFiles(t, dir)
+	assert.Equal(http.StatusServiceUnavailable, post(t, h, sign(body), strings.NewReader(body)))
+	assert.Equal(before, pendingFiles(t, dir), "a refused delivery is not stored")
+
+	require.NoError(os.Remove(existing))
+	assert.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)))
+}
+
+func TestNewHandlerCleansStagingAndOrdersAfterPendingDeliveries(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	dir := filepath.Join(t.TempDir(), "pending")
+	require.NoError(os.MkdirAll(dir, 0o700))
+	existing := "09000000000000000000-9-FUTURE.json" // written before the clock stepped back
+	for _, name := range []string{existing, ".x.json.tmp-123", ".y.json.set-aside", "notanumber-9-X.json"} {
+		require.NoError(os.WriteFile(filepath.Join(dir, name), []byte(`{}`), 0o600))
+	}
+	h := newHandlerIn(t, dir)
+	assert.NoFileExists(filepath.Join(dir, ".x.json.tmp-123"), "a staging file left by a crash is removed")
+	assert.FileExists(filepath.Join(dir, ".y.json.set-aside"), "a set-aside delivery is kept")
+
+	body := `{"object":"page","entry":[]}`
+	require.Equal(http.StatusOK, post(t, h, sign(body), strings.NewReader(body)))
+	var stored []string
+	for _, name := range pendingFiles(t, dir) {
+		if !strings.HasPrefix(name, ".") && name != existing && name != "notanumber-9-X.json" {
+			stored = append(stored, name)
+		}
+	}
+	require.Len(stored, 1)
+	assert.Greater(stored[0], existing, "the new delivery sorts after the pending one")
+}
+
+func TestWriteResultAcknowledgesOnlyDurableDeliveries(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		err       error
+		published bool
+		status    int
+	}{
+		{"stored", nil, true, http.StatusOK},
+		{"staging cleanup failed", fmt.Errorf("write: %w", atomicfile.ErrPublished), true, http.StatusOK},
+		{"directory not synced", fmt.Errorf("write: %w", atomicfile.ErrNotDurable), true, http.StatusServiceUnavailable},
+		{"name taken", fmt.Errorf("write: %w", fs.ErrExist), false, http.StatusServiceUnavailable},
+		{"spool full", errSpoolFull, false, http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			published, status := writeResult(tc.err)
+			assert.Equal(t, tc.published, published, "published")
+			assert.Equal(t, tc.status, status)
+		})
+	}
 }
 
 func TestHandlerChallenge(t *testing.T) {
@@ -82,7 +286,7 @@ func TestHandlerStoresOnlySignedDeliveries(t *testing.T) {
 	assert.Equal(http.StatusUnauthorized, post("/meta/webhook/9", "", body))
 	assert.Equal(http.StatusUnauthorized, post("/meta/webhook/9", sign(body+" "), body))
 	assert.Equal(http.StatusNotFound, post("/meta/webhook/10", sign(body), body), "unknown app")
-	assert.Equal(http.StatusRequestEntityTooLarge, post("/meta/webhook/9", "sha256=00", strings.Repeat(" ", maxBodyBytes+1)))
+	assert.Equal(http.StatusRequestEntityTooLarge, post("/meta/webhook/9", sign(body), strings.Repeat(" ", maxBodyBytes+1)))
 	assert.Empty(pendingFiles(t, dir))
 
 	assert.Equal(http.StatusOK, post("/meta/webhook/9", sign(body), body))

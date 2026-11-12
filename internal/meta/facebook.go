@@ -7,12 +7,14 @@ import (
 	"strings"
 )
 
+const facebookCommentFields = "id,message,created_time,from,parent"
+
 func (c *Client) VerifyPage(ctx context.Context, id string) (Page, error) {
 	var page Page
 	if !ValidAccountID(id) {
 		return page, errors.New("invalid selected Page ID")
 	}
-	if err := c.get(ctx, "me", url.Values{"fields": {"id,name,category"}}, &page); err != nil {
+	if err := c.get(ctx, "me", url.Values{fieldsParam: {"id,name,category"}}, &page); err != nil {
 		return Page{}, err
 	}
 	// Category is Page-only evidence in the pinned SDK, not a token-type
@@ -27,7 +29,7 @@ func (c *Client) Posts(ctx context.Context, page string, edge PostEdge, after st
 	if !ValidAccountID(page) || !edge.valid() {
 		return ObjectPage{}, errors.New("invalid selected Page or discovery edge")
 	}
-	q := url.Values{"fields": {"id,message,created_time,from"}, "limit": {"100"}}
+	q := url.Values{fieldsParam: {"id,message,created_time,from"}, "limit": {"100"}}
 	if edge == AdsPosts {
 		q.Set("include_inline_create", "true")
 	}
@@ -39,7 +41,7 @@ func (c *Client) Comments(ctx context.Context, object, after string) (ObjectPage
 		return ObjectPage{}, errors.New("invalid Graph object ID")
 	}
 	return c.objects(ctx, url.PathEscape(object)+"/comments", after, url.Values{
-		"fields": {"id,message,created_time,from,parent"}, "order": {"chronological"}, "filter": {"toplevel"}, "limit": {"100"},
+		fieldsParam: {facebookCommentFields}, "order": {"chronological"}, "filter": {"toplevel"}, "limit": {"100"},
 	})
 }
 
@@ -61,20 +63,20 @@ func (c *Client) Post(ctx context.Context, id string) (Object, error) {
 
 // Comment reads one comment and the parent Meta declares for it.
 func (c *Client) Comment(ctx context.Context, id string) (Object, error) {
-	return readNode(ctx, c, id, "id,message,created_time,from,parent", func(o Object) string { return o.ID })
+	return readNode(ctx, c, id, facebookCommentFields, func(o Object) string { return o.ID })
 }
 
 // readNode reads one Graph node by ID and checks that Meta returned that node.
 func readNode[T any](ctx context.Context, c *Client, id, fields string, nodeID func(T) string) (T, error) {
 	var node T
 	if !safeObjectID(id) {
-		return node, errors.New("invalid Graph object ID")
+		return node, invariantError("invalid Graph object ID")
 	}
-	if err := c.get(ctx, url.PathEscape(id), url.Values{"fields": {fields}}, &node); err != nil {
+	if err := c.get(ctx, url.PathEscape(id), url.Values{fieldsParam: {fields}}, &node); err != nil {
 		return node, err
 	}
 	if nodeID(node) != id {
-		return node, errors.New("graph object identity mismatch")
+		return node, invariantError("graph object identity mismatch")
 	}
 	return node, nil
 }

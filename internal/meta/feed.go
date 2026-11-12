@@ -2,7 +2,6 @@ package meta
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -91,13 +90,23 @@ func applyWebhook(ctx context.Context, st *store.Store, sourceType, identifier s
 	}
 	run := &importRun{imp: &Importer{store: st.ScopedToSync(source.ID, syncID)}, source: source, sum: &ImportSummary{}, syncID: syncID}
 	err = apply(run)
+	// Retrying cannot get past an archive invariant, so the change is invalid.
+	if _, ok := errors.AsType[invariantError](err); ok {
+		err = fmt.Errorf("%w: %w", ErrInvalidChange, err)
+	}
 	// Record the outcome even when ctx was cancelled during apply.
 	finish := context.WithoutCancel(ctx)
 	cp := &store.Checkpoint{MessagesAdded: int64(run.sum.MessagesAdded), MessagesUpdated: int64(run.sum.MessagesUpdated), MessagesProcessed: int64(run.sum.MessagesProcessed)}
 	if err = errors.Join(err, st.UpdateSyncCheckpointContext(finish, syncID, cp)); err != nil {
 		return errors.Join(err, st.FailSyncContext(finish, syncID, err.Error()))
 	}
-	return st.CompleteSyncContext(finish, syncID, "")
+	if err := st.CompleteSyncContext(finish, syncID, ""); err != nil || len(run.removed) == 0 {
+		return err
+	}
+	// A paused polling sync would read the removed objects on every resume,
+	// and after `msgvault gc` it cannot see they were removed. Prune it now,
+	// under the same lock. A failure is retried with the change.
+	return dropDeletedTraversal(ctx, st, execution, source, run.removed)
 }
 
 func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, change feedChange) error {
@@ -114,6 +123,17 @@ func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, ch
 	}
 	switch change.Verb {
 	case "remove", "delete":
+		// A paused sync can hold a saved copy the archive never got, so its
+		// traversal is pruned by ID either way.
+		r.removed = append(r.removed, id)
+		if !change.isPost() {
+			marked, err := r.imp.store.MarkMessageThreadDeletedContext(ctx, r.source.ID, id)
+			r.sum.MessagesProcessed += len(marked)
+			r.sum.MessagesUpdated += len(marked)
+			r.removed = append(r.removed, marked...)
+			return err
+		}
+		// Only the post is marked; its comments stay archived.
 		if !archived {
 			return nil
 		}
@@ -178,7 +198,7 @@ func (r *importRun) archiveAncestors(ctx context.Context, reader ancestorReader,
 			break
 		}
 		if len(chain) == maxAncestorReads {
-			return errors.New("comment ancestors exceed the read limit")
+			return invariantError("comment ancestors exceed the read limit")
 		}
 		obj, err := reader.comment(ctx, id)
 		if err != nil {
@@ -225,17 +245,13 @@ func (r *importRun) setHidden(ctx context.Context, id string, hidden bool) error
 	}
 	var meta objectMetadata
 	if err := json.Unmarshal([]byte(saved.String), &meta); err != nil {
-		return fmt.Errorf("decode comment metadata: %w", err)
+		return fmt.Errorf("%w: %w", invariantError("decode comment metadata"), err)
 	}
-	if meta.Hidden != nil && *meta.Hidden == hidden {
+	if meta.Hidden == hidden {
 		return nil
-	}
-	meta.Hidden = &hidden
-	data, err := json.Marshal(meta)
-	if err != nil {
-		return err
 	}
 	r.sum.MessagesProcessed++
 	r.sum.MessagesUpdated++
-	return r.imp.store.SetMessageMetadataContext(ctx, rows[id].ID, sql.NullString{String: string(data), Valid: true})
+	// The same write `comment moderate` uses, so both record one field.
+	return setCommentHidden(ctx, r.imp.store, rows[id].ID, hidden)
 }

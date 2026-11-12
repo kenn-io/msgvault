@@ -34,7 +34,7 @@ func (c *Client) Tags(ctx context.Context, accountID, after string) (IGMediaPage
 		return IGMediaPage{}, errors.New("invalid selected Instagram account ID")
 	}
 	page, err := readObjectPage(ctx, c, accountID+"/tags", after, url.Values{
-		"fields": {"id,caption,timestamp,permalink,username,owner{id}"}, "limit": {"100"},
+		fieldsParam: {"id,caption,timestamp,permalink,username,owner{id}"}, "limit": {"100"},
 	}, func(media IGMedia) string { return media.ID }, true)
 	return IGMediaPage(page), err
 }
