@@ -88,6 +88,13 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	_, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", missing)
 	require.ErrorAs(err, &refusal)
 	assert.Equal("person_merge_candidate_not_found", refusal.Code)
+	mismatch := map[string]any{"person_id": absorbed.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "reject", "etag": etag}
+	_, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", mismatch)
+	require.ErrorAs(err, &refusal)
+	assert.Equal("person_merge_candidate_state_changed", refusal.Code)
+	_, err = backend.OperationDisclosure(ctx, "split_person_merge", map[string]any{"person_id": survivor.ID, "merge_id": int64(999999), "participant_ids": []int64{b}, "etag": etag, "idempotency_key": "missing-split"})
+	require.ErrorAs(err, &refusal)
+	assert.Equal("person_merge_not_found", refusal.Code)
 	var disclosure string
 	approvals := 0
 	confirm := true
@@ -137,9 +144,13 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	assert.Equal("rejected", receipt.Candidate.State)
 	assert.NotEmpty(receipt.ETag)
 	opposite := map[string]any{"person_id": survivor.ID, "candidate_id": merged.ReviewCandidates[0].ID, "merge_id": merged.Merge.ID, "decision": "accept", "etag": receipt.ETag}
-	_, err = backend.OperationDisclosure(ctx, "decide_person_merge_candidate", opposite)
-	require.ErrorAs(err, &refusal)
-	assert.Equal("person_merge_candidate_state_changed", refusal.Code)
+	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decide_person_merge_candidate", Arguments: opposite})
+	require.NoError(err)
+	oppositeFailure := loopToolFailure(t, sdkResult)
+	assert.Equal("person_merge_candidate_state_changed", oppositeFailure["error"])
+	oppositeUncertain, ok := oppositeFailure["operation_may_have_completed"].(bool)
+	require.True(ok)
+	assert.False(oppositeUncertain)
 	staleSplit := map[string]any{"person_id": survivor.ID, "merge_id": merged.Merge.ID, "participant_ids": []int64{b}, "etag": etag, "idempotency_key": "stale-split"}
 	sdkResult, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: "split_person_merge", Arguments: staleSplit})
 	require.NoError(err)
@@ -184,7 +195,6 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 	assert.Equal(split.AmbiguousRowCount, replay.AmbiguousRowCount)
 	assert.Equal(split.UnrestoredRowCount, replay.UnrestoredRowCount)
 	var splitDisclosure struct {
-		Current any                   `json:"current"`
 		Lineage mcpserver.MergeDetail `json:"lineage"`
 		Changes struct {
 			PersonID       int64   `json:"person_id"`
@@ -195,7 +205,6 @@ func TestMCPMergeRecoveryRealStore(t *testing.T) {
 		} `json:"changes"`
 	}
 	require.NoError(json.Unmarshal([]byte(disclosure), &splitDisclosure))
-	assert.Empty(splitDisclosure.Current)
 	assert.Equal(merged.Merge.ID, splitDisclosure.Lineage.Merge.ID)
 	assert.Contains(splitDisclosure.Lineage.Labels.ParticipantIds, b)
 	require.Len(splitDisclosure.Lineage.Splits, 1)

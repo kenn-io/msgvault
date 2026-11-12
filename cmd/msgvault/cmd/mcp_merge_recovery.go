@@ -74,6 +74,18 @@ func mergeRefusal(code string) bool {
 	return false
 }
 
+func mergeContextRefusal(result *mcpserver.OperationResult) *mcpserver.OperationRefusalError {
+	if result != nil {
+		if failure, ok := result.Output.(struct {
+			Error                     string `json:"error"`
+			OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
+		}); ok && failure.Error != "" && !failure.OperationMayHaveCompleted {
+			return &mcpserver.OperationRefusalError{Code: failure.Error}
+		}
+	}
+	return &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+}
+
 func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
 	var result *mcpserver.OperationResult
 	var err error
@@ -163,7 +175,7 @@ func (b *daemonMCPOperations) executeMergeRecovery(ctx context.Context, name str
 }
 
 func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
-	var personID, mergeID int64
+	var mergeID int64
 	var effect string
 	var decision mergeDecisionArgs
 	switch name {
@@ -173,45 +185,40 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 			return "", true, &mcpserver.OperationRefusalError{Code: mergeInvalidArguments}
 		}
 		decision = a
-		personID, mergeID = a.PersonID, a.MergeID
+		mergeID = a.MergeID
 	case "split_person_merge":
 		a, err := decodeMCPOperationArguments[mergeSplitArgs](args)
 		if err != nil {
 			return "", true, &mcpserver.OperationRefusalError{Code: mergeInvalidArguments}
 		}
-		personID, mergeID = a.PersonID, a.MergeID
+		mergeID = a.MergeID
 		effect = "Split the selected absorbed participant lineage into a new person. Lineage labels are historical. The daemon checks the supplied revision, lineage and review restrictions for a new split. An identical completed request returns its saved result."
 	default:
 		return "", false, nil
 	}
-	var currentOutput, lineage any
+	var lineage any
 	detail, _, err := b.executeMergeRecovery(ctx, "get_person_merge", map[string]any{"merge_id": mergeID})
 	if err != nil {
 		return "", true, err
 	}
 	if detail == nil || detail.IsError {
-		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		return "", true, mergeContextRefusal(detail)
 	}
 	value, ok := detail.Output.(mcpserver.MergeDetail)
 	if !ok {
 		return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
 	}
 	if name == "decide_person_merge_candidate" {
-		current, _, err := b.executeSourceOperation(ctx, "get_person_edit_context", map[string]any{"person_id": personID})
-		if err != nil {
-			return "", true, err
-		}
-		if current == nil || current.IsError {
-			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
-		}
-		currentOutput = current.Output
 		i := slices.IndexFunc(value.ReviewCandidates, func(c generated.PersonMergeReviewCandidate) bool {
-			return c.ID == decision.CandidateID && c.PersonID == decision.PersonID
+			return c.ID == decision.CandidateID
 		})
 		if i < 0 {
 			return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_not_found"}
 		}
 		candidate := value.ReviewCandidates[i]
+		if candidate.PersonID != decision.PersonID {
+			return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_state_changed"}
+		}
 		lineage = candidate
 		wanted := "accepted"
 		if decision.Decision == "reject" {
@@ -224,18 +231,15 @@ func (b *daemonMCPOperations) mergeRecoveryDisclosure(ctx context.Context, name 
 		}
 		if candidate.State == wanted {
 			effect += " This decision has already been recorded; the daemon will replay it."
-		} else if candidate.State != "pending" {
-			return "", true, &mcpserver.OperationRefusalError{Code: "person_merge_candidate_state_changed"}
 		}
 	} else {
 		lineage = value
 	}
 	data, err := json.Marshal(struct {
 		Operation string         `json:"operation"`
-		Current   any            `json:"current,omitempty"`
 		Lineage   any            `json:"lineage,omitempty"`
 		Changes   map[string]any `json:"changes"`
 		Effect    string         `json:"effect"`
-	}{name, currentOutput, lineage, args, effect}, json.Deterministic(true))
+	}{name, lineage, args, effect}, json.Deterministic(true))
 	return string(data), true, err
 }
