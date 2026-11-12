@@ -19,7 +19,8 @@ func TestPersonBriefHTTPEventQuestionsAndLegacyHistoryKeepSentenceCitations(t *t
 	f.seedBrief(t, legacy)
 	// A v1 saved version stays readable after a current v2 event version.
 	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(`UPDATE person_briefs
-		SET program_version = 'v1' WHERE person_id = ? AND version = 1`), f.personID)
+		SET program_version = 'v1', renderer_policy = ? WHERE person_id = ? AND version = 1`),
+		peoplesweep.BriefRendererPolicyV1, f.personID)
 	require.NoError(err)
 	output := peoplesweep.BriefOutput{Highlights: []peoplesweep.BriefHighlight{{
 		Text: "their interview", Speaker: peoplesweep.BriefSpeakerPerson,
@@ -52,8 +53,12 @@ func TestPersonBriefHTTPEventQuestionsAndLegacyHistoryKeepSentenceCitations(t *t
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &versions))
 	require.Len(versions.Versions, 2)
 	assert.Equal("v1", versions.Versions[1].ProgramVersion)
+	assert.Equal(peoplesweep.BriefRendererPolicyV1, versions.Versions[1].RendererPolicy)
 	assert.Equal(legacy.rendered, versions.Versions[1].RenderedText)
-	assert.NotEmpty(versions.Versions[1].Sentences)
+	require.Len(versions.Versions[1].Sentences, 4)
+	for _, sentence := range versions.Versions[1].Sentences {
+		assert.Equal([]int{0}, sentence.EvidenceOrdinals)
+	}
 }
 
 func TestPersonBriefHTTPBoundarySanitizesEventProsePreservingReferences(t *testing.T) {
