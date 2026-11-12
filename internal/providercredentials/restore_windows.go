@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"slices"
 
 	"golang.org/x/sys/windows"
 )
@@ -36,14 +37,14 @@ func SecureRestored(dir string, restored []string) error {
 		if err != nil {
 			return err
 		}
-		for i := len(directories) - 1; i >= 0; i-- {
-			if err := secureRestoredDirectory(filepath.Join(dir, directories[i])); err != nil {
-				return fmt.Errorf("secure restored token directory %q: %w", directories[i], err)
-			}
-		}
 		for _, name := range restored {
 			if err := secureRestoredFile(filepath.Join(dir, name)); err != nil {
 				return fmt.Errorf("secure restored token %q: %w", name, err)
+			}
+		}
+		for _, name := range slices.Backward(directories) {
+			if err := secureRestoredDirectory(filepath.Join(dir, name)); err != nil {
+				return fmt.Errorf("secure restored token directory %q: %w", name, err)
 			}
 		}
 		if rootAffected {
