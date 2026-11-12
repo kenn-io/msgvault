@@ -572,7 +572,7 @@ func relationshipBoolQuery(w http.ResponseWriter, r *http.Request, name string) 
 	switch strings.TrimSpace(r.URL.Query().Get(name)) {
 	case "":
 		return false, true
-	case "true", "1":
+	case booleanTrueValue, "1":
 		return true, true
 	case "false", "0":
 		return false, true

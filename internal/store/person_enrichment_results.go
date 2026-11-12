@@ -473,7 +473,7 @@ func (s *Store) recheckPersonEnrichmentCommitTx(
 	if err := verifyEnrichmentLeaseTx(ctx, tx, s.dialect, token); err != nil {
 		return enrichmentCommitDisposition{}, err
 	}
-	if attempt.State != "pending" && attempt.State != "starting" {
+	if attempt.State != statusPending && attempt.State != "starting" {
 		return enrichmentCommitDisposition{}, fmt.Errorf(
 			"%w: attempt state %q", errPersonEnrichmentResultEnvelopeChanged, attempt.State)
 	}

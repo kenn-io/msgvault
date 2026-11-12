@@ -412,6 +412,22 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 	if result.Sources, err = res.RowsAffected(); err != nil {
 		return nil, fmt.Errorf("sources rows affected: %w", err)
 	}
+	// The X sync cursor carries spend buckets, reservations, and archive-job
+	// caps. Keep its content-free send receipts with that authority so a
+	// subset cannot retain a reservation while forgetting an uncertain or
+	// accepted provider request. Draft bodies and post aliases are copied by
+	// separate scope rules. New replies still require the numeric-owner send
+	// opt-in, current credentials, and the usual target and budget admission.
+	hasXReplyAttempts, err := sourceTableExists(ctx, tx, "x_reply_attempts")
+	if err != nil {
+		return nil, fmt.Errorf("check X reply receipt schema: %w", err)
+	}
+	if hasXReplyAttempts {
+		if _, err := copyByName(ctx, tx, "x_reply_attempts",
+			"source_id IN (SELECT source_id FROM selected_message_sources)"); err != nil {
+			return nil, fmt.Errorf("copy X reply receipts: %w", err)
+		}
+	}
 	hasRouteFailures, err := sourceTableExists(ctx, tx, "source_messaging_route_failures")
 	if err != nil {
 		return nil, fmt.Errorf("check source messaging route failure schema: %w", err)
@@ -812,6 +828,46 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 
 	if err := copyMessages(ctx, tx); err != nil {
 		return nil, err
+	}
+	// Keep aliases in selected X chains. They support local removal and allow
+	// the normal owner-gated reply path to resolve a copied target; send opt-in,
+	// credentials, and admission checks remain in the sender. Rows whose content
+	// was omitted retain only native-ID and suppression state, with no message
+	// reference.
+	hasXPostVersions, err := sourceTableExists(ctx, tx, "x_post_versions")
+	if err != nil {
+		return nil, fmt.Errorf("inspect X post version schema: %w", err)
+	}
+	if hasXPostVersions {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO x_post_versions (
+			source_id, post_id, canonical_id, message_id, version_position,
+			author_id, source_conversation_id, version_created_at, fetched_at,
+			last_checked_at, availability, suppressed_at, suppression_reason,
+			cleanup_pending
+		)
+		SELECT v.source_id, v.post_id, v.canonical_id,
+			CASE WHEN EXISTS (
+				SELECT 1 FROM src.messages m
+				WHERE m.id=v.message_id AND m.source_id=v.source_id
+				  AND m.id IN (SELECT id FROM selected_messages)
+			) THEN v.message_id ELSE NULL END,
+			v.version_position,
+			v.author_id, v.source_conversation_id, v.version_created_at, v.fetched_at,
+			v.last_checked_at, v.availability, v.suppressed_at, v.suppression_reason,
+			v.cleanup_pending
+		FROM src.x_post_versions AS v
+		WHERE v.source_id IN (SELECT source_id FROM selected_message_sources)
+		  AND EXISTS (
+			SELECT 1 FROM src.x_post_versions anchor
+			JOIN src.messages selected_message
+			  ON selected_message.id=anchor.message_id
+			 AND selected_message.source_id=anchor.source_id
+			WHERE anchor.source_id=v.source_id
+			  AND anchor.canonical_id=v.canonical_id
+			  AND selected_message.id IN (SELECT id FROM selected_messages)
+		  )`); err != nil {
+			return nil, fmt.Errorf("copy selected X post versions: %w", err)
+		}
 	}
 	// Merge-protection markers are portable owning-row state. Copy them from
 	// the selected messages directly so they remain useful even when a subset

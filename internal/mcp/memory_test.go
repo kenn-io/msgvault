@@ -57,6 +57,7 @@ func TestMCPMemoryChild(t *testing.T) {
 		require.Nil(listed.Error)
 		names := task3ToolNames(t, listed)
 		require.Contains(names, ToolDraftReply)
+		require.Contains(names, ToolSendReply)
 		require.Contains(names, ToolGetIdentityScoringStatus)
 		t.Logf("tools=%d", len(names))
 		// The transport goroutine and cleanup keep the server alive through GC.
@@ -98,6 +99,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		IdentityReview:       struct{ IdentityReviewBackend }{},
 		PersonCardDAV:        struct{ PersonCardDAVBackend }{},
 		IdentityScoring:      struct{ IdentityScoringBackend }{},
+		Replies:              struct{ ReplySender }{},
 		Drafts:               struct{ DraftRunner }{},
 		DraftCommands:        slices.Sorted(maps.Keys(stableDraftDefinitions)),
 		ChatDiscoveryBackend: struct{ ChatDiscoveryBackend }{},

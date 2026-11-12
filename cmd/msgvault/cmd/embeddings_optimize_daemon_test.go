@@ -13,10 +13,12 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
@@ -161,13 +163,26 @@ func TestDaemonOptimizeYieldsAndRestartsChangedSource(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, owner.Close()) }()
 	gate := api.NewSerialOperationGate()
-	adapter := &storeAPIAdapter{config: cfg, operationGate: gate}
+	main, err := store.OpenForTest(t.Context(), cfg.DatabaseDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, main.Close()) })
+	cleaner := NewXContentCleanup(main, cfg, nil)
+	adapter := &storeAPIAdapter{config: cfg, operationGate: gate, xCleanup: cleaner}
 	originalWorker := runAcceleratorWorkerSubprocess
 	defer func() { runAcceleratorWorkerSubprocess = originalWorker }()
 	runAcceleratorWorkerSubprocess = func(ctx context.Context, _ string, path string, generation vector.GenerationID, threads int, _ io.Writer) error {
 		label, _, held := gate.Holder()
 		assert.True(t, held, "training remains exclusive")
 		assert.Equal(t, "msgvault embeddings optimize", label)
+		// A nonblocking flock probe proves that training still owns the read fence.
+		writer := flock.New(cfg.AnalyticsDir() + ".x-content.lock")
+		locked, lockErr := writer.TryLock()
+		require.NoError(t, lockErr)
+		if locked {
+			require.NoError(t, writer.Unlock())
+		}
+		require.NoError(t, writer.Close())
+		assert.False(t, locked, "training must retain the content fence")
 		return sqlitevec.RunAcceleratorWorker(ctx, path, generation, threads)
 	}
 	queued := false
@@ -184,6 +199,14 @@ func TestDaemonOptimizeYieldsAndRestartsChangedSource(t *testing.T) {
 					imported <- errors.New("import admission failed")
 					return
 				}
+				lockCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				releaseContent, err := cleaner.lock(lockCtx, true)
+				if err != nil {
+					imported <- err
+					return
+				}
+				releaseContent()
 				backend, err := sqlitevec.Open(t.Context(), sqlitevec.Options{Path: cfg.Vector.DBPath, Dimension: 4})
 				if err != nil {
 					imported <- err

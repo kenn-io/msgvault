@@ -28,14 +28,15 @@ import (
 )
 
 type contextSemanticFake struct {
-	mu         sync.Mutex
-	dim        int
-	docs       int
-	calls      int
-	err        error
-	before     func()
-	sizeOnce   bool
-	rejectText string
+	observeContext func(context.Context)
+	mu             sync.Mutex
+	dim            int
+	docs           int
+	calls          int
+	err            error
+	before         func()
+	sizeOnce       bool
+	rejectText     string
 }
 
 type contextPartialSemanticFake struct {
@@ -129,9 +130,12 @@ func (c *contextPartialSemanticFake) EmbedDocuments(_ context.Context, documents
 	return out, nil
 }
 
-func (c *contextSemanticFake) EmbedDocuments(_ context.Context, documents []DocumentInput) ([][][]float32, error) {
+func (c *contextSemanticFake) EmbedDocuments(ctx context.Context, documents []DocumentInput) ([][][]float32, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.observeContext != nil {
+		c.observeContext(ctx)
+	}
 	c.calls++
 	if c.before != nil {
 		c.before()
@@ -2776,6 +2780,78 @@ func TestContextWorker_StoppedPassReusesCompletedRequest(t *testing.T) {
 			var saved int
 			require.NoError(f.backend.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
 			assert.Zero(t, saved, "publication releases all checkpoint owners")
+		})
+	}
+}
+
+func TestContextWorkerContentGuardCoversProviderResponse(t *testing.T) {
+	checks := assert.New(t)
+	needs := require.New(t)
+	var fence sync.RWMutex
+	type leaseKey struct{}
+	marker := new(int)
+	observed := false
+	guard := func(ctx context.Context) (context.Context, func() error, error) {
+		if err := ctx.Err(); err != nil {
+			return ctx, nil, err
+		}
+		fence.RLock()
+		return context.WithValue(ctx, leaseKey{}, marker), func() error { fence.RUnlock(); return nil }, nil
+	}
+	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) { deps.ContentReadGuard = guard })
+	f.client.observeContext = func(ctx context.Context) { observed = ctx.Value(leaseKey{}) == marker }
+	f.seed("x", f.chatID, time.Now().UTC(), "synthetic X post")
+	called := false
+	f.client.before = func() {
+		called = true
+		acquired := fence.TryLock()
+		if acquired {
+			fence.Unlock()
+		}
+		checks.False(acquired, "cleanup must wait for the contextual response")
+	}
+	_, err := f.worker.RunOnce(t.Context(), f.gen, testEmbeddingPassScope())
+	needs.NoError(err)
+	checks.True(called)
+	checks.True(observed, "guard context reaches the provider")
+	acquired := fence.TryLock()
+	checks.True(acquired)
+	if acquired {
+		fence.Unlock()
+	}
+}
+
+func TestContextWorkerRecordsContentGuardReleaseFailure(t *testing.T) {
+	for _, cause := range []string{"cancel", "retire"} {
+		t.Run(cause, func(t *testing.T) {
+			needs := require.New(t)
+			checks := assert.New(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+			sentinel := errors.New("synthetic lease release failure")
+			f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
+				deps.ContentReadGuard = func(ctx context.Context) (context.Context, func() error, error) {
+					return ctx, func() error { return sentinel }, nil
+				}
+			})
+			f.deps.Recorder = f.store
+			f.restartWorker()
+			f.client.before = func() {
+				if cause == "cancel" {
+					cancel()
+				} else {
+					needs.NoError(f.backend.RetireGeneration(t.Context(), f.gen, false))
+				}
+			}
+			f.seed("x", f.chatID, time.Now().UTC(), "synthetic X post")
+			_, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+			needs.ErrorIs(err, sentinel)
+			needs.ErrorIs(err, context.Canceled)
+			runs := messageEmbeddingOperationRuns(t, f.store)
+			needs.Len(runs, 1)
+			needs.NotNil(runs[0].Error)
+			checks.NotEqual(operations.StateCancelled, runs[0].State)
+			checks.Equal(operations.PublicErrorInvocationUpstreamFailed, runs[0].Error.Code)
 		})
 	}
 }

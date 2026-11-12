@@ -214,6 +214,21 @@ func (s *Store) requireSourceRemovalAllowed(ctx context.Context, q contextStatem
 	if merged {
 		return fmt.Errorf("source %d cannot be removed: %w", sourceID, ErrSourceMergeParticipant)
 	}
+	var sourceType string
+	if err := q.QueryRowContext(ctx, s.dialect.Rebind(`SELECT source_type FROM sources WHERE id=?`), sourceID).Scan(&sourceType); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check source type before removal: %w", err)
+	}
+	if sourceType == "x" {
+		var pending bool
+		if err := q.QueryRowContext(ctx, s.dialect.Rebind(`SELECT EXISTS(SELECT 1 FROM x_post_versions WHERE source_id=? AND cleanup_pending=1)
+ OR EXISTS(SELECT 1 FROM participant_contact_observations o WHERE o.source_id IN (SELECT id FROM sources WHERE source_type='x') AND `+xProfileCleanupCondition+`)`), sourceID).Scan(&pending); err != nil {
+			return fmt.Errorf("check pending X content cleanup: %w", err)
+		}
+		if pending {
+			return ErrXRemovalPending
+		}
+	}
+
 	return nil
 }
 
@@ -343,6 +358,12 @@ func (s *Store) RemoveSourceSerialized(
 		return hadActiveSync, 0, err
 	}
 
+	if err := s.preserveXSourceAuthorFloors(ctx, func(ctx context.Context, q string, args ...any) (rowsScanner, error) {
+		//nolint:rowserrcheck // The shared author-floor iterator checks Err and closes rows.
+		return conn.QueryContext(ctx, q, args...)
+	}, conn.ExecContext, sourceID); err != nil {
+		return hadActiveSync, 0, err
+	}
 	res, err := conn.ExecContext(
 		ctx, s.dialect.Rebind(`DELETE FROM sources WHERE id = ?`), sourceID,
 	)
@@ -449,6 +470,11 @@ func (s *Store) removeSourceExec(
 	if err := s.deleteSourceObservationIdentityCandidatesContext(
 		ctx, tx, sourceID,
 	); err != nil {
+		return err
+	}
+	if err := s.preserveXSourceAuthorFloors(ctx, func(ctx context.Context, q string, args ...any) (rowsScanner, error) {
+		return tx.QueryContext(ctx, q, args...)
+	}, tx.ExecContext, sourceID); err != nil {
 		return err
 	}
 	if err := s.deleteSourceRepairMigrationsContext(ctx, tx.ExecContext, sourceID); err != nil {

@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [X posts and replies](usage/x.md) adds opt-in public collection, capped backfill, availability refresh, and reviewed owner replies. Unknown send outcomes are not replayed automatically. Live API and billing checks remain release requirements.
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).

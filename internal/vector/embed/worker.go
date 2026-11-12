@@ -57,7 +57,10 @@ type WorkStore interface {
 // sensible defaults when zero: BatchSize defaults to 32,
 // MaxConsecutiveFailures defaults to 5, Log defaults to slog.Default().
 type WorkerDeps struct {
-	Backend vector.Backend
+	// ContentReadGuard fences source reads, provider responses and publication
+	// against destructive X content cleanup.
+	ContentReadGuard func(context.Context) (context.Context, func() error, error)
+	Backend          vector.Backend
 	// VectorsDB is the generation-side DB handle (vectors.db on SQLite,
 	// the shared main DB on PG). Used for embed_runs and the watermark.
 	VectorsDB *sql.DB
@@ -339,6 +342,20 @@ func (w *Worker) RunBackstop(
 func (w *Worker) runOperationPass(
 	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
 ) (res RunResult, retErr error) {
+	var releaseGuard func() error
+	defer func() {
+		if releaseGuard != nil {
+			retErr = errors.Join(retErr, releaseGuard())
+		}
+	}()
+	if w.deps.ContentReadGuard != nil {
+		leaseCtx, release, err := w.deps.ContentReadGuard(ctx)
+		if err != nil {
+			return res, err
+		}
+		releaseGuard = release
+		ctx = leaseCtx
+	}
 	pass, terminal, err := beginOperationPass(
 		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,
 	)
@@ -353,10 +370,22 @@ func (w *Worker) runOperationPass(
 	ctx = withEmbeddingDiagnostics(ctx, diagnostics)
 	defer func() {
 		retErr = operationRunError(retErr)
+		statusErr := retErr
+		statusCtx := ctx
+		if releaseGuard != nil {
+			releaseErr := releaseGuard()
+			retErr = errors.Join(retErr, releaseErr)
+			if releaseErr != nil {
+				statusErr = releaseErr
+				// Record the release failure even if the caller cancelled the pass.
+				statusCtx = context.WithoutCancel(ctx)
+			}
+			releaseGuard = nil
+		}
 		// Finish the snapshot while the run is still active, so status never
 		// sees a closed run with an unfinished snapshot.
 		diagnostics.finish(retErr)
-		pass.finish(ctx, outcomes.counters(true), retErr)
+		pass.finish(statusCtx, outcomes.counters(true), statusErr)
 	}()
 	return w.run(ctx, gen, backstop, outcomes)
 }

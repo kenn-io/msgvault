@@ -39,6 +39,8 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+const booleanTrueValue = "true"
+
 // CLIStore exposes archive operations needed by CLI-compatible HTTP routes.
 // These routes preserve local CLI output contracts while keeping SQLite access
 // inside the daemon process.
@@ -1399,6 +1401,24 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_args", "args must not be empty")
 		return
 	}
+	if IsCLIRunSendReply(req.Args) {
+		if _, err := ParseCLIRunSendReply(req); err != nil {
+			writeError(w, 400, "invalid_args", err.Error())
+			return
+		}
+	}
+	if IsCLIRunXSync(req.Args) {
+		if _, err := ParseCLIRunXSync(req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_args", err.Error())
+			return
+		}
+	}
+	if IsCLIRunXRegister(req.Args) {
+		if _, err := ParseCLIRunXRegister(req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_args", err.Error())
+			return
+		}
+	}
 	if !cliRunCommandAllowed(req.Args) {
 		writeError(w, http.StatusBadRequest, "command_not_allowed", "command is not allowed through the daemon CLI runner")
 		return
@@ -1438,6 +1458,14 @@ func (s *Server) handleCLIRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if s.contentReadGuard != nil && cliRunNeedsContentLease(req.Args) {
+		release, err := s.contentReadGuard(r.Context())
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "x_content_cleanup_pending", "X content cleanup is incomplete")
+			return
+		}
+		defer release()
+	}
 
 	writeEvent := newCLINDJSONEventWriter[CLIRunEvent](w)
 	if err := runner.RunCLICommand(s.WithPublishedVectorConfig(r.Context()), req, writeEvent); err != nil {
@@ -1460,7 +1488,7 @@ func (s *Server) cliRunEnvAllowedForCommand(args []string, name string) bool {
 	if name == clirun.EnvInlineOAuth {
 		return len(args) > 0 && args[0] == "add-inline"
 	}
-	if IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
+	if IsCLIRunSendReply(args) || IsCLIRunDraftCreate(args) || IsCLIRunDraftLifecycle(args) || IsCLIRunDraftSendAs(args) {
 		return false
 	}
 	if len(args) >= 3 && args[0] == cliRunPersonCommand {
@@ -1680,6 +1708,18 @@ const cliRunPersonCommand = "person"
 // admits only the provider consent boundary and sweep operations.
 
 func cliRunCommandAllowed(args []string) bool {
+	if IsCLIRunSendReply(args) {
+		_, err := ParseCLIRunSendReply(CLIRunRequest{Args: args})
+		return err == nil
+	}
+	if IsCLIRunXSync(args) {
+		_, err := ParseCLIRunXSync(CLIRunRequest{Args: args})
+		return err == nil
+	}
+	if IsCLIRunXRegister(args) {
+		_, err := ParseCLIRunXRegister(CLIRunRequest{Args: args})
+		return err == nil
+	}
 	if len(args) == 0 {
 		return false
 	}

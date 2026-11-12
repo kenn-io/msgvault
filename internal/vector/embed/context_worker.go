@@ -53,12 +53,14 @@ type ContextWorkerHooks struct {
 // ContextWorkerDeps bundles contextual source, assembly, embedding, and
 // publication collaborators.
 type ContextWorkerDeps struct {
-	Backend    vector.Backend
-	Publisher  vector.DocumentPublisher
-	Store      ContextWorkStore
-	Assembler  Assembler
-	Client     SemanticClient
-	BuildScope vector.BuildScope
+	// ContentReadGuard holds the source-content fence through publication.
+	ContentReadGuard func(context.Context) (context.Context, func() error, error)
+	Backend          vector.Backend
+	Publisher        vector.DocumentPublisher
+	Store            ContextWorkStore
+	Assembler        Assembler
+	Client           SemanticClient
+	BuildScope       vector.BuildScope
 
 	ChangeBatchSize         int
 	ReconcileBatchSize      int
@@ -150,6 +152,20 @@ func (w *ContextWorker) RunBackstop(
 func (w *ContextWorker) runOperationPass(
 	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
 ) (result RunResult, retErr error) {
+	var releaseGuard func() error
+	defer func() {
+		if releaseGuard != nil {
+			retErr = errors.Join(retErr, releaseGuard())
+		}
+	}()
+	if w.deps.ContentReadGuard != nil {
+		leaseCtx, release, err := w.deps.ContentReadGuard(ctx)
+		if err != nil {
+			return result, err
+		}
+		releaseGuard = release
+		ctx = leaseCtx
+	}
 	pass, terminal, err := beginOperationPass(
 		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,
 	)
@@ -163,12 +179,24 @@ func (w *ContextWorker) runOperationPass(
 	ctx = withEmbeddingDiagnostics(ctx, diagnostics)
 	defer func() {
 		retErr = operationRunError(retErr)
+		statusErr := retErr
+		statusCtx := ctx
+		if releaseGuard != nil {
+			releaseErr := releaseGuard()
+			retErr = errors.Join(retErr, releaseErr)
+			if releaseErr != nil {
+				statusErr = releaseErr
+				// Record the release failure even if the caller cancelled the pass.
+				statusCtx = context.WithoutCancel(ctx)
+			}
+			releaseGuard = nil
+		}
 		counters := finalRunCounters(result)
 		// Finish the snapshot while the run is still active, so status never
 		// sees a closed run with an unfinished snapshot.
 		diagnostics.finish(retErr)
 		pass.checkpoint(ctx, counters)
-		pass.finish(ctx, counters, retErr)
+		pass.finish(statusCtx, counters, statusErr)
 	}()
 	runCtx := contextWithOperationPass(ctx, pass)
 	if !backstop {

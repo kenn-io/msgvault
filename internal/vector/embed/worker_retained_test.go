@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -22,6 +25,40 @@ type upsertFailingBackend struct {
 	vector.Backend
 
 	fail bool
+}
+
+func TestWorkerRecordsContentGuardReleaseFailure(t *testing.T) {
+	for _, cause := range []string{"cancel", "retire"} {
+		t.Run(cause, func(t *testing.T) {
+			needs := require.New(t)
+			checks := assert.New(t)
+			f := newWorkerFixture(t, 1)
+			w := newRetainingWorker(f, f.Backend, 1)
+			recorder := testutil.NewTestStore(t)
+			w.deps.Recorder = recorder
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+			sentinel := errors.New("synthetic lease release failure")
+			f.FakeClient.preReturn = func() {
+				if cause == "cancel" {
+					cancel()
+				} else {
+					needs.NoError(f.Backend.RetireGeneration(t.Context(), f.BuildingGen, false))
+				}
+			}
+			w.deps.ContentReadGuard = func(ctx context.Context) (context.Context, func() error, error) {
+				return ctx, func() error { return sentinel }, nil
+			}
+			_, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
+			needs.ErrorIs(err, sentinel)
+			needs.ErrorIs(err, context.Canceled)
+			runs := messageEmbeddingOperationRuns(t, recorder)
+			needs.Len(runs, 1)
+			needs.NotNil(runs[0].Error)
+			checks.NotEqual(operations.StateCancelled, runs[0].State)
+			checks.Equal(operations.PublicErrorInvocationUpstreamFailed, runs[0].Error.Code)
+		})
+	}
 }
 
 func (b *upsertFailingBackend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []vector.Chunk) error {
@@ -351,5 +388,50 @@ func TestWorkerResolvedSourceReleasesUnpublishedCheckpoint(t *testing.T) {
 			require.NoError(t, f.backend.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embedding_checkpoints WHERE owner = ?`, fmt.Sprintf("message:%d", id)).Scan(&saved))
 			assert.Zero(t, saved, "a completed scan releases resolved output")
 		})
+	}
+}
+
+// The response save is cancellation-detached, so the content fence must outlive it.
+func TestWorkerContentGuardCoversDetachedCheckpointSave(t *testing.T) {
+	checks := assert.New(t)
+	needs := require.New(t)
+	f := newWorkerFixture(t, 1)
+	var fence sync.RWMutex
+	var savedAtRelease int
+	var releaseErr error
+	type leaseKey struct{}
+	marker := new(int)
+	observed := false
+	f.FakeClient.observeContext = func(ctx context.Context) { observed = ctx.Value(leaseKey{}) == marker }
+	guard := func(ctx context.Context) (context.Context, func() error, error) {
+		fence.RLock()
+		return context.WithValue(ctx, leaseKey{}, marker), func() error {
+			releaseErr = f.VectorsDB.QueryRowContext(context.WithoutCancel(t.Context()), `SELECT count(*) FROM embedding_checkpoints WHERE owner = 'message:1'`).Scan(&savedAtRelease)
+			fence.RUnlock()
+			return nil
+		}, nil
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f.FakeClient.OnEmbed = func(inputs []string) ([][]float32, error) {
+		acquired := fence.TryLock()
+		if acquired {
+			fence.Unlock()
+		}
+		checks.False(acquired, "cleanup must wait for an in-flight response")
+		cancel()
+		return fakeVectors(inputs), nil
+	}
+	w := newRetainingWorker(f, f.Backend, 1)
+	w.deps.ContentReadGuard = guard
+	_, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
+	needs.Error(err)
+	needs.NoError(releaseErr)
+	checks.True(observed, "guard context reaches the provider")
+	checks.Positive(savedAtRelease, "the detached response was saved before the lease was released")
+	acquired := fence.TryLock()
+	checks.True(acquired)
+	if acquired {
+		fence.Unlock()
 	}
 }

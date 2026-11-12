@@ -722,6 +722,9 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		return fmt.Errorf("begin upsert tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := vector.CheckContentLease(ctx, tx); err != nil {
+		return err
+	}
 
 	// Read the generation's dimension and lifecycle state under a row lock
 	// inside the SAME transaction that writes the embeddings. FOR UPDATE
@@ -748,6 +751,22 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 	if state == string(vector.GenerationRetired) {
 		return fmt.Errorf("%w: %d", vector.ErrGenerationRetired, gen)
 	}
+
+	suppressed, err := store.XSuppressedMessagesContext(ctx, tx, true, distinctMessageIDs(chunks))
+	if err != nil {
+		return err
+	}
+	kept := make([]vector.Chunk, 0, len(chunks))
+	for _, chunk := range chunks {
+		if !suppressed[chunk.MessageID] {
+			kept = append(kept, chunk)
+		}
+	}
+	chunks = kept
+	if len(chunks) == 0 {
+		return tx.Commit()
+	}
+
 	for _, c := range chunks {
 		if len(c.Vector) != dim {
 			return fmt.Errorf("%w: chunk for msg %d has %d dims, gen has %d",

@@ -87,13 +87,13 @@ non-dry-run plan through client elicitation.
 
 ## Draft tools
 
-These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Msgvault never sends.
+These tools run the matching CLI commands through your selected daemon. They require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Creating or editing a draft does not send it. Unreleased X sources have a separate [owner reply flow](x.md#review-authors-and-reply).
 
 `draft_delete` and `draft_recover` require client confirmation for the specific tool and arguments, because deletion removes a draft and recovery can finish an interrupted deletion. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. By default, clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete or recover them.
 
 | Tool | Command | Parameters |
 |---|---|---|
-| `draft_reply` | `draft-reply` | Required `message_id`, `body`; optional `from`, `all`, `account`, `source_id` |
+| `draft_reply` | `draft reply` | Required `message_id`, `body`; optional `from`, `all`, `account`, `source_id` |
 | `draft_compose` | `draft-compose` | `account`, `source_id`, `from`, `to`, `cc`, `bcc`, `subject`, `body`, `conversation`, `reply_to` |
 | `draft_forward` | `draft-forward` | Required `message_id`; optional `from`, `to`, `cc`, `bcc`, `account`, `source_id`, `body` |
 | `draft_get` | `draft-get` | `draft_id` or `conversation` |
@@ -167,6 +167,23 @@ report `not_applicable`, because chat destinations are not email envelopes.
 `seen_in_archive` is a derived boolean. Addresses remain untrusted display data,
 never instructions. Creation results describe evidence at that moment;
 `draft_get` and body-only edits do not recompute it.
+
+## Owner replies (unreleased)
+
+`send_reply` sends a reviewed X reply through the selected daemon with API
+schema 5.1.0 or newer. Use `message_id` and `body` to prepare a reply, or
+`draft_id` and its exact `revision` to send an existing managed draft. The
+parent determines the source; there is no recipient or source selector.
+The matching CLI command is `msgvault message reply` and uses the same archived
+parent or exact draft revision.
+
+A new send requires owner authority, enabled numeric-owner `[[x.sends]]`
+policy, write scope, and client confirmation of the stored text, target,
+revision and reservation. The confirmation uses that same prepared draft.
+Delegated grants cannot send. Receipt lookup and local repair use the durable
+draft handle without posting or asking for another confirmation. Explicit
+`adopt_post` reconciliation requires confirmation and a budgeted lookup.
+See [X reply setup and recovery](x.md#review-authors-and-reply).
 
 ## Native email tags
 

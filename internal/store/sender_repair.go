@@ -321,7 +321,7 @@ func (s *Store) ApplySenderRepairContext(
 		}
 
 		recipientSet := RecipientSet{
-			Type:           "from",
+			Type:           meetingSenderRole,
 			ParticipantIDs: participantIDs,
 			DisplayNames:   make([]string, len(envelope)),
 			EmailAddresses: make([]string, len(envelope)),

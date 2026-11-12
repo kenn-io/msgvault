@@ -179,7 +179,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 	}
 	if err := s.CheckSourceRemovalAllowedContext(cmd.Context(), source.ID); err != nil {
 		cleanup()
-		return err
+		return xSourceRemovalError(err)
 	}
 	dryRun, err := cmd.Flags().GetBool("dry-run")
 	if err != nil {
@@ -260,6 +260,14 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		}
 	}
 
+	if source.SourceType == sourceTypeX {
+		release, err := s.AcquireSourceRemovalLockContext(cmd.Context(), source.ID)
+		if err != nil {
+			return fmt.Errorf("prepare X account removal: %w", xSourceRemovalError(err))
+		}
+		defer func() { retErr = errors.Join(retErr, release()) }()
+	}
+
 	// Collect attachment paths unique to this source before the cascade deletes them.
 	attachmentPaths, err := s.AttachmentPathsUniqueToSource(source.ID)
 	if err != nil {
@@ -285,7 +293,10 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		packedMappingsRemoved int64
 		removeErr             error
 	)
-	if source.SourceType == sourceTypeDiscord {
+	switch source.SourceType {
+	case sourceTypeX:
+		hadActiveSync, packedMappingsRemoved, removeErr = removeXSource(cmd.Context(), s, cfg, source, defaultXCommandDeps(), true)
+	case sourceTypeDiscord:
 		discordTokens := discord.NewTokenManager(cfg.TokensDir())
 		if removeAccountBeforeDiscordLifecycleLockHook != nil {
 			removeAccountBeforeDiscordLifecycleLockHook()
@@ -314,7 +325,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			removeDiscordCredentialAfterCascade(s, discordTokens, discordCredential, hadActiveSync)
 			return nil
 		})
-	} else {
+	default:
 		hadActiveSync, packedMappingsRemoved, removeErr = s.RemoveSourceSerialized(cmd.Context(), source.ID)
 	}
 
