@@ -12,7 +12,21 @@ import (
 	"go.kenn.io/msgvault/internal/calevent"
 )
 
-func TestICalendarCancelledDetailsRevisionOrder(t *testing.T) {
+func TestICalendarRevisionPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"sequence order", testICalendarCancelledDetailsRevisionOrder},
+		{"cancelled details stamp", testICalendarCancelledDetailsStamp},
+		{"equal and newer revisions", testICalendarEqualRevisionIgnored},
+		{"cancellation tie", testICalendarCancellationWinsRevisionTie},
+	} {
+		t.Run(tc.name, tc.run)
+	}
+}
+
+func testICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 	initial := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Initial\r\nORGANIZER:mailto:organizer@example.com")
 	updated := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:organizer@example.com")
 	cancel := calendarDocument("CANCEL", "SEQUENCE:3\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:organizer@example.com")
@@ -50,16 +64,18 @@ func TestICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 				requirements.NoError(err)
 				assertions.Equal(updated, stored)
 				if mode == "file" && order == [3]int{0, 1, 2} {
-					_, err = st.db.ExecContext(t.Context(), `DELETE FROM calendar_events WHERE message_id=?`, ids[0])
-					requirements.NoError(err)
-					requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], stored, "ics"))
-					assertions.Equal(row.Event, calendarRows(t, st, ids[0])[0].Event)
-					restored := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored\r\nORGANIZER:mailto:organizer@example.com")
-					_, err = st.PersistICalendarContext(t.Context(), source, restored)
-					requirements.NoError(err)
-					row = calendarRows(t, st, ids[0])[0]
-					assertions.Equal("confirmed", row.Event.Status)
-					assertions.Equal("Restored", row.Subject)
+					t.Run("projection rebuild and restoration", func(t *testing.T) {
+						_, err := st.db.ExecContext(t.Context(), `DELETE FROM calendar_events WHERE message_id=?`, ids[0])
+						require.NoError(t, err)
+						require.NoError(t, st.UpsertMessageRawWithFormat(ids[0], stored, "ics"))
+						assert.Equal(t, row.Event, calendarRows(t, st, ids[0])[0].Event)
+						restored := calendarDocument("REQUEST", "SEQUENCE:4\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Restored\r\nORGANIZER:mailto:organizer@example.com")
+						_, err = st.PersistICalendarContext(t.Context(), source, restored)
+						require.NoError(t, err)
+						row := calendarRows(t, st, ids[0])[0]
+						assert.Equal(t, "confirmed", row.Event.Status)
+						assert.Equal(t, "Restored", row.Subject)
+					})
 				}
 			})
 		}
@@ -100,7 +116,7 @@ func TestICalendarCancellationRetainsAttendees(t *testing.T) {
 	requirements.Equal("cancelled", revision.Status)
 }
 
-func TestICalendarCancelledDetailsStamp(t *testing.T) {
+func testICalendarCancelledDetailsStamp(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
