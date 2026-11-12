@@ -236,15 +236,31 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 	}
 	var current any
 	var losing any
+	var preview *generated.OrganizationAttributeWrite
 	if r.id != 0 {
 		result, _, err := b.executeOrganizationOperation(ctx, "get_organization", map[string]any{"organization_id": r.id})
 		if err != nil || result == nil || result.IsError {
 			return "", true, organizationContextRefusal(result)
 		}
-		if r.etag != "" && result.ETag != r.etag {
-			return "", true, &mcpserver.OperationRefusalError{Code: "organization_revision_conflict"}
-		}
 		current = result.Output
+	}
+	if name == "set_organization_attribute" || name == "clear_organization_attribute" {
+		switch options := r.options.(type) {
+		case *generated.SetOrganizationAttributeRequestOptions:
+			body := *options.Body
+			body.DryRun = new(true)
+			options.Body = &body
+		case *generated.ClearOrganizationAttributeRequestOptions:
+			query := *options.Query
+			query.DryRun = new(true)
+			options.Query = &query
+		}
+		result, err := readMCPOperationJSONWithClassifier[generated.OrganizationAttributeWrite](ctx, b.client, r.method, r.path, r.options, organizationRefusal, http.StatusOK, http.StatusCreated)
+		if err != nil || result == nil || result.IsError {
+			return "", true, organizationContextRefusal(result)
+		}
+		value := result.Output.(generated.OrganizationAttributeWrite)
+		preview = &value
 	}
 	if name == "merge_organization" {
 		input, _ := decodeMCPOperationArguments[mcpserver.OrganizationMergeArgs](args)
@@ -281,11 +297,12 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 	}
 	effect := map[string]string{"create_organization": "create an organization", "update_organization": "replace mutable fields; omitted fields are cleared except retired", "delete_organization": "delete the organization only if it has no employment records", "merge_organization": "merge the losing organization, moving employment and superseding its active profile and attributes", "replace_organization_profile": "replace all profile collections; omitted collections are cleared", "set_organization_attribute": "set the named typed attribute", "clear_organization_attribute": "supersede the named typed attribute"}[name]
 	disclosure, err := json.Marshal(struct {
-		Operation string         `json:"operation"`
-		Current   any            `json:"current,omitempty"`
-		Losing    any            `json:"losing,omitempty"`
-		Changes   map[string]any `json:"changes"`
-		Effect    string         `json:"effect"`
-	}{name, current, losing, changes, effect}, json.Deterministic(true))
+		Operation string                                `json:"operation"`
+		Current   any                                   `json:"current,omitempty"`
+		Losing    any                                   `json:"losing,omitempty"`
+		Preview   *generated.OrganizationAttributeWrite `json:"preview,omitempty"`
+		Changes   map[string]any                        `json:"changes"`
+		Effect    string                                `json:"effect"`
+	}{name, current, losing, preview, changes, effect}, json.Deterministic(true))
 	return string(disclosure), true, err
 }

@@ -211,12 +211,51 @@ func TestOrganizationProfileMediaAndAttributesThroughNativeRoutes(t *testing.T) 
 		require.NoError(t, err)
 		write := operationOutput[generated.OrganizationAttributeWrite](t, set)
 		require.NotNil(t, write.Value)
+		for _, tc := range []struct {
+			name string
+			args map[string]any
+		}{
+			{"set_organization_attribute", map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "value": map[string]any{"type": "text", "text": "services"}, "source": "user"}}},
+			{"clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry"}},
+		} {
+			t.Run(tc.name+" disclosure", func(t *testing.T) {
+				disclosure, err := backend.OperationDisclosure(t.Context(), tc.name, tc.args)
+				require.NoError(t, err)
+				var decoded struct {
+					Current mcpserver.OrganizationRecord         `json:"current"`
+					Preview generated.OrganizationAttributeWrite `json:"preview"`
+				}
+				require.NoError(t, json.Unmarshal([]byte(disclosure), &decoded))
+				assert.Equal(t, org.ID, decoded.Current.Profile.Organization.ID)
+				assert.True(t, decoded.Preview.DryRun)
+				require.NotNil(t, decoded.Preview.Superseded)
+				assert.Equal(t, write.Value.ID, decoded.Preview.Superseded.ID)
+				missing := make(map[string]any, len(tc.args))
+				for key, value := range tc.args {
+					missing[key] = value
+				}
+				missing["organization_id"] = int64(999999)
+				prompt, err := backend.OperationDisclosure(t.Context(), tc.name, missing)
+				assert.Empty(t, prompt)
+				var refusal *mcpserver.OperationRefusalError
+				require.ErrorAs(t, err, &refusal)
+				assert.Equal(t, "organization_not_found", refusal.Code)
+			})
+		}
 		preview, err := backend.ExecuteOperation(t.Context(), "clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry", "expected_value_id": write.Value.ID, "dry_run": true})
 		require.NoError(t, err)
 		assert.True(t, operationOutput[generated.OrganizationAttributeWrite](t, preview).DryRun)
 		clear, err := backend.ExecuteOperation(t.Context(), "clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry", "expected_value_id": write.Value.ID})
 		require.NoError(t, err)
 		require.NotNil(t, operationOutput[generated.OrganizationAttributeWrite](t, clear).Superseded)
+		absentDisclosure, err := backend.OperationDisclosure(t.Context(), "set_organization_attribute", map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "value": map[string]any{"type": "text", "text": "services"}, "source": "user"}})
+		require.NoError(t, err)
+		var absent struct {
+			Preview generated.OrganizationAttributeWrite `json:"preview"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(absentDisclosure), &absent))
+		assert.True(t, absent.Preview.DryRun)
+		assert.Nil(t, absent.Preview.Superseded)
 		active, err := backend.ExecuteOperation(t.Context(), "list_organization_attributes", map[string]any{"organization_id": org.ID})
 		require.NoError(t, err)
 		assert.Empty(t, operationOutput[generated.OrganizationAttributesResponse](t, active).Values)
