@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
@@ -55,6 +56,9 @@ func TestZoomRosterThroughDaemon(t *testing.T) {
 	for range 2 {
 		run(joined)
 	}
+	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), "call_history", (callhistory.Evidence{Provider: "zoom_meetings", Account: zoomcalls.AccountNamespace("account/owner", "owner")}).SourceIdentifier())
+	require.NoError(err)
+	assert.Equal("Zoom meetings — account/owner", source.DisplayName.String)
 	q := store.CallQuery{PersonID: person.ID}
 	page, err := client.SummarizeCalls(t.Context(), q)
 	require.NoError(err)

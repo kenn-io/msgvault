@@ -35,6 +35,17 @@ func TestMeetingAttendance(t *testing.T) {
 	assert.Equal("joined", o.Participants[0].Participation)
 }
 
+func TestMeetingSourceLabelPreservesIdentityAndRaw(t *testing.T) {
+	account := strings.Repeat("a", 256)
+	o, err := Meeting(account, "owner", "instance", []byte(roster), nil)
+	require.NoError(t, err)
+	require.NotNil(t, o)
+	assert.Equal(t, "Zoom meetings — "+account, o.SourceLabel)
+	assert.Equal(t, AccountNamespace(account, "owner"), o.Account)
+	assert.Equal(t, (callhistory.Evidence{Provider: "zoom_meetings", Account: AccountNamespace(account, "owner")}).SourceIdentifier(), o.SourceIdentifier())
+	assert.JSONEq(t, roster, string(o.Raw))
+}
+
 func TestMeetingRejectsNumericMeetingID(t *testing.T) {
 	o, err := Meeting("example/owner", "owner", "1234567890", []byte(roster), nil)
 	require.ErrorContains(t, err, "UUID")

@@ -25,9 +25,9 @@ type callOpener func(context.Context) (callCommandClient, func(), error)
 type callWriter func(*cobra.Command, any) error
 
 func zoomIdentityFlags(cmd *cobra.Command, o *zoomOptions) {
-	cmd.Flags().StringVar(&o.account, "account", "", "Stable Zoom account/owner namespace (required)")
+	cmd.Flags().StringVar(&o.account, "account", "", "Stable Zoom account label (required)")
 	cmd.Flags().StringVar(&o.owner, "owner-id", "", "Owner's exact Zoom native ID (required)")
-	cmd.Flags().StringVar(&o.bindings, "bindings", "", "JSON file mapping native peers to existing archive participant IDs")
+	cmd.Flags().StringVar(&o.bindings, "bindings", "", "JSON file: Zoom IDs → existing archive participant IDs")
 }
 
 func readZoomFile(path string, limit int) ([]byte, error) {
