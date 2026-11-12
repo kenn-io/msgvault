@@ -319,11 +319,12 @@ export class PersonBriefController {
         return failed;
       }
       if (run.brief_version <= 0) {
-        this.runOutcome = `No new brief version. Reason: ${briefFailureClassLabel(run.brief_failure_class)}.`;
-        this.announcement = this.runOutcome;
-        return confirmed;
+        this.runOutcome = run.brief_failure_class
+          ? `No new brief version. Reason: ${briefFailureClassLabel(run.brief_failure_class)}.`
+          : 'No new brief version.';
+      } else {
+        this.runOutcome = `Brief version ${run.brief_version} generated.`;
       }
-      this.runOutcome = `Brief version ${run.brief_version} generated.`;
       this.announcement = this.runOutcome;
       this.endMutation(context, mutation, personID, abort);
       await Promise.all([this.loadBrief(personID), this.refreshVersions(personID)]);

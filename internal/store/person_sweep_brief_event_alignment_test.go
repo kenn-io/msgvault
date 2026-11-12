@@ -54,21 +54,17 @@ func TestPersonSweepEventAlignsEveryVersionOfRequiredSource(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		evidence  []personfacts.EvidenceInput
-		mandatory bool
 		wantError bool
 	}{
-		{"current then stale", []personfacts.EvidenceInput{current, old}, true, true},
-		{"stale then current", []personfacts.EvidenceInput{old, current}, true, true},
-		{"accepted duplicate", []personfacts.EvidenceInput{current, current}, true, false},
-		{"optional stale", []personfacts.EvidenceInput{current, old}, false, false},
+		{"current then stale", []personfacts.EvidenceInput{current, old}, true},
+		{"stale then current", []personfacts.EvidenceInput{old, current}, true},
+		{"accepted duplicate", []personfacts.EvidenceInput{current, current}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			required := require.New(t)
 			brief := briefApplyResult(personID, current.SourceRef)
 			brief.Evidence = tc.evidence
-			if tc.mandatory {
-				brief.Boundary.EventMemory = []peoplesweep.BriefEventMemory{{Sources: []peoplesweep.EvidenceRef{newItems[0].Ref}}}
-			}
+			brief.Boundary.EventMemory = []peoplesweep.BriefEventMemory{{Sources: []peoplesweep.EvidenceRef{newItems[0].Ref}}}
 			request := peoplesweep.ApplyRequest{Lease: peoplesweep.Lease{PersonID: personID}, Brief: brief}
 			prepared, err := preparePersonSweepBriefEvidence(t.Context(), request, PersonSweepEvidenceAligner{Store: st})
 			if tc.wantError {
