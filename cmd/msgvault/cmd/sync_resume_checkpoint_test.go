@@ -111,20 +111,26 @@ func TestInterruptedSyncCopiedCommandResumesCheckpoint(t *testing.T) {
 			http.Error(w, "unexpected proxy request", http.StatusBadRequest)
 			return
 		}
-		upstream, err := net.Dial("tcp", provider.Listener.Addr().String())
+		upstream, err := (&net.Dialer{}).DialContext(r.Context(), "tcp", provider.Listener.Addr().String())
 		if err != nil {
 			http.Error(w, "provider unavailable", http.StatusBadGateway)
 			return
 		}
-		client, buffered, err := w.(http.Hijacker).Hijack()
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			_ = upstream.Close()
+			http.Error(w, "proxy cannot hijack connection", http.StatusInternalServerError)
+			return
+		}
+		client, buffered, err := hijacker.Hijack()
 		if err != nil {
 			_ = upstream.Close()
 			return
 		}
 		tunnels.Add(1)
 		defer tunnels.Done()
-		defer client.Close()
-		defer upstream.Close()
+		defer func() { _ = client.Close() }()
+		defer func() { _ = upstream.Close() }()
 		_, _ = io.WriteString(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
 		copied := make(chan struct{})
 		go func() {
@@ -192,7 +198,7 @@ func TestInterruptedSyncCopiedCommandResumesCheckpoint(t *testing.T) {
 	require.NoError(t, os.MkdirAll(cliHome, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(cliHome, "config.toml"), []byte("[remote]\nurl = "+strconv.Quote(httpServer.URL)+"\nallow_insecure = true\n"), 0o600))
 	t.Setenv("MSGVAULT_HOME", cliHome)
-	cli := exec.CommandContext(ctx, binary, "--home", cliHome, "sync-full", "--no-build-cache", "--query", query, "reader@example.test")
+	cli := exec.CommandContext(ctx, binary, "--home", cliHome, "sync-full", "--no-build-cache", "--query", query, "reader@example.test") //nolint:gosec // The test operator supplies the built CLI binary.
 	var stdout, stderr bytes.Buffer
 	cli.Stdout, cli.Stderr = &stdout, &stderr
 	require.NoError(t, cli.Start())
