@@ -22,7 +22,7 @@ var _ peoplebrowser.ProfileUIDReader = (*PeopleBrowser)(nil)
 const PersonUIDLookupMinAPISchemaVersion = "3.10.0"
 
 // FirstAppearanceMinAPISchemaVersion is the first schema exposing first appearance.
-const FirstAppearanceMinAPISchemaVersion = "5.1.0"
+const FirstAppearanceMinAPISchemaVersion = "5.2.0"
 
 // maxProfileOrganizationLookups bounds the per-organization name resolution
 // a single profile read may perform beyond the primary-employment projection.
