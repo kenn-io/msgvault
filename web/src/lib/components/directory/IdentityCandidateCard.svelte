@@ -66,7 +66,7 @@
           {/each}
         </ul>
       {:else}
-        <p class="empty-evidence">No evidence supplied.</p>
+        <p class="empty-evidence">No supporting details for this match.</p>
       {/if}
     </section>
 

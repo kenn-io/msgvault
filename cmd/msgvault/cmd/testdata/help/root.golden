@@ -1,9 +1,8 @@
-Archive email, chat, meetings offline.
-Daemon or config.toml [remote].url; --local forces local.
+Archive email, chats, and meetings offline.
 
 Start here:
   msgvault list-accounts --json
-  msgvault search 'from:a@example.com newer_than:30d' --json
+  msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
   msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
@@ -12,9 +11,9 @@ Start here:
   msgvault setup status --json
 
 Output:
-  --json: stdout (export-messages: JSONL); logs/progress: stderr.
-  --log-level=warn quiets logs. Exit: 0 OK, 1 error, 130 interrupted.
-  More: msgvault quickstart.
+  --json writes JSON to stdout (JSONL for export-messages).
+  Logs and progress go to stderr. Exit: 0 OK, 1 error, 130 interrupted.
+  See msgvault quickstart.
 
 Usage:
   msgvault [command]
@@ -114,20 +113,21 @@ Add and sync sources:
   verify                 Verify archive integrity against Gmail
 
 Import local exports:
-  import-eml          Import a tree of RFC 5322 .eml files
-  import-emlx         Import Apple Mail .emlx files into msgvault
-  import-gvoice       Import Google Voice history from Takeout export
-  import-imazing-csv  Import Messages CSV exports created by iMazing
-  import-imessage     Import iMessages from local database
-  import-maildir      Import a Maildir or Maildir++ archive
-  import-mbox         Import an MBOX export into msgvault
-  import-messenger    Import Facebook Messenger from a Meta data export
-  import-pst          Import a PST (Outlook) archive into msgvault
-  import-slackdump    Import a Slackdump export
-  import-synctech-sms Import SMS Backup & Restore exports
-  import-telegram     Import a Telegram export
-  import-whatsapp     Import WhatsApp messages from an Android or Apple database
-  import-x            Import X direct-message archives
+  import-discord-package Import a Discord sent-message package
+  import-eml             Import a tree of RFC 5322 .eml files
+  import-emlx            Import Apple Mail .emlx files into msgvault
+  import-gvoice          Import Google Voice history from Takeout export
+  import-imazing-csv     Import Messages CSV exports created by iMazing
+  import-imessage        Import iMessages from local database
+  import-maildir         Import a Maildir or Maildir++ archive
+  import-mbox            Import an MBOX export into msgvault
+  import-messenger       Import Facebook Messenger from a Meta data export
+  import-pst             Import a PST (Outlook) archive into msgvault
+  import-slackdump       Import a Slackdump export
+  import-synctech-sms    Import SMS Backup & Restore exports
+  import-telegram        Import a Telegram export
+  import-whatsapp        Import WhatsApp messages from an Android or Apple database
+  import-x               Import X direct-message archives
 
 Drafts, calendar, and Kata (write to providers):
   calendar      Read archived events and control live calendars
