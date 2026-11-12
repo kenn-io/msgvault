@@ -244,6 +244,9 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 			if tc.kind == "google_chat" {
 				assertFTSContains(t, f.Store, "current@example.test", 0)
 			}
+			if tc.kind == "slack" {
+				assertFTSContains(t, f.Store, "slack@example.test", 1)
+			}
 			if tc.kind == "discord" {
 				assertFTSContains(t, f.Store, "discordmention", 1)
 			}
