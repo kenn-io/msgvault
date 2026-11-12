@@ -86,7 +86,7 @@ func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (Meet
 	return result, true
 }
 
-func (s *Store) suggestionRows(ctx context.Context, ids []int64) ([]suggestMember, error) {
+func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMember, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -120,14 +120,6 @@ func (s *Store) suggestionRows(ctx context.Context, ids []int64) ([]suggestMembe
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
 	}
-	return members, nil
-}
-
-func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMember, error) {
-	members, err := s.suggestionRows(ctx, ids)
-	if err != nil || len(members) == 0 {
-		return members, err
-	}
 	for i := range members {
 		if members[i].needRaw {
 			if err := s.suggestionRecoverStart(ctx, &members[i]); err != nil {
@@ -135,7 +127,7 @@ func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMe
 			}
 		}
 	}
-	participants, err := loadMeetingContextParticipantsPage(ctx, s.db, ids)
+	participants, err := loadMeetingContextParticipantsPage(ctx, r, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -170,57 +162,6 @@ func (s *Store) suggestionRecoverStart(ctx context.Context, member *suggestMembe
 		member.End = member.Start.Add(member.duration)
 	}
 	return nil
-}
-
-func (s *Store) suggestionMembersInWindow(ctx context.Context, from, to time.Time) ([]suggestMember, error) {
-	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
-	start, duration := s.suggestionIntervalExpressions()
-	end := start + " + (" + duration + ") * interval '1 second'"
-	startBound, endBound := "?", "?"
-	if !s.IsPostgreSQL() {
-		start = "julianday(" + start + ")"
-		end = start + " + (" + duration + ") / 86400.0"
-		startBound, endBound = "julianday(?)", "julianday(?)"
-	}
-	query := `SELECT m.id FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND ((` + start + ` < ` + startBound + ` AND ` + end + ` > ` + endBound + `) OR (d.duration_basis='scheduled' AND ` + s.suggestionScheduledStart() + ` IS NULL))` + scope + ` AND m.id > ? ORDER BY m.id LIMIT 400`
-	var members []suggestMember
-	var last int64
-	for {
-		args := append([]any{to, from}, scopeArgs...)
-		args = append(args, last)
-		rows, err := s.db.QueryContext(ctx, query, args...)
-		if err != nil {
-			return nil, err
-		}
-		var ids []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			ids = append(ids, id)
-		}
-		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-			return nil, err
-		}
-		batch, err := s.suggestionMembers(ctx, ids)
-		if err != nil {
-			return nil, err
-		}
-		for _, member := range batch {
-			if member.Start.Before(to) && member.End.After(from) {
-				members = append(members, member)
-				if len(members) > 2000 {
-					return nil, ErrQueryTooBroad
-				}
-			}
-		}
-		if len(ids) < 400 {
-			return members, nil
-		}
-		last = ids[len(ids)-1]
-	}
 }
 
 func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkRef, limit int, withheld func(context.Context, []int64) (map[int64]bool, error)) (MeetingSuggestionPage, error) {
@@ -295,16 +236,49 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 				break
 			}
 		}
-		members, err := s.suggestionMembersInWindow(ctx, *seed.Start, *seed.End)
+		r := s.db
+		scope, args := sourceScopeClause(ctx, "m.source_id")
+		startExpr, duration := s.suggestionIntervalExpressions()
+		endExpr := startExpr + " + (" + duration + ") * interval '1 second'"
+		startBound, endBound := "?", "?"
+		if !s.IsPostgreSQL() {
+			startExpr = "julianday(" + startExpr + ")"
+			endExpr = startExpr + " + (" + duration + ") / 86400.0"
+			startBound, endBound = "julianday(?)", "julianday(?)"
+		}
+		values := []any{*seed.End, *seed.Start}
+		values = append(values, args...)
+		rows, err := r.QueryContext(ctx, `SELECT m.id FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL AND `+startExpr+` < `+startBound+` AND `+endExpr+` > `+endBound+scope+` ORDER BY m.id LIMIT 2001`, values...)
 		if err != nil {
 			return page, err
 		}
-		for _, member := range members {
-			if item, ok := rankMeetingSuggestion(member, event); ok {
-				item.Title = member.Title
-				item.TitleMessageID = member.ID
-				item.Start = member.Start
-				candidates = append(candidates, item)
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return page, err
+			}
+			ids = append(ids, id)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return page, err
+		}
+		if len(ids) > 2000 {
+			return page, ErrQueryTooBroad
+		}
+		for i := 0; i < len(ids); i += 400 {
+			members, err := s.suggestionMembers(ctx, ids[i:min(i+400, len(ids))])
+			if err != nil {
+				return page, err
+			}
+			for _, member := range members {
+				if item, ok := rankMeetingSuggestion(member, event); ok {
+					item.Title = member.Title
+					item.TitleMessageID = member.ID
+					item.Start = member.Start
+					candidates = append(candidates, item)
+				}
 			}
 		}
 	}
