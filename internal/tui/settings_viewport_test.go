@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestSettingsViewportShortWideScreenKeepsCategoryVisible(t *testing.T) {
 		}
 	}
 	for _, height := range []int{5, 6} {
-		t.Run(fmt.Sprint(height), func(t *testing.T) {
+		t.Run(strconv.Itoa(height), func(t *testing.T) {
 			backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{snapshot}}
 			model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 100, height)
 			model.settingsBackend = backend
@@ -194,7 +195,7 @@ func TestSettingsViewportLoadKeepsCodexEditorVisible(t *testing.T) {
 
 func TestSettingsViewportDiscardConfirmationPaging(t *testing.T) {
 	for _, height := range []int{4, 6} {
-		t.Run(fmt.Sprint(height), func(t *testing.T) {
+		t.Run(strconv.Itoa(height), func(t *testing.T) {
 			model := resizeModel(t, loadedSettingsModel(t, settingsFixture()), 20, height)
 			model, _ = sendKey(t, model, keyEnter())
 			model, _ = sendKey(t, model, keyEnter())
