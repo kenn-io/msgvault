@@ -30,20 +30,14 @@ func EmailInviteSQL(messageType, sourceType, archiveOnly string) string {
 
 // ICSMetadata records the accepted revision independently of the retained raw.
 type ICSMetadata struct {
-	Status   string       `json:"status,omitempty"`
-	AllDay   bool         `json:"all_day"`
-	Sequence int64        `json:"sequence"`
-	Start    string       `json:"start,omitempty"`
-	End      string       `json:"end,omitempty"`
-	TimeZone string       `json:"time_zone,omitempty"`
-	ICalUID  string       `json:"ical_uid,omitempty"`
-	Stamp    time.Time    `json:"ics_stamp"`
-	Details  *ICSRevision `json:"ics_details,omitempty"`
-}
-
-type ICSRevision struct {
+	Status   string    `json:"status,omitempty"`
+	AllDay   bool      `json:"all_day"`
 	Sequence int64     `json:"sequence"`
-	Stamp    time.Time `json:"stamp"`
+	Start    string    `json:"start,omitempty"`
+	End      string    `json:"end,omitempty"`
+	TimeZone string    `json:"time_zone,omitempty"`
+	ICalUID  string    `json:"ical_uid,omitempty"`
+	Stamp    time.Time `json:"ics_stamp"`
 }
 
 type ICSComponent struct {
@@ -56,8 +50,8 @@ type ICSComponent struct {
 }
 
 // ICSMessageID is source-local and stable across input ordering and revisions.
-func ICSMessageID(uid, recurrenceID string) string {
-	b, _ := json.Marshal([]string{uid, recurrenceID})
+func ICSMessageID(organizer, uid, recurrenceID string) string {
+	b, _ := json.Marshal([]string{organizer, uid, recurrenceID})
 	sum := sha256.Sum256(b)
 	return "calendar-invite:" + hex.EncodeToString(sum[:])
 }
@@ -68,11 +62,8 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	if err := json.Unmarshal(metadata, &meta); err != nil {
 		return Event{}, false, fmt.Errorf("decode ICS metadata: %w", err)
 	}
-	method := ""
-	if meta.Status == "cancelled" && meta.Details == nil {
-		method = "CANCEL"
-	}
-	components, err := parseICS(raw, "", method, calendarZone)
+	// A MIME-only cancellation can omit both METHOD and DTSTART in retained raw.
+	components, err := parseICS(raw, "", calendarZone, meta.Status == "cancelled")
 	if err != nil {
 		return Event{}, false, err
 	}
@@ -82,6 +73,11 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	e := components[0].Event
 	if meta.Status != "" {
 		e.Status = meta.Status
+		if e.Status == "cancelled" && e.Kind == "exception" {
+			e.Start, e.End = nil, nil
+			e.StartDate, e.EndDate = "", ""
+			e.AllDay = e.Original.AllDay
+		}
 	}
 	return e, true, nil
 }
@@ -109,10 +105,10 @@ func encodeICSEvent(cal *ical.Calendar, zones []*ical.Component, event *ical.Com
 // byte for byte; each event of a larger file keeps its own VEVENT and the
 // shared calendar lines. An unsupported zone rejects the calendar.
 func ParseICS(raw []byte, method, calendarZone string) ([]ICSComponent, error) {
-	return parseICS(raw, method, "", calendarZone)
+	return parseICS(raw, method, calendarZone, false)
 }
 
-func parseICS(raw []byte, method, fallback, calendarZone string) (out []ICSComponent, err error) {
+func parseICS(raw []byte, method, calendarZone string, retainedCancellation bool) (out []ICSComponent, err error) {
 	defer func() {
 		if recover() != nil {
 			out = nil
@@ -134,7 +130,7 @@ func parseICS(raw []byte, method, fallback, calendarZone string) (out []ICSCompo
 	if _, err := decoder.Decode(); !errors.Is(err, io.EOF) {
 		return nil, errors.New("calendar has trailing content")
 	}
-	method, err = icsMethod(cal, method, fallback)
+	method, err = icsMethod(cal, method)
 	if err != nil {
 		return nil, err
 	}
@@ -159,12 +155,7 @@ func parseICS(raw []byte, method, fallback, calendarZone string) (out []ICSCompo
 	}
 	for index, event := range events {
 		comp := event.Component
-		zones, err := eventICSZones(zoneComponents, comp, calendarZone)
-		if err != nil {
-			return nil, fmt.Errorf("VEVENT %d: %w", index+1, err)
-		}
-		zone := cmp.Or(zones[calendarZone], calendarZone)
-		loc, err := LoadZone(zone)
+		loc, err := LoadZone(calendarZone)
 		if err != nil {
 			return nil, fmt.Errorf("calendar time zone: %w", err)
 		}
@@ -175,10 +166,10 @@ func parseICS(raw []byte, method, fallback, calendarZone string) (out []ICSCompo
 				return nil, fmt.Errorf("retain VEVENT %d: %w", index+1, err)
 			}
 		}
-		if err := normalizeICSParams(comp.Props, zones); err != nil {
+		if err := normalizeICSParams(comp.Props); err != nil {
 			return nil, fmt.Errorf("VEVENT %d: %w", index+1, err)
 		}
-		result, err := parseICSEvent(comp, method, loc)
+		result, err := parseICSEvent(comp, method, loc, retainedCancellation)
 		if err != nil {
 			return nil, fmt.Errorf("VEVENT %d: %w", index+1, err)
 		}
@@ -188,7 +179,7 @@ func parseICS(raw []byte, method, fallback, calendarZone string) (out []ICSCompo
 	return out, nil
 }
 
-func icsMethod(cal *ical.Calendar, method, fallback string) (string, error) {
+func icsMethod(cal *ical.Calendar, method string) (string, error) {
 	declared, err := propText(cal.Props, "METHOD")
 	if err != nil {
 		return "", err
@@ -198,7 +189,7 @@ func icsMethod(cal *ical.Calendar, method, fallback string) (string, error) {
 	if declared != "" && method != "" && declared != method {
 		return "", fmt.Errorf("calendar method %q differs from MIME method %q", declared, method)
 	}
-	method = cmp.Or(declared, method, fallback)
+	method = cmp.Or(declared, method)
 	switch method {
 	case "", "REQUEST", "PUBLISH", "CANCEL", "REPLY", "REFRESH", "COUNTER", "DECLINECOUNTER":
 		return method, nil
@@ -216,13 +207,10 @@ func propText(props ical.Props, name string) (string, error) {
 }
 
 // Resolve Windows IDs and libical's prefixed IANA names.
-func normalizeICSParams(props ical.Props, zones map[string]string) error {
+func normalizeICSParams(props ical.Props) error {
 	for name, values := range props {
 		for i, prop := range values {
 			zone := normalizeICSZone(prop.Params.Get("TZID"))
-			if custom := zones[zone]; custom != "" {
-				zone = custom
-			}
 			parsedTime := (name == "DTSTART" || name == "DTEND" || name == "RECURRENCE-ID" || name == "DTSTAMP") && i == 0 && prop.ValueType() != ical.ValueDate && !strings.HasSuffix(prop.Value, "Z")
 			if zone != "" && !parsedTime {
 				if _, err := LoadZone(zone); err != nil {
@@ -305,7 +293,7 @@ func icsDuration(value string) (int, time.Duration, error) {
 	return int(days), time.Duration(secs) * time.Second, nil
 }
 
-func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICSComponent, error) {
+func parseICSEvent(comp *ical.Component, method string, loc *time.Location, retainedCancellation bool) (ICSComponent, error) {
 	p := comp.Props
 	c := ICSComponent{OrganizerEmail: icsEmail(p.Get("ORGANIZER"))}
 	for name, target := range map[string]*string{"UID": &c.UID, "SUMMARY": &c.Summary, "DESCRIPTION": &c.Description, "LOCATION": &c.Location} {
@@ -341,7 +329,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 	if err != nil {
 		return ICSComponent{}, fmt.Errorf("DTSTART: %w", err)
 	}
-	if start.IsZero() && e.Status != "cancelled" {
+	if start.IsZero() && e.Status != "cancelled" && !retainedCancellation {
 		return ICSComponent{}, errors.New("active event requires DTSTART")
 	}
 	end, endAllDay, err := icsTime(p.Get("DTEND"), loc)
@@ -362,32 +350,27 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 		if allDay && elapsed != 0 {
 			return ICSComponent{}, errors.New("all-day DURATION must be whole days")
 		}
-	} else if allDay && e.Status != "cancelled" {
+	} else if allDay {
 		days = 1
 	}
 	if !start.IsZero() {
-		hasEnd := !end.IsZero() || p.Get("DURATION") != nil || e.Status != "cancelled"
 		if allDay {
 			e.AllDay = true
 			e.StartDate = start.Format(time.DateOnly)
-			if end.IsZero() && hasEnd {
+			if end.IsZero() {
 				end = start.AddDate(0, 0, days)
 			}
-			if hasEnd {
-				e.EndDate = end.Format(time.DateOnly)
-			}
-			if hasEnd && e.EndDate <= e.StartDate {
+			e.EndDate = end.Format(time.DateOnly)
+			if e.EndDate <= e.StartDate {
 				return ICSComponent{}, errors.New("event ends before its start")
 			}
 			if start, _, err = calrecur.CivilDateBoundary(e.StartDate, loc); err != nil {
 				return ICSComponent{}, fmt.Errorf("DTSTART: %w", err)
 			}
-			if hasEnd {
-				if end, _, err = calrecur.CivilDateBoundary(e.EndDate, loc); err != nil {
-					return ICSComponent{}, fmt.Errorf("DTEND: %w", err)
-				}
+			if end, _, err = calrecur.CivilDateBoundary(e.EndDate, loc); err != nil {
+				return ICSComponent{}, fmt.Errorf("DTEND: %w", err)
 			}
-		} else if end.IsZero() && hasEnd {
+		} else if end.IsZero() {
 			// Nominal days keep the wall time across offset changes;
 			// hours, minutes and seconds are exact elapsed time.
 			end = start
@@ -398,16 +381,14 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 			}
 			end = end.Add(elapsed)
 		}
-		if hasEnd && end.Before(start) {
+		if end.Before(start) {
 			return ICSComponent{}, errors.New("event ends before its start")
 		}
 		e.EventTimeZone = start.Location().String()
 		first := start.UTC()
 		e.Start = &first
-		if hasEnd {
-			last := end.UTC()
-			e.End = &last
-		}
+		last := end.UTC()
+		e.End = &last
 	}
 	recurrenceID := ""
 	if rid := p.Get("RECURRENCE-ID"); rid != nil {
@@ -428,17 +409,21 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 		if start.IsZero() {
 			e.AllDay = date
 		}
+		if e.Status == "cancelled" {
+			e.Start, e.End = nil, nil
+			e.StartDate, e.EndDate = "", ""
+			e.AllDay = date
+		}
 		recurrenceID = e.Original.Key()
 	}
-	e.ProviderEventID = ICSMessageID(c.UID, recurrenceID)
+	e.ProviderEventID = ICSMessageID(c.OrganizerEmail, c.UID, recurrenceID)
 	if e.Kind == "exception" {
-		e.SeriesProviderID = ICSMessageID(c.UID, "")
+		e.SeriesProviderID = ICSMessageID(c.OrganizerEmail, c.UID, "")
 	}
 	for _, name := range []string{"RRULE", "RDATE", "EXDATE", "EXRULE"} {
 		for _, prop := range p.Values(name) {
-			custom := customZonePattern.MatchString(prop.Params.Get("TZID"))
 			value := prop.Value
-			if (name == "RDATE" || name == "EXDATE") && (prop.Params.Get("TZID") == "" || custom) && prop.ValueType() == ical.ValueDateTime {
+			if (name == "RDATE" || name == "EXDATE") && prop.Params.Get("TZID") == "" && prop.ValueType() == ical.ValueDateTime {
 				values := strings.Split(value, ",")
 				valid := true
 				for i, v := range values {
@@ -453,19 +438,28 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 				}
 				if valid {
 					value = strings.Join(values, ",")
-				} else {
-					custom = false
 				}
 			}
 			var line strings.Builder
 			line.WriteString(name)
 			for _, param := range []string{"VALUE", "TZID"} {
-				if v := prop.Params.Get(param); v != "" && (param != "TZID" || !custom) {
+				if v := prop.Params.Get(param); v != "" {
 					line.WriteString(";" + param + "=" + v)
 				}
 			}
 			line.WriteString(":" + value)
 			e.Recurrence = append(e.Recurrence, line.String())
+		}
+	}
+	if len(e.Recurrence) > 0 && e.Kind != "exception" && !allDay {
+		if dur := p.Get("DURATION"); dur != nil {
+			parts := icsDurationPattern.FindStringSubmatch(dur.Value)
+			if parts[1] != "" || parts[2] != "" {
+				e.Recurrence = append(e.Recurrence, "DURATION:"+dur.Value)
+			}
+		}
+		if prop := p.Get("DTSTART"); prop != nil && !strings.HasSuffix(prop.Value, "Z") && start.In(start.Location()).Format("20060102T150405") != prop.Value {
+			e.Recurrence = append(e.Recurrence, "DTSTART;TZID="+start.Location().String()+":"+prop.Value)
 		}
 	}
 	if len(e.Recurrence) > 0 && e.Kind != "exception" {

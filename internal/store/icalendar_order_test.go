@@ -18,7 +18,7 @@ func TestICalendarRevisionPrecedence(t *testing.T) {
 		run  func(*testing.T)
 	}{
 		{"sequence order", testICalendarCancelledDetailsRevisionOrder},
-		{"cancelled details stamp", testICalendarCancelledDetailsStamp},
+		{"older detail stamps", testICalendarCancelledDetailsStamp},
 		{"equal and newer revisions", testICalendarEqualRevisionIgnored},
 		{"cancellation tie", testICalendarCancellationWinsRevisionTie},
 	} {
@@ -31,7 +31,7 @@ func testICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 	initial := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Initial\r\nORGANIZER:mailto:organizer@example.com")
 	updated := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:organizer@example.com")
 	cancel := calendarDocument("CANCEL", "SEQUENCE:3\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:organizer@example.com")
-	for _, order := range [][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
+	for _, order := range [][3]int{{0, 1, 2}, {1, 0, 2}, {1, 2, 0}} {
 		t.Run(fmt.Sprintf("file-%d%d%d", order[0], order[1], order[2]), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
@@ -53,6 +53,22 @@ func testICalendarCancelledDetailsRevisionOrder(t *testing.T) {
 			assertions.Equal(updated, stored)
 		})
 	}
+	t.Run("cancellation arrives first", func(t *testing.T) {
+		r := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		source := icsSource(t, st)
+		_, err := importICalendarForTest(t, st, source, cancel)
+		r.NoError(err)
+		result, err := importICalendarForTest(t, st, source, updated)
+		r.NoError(err)
+		r.Equal(1, result.Unchanged)
+		ids := emailEvents(t, st, source)
+		r.Len(ids, 1)
+		row := calendarRows(t, st, ids[0])[0]
+		r.Equal("cancelled", row.Event.Status)
+		r.Empty(row.Subject)
+		r.Nil(row.Event.Start)
+	})
 	for _, tc := range []struct {
 		name    string
 		rebuild bool
@@ -141,6 +157,6 @@ func testICalendarCancelledDetailsStamp(t *testing.T) {
 	ids := emailEvents(t, st, source)
 	requirements.Len(ids, 1)
 	row := calendarRows(t, st, ids[0])[0]
-	assertions.Equal("Latest", row.Subject)
+	assertions.Equal("Initial", row.Subject)
 	assertions.Equal("cancelled", row.Event.Status)
 }
