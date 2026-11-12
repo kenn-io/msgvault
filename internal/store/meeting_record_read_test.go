@@ -12,6 +12,42 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
+func TestMeetingRecordStandaloneCancellationWithoutEnd(t *testing.T) {
+	for _, tc := range []struct {
+		name, start, noteStart string
+		want                   time.Time
+	}{
+		{"timed", `{"dateTime":"2027-03-14T10:00:00Z"}`, "2027-03-14T10:00:00Z", time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)},
+		{"all-day", `{"date":"2027-03-14","timeZone":"UTC"}`, "2027-03-14T00:00:00Z", time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, event := calendarFixture(t, st, "cancelled", fmt.Sprintf(`{"id":"cancelled","iCalUID":"standalone@example.org","status":"cancelled","start":%s}`, tc.start), "owner@example.com")
+			_, note := projectionFixture(t, st, "note", "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"standalone@example.org","startsAt":%q}}`, tc.noteStart))
+			for _, seed := range []MeetingLinkRef{{Kind: "evt", MessageID: event}, {Kind: "msg", MessageID: note}} {
+				t.Run(seed.Kind, func(t *testing.T) {
+					assert, require := assert.New(t), require.New(t)
+					record, err := st.MeetingRecordContext(t.Context(), seed)
+					require.NoError(err)
+					require.Len(record.Links, 1)
+					assert.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
+					require.NotNil(record.Links[0].Start)
+					assert.Equal(tc.want, *record.Links[0].Start)
+					assert.Nil(record.Links[0].End)
+					assert.Equal("cancelled", record.Links[0].Status)
+					assert.Equal([]int64{note}, record.MessageIDs)
+					assert.Equal([]CalendarUnexpandable{{MessageID: event, Reason: "missing event bounds"}}, record.Unexpandable)
+				})
+			}
+			window := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), window, window.AddDate(0, 0, 1))
+			requirements.NoError(err)
+			assertions.Empty(page.Occurrences)
+		})
+	}
+}
+
 func TestMeetingRecordCancelledOccurrenceWithoutMaster(t *testing.T) {
 	for _, tc := range []struct{ name, original, eventID, master, identity string }{
 		{"timed", `{"dateTime":"2027-03-14T10:00:00Z"}`, "series_20270314T100000Z", `{"id":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "20270314T100000Z"},
