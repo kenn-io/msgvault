@@ -36,9 +36,9 @@ On unreleased `main`, `GET /api/v1/intros` lists local introductions and
 returned as `next_after_id`. Responses use `Cache-Control: no-store`.
 Source-scoped agent grants need `draft.create` to read eligible records;
 `draft.edit` also reveals the body. Network user IDs are hidden from agents.
-Delegated reads return 403 `not_permitted` when the grant lacks access; a
-missing or ineligible record receives the same refusal. Malformed parameters
-return 400 `invalid_args`. A store without introduction reads returns 503
+A delegated detail read returns 403 `not_permitted` when the grant lacks access
+or the record is missing or ineligible. Invalid list filters or cursor return
+400 `invalid_args`. A store without introduction reads returns 503
 `feature_unavailable`; an actual storage failure returns 503 `local_store_failed`.
 
 ### Filename suggestions
