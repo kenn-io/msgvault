@@ -9,17 +9,17 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-type FederationIdentity = generated.FederationIdentityPending
+type FederationIdentity = generated.FederationIdentityResponse
 type FederationEnrollmentResult struct {
-	Enrollment  generated.FederationEnrollmentViewPending `json:"enrollment"`
-	Token       string                                    `json:"token"`
-	HubInstance string                                    `json:"hub_instance"`
-	HubURL      string                                    `json:"hub_url,omitempty"`
+	Enrollment  generated.FederationEnrollment `json:"enrollment"`
+	Token       string                         `json:"token"`
+	HubInstance string                         `json:"hub_instance"`
+	HubURL      string                         `json:"hub_url,omitempty"`
 }
 
 func (c *Client) FederationIdentity(ctx context.Context) (*FederationIdentity, error) {
-	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.FederationResponsePending[generated.FederationIdentityPending], error) {
-		return client.GetFederationIdentityPending(ctx)
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetFederationIdentityResp, error) {
+		return client.GetFederationIdentityWithResponse(ctx)
 	})
 	if err != nil {
 		return nil, err
@@ -30,8 +30,8 @@ func (c *Client) FederationIdentity(ctx context.Context) (*FederationIdentity, e
 	return resp.JSON200, nil
 }
 func (c *Client) CreateFederationEnrollment(ctx context.Context, spoke, member, name string) (*FederationEnrollmentResult, error) {
-	resp, err := APIResponseWithStatuses(c, []int{http.StatusCreated}, func(client *apiclient.Client) (*generated.FederationResponsePending[generated.FederationEnrollmentPending], error) {
-		return client.CreateFederationEnrollmentPending(ctx, generated.FederationCreatePending{SpokeInstance: spoke, Member: member, SpokeName: name})
+	resp, err := APIResponseWithStatuses(c, []int{http.StatusCreated}, func(client *apiclient.Client) (*generated.CreateFederationEnrollmentResp, error) {
+		return client.CreateFederationEnrollmentWithResponse(ctx, &generated.CreateFederationEnrollmentRequestOptions{Body: &generated.CreateFederationEnrollmentBody{SpokeInstance: spoke, Member: member, SpokeName: &name}})
 	})
 	if err != nil {
 		return nil, err
@@ -42,9 +42,9 @@ func (c *Client) CreateFederationEnrollment(ctx context.Context, spoke, member, 
 	e := resp.JSON201
 	return &FederationEnrollmentResult{Enrollment: e.Enrollment, Token: e.Token, HubInstance: e.HubInstance}, nil
 }
-func (c *Client) ListFederationEnrollments(ctx context.Context) ([]generated.FederationEnrollmentViewPending, error) {
-	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.FederationResponsePending[generated.FederationListPending], error) {
-		return client.ListFederationEnrollmentsPending(ctx)
+func (c *Client) ListFederationEnrollments(ctx context.Context) ([]generated.FederationEnrollment, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ListFederationEnrollmentsResp, error) {
+		return client.ListFederationEnrollmentsWithResponse(ctx)
 	})
 	if err != nil {
 		return nil, err
@@ -55,8 +55,8 @@ func (c *Client) ListFederationEnrollments(ctx context.Context) ([]generated.Fed
 	return resp.JSON200.Enrollments, nil
 }
 func (c *Client) RevokeFederationEnrollment(ctx context.Context, uid string) error {
-	_, err := APIResponseWithStatuses(c, []int{http.StatusNoContent}, func(client *apiclient.Client) (*generated.FederationResponsePending[struct{}], error) {
-		return client.RevokeFederationEnrollmentPending(ctx, uid)
+	_, err := APIResponseWithStatuses(c, []int{http.StatusNoContent}, func(client *apiclient.Client) (*generated.RevokeFederationEnrollmentResp, error) {
+		return client.RevokeFederationEnrollmentWithResponse(ctx, &generated.RevokeFederationEnrollmentRequestOptions{PathParams: &generated.RevokeFederationEnrollmentPath{UID: uid}})
 	})
 	return err
 }

@@ -44,13 +44,15 @@ func TestFederationHubOrigin(t *testing.T) {
 }
 
 func TestFederationEnrollOutput(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	serverCfg := config.NewDefaultConfig()
 	serverCfg.Data.DataDir = t.TempDir()
 	serverCfg.Federation.Role = "hub"
 	serverCfg.Server.APIKey = "owner-fixture"
 	apiServer := api.NewServerWithOptions(api.ServerOptions{Config: serverCfg, Store: st, FederationStore: st, Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { require.NoError(t, apiServer.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Cleanup(func() { requirements.NoError(apiServer.Shutdown(context.WithoutCancel(t.Context()))) })
 	srv := httptest.NewServer(apiServer.Router())
 	t.Cleanup(srv.Close)
 	clientCfg := config.NewDefaultConfig()
@@ -58,59 +60,59 @@ func TestFederationEnrollOutput(t *testing.T) {
 	clientCfg.Remote = config.RemoteConfig{URL: srv.URL, APIKey: "owner-fixture", AllowInsecure: true}
 	ctx := withStoreResolverConfig(t, clientCfg)
 	template, _, err := rootCmd.Find([]string{"federation", "enroll"})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var stdout, stderr bytes.Buffer
 	command := &cobra.Command{Use: template.Use, Args: template.Args, RunE: template.RunE}
 	command.Flags().AddFlagSet(template.Flags())
-	command.Flags().VisitAll(func(flag *pflag.Flag) { require.NoError(t, flag.Value.Set(flag.DefValue)); flag.Changed = false })
+	command.Flags().VisitAll(func(flag *pflag.Flag) { requirements.NoError(flag.Value.Set(flag.DefValue)); flag.Changed = false })
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)
 	command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice"})
-	require.NoError(t, command.ExecuteContext(ctx))
+	requirements.NoError(command.ExecuteContext(ctx))
 	token := strings.TrimSpace(stdout.String())
-	assert.True(t, strings.HasPrefix(token, "mvf1_"))
-	assert.NotContains(t, stderr.String(), token)
-	assert.Contains(t, stderr.String(), "Join (upcoming, not in this release): msgvault federation join <hub-url>")
-	assert.NotContains(t, stderr.String(), srv.URL)
+	assertions.True(strings.HasPrefix(token, "mvf1_"))
+	assertions.NotContains(stderr.String(), token)
+	assertions.Contains(stderr.String(), "Join (upcoming, not in this release): msgvault federation join <hub-url>")
+	assertions.NotContains(stderr.String(), srv.URL)
 
 	listTemplate, _, err := rootCmd.Find([]string{"federation", "enrollments", "list"})
-	require.NoError(t, err)
+	requirements.NoError(err)
 	list := &cobra.Command{Use: listTemplate.Use, Args: listTemplate.Args, RunE: listTemplate.RunE}
 	list.Flags().AddFlagSet(listTemplate.Flags())
 	var output bytes.Buffer
 	list.SetOut(&output)
-	require.NoError(t, list.ExecuteContext(ctx))
-	assert.Contains(t, output.String(), "\talice\talice\tactive\t-\n")
+	requirements.NoError(list.ExecuteContext(ctx))
+	assertions.Contains(output.String(), "\talice\talice\tactive\t-\n")
 	entries, err := st.ListFederationEnrollmentsContext(t.Context())
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.NoError(t, st.TouchFederationEnrollmentContext(t.Context(), entries[0].EnrollmentUID))
+	requirements.NoError(err)
+	requirements.Len(entries, 1)
+	requirements.NoError(st.TouchFederationEnrollmentContext(t.Context(), entries[0].EnrollmentUID))
 	output.Reset()
-	require.NoError(t, list.ExecuteContext(ctx))
-	assert.Contains(t, output.String(), "\talice\talice\tactive\t")
-	assert.NotContains(t, output.String(), "\t-\n")
+	requirements.NoError(list.ExecuteContext(ctx))
+	assertions.Contains(output.String(), "\talice\talice\tactive\t")
+	assertions.NotContains(output.String(), "\t-\n")
 	stdout.Reset()
 	stderr.Reset()
 	command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://$HOME;echo.example.test"})
-	require.NoError(t, command.ExecuteContext(ctx))
-	assert.Regexp(t, `^mvf1_[A-Za-z0-9_-]+\n$`, stdout.String())
-	assert.NotContains(t, stderr.String(), strings.TrimSpace(stdout.String()))
-	assert.Contains(t, stderr.String(), "msgvault federation join 'https://$HOME;echo.example.test' --hub-instance ")
+	requirements.NoError(command.ExecuteContext(ctx))
+	assertions.Regexp(`^mvf1_[A-Za-z0-9_-]+\n$`, stdout.String())
+	assertions.NotContains(stderr.String(), strings.TrimSpace(stdout.String()))
+	assertions.Contains(stderr.String(), "msgvault federation join 'https://$HOME;echo.example.test' --hub-instance ")
 	stdout.Reset()
 	stderr.Reset()
 	command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://hub.example.test", "--json"})
-	require.NoError(t, command.ExecuteContext(ctx))
+	requirements.NoError(command.ExecuteContext(ctx))
 	var jsonOutput struct {
 		HubURL string `json:"hub_url"`
 		Token  string `json:"token"`
 	}
-	require.NoError(t, json.Unmarshal(stdout.Bytes(), &jsonOutput))
-	assert.Equal(t, "https://hub.example.test", jsonOutput.HubURL)
-	assert.Regexp(t, `^mvf1_[A-Za-z0-9_-]+$`, jsonOutput.Token)
-	assert.NotContains(t, stderr.String(), jsonOutput.Token)
+	requirements.NoError(json.Unmarshal(stdout.Bytes(), &jsonOutput))
+	assertions.Equal("https://hub.example.test", jsonOutput.HubURL)
+	assertions.Regexp(`^mvf1_[A-Za-z0-9_-]+$`, jsonOutput.Token)
+	assertions.NotContains(stderr.String(), jsonOutput.Token)
 	command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "Alice"})
 	err = command.ExecuteContext(ctx)
-	assert.ErrorContains(t, err, "member must be 1–64 lowercase ASCII")
+	assertions.ErrorContains(err, "member must be 1–64 lowercase ASCII")
 }
 
 func TestFederationHubRejectsMessageImport(t *testing.T) {
@@ -120,9 +122,11 @@ func TestFederationHubRejectsMessageImport(t *testing.T) {
 		status, sources int
 	}{{"off", http.StatusCreated, 1}, {"hub", http.StatusInternalServerError, 0}} {
 		t.Run(tc.role, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			st := testutil.NewTestStore(t)
 			if tc.role == "hub" {
-				require.NoError(t, st.ConfigureFederationHubContext(t.Context()))
+				requirements.NoError(st.ConfigureFederationHubContext(t.Context()))
 			}
 			cfg := config.NewDefaultConfig()
 			cfg.Data.DataDir = t.TempDir()
@@ -131,16 +135,16 @@ func TestFederationHubRejectsMessageImport(t *testing.T) {
 			logger := slog.New(slog.DiscardHandler)
 			adapter := &storeAPIAdapter{store: st, messageImporter: messageimport.NewImporter(st, messageimport.Hooks{}).WithLogger(logger)}
 			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, FederationStore: st, Logger: logger})
-			t.Cleanup(func() { require.NoError(t, server.Shutdown(context.WithoutCancel(t.Context()))) })
+			t.Cleanup(func() { requirements.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/import/message", strings.NewReader(body))
 			req.Header.Set("X-Api-Key", "owner-fixture")
 			req.Header.Set("Content-Type", "application/json")
 			resp := httptest.NewRecorder()
 			server.Router().ServeHTTP(resp, req)
-			assert.Equal(t, tc.status, resp.Code, resp.Body.String())
+			assertions.Equal(tc.status, resp.Code, resp.Body.String())
 			sources, err := st.ListSourcesContext(t.Context(), "")
-			require.NoError(t, err)
-			assert.Len(t, sources, tc.sources)
+			requirements.NoError(err)
+			assertions.Len(sources, tc.sources)
 		})
 	}
 }

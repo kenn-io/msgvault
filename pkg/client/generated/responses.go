@@ -1381,6 +1381,22 @@ func (p *PreflightExploreSelectionErrorResponseJSON503) UnmarshalJSON(data []byt
 
 type PreflightExploreSelectionErrorResponseJSONDefault = ErrorResponse
 
+type ListFederationEnrollmentsResponse = FederationListResponse
+
+type ListFederationEnrollmentsErrorResponse = ErrorResponse
+
+type CreateFederationEnrollmentResponse = FederationCreateResponse
+
+type CreateFederationEnrollmentErrorResponse = ErrorResponse
+
+type GetFederationHandshakeResponse = FederationHandshakeResponse
+
+type GetFederationHandshakeErrorResponse = ErrorResponse
+
+type GetFederationIdentityResponse = FederationIdentityResponse
+
+type GetFederationIdentityErrorResponse = ErrorResponse
+
 type GroupFilesResponse = FileGroupsHTTPResponse
 
 type GroupFilesErrorResponse = ErrorResponse
@@ -5395,6 +5411,44 @@ type PreflightExploreSelectionResp struct {
 	JSON409      *PreflightExploreSelectionErrorResponseJSON
 	JSON503      *PreflightExploreSelectionErrorResponseJSON503
 	JSONDefault  *PreflightExploreSelectionErrorResponseJSONDefault
+}
+
+type ListFederationEnrollmentsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListFederationEnrollmentsResponse
+	JSONDefault  *ListFederationEnrollmentsErrorResponse
+}
+
+type CreateFederationEnrollmentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON201      *CreateFederationEnrollmentResponse
+	JSONDefault  *CreateFederationEnrollmentErrorResponse
+}
+
+type RevokeFederationEnrollmentResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+}
+
+type GetFederationHandshakeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetFederationHandshakeResponse
+	JSONDefault  *GetFederationHandshakeErrorResponse
+}
+
+type GetFederationIdentityResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetFederationIdentityResponse
+	JSONDefault  *GetFederationIdentityErrorResponse
 }
 
 type GroupFilesResp struct {

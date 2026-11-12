@@ -19,20 +19,22 @@ func TestFederationRoleAndHubKeys(t *testing.T) {
 		{name: "invalid", config: "[federation]\nrole = \"other\"", loadError: "invalid [federation] role"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			path := writeRemoteClientConfig(t, tc.config, nil)
 			cfg, err := Load(path, t.TempDir())
 			if tc.loadError != "" {
-				require.ErrorContains(t, err, tc.loadError)
+				requirements.ErrorContains(err, tc.loadError)
 				return
 			}
-			require.NoError(t, err)
+			requirements.NoError(err)
 			cfg.Data.DataDir = t.TempDir()
-			assert.Equal(t, tc.role, cfg.Federation.Role)
+			assertions.Equal(tc.role, cfg.Federation.Role)
 			err = cfg.PrepareServerKey()
 			if tc.keyError != "" {
-				assert.ErrorContains(t, err, tc.keyError)
+				assertions.ErrorContains(err, tc.keyError)
 			} else {
-				assert.NoError(t, err)
+				assertions.NoError(err)
 			}
 		})
 	}

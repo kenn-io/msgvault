@@ -303,6 +303,14 @@ type SetPrimaryEmploymentPath struct {
 	ID int64 `json:"id"`
 }
 
+type RevokeFederationEnrollmentPath struct {
+	UID string `json:"uid" validate:"required"`
+}
+
+func (r RevokeFederationEnrollmentPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
 type GetFilePath struct {
 	// ID File attachment ID
 	ID int64 `json:"id"`

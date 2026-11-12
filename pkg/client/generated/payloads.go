@@ -104,6 +104,8 @@ type CountExploreMatchesBody = ExploreMatchCountsRequest
 
 type PreflightExploreSelectionBody = ExplorePreflightRequest
 
+type CreateFederationEnrollmentBody = FederationCreateRequest
+
 type GroupFilesBody = FileGroupsHTTPRequest
 
 type SearchFilesBody = FileSearchHTTPRequest

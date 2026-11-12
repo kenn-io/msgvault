@@ -19,16 +19,18 @@ import (
 )
 
 func TestFederationHandshakeCredential(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Federation.Role = "hub"
 	cfg.Server.APIKey = "owner-fixture"
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	uid := strings.Repeat("a", 64)
 	enrollment, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	request := func(path, instance string) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 		r.Header.Set("Authorization", "Bearer "+token)
@@ -40,31 +42,33 @@ func TestFederationHandshakeCredential(t *testing.T) {
 		return w
 	}
 	w := request("/api/v1/federation/handshake", uid)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	requirements.Equal(http.StatusOK, w.Code, w.Body.String())
 	var body federationHandshakeResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Equal(t, enrollment.EnrollmentUID, body.Enrollment.EnrollmentUID)
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
+	assertions.Equal(enrollment.EnrollmentUID, body.Enrollment.EnrollmentUID)
 	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_federation_touch BEFORE UPDATE OF last_seen_at ON federation_enrollments BEGIN SELECT RAISE(FAIL, 'fixture failure'); END`)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	w = request("/api/v1/federation/handshake", uid)
-	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 	bad := request("/api/v1/federation/handshake", "")
 	wrong := request("/api/v1/federation/handshake", strings.Repeat("b", 64))
-	assert.Equal(t, http.StatusUnauthorized, bad.Code)
-	assert.Equal(t, bad.Body.String(), wrong.Body.String())
+	assertions.Equal(http.StatusUnauthorized, bad.Code)
+	assertions.Equal(bad.Body.String(), wrong.Body.String())
 }
 
 func TestFederationRoleAndCredentialConflicts(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Server.APIKey = "owner-fixture"
 	cfg.Federation.Role = "hub"
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	uid := strings.Repeat("a", 64)
 	e, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	do := func(method, path string, headers http.Header) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(t.Context(), method, path, nil)
 		r.Header = headers
@@ -82,15 +86,15 @@ func TestFederationRoleAndCredentialConflicts(t *testing.T) {
 	var first string
 	for _, h := range invalid {
 		w := do(http.MethodGet, "/api/v1/federation/handshake", h)
-		assert.Equal(t, http.StatusUnauthorized, w.Code)
+		assertions.Equal(http.StatusUnauthorized, w.Code)
 		if first == "" {
 			first = w.Body.String()
 		}
-		assert.Equal(t, first, w.Body.String())
+		assertions.Equal(first, w.Body.String())
 	}
-	require.NoError(t, st.RevokeFederationEnrollmentContext(t.Context(), e.EnrollmentUID))
+	requirements.NoError(st.RevokeFederationEnrollmentContext(t.Context(), e.EnrollmentUID))
 	revoked := do(http.MethodGet, "/api/v1/federation/handshake", http.Header{"Authorization": {"Bearer " + token}, "X-Msgvault-Spoke-Instance": {uid}})
-	assert.Equal(t, first, revoked.Body.String())
+	assertions.Equal(first, revoked.Body.String())
 }
 
 func TestFederationKeylessSpokeIdentity(t *testing.T) {
@@ -107,13 +111,15 @@ func TestFederationKeylessSpokeIdentity(t *testing.T) {
 }
 
 func TestFederationOwnerLifecycle(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Server.APIKey = "owner-fixture"
 	cfg.Federation.Role = "hub"
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 		r.Header.Set("X-Api-Key", "owner-fixture")
@@ -125,15 +131,15 @@ func TestFederationOwnerLifecycle(t *testing.T) {
 		return w
 	}
 	w := do(http.MethodPost, "/api/v1/federation/enrollments", `{"spoke_instance":"`+strings.Repeat("a", 64)+`","member":"alice"}`)
-	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	requirements.Equal(http.StatusCreated, w.Code, w.Body.String())
 	var created federationCreateResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
-	require.NotEmpty(t, created.Token)
+	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &created))
+	requirements.NotEmpty(created.Token)
 	list := do(http.MethodGet, "/api/v1/federation/enrollments", "")
-	require.Equal(t, http.StatusOK, list.Code)
-	assert.NotContains(t, list.Body.String(), created.Token)
+	requirements.Equal(http.StatusOK, list.Code)
+	assertions.NotContains(list.Body.String(), created.Token)
 	revoked := do(http.MethodDelete, "/api/v1/federation/enrollments/"+created.Enrollment.EnrollmentUID, "")
-	assert.Equal(t, http.StatusNoContent, revoked.Code)
+	assertions.Equal(http.StatusNoContent, revoked.Code)
 	for _, tc := range []struct{ body, message string }{
 		{`{"spoke_instance":"bad","member":"alice"}`, "spoke_instance must be 64 lowercase hexadecimal digits"},
 		{`{"spoke_instance":"` + strings.Repeat("a", 64) + `","member":"Alice"}`, "member must be 1–64"},
@@ -141,27 +147,29 @@ func TestFederationOwnerLifecycle(t *testing.T) {
 		{`{"spoke_instance":"` + strings.Repeat("a", 64) + `","member":"alice","spoke_name":"` + strings.Repeat("x", 129) + `"}`, "spoke_name must be at most 128 bytes"},
 	} {
 		w := do(http.MethodPost, "/api/v1/federation/enrollments", tc.body)
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), tc.message)
+		assertions.Equal(http.StatusBadRequest, w.Code)
+		assertions.Contains(w.Body.String(), tc.message)
 	}
 	_, err := st.DB().ExecContext(t.Context(), "DROP TABLE federation_enrollments")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	w = do(http.MethodPost, "/api/v1/federation/enrollments", `{"spoke_instance":"`+strings.Repeat("a", 64)+`","member":"alice"}`)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "Could not create enrollment")
+	assertions.Equal(http.StatusInternalServerError, w.Code)
+	assertions.Contains(w.Body.String(), "Could not create enrollment")
 }
 
 func TestFederationOperationGate(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	gate := NewSerialOperationGate()
 	release, ok := gate.BeginWorkContext(t.Context())
-	require.True(t, ok)
+	requirements.True(ok)
 
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Server.APIKey = "owner-fixture"
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, OperationGate: gate, Logger: testLogger()})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	for _, role := range []string{"off", "spoke"} {
 		cfg.Federation.Role = role
 		for _, tc := range []struct{ method, path string }{{http.MethodPost, "/api/v1/federation/enrollments"}, {http.MethodDelete, "/api/v1/federation/enrollments/fixture"}} {
@@ -169,8 +177,8 @@ func TestFederationOperationGate(t *testing.T) {
 			r.Header.Set("X-Api-Key", "owner-fixture")
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
-			assert.Equal(t, http.StatusNotFound, w.Code)
-			assert.False(t, gate.HasRequestWaiters())
+			assertions.Equal(http.StatusNotFound, w.Code)
+			assertions.False(gate.HasRequestWaiters())
 		}
 	}
 	cfg.Federation.Role = "hub"
@@ -182,27 +190,29 @@ func TestFederationOperationGate(t *testing.T) {
 		r.Header.Set("X-Api-Key", "owner-fixture")
 		srv.Router().ServeHTTP(httptest.NewRecorder(), r)
 	}()
-	assert.Eventually(t, gate.HasRequestWaiters, 5*time.Second, 10*time.Millisecond)
+	assertions.Eventually(gate.HasRequestWaiters, 5*time.Second, 10*time.Millisecond)
 	cancel()
 	<-done
 	release()
-	assert.False(t, gate.HasRequestWaiters())
+	assertions.False(gate.HasRequestWaiters())
 }
 
 func TestFederationCredentialOnlyHandshake(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Server.APIKey = "owner-fixture"
 	cfg.Federation.Role = "hub"
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	uid := strings.Repeat("a", 64)
 	_, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	document := OpenAPIDocument()
 	for _, path := range []string{"/api/v1/federation/handshake", "/api/v1/federation/identity", "/api/v1/federation/enrollments", "/api/v1/federation/enrollments/{uid}"} {
-		require.NotNil(t, document.Paths[path], path)
+		requirements.NotNil(document.Paths[path], path)
 	}
 	matcher := regexp.MustCompile(`\{[^}]+\}`)
 	requests := 0
@@ -223,21 +233,21 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 			srv.Router().ServeHTTP(w, r)
 			if path == "/api/v1/federation/handshake" && method == http.MethodGet {
 				seen = true
-				assert.Equal(t, http.StatusOK, w.Code)
+				assertions.Equal(http.StatusOK, w.Code)
 			} else {
-				assert.Equal(t, http.StatusForbidden, w.Code, "%s %s: %s", method, path, w.Body.String())
+				assertions.Equal(http.StatusForbidden, w.Code, "%s %s: %s", method, path, w.Body.String())
 			}
 		}
 	}
-	assert.True(t, seen)
-	assert.Greater(t, requests, 10)
+	assertions.True(seen)
+	assertions.Greater(requests, 10)
 	for _, method := range []string{http.MethodPost, http.MethodTrace, http.MethodHead, http.MethodOptions} {
 		r := httptest.NewRequestWithContext(t.Context(), method, "/api/v1/federation/handshake", nil)
 		r.Header.Set("Authorization", "Bearer "+token)
 		r.Header.Set("X-Msgvault-Spoke-Instance", uid)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
-		assert.Equal(t, http.StatusForbidden, w.Code, method)
+		assertions.Equal(http.StatusForbidden, w.Code, method)
 	}
 	for _, path := range []string{"/", "/health", "/mcp", "/debug/pprof/"} {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
@@ -245,7 +255,7 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 		r.Header.Set("X-Msgvault-Spoke-Instance", uid)
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
-		assert.Equal(t, http.StatusForbidden, w.Code, path)
+		assertions.Equal(http.StatusForbidden, w.Code, path)
 	}
 }
 
@@ -261,53 +271,55 @@ func TestFederationRoleMatrix(t *testing.T) {
 	var unauthorizedBody string
 	for _, role := range []string{"off", "spoke", "hub"} {
 		t.Run(role, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			st := testutil.NewTestStore(t)
 			cfg := config.NewDefaultConfig()
 			cfg.Data.DataDir = t.TempDir()
 			cfg.Server.APIKey = "owner-fixture"
 			cfg.Federation.Role = role
 			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
-			t.Cleanup(func() { require.NoError(t, server.Shutdown(context.WithoutCancel(t.Context()))) })
+			t.Cleanup(func() { requirements.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
 			httpServer := httptest.NewServer(server.Router())
 			t.Cleanup(httpServer.Close)
 			request := func(method, path string, owner bool) (int, string) {
 				t.Helper()
 				req, err := http.NewRequestWithContext(t.Context(), method, httpServer.URL+path, nil)
-				require.NoError(t, err)
+				requirements.NoError(err)
 				if owner {
 					req.Header.Set("X-Api-Key", "owner-fixture")
 				}
 				resp, err := httpServer.Client().Do(req)
-				require.NoError(t, err)
+				requirements.NoError(err)
 				defer resp.Body.Close()
 				body, err := io.ReadAll(resp.Body)
-				require.NoError(t, err)
+				requirements.NoError(err)
 				return resp.StatusCode, string(body)
 			}
 			for _, op := range operations {
 				status, body := request(op.method, op.path, false)
-				assert.Equal(t, http.StatusUnauthorized, status, "%s %s", op.method, op.path)
+				assertions.Equal(http.StatusUnauthorized, status, "%s %s", op.method, op.path)
 				if unauthorizedBody == "" {
 					unauthorizedBody = body
 				}
-				assert.Equal(t, unauthorizedBody, body, "%s %s", op.method, op.path)
+				assertions.Equal(unauthorizedBody, body, "%s %s", op.method, op.path)
 				if role == "hub" {
 					continue
 				}
 				status, body = request(op.method, op.path, true)
 				if role == "spoke" && op.path == "/api/v1/federation/identity" {
-					assert.Equal(t, http.StatusOK, status)
+					assertions.Equal(http.StatusOK, status)
 					var identity map[string]any
-					require.NoError(t, json.Unmarshal([]byte(body), &identity))
-					assert.NotEmpty(t, identity["archive_uid"])
-					assert.NotContains(t, identity, "role")
+					requirements.NoError(json.Unmarshal([]byte(body), &identity))
+					assertions.NotEmpty(identity["archive_uid"])
+					assertions.NotContains(identity, "role")
 					continue
 				}
-				assert.Equal(t, http.StatusNotFound, status, "%s %s", op.method, op.path)
+				assertions.Equal(http.StatusNotFound, status, "%s %s", op.method, op.path)
 				const unknown = "/api/v1/no-such-route"
 				unknownStatus, unknownBody := request(op.method, unknown, true)
-				require.Equal(t, http.StatusNotFound, unknownStatus)
-				assert.Equal(t, strings.ReplaceAll(unknownBody, unknown, op.path), body)
+				requirements.Equal(http.StatusNotFound, unknownStatus)
+				assertions.Equal(strings.ReplaceAll(unknownBody, unknown, op.path), body)
 			}
 		})
 	}

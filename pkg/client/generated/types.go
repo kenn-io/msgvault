@@ -5258,6 +5258,121 @@ func (e ExploreUnavailableAction) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(e))
 }
 
+type FederationCreateRequest struct {
+	Member        string  `json:"member" validate:"required"`
+	SpokeInstance string  `json:"spoke_instance" validate:"required"`
+	SpokeName     *string `json:"spoke_name,omitzero"`
+}
+
+func (f FederationCreateRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
+type FederationCreateResponse struct {
+	Enrollment  FederationEnrollment `json:"enrollment"`
+	HubInstance string               `json:"hub_instance" validate:"required"`
+	Token       string               `json:"token" validate:"required"`
+}
+
+func (f FederationCreateResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(f.Enrollment).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Enrollment", err)
+		}
+	}
+	if err := typesValidator.Var(f.HubInstance, "required"); err != nil {
+		errors = errors.Append("HubInstance", err)
+	}
+	if err := typesValidator.Var(f.Token, "required"); err != nil {
+		errors = errors.Append("Token", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type FederationEnrollment struct {
+	CreatedAt       time.Time  `json:"created_at" validate:"required"`
+	EnrollmentUID   string     `json:"enrollment_uid" validate:"required"`
+	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
+	Member          string     `json:"member" validate:"required"`
+	RevokedAt       *time.Time `json:"revoked_at,omitempty"`
+	SpokeArchiveUID string     `json:"spoke_archive_uid" validate:"required"`
+	SpokeName       string     `json:"spoke_name" validate:"required"`
+}
+
+func (f FederationEnrollment) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
+type FederationHandshakeEnrollment struct {
+	EnrollmentUID string `json:"enrollment_uid" validate:"required"`
+	Member        string `json:"member" validate:"required"`
+	SpokeName     string `json:"spoke_name" validate:"required"`
+	State         string `json:"state" validate:"required"`
+}
+
+func (f FederationHandshakeEnrollment) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
+type FederationHandshakeResponse struct {
+	Enrollment       FederationHandshakeEnrollment `json:"enrollment"`
+	HubInstance      string                        `json:"hub_instance" validate:"required"`
+	ProtocolVersions []int64                       `json:"protocol_versions" validate:"required"`
+}
+
+func (f FederationHandshakeResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(f.Enrollment).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Enrollment", err)
+		}
+	}
+	if err := typesValidator.Var(f.HubInstance, "required"); err != nil {
+		errors = errors.Append("HubInstance", err)
+	}
+	if err := typesValidator.Var(f.ProtocolVersions, "required"); err != nil {
+		errors = errors.Append("ProtocolVersions", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type FederationIdentityResponse struct {
+	ArchiveUID string `json:"archive_uid" validate:"required"`
+}
+
+func (f FederationIdentityResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(f))
+}
+
+type FederationListResponse struct {
+	Enrollments []FederationEnrollment `json:"enrollments" validate:"required"`
+}
+
+func (f FederationListResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(f.Enrollments, "required"); err != nil {
+		errors = errors.Append("Enrollments", err)
+	}
+	for i, item := range f.Enrollments {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Enrollments[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type FieldDescriptor struct {
 	Cardinality string `json:"cardinality" validate:"required"`
 	Name        string `json:"name" validate:"required"`

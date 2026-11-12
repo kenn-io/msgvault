@@ -5428,6 +5428,112 @@ components:
         - action
         - reason
       type: object
+    FederationCreateRequest:
+      additionalProperties: false
+      properties:
+        member:
+          type: string
+        spoke_instance:
+          type: string
+        spoke_name:
+          type: string
+      required:
+        - spoke_instance
+        - member
+      type: object
+    FederationCreateResponse:
+      additionalProperties: true
+      properties:
+        enrollment:
+          $ref: "#/components/schemas/FederationEnrollment"
+        hub_instance:
+          type: string
+        token:
+          type: string
+      required:
+        - enrollment
+        - token
+        - hub_instance
+      type: object
+    FederationEnrollment:
+      additionalProperties: true
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        enrollment_uid:
+          type: string
+        last_seen_at:
+          format: date-time
+          type: string
+        member:
+          type: string
+        revoked_at:
+          format: date-time
+          type: string
+        spoke_archive_uid:
+          type: string
+        spoke_name:
+          type: string
+      required:
+        - enrollment_uid
+        - spoke_archive_uid
+        - member
+        - spoke_name
+        - created_at
+      type: object
+    FederationHandshakeEnrollment:
+      additionalProperties: true
+      properties:
+        enrollment_uid:
+          type: string
+        member:
+          type: string
+        spoke_name:
+          type: string
+        state:
+          type: string
+      required:
+        - enrollment_uid
+        - member
+        - spoke_name
+        - state
+      type: object
+    FederationHandshakeResponse:
+      additionalProperties: true
+      properties:
+        enrollment:
+          $ref: "#/components/schemas/FederationHandshakeEnrollment"
+        hub_instance:
+          type: string
+        protocol_versions:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - protocol_versions
+        - hub_instance
+        - enrollment
+      type: object
+    FederationIdentityResponse:
+      additionalProperties: true
+      properties:
+        archive_uid:
+          type: string
+      required:
+        - archive_uid
+      type: object
+    FederationListResponse:
+      additionalProperties: true
+      properties:
+        enrollments:
+          items:
+            $ref: "#/components/schemas/FederationEnrollment"
+          type: array
+      required:
+        - enrollments
+      type: object
     FieldDescriptor:
       additionalProperties: true
       properties:
@@ -22725,6 +22831,114 @@ paths:
       summary: Preflight a revision-pinned analytical selection
       tags:
         - Exploration
+  /api/v1/federation/enrollments:
+    get:
+      operationId: listFederationEnrollments
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FederationListResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List spoke enrollments
+      tags:
+        - API
+    post:
+      operationId: createFederationEnrollment
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FederationCreateRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FederationCreateResponse"
+          description: Created
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Enroll a spoke
+      tags:
+        - API
+  /api/v1/federation/enrollments/{uid}:
+    delete:
+      operationId: revokeFederationEnrollment
+      parameters:
+        - in: path
+          name: uid
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Revoke a spoke enrollment
+      tags:
+        - API
+  /api/v1/federation/handshake:
+    get:
+      operationId: getFederationHandshake
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FederationHandshakeResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Identify the hub for an enrolled spoke
+      tags:
+        - API
+  /api/v1/federation/identity:
+    get:
+      operationId: getFederationIdentity
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FederationIdentityResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get this archive's federation identity
+      tags:
+        - API
   /api/v1/files/groups:
     post:
       operationId: groupFiles
