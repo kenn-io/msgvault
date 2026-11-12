@@ -1330,8 +1330,10 @@
       </div>
     </header>
     {#if relationshipsController.pendingIdentityCacheRevision !== null}
-      <div class="identity-cache-notice"><InlineNotice tone="warning" message={relationshipsController.identityCacheRefreshing ? 'Refreshing...' : pendingMergeCacheError?.message ?? 'Changes saved, but related views may be out of date.'} actionLabel={pendingMergeCacheError?.unsupported ? 'Dismiss' : 'Retry'} actionDisabled={relationshipsController.identityCacheRefreshing} onaction={() => { if (pendingMergeCacheError?.unsupported) relationshipsController.pendingIdentityCacheRevision = null; else void retryMergeCache(); }}
-        secondaryActionLabel={pendingMergeCacheError?.dismissible && !pendingMergeCacheError.unsupported ? 'Dismiss' : undefined} onsecondaryaction={() => (relationshipsController.pendingIdentityCacheRevision = null)} /></div>
+      <div class="identity-cache-notice"><InlineNotice tone="warning" message={relationshipsController.identityCacheRefreshing ? 'Refreshing...' : pendingMergeCacheError?.message ?? 'Changes saved, but related views may be out of date.'} actions={[
+          ...(pendingMergeCacheError?.dismissible || pendingMergeCacheError?.unsupported ? [{ label: 'Dismiss', onclick: () => (relationshipsController.pendingIdentityCacheRevision = null), disabled: relationshipsController.identityCacheRefreshing }] : []),
+          ...(pendingMergeCacheError?.unsupported ? [] : [{ label: 'Retry', onclick: () => void retryMergeCache(), disabled: relationshipsController.identityCacheRefreshing }]),
+        ]} /></div>
     {/if}
     <div class="app-main">
       {#if exploreState.current.workspace === 'settings'}
