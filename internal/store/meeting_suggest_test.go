@@ -22,6 +22,11 @@ func TestMeetingSuggestionsRankingSignals(t *testing.T) {
 	r.Equal(1, result.SharedAttendees)
 	r.Equal(2, result.TitleTokens)
 	r.Equal(30, result.OverlapMinutes)
+	event.Start = member.End.Add(-20 * time.Second)
+	event.End = member.End.Add(time.Minute)
+	result, ok = rankMeetingSuggestion(member, event)
+	r.True(ok)
+	r.Equal(1, result.OverlapMinutes)
 	event.Start = member.End
 	event.End = event.Start.Add(time.Hour)
 	_, ok = rankMeetingSuggestion(member, event)

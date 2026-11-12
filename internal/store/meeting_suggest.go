@@ -57,7 +57,7 @@ func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (Meet
 	if !end.After(start) {
 		return MeetingSuggestion{}, false
 	}
-	result := MeetingSuggestion{Ref: event.Ref, MemberMessageID: member.ID, OverlapMinutes: int(end.Sub(start) / time.Minute)}
+	result := MeetingSuggestion{Ref: event.Ref, MemberMessageID: member.ID, OverlapMinutes: int((end.Sub(start)-1)/time.Minute) + 1}
 	seen := map[string]bool{}
 	for _, attendee := range event.Attendees {
 		email := strings.ToLower(strings.TrimSpace(attendee.Email))
