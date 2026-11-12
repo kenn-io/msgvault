@@ -24,12 +24,15 @@ type mcpPersonExportArgs struct {
 }
 
 func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map[string]any) (*mcpserver.OperationResult, error) {
+	refuse := func(code string) (*mcpserver.OperationResult, error) {
+		return operationFailure(code, false), nil
+	}
 	input, err := decodeMCPOperationArguments[mcpPersonExportArgs](args)
 	start, end, boundsErr := parseMessageExportBounds(input.Start, input.End)
 	types, typesErr := normalizeMessageExportTypes(input.MessageTypes)
 	sources, sourcesErr := normalizeMessageExportSelectors(input.Sources)
 	if err != nil || input.PersonID <= 0 || boundsErr != nil || typesErr != nil || sourcesErr != nil {
-		return operationFailure("invalid_arguments", false), nil
+		return refuse("invalid_arguments")
 	}
 	command := newExportMessagesCmd(defaultExportMessagesDeps())
 	flags := command.Flags()
@@ -44,7 +47,7 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 	}
 	argv, err := daemonCLIArgsFromCobra(command, nil)
 	if err != nil {
-		return operationFailure("invalid_arguments", false), nil
+		return refuse("invalid_arguments")
 	}
 	var output strings.Builder
 	overflow := false
@@ -66,7 +69,7 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 		return operationFailure(local.APIErrorCode(), false), nil
 	}
 	if err != nil || ctx.Err() != nil {
-		return operationFailure("export_failed", false), nil
+		return refuse("export_failed")
 	}
 	expected := exportMessagesManifest{Schema: messageExportSchema, Window: exportMessagesWindow{Start: start, End: end}, Filters: exportMessagesFilters{PersonID: &input.PersonID, MessageTypes: types, Sources: sources}}
 	if !validPersonExport(output.String(), expected) {

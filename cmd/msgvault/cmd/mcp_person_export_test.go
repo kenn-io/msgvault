@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 
 type personExportRouterStore struct {
 	*storeAPIAdapter
+
 	t  *testing.T
 	st *store.Store
 }
@@ -39,7 +41,7 @@ func (s *personExportRouterStore) RunCLICommand(ctx context.Context, req api.CLI
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs(req.Args[1:])
 	if err := cmd.ExecuteContext(ctx); err != nil {
-		return err
+		return fmt.Errorf("execute export messages: %w", err)
 	}
 	return emit(api.CLIRunEvent{Type: cliStreamStdout, Data: out.String()})
 }
@@ -156,6 +158,7 @@ func TestMCPPersonExportRefusesTransportFailureAndOverflow(t *testing.T) {
 
 type cancelOnCloseBody struct {
 	io.Reader
+
 	cancel context.CancelFunc
 }
 
