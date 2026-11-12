@@ -28,6 +28,7 @@ func TestFederationEnrollOutput(t *testing.T) {
 		serverCfg.Data.DataDir = t.TempDir()
 		serverCfg.Federation.Role = "hub"
 		serverCfg.Server.APIKey = "owner-fixture"
+		require.NoError(t, st.ConfigureFederationHubContext(t.Context()))
 		apiServer := api.NewServerWithOptions(api.ServerOptions{Config: serverCfg, Store: st, FederationStore: st, Logger: slog.New(slog.DiscardHandler)})
 		t.Cleanup(func() { require.NoError(t, apiServer.Shutdown(context.WithoutCancel(t.Context()))) })
 		srv := httptest.NewServer(apiServer.Router())
@@ -89,6 +90,7 @@ func TestFederationEnrollOutput(t *testing.T) {
 		assert.Contains(t, err.Error(), "revoke")
 		assert.Contains(t, err.Error(), "re-enroll")
 		assert.NotContains(t, err.Error(), "mvf1_")
+		assert.NotContains(t, stderr.String(), "mvf1_")
 		assert.NotContains(t, stderr.String(), "msgvault federation join")
 	})
 	t.Run("list", func(t *testing.T) {

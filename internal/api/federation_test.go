@@ -28,6 +28,7 @@ func federationHubFixture(t *testing.T) (*Server, *store.Store) {
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Federation.Role = "hub"
 	cfg.Server.APIKey = "owner-fixture"
+	require.NoError(t, st.ConfigureFederationHubContext(t.Context()))
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	return srv, st
@@ -156,6 +157,7 @@ func TestFederationHandshakeLibraryAuthorization(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Federation.Role = "hub"
 	// Library hosts can construct a keyless server without daemon startup validation.
+	requirements.NoError(st.ConfigureFederationHubContext(t.Context()))
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	spokeUID := strings.Repeat("a", 64)
@@ -275,6 +277,7 @@ func TestFederationHubOperationGate(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Server.APIKey = "owner-fixture"
 	cfg.Federation.Role = "hub"
+	requirements.NoError(st.ConfigureFederationHubContext(t.Context()))
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, OperationGate: gate, Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	ctx, cancel := context.WithCancel(t.Context())
@@ -339,6 +342,19 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 
 // TestFederationRoleMatrix exercises authentication and role checks over HTTP.
 func TestFederationRoleMatrix(t *testing.T) {
+	t.Run("hub requires armed store", func(t *testing.T) {
+		st := testutil.NewTestStore(t)
+		cfg := config.NewDefaultConfig()
+		cfg.Data.DataDir = t.TempDir()
+		cfg.Federation.Role = "hub"
+		opts := ServerOptions{Config: cfg, Store: st, Logger: testLogger()}
+		require.PanicsWithValue(t, "api: federation hub role needs its archive Store armed with Store.ConfigureFederationHubContext first", func() {
+			NewServerWithOptions(opts)
+		})
+		require.NoError(t, st.ConfigureFederationHubContext(t.Context()))
+		srv := NewServerWithOptions(opts)
+		t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	})
 	operations := []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/federation/handshake"},
 		{http.MethodGet, "/api/v1/federation/identity"},

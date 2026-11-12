@@ -632,6 +632,13 @@ func NewServer(cfg *config.Config, store MessageStore, sched SyncScheduler, logg
 
 // NewServerWithOptions creates a new API server with full options including query engine.
 func NewServerWithOptions(opts ServerOptions) *Server {
+	if opts.Config != nil && opts.Config.Federation.Role == "hub" {
+		for _, candidate := range []any{opts.Store, opts.FederationStore} {
+			if guard, ok := candidate.(interface{ FederationHubArmed() bool }); ok && !guard.FederationHubArmed() {
+				panic("api: federation hub role needs its archive Store armed with Store.ConfigureFederationHubContext first")
+			}
+		}
+	}
 	// Before vector initialization, configuration still describes which lanes
 	// are enabled. A supplied runtime keeps its resolved configuration.
 	if opts.Backend == nil && !opts.VectorCfg.AnyLaneEnabled() {

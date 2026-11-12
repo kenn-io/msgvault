@@ -112,6 +112,12 @@ func (s *Store) RevokeFederationEnrollmentContext(ctx context.Context, uid strin
 	}
 	return nil
 }
+
+// FederationHubArmed reports whether this handle refuses new sources for a hub.
+func (s *Store) FederationHubArmed() bool {
+	return s.federationHub || (s.syncBase != nil && s.syncBase.federationHub)
+}
+
 func (s *Store) ConfigureFederationHubContext(ctx context.Context) error {
 	exists, err := s.tableExistsContext(ctx, "sources")
 	if err != nil {
