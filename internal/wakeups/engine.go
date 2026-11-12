@@ -298,10 +298,11 @@ func (e *Engine) RunPass(ctx context.Context) error {
 				}
 			}
 			if len(matches) == 0 && state.Failures == 0 {
-				if len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime)) || recovered {
-					if len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime)) {
-						skipTo(next)
-					}
+				moved := len(page.Messages) > 0 || (!page.CompleteThrough.IsZero() && since.At().After(page.ServerTime))
+				if moved {
+					skipTo(next)
+				}
+				if moved || recovered {
 					_, err = advance(raw)
 					return err
 				}
@@ -337,11 +338,11 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		from := changefeed.EncodeCursor(uid, since, sub.Filter.Digest())
 		to := changefeed.EncodeCursor(uid, next, sub.Filter.Digest())
 		id := deliveryID(sub.Name, from, to)
+		var body []byte
+		subscriptionID := ""
 		if sub.Native {
 			id = "evt_" + id[3:]
-		}
-		var body []byte
-		if sub.Native {
+			subscriptionID = sub.Name
 			body, err = json.Marshal(struct {
 				EventID   string            `json:"eventId"`
 				Name      string            `json:"name"`
@@ -360,10 +361,6 @@ func (e *Engine) RunPass(ctx context.Context) error {
 		if err != nil {
 			logger.Warn("wakeup failed", "name", sub.Name, "category", "invalid_callback")
 			continue
-		}
-		subscriptionID := ""
-		if sub.Native {
-			subscriptionID = sub.Name
 		}
 		category, status, _ := sub.Client.request(ctx, sub.URL, id, subscriptionID, sub.Secret, body, false)
 		if ctx.Err() != nil {

@@ -204,10 +204,7 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, v
 		createID = id
 	}
 	ok, err := s.Store.SwapMCPEventsCatalog(ctx, raw, next, createID, initial, "")
-	if err != nil {
-		return out, failure(Unavailable, "store_unavailable")
-	}
-	if !ok {
+	if err != nil || !ok {
 		return out, failure(Unavailable, "store_unavailable")
 	}
 	_, err = providercredentials.PutIfRevision(s.TokensDir, revision, providercredentials.EventsID(id), origin, string(private))
@@ -267,13 +264,16 @@ func (s *Service) removeEntryAndCredential(ctx context.Context, entries []entry,
 		return ok, err
 	}
 	if credentialErr := s.deleteCredential(id); credentialErr != nil {
-		logger := s.Logger
-		if logger == nil {
-			logger = slog.Default()
-		}
-		logger.Warn("wakeup credential cleanup failed", "id", id, "category", "credential_unavailable")
+		s.logger().Warn("wakeup credential cleanup failed", "id", id, "category", "credential_unavailable")
 	}
 	return ok, err
+}
+
+func (s *Service) logger() *slog.Logger {
+	if s.Logger != nil {
+		return s.Logger
+	}
+	return slog.Default()
 }
 
 // purgeExpired removes expired entries and positions.
@@ -316,10 +316,7 @@ func (s *Service) Native(ctx context.Context) ([]wakeups.Subscription, error) {
 		return nil, err
 	}
 	var out []wakeups.Subscription
-	logger := s.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger := s.logger()
 	for _, e := range entries {
 		if e.Owner != "owner" {
 			continue

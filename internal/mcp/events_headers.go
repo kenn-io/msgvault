@@ -17,32 +17,13 @@ import (
 // the larger transport limit exists for image-sized tools/call bodies.
 const maxEventsBodyBytes = 1 << 20
 
-// isEventsNameMethod reports whether method is a name-addressed events/*
-// method that requires Mcp-Name.
-func isEventsNameMethod(method string) bool {
-	switch method {
-	case "events/subscribe", "events/unsubscribe":
-		return true
-	}
-	return false
-}
-
-// eventsNameHeaderHandler requires Mcp-Name to equal params.name for the
-// name-addressed events/* methods. It belongs on the 2026-07-28 path only. It
-// decides from the Mcp-Method header alone and never touches the body of other
-// methods.
-//
-// This relies on the go-sdk's validateMcpHeaders: for protocol 2026-07-28
-// single requests the SDK rejects (HTTP 400, -32020) any request whose
-// Mcp-Method is missing or differs from the body's method. A request that
-// lies about its method never reaches the inner handler. If an SDK upgrade
-// drops that check, this guard must also validate the method.
-//
-// Like the SDK, a body over the limit is answered with HTTP 413 and a
-// plain-text "request body exceeds N bytes".
+// eventsNameHeaderHandler guards name-addressed Events methods. It relies on
+// the SDK rejecting mismatched Mcp-Method headers; revisit this guard if an
+// SDK upgrade changes validateMcpHeaders.
 func eventsNameHeaderHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Mcp-Protocol-Version") < "2026-07-28" || r.Method != http.MethodPost || !isEventsNameMethod(r.Header.Get("Mcp-Method")) {
+		method := r.Header.Get("Mcp-Method")
+		if r.Header.Get("Mcp-Protocol-Version") < "2026-07-28" || r.Method != http.MethodPost || (method != "events/subscribe" && method != "events/unsubscribe") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -115,15 +96,11 @@ func writeHeaderMismatch(w http.ResponseWriter, id jsontext.Value) {
 	if len(id) == 0 {
 		id = jsontext.Value("null")
 	}
-	body, err := json.Marshal(map[string]any{
+	body, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
 		"error":   map[string]any{"code": -32020, "message": "HeaderMismatch", "data": map[string]string{"header": "Mcp-Name"}},
 	})
-	if err != nil {
-		http.Error(w, "header mismatch: Mcp-Name", http.StatusBadRequest)
-		return
-	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	_, _ = w.Write(body)

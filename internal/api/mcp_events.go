@@ -63,58 +63,35 @@ func readEventsBody(r *http.Request) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r.Body, 64<<10+1))
 }
 func (s *Server) handleMCPEventsSubscribe(w http.ResponseWriter, r *http.Request) {
-	raw, err := readEventsBody(r)
-	if err != nil {
-		eventsError(w, &mcpevents.Error{Code: mcpevents.InvalidParams, Reason: "invalid_params"})
-		return
-	}
-	in, err := mcpevents.DecodeSubscribe(raw)
-	if err != nil {
-		eventsError(w, err)
-		return
-	}
-	release, err := s.beginMutation("MCP Events")(r.Context())
-	if err != nil {
-		writeOperationGateBusy(w, r, s.operationGate)
-		return
-	}
-	defer func() {
-		if release != nil {
-			release()
+	serveEventsMutation(w, r, s, mcpevents.DecodeSubscribe, func(ctx context.Context, in mcpevents.MCPEventsSubscribeRequest, release *func()) (mcpevents.MCPEventsSubscribeResult, error) {
+		verify := func(ctx context.Context, endpoint, id string, secret []byte) error {
+			(*release)()
+			*release = nil
+			var verifyErr error
+			if s.verifyEventsCallback != nil {
+				verifyErr = s.verifyEventsCallback(ctx, endpoint, id, secret)
+			} else if category := wakeups.VerifyEventCallback(ctx, endpoint, id, secret); category != "" {
+				verifyErr = &mcpevents.Error{Code: mcpevents.CallbackEndpoint, Reason: category}
+			}
+			if verifyErr != nil {
+				return verifyErr
+			}
+			var err error
+			*release, err = s.beginMutation("MCP Events")(ctx)
+			if err != nil {
+				return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "unavailable"}
+			}
+			return nil
 		}
-	}()
-	verify := func(ctx context.Context, endpoint, id string, secret []byte) error {
-		release()
-		release = nil
-		var verifyErr error
-		if s.verifyEventsCallback != nil {
-			verifyErr = s.verifyEventsCallback(ctx, endpoint, id, secret)
-		} else if category := wakeups.VerifyEventCallback(ctx, endpoint, id, secret); category != "" {
-			verifyErr = &mcpevents.Error{Code: mcpevents.CallbackEndpoint, Reason: category}
-		}
-		if verifyErr != nil {
-			return verifyErr
-		}
-		var err error
-		release, err = s.beginMutation("MCP Events")(ctx)
-		if err != nil {
-			return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "unavailable"}
-		}
-		return nil
-	}
-	result, err := s.mcpEvents.Subscribe(r.Context(), in, verify)
-	if err != nil {
-		eventsError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
+		return s.mcpEvents.Subscribe(ctx, in, verify)
+	})
 }
 func (s *Server) handleMCPEventsUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	serveEventsMutation(w, r, s, mcpevents.DecodeUnsubscribe, func(ctx context.Context, in mcpevents.MCPEventsUnsubscribeRequest) (mcpevents.MCPEventsUnsubscribeResult, error) {
+	serveEventsMutation(w, r, s, mcpevents.DecodeUnsubscribe, func(ctx context.Context, in mcpevents.MCPEventsUnsubscribeRequest, _ *func()) (mcpevents.MCPEventsUnsubscribeResult, error) {
 		return mcpevents.MCPEventsUnsubscribeResult{}, s.mcpEvents.Unsubscribe(ctx, in)
 	})
 }
-func serveEventsMutation[Req, Resp any](w http.ResponseWriter, r *http.Request, s *Server, decode func([]byte) (Req, error), run func(context.Context, Req) (Resp, error)) {
+func serveEventsMutation[Req, Resp any](w http.ResponseWriter, r *http.Request, s *Server, decode func([]byte) (Req, error), run func(context.Context, Req, *func()) (Resp, error)) {
 	raw, err := readEventsBody(r)
 	if err != nil {
 		eventsError(w, &mcpevents.Error{Code: mcpevents.InvalidParams, Reason: "invalid_params"})
@@ -130,8 +107,12 @@ func serveEventsMutation[Req, Resp any](w http.ResponseWriter, r *http.Request, 
 		writeOperationGateBusy(w, r, s.operationGate)
 		return
 	}
-	defer release()
-	result, err := run(r.Context(), in)
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
+	result, err := run(r.Context(), in, &release)
 	if err != nil {
 		eventsError(w, err)
 		return

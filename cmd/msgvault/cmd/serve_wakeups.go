@@ -57,10 +57,11 @@ func configureWakeupJob(ctx context.Context, sched *scheduler.Scheduler, gate ap
 			logger.Warn("wakeup setup unavailable", "category", category)
 		}
 	}
-	if len(subs) == 0 && (events == nil || !events.Enabled || events.Store == nil) {
+	native := events != nil && events.Available(ctx)
+	if len(subs) == 0 && !native {
 		return nil
 	}
-	if events != nil && events.Enabled && events.Store != nil {
+	if native {
 		engine.Native = events.Native
 	}
 	return sched.AddJob(scheduler.Job{Name: "wakeups", Interval: 15 * time.Second, Background: true, Run: engine.RunPass})
