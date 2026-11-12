@@ -1032,8 +1032,11 @@ func copyData(ctx context.Context, tx *sql.Tx, rowCount int, options CopySubsetO
 	if present, err := sourceTableExists(ctx, tx, "meeting_link_decisions"); err != nil {
 		return nil, err
 	} else if present {
-		if err := copySubsetMeetingDecisions(ctx, tx); err != nil {
+		if _, err := copyByName(ctx, tx, "meeting_link_decisions", `left_message_id IN (SELECT id FROM selected_messages) AND right_message_id IN (SELECT id FROM selected_messages)`); err != nil {
 			return nil, fmt.Errorf("copy meeting link decisions: %w", err)
+		}
+		if _, err := copyByName(ctx, tx, "meeting_copy_survivors", `message_id IN (SELECT id FROM selected_messages) AND survivor_message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy meeting copy survivors: %w", err)
 		}
 	}
 
@@ -3152,104 +3155,4 @@ func preserveSubsetDraftEvidence(ctx context.Context, tx *sql.Tx) (int64, error)
 		}
 	}
 	return int64(len(sourceIDs)), nil
-}
-
-func copySubsetMeetingDecisions(ctx context.Context, tx *sql.Tx) error {
-	selectedRows, err := tx.QueryContext(ctx, `SELECT id FROM selected_messages`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = selectedRows.Close() }()
-	selected := map[int64]bool{}
-	for selectedRows.Next() {
-		var id int64
-		if err := selectedRows.Scan(&id); err != nil {
-			_ = selectedRows.Close()
-			return err
-		}
-		selected[id] = true
-	}
-	if err := errors.Join(selectedRows.Err(), selectedRows.Close()); err != nil {
-		return err
-	}
-	survivorRows, err := tx.QueryContext(ctx, `SELECT m.id,m.deleted_at IS NOT NULL,COALESCE(CASE WHEN m.delete_batch_id IS NOT NULL THEN c.survivor_message_id END, sm.survivor_message_id) FROM src.messages m LEFT JOIN src.meeting_copy_survivors c ON c.message_id=m.id LEFT JOIN src.source_merge_messages sm ON sm.message_id=m.id`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = survivorRows.Close() }()
-	type survivor struct {
-		hidden bool
-		next   sql.NullInt64
-	}
-	survivors := map[int64]survivor{}
-	for survivorRows.Next() {
-		var id int64
-		var v survivor
-		if err := survivorRows.Scan(&id, &v.hidden, &v.next); err != nil {
-			_ = survivorRows.Close()
-			return err
-		}
-		survivors[id] = v
-	}
-	if err := errors.Join(survivorRows.Err(), survivorRows.Close()); err != nil {
-		return err
-	}
-	resolve := func(id int64) int64 {
-		seen := map[int64]bool{}
-		for !seen[id] {
-			seen[id] = true
-			v, ok := survivors[id]
-			if !ok {
-				return 0
-			}
-			if !v.hidden {
-				return id
-			}
-			if !v.next.Valid {
-				return 0
-			}
-			id = v.next.Int64
-		}
-		return 0
-	}
-	decisionRows, err := tx.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision FROM src.meeting_link_decisions`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = decisionRows.Close() }()
-	var choices []meetingDecisionEdge
-	for decisionRows.Next() {
-		var d meetingDecisionEdge
-		if err := decisionRows.Scan(&d.id, &d.a.ID, &d.a.Kind, &d.a.Key, &d.b.ID, &d.b.Kind, &d.b.Key, &d.decision); err != nil {
-			_ = decisionRows.Close()
-			return err
-		}
-		choices = append(choices, d)
-	}
-	if err := errors.Join(decisionRows.Err(), decisionRows.Close()); err != nil {
-		return err
-	}
-	type pair struct{ a, b meetingDecisionEndpoint }
-	winners := map[pair]meetingDecisionEdge{}
-	for _, d := range choices {
-		d.a.ID = resolve(d.a.ID)
-		d.b.ID = resolve(d.b.ID)
-		if !selected[d.a.ID] || !selected[d.b.ID] || compareMeetingEndpoints(d.a, d.b) == 0 {
-			continue
-		}
-		if compareMeetingEndpoints(d.a, d.b) > 0 {
-			d.a, d.b = d.b, d.a
-		}
-		key := pair{d.a, d.b}
-		old, ok := winners[key]
-		if !ok || newerMeetingDecision(d, old) {
-			winners[key] = d
-		}
-	}
-	for _, d := range winners {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meeting_link_decisions(id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision) VALUES (?,?,?,?,?,?,?,?)`, d.id, d.a.ID, d.a.Kind, d.a.Key, d.b.ID, d.b.Kind, d.b.Key, d.decision); err != nil {
-			return err
-		}
-	}
-	return nil
 }

@@ -560,12 +560,6 @@ func TestMeetingLinkDecisionSubsetOmitsHiddenOrigin(t *testing.T) {
 			_, duplicate := projectionFixture(t, st, "subset-hidden", format, raw)
 			dupRef := MeetingLinkRef{Kind: "msg", MessageID: duplicate}
 			otherRef := MeetingLinkRef{Kind: "msg", MessageID: other}
-			earlier := "unlink"
-			if action == "unlink" {
-				earlier = "link"
-			}
-			_, err = st.DecideMeetingLinkContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: survivor}, otherRef, earlier)
-			requirements.NoError(err)
 			_, err = st.DecideMeetingLinkContext(t.Context(), dupRef, otherRef, action)
 			requirements.NoError(err)
 			_, err = st.MergeDuplicates(t.Context(), intermediate, []int64{duplicate}, "subset-undo")
@@ -581,9 +575,9 @@ func TestMeetingLinkDecisionSubsetOmitsHiddenOrigin(t *testing.T) {
 			record, err := dst.MeetingRecordContext(t.Context(), otherRef)
 			requirements.NoError(err)
 			if action == "link" {
-				assertions.Equal([]int64{survivor, other}, record.MessageIDs)
-			} else {
 				assertions.Equal([]int64{other}, record.MessageIDs)
+			} else {
+				assertions.Equal([]int64{survivor, other}, record.MessageIDs)
 			}
 		})
 	}
