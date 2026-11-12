@@ -32,7 +32,7 @@ func newRootCommand() *cobra.Command {
 		Short: "Offline email, chat, and meeting archive tool",
 		Long: `Offline archive.
 
-Examples:
+Start here:
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
