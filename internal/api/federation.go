@@ -48,11 +48,14 @@ type federationHandshakeResponse struct {
 }
 
 func (s *Server) registerFederationRoutes(api huma.API) {
-	registerAPIV1RawHumaJSONRoute[federationHandshakeResponse](api, "getFederationHandshake", http.MethodGet, "/federation/handshake", "Identify the hub for an enrolled spoke", s.handleFederationHandshake)
+	op := rawAPIV1Operation("getFederationHandshake", http.MethodGet, "/federation/handshake", "Identify the hub for an enrolled spoke")
+	op.Security = []map[string][]string{{federationTokenSecurityScheme: {}, federationSpokeSecurityScheme: {}}}
+	op.Responses = jsonResponsesFor[federationHandshakeResponse](api)
+	registerRawHumaRoute(api, op, s.handleFederationHandshake)
 	registerAPIV1RawHumaJSONRoute[federationIdentityResponse](api, "getFederationIdentity", http.MethodGet, "/federation/identity", "Get this archive's federation identity", s.handleFederationIdentity)
 	registerAPIV1RawHumaJSONRouteWithRequest[federationCreateRequest, federationCreateResponse](api, "createFederationEnrollment", http.MethodPost, "/federation/enrollments", "Enroll a spoke", s.handleFederationCreate, http.StatusCreated)
 	registerAPIV1RawHumaJSONRoute[federationListResponse](api, "listFederationEnrollments", http.MethodGet, "/federation/enrollments", "List spoke enrollments", s.handleFederationList)
-	op := rawAPIV1Operation("revokeFederationEnrollment", http.MethodDelete, "/federation/enrollments/{uid}", "Revoke a spoke enrollment")
+	op = rawAPIV1Operation("revokeFederationEnrollment", http.MethodDelete, "/federation/enrollments/{uid}", "Revoke a spoke enrollment")
 	op.Parameters = []*huma.Param{{Name: "uid", In: "path", Required: true, Schema: &huma.Schema{Type: "string"}}}
 	op.Responses = rawHumaResponses(http.StatusNoContent)
 	registerRawHumaRoute(api, op, s.handleFederationRevoke)

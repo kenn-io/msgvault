@@ -28,9 +28,11 @@ const (
 )
 
 const (
-	queryParamLocation   = "query"
-	apiKeySecurityScheme = "apiKey"
-	cliRouteTag          = "CLI"
+	queryParamLocation            = "query"
+	apiKeySecurityScheme          = "apiKey"
+	federationTokenSecurityScheme = "federationToken"
+	federationSpokeSecurityScheme = "federationSpoke"
+	cliRouteTag                   = "CLI"
 )
 
 var configureHumaOnce sync.Once
@@ -200,6 +202,17 @@ func (s *Server) setupHumaAPI(mux humago.Mux) huma.API {
 			Type: "apiKey",
 			In:   headerParamLocation,
 			Name: "X-Api-Key",
+		},
+		federationTokenSecurityScheme: {
+			Type:        "http",
+			Scheme:      "bearer",
+			Description: "Federation enrollment token (mvf1_ prefix).",
+		},
+		federationSpokeSecurityScheme: {
+			Type:        "apiKey",
+			In:          headerParamLocation,
+			Name:        "X-Msgvault-Spoke-Instance",
+			Description: "Archive UID pinned to the federation enrollment.",
 		},
 	}
 

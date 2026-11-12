@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
@@ -321,6 +322,28 @@ func TestFederationRoleMatrix(t *testing.T) {
 				requirements.Equal(http.StatusNotFound, unknownStatus)
 				assertions.Equal(strings.ReplaceAll(unknownBody, unknown, op.path), body)
 			}
+		})
+	}
+}
+
+func TestFederationHandshakeOpenAPISecurity(t *testing.T) {
+	for name, doc := range map[string]*huma.OpenAPI{"server": OpenAPIDocument(), "client": openAPIClientDocument()} {
+		t.Run(name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			path := doc.Paths["/api/v1/federation/handshake"]
+			requirements.NotNil(path)
+			requirements.NotNil(path.Get)
+			assertions.Equal([]map[string][]string{{federationTokenSecurityScheme: {}, federationSpokeSecurityScheme: {}}}, path.Get.Security)
+			token := doc.Components.SecuritySchemes[federationTokenSecurityScheme]
+			requirements.NotNil(token)
+			assertions.Equal("http", token.Type)
+			assertions.Equal("bearer", token.Scheme)
+			spoke := doc.Components.SecuritySchemes[federationSpokeSecurityScheme]
+			requirements.NotNil(spoke)
+			assertions.Equal("apiKey", spoke.Type)
+			assertions.Equal("header", spoke.In)
+			assertions.Equal("X-Msgvault-Spoke-Instance", spoke.Name)
 		})
 	}
 }
