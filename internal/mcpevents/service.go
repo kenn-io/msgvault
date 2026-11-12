@@ -146,7 +146,14 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 	refresh := index >= 0
 	var id string
 	if refresh {
+		if len(entries)+s.ConfigTargets > 32 {
+			return out, failure(ResourceExhausted, "subscriptions")
+		}
 		id = entries[index].ID
+		_, position, err := s.Store.LoadWakeupStateKey(ctx, store.MCPEventsPositionKey(id))
+		if err != nil || position == nil {
+			return out, failure(Unavailable, "store_unavailable")
+		}
 	} else {
 		id = subscriptionID(owner, in.Arguments, in.Delivery.URL)
 		if owner != "owner" {
@@ -160,12 +167,18 @@ func (s *Service) Subscribe(ctx context.Context, in MCPEventsSubscribeRequest, o
 	if !refresh && s.subscriptionLimit(entries, owner) {
 		return out, failure(ResourceExhausted, "subscriptions")
 	}
+	if !refresh && owner == "owner" {
+		page, err := s.Store.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
+		if err != nil || page.CompleteThrough.IsZero() {
+			return out, failure(Unavailable, "head_unavailable")
+		}
+	}
 	if verify == nil {
 		return out, failure(Unavailable, "unavailable")
 	}
 	if err := verify(ctx, in.Delivery.URL, id, in.secret); err != nil {
 		var callbackErr *Error
-		if errors.As(err, &callbackErr) && callbackErr.Code == Unavailable {
+		if errors.As(err, &callbackErr) && (callbackErr.Code == Unavailable || callbackErr.Code == Forbidden) {
 			return out, callbackErr
 		}
 		reason := "challenge_failed"

@@ -310,7 +310,6 @@ func TestOwnerEventsDisabledAndInvalidSubscription(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "-32602")
 }
 
-
 func TestDelegatedSourceScopeAdmission(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -338,6 +337,33 @@ func TestDelegatedSourceScopeAdmission(t *testing.T) {
 	assert.Contains(w.Body.String(), "permission_denied")
 }
 
+func TestDelegatedSourceIdentityChangesDuringChallenge(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, _, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "allowed@example.test", "allowed", "allowed", "")
+	require.NoError(t, err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
+	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, MCPEvents: events, Logger: testLogger()})
+	events.Grants = srv.agentGrants
+	t.Cleanup(srv.agentGrants.Close)
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	require.NoError(t, err)
+	srv.verifyEventsCallback = func(ctx context.Context, _ string, _ string, _ []byte) error {
+		_, err := st.DB().ExecContext(ctx, st.Rebind(`UPDATE sources SET identifier=? WHERE id=?`), "replacement@example.test", source.ID)
+		return err
+	}
+	body := fmt.Sprintf(`{"name":"msgvault.messages.changed","arguments":{"source_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, source.ID)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, r)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "permission_denied")
+	raw, err := st.LoadMCPEventsCatalog(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, raw)
+}
 
 func TestMCPEventsRequireSearchPermission(t *testing.T) {
 	srv, reg := newTestServerWithAgentGrants(t)

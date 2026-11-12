@@ -126,6 +126,18 @@ func (s *Server) handleMCPEventsSubscribe(w http.ResponseWriter, r *http.Request
 			if verifyErr != nil {
 				return verifyErr
 			}
+			if grant != nil && in.Arguments.SourceID != 0 {
+				request := r.Clone(ctx)
+				done, apiErr := s.beginAgentRead(request, "listChangedMessages", grant, agentgrant.PermissionSearchRead)
+				if apiErr != nil {
+					return &mcpevents.Error{Code: mcpevents.Unavailable, Reason: "source_scope_unavailable"}
+				}
+				allowed := slices.Contains(agentReadSourceIDs(request), in.Arguments.SourceID)
+				done()
+				if !allowed {
+					return &mcpevents.Error{Code: mcpevents.Forbidden, Reason: "permission_denied"}
+				}
+			}
 			var err error
 			*release, err = s.beginMutation("MCP Events")(ctx)
 			if err != nil {

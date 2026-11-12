@@ -974,14 +974,14 @@ retries a write by itself. If a write reports
 ## Write controls
 
 Enable only the write tools intended for the assistant's session. The HTTP
-write flag controls tools. Native Events subscription management uses owner
-access and persists callback registrations and credentials; subscribing also
-requires the daemon Events opt-in.
+write flag controls tools. Native Events subscription management is available
+to owners and delegated stdio clients with `search.read` and persists callback
+registrations and credentials; subscribing also requires the daemon Events opt-in.
 
 | Writes | Stdio | HTTP |
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
-| Native Events subscribe and unsubscribe | Owner access; subscribe requires daemon opt-in | Owner access and `--http-allow-writes`; subscribe requires daemon opt-in |
+| Native Events subscribe and unsubscribe | Owner access or delegated `search.read`; subscribe requires daemon opt-in | Owner access and `--http-allow-writes`; subscribe requires daemon opt-in |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
