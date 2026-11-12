@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -78,11 +79,13 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 		}
 	}
 	unexpandable := map[int64]bool{}
+	var tooBroadYears []int
 	if err == nil {
 		for year := earliest.Year(); year <= lastYear; year++ {
 			from := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
 			page, err := s.ListCalendarOccurrencesContext(ctx, from, from.AddDate(1, 0, 0))
 			if errors.Is(err, ErrQueryTooBroad) {
+				tooBroadYears = append(tooBroadYears, year)
 				if err := s.markBroadMeetingWindow(ctx, from, from.AddDate(1, 0, 0), unexpandable); err != nil {
 					return nil, time.Time{}, err
 				}
@@ -200,10 +203,12 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("read meeting decisions: %w", err)
 	}
+	skippedChoices := 0
 	for _, edge := range decisions {
 		budget := calrecur.RequestReadBudget
 		valid, _, err := s.resolveMeetingDecision(ctx, &edge, &budget)
 		if errors.Is(err, ErrQueryTooBroad) {
+			skippedChoices++
 			continue
 		}
 		if err != nil {
@@ -355,6 +360,15 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 	result = slices.CompactFunc(result, func(a, b MeetingOccurrence) bool {
 		return a.MessageID == b.MessageID && a.OccurrenceKey == b.OccurrenceKey
 	})
+	if len(unexpandable) > 0 || skippedChoices > 0 {
+		ids := make([]int64, 0, len(unexpandable))
+		for id := range unexpandable {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		ids = ids[:min(len(ids), 10)]
+		slog.WarnContext(ctx, "some meetings count once per calendar message because their recurrence could not be expanded", "messages", len(unexpandable), "message_ids", ids, "too_broad_years", tooBroadYears, "skipped_choices", skippedChoices)
+	}
 	return result, nextAt, nil
 }
 

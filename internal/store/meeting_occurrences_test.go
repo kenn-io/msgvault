@@ -1,7 +1,10 @@
 package store
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -109,10 +112,30 @@ func TestMeetingOccurrenceCountsYearBoundaryAndUnexpandable(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, series := calendarFixture(t, st, "boundary", `{"id":"boundary","start":{"dateTime":"2026-12-31T23:30:00Z"},"end":{"dateTime":"2027-01-01T00:30:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`)
 	_, earlier := calendarFixture(t, st, "earlier", `{"id":"earlier","start":{"dateTime":"2027-02-01T10:00:00Z"},"end":{"dateTime":"2027-02-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=1","RDATE:20250601T100000Z"]}`)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	_, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
+	require.NoError(t, err)
+	assert.Empty(t, logs.String())
 	_, unsupported := calendarFixture(t, st, "unsupported", `{"id":"unsupported","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYWEEKNO=20"]}`)
 	_, future := calendarFixture(t, st, "future", `{"id":"future","start":{"dateTime":"2028-01-01T10:00:00Z"},"end":{"dateTime":"2028-01-01T11:00:00Z"}}`)
 	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
+	var warning struct {
+		Level          string  `json:"level"`
+		Messages       int     `json:"messages"`
+		MessageIDs     []int64 `json:"message_ids"`
+		TooBroadYears  []int   `json:"too_broad_years"`
+		SkippedChoices int     `json:"skipped_choices"`
+	}
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &warning))
+	assert.Equal(t, "WARN", warning.Level)
+	assert.Equal(t, 1, warning.Messages)
+	assert.Equal(t, []int64{unsupported}, warning.MessageIDs)
+	assert.Empty(t, warning.TooBroadYears)
+	assert.Zero(t, warning.SkippedChoices)
 	var dates, earlierDates []time.Time
 	for _, row := range rows {
 		assert.NotEqual(t, unsupported, row.MessageID)
@@ -267,4 +290,31 @@ func TestMeetingOccurrencesMatchRecordsSavedSplit(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("evt:%d", ref.MessageID), record.Links[0].Ref)
 		assert.Contains(t, rows, MeetingOccurrence{MessageID: ref.MessageID, OccurrenceKey: record.Links[0].Ref, OccurredAt: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Counted: true})
 	}
+}
+
+func TestMeetingOccurrenceCountsReportsBusyYear(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	data, event := calendarFixture(t, st, "cap-master", calendarRaw)
+	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", 2001)
+	_, err := st.db.Exec(`UPDATE calendar_events SET start_at = '2027-03-01 00:00:00+00:00', end_at = '2027-03-02 00:00:00+00:00', start_date = '2027-03-01', end_date = '2027-03-02', recurrence_json = '["RRULE:FREQ=DAILY"]' WHERE kind = 'series'`)
+	require.NoError(t, err)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	_, _, err = st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
+	require.NoError(t, err)
+	var warning struct {
+		Level          string  `json:"level"`
+		Messages       int     `json:"messages"`
+		MessageIDs     []int64 `json:"message_ids"`
+		TooBroadYears  []int   `json:"too_broad_years"`
+		SkippedChoices int     `json:"skipped_choices"`
+	}
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &warning))
+	assert.Equal(t, "WARN", warning.Level)
+	assert.Equal(t, 2002, warning.Messages)
+	assert.Equal(t, []int64{event, 100000, 100001, 100002, 100003, 100004, 100005, 100006, 100007, 100008}, warning.MessageIDs)
+	assert.Equal(t, []int{2027}, warning.TooBroadYears)
+	assert.Zero(t, warning.SkippedChoices)
 }
