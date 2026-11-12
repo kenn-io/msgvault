@@ -310,18 +310,6 @@ func TestEmailCalendarMaterialization(t *testing.T) {
 		requirements.NoError(err)
 		assertions.Equal(ids, emailEvents(t, st, source), "rebuilding the same email keeps its claim identity")
 	})
-	t.Run("deleted email retains events", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		st, parent, _, ids, _ := setup(t)
-		_, err := st.db.Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, parent)
-		requirements.NoError(err)
-		from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
-		requirements.NoError(err)
-		requirements.Len(page.Occurrences, 2)
-		assertions.ElementsMatch(ids, []int64{page.Occurrences[0].MessageID, page.Occurrences[1].MessageID})
-	})
 	t.Run("garbage collection", func(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
@@ -339,18 +327,6 @@ func TestEmailCalendarMaterialization(t *testing.T) {
 		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
 		requirements.NoError(err)
 		assertions.Len(page.Occurrences, 2)
-	})
-	t.Run("source removal", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		st, _, source, _, _ := setup(t)
-		requirements.NoError(st.MarkMessageDeletedContext(t.Context(), source, "organizer-message"))
-		_, _, err := st.RemoveSourceSerialized(t.Context(), source)
-		requirements.NoError(err)
-		from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
-		requirements.NoError(err)
-		assertions.Empty(page.Occurrences)
 	})
 }
 

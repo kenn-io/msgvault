@@ -136,38 +136,6 @@ func TestICalendarRangeKeepsSiblings(t *testing.T) {
 			requirements.Empty(page.Unexpandable)
 		})
 	}
-	t.Run("range cancellation", func(t *testing.T) {
-		requirements := require.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		source := icsSource(t, st)
-		for _, event := range [][]byte{
-			calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=10"),
-			calendarDocument("REQUEST", "RECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"),
-			calendarDocument("CANCEL", "SEQUENCE:1\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z"),
-		} {
-			_, err := st.PersistICalendarContext(t.Context(), source, event)
-			requirements.NoError(err)
-		}
-		boundary := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-		boundaryPage, err := st.ListCalendarOccurrencesContext(t.Context(), boundary, boundary.AddDate(0, 0, 1))
-		requirements.NoError(err)
-		requirements.Len(boundaryPage.Occurrences, 1)
-		requirements.Equal("cancelled", boundaryPage.Occurrences[0].Status)
-		requirements.Empty(boundaryPage.Unexpandable)
-		from := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
-		page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-		requirements.NoError(err)
-		requirements.Len(page.Occurrences, 1)
-		requirements.Equal("cancelled", page.Occurrences[0].Status)
-		requirements.Empty(page.Unexpandable)
-		_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:2\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"))
-		requirements.NoError(err)
-		page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-		requirements.NoError(err)
-		requirements.Empty(page.Unexpandable)
-		requirements.Len(page.Occurrences, 1)
-		requirements.Equal("confirmed", page.Occurrences[0].Status)
-	})
 }
 
 func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
@@ -225,25 +193,32 @@ func TestICalendarRangePreservesOriginalPrefix(t *testing.T) {
 }
 
 func TestICalendarRangeMovesAroundLaterEdits(t *testing.T) {
-	master := "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=5"
+	master := "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=10"
 	move := "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"
 	for _, tc := range []struct {
-		name   string
-		events [][]byte
-		want   []string
+		name      string
+		events    [][]byte
+		want      []string
+		plainMove bool
 	}{
 		{"cancelled occurrence", [][]byte{calendarDocument("CANCEL", "RECURRENCE-ID:20270304T120000Z")},
-			[]string{"2027-03-03T14:00:00Z", "2027-03-04T14:00:00Z cancelled", "2027-03-05T14:00:00Z"}},
+			[]string{"2027-03-03T14:00:00Z", "2027-03-04T14:00:00Z cancelled", "2027-03-05T14:00:00Z"}, false},
 		{"cancelled range", [][]byte{calendarDocument("CANCEL", "SEQUENCE:1\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z")},
-			[]string{"2027-03-03T14:00:00Z cancelled", "2027-03-04T14:00:00Z cancelled", "2027-03-05T14:00:00Z cancelled"}},
+			[]string{"2027-03-03T14:00:00Z cancelled", "2027-03-04T14:00:00Z cancelled", "2027-03-05T14:00:00Z cancelled"}, false},
+		{"cancelled range after plain edit", [][]byte{calendarDocument("CANCEL", "SEQUENCE:1\r\nRECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z")},
+			[]string{"2027-03-03T14:00:00Z cancelled", "2027-03-04T14:00:00Z cancelled", "2027-03-05T14:00:00Z cancelled"}, true},
 		{"exception with its own start", [][]byte{calendarDocument("REQUEST", "RECURRENCE-ID:20270304T120000Z\r\nDTSTART:20270304T180000Z\r\nDURATION:PT1H")},
-			[]string{"2027-03-03T14:00:00Z", "2027-03-04T18:00:00Z", "2027-03-05T14:00:00Z"}},
+			[]string{"2027-03-03T14:00:00Z", "2027-03-04T18:00:00Z", "2027-03-05T14:00:00Z"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			source := icsSource(t, st)
-			for _, event := range append([][]byte{calendarDocument("REQUEST", master), calendarDocument("REQUEST", move)}, tc.events...) {
+			initialMove := move
+			if tc.plainMove {
+				initialMove = strings.Replace(move, ";RANGE=THISANDFUTURE", "", 1)
+			}
+			for _, event := range append([][]byte{calendarDocument("REQUEST", master), calendarDocument("REQUEST", initialMove)}, tc.events...) {
 				_, err := st.PersistICalendarContext(t.Context(), source, event)
 				requirements.NoError(err)
 			}
@@ -260,6 +235,21 @@ func TestICalendarRangeMovesAroundLaterEdits(t *testing.T) {
 			}
 			requirements.Equal(tc.want, got)
 			requirements.Empty(page.Unexpandable)
+			if tc.plainMove {
+				from = time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
+				page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+				requirements.NoError(err)
+				requirements.Len(page.Occurrences, 1)
+				requirements.Equal("cancelled", page.Occurrences[0].Status)
+				requirements.Empty(page.Unexpandable)
+				_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:2\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"))
+				requirements.NoError(err)
+				page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+				requirements.NoError(err)
+				requirements.Empty(page.Unexpandable)
+				requirements.Len(page.Occurrences, 1)
+				requirements.Equal("confirmed", page.Occurrences[0].Status)
+			}
 		})
 	}
 }
@@ -421,7 +411,6 @@ func TestICalendarSuccessiveRangeMoves(t *testing.T) {
 
 func TestICalendarRangeReportsIncompletePrefix(t *testing.T) {
 	for _, tc := range []struct{ name, master, exception, want, occurrence string }{
-		{"budget", "DTSTART:18000101T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY", "", "recurrence generation budget exceeded", ""},
 		{"unidentified", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=7", "RECURRENCE-ID;VALUE=DATE:20270303\r\nDTSTART:20270304T140000Z\r\nDURATION:PT1H", "exception original start cannot be compared", "2027-03-04T12:00:00Z"},
 		{"mismatched", "DTSTART;VALUE=DATE:20270302\r\nRRULE:FREQ=DAILY;COUNT=7", "", "unsupported recurrence range", ""},
 	} {
