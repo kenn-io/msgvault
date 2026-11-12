@@ -643,8 +643,8 @@
           {/if}
           {#if error}<p class="notice notice--error" role="alert">{error}</p>{/if}
           {#if buildError && activeId === 'overview'}<p class="notice notice--error" role="alert">{buildError}</p>{/if}
-          {#if pendingRestart}
-            <p class="notice notice--pending" role="status">Saved. Restart msgvault to apply these changes.</p>
+          {#if pendingRestart || inference.status?.pending_restart}
+            <InlineNotice tone="warning" message="Restart pending."><p class="restart-guidance">On the computer running msgvault, run <code>msgvault daemon restart</code> with the same custom <code>--home</code> and <code>--config</code> options, or restart its service.</p></InlineNotice>
           {/if}
         </div>
 
@@ -834,6 +834,7 @@
     font-size: var(--type-meta-size);
     line-height: var(--type-meta-line);
   }
+  .restart-guidance { margin: 0; }
   .notice--error {
     border-color: var(--status-error-ink);
     background: var(--status-error-bg);

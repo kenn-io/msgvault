@@ -217,9 +217,18 @@ func (m Model) handlePeopleInferenceControlMsg(msg tea.Msg) (tea.Model, tea.Cmd)
 	return m, nil
 }
 
-func (m Model) renderPeopleInferenceControls() string {
+func (m Model) peopleControlsParts() (string, string, string) {
 	s := m.settings.peopleControls
-	lines := []string{m.styles.titleBar.Render("People inference controls"), ""}
+	var lines []string
+	if s.message != "" {
+		lines = append(lines, textutil.SanitizeTerminalMultiline(s.message))
+	}
+	if s.exitBlocked {
+		lines = append(lines, "Change in progress; wait for the result before leaving.")
+	}
+	if s.status != nil && s.status.PendingRestart {
+		lines = append(lines, settingsRestartNotice)
+	}
 	if s.loading {
 		lines = append(lines, "Loading people inference status…")
 	}
@@ -235,10 +244,8 @@ func (m Model) renderPeopleInferenceControls() string {
 			lines = append(lines, "People inference: disabled")
 		}
 		lines = append(lines, "Running: "+textutil.SanitizeTerminal(status.Running))
-		if status.PendingRestart {
-			lines = append(lines, "Restart the daemon to apply the change.")
-		}
 	}
+	var actions string
 	if s.confirm != "" {
 		switch s.confirm {
 		case "disable":
@@ -248,30 +255,20 @@ func (m Model) renderPeopleInferenceControls() string {
 		default:
 			lines = append(lines, "Revoke consent for "+textutil.SanitizeTerminal(s.confirmProfile)+"?")
 		}
-		lines = append(lines, "Fingerprint: "+textutil.SanitizeTerminal(s.confirmFingerprint), "[y] Confirm  [n/Esc] Cancel")
+		lines = append(lines, "Fingerprint: "+textutil.SanitizeTerminal(s.confirmFingerprint))
+		actions = "[y] Confirm  [n/Esc] Cancel"
 	} else if s.pending {
-		lines = append(lines, "Applying people inference change…")
+		actions = "Applying people inference change…"
 	} else {
-		actions := "[d] Disable  [v] Revoke consent"
+		actions = "[d] Disable  [v] Revoke consent"
 		if s.status != nil && !s.status.ConfiguredEnabled && s.status.ConfiguredFingerprint != "" {
 			if s.status.ProfileCount > 1 {
 				actions += "  [x] Remove profile"
 			} else {
-				lines = append(lines, "Add another profile before removing this one.")
+				actions += "\nAdd another profile before removing this one."
 			}
 		}
-		lines = append(lines, actions+"  [r] Refresh  [Esc] Back")
+		actions += "\n[r] Refresh  [Esc] Back"
 	}
-	if s.message != "" {
-		lines = append(lines, textutil.SanitizeTerminalMultiline(s.message))
-	}
-	if s.exitBlocked {
-		lines = append(lines, "Change in progress; wait for the result before leaving.")
-	}
-	width := max(m.width, 20)
-	wrapped := []string{lines[0]}
-	for _, line := range lines[1:] {
-		wrapped = append(wrapped, wrapText(line, width)...)
-	}
-	return strings.Join(wrapped, "\n")
+	return m.styles.titleBar.Render("People inference controls"), strings.Join(lines, "\n"), actions
 }

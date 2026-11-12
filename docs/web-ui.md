@@ -489,8 +489,9 @@ The bar stays visible on Contacts while ordinary settings have unsaved changes.
 Leaving Settings or reloading the page asks first when the bar or one of those
 forms has unsaved edits. Switching categories keeps the bar's edits but drops
 unsaved edits in those forms.
-After a save that needs a restart, Settings shows “Saved. Restart msgvault to
-apply these changes.”
+After a save that needs a restart, Settings shows `msgvault daemon restart` to
+run on the computer running msgvault. Reuse any custom `--home` and `--config`
+options, or restart the daemon's service.
 
 Saving makes targeted edits to `config.toml` while preserving comments. A stale
 edit is rejected after another browser or a hand edit changes the

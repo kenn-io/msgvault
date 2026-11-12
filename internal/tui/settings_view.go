@@ -8,70 +8,21 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
+const settingsRestartNotice = "Restart pending: on the daemon host, run msgvault daemon restart with its --home and --config, or restart its service."
+
 func (m Model) renderSettingsView() string {
-	if m.settings.peopleControls.active {
-		return m.renderPeopleInferenceControls()
+	if m.settings.confirmDiscard {
+		return strings.Join([]string{m.styles.titleBar.Render("Settings *"), "", m.styles.modalTitle.Render("Discard unsaved changes?"), "", "Your settings drafts have not been saved.", "", "[Y] Discard and return    [N/Esc] Keep editing"}, "\n")
 	}
-	if m.settings.codex.active {
-		return m.renderCodexSettings()
-	}
+	return m.settingsScreenView()
+}
+
+func (m Model) mainSettingsParts() (string, string, string) {
 	title := "Settings"
 	if m.settings.dirty() {
 		title += " *"
 	}
-	header := m.styles.titleBar.Render(title)
-	if m.settings.confirmDiscard {
-		return strings.Join([]string{
-			header,
-			"",
-			m.styles.modalTitle.Render("Discard unsaved changes?"),
-			"",
-			"Your settings drafts have not been saved.",
-			"",
-			"[Y] Discard and return    [N/Esc] Keep editing",
-		}, "\n")
-	}
-
-	lines := []string{header}
-	if status := m.settings.peopleInferenceStatus; status != nil {
-		configured := textutil.SanitizeTerminal(status.Configured)
-		running := textutil.SanitizeTerminal(status.Running)
-		if configured == "" {
-			configured = "none"
-		}
-		if running == "" {
-			running = "none"
-		}
-		lines = append(lines, strings.Join(wrapText("People inference: "+configured+" · Running: "+running, max(m.width, 20)), "\n"))
-		if status.ConfiguredFingerprint != "" {
-			lines = append(lines, strings.Join(wrapText("Profile fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint), max(m.width, 20)), "\n"))
-		}
-		if status.PendingRestart {
-			lines = append(lines, "Restart the daemon to apply the people inference selection.")
-		}
-	}
-	if m.settings.pendingRestart {
-		lines = append(lines, m.styles.flash.Render("Pending restart — saved changes take effect after the daemon restarts."))
-	}
-	if m.settings.loading {
-		return strings.Join(append(lines, "", m.styles.loading.Render("Loading settings…"), "", "[Esc] Back"), "\n")
-	}
-
-	availableHeight := max(m.height-len(lines)-3, 4)
-	if m.settingsIsNarrow() {
-		if m.settings.narrowFields {
-			lines = append(lines, m.renderSettingsFields(max(m.width, 20), availableHeight))
-		} else {
-			lines = append(lines, m.renderSettingsCategories(max(m.width, 20), availableHeight))
-		}
-	} else {
-		categoryWidth := min(max(m.width/4, 20), 30)
-		fieldWidth := max(m.width-categoryWidth-3, 30)
-		categories := m.renderSettingsCategories(categoryWidth, availableHeight)
-		fields := m.renderSettingsFields(fieldWidth, availableHeight)
-		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, categories, " │ ", fields))
-	}
-
+	var lines []string
 	if m.settings.status != "" {
 		status := textutil.SanitizeTerminalMultiline(m.settings.status)
 		if m.settings.statusIsError {
@@ -81,8 +32,38 @@ func (m Model) renderSettingsView() string {
 		}
 		lines = append(lines, status)
 	}
-	lines = append(lines, m.settingsFooter())
-	return strings.Join(lines, "\n")
+	if m.settings.pendingRestart || (m.settings.peopleInferenceStatus != nil && m.settings.peopleInferenceStatus.PendingRestart) {
+		lines = append(lines, m.styles.flash.Render(settingsRestartNotice))
+	}
+	if status := m.settings.peopleInferenceStatus; status != nil {
+		configured, running := textutil.SanitizeTerminal(status.Configured), textutil.SanitizeTerminal(status.Running)
+		if configured == "" {
+			configured = "none"
+		}
+		if running == "" {
+			running = "none"
+		}
+		lines = append(lines, "People inference: "+configured+" · Running: "+running)
+		if status.ConfiguredFingerprint != "" {
+			lines = append(lines, "Profile fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint))
+		}
+	}
+	if m.settings.loading {
+		return m.styles.titleBar.Render(title), strings.Join(append(lines, "Loading settings…"), "\n"), "[Esc] Back"
+	}
+	availableHeight := max(m.height-4, 4)
+	if m.settingsIsNarrow() {
+		if m.settings.narrowFields {
+			lines = append(lines, m.renderSettingsFields(max(m.width, 20), availableHeight))
+		} else {
+			lines = append(lines, m.renderSettingsCategories(max(m.width, 20), availableHeight))
+		}
+	} else {
+		categoryWidth := min(max(m.width/4, 20), 30)
+		fieldWidth := max(m.width-categoryWidth-3, 30)
+		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, m.renderSettingsCategories(categoryWidth, availableHeight), " │ ", m.renderSettingsFields(fieldWidth, availableHeight)))
+	}
+	return m.styles.titleBar.Render(title), strings.Join(lines, "\n"), m.settingsFooter()
 }
 
 func (m Model) renderSettingsCategories(width, height int) string {

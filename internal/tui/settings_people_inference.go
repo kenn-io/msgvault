@@ -549,9 +549,16 @@ func codexPollTick(id uint64) tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return codexPollTickMsg{requestID: id} })
 }
 
-func (m Model) renderCodexSettings() string {
+func (m Model) codexSettingsParts() (string, string, string) {
 	s := m.settings.codex
-	lines := []string{m.styles.titleBar.Render("People inference · Codex"), ""}
+	var lines []string
+	var actions string
+	if s.message != "" {
+		lines = append(lines, textutil.SanitizeTerminalMultiline(s.message))
+	}
+	if s.status.PendingRestart {
+		lines = append(lines, settingsRestartNotice)
+	}
 	switch s.stage {
 	case "setup":
 		lines = append(lines,
@@ -568,7 +575,7 @@ func (m Model) renderCodexSettings() string {
 		if s.editing != "" {
 			lines = append(lines, "Edit field "+s.editing+": "+s.editor.View())
 		}
-		lines = append(lines, "[Enter] Sign in with Codex")
+		actions = "[Enter] Sign in with Codex"
 	case "starting":
 		lines = append(lines, "Starting Codex sign-in…")
 	case "waiting":
@@ -576,12 +583,15 @@ func (m Model) renderCodexSettings() string {
 		if !s.login.Deadline.IsZero() {
 			lines = append(lines, "Expires: "+s.login.Deadline.UTC().Format("15:04 UTC"))
 		}
-		lines = append(lines, "Waiting for sign-in… [r] Check now")
+		lines = append(lines, "Waiting for sign-in…")
+		actions = "[r] Check now"
 	case "authenticated":
-		lines = append(lines, "Signed in. [m] List available models")
+		lines = append(lines, "Signed in.")
+		actions = "[m] List available models"
 	case "models":
 		if len(s.models) == 0 {
-			lines = append(lines, "No Codex models available. [m] Retry")
+			lines = append(lines, "No Codex models available.")
+			actions = "[m] Retry"
 			break
 		}
 		lines = append(lines, "Choose a model:")
@@ -595,17 +605,19 @@ func (m Model) renderCodexSettings() string {
 				lines = append(lines, "Reasoning: "+textutil.SanitizeTerminal(model.ReasoningEfforts[s.effortCursor])+"  [e] Change")
 			}
 		}
-		lines = append(lines, "[j/k] Move  [Enter] Use model and reasoning")
+		actions = "[j/k] Move  [Enter] Use model and reasoning"
 	case "saving":
 		lines = append(lines, "Saving Codex profile…")
 	case "profile":
-		lines = append(lines, "Profile saved for "+textutil.SanitizeTerminal(s.profile), "[c] Run synthetic check")
+		lines = append(lines, "Profile saved for "+textutil.SanitizeTerminal(s.profile))
+		actions = "[c] Run synthetic check"
 	case "checked", "consented":
 		lines = append(lines, "Synthetic check passed.", textutil.SanitizeTerminalMultiline(s.disclosure.Text))
 		if s.consented {
-			lines = append(lines, "Consent granted. [s] Select profile")
+			lines = append(lines, "Consent granted.")
+			actions = "[s] Select profile"
 		} else {
-			lines = append(lines, "[a] Grant consent")
+			actions = "[a] Grant consent"
 		}
 	case "selected":
 		lines = append(lines, "Selected profile: "+textutil.SanitizeTerminal(s.status.Configured))
@@ -614,18 +626,12 @@ func (m Model) renderCodexSettings() string {
 	}
 	if s.status.Configured != "" || s.status.Running != "" {
 		lines = append(lines, fmt.Sprintf("Configured: %s  Running: %s", textutil.SanitizeTerminal(s.status.Configured), textutil.SanitizeTerminal(s.status.Running)))
-		if s.status.PendingRestart {
-			lines = append(lines, "Restart the daemon to use the selected profile.")
-		}
 	}
-	if s.message != "" {
-		lines = append(lines, textutil.SanitizeTerminalMultiline(s.message))
+	if actions != "" {
+		actions += "\n"
 	}
-	lines = append(lines, "[r] Refresh  [Esc] Cancel and return")
-	width := max(m.width, 20)
-	wrapped := []string{lines[0]}
-	for _, line := range lines[1:] {
-		wrapped = append(wrapped, wrapText(line, width)...)
+	if s.stage == "waiting" {
+		return m.styles.titleBar.Render("People inference · Codex"), strings.Join(lines, "\n"), actions + "[Esc] Cancel and return"
 	}
-	return strings.Join(wrapped, "\n")
+	return m.styles.titleBar.Render("People inference · Codex"), strings.Join(lines, "\n"), actions + "[r] Refresh  [Esc] Cancel and return"
 }

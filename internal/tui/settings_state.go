@@ -187,6 +187,7 @@ type settingsState struct {
 	saving                bool
 	confirmDiscard        bool
 	narrowFields          bool
+	scrollOffset          int
 
 	groups             []SettingsGroup
 	fields             []SettingField
