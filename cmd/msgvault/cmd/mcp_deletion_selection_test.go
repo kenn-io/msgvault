@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,11 +20,28 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+type partialDeletionSaver struct {
+	*storeAPIAdapter
+	path string
+}
+
+func (s *partialDeletionSaver) SaveCLIDeletionManifest(_ context.Context, manifest *deletion.Manifest) error {
+	s.path = filepath.Join(s.config.Data.DataDir, "deletions", "pending", manifest.ID+".json")
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(s.path, []byte(`{"id":`), 0o600); err != nil {
+		return err
+	}
+	return fmt.Errorf("injected partial manifest save")
+}
 
 func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	dir := t.TempDir()
@@ -115,8 +133,9 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	before = elicitations
 	assert.Equal(t, "operation_token_invalid", loopToolFailure(t, call("stage_deletion", args))["error"])
 	assert.Equal(t, before, elicitations)
-	require.NotEmpty(t, explored.Rows)
-	explicit := map[string]any{"mode": "explicit", "predicate": explored.Predicate, "cache_revision": explored.CacheRevision, "search_provenance": explored.SearchProvenance, "row_keys": []string{explored.Rows[0].Key}}
+	searched := loopToolOutput[exploredResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected", "query": longQuery, "search_mode": "full_text"}))
+	require.NotEmpty(t, searched.Rows)
+	explicit := map[string]any{"mode": "explicit", "predicate": searched.Predicate, "cache_revision": searched.CacheRevision, "search_provenance": searched.SearchProvenance, "row_keys": []string{searched.Rows[0].Key}}
 	explicitPreflight := loopToolOutput[generated.ExplorePreflightResponse](t, call("preflight_deletion_selection", map[string]any{"selection": explicit}))
 	explicitResult := loopToolOutput[struct {
 		BatchID string `json:"batch_id"`
@@ -127,11 +146,11 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	for _, manifest := range manifests {
 		if manifest.ID == explicitResult.BatchID {
 			explicitFound = true
-			assert.Equal(t, []string{strings.TrimPrefix(explored.Rows[0].Key, fmt.Sprintf("source:%d:message:", source.ID))}, manifest.GmailIDs)
+			assert.Equal(t, "selection: explicit", manifest.Description)
+			assert.Equal(t, []string{strings.TrimPrefix(searched.Rows[0].Key, fmt.Sprintf("source:%d:message:", source.ID))}, manifest.GmailIDs)
 		}
 	}
 	assert.True(t, explicitFound)
-	searched := loopToolOutput[exploredResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected", "query": longQuery, "search_mode": "full_text"}))
 	querySelection := map[string]any{"mode": "all_matching", "predicate": searched.Predicate, "cache_revision": searched.CacheRevision, "search_provenance": searched.SearchProvenance}
 	queryPreflight := loopToolOutput[generated.ExplorePreflightResponse](t, call("preflight_deletion_selection", map[string]any{"selection": querySelection}))
 	queryResult := loopToolOutput[struct {
@@ -162,6 +181,26 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	invalid := loopToolFailure(t, call("explore_deletion_selection", map[string]any{"filters": []any{map[string]any{"dimension": "source", "values": []string{"bad"}}}}))
 	assert.Equal(t, "invalid_filter", invalid["error"])
 	assert.Equal(t, false, invalid["operation_may_have_completed"])
+
+	partial := &partialDeletionSaver{storeAPIAdapter: adapter}
+	partialBackend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: partial, Engine: engine, Logger: slog.New(slog.DiscardHandler)}))
+	partialSession := loopOperationMCPSession(t, partialBackend, nil, &sdkmcp.ClientOptions{ElicitationHandler: func(_ context.Context, _ *sdkmcp.ElicitRequest) (*sdkmcp.ElicitResult, error) {
+		return &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}, nil
+	}})
+	partialCall := func(name string, args map[string]any) *sdkmcp.CallToolResult {
+		t.Helper()
+		result, err := partialSession.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: args})
+		require.NoError(t, err)
+		return result
+	}
+	partialExplore := loopToolOutput[exploredResponse](t, partialCall("explore_deletion_selection", map[string]any{"collection": "selected"}))
+	partialSelection := map[string]any{"mode": "all_matching", "predicate": partialExplore.Predicate, "cache_revision": partialExplore.CacheRevision, "search_provenance": partialExplore.SearchProvenance}
+	partialPreflight := loopToolOutput[generated.ExplorePreflightResponse](t, partialCall("preflight_deletion_selection", map[string]any{"selection": partialSelection}))
+	partialFailure := loopToolFailure(t, partialCall("stage_deletion", map[string]any{"selection": partialSelection, "operation_token": partialPreflight.OperationToken}))
+	require.NotEmpty(t, partial.path)
+	assert.FileExists(t, partial.path)
+	assert.Equal(t, "operation_refused", partialFailure["error"])
+	assert.Equal(t, true, partialFailure["operation_may_have_completed"])
 }
 
 // These native failures and an oversized response are supplied by a transport
@@ -202,7 +241,7 @@ func TestMCPDeletionSelectionRefusalsAndResponseBound(t *testing.T) {
 		code = nativeCode
 		result, err := backend.ExecuteOperation(t.Context(), "stage_deletion_selection", args)
 		require.NoError(t, err)
-		if nativeCode == "uncoded" {
+		if nativeCode == "uncoded" || nativeCode == "stage_deletion_failed" {
 			assertLoopRefusal(t, result, "operation_refused", true)
 		} else {
 			assertLoopRefusal(t, result, nativeCode, false)
