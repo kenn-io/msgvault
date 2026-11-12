@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Let owner MCP clients inspect configured people inference policy and, with `--allow-provider-writes`, select a checked and consented provider or disable inference. Disabling revokes active consent for the configured and running policies; an operator must grant it again before re-enabling a revoked policy.
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).

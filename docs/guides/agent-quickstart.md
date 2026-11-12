@@ -229,6 +229,8 @@ backend checks for action permissions, source scope, and sender identity;
 | `promote_person` | profile_write | `--allow-profile-writes` | owner-only |
 | `set_person_display_name` | profile_write | `--allow-profile-writes` | owner-only |
 | `update_person_notes` | profile_write | `--allow-profile-writes` | owner-only |
+| `disable_people_inference` | provider_write | `--allow-provider-writes` | owner-only |
+| `select_people_provider` | provider_write | `--allow-provider-writes` | owner-only |
 | `aggregate` | read | — | search.read |
 | `calendar_conflicts` | read | — | backend-dependent |
 | `calendar_freebusy` | read | — | backend-dependent |
@@ -253,6 +255,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_message` | read | — | message.read |
 | `get_message_tags` | read | — | owner-only |
 | `get_participant_identity` | read | — | owner-only |
+| `get_people_provider_settings` | read | — | owner-only |
 | `get_person_agenda` | read | — | owner-only |
 | `get_person_edit_context` | read | — | owner-only |
 | `get_person_merge_context` | read | — | owner-only |

@@ -301,7 +301,7 @@ func TestInstallServeMCPCatalogs(t *testing.T) {
 			if mode != "read" {
 				must.NoError(cmd.Flags().Set("mcp-allow-writes", "true"))
 			}
-			families := map[string]string{"profile-writes": "promote_person", "identity-decisions": "accept_identity_match", "identity-scoring": "score_identity_matches", "person-merges": "merge_person", "carddav-writes": "approve_carddav_publication", "calendar-writes": "calendar_create", "kata-writes": "create_kata_issue", "source-writes": "sync_source"}
+			families := map[string]string{"profile-writes": "promote_person", "identity-decisions": "accept_identity_match", "identity-scoring": "score_identity_matches", "person-merges": "merge_person", "carddav-writes": "approve_carddav_publication", "calendar-writes": "calendar_create", "kata-writes": "create_kata_issue", "source-writes": "sync_source", "provider-writes": "select_people_provider"}
 			if mode != "writes" {
 				for flag := range families {
 					must.NoError(cmd.Flags().Set("mcp-allow-"+flag, "true"))

@@ -38,6 +38,7 @@ var mcpAllowKataWrites bool
 var mcpAllowCalendarWrites bool
 var serveMCPStdioWithOptions = mcpserver.ServeWithOptions
 var mcpAllowSourceWrites bool
+var mcpAllowProviderWrites bool
 var mcpAllowLoopWrites bool
 var serveMCPHTTPWithOptions = mcpserver.ServeHTTPWithOptions
 
@@ -638,6 +639,8 @@ func addMCPWriteFlags(cmd *cobra.Command, prefix string) {
 		"Expose calendar event mutation tools. Calendar event text is untrusted input; enable only when the user explicitly authorizes calendar writes.")
 	flags.BoolVar(bind(&mcpAllowLoopWrites), prefix+"allow-loop-writes", false,
 		"Allow approved open-loop done, snooze, and reopen decisions")
+	flags.BoolVar(bind(&mcpAllowProviderWrites), prefix+"allow-provider-writes", false,
+		"Expose approved configured people-provider selection and disabling.")
 	flags.BoolVar(bind(&mcpAllowSourceWrites), prefix+"allow-source-writes", false,
 		"Expose source synchronization and source policy writes. Each operation requires client confirmation; HTTP also requires the general write opt-in.")
 }
@@ -656,6 +659,9 @@ func applyMCPWriteFlags(cmd *cobra.Command, prefix string, opts *mcpserver.Serve
 	}
 	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-loop-writes"); enabled {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyLoops)
+	}
+	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-provider-writes"); enabled {
+		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilyProviders)
 	}
 	if enabled, _ := cmd.Flags().GetBool(prefix + "allow-source-writes"); enabled {
 		opts.OperationWriteFamilies = append(opts.OperationWriteFamilies, mcpserver.OperationFamilySources)

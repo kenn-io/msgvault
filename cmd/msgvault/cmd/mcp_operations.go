@@ -51,6 +51,7 @@ func newDaemonMCPOperations(client *daemonclient.Client, capabilities *apiprotoc
 	}
 	backend.supported = append(backend.supported, loopMCPCapabilities(hasRoute, capabilities)...)
 	backend.supported = append(backend.supported, sourceMCPCapabilities(hasRoute, capabilities)...)
+	backend.supported = append(backend.supported, peopleProviderMCPCapabilities(hasRoute, capabilities)...)
 	return backend
 }
 
@@ -70,6 +71,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 		}
 		return readMCPOperationJSON[generated.TriggerSyncResponse](ctx, b.client, http.MethodPost, "/api/v1/sync/{account}", &generated.TriggerSyncRequestOptions{PathParams: &generated.TriggerSyncPath{Account: account}, Query: &generated.TriggerSyncQuery{SourceType: &sourceType}}, http.StatusAccepted)
 	default:
+		if result, handled, err := b.executePeopleProviderOperation(ctx, name, args); handled {
+			return result, err
+		}
 		if result, handled, err := b.executeLoopOperation(ctx, name, args); handled {
 			return result, err
 		}
@@ -82,6 +86,9 @@ func (b *daemonMCPOperations) ExecuteOperation(ctx context.Context, name string,
 
 func (b *daemonMCPOperations) OperationDisclosure(ctx context.Context, name string, args map[string]any) (string, error) {
 	if slices.Contains(b.supported, name) {
+		if disclosure, handled, err := b.peopleProviderDisclosure(ctx, name, args); handled {
+			return disclosure, err
+		}
 		if disclosure, handled, err := b.loopOperationDisclosure(name, args); handled {
 			return disclosure, err
 		}
@@ -144,11 +151,13 @@ func mcpSyncArguments(args map[string]any) (string, string, error) {
 	return account, sourceType, nil
 }
 
+type operationFailureOutput struct {
+	Error                     string `json:"error"`
+	OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
+}
+
 func operationFailure(code string, uncertain bool) *mcpserver.OperationResult {
-	return &mcpserver.OperationResult{IsError: true, Output: struct {
-		Error                     string `json:"error"`
-		OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
-	}{code, uncertain}}
+	return &mcpserver.OperationResult{IsError: true, Output: operationFailureOutput{code, uncertain}}
 }
 
 // The fixed route/request chosen by an adapter uses existing authentication and

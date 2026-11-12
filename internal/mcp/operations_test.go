@@ -151,6 +151,20 @@ func TestLoopCatalogGatesSchemasAndAnnotations(t *testing.T) {
 			assertions.True(*definition.definition.annotations.OpenWorldHint)
 		}
 	}
+	providerNames := []string{"get_people_provider_settings", "select_people_provider", "disable_people_inference"}
+	providers := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: providerNames}
+	requirements.Len(operationalCatalog(providers, true), 1)
+	providers.OperationWriteFamilies = []OperationFamily{OperationFamilyProviders}
+	definitions := operationalCatalog(providers, true)
+	requirements.Len(definitions, 3)
+	for i, definition := range definitions {
+		assertions.Equal(providerNames[i], definition.definition.name)
+		requirements.NotNil(definition.definition.annotations.DestructiveHint)
+		assertions.Equal(providerNames[i] == "disable_people_inference", *definition.definition.annotations.DestructiveHint)
+	}
+	requirements.Len(operationalCatalog(providers, false), 1)
+	providers.DelegatedOnly = true
+	assertions.Empty(operationalCatalog(providers, true))
 	opts.DelegatedOnly = true
 	assertions.Empty(operationalCatalog(opts, true))
 }
