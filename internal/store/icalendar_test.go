@@ -573,6 +573,29 @@ func TestICalendarCancelledExceptionOccurrenceAndConversationStats(t *testing.T)
 	assertions.Equal(time.Date(2027, 3, 3, 14, 0, 0, 0, time.UTC), last.UTC())
 }
 
+func TestICalendarRangeChangesDetails(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	for _, event := range [][]byte{
+		calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:Old\r\nATTENDEE:mailto:old@example.org"),
+		calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nSUMMARY:New\r\nATTENDEE:mailto:new@example.org"),
+	} {
+		_, err := st.PersistICalendarContext(t.Context(), source, event)
+		requirements.NoError(err)
+	}
+	from := time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal("New", page.Occurrences[0].Subject)
+	var emails []string
+	for _, attendee := range page.Occurrences[0].Attendees {
+		emails = append(emails, attendee.Email)
+	}
+	assertions.ElementsMatch([]string{"new@example.org"}, emails)
+}
+
 func TestICalendarCancelledExceptionOccurrences(t *testing.T) {
 	for _, tc := range []struct {
 		name, props, subject string
