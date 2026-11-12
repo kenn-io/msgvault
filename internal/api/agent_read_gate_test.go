@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -44,27 +43,6 @@ type agentReadGateStore struct {
 	onQuick                    func()
 	snapshotContext            context.Context
 	sourceLists, sourceLookups atomic.Int32
-}
-
-func TestPostgresServerRepairsSearchOnStartup(t *testing.T) {
-	require := require.New(t)
-	base := testutil.NewTestStore(t)
-	st := &postgresBackfillStore{Store: base, started: make(chan struct{}, 1)}
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner"}}, Store: st, Engine: query.NewEngine(base.DB(), base.IsPostgreSQL()), Logger: testLogger()})
-	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
-	require.NoError(err)
-	done := make(chan error, 1)
-	go func() { done <- srv.StartOnListener(listener) }()
-	t.Cleanup(func() {
-		_ = srv.Shutdown(context.WithoutCancel(t.Context()))
-		require.ErrorIs(<-done, http.ErrServerClosed)
-	})
-	require.NoError(srv.WaitStarted(t.Context()))
-	select {
-	case <-st.started:
-	case <-time.After(5 * time.Second):
-		require.FailNow("startup did not begin search indexing")
-	}
 }
 
 func (s *agentReadGateStore) ListSourcesContext(ctx context.Context, kind string) ([]*store.Source, error) {

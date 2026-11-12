@@ -2609,6 +2609,26 @@ func (s *postgresBackfillStore) BackfillFTSContext(ctx context.Context, _ func(i
 }
 
 func TestHandleCLISearchPostgresBackfillAllowsOtherOperations(t *testing.T) {
+	t.Run("startup begins search repair", func(t *testing.T) {
+		require := require.New(t)
+		base := testutil.NewTestStore(t)
+		st := &postgresBackfillStore{Store: base, started: make(chan struct{}, 1)}
+		srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+		require.NoError(err)
+		done := make(chan error, 1)
+		go func() { done <- srv.StartOnListener(listener) }()
+		t.Cleanup(func() {
+			_ = srv.Shutdown(context.WithoutCancel(t.Context()))
+			require.ErrorIs(<-done, http.ErrServerClosed)
+		})
+		require.NoError(srv.WaitStarted(t.Context()))
+		select {
+		case <-st.started:
+		case <-time.After(5 * time.Second):
+			require.FailNow("startup did not begin search indexing")
+		}
+	})
 	t.Run("shutdown cancels the startup probe", func(t *testing.T) {
 		require := require.New(t)
 		base := testutil.NewTestStore(t)

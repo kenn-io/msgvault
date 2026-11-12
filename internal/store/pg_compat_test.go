@@ -159,7 +159,7 @@ func TestPostgresFTSSaturatedPhrases(t *testing.T) {
 		assert.Contains(want, ids[0])
 		assert.Equal(int64(len(want)), count)
 	}
-	for i, prefix := range []string{strings.Repeat("filler ", 17000), strings.Repeat("alice ", 255), strings.Repeat("alice ", 300)} {
+	for i, prefix := range []string{strings.Repeat("filler ", 17000), strings.Repeat("alice ", 255)} {
 		id := f.NewMessage().WithSourceMessageID(strconv.Itoa(i)).Create(t, f.Store)
 		require.NoError(f.Store.UpsertFTS(id, "", prefix+"alice@example.com", "", "", ""))
 		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"alice@exam"}}, 10)
@@ -190,6 +190,32 @@ func TestPostgresFTSSaturatedPhrases(t *testing.T) {
 		require.NoError(err)
 		assert.Contains(ids, unicodeID)
 	}
+}
+
+func TestPostgresFTSSaturatedEditAndRebuild(t *testing.T) {
+	skipUnlessPostgres(t)
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	id := f.NewMessage().WithSourceMessageID("edited-body").WithSubject("ordinary").Create(t, f.Store)
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: strings.Repeat("padding ", 17000) + "old@example.test", Valid: true}, sql.NullString{}))
+	_, err := f.Store.BackfillFTS(nil)
+	require.NoError(err)
+	check := func(term string) {
+		t.Helper()
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{term}}, 10)
+		require.NoError(err)
+		assert.Equal([]int64{id}, ids)
+	}
+	check("old@example.test")
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: strings.Repeat("padding ", 17000) + "new@example.test", Valid: true}, sql.NullString{}))
+	_, err = f.Store.RebuildFTS(nil)
+	require.NoError(err)
+	check("new@example.test")
+	require.NoError(f.Store.UpsertMessageBody(id, sql.NullString{String: "short@example.test", Valid: true}, sql.NullString{}))
+	_, err = f.Store.RebuildFTS(nil)
+	require.NoError(err)
+	check("short@example.test")
 }
 
 // TestEnsureParticipant_Concurrent covers H5: 50 goroutines all

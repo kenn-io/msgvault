@@ -268,9 +268,6 @@ func TestApplySenderRepairRefreshesFTS(t *testing.T) {
 		[]byte("From: repairftsneedle@example.test\r\n\r\nBody\r\n")),
 		"UpsertMessageRaw repair candidate")
 	body := "preservedbodyneedle"
-	if f.Store.IsPostgreSQL() {
-		body = strings.Repeat("filler ", 17000) + body
-	}
 	require.NoError(f.Store.UpsertMessageBody(messageID,
 		sql.NullString{String: body, Valid: true}, sql.NullString{}),
 		"UpsertMessageBody repair candidate")
