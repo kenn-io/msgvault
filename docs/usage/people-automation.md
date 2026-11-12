@@ -79,6 +79,24 @@ grant provider consent, enable a provider, or enroll a person in briefs.
 Untracking stops that person from being selected for future maintenance and
 keeps their saved profile.
 
+## Fill how you met
+
+When People Sweep is enabled and its exact provider profile has active consent,
+the sweep can fill an empty `how_we_met` field from the person's [first archived
+appearance](/docs/usage/people/#see-a-persons-first-archived-appearance). For
+example, it may write “Sam Example introduced them by email in March 2021.”
+This deterministic step uses event metadata and does not request a model or
+read message bodies. It does not require a successful provider check.
+
+The selected first appearance must fall within the profile's allowed source
+lanes and date range; the sweep does not substitute a later event. When that
+appearance changes, the sweep updates its own sentence and retains its history.
+If evidence disappears or falls outside the policy, it retires its own value.
+Existing values from other sources are preserved. Editing or clearing the field
+pins it; unpin it to allow automatic maintenance again. An explicit pin also
+freezes an automatically filled value. After unpinning, an existing model value
+is preserved by this step.
+
 ## Configure a provider
 
 For the standard provider setup, start with [Recommended

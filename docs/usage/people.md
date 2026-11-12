@@ -63,6 +63,8 @@ evidence exists, no first appearance is shown. `first_seen_at` and
 `first_contact_at` and interaction counts still describe direct contact.
 The HTTP contact-state route, assembled profiles, MCP `get_person_profile`, and `person get --json` carry the same fields. `person get` includes them when daemon API schema 5.2.0 or newer is available; older daemons still return the person. The Web UI and TUI do not yet show first appearance.
 
+People Sweep can use this appearance to [fill how you met](/docs/usage/people-automation/#fill-how-you-met), such as “Sam Example introduced them by email in March 2021.”
+
 After an import, the activity projection must catch up before first appearance
 reflects the new messages; results marked `stale` are provisional. Projection
 runs hourly by default, or you can run `msgvault activity build` manually. An

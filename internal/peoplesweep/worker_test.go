@@ -1287,3 +1287,42 @@ func TestPersonSweepWorkerNoChangedSeedAdvancesCursorWithoutProvider(t *testing.
 	checks.Equal(int64(1), request.CursorAdvances[0].NextSequence)
 	checks.Equal(request.CursorAdvances, result.CursorAdvances)
 }
+
+type howWeMetRecorder struct {
+	requests []HowWeMetRequest
+	err      error
+}
+
+func (r *howWeMetRecorder) FillPersonHowWeMetContext(_ context.Context, request HowWeMetRequest) error {
+	r.requests = append(r.requests, request)
+	return r.err
+}
+
+func TestHowWeMetReconcilePagesAndPersonFilter(t *testing.T) {
+	config, catalog := workerTestConfig(t)
+	profile, err := config.Profile()
+	require.NoError(t, err)
+	for _, personID := range []int64{0, 3} {
+		t.Run(fmt.Sprint(personID), func(t *testing.T) {
+			st := &workerFailureStore{gapResults: []GapResult{
+				{PeopleScanned: 2, NextPersonID: 2, PersonIDs: []int64{1, 2}},
+				{PeopleScanned: 1, NextPersonID: 3, PersonIDs: []int64{3}}, {},
+			}}
+			recorder := &howWeMetRecorder{}
+			worker := Worker{Config: config, Store: st, HowWeMet: recorder}
+			require.NoError(t, worker.reconcile(t.Context(), profile, catalog, time.Now(), RunRequest{PersonID: personID}))
+			if personID == 0 {
+				require.Len(t, recorder.requests, 2)
+				assert.Equal(t, []int64{1, 2}, recorder.requests[0].PersonIDs)
+			} else {
+				require.Len(t, recorder.requests, 1)
+			}
+			last := recorder.requests[len(recorder.requests)-1]
+			assert.Equal(t, []int64{3}, last.PersonIDs)
+			assert.Equal(t, profile.Fingerprint, last.ProviderFingerprint)
+			assert.Equal(t, profile.AllowedSources, last.AllowedSources)
+			assert.Equal(t, profile.SourceSince, last.SourceSince)
+			assert.Equal(t, profile.SourceUntil, last.SourceUntil)
+		})
+	}
+}

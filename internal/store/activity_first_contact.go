@@ -103,32 +103,47 @@ func earliestFirstContactTx(ctx context.Context, tx *loggedTx, personID int64) (
 	return event, refKind, err
 }
 
-func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state *ContactState) error {
-	event, refKind, err := earliestFirstContactTx(ctx, tx, state.PersonID)
+type firstAppearance struct {
+	event      ActivityEvent
+	refKind    sql.NullString
+	candidate  ActivityCandidate
+	kind       FirstContactKind
+	introducer *FirstContactIntroducer
+}
+
+func (s *Store) firstAppearanceTx(ctx context.Context, tx *loggedTx, personID int64) (*firstAppearance, error) {
+	event, refKind, err := earliestFirstContactTx(ctx, tx, personID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("read first contact: %w", err)
+		return nil, fmt.Errorf("read first contact: %w", err)
 	}
-	messageID := event.MessageID
-	occurredAt := sql.NullTime{Time: event.OccurredAt, Valid: true}
-	state.FirstSeenAt = utcNullTimePointer(occurredAt)
-	state.FirstSeenRef = activityStoredRef(refKind, sql.NullInt64{Int64: messageID, Valid: true})
-	candidates, err := s.loadActivityCandidatesByIDQueryerContext(ctx, tx, []int64{messageID})
+	candidates, err := s.loadActivityCandidatesByIDQueryerContext(ctx, tx, []int64{event.MessageID})
 	if err != nil {
-		return fmt.Errorf("load first-contact candidate: %w", err)
+		return nil, fmt.Errorf("load first-contact candidate: %w", err)
 	}
 	candidate := candidates[0]
-	state.FirstContactKind, state.Introducer = ClassifyFirstContact(candidate, state.PersonID, candidate.DirectLimitTransition.Target)
-	if state.Introducer != nil {
+	kind, introducer := ClassifyFirstContact(candidate, personID, candidate.DirectLimitTransition.Target)
+	if introducer != nil {
 		err = tx.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(TRIM(person.display_name), ''), NULLIF(TRIM(`+participantSenderNameSQL+`), ''), NULLIF(TRIM(p.email_address), ''), NULLIF(TRIM(p.phone_number), ''), '') FROM participants p
   LEFT JOIN persons person ON person.id = ?
   LEFT JOIN message_recipients mr ON mr.participant_id = p.id AND mr.message_id = ? AND mr.recipient_type = 'from'
-  WHERE p.id = ? ORDER BY mr.id LIMIT 1`, state.Introducer.PersonID, messageID, state.Introducer.ParticipantID).Scan(&state.Introducer.DisplayName)
+  WHERE p.id = ? ORDER BY mr.id LIMIT 1`, introducer.PersonID, event.MessageID, introducer.ParticipantID).Scan(&introducer.DisplayName)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("load first-contact introducer: %w", err)
+			return nil, fmt.Errorf("load first-contact introducer: %w", err)
 		}
 	}
+	return &firstAppearance{event, refKind, candidate, kind, introducer}, nil
+}
+
+func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state *ContactState) error {
+	first, err := s.firstAppearanceTx(ctx, tx, state.PersonID)
+	if err != nil || first == nil {
+		return err
+	}
+	state.FirstSeenAt = utcNullTimePointer(sql.NullTime{Time: first.event.OccurredAt, Valid: true})
+	state.FirstSeenRef = activityStoredRef(first.refKind, sql.NullInt64{Int64: first.event.MessageID, Valid: true})
+	state.FirstContactKind, state.Introducer = first.kind, first.introducer
 	return nil
 }
