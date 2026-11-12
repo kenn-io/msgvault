@@ -145,14 +145,20 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 // deleted comments and posts and the replies below them. It prunes now, so a
 // later `msgvault gc` cannot matter, and by the Meta IDs of the deleted objects
 // and the archived replies marked with them, so it does not depend on the
-// archive rows.
+// archive rows. It also drops rows the archive already marks deleted, which a
+// retried removal no longer reports as newly marked.
 func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store.SyncExecution, source *store.Source, ids []string) error {
 	state, err := loadState(ctx, st, source, false)
 	if err != nil {
 		return err
 	}
 	run := &importRun{state: state, sum: &ImportSummary{}}
-	changed, err := run.dropDeletedFrames(func(id string) (bool, error) { return slices.Contains(ids, id), nil })
+	changed, err := run.dropDeletedFrames(func(id string) (bool, error) {
+		if slices.Contains(ids, id) {
+			return true, nil
+		}
+		return st.MessageDeletedFromSourceContext(ctx, source.ID, id)
+	})
 	if err != nil || !changed {
 		return err
 	}

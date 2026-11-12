@@ -29,6 +29,8 @@ type graphFixture struct {
 	rejectCursor         string
 	freshCommentReads    int
 	paths                []string
+	// pageSize is how many objects a page lists; zero means two.
+	pageSize int
 }
 
 func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
@@ -82,7 +84,11 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 			http.Error(w, "invalid fixture cursor", http.StatusBadRequest)
 			return
 		}
-		end := min(start+2, len(data))
+		size := f.pageSize
+		if size == 0 {
+			size = 2
+		}
+		end := min(start+size, len(data))
 		if !assert.LessOrEqual(t, start, end) {
 			http.Error(w, "fixture cursor exceeds response", http.StatusBadRequest)
 			return
