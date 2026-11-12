@@ -30,9 +30,9 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   daemonService,
 		Short: "Offline email, chat, and meeting archive tool",
-		Long: `Archive email, chats, and meetings offline.
+		Long: `Offline archive.
 
-Start here:
+Examples:
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
@@ -42,10 +42,8 @@ Start here:
   msgvault daemon status
   msgvault setup status --json
 
-Output:
-  --json writes JSON to stdout (JSONL for export-messages).
-  Logs and progress go to stderr. Exit: 0 OK, 1 error, 130 interrupted.
-  See msgvault quickstart.`,
+--json: stdout (export-messages: JSONL); logs/progress: stderr.
+Exit: 0 OK, 1 error, 130 interrupted. See msgvault quickstart.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)
 			if inv == nil {
