@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -447,6 +448,7 @@ type HybridSearchRequest struct {
 	Mode           string
 	Account        string
 	AccountScopes  []search.AccountScope
+	SourceID       *int64
 	Limit          int
 	Offset         int
 	IncludeMatches bool
@@ -759,8 +761,7 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	limit := searchLimitArg(args)
 	offset := intArg(args, toolArgOffset, 0)
 
-	account, _ := args[toolArgAccount].(string)
-	selection, err := h.resolveAccount(ctx, account)
+	selection, err := h.resolveReadSelection(ctx, stringArgument(args, toolArgAccount), args)
 	if err != nil {
 		return dependencyError("resolve metadata-search account", err)
 	}
@@ -829,10 +830,12 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	limit := searchLimitArg(args)
 	offset := intArg(args, toolArgOffset, 0)
 
-	account, _ := args[toolArgAccount].(string)
-	selection, err := h.resolveAccount(ctx, account)
+	selection, err := h.resolveReadSelection(ctx, stringArgument(args, toolArgAccount), args)
 	if err != nil {
 		return dependencyError("resolve body-search account", err)
+	}
+	if err := selection.singleSourceCollection(); err != nil {
+		return dependencyError("resolve body-search collection", err)
 	}
 	if err := selection.applyToQuery(q); err != nil {
 		return toolErrorResult(err.Error()), nil
@@ -967,38 +970,40 @@ func (h *handlers) searchMessageBodiesHybrid(
 	ctx context.Context, args map[string]any,
 	queryStr string, parsed *search.Query, mode string, explain bool,
 ) (*toolResult, error) {
-	if h.hybridSearcher != nil {
-		return h.searchMessageBodiesHybridViaSearcher(ctx, args, queryStr, parsed, mode, explain)
+	if h.hybridSearcher == nil && h.hybridEngine == nil {
+		return toolErrorResult("vector_not_enabled: vector search is not configured on this server"), nil
 	}
-	if h.hybridEngine == nil {
-		return toolErrorResult(
-			"vector_not_enabled: vector search is not configured on this server",
-		), nil
+	freeText := strings.Join(parsed.TextTerms, " ")
+	if freeText == "" {
+		return toolErrorResult("missing_free_text: mode=" + mode +
+			" requires at least one free-text term; use search_metadata for filter-only queries"), nil
+	}
+	var selection accountSelection
+	var err error
+	if _, ok := args["collection"]; ok {
+		selection, err = h.resolveReadSelection(ctx, stringArgument(args, toolArgAccount), args)
+		if err != nil {
+			return dependencyError("resolve semantic-search collection", err)
+		}
+	}
+	if err := selection.singleSourceCollection(); err != nil {
+		return dependencyError("resolve semantic-search collection", err)
+	}
+	if selection.sourceIDs != nil && len(selection.sourceIDs) == 0 {
+		return jsonResult(searchMessageBodiesResponse{paginatedResponse: newPaginatedResponseNoTotal([]searchMessageItem{}, intArg(args, toolArgOffset, 0), false), Mode: mode})
+	}
+	if h.hybridSearcher != nil {
+		return h.searchMessageBodiesHybridViaSearcher(ctx, args, queryStr, mode, explain, selection)
 	}
 	started := time.Now()
-
-	// Resolve account filter to a source ID for the structured Filter.
-	account, _ := args[toolArgAccount].(string)
-	selection, err := h.resolveAccount(ctx, account)
-	if err != nil {
-		return dependencyError("resolve semantic-search account", err)
+	if selection.sourceIDs == nil {
+		selection, err = h.resolveAccount(ctx, stringArgument(args, toolArgAccount))
+		if err != nil {
+			return dependencyError("resolve semantic-search account", err)
+		}
 	}
-	sourceID := selection.sourceID
-
 	limit := searchLimitArg(args)
 	offset := intArg(args, toolArgOffset, 0)
-
-	freeText := strings.Join(parsed.TextTerms, " ")
-
-	// mode=vector|hybrid requires at least one free-text term; filter-only
-	// queries have no query vector to rank by. Callers that want pure
-	// structured filtering should omit mode (metadata search).
-	if freeText == "" {
-		return toolErrorResult(
-			"missing_free_text: mode=" + mode +
-				" requires at least one free-text term; use search_metadata for filter-only queries",
-		), nil
-	}
 
 	subjectTerms := make([]string, 0, len(parsed.TextTerms))
 	for _, t := range parsed.TextTerms {
@@ -1009,8 +1014,10 @@ func (h *handlers) searchMessageBodiesHybrid(
 	if err != nil {
 		return nil, newInternalError("build semantic-search filter", err)
 	}
-	if sourceID != nil {
-		filter.SourceIDs = []int64{*sourceID}
+	if selection.sourceIDs != nil {
+		filter.SourceIDs = selection.sourceIDs
+	} else if selection.sourceID != nil {
+		filter.SourceIDs = []int64{*selection.sourceID}
 	}
 	filter.AccountScopes = append(filter.AccountScopes, selection.scopes()...)
 
@@ -1135,28 +1142,29 @@ func (h *handlers) searchMessageBodiesHybrid(
 
 func (h *handlers) searchMessageBodiesHybridViaSearcher(
 	ctx context.Context, args map[string]any,
-	queryStr string, parsed *search.Query, mode string, explain bool,
+	queryStr string, mode string, explain bool, selection accountSelection,
 ) (*toolResult, error) {
 	limit := searchLimitArg(args)
 	offset := intArg(args, toolArgOffset, 0)
 
-	freeText := strings.Join(parsed.TextTerms, " ")
-	if freeText == "" {
-		return toolErrorResult(
-			"missing_free_text: mode=" + mode +
-				" requires at least one free-text term; use search_metadata for filter-only queries",
-		), nil
-	}
-
-	account, accountScopes, err := h.resolveForwardedAccount(ctx, stringArgument(args, toolArgAccount))
-	if err != nil {
-		return dependencyError("resolve semantic-search account", err)
+	var account string
+	var accountScopes []search.AccountScope
+	var sourceID *int64
+	if selection.sourceIDs == nil {
+		var err error
+		account, accountScopes, err = h.resolveForwardedAccount(ctx, stringArgument(args, toolArgAccount))
+		if err != nil {
+			return dependencyError("resolve semantic-search account", err)
+		}
+	} else {
+		sourceID = &selection.sourceIDs[0]
 	}
 	result, err := h.hybridSearcher.SearchHybrid(ctx, HybridSearchRequest{
 		Query:          queryStr,
 		Mode:           mode,
 		Account:        account,
 		AccountScopes:  accountScopes,
+		SourceID:       sourceID,
 		Limit:          limit,
 		Offset:         offset,
 		IncludeMatches: true,
@@ -1559,11 +1567,15 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		return toolErrorResult(err.Error()), nil
 	}
 
+	selection, err := h.resolveReadSelection(ctx, "", args)
+	if err != nil {
+		return dependencyError("resolve message collection", err)
+	}
 	msg, err := h.engine.GetMessage(ctx, id)
 	if err != nil {
 		return messageLookupError("load message", err)
 	}
-	if msg == nil {
+	if msg == nil || (selection.sourceIDs != nil && !slices.Contains(selection.sourceIDs, msg.SourceID)) {
 		return toolErrorResult("message not found"), nil
 	}
 
@@ -2022,8 +2034,7 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 	args := req.GetArguments()
 
 	// Look up account filter
-	account, _ := args[toolArgAccount].(string)
-	selection, err := h.resolveAccount(ctx, account)
+	selection, err := h.resolveReadSelection(ctx, stringArgument(args, toolArgAccount), args)
 	if err != nil {
 		return dependencyError("resolve message-list account", err)
 	}
@@ -2132,14 +2143,14 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 	}
 
 	// Look up account filter
-	account, _ := args[toolArgAccount].(string)
-	selection, err := h.resolveAccount(ctx, account)
+	selection, err := h.resolveReadSelection(ctx, stringArgument(args, toolArgAccount), args)
 	if err != nil {
 		return dependencyError("resolve aggregate account", err)
 	}
 
 	opts := query.AggregateOptions{
 		SourceID:      selection.sourceID,
+		SourceIDs:     selection.sourceIDs,
 		AccountScopes: selection.scopes(),
 		Limit:         limitArg(args, toolArgLimit, 50),
 	}

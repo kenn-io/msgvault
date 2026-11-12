@@ -14,8 +14,9 @@ import (
 // accountSelection is a resolved account argument: a physical source, a
 // virtual account of one source, or an address matched on every source.
 type accountSelection struct {
-	sourceID *int64
-	scope    *search.AccountScope
+	sourceID  *int64
+	scope     *search.AccountScope
+	sourceIDs []int64
 }
 
 var errAccountSelectionConflict = errors.New(
@@ -96,6 +97,7 @@ func (a accountSelection) scopes() []search.AccountScope {
 // applyToFilter narrows a message filter to the selection.
 func (a accountSelection) applyToFilter(filter *query.MessageFilter) {
 	filter.SourceID = a.sourceID
+	filter.SourceIDs = a.sourceIDs
 	filter.AccountScopes = append(filter.AccountScopes, a.scopes()...)
 }
 
@@ -103,7 +105,9 @@ func (a accountSelection) applyToFilter(filter *query.MessageFilter) {
 // account: operator; the unattributed bucket, which no operator can express,
 // rides the query's structured scopes.
 func (a accountSelection) applyToQuery(q *search.Query) error {
-	if a.sourceID != nil {
+	if a.sourceIDs != nil {
+		q.AccountIDs = slices.Clone(a.sourceIDs)
+	} else if a.sourceID != nil {
 		q.AccountIDs = []int64{*a.sourceID}
 	}
 	if a.scope == nil {
