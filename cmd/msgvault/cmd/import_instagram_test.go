@@ -20,6 +20,8 @@ func TestImportInstagramNameAdvice(t *testing.T) {
 		badShard, wantWarning   bool
 	}{
 		{"complete without match", "Unmatched", `{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"one"}`, 0, false, true},
+		{"missing media without match", "Unmatched", `{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"one","photos":[{"uri":"photos/missing.jpg"}]}`, 0, false, true},
+		{"missing media and record", "Nova Example", `{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"one","photos":[{"uri":"photos/missing.jpg"}]},{"sender_name":"Nova Example","content":"missing timestamp"}`, 0, false, false},
 		{"limit before self", "Nova Example", `{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"one"},{"sender_name":"Nova Example","timestamp_ms":1730500000124,"content":"two"}`, 1, false, false},
 		{"incomplete records", "Nova Example", `{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"one"},{"sender_name":"Nova Example","content":"missing timestamp"}`, 0, false, false},
 		{"import error", "Nova Example", `{"sender_name":"Mira Example","timestamp_ms":1730500000123,"content":"one"}`, 0, true, false},
