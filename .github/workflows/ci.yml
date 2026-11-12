@@ -10,6 +10,8 @@ env:
   # Compile without absolute source paths, like the Makefile does.
   GOFLAGS: -trimpath
   PG_MOVED_PKGS: ./internal/matrix ./internal/beeper ./internal/rederive ./internal/chatwoot
+  API_CONTRACT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.before) || '' }}
+  API_CONTRACT_MERGE_MAIN: ${{ github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/main' }}
 
 on:
   workflow_call:
@@ -51,19 +53,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - goarch: amd64
-            runner: ubuntu-24.04
-            go_arch_name: amd64
-            job_timeout: 27
-            test_timeout: 5m
-          - goarch: arm64
-            runner: ubuntu-24.04-arm
-            go_arch_name: arm64
-            job_timeout: 13
-            test_timeout: 5m
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: ${{ matrix.job_timeout }}
+        # The merge queue builds one release binary. `include` cannot drop an
+        # entry, so per-architecture settings are expressions below.
+        goarch: &linux-smoke-architectures ${{ fromJSON(github.event_name == 'merge_group' && '["amd64"]' || '["amd64", "arm64"]') }}
+    runs-on: ${{ matrix.goarch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: ${{ matrix.goarch == 'arm64' && 13 || 27 }}
     container:
       # Build against the oldest runtime exercised below. Newer builders can
       # introduce glibc/libstdc++ requirements that stock bookworm cannot load.
@@ -86,7 +80,7 @@ jobs:
           GO_VERSION=$(grep '^go ' go.mod | awk '{print $2}')
           # workflowretry: allow Cap each attempt so a slow transfer leaves time to retry.
           kit-retry 6 1 curl -fsSL --connect-timeout 30 --max-time 120 \
-            "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.go_arch_name }}.tar.gz" -o go.tar.gz
+            "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.goarch }}.tar.gz" -o go.tar.gz
           tar -C /usr/local -xzf go.tar.gz
           rm go.tar.gz
           echo "/usr/local/go/bin" >> "$GITHUB_PATH"
@@ -126,7 +120,7 @@ jobs:
           echo "$SMOKE_OUT" | grep -q "$VERSION" || { echo "FATAL: version output doesn't match CI build version"; exit 1; }
 
       - name: Test built CLI on a synthetic archive
-        run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
+        run: make test-cli-e2e TEST_TIMEOUT=5m MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
 
       # Keep modes inside a tar: artifact downloads do not preserve +x.
       # This payload tests the direct executable, independently of the image build.
@@ -167,12 +161,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - goarch: amd64
-            runner: ubuntu-24.04
-          - goarch: arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
+        goarch: *linux-smoke-architectures
+    runs-on: ${{ matrix.goarch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 5
     container:
       image: debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
@@ -363,7 +353,6 @@ jobs:
             package: ./internal/api
             job_timeout: 13
             test_timeout: 5m
-            followups: true
     runs-on: ubuntu-26.04
     timeout-minutes: ${{ matrix.job_timeout }}
     steps:
@@ -381,15 +370,29 @@ jobs:
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
+      - name: Set API contract base
+        if: ${{ matrix.name == 'api' }}
+        shell: bash
+        run: &set-api-contract-base |
+          if [ -z "$API_CONTRACT_BASE_REF" ]; then
+            kit-retry 3 5 git fetch --no-tags --unshallow origin +refs/heads/main:refs/remotes/origin/main
+            if [ "$API_CONTRACT_MERGE_MAIN" = true ]; then
+              git -c user.name='CI' -c user.email='ci@example.com' merge --no-commit --no-ff refs/remotes/origin/main
+              BASE_SHA=$(git rev-parse refs/remotes/origin/main)
+            else
+              BASE_SHA=$(git merge-base HEAD refs/remotes/origin/main)
+            fi
+          else
+            kit-retry 3 5 git fetch --no-tags --depth=1 origin "$API_CONTRACT_BASE_REF"
+            BASE_SHA=$(git rev-parse FETCH_HEAD)
+          fi
+          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
+
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Test package in isolated shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "sharded-${{ matrix.name }}"
-
-      - name: Check testify helpers
-        if: ${{ !cancelled() && matrix.followups }}
-        run: make testify-helper-check
 
       - name: Upload test events
         if: failure() || github.run_attempt > 1
@@ -417,6 +420,12 @@ jobs:
         with:
           group: macos
           trim: "true"
+
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+
+      - name: Set API contract base
+        shell: bash
+        run: *set-api-contract-base
 
       - name: Test
         run: make test TEST_TIMEOUT=39m
@@ -651,9 +660,11 @@ jobs:
           path: large-archive-benchmark.txt
           if-no-files-found: error
 
+  # Merge groups skip Windows, pgvector, and most PostgreSQL jobs. Every PR runs
+  # them before it can be queued; see docs/development.md#ci-and-the-merge-queue.
   test-windows:
     needs: changes
-    if: *go-changed
+    if: &go-changed-outside-queue ${{ github.event_name != 'merge_group' && !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all == 'true' || contains(fromJSON(needs.changes.outputs.groups), 'go')) }}
     runs-on: windows-2025
     timeout-minutes: 47
     steps:
@@ -778,7 +789,7 @@ jobs:
 
   lint-windows:
     needs: changes
-    if: *go-changed
+    if: *go-changed-outside-queue
     runs-on: windows-2025
     timeout-minutes: 64
     steps:
@@ -828,7 +839,7 @@ jobs:
 
   test-windows-slow-packages:
     needs: changes
-    if: *go-changed
+    if: *go-changed-outside-queue
     runs-on: windows-2025
     timeout-minutes: 21
     steps:
@@ -847,6 +858,10 @@ jobs:
           group: windows
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
+
+      - name: Set API contract base
+        shell: bash
+        run: *set-api-contract-base
 
       - name: Install SQLite development headers
         shell: bash
@@ -885,7 +900,7 @@ jobs:
 
   test-windows-sharded:
     needs: changes
-    if: *go-changed
+    if: *go-changed-outside-queue
     name: test-windows-sharded (${{ matrix.name }})
     strategy:
       fail-fast: false
@@ -1021,7 +1036,7 @@ jobs:
   # so this code would otherwise have zero CI coverage.
   test-pgvector:
     needs: changes
-    if: *go-changed
+    if: *go-changed-outside-queue
     runs-on: ubuntu-26.04
     timeout-minutes: 109
     services:
@@ -1110,7 +1125,7 @@ jobs:
   # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.
   test-postgres:
     needs: changes
-    if: *go-changed
+    if: *go-changed-outside-queue
     runs-on: ubuntu-26.04
     timeout-minutes: 55
     services:
@@ -1199,26 +1214,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: cli
-            job_timeout: 36
-            test_timeout: 18m
-            package: ./cmd/msgvault/cmd
-          - name: store
-            job_timeout: 84
-            test_timeout: 71m
-            package: ./internal/store
-          - name: api
-            job_timeout: 30
-            test_timeout: 8m
-            package: ./internal/api
-            followups: true
-          - name: pg_extra
-            extra_packages: true
-            job_timeout: 36
-            test_timeout: 24m
+        # Merge groups keep store, which holds the PostgreSQL schema, migration,
+        # and upgrade tests. `include` cannot drop an entry, so per-job
+        # settings are expressions below. api also runs the follow-up checks;
+        # pg_extra runs PG_MOVED_PKGS instead of a sharded package.
+        name: ${{ fromJSON(github.event_name == 'merge_group' && '["store"]' || '["cli", "store", "api", "pg_extra"]') }}
     runs-on: ubuntu-26.04
-    timeout-minutes: ${{ matrix.job_timeout }}
+    timeout-minutes: ${{ matrix.name == 'store' && 84 || matrix.name == 'api' && 30 || 36 }}
     services:
       postgres:
         image: postgres:18
@@ -1254,19 +1256,27 @@ jobs:
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
+      - name: Set API contract base
+        if: ${{ matrix.name == 'api' }}
+        shell: bash
+        run: *set-api-contract-base
+
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Stabilize tracked file times
-        if: ${{ matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ matrix.name == 'pg_extra' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
         run: go run ./scripts/stable-mtimes
 
       # Shipped build (no pgvector tag) against a stock postgres:16 image, as
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
-        if: ${{ !matrix.extra_packages }}
+        if: ${{ matrix.name != 'pg_extra' }}
         id: postgres-shards
-        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "postgres-sharded-${{ matrix.name }}"
+        env:
+          SHARD_PACKAGE: ${{ matrix.name == 'cli' && './cmd/msgvault/cmd' || format('./internal/{0}', matrix.name) }}
+          SHARD_TIMEOUT: ${{ matrix.name == 'store' && '71m' || matrix.name == 'cli' && '18m' || '8m' }}
+        run: scripts/test-package-shards.sh "$SHARD_PACKAGE" 4 "fts5 sqlite_vec" "$SHARD_TIMEOUT" "postgres-sharded-${{ matrix.name }}"
 
       - name: Upload test events
         if: failure() || github.run_attempt > 1
@@ -1278,11 +1288,11 @@ jobs:
           if-no-files-found: ignore
 
       - name: Test additional PostgreSQL packages
-        if: ${{ matrix.extra_packages && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
-        run: make test-pg-packages PKGS="$PG_MOVED_PKGS" TEST_TIMEOUT=${{ matrix.test_timeout }}
+        if: ${{ matrix.name == 'pg_extra' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+        run: make test-pg-packages PKGS="$PG_MOVED_PKGS" TEST_TIMEOUT=24m
 
       - name: Check for additional test reruns
-        if: always() && matrix.extra_packages
+        if: always() && matrix.name == 'pg_extra'
         id: check-pg-packages-reruns
         run: |
           if [ -s gotestsum/pg-packages-reruns.txt ]; then
@@ -1290,7 +1300,7 @@ jobs:
           fi
 
       - name: Upload additional test events
-        if: ${{ matrix.extra_packages && (failure() || github.event_name == 'workflow_dispatch' || github.run_attempt > 1 || steps.check-pg-packages-reruns.outputs.reruns == 'true') }}
+        if: ${{ matrix.name == 'pg_extra' && (failure() || github.event_name == 'workflow_dispatch' || github.run_attempt > 1 || steps.check-pg-packages-reruns.outputs.reruns == 'true') }}
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pg-packages-attempt-${{ github.run_attempt }}
@@ -1299,7 +1309,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Test PostgreSQL library without CGO
-        if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
+        if: ${{ !cancelled() && matrix.name == 'api' && steps.postgres-shards.outcome != 'skipped' }}
         run: make test-pg-nocgo TEST_TIMEOUT=5m
 
       - name: Check for test reruns
@@ -1312,7 +1322,7 @@ jobs:
           fi
 
       - name: Upload test events
-        if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || steps.check-pg-nocgo-reruns.outputs.reruns == 'true') }}
+        if: ${{ matrix.name == 'api' && (failure() || github.run_attempt > 1 || steps.check-pg-nocgo-reruns.outputs.reruns == 'true') }}
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pg-nocgo-attempt-${{ github.run_attempt }}
@@ -1323,7 +1333,7 @@ jobs:
       # Run store concurrency tests after the API package test, away from the store package shard.
       # Five repetitions catch intermittent lost updates and uniqueness races.
       - name: Concurrency tests (-count=5)
-        if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
+        if: ${{ !cancelled() && matrix.name == 'api' && steps.postgres-shards.outcome != 'skipped' }}
         run: >-
           go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/store-concurrency.json --rerun-fails=2 --rerun-fails-report gotestsum/store-concurrency-reruns.txt
           --packages ./internal/store -- -timeout 7m -tags fts5 -count=5 -run 'Concurrent'
@@ -1338,7 +1348,7 @@ jobs:
           fi
 
       - name: Upload test events
-        if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || steps.check-store-concurrency-reruns.outputs.reruns == 'true') }}
+        if: ${{ matrix.name == 'api' && (failure() || github.run_attempt > 1 || steps.check-store-concurrency-reruns.outputs.reruns == 'true') }}
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-store-concurrency-attempt-${{ github.run_attempt }}

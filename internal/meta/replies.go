@@ -112,13 +112,13 @@ func (c *Client) readComment(ctx context.Context, sourceType, id string) (Object
 	}
 	if sourceType == InstagramSourceType {
 		var comment IGComment
-		if err := c.get(ctx, url.PathEscape(id), url.Values{fieldsParam: {instagramCommentFields}}, &comment); err != nil {
+		if err := c.get(ctx, url.PathEscape(id), url.Values{"fields": {instagramCommentFields}}, &comment); err != nil {
 			return Object{}, err
 		}
 		return instagramCommentObject(&comment), nil
 	}
 	var comment Object
-	err := c.get(ctx, url.PathEscape(id), url.Values{fieldsParam: {facebookCommentFields}}, &comment)
+	err := c.get(ctx, url.PathEscape(id), url.Values{"fields": {facebookCommentFields}}, &comment)
 	return comment, err
 }
 

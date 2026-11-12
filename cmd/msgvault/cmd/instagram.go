@@ -151,7 +151,7 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 				if sum != nil {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Instagram %s: %d messages processed (%d added, %d updated), %d requests\n", profile.Identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.MessagesUpdated, sum.Requests)
 					if sum.Partial {
-						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Partial coverage; unfinished surfaces resume on the next sync.")
+						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Some comments weren't synced. The next sync will continue.")
 					}
 				}
 				if err != nil {
