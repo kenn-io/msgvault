@@ -50,6 +50,7 @@ func TestMeetingDecisionOwnerHTTP(t *testing.T) {
 		{"same copy", `{"left":"msg:1","right":"msg:2","decision":"link"}`, "", store.ErrMeetingLinkSameCopy, http.StatusBadRequest, store.ErrMeetingLinkSameCopy.Error()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
 			backend.err = tc.err
 			before := backend.calls
 			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/meetings/links/decisions", strings.NewReader(tc.body))
@@ -61,17 +62,17 @@ func TestMeetingDecisionOwnerHTTP(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, req)
-			require.Equal(t, tc.status, w.Code, w.Body.String())
+			requirements.Equal(tc.status, w.Code, w.Body.String())
 			if tc.want != "" {
-				assert.Contains(t, w.Body.String(), tc.want)
+				assertions.Contains(w.Body.String(), tc.want)
 			}
 			if tc.token != "" {
-				assert.Equal(t, before, backend.calls)
+				assertions.Equal(before, backend.calls)
 			}
 			if tc.name == "owner" {
-				assert.Equal(t, store.MeetingLinkRef{Kind: "msg", MessageID: 1}, backend.left)
-				assert.Equal(t, store.MeetingLinkRef{Kind: "msg", MessageID: 2}, backend.right)
-				assert.Equal(t, "link", backend.decision)
+				assertions.Equal(store.MeetingLinkRef{Kind: "msg", MessageID: 1}, backend.left)
+				assertions.Equal(store.MeetingLinkRef{Kind: "msg", MessageID: 2}, backend.right)
+				assertions.Equal("link", backend.decision)
 			}
 		})
 	}
