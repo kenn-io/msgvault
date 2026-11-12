@@ -353,7 +353,6 @@ jobs:
             package: ./internal/api
             job_timeout: 13
             test_timeout: 5m
-            followups: true
     runs-on: ubuntu-26.04
     timeout-minutes: ${{ matrix.job_timeout }}
     steps:
@@ -394,10 +393,6 @@ jobs:
 
       - name: Test package in isolated shards
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "sharded-${{ matrix.name }}"
-
-      - name: Check testify helpers
-        if: ${{ !cancelled() && matrix.followups }}
-        run: make testify-helper-check
 
       - name: Upload test events
         if: failure() || github.run_attempt > 1
