@@ -117,7 +117,7 @@ func (s *Server) handleFederationHandshake(w http.ResponseWriter, r *http.Reques
 	}
 	gateCtx, cancel := context.WithTimeout(r.Context(), operationGateWaitLimit)
 	defer cancel()
-	if done, ok := s.beginLabeledOperationGateWork(gateCtx, "federation handshake"); ok {
+	if done, ok := s.beginBackgroundOperationGateWork(gateCtx, "federation handshake"); ok {
 		if err := s.federationStore.TouchFederationEnrollmentContext(r.Context(), auth.Federation.EnrollmentUID); err != nil {
 			s.logger.Warn("federation last-seen update failed", "enrollment_uid", auth.Federation.EnrollmentUID, "error", err)
 		}

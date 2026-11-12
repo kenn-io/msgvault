@@ -247,6 +247,7 @@ func TestFederationHandshakeDuringOperation(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	}
 	handshake()
+	assert.False(t, gate.HasRequestWaiters())
 	entries, err := st.ListFederationEnrollmentsContext(t.Context())
 	requirements.NoError(err)
 	requirements.Len(entries, 1)

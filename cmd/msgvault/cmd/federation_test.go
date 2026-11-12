@@ -162,7 +162,7 @@ func TestFederationHubRejectsMessageImport(t *testing.T) {
 	for _, tc := range []struct {
 		role            string
 		status, sources int
-	}{{"hub", http.StatusCreated, 0}} {
+	}{{"off", http.StatusCreated, 1}, {"hub", http.StatusInternalServerError, 0}} {
 		t.Run(tc.role, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -183,7 +183,7 @@ func TestFederationHubRejectsMessageImport(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			resp := httptest.NewRecorder()
 			server.Router().ServeHTTP(resp, req)
-			assertions.NotEqual(tc.status, resp.Code, resp.Body.String())
+			assertions.Equal(tc.status, resp.Code, resp.Body.String())
 			sources, err := st.ListSourcesContext(t.Context(), "")
 			requirements.NoError(err)
 			assertions.Len(sources, tc.sources)
