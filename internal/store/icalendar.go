@@ -121,17 +121,8 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				return fmt.Errorf("decode retained ICS metadata: %w", err)
 			}
 		}
-		seriesExists := false
-		if item.fromEmail && !exists && e.Original != nil {
-			seriesID := calevent.ICSMessageID(item.component.OrganizerEmail, item.component.UID, "")
-			var seriesRowID int64
-			err := q.QueryRow(`SELECT m.id FROM messages m WHERE m.source_id=? AND m.id IN (SELECT id FROM messages WHERE source_id=? AND source_message_id=? UNION ALL SELECT message_id FROM source_merge_archive_only_messages WHERE original_source_message_id=?) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, sourceID, seriesID, seriesID, seriesID).Scan(&seriesRowID)
-			seriesExists = err == nil
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("read prior ICS series identity: %w", err)
-			}
-		}
-		if item.fromEmail && (exists || seriesExists) && !strings.EqualFold(item.sender, item.component.OrganizerEmail) {
+		// Only the organizer's own email creates or changes an event under its ID.
+		if item.fromEmail && !strings.EqualFold(item.sender, item.component.OrganizerEmail) {
 			summary.Unchanged++
 			continue
 		}
