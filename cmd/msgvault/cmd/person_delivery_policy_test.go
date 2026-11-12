@@ -55,7 +55,7 @@ func TestPersonDeliveryPolicyCommands(t *testing.T) {
 		{name: "missing revision", operation: "set", args: []string{"person-example", "send_allowed", "--reason", "Owner approval"}, wantError: "expected-revision"},
 		{name: "missing reason", operation: "clear", args: []string{"person-example", "--expected-revision", "3"}, wantError: "reason"},
 		{name: "missing UID", operation: "read", wantError: "arg"},
-		{name: "old daemon read", operation: "read", args: []string{"person-example"}, schema: "5.0.0", wantError: "daemon API schema 5.1.0 or newer"},
+		{name: "old daemon read", operation: "read", args: []string{"person-example"}, schema: "5.1.0", wantError: "daemon API schema 5.2.0 or newer"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

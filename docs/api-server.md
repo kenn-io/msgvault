@@ -166,7 +166,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.1.0**.
+it is separate from the binary release version. The current schema is **5.2.0**.
 
 Schema 5.2.0 adds owner-only [contact delivery policy](#contact-delivery-policies) routes.
 
@@ -3469,7 +3469,7 @@ first. It does not send anything, disable drafting, change existing drafts, or
 replace provider credentials and platform confirmation. Policies are managed
 over HTTP, MCP, and the owner CLI commands [person read-delivery-policy, set-delivery-policy, and clear-delivery-policy](cli-reference.md#person-delivery-policies).
 
-These owner-only routes require API schema 5.1.0:
+These owner-only routes require API schema 5.2.0:
 
 | Operation | POST path | Request |
 | --- | --- | --- |
