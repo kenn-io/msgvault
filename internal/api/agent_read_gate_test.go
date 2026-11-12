@@ -39,6 +39,7 @@ type agentReadGateStore struct {
 
 	sourceContextMu            sync.Mutex
 	onSources                  func()
+	sourceErr                  error
 	onStats                    func(context.Context)
 	onQuick                    func()
 	snapshotContext            context.Context
@@ -47,6 +48,9 @@ type agentReadGateStore struct {
 
 func (s *agentReadGateStore) ListSourcesContext(ctx context.Context, kind string) ([]*store.Source, error) {
 	s.sourceLists.Add(1)
+	if s.sourceErr != nil {
+		return nil, s.sourceErr
+	}
 	s.sourceContextMu.Lock()
 	s.snapshotContext = ctx
 	s.sourceContextMu.Unlock()

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/mcpevents"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
@@ -420,7 +422,11 @@ func TestDelegatedPersonRefusalsHaveSameReason(t *testing.T) {
 			previousCalls := calls
 			srv.Router().ServeHTTP(w, r)
 			assert.Equal(t, tc.status, w.Code, w.Body.String())
-			assert.Equal(t, previousCalls+1, calls)
+			if tc.reason == "" {
+				assert.Equal(t, previousCalls+1, calls)
+			} else {
+				assert.Equal(t, previousCalls, calls)
+			}
 			after, err := st.LoadMCPEventsCatalog(t.Context())
 			require.NoError(t, err)
 			if tc.reason != "" {
@@ -431,4 +437,38 @@ func TestDelegatedPersonRefusalsHaveSameReason(t *testing.T) {
 			}
 		})
 	}
+	require.NoError(t, st.ReplaceMessageRecipients(outsideMessage, "to", []int64{outside, both, inside}, nil))
+	body := fmt.Sprintf(`{"name":"msgvault.messages.changed","arguments":{"person_id":%d},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}}`, inPerson.ID)
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/mcp-events/subscribe", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	previousCalls := calls
+	srv.Router().ServeHTTP(w, r)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, previousCalls+1, calls)
+}
+
+func TestEventsInitialSourceAdmissionPreservesDaemonClientReason(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("test", "events@example.test")
+	require.NoError(t, err)
+	wrapped := &agentReadGateStore{Store: st, sourceErr: errors.New("fixture source failure")}
+	registry := agentgrant.NewRegistry()
+	t.Cleanup(registry.Close)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner-key", AgentAccess: true}}
+	events := &mcpevents.Service{Store: st, TokensDir: cfg.TokensDir(), Enabled: true, Grants: registry}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: wrapped, MCPEvents: events, AgentGrants: registry, Logger: testLogger()})
+	_, token, _, err := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	require.NoError(t, err)
+	server := httptest.NewServer(srv.Router())
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: token, AllowInsecure: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, client.Close()) })
+	_, err = client.MCPEventsSubscribe(t.Context(), mcpevents.MCPEventsSubscribeRequest{Name: mcpevents.Name, Arguments: mcpevents.MCPEventsArguments{SourceID: source.ID}, Delivery: mcpevents.MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+	var eventErr *mcpevents.Error
+	require.ErrorAs(t, err, &eventErr)
+	assert.Equal(t, mcpevents.Unavailable, eventErr.Code)
+	assert.Equal(t, "source_scope_unavailable", eventErr.Reason)
 }

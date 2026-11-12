@@ -302,6 +302,55 @@ func TestDisabledUnsubscribeThenSubscribeReusesIDAndStartsAtCurrentBound(t *test
 	assert.Equal(store.WakeupState{At: state.At}, state)
 }
 
+func TestSubscriptionChallengeKeepsOwnerHeadAndRefreshesGrantHead(t *testing.T) {
+	for _, delegated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delegated=%t", delegated), func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("test", "events@example.test")
+			require.NoError(t, err)
+			registry := agentgrant.NewRegistry()
+			t.Cleanup(registry.Close)
+			owner := "owner"
+			if delegated {
+				id, _, _, issueErr := registry.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+				require.NoError(t, issueErr)
+				owner = agentgrant.Owner(id)
+			}
+			service := Service{Store: st, TokensDir: t.TempDir(), Enabled: true, Grants: registry}
+			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: source.ID}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
+			var beforeWrite, afterWrite time.Time
+			var messageID int64
+			result, err := service.Subscribe(t.Context(), in, owner, func(ctx context.Context, _ string, _ string, _ []byte) error {
+				before, readErr := st.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
+				require.NoError(t, readErr)
+				beforeWrite = before.CompleteThrough
+				_, messageID, readErr = testutil.CreateIndexedSourceMessage(ctx, st, "events@example.test", "challenge", "challenge", "")
+				require.NoError(t, readErr)
+				after, readErr := st.ListChangedMessages(ctx, store.ChangedMessagesCursor{}, 1)
+				require.NoError(t, readErr)
+				afterWrite = after.CompleteThrough
+				return nil
+			}, nil)
+			require.NoError(t, err)
+			state, raw, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+			require.NoError(t, err)
+			require.NotNil(t, raw)
+			if delegated {
+				assert.False(t, state.At.Before(afterWrite))
+			} else {
+				assert.False(t, state.At.After(beforeWrite))
+				page, readErr := st.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(state.At), 100)
+				require.NoError(t, readErr)
+				var ids []int64
+				for _, message := range page.Messages {
+					ids = append(ids, message.ID)
+				}
+				assert.Contains(t, ids, messageID)
+			}
+		})
+	}
+}
+
 func TestExpiredSubscriptionRemovedWithoutDelivery(t *testing.T) {
 	for _, owner := range []string{"owner"} {
 		t.Run(owner, func(t *testing.T) {

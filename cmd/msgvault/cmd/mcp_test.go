@@ -651,3 +651,33 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 	assert.Contains(logs.String(), "Kata transcript citations hidden because the Docbank status probe failed")
 	assert.Contains(logs.String(), "503")
 }
+
+func TestDelegatedMCPEventsPermissionAndSchemaGate(t *testing.T) {
+	for _, tc := range []struct {
+		version     string
+		permissions []string
+		want        bool
+	}{
+		{"5.3.9", []string{"search.read"}, false},
+		{"5.4.0", []string{"search.read"}, true},
+		{"5.4.0", []string{"message.read"}, false},
+		{"5.3.9", []string{"message.read"}, false},
+	} {
+		t.Run(tc.version+"/"+tc.permissions[0], func(t *testing.T) {
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": tc.version}))
+				case "/api/v1/agent-tokens/self":
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": "fixture", "label": "reader", "created_at": "2025-01-01T00:00:00Z", "permissions": tc.permissions, "sources": []any{}}))
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			opts, err := delegatedMCPServeOptions(t.Context(), client)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, opts.Events != nil)
+		})
+	}
+}
