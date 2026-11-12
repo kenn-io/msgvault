@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -22,6 +23,7 @@ func selectionInputSchema() *jsonschema.Schema {
 
 type deletionExploreResponse struct {
 	generated.ExploreHTTPResponse
+
 	Predicate generated.ExploreHTTPRequest `json:"predicate"`
 }
 
@@ -61,7 +63,7 @@ func (h *handlers) exploreDeletionSelection(ctx context.Context, req toolRequest
 	}
 	response, ok := result.Output.(generated.ExploreHTTPResponse)
 	if !ok {
-		return nil, newInternalError("explore deletion selection", fmt.Errorf("unexpected response"))
+		return nil, newInternalError("explore deletion selection", errors.New("unexpected response"))
 	}
 	predicate := make(map[string]any, len(args))
 	for key, value := range args {
@@ -71,6 +73,7 @@ func (h *handlers) exploreDeletionSelection(ctx context.Context, req toolRequest
 	}
 	return jsonResult(struct {
 		generated.ExploreHTTPResponse
+
 		Predicate map[string]any `json:"predicate"`
 	}{response, predicate})
 }
@@ -94,7 +97,7 @@ func (h *handlers) stageDeletionSelection(ctx context.Context, req toolRequest) 
 	}
 	counts, ok := dryRun.Output.(generated.StageDeletionResponse)
 	if !ok || counts.Account == nil || counts.MatchedCount == nil {
-		return nil, newInternalError("dry run deletion selection", fmt.Errorf("unexpected response"))
+		return nil, newInternalError("dry run deletion selection", errors.New("unexpected response"))
 	}
 	skipped := int64(0)
 	if counts.SkippedCount != nil {

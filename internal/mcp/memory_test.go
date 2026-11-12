@@ -73,6 +73,8 @@ func TestMCPMemoryChild(t *testing.T) {
 // a backend, so empty implementations suffice.
 func daemonProxyMemoryOptions() ServeOptions {
 	return ServeOptions{
+		Operations:                operationalTestBackend{},
+		OperationCapabilities:     []string{"stage_deletion_selection"},
 		EmbeddingStatus:           struct{ EmbeddingStatusReader }{},
 		Engine:                    &collectionTestEngine{Engine: &querytest.MockEngine{}},
 		CollectionScopesAvailable: true,

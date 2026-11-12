@@ -34,10 +34,13 @@ func deletionSelectionRefusal(code string) bool {
 }
 
 func (b *daemonMCPOperations) executeDeletionSelection(ctx context.Context, name string, args map[string]any) (*mcpserver.OperationResult, bool, error) {
+	invalid := func() (*mcpserver.OperationResult, bool, error) {
+		return operationFailure("invalid_arguments", false), true, nil
+	}
 	if name == "explore_deletion_selection" {
 		input, err := decodeMCPOperationArguments[generated.ExploreHTTPRequest](args)
 		if err != nil {
-			return operationFailure("invalid_arguments", false), true, nil
+			return invalid()
 		}
 		result, err := readMCPOperationJSONWithClassifier[generated.ExploreHTTPResponse](ctx, b.client, http.MethodPost, "/api/v1/explore", &generated.ExploreRequestOptions{Body: &input}, deletionSelectionRefusal, http.StatusOK)
 		return result, true, err
@@ -47,7 +50,7 @@ func (b *daemonMCPOperations) executeDeletionSelection(ctx context.Context, name
 	}
 	input, err := decodeMCPOperationArguments[deletionSelectionArgs](args)
 	if err != nil || (name == "preflight_deletion_selection" && input.OperationToken != "") {
-		return operationFailure("invalid_arguments", false), true, nil
+		return invalid()
 	}
 	if name == "preflight_deletion_selection" {
 		body := generated.PreflightExploreSelectionBody{Selection: input.Selection}

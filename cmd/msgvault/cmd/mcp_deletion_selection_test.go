@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -41,7 +42,7 @@ func (s *partialDeletionSaver) SaveCLIDeletionManifest(_ context.Context, manife
 	if err := os.WriteFile(s.path, []byte(`{"id":`), 0o600); err != nil {
 		return err
 	}
-	return fmt.Errorf("injected partial manifest save")
+	return errors.New("injected partial manifest save")
 }
 
 func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
@@ -98,6 +99,7 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	}
 	type exploredResponse struct {
 		generated.ExploreHTTPResponse
+
 		Predicate map[string]any `json:"predicate"`
 	}
 	explored := loopToolOutput[exploredResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected"}))
