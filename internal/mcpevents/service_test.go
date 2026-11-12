@@ -559,25 +559,15 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			require.NoError(err)
 			require.NoError(os.Remove(lock))
 			require.NoError(os.Mkdir(lock, 0700))
+			assert.Equal(now.Add(24*time.Hour), result.RefreshBefore)
 			now = now.Add(time.Hour)
+			refresh, err := DecodeSubscribe([]byte(`{"name":"msgvault.messages.changed","arguments":{"source_id":1},"delivery":{"mode":"webhook","url":"https://example.com/hook","secret":"whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"},"ttlMs":60000}`))
+			require.NoError(err)
 			before = snapshot(t, st, tokens)
-			_, err = service.Subscribe(t.Context(), in, acceptCallback)
-			refreshErr := err
+			_, err = service.Subscribe(t.Context(), refresh, acceptCallback)
 			after = snapshot(t, st, tokens)
-			// A failed refresh may publish its lease before the credential write (R2 #1).
-			var beforeEntries, afterEntries []entry
-			require.NoError(json.Unmarshal(before.catalog, &beforeEntries))
-			require.NoError(json.Unmarshal(after.catalog, &afterEntries))
-			require.Len(beforeEntries, 1)
-			require.Len(afterEntries, 1)
-			beforeEntries[0].Expires = time.Time{}
-			afterEntries[0].Expires = time.Time{}
-			before.catalog, err = json.Marshal(beforeEntries)
-			require.NoError(err)
-			after.catalog, err = json.Marshal(afterEntries)
-			require.NoError(err)
 			assert.Equal(before, after)
-			require.ErrorAs(refreshErr, &eventErr)
+			require.ErrorAs(err, &eventErr)
 			assert.Equal("credential_unavailable", eventErr.Reason)
 			entries, _, err = service.catalog(t.Context())
 			require.NoError(err)
@@ -589,6 +579,15 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			afterCredentials, err := os.ReadFile(filepath.Join(tokens, providercredentials.EventsFilename))
 			require.NoError(err)
 			assert.Equal(credentials, afterCredentials)
+			now = now.Add(2 * time.Minute)
+			targets, err := service.Native(t.Context())
+			require.NoError(err)
+			if assert.Len(targets, 1) {
+				assert.Equal(result.ID, targets[0].Name)
+			}
+			_, livePosition, err := st.LoadWakeupStateKey(t.Context(), store.MCPEventsPositionKey(result.ID))
+			require.NoError(err)
+			assert.Equal(position, livePosition)
 		}},
 		{"IncompatibleCatalogRefusedWithoutRewriting", func(t *testing.T) {
 			t.Helper()
