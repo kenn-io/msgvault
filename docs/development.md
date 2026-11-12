@@ -565,10 +565,10 @@ ignored.
 When the HTTP API contract changes, bump `APISchemaVersion` in
 `internal/api/openapi.go`. `TestAPISchemaVersionContract` hashes both generated
 documents. It tracks routes, parameters, requests, responses, tags, schemas,
-constraints, defaults, and
-extensions. It ignores wording such as descriptions, summaries, titles, examples,
-and external documentation. Handler changes that leave the documents unchanged
-still need an explicit version bump when they change the API contract.
+constraints, defaults, and extensions. It ignores wording such as descriptions,
+summaries, titles, examples, and external documentation. Handler changes that
+leave the documents unchanged still need an explicit version bump when they change
+the API contract.
 
 Add a marker under `internal/api/testdata/api-version-contracts/` using the path
 printed by the test. Put a one-line summary in the file, then replace
@@ -584,10 +584,9 @@ another change has already used that version, keep its marker, remove yours, and
 take the next minor above the greatest recorded version. Move any feature minimum
 constants introduced by your change to that version.
 
-The comment above `APISchemaVersion` preserves earlier version history. Do not
-add new version entries to that shared comment. CI compares markers with its exact
-base. Local tests skip that history comparison unless `MSGVAULT_API_CONTRACT_BASE`
-is set to a local base SHA or ref.
+Do not add version entries to the comment above `APISchemaVersion`. CI compares
+markers with its exact base. Local tests skip that history comparison unless
+`MSGVAULT_API_CONTRACT_BASE` is set to a local base SHA or ref.
 
 ## Archive schema version maintenance
 
