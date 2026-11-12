@@ -184,3 +184,47 @@ func TestCacheRelatedChangeJournalTracksHiddenTextFlag(t *testing.T) {
 		WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`, baseline, messageID).Scan(&count))
 	assert.Equal(t, 1, count)
 }
+
+func TestMeetingOccurrenceJournalUpgradesSchema42(t *testing.T) {
+	testutil.SkipIfPostgres(t, "analytics cache journal is SQLite-only")
+	f := storetest.New(t)
+	s := f.Store
+	ctx := t.Context()
+	first, err := s.UpsertMessage(f.NewMessage().WithSourceMessageID("event").Build())
+	require.NoError(t, err)
+	second, err := s.UpsertMessage(f.NewMessage().WithSourceMessageID("note").Build())
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `DROP TRIGGER trg_cache_meeting_events_insert;
+		DROP TRIGGER trg_cache_meeting_events_update;
+		DROP TRIGGER trg_cache_meeting_events_delete;
+		DROP TRIGGER trg_cache_meeting_details_update;
+		DROP TABLE meeting_link_decision_dependencies;
+		DROP TABLE meeting_link_decisions;
+		UPDATE archive_metadata SET value = '42' WHERE key = 'schema_version'`)
+	require.NoError(t, err)
+	require.NoError(t, s.InitSchemaUnlessCurrentContext(ctx))
+	version, err := s.SchemaVersionContext(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, store.SchemaVersion, version)
+	var baseline int64
+	require.NoError(t, s.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
+	_, err = s.DB().ExecContext(ctx, `INSERT INTO calendar_events (message_id, projection_version, content_hash) VALUES (?, 1, 'first')`, first)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `UPDATE calendar_events SET content_hash='second' WHERE message_id=?`, first)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM calendar_events WHERE message_id=?`, first)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `INSERT INTO meeting_details (message_id, projection_version, content_hash, content_json, action_coverage, transcript_state) VALUES (?, 1, 'first', '{}', '', 'empty')`, second)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `UPDATE meeting_details SET transcript_state='available' WHERE message_id=?`, second)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `INSERT INTO meeting_link_decisions (left_message_id, left_kind, left_key, left_anchor, right_message_id, right_kind, right_key, right_anchor, decision, choice_key) VALUES (?, 'evt', '', '', ?, 'msg', '', '', 'link', 'choice')`, first, second)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `UPDATE meeting_link_decisions SET decision='split' WHERE choice_key='choice'`)
+	require.NoError(t, err)
+	_, err = s.DB().ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE choice_key='choice'`)
+	require.NoError(t, err)
+	var changes int
+	require.NoError(t, s.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM cache_related_change_journal WHERE seq > ? AND dataset='meeting_occurrences' AND message_id=0`, baseline).Scan(&changes))
+	assert.Equal(t, 7, changes)
+}
