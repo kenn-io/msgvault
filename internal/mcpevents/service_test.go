@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -570,7 +571,7 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			st := newEventsTestStore(t)
 			tokens := filepath.Join(t.TempDir(), "tokens")
 			lock := filepath.Join(tokens, ".provider-credentials.lock")
-			require.NoError(os.MkdirAll(lock, 0700))
+			require.NoError(fileutil.SecureMkdirAll(lock, 0700))
 			now := time.Now().UTC()
 			service := Service{Store: st, TokensDir: tokens, Enabled: true, Now: func() time.Time { return now }}
 			in := preparedSubscribe(t, MCPEventsSubscribeRequest{Name: Name, Arguments: MCPEventsArguments{SourceID: 1}, Delivery: MCPEventsDelivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh"}})
@@ -600,7 +601,7 @@ func TestSubscribeFailuresPreserveStateAndVerify(t *testing.T) {
 			credentials, err := os.ReadFile(filepath.Join(tokens, providercredentials.EventsFilename))
 			require.NoError(err)
 			require.NoError(os.Remove(lock))
-			require.NoError(os.Mkdir(lock, 0700))
+			require.NoError(fileutil.SecureMkdirAll(lock, 0700))
 			assert.Equal(now.Add(24*time.Hour), result.RefreshBefore)
 			now = now.Add(time.Hour)
 			before = snapshot(t, st, tokens)
