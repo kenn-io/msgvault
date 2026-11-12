@@ -77,3 +77,22 @@ func TestMetaWebhooksAllowsInstagramProfilesThatCannotCollide(t *testing.T) {
 		})
 	}
 }
+
+// relinkedInstagramInboxes is relinkedInstagramProfiles as two inbox profiles.
+var relinkedInstagramInboxes = strings.ReplaceAll(relinkedInstagramProfiles, "[[instagram_comments]]", "[[instagram_messages]]")
+
+func TestMetaWebhooksRejectsTwoInstagramInboxesForOneAccount(t *testing.T) {
+	err := loadConfigTextError(t, metaWebhooksSection+relinkedInstagramInboxes)
+	require.ErrorContains(t, err, "instagram_messages[1] and instagram_messages[0] both receive webhooks for app 9 and Instagram account 200")
+}
+
+func TestMetaWebhooksAllowsInstagramInboxesThatCannotCollide(t *testing.T) {
+	for name, text := range map[string]string{
+		"no receiver":  relinkedInstagramInboxes,
+		"one disabled": metaWebhooksSection + strings.Replace(relinkedInstagramInboxes, "enabled=true", "enabled=false", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Len(t, loadConfigText(t, text).InstagramMessages, 2)
+		})
+	}
+}

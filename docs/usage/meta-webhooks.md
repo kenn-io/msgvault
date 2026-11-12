@@ -62,8 +62,9 @@ mentions source.
 To archive new Messenger and Instagram direct messages as they arrive,
 subscribe the Page object to the `messages` and `message_echoes` fields, and
 the Instagram object to `messages`. Echoes are the messages the Page or
-account sends. Each inbox needs an enabled
-[`[[facebook_messages]]` or `[[instagram_messages]]` profile](meta-messages.md),
+account sends. Each inbox needs exactly one enabled
+[`[[facebook_messages]]` or `[[instagram_messages]]` profile](meta-messages.md)
+for the same app and Page or account,
 registered with `source facebook-messages add` or `source instagram-messages add`.
 Add the two Page fields to the Page subscription too, for example
 `subscribed_fields=feed,mention,messages,message_echoes` in the `curl` call

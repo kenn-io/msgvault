@@ -49,7 +49,10 @@ func (c *Config) validateMetaWebhooks() error {
 			return fmt.Errorf("meta_webhooks.apps[%d] needs app_secret_env and verify_token_env naming environment variables", i)
 		}
 	}
-	return uniqueInstagramWebhookProfiles("instagram_comments", seen, c.InstagramComments)
+	if err := uniqueInstagramWebhookProfiles("instagram_comments", seen, c.InstagramComments); err != nil {
+		return err
+	}
+	return uniqueInstagramWebhookProfiles("instagram_messages", seen, c.InstagramMessages)
 }
 
 // uniqueInstagramWebhookProfiles refuses two enabled profiles that would

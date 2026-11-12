@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-12"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1697,7 +1697,8 @@ the verify token (`verify_token_env`). App IDs must be unique, and a
 `listen_addr` needs at least one app. Unknown keys are rejected.
 
 With the receiver on, an app listed here may have only one enabled
-`[[instagram_comments]]` profile per Instagram account. msgvault refuses the
+`[[instagram_comments]]` profile and one enabled `[[instagram_messages]]`
+profile per Instagram account. msgvault refuses the
 configuration otherwise, because it could not tell which profile a delivery is for.
 
 ### `[[instagram_comments]]` {#instagram-comments}
