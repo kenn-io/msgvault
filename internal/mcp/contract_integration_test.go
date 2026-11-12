@@ -111,7 +111,7 @@ func (r *task5SavedViewService) GetSavedView(_ context.Context, id int64) (*stor
 }
 
 func (r *task5SavedViewService) RunSavedView(
-	_ context.Context, id int64, _ int, _ string,
+	_ context.Context, id int64, _ int, _, _ string,
 ) (*savedview.RunPage, error) {
 	if id != r.view.ID {
 		return nil, store.ErrSavedViewNotFound

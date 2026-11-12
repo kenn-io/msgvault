@@ -8,9 +8,9 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Join or separate archived meeting copies with `meetings link` and `meetings unlink`, the API, or MCP. Choices survive sync and rebuilds. `meetings reset-link` restores automatic matching. Requires HTTP API schema 5.2.0; existing archives upgrade to schema 43.
+- Join or separate archived meeting copies with `meetings link` and `meetings unlink`, the API, or MCP. Choices survive sync and rebuilds. `meetings reset-link` restores automatic matching. Requires HTTP API schema 5.3.0; existing archives upgrade to schema 43.
 
-- Open linked calendar copies and notes with `msgvault meetings links`, `GET /api/v1/meetings/record`, or MCP `get_meeting_record`. Copy an occurrence reference from `msgvault calendar events` to select a specific week. Requires HTTP API schema 5.1.0; existing archives upgrade to schema 42.
+- Open linked calendar copies and notes with `msgvault meetings links`, `GET /api/v1/meetings/record`, or MCP `get_meeting_record`. Copy an occurrence reference from `msgvault calendar events` to select a specific week. Requires HTTP API schema 5.2.0; existing archives upgrade to schema 42.
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).

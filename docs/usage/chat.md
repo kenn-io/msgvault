@@ -225,7 +225,7 @@ need daemon API schema 2.27.0 or newer. They make no AI call and require no
 profile-write permission. Source action status remains archived evidence;
 these tools do not complete tasks or infer new ones.
 
-`link_meeting`, `unlink_meeting`, and `reset_meeting_link` join or separate copies, or clear a saved choice. They need daemon API schema 5.2.0 or newer and follow the normal [write controls](#write-controls).
+`link_meeting`, `unlink_meeting`, and `reset_meeting_link` join or separate copies, or clear a saved choice. They need daemon API schema 5.3.0 or newer and follow the normal [write controls](#write-controls).
 
 ## Setup
 
@@ -459,8 +459,8 @@ The MCP server exposes the following tools to connected AI clients:
 | `update_message_tags` | Add or remove native email tags through the daemon. Write-class. | `message_id` (int, required), `add` / `remove` (string arrays), `mailbox` (string, IMAP only), `dry_run` (bool) |
 | `list_saved_views` | List persistent reusable Saved Views and their complete definitions. Read-only. | — |
 | `get_saved_view` | Get one Saved View and its canonical definition and revision. Read-only. | `id` (int, required) |
-| `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string) |
-| `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `2` for new definitions; schema `1` retains literal-pipe meaning), `description` (string) |
+| `run_saved_view` | Execute a Saved View through Explore without reconstructing its query. Returns typed entries, groups, or files. Read-only. | `id` (int, required), `limit` (int), `cursor` (string), `timezone` (IANA time zone) |
+| `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `3` for local date bounds with numeric offsets, or `2` for UTC; schema `1` retains literal-pipe meaning), `description` (string) |
 | `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
 | `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
 | `stage_deletion` | Stage every match its source can delete (creates manifest only); refuses above 100000 Gmail, Microsoft Graph, or IMAP matches | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
@@ -767,10 +767,8 @@ array. Request the next page by passing the opaque `next_cursor` as `cursor`;
 
 The daemon executes the view. `run_saved_view` calls
 `POST /api/v1/saved-views/{id}/run`, which hands the stored definition to the
-same Explore endpoint the Web UI uses, so the query, search mode, filters,
-grouping, presentation, and sort run exactly as saved. A grouped view runs at
-the first level of its grouping chain, the level the Web UI shows when it
-opens that view, and a timeline view returns the same entry rows as a table.
+same Explore endpoint the Web UI uses. A grouped view runs at the first level
+of its grouping chain. Calendar groups use the requested time zone, or UTC by default; Month and Year groups appear newest first, while other groups sort by descending count. Use the same time zone for every page. A timeline view returns the same entry rows as a table.
 The tools are offered only when the daemon serves that endpoint (API schema
 2.21.0 or later); an older daemon omits them from the tool list.
 
