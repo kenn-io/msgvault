@@ -100,7 +100,8 @@ var inboxTestCases = []struct {
 }
 
 // inboxPages serves the Page and linked account reads, and the conversation
-// pages keyed by their after cursor. It records each cursor it was asked for.
+// pages keyed by their after cursor, and answers any other cursor with a 400.
+// It records each cursor it was asked for.
 func inboxPages(t *testing.T, pages map[string]string, afters *[]string) *Client {
 	t.Helper()
 	return fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +115,7 @@ func inboxPages(t *testing.T, pages map[string]string, afters *[]string) *Client
 			*afters = append(*afters, after)
 			body, ok := pages[after]
 			if !ok {
-				http.Error(w, "unexpected cursor", http.StatusNotFound)
+				http.Error(w, "invalid fixture cursor", http.StatusBadRequest)
 				return
 			}
 			_, _ = fmt.Fprint(w, body)
@@ -194,6 +195,34 @@ func TestInboxImportRefusesPageWithoutOwner(t *testing.T) {
 			assert.Empty(ids)
 		})
 	}
+}
+
+func TestInboxImportRejectedSavedPositionNamesFull(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	inbox := Inbox{App: "9", Page: "100"}
+	var afters []string
+	pages := map[string]string{
+		"": `{"data":[` + inboxConversation("t_1", []string{"100", "700"}, map[string]string{"m_1": "700"}) + `],"paging":{"cursors":{"after":"c2"},"next":"https://example.test/unused"}}`,
+	}
+	imp := NewInboxImporter(testutil.NewSQLiteTestStore(t), inboxPages(t, pages, &afters))
+	_, err := imp.Register(t.Context(), inbox)
+	require.NoError(err)
+	sum, err := imp.Import(t.Context(), inbox, ImportOptions{MaxRequests: 1})
+	require.NoError(err)
+	require.True(sum.Partial)
+
+	_, err = imp.Import(t.Context(), inbox, ImportOptions{})
+	require.Error(err)
+	assert.Equal([]string{"", "c2"}, afters)
+	var apiErr *APIError
+	require.ErrorAs(err, &apiErr)
+	assert.Equal(http.StatusBadRequest, apiErr.Status)
+	assert.Contains(err.Error(), "run this sync again with --full")
+
+	delete(pages, "")
+	_, err = imp.Import(t.Context(), inbox, ImportOptions{Full: true})
+	require.ErrorAs(err, &apiErr, "a 400 on the first page is not about a saved position")
+	assert.NotContains(err.Error(), "--full")
 }
 
 func TestInboxImportRefusesOtherAccountsAndUnknownSenders(t *testing.T) {

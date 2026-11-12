@@ -75,7 +75,9 @@ sync cannot reach older history. Each sync reads every conversation again and
 updates messages already archived in place. Each request reads up to 25
 conversations, and `--max-requests` limits a run; an unfinished run resumes
 from its saved position, and `--full` starts again from the most recent
-conversations.
+conversations. Meta's saved positions expire. If a sync fails with
+`continuation request failed` and the token and its permissions are valid,
+run the sync again with `--full`.
 
 ## Limits
 

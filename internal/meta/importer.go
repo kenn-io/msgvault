@@ -180,7 +180,8 @@ func pollPages(ctx context.Context, st *store.Store, sourceType, identifier stri
 		sum.Requests++
 		next, err := page(scoped, source, sum, after)
 		if apiErr, ok := errors.AsType[*APIError](err); ok && after != "" && apiErr.Status == 400 {
-			return sum, fmt.Errorf("continuation request failed: %w", err)
+			// A 400 can also mean a missing permission, so say both.
+			return sum, fmt.Errorf("continuation request failed; if the token and its permissions are valid, the saved position has expired: run this sync again with --full: %w", err)
 		} else if err != nil {
 			return sum, err
 		}
