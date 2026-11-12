@@ -215,7 +215,7 @@ func TestStreamDaemonCLIPipeTerminalAndMalformedBytes(t *testing.T) {
 		{"data with error", iotest.DataErrReader(io.MultiReader(strings.NewReader("界"), iotest.ErrReader(readErr))), "界", readErr},
 		{"held suffix then EOF", io.MultiReader(bytes.NewReader([]byte("prefix\xe2\x82"))), "prefix\xe2\x82", nil},
 		{"held suffix then error", io.MultiReader(bytes.NewReader([]byte("prefix\xf0\x9f")), iotest.ErrReader(readErr)), "prefix\xf0\x9f", readErr},
-		{"malformed bytes", io.MultiReader(bytes.NewReader([]byte("\xe0\x80")), bytes.NewReader([]byte("\x80")), bytes.NewReader([]byte("a\xff"))), "\xe0\x80\x80a\xff", nil},
+		{"malformed bytes", io.MultiReader(bytes.NewReader([]byte("\xe0\x80")), bytes.NewReader([]byte("\x80\xe2")), bytes.NewReader([]byte("a\xff"))), "\xe0\x80\x80\xe2a\xff", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got bytes.Buffer

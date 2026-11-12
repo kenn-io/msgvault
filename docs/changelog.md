@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Daemon CLI output preserves Unicode characters split across output reads, including in message exports.
+- Message exports and other daemon CLI output no longer turn accented, CJK, or emoji characters into replacement characters.
 
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
