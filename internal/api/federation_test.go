@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -237,5 +238,69 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
 		assert.Equal(t, http.StatusForbidden, w.Code, path)
+	}
+}
+
+// TestFederationRoleMatrix exercises authentication and role checks over HTTP.
+func TestFederationRoleMatrix(t *testing.T) {
+	operations := []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/federation/handshake"},
+		{http.MethodGet, "/api/v1/federation/identity"},
+		{http.MethodGet, "/api/v1/federation/enrollments"},
+		{http.MethodPost, "/api/v1/federation/enrollments"},
+		{http.MethodDelete, "/api/v1/federation/enrollments/fixture"},
+	}
+	var unauthorizedBody string
+	for _, role := range []string{"off", "spoke", "hub"} {
+		t.Run(role, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			cfg := config.NewDefaultConfig()
+			cfg.Data.DataDir = t.TempDir()
+			cfg.Server.APIKey = "owner-fixture"
+			cfg.Federation.Role = role
+			server := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
+			t.Cleanup(func() { require.NoError(t, server.Shutdown(context.WithoutCancel(t.Context()))) })
+			httpServer := httptest.NewServer(server.Router())
+			t.Cleanup(httpServer.Close)
+			request := func(method, path string, owner bool) (int, string) {
+				t.Helper()
+				req, err := http.NewRequestWithContext(t.Context(), method, httpServer.URL+path, nil)
+				require.NoError(t, err)
+				if owner {
+					req.Header.Set("X-Api-Key", "owner-fixture")
+				}
+				resp, err := httpServer.Client().Do(req)
+				require.NoError(t, err)
+				defer resp.Body.Close()
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				return resp.StatusCode, string(body)
+			}
+			for _, op := range operations {
+				status, body := request(op.method, op.path, false)
+				assert.Equal(t, http.StatusUnauthorized, status, "%s %s", op.method, op.path)
+				if unauthorizedBody == "" {
+					unauthorizedBody = body
+				}
+				assert.Equal(t, unauthorizedBody, body, "%s %s", op.method, op.path)
+				if role == "hub" {
+					continue
+				}
+				status, body = request(op.method, op.path, true)
+				if role == "spoke" && op.path == "/api/v1/federation/identity" {
+					assert.Equal(t, http.StatusOK, status)
+					var identity map[string]any
+					require.NoError(t, json.Unmarshal([]byte(body), &identity))
+					assert.NotEmpty(t, identity["archive_uid"])
+					assert.NotContains(t, identity, "role")
+					continue
+				}
+				assert.Equal(t, http.StatusNotFound, status, "%s %s", op.method, op.path)
+				const unknown = "/api/v1/no-such-route"
+				unknownStatus, unknownBody := request(op.method, unknown, true)
+				require.Equal(t, http.StatusNotFound, unknownStatus)
+				assert.Equal(t, strings.ReplaceAll(unknownBody, unknown, op.path), body)
+			}
+		})
 	}
 }

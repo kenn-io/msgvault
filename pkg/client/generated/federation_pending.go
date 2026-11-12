@@ -15,7 +15,6 @@ import (
 
 type FederationIdentityPending struct {
 	ArchiveUID string `json:"archive_uid"`
-	Role       string `json:"role"`
 }
 type FederationEnrollmentViewPending struct {
 	EnrollmentUID   string     `json:"enrollment_uid"`

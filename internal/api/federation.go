@@ -34,7 +34,6 @@ type federationListResponse struct {
 }
 type federationIdentityResponse struct {
 	ArchiveUID string `json:"archive_uid"`
-	Role       string `json:"role"`
 }
 type federationHandshakeEnrollment struct {
 	EnrollmentUID string `json:"enrollment_uid"`
@@ -93,7 +92,7 @@ func (s *Server) handleFederationIdentity(w http.ResponseWriter, r *http.Request
 	}
 	uid, ok := s.federationArchiveUID(w, r)
 	if ok {
-		writeJSON(w, http.StatusOK, federationIdentityResponse{uid, s.cfg.Federation.Role})
+		writeJSON(w, http.StatusOK, federationIdentityResponse{ArchiveUID: uid})
 	}
 }
 func (s *Server) handleFederationHandshake(w http.ResponseWriter, r *http.Request) {

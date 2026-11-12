@@ -3,7 +3,9 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/messageimport"
 	"go.kenn.io/msgvault/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
@@ -93,7 +96,51 @@ func TestFederationEnrollOutput(t *testing.T) {
 	assert.Regexp(t, `^mvf1_[A-Za-z0-9_-]+\n$`, stdout.String())
 	assert.NotContains(t, stderr.String(), strings.TrimSpace(stdout.String()))
 	assert.Contains(t, stderr.String(), "msgvault federation join 'https://$HOME;echo.example.test' --hub-instance ")
+	stdout.Reset()
+	stderr.Reset()
+	command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", "https://hub.example.test", "--json"})
+	require.NoError(t, command.ExecuteContext(ctx))
+	var jsonOutput struct {
+		HubURL string `json:"hub_url"`
+		Token  string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &jsonOutput))
+	assert.Equal(t, "https://hub.example.test", jsonOutput.HubURL)
+	assert.Regexp(t, `^mvf1_[A-Za-z0-9_-]+$`, jsonOutput.Token)
+	assert.NotContains(t, stderr.String(), jsonOutput.Token)
 	command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "Alice"})
 	err = command.ExecuteContext(ctx)
 	assert.ErrorContains(t, err, "member must be 1–64 lowercase ASCII")
+}
+
+func TestFederationHubRejectsMessageImport(t *testing.T) {
+	body := `{"source":{"identifier":"feeds","account_email":"user@example.com"},"message":{"external_id":"entry-42","message_type":"feed_item","conversation":{"external_id":"feed-7","title":"Example"},"sender":{"name":"Example"},"title":"Example","sent_at":"2026-11-07T10:00:00-05:00","body_markdown":"Example"}}`
+	for _, tc := range []struct {
+		role            string
+		status, sources int
+	}{{"off", http.StatusCreated, 1}, {"hub", http.StatusInternalServerError, 0}} {
+		t.Run(tc.role, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			if tc.role == "hub" {
+				require.NoError(t, st.ConfigureFederationHubContext(t.Context()))
+			}
+			cfg := config.NewDefaultConfig()
+			cfg.Data.DataDir = t.TempDir()
+			cfg.Federation.Role = tc.role
+			cfg.Server.APIKey = "owner-fixture"
+			logger := slog.New(slog.DiscardHandler)
+			adapter := &storeAPIAdapter{store: st, messageImporter: messageimport.NewImporter(st, messageimport.Hooks{}).WithLogger(logger)}
+			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, FederationStore: st, Logger: logger})
+			t.Cleanup(func() { require.NoError(t, server.Shutdown(context.WithoutCancel(t.Context()))) })
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/import/message", strings.NewReader(body))
+			req.Header.Set("X-Api-Key", "owner-fixture")
+			req.Header.Set("Content-Type", "application/json")
+			resp := httptest.NewRecorder()
+			server.Router().ServeHTTP(resp, req)
+			assert.Equal(t, tc.status, resp.Code, resp.Body.String())
+			sources, err := st.ListSourcesContext(t.Context(), "")
+			require.NoError(t, err)
+			assert.Len(t, sources, tc.sources)
+		})
+	}
 }

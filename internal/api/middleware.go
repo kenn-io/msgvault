@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net"
 	"net/http"
 	"slices"
@@ -279,6 +280,9 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 					enrollment, err := s.federationStore.AuthenticateFederationEnrollmentContext(r.Context(), hex.EncodeToString(digest[:]), instances[0])
 					if err == nil {
 						return requestAuthentication{Mode: AuthModeFederation, Federation: enrollment}
+					}
+					if !errors.Is(err, store.ErrNotFound) {
+						s.logger.Warn("federation enrollment lookup failed", "error", err)
 					}
 				}
 			}

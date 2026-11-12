@@ -24,7 +24,7 @@ func federationHubOrigin(raw string) (string, error) {
 }
 func init() {
 	root := &cobra.Command{Use: "federation", Short: "Manage hub enrollment"}
-	identity := &cobra.Command{Use: "identity", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	identity := &cobra.Command{Use: "identity", Short: "Print this archive's federation UID", Long: "Print this archive's federation UID. Set [federation] role to spoke or hub and restart the daemon first.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, _, err := OpenHTTPStore(cmd.Context(), "5.1.0")
 		if err != nil {
 			return err
@@ -38,7 +38,7 @@ func init() {
 	}}
 	var spoke, member, name, hub string
 	var asJSON bool
-	enroll := &cobra.Command{Use: "enroll", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	enroll := &cobra.Command{Use: "enroll", Short: "Enroll a spoke on this hub", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if spoke == "" || member == "" {
 			return errors.New("--spoke-instance and --member are required")
 		}
@@ -80,7 +80,7 @@ func init() {
 	enroll.Flags().StringVar(&hub, "hub-url", "", "Public hub origin")
 	enroll.Flags().BoolVar(&asJSON, "json", false, "Output JSON")
 	var listJSON bool
-	list := &cobra.Command{Use: "list", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	list := &cobra.Command{Use: "list", Short: "List spoke enrollments", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, _, err := OpenHTTPStore(cmd.Context(), "5.1.0")
 		if err != nil {
 			return err
@@ -108,7 +108,7 @@ func init() {
 	list.Flags().BoolVar(&listJSON, "json", false, "Output JSON")
 	enrollments := &cobra.Command{Use: "enrollments", Short: "List enrollments"}
 	enrollments.AddCommand(list)
-	revoke := &cobra.Command{Use: "revoke <enrollment-uid>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	revoke := &cobra.Command{Use: "revoke <enrollment-uid>", Short: "Revoke a spoke enrollment", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if strings.TrimSpace(args[0]) == "" {
 			return errors.New("enrollment UID is required")
 		}
