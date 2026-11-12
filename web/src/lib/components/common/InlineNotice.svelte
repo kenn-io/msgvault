@@ -12,9 +12,12 @@
     actionLabel?: string;
     actionDisabled?: boolean;
     onaction?: () => void;
+    /** A second text action, left of the first, for a notice that can also be dismissed. */
+    secondaryActionLabel?: string;
+    onsecondaryaction?: () => void;
   }
 
-  let { tone = 'error', message, children = undefined, details = undefined, actionLabel = undefined, actionDisabled = false, onaction = undefined }: Props = $props();
+  let { tone = 'error', message, children = undefined, details = undefined, actionLabel = undefined, actionDisabled = false, onaction = undefined, secondaryActionLabel = undefined, onsecondaryaction = undefined }: Props = $props();
   let notice: HTMLDivElement;
   $effect(() => {
     // Notice creates its action only when both props are present.
@@ -27,7 +30,9 @@
 
 <div class="inline-notice" bind:this={notice}>
   <Notice {tone} {actionLabel} {onaction}>
-    <p>{message}</p>
+    {#if secondaryActionLabel && onsecondaryaction}
+      <div class="inline-notice__lead"><p>{message}</p><button class="kit-control-states" type="button" disabled={actionDisabled} onclick={onsecondaryaction}>{secondaryActionLabel}</button></div>
+    {:else}<p>{message}</p>{/if}
     {@render children?.()}
     {#if details}<Disclosure variant="plain" title="Details"><pre>{details}</pre></Disclosure>{/if}
   </Notice>
@@ -48,6 +53,11 @@
   .inline-notice :global(.kit-notice .kit-notice__body.kit-notice__body) { display: grid; gap: var(--space-group); font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .inline-notice :global(.kit-notice.kit-notice > button) { grid-column: auto; justify-self: auto; min-height: var(--control-h); margin: 0; padding: 0; font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   .inline-notice :global(.kit-notice.kit-notice > button:hover) { background: transparent; text-decoration: underline; }
+  /* A second action sits in the sentence's row, one group gap left of the first, styled as its twin and raised back onto the action line. */
+  .inline-notice__lead { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-group); }
+  .inline-notice__lead button { min-height: var(--control-h); margin: calc(-1 * var(--notice-line-offset)) 0 0; padding: 0; background: transparent; border: 0; border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer; font: inherit; font-size: var(--type-meta-size); font-weight: var(--font-weight-semibold); line-height: var(--type-meta-line); }
+  .inline-notice__lead button:hover:not(:disabled) { text-decoration: underline; }
+  .inline-notice__lead button:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
   .inline-notice :global(.kit-disclosure .kit-disclosure__summary.kit-disclosure__summary) { font-size: var(--type-meta-size); line-height: var(--type-meta-line); }
   p { margin: 0; }
   pre { max-height: 16rem; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--type-small-size); line-height: var(--type-small-line); }
