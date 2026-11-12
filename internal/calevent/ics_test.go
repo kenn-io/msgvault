@@ -217,6 +217,8 @@ func TestICSStatus(t *testing.T) {
 		components, err := ParseICS([]byte(raw), "REPLY", "")
 		requirements.NoError(err)
 		assertions.Empty(components)
+		_, err = ParseICS([]byte(raw), "ADD", "")
+		requirements.ErrorContains(err, `unsupported calendar method "ADD"`)
 		components, err = ParseICS([]byte(raw), "CANCEL", "")
 		requirements.NoError(err)
 		requirements.Len(components, 1)

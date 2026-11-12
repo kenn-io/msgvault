@@ -2148,14 +2148,16 @@ UTF-8, as it does for email. A series with unsupported recurrence stays archived
 reports how many events were updated and how many were not. Floating times use the calendar's `X-WR-TIMEZONE` when declared, or UTC otherwise. The daemon
 reads the file locally; importing files through a remote daemon is unavailable.
 
+A file with `METHOD:ADD` is rejected as unsupported.
+
 A cancellation keeps the event's last accepted title, times, participants, and
 raw iCalendar data, and only marks it cancelled.
 
 ### Invitations in email
 
 On unreleased `main`, archiving email extracts decoded `text/calendar` and `application/ics` MIME
-parts into event messages in the same source. Attached forwarded emails and iTIP messages with the ADD,
-REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored.
+parts into event messages in the same source. Attached forwarded emails and iTIP messages with the
+REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored. ADD is unsupported; the email is kept and a warning is logged.
 Attendee RSVPs come from the invitation snapshot; Google Calendar sync supplies provider-reported RSVPs.
 
 Within a source, an event keeps the organizer stored with it, and a new occurrence takes its series' organizer. Once an organizer is stored, a later emailed invite for that UID with a different or missing ORGANIZER is ignored with a warning; the email itself is kept. Files imported with `import-ics` are not checked.

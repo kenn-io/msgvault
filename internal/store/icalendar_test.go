@@ -26,6 +26,14 @@ func icsSource(t *testing.T, st *Store) int64 {
 	return source.ID
 }
 
+func TestICalendarUnsupportedMethod(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("ADD", "DTSTART:20270302T120000Z"))
+	require.ErrorContains(t, err, `unsupported calendar method "ADD"`)
+	assert.Empty(t, emailEvents(t, st, source))
+}
+
 func TestICalendarDeclaredTimeZone(t *testing.T) {
 	for _, mode := range []string{"file", "email"} {
 		t.Run(mode, func(t *testing.T) {

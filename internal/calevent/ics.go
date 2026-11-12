@@ -143,7 +143,7 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 		return nil, err
 	}
 	switch method {
-	case "REPLY", "ADD", "REFRESH", "COUNTER", "DECLINECOUNTER":
+	case "REPLY", "REFRESH", "COUNTER", "DECLINECOUNTER":
 		return nil, nil
 	}
 	declaredZone, err := propText(cal.Props, "X-WR-TIMEZONE")
@@ -203,7 +203,7 @@ func icsMethod(cal *ical.Calendar, method string) (string, error) {
 		method = declared
 	}
 	switch method {
-	case "", "REQUEST", "PUBLISH", "CANCEL", "REPLY", "ADD", "REFRESH", "COUNTER", "DECLINECOUNTER":
+	case "", "REQUEST", "PUBLISH", "CANCEL", "REPLY", "REFRESH", "COUNTER", "DECLINECOUNTER":
 		return method, nil
 	default:
 		return "", fmt.Errorf("unsupported calendar method %q", method)
