@@ -422,7 +422,7 @@ const APISchemaVersion = "5.2.0"
 func OpenAPIDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(false)
 	hardenSourceStatusPublicSchemas(doc)
-	hardenEmbeddingStatusSchemas(doc, false)
+	hardenNullableResponseSchemas(doc, false)
 	relaxResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
 	return doc
@@ -431,7 +431,7 @@ func OpenAPIDocument() *huma.OpenAPI {
 func openAPIClientDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(true)
 	hardenSourceStatusClientSchemas(doc)
-	hardenEmbeddingStatusSchemas(doc, true)
+	hardenNullableResponseSchemas(doc, true)
 	clearResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
 	applyClientCodegenExtensions(doc)
@@ -745,22 +745,23 @@ func hardenSourceStatusClientSchemas(doc *huma.OpenAPI) {
 	}
 }
 
-// embeddingStatusNullableFields are always-present nullable fields. The
+// nullableResponseFields are always-present nullable fields. The
 // public document marks object references with nullablePublicObjectRefs; the
 // Go client uses optional pointers for all of them, as with SourceStatus.
-var embeddingStatusNullableFields = map[string][]string{
+var nullableResponseFields = map[string][]string{
 	"EmbeddingStatus":         {"active_generation", "diagnostics", "messages_per_minute", "eta_seconds"},
 	"EmbeddingDiagnostics":    {"current_batch", "last_error", "finished_at", "last_successful_batch_at"},
 	"EmbeddingBatch":          {"error"},
 	"EmbeddingJobState":       {"started_at", "queued_at"},
 	"EmbeddingSchedulerState": {"slot_held_since"},
+	"BriefThanksSuggestion":   {"thanked"},
 }
 
-func hardenEmbeddingStatusSchemas(doc *huma.OpenAPI, client bool) {
+func hardenNullableResponseSchemas(doc *huma.OpenAPI, client bool) {
 	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
 		return
 	}
-	for schemaName, names := range embeddingStatusNullableFields {
+	for schemaName, names := range nullableResponseFields {
 		if !client {
 			nullablePublicObjectRefs(doc, schemaName, names...)
 			continue

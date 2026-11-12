@@ -66,7 +66,7 @@ type BriefThanksSuggestion struct {
 	Text        string               `json:"text"`
 	AnchorID    string               `json:"anchor_id"`
 	Quote       string               `json:"quote"`
-	Thanked     *BriefThanksEvidence `json:"thanked" nullable:"true"`
+	Thanked     *BriefThanksEvidence `json:"thanked"`
 	Key         string               `json:"key,omitempty"`
 	State       string               `json:"state,omitempty"`
 	PriorThanks string               `json:"prior_thanks,omitempty"`
