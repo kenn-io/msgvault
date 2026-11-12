@@ -229,6 +229,21 @@ func (r *importRun) dropDeletedFrames(deleted func(id string) (bool, error)) (bo
 	for more := true; more; {
 		more = false
 		for _, p := range r.state.Phases {
+			// A new slice keeps the saved page intact if a lookup fails.
+			posts := make([]Object, 0, len(p.Posts))
+			for _, post := range p.Posts {
+				gone, err := deleted(post.ID)
+				if err != nil {
+					return changed, err
+				}
+				if !gone {
+					posts = append(posts, post)
+				}
+			}
+			if len(posts) != len(p.Posts) {
+				changed = true
+				p.Posts = posts
+			}
 			for i := range p.Stack {
 				f := &p.Stack[i]
 				// A post's own frame is the bottom of its stack, so a deleted

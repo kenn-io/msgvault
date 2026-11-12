@@ -105,8 +105,10 @@ func applyWebhook(ctx context.Context, st *store.Store, sourceType, identifier s
 	}
 	// A paused polling sync would read the removed objects on every resume,
 	// and after `msgvault gc` it cannot see they were removed. Prune it now,
-	// under the same lock. A failure is retried with the change.
-	return dropDeletedTraversal(ctx, st, execution, source, run.sum.removed)
+	// under the same lock. A failure is retried with the change. It uses the
+	// uncancelled context, so a cancellation cannot commit the removal and
+	// skip the prune.
+	return dropDeletedTraversal(finish, st, execution, source, run.sum.removed)
 }
 
 func (r *importRun) applyFeedChange(ctx context.Context, reader ObjectReader, change feedChange) error {
