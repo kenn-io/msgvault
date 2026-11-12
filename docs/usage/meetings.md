@@ -48,7 +48,7 @@ matches. Meetings mode does not offer selection or deletion.
 Unscoped search includes meetings and chats. Email-specific CLI and TUI
 aggregates remain email-only unless you choose another message type.
 
-## Export context and read follow-ups
+## Link calendar events and notes
 
 Use `msgvault meetings links <note-id>` to see the calendar copies and notes
 that share an exact occurrence. You can also pass `msg:<id>` or an event `ref`
@@ -73,6 +73,8 @@ CLI table, and `unexpandable` reports the missing series and bounds. A known
 bound is kept even if the other is missing. Importing the master later fills
 in the times. Note matches, calendar candidate reads, and recurrence steps share
 one request work limit; exceeding it returns `query_too_broad`.
+
+## Export context and read follow-ups
 
 In Messages, select meeting rows and choose **Meeting context…** in the
 selection bar. In its popover, choose JSON or Markdown, optionally turn on
