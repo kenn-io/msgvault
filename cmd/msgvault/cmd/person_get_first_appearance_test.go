@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	assertpkg "github.com/stretchr/testify/assert"
+	requirepkg "github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
@@ -22,25 +22,27 @@ import (
 )
 
 func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
+	assert := assertpkg.New(t)
+	require := requirepkg.New(t)
 	f := storetest.New(t)
-	require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
 	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
 	sender := f.EnsureParticipant("sender@example.test", "Sender Example", "example.test")
 	senderPerson, _, err := f.Store.CreatePersonFromParticipant(sender)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = f.Store.UpdatePersonDisplayNameContext(t.Context(), senderPerson.ID, senderPerson.Revision, new("Saved Sender"))
-	require.NoError(t, err)
+	require.NoError(err)
 	target := f.EnsureParticipant("target@example.test", "Target Example", "example.test")
 	person, _, err := f.Store.CreatePersonFromParticipant(target)
-	require.NoError(t, err)
+	require.NoError(err)
 	at := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
 	id := f.NewMessage().WithSourceMessageID("intro-cli").WithSentAt(at).Create(t, f.Store)
-	require.NoError(t, f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Sender Example"}))
-	require.NoError(t, f.Store.ReplaceMessageRecipients(id, "to", []int64{owner, target}, []string{"Owner", "Target Example"}))
+	require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Sender Example"}))
+	require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner, target}, []string{"Owner", "Target Example"}))
 	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 10, MaxDirectCounterparts: 25})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = projector.RunOnce(t.Context())
-	require.NoError(t, err)
+	require.NoError(err)
 	srv := api.NewServer(&config.Config{}, &storeAPIAdapter{store: f.Store}, nil, slog.New(slog.DiscardHandler))
 	var oldDaemon, failState atomic.Bool
 	router := srv.Router()
@@ -59,15 +61,15 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 	t.Cleanup(httpServer.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: httpServer.URL, AllowInsecure: true}})
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, fmt.Sprintf("%s/api/v1/people/%d/contact-state", httpServer.URL, person.ID), nil)
-	require.NoError(t, err)
+	require.NoError(err)
 	response, err := http.DefaultClient.Do(request)
-	require.NoError(t, err)
+	require.NoError(err)
 	defer func() { _ = response.Body.Close() }()
-	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.Equal(http.StatusOK, response.StatusCode)
 	var state map[string]any
-	require.NoError(t, json.NewDecoder(response.Body).Decode(&state))
-	assert.Equal(t, fmt.Sprintf("message:%d", id), state["first_seen_ref"])
-	assert.Equal(t, "email_intro", state["first_contact_kind"])
+	require.NoError(json.NewDecoder(response.Body).Decode(&state))
+	assert.Equal(fmt.Sprintf("message:%d", id), state["first_seen_ref"])
+	assert.Equal("email_intro", state["first_contact_kind"])
 
 	savedJSON := personJSON
 	personJSON = true
@@ -78,18 +80,20 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 		var got bytes.Buffer
 		get.SetOut(&got)
 		get.SetArgs(args)
-		require.NoError(t, get.ExecuteContext(ctx))
+		require.NoError(get.ExecuteContext(ctx))
 		var profile map[string]any
-		require.NoError(t, json.Unmarshal(got.Bytes(), &profile))
+		require.NoError(json.Unmarshal(got.Bytes(), &profile))
 		contact, ok := profile["contact_state"].(map[string]any)
-		require.True(t, ok)
-		assert.Equal(t, state["first_seen_ref"], contact["first_seen_ref"])
+		require.True(ok)
+		assert.Equal(state["first_seen_ref"], contact["first_seen_ref"])
 	}
 	for _, scenario := range []struct {
 		name      string
 		old, fail bool
 	}{{"older daemon", true, false}, {"optional subresource unavailable", false, true}} {
 		t.Run(scenario.name, func(t *testing.T) {
+			assert := assertpkg.New(t)
+			require := requirepkg.New(t)
 			oldDaemon.Store(scenario.old)
 			failState.Store(scenario.fail)
 			for _, args := range [][]string{{strconv.FormatInt(person.ID, 10)}, {"--vcard-uid", person.VCardUID}} {
@@ -100,14 +104,14 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 				get.SetArgs(args)
 				err := get.ExecuteContext(ctx)
 				if scenario.fail {
-					require.ErrorContains(t, err, "read person contact state")
+					require.ErrorContains(err, "read person contact state")
 					continue
 				}
-				require.NoError(t, err)
+				require.NoError(err)
 				var profile map[string]any
-				require.NoError(t, json.Unmarshal(got.Bytes(), &profile))
-				assert.Equal(t, float64(person.ID), profile["id"])
-				assert.NotContains(t, profile, "contact_state")
+				require.NoError(json.Unmarshal(got.Bytes(), &profile))
+				assert.InDelta(float64(person.ID), profile["id"], 0)
+				assert.NotContains(profile, "contact_state")
 			}
 		})
 	}

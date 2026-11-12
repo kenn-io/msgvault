@@ -758,7 +758,8 @@ func writeCLIGetPerson(cmd *cobra.Command, client *daemonclient.Client, person *
 	}
 	return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), struct {
 		*generated.Person `json:",inline"`
-		ContactState      *generated.ContactState `json:"contact_state"`
+
+		ContactState *generated.ContactState `json:"contact_state"`
 	}{person, response.JSON200}, json.Deterministic(true))
 }
 

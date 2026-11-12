@@ -42,7 +42,7 @@ func ClassifyFirstContact(candidate ActivityCandidate, personID int64, maxDirect
 		return FirstContactGroupShared, nil
 	}
 	email := candidate.ConversationType == "email_thread"
-	direct := candidate.ConversationType == "direct_chat"
+	direct := candidate.ConversationType == string(MessageExportConversationDirectChat)
 	if !email && !direct {
 		return FirstContactObserved, nil
 	}

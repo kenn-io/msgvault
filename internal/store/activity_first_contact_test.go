@@ -46,7 +46,7 @@ func TestClassifyFirstContact(t *testing.T) {
 	for _, n := range []int{maxIntroCounterparts, maxIntroCounterparts + 1} {
 		c := email
 		c.Counterparts = append([]ActivityCounterpart(nil), email.Counterparts...)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			id := int64(100 + i)
 			c.Counterparts = append(c.Counterparts, ActivityCounterpart{ParticipantID: id, PersonID: &id, RecipientType: "cc"})
 		}
@@ -60,17 +60,18 @@ func TestClassifyFirstContact(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
 			kind, intro := ClassifyFirstContact(tc.candidate, target, tc.max)
-			assert.Equal(t, tc.want, kind)
+			assert.Equal(tc.want, kind)
 			if tc.introducer == 0 {
-				assert.Nil(t, intro)
-			} else if assert.NotNil(t, intro) {
-				assert.Equal(t, tc.introducer, intro.ParticipantID)
+				assert.Nil(intro)
+			} else if assert.NotNil(intro) {
+				assert.Equal(tc.introducer, intro.ParticipantID)
 				if tc.person == nil {
-					assert.Nil(t, intro.PersonID)
+					assert.Nil(intro.PersonID)
 				} else {
 					require.NotNil(t, intro.PersonID)
-					assert.Equal(t, *tc.person, *intro.PersonID)
+					assert.Equal(*tc.person, *intro.PersonID)
 				}
 			}
 		})

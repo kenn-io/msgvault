@@ -298,6 +298,8 @@ func TestPeopleBrowserGetPersonProfileByUIDRequiresCurrentDaemonSchema(t *testin
 }
 
 func TestPeopleBrowserPreservesFirstSeenWithoutDirectContact(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	engine := newPeopleBrowserTestEngine(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/people/51":
@@ -309,14 +311,14 @@ func TestPeopleBrowserPreservesFirstSeenWithoutDirectContact(t *testing.T) {
 		}
 	}))
 	profile, err := engine.GetPersonProfile(t.Context(), 51)
-	require.NoError(t, err)
-	require.NotNil(t, profile.ContactState)
-	assert.Equal(t, "message:7", profile.ContactState.FirstSeenRef)
-	assert.Equal(t, store.FirstContactEmailIntro, profile.ContactState.FirstContactKind)
-	require.NotNil(t, profile.ContactState.Introducer)
-	assert.Equal(t, int64(8), profile.ContactState.Introducer.ParticipantID)
-	assert.Equal(t, "Sender Example", profile.ContactState.Introducer.DisplayName)
-	require.NotNil(t, profile.ContactState.Introducer.PersonID)
-	assert.Equal(t, int64(9), *profile.ContactState.Introducer.PersonID)
-	assert.Zero(t, profile.ContactState.ComputedAt)
+	require.NoError(err)
+	require.NotNil(profile.ContactState)
+	assert.Equal("message:7", profile.ContactState.FirstSeenRef)
+	assert.Equal(store.FirstContactEmailIntro, profile.ContactState.FirstContactKind)
+	require.NotNil(profile.ContactState.Introducer)
+	assert.Equal(int64(8), profile.ContactState.Introducer.ParticipantID)
+	assert.Equal("Sender Example", profile.ContactState.Introducer.DisplayName)
+	require.NotNil(profile.ContactState.Introducer.PersonID)
+	assert.Equal(int64(9), *profile.ContactState.Introducer.PersonID)
+	assert.Zero(profile.ContactState.ComputedAt)
 }
