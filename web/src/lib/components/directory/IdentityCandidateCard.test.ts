@@ -52,7 +52,7 @@ function completeCandidate(): IdentityMatchCandidate {
 describe('IdentityCandidateCard', () => {
   it('shows when no evidence was supplied', () => {
     render(IdentityCandidateCard, { candidate: { ...completeCandidate(), evidence: [] }, pending: false });
-    expect(screen.getByText('No evidence supplied.')).toBeDefined();
+    expect(screen.getByText('No supporting details for this match.')).toBeDefined();
   });
 
   it('renders candidate fields and labelled evidence', () => {
