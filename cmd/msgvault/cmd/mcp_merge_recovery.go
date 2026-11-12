@@ -66,7 +66,7 @@ const mergeInvalidResponse = "invalid_operation_response"
 
 func mergeRefusal(code string) bool {
 	switch code {
-	case "person_profile_not_found", "person_merge_not_found", "person_merge_snapshot_corrupt", "invalid_merge_id", "invalid_candidate_id", "invalid_limit", "invalid_offset", "person_merge_revision_conflict", "person_split_idempotency_conflict", "person_merge_already_split", "person_split_reviewed_candidates", "person_split_merge_not_owned", "person_merge_candidate_not_found", "person_merge_candidate_state_changed", "person_split_invalid_participants", "person_merge_invalid", "if_match_required", "invalid_if_match", "idempotency_key_required", "invalid_idempotency_key":
+	case "person_profile_not_found", "person_merge_not_found", "person_merge_snapshot_corrupt", "invalid_merge_id", "invalid_candidate_id", "invalid_limit", "invalid_offset", "person_merge_revision_conflict", "person_split_idempotency_conflict", "person_merge_already_split", "person_split_reviewed_candidates", "person_split_merge_not_owned", "person_merge_candidate_not_found", "person_merge_candidate_state_changed", "person_split_invalid_participants", "person_merge_invalid", "if_match_required", "invalid_if_match", "idempotency_key_required", "invalid_idempotency_key", "server_busy":
 		return true
 	}
 	return false
