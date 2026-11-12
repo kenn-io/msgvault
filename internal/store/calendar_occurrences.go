@@ -222,7 +222,7 @@ func calendarOriginalStart(original calrecur.Identity, event calevent.Event) (ti
 	}
 	zone, err := calendarEventZone(event)
 	if err != nil {
-		return original.Instant, err
+		return time.Time{}, nil
 	}
 	start, _, err := calrecur.CivilDateBoundary(original.Date, zone)
 	return start, err

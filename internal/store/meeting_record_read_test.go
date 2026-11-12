@@ -488,6 +488,36 @@ func TestMeetingRecordRetainsExceptionForUnsupportedSeries(t *testing.T) {
 	}
 }
 
+func TestMeetingRecordAllDayEditWithUnavailableSeriesZone(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"series","iCalUID":"zone@example.org","start":{"dateTime":"2027-03-14T10:00:00Z","timeZone":"Unavailable/Zone"},"end":{"dateTime":"2027-03-14T11:00:00Z","timeZone":"Unavailable/Zone"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, "owner@example.com")
+	_, edit := calendarFixture(t, st, "edit", `{"id":"edit","recurringEventId":"series","iCalUID":"zone@example.org","originalStartTime":{"date":"2027-03-14"},"start":{"dateTime":"2027-03-15T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2027-03-15T11:00:00Z","timeZone":"UTC"}}`, "owner@example.com")
+	_, exact := projectionFixture(t, st, "exact", "granola_json", `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"edit"}}`)
+	_, midnight := projectionFixture(t, st, "midnight", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"zone@example.org","startsAt":"2027-03-14T00:00:00Z"}}`)
+	start := time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC)
+	end := time.Date(2027, 3, 15, 11, 0, 0, 0, time.UTC)
+	window := time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), window, window.AddDate(0, 0, 1))
+	require.NoError(err)
+	require.Len(page.Occurrences, 1)
+	assert.Equal(edit, page.Occurrences[0].MessageID)
+	assert.Equal(start, page.Occurrences[0].Start)
+	assert.Equal(end, page.Occurrences[0].End)
+	assert.Contains(page.Unexpandable, CalendarUnexpandable{MessageID: master, Reason: "unsupported recurrence"})
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: edit})
+	require.NoError(err)
+	require.Len(record.Links, 1)
+	assert.Equal(fmt.Sprintf("evt:%d", edit), record.Links[0].Ref)
+	require.NotNil(record.Links[0].Start)
+	require.NotNil(record.Links[0].End)
+	assert.Equal(start, *record.Links[0].Start)
+	assert.Equal(end, *record.Links[0].End)
+	assert.Equal([]int64{exact}, record.MessageIDs)
+	assert.NotContains(record.MessageIDs, midnight)
+	assert.Contains(record.Unexpandable, CalendarUnexpandable{MessageID: master, Reason: "unsupported recurrence"})
+}
+
 func TestMeetingRecordUnsupportedAllDayEditOriginalZone(t *testing.T) {
 	assertions, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
