@@ -275,6 +275,10 @@ func TestMeetingLinkDecisionRejectsSameCopy(t *testing.T) {
 	requirements.NoError(err)
 	_, err = st.DecideMeetingLinkContext(t.Context(), occurrence, MeetingLinkRef{Kind: "evt", MessageID: edit}, "link")
 	requirements.ErrorIs(err, ErrMeetingLinkSameCopy)
+	_, err = st.DecideMeetingLinkContext(t.Context(), occurrence, occurrence, "link")
+	requirements.ErrorIs(err, ErrMeetingLinkSameCopy)
+	_, err = st.DecideMeetingLinkContext(t.Context(), occurrence, MeetingLinkRef{Kind: "evt", MessageID: edit}, "invalid")
+	requirements.ErrorIs(err, ErrInvalidMeetingLinkDecision)
 }
 
 func TestMeetingLinkDecisionEquivalentEventCopies(t *testing.T) {

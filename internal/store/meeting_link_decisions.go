@@ -67,20 +67,16 @@ func compareMeetingEndpoints(a, b meetingDecisionEndpoint) int {
 	return strings.Compare(a.Key, b.Key)
 }
 
-func validateMeetingLinkDecision(left, right MeetingLinkRef, decision string) error {
+func validateMeetingLinkDecision(decision string) error {
 	if decision != "link" && decision != "unlink" && decision != "clear" {
 		return fmt.Errorf("%w: decision must be link, unlink, or clear", ErrInvalidMeetingLinkDecision)
-	}
-	a, b := endpointFromRef(left), endpointFromRef(right)
-	if a.ID <= 0 || b.ID <= 0 || (a.Kind != meetingRefMessage && a.Kind != meetingRefEvent) || (b.Kind != meetingRefMessage && b.Kind != meetingRefEvent) || compareMeetingEndpoints(a, b) == 0 {
-		return fmt.Errorf("%w: invalid endpoints", ErrInvalidMeetingLinkDecision)
 	}
 	return nil
 }
 
 // DecideMeetingLinkContext saves or clears a choice between two copies.
 func (s *Store) DecideMeetingLinkContext(ctx context.Context, left, right MeetingLinkRef, decision string) (result MeetingLinkDecisionResult, err error) {
-	if err := validateMeetingLinkDecision(left, right, decision); err != nil {
+	if err := validateMeetingLinkDecision(decision); err != nil {
 		return result, err
 	}
 	a, b := endpointFromRef(left), endpointFromRef(right)
