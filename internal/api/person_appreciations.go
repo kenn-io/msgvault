@@ -92,12 +92,6 @@ func (s *Server) handleListPersonAppreciations(w http.ResponseWriter, r *http.Re
 	for _, memory := range projection.Appreciations {
 		suggestion := memory.Suggestion
 		suggestion.Text = textutil.SanitizeTerminal(suggestion.Text)
-		suggestion.Quote = textutil.SanitizeTerminal(suggestion.Quote)
-		if suggestion.Thanked != nil {
-			thanks := *suggestion.Thanked
-			thanks.Quote = textutil.SanitizeTerminal(thanks.Quote)
-			suggestion.Thanked = &thanks
-		}
 		response.Appreciations = append(response.Appreciations, PersonAppreciation{Suggestion: suggestion, Peer: memory.PeerRef, Owner: memory.OwnerRef})
 	}
 	w.Header().Set("Cache-Control", "no-store")
