@@ -180,6 +180,9 @@ func freezeBriefEventMemory(window BriefWindow, events []BriefHighlight, byID ma
 			boundary.AdmissionThroughEventTime = item.EventTime.UTC()
 		}
 	}
+	if boundary.AdmissionThroughEventTime.After(window.Request.AsOf) {
+		boundary.AdmissionThroughEventTime = window.Request.AsOf.UTC()
+	}
 	if previous := window.Request.Previous; previous != nil && previous.AdmissionThroughEventTime.After(boundary.AdmissionThroughEventTime) {
 		boundary.AdmissionThroughEventTime = previous.AdmissionThroughEventTime
 	}

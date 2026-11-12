@@ -234,6 +234,10 @@ func mergeBriefEvents(
 				indexes[original] = index
 				continue
 			}
+			if evidence[event.AnchorID].EventTime.After(asOf) {
+				dropped++
+				continue
+			}
 			if context != nil && !context.Bootstrap &&
 				!evidence[event.AnchorID].EventTime.After(context.AdmissionThrough) {
 				dropped++
