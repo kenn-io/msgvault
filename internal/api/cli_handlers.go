@@ -732,22 +732,23 @@ type sourceMessageCounter interface {
 
 // virtualAccountLister reads the virtual account catalog. Its freshness
 // depends on the confirmed identities, so a store that offers the catalog
-// also reports the revision that changes when one is added or removed.
+// also reports the revision that changes when one is added or removed or any
+// transaction rewrites a message's attribution.
 type virtualAccountLister interface {
 	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
-	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+	AccountCatalogRevisionContext(ctx context.Context) (int64, error)
 }
 
 // virtualAccountCatalogFreshFor is how long a completed catalog read serves
 // as current. Confirming or removing an identity starts a new read at once.
 const virtualAccountCatalogFreshFor = 2 * time.Minute
 
-// virtualAccountCatalogVersion is the identity revision a catalog read
-// depends on, so a read from before an identity change is never fresh.
+// virtualAccountCatalogVersion is the catalog revision a read depends on, so a
+// read from before an identity or attribution change is never fresh.
 func (s *Server) virtualAccountCatalogVersion(ctx context.Context, lister virtualAccountLister) string {
-	revision, err := lister.AccountIdentityRevisionContext(ctx)
+	revision, err := lister.AccountCatalogRevisionContext(ctx)
 	if err != nil {
-		s.logger.Warn("reading account identity revision for the account catalog", "error", err)
+		s.logger.Warn("reading account catalog revision", "error", err)
 		return ""
 	}
 	return strconv.FormatInt(revision, 10)

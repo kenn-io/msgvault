@@ -1063,6 +1063,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		apiOpts.VectorStatus = api.VectorStatusInitializing
 	}
 	apiServer = api.NewServerWithOptions(apiOpts)
+	apiServer.StartAccountAttributionRecovery()
 	if cfg.People.Sweep.Enabled {
 		// The daemon owns the people sweep worker, so it owns manual brief
 		// generation: POST /api/v1/people/{id}/brief/generate reports
@@ -2251,6 +2252,9 @@ func (a *storeAPIAdapter) BeginReadSnapshotContext(ctx context.Context) (context
 }
 func (a *storeAPIAdapter) DB() *sql.DB        { return a.store.DB() }
 func (a *storeAPIAdapter) IsPostgreSQL() bool { return a.store.IsPostgreSQL() }
+func (a *storeAPIAdapter) RepairAccountAttributionContext(ctx context.Context, sourceID int64, progress func(store.AccountAttributionRepairSummary)) (store.AccountAttributionRepairSummary, error) {
+	return a.store.RepairAccountAttributionContext(ctx, sourceID, progress)
+}
 
 func (a *storeAPIAdapter) ListMessagesContext(
 	ctx context.Context, offset, limit int, sourceIDs []int64,
@@ -3066,17 +3070,28 @@ func (a *storeAPIAdapter) ListVirtualAccountsContext(ctx context.Context) (map[i
 	return a.store.ListVirtualAccountsContext(ctx)
 }
 
+func (a *storeAPIAdapter) PendingAccountAttributionSourcesContext(ctx context.Context) ([]int64, error) {
+	return a.store.PendingAccountAttributionSourcesContext(ctx)
+}
+
 // AccountIdentityRevisionContext lets the API tell a catalog read from before
 // an identity change from a current one.
 func (a *storeAPIAdapter) AccountIdentityRevisionContext(ctx context.Context) (int64, error) {
 	return a.store.AccountIdentityRevisionContext(ctx)
 }
 
+// AccountCatalogRevisionContext reports attribution rewrites, including ones
+// committed outside the daemon's repair queue.
+func (a *storeAPIAdapter) AccountCatalogRevisionContext(ctx context.Context) (int64, error) {
+	return a.store.AccountCatalogRevisionContext(ctx)
+}
+
 // The API serves the account catalog only from a store that also reports
-// the identity revision, so the adapter must keep both.
+// the identity and catalog revisions, so the adapter must keep all three.
 var _ interface {
 	ListVirtualAccountsContext(ctx context.Context) (map[int64][]store.VirtualAccount, error)
 	AccountIdentityRevisionContext(ctx context.Context) (int64, error)
+	AccountCatalogRevisionContext(ctx context.Context) (int64, error)
 } = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) ResolveAccountIdentityContext(

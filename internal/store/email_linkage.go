@@ -155,7 +155,7 @@ func (s *Store) storedEmailLinkage(ctx context.Context, tx *loggedTx, messageID 
 func (s *Store) RepairEmailLinkageContext(
 	ctx context.Context, sourceID int64, progress func(EmailLinkageRepairSummary),
 ) (EmailLinkageRepairSummary, error) {
-	scanned, incomplete, err := s.derivePagesContext(ctx, sourceID, "derive email linkage",
+	scanned, incomplete, err := s.derivePagesContext(ctx, sourceID, "derive email linkage", false,
 		func(tx *loggedTx, after int64, limit int) ([]int64, error) {
 			var ids []int64
 			err := scanIDsTx(ctx, tx, func(rows *loggedRows) error {

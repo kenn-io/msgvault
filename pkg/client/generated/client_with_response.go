@@ -33355,6 +33355,39 @@ func (c *Client) ListSourceStatusWithResponse(ctx context.Context, options *List
 	}
 }
 
+// RepairAccountAttribution Retry account matching for one source
+func (c *Client) RepairAccountAttributionWithResponse(ctx context.Context, options *RepairAccountAttributionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RepairAccountAttributionResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/sources/{source_id}/account-attribution/repair",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/sources/{source_id}/account-attribution/repair")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &RepairAccountAttributionResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 202:
+		return out, nil
+	default:
+		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
 // ListSourceIdentities List confirmed identities for one source
 func (c *Client) ListSourceIdentitiesWithResponse(ctx context.Context, options *ListSourceIdentitiesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListSourceIdentitiesResp, error) {
 	var err error

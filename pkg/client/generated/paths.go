@@ -1023,6 +1023,11 @@ func (p PutSettingsProviderCredentialPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type RepairAccountAttributionPath struct {
+	// SourceID Source ID
+	SourceID int64 `json:"source_id"`
+}
+
 type ListSourceIdentitiesPath struct {
 	// SourceID Source ID
 	SourceID int64 `json:"source_id"`

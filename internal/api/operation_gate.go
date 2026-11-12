@@ -472,6 +472,8 @@ var readOnlyPostRoutePatterns = []string{
 	"/api/v1/meetings/context",
 	"/api/v1/meetings/metrics",
 	"/api/v1/search/coverage",
+	// Account matching retry only queues work; its coordinator takes the gate.
+	"/api/v1/sources/{source_id}/account-attribution/repair",
 }
 
 var (

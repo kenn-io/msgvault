@@ -194,7 +194,7 @@ func (s *Store) refreshAccountAttributionAfterWriteTx(
 		return fmt.Errorf("read message %d for account attribution: %w", id, err)
 	}
 	if (IsEmailMessageType(messageType) || messageType == "calendar_event") && !tx.attribution.holds(sourceID) {
-		if _, err := tx.ExecContext(ctx, `
+		if _, err := tx.execAttributionContext(ctx, `
 			UPDATE messages SET account_address = NULL, account_path = NULL
 			WHERE id = ? AND (account_address IS NOT NULL OR account_path IS NOT NULL)`, id); err != nil {
 			return fmt.Errorf("mark message %d account attribution pending: %w", id, err)
@@ -603,7 +603,7 @@ func (s *Store) writeAccountAttributionTx(
 	if path != "" {
 		pathValue = path
 	}
-	if _, err := tx.ExecContext(ctx, `
+	if _, err := tx.execAttributionContext(ctx, `
 		UPDATE messages SET account_address = ?, account_path = ?
 		WHERE id = ? AND COALESCE(message_type, '') = ?`,
 		addressValue, pathValue, id, messageType,
@@ -1112,13 +1112,34 @@ func markPendingIfSentFolderChangedTx(f *labelOutboundFlips) error {
 	if err != nil || after == before {
 		return err
 	}
-	if _, err := f.tx.ExecContext(f.ctx, `
+	if _, err := f.tx.execAttributionContext(f.ctx, `
 		UPDATE messages SET account_address = NULL, account_path = NULL
 		WHERE source_id = ? AND COALESCE(message_type, '') IN ('', 'email') AND account_path IS NOT NULL`,
 		f.sourceID); err != nil {
 		return fmt.Errorf("mark source %d account attribution pending: %w", f.sourceID, err)
 	}
 	return nil
+}
+
+// PendingAccountAttributionSourcesContext finds sources with unfinished matching.
+func (s *Store) PendingAccountAttributionSourcesContext(ctx context.Context) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM sources WHERE EXISTS (SELECT 1 FROM messages WHERE source_id = sources.id AND `+accountPendingPredicate+`) ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list sources with pending account attribution: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan pending account attribution source: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read pending account attribution sources: %w", err)
+	}
+	return ids, nil
 }
 
 // markAccountAttributionPendingForAddressesTx returns to pending the rows of
@@ -1203,7 +1224,7 @@ func (s *Store) markAccountAttributionPendingForAddressesTx(
 	}
 
 	list := slices.Sorted(maps.Keys(ids))
-	if err := execInChunksContext(ctx, tx, list, nil,
+	if err := execInChunksContext(ctx, attributionWriter{tx}, list, nil,
 		`UPDATE messages SET account_address = NULL, account_path = NULL WHERE id IN (%s)`); err != nil {
 		return nil, fmt.Errorf("mark account attribution pending for source %d: %w", sourceID, err)
 	}
@@ -1212,8 +1233,7 @@ func (s *Store) markAccountAttributionPendingForAddressesTx(
 
 // deriveAccountAttributionAfterCommit derives rows an identity or mailbox
 // change returned to pending, a page per transaction. The change has already
-// committed, so a failure is logged and the rows stay pending until the
-// source's next sync or repair-derived.
+// committed, so temporary database errors are retried before logging failure.
 func (s *Store) deriveAccountAttributionAfterCommit(ctx context.Context, sourceID int64, ids []int64) {
 	if len(ids) == 0 {
 		return
@@ -1326,7 +1346,9 @@ func (s *Store) RepairAccountAttributionContext(
 	ctx context.Context, sourceID int64, progress func(AccountAttributionRepairSummary),
 ) (AccountAttributionRepairSummary, error) {
 	var present int
-	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM sources WHERE id = ?`, sourceID).Scan(&present)
+	err := retryBusyWriteErr(ctx, s, "read account attribution source", func() error {
+		return s.db.QueryRowContext(ctx, `SELECT 1 FROM sources WHERE id = ?`, sourceID).Scan(&present)
+	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return AccountAttributionRepairSummary{}, nil
 	}
@@ -1356,7 +1378,7 @@ func (s *Store) deriveAccountAttributionPagesContext(
 	ctx context.Context, sourceID int64, progress func(AccountAttributionRepairSummary),
 	page func(tx *loggedTx, after int64, limit int) ([]int64, error),
 ) (AccountAttributionRepairSummary, error) {
-	scanned, flagged, err := s.derivePagesContext(ctx, sourceID, "derive account attribution", page,
+	scanned, flagged, err := s.derivePagesContext(ctx, sourceID, "derive account attribution", true, page,
 		func(tx *loggedTx, id int64) (bool, error) {
 			return s.refreshAccountAttributionTx(ctx, tx, id, deliveryInput{})
 		},
@@ -1373,7 +1395,7 @@ func (s *Store) deriveAccountAttributionPagesContext(
 // a flag in the summary (undecodable, incomplete). progress sees the running
 // totals after each committed page.
 func (s *Store) derivePagesContext(
-	ctx context.Context, sourceID int64, what string,
+	ctx context.Context, sourceID int64, what string, retry bool,
 	page func(tx *loggedTx, after int64, limit int) ([]int64, error),
 	derive func(tx *loggedTx, id int64) (bool, error),
 	progress func(scanned, flagged int64),
@@ -1388,7 +1410,7 @@ func (s *Store) derivePagesContext(
 			return scanned, flagged, err
 		}
 		var pageScanned, pageFlagged, last int64
-		err := s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
+		pageTx := func(tx *loggedTx) error {
 			pageScanned, pageFlagged, last = 0, 0, 0
 			ids, err := page(tx, after, limit)
 			if err != nil {
@@ -1409,7 +1431,16 @@ func (s *Store) derivePagesContext(
 				last = id
 			}
 			return nil
-		})
+		}
+		attempt := func() error {
+			return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, pageTx)
+		}
+		var err error
+		if retry {
+			err = retryBusyWriteErr(ctx, s, what, attempt)
+		} else {
+			err = attempt()
+		}
 		if err != nil {
 			return scanned, flagged, fmt.Errorf("%s for source %d: %w", what, sourceID, err)
 		}
