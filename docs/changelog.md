@@ -10,8 +10,6 @@ All notable changes to msgvault, grouped by release.
 
 - Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
-- Call imports require `record_id` to equal `native_call_id` when supplied,
-  so reimporting the same call replaces its evidence and counts it once.
 - [Call history](usage/call-history.md) shows how often you call each person. Use `msgvault calls import`, `msgvault calls list`, and `msgvault calls summary` to import, browse, and count calls. Summaries count only calls where you and that person attended; invitations never count as calls. These commands require HTTP API schema 5.1.0.
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
