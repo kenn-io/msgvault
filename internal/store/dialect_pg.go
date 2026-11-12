@@ -406,9 +406,12 @@ func truncateBytesRuneSafe(s string) string {
 // tokens can still exceed PostgreSQL limits; upsertFTSOrUnsearchable handles
 // that case.
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
+	if err := q.QueryRow(`SELECT `+voiceSearchSQL(true, "$1"), doc.MessageID).Scan(&doc.voice); err != nil {
+		return err
+	}
 	vector, args := pgFTSVector(doc)
 	_, err := q.Exec(
-		`UPDATE messages SET search_fts = v.vector, search_fts_fields = $7::text[],
+		`UPDATE messages SET search_fts = v.vector, search_fts_fields = $8::text[],
 			indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`
 		FROM (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -418,11 +421,14 @@ func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 
 // FTSMatches compares the stored tsvector with the one FTSUpsert would write.
 func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
+	if err := q.QueryRow(`SELECT `+voiceSearchSQL(true, "$1"), doc.MessageID).Scan(&doc.voice); err != nil {
+		return false, err
+	}
 	vector, args := pgFTSVector(doc)
 	var matches bool
 	err := q.QueryRow(
 		`SELECT COALESCE(search_fts = v.vector
-			AND search_fts_fields IS NOT DISTINCT FROM $7::text[]
+			AND search_fts_fields IS NOT DISTINCT FROM $8::text[]
 			AND indexing_version = `+strconv.Itoa(CurrentFTSIndexingVersion)+`, FALSE)
 		FROM messages, (SELECT `+vector+` AS vector) v WHERE id = $1`,
 		args...,
@@ -438,8 +444,8 @@ func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 // a position between fields and cannot appear in a normalized search term.
 func pgFTSVector(doc FTSDoc) (string, []any) {
 	doc, fields := preparePostgresFTSDoc(doc)
-	vector := pgFTSVectorFields("$2", "$3", "$4", "$5", "$6")
-	return vector, []any{doc.MessageID, doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, fields}
+	vector := pgFTSVectorFields("$2", "$3", "$4", "$5", "$6", "$7")
+	return vector, []any{doc.MessageID, doc.Subject, doc.Body, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.voice, fields}
 }
 
 func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
@@ -454,9 +460,10 @@ func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
 	doc.FromAddr = prepare(doc.FromAddr)
 	doc.ToAddrs = prepare(doc.ToAddrs)
 	doc.CcAddrs = prepare(doc.CcAddrs)
-	fields := []string{doc.Subject, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.Body}
+	doc.voice = prepare(doc.voice)
+	fields := []string{doc.Subject, doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.Body, doc.voice}
 	counts := make(map[string]int)
-	positions := 4 // Separator lexemes between the five fields.
+	positions := 5 // Separator lexemes between the six fields.
 	saturated := false
 	for _, field := range fields {
 		for token := range strings.FieldsSeq(field) {
@@ -478,12 +485,13 @@ func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
 	return doc, fields
 }
 
-func pgFTSVectorFields(subject, body, sender, to, cc string) string {
+func pgFTSVectorFields(subject, body, sender, to, cc, voice string) string {
 	return `setweight(to_tsvector('simple', COALESCE(` + subject + `, '')), 'A') || '''!'':1'::tsvector ||
 			setweight(to_tsvector('simple', COALESCE(` + sender + `, '')), 'B') || '''!'':1'::tsvector ||
 			setweight(to_tsvector('simple', COALESCE(` + to + `, '')), 'C') || '''!'':1'::tsvector ||
 			setweight(to_tsvector('simple', COALESCE(` + cc + `, '')), 'C') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', COALESCE(` + body + `, '')), 'D')`
+			setweight(to_tsvector('simple', COALESCE(` + body + `, '')), 'D') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', COALESCE(` + voice + `, '')), 'C')`
 }
 
 // FTSSearchClause returns SQL fragments for tsvector full-text search.

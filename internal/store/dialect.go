@@ -25,6 +25,7 @@ type FTSDoc struct {
 	FromAddr  string
 	ToAddrs   string
 	CcAddrs   string
+	voice     string
 }
 
 type ftsEnvelopeExpressions struct {

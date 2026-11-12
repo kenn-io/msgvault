@@ -4136,6 +4136,13 @@ BEGIN
     WHERE person_id = OLD.person_id;
 END;
 
+CREATE TABLE IF NOT EXISTS voice_transcripts (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    attachment_id BIGINT NOT NULL,
+    transcript_text TEXT NOT NULL,
+    PRIMARY KEY (message_id, attachment_id)
+);
+
 -- Current normalized source evidence, rebuilt from authoritative meeting raw.
 CREATE TABLE IF NOT EXISTS meeting_details (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,

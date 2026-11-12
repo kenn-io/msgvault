@@ -3757,6 +3757,13 @@ CREATE INDEX IF NOT EXISTS idx_account_identities_address
 CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
     ON collection_sources(source_id);
 
+CREATE TABLE IF NOT EXISTS voice_transcripts (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    attachment_id BIGINT NOT NULL,
+    transcript_text TEXT NOT NULL,
+    PRIMARY KEY (message_id, attachment_id)
+);
+
 -- Current normalized source evidence, rebuilt from authoritative meeting raw.
 CREATE TABLE IF NOT EXISTS meeting_details (
     message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,

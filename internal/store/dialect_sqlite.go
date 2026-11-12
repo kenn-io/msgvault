@@ -399,9 +399,9 @@ func (d *SQLiteDialect) InsertOrIgnoreSuffix() string { return "" }
 func (d *SQLiteDialect) FTSUpsert(q querier, doc FTSDoc) error {
 	_, err := q.Exec(
 		`INSERT OR REPLACE INTO messages_fts(rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ? || CASE WHEN `+voiceSearchSQL(false, "?")+` = '' THEN '' ELSE char(10) || `+voiceSearchSQL(false, "?")+` END)`,
 		doc.MessageID, doc.MessageID, doc.Subject, doc.Body,
-		doc.FromAddr, doc.ToAddrs, doc.CcAddrs,
+		doc.FromAddr, doc.ToAddrs, doc.CcAddrs, doc.MessageID, doc.MessageID,
 	)
 	return err
 }
@@ -419,9 +419,16 @@ func (d *SQLiteDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	var speech string
+	if err := q.QueryRow(`SELECT `+voiceSearchSQL(false, "?"), doc.MessageID).Scan(&speech); err != nil {
+		return false, err
+	}
+	if speech != "" {
+		speech = "\n" + speech
+	}
 	return subject.String == doc.Subject && body.String == doc.Body &&
 		fromAddr.String == doc.FromAddr && toAddrs.String == doc.ToAddrs &&
-		ccAddrs.String == doc.CcAddrs, nil
+		ccAddrs.String == doc.CcAddrs+speech, nil
 }
 
 // FTSSearchClause returns SQL fragments for FTS5 full-text search.
@@ -490,7 +497,7 @@ func (d *SQLiteDialect) FTSBackfillBatchSQL() string {
 	envelope := storedFTSEnvelopeSQL("GROUP_CONCAT")
 	return `INSERT OR REPLACE INTO messages_fts (rowid, message_id, subject, body, from_addr, to_addr, cc_addr)
 		SELECT m.id, m.id, ` + envelope.subject + `, COALESCE(mb.body_text, ''), ` +
-		envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs + `
+		envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs + ` || CASE WHEN ` + voiceSearchSQL(false, "m.id") + ` = '' THEN '' ELSE char(10) || ` + voiceSearchSQL(false, "m.id") + ` END` + `
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		WHERE m.id >= ? AND m.id < ?`

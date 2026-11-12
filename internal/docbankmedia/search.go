@@ -47,7 +47,7 @@ type SearchMediaSelection struct {
 	Completeness    string `json:"completeness"`
 }
 
-func validSearchTranscript(origin, input, completeness string) bool {
+func ValidSearchTranscript(origin, input, completeness string) bool {
 	return (completeness == "complete" || completeness == "partial" || completeness == "degraded_provenance") &&
 		(origin == "generated" && input == "" || origin == "supplied" && input != "")
 }
@@ -133,7 +133,7 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 	for _, selection := range report.MediaSelections {
 		source, known := sources[selection.SearchMediaSource]
 		_, duplicate := selections[selection.SearchMediaSource]
-		if !known || duplicate || !validSearchTranscript(selection.Origin, selection.SuppliedInputID, selection.Completeness) ||
+		if !known || duplicate || !ValidSearchTranscript(selection.Origin, selection.SuppliedInputID, selection.Completeness) ||
 			(selection.Origin == "supplied" && source.SuppliedInputIDs != nil && !slices.Contains(source.SuppliedInputIDs, selection.SuppliedInputID)) {
 			return SearchReport{}, ErrInvalidReceipt
 		}

@@ -6994,10 +6994,10 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 	env := storedFTSEnvelopeSQL("STRING_AGG")
 	lockSQL := `SELECT m.id FROM messages m WHERE m.id IN (` + query + `) ORDER BY m.id LIMIT 64 FOR UPDATE OF m`
 	charCap := strconv.Itoa(maxFTSBodyChars)
-	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), r.raw_data, r.compression
+	selectSQL := `SELECT m.id, LEFT(` + env.subject + `, ` + charCap + `), LEFT(COALESCE(b.body_text, ''), ` + charCap + `), LEFT(` + env.fromAddr + `, ` + charCap + `), LEFT(` + env.toAddrs + `, ` + charCap + `), LEFT(` + env.ccAddrs + `, ` + charCap + `), ` + voiceSearchSQL(true, "m.id") + `, r.raw_data, r.compression
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id LEFT JOIN message_raw r ON r.message_id = m.id AND r.raw_format = 'beeper_json' WHERE m.id = ANY(?::bigint[]) AND ` + postgresFTSStalePredicate("m.") + ` ORDER BY m.id`
-	vector := pgFTSVectorFields("u.subject", "u.body", "u.sender", "u.to_addrs", "u.cc_addrs")
-	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, fields)) UPDATE messages m SET search_fts = ` + vector + `, search_fts_fields = CASE WHEN u.fields::jsonb = 'null'::jsonb THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u.fields::jsonb)) END, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM u WHERE m.id = u.id`
+	vector := pgFTSVectorFields("u.subject", "u.body", "u.sender", "u.to_addrs", "u.cc_addrs", "u.voice")
+	updateSQL := `WITH u AS (SELECT * FROM unnest(?::bigint[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[], ?::text[]) AS x(id, subject, body, sender, to_addrs, cc_addrs, voice, fields)) UPDATE messages m SET search_fts = ` + vector + `, search_fts_fields = CASE WHEN u.fields::jsonb = 'null'::jsonb THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u.fields::jsonb)) END, indexing_version = ` + strconv.Itoa(CurrentFTSIndexingVersion) + ` FROM u WHERE m.id = u.id`
 	var affected int64
 	for fromID < toID {
 		rows, err := tx.QueryContext(ctx, lockSQL, fromID, toID)
@@ -7020,14 +7020,14 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 			return 0, err
 		}
 		var ids []int64
-		var subjects, bodies, senders, tos, ccs []string
+		var subjects, bodies, senders, tos, ccs, voices []string
 		var canonicalFields []string
 		bytes := 0
 		for rows.Next() {
 			var doc FTSDoc
 			var raw []byte
 			var compression sql.NullString
-			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &raw, &compression); err != nil {
+			if err := rows.Scan(&doc.MessageID, &doc.Subject, &doc.Body, &doc.FromAddr, &doc.ToAddrs, &doc.CcAddrs, &doc.voice, &raw, &compression); err != nil {
 				_ = rows.Close()
 				return 0, err
 			}
@@ -7048,7 +7048,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 				_ = rows.Close()
 				return 0, err
 			}
-			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs) + len(encoded) + len(raw)
+			size := len(doc.Subject) + len(doc.Body) + len(doc.FromAddr) + len(doc.ToAddrs) + len(doc.CcAddrs) + len(doc.voice) + len(encoded) + len(raw)
 			if len(ids) > 0 && bytes+size > 4*1024*1024 {
 				break
 			}
@@ -7058,6 +7058,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 			senders = append(senders, doc.FromAddr)
 			tos = append(tos, doc.ToAddrs)
 			ccs = append(ccs, doc.CcAddrs)
+			voices = append(voices, doc.voice)
 			canonicalFields = append(canonicalFields, string(encoded))
 			bytes += size
 		}
@@ -7072,7 +7073,7 @@ func (s *Store) backfillPostgresFTS(ctx context.Context, tx *loggedTx, query str
 			fromID = lockedIDs[len(lockedIDs)-1] + 1
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs, canonicalFields); err != nil {
+		if _, err := tx.ExecContext(ctx, updateSQL, ids, subjects, bodies, senders, tos, ccs, voices, canonicalFields); err != nil {
 			return 0, err
 		}
 		affected += int64(len(ids))
