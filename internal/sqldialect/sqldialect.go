@@ -56,7 +56,7 @@ func PostgreSQLSearchArg(terms []string) string {
 
 // CanonicalFTSText prepares text for collation-independent phrase matching.
 func CanonicalFTSText(s string) string {
-	return strings.Join(strings.Fields(strings.ToLower(NormalizeFTSText(s))), " ")
+	return strings.ToLower(strings.Join(EscapeTSQueryTerm(s), " "))
 }
 
 // PostgreSQLSearchPredicate narrows unordered candidates to ordered phrases.
@@ -91,45 +91,39 @@ func PostgreSQLBodyPredicate(arg string, terms []string) string {
 	return "(m.search_fts @@ to_tsquery('simple', " + arg + ") AND ((m.search_fts_fields IS NULL AND m.search_fts @@ to_tsquery('simple', '" + TSQuery(terms, "D") + "')) OR (m.search_fts_fields IS NOT NULL AND " + strings.Join(checks, " AND ") + ")))"
 }
 
-// tokenSpans returns byte offsets of Unicode letter and digit runs.
-func tokenSpans(s string) [][2]int {
-	var spans [][2]int
-	start := -1
-	for i, r := range s {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			if start < 0 {
-				start = i
-			}
-		} else if start >= 0 {
-			spans = append(spans, [2]int{start, i})
-			start = -1
-		}
-	}
-	if start >= 0 {
-		spans = append(spans, [2]int{start, len(s)})
-	}
-	return spans
-}
-
-// EscapeTSQueryTerm splits a search term into Unicode letter and digit runs.
+// EscapeTSQueryTerm tokenizes a single user-supplied search term into
+// PostgreSQL `to_tsquery`-safe lexemes. The input is split on every
+// rune that isn't a Unicode letter or digit, so inputs that previously
+// produced invalid tsquery fragments — `---` (parse error), `foo-bar`
+// (the `-` is the NOT operator), `user@example.com`, `a.b.c` — now
+// decompose into their component lexemes that to_tsquery accepts.
+//
+// Returns an empty slice when the input collapses to nothing usable
+// (whitespace-only, all punctuation, or all metacharacters). Each
+// returned lexeme is safe to suffix with `:*` for prefix matching and
+// join with ` & `.
+//
+// Both PG FTS code paths share this allowlist tokenizer:
+// query.PostgreSQLQueryDialect.BuildFTSTerm and SanitizeFTSQuery both
+// call it, so they produce the same lexeme set for the same input.
 func EscapeTSQueryTerm(s string) []string {
 	var lexemes []string
-	for _, span := range tokenSpans(s) {
-		lexemes = append(lexemes, s[span[0]:span[1]])
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			lexemes = append(lexemes, cur.String())
+			cur.Reset()
+		}
 	}
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			cur.WriteRune(r)
+		} else {
+			flush()
+		}
+	}
+	flush()
 	return lexemes
-}
-
-// NormalizeFTSText replaces separators with spaces without changing byte offsets.
-func NormalizeFTSText(s string) string {
-	b := []byte(s)
-	for i := range b {
-		b[i] = ' '
-	}
-	for _, span := range tokenSpans(s) {
-		copy(b[span[0]:span[1]], s[span[0]:span[1]])
-	}
-	return string(b)
 }
 
 // FoldFTSText maps each output byte boundary back to the original text.

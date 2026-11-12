@@ -450,7 +450,7 @@ func preparePostgresFTSDoc(doc FTSDoc, liveWrite bool) (FTSDoc, []string) {
 		if len(runes) > maxFTSBodyChars {
 			s = string(runes[:maxFTSBodyChars])
 		}
-		s = strings.ToLower(sqldialect.NormalizeFTSText(s))
+		s = sqldialect.CanonicalFTSText(s)
 		if liveWrite {
 			s = truncateBytesRuneSafe(s)
 		}
@@ -481,25 +481,15 @@ func preparePostgresFTSDoc(doc FTSDoc, liveWrite bool) (FTSDoc, []string) {
 	if !saturated {
 		return doc, nil
 	}
-	for i := range fields {
-		fields[i] = strings.Join(strings.Fields(fields[i]), " ")
-	}
 	return doc, fields
 }
 
 func pgFTSVectorFields(subject, body, sender, to, cc string) string {
-	return pgFTSMetadataFields(subject, sender, to, cc) + ` || ` + pgFTSBodyField(body)
-}
-
-func pgFTSMetadataFields(subject, sender, to, cc string) string {
 	return `setweight(to_tsvector('simple', COALESCE(` + subject + `, '')), 'A') || '''!'':1'::tsvector ||
 			setweight(to_tsvector('simple', COALESCE(` + sender + `, '')), 'B') || '''!'':1'::tsvector ||
 			setweight(to_tsvector('simple', COALESCE(` + to + `, '')), 'C') || '''!'':1'::tsvector ||
-			setweight(to_tsvector('simple', COALESCE(` + cc + `, '')), 'C') || '''!'':1'::tsvector`
-}
-
-func pgFTSBodyField(body string) string {
-	return `setweight(to_tsvector('simple', COALESCE(` + body + `, '')), 'D')`
+			setweight(to_tsvector('simple', COALESCE(` + cc + `, '')), 'C') || '''!'':1'::tsvector ||
+			setweight(to_tsvector('simple', COALESCE(` + body + `, '')), 'D')`
 }
 
 // FTSSearchClause returns SQL fragments for tsvector full-text search.
