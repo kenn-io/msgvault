@@ -128,6 +128,14 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		return page, err
 	}
 	defer release()
+	id, found, err := s.resolveMeetingMessage(ctx, ref.MessageID)
+	if err != nil {
+		return page, err
+	}
+	if !found {
+		return page, sql.ErrNoRows
+	}
+	ref.MessageID = id
 	var candidates []MeetingSuggestion
 	seedIDs := []int64{ref.MessageID}
 	if ref.Kind == meetingRefMessage {

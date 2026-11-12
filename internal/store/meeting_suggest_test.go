@@ -466,3 +466,54 @@ func TestMeetingSuggestionsLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestMeetingSuggestionsDeduplicatedSeed(t *testing.T) {
+	for _, kind := range []string{"msg", "evt", "recurring"} {
+		t.Run(kind, func(t *testing.T) {
+			r := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			recurring := kind == "recurring"
+			raw := `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+			if recurring {
+				raw = `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`
+			}
+			_, event := calendarFixture(t, st, "seed-event", raw)
+			data, note := projectionFixture(t, st, "seed-note", "meeting_json", `{}`)
+			data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
+			_, err := st.UpsertMessage(data.Message)
+			r.NoError(err)
+			var survivor, duplicate int64
+			if kind == "msg" {
+				survivor = note
+				_, duplicate = projectionFixture(t, st, "duplicate-note", "meeting_json", `{}`)
+			} else {
+				survivor = event
+				_, duplicate = calendarFixture(t, st, "duplicate-event", raw)
+			}
+			_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "seed-duplicate")
+			r.NoError(err)
+			if recurring {
+				kind = "evt"
+			}
+			old := MeetingLinkRef{Kind: kind, MessageID: duplicate}
+			current := MeetingLinkRef{Kind: kind, MessageID: survivor}
+			if recurring {
+				old, err = ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270314T100000Z", duplicate))
+				r.NoError(err)
+				current, err = ParseMeetingLinkRef(fmt.Sprintf("evt:%d@20270314T100000Z", survivor))
+				r.NoError(err)
+			}
+			_, err = st.MeetingRecordContext(t.Context(), old)
+			r.NoError(err)
+			want, err := st.SuggestMeetingLinksContext(t.Context(), current, 10, nil)
+			r.NoError(err)
+			r.Len(want.Suggestions, 1)
+			got, err := st.SuggestMeetingLinksContext(t.Context(), old, 10, nil)
+			r.NoError(err)
+			r.Equal(want, got)
+			ctx := sourcescope.WithSourceIDs(t.Context(), []int64{})
+			_, err = st.SuggestMeetingLinksContext(ctx, old, 10, nil)
+			r.ErrorIs(err, sql.ErrNoRows)
+		})
+	}
+}
