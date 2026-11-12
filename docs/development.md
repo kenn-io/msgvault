@@ -563,24 +563,18 @@ ignored.
 ## API schema version maintenance
 
 When the HTTP API contract changes, bump `APISchemaVersion` in `internal/api/openapi.go`.
-`TestAPISchemaVersionContract` hashes both generated documents, including routes, parameters,
-requests, responses, tags, schemas, constraints, defaults, and extensions, but not descriptions,
-summaries, titles, examples, or external documentation. Handler changes the documents don't show
-still need a bump.
+`TestAPISchemaVersionContract` hashes both generated documents and ignores wording (descriptions,
+summaries, titles, examples). Handler changes the documents don't show still need a bump.
 
 Add the marker path the test prints under `internal/api/testdata/api-version-contracts/`, with a
 one-line summary as its contents. Replace `<summary-sha256>` with the output of
 `printf '%s' 'Your summary' | sha256sum | cut -d ' ' -f 1`, so each change gets its own marker even
-when its contract matches another. You can correct a summary without renaming its marker.
+when its contract matches another.
 
-Keep every marker on the base. If your contract changes and the base has no marker for that
-version, replace your marker. If another change used that version, remove your marker, take the
-next minor above the greatest recorded version, and move feature minimum constants your change
-introduced to it. Local tests read the base from the common ancestor of `HEAD` and `origin/main`;
+Keep every marker on the base; the failing test names the repair, including the next minor above
+the greatest recorded version. Local tests read the base from the common ancestor of `HEAD` and `origin/main`;
 if that fails, fetch `origin/main` with its history, or set `MSGVAULT_API_CONTRACT_BASE` to a SHA
-or ref. CI uses the pull request or merge group base, the previous SHA for main pushes, and the
-common ancestor with `main` for scheduled and manual main runs. Manual feature runs merge `main`
-into the checkout and use `main` as the base.
+or ref. CI sets `MSGVAULT_API_CONTRACT_BASE` to the exact base.
 
 ## Archive schema version maintenance
 

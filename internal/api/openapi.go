@@ -18,7 +18,6 @@ import (
 // version, so clients can reason about compatibility independently of releases.
 //
 // Record each change with a summary in internal/api/testdata/api-version-contracts.
-// Local tests compare the origin/main ancestor; CI uses the exact base.
 // See docs/development.md#api-schema-version-maintenance. Do not add entries here.
 //
 // 1.1.0: GET /api/v1/cli/search no longer blocks on the FTS completeness
