@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.kenn.io/kit/consolewindow"
+	"go.kenn.io/msgvault/internal/api"
 )
 
 const daemonCLISubprocessEnv = "MSGVAULT_DAEMON_CLI_PARENT_PID"
@@ -117,7 +118,7 @@ func classifyDaemonCLIWaitErr(waitErr error, args []string, emit func(string, st
 		// wrapped with context below.
 		return errors.New(cliSubprocessExitSentinel)
 	}
-	return fmt.Errorf("CLI subprocess %s: %w", strings.Join(args, " "), waitErr)
+	return fmt.Errorf("CLI subprocess %s: %w", strings.Join(api.RedactedCLIRunArgs(args), " "), waitErr)
 }
 
 func newDaemonCLISubprocessCommand(ctx context.Context, commandArgs []string, env map[string]string, cwd string) (*exec.Cmd, error) {

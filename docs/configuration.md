@@ -1663,7 +1663,7 @@ schedule = "*/30 * * * *"
 | `token_env` | required | Explicit environment variable name on the daemon host; no token values or fallback variables |
 | `enabled` | `false` | Enable scheduled sync; manual commands remain available |
 | `schedule` | empty | Five-field cron expression; empty means manual sync only |
-| `actions` | empty | Comment changes allowed on Meta: `"hide"` (also allows unhide) and `"delete"`. Empty means read only. See [Hide or delete comments](usage/facebook-comments.md#hide-or-delete-comments) |
+| `actions` | empty | Comment changes allowed on Meta: `"hide"` (also allows unhide), `"delete"`, and `"reply"`. Empty means read only. See [Hide or delete comments](usage/facebook-comments.md#hide-or-delete-comments) and [Reply to comments](usage/facebook-comments.md#reply-to-comments) |
 
 `identifier` is trimmed and must be nonempty and unique ignoring case.
 `app_id` and `page_id` must be positive decimal IDs without leading zeros.

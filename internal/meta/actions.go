@@ -20,6 +20,7 @@ const (
 	ActionHide   CommentAction = "hide"
 	ActionUnhide CommentAction = "unhide"
 	ActionDelete CommentAction = "delete"
+	ActionReply  CommentAction = "reply"
 )
 
 // ProfileAction is the profile `actions` entry that allows a. Unhide only
@@ -34,12 +35,12 @@ func (a CommentAction) ProfileAction() string {
 // commentPlatform holds the only differences between Facebook and Instagram
 // comment writes.
 type commentPlatform struct {
-	name, hideParam string
+	name, hideParam, replyEdge string
 }
 
 var commentPlatforms = map[string]commentPlatform{
-	SourceType:          {name: "Facebook", hideParam: "is_hidden"},
-	InstagramSourceType: {name: "Instagram", hideParam: "hide"},
+	SourceType:          {name: "Facebook", hideParam: "is_hidden", replyEdge: "comments"},
+	InstagramSourceType: {name: "Instagram", hideParam: "hide", replyEdge: "replies"},
 }
 
 // CommentTarget is an archived comment, read from the archive alone.
@@ -49,6 +50,7 @@ type CommentTarget struct {
 	// CommentID is Meta's native comment ID.
 	CommentID, Author, Text string
 	Hidden                  bool
+	metadata                objectMetadata
 }
 
 // Provider names the platform for messages to the user.
@@ -86,7 +88,7 @@ func ResolveCommentTarget(ctx context.Context, st *store.Store, messageID int64)
 	}
 	return CommentTarget{
 		MessageID: messageID, SourceID: source.ID, SourceType: source.SourceType, SourceIdentifier: source.Identifier,
-		CommentID: msg.SourceMessageID, Author: msg.FromName, Text: msg.Snippet, Hidden: metadata.Hidden,
+		CommentID: msg.SourceMessageID, Author: msg.FromName, Text: msg.Snippet, Hidden: metadata.Hidden, metadata: metadata,
 	}, nil
 }
 
@@ -97,18 +99,11 @@ func ModerateComment(ctx context.Context, st *store.Store, client *Client, targe
 	if !ok || !safeObjectID(target.CommentID) {
 		return errors.New("invalid comment target")
 	}
-	execution, err := st.AcquireSyncExecutionContext(ctx, target.SourceID)
+	execution, source, err := lockActiveSource(ctx, st, target.SourceID)
 	if err != nil {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
-	source, err := st.GetSourceByIDContext(ctx, target.SourceID)
-	if err != nil {
-		return err
-	}
-	if source.HistoryOnly || source.MergedIntoSourceID != 0 {
-		return store.ErrSourceRetired
-	}
 	var result struct {
 		Success bool `json:"success"`
 	}
@@ -169,6 +164,23 @@ func dropDeletedTraversal(ctx context.Context, st *store.Store, execution *store
 		return err
 	}
 	return st.PauseSyncWithCheckpoint(ctx, syncID, checkpoint)
+}
+
+// lockActiveSource takes the source's sync lock so a running sync cannot
+// overwrite the archived result, and refuses a retired source.
+func lockActiveSource(ctx context.Context, st *store.Store, sourceID int64) (*store.SyncExecution, *store.Source, error) {
+	execution, err := st.AcquireSyncExecutionContext(ctx, sourceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	source, err := st.GetSourceByIDContext(ctx, sourceID)
+	if err == nil && (source.HistoryOnly || source.MergedIntoSourceID != 0) {
+		err = store.ErrSourceRetired
+	}
+	if err != nil {
+		return nil, nil, errors.Join(err, execution.Release())
+	}
+	return execution, source, nil
 }
 
 func setCommentHidden(ctx context.Context, st *store.Store, messageID int64, hidden bool) error {

@@ -149,8 +149,10 @@ func (c *Config) validateInstagramCommentsSources() error {
 // validateCommentActions accepts the comment changes a profile can opt in to.
 func validateCommentActions(actions []string) error {
 	for _, action := range actions {
-		if action != string(meta.ActionHide) && action != string(meta.ActionDelete) {
-			return fmt.Errorf("unknown action %q; use \"hide\" or \"delete\"", action)
+		switch meta.CommentAction(action) {
+		case meta.ActionHide, meta.ActionDelete, meta.ActionReply:
+		default:
+			return fmt.Errorf("unknown action %q; use \"hide\", \"delete\" or \"reply\"", action)
 		}
 	}
 	return nil

@@ -45,7 +45,13 @@ func facebookHTTPFixture(t *testing.T, wrongIdentity bool) {
 		case "/v26.0/100_200/comments":
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"100_201","message":"Example comment","from":{"id":"300","name":"Example Customer"}}]}`)
 		case "/v26.0/100_201/comments":
+			if r.Method == http.MethodPost {
+				_, _ = fmt.Fprint(w, `{"id":"100_202"}`)
+				return
+			}
 			_, _ = fmt.Fprint(w, `{"data":[]}`)
+		case "/v26.0/100_202":
+			_, _ = fmt.Fprint(w, `{"id":"100_202","message":"Thanks","from":{"id":"100","name":"Example Page"},"parent":{"id":"100_201"}}`)
 		case "/v26.0/100_201":
 			assert.Contains(t, []string{http.MethodPost, http.MethodDelete}, r.Method)
 			_, _ = fmt.Fprint(w, `{"success":true}`)

@@ -11,6 +11,10 @@ All notable changes to msgvault, grouped by release.
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
 - `daemon start` and `daemon restart` keep new daemons running until stopped, including through updates. Starting against an automatic daemon preserves its lifetime and prints `msgvault daemon restart` to keep it running.
+- [Reply publicly](usage/facebook-comments.md#reply-to-comments) to an archived
+  Facebook Page or Instagram comment with `msgvault comment reply`. The reply
+  is archived straight away, and msgvault refuses to send the same text to a
+  comment twice. Each profile opts in with `"reply"` in `actions`.
 - [Hide, unhide, or delete](usage/facebook-comments.md#hide-or-delete-comments)
   an archived Facebook Page or Instagram comment with `msgvault comment moderate`.
   Each profile opts in with `actions`, and delete needs `--yes`.

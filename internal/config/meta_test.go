@@ -81,14 +81,14 @@ func TestFacebookCommentsRejectsInvalidProfiles(t *testing.T) {
 
 func TestCommentProfileActions(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	allow := `actions=["hide","delete"]` + "\n"
+	allow := `actions=["hide","delete","reply"]` + "\n"
 	cfg := loadConfigText(t, facebookProfile+allow+instagramProfile+allow)
 	require.Len(cfg.FacebookComments, 1)
 	require.Len(cfg.InstagramComments, 1)
-	assert.Equal([]string{"hide", "delete"}, cfg.FacebookComments[0].Actions)
-	assert.Equal([]string{"hide", "delete"}, cfg.InstagramComments[0].Actions)
+	assert.Equal([]string{"hide", "delete", "reply"}, cfg.FacebookComments[0].Actions)
+	assert.Equal([]string{"hide", "delete", "reply"}, cfg.InstagramComments[0].Actions)
 	for _, profile := range []string{facebookProfile, instagramProfile} {
-		for _, invalid := range []string{"unhide", "reply", "Hide"} {
+		for _, invalid := range []string{"unhide", "private_reply", "Hide"} {
 			require.ErrorContains(loadConfigTextError(t, profile+`actions=["`+invalid+`"]`+"\n"), "actions")
 		}
 	}
