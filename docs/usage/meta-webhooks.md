@@ -64,8 +64,10 @@ data directory before it answers Meta, so a delivery survives a daemon
 restart. Deliveries are applied in the order they arrived and deleted once
 applied. At most 10,000 deliveries or 1 GiB wait in that directory. Past
 either limit the daemon answers 503 until it catches up, and Meta retries.
-A delivery file the daemon cannot read or delete is renamed to
-`.<name>.set-aside` in the same directory and left for you to inspect.
+The daemon tries to rename a delivery file it cannot read or delete to
+`.<name>.set-aside` in the same directory, for you to inspect. If the rename
+fails too, it logs that, leaves the file where it is and skips it until the
+daemon restarts.
 
 A new or edited comment is read from Meta with the Page token rather than
 taken from the delivery, so a late or repeated delivery cannot bring back older
@@ -96,16 +98,20 @@ What the daemon does depends on why the change failed:
 When a delivery has used its hour, the daemon logs the failing change and
 skips it, then tries each remaining change of the delivery once.
 
-A skipped change is not always recovered. The next polling sync archives a new
-or edited comment that was skipped. It does not recover a skipped hide, unhide
-or removal, because polling does not read those.
+A skipped change is not always recovered. A later polling sync archives the
+current text of a skipped new or edited comment when it reads that comment
+again and Meta still returns it. That can take several runs; see
+[coverage and resuming](facebook-comments.md#understand-coverage-and-resuming).
+Polling does not recover a skipped hide, unhide or removal, because it does
+not read those.
 
 ## Limits
 
-- Only comment changes from the Page `feed` field and the Instagram
-  `comments` and `live_comments` fields are applied. A change for a field
-  msgvault does not handle is logged and dropped. Other changes inside a
-  handled field, such as reactions, are dropped without a log line.
+- msgvault applies comment changes and post removals from the Page `feed`
+  field, and new comments from the Instagram `comments` and `live_comments`
+  fields. A change for a field msgvault does not handle is logged and
+  dropped. Other changes inside a handled field, such as reactions, are
+  dropped without a log line.
 - Instagram does not send edits, hides or removals of comments.
 - A hide or unhide for a comment that is not archived yet is ignored. Polling
   sync does not read hidden state, so that comment is not marked hidden.
