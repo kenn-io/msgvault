@@ -440,27 +440,33 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 	}
 	for _, name := range []string{"RRULE", "RDATE", "EXDATE", "EXRULE"} {
 		for _, prop := range p.Values(name) {
-			var line strings.Builder
-			line.WriteString(name)
 			custom := customZonePattern.MatchString(prop.Params.Get("TZID"))
-			for _, param := range []string{"VALUE", "TZID"} {
-				if v := prop.Params.Get(param); v != "" && (param != "TZID" || !custom) {
-					line.WriteString(";" + param + "=" + v)
-				}
-			}
 			value := prop.Value
 			if (name == "RDATE" || name == "EXDATE") && (prop.Params.Get("TZID") == "" || custom) && prop.ValueType() == ical.ValueDateTime {
 				values := strings.Split(value, ",")
+				valid := true
 				for i, v := range values {
 					date := prop
 					date.Value = v
 					resolved, _, err := icsTime(&date, loc)
 					if err != nil {
-						return ICSComponent{}, fmt.Errorf("%s: %w", name, err)
+						valid = false
+						break
 					}
 					values[i] = resolved.UTC().Format("20060102T150405Z")
 				}
-				value = strings.Join(values, ",")
+				if valid {
+					value = strings.Join(values, ",")
+				} else {
+					custom = false
+				}
+			}
+			var line strings.Builder
+			line.WriteString(name)
+			for _, param := range []string{"VALUE", "TZID"} {
+				if v := prop.Params.Get(param); v != "" && (param != "TZID" || !custom) {
+					line.WriteString(";" + param + "=" + v)
+				}
 			}
 			line.WriteString(":" + value)
 			e.Recurrence = append(e.Recurrence, line.String())

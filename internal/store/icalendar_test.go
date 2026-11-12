@@ -44,6 +44,29 @@ func TestICalendarDeclaredTimeZone(t *testing.T) {
 	}
 }
 
+func TestICalendarInvalidFloatingRecurrenceDate(t *testing.T) {
+	for _, name := range []string{"RDATE", "EXDATE"} {
+		t.Run(name, func(t *testing.T) {
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			property := name + ":20270303T090000,invalid"
+			raw := calendarDocument("REQUEST", "DTSTART:20270302T090000Z\r\nRRULE:FREQ=DAILY;COUNT=2\r\n"+property)
+			_, err := st.PersistICalendarContext(t.Context(), source, raw)
+			requirements.NoError(err)
+			ids := emailEvents(t, st, source)
+			requirements.Len(ids, 1)
+			requirements.Contains(calendarRows(t, st, ids[0])[0].Event.Recurrence, property)
+			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+			requirements.NoError(err)
+			requirements.Empty(page.Occurrences)
+			requirements.Len(page.Unexpandable, 1)
+			requirements.Equal(ids[0], page.Unexpandable[0].MessageID)
+		})
+	}
+}
+
 func TestICalendarRangeKeepsSiblingsAndReportsSeries(t *testing.T) {
 	master := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=10\r\nSUMMARY:Series")
 	rangeEvent := calendarDocument("REQUEST", "RECURRENCE-ID;RANGE=THISANDFUTURE:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H\r\nSUMMARY:Moved")
