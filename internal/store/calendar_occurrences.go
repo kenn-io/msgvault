@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
@@ -115,6 +116,16 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		if e.Kind == "exception" && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
+		if e.Kind == "exception" && calendarRangeException(e) && !masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
+			report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")
+			continue
+		}
+		if (e.Kind == "single" || e.Kind == "series") && slices.ContainsFunc(exceptions[seriesKey{row.SourceID, e.ProviderEventID}], func(row CalendarEventRow) bool {
+			return calendarRangeException(row.Event)
+		}) {
+			report(row.MessageID, "unsupported recurrence: RANGE=THISANDFUTURE")
+			continue
+		}
 		switch e.Kind {
 		case "exception", "single":
 			if e.Kind == "exception" && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
@@ -154,6 +165,12 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return cmp.Compare(a.MessageID, b.MessageID)
 	})
 	return page, nil
+}
+
+func calendarRangeException(event calevent.Event) bool {
+	return slices.ContainsFunc(event.Recurrence, func(line string) bool {
+		return strings.HasPrefix(line, "RECURRENCE-ID;RANGE=THISANDFUTURE:")
+	})
 }
 
 func calendarReportMismatchedExceptions(master calevent.Event, exceptions []CalendarEventRow, report func(int64, string)) {

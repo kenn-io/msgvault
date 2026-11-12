@@ -65,32 +65,40 @@ func upsertEmailRaw(q querier, messageID int64, rawData []byte, format string) e
 
 // RetryPendingEmailCalendarsContext retries invitation derives left by raw writes.
 func (s *Store) RetryPendingEmailCalendarsContext(ctx context.Context, sourceID int64) error {
-	var after int64
-	for {
-		var id int64
-		err := s.db.QueryRowContext(ctx, `SELECT p.message_id FROM email_calendar_pending p
-			JOIN messages m ON m.id = p.message_id WHERE m.source_id = ? AND p.message_id > ?
-			ORDER BY p.message_id LIMIT 1`, sourceID, after).Scan(&id)
-		if errors.Is(err, sql.ErrNoRows) {
-			break
-		}
+	var id int64
+	var revisionPending bool
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE((SELECT p.message_id FROM email_calendar_pending p
+		CROSS JOIN messages m WHERE m.id = p.message_id AND m.source_id = ?
+		ORDER BY p.message_id LIMIT 1), 0),
+		EXISTS (SELECT 1 FROM archive_metadata WHERE key = ?)`, sourceID, pendingDerivedEmailRevisionKey).Scan(&id, &revisionPending)
+	if err != nil {
+		return err
+	}
+	if id == 0 && !revisionPending {
+		return nil
+	}
+	for id != 0 {
+		after := id
+		item, err := s.ScanArchivedEmailContext(ctx, sourceID, id-1, id)
 		if err != nil {
 			return err
 		}
-		after = id
-		item, err := s.ScanArchivedEmailContext(ctx, sourceID, id-1, id)
-		if err != nil {
+		id = 0
+		err = s.db.QueryRowContext(ctx, `SELECT p.message_id FROM email_calendar_pending p
+			CROSS JOIN messages m WHERE m.id = p.message_id AND m.source_id = ? AND p.message_id > ?
+			ORDER BY p.message_id LIMIT 1`, sourceID, after).Scan(&id)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if item == nil {
 			// A concurrent MIME write must not lose its pending flag.
 			err = s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
-				if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
+				if err := s.lockMeetingEvidenceWith(ctx, tx, after); err != nil {
 					return err
 				}
 				_, err := tx.ExecContext(ctx, `DELETE FROM email_calendar_pending WHERE message_id = ?
 					AND EXISTS (SELECT 1 FROM messages m JOIN message_raw r ON r.message_id = m.id
-					WHERE m.id = ? AND m.source_id = ? AND r.raw_format <> 'mime')`, id, id, sourceID)
+					WHERE m.id = ? AND m.source_id = ? AND r.raw_format <> 'mime')`, after, after, sourceID)
 				return err
 			})
 			if err != nil {
@@ -103,14 +111,14 @@ func (s *Store) RetryPendingEmailCalendarsContext(ctx context.Context, sourceID 
 			parseErr = item.RawDecodeError
 		}
 		if parseErr != nil {
-			slog.Warn("cannot parse pending email calendar", "message_id", id, "error", parseErr)
+			slog.Warn("cannot parse pending email calendar", "message_id", after, "error", parseErr)
 			parsed = &mime.Message{}
 		}
 		if _, err := s.RefreshArchivedEmailCalendarContext(ctx, sourceID, item, parsed); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			slog.Warn("retry email calendar failed", "message_id", id, "error", err)
+			slog.Warn("retry email calendar failed", "message_id", after, "error", err)
 		}
 	}
 	return s.PublishPendingDerivedEmailRevisionContext(ctx)

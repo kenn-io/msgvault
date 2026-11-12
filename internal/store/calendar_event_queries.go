@@ -264,7 +264,12 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 		timedEnd = `e.original_start_at + (p.end_at - p.start_at) >= ?`
 		dateEnd = `NULLIF(e.original_start_date, '')::date + (NULLIF(p.end_date, '')::date - NULLIF(p.start_date, '')::date) >= ?::date`
 	}
-	predicate := `e.kind = 'exception' AND ((e.start_at < ? AND e.end_at >= ?) OR
+	predicate := `e.kind = 'exception' AND ((e.recurrence_json LIKE '%RECURRENCE-ID;RANGE=THISANDFUTURE:%' AND EXISTS (
+    SELECT 1 FROM calendar_events p JOIN messages pm ON pm.id = p.message_id
+    WHERE p.kind = 'series' AND p.provider_event_id = e.series_provider_id AND pm.source_id = m.source_id
+    AND pm.deleted_at IS NULL AND ` + calendarEventVisibility("p", "pm") + `
+    AND (p.start_at IS NULL OR p.start_at < ? OR p.recurrence_json LIKE '%RDATE%')
+    AND (p.recurrence_end_at IS NULL OR p.recurrence_end_at >= ?))) OR (e.start_at < ? AND e.end_at >= ?) OR
   (e.start_at IS NULL AND e.end_at >= ?) OR
   (e.end_at IS NULL AND e.start_at < ?) OR
   (e.original_start_at >= ? AND e.original_start_at < ?) OR
@@ -278,7 +283,7 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 	   (e.original_start_at IS NULL AND e.original_start_date = ''))`
 	dateLower, dateUpper := lower.Format(time.DateOnly), upper.AddDate(0, 0, 1).Format(time.DateOnly)
 	return queryCalendarEventRowsWithinBudget(ctx, r, predicate, []any{
-		upper, lower, lower, upper, lower, upper, dateLower, dateUpper,
+		upper, lower, upper, lower, lower, upper, lower, upper, dateLower, dateUpper,
 		upper, dialect.TimestampParam(lower), dateUpper, dateLower,
 	}, maxCalendarExceptions)
 }

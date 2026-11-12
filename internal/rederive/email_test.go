@@ -145,10 +145,8 @@ func TestEmailFirstSyncBoundsReadQueries(t *testing.T) {
 	require.NoError(err)
 	require.Equal(int64(32), sum.MessagesScanned)
 	reads := strings.Count(logs.String(), `"kind":"query`)
-	// Each row needs its MIME/envelope scan and FTS comparison. The five
-	// fixed reads check completion, check the retry phase, finish the scan,
-	// check for a write that reopened the pass, and check whether a prior
-	// interrupted repair still needs a cache revision.
+	// Each row needs its MIME/envelope scan and FTS comparison. Fixed reads
+	// cover the pending sweep, completion, retry phase, and scan exhaustion.
 	require.LessOrEqual(reads, 2*32+5, "first-sync repair must share stored-envelope reads with the bounded MIME scan")
 }
 
