@@ -517,7 +517,11 @@ type exportPipeRunner struct {
 }
 
 func (s *exportPipeRunner) RunCLICommand(_ context.Context, _ api.CLIRunRequest, emit func(api.CLIRunEvent) error) error {
-	reader := &pipeReadScript{fragments: s.fragments, terminal: io.EOF}
+	readers := make([]io.Reader, 0, len(s.fragments))
+	for _, fragment := range s.fragments {
+		readers = append(readers, bytes.NewReader(fragment))
+	}
+	reader := io.MultiReader(readers...)
 	return streamDaemonCLIPipe(reader, cliStreamStdout, func(stream, data string) error {
 		return emit(api.CLIRunEvent{Type: stream, Data: data})
 	})

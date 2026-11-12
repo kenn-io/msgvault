@@ -179,27 +179,9 @@ func TestNewDaemonCLISubprocessCommandAppliesWorkingDirectory(t *testing.T) {
 	assert.Equal(t, cwd, cmd.Dir, "working directory")
 }
 
-// pipeReadScript returns each supplied fragment separately, then its terminal error.
-type pipeReadScript struct {
-	fragments [][]byte
-	terminal  error
-}
-
-func (r *pipeReadScript) Read(p []byte) (int, error) {
-	if len(r.fragments) == 0 {
-		return 0, r.terminal
-	}
-	n := copy(p, r.fragments[0])
-	r.fragments[0] = r.fragments[0][n:]
-	if len(r.fragments[0]) == 0 {
-		r.fragments = r.fragments[1:]
-	}
-	return n, nil
-}
-
 func TestStreamDaemonCLIPipeValidUTF8Chunks(t *testing.T) {
 	for _, stream := range []string{cliStreamStdout, cliStreamStderr} {
-		for _, value := range []string{"", "ascii", "é", "界", "😀", strings.Repeat("x", 33000) + "é界😀"} {
+		for _, value := range []string{"", "ascii", "é", "界", "😀", strings.Repeat("x", 32767) + "😀" + strings.Repeat("y", 32768) + "é界😀"} {
 			t.Run(fmt.Sprintf("%s/%q", stream, value[:min(len(value), 8)]), func(t *testing.T) {
 				var got strings.Builder
 				reader := io.Reader(strings.NewReader(value))
@@ -221,17 +203,6 @@ func TestStreamDaemonCLIPipeValidUTF8Chunks(t *testing.T) {
 	}
 }
 
-type pipeTerminalReader struct {
-	data []byte
-	err  error
-}
-
-func (r *pipeTerminalReader) Read(p []byte) (int, error) {
-	n := copy(p, r.data)
-	r.data = r.data[n:]
-	return n, r.err
-}
-
 func TestStreamDaemonCLIPipeTerminalAndMalformedBytes(t *testing.T) {
 	readErr := errors.New("synthetic read failure")
 	for _, tc := range []struct {
@@ -240,11 +211,11 @@ func TestStreamDaemonCLIPipeTerminalAndMalformedBytes(t *testing.T) {
 		want   string
 		err    error
 	}{
-		{"data with EOF", &pipeTerminalReader{data: []byte("é"), err: io.EOF}, "é", nil},
-		{"data with error", &pipeTerminalReader{data: []byte("界"), err: readErr}, "界", readErr},
-		{"held suffix then EOF", &pipeReadScript{fragments: [][]byte{[]byte("prefix\xe2\x82")}, terminal: io.EOF}, "prefix\xe2\x82", nil},
-		{"held suffix then error", &pipeReadScript{fragments: [][]byte{[]byte("prefix\xf0\x9f")}, terminal: readErr}, "prefix\xf0\x9f", readErr},
-		{"malformed bytes", &pipeReadScript{fragments: [][]byte{[]byte("\xe0\x80"), []byte("\x80"), []byte("a\xff")}, terminal: io.EOF}, "\xe0\x80\x80a\xff", nil},
+		{"data with EOF", iotest.DataErrReader(strings.NewReader("é")), "é", nil},
+		{"data with error", iotest.DataErrReader(io.MultiReader(strings.NewReader("界"), iotest.ErrReader(readErr))), "界", readErr},
+		{"held suffix then EOF", io.MultiReader(bytes.NewReader([]byte("prefix\xe2\x82"))), "prefix\xe2\x82", nil},
+		{"held suffix then error", io.MultiReader(bytes.NewReader([]byte("prefix\xf0\x9f")), iotest.ErrReader(readErr)), "prefix\xf0\x9f", readErr},
+		{"malformed bytes", io.MultiReader(bytes.NewReader([]byte("\xe0\x80")), bytes.NewReader([]byte("\x80")), bytes.NewReader([]byte("a\xff"))), "\xe0\x80\x80a\xff", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got bytes.Buffer
@@ -257,10 +228,13 @@ func TestStreamDaemonCLIPipeTerminalAndMalformedBytes(t *testing.T) {
 
 func TestStreamDaemonCLIPipeDrainsAfterEmitFailure(t *testing.T) {
 	emitErr, readErr := errors.New("emit failure"), errors.New("read failure")
-	reader := &pipeReadScript{fragments: [][]byte{[]byte("first"), []byte("second"), []byte("third")}, terminal: readErr}
+	r1, r2, r3 := bytes.NewReader([]byte("first")), bytes.NewReader([]byte("second")), bytes.NewReader([]byte("third"))
+	reader := io.MultiReader(r1, r2, r3, iotest.ErrReader(readErr))
 	calls := 0
 	err := streamDaemonCLIPipe(reader, cliStreamStderr, func(_, _ string) error { calls++; return emitErr })
 	require.ErrorIs(t, err, emitErr)
 	assert.Equal(t, 1, calls)
-	assert.Empty(t, reader.fragments)
+	assert.Zero(t, r1.Len())
+	assert.Zero(t, r2.Len())
+	assert.Zero(t, r3.Len())
 }
