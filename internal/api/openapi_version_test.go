@@ -75,11 +75,17 @@ func apiBaseMarkers(t *testing.T, base string) []string {
 	t.Helper()
 	if base == "" {
 		out, err := exec.CommandContext(t.Context(), "git", "merge-base", "HEAD", "origin/main").Output()
+		if err != nil && os.Getenv("CI") == "" {
+			t.Skip("API contract base unavailable; fetch origin/main or set MSGVAULT_API_CONTRACT_BASE")
+		}
 		require.NoError(t, err, "find API contract base; fetch origin/main and its history or set MSGVAULT_API_CONTRACT_BASE to a base SHA")
 		base = strings.TrimSpace(string(out))
 	}
 	cmd := exec.CommandContext(t.Context(), "git", "ls-tree", "-z", "--name-only", "--full-tree", base, "--", "internal/api/"+apiContractsDir+"/") // #nosec G702 -- base is a Git ref supplied by the test runner.
 	out, err := cmd.Output()
+	if err != nil && os.Getenv("CI") == "" {
+		t.Skipf("API contract base %q unavailable; fetch it or set MSGVAULT_API_CONTRACT_BASE", base)
+	}
 	require.NoError(t, err, "read API contract markers at %q", base)
 	markers := []string{}
 	for path := range strings.SplitSeq(string(out), "\x00") {
@@ -235,6 +241,13 @@ func TestAPIBaseMarkers(t *testing.T) {
 	git("update-ref", "refs/remotes/upstream/main", "HEAD")
 	require.NoError(os.Remove(dir + marker))
 	assert.Equal(t, []string{marker}, apiBaseMarkers(t, "refs/remotes/upstream/main"))
+	t.Setenv("CI", "")
+	run := false
+	assert.True(t, t.Run("missing base", func(t *testing.T) {
+		apiBaseMarkers(t, "")
+		run = true
+	}))
+	assert.False(t, run)
 }
 
 func TestAPIMarkerSummary(t *testing.T) {
