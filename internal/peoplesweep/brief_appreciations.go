@@ -9,11 +9,20 @@ import (
 	"time"
 )
 
+// ErrBriefAppreciationMemoryInvalid reports that revalidated memory exceeds the
+// supported active/resolved bounds, so the brief is refused before it is saved.
+var ErrBriefAppreciationMemoryInvalid = errors.New("person brief appreciation memory exceeds supported state bounds")
+
 // FilterBriefAppreciations rebuilds the in-flight structure, citation inputs,
 // and deterministic paragraph after transactional source revalidation.
 // The original last-contact header is retained because its date and channel
 // came from the generation window rather than the structured model output.
+// It refuses final memory that readers could not load, rather than evicting
+// a supported entry.
 func FilterBriefAppreciations(result *BriefResult, current map[string]BriefAppreciationMemory) error {
+	if !ValidBriefAppreciationMemory(result.Boundary.AppreciationMemory) {
+		return fmt.Errorf("%w: %w", ErrInvalidStructuredOutput, ErrBriefAppreciationMemoryInvalid)
+	}
 	var output BriefOutput
 	if err := json.Unmarshal(result.Structured, &output); err != nil {
 		return fmt.Errorf("decode appreciation brief: %w", err)

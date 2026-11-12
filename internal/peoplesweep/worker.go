@@ -1132,7 +1132,8 @@ func (w *Worker) runPerson(
 		BriefRetryAt: briefRetryAt, CompletedAt: completedAt}
 	apply, applyErr := w.Sink.ApplyPersonSweep(ctx, applyRequest)
 	if brief != nil && (errors.Is(applyErr, ErrBriefEventEvidenceChanged) ||
-		errors.Is(applyErr, ErrBriefEventMemoryChanged) || errors.Is(applyErr, ErrEmptyBrief)) {
+		errors.Is(applyErr, ErrBriefEventMemoryChanged) || errors.Is(applyErr, ErrEmptyBrief) ||
+		errors.Is(applyErr, ErrBriefAppreciationMemoryInvalid)) {
 		// The first apply refused before writing. Preserve paid usage and
 		// extraction, and let the normal brief-only retry retain its work.
 		briefFailure = briefFailureClass(applyErr)

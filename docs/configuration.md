@@ -327,9 +327,11 @@ share its budgets. The profile must permit sensitive content and include
 `conversation_text` in `allowed_sources`.
 
 Only supported chat and text-message sources supply brief evidence; email,
-meeting transcripts, documents, and your own replies are excluded. See the
-[brief guide](usage/people-briefs.md) for
-supported sources and enrollment instructions.
+meeting transcripts, and documents are excluded. Your own messages may be sent
+to the selected provider as bounded context to check for a specific earlier
+thank-you in a direct conversation with a complete provider roster. They do not
+become facts about the other person. See the [brief guide](usage/people-briefs.md)
+for supported sources and enrollment instructions.
 
 Generation is enabled here by default, but each person must be enrolled
 separately. These settings apply to everyone; there are no per-person overrides.
