@@ -450,7 +450,7 @@ func (d *SQLiteDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
 // docs-site search ranking page ("Where Ordering Can Diverge") and
 // TestFTSRank_KnownDivergence for the expected-behavior pin and
 // rationale.
-func (d *SQLiteDialect) FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int) {
+func (d *SQLiteDialect) FTSSearchClause(rowIDs bool, _ []string) (join, where, orderBy string, orderArgCount int) {
 	where = "messages_fts MATCH ?"
 	if rowIDs {
 		where = SQLiteFTSRowIDCondition(where)
