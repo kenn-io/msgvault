@@ -204,6 +204,9 @@ func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
 	assert.Contains(end, `"operation":"end_employment"`)
 	assert.Contains(end, `"end_date":"2024-05"`)
 	assert.Contains(end, "End this employment on the given date; it is no longer current or primary.")
+	replace, err := b.OperationDisclosure(t.Context(), "replace_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "source": "user", "end_date": "2024-05"}})
+	require.NoError(err)
+	assert.Contains(replace, "Replace mutable fields; omitted ones clear. Omitted is_current is kept only without end_date; omitted is_primary only while the record stays current.")
 	primary, err := b.OperationDisclosure(t.Context(), "set_primary_employment", map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag})
 	require.NoError(err)
 	assert.Contains(primary, `"operation":"set_primary_employment"`)
@@ -239,8 +242,7 @@ func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
 }
 
 func TestMCPEmploymentCapabilityRequiresNativeRoute(t *testing.T) {
-	backend, _, _, org := employmentFixture(t)
-	_ = org
+	backend, _, _, _ := employmentFixture(t)
 	capabilities, err := backend.client.MCPCapabilities(t.Context())
 	require.NoError(t, err)
 	for i := range capabilities.Routes {
