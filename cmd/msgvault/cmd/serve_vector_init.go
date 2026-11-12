@@ -575,6 +575,8 @@ func newSchedulerEmbedJob(vf *vectorFeatures, s *store.Store, logger *slog.Logge
 		SequenceBoundActivation: vf.Cfg.Embeddings.EffectiveAPIFormat() ==
 			vector.APIFormatVoyageContextual,
 		Fingerprint:      vf.Cfg.GenerationFingerprint(),
+		RequestTimeout:   vf.Cfg.Embeddings.Timeout,
+		BatchSize:        vf.Cfg.Embeddings.BatchSize,
 		BackstopInterval: vf.Cfg.Embed.BackstopInterval,
 		BuildScope:       vf.Cfg.Embed.Scope.BuildScope(),
 		Log:              repairLogger(logger),
