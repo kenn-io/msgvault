@@ -184,7 +184,7 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 	if err != nil {
 		return nil, err
 	}
-	exceptions, err := queryCalendarExceptionsInWindow(ctx, r, dialect, lower, upper, "", nil)
+	exceptions, err := queryCalendarExceptionsInWindow(ctx, r, dialect, lower, upper)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +252,7 @@ func queryCalendarSeriesWithinBudget(ctx context.Context, r *loggedDB, predicate
 	return rows, err
 }
 
-func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect Dialect, lower, upper time.Time, restriction string, extra []any) ([]CalendarEventRow, error) {
+func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect Dialect, lower, upper time.Time) ([]CalendarEventRow, error) {
 	// A shortened series may end before the window. Look up each exception's
 	// own visible master to retain its full original interval without loading
 	// unrelated series or charging them against the series budget.
@@ -264,21 +264,7 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 		timedEnd = `e.original_start_at + (p.end_at - p.start_at) >= ?`
 		dateEnd = `NULLIF(e.original_start_date, '')::date + (NULLIF(p.end_date, '')::date - NULLIF(p.start_date, '')::date) >= ?::date`
 	}
-	rangeEnd := `julianday(p.recurrence_end_at) + coalesce(abs(julianday(e.start_at) - coalesce(julianday(e.original_start_at), julianday(e.original_start_date))), 0) + coalesce(abs(julianday(e.end_at) - julianday(e.start_at)), 0) >= julianday(?)`
-	rangeStart := `coalesce(julianday(e.original_start_at), julianday(e.original_start_date)) - coalesce(abs(julianday(e.start_at) - coalesce(julianday(e.original_start_at), julianday(e.original_start_date))), 0) - coalesce(abs(julianday(e.end_at) - julianday(e.start_at)), 0)`
-	rangeUpper := `julianday(?)`
-	if dialect.DriverName() == postgresDriverName {
-		rangeEnd = `p.recurrence_end_at + (coalesce(abs(extract(epoch from (e.start_at - coalesce(e.original_start_at, NULLIF(e.original_start_date, '')::date::timestamp AT TIME ZONE 'UTC')))), 0) + coalesce(abs(extract(epoch from (e.end_at - e.start_at))), 0)) * interval '1 second' >= ?`
-		rangeStart = `coalesce(e.original_start_at, NULLIF(e.original_start_date, '')::date::timestamp AT TIME ZONE 'UTC') - (coalesce(abs(extract(epoch from (e.start_at - coalesce(e.original_start_at, NULLIF(e.original_start_date, '')::date::timestamp AT TIME ZONE 'UTC')))), 0) + coalesce(abs(extract(epoch from (e.end_at - e.start_at))), 0)) * interval '1 second'`
-		rangeUpper = `?`
-	}
-	rangeCandidate := `e.recurrence_json LIKE '%RECURRENCE-ID;RANGE=THISANDFUTURE%' AND (` + rangeStart + ` IS NULL OR ` + rangeStart + ` < ` + rangeUpper + `) AND NOT EXISTS (SELECT 1 FROM calendar_events p JOIN messages pm ON pm.id=p.message_id WHERE p.provider_event_id=e.series_provider_id AND pm.source_id=m.source_id AND p.kind IN ('series','single') AND pm.deleted_at IS NULL AND ` + calendarEventVisibility("p", "pm") + ` AND p.recurrence_end_at IS NOT NULL AND NOT (` + rangeEnd + `))`
-	rangeArgs := []any{dialect.TimestampParam(upper), dialect.TimestampParam(lower)}
-	if restriction != "" {
-		rangeCandidate = `e.recurrence_json LIKE '%RECURRENCE-ID;RANGE=THISANDFUTURE%'`
-		rangeArgs = nil
-	}
-	predicate := `e.kind = 'exception' AND (` + rangeCandidate + ` OR (e.start_at < ? AND e.end_at >= ?) OR
+	predicate := `e.kind = 'exception' AND ((e.start_at < ? AND e.end_at >= ?) OR
   (e.start_at IS NULL AND e.end_at >= ?) OR
   (e.end_at IS NULL AND e.start_at < ?) OR
   (e.original_start_at >= ? AND e.original_start_at < ?) OR
@@ -289,12 +275,12 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
      AND ` + calendarEventVisibility("p", "pm") + `) = m.source_id
     AND ((e.original_start_at < ? AND ` + timedEnd + `) OR
     (e.original_start_date < ? AND ` + dateEnd + `))) OR
-	   (e.original_start_at IS NULL AND e.original_start_date = ''))` + restriction
+	   (e.original_start_at IS NULL AND e.original_start_date = ''))`
 	dateLower, dateUpper := lower.Format(time.DateOnly), upper.AddDate(0, 0, 1).Format(time.DateOnly)
-	return queryCalendarEventRowsWithinBudget(ctx, r, predicate, append(append(rangeArgs, []any{
+	return queryCalendarEventRowsWithinBudget(ctx, r, predicate, []any{
 		upper, lower, lower, upper, lower, upper, dateLower, dateUpper,
 		upper, dialect.TimestampParam(lower), dateUpper, dateLower,
-	}...), extra...), maxCalendarExceptions)
+	}, maxCalendarExceptions)
 }
 
 // Only sparse cancellations inherit omitted details from the master.
