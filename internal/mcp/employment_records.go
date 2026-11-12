@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -16,14 +17,18 @@ type EmploymentRecord struct {
 func employmentOperationalDefinitions() []operationalDefinition {
 	id := safeIDSchema("Employment ID")
 	etag := stringSchema("Exact ETag from the latest employment read")
+	sources := make([]string, 0, len(store.AllProvenances))
+	for _, source := range store.AllProvenances {
+		sources = append(sources, string(source))
+	}
 	body := closedObject(map[string]*jsonschema.Schema{
 		"person_id": safeIDSchema("Durable person ID"), "organization_id": safeIDSchema("Organization ID"),
-		"source": stringSchema("Native provenance", "user", "carddav_import", "vcard_import", "archive_observation", "extraction", "enrichment", "system"),
+		"source": stringSchema("Native provenance", sources...),
 		"title":  stringSchema("Title"), "role": stringSchema("Role"), "department": stringSchema("Department"), "location": stringSchema("Location"),
 		"address_id": safeIDSchema("Address ID"), "description": stringSchema("Description"),
 		"start_date": stringSchema("Partial ISO date: YYYY, YYYY-MM, or YYYY-MM-DD"), "end_date": stringSchema("Partial ISO date"),
 		"is_current": booleanSchema("Explicit current state"), "is_primary": booleanSchema("Explicit primary state"),
-		"source_ref": stringSchema("Provenance reference"), "confidence": {Type: "number"},
+		"source_ref": stringSchema("Provenance reference"), "confidence": scoreSchema("Derived confidence from 0 to 1"),
 	}, "person_id", "organization_id", "source")
 	// Native nullable fields use omission and null equivalently for replacement.
 	for key := range body.Properties {
@@ -45,7 +50,7 @@ func employmentOperationalDefinitions() []operationalDefinition {
 		newOperationalDefinition("list_person_employments", "List a person's employment history and current primary projection.", OperationFamilyEmployment, listInput("person_id"), list, false),
 		newOperationalDefinition("list_organization_employments", "List an organization's employment history.", OperationFamilyEmployment, listInput("organization_id"), list, false),
 		mutation("create_employment", "Create an employment record; native primary and duplicate guards apply.", map[string]*jsonschema.Schema{"employment": body}, "employment"),
-		mutation("replace_employment", "Replace mutable fields using the exact ETag; omitted text, dates and other optional fields are cleared, while omitted current and primary flags follow native preservation rules.", map[string]*jsonschema.Schema{"employment_id": id, "etag": etag, "employment": body}, "employment_id", "etag", "employment"),
+		mutation("replace_employment", "Replace mutable fields using the exact ETag; omitted text, dates and other optional fields are cleared, while omitted current and primary flags follow native preservation rules. Reads return dates as year/month/day objects; send partial ISO date strings.", map[string]*jsonschema.Schema{"employment_id": id, "etag": etag, "employment": body}, "employment_id", "etag", "employment"),
 		mutation("end_employment", "End the employment on a partial date using the exact ETag.", map[string]*jsonschema.Schema{"employment_id": id, "etag": etag, "end_date": stringSchema("Partial ISO end date")}, "employment_id", "etag", "end_date"),
 		mutation("set_primary_employment", "Set this current employment primary using the exact ETag; another primary may be demoted.", map[string]*jsonschema.Schema{"employment_id": id, "etag": etag}, "employment_id", "etag"),
 		newOperationalDefinition("delete_employment", "Delete this employment using the exact ETag. Requires client confirmation.", OperationFamilyEmployment, closedObject(map[string]*jsonschema.Schema{"employment_id": id, "etag": etag}, "employment_id", "etag"), closedObject(nil), true),

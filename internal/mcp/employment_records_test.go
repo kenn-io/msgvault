@@ -35,6 +35,7 @@ func TestEmploymentCatalogGatesAndClosedInput(t *testing.T) {
 	assert.NoError(t, resolved.Validate(good))
 	bad := map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "user", "other": true}}
 	assert.Error(t, resolved.Validate(bad))
+	assert.Error(t, resolved.Validate(map[string]any{"employment": map[string]any{"person_id": 1, "organization_id": 2, "source": "extraction", "confidence": 2}}))
 	opts.DelegatedOnly = true
 	assert.Empty(t, operationalCatalog(opts, true))
 	found := false

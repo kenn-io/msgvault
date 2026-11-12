@@ -177,11 +177,18 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 		}
 		current = result.Output
 	}
+	effect := map[string]string{
+		"create_employment":      "Create this employment record; it may become the person's primary current employment.",
+		"replace_employment":     "Replace this employment's mutable fields; omitted optional fields are cleared.",
+		"end_employment":         "End this employment on the given date; it is no longer current or primary.",
+		"set_primary_employment": "Make this employment primary; the person's other primary employment is demoted.",
+		"delete_employment":      "Permanently delete this employment record.",
+	}[name]
 	data, err := json.Marshal(struct {
 		Operation string         `json:"operation"`
 		Current   any            `json:"current,omitempty"`
 		Changes   map[string]any `json:"changes"`
 		Effect    string         `json:"effect"`
-	}{name, current, args, "Changes employment history and may change the primary current employment projection."}, json.Deterministic(true))
+	}{name, current, args, effect}, json.Deterministic(true))
 	return string(data), true, err
 }

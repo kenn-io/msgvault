@@ -133,6 +133,26 @@ func TestMCPEmploymentSDKApprovalAndReadOnly(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &list))
 	require.Len(t, list.Employments, 1)
 	assert.Equal(t, record.Employment.ID, list.Employments[0].ID)
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "replace_employment", Arguments: map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag, "employment": map[string]any{"person_id": person, "organization_id": org, "source": "user", "title": "Engineer", "is_primary": false}}})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	assert.Equal(t, 2, approvals)
+	data, err = json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	var replaced mcpserver.EmploymentRecord
+	require.NoError(t, json.Unmarshal(data, &replaced))
+	require.NotNil(t, replaced.Employment.Title)
+	assert.Equal(t, "Engineer", *replaced.Employment.Title)
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "delete_employment", Arguments: map[string]any{"employment_id": record.Employment.ID, "etag": record.ETag}})
+	require.NoError(t, err)
+	assert.Equal(t, "employment_revision_conflict", loopToolFailure(t, result)["error"])
+	assert.Equal(t, 2, approvals)
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "delete_employment", Arguments: map[string]any{"employment_id": record.Employment.ID, "etag": replaced.ETag}})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+	assert.Equal(t, 3, approvals)
+	_, err = st.GetEmploymentContext(t.Context(), record.Employment.ID)
+	assert.ErrorIs(t, err, store.ErrEmploymentNotFound)
 }
 
 func TestMCPEmploymentNativePrimaryConflictAndDisclosure(t *testing.T) {
