@@ -11,37 +11,39 @@ import (
 )
 
 type meetingDecisionEdge struct {
-	id         int64
-	isExplicit bool
-	a, b       meetingDecisionEndpoint
-	decision   string
+	id       int64
+	direct   bool
+	a, b     meetingDecisionEndpoint
+	decision string
 }
 
-// meetingDecisionSideClause filters one stored endpoint before the read budget applies.
-func meetingDecisionSideClause(endpoint meetingDecisionEndpoint, side string) (string, []any) {
-	clause := "d." + side + "_message_id=?"
-	args := []any{endpoint.ID}
-	if endpoint.Kind != "" {
-		clause += " AND d." + side + "_kind=?"
-		args = append(args, endpoint.Kind)
-		if endpoint.Kind == meetingRefEvent {
-			clause += " AND (d." + side + "_key=? OR (d." + side + "_key='' AND d." + side + "_anchor=?))"
-			args = append(args, endpoint.Key, endpoint.Key)
-		}
-	}
-	return "(" + clause + ")", args
-}
-
+// meetingDecisionEdges finds choices saved on the occurrence or its hidden copies.
 func (s *Store) meetingDecisionEdges(ctx context.Context, endpoint meetingDecisionEndpoint, budget *int) ([]meetingDecisionEdge, error) {
 	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
 	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
-	left, args := meetingDecisionSideClause(endpoint, "left")
-	right, rightEndpointArgs := meetingDecisionSideClause(endpoint, "right")
-	args = append(args, rightEndpointArgs...)
+	var originalDate string
+	var originalTime any
+	if endpoint.Kind == meetingRefEvent && endpoint.Key != "" {
+		ref, err := endpoint.meetingRef()
+		if err != nil {
+			return nil, err
+		}
+		if ref.Identity.AllDay {
+			originalDate = ref.Identity.Date
+		} else {
+			originalTime = ref.Identity.Instant
+		}
+	}
+	args := []any{originalDate, originalTime, endpoint.ID, endpoint.ID, endpoint.Kind, endpoint.Key, endpoint.Key, endpoint.ID, endpoint.Kind, endpoint.Key, endpoint.Key}
 	args = append(args, leftArgs...)
 	args = append(args, rightArgs...)
 	args = append(args, *budget+1)
-	rows, err := s.db.QueryContext(ctx, `SELECT d.id,d.is_explicit,d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE (`+left+` OR `+right+`) AND l.deleted_at IS NULL AND r.deleted_at IS NULL`+leftScope+rightScope+` LIMIT ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `WITH RECURSIVE edges(child, parent) AS (
+ SELECT c.message_id,c.survivor_message_id FROM meeting_copy_survivors c JOIN messages m ON m.id=c.message_id WHERE m.deleted_at IS NOT NULL AND m.delete_batch_id IS NOT NULL
+ UNION SELECT c.message_id,c.survivor_message_id FROM source_merge_messages c JOIN messages m ON m.id=c.message_id WHERE m.deleted_at IS NOT NULL AND (m.delete_batch_id IS NULL OR NOT EXISTS (SELECT 1 FROM meeting_copy_survivors x WHERE x.message_id=m.id)) AND c.survivor_message_id IS NOT NULL
+ UNION SELECT e.message_id,series.message_id FROM calendar_events e JOIN messages m ON m.id=e.message_id JOIN calendar_events series ON series.provider_event_id=e.series_provider_id JOIN messages sm ON sm.id=series.message_id AND sm.source_id=m.source_id WHERE e.kind='exception' AND e.series_provider_id<>'' AND series.kind='series' AND m.deleted_at IS NULL AND ((e.original_start_date<>'' AND e.original_start_date=?) OR e.original_start_at=?)
+ ), ids(id) AS (SELECT CAST(? AS BIGINT) UNION SELECT edges.child FROM edges JOIN ids ON edges.parent=ids.id
+ ) SELECT d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision,l.deleted_at IS NULL AND r.deleted_at IS NULL FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE ((d.left_message_id IN (SELECT id FROM ids) AND (d.left_message_id<>? OR d.left_kind=? AND (d.left_key=? OR d.left_key='' OR ?=''))) OR (d.right_message_id IN (SELECT id FROM ids) AND (d.right_message_id<>? OR d.right_kind=? AND (d.right_key=? OR d.right_key='' OR ?=''))))`+leftScope+rightScope+` LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +51,7 @@ func (s *Store) meetingDecisionEdges(ctx context.Context, endpoint meetingDecisi
 	var edges []meetingDecisionEdge
 	for rows.Next() {
 		var edge meetingDecisionEdge
-		if err := rows.Scan(&edge.id, &edge.isExplicit, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.a.Anchor, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.b.Anchor, &edge.decision); err != nil {
+		if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision, &edge.direct); err != nil {
 			return nil, err
 		}
 		edges = append(edges, edge)
@@ -62,10 +64,6 @@ func (s *Store) meetingDecisionEdges(ctx context.Context, endpoint meetingDecisi
 		return nil, calendarRecurrenceBudgetError()
 	}
 	return edges, nil
-}
-
-func meetingDecisionEndpointMatches(query, stored meetingDecisionEndpoint) bool {
-	return query.ID == stored.ID && (query.Kind == "" || query.Kind == stored.Kind && (query.Kind != meetingRefEvent || query.Key == stored.Key || stored.Key == "" && stored.Anchor == query.Key))
 }
 
 // MeetingRecordContext follows automatic evidence and owner choices in one snapshot.
@@ -99,7 +97,10 @@ func (s *Store) meetingRecordContext(ctx context.Context, ref MeetingLinkRef) (M
 	}
 	defer release()
 	budget := calrecur.RequestReadBudget
-	seed := endpointFromRef(ref)
+	seed, err := s.meetingOccurrenceKey(ctx, endpointFromRef(ref), &budget)
+	if err != nil {
+		return result, err
+	}
 	graph, err := s.loadMeetingDecisionGraph(ctx, []meetingDecisionEndpoint{seed}, &budget)
 	if err != nil {
 		return result, err
@@ -134,16 +135,11 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 	seenDecisions := map[int64]bool{}
 	var candidates []meetingDecisionEdge
 	resolved := map[string]bool{}
-	materialized := map[string]MeetingRecord{}
 	for len(queue) > 0 {
 		endpoint := queue[0]
 		queue = queue[1:]
 		if !resolved[endpoint.ref()] {
-			record, cached := materialized[endpoint.ref()]
-			var err error
-			if !cached {
-				record, err = s.meetingAutomaticRecordForEndpoint(ctx, endpoint, budget)
-			}
+			record, err := s.meetingAutomaticRecordForEndpoint(ctx, endpoint, budget)
 			if errors.Is(err, sql.ErrNoRows) && endpoint != seeds[0] {
 				continue
 			}
@@ -174,15 +170,13 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 				if err != nil {
 					return nil, err
 				}
-				member := endpointFromRef(ref)
+				member, err := s.meetingOccurrenceKey(ctx, endpointFromRef(ref), budget)
+				if err != nil {
+					return nil, err
+				}
 				linkCopy := link
 				add(member, &linkCopy)
 				addMember(member)
-				if link.MessageID != member.ID {
-					alias := meetingDecisionEndpoint{ID: link.MessageID, Kind: meetingRefEvent}
-					add(alias, nil)
-					addMember(alias)
-				}
 			}
 			for _, member := range members {
 				resolved[member.ref()] = true
@@ -200,24 +194,14 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 			seenDecisions[choice.id] = true
 			valid := true
 			for _, endpoint := range []*meetingDecisionEndpoint{&choice.a, &choice.b} {
-				canonical, _, record, err := s.materializedMeetingEndpointRecord(ctx, *endpoint, budget)
-				if errors.Is(err, ErrMeetingOccurrenceRequired) {
+				canonical, err := s.meetingOccurrenceKey(ctx, *endpoint, budget)
+				if errors.Is(err, ErrMeetingOccurrenceRequired) || errors.Is(err, sql.ErrNoRows) {
 					valid = false
 					break
 				}
-				if errors.Is(err, sql.ErrNoRows) {
-					if len(record.Unexpandable) == 0 {
-						valid = false
-						break
-					}
-					canonical = *endpoint
-					if canonical.Key == "" {
-						canonical.Key = canonical.Anchor
-					}
-				} else if err != nil {
+				if err != nil {
 					return nil, err
 				}
-				materialized[canonical.ref()] = record
 				*endpoint = canonical
 			}
 			if !valid {
@@ -233,7 +217,7 @@ func (s *Store) loadMeetingDecisionGraph(ctx context.Context, seeds []meetingDec
 
 func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionEdge) {
 	var explicit, splits []meetingDecisionEdge
-	// Materialize aliases before choosing one effective contribution per pair.
+	// Choose one effective contribution per pair.
 	effective := map[string]meetingDecisionEdge{}
 	for _, choice := range g.candidates {
 		left, right := choice.a, choice.b
@@ -243,7 +227,7 @@ func (g *meetingDecisionGraph) reduce() (func(string) string, []meetingDecisionE
 		choice.a, choice.b = left, right
 		key := left.ref() + "/" + right.ref()
 		old, exists := effective[key]
-		if !exists || choice.isExplicit && !old.isExplicit || choice.isExplicit == old.isExplicit && choice.decision == "split" && old.decision != "split" {
+		if !exists || choice.direct && !old.direct || choice.direct == old.direct && choice.id > old.id {
 			effective[key] = choice
 		}
 	}
