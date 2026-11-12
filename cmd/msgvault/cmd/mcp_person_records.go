@@ -176,15 +176,13 @@ func (b *daemonMCPOperations) personRecordDisclosure(ctx context.Context, name s
 		for _, item := range input.Patch.Media.Add {
 			add := mediaAdd{PersonMediaInputRequest: item}
 			if item.Data != nil {
-				data, err := base64.StdEncoding.DecodeString(*item.Data)
+				size, digest, err := summarizeInlineMedia(*item.Data)
 				if err != nil {
 					return "", true, &mcpserver.OperationRefusalError{Code: invalidArguments}
 				}
-				if len(data) > store.MaxPersonMediaBytes {
+				if size > store.MaxPersonMediaBytes {
 					return "", true, &mcpserver.OperationRefusalError{Code: "invalid_profile_value"}
 				}
-				sum := sha256.Sum256(data)
-				size, digest := len(data), hex.EncodeToString(sum[:])
 				add.Data, add.DataSize, add.DataSHA256 = nil, &size, &digest
 			}
 			patch.Media.Add = append(patch.Media.Add, add)
@@ -326,4 +324,13 @@ func superseded(values []jsontext.Value, ids []int64, missing bool) ([]any, bool
 		missing = missing || !found[value]
 	}
 	return selected, missing, nil
+}
+
+func summarizeInlineMedia(encoded string) (int, string, error) {
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return 0, "", err
+	}
+	sum := sha256.Sum256(data)
+	return len(data), hex.EncodeToString(sum[:]), nil
 }

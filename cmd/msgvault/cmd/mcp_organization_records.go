@@ -2,11 +2,9 @@ package cmd
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json/v2"
 	"net/http"
+	"net/url"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
@@ -83,11 +81,9 @@ func (b *daemonMCPOperations) executeOrganizationOperation(ctx context.Context, 
 		result, err = readMCPOperationJSON[generated.OrganizationAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/attributes", &generated.ListOrganizationAttributesRequestOptions{PathParams: &generated.ListOrganizationAttributesPath{ID: input.OrganizationID}, Query: &generated.ListOrganizationAttributesQuery{DefinitionSlug: input.DefinitionSlug, IncludeSuperseded: input.IncludeSuperseded}}, http.StatusOK)
 	}
 	if result != nil && !result.IsError && name != "list_organization_attributes" {
-		profile, ok := result.Output.(generated.OrganizationProfile)
-		if !ok || result.ETag == "" {
-			return operationFailure("invalid_operation_response", false), true, nil
-		}
-		result.Output = mcpserver.OrganizationRecord{ETag: result.ETag, Profile: profile}
+		result = etagProjection(result, false, func(etag string, profile generated.OrganizationProfile) mcpserver.OrganizationRecord {
+			return mcpserver.OrganizationRecord{ETag: etag, Profile: profile}
+		})
 	}
 	return result, true, err
 }
@@ -129,8 +125,8 @@ func organizationWriteRequest(name string, args map[string]any) (organizationReq
 		r = organizationRequest{http.MethodPost, "/api/v1/organizations/{id}/attributes", &generated.SetOrganizationAttributeRequestOptions{PathParams: &generated.SetOrganizationAttributePath{ID: a.OrganizationID}, Body: &a.Body}, a.OrganizationID, ""}
 	case "clear_organization_attribute":
 		a, err := decodeMCPOperationArguments[mcpserver.OrganizationClearAttributeArgs](args)
-		valid = err == nil && store.ValidateAttributeSlug(a.Slug) == nil
-		r = organizationRequest{http.MethodDelete, "/api/v1/organizations/{id}/attributes/{slug}", &generated.ClearOrganizationAttributeRequestOptions{PathParams: &generated.ClearOrganizationAttributePath{ID: a.OrganizationID, Slug: a.Slug}, Query: &generated.ClearOrganizationAttributeQuery{Ordinal: a.Ordinal, ExpectedValueID: a.ExpectedValueID, DryRun: a.DryRun}}, a.OrganizationID, ""}
+		valid = err == nil
+		r = organizationRequest{http.MethodDelete, "/api/v1/organizations/{id}/attributes/{slug}", &generated.ClearOrganizationAttributeRequestOptions{PathParams: &generated.ClearOrganizationAttributePath{ID: a.OrganizationID, Slug: url.PathEscape(a.Slug)}, Query: &generated.ClearOrganizationAttributeQuery{Ordinal: a.Ordinal, ExpectedValueID: a.ExpectedValueID, DryRun: a.DryRun}}, a.OrganizationID, ""}
 	default:
 		return r, false, false
 	}
@@ -145,7 +141,7 @@ func organizationWriteRequest(name string, args map[string]any) (organizationReq
 
 func organizationRefusal(code string) bool {
 	switch code {
-	case "organization_not_found", "organization_revision_conflict", "organization_has_employments", "organization_merge_conflict", "organization_profile_too_large", "invalid_organization", "invalid_source", "invalid_attribute_definition", "attribute_definition_not_found", "attribute_definition_inactive", "attribute_definition_not_writable", "invalid_attribute_value", "attribute_value_not_found", "attribute_value_conflict", "invalid_person_id", "profile_media_not_found", "profile_media_content_unavailable", "invalid_if_match", "invalid_ordinal", "invalid_expected_value_id", "organizations_unavailable":
+	case mcpInvalidArguments, "organization_not_found", "organization_revision_conflict", "organization_has_employments", "organization_merge_conflict", "organization_profile_too_large", "invalid_organization", "invalid_source", "invalid_attribute_slug", "invalid_attribute_definition", "attribute_definition_not_found", "attribute_definition_inactive", "attribute_definition_not_writable", "invalid_attribute_value", "attribute_value_not_found", "attribute_value_conflict", "invalid_person_id", "profile_media_not_found", "profile_media_content_unavailable", "invalid_if_match", "invalid_ordinal", "invalid_expected_value_id", "organizations_unavailable":
 		return true
 	}
 	return false
@@ -176,23 +172,15 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 	}
 	if name == "replace_organization_profile" {
 		result, err := readMCPOperationJSONLimit[generated.OrganizationProfile](ctx, b.client, r.method, r.path, r.options, organizationProfileResponseLimit, http.StatusOK)
-		if result != nil && !result.IsError {
-			profile, ok := result.Output.(generated.OrganizationProfile)
-			if !ok || result.ETag == "" {
-				return operationFailure("invalid_operation_response", true), true, nil
-			}
-			result.Output = mcpserver.OrganizationRecord{ETag: result.ETag, Profile: profile}
-		}
+		result = etagProjection(result, true, func(etag string, profile generated.OrganizationProfile) mcpserver.OrganizationRecord {
+			return mcpserver.OrganizationRecord{ETag: etag, Profile: profile}
+		})
 		return result, true, err
 	}
 	result, err := readMCPOperationJSON[generated.Organization](ctx, b.client, r.method, r.path, r.options, http.StatusOK, http.StatusCreated)
-	if result != nil && !result.IsError {
-		org, ok := result.Output.(generated.Organization)
-		if !ok || result.ETag == "" {
-			return operationFailure("invalid_operation_response", true), true, nil
-		}
-		result.Output = mcpserver.OrganizationMutation{ETag: result.ETag, Organization: org}
-	}
+	result = etagProjection(result, true, func(etag string, org generated.Organization) mcpserver.OrganizationMutation {
+		return mcpserver.OrganizationMutation{ETag: etag, Organization: org}
+	})
 	return result, true, err
 }
 
@@ -220,18 +208,6 @@ func (b *daemonMCPOperations) organizationMedia(ctx context.Context, args map[st
 	return &mcpserver.OperationResult{Output: chunk}, nil
 }
 
-func organizationContextRefusal(result *mcpserver.OperationResult) *mcpserver.OperationRefusalError {
-	if result != nil && result.IsError {
-		if failure, ok := result.Output.(struct {
-			Error                     string `json:"error"`
-			OperationMayHaveCompleted bool   `json:"operation_may_have_completed"`
-		}); ok && failure.Error != "" && !failure.OperationMayHaveCompleted {
-			return &mcpserver.OperationRefusalError{Code: failure.Error}
-		}
-	}
-	return &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
-}
-
 func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {
 	r, handled, valid := organizationWriteRequest(name, args)
 	if !handled {
@@ -245,8 +221,11 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 	var preview any
 	if r.id != 0 {
 		result, _, err := b.executeOrganizationOperation(ctx, "get_organization", map[string]any{"organization_id": r.id})
+		if err != nil {
+			result = nil
+		}
 		if err != nil || result == nil || result.IsError {
-			return "", true, organizationContextRefusal(result)
+			return "", true, operationContext(result, "", "", organizationRefusal)
 		}
 		current = result.Output
 	}
@@ -255,17 +234,18 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 		case *generated.SetOrganizationAttributeRequestOptions:
 			body := *options.Body
 			body.DryRun = new(true)
-			body.ExpectedValueID = nil
 			options.Body = &body
 		case *generated.ClearOrganizationAttributeRequestOptions:
 			query := *options.Query
 			query.DryRun = new(true)
-			query.ExpectedValueID = nil
 			options.Query = &query
 		}
 		result, err := readMCPOperationJSON[generated.OrganizationAttributeWrite](ctx, b.client, r.method, r.path, r.options, http.StatusOK, http.StatusCreated)
+		if err != nil {
+			result = nil
+		}
 		if err != nil || result == nil || result.IsError {
-			return "", true, organizationContextRefusal(result)
+			return "", true, operationContext(result, "", "", organizationRefusal)
 		}
 		write, ok := result.Output.(generated.OrganizationAttributeWrite)
 		if !ok {
@@ -285,12 +265,15 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 	if name == "merge_organization" {
 		input, _ := decodeMCPOperationArguments[mcpserver.OrganizationMergeArgs](args)
 		result, _, err := b.executeOrganizationOperation(ctx, "get_organization", map[string]any{"organization_id": input.Body.LosingOrganizationID})
+		if err != nil {
+			result = nil
+		}
 		if err != nil || result == nil || result.IsError {
-			return "", true, organizationContextRefusal(result)
+			return "", true, operationContext(result, "", "", organizationRefusal)
 		}
 		losing = result.Output
 	}
-	// Hash all exact arguments and replace inline media with its digest in the human disclosure.
+	// Copy arguments for display; confirmation and execution retain the originals.
 	raw, err := json.Marshal(args, json.Deterministic(true))
 	if err != nil {
 		return "", true, err
@@ -304,12 +287,10 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 			for _, item := range media {
 				if row, ok := item.(map[string]any); ok {
 					if data, ok := row["data"].(string); ok {
-						bytes, err := base64.StdEncoding.DecodeString(data)
-						if err != nil {
-							return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+						size, digest, err := summarizeInlineMedia(data)
+						if err == nil {
+							row["data"] = map[string]any{"bytes": size, "sha256": digest}
 						}
-						digest := sha256.Sum256(bytes)
-						row["data"] = map[string]any{"bytes": len(bytes), "sha256": hex.EncodeToString(digest[:])}
 					}
 				}
 			}

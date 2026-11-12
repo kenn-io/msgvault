@@ -938,6 +938,16 @@ one second, then make a new call, which needs approval again. MCP never
 retries a write by itself. If a write reports
 `operation_may_have_completed: true`, list the loops again before retrying.
 
+## Organization records
+
+On unreleased `main`, owner sessions can read an organization by ID, its profile history, typed attributes, and stored inline media. Media uses base64 chunks: start at offset zero and pass the returned SHA-256 with subsequent offsets. URI-only media cannot be downloaded and msgvault does not fetch its URI.
+
+Enable `--allow-organization-writes` for confirmed create, update, delete, merge, profile replacement, and attribute operations. HTTP also requires the general write opt-in and protocol `2026-07-28` or newer. Updates, deletes, merges, and profile replacement use the exact ETag from a read; merges also require the losing revision. Profile replacement clears omitted collections. Deletion refuses organizations with employment records. If a mutation reports an uncertain outcome, read the record before retrying.
+
+For the embedded server, use `msgvault serve --mcp-allow-writes --mcp-allow-organization-writes`.
+
+Organization history responses are limited to 1 MiB. Active profile reads and replacement receipts have a larger 36 MiB response limit; an even larger response returns a limit error.
+
 ## Employment records
 
 On unreleased `main`, `get_employment` reads one record with its revision
