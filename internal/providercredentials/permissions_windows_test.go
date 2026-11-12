@@ -470,7 +470,7 @@ func TestSecureRestoredRefusesInheritedOmittedACLBeforeChanges(t *testing.T) {
 	user := currentWindowsProviderCredentialSID(t)
 	access := providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER)
 	access.Inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
-	setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{access}, true)
+	setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{access, providerCredentialTestAccess(windowsProviderCredentialSID(t, "S-1-1-0"), windows.GENERIC_READ, windows.TRUSTEE_IS_WELL_KNOWN_GROUP)}, true)
 	selected := filepath.Join(dir, "selected")
 	omitted := filepath.Join(dir, "omitted")
 	requirements.NoError(os.WriteFile(selected, []byte("selected"), 0600))
@@ -503,7 +503,7 @@ func TestRestorePreflightRejectsReparseEntry(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(dir, "link")); err != nil {
 		t.Skipf("creating a symlink requires Windows privileges: %v", err)
 	}
-	_, err := restorePreflight(dir, map[string]struct{}{}, map[string]struct{}{})
+	_, err := restorePreflight(dir, map[string]struct{}{}, map[string]struct{}{}, true)
 	requirements.ErrorIs(err, ErrRestorePermissionsConflict)
 }
 
@@ -554,6 +554,11 @@ func TestSecureRestoredPreservesOmittedLockAndProtectedMixedTree(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("omitted nested", string(data))
 
+	// Force a root repair while the protected nested directory remains a boundary.
+	setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{
+		providerCredentialTestAccess(user, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER),
+		providerCredentialTestAccess(windowsProviderCredentialSID(t, "S-1-1-0"), windows.GENERIC_READ, windows.TRUSTEE_IS_WELL_KNOWN_GROUP),
+	}, true)
 	changedAncestor := filepath.Join(nested, "changed")
 	requirements.NoError(os.Mkdir(changedAncestor, 0700))
 	selectedBelow := filepath.Join(changedAncestor, "selected")
@@ -561,7 +566,7 @@ func TestSecureRestoredPreservesOmittedLockAndProtectedMixedTree(t *testing.T) {
 	requirements.NoError(os.WriteFile(selectedBelow, []byte("selected"), 0600))
 	requirements.NoError(os.WriteFile(omittedBelow, []byte("omitted"), 0600))
 	err = SecureRestored(dir, []string{filepath.Join("nested", "changed", "selected")})
-	requirements.ErrorIs(err, ErrRestorePermissionsConflict)
+	requirements.NoError(err)
 	data, err = os.ReadFile(omittedBelow)
 	requirements.NoError(err)
 	assertions.Equal("omitted", string(data))
