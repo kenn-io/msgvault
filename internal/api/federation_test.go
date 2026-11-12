@@ -25,6 +25,16 @@ type failingFederationTouch struct {
 	fail bool
 }
 
+type federationObservedGate struct {
+	*SerialOperationGate
+	requestWork bool
+}
+
+func (g *federationObservedGate) BeginRequestWorkContext(ctx context.Context, label string) (func(), bool) {
+	g.requestWork = true
+	return g.SerialOperationGate.BeginRequestWorkContext(ctx, label)
+}
+
 func (f *failingFederationTouch) TouchFederationEnrollmentContext(ctx context.Context, uid string) error {
 	if f.fail {
 		return errors.New("fixture failure")
@@ -217,7 +227,7 @@ func TestFederationOperationGate(t *testing.T) {
 func TestFederationHandshakeDuringOperation(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
-	gate := NewSerialOperationGate()
+	gate := &federationObservedGate{SerialOperationGate: NewSerialOperationGate()}
 	release, ok := gate.BeginWorkContext(t.Context())
 	requirements.True(ok)
 	t.Cleanup(func() {
@@ -247,7 +257,7 @@ func TestFederationHandshakeDuringOperation(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	}
 	handshake()
-	assert.False(t, gate.HasRequestWaiters())
+	assert.False(t, gate.requestWork, "handshake must not make background work yield")
 	entries, err := st.ListFederationEnrollmentsContext(t.Context())
 	requirements.NoError(err)
 	requirements.Len(entries, 1)
