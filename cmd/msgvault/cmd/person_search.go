@@ -64,9 +64,6 @@ use 'person directory --query <name>' or '--address <address>'.`,
 		}
 		defer func() { _ = client.Close() }()
 
-		if err := client.RequirePersonDiscoveryScope(cmd.Context(), personSearchOrganizationID); err != nil {
-			return err
-		}
 		limit := int64(personSearchLimit)
 		body := generated.SearchPeopleBody{Query: query, Limit: &limit}
 		if personSearchOrganizationID != 0 {

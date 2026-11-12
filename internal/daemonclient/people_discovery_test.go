@@ -50,9 +50,9 @@ func TestPersonDiscoveryClientRequiresSupportedScope(t *testing.T) {
 			_, organizationErr := people.ListOrganizations(t.Context(), "Example", 2, 1)
 			if version == "5.1.0" {
 				require.ErrorContains(directoryErr, "5.2.0")
-				require.ErrorContains(searchErr, "5.2.0")
+				require.NoError(searchErr)
 				require.ErrorContains(organizationErr, "5.2.0")
-				assert.Zero(requests)
+				assert.Equal(1, requests)
 			} else {
 				require.NoError(directoryErr)
 				require.NoError(searchErr)

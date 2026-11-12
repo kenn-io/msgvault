@@ -785,25 +785,3 @@ func writePersonSearchCommandResponse(t *testing.T, w http.ResponseWriter) {
 func jsonInt(value int64) string {
 	return strconv.FormatInt(value, 10)
 }
-
-func TestPersonDiscoverySemanticCLIRejectsOldDaemonBeforeSearch(t *testing.T) {
-	var searches atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/api/v1/health" {
-			_, err := io.WriteString(w, `{ "status":"ok", "api_schema_version":"3.48.0" }`)
-			assert.NoError(t, err)
-			return
-		}
-		searches.Add(1)
-		writePersonSearchCommandResponse(t, w)
-	}))
-	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	command, _, _ := newPersonSearchTestCommand(ctx, t)
-	command.SetArgs([]string{"--organization-id", "13", "equipment", "--json"})
-	err := command.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "5.2.0")
-	assert.Zero(t, searches.Load())
-}

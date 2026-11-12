@@ -39,9 +39,6 @@ func (c *Client) RequirePersonDiscoveryScope(ctx context.Context, organizationID
 }
 
 func (b *PeopleBrowser) SearchSemanticPeople(ctx context.Context, request peoplebrowser.SemanticPeopleRequest) (*peoplebrowser.SemanticPeoplePage, error) {
-	if err := b.engine.store.RequirePersonDiscoveryScope(ctx, request.OrganizationID); err != nil {
-		return nil, err
-	}
 	body := generated.SearchPeopleBody{Query: request.Query, Limit: new(int64(request.Limit))}
 	if request.OrganizationID != 0 {
 		body.OrganizationID = &request.OrganizationID
