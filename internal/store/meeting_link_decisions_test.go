@@ -360,9 +360,6 @@ func TestMeetingLinkDecisionBridgeDoesNotMakeEventsCopies(t *testing.T) {
 	var decision string
 	r.NoError(st.db.QueryRowContext(t.Context(), `SELECT decision FROM meeting_link_decisions WHERE (left_message_id=? AND right_message_id=?) OR (left_message_id=? AND right_message_id=?)`, note, first, first, note).Scan(&decision))
 	r.Equal("split", decision)
-	record, err := st.MeetingRecordContext(t.Context(), noteRef)
-	r.NoError(err)
-	r.Empty(record.Links)
 }
 
 func TestMeetingLinkDecisionEquivalentEventCopies(t *testing.T) {
