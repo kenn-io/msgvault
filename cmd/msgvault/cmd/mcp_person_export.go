@@ -48,15 +48,12 @@ func (b *daemonMCPOperations) exportPersonMessages(ctx context.Context, args map
 	}
 	var output strings.Builder
 	overflow := false
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	err = b.client.RunCLICommand(runCtx, daemonclient.CLIRunRequest{Args: argv}, func(stream, data string) error {
+	err = b.client.RunCLICommand(ctx, daemonclient.CLIRunRequest{Args: argv}, func(stream, data string) error {
 		if stream != cliStreamStdout {
 			return nil
 		}
 		if len(data) > mcpPersonExportLimit-output.Len() {
 			overflow = true
-			cancel()
 			return errors.New("export limit exceeded")
 		}
 		output.WriteString(data)
@@ -86,7 +83,7 @@ func validPersonExport(data string, expected exportMessagesManifest) bool {
 	scanner := bufio.NewScanner(strings.NewReader(data))
 	scanner.Buffer(make([]byte, 4096), mcpPersonExportLimit)
 	count := exportMessagesCounts{}
-	index, phase := 0, 0
+	index := 0
 	complete := false
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -104,18 +101,10 @@ func validPersonExport(data string, expected exportMessagesManifest) bool {
 		} else {
 			switch header.RecordType {
 			case "source":
-				if phase > 0 {
-					return false
-				}
 				count.Sources++
 			case "conversation":
-				if phase > 1 {
-					return false
-				}
-				phase = 1
 				count.Conversations++
 			case "message":
-				phase = 2
 				count.Messages++
 			case "complete":
 				var receipt struct {
