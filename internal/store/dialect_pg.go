@@ -406,8 +406,10 @@ func truncateBytesRuneSafe(s string) string {
 // tokens can still exceed PostgreSQL limits; upsertFTSOrUnsearchable handles
 // that case.
 func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
-	if err := q.QueryRow(`SELECT `+voiceSearchSQL(true, "$1"), doc.MessageID).Scan(&doc.voice); err != nil {
-		return err
+	if !doc.voiceLoaded {
+		if err := q.QueryRow(`SELECT `+voiceSearchSQL(true, "$1"), doc.MessageID).Scan(&doc.voice); err != nil {
+			return err
+		}
 	}
 	vector, args := pgFTSVector(doc)
 	_, err := q.Exec(
@@ -421,8 +423,10 @@ func (d *PostgreSQLDialect) FTSUpsert(q querier, doc FTSDoc) error {
 
 // FTSMatches compares the stored tsvector with the one FTSUpsert would write.
 func (d *PostgreSQLDialect) FTSMatches(q querier, doc FTSDoc) (bool, error) {
-	if err := q.QueryRow(`SELECT `+voiceSearchSQL(true, "$1"), doc.MessageID).Scan(&doc.voice); err != nil {
-		return false, err
+	if !doc.voiceLoaded {
+		if err := q.QueryRow(`SELECT `+voiceSearchSQL(true, "$1"), doc.MessageID).Scan(&doc.voice); err != nil {
+			return false, err
+		}
 	}
 	vector, args := pgFTSVector(doc)
 	var matches bool

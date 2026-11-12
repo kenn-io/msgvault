@@ -6865,6 +6865,7 @@ func (s *Store) ScanArchivedEmailContext(ctx context.Context, sourceID, afterID,
 		return nil, fmt.Errorf("scan archived email: %w", err)
 	}
 	item.stored.fts.MessageID = item.MessageID
+	item.stored.fts.voiceLoaded = true
 	item.BodyText, item.Snippet = item.stored.body, item.stored.snippet
 	item.decodeArchivedEmail(raw, compression)
 	return item, nil
@@ -7109,11 +7110,11 @@ func (s *Store) derivedEmailTextColumns() string {
 	}
 	envelope := storedFTSEnvelopeSQL(aggregate)
 	return `COALESCE(b.body_text, ''), COALESCE(b.body_html, ''), COALESCE(m.snippet, ''), ` +
-		envelope.subject + `, ` + envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs
+		envelope.subject + `, ` + envelope.fromAddr + `, ` + envelope.toAddrs + `, ` + envelope.ccAddrs + `, ` + voiceSearchSQL(s.IsPostgreSQL(), "m.id")
 }
 
 func (row *derivedEmailText) scanDest() []any {
-	return []any{&row.body, &row.html, &row.snippet, &row.fts.Subject, &row.fts.FromAddr, &row.fts.ToAddrs, &row.fts.CcAddrs}
+	return []any{&row.body, &row.html, &row.snippet, &row.fts.Subject, &row.fts.FromAddr, &row.fts.ToAddrs, &row.fts.CcAddrs, &row.fts.voice}
 }
 
 func (s *Store) loadDerivedEmailText(q querier, messageID int64) (derivedEmailText, error) {
@@ -7121,6 +7122,7 @@ func (s *Store) loadDerivedEmailText(q querier, messageID int64) (derivedEmailTe
 	err := q.QueryRow(`SELECT `+s.derivedEmailTextColumns()+`
 		FROM messages m LEFT JOIN message_bodies b ON b.message_id = m.id WHERE m.id = ?`, messageID).
 		Scan(row.scanDest()...)
+	row.fts.voiceLoaded = err == nil
 	return row, err
 }
 
