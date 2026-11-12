@@ -902,10 +902,6 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 	)
 }
 
-func stageDeletionDefinition(_ *handlers) toolDefinition {
-	return stageDeletionDefinitionForCapability(false)
-}
-
 func stageDeletionDefinitionForCapability(available bool) toolDefinition {
 	selectionInput := selectionInputSchema()
 	selection := selectionInput.Properties["selection"]
@@ -920,12 +916,19 @@ func stageDeletionDefinitionForCapability(available bool) toolDefinition {
 		input.Properties["operation_token"] = stringSchema("Exact native operation token from preflight")
 		input.Defs, input.Definitions = selectionInput.Defs, selectionInput.Definitions
 	}
+	description := fmt.Sprintf("Stage deletion without deleting immediately. Queries select Gmail, Microsoft Graph, and IMAP mail, report undeletable matches in skipped_count, and refuse above %d matches or when none are deletable. Structured filters select eligible Gmail and Microsoft Graph mail. ", maxStageDeletionResults) +
+		"Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. "
+	output := outputSchemaFor[stageDeletionResponse]()
+	if available {
+		description += "Alternatively pass an unchanged preflight selection and operation token, with client confirmation. "
+		output = operationalOutputSchema(output)
+	}
+	description += "To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged."
 	return writeDefinition(
 		ToolStageDeletion,
-		fmt.Sprintf("Stage deletion without deleting immediately. Queries select Gmail, Microsoft Graph, and IMAP mail, report undeletable matches in skipped_count, and refuse above %d matches or when none are deletable. Structured filters select eligible Gmail and Microsoft Graph mail. ", maxStageDeletionResults)+
-			"Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. Alternatively pass an unchanged preflight selection and operation token, with client confirmation. To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.",
+		description,
 		input,
-		operationalOutputSchema(outputSchemaFor[stageDeletionResponse]()),
+		output,
 		(*handlers).stageDeletion,
 	)
 }

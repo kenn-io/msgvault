@@ -3292,6 +3292,19 @@ func TestStageDeletion(t *testing.T) {
 		assert.Equal(t, 2, resp.MessageCount, "MessageCount")
 	})
 
+	t.Run("query description preserves UTF-8 when saved", func(t *testing.T) {
+		dataDir := t.TempDir()
+		h := &handlers{engine: eng, dataDir: dataDir}
+		response := runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, map[string]any{"query": strings.Repeat("a", 42) + "é"})
+		manager, err := deletion.NewManager(filepath.Join(dataDir, "deletions"))
+		require.NoError(t, err)
+		manifest, _, err := manager.GetManifest(response.BatchID)
+		require.NoError(t, err)
+		assert.Equal(t, "query: "+strings.Repeat("a", 42), manifest.Description)
+		assert.True(t, utf8.ValidString(manifest.Description))
+		assert.LessOrEqual(t, len(manifest.Description), 50)
+	})
+
 	t.Run("uses injected manifest saver", func(t *testing.T) {
 		assert := assert.
 			New(t)

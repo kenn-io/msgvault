@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
@@ -33,8 +34,9 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	require.NoError(t, err)
 	conversation, err := st.EnsureConversation(t.Context(), source.ID, "thread", "Synthetic")
 	require.NoError(t, err)
+	longQuery := strings.Repeat("a", 42) + "é"
 	for _, id := range []string{"first", "second"} {
-		_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: id, MessageType: "email", Subject: sql.NullString{String: "Synthetic", Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
+		_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: id, MessageType: "email", Subject: sql.NullString{String: longQuery, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
 		require.NoError(t, err)
 	}
 	other, err := st.GetOrCreateSource("gmail", "other@example.test")
@@ -44,6 +46,8 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	_, err = st.UpsertMessage(&store.Message{SourceID: other.ID, ConversationID: otherConversation, SourceMessageID: "other", MessageType: "email", Subject: sql.NullString{String: "Synthetic", Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
 	require.NoError(t, err)
 	_, err = st.CreateCollection("selected", "", []int64{source.ID})
+	require.NoError(t, err)
+	_, err = st.BackfillFTSContext(t.Context(), nil)
 	require.NoError(t, err)
 	_, err = buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
@@ -73,8 +77,16 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 		require.NoError(t, err)
 		return result
 	}
-	predicate := map[string]any{"filters": []any{map[string]any{"dimension": "source", "values": []string{fmt.Sprint(source.ID)}}}}
-	explored := loopToolOutput[generated.ExploreHTTPResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected"}))
+	type exploredResponse struct {
+		generated.ExploreHTTPResponse
+		Predicate map[string]any `json:"predicate"`
+	}
+	explored := loopToolOutput[exploredResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected"}))
+	predicate := explored.Predicate
+	page := loopToolOutput[exploredResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected", "limit": 1}))
+	require.NotNil(t, page.NextCursor)
+	nextPage := loopToolOutput[exploredResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected", "limit": 1, "cursor": *page.NextCursor}))
+	assert.NotContains(t, nextPage.Predicate, "cursor")
 	selection := map[string]any{"mode": "all_matching", "predicate": predicate, "cache_revision": explored.CacheRevision, "search_provenance": explored.SearchProvenance, "exclusions": []string{fmt.Sprintf("source:%d:message:first", source.ID)}}
 	preflight := loopToolOutput[generated.ExplorePreflightResponse](t, call("preflight_deletion_selection", map[string]any{"selection": selection}))
 	assert.Equal(t, int64(1), preflight.Count)
@@ -101,10 +113,45 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, manifests, 1)
 	assert.Equal(t, []string{"second"}, manifests[0].GmailIDs)
+	require.NotNil(t, manifests[0].Source)
+	assert.Equal(t, "owner@example.test", manifests[0].Source.Identifier)
 	assert.Equal(t, "selection: all_matching", manifests[0].Description)
 	before = elicitations
 	assert.Equal(t, "operation_token_invalid", loopToolFailure(t, call("stage_deletion", args))["error"])
 	assert.Equal(t, before, elicitations)
+	require.NotEmpty(t, explored.Rows)
+	explicit := map[string]any{"mode": "explicit", "predicate": explored.Predicate, "cache_revision": explored.CacheRevision, "search_provenance": explored.SearchProvenance, "row_keys": []string{explored.Rows[0].Key}}
+	explicitPreflight := loopToolOutput[generated.ExplorePreflightResponse](t, call("preflight_deletion_selection", map[string]any{"selection": explicit}))
+	explicitResult := loopToolOutput[struct {
+		BatchID string `json:"batch_id"`
+	}](t, call("stage_deletion", map[string]any{"selection": explicit, "operation_token": explicitPreflight.OperationToken}))
+	manifests, err = adapter.ListDeletionManifests(t.Context(), "")
+	require.NoError(t, err)
+	explicitFound := false
+	for _, manifest := range manifests {
+		if manifest.ID == explicitResult.BatchID {
+			explicitFound = true
+			assert.Equal(t, []string{strings.TrimPrefix(explored.Rows[0].Key, fmt.Sprintf("source:%d:message:", source.ID))}, manifest.GmailIDs)
+		}
+	}
+	assert.True(t, explicitFound)
+	searched := loopToolOutput[exploredResponse](t, call("explore_deletion_selection", map[string]any{"collection": "selected", "query": longQuery, "search_mode": "full_text"}))
+	querySelection := map[string]any{"mode": "all_matching", "predicate": searched.Predicate, "cache_revision": searched.CacheRevision, "search_provenance": searched.SearchProvenance}
+	queryPreflight := loopToolOutput[generated.ExplorePreflightResponse](t, call("preflight_deletion_selection", map[string]any{"selection": querySelection}))
+	queryResult := loopToolOutput[struct {
+		BatchID string `json:"batch_id"`
+	}](t, call("stage_deletion", map[string]any{"selection": querySelection, "operation_token": queryPreflight.OperationToken}))
+	manifests, err = adapter.ListDeletionManifests(t.Context(), "")
+	require.NoError(t, err)
+	var queryDescription string
+	for _, manifest := range manifests {
+		if manifest.ID == queryResult.BatchID {
+			queryDescription = manifest.Description
+		}
+	}
+	assert.Equal(t, "query: "+strings.Repeat("a", 42), queryDescription)
+	assert.True(t, utf8.ValidString(queryDescription))
+	assert.LessOrEqual(t, len(queryDescription), 50)
 	preflight = loopToolOutput[generated.ExplorePreflightResponse](t, call("preflight_deletion_selection", map[string]any{"selection": selection}))
 	_, err = st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "third", MessageType: "email", Subject: sql.NullString{String: "Synthetic", Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}})
 	require.NoError(t, err)
@@ -115,7 +162,7 @@ func TestMCPDeletionSelectionNativePreflightAndStage(t *testing.T) {
 	assert.Equal(t, false, failure["operation_may_have_completed"])
 	manifests, err = adapter.ListDeletionManifests(t.Context(), "")
 	require.NoError(t, err)
-	assert.Len(t, manifests, 1)
+	assert.Len(t, manifests, 3)
 	invalid := loopToolFailure(t, call("explore_deletion_selection", map[string]any{"filters": []any{map[string]any{"dimension": "source", "values": []string{"bad"}}}}))
 	assert.Equal(t, "invalid_filter", invalid["error"])
 	assert.Equal(t, false, invalid["operation_may_have_completed"])

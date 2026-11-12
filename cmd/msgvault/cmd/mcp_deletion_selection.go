@@ -46,7 +46,7 @@ func (b *daemonMCPOperations) executeDeletionSelection(ctx context.Context, name
 		return nil, false, nil
 	}
 	input, err := decodeMCPOperationArguments[deletionSelectionArgs](args)
-	if err != nil || input.Selection.CacheRevision == "" || (name == "stage_deletion_selection" && input.OperationToken == "") || (name == "preflight_deletion_selection" && input.OperationToken != "") {
+	if err != nil || (name == "preflight_deletion_selection" && input.OperationToken != "") {
 		return operationFailure("invalid_arguments", false), true, nil
 	}
 	if name == "preflight_deletion_selection" {

@@ -2292,6 +2292,17 @@ func stringArrayArg(args map[string]any, key string) ([]string, error) {
 // maxStageDeletionResults limits how many messages can be staged in one call.
 const maxStageDeletionResults = query.MaxDeletionTargetSearchResults - 1
 
+func capDeletionDescription(description string) string {
+	if len(description) <= 50 {
+		return description
+	}
+	end := 50
+	for !utf8.RuneStart(description[end]) {
+		end--
+	}
+	return description[:end]
+}
+
 func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 	if _, ok := args["selection"]; ok {
@@ -2386,9 +2397,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		}
 		skipped = matched - len(targets)
 		description = "query: " + queryStr
-		if len(description) > 50 {
-			description = description[:50]
-		}
+		description = capDeletionDescription(description)
 	} else {
 		// Structured filter
 		filter := query.MessageFilter{
@@ -2436,9 +2445,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 			parts = append(parts, "before:"+beforeDate.Format("2006-01-02"))
 		}
 		description = "filter: " + strings.Join(parts, " ")
-		if len(description) > 50 {
-			description = description[:50]
-		}
+		description = capDeletionDescription(description)
 	}
 
 	if len(targets) == 0 {
