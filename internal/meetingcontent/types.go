@@ -93,7 +93,6 @@ type LinkEvidence struct {
 
 type Content struct {
 	LinkEvidence       LinkEvidence  `json:"-"`
-	ScheduledStart     *time.Time    `json:"-"`
 	Summary            Section       `json:"summary"`
 	Notes              Section       `json:"notes"`
 	Transcript         Transcript    `json:"transcript"`

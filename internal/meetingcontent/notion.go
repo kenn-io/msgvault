@@ -33,7 +33,7 @@ func decodeNotion(fields map[string]jsontext.Value) Content {
 	content.SourceParticipants = notionParticipants(fields, discovery)
 	if discoveryOK {
 		if start, ok := parseTimeString(discovery.Calendar.Start); ok {
-			content.ScheduledStart = &start
+			content.LinkEvidence.ScheduledAt = &start
 		}
 		if start, startOK := parseTimeString(discovery.Recording.Start); startOK {
 			if end, endOK := parseTimeString(discovery.Recording.End); endOK && end.After(start) {
@@ -41,8 +41,8 @@ func decodeNotion(fields map[string]jsontext.Value) Content {
 				return content
 			}
 		}
-		if end, ok := parseTimeString(discovery.Calendar.End); content.ScheduledStart != nil && ok && end.After(*content.ScheduledStart) {
-			setDuration(&content, end.Sub(*content.ScheduledStart).Seconds(), DurationScheduled)
+		if end, ok := parseTimeString(discovery.Calendar.End); content.LinkEvidence.ScheduledAt != nil && ok && end.After(*content.LinkEvidence.ScheduledAt) {
+			setDuration(&content, end.Sub(*content.LinkEvidence.ScheduledAt).Seconds(), DurationScheduled)
 		}
 	}
 	return content

@@ -29,7 +29,7 @@ func decodeCircleback(fields map[string]jsontext.Value) Content {
 
 	for _, key := range []string{"startTime", "date"} {
 		if start, ok := rawTime(meeting[key], true); ok {
-			content.ScheduledStart = &start
+			content.LinkEvidence.ScheduledAt = &start
 			break
 		}
 	}
@@ -43,7 +43,7 @@ func decodeCircleback(fields map[string]jsontext.Value) Content {
 		start, startOK := rawTime(meeting[startKey], true)
 		end, endOK := rawTime(meeting["endTime"], true)
 		if startOK && endOK && end.After(start) {
-			content.ScheduledStart = &start
+			content.LinkEvidence.ScheduledAt = &start
 			setDuration(&content, end.Sub(start).Seconds(), DurationScheduled)
 			return content
 		}

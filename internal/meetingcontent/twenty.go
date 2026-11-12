@@ -27,7 +27,6 @@ func decodeTwenty(fields map[string]jsontext.Value) Content {
 		c.LinkEvidence.ICalUID = strings.TrimSpace(uid)
 		if at, ok := rawTime(calendar["startsAt"], false); ok {
 			c.LinkEvidence.ScheduledAt = &at
-			c.ScheduledStart = &at
 		}
 	}
 	c.Notes = Section{State: StateUnsupported}

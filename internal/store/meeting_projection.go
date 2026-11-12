@@ -93,7 +93,7 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 		Content        meetingcontent.Content
 		Key            meetingLinkKey
 		ScheduledStart *time.Time
-	}{content, key, content.ScheduledStart})
+	}{content, key, content.LinkEvidence.ScheduledAt})
 	if err != nil {
 		return fmt.Errorf("marshal meeting content hash: %w", err)
 	}
@@ -133,7 +133,7 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 			scheduled_start = excluded.scheduled_start`,
 		messageID, meetingProjectionVersion, hash, string(compact),
 		content.DurationSeconds, string(content.DurationBasis),
-		string(content.ActionCoverage), string(content.Transcript.State), linkKey, content.ScheduledStart,
+		string(content.ActionCoverage), string(content.Transcript.State), linkKey, content.LinkEvidence.ScheduledAt,
 	)
 	if err != nil {
 		return fmt.Errorf("write meeting projection: %w", err)
