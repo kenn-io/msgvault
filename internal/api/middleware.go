@@ -254,7 +254,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	// Agent token takes priority: if the header is present, the request must
 	// authenticate as a delegated caller; we never fall through to other modes.
 	if agentVal, agentPresent := agentTokenHeaderValue(r); agentPresent {
-		if s.agentGrants == nil || agentVal == "" || ownerCredentialPresented(r) || (s.cfg.Federation.Role == "hub" && len(r.Header.Values(apiprotocol.SpokeInstanceHeader)) > 0) {
+		if s.agentGrants == nil || agentVal == "" || ownerCredentialPresented(r) || s.federationClaim(r) {
 			return requestAuthentication{Mode: AuthModeRequired}
 		}
 		if grant, ok := s.agentGrants.Lookup(agentVal); ok {

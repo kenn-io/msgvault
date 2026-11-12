@@ -33,6 +33,8 @@ type Operation struct {
 // That includes daemon shutdown through ServerOptions' shutdown callback, backup
 // freezes, and agent token management, without the daemon's shutdown token or
 // same-host checks.
+// Like the daemon's owner key, admission alone does not satisfy the federation handshake, which requires a valid hub
+// enrollment token and spoke instance header and returns 401 without them.
 func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Operation) bool) http.Handler {
 	mux := http.NewServeMux()
 	api := s.setupHumaAPI(mux)
