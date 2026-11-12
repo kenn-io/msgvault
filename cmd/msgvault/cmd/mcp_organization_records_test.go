@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -207,29 +208,46 @@ func TestOrganizationProfileMediaAndAttributesThroughNativeRoutes(t *testing.T) 
 		invalid, err := backend.ExecuteOperation(t.Context(), "clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry", "ordinal": -1})
 		require.NoError(t, err)
 		assertLoopRefusal(t, invalid, "invalid_ordinal", false)
+		absentArgs := map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "value": map[string]any{"type": "text", "text": "services"}, "source": "user"}}
+		absentDisclosure, err := backend.OperationDisclosure(t.Context(), "set_organization_attribute", absentArgs)
+		require.NoError(t, err)
+		assert.Contains(t, absentDisclosure, `"superseded":null`)
 		set, err := backend.ExecuteOperation(t.Context(), "set_organization_attribute", map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "value": map[string]any{"type": "text", "text": "software"}, "source": "user"}})
 		require.NoError(t, err)
 		write := operationOutput[generated.OrganizationAttributeWrite](t, set)
 		require.NotNil(t, write.Value)
-		for _, tc := range []struct {
+		cases := []struct {
 			name string
 			args map[string]any
 		}{
-			{"set_organization_attribute", map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "value": map[string]any{"type": "text", "text": "services"}, "source": "user"}}},
-			{"clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry"}},
-		} {
+			{"set_organization_attribute", map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "value": map[string]any{"type": "text", "text": "services"}, "source": "user", "expected_value_id": int64(999999)}}},
+			{"clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry", "expected_value_id": int64(999999)}},
+		}
+		disclosures := make([]string, len(cases))
+		for i, tc := range cases {
 			t.Run(tc.name+" disclosure", func(t *testing.T) {
 				disclosure, err := backend.OperationDisclosure(t.Context(), tc.name, tc.args)
 				require.NoError(t, err)
+				again, err := backend.OperationDisclosure(t.Context(), tc.name, tc.args)
+				require.NoError(t, err)
+				assert.Equal(t, disclosure, again)
+				assert.Contains(t, disclosure, "software")
+				assert.NotContains(t, disclosure, `"active_until"`)
+				assert.NotContains(t, disclosure, `"superseded_at"`)
 				var decoded struct {
-					Current mcpserver.OrganizationRecord         `json:"current"`
-					Preview generated.OrganizationAttributeWrite `json:"preview"`
+					Current mcpserver.OrganizationRecord `json:"current"`
+					Preview struct {
+						Superseded *generated.OrganizationAttributeValue `json:"superseded"`
+					} `json:"preview"`
 				}
 				require.NoError(t, json.Unmarshal([]byte(disclosure), &decoded))
 				assert.Equal(t, org.ID, decoded.Current.Profile.Organization.ID)
-				assert.True(t, decoded.Preview.DryRun)
 				require.NotNil(t, decoded.Preview.Superseded)
 				assert.Equal(t, write.Value.ID, decoded.Preview.Superseded.ID)
+				disclosures[i] = disclosure
+				refused, err := backend.ExecuteOperation(t.Context(), tc.name, tc.args)
+				require.NoError(t, err)
+				assertLoopRefusal(t, refused, "attribute_value_conflict", false)
 				missing := make(map[string]any, len(tc.args))
 				for key, value := range tc.args {
 					missing[key] = value
@@ -242,30 +260,61 @@ func TestOrganizationProfileMediaAndAttributesThroughNativeRoutes(t *testing.T) 
 				assert.Equal(t, "organization_not_found", refusal.Code)
 			})
 		}
+		changed, err := backend.ExecuteOperation(t.Context(), "set_organization_attribute", absentArgs)
+		require.NoError(t, err)
+		write = operationOutput[generated.OrganizationAttributeWrite](t, changed)
+		require.NotNil(t, write.Value)
+		for i, tc := range cases {
+			disclosure, err := backend.OperationDisclosure(t.Context(), tc.name, tc.args)
+			require.NoError(t, err)
+			assert.NotEqual(t, disclosures[i], disclosure)
+		}
 		preview, err := backend.ExecuteOperation(t.Context(), "clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry", "expected_value_id": write.Value.ID, "dry_run": true})
 		require.NoError(t, err)
 		assert.True(t, operationOutput[generated.OrganizationAttributeWrite](t, preview).DryRun)
 		clear, err := backend.ExecuteOperation(t.Context(), "clear_organization_attribute", map[string]any{"organization_id": org.ID, "slug": "industry", "expected_value_id": write.Value.ID})
 		require.NoError(t, err)
 		require.NotNil(t, operationOutput[generated.OrganizationAttributeWrite](t, clear).Superseded)
-		absentDisclosure, err := backend.OperationDisclosure(t.Context(), "set_organization_attribute", map[string]any{"organization_id": org.ID, "body": map[string]any{"definition_slug": "industry", "value": map[string]any{"type": "text", "text": "services"}, "source": "user"}})
-		require.NoError(t, err)
-		var absent struct {
-			Preview generated.OrganizationAttributeWrite `json:"preview"`
-		}
-		require.NoError(t, json.Unmarshal([]byte(absentDisclosure), &absent))
-		assert.True(t, absent.Preview.DryRun)
-		assert.Nil(t, absent.Preview.Superseded)
 		active, err := backend.ExecuteOperation(t.Context(), "list_organization_attributes", map[string]any{"organization_id": org.ID})
 		require.NoError(t, err)
 		assert.Empty(t, operationOutput[generated.OrganizationAttributesResponse](t, active).Values)
 		historical, err := backend.ExecuteOperation(t.Context(), "list_organization_attributes", map[string]any{"organization_id": org.ID, "include_superseded": true})
 		require.NoError(t, err)
-		assert.Len(t, operationOutput[generated.OrganizationAttributesResponse](t, historical).Values, 1)
+		assert.Len(t, operationOutput[generated.OrganizationAttributesResponse](t, historical).Values, 2)
 		filtered, err := backend.ExecuteOperation(t.Context(), "list_organization_attributes", map[string]any{"organization_id": org.ID, "include_superseded": true, "definition_slug": "nonexistent"})
 		require.NoError(t, err)
 		assert.Empty(t, operationOutput[generated.OrganizationAttributesResponse](t, filtered).Values)
 	})
+}
+
+func TestOrganizationLargeProfileResponse(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	org, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Company", Kind: store.OrganizationKindCompany})
+	require.NoError(t, err)
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}))
+	read, err := backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": org.ID})
+	require.NoError(t, err)
+	etag := operationOutput[mcpserver.OrganizationRecord](t, read).ETag
+	names := make([]any, 0, store.MaxOrganizationProfileValues)
+	for i := range store.MaxOrganizationProfileValues {
+		names = append(names, map[string]any{"name": fmt.Sprintf("Name %03d %s", i, strings.Repeat("a", 6<<10)), "name_kind": "alias", "source": "user"})
+	}
+	body := map[string]any{"names": names}
+	encoded, err := json.Marshal(body)
+	require.NoError(t, err)
+	assert.Less(t, len(encoded), api.MaxOrganizationProfileRequestBytes)
+	replaced, err := backend.ExecuteOperation(t.Context(), "replace_organization_profile", map[string]any{"organization_id": org.ID, "etag": etag, "body": body})
+	require.NoError(t, err)
+	receipt := operationOutput[mcpserver.OrganizationRecord](t, replaced)
+	encoded, err = json.Marshal(receipt)
+	require.NoError(t, err)
+	assert.Greater(t, len(encoded), 1<<20)
+	read, err = backend.ExecuteOperation(t.Context(), "get_organization", map[string]any{"organization_id": org.ID})
+	require.NoError(t, err)
+	assert.Len(t, operationOutput[mcpserver.OrganizationRecord](t, read).Profile.Names, store.MaxOrganizationProfileValues)
+	history, err := backend.ExecuteOperation(t.Context(), "get_organization_history", map[string]any{"organization_id": org.ID})
+	require.NoError(t, err)
+	assertLoopRefusal(t, history, "operation_response_limit_exceeded", false)
 }
 
 func TestOrganizationMergeThroughNativeRoutes(t *testing.T) {

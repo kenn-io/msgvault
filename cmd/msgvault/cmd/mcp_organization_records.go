@@ -10,11 +10,17 @@ import (
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
+	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
+
+// Active profile responses may include normalized and synthesized copies of
+// request text plus metadata for up to 200 rows. Three times the native request
+// limit provides room for those copies; merged history can still exceed it.
+const organizationProfileResponseLimit = 3 * api.MaxOrganizationProfileRequestBytes
 
 func organizationMCPCapabilities(hasRoute mcpRouteCheck, caps *apiprotocol.MCPCapabilities) []string {
 	var names []string
@@ -70,11 +76,11 @@ func (b *daemonMCPOperations) executeOrganizationOperation(ctx context.Context, 
 	var result *mcpserver.OperationResult
 	switch name {
 	case "get_organization":
-		result, err = readMCPOperationJSONWithClassifier[generated.OrganizationProfile](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}", &generated.GetOrganizationRequestOptions{PathParams: &generated.GetOrganizationPath{ID: input.OrganizationID}}, organizationRefusal, http.StatusOK)
+		result, err = readMCPOperationJSONLimit[generated.OrganizationProfile](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}", &generated.GetOrganizationRequestOptions{PathParams: &generated.GetOrganizationPath{ID: input.OrganizationID}}, organizationProfileResponseLimit, http.StatusOK)
 	case "get_organization_history":
-		result, err = readMCPOperationJSONWithClassifier[generated.OrganizationProfile](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/history", &generated.GetOrganizationHistoryRequestOptions{PathParams: &generated.GetOrganizationHistoryPath{ID: input.OrganizationID}}, organizationRefusal, http.StatusOK)
+		result, err = readMCPOperationJSON[generated.OrganizationProfile](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/history", &generated.GetOrganizationHistoryRequestOptions{PathParams: &generated.GetOrganizationHistoryPath{ID: input.OrganizationID}}, http.StatusOK)
 	case "list_organization_attributes":
-		result, err = readMCPOperationJSONWithClassifier[generated.OrganizationAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/attributes", &generated.ListOrganizationAttributesRequestOptions{PathParams: &generated.ListOrganizationAttributesPath{ID: input.OrganizationID}, Query: &generated.ListOrganizationAttributesQuery{DefinitionSlug: input.DefinitionSlug, IncludeSuperseded: input.IncludeSuperseded}}, organizationRefusal, http.StatusOK)
+		result, err = readMCPOperationJSON[generated.OrganizationAttributesResponse](ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/attributes", &generated.ListOrganizationAttributesRequestOptions{PathParams: &generated.ListOrganizationAttributesPath{ID: input.OrganizationID}, Query: &generated.ListOrganizationAttributesQuery{DefinitionSlug: input.DefinitionSlug, IncludeSuperseded: input.IncludeSuperseded}}, http.StatusOK)
 	}
 	if result != nil && !result.IsError && name != "list_organization_attributes" {
 		profile, ok := result.Output.(generated.OrganizationProfile)
@@ -158,18 +164,18 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 		return operationFailure("invalid_arguments", false), true, nil
 	}
 	if name == "delete_organization" {
-		_, _, failure, err := readMCPOperationBytes(ctx, b.client, r.method, r.path, r.options, 1<<20, organizationRefusal, http.StatusNoContent)
+		_, _, failure, err := readMCPOperationBytes(ctx, b.client, r.method, r.path, r.options, 1<<20, http.StatusNoContent)
 		if failure != nil {
 			return failure, true, err
 		}
 		return &mcpserver.OperationResult{Output: mcpserver.OrganizationDeleted{Deleted: true}}, true, nil
 	}
 	if name == "set_organization_attribute" || name == "clear_organization_attribute" {
-		result, err := readMCPOperationJSONWithClassifier[generated.OrganizationAttributeWrite](ctx, b.client, r.method, r.path, r.options, organizationRefusal, http.StatusOK, http.StatusCreated)
+		result, err := readMCPOperationJSON[generated.OrganizationAttributeWrite](ctx, b.client, r.method, r.path, r.options, http.StatusOK, http.StatusCreated)
 		return result, true, err
 	}
 	if name == "replace_organization_profile" {
-		result, err := readMCPOperationJSONWithClassifier[generated.OrganizationProfile](ctx, b.client, r.method, r.path, r.options, organizationRefusal, http.StatusOK)
+		result, err := readMCPOperationJSONLimit[generated.OrganizationProfile](ctx, b.client, r.method, r.path, r.options, organizationProfileResponseLimit, http.StatusOK)
 		if result != nil && !result.IsError {
 			profile, ok := result.Output.(generated.OrganizationProfile)
 			if !ok || result.ETag == "" {
@@ -179,7 +185,7 @@ func (b *daemonMCPOperations) executeOrganizationWriteOrMedia(ctx context.Contex
 		}
 		return result, true, err
 	}
-	result, err := readMCPOperationJSONWithClassifier[generated.Organization](ctx, b.client, r.method, r.path, r.options, organizationRefusal, http.StatusOK, http.StatusCreated)
+	result, err := readMCPOperationJSON[generated.Organization](ctx, b.client, r.method, r.path, r.options, http.StatusOK, http.StatusCreated)
 	if result != nil && !result.IsError {
 		org, ok := result.Output.(generated.Organization)
 		if !ok || result.ETag == "" {
@@ -203,7 +209,7 @@ func (b *daemonMCPOperations) organizationMedia(ctx context.Context, args map[st
 	if err != nil || !validLoopID(a.OrganizationID) || !validLoopID(a.MediaID) {
 		return operationFailure("invalid_arguments", false), nil
 	}
-	data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/profile/media/{media_id}/content", &generated.GetOrganizationProfileMediaContentRequestOptions{PathParams: &generated.GetOrganizationProfileMediaContentPath{ID: a.OrganizationID, MediaID: a.MediaID}}, store.MaxPersonMediaBytes, organizationRefusal, http.StatusOK)
+	data, headers, failure, err := readMCPOperationBytes(ctx, b.client, http.MethodGet, "/api/v1/organizations/{id}/profile/media/{media_id}/content", &generated.GetOrganizationProfileMediaContentRequestOptions{PathParams: &generated.GetOrganizationProfileMediaContentPath{ID: a.OrganizationID, MediaID: a.MediaID}}, store.MaxPersonMediaBytes, http.StatusOK)
 	if failure != nil {
 		return failure, err
 	}
@@ -236,7 +242,7 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 	}
 	var current any
 	var losing any
-	var preview *generated.OrganizationAttributeWrite
+	var preview any
 	if r.id != 0 {
 		result, _, err := b.executeOrganizationOperation(ctx, "get_organization", map[string]any{"organization_id": r.id})
 		if err != nil || result == nil || result.IsError {
@@ -249,18 +255,32 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 		case *generated.SetOrganizationAttributeRequestOptions:
 			body := *options.Body
 			body.DryRun = new(true)
+			body.ExpectedValueID = nil
 			options.Body = &body
 		case *generated.ClearOrganizationAttributeRequestOptions:
 			query := *options.Query
 			query.DryRun = new(true)
+			query.ExpectedValueID = nil
 			options.Query = &query
 		}
-		result, err := readMCPOperationJSONWithClassifier[generated.OrganizationAttributeWrite](ctx, b.client, r.method, r.path, r.options, organizationRefusal, http.StatusOK, http.StatusCreated)
+		result, err := readMCPOperationJSON[generated.OrganizationAttributeWrite](ctx, b.client, r.method, r.path, r.options, http.StatusOK, http.StatusCreated)
 		if err != nil || result == nil || result.IsError {
 			return "", true, organizationContextRefusal(result)
 		}
-		value := result.Output.(generated.OrganizationAttributeWrite)
-		preview = &value
+		write, ok := result.Output.(generated.OrganizationAttributeWrite)
+		if !ok {
+			return "", true, &mcpserver.OperationRefusalError{Code: "operation_context_unavailable"}
+		}
+		var ordinal int64
+		var superseded any
+		if v := write.Superseded; v != nil {
+			ordinal = v.Ordinal
+			superseded = map[string]any{"id": v.ID, "ordinal": v.Ordinal, "value": v.Value, "source": v.Source, "source_ref": v.SourceRef, "actor": v.Actor, "confidence": v.Confidence, "active_from": v.ActiveFrom, "created_at": v.CreatedAt}
+		}
+		if write.Value != nil {
+			ordinal = write.Value.Ordinal
+		}
+		preview = map[string]any{"ordinal": ordinal, "superseded": superseded}
 	}
 	if name == "merge_organization" {
 		input, _ := decodeMCPOperationArguments[mcpserver.OrganizationMergeArgs](args)
@@ -297,12 +317,12 @@ func (b *daemonMCPOperations) organizationOperationDisclosure(ctx context.Contex
 	}
 	effect := map[string]string{"create_organization": "create an organization", "update_organization": "replace mutable fields; omitted fields are cleared except retired", "delete_organization": "delete the organization only if it has no employment records", "merge_organization": "merge the losing organization, moving employment and superseding its active profile and attributes", "replace_organization_profile": "replace all profile collections; omitted collections are cleared", "set_organization_attribute": "set the named typed attribute", "clear_organization_attribute": "supersede the named typed attribute"}[name]
 	disclosure, err := json.Marshal(struct {
-		Operation string                                `json:"operation"`
-		Current   any                                   `json:"current,omitempty"`
-		Losing    any                                   `json:"losing,omitempty"`
-		Preview   *generated.OrganizationAttributeWrite `json:"preview,omitempty"`
-		Changes   map[string]any                        `json:"changes"`
-		Effect    string                                `json:"effect"`
+		Operation string         `json:"operation"`
+		Current   any            `json:"current,omitempty"`
+		Losing    any            `json:"losing,omitempty"`
+		Preview   any            `json:"preview,omitempty"`
+		Changes   map[string]any `json:"changes"`
+		Effect    string         `json:"effect"`
 	}{name, current, losing, preview, changes, effect}, json.Deterministic(true))
 	return string(disclosure), true, err
 }
