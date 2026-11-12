@@ -9,6 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - An interrupted `sync-full` prints a command to run again with the same account, filters, configuration, and logging flags. It exits with status 130; on Windows, run the command in PowerShell 7.3 or later.
+- Automatic attachment maintenance no longer queues follow-ups to verify healthy packed blobs without loose copies.
 
 - New GitHub notification email, including bot notifications, now appears under the GitHub author in People while retaining its recorded From address. Configure other relay senders in [configuration](configuration.md#relayed-email-senders).
 
