@@ -24,6 +24,11 @@ const (
 	// stopped before its importer started a run, so it wrote nothing.
 	SyncTypeNotStarted = "not_started"
 
+	// SyncTypeWebhook marks a run that applied pushed changes between polling
+	// syncs. It does not cover the source, so it says nothing about whether
+	// polling works.
+	SyncTypeWebhook = "webhook"
+
 	SyncRunItemStatusError    = "error"
 	SyncRunItemStatusSkipped  = "skipped"
 	SyncRunItemStatusResolved = "resolved"
@@ -1075,7 +1080,7 @@ func (s *Store) ListSyncRunItemsContext(ctx context.Context, syncRunID int64, st
 // errors. That run supersedes older debt by recording anything still failing.
 func (s *Store) ListUnresolvedSyncItemErrors(ctx context.Context, sourceID int64) ([]SyncRunItem, error) {
 	var lowerBound int64
-	last, err := s.getLastSuccessfulSyncContext(ctx, sourceID, "incremental", true)
+	last, err := s.getLastSuccessfulSyncContext(ctx, sourceID, "=", "incremental")
 	if err != nil && !errors.Is(err, ErrSyncRunNotFound) {
 		return nil, fmt.Errorf("find latest completed incremental: %w", err)
 	}
@@ -1552,6 +1557,26 @@ func (s *Store) GetLatestSyncContext(ctx context.Context, sourceID, excludeID in
 	return run, err
 }
 
+// GetLatestSyncExcludingTypeContext returns the most recent sync run for a
+// source whose sync_type is not syncType.
+func (s *Store) GetLatestSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*SyncRun, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, source_id, started_at, completed_at, status,
+		       messages_processed, messages_added, messages_updated, errors_count,
+		       error_message, cursor_before, cursor_after, request_fingerprint
+		FROM sync_runs
+		WHERE source_id = ? AND sync_type <> ?
+		ORDER BY started_at DESC, id DESC
+		LIMIT 1
+	`, sourceID, syncType)
+
+	run, err := scanSyncRun(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("latest non-%s sync for source %d: %w", syncType, sourceID, ErrSyncRunNotFound)
+	}
+	return run, err
+}
+
 // GetLatestStartedSyncContext is GetLatestSyncContext without not-started
 // attempts. Those wrote nothing, so they cannot invalidate an importer's
 // incremental state.
@@ -1740,23 +1765,30 @@ func (s *Store) GetLastSuccessfulSync(sourceID int64) (*SyncRun, error) {
 
 // GetLastSuccessfulSyncContext is the request-aware form of GetLastSuccessfulSync.
 func (s *Store) GetLastSuccessfulSyncContext(ctx context.Context, sourceID int64) (*SyncRun, error) {
-	return s.getLastSuccessfulSyncContext(ctx, sourceID, "", false)
+	return s.getLastSuccessfulSyncContext(ctx, sourceID, "", "")
 }
 
 // GetLastSuccessfulSyncByType returns the most recent successful sync whose
 // sync_type exactly equals syncType, the legacy empty value included; only
 // GetLastSuccessfulSync queries without a type filter.
 func (s *Store) GetLastSuccessfulSyncByType(ctx context.Context, sourceID int64, syncType string) (*SyncRun, error) {
-	return s.getLastSuccessfulSyncContext(ctx, sourceID, syncType, true)
+	return s.getLastSuccessfulSyncContext(ctx, sourceID, "=", syncType)
+}
+
+// GetLastSuccessfulSyncExcludingTypeContext returns the most recent successful
+// sync whose sync_type is not syncType.
+func (s *Store) GetLastSuccessfulSyncExcludingTypeContext(ctx context.Context, sourceID int64, syncType string) (*SyncRun, error) {
+	return s.getLastSuccessfulSyncContext(ctx, sourceID, "<>", syncType)
 }
 
 // lastSuccessfulSyncQuery reads the newest completed run for a source.
 // idx_sync_runs_completed matches its filter and order, so the lookup stops at
-// the first row instead of sorting every completed run.
-func lastSuccessfulSyncQuery(filterByType bool) string {
+// the first row instead of sorting every completed run. typeOp is "" for any
+// sync_type, or "=" or "<>" to compare sync_type with a bound type.
+func lastSuccessfulSyncQuery(typeOp string) string {
 	whereType := ""
-	if filterByType {
-		whereType = " AND sync_type = ?"
+	if typeOp != "" {
+		whereType = " AND sync_type " + typeOp + " ?"
 	}
 	return `
 		SELECT id, source_id, started_at, completed_at, status,
@@ -1769,17 +1801,20 @@ func lastSuccessfulSyncQuery(filterByType bool) string {
 	`
 }
 
-func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64, syncType string, filterByType bool) (*SyncRun, error) {
+func (s *Store) getLastSuccessfulSyncContext(ctx context.Context, sourceID int64, typeOp, syncType string) (*SyncRun, error) {
 	args := []any{sourceID}
-	if filterByType {
+	if typeOp != "" {
 		args = append(args, syncType)
 	}
-	row := s.db.QueryRowContext(ctx, lastSuccessfulSyncQuery(filterByType), args...)
+	row := s.db.QueryRowContext(ctx, lastSuccessfulSyncQuery(typeOp), args...)
 
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		if filterByType {
+		switch typeOp {
+		case "=":
 			return nil, fmt.Errorf("last successful %s sync for source %d: %w", syncType, sourceID, ErrSyncRunNotFound)
+		case "<>":
+			return nil, fmt.Errorf("last successful non-%s sync for source %d: %w", syncType, sourceID, ErrSyncRunNotFound)
 		}
 		return nil, fmt.Errorf("last successful sync for source %d: %w", sourceID, ErrSyncRunNotFound)
 	}

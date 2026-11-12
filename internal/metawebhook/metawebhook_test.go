@@ -15,7 +15,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -298,31 +300,67 @@ func TestHandlerStoresOnlySignedDeliveries(t *testing.T) {
 	assert.Equal(body, string(stored))
 }
 
+// recorder holds what a worker test's field handler saw. The handler runs on
+// the worker's goroutine and the test reads on its own, so every access takes
+// the lock and reads return copies.
+type recorder struct {
+	mu       sync.Mutex
+	applied  []string
+	attempts map[string][]time.Time
+}
+
+// attempt records an attempt at value now and returns how many there were.
+func (r *recorder) attempt(value string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.attempts == nil {
+		r.attempts = map[string][]time.Time{}
+	}
+	r.attempts[value] = append(r.attempts[value], time.Now())
+	return len(r.attempts[value])
+}
+
+func (r *recorder) apply(value string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.applied = append(r.applied, value)
+}
+
+func (r *recorder) appliedValues() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.applied)
+}
+
+func (r *recorder) attemptTimes(value string) []time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.attempts[value])
+}
+
+func (r *recorder) attemptCount(value string) int {
+	return len(r.attemptTimes(value))
+}
+
 func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		h, dir := newTestHandler(t)
-		var applied []string
-		flaky, invalid, down, alsoDown := 0, 0, 0, 0
+		var rec recorder
 		feed := func(ctx context.Context, change Change) error {
 			value := string(change.Values[0])
+			attempts := rec.attempt(value)
 			switch value {
 			case `"flaky"`:
-				flaky++
-				if flaky < 3 {
+				if attempts < 3 {
 					return errors.New("temporary failure")
 				}
 			case `"invalid"`:
-				invalid++
 				return fmt.Errorf("%w: not archivable", ErrUnrecoverable)
-			case `"down"`:
-				down++
-				return errors.New("graph unavailable")
-			case `"also down"`:
-				alsoDown++
+			case `"down"`, `"also down"`:
 				return errors.New("graph unavailable")
 			}
-			applied = append(applied, change.App+":"+change.EntryID+":"+value)
+			rec.apply(change.App + ":" + change.EntryID + ":" + value)
 			return nil
 		}
 		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
@@ -345,26 +383,26 @@ func TestWorkerRetriesEachChangeInOrderAndAppliesTheRest(t *testing.T) {
 
 		time.Sleep(30 * time.Minute) // lets the fake clock run through the retry waits
 		synctest.Wait()
-		assert.Equal([]string{`9:100:"first"`, `9:100:"flaky"`}, applied,
+		assert.Equal([]string{`9:100:"first"`, `9:100:"flaky"`}, rec.appliedValues(),
 			"a retried change does not apply the changes before it again; a failing change blocks the rest")
-		assert.Equal(1, invalid, "an unrecoverable change is skipped at once, without retries")
-		assert.Equal(3, flaky)
+		assert.Equal(1, rec.attemptCount(`"invalid"`), "an unrecoverable change is skipped at once, without retries")
+		assert.Equal(3, rec.attemptCount(`"flaky"`))
 		assert.Len(pendingFiles(t, dir), 2, "the failing delivery and the one after it wait")
 
 		time.Sleep(time.Hour)
 		synctest.Wait()
-		assert.Equal([]string{`9:100:"first"`, `9:100:"flaky"`, `9:100:"later"`, `9:100:"after"`}, applied,
+		assert.Equal([]string{`9:100:"first"`, `9:100:"flaky"`, `9:100:"later"`, `9:100:"after"`}, rec.appliedValues(),
 			"after an hour the failing change is skipped and the rest of its delivery and later deliveries apply")
-		assert.Equal(1, alsoDown, "with the retry budget spent, a later failing change gets a single attempt")
-		assert.Equal(1, invalid)
+		assert.Equal(1, rec.attemptCount(`"also down"`), "with the retry budget spent, a later failing change gets a single attempt")
+		assert.Equal(1, rec.attemptCount(`"invalid"`))
 		assert.Empty(pendingFiles(t, dir), "applied and dropped deliveries are deleted")
-		attempts := down
+		attempts := rec.attemptCount(`"down"`)
 
 		store(`"down"`)
 		w.Wake()
 		time.Sleep(10 * time.Minute)
 		synctest.Wait()
-		assert.Greater(down, attempts+1, "the new delivery is being retried")
+		assert.Greater(rec.attemptCount(`"down"`), attempts+1, "the new delivery is being retried")
 		cancel()
 		require.ErrorIs(<-done, context.Canceled)
 		assert.Len(pendingFiles(t, dir), 1, "a delivery interrupted by shutdown stays for the next start")
@@ -401,9 +439,9 @@ func TestWorkerSetsAsideADeliveryItCannotRead(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		h, dir := newTestHandler(t)
-		var applied []string
+		var rec recorder
 		feed := func(_ context.Context, change Change) error {
-			applied = append(applied, string(change.Values[0]))
+			rec.apply(string(change.Values[0]))
 			return nil
 		}
 		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
@@ -417,13 +455,13 @@ func TestWorkerSetsAsideADeliveryItCannotRead(t *testing.T) {
 		go func() { done <- w.Run(ctx) }()
 
 		synctest.Wait()
-		assert.Equal([]string{`"later"`}, applied, "a later delivery still applies")
+		assert.Equal([]string{`"later"`}, rec.appliedValues(), "a later delivery still applies")
 		assert.Equal([]string{"." + names[0] + ".set-aside"}, pendingFiles(t, dir), "the unreadable delivery is set aside")
 
 		require.NoError(h.store("9", feedDelivery(`"after"`)))
 		w.Wake()
 		synctest.Wait()
-		assert.Equal([]string{`"later"`, `"after"`}, applied, "the worker keeps running")
+		assert.Equal([]string{`"later"`, `"after"`}, rec.appliedValues(), "the worker keeps running")
 		cancel()
 		require.ErrorIs(<-done, context.Canceled)
 	})
@@ -434,9 +472,9 @@ func TestWorkerSkipsADeliveryItCannotRemoveOrSetAside(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		h, dir := newTestHandler(t)
-		var applied []string
+		var rec recorder
 		feed := func(_ context.Context, change Change) error {
-			applied = append(applied, string(change.Values[0]))
+			rec.apply(string(change.Values[0]))
 			return nil
 		}
 		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
@@ -449,14 +487,14 @@ func TestWorkerSkipsADeliveryItCannotRemoveOrSetAside(t *testing.T) {
 		go func() { done <- w.Run(ctx) }()
 
 		synctest.Wait() // a worker that re-listed the directory forever would never block here
-		assert.Equal([]string{`"stuck"`}, applied)
+		assert.Equal([]string{`"stuck"`}, rec.appliedValues())
 		assert.Equal(stuck, pendingFiles(t, dir), "the delivery stays where it is")
 
 		require.NoError(os.Chmod(dir, 0o700))
 		require.NoError(h.store("9", feedDelivery(`"next"`)))
 		w.Wake()
 		synctest.Wait()
-		assert.Equal([]string{`"stuck"`, `"next"`}, applied, "the stuck delivery is not applied again and the worker keeps running")
+		assert.Equal([]string{`"stuck"`, `"next"`}, rec.appliedValues(), "the stuck delivery is not applied again and the worker keeps running")
 		cancel()
 		require.ErrorIs(<-done, context.Canceled)
 	})
@@ -481,28 +519,23 @@ func TestWorkerWaitsOutABusySourceWithoutSpendingTheRetryBudget(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		h, dir := newTestHandler(t)
 		start := time.Now()
-		var applied []string
-		var downAttempts []time.Time
-		var busyLaterSince time.Time
+		var rec recorder
 		feed := func(ctx context.Context, change Change) error {
 			value := string(change.Values[0])
+			rec.attempt(value)
 			switch value {
 			case `"busy"`:
 				if time.Since(start) < 3*time.Hour {
 					return fmt.Errorf("%w: polling sync running", ErrBusy)
 				}
 			case `"down"`:
-				downAttempts = append(downAttempts, time.Now())
 				return errors.New("graph unavailable")
 			case `"busy later"`:
-				if busyLaterSince.IsZero() {
-					busyLaterSince = time.Now()
-				}
-				if time.Since(busyLaterSince) < 10*time.Minute {
+				if time.Since(rec.attemptTimes(value)[0]) < 10*time.Minute {
 					return fmt.Errorf("%w: polling sync running", ErrBusy)
 				}
 			}
-			applied = append(applied, value)
+			rec.apply(value)
 			return nil
 		}
 		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
@@ -516,8 +549,9 @@ func TestWorkerWaitsOutABusySourceWithoutSpendingTheRetryBudget(t *testing.T) {
 
 		time.Sleep(6 * time.Hour)
 		synctest.Wait()
-		assert.Equal([]string{`"busy"`, `"busy later"`, `"after"`}, applied,
+		assert.Equal([]string{`"busy"`, `"busy later"`, `"after"`}, rec.appliedValues(),
 			"busy changes wait for their source, even after the budget is spent; the failing change is skipped")
+		downAttempts := rec.attemptTimes(`"down"`)
 		require.NotEmpty(downAttempts)
 		assert.GreaterOrEqual(downAttempts[len(downAttempts)-1].Sub(downAttempts[0]), 55*time.Minute,
 			"hours of waiting for a busy source leave the next failure its full retry budget")
@@ -534,16 +568,15 @@ func TestWorkerDoesNotChargeTimeInsideAnAttempt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
 		h, dir := newTestHandler(t)
-		attempts := 0
-		var applied []string
+		var rec recorder
 		feed := func(ctx context.Context, change Change) error {
-			attempts++
-			if attempts < 4 {
+			value := string(change.Values[0])
+			if rec.attempt(value) < 4 {
 				// Each failing attempt takes longer than the whole budget.
 				time.Sleep(2 * time.Hour)
 				return errors.New("graph unavailable")
 			}
-			applied = append(applied, string(change.Values[0]))
+			rec.apply(value)
 			return nil
 		}
 		w := NewWorker(dir, map[Field]FieldHandler{{"page", "feed"}: feed})
@@ -554,8 +587,8 @@ func TestWorkerDoesNotChargeTimeInsideAnAttempt(t *testing.T) {
 
 		time.Sleep(7 * time.Hour)
 		synctest.Wait()
-		assert.Equal([]string{`"slow"`}, applied, "the change is retried after slow attempts and applies")
-		assert.Equal(4, attempts)
+		assert.Equal([]string{`"slow"`}, rec.appliedValues(), "the change is retried after slow attempts and applies")
+		assert.Equal(4, rec.attemptCount(`"slow"`))
 		assert.Empty(pendingFiles(t, dir))
 		cancel()
 		require.ErrorIs(<-done, context.Canceled)

@@ -16,7 +16,8 @@ report changes after you subscribe.
 
 1. Give the daemon a listener that Meta can reach over public HTTPS. msgvault
    listens on plain HTTP, so put it behind a TLS proxy or tunnel that forwards
-   to `listen_addr`.
+   to `listen_addr`. Use a reverse proxy that also limits slow or abusive
+   clients: msgvault only caps how many delivery bodies it reads at once.
 2. Store your Meta app secret and a verify token of your choice in two
    environment variables on the **daemon host**.
 3. Add the receiver to the [configuration](../configuration.md#meta-webhooks):
@@ -31,8 +32,14 @@ report changes after you subscribe.
    verify_token_env = "EXAMPLE_META_VERIFY_TOKEN"
    ```
 
-4. Restart the daemon. If either variable is empty, the daemon logs a warning
-   and does not start the receiver.
+4. Restart the daemon with `msgvault daemon restart`, or `msgvault daemon start`
+   when none is running. That daemon keeps running until you stop it. If
+   either variable is empty, the daemon logs a warning and does not start the
+   receiver.
+
+   A daemon that another command started automatically also stays up while
+   the receiver is listening. Nothing starts it again after a reboot or
+   `msgvault daemon stop`, and the receiver is down until a daemon runs.
 5. In your Meta app's Webhooks settings, subscribe the Page object to the
    `feed` field. Use `https://<your-host>/meta/webhook/<app_id>` as the callback
    URL and the same verify token.
