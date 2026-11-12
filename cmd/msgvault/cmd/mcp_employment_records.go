@@ -145,26 +145,25 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
 	}
 	var id int64
-	var etag string
 	switch name {
 	case "create_employment", "replace_employment":
 		a, e := decodeMCPOperationArguments[employmentBodyArgs](args)
 		if e != nil {
 			return invalid()
 		}
-		id, etag = a.EmploymentID, a.ETag
+		id = a.EmploymentID
 	case "end_employment":
 		a, e := decodeMCPOperationArguments[employmentEndArgs](args)
 		if e != nil {
 			return invalid()
 		}
-		id, etag = a.EmploymentID, a.ETag
+		id = a.EmploymentID
 	default:
 		a, e := decodeMCPOperationArguments[employmentIDArgs](args)
 		if e != nil {
 			return invalid()
 		}
-		id, etag = a.EmploymentID, a.ETag
+		id = a.EmploymentID
 	}
 	var current any
 	if name != "create_employment" {
@@ -172,7 +171,7 @@ func (b *daemonMCPOperations) employmentOperationDisclosure(ctx context.Context,
 		if err != nil {
 			return "", true, err
 		}
-		if err := operationContext(result, etag, "employment_revision_conflict", employmentDefiniteRefusal); err != nil {
+		if err := operationContext(result, result.ETag, "employment_revision_conflict", employmentDefiniteRefusal); err != nil {
 			return "", true, err
 		}
 		current = result.Output
