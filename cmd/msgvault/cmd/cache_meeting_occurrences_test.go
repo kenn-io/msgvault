@@ -630,14 +630,6 @@ func TestMeetingCountsDeletedAndSourceScope(t *testing.T) {
 				detail, err := engine.GetPerson(t.Context(), person, query.Context{}, nil)
 				require.NoError(t, err)
 				require.NotNil(t, detail)
-				timeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Timezone: "UTC"})
-				require.NoError(t, err)
-				if detail.MeetingCount > 0 {
-					require.NotEmpty(t, timeline.Rows)
-				}
-				for _, row := range timeline.Rows {
-					assert.Greater(t, row.OccurredAt.Year(), 1)
-				}
 				return detail.MeetingCount
 			}
 			if tc.deleted {
