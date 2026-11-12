@@ -406,7 +406,7 @@
       directoryReviewController.refreshSummaries(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates);
       await refreshIdentityProfiles();
     }
-    else if (!result.ok && revision !== null && revision === relationshipsController.pendingIdentityCacheRevision) mergeCacheError = { revision, message: result.message, unsupported: result.code === 'cache_unsupported', dismissible: result.code === 'cache_unsupported' || result.code === 'cache_build_required' };
+    else if (!result.ok && revision !== null && revision === relationshipsController.pendingIdentityCacheRevision) mergeCacheError = { revision, message: result.message, unsupported: result.code === 'cache_unsupported', dismissible: true };
   }
   async function identityChanged(): Promise<void> {
     await Promise.all([
