@@ -1825,9 +1825,10 @@ func TestPersonFactDecisionOutcomesPersist(t *testing.T) {
 				claim.Relation = personfacts.RelationContradict
 			}
 			claims := []personfacts.ProposedClaim{claim}
-			if test.name == "tie" {
+			switch test.name {
+			case "tie":
 				claims = append(claims, personFactProjectionClaim(personID, target, `"phone"`, "tie-other"))
-			} else if test.name == "superseded" {
+			case "superseded":
 				claims = append(claims, personFactProjectionClaim(personID, target, `"email"`, "ranked-winner"))
 			}
 			input := personFactProjectionInput(personID, test.name, claims, nil)
