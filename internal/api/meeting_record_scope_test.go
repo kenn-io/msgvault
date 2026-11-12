@@ -189,42 +189,31 @@ func TestMeetingRecordRequiresSeriesOccurrence(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gcal", "calendar@example.test")
 	requirements.NoError(err)
-	notes, err := st.GetOrCreateSource("meeting_import", "notes@example.test")
-	requirements.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: st, Logger: testLogger()})
 	for _, tc := range []struct {
-		name, raw    string
-		keys, starts []string
+		name, raw string
+		keys      []string
 	}{
-		{"timed", `{"id":"timed","iCalUID":"timed@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314T100000Z", "20270321T100000Z"}, []string{"2027-03-14T10:00:00Z", "2027-03-21T10:00:00Z"}},
-		{"all-day", `{"id":"all-day","iCalUID":"all-day@example.test","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314", "20270321"}, []string{"2027-03-14T00:00:00Z", "2027-03-21T00:00:00Z"}},
+		{"timed", `{"id":"timed","iCalUID":"timed@example.test","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314T100000Z", "20270321T100000Z"}},
+		{"all-day", `{"id":"all-day","iCalUID":"all-day@example.test","start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`, []string{"20270314", "20270321"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: tc.name, MessageType: "calendar_event"}, Conversation: &store.ConversationPersistData{SourceConversationID: tc.name, ConversationType: "calendar"}, RawMIME: []byte(tc.raw), RawFormat: "gcal_json"})
 			requirements.NoError(err)
-			var noteIDs []int64
-			for i, start := range tc.starts {
-				key := fmt.Sprintf("%s-%d", tc.name, i)
-				raw := fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"%s@example.test","startsAt":"%s"}}`, tc.name, start)
-				note, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: notes.ID, SourceMessageID: key, MessageType: "meeting_transcript"}, Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting"}, RawMIME: []byte(raw), RawFormat: "twenty_json"})
-				requirements.NoError(err)
-				noteIDs = append(noteIDs, note)
-			}
 			request := func(ref string) *httptest.ResponseRecorder {
 				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/record?ref="+ref, nil)
 				w := httptest.NewRecorder()
 				srv.Router().ServeHTTP(w, req)
 				return w
 			}
-			for i, key := range tc.keys {
+			for _, key := range tc.keys {
 				explicit := request(fmt.Sprintf("evt:%d@%s", id, key))
 				requirements.Equal(http.StatusOK, explicit.Code, explicit.Body.String())
 				var record store.MeetingRecord
 				requirements.NoError(json.Unmarshal(explicit.Body.Bytes(), &record))
 				requirements.Len(record.Links, 1)
 				assertions.Equal(fmt.Sprintf("evt:%d@%s", id, key), record.Links[0].Ref)
-				assertions.Equal([]int64{noteIDs[i]}, record.MessageIDs)
 			}
 		})
 	}

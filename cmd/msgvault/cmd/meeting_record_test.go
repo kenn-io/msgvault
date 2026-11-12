@@ -33,7 +33,6 @@ func (c *meetingRecordClient) MeetingRecord(_ context.Context, ref string) (stor
 }
 
 func TestMeetingLinksCLIPartialRecord(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
 	at := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
 	start, end := &at, new(at.Add(time.Hour))
 	record := store.MeetingRecord{
@@ -45,30 +44,36 @@ func TestMeetingLinksCLIPartialRecord(t *testing.T) {
 		},
 		MessageIDs: []int64{42}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 7, Reason: "unsupported recurrence"}},
 	}
-	for _, jsonOutput := range []bool{false, true} {
-		client := &meetingRecordClient{version: "5.1.0", record: &record}
-		command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
-		var out, stderr bytes.Buffer
-		command.SetOut(&out)
-		command.SetErr(&stderr)
-		args := []string{"evt:1"}
-		if jsonOutput {
-			args = append(args, "--json")
-		}
-		command.SetArgs(args)
-		require.NoError(command.Execute())
-		if jsonOutput {
-			assert.Contains(out.String(), `"unexpandable":[{"message_id":7,"reason":"unsupported recurrence"}]`)
-			assert.Empty(stderr.String())
-		} else {
-			assert.Contains(out.String(), "STATUS")
-			assert.Contains(out.String(), "confirmed")
-			assert.Contains(out.String(), "cancelled")
-			assert.Contains(out.String(), "deleted")
-			assert.Regexp(`evt:4\s+unknown\s+unknown\s+cancelled`, out.String())
-			assert.Contains(out.String(), "Notes: 42\n")
-			assert.Contains(stderr.String(), "message 7 (unsupported recurrence)")
-		}
+	for _, tc := range []struct {
+		name       string
+		jsonOutput bool
+	}{{"table", false}, {"json", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			client := &meetingRecordClient{version: "5.1.0", record: &record}
+			command := newMeetingLinksCommand(meetingCommandDeps{open: func(context.Context) (meetingCommandClient, func(), error) { return client, func() {}, nil }})
+			var out, stderr bytes.Buffer
+			command.SetOut(&out)
+			command.SetErr(&stderr)
+			args := []string{"evt:1"}
+			if tc.jsonOutput {
+				args = append(args, "--json")
+			}
+			command.SetArgs(args)
+			require.NoError(command.Execute())
+			if tc.jsonOutput {
+				assert.Contains(out.String(), `"unexpandable":[{"message_id":7,"reason":"unsupported recurrence"}]`)
+				assert.Empty(stderr.String())
+			} else {
+				assert.Contains(out.String(), "STATUS")
+				assert.Contains(out.String(), "confirmed")
+				assert.Contains(out.String(), "cancelled")
+				assert.Contains(out.String(), "deleted")
+				assert.Regexp(`evt:4\s+unknown\s+unknown\s+cancelled`, out.String())
+				assert.Contains(out.String(), "Notes: 42\n")
+				assert.Contains(stderr.String(), "message 7 (unsupported recurrence)")
+			}
+		})
 	}
 }
 
