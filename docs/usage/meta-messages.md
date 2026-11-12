@@ -58,8 +58,9 @@ configured account.
 
 Each conversation becomes a chat with the customer, titled with the customer's
 name or Instagram username. Messages the Page or account sent are marked as
-yours. The source and message types are `facebook_messages` and
-`instagram_messages`. Customer identities are scoped to the app and inbox, so
+yours. Only messages with text are archived; a message without text, such as
+an attachment, sticker or like, is skipped. The source and message types are
+`facebook_messages` and `instagram_messages`. Customer identities are scoped to the app and inbox, so
 they never merge with commenters or with people in other sources; use the
 [people tools](people.md) to link them.
 
@@ -82,6 +83,8 @@ run the sync again with `--full`.
 ## Limits
 
 - Message text only: attachments, stickers and reactions are not archived.
+  A message without text is never archived. If an archived message later
+  comes back without text, its archived text stays.
 - Group conversations are not archived.
 - A later sync updates the text of a message that is still among the 20 most
   recent, so an edit replaces the archived text. Earlier versions and

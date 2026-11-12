@@ -284,6 +284,12 @@ func (imp *InboxImporter) Import(ctx context.Context, b Inbox, opts ImportOption
 				continue
 			}
 			for _, msg := range conversation.Messages {
+				// A message without text is an attachment, sticker or like.
+				// Webhooks skip these too, and an archived message that
+				// comes back without text keeps the text it had.
+				if msg.Message == "" {
+					continue
+				}
 				if err := b.persistMessage(ctx, st, source.ID, sum, owner, customer, msg); err != nil {
 					return "", fmt.Errorf("conversation %q message %q: %w", conversation.ID, msg.ID, err)
 				}

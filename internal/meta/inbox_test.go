@@ -225,6 +225,38 @@ func TestInboxImportRejectedSavedPositionNamesFull(t *testing.T) {
 	assert.NotContains(err.Error(), "--full")
 }
 
+func TestInboxImportSkipsMessagesWithoutText(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	inbox := Inbox{App: "9", Page: "100"}
+	page := func(text string) string {
+		return `{"data":[{"id":"t_1","participants":{"data":[{"id":"100"},{"id":"700","name":"Example Customer"}]},
+			"messages":{"data":[{"id":"m_sticker","created_time":"2026-10-01T12:05:00+0000","from":{"id":"700"},"message":""},
+			{"id":"m_text","created_time":"2026-10-01T12:00:00+0000","from":{"id":"700"},"message":"` + text + `"}]}}]}`
+	}
+	var afters []string
+	pages := map[string]string{"": page("orchard question")}
+	imp := NewInboxImporter(st, inboxPages(t, pages, &afters))
+	src, err := imp.Register(t.Context(), inbox)
+	require.NoError(err)
+
+	sum, err := imp.Import(t.Context(), inbox, ImportOptions{})
+	require.NoError(err)
+	assert.Equal(1, sum.MessagesProcessed)
+	assert.Equal(1, sum.MessagesAdded)
+	ids, err := st.MessageExistsBatch(src.ID, []string{"m_text", "m_sticker"})
+	require.NoError(err)
+	assert.ElementsMatch([]string{"m_text"}, slices.Collect(maps.Keys(ids)))
+
+	pages[""] = page("")
+	sum, err = imp.Import(t.Context(), inbox, ImportOptions{})
+	require.NoError(err)
+	assert.Zero(sum.MessagesProcessed)
+	body, err := st.GetMessageBodyText(t.Context(), ids["m_text"])
+	require.NoError(err)
+	assert.Equal("orchard question", body, "a message that comes back without text keeps its archived text")
+}
+
 func TestInboxImportRefusesOtherAccountsAndUnknownSenders(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := testutil.NewSQLiteTestStore(t)
