@@ -232,40 +232,6 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 			}
 		}
 	}
-	// Range edits can move an occurrence farther than the initial candidate margin.
-	// Reload its series' exceptions over the same original-date window used for expansion.
-	type seriesKey struct {
-		source int64
-		id     string
-	}
-	rangeEdits := make(map[seriesKey][]CalendarEventRow)
-	for _, exception := range exceptions {
-		key := seriesKey{exception.SourceID, exception.Event.SeriesProviderID}
-		rangeEdits[key] = append(rangeEdits[key], exception)
-	}
-	for _, master := range byID {
-		if master.Event.Kind != "series" && master.Event.Kind != "single" {
-			continue
-		}
-		edits := rangeEdits[seriesKey{master.SourceID, master.Event.ProviderEventID}]
-		_, shift, _ := calendarRangeBoundary(master.Event, edits)
-		if shift.pad == 0 {
-			continue
-		}
-		more, err := queryCalendarExceptionsInWindow(ctx, r, dialect, lower.Add(-shift.pad), upper.Add(shift.pad), " AND e.series_provider_id = ? AND m.source_id = ?", []any{master.Event.ProviderEventID, master.SourceID})
-		if err != nil {
-			return nil, err
-		}
-		for _, row := range more {
-			if _, exists := byID[row.MessageID]; !exists {
-				exceptions = append(exceptions, row)
-				byID[row.MessageID] = row
-				if len(exceptions) > maxCalendarExceptions {
-					return nil, fmt.Errorf("%w: too many calendar exceptions; narrow the window", ErrQueryTooBroad)
-				}
-			}
-		}
-	}
 	out := make([]CalendarEventRow, 0, len(byID))
 	for _, row := range byID {
 		out = append(out, row)

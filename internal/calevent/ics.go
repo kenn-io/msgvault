@@ -23,8 +23,6 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-const ICSRangeRecurrence = "RECURRENCE-ID;RANGE=THISANDFUTURE"
-
 // EmailInviteSQL identifies email-derived events; source merges preserve source types.
 func EmailInviteSQL(messageType, sourceType, archiveOnly string) string {
 	return fmt.Sprintf("(COALESCE(%s, '') = 'calendar_event' AND COALESCE(%s, '') NOT IN ('gcal', 'ics', 'message_import') AND %s)", messageType, sourceType, archiveOnly)
@@ -41,7 +39,6 @@ type ICSMetadata struct {
 	ICalUID  string       `json:"ical_uid,omitempty"`
 	Stamp    time.Time    `json:"ics_stamp"`
 	Details  *ICSRevision `json:"ics_details,omitempty"`
-	Range    bool         `json:"ics_range,omitempty"`
 }
 
 type ICSRevision struct {
@@ -83,10 +80,6 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 		return Event{}, false, errors.New("stored ICS requires one VEVENT")
 	}
 	e := components[0].Event
-	e.Recurrence = slices.DeleteFunc(e.Recurrence, func(line string) bool { return line == ICSRangeRecurrence })
-	if meta.Range {
-		e.Recurrence = append(e.Recurrence, ICSRangeRecurrence)
-	}
 	if meta.Status != "" {
 		e.Status = meta.Status
 	}
@@ -422,7 +415,6 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 			if !strings.EqualFold(value, "THISANDFUTURE") {
 				return ICSComponent{}, errors.New("RECURRENCE-ID: invalid RANGE")
 			}
-			e.Recurrence = append(e.Recurrence, ICSRangeRecurrence)
 		}
 		original, date, err := icsTime(rid, loc)
 		if err != nil {

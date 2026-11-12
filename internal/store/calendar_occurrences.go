@@ -83,12 +83,12 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		}
 		page.Occurrences = append(page.Occurrences, CalendarOccurrence{MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: attendees})
 	}
-	addSeriesOccurrence := func(row CalendarEventRow, o calrecur.Occurrence, ranges []CalendarEventRow) error {
+	addSeriesOccurrence := func(row CalendarEventRow, o calrecur.Occurrence) error {
 		effective := row
 		if o.HasException {
 			effective = byID[o.ExceptionRef]
 			if effective.Event.Status == "cancelled" {
-				effective, err = inheritCalendarCancellation(ctx, s.db, effective, calendarEarlierRange(row, ranges, effective.Event.Original))
+				effective, err = inheritCalendarCancellation(ctx, s.db, effective, row)
 				if err != nil {
 					return err
 				}
@@ -112,10 +112,6 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			return page, err
 		}
 		e := row.Event
-		boundary, shift, skip := calendarRangeScope(row, masters[seriesKey{row.SourceID, e.SeriesProviderID}], exceptions[seriesKey{row.SourceID, e.ProviderEventID}], report)
-		if skip {
-			continue
-		}
 		if e.Kind == "exception" && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
@@ -125,8 +121,6 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 				continue
 			}
 			switch {
-			case boundary != nil && !calendarIdentityBefore(calendarEventIdentity(e), boundary):
-				// The master itself lies in the omitted part of the series.
 			case e.Start != nil && e.End != nil:
 				add(row, 0, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled"})
 			default:
@@ -137,12 +131,8 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			}
 			fallthrough
 		case "series":
-			ranges, err := calendarEffectiveRanges(ctx, s.db, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], byID)
-			if err != nil {
-				return page, err
-			}
 			calendarReportMismatchedExceptions(e, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], report)
-			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from.Add(-shift.pad), to.Add(shift.pad), remaining)
+			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
 			remaining -= count
 			if err != nil {
 				return page, err
@@ -151,10 +141,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 				report(row.MessageID, reason)
 			}
 			for _, o := range occurrences {
-				if !calendarKeepBeforeBoundary(&o, byID, boundary, shift, report) {
-					continue
-				}
-				if err := addSeriesOccurrence(row, o, ranges); err != nil {
+				if err := addSeriesOccurrence(row, o); err != nil {
 					return page, err
 				}
 			}
@@ -176,250 +163,6 @@ func calendarReportMismatchedExceptions(master calevent.Event, exceptions []Cale
 			report(exception.MessageID, "exception original type differs from series and event bounds are missing")
 		}
 	}
-}
-
-func calendarEarlierRange(master CalendarEventRow, edits []CalendarEventRow, original *calrecur.Identity) CalendarEventRow {
-	for _, edit := range slices.Backward(edits) {
-		if calendarIdentityBefore(edit.Event.Original, original) {
-			return edit
-		}
-	}
-	return master
-}
-
-func calendarEffectiveRanges(ctx context.Context, db *loggedDB, master CalendarEventRow, exceptions []CalendarEventRow, byID map[int64]CalendarEventRow) ([]CalendarEventRow, error) {
-	edits := slices.DeleteFunc(slices.Clone(exceptions), func(row CalendarEventRow) bool {
-		return !slices.Contains(row.Event.Recurrence, calevent.ICSRangeRecurrence) || !calendarIdentityComparable(row.Event.Original, master.Event.AllDay)
-	})
-	slices.SortStableFunc(edits, func(a, b CalendarEventRow) int { return cmp.Compare(a.Event.Original.Key(), b.Event.Original.Key()) })
-	previous := master
-	for i, edit := range edits {
-		if edit.Event.Status == SyncStatusCancelled {
-			var err error
-			edit, err = inheritCalendarCancellation(ctx, db, edit, previous)
-			if err != nil {
-				return nil, err
-			}
-		}
-		edits[i], byID[edit.MessageID], previous = edit, edit, edit
-	}
-	return edits, nil
-}
-
-func calendarIdentityBefore(a, b *calrecur.Identity) bool {
-	if a == nil || b == nil || a.AllDay != b.AllDay || a.Key() == "" || b.Key() == "" {
-		return false
-	}
-	if a.AllDay {
-		return a.Date < b.Date
-	}
-	return !a.Instant.IsZero() && a.Instant.Before(b.Instant)
-}
-
-// calendarIdentityComparable reports whether id can be ordered against identities of the given type.
-func calendarIdentityComparable(id *calrecur.Identity, allDay bool) bool {
-	return id != nil && id.AllDay == allDay && id.Key() != "" && (allDay || !id.Instant.IsZero())
-}
-
-func calendarEventIdentity(e calevent.Event) *calrecur.Identity {
-	id := &calrecur.Identity{AllDay: e.AllDay, Date: e.StartDate}
-	if e.Start != nil {
-		id.Instant = *e.Start
-	}
-	return id
-}
-
-// calendarShift moves the occurrences a RANGE edit covers; pad is how far a moved occurrence can lie
-// from where the series generates it. The zero value cannot move them.
-type calendarShift struct {
-	move func(*calrecur.Occurrence)
-	pad  time.Duration
-}
-
-// calendarRangeScope reports unsupported RANGE edits. An edit without a master is skipped. A series
-// keeps the occurrences before its earliest edit, cancels or moves later ones when every edit cancels or
-// sets a new start, and omits them otherwise; it is skipped only when an edit cannot be placed.
-func calendarRangeScope(row CalendarEventRow, hasMaster bool, seriesExceptions []CalendarEventRow, report func(int64, string)) (*calrecur.Identity, calendarShift, bool) {
-	e := row.Event
-	if e.Kind == "exception" {
-		orphan := slices.Contains(e.Recurrence, calevent.ICSRangeRecurrence) && !hasMaster
-		if orphan {
-			report(row.MessageID, "unsupported recurrence range")
-		}
-		return nil, calendarShift{}, orphan
-	}
-	boundary, shift, id := calendarRangeBoundary(e, seriesExceptions)
-	if id != 0 && shift.move == nil {
-		reason := "unsupported recurrence range: later occurrences omitted"
-		if boundary == nil {
-			reason = "unsupported recurrence range"
-		}
-		report(id, reason)
-	}
-	return boundary, shift, id != 0 && boundary == nil
-}
-
-// calendarKeepBeforeBoundary keeps occurrences whose original start precedes or equals the range boundary,
-// whatever their effective start, and moves or drops later ones; occurrences with no comparable
-// original start are dropped and reported.
-func calendarKeepBeforeBoundary(o *calrecur.Occurrence, byID map[int64]CalendarEventRow, boundary *calrecur.Identity, shift calendarShift, report func(int64, string)) bool {
-	if boundary == nil {
-		return true
-	}
-	original := &o.Original
-	if o.HasException {
-		original = byID[o.ExceptionRef].Event.Original
-	}
-	if !calendarIdentityComparable(original, boundary.AllDay) {
-		report(o.ExceptionRef, "exception original start cannot be compared to recurrence range")
-		return false
-	}
-	return calendarMoveLater(o, calendarIdentityBefore(boundary, original), shift, byID[o.ExceptionRef].Event.Start != nil)
-}
-
-// calendarMoveLater moves a later occurrence, or drops it when the range cannot move it. An exception
-// that sets its own start keeps it, being more specific than the range; generated occurrences have no
-// exception row (reference 0), so explicit is false for them.
-func calendarMoveLater(o *calrecur.Occurrence, later bool, shift calendarShift, explicit bool) bool {
-	if later && !explicit && shift.move != nil {
-		shift.move(o)
-	}
-	return !later || explicit || shift.move != nil
-}
-
-func calendarRangeBoundary(master calevent.Event, exceptions []CalendarEventRow) (*calrecur.Identity, calendarShift, int64) {
-	var boundary *calrecur.Identity
-	var id int64
-	edits := slices.DeleteFunc(slices.Clone(exceptions), func(row CalendarEventRow) bool {
-		return !slices.Contains(row.Event.Recurrence, calevent.ICSRangeRecurrence)
-	})
-	for _, row := range edits {
-		original := row.Event.Original
-		if !calendarIdentityComparable(original, master.AllDay) {
-			return nil, calendarShift{}, row.MessageID
-		}
-		if boundary == nil || calendarIdentityBefore(original, boundary) {
-			boundary, id = original, row.MessageID
-		}
-	}
-	return boundary, calendarRangeShift(master, edits), id
-}
-
-// calendarRangeShift follows each RANGE edit, in original-start order, and applies to a later occurrence
-// the latest edit that does not start after it. The edits are sorted in place. One edit that cannot be
-// followed leaves the whole series unfollowed.
-func calendarRangeShift(master calevent.Event, edits []CalendarEventRow) calendarShift {
-	zone, err := calendarEventZone(master)
-	slices.SortStableFunc(edits, func(a, b CalendarEventRow) int { return cmp.Compare(a.Event.Original.Key(), b.Event.Original.Key()) })
-	shifts := make([]calendarShift, len(edits))
-	var pad time.Duration
-	for i, row := range edits {
-		shifts[i] = calendarEditShift(master, row.Event, zone)
-		if row.Event.Status == SyncStatusCancelled && row.Event.Start == nil && i > 0 {
-			shifts[i] = calendarCancelShift(row.Event, shifts[i-1])
-		}
-		if shifts[i].move == nil || err != nil {
-			return calendarShift{}
-		}
-		pad = max(pad, shifts[i].pad)
-	}
-	return calendarShift{pad: pad, move: func(o *calrecur.Occurrence) {
-		for i, edit := range slices.Backward(edits) {
-			if edit.Event.Original.Key() <= o.Original.Key() {
-				calendarApplyEdit(shifts[i], edit, o)
-				return
-			}
-		}
-	}}
-}
-
-// calendarApplyEdit applies a RANGE edit to a later occurrence: its shift, and its details unless the
-// occurrence has an exception of its own.
-func calendarApplyEdit(shift calendarShift, edit CalendarEventRow, o *calrecur.Occurrence) {
-	shift.move(o)
-	if !o.HasException {
-		o.HasException, o.ExceptionRef = true, edit.MessageID
-	}
-}
-
-// calendarEditShift follows one RANGE edit: a new start moves the later occurrences by its change in the
-// series zone's wall-clock time (civil days for an all-day series), and a cancellation also cancels them.
-// An edit that sets neither cannot be followed.
-func calendarEditShift(master, edit calevent.Event, zone *time.Location) calendarShift {
-	var shift calendarShift
-	switch {
-	case master.AllDay && edit.StartDate != "":
-		shift = calendarAllDayShift(edit, zone)
-	case !master.AllDay && edit.Start != nil:
-		shift = calendarTimedShift(master, edit, zone)
-	}
-	return calendarCancelShift(edit, shift)
-}
-
-// calendarCancelShift makes a cancellation also cancel the later occurrences its edit moves. A
-// cancellation that sets no start has nothing to move, so it only cancels.
-func calendarCancelShift(edit calevent.Event, shift calendarShift) calendarShift {
-	if edit.Status != SyncStatusCancelled {
-		return shift
-	}
-	move := shift.move
-	shift.move = func(o *calrecur.Occurrence) {
-		if move != nil {
-			move(o)
-		}
-		o.Cancelled = true
-	}
-	return shift
-}
-
-// calendarTimedShift moves later occurrences so they keep the zone's local time across daylight saving
-// changes, and gives them the edit's duration.
-func calendarTimedShift(master, edit calevent.Event, zone *time.Location) calendarShift {
-	wall := func(t time.Time) time.Time {
-		t = t.In(zone)
-		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, time.UTC)
-	}
-	delta := wall(*edit.Start).Sub(wall(edit.Original.Instant))
-	pad := max(delta, -delta)
-	if edit.End != nil && master.Start != nil && master.End != nil {
-		pad += max(0, edit.End.Sub(*edit.Start)-master.End.Sub(*master.Start))
-	}
-	return calendarShift{pad: pad, move: func(o *calrecur.Occurrence) {
-		length := o.End.Sub(o.Start)
-		if edit.End != nil {
-			length = edit.End.Sub(*edit.Start)
-		}
-		w := wall(o.Start).Add(delta)
-		o.Start = time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second(), 0, zone).UTC()
-		o.End = o.Start.Add(length)
-	}}
-}
-
-// calendarAllDayShift moves later all-day occurrences by the edit's change in civil days and gives them
-// the edit's length when it sets an end date. An edit that keeps its start day moves them by nothing.
-func calendarAllDayShift(edit calevent.Event, zone *time.Location) calendarShift {
-	start, startErr := time.Parse(time.DateOnly, edit.StartDate)
-	was, wasErr := time.Parse(time.DateOnly, edit.Original.Date)
-	end, endErr := time.Parse(time.DateOnly, edit.EndDate)
-	if startErr != nil || wasErr != nil {
-		return calendarShift{}
-	}
-	delta, span := start.Sub(was), end.Sub(start)
-	return calendarShift{pad: max(delta, -delta) + max(0, span), move: func(o *calrecur.Occurrence) {
-		first, firstErr := time.Parse(time.DateOnly, o.StartDate)
-		last, lastErr := time.Parse(time.DateOnly, o.EndDate)
-		if !o.AllDay || firstErr != nil || lastErr != nil {
-			return
-		}
-		if first = first.Add(delta); endErr == nil {
-			last = first.Add(span)
-		} else {
-			last = last.Add(delta)
-		}
-		o.StartDate, o.EndDate = first.Format(time.DateOnly), last.Format(time.DateOnly)
-		o.Start, _, _ = calrecur.CivilDateBoundary(o.StartDate, zone)
-		o.End, _, _ = calrecur.CivilDateBoundary(o.EndDate, zone)
-	}}
 }
 
 func calendarMissingBoundsReason(event calevent.Event) string {
