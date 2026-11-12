@@ -804,6 +804,6 @@ func TestPersonDiscoverySemanticCLIRejectsOldDaemonBeforeSearch(t *testing.T) {
 	command.SetArgs([]string{"--organization-id", "13", "equipment", "--json"})
 	err := command.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "5.1.0")
+	assert.Contains(t, err.Error(), "5.2.0")
 	assert.Zero(t, searches.Load())
 }

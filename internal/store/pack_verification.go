@@ -5,6 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
+
+	"go.kenn.io/kit/packstore"
 )
 
 const packVerificationCursorKey = "attachment_pack_verification_cursor"
@@ -13,8 +17,8 @@ type packVerificationKey struct{}
 
 // PackVerificationPass limits physical verification during one automatic Pack
 // call. All resolver, reference, and unpack inventories remain authoritative.
-// Kit's two ListIndexed calls (repair and loose sweeping) use the same hash
-// range; omitted entries are deferred, never treated as absent from the
+// Kit's two ListIndexed calls (repair and loose sweeping) use the same candidate
+// hashes; omitted entries are deferred, never treated as absent from the
 // catalog. Rows are read when Kit lists them, while it holds the maintenance
 // lease, so a repack that finished earlier cannot leave a stale pack location
 // for repair to delete.
@@ -23,9 +27,9 @@ type PackVerificationPass struct {
 	start                string
 	maxEntries           int
 	maxBytes             int64
-	// selected is set by the first ListIndexed call, which fixes the range.
+	// selected is set by the first ListIndexed call, which fixes hashes.
 	selected bool
-	end      string
+	hashes   []string
 	more     bool
 }
 
@@ -34,6 +38,13 @@ type PackVerificationPass struct {
 // reconciliation, and loose sweeping are untouched.
 func (p *PackVerificationPass) SkipLooseEnumeration() {
 	p.skipLooseEnumeration = true
+}
+
+// PackVerificationSkipsLooseEnumeration reports whether this pass skipped
+// discovery of loose blobs that need packing.
+func PackVerificationSkipsLooseEnumeration(ctx context.Context) bool {
+	pass, ok := ctx.Value(packVerificationKey{}).(*PackVerificationPass)
+	return ok && pass.skipLooseEnumeration
 }
 
 // BeginPackVerification starts a bounded verification window after the
@@ -55,59 +66,137 @@ func (s *Store) BeginPackVerification(
 	return context.WithValue(ctx, packVerificationKey{}, pass), pass, nil
 }
 
-// listPackVerificationWindow returns the current index rows in the pass's
-// hash range. The first call selects at most maxEntries rows or maxBytes of
-// raw content after the cursor, always admitting one oversized row. Later
-// calls return the current rows in that same range, so rows Pack adds past
-// its end wait for a later window.
-func (s *Store) listPackVerificationWindow(
-	ctx context.Context, pass *PackVerificationPass,
-) ([]PackIndexEntry, error) {
-	if pass.selected && pass.end == "" {
-		return nil, nil
-	}
-	query := `SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
-		FROM attachment_pack_index WHERE blob_hash > ?`
-	args := []any{pass.start}
+// listPackVerificationWindow fixes candidate hashes on the first listing and
+// rereads their current mappings on the second, under the maintenance lease.
+func (s *Store) listPackVerificationWindow(ctx context.Context, pass *PackVerificationPass, root string) ([]PackIndexEntry, error) {
 	if pass.selected {
-		query += ` AND blob_hash <= ? ORDER BY blob_hash`
-		args = append(args, pass.end)
-	} else {
-		query += ` ORDER BY blob_hash LIMIT ?`
-		args = append(args, pass.maxEntries+1)
+		if len(pass.hashes) == 0 {
+			return nil, nil
+		}
+		return s.listPackVerificationCandidates(ctx, pass.hashes)
 	}
-	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
+	hashes, err := s.packVerificationCandidates(ctx, root, pass.start, pass.maxEntries+1)
 	if err != nil {
-		return nil, fmt.Errorf("list pack verification window: %w", err)
+		return nil, err
 	}
-	defer rows.Close() //nolint:errcheck // read-only cursor
 	var entries []PackIndexEntry
 	var bytes int64
-	more := false
-	for rows.Next() {
-		entry, err := scanPackIndexEntry(rows)
+	for start := 0; start < len(hashes) && !pass.more; start += 256 {
+		batch, err := s.listPackVerificationCandidates(ctx, hashes[start:min(start+256, len(hashes))])
 		if err != nil {
-			return nil, fmt.Errorf("scan pack verification window: %w", err)
+			return nil, err
 		}
-		if !pass.selected && (len(entries) >= pass.maxEntries ||
-			(len(entries) > 0 && entry.RawLen > pass.maxBytes-bytes)) {
-			more = true
-			break
-		}
-		entries = append(entries, entry)
-		bytes += entry.RawLen
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate pack verification window: %w", err)
-	}
-	if !pass.selected {
-		pass.selected = true
-		pass.more = more
-		if len(entries) > 0 {
-			pass.end = entries[len(entries)-1].BlobHash
+		for _, entry := range batch {
+			if len(entries) >= pass.maxEntries || (len(entries) > 0 && entry.RawLen > pass.maxBytes-bytes) {
+				pass.more = true
+				break
+			}
+			entries = append(entries, entry)
+			pass.hashes = append(pass.hashes, entry.BlobHash)
+			bytes += entry.RawLen
 		}
 	}
+	pass.selected = true
 	return entries, nil
+}
+
+// listPackVerificationCandidates returns the current mappings for hashes,
+// omitting hashes that have none.
+func (s *Store) listPackVerificationCandidates(ctx context.Context, hashes []string) ([]PackIndexEntry, error) {
+	args := make([]any, len(hashes))
+	for i, hash := range hashes {
+		args[i] = hash
+	}
+	query := `SELECT blob_hash, pack_id, pack_offset, stored_len, raw_len, flags, crc32c
+		FROM attachment_pack_index WHERE blob_hash IN (` + placeholders(len(hashes)) + `) ORDER BY blob_hash`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list pack verification candidates: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only cursor
+	return scanPackIndexEntries(rows, "pack verification candidates", "")
+}
+
+// packVerificationCandidates finds hashes after the cursor with canonical
+// loose sources or mappings whose physical pack is missing, including
+// mappings without a pack record. Each batch of missing packs contributes at
+// most limit hashes: a window that reaches the last of them already holds
+// limit indexed candidates, so it never needs a later one.
+func (s *Store) packVerificationCandidates(ctx context.Context, root, after string, limit int) ([]string, error) {
+	layout, err := packstore.NewLayout(root, packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
+	if err != nil {
+		return nil, fmt.Errorf("open attachment layout: %w", err)
+	}
+	backend, err := packstore.NewFilesystemBackend(layout, packstore.FilesystemBackendOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("open attachment backend: %w", err)
+	}
+	defer backend.Close() //nolint:errcheck // inventory opens no pack readers
+	inventory, err := backend.Inventory(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("inventory attachment files: %w", err)
+	}
+	candidates := make(map[string]struct{})
+	present := make(map[string]struct{})
+	for _, object := range inventory.Objects {
+		if object.Ref.LooseHash == "" {
+			present[object.Ref.PackID] = struct{}{}
+		} else if hash := object.Ref.LooseHash.String(); hash > after {
+			candidates[hash] = struct{}{}
+		}
+	}
+	missing, err := s.listMissingIndexedPacks(ctx, present)
+	if err != nil {
+		return nil, err
+	}
+	for start := 0; start < len(missing); start += 256 {
+		batch := missing[start:min(start+256, len(missing))]
+		args := make([]any, 0, len(batch)+2)
+		args = append(args, after)
+		for _, id := range batch {
+			args = append(args, id)
+		}
+		args = append(args, limit)
+		rows, err := s.db.QueryContext(ctx, `SELECT blob_hash FROM attachment_pack_index
+			WHERE blob_hash > ? AND pack_id IN (`+placeholders(len(batch))+`)
+			ORDER BY blob_hash LIMIT ?`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("list missing pack mappings: %w", err)
+		}
+		for rows.Next() {
+			var hash string
+			if err := rows.Scan(&hash); err != nil {
+				return nil, errors.Join(fmt.Errorf("scan missing pack mapping: %w", err), rows.Close())
+			}
+			candidates[hash] = struct{}{}
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, fmt.Errorf("list missing pack mappings: %w", err)
+		}
+	}
+	return slices.Sorted(maps.Keys(candidates)), nil
+}
+
+// listMissingIndexedPacks returns indexed pack IDs absent from present.
+func (s *Store) listMissingIndexedPacks(ctx context.Context, present map[string]struct{}) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT pack_id FROM attachment_pack_index`)
+	if err != nil {
+		return nil, fmt.Errorf("list indexed packs: %w", err)
+	}
+	var missing []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, errors.Join(fmt.Errorf("scan indexed pack: %w", err), rows.Close())
+		}
+		if _, ok := present[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, fmt.Errorf("list indexed packs: %w", err)
+	}
+	return missing, nil
 }
 
 // FinishPackVerification advances only after Pack successfully verified its
@@ -117,9 +206,9 @@ func (s *Store) FinishPackVerification(ctx context.Context, pass *PackVerificati
 	if !pass.selected {
 		return false, nil
 	}
-	after := pass.end
-	if !pass.more {
-		after = ""
+	after := ""
+	if pass.more {
+		after = pass.hashes[len(pass.hashes)-1]
 	}
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		return setArchiveMetadataValueTx(ctx, tx, packVerificationCursorKey, after)

@@ -122,7 +122,7 @@ func TestPersonDirectoryCommandMapsDirectoryQueryParameters(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			requests, testCtx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`, "5.1.0")
+			requests, testCtx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`, "5.2.0")
 			output, err := runPersonDirectoryCommand(testCtx, t, append(tc.args, "--json")...)
 			require.NoError(err)
 			require.Len(requests, 1)
@@ -171,7 +171,7 @@ func TestPersonDirectoryAddressRequiresCurrentDaemonSchema(t *testing.T) {
 	assert.Empty(output)
 	assert.Zero(lookups.Load())
 	output, err = runPersonDirectoryCommand(ctx, t, "--organization-id", "13", "--json")
-	require.ErrorContains(err, "5.1.0")
+	require.ErrorContains(err, "5.2.0")
 	assert.Empty(output)
 	assert.Zero(lookups.Load())
 }

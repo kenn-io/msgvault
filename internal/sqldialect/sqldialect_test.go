@@ -36,7 +36,7 @@ func TestEscapeTSQueryTerm(t *testing.T) {
 		{"unicode_kept", "café", []string{"café"}},
 		{"strip_meta_inline", "in&voice|!", []string{"in", "voice"}},
 		{"whitespace_splits", "hello world", []string{"hello", "world"}},
-		{"all_meta_empty", "&|!():*\\'", nil},
+		{"all_meta_empty", "&|!():*\\'<>#$=", nil},
 		{"colon_splits", "user:foo", []string{"user", "foo"}},
 
 		// R3 regression cases: previously these leaked punctuation

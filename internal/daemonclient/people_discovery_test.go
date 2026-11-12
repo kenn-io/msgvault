@@ -12,7 +12,7 @@ import (
 )
 
 func TestPersonDiscoveryClientRequiresSupportedScope(t *testing.T) {
-	for _, version := range []string{"5.0.0", "5.1.0"} {
+	for _, version := range []string{"5.1.0", "5.2.0"} {
 		t.Run(version, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -48,10 +48,10 @@ func TestPersonDiscoveryClientRequiresSupportedScope(t *testing.T) {
 			_, directoryErr := people.ListDirectoryPeople(t.Context(), store.DirectoryPeopleQuery{OrganizationID: 13})
 			_, searchErr := people.SearchSemanticPeople(t.Context(), peoplebrowser.SemanticPeopleRequest{Query: "equipment", OrganizationID: 13, Limit: 3})
 			_, organizationErr := people.ListOrganizations(t.Context(), "Example", 2, 1)
-			if version == "5.0.0" {
-				require.ErrorContains(directoryErr, "5.1.0")
-				require.ErrorContains(searchErr, "5.1.0")
-				require.ErrorContains(organizationErr, "5.1.0")
+			if version == "5.1.0" {
+				require.ErrorContains(directoryErr, "5.2.0")
+				require.ErrorContains(searchErr, "5.2.0")
+				require.ErrorContains(organizationErr, "5.2.0")
 				assert.Zero(requests)
 			} else {
 				require.NoError(directoryErr)

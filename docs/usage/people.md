@@ -227,7 +227,7 @@ same filters to enumerate matching saved people. This is not a census of all
 employees: unpromoted identities and missing employment records are outside
 this directory. People with the same name keep separate IDs and vCard UIDs.
 
-Exact organization-ID filters require daemon API schema 5.1.0 or newer. The
+Exact organization-ID filters require daemon API schema 5.2.0 or newer. The
 CLI refuses an older or unknown schema before sending a scoped request.
 
 In MCP, call `list_organizations` with `query`, then `list_directory_people`

@@ -170,7 +170,7 @@ func TestOrganizationListSendsQueryParametersAndRendersTable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
 			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.1.0"}`))
+			_, err := w.Write([]byte(`{"status":"ok","api_schema_version":"5.2.0"}`))
 			assert.NoError(err)
 			return
 		}
@@ -299,9 +299,9 @@ func TestOrganizationListQueryRequiresDiscoverySchema(t *testing.T) {
 		args          []string
 		wantRequest   bool
 	}{
-		{"old query", "5.0.0", []string{"--query", "Coop", "--json"}, false},
-		{"old plain list", "5.0.0", []string{"--json"}, true},
-		{"old blank query", "5.0.0", []string{"--query", "  ", "--json"}, true},
+		{"old query", "5.1.0", []string{"--query", "Coop", "--json"}, false},
+		{"old plain list", "5.1.0", []string{"--json"}, true},
+		{"old blank query", "5.1.0", []string{"--query", "  ", "--json"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -329,7 +329,7 @@ func TestOrganizationListQueryRequiresDiscoverySchema(t *testing.T) {
 				require.NoError(err)
 				assert.Equal(1, requests)
 			} else {
-				require.ErrorContains(err, "5.1.0")
+				require.ErrorContains(err, "5.2.0")
 				assert.Zero(requests)
 			}
 		})

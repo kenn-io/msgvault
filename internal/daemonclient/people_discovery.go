@@ -12,7 +12,7 @@ import (
 
 // PersonDiscoveryMinAPISchemaVersion guarantees exact organization scope and
 // current organization alias lookup. Older daemons can ignore unknown filters.
-const PersonDiscoveryMinAPISchemaVersion = "5.1.0"
+const PersonDiscoveryMinAPISchemaVersion = "5.2.0"
 
 var _ peoplebrowser.SemanticPeopleSearcher = (*PeopleBrowser)(nil)
 var _ peoplebrowser.OrganizationLister = (*PeopleBrowser)(nil)

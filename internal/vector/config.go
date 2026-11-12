@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/msgvault/internal/envutil"
 )
 
@@ -690,9 +691,15 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Embeddings.BatchSize == 0 {
 		c.Embeddings.BatchSize = 32
+		if c.Embeddings.LocalOnly {
+			c.Embeddings.BatchSize = embedlocal.BatchItems
+		}
 	}
 	if c.Embeddings.Timeout == 0 {
 		c.Embeddings.Timeout = 30 * time.Second
+		if c.Embeddings.LocalOnly {
+			c.Embeddings.Timeout = embedlocal.RequestTimeout
+		}
 	}
 	if c.Embeddings.MaxRetries == 0 {
 		c.Embeddings.MaxRetries = 3

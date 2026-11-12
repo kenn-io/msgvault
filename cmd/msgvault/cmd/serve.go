@@ -1123,11 +1123,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 			apiServer, sched, blobStore,
 		)
 		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
-		apiServer.SetLocalEmbeddings(&localEmbeddingsController{
+		localController := &localEmbeddingsController{
 			state: state, store: s, dbPath: dbPath, handle: vectorInit, server: apiServer, scheduler: sched,
 			gate: operationGate, runner: storeAdapter, openers: []visual.StreamOpener{blobStore},
-			inspect: embedlocal.Inspect, install: embedlocal.Install,
-		})
+			inspect: embedlocal.Inspect, install: embedlocal.Install, choice: embedlocal.ChoiceRecorded,
+		}
+		apiServer.SetLocalEmbeddings(localController)
+		apiServer.StartLocalEmbeddings(localController.Start)
 		telemetryHeartbeatDone := make(chan struct{})
 		go func() {
 			defer close(telemetryHeartbeatDone)
@@ -2361,6 +2363,10 @@ func (a *storeAPIAdapter) BackfillFTS(progress func(done, total int64)) (int64, 
 	return a.store.BackfillFTS(progress)
 }
 
+func (a *storeAPIAdapter) BackfillFTSContext(ctx context.Context, progress func(done, total int64)) (int64, error) {
+	return a.store.BackfillFTSContext(ctx, progress)
+}
+
 func (a *storeAPIAdapter) RebuildFTS(progress func(done, total int64)) (int64, error) {
 	return a.store.RebuildFTS(progress)
 }
@@ -2443,15 +2449,9 @@ func (a *storeAPIAdapter) runCLISyncWithRunner(
 		}
 		return emit(api.CLISyncEvent{Type: stream, Data: data})
 	}
-	emitWarning := func(message string) error {
-		if emit == nil {
-			return nil
-		}
-		return emit(api.CLISyncEvent{Type: "stderr", Data: message})
-	}
-	return runAfterSuccessfulAttachmentIngest(ctx, a.attachmentMaintenance, func(ctx context.Context) error {
+	return runAttachmentIngest(ctx, a.attachmentMaintenance, func(ctx context.Context) error {
 		return run(ctx, cliSyncSubprocessArgs(req), emitSubprocess)
-	}, emitWarning)
+	})
 }
 
 // emitFolderArgs appends a --folder/--skip-folder flag for each
@@ -2590,13 +2590,7 @@ func (a *storeAPIAdapter) runCLIRepairMessageWithRunner(
 	if req.Audit {
 		return runRepair(ctx)
 	}
-	emitWarning := func(message string) error {
-		if emit == nil {
-			return nil
-		}
-		return emit(api.CLIRepairMessageEvent{Type: "stderr", Data: message})
-	}
-	return runAfterSuccessfulAttachmentIngest(ctx, a.attachmentMaintenance, runRepair, emitWarning)
+	return runAttachmentIngest(ctx, a.attachmentMaintenance, runRepair)
 }
 
 func cliRepairMessageSubprocessArgs(req api.CLIRepairMessageRequest) []string {
@@ -2720,18 +2714,7 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 			ctx, a.attachmentMaintenance, runSubprocess, emitWarning,
 		)
 	}
-	emitWarning := func(message string) error {
-		if emit == nil {
-			return nil
-		}
-		return emit(api.CLIRunEvent{Type: "stderr", Data: message})
-	}
-	return runAfterSuccessfulAttachmentIngest(
-		ctx,
-		a.attachmentMaintenance,
-		runSubprocess,
-		emitWarning,
-	)
+	return runAttachmentIngest(ctx, a.attachmentMaintenance, runSubprocess)
 }
 
 // Lease each media write so downloads can proceed while packing runs.
