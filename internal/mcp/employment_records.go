@@ -25,11 +25,11 @@ func employmentOperationalDefinitions() []operationalDefinition {
 	body.Schema = ""
 	body.Properties["person_id"] = safeIDSchema("Durable person ID")
 	body.Properties["organization_id"] = safeIDSchema("Organization ID")
-	body.Properties["address_id"] = safeIDSchema("Address ID")
+	body.Properties["address_id"] = safeIDSchema("Address ID belonging to organization_id")
 	body.Properties["source"] = stringSchema("Native provenance", sources...)
-	body.Properties["confidence"] = scoreSchema("Derived confidence from 0 to 1")
+	body.Properties["confidence"] = scoreSchema("Confidence from 0 to 1, only for derived or suggested sources")
 	body.Properties["start_date"] = stringSchema("Partial ISO date: YYYY, YYYY-MM, or YYYY-MM-DD")
-	body.Properties["end_date"] = stringSchema("Partial ISO date")
+	body.Properties["end_date"] = stringSchema("Partial ISO date, not before start_date; omit while is_current is true")
 	// Native nullable fields use omission and null equivalently for replacement.
 	for key := range body.Properties {
 		if slices.Contains(body.Required, key) {
@@ -43,7 +43,7 @@ func employmentOperationalDefinitions() []operationalDefinition {
 		return newOperationalDefinition(name, description+" Requires client confirmation.", OperationFamilyEmployment, closedObject(properties, required...), record, true)
 	}
 	listInput := func(key string) *jsonschema.Schema {
-		return closedObject(map[string]*jsonschema.Schema{key: safeIDSchema("Exact owner ID"), "current_only": booleanSchema("Only current records"), "limit": boundedIntegerSchema("Maximum results", 0, 200), "offset": boundedIntegerSchema("Results to skip", 0, maxJSONSafeInteger)}, key)
+		return closedObject(map[string]*jsonschema.Schema{key: safeIDSchema("Exact owner ID"), "current_only": booleanSchema("Only current records"), "limit": boundedIntegerSchema("Maximum results; 0 or omitted uses the default of 200", 0, 200), "offset": boundedIntegerSchema("Results to skip", 0, maxJSONSafeInteger)}, key)
 	}
 	return []operationalDefinition{
 		newOperationalDefinition("get_employment", "Read one employment and its exact revision ETag.", OperationFamilyEmployment, closedObject(map[string]*jsonschema.Schema{"employment_id": id}, "employment_id"), record, false),
