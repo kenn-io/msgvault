@@ -85,7 +85,7 @@ func (o Observation) Validate() error {
 	if err := o.Evidence.Validate(); err != nil {
 		return err
 	}
-	if o.SourceLabel != "" && !validID(o.SourceLabel) {
+	if o.SourceLabel != "" && (strings.TrimSpace(o.SourceLabel) == "" || len(o.SourceLabel) > 2048 || strings.ContainsRune(o.SourceLabel, 0)) {
 		return invalid("source_label")
 	}
 	if !validID(o.RecordID) || len(o.Raw) == 0 {
