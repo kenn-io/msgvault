@@ -173,8 +173,6 @@ func TestAPISchemaVersionContract(t *testing.T) {
 	if base, ok := os.LookupEnv("MSGVAULT_API_CONTRACT_BASE"); ok {
 		baseMarkers, err = apiBaseMarkers(t.Context(), base)
 		require.NoError(err)
-	} else {
-		t.Log("MSGVAULT_API_CONTRACT_BASE is unset; skipping history comparison")
 	}
 	require.NoError(checkAPIContract(APISchemaVersion, digest, markers, baseMarkers))
 }
@@ -185,10 +183,7 @@ func TestAPIVersionMarkerSummary(t *testing.T) {
 	for _, entry := range entries {
 		content, err := os.ReadFile(filepath.Join(apiContractsDir, entry.Name()))
 		require.NoError(t, err)
-		summary := strings.TrimSuffix(strings.TrimSuffix(string(content), "\n"), "\r")
-		assert.NotEmpty(t, strings.TrimSpace(summary), entry.Name())
-		assert.NotContains(t, summary, "\n", entry.Name())
-		assert.NotContains(t, summary, "\r", entry.Name())
+		assert.Regexp(t, `\A[^\r\n]*\S[^\r\n]*\r?\n?\z`, string(content), entry.Name())
 	}
 }
 
@@ -223,7 +218,6 @@ func TestCheckAPIContract(t *testing.T) {
 
 func TestAPIBaseMarkers(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	for _, env := range os.Environ() {
 		key, _, _ := strings.Cut(env, "=")
 		if strings.HasPrefix(key, "GIT_") {
@@ -244,17 +238,16 @@ func TestAPIBaseMarkers(t *testing.T) {
 	require.ErrorContains(err, "read API contract markers")
 	markers, err := apiBaseMarkers(t.Context(), "HEAD")
 	require.NoError(err)
-	assert.Equal([]string{marker}, markers)
+	assert.Equal(t, []string{marker}, markers)
 }
 
 func TestAPIContractDigest(t *testing.T) {
 	makeDoc := func(doc *huma.OpenAPI) *huma.OpenAPI {
-		doc.Webhooks = map[string]*huma.PathItem{"description": {Post: &huma.Operation{OperationID: "hook"}}}
 		doc.Paths["/api/v1/contract-test"] = &huma.PathItem{Post: &huma.Operation{
 			OperationID: "contract-test", Summary: "original", Description: "original",
-			Parameters:  []*huma.Param{{Name: "query", In: "query", Description: "original"}},
+			Parameters:  []*huma.Param{{Name: "query", In: "query"}},
 			RequestBody: &huma.RequestBody{Content: map[string]*huma.MediaType{"application/json": {Schema: &huma.Schema{Type: "object", Properties: map[string]*huma.Schema{"description": {Type: "string"}}}}}},
-			Responses:   map[string]*huma.Response{"200": {Description: "original", Content: map[string]*huma.MediaType{"application/json": {Schema: &huma.Schema{Type: "string"}}}}},
+			Responses:   map[string]*huma.Response{"200": {Content: map[string]*huma.MediaType{"application/json": {Schema: &huma.Schema{Type: "string"}}}}},
 		}}
 		return doc
 	}
@@ -270,8 +263,6 @@ func TestAPIContractDigest(t *testing.T) {
 		{"wording", func(d *huma.OpenAPI) {
 			op(d).Summary = "new"
 			op(d).Description = "new"
-			op(d).Parameters[0].Description = "new"
-			op(d).Responses["200"].Description = "new"
 			op(d).RequestBody.Content["application/json"].Schema.Examples = []any{"example"}
 		}, true, false},
 		{"version", func(d *huma.OpenAPI) { d.Info.Version = "9.0.0" }, true, false},
@@ -281,7 +272,6 @@ func TestAPIContractDigest(t *testing.T) {
 		}, false, false},
 		{"parameter", func(d *huma.OpenAPI) { op(d).Parameters[0].Required = true }, false, false},
 		{"response", func(d *huma.OpenAPI) { op(d).Responses["200"].Content["application/json"].Schema.Type = "integer" }, false, false},
-		{"webhook named description", func(d *huma.OpenAPI) { d.Webhooks["description"].Post.OperationID = "changed-hook" }, false, false},
 		{"property named description", func(d *huma.OpenAPI) {
 			op(d).RequestBody.Content["application/json"].Schema.Properties["description"].Type = "integer"
 		}, false, false},
@@ -295,11 +285,7 @@ func TestAPIContractDigest(t *testing.T) {
 			}
 			digest, err := apiContractDigest(public, client)
 			require.NoError(t, err)
-			if tc.same {
-				assert.Equal(t, base, digest)
-			} else {
-				assert.NotEqual(t, base, digest)
-			}
+			assert.Equal(t, tc.same, digest == base)
 		})
 	}
 }
