@@ -18,7 +18,10 @@ func dateWindows(from, to string, now time.Time) ([][2]time.Time, error) {
 		return nil, errors.New("zoom --to must be YYYY-MM-DD (exclusive)")
 	}
 	today := now.UTC().Truncate(24 * time.Hour)
-	if !a.Before(b) || b.Sub(a) > 31*24*time.Hour || a.Before(today.AddDate(0, -6, 0)) || b.After(today.AddDate(0, 0, 1)) {
+	// Clamp month-end dates to the last day of the target month.
+	lastDay := time.Date(today.Year(), today.Month()-5, 0, 0, 0, 0, 0, time.UTC)
+	cutoff := time.Date(lastDay.Year(), lastDay.Month(), min(today.Day(), lastDay.Day()), 0, 0, 0, 0, time.UTC)
+	if !a.Before(b) || b.Sub(a) > 31*24*time.Hour || a.Before(cutoff) || b.After(today.AddDate(0, 0, 1)) {
 		return nil, errors.New("zoom window must be 1–31 days within the past six months")
 	}
 	var out [][2]time.Time

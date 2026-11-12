@@ -73,6 +73,37 @@ func TestDateWindowsRejectInvalidSelections(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestDateWindowsClampSixMonthCutoff(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		now         time.Time
+		from, to    string
+		wantWindows [][2]string
+		wantError   bool
+	}{
+		{"march after february cutoff", time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC), "2026-03-01", "2026-03-02", [][2]string{{"2026-03-01", "2026-03-02"}}, false},
+		{"nonleap cutoff with UTC offset", time.Date(2026, 9, 1, 3, 0, 0, 0, time.FixedZone("offset", 7*3600)), "2026-02-28", "2026-03-02", [][2]string{{"2026-02-28", "2026-03-01"}, {"2026-03-01", "2026-03-02"}}, false},
+		{"before nonleap cutoff", time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC), "2026-02-27", "2026-02-28", nil, true},
+		{"leap cutoff", time.Date(2024, 8, 31, 0, 0, 0, 0, time.UTC), "2024-02-29", "2024-03-01", [][2]string{{"2024-02-29", "2024-03-01"}}, false},
+		{"before leap cutoff", time.Date(2024, 8, 31, 0, 0, 0, 0, time.UTC), "2024-02-28", "2024-02-29", nil, true},
+		{"aligned cutoff", time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC), "2026-04-21", "2026-04-22", [][2]string{{"2026-04-21", "2026-04-22"}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			windows, err := dateWindows(tc.from, tc.to, tc.now)
+			if tc.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			got := make([][2]string, 0, len(windows))
+			for _, window := range windows {
+				got = append(got, [2]string{window[0].Format(time.DateOnly), window[1].Format(time.DateOnly)})
+			}
+			assert.Equal(t, tc.wantWindows, got)
+		})
+	}
+}
+
 func TestLeapMonthWindowsRemainContiguous(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
