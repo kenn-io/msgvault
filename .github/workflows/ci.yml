@@ -10,6 +10,7 @@ env:
   # Compile without absolute source paths, like the Makefile does.
   GOFLAGS: -trimpath
   PG_MOVED_PKGS: ./internal/matrix ./internal/beeper ./internal/rederive ./internal/chatwoot
+  API_CONTRACT_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.ref == 'refs/heads/main' && github.sha) || 'refs/heads/main' }}
 
 on:
   workflow_call:
@@ -371,10 +372,13 @@ jobs:
 
       - name: Set API contract base
         if: ${{ matrix.name == 'api' }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
-        run: |
-          [ "$BASE_SHA" = "$(git rev-parse HEAD)" ] || kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
+        shell: bash
+        run: &set-api-contract-base |
+          BASE_SHA=$(git rev-parse HEAD)
+          if [ "$API_CONTRACT_BASE_REF" != "$BASE_SHA" ]; then
+            kit-retry 3 5 git fetch --no-tags --depth=1 origin "$API_CONTRACT_BASE_REF"
+            BASE_SHA=$(git rev-parse FETCH_HEAD)
+          fi
           echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
 
       - name: Install test dependencies
@@ -417,16 +421,8 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Set API contract base
-        env:
-          REF: ${{ github.ref }}
-        run: |
-          if [ "$REF" != refs/heads/main ]; then
-            kit-retry 3 5 git fetch --no-tags --depth=1 origin main
-            BASE_SHA=$(git rev-parse FETCH_HEAD)
-          else
-            BASE_SHA=$(git rev-parse HEAD)
-          fi
-          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
+        shell: bash
+        run: *set-api-contract-base
 
       - name: Test
         run: make test TEST_TIMEOUT=39m
@@ -862,11 +858,7 @@ jobs:
 
       - name: Set API contract base
         shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
-        run: |
-          [ "$BASE_SHA" = "$(git rev-parse HEAD)" ] || kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
+        run: *set-api-contract-base
 
       - name: Install SQLite development headers
         shell: bash
@@ -1263,11 +1255,8 @@ jobs:
 
       - name: Set API contract base
         if: ${{ matrix.name == 'api' }}
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
-        run: |
-          [ "$BASE_SHA" = "$(git rev-parse HEAD)" ] || kit-retry 3 5 git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          echo "MSGVAULT_API_CONTRACT_BASE=$BASE_SHA" >> "$GITHUB_ENV"
+        shell: bash
+        run: *set-api-contract-base
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o Dir::Etc::sourcelist=sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=- -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
