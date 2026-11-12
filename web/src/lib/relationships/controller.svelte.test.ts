@@ -1183,6 +1183,8 @@ describe('RelationshipsController.linkParticipants / unlinkParticipants', () => 
     expect(controller.pendingIdentityCacheRevision).toBeNull();
     controller.recordIdentityCacheState(5, 'stale');
     expect(controller.pendingIdentityCacheRevision).toBe(5);
+    controller.recordIdentityCacheState(4, 'ready');
+    expect(controller.pendingIdentityCacheRevision).toBe(5);
     controller.destroy();
   });
   it('maps 200 to ok with cacheState and reopens the target', async () => {

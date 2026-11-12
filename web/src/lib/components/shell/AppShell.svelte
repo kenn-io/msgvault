@@ -392,14 +392,13 @@
     await Promise.all([refreshIdentityProfiles(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
   }
   async function refreshIdentityProfiles(): Promise<void> {
-    directoryReviewController.refreshSummaries(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates);
     await Promise.all([shellData.refreshDuplicates(), directoryController.loadFirstPage(), directoryController.refreshSelectedPerson()]);
   }
   let mergeCacheError = $state<{ revision: number; message: string; unsupported: boolean }>();
   async function retryMergeCache(): Promise<void> {
     const revision = relationshipsController.pendingIdentityCacheRevision;
     const result = await relationshipsController.refreshIdentityCache();
-    if (result.ok && result.cacheState === 'ready') await refreshIdentityProfiles();
+    if (result.ok && result.cacheState === 'ready') { directoryReviewController.refreshSummaries(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates); await refreshIdentityProfiles(); }
     else if (!result.ok && revision !== null && revision === relationshipsController.pendingIdentityCacheRevision) mergeCacheError = { revision, message: result.message, unsupported: result.code === 'cache_unsupported' };
   }
   async function identityChanged(): Promise<void> {
