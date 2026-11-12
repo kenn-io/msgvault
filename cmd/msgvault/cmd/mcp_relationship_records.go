@@ -14,6 +14,8 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+const relationshipInvalidArguments = "invalid_arguments"
+
 var relationshipWriteBodyKeys = map[string][]string{
 	"create_relationship_type":   {"slug", "forward_label", "reverse_label", "is_symmetric", "vcard_related_type", "color", "icon", "description"},
 	"update_relationship_type":   {"forward_label", "reverse_label", "vcard_related_type", "color", "icon", "description"},
@@ -97,7 +99,7 @@ func (b *daemonMCPOperations) executeRelationshipRead(ctx context.Context, name 
 	}
 	input, err := decodeMCPOperationArguments[relationshipReadArguments](args)
 	if err != nil {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure(relationshipInvalidArguments, false), true, nil //nolint:nilerr // Invalid arguments become a fixed structured tool refusal.
 	}
 	var result *mcpserver.OperationResult
 	switch name {
@@ -105,33 +107,33 @@ func (b *daemonMCPOperations) executeRelationshipRead(ctx context.Context, name 
 		result, err = readMCPOperationJSONWithClassifier[generated.RelationshipTypesResponse](ctx, b.client, http.MethodGet, "/api/v1/relationship-types", nil, relationshipRefusal, http.StatusOK)
 	case "get_relationship_type":
 		if !validLoopID(input.ID) {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure(relationshipInvalidArguments, false), true, nil
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.RelationshipType](ctx, b.client, http.MethodGet, "/api/v1/relationship-types/{id}", &generated.GetRelationshipTypeRequestOptions{PathParams: &generated.GetRelationshipTypePath{ID: input.ID}}, relationshipRefusal, http.StatusOK)
 		result = relationshipProjection(result, false)
 	case "get_person_relationship_record":
 		if !validLoopID(input.ID) {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure(relationshipInvalidArguments, false), true, nil
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonRelationship](ctx, b.client, http.MethodGet, "/api/v1/person-relationships/{id}", &generated.GetPersonRelationshipRequestOptions{PathParams: &generated.GetPersonRelationshipPath{ID: input.ID}}, relationshipRefusal, http.StatusOK)
 		result = relationshipProjection(result, false)
 	case "list_person_relationships":
 		if !validLoopID(input.PersonID) {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure(relationshipInvalidArguments, false), true, nil
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonRelationshipsResponse](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/relationships", &generated.ListPersonRelationshipsRequestOptions{PathParams: &generated.ListPersonRelationshipsPath{ID: input.PersonID}, Query: &generated.ListPersonRelationshipsQuery{IncludeEnded: input.IncludeEnded}}, relationshipRefusal, http.StatusOK)
 	case "list_person_relationship_reviews":
 		var personID *int64
 		if input.PersonID != 0 {
 			if !validLoopID(input.PersonID) {
-				return operationFailure("invalid_arguments", false), true, nil
+				return operationFailure(relationshipInvalidArguments, false), true, nil
 			}
 			personID = &input.PersonID
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.RelationshipReviewsResponse](ctx, b.client, http.MethodGet, "/api/v1/person-relationship-reviews", &generated.ListPersonRelationshipReviewsRequestOptions{Query: &generated.ListPersonRelationshipReviewsQuery{PersonID: personID, Status: input.Status}}, relationshipRefusal, http.StatusOK)
 	case "get_person_network":
 		if !validLoopID(input.PersonID) || input.Depth != nil && (*input.Depth < 1 || *input.Depth > 3) {
-			return operationFailure("invalid_arguments", false), true, nil
+			return operationFailure(relationshipInvalidArguments, false), true, nil
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonNetwork](ctx, b.client, http.MethodGet, "/api/v1/people/{id}/network", &generated.GetPersonNetworkRequestOptions{PathParams: &generated.GetPersonNetworkPath{ID: input.PersonID}, Query: &generated.GetPersonNetworkQuery{Depth: input.Depth, IncludeEnded: input.IncludeEnded}}, relationshipRefusal, http.StatusOK)
 	}
@@ -157,6 +159,7 @@ func (b *daemonMCPOperations) executeRelationshipRead(ctx context.Context, name 
 // reusing the generated route, path and header serialization.
 type relationshipBodyOptions struct {
 	runtime.RequestOptions
+
 	body map[string]any
 }
 
@@ -235,7 +238,7 @@ func (b *daemonMCPOperations) executeRelationshipWrite(ctx context.Context, name
 	}
 	input, body, ok := relationshipWriteInput(name, args)
 	if !ok {
-		return operationFailure("invalid_arguments", false), true, nil
+		return operationFailure(relationshipInvalidArguments, false), true, nil
 	}
 	var method, path string
 	var options runtime.RequestOptions
@@ -282,7 +285,7 @@ func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name s
 	}
 	input, _, ok := relationshipWriteInput(name, args)
 	if !ok {
-		return "", true, &mcpserver.OperationRefusalError{Code: "invalid_arguments"}
+		return "", true, &mcpserver.OperationRefusalError{Code: relationshipInvalidArguments}
 	}
 	var current any
 	if input.ID > 0 {
