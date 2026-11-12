@@ -71,12 +71,12 @@ func (w *MediaSubmitter) readVoiceTranscripts(ctx context.Context) error {
 
 func generatedVoiceText(t docbankmedia.MediaTranscript) string {
 	e := t.Transcript
-	if e.Origin != "generated" || e.BuildID == "" || !docbankmedia.ValidSearchTranscript(e.Origin, e.SuppliedInputID, e.Completeness) {
+	if e.Origin != "generated" || !docbankmedia.ValidSearchTranscript(e.Origin, e.SuppliedInputID, e.Completeness) {
 		return ""
 	}
 	var text strings.Builder
 	for _, unit := range e.Units {
-		if strings.TrimSpace(unit.Text) == "" || strings.ContainsRune(unit.Text, 0) {
+		if strings.ContainsRune(unit.Text, 0) {
 			continue
 		}
 		if text.Len() > 0 {

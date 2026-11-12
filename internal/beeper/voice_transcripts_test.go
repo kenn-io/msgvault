@@ -52,7 +52,7 @@ func TestVoiceTranscriptSearchReadsReadyEvidence(t *testing.T) {
 					_, _ = fmt.Fprint(w, `{"vault_uid":"vault-1","source_id":"source-1","source_version_id":"audio-version-1","content_version_id":"audio-content-1","evidence_state":"ready","coverage_state":"transcribed","transcript":{"build_id":"build","origin":"supplied","supplied_input_id":"input","completeness":"complete","units":[{"text":"provider words"}]}}`)
 					return
 				}
-				_, _ = fmt.Fprint(w, `{"vault_uid":"vault-1","source_id":"source-1","source_version_id":"audio-version-1","content_version_id":"audio-content-1","evidence_state":"ready","coverage_state":"transcribed","transcript":{"build_id":"build","origin":"generated","completeness":"complete","units":[{"text":"dinner Thursday"}]}}`)
+				_, _ = fmt.Fprint(w, `{"vault_uid":"vault-1","source_id":"source-1","source_version_id":"audio-version-1","content_version_id":"audio-content-1","evidence_state":"ready","coverage_state":"transcribed","transcript":{"origin":"generated","completeness":"complete","units":[{"text":"dinner Thursday"}]}}`)
 			}))
 			defer server.Close()
 			require.NoError(t, world.st.SetVoiceTranscriptSearch(t.Context(), true))
