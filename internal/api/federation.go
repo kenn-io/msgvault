@@ -17,7 +17,6 @@ type FederationStore interface {
 	ListFederationEnrollmentsContext(ctx context.Context) ([]store.FederationEnrollment, error)
 	RevokeFederationEnrollmentContext(ctx context.Context, uid string) error
 	AuthenticateFederationEnrollmentContext(ctx context.Context, token, spokeUID string) (*store.FederationEnrollment, error)
-	TouchFederationEnrollmentContext(ctx context.Context, uid string) error
 }
 
 type federationCreateRequest struct {
@@ -114,14 +113,6 @@ func (s *Server) handleFederationHandshake(w http.ResponseWriter, r *http.Reques
 	uid, ok := s.federationArchiveUID(w, r)
 	if !ok {
 		return
-	}
-	gateCtx, cancel := context.WithTimeout(r.Context(), operationGateWaitLimit)
-	defer cancel()
-	if done, ok := s.beginBackgroundOperationGateWork(gateCtx, "federation handshake"); ok {
-		if err := s.federationStore.TouchFederationEnrollmentContext(r.Context(), auth.Federation.EnrollmentUID); err != nil {
-			s.logger.Warn("federation last-seen update failed", "enrollment_uid", auth.Federation.EnrollmentUID, "error", err)
-		}
-		done()
 	}
 	writeJSON(w, http.StatusOK, federationHandshakeResponse{ProtocolVersions: []int{1}, HubInstance: uid, EnrollmentState: "active"})
 }

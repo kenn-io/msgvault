@@ -13,7 +13,6 @@ CREATE TABLE IF NOT EXISTS federation_enrollments (
     spoke_name TEXT NOT NULL,
     token_sha256 TEXT NOT NULL UNIQUE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_seen_at DATETIME,
     revoked_at DATETIME
 );
 

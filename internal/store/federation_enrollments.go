@@ -29,11 +29,10 @@ type FederationEnrollment struct {
 	Member          string     `json:"member"`
 	SpokeName       string     `json:"spoke_name"`
 	CreatedAt       time.Time  `json:"created_at"`
-	LastSeenAt      *time.Time `json:"last_seen_at,omitempty"`
 	RevokedAt       *time.Time `json:"revoked_at,omitempty"`
 }
 
-const federationColumns = `enrollment_uid, spoke_archive_uid, member_handle, spoke_name, created_at, last_seen_at, revoked_at`
+const federationColumns = `enrollment_uid, spoke_archive_uid, member_handle, spoke_name, created_at, revoked_at`
 
 func federationTokenDigest(token string) string {
 	digest := sha256.Sum256([]byte(token))
@@ -42,15 +41,15 @@ func federationTokenDigest(token string) string {
 
 func scanFederation(row scanner) (*FederationEnrollment, error) {
 	var e FederationEnrollment
-	var seen, revoked sql.NullTime
-	err := row.Scan(&e.EnrollmentUID, &e.SpokeArchiveUID, &e.Member, &e.SpokeName, &e.CreatedAt, &seen, &revoked)
+	var revoked sql.NullTime
+	err := row.Scan(&e.EnrollmentUID, &e.SpokeArchiveUID, &e.Member, &e.SpokeName, &e.CreatedAt, &revoked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	e.LastSeenAt, e.RevokedAt = activityTimePointer(seen), activityTimePointer(revoked)
+	e.RevokedAt = activityTimePointer(revoked)
 	return &e, nil
 }
 func (s *Store) CreateFederationEnrollmentContext(ctx context.Context, spokeUID, member, name string) (*FederationEnrollment, string, error) {
@@ -113,10 +112,6 @@ func (s *Store) RevokeFederationEnrollmentContext(ctx context.Context, uid strin
 		return ErrNotFound
 	}
 	return nil
-}
-func (s *Store) TouchFederationEnrollmentContext(ctx context.Context, uid string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE federation_enrollments SET last_seen_at = CURRENT_TIMESTAMP WHERE enrollment_uid = ? AND revoked_at IS NULL`, uid)
-	return err
 }
 func (s *Store) ConfigureFederationHubContext(ctx context.Context) error {
 	var count int

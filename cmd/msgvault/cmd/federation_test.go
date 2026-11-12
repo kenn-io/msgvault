@@ -100,7 +100,7 @@ func TestFederationEnrollOutput(t *testing.T) {
 		assertions.NotContains(stderr.String(), srv.URL)
 	})
 
-	t.Run("list and last seen", func(t *testing.T) {
+	t.Run("list", func(t *testing.T) {
 		assertions := assert.New(t)
 		requirements := require.New(t)
 		entries, err := st.ListFederationEnrollmentsContext(t.Context())
@@ -116,15 +116,7 @@ func TestFederationEnrollOutput(t *testing.T) {
 		var output bytes.Buffer
 		list.SetOut(&output)
 		requirements.NoError(list.ExecuteContext(ctx))
-		assertions.Contains(output.String(), "\talice\talice\tactive\t-\n")
-		entries, err = st.ListFederationEnrollmentsContext(t.Context())
-		requirements.NoError(err)
-		requirements.Len(entries, 1)
-		requirements.NoError(st.TouchFederationEnrollmentContext(t.Context(), entries[0].EnrollmentUID))
-		output.Reset()
-		requirements.NoError(list.ExecuteContext(ctx))
-		assertions.Contains(output.String(), "\talice\talice\tactive\t")
-		assertions.NotContains(output.String(), "\t-\n")
+		assertions.Contains(output.String(), "\talice\talice\tactive\n")
 		list.SetOut(federationFailWriter{})
 		assertions.ErrorContains(list.ExecuteContext(ctx), "write federation enrollments: output failed")
 	})

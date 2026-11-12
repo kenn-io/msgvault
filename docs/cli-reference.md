@@ -5800,8 +5800,9 @@ Without `--hub-url`, the join command uses a placeholder. `--json` prints the
 response, including the token, once. Joining is not yet available.
 
 Use `msgvault federation enrollments list [--json]` to inspect enrollments and
-`msgvault federation revoke <enrollment-uid>` to revoke one. The last-seen value
-is the last handshake the hub recorded; `-` means none was recorded. If a token
-is lost, list enrollments, revoke the one never seen, and enroll again.
+`msgvault federation revoke <enrollment-uid>` to revoke one. Record the enrollment
+UID when enrolling. If a token is lost, revoke that UID and enroll again. If you
+do not know which enrollment it belongs to, revoke the affected candidates and
+enroll them again.
 Enrolling the same spoke twice leaves both enrollments active until you revoke
 one. Enrollment alone shares no messages or sources.

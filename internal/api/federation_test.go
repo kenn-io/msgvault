@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,28 +19,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-type failingFederationTouch struct {
-	FederationStore
-	fail bool
-}
-
-type federationObservedGate struct {
-	*SerialOperationGate
-	requestWork bool
-}
-
-func (g *federationObservedGate) BeginRequestWorkContext(ctx context.Context, label string) (func(), bool) {
-	g.requestWork = true
-	return g.SerialOperationGate.BeginRequestWorkContext(ctx, label)
-}
-
-func (f *failingFederationTouch) TouchFederationEnrollmentContext(ctx context.Context, uid string) error {
-	if f.fail {
-		return errors.New("fixture failure")
-	}
-	return f.FederationStore.TouchFederationEnrollmentContext(ctx, uid)
-}
-
 func TestFederationHandshakeCredential(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -50,8 +27,7 @@ func TestFederationHandshakeCredential(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Federation.Role = "hub"
 	cfg.Server.APIKey = "owner-fixture"
-	federation := &failingFederationTouch{FederationStore: st}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: federation, Logger: testLogger()})
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	uid := strings.Repeat("a", 64)
 	enrollment, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
@@ -79,10 +55,6 @@ func TestFederationHandshakeCredential(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(entries, 1)
 	assertions.Equal(enrollment.EnrollmentUID, entries[0].EnrollmentUID)
-	assertions.NotNil(entries[0].LastSeenAt)
-	federation.fail = true
-	w = request("/api/v1/federation/handshake", uid)
-	assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 	do := func(method, path string, headers http.Header) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(t.Context(), method, path, nil)
 		r.Header = headers
@@ -222,53 +194,6 @@ func TestFederationOperationGate(t *testing.T) {
 	cancel()
 	<-done
 	assertions.False(gate.HasRequestWaiters())
-}
-
-func TestFederationHandshakeDuringOperation(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	gate := &federationObservedGate{SerialOperationGate: NewSerialOperationGate()}
-	release, ok := gate.BeginWorkContext(t.Context())
-	requirements.True(ok)
-	t.Cleanup(func() {
-		if release != nil {
-			release()
-		}
-	})
-	previousLimit := operationGateWaitLimit
-	operationGateWaitLimit = 20 * time.Millisecond
-	t.Cleanup(func() { operationGateWaitLimit = previousLimit })
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	cfg.Server.APIKey = "owner-fixture"
-	cfg.Federation.Role = "hub"
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, OperationGate: gate, Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
-	uid := strings.Repeat("a", 64)
-	_, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
-	requirements.NoError(err)
-	handshake := func() {
-		t.Helper()
-		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/federation/handshake", nil)
-		r.Header.Set("Authorization", "Bearer "+token)
-		r.Header.Set("X-Msgvault-Spoke-Instance", uid)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, r)
-		assert.Equal(t, http.StatusOK, w.Code)
-	}
-	handshake()
-	assert.False(t, gate.requestWork, "handshake must not make background work yield")
-	entries, err := st.ListFederationEnrollmentsContext(t.Context())
-	requirements.NoError(err)
-	requirements.Len(entries, 1)
-	assert.Nil(t, entries[0].LastSeenAt)
-	release()
-	release = nil
-	handshake()
-	entries, err = st.ListFederationEnrollmentsContext(t.Context())
-	requirements.NoError(err)
-	requirements.Len(entries, 1)
-	assert.NotNil(t, entries[0].LastSeenAt)
 }
 
 func TestFederationCredentialOnlyHandshake(t *testing.T) {

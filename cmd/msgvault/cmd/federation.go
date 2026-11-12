@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/netguard"
@@ -100,11 +99,7 @@ func init() {
 			if e.RevokedAt != nil {
 				state = "revoked"
 			}
-			lastSeen := "-"
-			if e.LastSeenAt != nil {
-				lastSeen = e.LastSeenAt.UTC().Format(time.RFC3339)
-			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", e.EnrollmentUID, e.Member, e.SpokeName, state, lastSeen); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", e.EnrollmentUID, e.Member, e.SpokeName, state); err != nil {
 				return fmt.Errorf("write federation enrollments: %w", err)
 			}
 		}
