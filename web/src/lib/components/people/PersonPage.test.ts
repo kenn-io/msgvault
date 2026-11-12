@@ -273,8 +273,8 @@ it('keeps the current person retry pair when an earlier Retry finishes late', as
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer 2/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await screen.findByText('Identity saved; the cache refresh failed.');
-    await fireEvent.click(within(screen.getByText('Identity saved; the cache refresh failed.')).getByRole('button', { name: 'Retry' }));
+    await screen.findByText('Identity saved, but related views may be out of date.');
+    await fireEvent.click(within(screen.getByText('Identity saved, but related views may be out of date.')).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(writes).toHaveLength(2));
     await controller.openTarget('cluster:3', {});
     await view.rerender({ ...props, target: 'cluster:3' });
@@ -283,10 +283,10 @@ it('keeps the current person retry pair when an earlier Retry finishes late', as
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Peer' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Peer 4/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    await screen.findByText('Identity saved; the cache refresh failed.');
+    await screen.findByText('Identity saved, but related views may be out of date.');
     await act(async () => { release(Response.json({ identity_revision: 2, cache_state: 'ready' })); await link.mock.results[1]!.value; });
-    expect(screen.queryByText('Identity saved; the cache refresh failed.')).not.toBeNull();
-    await fireEvent.click(within(screen.getByText('Identity saved; the cache refresh failed.')).getByRole('button', { name: 'Retry' }));
+    expect(screen.queryByText('Identity saved, but related views may be out of date.')).not.toBeNull();
+    await fireEvent.click(within(screen.getByText('Identity saved, but related views may be out of date.')).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(writes).toHaveLength(4));
     expect(writes.at(-1)).toEqual({ participant_a: 3, participant_b: 4 });
   } finally { view.unmount(); controller.destroy(); directory.destroy(); }
