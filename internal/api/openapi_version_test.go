@@ -109,6 +109,7 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 	current := "v" + version
 	greatest := ""
 	contracts := make(map[string]map[string]bool)
+	candidates := make(map[string]bool)
 	for i, list := range [][]string{markers, base} {
 		for _, marker := range list {
 			v, hash, ok := parseAPIMarker(marker)
@@ -116,6 +117,7 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 				return fmt.Errorf("invalid API contract marker %q; use <version>_<sha256>_<summary-sha256> in %s", marker, apiContractsDir)
 			}
 			if i == 0 {
+				candidates[marker] = true
 				if contracts[v] == nil {
 					contracts[v] = make(map[string]bool)
 				}
@@ -141,7 +143,7 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 		}
 	}
 	for _, marker := range base {
-		if v, hash, _ := parseAPIMarker(marker); !contracts[v][hash] {
+		if !candidates[marker] {
 			return fmt.Errorf("restore removed API contract marker %s", marker)
 		}
 	}
@@ -213,7 +215,7 @@ func TestCheckAPIContract(t *testing.T) {
 		markers, base               []string
 	}{
 		{"matching contracts with different summaries", "5.1.0", a, "", []string{"5.1.0_" + a + "_" + strings.Repeat("c", 64), "5.1.0_" + a + "_" + strings.Repeat("d", 64)}, []string{"5.1.0_" + a + "_" + strings.Repeat("c", 64)}},
-		{"corrected summary", "5.1.0", a, "", []string{"5.1.0_" + a + "_" + strings.Repeat("d", 64)}, []string{"5.1.0_" + a + "_" + strings.Repeat("c", 64)}},
+		{"replaced base summary path", "5.1.0", a, "restore removed API contract marker", []string{"5.1.0_" + a + "_" + strings.Repeat("d", 64)}, []string{"5.1.0_" + a + "_" + strings.Repeat("c", 64)}},
 		{"collision", "5.1.0", b, "use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a), m("5.1.0", b)}, []string{m("5.0.0", a)}},
 		{"collision with next minor taken", "5.1.0", b, "use 5.3.0", []string{m("5.0.0", a), m("5.1.0", a), m("5.1.0", b), m("5.2.0", a)}, []string{m("5.0.0", a)}},
 		{"collision repaired", "5.2.0", b, "", []string{m("5.0.0", a), m("5.1.0", a), m("5.2.0", b)}, []string{m("5.0.0", a), m("5.1.0", a)}},
@@ -260,6 +262,11 @@ func TestAPIBaseMarkers(t *testing.T) {
 	markers, err := apiBaseMarkers(t.Context(), "HEAD")
 	require.NoError(err)
 	assert.Equal([]string{marker}, markers)
+	require.NoError(os.WriteFile("internal/api/"+apiContractsDir+"/"+marker, []byte("Corrected summary\n"), 0o644))
+	content, err := os.ReadFile("internal/api/" + apiContractsDir + "/" + marker)
+	require.NoError(err)
+	assert.Equal("Corrected summary\n", string(content))
+	require.NoError(checkAPIContract("5.0.0", strings.Repeat("f", 64), []string{marker}, markers))
 }
 
 func TestAPIContractDigest(t *testing.T) {
