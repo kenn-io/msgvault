@@ -77,15 +77,17 @@ func TestSignalNativeStatuses(t *testing.T) {
 }
 
 func TestNormalizedImportPreservesSourceLabel(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	o := exampleObservation()
 	o.SourceLabel = "Example calls"
 	record, err := json.Marshal(o)
-	require.NoError(t, err)
+	require.NoError(err)
 	got, err := (ImportRequest{Format: "normalized", Account: o.Account, Record: record}).Observation()
-	require.NoError(t, err)
-	assert.Equal(t, o.SourceLabel, got.SourceLabel)
-	assert.Equal(t, o.SourceIdentifier(), got.SourceIdentifier())
-	assert.JSONEq(t, string(o.Raw), string(got.Raw))
+	require.NoError(err)
+	assert.Equal(o.SourceLabel, got.SourceLabel)
+	assert.Equal(o.SourceIdentifier(), got.SourceIdentifier())
+	assert.JSONEq(string(o.Raw), string(got.Raw))
 }
 
 func TestNormalizedImportValidatesObservation(t *testing.T) {

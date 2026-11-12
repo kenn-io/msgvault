@@ -26,29 +26,64 @@ func validCallObservation(t *testing.T, st *store.Store) (callhistory.Observatio
 }
 
 func TestCallSourceLabelIsTransactionalAndPreservesDisplayName(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	o, sourceID := validCallObservation(t, f.Store)
 	o.SourceLabel = "Example calls"
 	o.Participants = []callhistory.Participant{{ID: 123456789, Participation: "joined"}}
 	_, err := f.Store.PutCallObservationContext(t.Context(), sourceID, o)
-	require.ErrorIs(t, err, callhistory.ErrInvalid)
+	require.ErrorIs(err, callhistory.ErrInvalid)
 	source, err := f.Store.GetSourceByIDContext(t.Context(), sourceID)
-	require.NoError(t, err)
-	assert.Empty(t, source.DisplayName.String)
+	require.NoError(err)
+	assert.Empty(source.DisplayName.String)
 
 	o.Participants = nil
 	_, err = f.Store.PutCallObservationContext(t.Context(), sourceID, o)
-	require.NoError(t, err)
+	require.NoError(err)
 	source, err = f.Store.GetSourceByIDContext(t.Context(), sourceID)
-	require.NoError(t, err)
-	assert.Equal(t, "Example calls", source.DisplayName.String)
-	require.NoError(t, f.Store.UpdateSourceDisplayNameContext(t.Context(), sourceID, "My archive"))
+	require.NoError(err)
+	assert.Equal("Example calls", source.DisplayName.String)
+	require.NoError(f.Store.UpdateSourceDisplayNameContext(t.Context(), sourceID, "My archive"))
 	o.SourceLabel = "Updated provider label"
 	_, err = f.Store.PutCallObservationContext(t.Context(), sourceID, o)
-	require.NoError(t, err)
+	require.NoError(err)
 	source, err = f.Store.GetSourceByIDContext(t.Context(), sourceID)
-	require.NoError(t, err)
-	assert.Equal(t, "My archive", source.DisplayName.String)
+	require.NoError(err)
+	assert.Equal("My archive", source.DisplayName.String)
+}
+
+func TestCallSourceLabelSkipsSelectorConflicts(t *testing.T) {
+	for _, kind := range []string{"identifier", "alias"} {
+		t.Run(kind, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			o, sourceID := validCallObservation(t, f.Store)
+			identifier := "History"
+			if kind == "alias" {
+				identifier = "other@example.test"
+			}
+			other, err := f.Store.GetOrCreateSourceContext(t.Context(), "imap", identifier)
+			require.NoError(err)
+			if kind == "alias" {
+				alias := "History"
+				_, err = f.Store.UpdateSourceSettingsContext(t.Context(), other.ID, store.SourceSettingsUpdate{Alias: &alias})
+				require.NoError(err)
+			}
+			o.SourceLabel = "hIsToRy"
+			id, err := f.Store.PutCallObservationContext(t.Context(), sourceID, o)
+			require.NoError(err)
+			assert.Positive(id)
+			source, err := f.Store.GetSourceByIDContext(t.Context(), sourceID)
+			require.NoError(err)
+			assert.Empty(source.DisplayName.String)
+			matches, err := f.Store.GetSourcesByIdentifierOrDisplayNameContext(t.Context(), "history")
+			require.NoError(err)
+			require.Len(matches, 1)
+			assert.Equal(other.ID, matches[0].ID)
+		})
+	}
 }
 
 func TestCallObservationSearchAndMessageProjections(t *testing.T) {

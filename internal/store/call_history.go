@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/callhistory"
@@ -22,7 +23,11 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 			return err
 		}
 		if o.SourceLabel != "" {
-			if _, err := tx.ExecContext(ctx, `UPDATE sources SET display_name = ? WHERE id = ? AND (display_name IS NULL OR display_name = '')`, o.SourceLabel, sourceID); err != nil {
+			if err := checkSourceDisplayNameSelectorConflict(boundQuerier{ctx: ctx, q: tx}, sourceID, o.SourceLabel); err != nil {
+				if !errors.Is(err, ErrSourceSettingsInvalid) {
+					return err
+				}
+			} else if _, err := tx.ExecContext(ctx, `UPDATE sources SET display_name = ? WHERE id = ? AND (display_name IS NULL OR display_name = '')`, o.SourceLabel, sourceID); err != nil {
 				return fmt.Errorf("set call source label: %w", err)
 			}
 		}
@@ -53,7 +58,7 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 	if o.DurationSeconds != nil {
 		text += fmt.Sprintf(", %g seconds", *o.DurationSeconds)
 	}
-	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{Sources: []int64{sourceID}},
+	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{Catalog: o.SourceLabel != "", Sources: []int64{sourceID}},
 		before, nil, func([]int64) *MessagePersistData {
 			return &MessagePersistData{
 				Message: &Message{
