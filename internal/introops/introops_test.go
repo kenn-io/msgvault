@@ -34,6 +34,10 @@ func TestGrantBodyAndEdit(t *testing.T) {
 	req.NoError(err)
 	check.Empty(row.Body)
 	check.Equal("agent", row.CreatedBy)
+	req.Len(row.Members, 2)
+	for _, member := range row.Members {
+		check.Empty(member.UserID)
+	}
 	title := "changed"
 	_, err = svc.Edit(ctx, grant, row.IntroID, store.PersonIntroductionEdit{Revision: 1, Title: &title})
 	req.ErrorIs(err, introops.ErrForbidden)
@@ -41,6 +45,12 @@ func TestGrantBodyAndEdit(t *testing.T) {
 	row, err = svc.Get(ctx, grant, row.IntroID)
 	req.NoError(err)
 	check.Equal("private", row.Body)
+	for _, member := range row.Members {
+		check.Empty(member.UserID)
+	}
+	ownerRow, err := svc.Get(ctx, nil, row.IntroID)
+	req.NoError(err)
+	check.NotEmpty(ownerRow.Members[0].UserID)
 	grant.Sources = nil
 	_, err = svc.Get(ctx, grant, row.IntroID)
 	req.ErrorIs(err, introops.ErrForbidden)
@@ -118,6 +128,9 @@ func TestListFiltersSourcesBeforePagination(t *testing.T) {
 	req.Len(first.Items, 1)
 	check.Equal(allowed.ID, first.Items[0].SourceID)
 	check.Empty(first.Items[0].Body)
+	for _, member := range first.Items[0].Members {
+		check.Empty(member.UserID)
+	}
 	check.False(first.HasMore)
 }
 
@@ -156,9 +169,27 @@ func TestDelegatedPersonVisibility(t *testing.T) {
 	svc := introops.Service{Store: f.Store}
 	g := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{ID: other.ID, Type: "beeper", Identifier: "scope-a"}}}
 	in := store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a, PersonBID: b, Body: "private"}
+	unsupported, err := f.Store.GetOrCreateSource("gmail", "other@example.test")
+	req.NoError(err)
+	otherGrant := &agentgrant.Grant{ID: "agent", Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}, Sources: []agentgrant.SourceRef{{Type: "gmail", Identifier: "other@example.test"}}}
+	badSource := in
+	badSource.SourceID = unsupported.ID
+	_, err = svc.Prepare(ctx, otherGrant, badSource)
+	req.ErrorIs(err, introops.ErrForbidden)
+	badSource.SourceID = 99999999
+	_, err = svc.Prepare(ctx, otherGrant, badSource)
+	req.ErrorIs(err, introops.ErrForbidden)
 	visible, err := svc.Prepare(ctx, g, in)
 	req.NoError(err)
 	check.Empty(visible.Body)
+	// A second account identity is a visible blocker, not a permission denial.
+	var participant int64
+	req.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), b).Scan(&participant))
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?)`), participant, beeperidentity.Fallback("scope-a", "second-b"))
+	req.NoError(err)
+	ambiguous, err := svc.Get(ctx, g, visible.IntroID)
+	req.NoError(err)
+	check.Contains(ambiguous.Blockers, store.IntroductionBlocker{Code: "ambiguous_identity", PersonID: b})
 	for _, id := range []int64{wrong, absent, owner, 99999999} {
 		in.PersonBID = id
 		_, err := svc.Prepare(ctx, g, in)

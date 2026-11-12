@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"encoding/base64"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -13,7 +14,14 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestPersonIntroductionLifecycle(t *testing.T) {
+func TestPersonIntroductionLifecycle(t *testing.T) { checkPersonIntroductionLifecycle(t) }
+func TestPostgresPersonIntroductionLifecycle(t *testing.T) {
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("PostgreSQL test database not configured")
+	}
+	checkPersonIntroductionLifecycle(t)
+}
+func checkPersonIntroductionLifecycle(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -121,7 +129,14 @@ func TestIntroductionMergeAndSplit(t *testing.T) {
 	check.Greater(got.Revision, int64(3))
 }
 
-func TestIntroductionPaginationAndScope(t *testing.T) {
+func TestIntroductionPaginationAndScope(t *testing.T) { checkIntroductionPaginationAndScope(t) }
+func TestPostgresIntroductionPaginationAndScope(t *testing.T) {
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("PostgreSQL test database not configured")
+	}
+	checkIntroductionPaginationAndScope(t)
+}
+func checkIntroductionPaginationAndScope(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -232,7 +247,7 @@ func TestIntroductionPersonDeleteCascades(t *testing.T) {
 	req.NoError(err)
 	_, err = f.Store.PreparePersonIntroductionContext(ctx, store.PersonIntroductionPrepare{SourceID: src.ID, PersonAID: a.ID, PersonBID: b.ID}, "owner")
 	req.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM persons WHERE id = ?`), b.ID)
+	err = f.Store.DeletePersonContext(ctx, b.ID, b.Revision)
 	req.NoError(err)
 	page, err := f.Store.ListPersonIntroductionsContext(ctx, store.PersonIntroductionQuery{}, nil)
 	req.NoError(err)

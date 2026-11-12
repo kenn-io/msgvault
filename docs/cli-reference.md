@@ -45,7 +45,8 @@ msgvault intro cancel ID --revision N [--json]
 ```
 
 List defaults to 20 records and accepts a limit from 1 to 100. Results are
-newest first; pass `next_after_id` as `--after-id` for the next JSON page.
+ordered by creation timestamp descending, then introduction ID descending for
+ties. Pass `next_after_id` as `--after-id` for the next JSON page.
 Edit needs at least one replacement field. A stale revision or a record that
 is no longer prepared is refused. Cancel removes the stored body.
 
@@ -5695,7 +5696,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read`, and the `verification.read` reveal modifier (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read`, and the `verification.read` reveal modifier (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `draft.create` for `draft-reply`, `draft-compose`, `draft-get`, and `intro prepare/list/show/cancel`; `draft.edit` for `draft-get`, `draft-edit`, `draft-recover`, and introduction body access; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |

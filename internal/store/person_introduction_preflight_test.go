@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +12,15 @@ import (
 )
 
 func TestIntroductionPreflightScopedIdentity(t *testing.T) {
+	checkIntroductionPreflightScopedIdentity(t)
+}
+func TestPostgresIntroductionPreflightScopedIdentity(t *testing.T) {
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("PostgreSQL test database not configured")
+	}
+	checkIntroductionPreflightScopedIdentity(t)
+}
+func checkIntroductionPreflightScopedIdentity(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)
@@ -35,6 +45,15 @@ func TestIntroductionPreflightScopedIdentity(t *testing.T) {
 }
 
 func TestIntroductionPreflightAmbiguityAndOwner(t *testing.T) {
+	checkIntroductionPreflightAmbiguityAndOwner(t)
+}
+func TestPostgresIntroductionPreflightAmbiguityAndOwner(t *testing.T) {
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("PostgreSQL test database not configured")
+	}
+	checkIntroductionPreflightAmbiguityAndOwner(t)
+}
+func checkIntroductionPreflightAmbiguityAndOwner(t *testing.T) {
 	check := assert.New(t)
 	req := require.New(t)
 	f := storetest.New(t)

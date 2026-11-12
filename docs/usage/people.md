@@ -62,8 +62,11 @@ selected twice. These checks use archived identities, not a live lookup. Group
 creation and confirmation are future work.
 
 An agent with source-scoped `draft.create` can prepare, list, show, and cancel.
-Its responses include the body only with `draft.edit` on that source. Editing
-an introduction is owner-only. See the [CLI reference](../cli-reference.md#intro)
+The selected people must each have an identity on that account, and neither
+may be an owner, including through any linked participant across accounts.
+Account-present people with ambiguous identities remain visible with a blocker.
+Responses omit network user IDs and include the body only with `draft.edit` on
+that source. Editing an introduction is owner-only. See the [CLI reference](../cli-reference.md#intro)
 for flags and pagination.
 
 ## Understand the records

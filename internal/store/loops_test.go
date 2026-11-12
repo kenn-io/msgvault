@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/beeperidentity"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/email"
@@ -337,16 +338,19 @@ const malformedAutoReply = "From: " + loopAlex + "\r\nTo: " + loopOwner + "\r\nA
 
 func TestLoopIgnoresAddressesLinkedToTheOwner(t *testing.T) {
 	const alias = "me@old.example.test"
-	for _, account := range []bool{false, true} {
-		name := "linked owner addresses"
-		if account {
-			name = "account identities"
-		}
+	for _, name := range []string{"linked owner addresses", "account identities", "scoped beeper identity"} {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := storetest.New(t)
-			if account {
+			if name == "scoped beeper identity" {
+				other, err := f.Store.GetOrCreateSource("beeper", "loop-account")
+				require.NoError(err)
+				require.NoError(f.Store.AddAccountIdentity(other.ID, "opaque-self", "manual"))
+				participant := f.EnsureParticipant(alias, "", "old.example.test")
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) VALUES (?, 'beeper', ?)`), participant, beeperidentity.Fallback("loop-account", "opaque-self"))
+				require.NoError(err)
+			} else if name == "account identities" {
 				other, err := f.Store.GetOrCreateSource("gmail", alias)
 				require.NoError(err)
 				require.NoError(f.Store.AddAccountIdentity(other.ID, alias, "manual"))

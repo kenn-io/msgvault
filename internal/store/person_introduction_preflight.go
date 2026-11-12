@@ -7,44 +7,6 @@ import (
 	"go.kenn.io/msgvault/internal/beeperidentity"
 )
 
-// IntroductionPeopleVisibleContext checks account-scoped identities without
-// returning person-dependent details. Owners are excluded across all sources.
-func (s *Store) IntroductionPeopleVisibleContext(ctx context.Context, account string, personIDs ...int64) (bool, error) {
-	owners, err := s.loopOwnerIdentities(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, personID := range personIDs {
-		if _, owner := owners.persons[personID]; owner {
-			return false, nil
-		}
-		rows, err := s.db.QueryContext(ctx, `SELECT pi.identifier_value FROM person_participants pp JOIN participant_identifiers pi ON pi.participant_id = pp.participant_id AND pi.identifier_type = 'beeper' WHERE pp.person_id = ?`, personID)
-		if err != nil {
-			return false, err
-		}
-		visible := false
-		for rows.Next() {
-			var identifier string
-			if err := rows.Scan(&identifier); err != nil {
-				_ = rows.Close()
-				return false, err
-			}
-			if _, ok := beeperidentity.UserID(account, identifier); ok {
-				visible = true
-			}
-		}
-		err = rows.Err()
-		_ = rows.Close()
-		if err != nil {
-			return false, err
-		}
-		if !visible {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
 type IntroductionMember struct {
 	PersonID      int64  `json:"person_id"`
 	ParticipantID int64  `json:"participant_id"`
