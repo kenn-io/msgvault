@@ -10,5 +10,6 @@ export interface ExploreGroupRow {
   label: string;
   latest_at: string;
   level?: ExploreGroupRowLevel;
+  total_items?: number;
   [key: string]: unknown;
 }
