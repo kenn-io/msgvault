@@ -50,7 +50,7 @@ func TestMeetingLinkProjectionBackfill(t *testing.T) {
 	assert.True(applied)
 	var version int
 	require.NoError(reopened.db.QueryRowContext(t.Context(), `SELECT projection_version FROM meeting_details WHERE message_id = ?`, note).Scan(&version))
-	assert.Equal(2, version)
+	assert.Equal(meetingProjectionVersion, version)
 	require.NoError(reopened.InitSchemaContext(t.Context()))
 }
 
