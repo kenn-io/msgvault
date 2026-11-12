@@ -72,7 +72,7 @@ func TestImportTagsResumesAndArchivesOtherAccountsMedia(t *testing.T) {
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT message_type, subject, metadata FROM messages WHERE id=?`, ids["700"]).Scan(&messageType, &subject, &metadata))
 	assert.Equal(MentionsSourceType, messageType)
 	assert.Equal("@example_visitor", subject)
-	assert.JSONEq(`{"app_id":"9","page_id":"100","instagram_account_id":"200","media_id":"700","kind":"tag"}`, metadata)
+	assert.JSONEq(`{"app_id":"9","page_id":"100","instagram_account_id":"200","media_id":"700","kinds":["tag"]}`, metadata)
 	var hits int
 	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'orchardmarket'`).Scan(&hits))
 	assert.Equal(1, hits)

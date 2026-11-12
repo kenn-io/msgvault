@@ -154,14 +154,14 @@ type mentionRun struct {
 	sum                *ImportSummary
 }
 
-// mentionMetadata records how the media reached the archive. A later
-// delivery of the same object replaces Kind.
+// mentionMetadata records how the media reached the archive. Kinds is a set,
+// so another way of finding the same media can be added to it later.
 type mentionMetadata struct {
-	AppID              string `json:"app_id"`
-	PageID             string `json:"page_id"`
-	InstagramAccountID string `json:"instagram_account_id"`
-	MediaID            string `json:"media_id"`
-	Kind               string `json:"kind"`
+	AppID              string   `json:"app_id"`
+	PageID             string   `json:"page_id"`
+	InstagramAccountID string   `json:"instagram_account_id"`
+	MediaID            string   `json:"media_id"`
+	Kinds              []string `json:"kinds"`
 }
 
 // persistMedia archives media by another account as the root of its own
@@ -180,7 +180,7 @@ func (r *mentionRun) persistMedia(ctx context.Context, media IGMedia, kind strin
 			return err
 		}
 	}
-	metadata, err := json.Marshal(mentionMetadata{AppID: r.app, PageID: r.page, InstagramAccountID: r.account, MediaID: media.ID, Kind: kind})
+	metadata, err := json.Marshal(mentionMetadata{AppID: r.app, PageID: r.page, InstagramAccountID: r.account, MediaID: media.ID, Kinds: []string{kind}})
 	if err != nil {
 		return err
 	}
