@@ -133,6 +133,10 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 			}
 		}
 	}
+	marker := path.Join(apiContractsDir, version+"_"+digest+"_<summary-sha256>")
+	if greatest == "" {
+		return fmt.Errorf("record the API contract with a marker at %s", marker)
+	}
 	major, minor, _ := strings.Cut(strings.TrimPrefix(semver.MajorMinor(greatest), "v"), ".")
 	n, _ := strconv.Atoi(minor)
 	next := fmt.Sprintf("%s.%d.0", major, n+1)
@@ -152,7 +156,6 @@ func checkAPIContract(version, digest string, markers, base []string) error {
 			return nextMinor("restore removed API contract marker " + marker)
 		}
 	}
-	marker := path.Join(apiContractsDir, version+"_"+digest+"_<summary-sha256>")
 	switch c := semver.Compare(current, greatest); {
 	case c > 0:
 		return fmt.Errorf("record the API contract with a marker at %s", marker)
@@ -191,6 +194,7 @@ func TestCheckAPIContract(t *testing.T) {
 		{"edited marker", "5.1.0", b, "replace your marker with testdata/api-version-contracts/5.1.0_" + b + "_<summary-sha256>; otherwise compare with MSGVAULT_API_CONTRACT_BASE or use 5.2.0", []string{m("5.0.0", a), m("5.1.0", a)}, []string{m("5.0.0", a)}},
 		{"superseded", "5.2.0", b, "remove the superseded", []string{m("5.1.0", a), m("5.1.0", b), m("5.2.0", b)}, []string{m("5.1.0", a)}},
 		{"unrecorded", "5.1.0", b, "marker at", []string{m("5.0.0", a)}, []string{m("5.0.0", a)}},
+		{"empty", "5.0.0", a, "marker at testdata/api-version-contracts/5.0.0_" + a + "_<summary-sha256>", nil, nil},
 		{"malformed", "5.0.0", a, "<version>_<sha256>", []string{"bad"}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

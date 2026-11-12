@@ -563,18 +563,14 @@ ignored.
 ## API schema version maintenance
 
 When the HTTP API contract changes, bump `APISchemaVersion` in `internal/api/openapi.go`.
-`TestAPISchemaVersionContract` hashes both generated documents and ignores wording (descriptions,
-summaries, titles, examples). Handler changes the documents don't show still need a bump.
-
+Handler changes absent from the generated documents also need a bump. The test ignores wording.
 Add the marker path the test prints under `internal/api/testdata/api-version-contracts/`, with a
-one-line summary as its contents. Replace `<summary-sha256>` with the output of
-`printf '%s' 'Your summary' | sha256sum | cut -d ' ' -f 1`, so each change gets its own marker even
-when its contract matches another.
-
-Keep every marker on the base; the failing test names the repair, including the next minor above
-the greatest recorded version. Local tests read the base from the common ancestor of `HEAD` and `origin/main`;
-if that fails, fetch `origin/main` with its history, or set `MSGVAULT_API_CONTRACT_BASE` to a SHA
-or ref. CI sets `MSGVAULT_API_CONTRACT_BASE` to the exact base.
+one-line summary. Replace `<summary-sha256>` with `printf '%s' 'Your summary' | sha256sum | cut -d ' ' -f 1`.
+The suffix identifies the marker; the test does not check it against the summary.
+Keep every base marker. Replace a branch-only marker after changing its contract; if the version
+is used on the base, take the next minor and move feature minimums introduced by your change.
+Local tests use the common ancestor of `HEAD` and `origin/main`; fetch its history if needed, or set
+`MSGVAULT_API_CONTRACT_BASE` to a SHA or ref. CI sets it to the exact base.
 
 ## Archive schema version maintenance
 
