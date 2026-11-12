@@ -737,15 +737,24 @@ func writeCLIGetPerson(cmd *cobra.Command, client *daemonclient.Client, person *
 	if !personJSON || person == nil {
 		return writeCLIPerson(cmd, person)
 	}
-	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), "5.1.0")
-	if err != nil || !supported {
+	supported, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.FirstAppearanceMinAPISchemaVersion)
+	if err != nil {
+		return fmt.Errorf("check first appearance capability: %w", err)
+	}
+	if !supported {
 		return writeCLIPerson(cmd, person)
 	}
 	response, err := daemonclient.APIResponse(client, func(api *apiclient.Client) (*generated.GetPersonContactStateResp, error) {
 		return api.GetPersonContactStateWithResponse(cmd.Context(), &generated.GetPersonContactStateRequestOptions{PathParams: &generated.GetPersonContactStatePath{ID: person.ID}})
 	})
-	if err != nil || response.JSON200 == nil {
-		return writeCLIPerson(cmd, person)
+	if err != nil {
+		if daemonclient.AbsentAPIResource(err) {
+			return writeCLIPerson(cmd, person)
+		}
+		return fmt.Errorf("read person contact state: %w", err)
+	}
+	if response.JSON200 == nil {
+		return errors.New("person contact state response was empty")
 	}
 	return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), struct {
 		*generated.Person `json:",inline"`

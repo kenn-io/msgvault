@@ -51,7 +51,7 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 			return
 		}
 		if failState.Load() && r.URL.Path == fmt.Sprintf("/api/v1/people/%d/contact-state", person.ID) {
-			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			http.Error(w, "unavailable", http.StatusInternalServerError)
 			return
 		}
 		router.ServeHTTP(w, r)
@@ -98,7 +98,12 @@ func TestPersonGetFirstAppearanceRealProjection(t *testing.T) {
 				var got bytes.Buffer
 				get.SetOut(&got)
 				get.SetArgs(args)
-				require.NoError(t, get.ExecuteContext(ctx))
+				err := get.ExecuteContext(ctx)
+				if scenario.fail {
+					require.ErrorContains(t, err, "read person contact state")
+					continue
+				}
+				require.NoError(t, err)
 				var profile map[string]any
 				require.NoError(t, json.Unmarshal(got.Bytes(), &profile))
 				assert.Equal(t, float64(person.ID), profile["id"])

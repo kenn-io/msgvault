@@ -128,8 +128,7 @@ func (s *Store) populateFirstContactTx(ctx context.Context, tx *loggedTx, state 
 	candidate := candidates[0]
 	state.FirstContactKind, state.Introducer = ClassifyFirstContact(candidate, state.PersonID, candidate.DirectLimitTransition.Target)
 	if state.Introducer != nil {
-		state.Introducer.DisplayName = "-"
-		err = tx.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(TRIM(person.display_name), ''), NULLIF(TRIM(`+participantSenderNameSQL+`), ''), NULLIF(TRIM(p.email_address), ''), NULLIF(TRIM(p.phone_number), ''), '-') FROM participants p
+		err = tx.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(TRIM(person.display_name), ''), NULLIF(TRIM(`+participantSenderNameSQL+`), ''), NULLIF(TRIM(p.email_address), ''), NULLIF(TRIM(p.phone_number), ''), '') FROM participants p
   LEFT JOIN persons person ON person.id = ?
   LEFT JOIN message_recipients mr ON mr.participant_id = p.id AND mr.message_id = ? AND mr.recipient_type = 'from'
   WHERE p.id = ? ORDER BY mr.id LIMIT 1`, state.Introducer.PersonID, messageID, state.Introducer.ParticipantID).Scan(&state.Introducer.DisplayName)

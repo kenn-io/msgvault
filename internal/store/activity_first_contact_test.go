@@ -18,14 +18,15 @@ func TestClassifyFirstContact(t *testing.T) {
 	targetRecipient := ActivityCounterpart{ParticipantID: 10, PersonID: &target, RecipientType: "cc"}
 	ownerRecipient := ActivityCounterpart{ParticipantID: 11, PersonID: &ownerID, RecipientType: "to", IsOwner: true}
 	unsavedSender := ActivityCounterpart{ParticipantID: 12, RecipientType: "from"}
-	tests := []struct {
+	type testCase struct {
 		name       string
 		candidate  ActivityCandidate
 		want       FirstContactKind
 		introducer int64
 		person     *int64
 		max        int
-	}{
+	}
+	tests := []testCase{
 		{"introduction", email, FirstContactEmailIntro, 2, &sender, 25},
 		{"meeting", ActivityCandidate{MessageType: "calendar_event", Counterparts: email.Counterparts}, FirstContactMeeting, 0, nil, 25},
 		{"owner absent", ActivityCandidate{ConversationType: "group_chat", Counterparts: []ActivityCounterpart{from, addressed}}, FirstContactObserved, 0, nil, 25},
@@ -55,14 +56,7 @@ func TestClassifyFirstContact(t *testing.T) {
 		if n > maxIntroCounterparts {
 			want, intro, person = FirstContactObserved, 0, nil
 		}
-		tests = append(tests, struct {
-			name       string
-			candidate  ActivityCandidate
-			want       FirstContactKind
-			introducer int64
-			person     *int64
-			max        int
-		}{fmt.Sprintf("%d other recipients", n), c, want, intro, person, 25})
+		tests = append(tests, testCase{fmt.Sprintf("%d other recipients", n), c, want, intro, person, 25})
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,5 +75,4 @@ func TestClassifyFirstContact(t *testing.T) {
 			}
 		})
 	}
-
 }

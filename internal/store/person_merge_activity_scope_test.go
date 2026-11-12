@@ -152,7 +152,7 @@ func TestMergePersons_DefersMemberOnlyActivity(t *testing.T) {
 				} else {
 					// A split after the merged epoch has already converged must
 					// also restore the original room audience and evidence.
-					_, err := f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+					_, err = f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
 						SourcePersonID: survivor.ID, MergeID: merged.Merge.ID,
 						ParticipantIDs: absorbed.ParticipantIDs, ExpectedSourceRevision: merged.Person.Revision,
 						IdempotencyKey: "scope-split-after-projection", Actor: "test",
