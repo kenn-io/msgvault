@@ -154,8 +154,11 @@ func TestSettingsViewportTinyScreenKeepsPagingAndBack(t *testing.T) {
 	snapshot := settingsFixture()
 	snapshot.PendingRestart = true
 	backend := &viewportFullBackend{fakePeopleInferenceBackend: &fakePeopleInferenceBackend{loads: []SettingsSnapshot{snapshot}}, PeopleInferenceControlBackend: &fakePeopleInferenceControlBackend{}}
-	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 20, 6)
+	model := NewBuilder().WithSize(20, 6).Build()
 	model.settingsBackend = backend
+	model, load := sendKey(t, model, key(','))
+	require.NotNil(t, load)
+	model = sendSettingsMsg(t, model, load())
 	screen := uv.NewScreenBuffer(20, 6)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "[Esc]")

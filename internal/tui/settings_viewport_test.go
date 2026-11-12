@@ -145,6 +145,53 @@ func TestSettingsViewportResizeKeepsVisibleSelection(t *testing.T) {
 	assert.Contains(t, screen.String(), "▶   Field 6")
 }
 
+func TestSettingsViewportResizeKeepsUnpagedSelection(t *testing.T) {
+	for _, tc := range []struct{ width, newWidth, newHeight int }{{80, 40, 8}, {100, 100, 6}} {
+		t.Run(fmt.Sprint(tc.width), func(t *testing.T) {
+			snapshot := SettingsSnapshot{PendingRestart: true, Groups: []SettingsGroup{{ID: "search", Label: "Search"}}, Fields: []SettingField{{Key: "search.field", Group: "search", Label: "Search field", Kind: SettingKindString, Value: stringSettingValue("value")}}}
+			model := resizeModel(t, loadedSettingsModel(t, snapshot), tc.width, 24)
+			screen := uv.NewScreenBuffer(tc.width, 24)
+			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+			require.Contains(t, screen.String(), "▶ Search")
+			model = resizeModel(t, model, tc.newWidth, tc.newHeight)
+			screen = uv.NewScreenBuffer(tc.newWidth, tc.newHeight)
+			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+			assert.Contains(t, screen.String(), "▶ Search")
+		})
+	}
+	snapshot := settingsFixture()
+	snapshot.PendingRestart = true
+	backend := &fakeSettingsBackend{loads: []SettingsSnapshot{snapshot}}
+	model := NewBuilder().WithSize(40, 8).Build()
+	model.settingsBackend = backend
+	model, load := sendKey(t, model, key(','))
+	model = sendSettingsMsg(t, model, load())
+	model = resizeModel(t, model, 40, 7)
+	screen := uv.NewScreenBuffer(40, 7)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "Restart pending.")
+}
+
+func TestSettingsViewportLoadKeepsCodexEditorVisible(t *testing.T) {
+	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{settingsFixture()}}
+	model := NewBuilder().WithSize(40, 8).Build()
+	model.settingsBackend = backend
+	model, load := sendKey(t, model, key(','))
+	require.NotNil(t, load)
+	model, _ = sendKey(t, model, key('p'))
+	model, _ = sendKey(t, model, key('1'))
+	for _, r := range "example-profile" {
+		model, _ = sendKey(t, model, key(r))
+	}
+	screen := uv.NewScreenBuffer(40, 8)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	require.Contains(t, screen.String(), "Edit field 1:")
+	model = sendSettingsMsg(t, model, load())
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "Edit field 1:")
+	assert.Contains(t, screen.String(), "example-profile")
+}
+
 func TestSettingsViewportDiscardConfirmationPaging(t *testing.T) {
 	for _, height := range []int{4, 6} {
 		t.Run(fmt.Sprint(height), func(t *testing.T) {

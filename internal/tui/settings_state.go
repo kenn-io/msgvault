@@ -319,7 +319,10 @@ func (m Model) handleSettingsLoaded(msg settingsLoadedMsg) (tea.Model, tea.Cmd) 
 	if !m.settings.active || msg.requestID != m.settings.requestID {
 		return m, nil
 	}
-	m.settings.loading, m.settings.scrollOffset = false, 0
+	m.settings.loading = false
+	if !m.settings.codex.active && !m.settings.peopleControls.active {
+		m.settings.scrollOffset = 0
+	}
 	if msg.err != nil {
 		m.settings.status = "Could not load settings: " + msg.err.Error()
 		m.settings.statusIsError = true
