@@ -3,10 +3,12 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,6 +31,65 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
+
+type embeddingGateWaitRecorder struct {
+	*httptest.ResponseRecorder
+	wrote chan struct{}
+}
+
+func (w *embeddingGateWaitRecorder) Write(p []byte) (int, error) {
+	n, err := w.ResponseRecorder.Write(p)
+	select {
+	case w.wrote <- struct{}{}:
+	default:
+	}
+	return n, err
+}
+
+func TestManagedEmbeddingsHTTPWaitsForGateWithoutContentLease(t *testing.T) {
+	for _, args := range [][]string{{"embeddings", "build", "--yes"}, {"embeddings", "resume"}, {"build-embeddings", "--yes"}, {"embeddings", "optimize"}} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			gate := api.NewSerialOperationGate()
+			release, ok := gate.BeginWorkContext(t.Context())
+			require.True(t, ok)
+			defer release()
+			cfg := config.NewDefaultConfig()
+			cfg.HomeDir = t.TempDir()
+			cfg.Data.DataDir = cfg.HomeDir
+			cfg.Server.APIKey = "example-owner-key"
+			cfg.Vector.Enabled = true
+			cfg.Vector.Embeddings.Endpoint = "https://example.com/v1"
+			cfg.Vector.Embeddings.Model = "test-model"
+			adapter := &storeAPIAdapter{config: cfg, operationGate: gate}
+			var guardCalls atomic.Int32
+			server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Logger: slog.New(slog.DiscardHandler), OperationGate: gate, ContentReadGuard: func(context.Context) (func(), error) {
+				guardCalls.Add(1)
+				return func() {}, nil
+			}})
+			body, err := json.Marshal(api.CLIRunRequest{Args: args})
+			require.NoError(t, err)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/cli/run", bytes.NewReader(body))
+			req.Header.Set("X-Api-Key", cfg.Server.APIKey)
+			req.Header.Set("Content-Type", "application/json")
+			response := &embeddingGateWaitRecorder{ResponseRecorder: httptest.NewRecorder(), wrote: make(chan struct{}, 1)}
+			done := make(chan struct{})
+			go func() { defer close(done); server.Router().ServeHTTP(response, req) }()
+			select {
+			case <-response.wrote:
+			case <-time.After(5 * time.Second):
+				cancel()
+				<-done
+				require.FailNow(t, "gate wait was not reported")
+			}
+			cancel()
+			<-done
+			assert.Contains(t, response.Body.String(), "Waiting for archive operation gate")
+			assert.Zero(t, guardCalls.Load(), "the HTTP handler must not hold a content lease while waiting")
+		})
+	}
+}
 
 func TestManagedEmbeddingsCommandsDispatch(t *testing.T) {
 	for _, args := range [][]string{

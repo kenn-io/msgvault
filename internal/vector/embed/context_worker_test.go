@@ -2846,7 +2846,7 @@ func TestContextWorkerRecordsContentGuardReleaseFailure(t *testing.T) {
 			f.seed("x", f.chatID, time.Now().UTC(), "synthetic X post")
 			_, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
 			needs.ErrorIs(err, sentinel)
-			checks.ErrorIs(err, context.Canceled)
+			needs.ErrorIs(err, context.Canceled)
 			runs := messageEmbeddingOperationRuns(t, f.store)
 			needs.Len(runs, 1)
 			needs.NotNil(runs[0].Error)

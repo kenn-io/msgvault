@@ -251,7 +251,7 @@ func TestMarkXRemovalPendingPreservesContentAndRecovery(t *testing.T) {
 	var tokens string
 	needs.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT type_tokens FROM participant_contact_observations WHERE id=?`), observation).Scan(&tokens))
 	var pendingTokens int
-	for _, token := range strings.Split(tokens, ",") {
+	for token := range strings.SplitSeq(tokens, ",") {
 		if token == "x_author_profile_cleanup_pending" {
 			pendingTokens++
 		}

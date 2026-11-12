@@ -45,7 +45,37 @@ func (a *storeAPIAdapter) runCLIEmbeddingsOptimize(ctx context.Context, req api.
 					return err
 				}
 				defer lease.close()
-				return runEmbeddingsOptimizeManaged(cmd, args, lease.yield)
+				var releaseContent func()
+				acquireContent := func() error {
+					if a.xCleanup == nil {
+						return nil
+					}
+					var err error
+					releaseContent, err = a.xCleanup.AcquireRead(cmd.Context())
+					return err
+				}
+				if err := acquireContent(); err != nil {
+					return fmt.Errorf("acquire X content lease: %w", err)
+				}
+				defer func() {
+					if releaseContent != nil {
+						releaseContent()
+					}
+				}()
+				yield := func() error {
+					if releaseContent != nil {
+						releaseContent()
+						releaseContent = nil
+					}
+					if err := lease.yield(); err != nil {
+						return err
+					}
+					if err := acquireContent(); err != nil {
+						return fmt.Errorf("reacquire X content lease: %w", err)
+					}
+					return nil
+				}
+				return runEmbeddingsOptimizeManaged(cmd, args, yield)
 			},
 		}
 		command.Flags().Bool("drop", false, "Remove the accelerator while keeping exact vectors")

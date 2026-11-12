@@ -658,7 +658,7 @@ func TestSyncXArchiveLifetimeCapResumeRenameAndFreshJob(t *testing.T) {
 	human, err := f.runArchive(t, "--job-id="+r.JobID, "--max-spend=0.30")
 	_testRequire.NoError(err)
 	_testAssert.Equal(beforeRepeat, f.calls.Load())
-	for _, part := range []string{"Job ID: " + r.JobID, "Lifetime cap: USD 0.300000", "Lifetime estimated spent: USD 0.030000", "Lifetime unsettled reserved: USD 0.000000", "Remaining allowance: USD 0.270000", "Archive own walk complete: true", "Archive mentions walk complete: true"} {
+	for _, part := range []string{"Job ID: " + r.JobID, "Lifetime cap: USD 0.300000", "Lifetime estimated spent: USD 0.030000", "Lifetime unsettled reserved: USD 0.000000", "Remaining allowance: USD 0.270000", "Archive complete: own posts true, mentions true"} {
 		_testAssert.Contains(human, part)
 	}
 	raw, err = f.runArchive(t, "--new-job", "--max-spend=0.30", "--json")
@@ -729,7 +729,7 @@ func TestSyncXArchiveProviderErrorKeepsLifetimeReservationAndCache(t *testing.T)
 	f.mu.Unlock()
 	out, err := f.runArchive(t, "--max-spend=5", "--build-cache")
 	_testRequire.Error(err)
-	for _, text := range []string{"X archive partial:", "messages_added: 1", "Lifetime cap: USD 5.000000", "Lifetime estimated spent: USD 0.015000", "Lifetime unsettled reserved: USD 1.500000", "Remaining allowance: USD 3.485000", "Archive own walk complete: true", "Archive mentions walk complete: false", "Total estimate: unknown", "Resolve the reported provider, credential or coverage error before retrying", "unsettled requests remain reserved", "repeating a cap never renews it"} {
+	for _, text := range []string{"X archive partial:", "messages_added: 1", "Lifetime cap: USD 5.000000", "Lifetime estimated spent: USD 0.015000", "Lifetime unsettled reserved: USD 1.500000", "Remaining allowance: USD 3.485000", "Archive complete: own posts true, mentions false", "Total estimate: unknown", "Resolve the reported provider, credential or coverage error before retrying", "unsettled requests remain reserved", "repeating a cap never renews it"} {
 		_testAssert.Contains(out, text)
 	}
 	state, err := f.st.LoadXControlContext(t.Context(), f.source.ID)

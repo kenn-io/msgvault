@@ -12,7 +12,9 @@ import (
 // Typed X operations emit only control/receipt metadata and own their cleanup;
 // retaining a read lease there would deadlock their exclusive cleanup fence.
 func cliRunNeedsContentLease(args []string) bool {
-	if IsCLIRunXSync(args) || IsCLIRunXRegister(args) || IsCLIRunSendReply(args) {
+	if IsCLIRunXSync(args) || IsCLIRunXRegister(args) || IsCLIRunSendReply(args) || IsCLIRunEmbeddingsBuild(args) || IsCLIRunEmbeddingsOptimize(args) {
+		// Managed embedding operations fence content after operation admission
+		// and release their leases before yielding the gate.
 		return false
 	}
 	if len(args) > 0 {

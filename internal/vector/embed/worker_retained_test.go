@@ -51,7 +51,7 @@ func TestWorkerRecordsContentGuardReleaseFailure(t *testing.T) {
 			}
 			_, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 			needs.ErrorIs(err, sentinel)
-			checks.ErrorIs(err, context.Canceled)
+			needs.ErrorIs(err, context.Canceled)
 			runs := messageEmbeddingOperationRuns(t, recorder)
 			needs.Len(runs, 1)
 			needs.NotNil(runs[0].Error)

@@ -326,8 +326,6 @@ func xSyncSummaryText(s *xapi.ImportSummary) string {
 func writeXArchiveSummary(out *strings.Builder, a *xapi.ArchiveSummary, code string) {
 	if a.JobID != "" {
 		fmt.Fprintf(out, "  Job ID: %s\n", a.JobID)
-	} else {
-		fmt.Fprintln(out, "  Job ID: not created (preview)")
 	}
 	fmt.Fprintf(out, "  Verified cached handle: %s\n  Own query: %s\n  Mentions query: %s\n", a.Username, a.OwnQuery, a.MentionsQuery)
 	fmt.Fprintf(out, "  After (exclusive): %s\n  Before (frozen): %s\n", a.After.UTC().Format(time.RFC3339Nano), a.Before.UTC().Format(time.RFC3339Nano))
@@ -339,7 +337,7 @@ func writeXArchiveSummary(out *strings.Builder, a *xapi.ArchiveSummary, code str
 	if a.RemainingMicros != nil {
 		fmt.Fprintf(out, "  Remaining allowance: USD %s\n", xUSDMicros(*a.RemainingMicros))
 	}
-	fmt.Fprintf(out, "  Archive own walk complete: %t\n  Archive mentions walk complete: %t\n", a.OwnComplete, a.MentionsComplete)
+	fmt.Fprintf(out, "  Archive complete: own posts %t, mentions %t\n", a.OwnComplete, a.MentionsComplete)
 	if a.TotalUnknown {
 		fmt.Fprintln(out, "  Total estimate: unknown")
 	}
