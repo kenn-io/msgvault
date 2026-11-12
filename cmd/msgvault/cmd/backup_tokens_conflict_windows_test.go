@@ -50,6 +50,13 @@ func backupRestoreOmittedOAuthLock(t *testing.T, compliant bool) {
 	tokens := filepath.Join(target, "tokens")
 	nestedTarget := filepath.Join(tokens, "carddav-connections", "example")
 	require.NoError(os.MkdirAll(nestedTarget, 0o700))
+	if compliant {
+		targetEmpty, readErr := providercredentials.Read(tokens)
+		require.NoError(readErr)
+		_, readErr = providercredentials.Put(tokens, targetEmpty.ETag, providercredentials.VectorEmbeddingsID, endpoint, providerKey)
+		require.NoError(readErr)
+		require.NoError(os.Remove(filepath.Join(tokens, ".provider-credentials.lock")))
+	}
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	require.NoError(err)
 	entries := []windows.EXPLICIT_ACCESS{{
@@ -65,22 +72,29 @@ func backupRestoreOmittedOAuthLock(t *testing.T, compliant bool) {
 	acl, err := windows.ACLFromEntries(entries, nil)
 	require.NoError(err)
 	require.NoError(windows.SetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
+	if compliant {
+		_, err := providercredentials.Read(tokens)
+		require.NoError(err)
+	}
 	omitted := filepath.Join(tokens, "oauth-token.json.lock")
 	require.NoError(os.WriteFile(omitted, []byte("omitted"), 0o600))
-	before, err := windows.GetNamedSecurityInfo(omitted, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	require.NoError(err)
-	dacl, _, err := before.DACL()
-	require.NoError(err)
-	require.NotNil(dacl)
-	inherited := false
-	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
-		var ace *windows.ACCESS_ALLOWED_ACE
-		require.NoError(windows.GetAce(dacl, i, &ace))
-		inherited = inherited || ace.Header.AceFlags&windows.INHERITED_ACE != 0
+	var before, rootBefore *windows.SECURITY_DESCRIPTOR
+	if compliant {
+		before, err = windows.GetNamedSecurityInfo(omitted, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+		require.NoError(err)
+		dacl, _, err := before.DACL()
+		require.NoError(err)
+		require.NotNil(dacl)
+		inherited := false
+		for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+			var ace *windows.ACCESS_ALLOWED_ACE
+			require.NoError(windows.GetAce(dacl, i, &ace))
+			inherited = inherited || ace.Header.AceFlags&windows.INHERITED_ACE != 0
+		}
+		require.True(inherited)
+		rootBefore, err = windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+		require.NoError(err)
 	}
-	require.True(inherited)
-	rootBefore, err := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	require.NoError(err)
 	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
 	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
 	rootCmd.SetOut(io.Discard)
@@ -97,21 +111,21 @@ func backupRestoreOmittedOAuthLock(t *testing.T, compliant bool) {
 		key, readErr := providercredentials.ReadSecretFile(filepath.Join(tokens, providercredentials.ServerKeyFilename))
 		require.NoError(readErr)
 		assert.Equal(serverKey, key)
+		rootAfter, readErr := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+		require.NoError(readErr)
+		assert.Equal(rootBefore.String(), rootAfter.String())
+		data, readErr := os.ReadFile(omitted)
+		require.NoError(readErr)
+		assert.Equal("omitted", string(data))
+		after, readErr := windows.GetNamedSecurityInfo(omitted, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+		require.NoError(readErr)
+		assert.Equal(before.String(), after.String())
+		data, readErr = os.ReadFile(filepath.Join(nestedTarget, "carddav.json"))
+		require.NoError(readErr)
+		assert.Equal("synthetic-carddav", string(data))
 	} else {
 		require.ErrorContains(err, "was restored to")
 		require.ErrorContains(err, "permissions conflict")
 	}
-	rootAfter, err := windows.GetNamedSecurityInfo(tokens, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	require.NoError(err)
-	assert.Equal(rootBefore.String(), rootAfter.String())
 	assert.FileExists(filepath.Join(target, "msgvault.db"))
-	data, err := os.ReadFile(omitted)
-	require.NoError(err)
-	assert.Equal("omitted", string(data))
-	after, err := windows.GetNamedSecurityInfo(omitted, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	require.NoError(err)
-	assert.Equal(before.String(), after.String())
-	data, err = os.ReadFile(filepath.Join(nestedTarget, "carddav.json"))
-	require.NoError(err)
-	assert.Equal("synthetic-carddav", string(data))
 }
