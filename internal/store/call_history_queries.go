@@ -96,7 +96,13 @@ func (s *Store) callRolesSQL() string {
 // callTimeBound compares SQLite timestamps as exact instants, including offsets.
 func (s *Store) callTimeBound(column string, bound time.Time) (string, any) {
 	if s.IsPostgreSQL() {
-		return column, bound.UTC()
+		bound = bound.UTC()
+		// Stored timestamps have microsecond precision. Ceiling preserves both
+		// inclusive lower and exclusive upper comparisons before pgx encodes them.
+		if remainder := bound.Nanosecond() % 1000; remainder != 0 {
+			bound = bound.Add(time.Duration(1000-remainder) * time.Nanosecond)
+		}
+		return column, bound
 	}
 	return sqliteutil.TimestampKeyFunction + "(" + column + ")", sqliteutil.TimestampKey(bound)
 }

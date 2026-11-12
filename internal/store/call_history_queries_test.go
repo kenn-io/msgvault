@@ -448,3 +448,63 @@ func TestCallReadersCompareWindowInstants(t *testing.T) {
 	require.Len(summary, 1)
 	assert.Equal(t, []store.PersonCallSummary{{PersonID: person.ID, Answered: len(expected), ExampleMessageID: expected[0]}}, summary)
 }
+
+func TestCallReadersWindowBetweenMicroseconds(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	peer, err := f.Store.EnsureParticipantByPhone(t.Context(), "+12025550101", "Example", "signal")
+	require.NoError(err)
+	person, _, err := f.Store.CreatePersonFromParticipant(peer)
+	require.NoError(err)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 999999000, time.UTC)
+	next := at.Add(time.Microsecond)
+
+	o, sourceID := validCallObservation(t, f.Store)
+	o.OccurredAt = at
+	o.EndedAt = new(at.Add(time.Minute))
+	o.Participants = []callhistory.Participant{{ID: peer, Participation: "joined"}}
+	normalizedID, err := f.Store.PutCallObservationContext(t.Context(), sourceID, o)
+	require.NoError(err)
+	message := f.NewMessage().Build()
+	message.MessageType = store.MessageTypeSynctechCall
+	message.SentAt = sql.NullTime{Time: next, Valid: true}
+	legacyID, err := f.Store.UpsertMessage(message)
+	require.NoError(err)
+	require.NoError(f.Store.ReplaceMessageRecipients(legacyID, "from", []int64{peer}, nil))
+	require.NoError(f.Store.SetMessageMetadata(legacyID, store.CallConnectedMetadata(60)))
+
+	fractional := at.Add(500 * time.Nanosecond).In(time.FixedZone("offset", 7*3600))
+	aligned := next.In(time.FixedZone("offset", -5*3600))
+	upper := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		query store.CallQuery
+		want  []int64
+	}{
+		{"fractional inclusive start rolls second", store.CallQuery{After: &fractional}, []int64{legacyID}},
+		{"fractional exclusive end rolls second", store.CallQuery{Before: &fractional}, []int64{normalizedID}},
+		{"aligned inclusive start", store.CallQuery{After: &aligned}, []int64{legacyID}},
+		{"aligned exclusive end", store.CallQuery{Before: &aligned}, []int64{normalizedID}},
+		{"upper year inclusive start", store.CallQuery{After: &upper}, nil},
+		{"upper year exclusive end", store.CallQuery{Before: &upper}, []int64{normalizedID, legacyID}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			items, err := f.Store.ListCallObservationsContext(t.Context(), tc.query)
+			require.NoError(err)
+			var got []int64
+			for _, item := range items {
+				got = append(got, item.MessageID)
+			}
+			assert.Equal(tc.want, got)
+			summary, err := f.Store.SummarizeCallsContext(t.Context(), tc.query)
+			require.NoError(err)
+			if len(tc.want) == 0 {
+				assert.Empty(summary)
+			} else {
+				assert.Equal([]store.PersonCallSummary{{PersonID: person.ID, Answered: len(tc.want), ExampleMessageID: tc.want[0]}}, summary)
+			}
+		})
+	}
+}
