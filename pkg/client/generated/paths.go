@@ -582,6 +582,23 @@ func (u UpdatePersonAgendaItemPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(u))
 }
 
+type ListPersonAppreciationsPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type DismissPersonAppreciationPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+
+	// Key Contribution key: exactly 64 lowercase hexadecimal characters
+	Key string `json:"key" validate:"required"`
+}
+
+func (d DismissPersonAppreciationPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
 type ListPersonAttributesPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`

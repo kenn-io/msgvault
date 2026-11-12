@@ -751,6 +751,47 @@ type BodySearchContext struct {
 	MessageID                int64    `json:"message_id"`
 }
 
+type BriefThanksEvidence struct {
+	EvidenceID string `json:"evidence_id" validate:"required"`
+	Quote      string `json:"quote" validate:"required"`
+}
+
+func (b BriefThanksEvidence) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type BriefThanksSuggestion struct {
+	AnchorID    string              `json:"anchor_id" validate:"required"`
+	Key         *string             `json:"key,omitzero"`
+	PriorThanks *string             `json:"prior_thanks,omitzero"`
+	Quote       string              `json:"quote" validate:"required"`
+	State       *string             `json:"state,omitzero"`
+	Text        string              `json:"text" validate:"required"`
+	Thanked     BriefThanksEvidence `json:"thanked"`
+}
+
+func (b BriefThanksSuggestion) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(b.AnchorID, "required"); err != nil {
+		errors = errors.Append("AnchorID", err)
+	}
+	if err := typesValidator.Var(b.Quote, "required"); err != nil {
+		errors = errors.Append("Quote", err)
+	}
+	if err := typesValidator.Var(b.Text, "required"); err != nil {
+		errors = errors.Append("Text", err)
+	}
+	if v, ok := any(b.Thanked).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Thanked", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type BuildingSummary struct {
 	Dimension int64    `json:"dimension"`
 	ID        int64    `json:"id"`
@@ -4545,6 +4586,22 @@ func (e Evidence) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type EvidenceRef struct {
+	AttachmentID    int64  `json:"attachment_id"`
+	ChunkKey        string `json:"chunk_key" validate:"required"`
+	MessageID       int64  `json:"message_id"`
+	OccurrenceKey   string `json:"occurrence_key" validate:"required"`
+	SourceID        int64  `json:"source_id"`
+	SourceLane      string `json:"source_lane" validate:"required"`
+	SourceMessageID string `json:"source_message_id" validate:"required"`
+	SpanEnd         int64  `json:"span_end"`
+	SpanStart       int64  `json:"span_start"`
+}
+
+func (e EvidenceRef) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
 }
 
 type Execution struct {
@@ -10716,6 +10773,71 @@ func (p PersonAgendaUpdateRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
+type PersonAppreciation struct {
+	Owner      *EvidenceRef          `json:"owner,omitempty"`
+	Peer       EvidenceRef           `json:"peer"`
+	Suggestion BriefThanksSuggestion `json:"suggestion"`
+}
+
+func (p PersonAppreciation) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.Owner != nil {
+		if v, ok := any(p.Owner).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Owner", err)
+			}
+		}
+	}
+	if v, ok := any(p.Peer).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Peer", err)
+		}
+	}
+	if v, ok := any(p.Suggestion).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Suggestion", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonAppreciationState struct {
+	ContributionKey    string     `json:"contribution_key" validate:"required"`
+	DismissedAt        *time.Time `json:"dismissed_at,omitempty"`
+	DismissedBy        *string    `json:"dismissed_by,omitzero"`
+	DismissedPersonUID *string    `json:"dismissed_person_uid,omitzero"`
+	ThanksBriefID      *int64     `json:"thanks_brief_id,omitempty"`
+}
+
+func (p PersonAppreciationState) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonAppreciationsResponse struct {
+	Appreciations []PersonAppreciation `json:"appreciations" validate:"required"`
+}
+
+func (p PersonAppreciationsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Appreciations, "required"); err != nil {
+		errors = errors.Append("Appreciations", err)
+	}
+	for i, item := range p.Appreciations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Appreciations[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonAttributeConflictResponse struct {
 	CurrentValue   *PersonAttributeValue `json:"current_value,omitempty"`
 	CurrentValueID *int64                `json:"current_value_id,omitempty"`
@@ -10871,23 +10993,25 @@ func (p PersonAttributesResponse) Validate() error {
 }
 
 type PersonBrief struct {
-	Boundary         jsontext.Value               `json:"boundary"`
-	DroppedItemCount int64                        `json:"dropped_item_count"`
-	Evidence         []PersonBriefEvidencePointer `json:"evidence" validate:"required"`
-	GeneratedAt      time.Time                    `json:"generated_at" validate:"required"`
-	Model            string                       `json:"model" validate:"required"`
-	ProgramID        string                       `json:"program_id" validate:"required"`
-	ProgramVersion   string                       `json:"program_version" validate:"required"`
-	Provider         string                       `json:"provider" validate:"required"`
-	RejectedAt       *time.Time                   `json:"rejected_at" validate:"omitempty"`
-	RejectedReason   string                       `json:"rejected_reason" validate:"required"`
-	RenderedText     string                       `json:"rendered_text" validate:"required"`
-	RendererPolicy   string                       `json:"renderer_policy" validate:"required"`
-	Sentences        []PersonBriefSentence        `json:"sentences" validate:"required"`
-	Status           string                       `json:"status" validate:"required"`
-	Structured       jsontext.Value               `json:"structured"`
-	SupersededAt     *time.Time                   `json:"superseded_at" validate:"omitempty"`
-	Version          int64                        `json:"version"`
+	AppreciationDismissalKeys []string                     `json:"appreciation_dismissal_keys,omitempty"`
+	Boundary                  jsontext.Value               `json:"boundary"`
+	DroppedItemCount          int64                        `json:"dropped_item_count"`
+	Evidence                  []PersonBriefEvidencePointer `json:"evidence" validate:"required"`
+	GeneratedAt               time.Time                    `json:"generated_at" validate:"required"`
+	HistoricalSnapshot        *bool                        `json:"historical_snapshot,omitempty"`
+	Model                     string                       `json:"model" validate:"required"`
+	ProgramID                 string                       `json:"program_id" validate:"required"`
+	ProgramVersion            string                       `json:"program_version" validate:"required"`
+	Provider                  string                       `json:"provider" validate:"required"`
+	RejectedAt                *time.Time                   `json:"rejected_at" validate:"omitempty"`
+	RejectedReason            string                       `json:"rejected_reason" validate:"required"`
+	RenderedText              string                       `json:"rendered_text" validate:"required"`
+	RendererPolicy            string                       `json:"renderer_policy" validate:"required"`
+	Sentences                 []PersonBriefSentence        `json:"sentences" validate:"required"`
+	Status                    string                       `json:"status" validate:"required"`
+	Structured                jsontext.Value               `json:"structured"`
+	SupersededAt              *time.Time                   `json:"superseded_at" validate:"omitempty"`
+	Version                   int64                        `json:"version"`
 }
 
 func (p PersonBrief) Validate() error {
@@ -10974,6 +11098,28 @@ type PersonBriefEnrollment struct {
 
 func (p PersonBriefEnrollment) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonBriefEnrollmentsResponse struct {
+	Enrollments []PersonBriefEnrollment `json:"enrollments" validate:"required"`
+}
+
+func (p PersonBriefEnrollmentsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Enrollments, "required"); err != nil {
+		errors = errors.Append("Enrollments", err)
+	}
+	for i, item := range p.Enrollments {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Enrollments[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PersonBriefEvidencePointer struct {
