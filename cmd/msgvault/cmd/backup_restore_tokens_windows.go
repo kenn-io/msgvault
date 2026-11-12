@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/msgvault/internal/backupapp"
@@ -41,6 +42,28 @@ func secureRestoredTokens(ctx context.Context, repo *backup.Repo, snapshotID, ta
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("inspect restored token membership: %w", err)
+		}
+	}
+	if !strict && info.IsDir() {
+		entries, readErr := os.ReadDir(dir)
+		if readErr != nil {
+			// Without a known strict member, an unreadable directory may be
+			// unrelated to this snapshot; keep non-token restores working.
+			return nil
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if !strings.EqualFold(name, providercredentials.Filename) && !strings.EqualFold(name, providercredentials.ServerKeyFilename) {
+				continue
+			}
+			_, err := snapshot.Extra("tokens/" + name)
+			if err == nil {
+				strict = true
+				break
+			}
+			if !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("inspect restored token membership: %w", err)
+			}
 		}
 	}
 	if !strict {
