@@ -98,18 +98,6 @@ func runSyncFullWithHint(cmd *cobra.Command, resume string, noResume bool, run f
 }
 
 func syncInterruptionDetails(err error) string {
-	if err == nil {
-		return ""
-	}
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		var details []string
-		for _, part := range joined.Unwrap() {
-			if detail := syncInterruptionDetails(part); detail != "" {
-				details = append(details, detail)
-			}
-		}
-		return strings.Join(details, "\n")
-	}
 	if streamErr, ok := errors.AsType[*daemonclient.CLIRunError](err); ok {
 		var details []string
 		for line := range strings.SplitSeq(streamErr.Error(), "\n") {
@@ -119,7 +107,7 @@ func syncInterruptionDetails(err error) string {
 		}
 		return strings.Join(details, "\n")
 	}
-	if errors.Is(err, context.Canceled) {
+	if err == nil || errors.Is(err, context.Canceled) {
 		return ""
 	}
 	return err.Error()

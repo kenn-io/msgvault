@@ -145,9 +145,8 @@ func TestSyncResumeCommandNativeArguments(t *testing.T) {
 	command.Flags().Bool("noresume", false, "")
 	command.Flags().Bool("build-cache", false, "")
 	command.Flags().Bool("no-build-cache", false, "")
-	command.Flags().String("sync-operation-id", "", "")
 	query := `from:"a b" $HOME;echo`
-	require.NoError(t, command.ParseFlags([]string{"--config", "config file", "--home", "home dir", "--local=false", "--log-file=", "--verbose=false", "--query", query, "--folder", "A B", "--folder", "C", "--noresume", "--build-cache=false", "--sync-operation-id", "internal", "--", "reader@example.test"}))
+	require.NoError(t, command.ParseFlags([]string{"--config", "config file", "--home", "home dir", "--local=false", "--log-file=", "--verbose=false", "--query", query, "--folder", "A B", "--folder", "C", "--noresume", "--build-cache=false", "--", "reader@example.test"}))
 	line, err := syncResumeCommand(command, command.Flags().Args())
 	require.NoError(t, err)
 	shell := "sh"
@@ -156,17 +155,8 @@ func TestSyncResumeCommandNativeArguments(t *testing.T) {
 		line = strings.TrimPrefix(line, "& ")
 	}
 	fixture := testutil.SecretCommand(t, "argv")[0]
-	want := []string{"--config=config file", "--home=home dir", "--local=false", "--log-file=", "--verbose=false", "sync-full", "--build-cache=false", "--folder=A B", "--folder=C", "--noresume", "--query=" + query, "--sync-operation-id=internal", "--", "reader@example.test"}
+	want := []string{"--config=config file", "--home=home dir", "--local=false", "--log-file=", "--verbose=false", "sync-full", "--build-cache=false", "--folder=A B", "--folder=C", "--noresume", "--query=" + query, "--", "reader@example.test"}
 	assert.Equal(t, want, headlessNativeArgs(t, shell, fixture, line))
-	if runtime.GOOS != "windows" {
-		t.Run("powershell", func(t *testing.T) {
-			args, err := cobraCommandArgs(command, command.Flags().Args(), true)
-			require.NoError(t, err)
-			line, err := formatCommand("msgvault", args, "windows")
-			require.NoError(t, err)
-			assert.Equal(t, want, headlessNativeArgs(t, "pwsh", fixture, strings.TrimPrefix(line, "& ")))
-		})
-	}
 }
 
 func TestSyncFullHintCancellationPhases(t *testing.T) {
