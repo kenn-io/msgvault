@@ -236,7 +236,7 @@ export class DirectoryReviewController {
     this.invalidateSummaries();
     if (this.mergeRequired?.candidateID === candidateID) this.mergeRequired = null;
     const name = success.survivor.display_name?.trim() || `Person ${success.survivor.id}`;
-    this.status = `Profiles merged into ${name}. Review the refreshed pair to finish. Identity cache ${success.result.cache_state}.`;
+    this.status = `Profiles merged into ${name}. Review the refreshed pair to finish.`;
     await this.loadIdentityPage(this.offset, this.identityState);
   }
   get submitting(): boolean { return this.loading || this.pendingDecisions.size > 0 || this.mergeRequired !== null; }
@@ -402,7 +402,7 @@ export class DirectoryReviewController {
         this.decisionDrafts.delete(candidateID);
         if (this.ownsDecisionContext(context)) {
           this.rows = this.rows.map(row => row.id === candidateID ? decidedCandidate : row);
-          this.status = `Identity match ${decidedCandidate.state}.${response.data.cache_state === 'stale' ? ' Identity cache refresh failed.' : ''}`;
+          this.status = `Identity match ${decidedCandidate.state}.`;
         }
         result = { ok: true, candidate: decidedCandidate, cacheState: response.data.cache_state, identityRevision: response.data.identity_revision };
         await Promise.resolve().then(() => this.onSettled(result!)).catch(() => undefined);
