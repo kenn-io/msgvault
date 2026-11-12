@@ -285,7 +285,7 @@ describe('DirectoryReviewController', () => {
         controller.applyURLState({ identityState: 'candidate' }, true);
         await vi.waitFor(() => expect(controller.rows).toEqual([candidate(99)]));
         decisionResponse.resolve(Response.json({ candidate: candidate(17, 'accepted'), identity_revision: 4, cache_state: 'ready' }));
-        await expect(decision).resolves.toEqual({ ok: true, candidate: candidate(17, 'accepted'), cacheState: 'ready' });
+        await expect(decision).resolves.toEqual({ ok: true, candidate: candidate(17, 'accepted'), cacheState: 'ready', identityRevision: 4 });
         await navigation;
         expect(controller.identityState).toBe('candidate');
         expect(controller.rows).toEqual([candidate(100)]);
@@ -393,7 +393,7 @@ it.each([
     if (request.method === 'POST') {
       writes.push({ path: new URL(request.url).pathname, body: await request.json(), keepalive: request.keepalive });
       decided = true;
-      return Response.json({ candidate: accepted, cache_state: cacheState });
+      return Response.json({ candidate: accepted, cache_state: cacheState, identity_revision: 4 });
     }
     const path = new URL(request.url).pathname;
     if (path.includes('/participants/')) return Response.json({ id: Number(path.split('/').at(-1)), display_label: decided ? 'Updated Example' : 'Original Example', activity_count: decided ? 9 : 3, identifiers: [{ participant_id: Number(path.split('/').at(-1)), type: 'email', is_primary: true, value: decided ? 'updated@example.com' : 'original@example.com' }] });
@@ -411,7 +411,7 @@ it.each([
       expect(controller.isDecisionPending(1)).toBe(true);
       refresh.resolve(page([candidate(2)]));
     }
-    await expect(completion).resolves.toEqual({ ok: true, candidate: accepted, cacheState });
+    await expect(completion).resolves.toEqual({ ok: true, candidate: accepted, cacheState, identityRevision: 4 });
     await vi.waitFor(() => expect(settled).toHaveBeenCalledOnce());
     expect(controller.isDecisionPending(1)).toBe(false);
     expect(writes).toEqual([{ path: `/api/v1/identity/match-candidates/1/review/${decision}`, body: { review_token: 'token-1-candidate', notes: 'Different people' }, keepalive: true }]);
