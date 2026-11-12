@@ -371,7 +371,6 @@ jobs:
 
       - name: Set API contract base
         if: ${{ matrix.name == 'api' }}
-        shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
         run: |
@@ -418,12 +417,10 @@ jobs:
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.48.4
 
       - name: Set API contract base
-        shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
         run: |
-          if [ "$EVENT_NAME" = workflow_dispatch ] && [ "$REF" != refs/heads/main ]; then
+          if [ "$REF" != refs/heads/main ]; then
             kit-retry 3 5 git fetch --no-tags --depth=1 origin main
             BASE_SHA=$(git rev-parse FETCH_HEAD)
           else
@@ -1266,7 +1263,6 @@ jobs:
 
       - name: Set API contract base
         if: ${{ matrix.name == 'api' }}
-        shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
         run: |
