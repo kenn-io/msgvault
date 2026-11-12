@@ -84,9 +84,20 @@ func TestPersonDiscoveryMCPReportsCorpusAndExplicitAvailabilityErrors(t *testing
 
 func TestPersonDiscoveryMCPRejectsInvalidSearch(t *testing.T) {
 	assert := assert.New(t)
-	for _, args := range []map[string]any{{"query": "equipment", "organization_id": -1}, {"query": "equipment", "limit": 101}, {"query": "equipment", "organization_id": 1.5}, {"query": " "}} {
-		failed := rawCallTool(t, discoveryToolOptions(&discoveryPeopleBackend{}), "search_semantic_people", args)
+	for _, tc := range []struct {
+		args map[string]any
+		want string
+	}{
+		{map[string]any{"query": "equipment", "organization_id": -1}, "minimum"},
+		{map[string]any{"query": "equipment", "limit": 101}, "maximum"},
+		{map[string]any{"query": "equipment", "organization_id": 1.5}, "integer"},
+		{map[string]any{"query": " "}, "query must contain non-whitespace text"},
+	} {
+		backend := &discoveryPeopleBackend{}
+		failed := rawCallTool(t, discoveryToolOptions(backend), "search_semantic_people", tc.args)
 		assert.Equal(true, failed["isError"])
+		assert.Contains(toolErrorTextFromResult(t, failed), tc.want)
+		assert.Equal(peoplebrowser.SemanticPeopleRequest{}, backend.request)
 	}
 }
 

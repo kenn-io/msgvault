@@ -38,8 +38,9 @@ func TestPersonSearchCommandUsesGeneratedRouteWithoutOpeningLocalStore(t *testin
 		assertions.Equal("application/json", r.Header.Get("Content-Type"))
 		assertions.Equal("synthetic-daemon-key", r.Header.Get("X-Api-Key"))
 		var body struct {
-			Query string `json:"query"`
-			Limit int64  `json:"limit"`
+			Query          string `json:"query"`
+			Limit          int64  `json:"limit"`
+			OrganizationID int64  `json:"organization_id"`
 		}
 		if !assertions.NoError(json.NewDecoder(r.Body).Decode(&body)) {
 			w.WriteHeader(http.StatusBadRequest)
@@ -47,6 +48,7 @@ func TestPersonSearchCommandUsesGeneratedRouteWithoutOpeningLocalStore(t *testin
 		}
 		assertions.Equal("synthetic systems architect", body.Query)
 		assertions.Equal(int64(2), body.Limit)
+		assertions.Equal(int64(13), body.OrganizationID)
 		writePersonSearchCommandResponse(t, w)
 	}))
 	t.Cleanup(server.Close)
@@ -61,7 +63,7 @@ func TestPersonSearchCommandUsesGeneratedRouteWithoutOpeningLocalStore(t *testin
 		},
 	})
 	command, stdout, stderr := newPersonSearchTestCommand(testCtx, t)
-	command.SetArgs([]string{"--limit", "2", "synthetic", "systems", "architect"})
+	command.SetArgs([]string{"--limit", "2", "--organization-id", "13", "synthetic", "systems", "architect"})
 	requirements.NoError(command.Execute())
 
 	assertions.Equal(int32(1), requests.Load())

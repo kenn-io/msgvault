@@ -433,7 +433,13 @@ func TestDirectoryOrganizationScopeIntersectsAndBindsCursor(t *testing.T) {
 	check.Equal(members[0].ID, first.People[0].ID)
 	check.Equal(members[0].VCardUID, first.People[0].VCardUID)
 	must.NotEmpty(first.NextCursor)
-	query.Cursor, query.OrganizationID = first.NextCursor, other.ID
+	query.Cursor = first.NextCursor
+	second, err := st.DirectoryPeoplePageContext(ctx, query)
+	must.NoError(err)
+	must.Len(second.People, 1)
+	check.Equal(members[1].ID, second.People[0].ID)
+	must.NotEmpty(second.NextCursor)
+	query.Cursor, query.OrganizationID = second.NextCursor, other.ID
 	_, err = st.DirectoryPeoplePageContext(ctx, query)
 	must.ErrorIs(err, store.ErrInvalidDirectoryCursor)
 	query.Cursor, query.OrganizationID, query.Organization = "", org.ID, "Other Company"

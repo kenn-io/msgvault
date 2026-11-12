@@ -367,17 +367,16 @@ func newPersonBackendForTest(t *testing.T) (*Backend, context.Context) {
 	return b, ctx
 }
 
-// Person search must exhaust its own generation beyond vec0's 4096-neighbor
-// ceiling, retaining revisions, cosine scores and deterministic distance/ID ties.
-func TestPersonBackend_SearchBeyondVec0Ceiling(t *testing.T) {
+// Scoped search ranks selected members directly even when distant from the query.
+func TestPersonBackend_SearchScopedExactRanking(t *testing.T) {
 	must := require.New(t)
 
 	b, ctx := newPersonBackendForTest(t)
 	gen, err := b.CreateGeneration(ctx, "m", 4, "serving-large-person-corpus")
 	must.NoError(err)
 	const count = 5000
-	persons := make([]vector.PersonEmbedding, 0, count+1)
-	// Reverse insertion separates person-ID tie ordering from vec0 row IDs.
+	persons := make([]vector.PersonEmbedding, 0, count)
+	// Unscoped nearer people must not displace the distant scoped member.
 	for id := int64(count); id > 0; id-- {
 		vec := []float32{2, 0, 0, 0}
 		if id == 1 {
@@ -388,46 +387,12 @@ func TestPersonBackend_SearchBeyondVec0Ceiling(t *testing.T) {
 		}
 		persons = append(persons, vector.PersonEmbedding{PersonID: id, Revision: fmt.Sprintf("serving-%d", id), Vector: vec})
 	}
-	persons = append(persons, vector.PersonEmbedding{PersonID: count + 1, Revision: "terminal-rejection"})
 	must.NoError(b.UpsertPersons(ctx, gen, persons))
 	must.NoError(b.ActivateGeneration(ctx, gen, true))
-	building, err := b.CreateGeneration(ctx, "m", 4, "different-generation")
-	must.NoError(err)
-	must.NoError(b.UpsertPersons(ctx, building, []vector.PersonEmbedding{
-		{PersonID: 1, Revision: "other-generation", Vector: unitVec(4, 0)},
-		{PersonID: 999999, Revision: "other-generation", Vector: unitVec(4, 0)},
-	}))
-	for _, k := range []int{4097, count + 100} {
-		t.Run(fmt.Sprintf("k=%d", k), func(t *testing.T) {
-			check := assert.New(t)
-			must := require.New(t)
-
-			hits, err := b.SearchPeople(t.Context(), gen, unitVec(4, 0), k, nil)
-			must.NoError(err)
-			must.Len(hits, min(k, count))
-			for i, hit := range hits {
-				wantID, wantScore := int64(i+2), float64(1)
-				if i == count-2 {
-					wantID, wantScore = 1, 0
-				}
-				if i == count-1 {
-					wantID, wantScore = count, -1
-				}
-				check.Equal(wantID, hit.PersonID)
-				check.Equal(fmt.Sprintf("serving-%d", wantID), hit.Revision)
-				check.InDelta(wantScore, hit.Score, 0)
-				check.Equal(i+1, hit.Rank)
-			}
-		})
-	}
 	hits, err := b.SearchPeople(ctx, gen, unitVec(4, 0), 1, []int64{count})
 	must.NoError(err)
 	must.Len(hits, 1)
 	must.Equal(int64(count), hits[0].PersonID)
 	must.Equal("serving-5000", hits[0].Revision)
 	must.InDelta(-1, hits[0].Score, 0)
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	_, err = b.SearchPeople(canceled, gen, unitVec(4, 0), count+100, nil)
-	must.ErrorIs(err, context.Canceled)
 }

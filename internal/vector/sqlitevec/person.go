@@ -17,9 +17,6 @@ import (
 
 var _ vector.PersonBackend = (*Backend)(nil)
 
-// vec0 rejects KNN requests above this limit; larger searches rank exactly.
-const personVec0KNNLimit = 4096
-
 const personEmbeddingsSchema = `
 CREATE TABLE IF NOT EXISTS person_embeddings (
 	embedding_id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -334,18 +331,14 @@ func (b *Backend) SearchPeople(ctx context.Context, gen vector.GenerationID, que
 	searchLimit := min(k, count)
 	queryBlob := float32SliceBlob(queryVec)
 	args := []any{int64(gen), queryBlob, searchLimit}
-	if personIDs != nil || searchLimit > personVec0KNNLimit {
-		// Rank scoped members and searches beyond vec0's ceiling directly.
-		scope := ""
-		args = []any{queryBlob, int64(gen), int64(gen)}
-		if personIDs != nil {
-			encoded, err := json.Marshal(personIDs)
-			if err != nil {
-				return nil, fmt.Errorf("encode person ids: %w", err)
-			}
-			scope = "AND p.person_id IN (SELECT value FROM json_each(?))"
-			args = append(args, string(encoded))
+	if personIDs != nil {
+		// Rank scoped members directly.
+		encoded, err := json.Marshal(personIDs)
+		if err != nil {
+			return nil, fmt.Errorf("encode person ids: %w", err)
 		}
+		scope := "AND p.person_id IN (SELECT value FROM json_each(?))"
+		args = []any{queryBlob, int64(gen), int64(gen), string(encoded)}
 		q = fmt.Sprintf(`
 			SELECT p.person_id, p.published_revision,
 			       vec_distance_cosine(v.embedding, ?) AS distance

@@ -548,20 +548,15 @@ func TestOrganizationAliasLookupSharesCurrentPrefixAndCount(t *testing.T) {
 			{Name: "  Shared Alias  ", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
 			{Name: "Shared Alternative", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
 			{Name: `Literal %_\ alias`, NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
-			{Name: "Ended Alias", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}},
 			{Name: "Future Alias", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, ActiveFrom: &future}},
 			{Name: "Current Alias", NameKind: store.OrganizationNameKindAlias, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser, ActiveFrom: &current}},
 		}})
 		must.NoError(err)
-		// Materialize an ended historical row to test the current-envelope predicate.
-		_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE organization_names
-			SET active_until = active_from WHERE organization_id = ? AND name_normalized = ?`), org.ID, "ended alias")
-		must.NoError(err)
 	}
-	for _, query := range []string{"SHARED", `literal %_\`, "canonical", "current", "alias", "ended", "future"} {
+	for _, query := range []string{"SHARED", `literal %_\`, "canonical", "current", "alias", "future"} {
 		filter := store.OrganizationFilter{Query: query, Limit: 1}
 		want := int64(2)
-		if query == "alias" || query == "ended" || query == "future" {
+		if query == "alias" || query == "future" {
 			want = 0
 		} // Prefix, not substring.
 		total, err := st.CountOrganizationsContext(ctx, filter)

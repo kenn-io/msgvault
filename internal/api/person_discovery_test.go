@@ -26,9 +26,12 @@ func TestPersonDiscoveryHTTPDirectoryForwardsOrganizationID(t *testing.T) {
 	createDirectoryHTTPPerson(t, st, "Alex Example", "outsider@example.test", "colleague", "Other Cooperative", true)
 	organization, err := st.CreateOrganizationContext(t.Context(), store.OrganizationInput{Name: "Example Cooperative", Kind: store.OrganizationKindCompany})
 	require.NoError(err)
+	member := createDirectoryHTTPPerson(t, st, "Member Example", "member@example.test", "colleague", "Independent Cooperative", true)
+	_, err = st.AddEmploymentContext(t.Context(), store.EmploymentInput{PersonID: member.ID, OrganizationID: organization.ID, Source: store.ProvenanceUser})
+	require.NoError(err)
 	response := personRequest(t, srv, http.MethodGet, fmt.Sprintf("%s/directory?organization_id=%d", peoplePath, organization.ID), nil, "")
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
-	assertDirectoryPeopleResponseIDs(t, response, []int64{}...)
+	assertDirectoryPeopleResponseIDs(t, response, member.ID)
 	for _, scope := range []string{"-1", "bad"} {
 		invalid := personRequest(t, srv, http.MethodGet, peoplePath+"/directory?organization_id="+scope, nil, "")
 		assert.Equal(http.StatusBadRequest, invalid.Code)
