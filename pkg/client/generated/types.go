@@ -6849,7 +6849,7 @@ func (i IntroductionBlocker) Validate() error {
 type IntroductionMember struct {
 	ParticipantID int64  `json:"participant_id"`
 	PersonID      int64  `json:"person_id"`
-	UserID        string `json:"user_id" validate:"required"`
+	UserID        string `json:"user_id" validate:"omitempty"`
 }
 
 func (i IntroductionMember) Validate() error {
@@ -6859,7 +6859,7 @@ func (i IntroductionMember) Validate() error {
 type IntroductionPage struct {
 	HasMore     bool                 `json:"has_more"`
 	Items       []IntroductionRecord `json:"items" validate:"required"`
-	NextAfterID string               `json:"next_after_id" validate:"required"`
+	NextAfterID string               `json:"next_after_id" validate:"omitempty"`
 }
 
 func (i IntroductionPage) Validate() error {
@@ -6885,7 +6885,7 @@ func (i IntroductionPage) Validate() error {
 
 type IntroductionRecord struct {
 	Blockers    []IntroductionBlocker    `json:"blockers" validate:"required"`
-	Body        string                   `json:"body" validate:"required"`
+	Body        string                   `json:"body" validate:"omitempty"`
 	CancelledAt *time.Time               `json:"cancelled_at" validate:"required"`
 	CreatedAt   time.Time                `json:"created_at" validate:"required"`
 	CreatedBy   string                   `json:"created_by" validate:"required"`
@@ -6896,7 +6896,7 @@ type IntroductionRecord struct {
 	Revision    int64                    `json:"revision"`
 	SourceID    int64                    `json:"source_id"`
 	Status      IntroductionRecordStatus `json:"status" validate:"required"`
-	Title       string                   `json:"title" validate:"required"`
+	Title       string                   `json:"title" validate:"omitempty"`
 	UpdatedAt   time.Time                `json:"updated_at" validate:"required"`
 }
 
