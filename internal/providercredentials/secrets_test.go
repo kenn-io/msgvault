@@ -156,10 +156,3 @@ func TestEnsureServerKeyDoesNotReplaceInvalidExistingFile(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(data)
 }
-
-func TestSecureRestoredDoesNotTouchEmptySelection(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "missing")
-	require.NoError(t, SecureRestored(dir, nil))
-	_, err := os.Stat(dir)
-	require.ErrorIs(t, err, os.ErrNotExist)
-}

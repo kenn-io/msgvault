@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,11 @@ func TestBackupRestoreOmittedTokensRemainReadable(t *testing.T) {
 	require.NoError(err)
 	_, err = providercredentials.Put(cfg.TokensDir(), empty.ETag, providercredentials.VectorEmbeddingsID, endpoint, providerKey)
 	require.NoError(err)
+	require.NoError(os.Remove(filepath.Join(cfg.TokensDir(), ".provider-credentials.lock")))
+
+	nested := filepath.Join(cfg.TokensDir(), "carddav-connections", "example", "carddav.json")
+	require.NoError(os.MkdirAll(filepath.Dir(nested), 0o700))
+	require.NoError(os.WriteFile(nested, []byte("synthetic-carddav"), 0o600))
 
 	oldInclude, oldConfig, oldPlain := backupCreateIncludeTokens, backupCreateIncludeConfig, backupCreateAllowPlaintextSecrets
 	backupCreateIncludeTokens, backupCreateIncludeConfig, backupCreateAllowPlaintextSecrets = true, false, true
@@ -70,10 +76,28 @@ func TestBackupRestoreOmittedTokensRemainReadable(t *testing.T) {
 		rootCmd.SetArgs(nil)
 		slog.SetDefault(oldLogger)
 	})
+	fresh := filepath.Join(t.TempDir(), "fresh")
+	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
+	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(io.Discard)
+	rootCmd.SetArgs([]string{"--home", cfg.HomeDir, "--no-log-file", "backup", "restore", "--repo", repo.Root(), "--target", fresh, "--jobs", "1"})
+	require.NoError(executeRootContext(t.Context(), rootCmd))
+	freshTokens := filepath.Join(fresh, "tokens")
+	_, err = providercredentials.Read(freshTokens)
+	require.NoError(err)
+	freshNested, err := os.ReadFile(filepath.Join(freshTokens, "carddav-connections", "example", "carddav.json"))
+	require.NoError(err)
+	assert.Equal("synthetic-carddav", string(freshNested))
+
 	target := filepath.Join(t.TempDir(), "restored")
 	tokens := filepath.Join(target, "tokens")
 	omittedKey, err := providercredentials.EnsureServerKey(tokens)
 	require.NoError(err)
+	lockPath := filepath.Join(tokens, ".provider-credentials.lock")
+	if runtime.GOOS != "windows" {
+		require.NoError(os.Chmod(lockPath, 0o644))
+	}
 	backupRestoreOverwrite, backupRestoreForceUnlock = false, false
 	backupRestoreLooseAttachments, backupRestoreIntegrityCheck = false, false
 	rootCmd.SetOut(io.Discard)
@@ -89,4 +113,12 @@ func TestBackupRestoreOmittedTokensRemainReadable(t *testing.T) {
 	key, err := providercredentials.ReadSecretFile(filepath.Join(tokens, providercredentials.ServerKeyFilename))
 	require.NoError(err, "omitted server key remains readable")
 	assert.Equal(omittedKey, key)
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(lockPath)
+		require.NoError(err)
+		assert.Equal(os.FileMode(0o644), info.Mode().Perm())
+	}
+	nestedData, err := os.ReadFile(filepath.Join(tokens, "carddav-connections", "example", "carddav.json"))
+	require.NoError(err)
+	assert.Equal("synthetic-carddav", string(nestedData))
 }

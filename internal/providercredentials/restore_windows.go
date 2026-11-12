@@ -3,42 +3,81 @@
 package providercredentials
 
 import (
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
 
 	"golang.org/x/sys/windows"
 )
 
-func restorePreflight(dir string, selected map[string]struct{}) error {
-	if err := (nativePermissions{}).prepareDirectory(dir); err != nil {
-		return fmt.Errorf("inspect restored token directory: %w", err)
+// ErrRestorePermissionsConflict means an omitted entry cannot safely retain its access.
+var ErrRestorePermissionsConflict = errors.New("restored token permissions conflict with an omitted entry")
+
+// SecureRestored protects snapshot-selected token files while preserving omitted entries.
+func SecureRestored(dir string, restored []string) error {
+	if len(restored) == 0 {
+		return nil
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("inspect restored token directory: %w", err)
+	selected := make(map[string]struct{}, len(restored))
+	ancestors := make(map[string]struct{})
+	for _, name := range restored {
+		selected[name] = struct{}{}
+		for parent := filepath.Dir(name); parent != "."; parent = filepath.Dir(parent) {
+			ancestors[parent] = struct{}{}
+		}
 	}
-	for _, entry := range entries {
-		if _, ok := selected[entry.Name()]; ok {
-			continue
+	return withDirectoryMutex(dir, func(directory windows.Handle) error {
+		if err := verifyHandleOwner(directory); err != nil {
+			return fmt.Errorf("inspect restored token directory: %w", err)
 		}
-		if entry.IsDir() {
-			return fmt.Errorf("%w: ambiguous nested tokens/%s", ErrRestorePermissionsConflict, entry.Name())
+		if err := restorePreflight(dir, selected, ancestors); err != nil {
+			return err
 		}
-		h, err := openSecurityHandle(filepath.Join(dir, entry.Name()), entry.IsDir(), windows.READ_CONTROL)
+		for _, name := range restored {
+			if err := secureRestoredFile(filepath.Join(dir, name)); err != nil {
+				return fmt.Errorf("secure restored token %q: %w", name, err)
+			}
+		}
+		return secureOwnerOnlyHandle(directory)
+	})
+}
+
+func restorePreflight(dir string, selected, ancestors map[string]struct{}) error {
+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("%w: inspect tokens: %w", ErrRestorePermissionsConflict, walkErr)
+		}
+		if path == dir {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
 		if err != nil {
-			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, entry.Name(), err)
+			return fmt.Errorf("%w: inspect tokens: %w", ErrRestorePermissionsConflict, err)
 		}
-		affected, checkErr := inheritedAccess(h)
-		_ = windows.CloseHandle(h)
-		if checkErr != nil {
-			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, entry.Name(), checkErr)
+		if entry.Type()&fs.ModeSymlink != 0 || (!entry.IsDir() && !entry.Type().IsRegular()) {
+			return fmt.Errorf("%w: ambiguous tokens/%s", ErrRestorePermissionsConflict, rel)
+		}
+		h, err := openSecurityHandle(path, entry.IsDir(), windows.READ_CONTROL)
+		if err != nil {
+			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
+		}
+		defer windows.CloseHandle(h) //nolint:errcheck // inspection result is authoritative
+		if _, ok := selected[rel]; ok && !entry.IsDir() {
+			return nil
+		}
+		if _, ok := ancestors[rel]; ok && entry.IsDir() {
+			return nil
+		}
+		affected, err := inheritedAccess(h)
+		if err != nil {
+			return fmt.Errorf("%w: tokens/%s: %w", ErrRestorePermissionsConflict, rel, err)
 		}
 		if affected {
-			return fmt.Errorf("%w: tokens/%s", ErrRestorePermissionsConflict, entry.Name())
+			return fmt.Errorf("%w: tokens/%s", ErrRestorePermissionsConflict, rel)
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func inheritedAccess(h windows.Handle) (bool, error) {
