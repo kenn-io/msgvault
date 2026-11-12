@@ -10,13 +10,22 @@
     /** The original error, folded under Details inside the notice. */
     details?: string;
     actionLabel?: string;
+    actionDisabled?: boolean;
     onaction?: () => void;
   }
 
-  let { tone = 'error', message, children = undefined, details = undefined, actionLabel = undefined, onaction = undefined }: Props = $props();
+  let { tone = 'error', message, children = undefined, details = undefined, actionLabel = undefined, actionDisabled = false, onaction = undefined }: Props = $props();
+  let notice: HTMLDivElement;
+  $effect(() => {
+    // Notice creates its action only when both props are present.
+    void actionLabel;
+    void onaction;
+    const button = notice.querySelector<HTMLButtonElement>('.kit-notice > button');
+    if (button) button.disabled = actionDisabled;
+  });
 </script>
 
-<div class="inline-notice">
+<div class="inline-notice" bind:this={notice}>
   <Notice {tone} {actionLabel} {onaction}>
     <p>{message}</p>
     {@render children?.()}
