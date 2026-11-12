@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +12,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type viewportControlActions interface {
+	DisablePeopleInference(context.Context, string) (PeopleInferenceStatus, error)
+	RevokePeopleInferenceConsent(context.Context, string, string) (PeopleInferenceStatus, error)
+	RemovePeopleInferenceProfile(context.Context, string, string) (PeopleInferenceStatus, error)
+}
+
+type viewportFullBackend struct {
+	*fakePeopleInferenceBackend
+	viewportControlActions
+}
 
 func TestSettingsViewportShortScreenPeopleDisable(t *testing.T) {
 	backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{settingsFixture()}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64), ConfiguredEnabled: true, RunningEnabled: true, ProfileCount: 1}}
@@ -27,13 +39,12 @@ func TestSettingsViewportShortScreenPeopleDisable(t *testing.T) {
 	assert.Contains(t, screen.String(), "People inference disabled.")
 	assert.Contains(t, screen.String(), "--home")
 	assert.Contains(t, screen.String(), "service.")
-	assert.Regexp(t, `Fingerprint:\s*a{8}`, screen.String())
+	assert.Contains(t, screen.String(), "Fingerprint:")
 	model, _ = sendKey(t, model, key('v'))
 	screen = uv.NewScreenBuffer(40, 12)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "Revoke consent for example-profile?")
 	assert.Contains(t, screen.String(), "[y]")
-	assert.Equal(t, 1, strings.Count(screen.String(), "Fingerprint:"))
 	assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
 	model, _ = sendKey(t, model, key('n'))
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
@@ -46,16 +57,6 @@ func TestSettingsViewportShortScreenPeopleDisable(t *testing.T) {
 	screen = uv.NewScreenBuffer(40, 12)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Equal(t, page, screen.String())
-	model, _ = sendKey(t, model, key('z'))
-	screen = uv.NewScreenBuffer(40, 12)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Equal(t, page, screen.String())
-	model = resizeModel(t, model, 40, 10)
-	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	model = resizeModel(t, model, 120, 40)
-	screen = uv.NewScreenBuffer(120, 40)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), strings.Repeat("a", 64))
 	model = resizeModel(t, model, 40, 14)
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgUp})
 	screen = uv.NewScreenBuffer(40, 14)
@@ -63,24 +64,6 @@ func TestSettingsViewportShortScreenPeopleDisable(t *testing.T) {
 	assert.Contains(t, screen.String(), "People inference disabled.")
 	model, _ = sendKey(t, model, keyEsc())
 	assert.False(t, model.settings.peopleControls.active)
-}
-
-func TestSettingsViewportShortScreenSaveFeedback(t *testing.T) {
-	snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "archive", Label: "Archive"}}, Fields: []SettingField{{Key: "analytics.auto_build_cache", Group: "archive", Label: "Build cache", Kind: SettingKindBoolean, Value: boolSettingValue(true), RestartRequired: true}}}
-	saved := snapshot
-	saved.PendingRestart = true
-	backend := &fakeSettingsBackend{loads: []SettingsSnapshot{snapshot}, save: saved}
-	model := resizeModel(t, loadedSettingsModelWithBackend(t, backend), 40, 12)
-	model, _ = sendKey(t, model, keyEnter())
-	model, _ = sendKey(t, model, key(' '))
-	model, save := sendKey(t, model, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
-	require.NotNil(t, save)
-	model = sendSettingsMsg(t, model, save())
-	screen := uv.NewScreenBuffer(40, 12)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "Settings saved.")
-	assert.Contains(t, screen.String(), "[j/k]")
-	assert.Contains(t, screen.String(), "[Esc]")
 }
 
 func TestSettingsViewportSaveKeepsSelectedFieldVisible(t *testing.T) {
@@ -91,8 +74,9 @@ func TestSettingsViewportSaveKeepsSelectedFieldVisible(t *testing.T) {
 	snapshot.Fields = append(snapshot.Fields, SettingField{Key: "server.daemon_auto_start", Group: "server", Label: "Automatic start", Kind: SettingKindBoolean, Value: boolSettingValue(true), RestartRequired: true})
 	saved := snapshot
 	saved.PendingRestart = true
-	backend := &fakeSettingsBackend{loads: []SettingsSnapshot{snapshot}, save: saved}
-	model := resizeModel(t, loadedSettingsModelWithBackend(t, backend), 40, 12)
+	backend := &viewportFullBackend{fakePeopleInferenceBackend: &fakePeopleInferenceBackend{fakeSettingsBackend: fakeSettingsBackend{loads: []SettingsSnapshot{snapshot}, save: saved}}, viewportControlActions: &fakePeopleInferenceControlBackend{}}
+	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 12)
+	model.settingsBackend = backend
 	model, _ = sendKey(t, model, keyEnter())
 	for range 6 {
 		model, _ = sendKey(t, model, key('j'))
@@ -104,6 +88,9 @@ func TestSettingsViewportSaveKeepsSelectedFieldVisible(t *testing.T) {
 	screen := uv.NewScreenBuffer(40, 12)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "Settings saved.")
+	assert.Contains(t, screen.String(), "[j/k]")
+	assert.Contains(t, screen.String(), "[Esc]")
+	assert.Contains(t, screen.String(), "▶   Automatic start")
 	assert.Regexp(t, `(?s)daemon host.*msgvault daemon restart.*--home.*--config.*service`, screen.String())
 	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())

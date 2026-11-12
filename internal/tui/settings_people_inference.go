@@ -630,8 +630,5 @@ func (m Model) codexSettingsParts() (string, string, string) {
 	if actions != "" {
 		actions += "\n"
 	}
-	if s.stage == "waiting" {
-		return m.styles.titleBar.Render("People inference · Codex"), strings.Join(lines, "\n"), actions + "[Esc] Cancel and return"
-	}
 	return m.styles.titleBar.Render("People inference · Codex"), strings.Join(lines, "\n"), actions + "[r] Refresh  [Esc] Cancel and return"
 }

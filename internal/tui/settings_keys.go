@@ -32,7 +32,7 @@ func (m Model) handleSettingsKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		return updated, cmd
 	}
 	before, after := m.settings, next.settings
-	if before.peopleControls.active != after.peopleControls.active || before.codex.active != after.codex.active || before.peopleControls.confirm != after.peopleControls.confirm || before.peopleControls.exitBlocked != after.peopleControls.exitBlocked || before.peopleControls.pending != after.peopleControls.pending || before.codex.stage != after.codex.stage || codexSelectionChanged(before, after) || before.editing != after.editing || before.groupCursor != after.groupCursor || before.rowCursor != after.rowCursor || before.narrowFields != after.narrowFields || before.status != after.status || before.codex.message != after.codex.message || before.peopleControls.message != after.peopleControls.message {
+	if before.peopleControls.active != after.peopleControls.active || before.codex.active != after.codex.active || before.peopleControls.confirm != after.peopleControls.confirm || before.peopleControls.exitBlocked != after.peopleControls.exitBlocked || before.codex.stage != after.codex.stage || codexSelectionChanged(before, after) || before.editing != after.editing || before.groupCursor != after.groupCursor || before.rowCursor != after.rowCursor || before.narrowFields != after.narrowFields || before.status != after.status || before.codex.message != after.codex.message || before.peopleControls.message != after.peopleControls.message {
 		next.settings.scrollOffset = 0
 		if before.peopleControls.confirm != after.peopleControls.confirm && after.peopleControls.confirm != "" {
 			next.settings.scrollOffset = settingsScrollBottom

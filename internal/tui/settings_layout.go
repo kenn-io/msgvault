@@ -12,13 +12,10 @@ const settingsScrollBottom = -1
 // settingsViewport keeps the actions outside the scrollable settings content.
 func (m Model) settingsViewport(body, actions string) (viewport.Model, string) {
 	width := max(m.width, 20)
-	if m.settingsIsNarrow() {
-		actions = strings.ReplaceAll(actions, "] ", "]\u00a0")
-	}
 	footer := wrapText(actions, width)
 	v := viewport.New(viewport.WithWidth(width), viewport.WithHeight(max(m.height-len(footer)-1, 1)))
 	v.SoftWrap = true
-	wrapped := strings.ReplaceAll(ansi.Wrap(body, width, ""), "\u00a0", " ")
+	wrapped := ansi.Wrap(body, width, "")
 	v.SetContent(wrapped)
 	if v.TotalLineCount() > v.Height() {
 		footer = append(footer, "[PgUp/PgDn] Scroll")
@@ -53,6 +50,17 @@ func settingsCursorLine(wrapped string) int {
 		}
 	}
 	return line
+}
+
+// settingsListHeight keeps the notices, the selected row, and the footer on one
+// screen: the list gets the lines left once they and the scroll hint are placed.
+func (m Model) settingsListHeight(notices []string) int {
+	width := max(m.width, 20)
+	used := 2 + len(wrapText(m.settingsFooter(), width))
+	for _, notice := range notices {
+		used += strings.Count(ansi.Wrap(notice, width, ""), "\n") + 1
+	}
+	return min(max(m.height-4-len(notices), 4), max(m.height-used, 2))
 }
 
 func (m Model) settingsScreen() (string, string, string) {

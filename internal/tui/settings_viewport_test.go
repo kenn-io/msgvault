@@ -11,78 +11,67 @@ import (
 )
 
 func TestSettingsViewportEndpointDetail(t *testing.T) {
-	snapshot := SettingsSnapshot{Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
-	for range 6 {
-		snapshot.Fields = append(snapshot.Fields, SettingField{Key: "search.field", Group: "search", Label: "Other", Kind: SettingKindString, Value: stringSettingValue("auto")})
-	}
-	snapshot.Fields = append(snapshot.Fields, SettingField{Key: "vector.embeddings.endpoint", Group: "search", Label: "Embedding endpoint", Description: "Endpoint for the embedding service.", RestartRequired: true, Kind: SettingKindString, Value: stringSettingValue(""), Validation: SettingValidation{Hint: "HTTP or HTTPS URL without credentials, query, or fragment."}})
-	model := resizeModel(t, loadedSettingsModel(t, snapshot), 80, 12)
-	model, _ = sendKey(t, model, keyEnter())
-	for range 6 {
-		model, _ = sendKey(t, model, key('j'))
-	}
-	screen := uv.NewScreenBuffer(80, 12)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "HTTP or HTTPS URL without credentials")
-	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgUp})
-	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
-	screen = uv.NewScreenBuffer(80, 12)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "HTTP or HTTPS URL without credentials")
-	assert.Contains(t, screen.String(), "[Esc]")
-	model, _ = sendKey(t, model, key('k'))
-	screen = uv.NewScreenBuffer(80, 12)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "Key: search.field")
-}
-
-func TestSettingsViewportPendingSelectionKeepsDetail(t *testing.T) {
-	for _, width := range []int{80, 100} {
-		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
-			snapshot := SettingsSnapshot{PendingRestart: true, Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
-			for i := range 6 {
-				snapshot.Fields = append(snapshot.Fields, SettingField{Key: fmt.Sprintf("search.field%d", i), Group: "search", Label: "Other", Kind: SettingKindString, Value: stringSettingValue("auto")})
-			}
-			snapshot.Fields = append(snapshot.Fields, SettingField{Key: "vector.embeddings.endpoint", Group: "search", Label: "Embedding endpoint", Description: "Endpoint for the embedding service.", RestartRequired: true, Kind: SettingKindString, Value: stringSettingValue(""), Validation: SettingValidation{Hint: "HTTP or HTTPS URL without credentials, query, or fragment."}})
-			model := resizeModel(t, loadedSettingsModel(t, snapshot), width, 12)
-			if width < settingsWideWidth {
-				model, _ = sendKey(t, model, keyEnter())
-			}
-			for range 6 {
-				model, _ = sendKey(t, model, key('j'))
-			}
-			screen := uv.NewScreenBuffer(width, 12)
-			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-			assert.Contains(t, screen.String(), "HTTP or HTTPS URL without credentials")
-		})
+	for _, pending := range []bool{false, true} {
+		for _, width := range []int{80, 100} {
+			t.Run(fmt.Sprintf("pending_%t_width_%d", pending, width), func(t *testing.T) {
+				snapshot := SettingsSnapshot{PendingRestart: pending, Groups: []SettingsGroup{{ID: "search", Label: "Search"}}}
+				for range 6 {
+					snapshot.Fields = append(snapshot.Fields, SettingField{Key: "search.field", Group: "search", Label: "Other", Kind: SettingKindString, Value: stringSettingValue("auto")})
+				}
+				snapshot.Fields = append(snapshot.Fields, SettingField{Key: "vector.embeddings.endpoint", Group: "search", Label: "Embedding endpoint", Description: "Endpoint for the embedding service.", RestartRequired: true, Kind: SettingKindString, Value: stringSettingValue(""), Validation: SettingValidation{Hint: "HTTP or HTTPS URL without credentials, query, or fragment."}})
+				model := resizeModel(t, loadedSettingsModel(t, snapshot), width, 12)
+				if width < settingsWideWidth {
+					model, _ = sendKey(t, model, keyEnter())
+				}
+				for range 6 {
+					model, _ = sendKey(t, model, key('j'))
+				}
+				screen := uv.NewScreenBuffer(width, 12)
+				uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+				assert.Contains(t, screen.String(), "HTTP or HTTPS URL without credentials")
+				if !pending {
+					model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgUp})
+					model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+					uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+					assert.Contains(t, screen.String(), "HTTP or HTTPS URL without credentials")
+					assert.Contains(t, screen.String(), "[Esc]")
+					model, _ = sendKey(t, model, key('k'))
+					uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+					assert.Contains(t, screen.String(), "Key: search.field")
+				}
+			})
+		}
 	}
 }
 
 func TestSettingsViewportFingerprint(t *testing.T) {
-	backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{settingsFixture()}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64), PendingRestart: true}}
-	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 80, 24)
-	model.settingsBackend = backend
-	model, load := sendKey(t, model, key('i'))
-	model = sendSettingsMsg(t, model, load())
-	model, _ = sendKey(t, model, keyEsc())
-	screen := uv.NewScreenBuffer(80, 24)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
-}
-
-func TestSettingsViewportProfileWithoutRestartKeepsNavigation(t *testing.T) {
-	backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{settingsFixture()}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64)}}
-	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 12)
-	model.settingsBackend = backend
-	model, load := sendKey(t, model, key('i'))
-	model = sendSettingsMsg(t, model, load())
-	model, _ = sendKey(t, model, keyEsc())
-	model, _ = sendKey(t, model, keyEnter())
-	screen := uv.NewScreenBuffer(40, 12)
-	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
-	assert.Contains(t, screen.String(), "[j/k]")
-	assert.Contains(t, screen.String(), "[Esc]")
-	assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
+	for _, tc := range []struct {
+		name          string
+		width, height int
+		pending       bool
+	}{
+		{name: "pending", width: 80, height: 24, pending: true},
+		{name: "no_pending", width: 40, height: 12},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &fakePeopleInferenceControlBackend{loads: []SettingsSnapshot{settingsFixture()}, status: PeopleInferenceStatus{Configured: "example-profile", Running: "example-profile", ConfiguredFingerprint: strings.Repeat("a", 64), PendingRestart: tc.pending}}
+			model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), tc.width, tc.height)
+			model.settingsBackend = backend
+			model, load := sendKey(t, model, key('i'))
+			model = sendSettingsMsg(t, model, load())
+			model, _ = sendKey(t, model, keyEsc())
+			if !tc.pending {
+				model, _ = sendKey(t, model, keyEnter())
+			}
+			screen := uv.NewScreenBuffer(tc.width, tc.height)
+			uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+			assert.Contains(t, strings.Join(strings.Fields(screen.String()), ""), strings.Repeat("a", 64))
+			if !tc.pending {
+				assert.Contains(t, screen.String(), "[j/k]")
+				assert.Contains(t, screen.String(), "[Esc]")
+			}
+		})
+	}
 }
 
 func TestSettingsViewportSettingsRestartNotice(t *testing.T) {

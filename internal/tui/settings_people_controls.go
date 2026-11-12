@@ -217,14 +217,6 @@ func (m Model) handlePeopleInferenceControlMsg(msg tea.Msg) (tea.Model, tea.Cmd)
 	return m, nil
 }
 
-// shownFingerprint is the fingerprint under review while a confirmation is open.
-func (s peopleInferenceControlState) shownFingerprint() string {
-	if s.confirm != "" {
-		return s.confirmFingerprint
-	}
-	return s.status.ConfiguredFingerprint
-}
-
 func (m Model) peopleControlsParts() (string, string, string) {
 	s := m.settings.peopleControls
 	var lines []string
@@ -245,7 +237,7 @@ func (m Model) peopleControlsParts() (string, string, string) {
 		if configured == "" {
 			configured = "none"
 		}
-		lines = append(lines, "Configured: "+configured, "Fingerprint:\u00a0"+textutil.SanitizeTerminal(s.shownFingerprint()))
+		lines = append(lines, "Configured: "+configured, "Fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint))
 		if status.ConfiguredEnabled {
 			lines = append(lines, "People inference: enabled")
 		} else {
@@ -263,6 +255,7 @@ func (m Model) peopleControlsParts() (string, string, string) {
 		default:
 			lines = append(lines, "Revoke consent for "+textutil.SanitizeTerminal(s.confirmProfile)+"?")
 		}
+		lines = append(lines, "Fingerprint: "+textutil.SanitizeTerminal(s.confirmFingerprint))
 		actions = "[y] Confirm  [n/Esc] Cancel"
 	} else if s.pending {
 		actions = "Applying people inference change…"

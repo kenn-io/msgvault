@@ -45,13 +45,13 @@ func (m Model) mainSettingsParts() (string, string, string) {
 		}
 		lines = append(lines, "People inference: "+configured+" · Running: "+running)
 		if status.ConfiguredFingerprint != "" {
-			lines = append(lines, "Profile fingerprint:\u00a0"+textutil.SanitizeTerminal(status.ConfiguredFingerprint))
+			lines = append(lines, "Profile fingerprint: "+textutil.SanitizeTerminal(status.ConfiguredFingerprint))
 		}
 	}
 	if m.settings.loading {
 		return m.styles.titleBar.Render(title), strings.Join(append(lines, "Loading settings…"), "\n"), "[Esc] Back"
 	}
-	availableHeight := max(m.height-4, 4)
+	availableHeight := m.settingsListHeight(lines)
 	if m.settingsIsNarrow() {
 		if m.settings.narrowFields {
 			lines = append(lines, m.renderSettingsFields(max(m.width, 20), availableHeight))
@@ -121,7 +121,7 @@ func (m Model) renderSettingsFields(width, height int) string {
 		sb.WriteString("No settings in this category")
 		return sb.String()
 	}
-	maxRows := max(min(len(fields), height/2), 1)
+	maxRows := max(min(len(fields), height/2, height-1), 1)
 	start := 0
 	if m.settings.rowCursor >= maxRows {
 		start = m.settings.rowCursor - maxRows + 1
@@ -238,5 +238,5 @@ func (m Model) settingsFooter() string {
 		field.Kind == SettingKindSecret && !field.ReadOnly {
 		return "[j/k] Row  [h/l] Category  [Enter] Set secret  [x] Clear" + peopleEntry + "  [Ctrl+S] Save  [Esc] Back"
 	}
-	return "[j/k] Row  [h/l] Category  [Enter] Edit  [Space] Toggle" + peopleEntry + "  [Ctrl+S] Save  [Esc] Back"
+	return "[j/k] Row [h/l] Category [Enter] Edit [Space] Toggle" + peopleEntry + " [Ctrl+S] Save [Esc] Back"
 }

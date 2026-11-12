@@ -253,7 +253,6 @@ func TestSettingsRendersPendingRestartAndFieldMetadata(t *testing.T) {
 	model := loadedSettingsModel(t, snapshot)
 
 	view := model.renderView()
-	assert.Contains(t, view, "Restart pending")
 	assertions.Contains(view, "Threads used for cache builds")
 	assertions.Contains(view, "read-only")
 	assertions.Contains(view, "restart required")

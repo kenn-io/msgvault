@@ -372,9 +372,8 @@ Use the arrow keys to choose a category and field, `Enter` to edit, `Space` to
 toggle a boolean, and `Ctrl+S` to save. `Esc` asks before discarding unsaved
 changes. Fields marked restart-required remain pending until the daemon
 restarts. Settings shows the restart command for the daemon host, with guidance
-for custom options and services. Use `PgUp` and `PgDn` to scroll longer
-settings views. Named person-enrichment provider policies are read-only here; edit
-them in [Web Settings](/docs/web-ui/#settings-and-restart-behavior).
+for custom options and services. Named person-enrichment provider policies are
+read-only here; edit them in [Web Settings](/docs/web-ui/#settings-and-restart-behavior).
 
 ## Performance
 
