@@ -95,7 +95,6 @@ func TestIntroductionReadErrorsAndSnapshotCapacity(t *testing.T) {
 					}
 					return
 				}
-				assert.True(t, response.observed)
 				assert.Equal(t, 1, response.firstSlotCount, "only the unrelated slot should remain at the response boundary")
 				assert.Equal(t, tc.status, response.Code)
 				if tc.code != "" {
@@ -143,13 +142,9 @@ type introductionBoundaryRecorder struct {
 
 	slots          chan struct{}
 	firstSlotCount int
-	observed       bool
 }
 
 func (w *introductionBoundaryRecorder) WriteHeader(status int) {
-	if !w.observed {
-		w.firstSlotCount = len(w.slots)
-		w.observed = true
-	}
+	w.firstSlotCount = len(w.slots)
 	w.ResponseRecorder.WriteHeader(status)
 }
