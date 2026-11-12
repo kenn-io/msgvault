@@ -40,6 +40,7 @@ const (
 )
 
 type catalogCapabilities struct {
+	collections     bool
 	sqlQuery        bool
 	semanticSearch  bool
 	vectorInMessage bool
@@ -129,7 +130,9 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 }
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
+	_, collections := opts.Engine.(query.CollectionScopeLister)
 	return catalogCapabilities{
+		collections:     collections && opts.CollectionScopesAvailable,
 		sqlQuery:        opts.ArchiveSQLQuerier != nil,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
@@ -232,6 +235,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
 		aggregateDefinition(nil),
+		listMessageCollectionsDefinition(),
 		createSavedViewDefinition(nil),
 		deleteSavedViewDefinition(nil),
 		exportAttachmentDefinition(nil),
@@ -546,6 +550,7 @@ func searchMetadataDefinition(_ *handlers) toolDefinition {
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:   stringSchema(queryDesc),
 			toolArgAccount: accountProperty(),
+			"collection":   collectionProperty(),
 			toolArgLimit:   searchLimitProperty(),
 			toolArgOffset:  offsetProperty(),
 		}, toolArgQuery),
@@ -562,6 +567,7 @@ func searchMessagesDefinition(_ *handlers, vectorAvailable bool) toolDefinition 
 			"Search query; omit mode for metadata search or set mode=vector|hybrid for semantic search",
 		),
 		toolArgAccount: accountProperty(),
+		"collection":   collectionProperty(),
 		toolArgLimit:   searchLimitProperty(),
 		toolArgOffset:  offsetProperty(),
 	}
@@ -607,6 +613,7 @@ func searchMessageBodiesDefinition(_ *handlers) toolDefinition {
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgQuery:   stringSchema(queryDesc),
 			toolArgAccount: accountProperty(),
+			"collection":   collectionProperty(),
 			toolArgLimit:   searchLimitProperty(),
 			toolArgOffset:  offsetProperty(),
 		}, toolArgQuery),
@@ -827,6 +834,7 @@ func listMessagesDefinition(_ *handlers) toolDefinition {
 			"total=-1 because the full count is not computed; use has_more for paging.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgAccount:    accountProperty(),
+			"collection":      collectionProperty(),
 			toolArgFrom:       stringSchema("Filter by sender email address"),
 			"to":              stringSchema("Filter by recipient email address"),
 			"label":           stringSchema("Filter by Gmail label"),
@@ -860,6 +868,7 @@ func aggregateDefinition(_ *handlers) toolDefinition {
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgGroupBy: stringSchema("Dimension to group by. When 'time', buckets are by calendar year only (Key is a year string like \"2024\").", toolArgSender, "recipient", "domain", "label", toolArgList, "time"),
 			toolArgAccount: accountProperty(),
+			"collection":   collectionProperty(),
 			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 50)", 50),
 			toolArgAfter:   afterProperty(),
 			toolArgBefore:  beforeProperty(),

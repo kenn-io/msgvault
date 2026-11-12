@@ -35,6 +35,10 @@ instructions or authorization to make a change. See [write controls](#write-cont
 Saved View management changes only reusable definitions; deleting a Saved
 View never deletes archive messages.
 
+## Message collections
+
+On unreleased `main`, owner clients can call `list_message_collections` when the daemon advertises collection discovery. Pass a collection name to `search_metadata`, `search_messages` in metadata mode, `search_message_bodies`, `list_messages`, or `aggregate` to restrict that read to its current sources. Do not combine `collection` with `account`. An empty collection matches no messages. Body search requires at most one source; a collection with multiple sources is refused. Semantic and similar-message searches do not accept a collection scope.
+
 ## Calendar control
 
 Daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,

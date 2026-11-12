@@ -265,6 +265,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if discoveryErr != nil {
 		log.Warn("operational MCP tools disabled because daemon discovery failed", "error", discoveryErr)
 	} else {
+		opts.CollectionScopesAvailable = mcpCollectionScopesAvailable(capabilities)
 		backend := newDaemonMCPOperations(st, capabilities)
 		opts.Operations = backend
 		opts.OperationCapabilities = backend.capabilities()

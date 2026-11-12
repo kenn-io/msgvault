@@ -387,7 +387,7 @@ func TestCatalogSchemas(t *testing.T) {
 
 				byName := toolsByName(t, tools)
 
-				searchMessagesProperties := []string{"account", "limit", "offset", "query"}
+				searchMessagesProperties := []string{"account", "collection", "limit", "offset", "query"}
 				semanticProperties := []string{"query"}
 				if shape.semantic {
 					searchMessagesProperties = append(searchMessagesProperties, "explain", "min_score", "mode")

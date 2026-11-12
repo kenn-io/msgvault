@@ -731,6 +731,9 @@ func (h *handlers) searchMessages(ctx context.Context, req toolRequest) (*toolRe
 	case "":
 		return h.searchMetadata(ctx, req)
 	case searchModeVector, searchModeHybrid:
+		if stringArgument(req.GetArguments(), "collection") != "" {
+			return toolErrorResult("collection scope is unavailable for semantic search"), nil
+		}
 		return h.semanticSearchMessages(ctx, req)
 	default:
 		return toolErrorResult(
@@ -757,8 +760,7 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 	limit := searchLimitArg(args)
 	offset := intArg(args, toolArgOffset, 0)
 
-	account, _ := args[toolArgAccount].(string)
-	selection, err := h.resolveAccount(ctx, account)
+	selection, err := h.resolveReadSelection(ctx, stringArgument(args, toolArgAccount), stringArgument(args, "collection"))
 	if err != nil {
 		return dependencyError("resolve metadata-search account", err)
 	}
@@ -827,10 +829,12 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 	limit := searchLimitArg(args)
 	offset := intArg(args, toolArgOffset, 0)
 
-	account, _ := args[toolArgAccount].(string)
-	selection, err := h.resolveAccount(ctx, account)
+	selection, err := h.resolveReadSelection(ctx, stringArgument(args, toolArgAccount), stringArgument(args, "collection"))
 	if err != nil {
 		return dependencyError("resolve body-search account", err)
+	}
+	if err := selection.singleSourceCollection(); err != nil {
+		return dependencyError("resolve body-search collection", err)
 	}
 	if err := selection.applyToQuery(q); err != nil {
 		return toolErrorResult(err.Error()), nil
@@ -2020,8 +2024,7 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 	args := req.GetArguments()
 
 	// Look up account filter
-	account, _ := args[toolArgAccount].(string)
-	selection, err := h.resolveAccount(ctx, account)
+	selection, err := h.resolveReadSelection(ctx, stringArgument(args, toolArgAccount), stringArgument(args, "collection"))
 	if err != nil {
 		return dependencyError("resolve message-list account", err)
 	}
@@ -2130,14 +2133,14 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 	}
 
 	// Look up account filter
-	account, _ := args[toolArgAccount].(string)
-	selection, err := h.resolveAccount(ctx, account)
+	selection, err := h.resolveReadSelection(ctx, stringArgument(args, toolArgAccount), stringArgument(args, "collection"))
 	if err != nil {
 		return dependencyError("resolve aggregate account", err)
 	}
 
 	opts := query.AggregateOptions{
 		SourceID:      selection.sourceID,
+		SourceIDs:     selection.sourceIDs,
 		AccountScopes: selection.scopes(),
 		Limit:         limitArg(args, toolArgLimit, 50),
 	}
