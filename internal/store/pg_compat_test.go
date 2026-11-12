@@ -134,6 +134,23 @@ func TestPostgresFTSSaturatedPhrases(t *testing.T) {
 	if !f.Store.IsPostgreSQL() {
 		t.Skip("PostgreSQL indexing")
 	}
+	for _, tc := range []struct {
+		count      int
+		wantFields bool
+	}{
+		{255, false},
+		{256, true},
+		{257, true},
+	} {
+		id := f.NewMessage().WithSourceMessageID(fmt.Sprintf("repeat-boundary-%d", tc.count)).Create(t, f.Store)
+		require.NoError(f.Store.UpsertFTS(id, "", strings.Repeat("boundary ", tc.count)+"match", "", "", ""))
+		var hasFields bool
+		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT search_fts_fields IS NOT NULL FROM messages WHERE id = $1`, id).Scan(&hasFields))
+		assert.Equal(tc.wantFields, hasFields, "repetitions: %d", tc.count)
+		ids, _, err := f.Store.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"boundary@match"}}, 10)
+		require.NoError(err)
+		assert.Contains(ids, id, "repetitions: %d", tc.count)
+	}
 	{
 		var want []int64
 		for i := range 5 {

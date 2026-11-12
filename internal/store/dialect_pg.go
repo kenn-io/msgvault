@@ -462,7 +462,8 @@ func preparePostgresFTSDoc(doc FTSDoc) (FTSDoc, []string) {
 		for token := range strings.FieldsSeq(field) {
 			positions++
 			counts[token]++
-			if positions > 16000 || counts[token] > 200 {
+			// PostgreSQL retains at most 255 positions per lexeme.
+			if positions > 16000 || counts[token] > 255 {
 				saturated = true
 				break
 			}
