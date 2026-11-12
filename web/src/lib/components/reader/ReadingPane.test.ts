@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
 import type { EntryRow, ExploreFilter, ExplorePredicate } from '../../explore/models';
 import ReadingPane from './ReadingPane.svelte';
 
@@ -109,6 +110,32 @@ describe('ReadingPane identity matches', () => {
 });
 
 describe('ReadingPane group file drill-down', () => {
+  it.each(['participant', 'domain'] as const)('keeps %s files when meeting authority arrives', async dimension => {
+    let fileRequests = 0;
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/explore/files')) {
+        fileRequests += 1;
+        return Response.json({ files: [{ key: 'file-1', filename: 'report.pdf', size: 128, occurred_at: '2026-07-18T12:00:00Z', title: 'Report', source_identifier: 'example.test' }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
+      }
+      return Response.json(path.endsWith('/meetings/actions') ? meetingActions() : meetingMetrics());
+    });
+    const selection = { kind: 'group' as const, dimension, key: '42', label: 'Example' };
+    const view = render(ReadingPane, { client, predicate: {}, selection });
+    await screen.findByText('report.pdf');
+    await view.rerender({ client, predicate: {}, selection: { ...selection, meetingScope: { predicate: {}, cache_revision: 'cache-1', search_provenance: {} } } });
+    expect(fileRequests).toBe(1);
+    expect(screen.getByText('report.pdf')).toBeDefined();
+  });
+
+  it('retries unavailable meeting authority', async () => {
+    const onReloadMeetings = vi.fn();
+    render(ReadingPane, { client: createAPIClient(async () => Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} })), predicate: {}, onReloadMeetings,
+      selection: { kind: 'group', dimension: 'participant', key: '42', label: 'Example' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload meeting activity' }));
+    expect(onReloadMeetings).toHaveBeenCalledOnce();
+  });
+
   it('intersects a drilled-into participant group with an existing participant filter', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -134,4 +161,13 @@ describe('ReadingPane group file drill-down', () => {
       { dimension: 'participant', values: ['99'] }
     ]);
   });
+});
+
+it('leads group details with the overview and a friendly grouping label', () => {
+ render(ReadingPane, { client: createAPIClient(async () => Response.json({ files: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} })), predicate: {}, selection: {
+  kind: 'group', dimension: 'participant', key: '7', label: 'Person Example', count: 3, latestAt: '2024-05-31T12:00:00Z',
+  overview: { first_at: '2024-05-03T12:00:00Z', activity: [{ bucket: '2024-05', count: 3 }], co_participants: [] }
+ } });
+ expect(screen.getByText('Grouped by Person')).toBeDefined();
+ expect(screen.getByLabelText('Group details').firstElementChild).toBe(screen.getByRole('region', { name: 'Group overview' }));
 });

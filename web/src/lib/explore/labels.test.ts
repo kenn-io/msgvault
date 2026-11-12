@@ -1,3 +1,5 @@
+import Mic from '@lucide/svelte/icons/mic';
+import { groupRowName } from './labels';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -109,4 +111,53 @@ describe('entryKindPresentation', () => {
   it('prefers the server kind over the message type', () => {
     expect(entryKindPresentation('meeting', 'email').name).toBe('Meeting');
   });
+});
+
+it.each([
+ ['month', '2022-05', '2022-05', 'May 2022'],
+ ['message_type', 'meeting_transcript', 'meeting_transcript', 'Meeting transcript'],
+ ['kind', 'meeting', 'meeting', 'Meeting']
+] as const)('formats %s group names', (dimension, key, label, name) => {
+ expect(groupRowName(dimension, key, label).name).toBe(name);
+});
+
+it('uses the meeting icon for a Granola source group', () => {
+  expect(groupRowName('source', '7', 'fixture-granola', new Map([['7', { type: 'granola', identifier: 'fixture-granola' }]])).icon).toBe(Mic);
+});
+
+it('disambiguates source labels using the full inventory', () => {
+  const sources = new Map([
+    ['1', { type: 'imap', identifier: 'imaps://person@example.org@one.example:993' }],
+    ['2', { type: 'imap', identifier: 'imaps://person@example.org@two.example:993' }],
+    ['3', { type: 'mbox', identifier: 'archive-a.example' }],
+    ['4', { type: 'mbox', identifier: 'archive-b.example' }],
+    ['5', { type: 'gcal', identifier: 'work.example' }],
+    ['6', { type: 'gcal', identifier: 'home.example' }],
+    ['7', { type: 'gmail', identifier: 'person@example.com' }],
+    ['8', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:993' }],
+    ['9', { type: 'msmail', identifier: 'person@example.com' }],
+    ['10', { type: 'imap', identifier: 'imap://person@example.com@mail.example.com:993' }],
+    ['11', { type: 'imap', identifier: 'imaps://person@example.com@mail.example.com:143' }],
+  ]);
+  expect(groupRowName('source', '1', sources.get('1')!.identifier, sources).name).toBe('person@example.org (one.example:993)');
+  expect(groupRowName('source', '2', sources.get('2')!.identifier, sources).name).toBe('person@example.org (two.example:993)');
+  expect(groupRowName('source', '3', 'archive-a.example', sources).name).toBe('Mbox import (archive-a.example)');
+  expect(groupRowName('source', '5', 'work.example', sources).name).toBe('Google Calendar (work.example)');
+  expect(groupRowName('source', '7', 'person@example.com', sources).name).toBe('person@example.com (7)');
+  expect(groupRowName('source', '8', sources.get('8')!.identifier, sources).name).toBe('person@example.com (mail.example.com:993 · 8)');
+  expect(groupRowName('source', '10', sources.get('10')!.identifier, sources).name).toBe('person@example.com (mail.example.com:993 · 10)');
+  expect(groupRowName('source', '11', sources.get('11')!.identifier, sources).name).toBe('person@example.com (mail.example.com:143)');
+});
+
+it('uses friendly Chatwoot inbox names and distinguishes repeated or missing names', () => {
+  const sources = new Map([
+    ['1', { type: 'chatwoot', identifier: 'https://example.org/inbox/1', displayName: 'Support' }],
+    ['2', { type: 'chatwoot', identifier: 'https://example.org/inbox/2', displayName: 'Sales' }],
+    ['3', { type: 'chatwoot', identifier: 'https://example.org/inbox/3', displayName: 'Support' }],
+    ['4', { type: 'chatwoot', identifier: 'https://example.org/inbox/4', displayName: null }],
+    ['5', { type: 'chatwoot', identifier: 'https://example.org/inbox/5', displayName: '' }],
+  ]);
+  expect([...sources].map(([key, source]) => groupRowName('source', key, source.identifier, sources).name)).toEqual([
+    'Chatwoot (Support · 1)', 'Chatwoot (Sales)', 'Chatwoot (Support · 3)', 'Chatwoot (4)', 'Chatwoot (5)'
+  ]);
 });
