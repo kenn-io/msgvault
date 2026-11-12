@@ -410,20 +410,25 @@ func TestPersonSweepAppreciationProofProjectionAndDismissal(t *testing.T) {
 		owners, ok := packet["appreciation_owners"].([]any)
 		require.True(t, ok)
 		require.NotEmpty(t, owners)
-		assert.Equal(t, "Thanks for carrying my boxes upstairs!", owners[0].(map[string]any)["exact_excerpt"])
+		owner, ok := owners[0].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "Thanks for carrying my boxes upstairs!", owner["exact_excerpt"])
 		var anchor string
 		for _, value := range peers {
-			peer := value.(map[string]any)
+			peer, ok := value.(map[string]any)
+			require.True(t, ok)
 			if peer["exact_excerpt"] == "I carried your boxes upstairs." {
-				anchor = peer["anchor_id"].(string)
+				anchor, ok = peer["anchor_id"].(string)
+				require.True(t, ok)
 			}
 		}
 		require.NotEmpty(t, anchor)
-		owner := owners[0].(map[string]any)
+		ownerEvidence, ok := owner["evidence_id"].(string)
+		require.True(t, ok)
 		return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":{"evidence_id":%q,"summary":"they helped with the move"},
  "highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"carrying the boxes","anchor_id":%q,
  "quote":"carried your boxes","thanked":{"evidence_id":%q,"quote":"Thanks for carrying my boxes upstairs!"}}],
- "uncertainties":[],"possible_attributes":[]}`, anchor, anchor, owner["evidence_id"].(string)))
+ "uncertainties":[],"possible_attributes":[]}`, anchor, anchor, ownerEvidence))
 	}
 	run, err := f.worker.Run(t.Context(), peoplesweep.RunRequest{Kind: peoplesweep.RunManual, Mode: peoplesweep.RunIncremental,
 		PersonID: journal.alicePersonID, Limit: 1, Brief: peoplesweep.BriefModeForce})
@@ -1320,14 +1325,19 @@ func TestPersonSweepConcurrentDismissal(t *testing.T) {
 			key, err := peoplesweep.AppreciationContributionKey("slack", "person-sweep-journal", "brief-e2e-1-appreciation-empty-race")
 			require.NoError(t, err)
 			f.runner.candidate = func(packet map[string]any) json.RawMessage {
-				for _, value := range packet["appreciation_peers"].([]any) {
-					peer := value.(map[string]any)
+				peers, ok := packet["appreciation_peers"].([]any)
+				require.True(t, ok)
+				for _, value := range peers {
+					peer, ok := value.(map[string]any)
+					require.True(t, ok)
+					anchor, ok := peer["anchor_id"].(string)
+					require.True(t, ok)
 					if peer["contribution_key"] == key {
 						interaction := "null"
 						if !empty {
-							interaction = fmt.Sprintf(`{"evidence_id":%q,"summary":"they finished the move"}`, peer["anchor_id"].(string))
+							interaction = fmt.Sprintf(`{"evidence_id":%q,"summary":"they finished the move"}`, anchor)
 						}
-						return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":%s,"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"helping with the move","anchor_id":%q,"quote":"finished the move","thanked":null}],"uncertainties":[],"possible_attributes":[]}`, interaction, peer["anchor_id"].(string)))
+						return json.RawMessage(fmt.Sprintf(`{"last_meaningful_interaction":%s,"highlights":[],"follow_ups":[],"appreciations":[],"thanks_suggestions":[{"text":"helping with the move","anchor_id":%q,"quote":"finished the move","thanked":null}],"uncertainties":[],"possible_attributes":[]}`, interaction, anchor))
 					}
 				}
 				require.FailNow(t, "expected contribution in brief input")
@@ -1354,7 +1364,7 @@ func TestPersonSweepConcurrentDismissal(t *testing.T) {
 			}
 			assert.Equal(t, peoplesweep.FailureInvalidOutput, run.People[0].BriefFailureClass)
 			_, err = f.journal.store.GetPersonBriefContext(t.Context(), f.journal.alicePersonID, 0)
-			assert.ErrorIs(t, err, store.ErrPersonBriefNotFound)
+			require.ErrorIs(t, err, store.ErrPersonBriefNotFound)
 			var successfulBatches int
 			require.NoError(t, f.journal.store.DB().QueryRowContext(t.Context(), f.journal.store.Rebind(`SELECT COUNT(*) FROM person_sweep_batches WHERE attempt_id = ? AND status = 'succeeded'`), run.People[0].AttemptID).Scan(&successfulBatches))
 			assert.GreaterOrEqual(t, successfulBatches, 2, "paid extraction and brief calls are recorded")
@@ -1389,11 +1399,16 @@ func TestAppreciationOwnerDowngradePreservesBriefAndRetries(t *testing.T) {
 			}
 			f.runner.candidate = func(packet map[string]any) json.RawMessage {
 				var suggestions []string
-				for _, value := range packet["appreciation_peers"].([]any) {
-					peer := value.(map[string]any)
+				peers, ok := packet["appreciation_peers"].([]any)
+				require.True(t, ok)
+				for _, value := range peers {
+					peer, ok := value.(map[string]any)
+					require.True(t, ok)
+					anchor, ok := peer["anchor_id"].(string)
+					require.True(t, ok)
 					for _, body := range texts[:3] {
 						if peer["exact_excerpt"] == body {
-							suggestions = append(suggestions, fmt.Sprintf(`{"text":"help","anchor_id":%q,"quote":%q,"thanked":null}`, peer["anchor_id"].(string), body))
+							suggestions = append(suggestions, fmt.Sprintf(`{"text":"help","anchor_id":%q,"quote":%q,"thanked":null}`, anchor, body))
 						}
 					}
 				}
@@ -1418,9 +1433,14 @@ func TestAppreciationOwnerDowngradePreservesBriefAndRetries(t *testing.T) {
 			require.NoError(t, err)
 			f.runner.candidate = func(packet map[string]any) json.RawMessage {
 				anchors := map[string]string{}
-				for _, value := range packet["appreciation_peers"].([]any) {
-					peer := value.(map[string]any)
-					anchors[peer["exact_excerpt"].(string)] = peer["anchor_id"].(string)
+				peers, ok := packet["appreciation_peers"].([]any)
+				require.True(t, ok)
+				for _, value := range peers {
+					peer, ok := value.(map[string]any)
+					require.True(t, ok)
+					anchor, ok := peer["anchor_id"].(string)
+					require.True(t, ok)
+					anchors[peer["exact_excerpt"].(string)] = anchor
 				}
 				require.NotEmpty(t, anchors[texts[0]])
 				require.NotEmpty(t, anchors[texts[3]])

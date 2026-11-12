@@ -67,7 +67,7 @@ func TestPersonSweepBriefEligibilityRejectsFutureProgramWithoutRetiringHistory(t
 	input.ProgramVersion = "v99"
 	f.applyBrief(t, input)
 	_, _, err = f.store.PersonSweepBriefEligibility(t.Context(), f.personID)
-	assert.ErrorContains(t, err, "unsupported program version")
+	require.ErrorContains(t, err, "unsupported program version")
 	brief, err := f.store.GetPersonBriefContext(t.Context(), f.personID, 0)
 	require.NoError(t, err)
 	assert.Equal(t, "v99", brief.ProgramVersion)

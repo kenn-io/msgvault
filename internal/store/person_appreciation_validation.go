@@ -114,7 +114,7 @@ func (s *Store) appreciationPeerCurrentTx(ctx context.Context, tx *loggedTx, per
 	}
 	// Route the existing scope/provenance loader through the transaction that
 	// holds the evidence locks, never through a second database connection.
-	readCtx := WithReadSnapshotContext(ctx, s.db.DB, tx.Tx)
+	readCtx := context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx})
 	items, _, err := s.hydratePersonSweepMessageSet(readCtx, personID, peoplesweep.SourceConversationText, []int64{memory.PeerRef.MessageID}, 0)
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("rehydrate appreciation peer: %w", err)
@@ -178,7 +178,7 @@ func (s *Store) appreciationDirectOwnerTx(ctx context.Context, tx *loggedTx, per
 		return 0, 0, false, fmt.Errorf("read appreciation conversation: %w", err)
 	}
 	record := decodeMembershipRecord(metadata)
-	if kind != "direct_chat" || !personSweepSourceAuthenticatesSender(sourceType) ||
+	if kind != MessageExportConversationDirectChat || !personSweepSourceAuthenticatesSender(sourceType) ||
 		!record.counted || record.unknown || record.repairPending {
 		return 0, 0, false, nil
 	}

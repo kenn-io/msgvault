@@ -571,3 +571,27 @@ func FuzzBriefEventDateTransition(f *testing.F) {
 		checks.Equal(BriefEventResolved, state)
 	})
 }
+
+func TestBriefWindowRetiresResolvedEventForRetainedAppreciation(t *testing.T) {
+	anchor := briefWindowItem(10, SourceConversationText, 10, "I move on August 15.")
+	resolution := briefWindowItem(11, SourceConversationText, 17, "I cancelled the move.")
+	peer := briefWindowItem(12, SourceConversationText, 9, "I carried the boxes.")
+	highlight := eventHighlight(anchor, "2026-08-15")
+	highlight.EvidenceIDs = append(highlight.EvidenceIDs, packetEvidenceID(resolution))
+	highlight.LifeEvent.Resolution = &BriefEventResolution{EvidenceID: packetEvidenceID(resolution), Quote: resolution.Excerpt}
+	key, hash := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	previous := &BriefBoundary{EventMemoryVersion: 1, ThroughEventTime: resolution.EventTime,
+		AdmissionThroughEventTime: resolution.EventTime,
+		EventMemory:               []BriefEventMemory{{Highlight: highlight, Sources: []EvidenceRef{anchor.Ref, resolution.Ref}}},
+		AppreciationMemory:        []BriefAppreciationMemory{{Suggestion: BriefThanksSuggestion{Text: "carrying boxes", Quote: "carried the boxes", Key: key, State: "suggested", PriorThanks: "unknown"}, PeerRef: peer.Ref, PeerRawSHA256: hash, ConversationID: 42}}}
+	archive := &briefFakeArchive{items: []EvidenceItem{anchor, resolution, peer}, appreciationPeers: []BriefAppreciationPeer{{Ref: peer.Ref, ConversationID: 42, ContributionKey: key, RawSHA256: hash, ExactExcerpt: peer.Excerpt, EventTime: peer.EventTime}}}
+	request := briefWindowRequest(t)
+	request.Previous, request.MaxItems, request.OverlapItems = previous, 2, 0
+	request.AsOf = time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	window, err := BuildBriefWindow(t.Context(), archive, request)
+	require.NoError(t, err)
+	assert.Empty(t, window.Request.retainedEvents)
+	require.Len(t, window.Request.retainedAppreciations, 1)
+	assert.Equal(t, key, window.Request.retainedAppreciations[0].Key)
+	assert.LessOrEqual(t, len(window.Items), 2)
+}

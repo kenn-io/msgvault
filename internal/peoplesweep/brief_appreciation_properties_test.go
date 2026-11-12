@@ -79,14 +79,14 @@ func FuzzAppreciationQuoteAndThanks(f *testing.F) {
 			ownerID = anchor
 		}
 		parsed, err := ParseBrief(appreciationQuoteCandidate(t, anchor, quote, ownerID, thanks), window, window.Request.Profile)
-		require.NoError(t, err, fmt.Sprintf("quote %q, thanks %q", quote, thanks))
-		peerOK := strings.TrimSpace(quote) != "" && strings.Contains("I carried your boxes upstairs.", quote)
+		require.NoError(t, err, "quote %q, thanks %q", quote, thanks)
+		peerOK := strings.TrimSpace(quote) != "" && strings.Contains("I carried your boxes upstairs.", quote) //nolint:gocritic // The quote must occur in the source text.
 		if !peerOK {
 			assert.Empty(t, parsed.Output.ThanksSuggestions)
 			return
 		}
 		require.Len(t, parsed.Output.ThanksSuggestions, 1)
-		ownerOK := ownerNamespace && strings.TrimSpace(thanks) != "" && strings.Contains("Thanks for carrying my boxes!", thanks)
+		ownerOK := ownerNamespace && strings.TrimSpace(thanks) != "" && strings.Contains("Thanks for carrying my boxes!", thanks) //nolint:gocritic // The quote must occur in the source text.
 		if ownerOK {
 			assert.Equal(t, "already_thanked", parsed.Output.ThanksSuggestions[0].State)
 		} else {
@@ -105,7 +105,7 @@ func TestAppreciationReplayProperty(t *testing.T) {
 		request := briefWindowRequest(t)
 		request.MaxItems = 6
 		archive := &briefFakeArchive{dismissedAppreciations: map[string]bool{}}
-		for i := 0; i < 4; i++ {
+		for i := range 4 {
 			item := briefWindowItem(int64(60+i), SourceConversationText, 10+i, "I reviewed and sent the draft today.")
 			key := fmt.Sprintf("%064x", i+1)
 			archive.items = append(archive.items, item)
@@ -144,16 +144,26 @@ func TestAppreciationReplayProperty(t *testing.T) {
 		seen := map[string]BriefThanksSuggestion{}
 		for _, suggestion := range parsed.Output.ThanksSuggestions {
 			seen[suggestion.Key] = suggestion
-			if suggestion.State == "suggested" {
+			switch suggestion.State {
+			case "suggested":
 				active++
-			} else if suggestion.State == "already_thanked" {
+			case "already_thanked":
 				resolved++
 			}
 		}
 		assert.LessOrEqual(ht, active, 3)
 		assert.LessOrEqual(ht, resolved, 3)
-		assert.Contains(ht, seen, fmt.Sprintf("%064x", 4), "fresh item uses the freed slot")
-		assert.Equal(ht, "already_thanked", seen[fmt.Sprintf("%064x", 1)].State)
+		if alternate && !dismissed {
+			assert.NotContains(ht, seen, fmt.Sprintf("%064x", 4), "a different quote does not free a slot")
+		} else {
+			assert.Contains(ht, seen, fmt.Sprintf("%064x", 4), "fresh item uses the freed slot")
+		}
+		if alternate {
+			assert.Equal(ht, "suggested", seen[fmt.Sprintf("%064x", 1)].State)
+			assert.Nil(ht, seen[fmt.Sprintf("%064x", 1)].Thanked)
+		} else {
+			assert.Equal(ht, "already_thanked", seen[fmt.Sprintf("%064x", 1)].State)
+		}
 		assert.Equal(ht, "sent the draft", seen[fmt.Sprintf("%064x", 1)].Quote)
 		if dismissed {
 			assert.NotContains(ht, seen, fmt.Sprintf("%064x", 2))
@@ -164,13 +174,13 @@ func TestAppreciationReplayProperty(t *testing.T) {
 		replayed, err := BuildBriefWindow(t.Context(), archive, request)
 		require.NoError(ht, err)
 		want := 3
-		if dismissed {
+		if dismissed && !alternate {
 			want = 2
 		}
 		assert.Len(ht, replayed.Request.retainedAppreciations, want)
-		if !dismissed {
+		if !dismissed && !alternate {
 			// Each resolved contribution retires before the next fresh one arrives.
-			for i := 0; i < 3; i++ {
+			for i := range 3 {
 				archive.dismissedAppreciations[fmt.Sprintf("%064x", i+1)] = true
 				item := briefWindowItem(int64(64+i), SourceConversationText, 15+i, "I reviewed and sent the draft today.")
 				archive.items = append(archive.items, item)

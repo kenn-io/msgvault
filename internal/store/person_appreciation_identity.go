@@ -35,7 +35,7 @@ func appreciationMessageKeyTx(ctx context.Context, tx *loggedTx, messageID int64
 	}
 	key, err := peoplesweep.AppreciationContributionKey(sourceType.String, identifier.String, message.String)
 	if err != nil {
-		return "", nil // Incomplete native coordinates are unsupported.
+		return "", nil //nolint:nilerr // Incomplete native coordinates are unsupported.
 	}
 	return key, nil
 }

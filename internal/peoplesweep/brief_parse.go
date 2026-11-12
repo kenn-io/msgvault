@@ -162,7 +162,7 @@ func ParseBrief(
 	}
 	// Resolve retained updates first so a newly evidenced thank-you frees an
 	// active slot even when a new contribution appeared earlier in the output.
-	for pass := 0; pass < 2; pass++ {
+	for pass := range 2 {
 		for _, suggestion := range candidate.ThanksSuggestions {
 			peer, ok := peers[suggestion.AnchorID]
 			if (pass == 0) != retainedKeys[peer.ContributionKey] {
@@ -191,7 +191,7 @@ func ParseBrief(
 			}
 			if index, exists := seenKeys[peer.ContributionKey]; exists {
 				old := parsed.Output.ThanksSuggestions[index]
-				if suggestion.Thanked != nil {
+				if suggestion.Thanked != nil && suggestion.Quote == old.Quote {
 					old.Thanked, old.State, old.PriorThanks = suggestion.Thanked, suggestion.State, suggestion.PriorThanks
 					parsed.Output.ThanksSuggestions[index] = old
 				}
