@@ -37,10 +37,11 @@ func (e *OperationRefusalError) Error() string { return e.Code }
 type OperationFamily string
 
 const (
-	OperationFamilySources OperationFamily = "sources"
-	OperationFamilyRecords OperationFamily = "records"
-	OperationFamilyLoops   OperationFamily = "loops"
-	OperationFamilyCurated OperationFamily = "curated"
+	OperationFamilySources             OperationFamily = "sources"
+	OperationFamilyRecords             OperationFamily = "records"
+	OperationFamilyRelationshipRecords OperationFamily = "relationship_records"
+	OperationFamilyLoops               OperationFamily = "loops"
+	OperationFamilyCurated             OperationFamily = "curated"
 )
 
 type operationalDefinition struct {
