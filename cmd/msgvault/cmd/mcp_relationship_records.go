@@ -14,6 +14,13 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+var relationshipWriteBodyKeys = map[string][]string{
+	"create_relationship_type":   {"slug", "forward_label", "reverse_label", "is_symmetric", "vcard_related_type", "color", "icon", "description"},
+	"update_relationship_type":   {"forward_label", "reverse_label", "vcard_related_type", "color", "icon", "description"},
+	"create_person_relationship": {"source_person_id", "target_person_id", "relationship_type_slug", "start_date", "end_date", "notes"},
+	"update_person_relationship": {"end_date", "notes"},
+}
+
 func relationshipRecordCapabilities(hasRoute mcpRouteCheck, capabilities *apiprotocol.MCPCapabilities) []string {
 	var names []string
 	for _, route := range []struct {
@@ -36,11 +43,11 @@ func relationshipRecordCapabilities(hasRoute mcpRouteCheck, capabilities *apipro
 		name, id, method, path string
 		properties             []string
 	}{
-		{"create_relationship_type", "createRelationshipType", http.MethodPost, "/api/v1/relationship-types", []string{"slug", "forward_label", "reverse_label", "is_symmetric", "vcard_related_type", "color", "icon", "description"}},
-		{"update_relationship_type", "patchRelationshipType", http.MethodPatch, "/api/v1/relationship-types/{id}", []string{"forward_label", "reverse_label", "vcard_related_type", "color", "icon", "description"}},
+		{"create_relationship_type", "createRelationshipType", http.MethodPost, "/api/v1/relationship-types", relationshipWriteBodyKeys["create_relationship_type"]},
+		{"update_relationship_type", "patchRelationshipType", http.MethodPatch, "/api/v1/relationship-types/{id}", relationshipWriteBodyKeys["update_relationship_type"]},
 		{"delete_relationship_type", "deleteRelationshipType", http.MethodDelete, "/api/v1/relationship-types/{id}", nil},
-		{"create_person_relationship", "createPersonRelationship", http.MethodPost, "/api/v1/person-relationships", []string{"source_person_id", "target_person_id", "relationship_type_slug", "start_date", "end_date", "notes"}},
-		{"update_person_relationship", "patchPersonRelationship", http.MethodPatch, "/api/v1/person-relationships/{id}", []string{"end_date", "notes"}},
+		{"create_person_relationship", "createPersonRelationship", http.MethodPost, "/api/v1/person-relationships", relationshipWriteBodyKeys["create_person_relationship"]},
+		{"update_person_relationship", "patchPersonRelationship", http.MethodPatch, "/api/v1/person-relationships/{id}", relationshipWriteBodyKeys["update_person_relationship"]},
 		{"delete_person_relationship", "deletePersonRelationship", http.MethodDelete, "/api/v1/person-relationships/{id}", nil},
 	} {
 		if hasRoute(route.id, route.method, route.path) && (len(route.properties) == 0 || mcpRequestPropertiesPresent(capabilities, route.id, route.properties...)) && (strings.HasPrefix(route.name, "create_") || strings.Contains(route.name, "relationship_type") && hasRoute("getRelationshipType", http.MethodGet, "/api/v1/relationship-types/{id}") || strings.Contains(route.name, "person_relationship") && hasRoute("getPersonRelationship", http.MethodGet, "/api/v1/person-relationships/{id}")) {
@@ -48,6 +55,36 @@ func relationshipRecordCapabilities(hasRoute mcpRouteCheck, capabilities *apipro
 		}
 	}
 	return names
+}
+
+func relationshipTypeProjection(result *mcpserver.OperationResult, writes bool) *mcpserver.OperationResult {
+	if result == nil || result.IsError {
+		return result
+	}
+	value, ok := result.Output.(generated.RelationshipType)
+	if !ok || result.ETag == "" {
+		return operationFailure("invalid_operation_response", writes)
+	}
+	result.Output = mcpserver.RelationshipTypeRecord{ETag: result.ETag, RelationshipType: value}
+	return result
+}
+
+func redactPersonRelationship(value generated.PersonRelationship) generated.PersonRelationship {
+	value.SourceRef = nil
+	value.SourceResourceUID = nil
+	return value
+}
+
+func personRelationshipProjection(result *mcpserver.OperationResult, writes bool) *mcpserver.OperationResult {
+	if result == nil || result.IsError {
+		return result
+	}
+	value, ok := result.Output.(generated.PersonRelationship)
+	if !ok || result.ETag == "" {
+		return operationFailure("invalid_operation_response", writes)
+	}
+	result.Output = mcpserver.PersonRelationshipRecord{ETag: result.ETag, Relationship: redactPersonRelationship(value)}
+	return result
 }
 
 type relationshipReadArguments struct {
@@ -77,27 +114,13 @@ func (b *daemonMCPOperations) executeRelationshipRead(ctx context.Context, name 
 			return operationFailure("invalid_arguments", false), true, nil
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.RelationshipType](ctx, b.client, http.MethodGet, "/api/v1/relationship-types/{id}", &generated.GetRelationshipTypeRequestOptions{PathParams: &generated.GetRelationshipTypePath{ID: input.ID}}, relationshipRefusal, http.StatusOK)
-		if result != nil && !result.IsError {
-			if value, ok := result.Output.(generated.RelationshipType); ok && result.ETag != "" {
-				result.Output = mcpserver.RelationshipTypeRecord{ETag: result.ETag, RelationshipType: value}
-			} else {
-				result = operationFailure("invalid_operation_response", false)
-			}
-		}
+		result = relationshipTypeProjection(result, false)
 	case "get_person_relationship_record":
 		if !validLoopID(input.ID) {
 			return operationFailure("invalid_arguments", false), true, nil
 		}
 		result, err = readMCPOperationJSONWithClassifier[generated.PersonRelationship](ctx, b.client, http.MethodGet, "/api/v1/person-relationships/{id}", &generated.GetPersonRelationshipRequestOptions{PathParams: &generated.GetPersonRelationshipPath{ID: input.ID}}, relationshipRefusal, http.StatusOK)
-		if result != nil && !result.IsError {
-			if value, ok := result.Output.(generated.PersonRelationship); ok && result.ETag != "" {
-				value.SourceRef = nil
-				value.SourceResourceUID = nil
-				result.Output = mcpserver.PersonRelationshipRecord{ETag: result.ETag, Relationship: value}
-			} else {
-				result = operationFailure("invalid_operation_response", false)
-			}
-		}
+		result = personRelationshipProjection(result, false)
 	case "list_person_relationships":
 		if !validLoopID(input.PersonID) {
 			return operationFailure("invalid_arguments", false), true, nil
@@ -124,8 +147,7 @@ func (b *daemonMCPOperations) executeRelationshipRead(ctx context.Context, name 
 		switch value := result.Output.(type) {
 		case generated.PersonRelationshipsResponse:
 			for i := range value.Relationships {
-				value.Relationships[i].Relationship.SourceRef = nil
-				value.Relationships[i].Relationship.SourceResourceUID = nil
+				value.Relationships[i].Relationship = redactPersonRelationship(value.Relationships[i].Relationship)
 			}
 			result.Output = value
 		case generated.RelationshipReviewsResponse:
@@ -172,28 +194,22 @@ func relationshipWriteInput(name string, args map[string]any) (relationshipWrite
 	if err != nil {
 		return input, nil, false
 	}
-	var allowed []string
+	bodyKeys, hasBody := relationshipWriteBodyKeys[name]
+	var hasIdentity bool
 	switch name {
-	case "create_relationship_type":
-		allowed = []string{"slug", "forward_label", "reverse_label", "is_symmetric", "vcard_related_type", "color", "icon", "description"}
-	case "update_relationship_type":
-		allowed = []string{"id", "etag", "forward_label", "reverse_label", "vcard_related_type", "color", "icon", "description"}
-	case "delete_relationship_type", "delete_person_relationship":
-		allowed = []string{"id", "etag"}
-	case "create_person_relationship":
-		allowed = []string{"source_person_id", "target_person_id", "relationship_type_slug", "start_date", "end_date", "notes"}
-	case "update_person_relationship":
-		allowed = []string{"id", "etag", "end_date", "notes"}
+	case "create_relationship_type", "create_person_relationship":
+	case "update_relationship_type", "update_person_relationship", "delete_relationship_type", "delete_person_relationship":
+		hasIdentity = true
 	default:
 		return input, nil, false
 	}
 	body := make(map[string]any)
 	for key, value := range args {
-		if !slices.Contains(allowed, key) {
-			return input, nil, false
-		}
-		if key == "id" || key == "etag" {
+		if hasIdentity && (key == "id" || key == "etag") {
 			continue
+		}
+		if !hasBody || !slices.Contains(bodyKeys, key) {
+			return input, nil, false
 		}
 		if value == nil && !(name == "update_person_relationship" && key == "notes") && !(name == "create_person_relationship" && key == "notes") && !(name == "create_relationship_type" && slices.Contains([]string{"vcard_related_type", "color", "icon", "description"}, key)) {
 			return input, nil, false
@@ -278,26 +294,10 @@ func (b *daemonMCPOperations) executeRelationshipWrite(ctx context.Context, name
 	}
 	if strings.Contains(name, "relationship_type") {
 		result, err := readMCPOperationJSONWithClassifier[generated.RelationshipType](ctx, b.client, method, path, options, relationshipRefusal, http.StatusOK, http.StatusCreated)
-		if result != nil && !result.IsError {
-			if value, ok := result.Output.(generated.RelationshipType); ok && result.ETag != "" {
-				result.Output = mcpserver.RelationshipTypeRecord{ETag: result.ETag, RelationshipType: value}
-			} else {
-				result = operationFailure("invalid_operation_response", true)
-			}
-		}
-		return result, true, err
+		return relationshipTypeProjection(result, true), true, err
 	}
 	result, err := readMCPOperationJSONWithClassifier[generated.PersonRelationship](ctx, b.client, method, path, options, relationshipRefusal, http.StatusOK, http.StatusCreated)
-	if result != nil && !result.IsError {
-		if value, ok := result.Output.(generated.PersonRelationship); ok && result.ETag != "" {
-			value.SourceRef = nil
-			value.SourceResourceUID = nil
-			result.Output = mcpserver.PersonRelationshipRecord{ETag: result.ETag, Relationship: value}
-		} else {
-			result = operationFailure("invalid_operation_response", true)
-		}
-	}
-	return result, true, err
+	return personRelationshipProjection(result, true), true, err
 }
 
 func (b *daemonMCPOperations) relationshipDisclosure(ctx context.Context, name string, args map[string]any) (string, bool, error) {

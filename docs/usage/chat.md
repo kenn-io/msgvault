@@ -933,7 +933,7 @@ retries a write by itself. If a write reports
 
 ## Relationship records
 
-On unreleased `main`, owner sessions can read declared relationship types, records, imported reviews, and the curated network through MCP. Relationship reads do not need write access. The network contains declared relationships and employments; it excludes archive-derived associations. Relationship writes need `--allow-relationship-writes` and confirmation for each change. Use the current ETag for updates and deletes.
+On unreleased `main`, owner sessions can read declared relationship types, records, imported reviews, and the curated network through MCP. Relationship reads do not need write access. The network contains declared relationships and employments; it excludes archive-derived associations. Relationship writes need `--allow-relationship-writes` and confirmation for each change. Use the current ETag for updates and deletes. Call `get_relationship_type` or `get_person_relationship_record` as appropriate, then pass its exact returned `etag` to the matching update or delete.
 
 ## Write controls
 
