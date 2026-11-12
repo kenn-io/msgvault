@@ -57,8 +57,8 @@ func TestRecordRejectsInvalidEvidence(t *testing.T) {
 		value any
 	}{
 		{"ZUNIQUE_ID", " "},
-		{"ZDATE", "123"}, {"ZDATE", math.Inf(1)}, {"ZDATE", math.MaxFloat64},
-		{"ZDURATION", -1.0}, {"ZDURATION", math.Inf(1)}, {"ZANSWERED", 1.0}, {"ZORIGINATED", "secret"}, {"ZADDRESS", int64(3)},
+		{"ZDATE", "123"}, {"ZDATE", math.MaxFloat64},
+		{"ZDURATION", math.Inf(1)}, {"ZANSWERED", 1.0}, {"ZORIGINATED", "secret"}, {"ZADDRESS", int64(3)},
 	} {
 		r := exampleRecord()
 		r[tc.key] = tc.value
@@ -71,8 +71,8 @@ func TestRecordRejectsInvalidEvidence(t *testing.T) {
 		value any
 		want  string
 	}{
-		{"ZDATE", math.Inf(1), "Invalid call date."},
-		{"ZDURATION", -1.0, "Invalid call duration."},
+		{"ZDATE", math.Inf(1), "invalid call date"},
+		{"ZDURATION", -1.0, "invalid call duration"},
 	} {
 		r := exampleRecord()
 		r[tc.key] = tc.value

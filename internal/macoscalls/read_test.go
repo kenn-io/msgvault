@@ -73,7 +73,7 @@ func TestReadFailuresAndCleanup(t *testing.T) {
 	} {
 		_, path := sourceDB(t, schema)
 		err := Read(t.Context(), path, "example", func(callhistory.Observation) error { require.FailNow("invalid source must not emit"); return nil })
-		require.EqualError(err, "Unsupported call database format.")
+		require.EqualError(err, "unsupported call database format")
 	}
 	for _, schema := range []string{
 		`CREATE TABLE ZCALLRECORD(Z_PK INTEGER PRIMARY KEY,ZUNIQUE_ID TEXT,ZDATE REAL); INSERT INTO ZCALLRECORD VALUES(1,'secret',NULL);`,
@@ -82,7 +82,7 @@ func TestReadFailuresAndCleanup(t *testing.T) {
 	} {
 		_, path := sourceDB(t, schema)
 		err := Read(t.Context(), path, "example", func(callhistory.Observation) error { require.FailNow("invalid source must not emit"); return nil })
-		require.EqualError(err, "macOS call row 1: Invalid call date.")
+		require.EqualError(err, "macOS call row 1: invalid call date")
 		assert.NotContains(err.Error(), "secret")
 	}
 	temp := t.TempDir()

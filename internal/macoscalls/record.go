@@ -24,7 +24,7 @@ var columns = []struct{ name, kind, label string }{
 
 func (r record) observation(account string) (callhistory.Observation, error) {
 	fail := func(field string) (callhistory.Observation, error) {
-		return callhistory.Observation{}, fmt.Errorf("Invalid call %s.", field)
+		return callhistory.Observation{}, fmt.Errorf("invalid call %s", field)
 	}
 	for _, c := range columns {
 		v := r[c.name]
