@@ -94,3 +94,68 @@ func TestGrantedMeetingSuggestions(t *testing.T) {
 		}
 	})
 }
+
+func TestGrantedMeetingSuggestionsTitleWords(t *testing.T) {
+	r := require.New(t)
+	st := testutil.NewTestStore(t)
+	notes, err := st.GetOrCreateSource("meeting_import", "notes@example.com")
+	r.NoError(err)
+	calendar, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	r.NoError(err)
+	at := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
+	ids := make([]int64, 0, 2)
+	for _, title := range []string{"standup", "482913"} {
+		id, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: notes.ID, SourceMessageID: title, MessageType: "meeting_transcript", Subject: sql.NullString{String: title, Valid: true}, SentAt: sql.NullTime{Time: at, Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: title, ConversationType: "meeting"}, RawMIME: []byte(`{}`), RawFormat: "meeting_json"})
+		r.NoError(err)
+		ids = append(ids, id)
+	}
+	event, err := st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: calendar.ID, SourceMessageID: "event", MessageType: "calendar_event", Subject: sql.NullString{String: "Your verification code is 482913", Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawMIME: []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`), RawFormat: "gcal_json"})
+	r.NoError(err)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(srv.agentGrants.Close)
+	sources := []agentgrant.SourceRef{{ID: notes.ID, Type: notes.SourceType, Identifier: notes.Identifier}, {ID: calendar.ID, Type: calendar.SourceType, Identifier: calendar.Identifier}}
+	_, limited, _, err := srv.agentGrants.Issue("limited", []agentgrant.Permission{agentgrant.PermissionMessageRead}, sources, time.Time{})
+	r.NoError(err)
+	_, reveal, _, err := srv.agentGrants.Issue("reveal", []agentgrant.Permission{agentgrant.PermissionMessageRead, agentgrant.PermissionVerificationRead}, sources, time.Time{})
+	r.NoError(err)
+	for _, tc := range []struct {
+		name, token string
+		reveal      bool
+	}{{"limited", limited, false}, {"verification", reveal, true}, {"owner", "", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, ref := range []string{fmt.Sprintf("msg:%d", ids[1]), fmt.Sprintf("evt:%d", event)} {
+				t.Run(ref, func(t *testing.T) {
+					req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/meetings/suggestions?ref="+ref+"&limit=1", nil)
+					if tc.token == "" {
+						req.Header.Set("Authorization", "Bearer owner")
+					} else {
+						req.Header.Set(apiprotocol.AgentTokenHeader, tc.token)
+					}
+					w := httptest.NewRecorder()
+					srv.Router().ServeHTTP(w, req)
+					require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+					var page store.MeetingSuggestionPage
+					require.NoError(t, json.Unmarshal(w.Body.Bytes(), &page))
+					require.Len(t, page.Suggestions, 1)
+					item := page.Suggestions[0]
+					if tc.reveal {
+						require.Equal(t, 1, item.TitleTokens)
+						if ref[0:3] == "evt" {
+							require.Equal(t, ids[1], item.MemberMessageID)
+						} else {
+							require.Equal(t, "Your verification code is 482913", item.Title)
+						}
+					} else {
+						require.Zero(t, item.TitleTokens)
+						if ref[0:3] == "evt" {
+							require.Equal(t, ids[0], item.MemberMessageID)
+						} else {
+							require.Equal(t, "[verification content masked]", item.Title)
+						}
+					}
+				})
+			}
+		})
+	}
+}

@@ -5,7 +5,6 @@
 export interface MeetingSuggestion {
   member_message_id: number;
   overlap_minutes: number;
-  reasons: string[];
   ref: string;
   shared_attendees: number;
   start: string;

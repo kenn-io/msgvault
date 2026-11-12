@@ -8027,10 +8027,6 @@ components:
         overlap_minutes:
           format: int64
           type: integer
-        reasons:
-          items:
-            type: string
-          type: array
         ref:
           type: string
         shared_attendees:
@@ -8052,7 +8048,6 @@ components:
         - overlap_minutes
         - shared_attendees
         - title_tokens
-        - reasons
       type: object
     MeetingSuggestionPage:
       additionalProperties: true

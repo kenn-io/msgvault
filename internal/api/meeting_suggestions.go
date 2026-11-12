@@ -11,7 +11,7 @@ import (
 )
 
 type MeetingSuggestionStore interface {
-	SuggestMeetingLinksContext(context.Context, store.MeetingLinkRef, int) (store.MeetingSuggestionPage, error)
+	SuggestMeetingLinksContext(context.Context, store.MeetingLinkRef, int, bool) (store.MeetingSuggestionPage, error)
 }
 
 func (s *Server) registerMeetingSuggestionRoute(api huma.API) {
@@ -45,7 +45,7 @@ func (s *Server) handleMeetingSuggestions(w http.ResponseWriter, r *http.Request
 		writeError(w, 503, "meetings_unavailable", "Meeting suggestions are unavailable")
 		return
 	}
-	page, err := backend.SuggestMeetingLinksContext(r.Context(), ref, limit)
+	page, err := backend.SuggestMeetingLinksContext(r.Context(), ref, limit, !s.withholdsVerification(r))
 	if err != nil {
 		s.writeMeetingLinkError(w, err)
 		return

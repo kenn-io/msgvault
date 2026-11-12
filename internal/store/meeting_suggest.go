@@ -22,7 +22,6 @@ type MeetingSuggestion struct {
 	OverlapMinutes  int       `json:"overlap_minutes"`
 	SharedAttendees int       `json:"shared_attendees"`
 	TitleTokens     int       `json:"title_tokens"`
-	Reasons         []string  `json:"reasons"`
 }
 
 type MeetingSuggestionPage struct {
@@ -37,7 +36,7 @@ type suggestMember struct {
 	Emails     map[string]bool
 }
 
-func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (MeetingSuggestion, bool) {
+func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence, titleWords bool) (MeetingSuggestion, bool) {
 	if event.Status == "cancelled" || event.Start.IsZero() || event.End.IsZero() || member.Start.IsZero() {
 		return MeetingSuggestion{}, false
 	}
@@ -51,7 +50,7 @@ func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (Meet
 	if !end.After(start) {
 		return MeetingSuggestion{}, false
 	}
-	result := MeetingSuggestion{Ref: event.Ref, MemberMessageID: member.ID, OverlapMinutes: int(end.Sub(start) / time.Minute), Reasons: []string{"time_overlap"}}
+	result := MeetingSuggestion{Ref: event.Ref, MemberMessageID: member.ID, OverlapMinutes: int(end.Sub(start) / time.Minute)}
 	seen := map[string]bool{}
 	for _, attendee := range event.Attendees {
 		email := strings.ToLower(strings.TrimSpace(attendee.Email))
@@ -60,17 +59,13 @@ func rankMeetingSuggestion(member suggestMember, event CalendarOccurrence) (Meet
 			result.SharedAttendees++
 		}
 	}
-	tokens := uniqueChatTokens(member.Title)
-	for _, token := range uniqueChatTokens(event.Subject) {
-		if slices.Contains(tokens, token) {
-			result.TitleTokens++
+	if titleWords {
+		tokens := uniqueChatTokens(member.Title)
+		for _, token := range uniqueChatTokens(event.Subject) {
+			if slices.Contains(tokens, token) {
+				result.TitleTokens++
+			}
 		}
-	}
-	if result.SharedAttendees > 0 {
-		result.Reasons = append(result.Reasons, "shared_attendees")
-	}
-	if result.TitleTokens > 0 {
-		result.Reasons = append(result.Reasons, "title_tokens")
 	}
 	return result, true
 }
@@ -129,7 +124,7 @@ func (s *Store) suggestionMembers(ctx context.Context, ids []int64) ([]suggestMe
 	return members, nil
 }
 
-func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkRef, limit int) (MeetingSuggestionPage, error) {
+func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkRef, limit int, titleWords bool) (MeetingSuggestionPage, error) {
 	page := MeetingSuggestionPage{Suggestions: []MeetingSuggestion{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
@@ -155,7 +150,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		}
 		page.Unexpandable = events.Unexpandable
 		for _, event := range events.Occurrences {
-			if item, ok := rankMeetingSuggestion(member, event); ok {
+			if item, ok := rankMeetingSuggestion(member, event, titleWords); ok {
 				item.Title = event.Subject
 				item.TitleMessageID = event.MessageID
 				item.TitleOriginID = event.row.SubjectOriginID
@@ -236,7 +231,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 				return page, err
 			}
 			for _, member := range members {
-				if item, ok := rankMeetingSuggestion(member, event); ok {
+				if item, ok := rankMeetingSuggestion(member, event, titleWords); ok {
 					item.Title = member.Title
 					item.TitleMessageID = member.ID
 					item.Start = member.Start

@@ -7940,7 +7940,6 @@ func (m MeetingScopeRequest) Validate() error {
 type MeetingSuggestion struct {
 	MemberMessageID int64     `json:"member_message_id"`
 	OverlapMinutes  int64     `json:"overlap_minutes"`
-	Reasons         []string  `json:"reasons" validate:"required"`
 	Ref             string    `json:"ref" validate:"required"`
 	SharedAttendees int64     `json:"shared_attendees"`
 	Start           time.Time `json:"start" validate:"required"`
