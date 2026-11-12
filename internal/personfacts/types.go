@@ -493,8 +493,7 @@ func DecisionOutcomeFor(f OutcomeFacts) (DecisionOutcome, bool) {
 	if f.Retired {
 		return OutcomeValueRetired, true
 	}
-	switch d.Action {
-	case DecisionInvalid, DecisionIdentityRejected, DecisionPolicyRejected:
+	if d.Action == DecisionInvalid || d.Action == DecisionIdentityRejected || d.Action == DecisionPolicyRejected {
 		return OutcomeNotUsed, true
 	}
 	if d.Reason == ReasonOrganizationAmbiguous || d.Reason == ReasonOutsideValidity || d.Reason == ReasonEvidenceUnsupported {
@@ -518,7 +517,7 @@ func DecisionOutcomeFor(f OutcomeFacts) (DecisionOutcome, bool) {
 	if f.CloseCompetition {
 		return OutcomeTooCloseToChoose, true
 	}
-	if f.HasCurrent && !f.MatchesCurrent && !f.Duplicate && (d.Action == DecisionRetained || d.Action == DecisionConflictRejected || d.Action == DecisionSuperseded) {
+	if f.HasCurrent && !f.MatchesCurrent && !f.Duplicate && (d.Action == DecisionRetained || d.Action == DecisionConflictRejected) {
 		return OutcomeCurrentValueKept, true
 	}
 	return OutcomeNotUsed, true
