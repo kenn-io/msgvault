@@ -517,3 +517,28 @@ func TestMeetingSuggestionsDeduplicatedSeed(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingSuggestionsKeepsEligibleGroupedNote(t *testing.T) {
+	r := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "grouped-event", `{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	raw := `{"owner":{"email":"owner@example.com"},"calendar_event":{"calendar_event_id":"group_20270314T100000Z"}}`
+	var notes []int64
+	for i, title := range []string{"Other", "Example event"} {
+		data, note := projectionFixture(t, st, fmt.Sprintf("grouped-note-%d", i), "granola_json", raw)
+		data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
+		data.Message.Subject = sql.NullString{String: title, Valid: true}
+		_, err := st.UpsertMessage(data.Message)
+		r.NoError(err)
+		notes = append(notes, note)
+	}
+	eventRef := MeetingLinkRef{Kind: "evt", MessageID: event}
+	_, err := st.DecideMeetingLinkContext(t.Context(), eventRef, MeetingLinkRef{Kind: "msg", MessageID: notes[1]}, "unlink")
+	r.NoError(err)
+	page, err := st.SuggestMeetingLinksContext(t.Context(), eventRef, 10, nil)
+	r.NoError(err)
+	r.Len(page.Suggestions, 1)
+	r.Equal(notes[0], page.Suggestions[0].MemberMessageID)
+	_, err = st.DecideMeetingLinkContext(t.Context(), eventRef, MeetingLinkRef{Kind: "msg", MessageID: notes[0]}, "link")
+	r.NoError(err)
+}

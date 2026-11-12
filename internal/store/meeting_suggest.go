@@ -353,12 +353,6 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 			return page, err
 		}
 		root, links := graph.reduce()
-		key := root(partner.ref())
-		for ref := range graph.nodes {
-			if root(ref) == key {
-				seen[ref] = true
-			}
-		}
 		if root(a.ref()) == root(b.ref()) {
 			continue
 		}
@@ -380,6 +374,12 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		graph.candidates = append(graph.candidates, meetingDecisionEdge{id: int64(^uint64(0) >> 1), a: a, b: b, decision: "link"})
 		if _, conflict := meetingDecisionConflict(graph, a, b, true, active); conflict {
 			continue
+		}
+		key := root(partner.ref())
+		for ref := range graph.nodes {
+			if root(ref) == key {
+				seen[ref] = true
+			}
 		}
 		page.Suggestions = append(page.Suggestions, candidate)
 		if len(page.Suggestions) == limit {
