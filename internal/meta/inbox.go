@@ -6,7 +6,9 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
+	"slices"
 
 	"go.kenn.io/msgvault/internal/beeperidentity"
 	"go.kenn.io/msgvault/internal/store"
@@ -238,6 +240,24 @@ func (imp *InboxImporter) Register(ctx context.Context, b Inbox) (*store.Source,
 	return registerSource(ctx, imp.store, b.SourceType(), b.Identifier(), b.actorIdentifier(b.owner()), provenance, name)
 }
 
+func (b Inbox) includesOwner(c InboxConversation) bool {
+	return slices.ContainsFunc(c.Participants, func(p InboxParticipant) bool { return p.ID == b.owner() })
+}
+
+// oneToOne returns the owner and customer of a conversation between exactly
+// the inbox owner and one other participant. ok is false for any other
+// conversation, such as a group chat, which cannot be filed as a direct chat.
+func (b Inbox) oneToOne(c InboxConversation) (owner, customer InboxParticipant, ok bool) {
+	if len(c.Participants) != 2 {
+		return owner, customer, false
+	}
+	owner, customer = c.Participants[0], c.Participants[1]
+	if customer.ID == b.owner() {
+		owner, customer = customer, owner
+	}
+	return owner, customer, owner.ID == b.owner() && customer.ID != owner.ID && safeObjectID(customer.ID)
+}
+
 // Import archives inbox conversations one page of up to 25 at a time, each
 // with its most recent messages. The checkpoint is the next page cursor.
 func (imp *InboxImporter) Import(ctx context.Context, b Inbox, opts ImportOptions) (*ImportSummary, error) {
@@ -246,21 +266,22 @@ func (imp *InboxImporter) Import(ctx context.Context, b Inbox, opts ImportOption
 		if err != nil {
 			return "", err
 		}
+		// Meta reads the inbox of the account linked to the Page now. If the
+		// Page was linked to another account, none of its conversations
+		// include the configured one; refuse the page instead of archiving
+		// another account's messages in this source.
+		if len(page.Data) > 0 && !slices.ContainsFunc(page.Data, b.includesOwner) {
+			return "", fmt.Errorf("conversation %q does not include inbox owner %s; check which account the Page is linked to", page.Data[0].ID, b.owner())
+		}
 		for _, conversation := range page.Data {
-			var owner, customer InboxParticipant
-			for _, p := range conversation.Participants {
-				if p.ID == b.owner() {
-					owner = p
-				} else if customer.ID == "" {
-					customer = p
-				}
-			}
-			// Meta reads the inbox of the account linked to the Page now. If
-			// the Page was linked to another account, its conversations do
-			// not include the configured one; refuse them instead of
-			// archiving another account's messages in this source.
-			if owner.ID == "" {
-				return "", fmt.Errorf("conversation %q does not include inbox owner %s; check which account the Page is linked to", conversation.ID, b.owner())
+			owner, customer, ok := b.oneToOne(conversation)
+			if !ok {
+				// Skip it rather than fail the page, so the cursor still
+				// moves past it on this and every later run.
+				sum.ConversationsSkipped++
+				slog.WarnContext(ctx, "skipped inbox conversation that is not one-to-one",
+					"source_type", b.SourceType(), "conversation", conversation.ID, "participants", len(conversation.Participants))
+				continue
 			}
 			for _, msg := range conversation.Messages {
 				if err := b.persistMessage(ctx, st, source.ID, sum, owner, customer, msg); err != nil {

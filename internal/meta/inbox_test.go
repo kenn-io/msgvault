@@ -2,7 +2,10 @@ package meta
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,6 +87,111 @@ func TestInboxImportArchivesConversationsAsChats(t *testing.T) {
 			body, err := st.GetMessageBodyText(t.Context(), answer.ID)
 			require.NoError(err)
 			assert.Equal("edited reply", body)
+		})
+	}
+}
+
+var inboxTestCases = []struct {
+	name, platform, owner string
+	inbox                 Inbox
+}{
+	{"messenger", "messenger", "100", Inbox{App: "9", Page: "100"}},
+	{"instagram", "instagram", "200", Inbox{App: "9", Page: "100", Account: "200"}},
+}
+
+// inboxPages serves the Page and linked account reads, and the conversation
+// pages keyed by their after cursor. It records each cursor it was asked for.
+func inboxPages(t *testing.T, pages map[string]string, afters *[]string) *Client {
+	t.Helper()
+	return fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v26.0/me":
+			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+		case "/v26.0/100":
+			_, _ = fmt.Fprint(w, `{"id":"100","instagram_business_account":{"id":"200","username":"example_business"}}`)
+		case "/v26.0/100/conversations":
+			after := r.URL.Query().Get("after")
+			*afters = append(*afters, after)
+			body, ok := pages[after]
+			if !ok {
+				http.Error(w, "unexpected cursor", http.StatusNotFound)
+				return
+			}
+			_, _ = fmt.Fprint(w, body)
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+}
+
+// inboxConversation renders one Graph conversation. messages maps each
+// message ID to its sender's ID.
+func inboxConversation(id string, participants []string, messages map[string]string) string {
+	ps := make([]string, 0, len(participants))
+	for _, p := range participants {
+		ps = append(ps, fmt.Sprintf(`{"id":%q,"name":"Example %s"}`, p, p))
+	}
+	ms := make([]string, 0, len(messages))
+	for _, mid := range slices.Sorted(maps.Keys(messages)) {
+		ms = append(ms, fmt.Sprintf(`{"id":%q,"created_time":"2026-10-01T12:00:00+0000","from":{"id":%q},"message":"synthetic text"}`, mid, messages[mid]))
+	}
+	return fmt.Sprintf(`{"id":%q,"participants":{"data":[%s]},"messages":{"data":[%s]}}`, id, strings.Join(ps, ","), strings.Join(ms, ","))
+}
+
+func TestInboxImportSkipsConversationsThatAreNotOneToOne(t *testing.T) {
+	for _, tc := range inboxTestCases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			var afters []string
+			first := strings.Join([]string{
+				inboxConversation("t_group", []string{tc.owner, "701", "702"}, map[string]string{"m_g1": "701", "m_g2": "702"}),
+				inboxConversation("t_ok", []string{"700", tc.owner}, map[string]string{"m_ok": "700"}),
+				inboxConversation("t_alone", []string{tc.owner}, map[string]string{"m_alone": tc.owner}),
+				inboxConversation("t_other", []string{"703", "704"}, map[string]string{"m_other": "703"}),
+			}, ",")
+			c := inboxPages(t, map[string]string{
+				"":   `{"data":[` + first + `],"paging":{"cursors":{"after":"c2"},"next":"https://example.test/unused"}}`,
+				"c2": `{"data":[` + inboxConversation("t_2", []string{tc.owner, "705"}, map[string]string{"m_next": "705"}) + `]}`,
+			}, &afters)
+			imp := NewInboxImporter(st, c)
+			src, err := imp.Register(t.Context(), tc.inbox)
+			require.NoError(err)
+
+			sum, err := imp.Import(t.Context(), tc.inbox, ImportOptions{})
+			require.NoError(err)
+			assert.False(sum.Partial)
+			assert.Equal(3, sum.ConversationsSkipped)
+			assert.Equal(2, sum.MessagesProcessed)
+			assert.Equal([]string{"", "c2"}, afters, "the sync reads past the page with skipped conversations")
+			ids, err := st.MessageExistsBatch(src.ID, []string{"m_ok", "m_next", "m_g1", "m_g2", "m_alone", "m_other"})
+			require.NoError(err)
+			assert.ElementsMatch([]string{"m_ok", "m_next"}, slices.Collect(maps.Keys(ids)))
+		})
+	}
+}
+
+func TestInboxImportRefusesPageWithoutOwner(t *testing.T) {
+	for _, tc := range inboxTestCases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			var afters []string
+			c := inboxPages(t, map[string]string{
+				"": `{"data":[` + inboxConversation("t_a", []string{"700", "799"}, map[string]string{"m_a": "700"}) + `,` +
+					inboxConversation("t_b", []string{"701", "799", "702"}, map[string]string{"m_b": "701"}) + `]}`,
+			}, &afters)
+			imp := NewInboxImporter(st, c)
+			src, err := imp.Register(t.Context(), tc.inbox)
+			require.NoError(err)
+
+			_, err = imp.Import(t.Context(), tc.inbox, ImportOptions{})
+			require.Error(err)
+			assert.Contains(err.Error(), "check which account the Page is linked to")
+			assert.Contains(err.Error(), `"t_a"`)
+			ids, err := st.MessageExistsBatch(src.ID, []string{"m_a", "m_b"})
+			require.NoError(err)
+			assert.Empty(ids)
 		})
 	}
 }

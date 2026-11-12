@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-10"
+last_edited: "2026-11-12"
 title: Facebook and Instagram Messages
 description: Archive a Facebook Page's Messenger inbox or a linked Instagram account's direct messages as searchable chats.
 ---
@@ -63,6 +63,13 @@ yours. The source and message types are `facebook_messages` and
 they never merge with commenters or with people in other sources; use the
 [people tools](people.md) to link them.
 
+Only one-to-one conversations are archived: the Page or account and one other
+person. A sync skips any other conversation, such as a group chat, and its
+output counts them, for example `2 conversations skipped (not a one-to-one
+chat)`. A sync fails if none of the conversations on a page include the
+configured Page or account. That means the Page is now linked to another
+account; check which account the Page is linked to.
+
 Meta returns only the **20 most recent messages** of each conversation, so a
 sync cannot reach older history. Each sync reads every conversation again and
 updates messages already archived in place. Each request reads up to 25
@@ -73,6 +80,7 @@ conversations.
 ## Limits
 
 - Message text only: attachments, stickers and reactions are not archived.
+- Group conversations are not archived.
 - A later sync updates the text of a message that is still among the 20 most
   recent, so an edit replaces the archived text. Earlier versions and
   deletions are not kept.
