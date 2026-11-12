@@ -3294,15 +3294,6 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, changesCursorError("was issued for a different filter; restart from an unfiltered cursor or the original filter"))
 		return
 	}
-	if filter.PersonID != 0 {
-		reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: filter.PersonID}
-		resolution, resolveErr := resolver.Resolve(r.Context(), s.store, reference, nil)
-		if resolveErr != nil {
-			s.writePersonScopeError(w, reference, resolveErr, "change feed")
-			return
-		}
-		filter.participants = resolution.Scope.ParticipantIDs
-	}
 	since := position.cursor
 
 	lister, ok := s.store.(ChangedMessageLister)
@@ -3325,6 +3316,15 @@ func (s *Server) handleMessageChanges(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("changed messages query failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Message change query failed")
 		return
+	}
+	if filter.PersonID != 0 {
+		reference := resolver.Reference{Kind: resolver.ReferencePerson, ID: filter.PersonID}
+		resolution, resolveErr := resolver.Resolve(r.Context(), s.store, reference, nil)
+		if resolveErr != nil {
+			s.writePersonScopeError(w, reference, resolveErr, "change feed")
+			return
+		}
+		filter.participants = resolution.Scope.ParticipantIDs
 	}
 
 	rows := page.Messages

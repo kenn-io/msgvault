@@ -175,6 +175,7 @@ func TestChangesPersonErrorsAreDeclared(t *testing.T) {
 // the real store reads the bounded page, without depending on goroutine timing.
 type linkBeforeChangesPage struct {
 	*store.Store
+
 	before func()
 }
 
