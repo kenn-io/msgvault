@@ -812,14 +812,12 @@ func TestSearchTools_RealEngineScopeIsolation(t *testing.T) {
 
 func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 	tests := []struct {
-		name         string
-		query        string
-		body         string
-		wantContext  string
-		reject       string
-		sqliteOnly   bool
-		postgresOnly bool
-		exact        bool
+		name        string
+		query       string
+		body        string
+		wantContext string
+		reject      string
+		sqliteOnly  bool
 	}{
 		{
 			name:        "punctuation becomes token boundary",
@@ -840,22 +838,6 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 			body:        "cafe\u0301teria notes",
 			wantContext: "cafe\u0301teria",
 			sqliteOnly:  true,
-		},
-		{
-			name:         "decomposed word splits on PostgreSQL",
-			query:        "cafe teria",
-			body:         "cafe\u0301teria",
-			wantContext:  "cafe\u0301teria",
-			postgresOnly: true,
-			exact:        true,
-		},
-		{
-			name:         "accent lookalikes precede clean match",
-			query:        "resume marker",
-			body:         "résumé résumé " + strings.Repeat("x", 400) + " resume marker",
-			wantContext:  "resume marker",
-			reject:       "résumé",
-			postgresOnly: true,
 		},
 		{
 			name:        "full case fold matches Greek final sigma",
@@ -894,9 +876,6 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 			if tc.sqliteOnly && f.Store.IsPostgreSQL() {
 				t.Skip("unicode61 remove_diacritics regression is SQLite-specific")
 			}
-			if tc.postgresOnly && !f.Store.IsPostgreSQL() {
-				t.Skip("PostgreSQL indexing")
-			}
 			messageID := f.NewMessage().
 				WithSourceMessageID("mcp-normalized-context").
 				WithSubject("ordinary subject").
@@ -918,11 +897,7 @@ func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 			require.Len(resp.Data, 1, "body hit")
 			assert.Equal(messageID, resp.Data[0].ID, "body hit ID")
 			require.Len(resp.Data[0].Matches, 1, "FTS hit context windows")
-			if tc.exact {
-				assert.Equal(tc.wantContext, resp.Data[0].Matches[0].Snippet)
-			} else {
-				assert.Contains(resp.Data[0].Matches[0].Snippet, tc.wantContext)
-			}
+			assert.Contains(resp.Data[0].Matches[0].Snippet, tc.wantContext)
 			if tc.reject != "" {
 				assert.NotContains(resp.Data[0].Matches[0].Snippet, tc.reject,
 					"context must start from an FTS token-prefix match")

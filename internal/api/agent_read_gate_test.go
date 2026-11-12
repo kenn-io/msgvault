@@ -1132,7 +1132,7 @@ func TestPostgresStartupRepairsAgentSearch(t *testing.T) {
 	}
 	source, id, err := testutil.CreateIndexedSourceMessage(t.Context(), st, "reader@example.test", "message", "visiblemarker", "startupneedle body")
 	require.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'legacy'), indexing_version = 2 WHERE id = $1`, id)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET search_fts = to_tsvector('simple', 'legacy'), search_fts_fields = NULL, indexing_version = 2 WHERE id = $1`, id)
 	require.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), true), Logger: testLogger()})
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})

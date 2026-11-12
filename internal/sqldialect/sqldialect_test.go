@@ -26,7 +26,7 @@ func TestRebindPostgreSQL(t *testing.T) {
 	}
 }
 
-func TestTSQueryAndEscapeTSQueryTerm(t *testing.T) {
+func TestEscapeTSQueryTerm(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
@@ -57,14 +57,20 @@ func TestTSQueryAndEscapeTSQueryTerm(t *testing.T) {
 			assert.Equal(t, tc.want, EscapeTSQueryTerm(tc.in), "EscapeTSQueryTerm(%q)", tc.in)
 		})
 	}
+}
+
+func TestTSQuery(t *testing.T) {
 	for _, tc := range []struct {
+		name  string
 		terms []string
 		want  string
 	}{
-		{[]string{"---"}, ""},
-		{[]string{"foo-bar"}, "foo & bar:*"},
-		{[]string{"monthly", "foo-bar", "or"}, "monthly:* & foo & bar:* & or:*"},
+		{"punctuation", []string{"---"}, ""},
+		{"phrase", []string{"foo-bar"}, "foo & bar:*"},
+		{"multiple terms", []string{"monthly", "foo-bar", "or"}, "monthly:* & foo & bar:* & or:*"},
 	} {
-		assert.Equal(t, tc.want, TSQuery(tc.terms, "", " & "))
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, TSQuery(tc.terms, "", " & "))
+		})
 	}
 }

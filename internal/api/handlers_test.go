@@ -2602,7 +2602,7 @@ func (s *postgresBackfillStore) BackfillFTSContext(ctx context.Context, _ func(i
 	return 0, ctx.Err()
 }
 
-func TestPostgresStartupSearchRepairLifecycle(t *testing.T) {
+func TestSearchRepairBlocksIdleAndStopsOnShutdown(t *testing.T) {
 	base := testutil.NewTestStore(t)
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)

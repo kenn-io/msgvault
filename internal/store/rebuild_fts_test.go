@@ -192,6 +192,7 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 		{"fbmessenger", "messengertitle"},
 		{"imessage", "15550100777"},
 		{"beeper", "beepersnapshot"},
+		{"google_chat", "saved@example.test"},
 	} {
 		if tc.kind == "beeper" && !f.Store.IsPostgreSQL() {
 			continue
@@ -219,6 +220,12 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 				require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{pid}, []string{"Phone"}))
 			case "beeper":
 				require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(`{"senderName":"beepersnapshot"}`), "beeper_json"))
+			case "google_chat":
+				pid := f.EnsureParticipant("current@example.test", "Current", "example.test")
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id = ? WHERE id = ?`), pid, id)
+				require.NoError(err)
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'from', ?)`), id, pid, tc.term)
+				require.NoError(err)
 			}
 			to := ""
 			if tc.kind == "discord" {
@@ -226,7 +233,7 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 			}
 			require.NoError(f.Store.UpsertFTS(id, "", "", tc.term, to, ""))
 			if f.Store.IsPostgreSQL() {
-				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET indexing_version = 2 WHERE id = ?`), id)
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET search_fts_fields = NULL, indexing_version = 2 WHERE id = ?`), id)
 			} else {
 				_, err = f.Store.DB().ExecContext(t.Context(), `DELETE FROM messages_fts WHERE rowid = ?`, id)
 			}
@@ -234,6 +241,9 @@ func TestFTSBackfillRetainsImportedTerms(t *testing.T) {
 			_, err = f.Store.BackfillFTS(nil)
 			require.NoError(err)
 			assertFTSContains(t, f.Store, tc.term, 1)
+			if tc.kind == "google_chat" {
+				assertFTSContains(t, f.Store, "current@example.test", 0)
+			}
 			if tc.kind == "discord" {
 				assertFTSContains(t, f.Store, "discordmention", 1)
 			}
