@@ -323,8 +323,8 @@ msgvault search "dinner" --message-type sms --message-type mms
 
 Valid values are `email`, `google_chat`, `calendar_event`, `meeting_transcript`,
 `beeper`, `chatwoot`, `sms`, `mms`, `rcs`, `whatsapp`, `imessage`, `teams`, `discord`, `slack`, `fbmessenger`, `telegram`,
-`synctech_sms_call`, `google_voice_text`, `google_voice_call`, and
-`google_voice_voicemail`. `message_type:email` also includes legacy rows whose
+`synctech_sms_call`, `google_voice_text`, `google_voice_call`,
+`google_voice_voicemail`, and `call_record`. `message_type:email` also includes legacy rows whose
 type is empty because older msgvault versions created them before the column
 existed.
 Messages from the [message import API](/docs/usage/message-import/) carry the

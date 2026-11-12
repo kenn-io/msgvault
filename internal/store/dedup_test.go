@@ -983,6 +983,20 @@ func TestStore_GetDuplicateGroupMessages_PreservesFromCase(t *testing.T) {
 	assert.Equal(t, mxid, rows[0].FromEmail, "FromEmail (case must be preserved)")
 }
 
+func TestStore_GetAllRawMIMECandidates_SkipsCallRecords(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+
+	o, sourceID := validCallObservation(t, f.Store)
+	o.Raw = []byte(`{"same":"evidence"}`)
+	_, err := f.Store.PutCallObservationContext(t.Context(), sourceID, o)
+	require.NoError(err)
+
+	cands, err := f.Store.GetAllRawMIMECandidates(t.Context())
+	require.NoError(err)
+	require.Empty(cands)
+}
+
 // TestStore_GetAllRawMIMECandidates_PreservesFromCase mirrors
 // TestStore_GetDuplicateGroupMessages_PreservesFromCase but covers the
 // content-hash candidate path. Both queries had the same SQL `LOWER()`

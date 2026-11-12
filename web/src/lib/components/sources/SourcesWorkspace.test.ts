@@ -65,6 +65,22 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
+  it.each([
+    ['Zoom meetings — Example', 'Zoom meetings — Example'],
+    ['', 'Call history']
+  ])('shows call sources without exposing their internal identifier', async (displayName, expected) => {
+    const identifier = 'calls/13:zoom_meetings' + 'a'.repeat(64);
+    render(SourcesWorkspace, { client: createAPIClient(api([source({
+      source_type: 'call_history', identifier, display_name: displayName, can_sync: false
+    })])) });
+    await fireEvent.click(await screen.findByRole('button', { name: `Details for ${expected}` }));
+    const panel = screen.getByRole('dialog', { name: expected });
+    expect(within(panel).getAllByText('Call history')).toHaveLength(1);
+    expect(screen.getAllByText('Call history')).toHaveLength(2);
+    if (!displayName) expect(panel.querySelector('.type')).toBeNull();
+    expect(document.body.textContent).not.toContain(identifier);
+  });
+
   it('shows a scheduler handoff as queued without concealing a real failure', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,

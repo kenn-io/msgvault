@@ -171,6 +171,7 @@ var KnownMessageTypes = []string{
 	"fbmessenger",
 	"facebook_comments", "instagram_comments",
 	"synctech_sms_call",
+	"call_record",
 	"google_voice_text",
 	"google_voice_call",
 	"google_voice_voicemail",

@@ -12,7 +12,7 @@
   import { CardDAVController } from '../../carddav/controller.svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { contactCanSync, contactLabel, contactLastGood, contactRunState } from '../../sources/contacts';
-  import { isOnDemandSourceType, sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
+  import { isOnDemandSourceType, sourceLabel, sourceRunState, sourceTypeLabel, syncRunning, syncUnavailableLabel } from '../../sources/labels';
   import { formatDateTime } from '../../util/format';
   import InlineNotice from '../common/InlineNotice.svelte';
   import { operationStateChip } from '../../operations/labels';
@@ -361,7 +361,7 @@
     return Number.isFinite(timestamp) && Date.now() - timestamp > 24 * 60 * 60 * 1000;
   }
   function label(source: Source): string {
-    return source.display_name || source.identifier;
+    return sourceLabel(source);
   }
   function messageFor(value: unknown, fallback: string): string {
     return typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'
@@ -450,7 +450,7 @@
                   toggle(key);
                 }}>{label(source)}</button
               >
-              <span class="muted">{sourceTypeLabel(source.source_type)}</span>
+              {#if sourceTypeLabel(source.source_type) && sourceTypeLabel(source.source_type) !== label(source)}<span class="muted">{sourceTypeLabel(source.source_type)}</span>{/if}
             </div>
           </td>
           <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span><span class="muted">{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()} errors</span>{:else if staleLastResult(source)}<span class="muted">This result may be out of date.</span>{/if}
