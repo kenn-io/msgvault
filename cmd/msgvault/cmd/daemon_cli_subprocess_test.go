@@ -59,41 +59,38 @@ func helperProcessCommand(ctx context.Context, mode string) *exec.Cmd {
 }
 
 func TestClassifyDaemonCLIWaitErrExitStatus(t *testing.T) {
-	for _, mode := range []string{"exit3", "paused", "interrupted", "interrupted-emit-failure"} {
-		t.Run(mode, func(t *testing.T) {
-			require, assert := require.New(t), assert.New(t)
-			childMode := mode
-			if mode == "interrupted-emit-failure" {
-				childMode = "interrupted"
-			}
-			waitErr := helperProcessCommand(t.Context(), childMode).Run()
-			require.Error(waitErr)
+	emitErr := errors.New("stream closed")
+	for _, tc := range []struct {
+		name, mode, command, wantError string
+		emitErr                        error
+		wantEvents                     []string
+	}{
+		{name: "other exit", mode: "exit3", command: "sync-omi", wantError: cliSubprocessExitSentinel},
+		{name: "paused", mode: "paused", command: "sync-omi", wantEvents: []string{"outcome=paused"}},
+		{name: "interrupted", mode: "interrupted", command: "sync-full", wantError: cliSubprocessExitSentinel, wantEvents: []string{"outcome=interrupted"}},
+		{name: "interrupted other command", mode: "interrupted", command: "sync-omi", wantError: cliSubprocessExitSentinel},
+		{name: "interrupted emit failure", mode: "interrupted", command: "sync-full", emitErr: emitErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			waitErr := helperProcessCommand(t.Context(), tc.mode).Run()
+			require.Error(t, waitErr)
 			var events []string
-			args := []string{"sync-omi"}
-			if childMode == "interrupted" {
-				args = []string{"sync-full"}
-			}
-			want := errors.New("stream closed")
-			got := classifyDaemonCLIWaitErr(waitErr, args, func(stream, data string) error {
-				if mode == "interrupted-emit-failure" {
-					return want
+			got := classifyDaemonCLIWaitErr(waitErr, []string{tc.command}, func(stream, data string) error {
+				if tc.emitErr != nil {
+					return tc.emitErr
 				}
 				events = append(events, stream+"="+data)
 				return nil
 			})
-			switch mode {
-			case "interrupted-emit-failure":
-				require.ErrorIs(got, want)
-			case "paused":
-				require.NoError(got)
-				assert.Equal([]string{"outcome=" + mode}, events)
-			case "interrupted":
-				require.EqualError(got, cliSubprocessExitSentinel)
-				assert.Equal([]string{"outcome=interrupted"}, events)
+			switch {
+			case tc.emitErr != nil:
+				require.ErrorIs(t, got, tc.emitErr)
+			case tc.wantError != "":
+				require.EqualError(t, got, tc.wantError)
 			default:
-				require.EqualError(got, cliSubprocessExitSentinel)
-				assert.Empty(events)
+				require.NoError(t, got)
 			}
+			assert.Equal(t, tc.wantEvents, events)
 		})
 	}
 }
