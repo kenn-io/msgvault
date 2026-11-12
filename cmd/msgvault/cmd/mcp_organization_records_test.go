@@ -105,6 +105,12 @@ func TestOrganizationWritesUseRevisionsAndEmploymentGuard(t *testing.T) {
 	must.NoError(err)
 	second := operationOutput[mcpserver.OrganizationMutation](t, patched)
 	checks.Equal("Example Group", second.Organization.Name)
+	blank := map[string]any{"organization_id": id, "etag": "", "body": map[string]any{"name": "Example Blank", "kind": "company"}}
+	_, err = backend.OperationDisclosure(t.Context(), "update_organization", blank)
+	must.NoError(err)
+	missing, err := backend.ExecuteOperation(t.Context(), "update_organization", blank)
+	must.NoError(err)
+	assertLoopRefusal(t, missing, "if_match_required", false)
 	stale, err := backend.ExecuteOperation(t.Context(), "delete_organization", map[string]any{"organization_id": id, "etag": first.ETag})
 	must.NoError(err)
 	checks.True(stale.IsError)
