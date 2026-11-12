@@ -87,6 +87,37 @@ func TestFederationHandshakeCredential(t *testing.T) {
 	assertions.Equal(first, revoked.Body.String())
 }
 
+func TestFederationHandshakeLibraryAuthorization(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Federation.Role = "hub"
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
+	hubUID, err := st.ArchiveUIDContext(t.Context())
+	requirements.NoError(err)
+	for _, admitted := range []bool{true, false} {
+		handler := srv.Handler(func(w http.ResponseWriter, _ *http.Request, op Operation) bool {
+			requirements.Equal(Operation{ID: "getFederationHandshake", Method: http.MethodGet, Path: "/api/v1/federation/handshake"}, op)
+			if !admitted {
+				w.WriteHeader(http.StatusForbidden)
+			}
+			return admitted
+		})
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/federation/handshake", nil))
+		if !admitted {
+			requirements.Equal(http.StatusForbidden, w.Code)
+			continue
+		}
+		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+		var body federationHandshakeResponse
+		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
+		requirements.Equal(federationHandshakeResponse{ProtocolVersions: []int{1}, HubInstance: hubUID, EnrollmentState: "active"}, body)
+	}
+}
+
 func TestFederationKeylessSpokeIdentity(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	cfg := config.NewDefaultConfig()

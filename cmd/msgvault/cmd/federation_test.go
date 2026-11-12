@@ -77,16 +77,18 @@ func TestFederationEnrollOutput(t *testing.T) {
 	command.SetOut(&stdout)
 	command.SetErr(&stderr)
 	t.Run("invalid port does not enroll", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
 		for _, origin := range []string{"https://hub.example.test:0", "https://hub.example.test:99999"} {
 			command.SetArgs([]string{"--spoke-instance", strings.Repeat("a", 64), "--member", "alice", "--hub-url", origin})
-			require.ErrorContains(t, command.ExecuteContext(ctx), "--hub-url")
+			requirements.ErrorContains(command.ExecuteContext(ctx), "--hub-url")
 			entries, err := st.ListFederationEnrollmentsContext(t.Context())
-			require.NoError(t, err)
-			assert.Empty(t, entries)
-			assert.Empty(t, stdout.String())
+			requirements.NoError(err)
+			assertions.Empty(entries)
+			assertions.Empty(stdout.String())
 		}
 		flag := command.Flags().Lookup("hub-url")
-		require.NoError(t, flag.Value.Set(flag.DefValue))
+		requirements.NoError(flag.Value.Set(flag.DefValue))
 		flag.Changed = false
 	})
 	t.Run("token and join hint", func(t *testing.T) {

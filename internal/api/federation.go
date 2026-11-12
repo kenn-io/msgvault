@@ -106,7 +106,7 @@ func (s *Server) handleFederationHandshake(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	auth := s.requestAuthentication(r)
-	if auth.Mode != AuthModeFederation {
+	if auth.Mode != AuthModeFederation && auth.Mode != AuthModeCaller {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return
 	}
