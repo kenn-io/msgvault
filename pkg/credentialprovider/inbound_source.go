@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"uuid"
 )
@@ -45,6 +46,9 @@ type InboundSource struct {
 	// turn holds one value while a caller owns held, so waiting can be canceled.
 	turn chan struct{}
 	held *heldCredential
+	// rejected holds credential IDs an endpoint refused. Renew records them
+	// before waiting for its turn, so a canceled renewal still retires them.
+	rejected sync.Map
 }
 
 type heldCredential struct {
@@ -54,7 +58,6 @@ type heldCredential struct {
 	bearer     string
 	started    time.Time
 	usable     time.Duration
-	rejected   bool
 }
 
 // NewInboundSource checks argv and scope without starting the helper.
@@ -72,7 +75,7 @@ func (s *InboundSource) Token(ctx context.Context) (InboundToken, error) {
 		return InboundToken{}, err
 	}
 	defer s.release()
-	if s.held.valid(time.Now()) {
+	if s.usableLocked() {
 		return s.held.token(), nil
 	}
 	return s.exchangeLocked(ctx)
@@ -82,17 +85,25 @@ func (s *InboundSource) Token(ctx context.Context) (InboundToken, error) {
 // never returned again; a usable successor that another caller already obtained
 // is returned without starting the helper.
 func (s *InboundSource) Renew(ctx context.Context, rejected InboundToken) (InboundToken, error) {
+	if rejected.credentialID != uuid.Nil() {
+		s.rejected.Store(rejected.credentialID, struct{}{})
+	}
 	if err := s.acquire(ctx); err != nil {
 		return InboundToken{}, err
 	}
 	defer s.release()
-	if s.held != nil && s.held.id == rejected.credentialID {
-		s.held.rejected = true
-	}
-	if s.held.valid(time.Now()) {
+	if s.usableLocked() {
 		return s.held.token(), nil
 	}
 	return s.exchangeLocked(ctx)
+}
+
+func (s *InboundSource) usableLocked() bool {
+	if !s.held.valid(time.Now()) {
+		return false
+	}
+	_, rejected := s.rejected.Load(s.held.id)
+	return !rejected
 }
 
 func (s *InboundSource) acquire(ctx context.Context) error {
@@ -136,6 +147,8 @@ func (s *InboundSource) exchangeLocked(ctx context.Context) (InboundToken, error
 		started:    started,
 		usable:     lifetime - min(lifetime/2, renewMargin),
 	}
+	// Only the new credential can be handed out now; older rejections are moot.
+	s.rejected.Clear()
 	if !s.held.valid(time.Now()) {
 		return InboundToken{}, ErrCredentialExpired
 	}
@@ -148,7 +161,7 @@ func (s *InboundSource) exchangeLocked(ctx context.Context) (InboundToken, error
 // valid bounds both monotonic and wall-clock elapsed time. The monotonic clock
 // may stop while the host sleeps; the wall clock does not.
 func (h *heldCredential) valid(now time.Time) bool {
-	return h != nil && !h.rejected && now.Sub(h.started) < h.usable && now.Round(0).Sub(h.started.Round(0)) < h.usable
+	return h != nil && now.Sub(h.started) < h.usable && now.Round(0).Sub(h.started.Round(0)) < h.usable
 }
 
 func (h *heldCredential) token() InboundToken {

@@ -200,7 +200,8 @@ and wall clocks so a host that slept renews before its next request.
 - A credential whose usable lifetime ends during its own exchange is not
   returned; the call fails with `ErrCredentialExpired` and the next call renews.
 - When the endpoint rejects a credential, `Renew` sends one `renew`. The
-  rejected credential is never returned again, even if that renewal fails.
+  rejected credential is never returned again, even if that renewal fails or
+  is canceled.
   Callers holding an already-replaced credential receive its successor without
   another exchange.
 - A canceled caller stops waiting for another caller's exchange and never

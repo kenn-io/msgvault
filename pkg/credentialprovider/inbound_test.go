@@ -277,6 +277,31 @@ func TestInboundSourceNeverReusesRejectedCredential(t *testing.T) {
 	}
 }
 
+func TestInboundSourceRetiresRejectedCredentialWhenRenewalIsCanceled(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	executable, err := os.Executable()
+	requirements.NoError(err)
+	argv := inboundHelper(t, executable, "ready", time.Hour)
+	source, err := credentialprovider.NewInboundSource(argv, inboundScope)
+	requirements.NoError(err)
+	rejected, err := source.Token(t.Context())
+	requirements.NoError(err)
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = source.Renew(canceled, rejected)
+	requirements.ErrorIs(err, context.Canceled)
+	token, err := source.Token(t.Context())
+	requirements.NoError(err)
+	assertions.Equal("synthetic-token-2", token.Bearer)
+	requests := helperRequests(t, argv)
+	requirements.Len(requests, 2)
+	assertions.Equal("renew", requests[1].Operation)
+	again, err := source.Token(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(token, again, "the successor is reused")
+}
+
 func TestInboundSourceHonorsCancellation(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
