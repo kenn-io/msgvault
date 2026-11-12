@@ -276,24 +276,41 @@ func (s *Store) MeetingOccurrencesContext(ctx context.Context, through time.Time
 		graph.groups = append(graph.groups, group)
 	}
 
-	rows, err = s.db.QueryContext(ctx, `SELECT `+meetingDecisionColumns+` FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE l.deleted_at IS NULL AND r.deleted_at IS NULL`)
+	rows, err = s.db.QueryContext(ctx, `SELECT id,left_message_id,left_kind,left_key,right_message_id,right_kind,right_key,decision FROM meeting_link_decisions`)
 	if err != nil {
 		return nil, time.Time{}, fmt.Errorf("read meeting decisions: %w", err)
 	}
-	decisions, err := scanMeetingDecisionEdges(rows)
-	if err != nil {
+	var decisions []meetingDecisionEdge
+	for rows.Next() {
+		var edge meetingDecisionEdge
+		if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision); err != nil {
+			_ = rows.Close()
+			return nil, time.Time{}, err
+		}
+		decisions = append(decisions, edge)
+	}
+	if err := errorsJoinRows(rows); err != nil {
 		return nil, time.Time{}, fmt.Errorf("read meeting decisions: %w", err)
 	}
 	skippedChoices := 0
 	for _, edge := range decisions {
 		budget := calrecur.RequestReadBudget
-		valid, _, err := s.resolveMeetingDecision(ctx, &edge, &budget)
-		if errors.Is(err, ErrQueryTooBroad) {
-			skippedChoices++
-			continue
-		}
-		if err != nil {
-			return nil, time.Time{}, fmt.Errorf("resolve meeting decision: %w", err)
+		valid := true
+		for _, endpoint := range []*meetingDecisionEndpoint{&edge.a, &edge.b} {
+			canonical, err := s.meetingOccurrenceKey(ctx, *endpoint, &budget)
+			if errors.Is(err, ErrQueryTooBroad) {
+				skippedChoices++
+				valid = false
+				break
+			}
+			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrMeetingOccurrenceRequired) {
+				valid = false
+				break
+			}
+			if err != nil {
+				return nil, time.Time{}, fmt.Errorf("resolve meeting decision: %w", err)
+			}
+			*endpoint = canonical
 		}
 		_, leftOK := graph.nodes[edge.a.ref()]
 		_, rightOK := graph.nodes[edge.b.ref()]
@@ -577,13 +594,13 @@ func (s *Store) futureMeetingYears(ctx context.Context, lastYear int) (map[int]b
 	if err := errorsJoinRows(rows); err != nil {
 		return nil, err
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT d.left_message_id,d.left_kind,d.left_key,d.left_anchor,d.right_message_id,d.right_kind,d.right_key,d.right_anchor FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE l.deleted_at IS NULL AND r.deleted_at IS NULL`)
+	rows, err = s.db.QueryContext(ctx, `SELECT left_message_id,left_kind,left_key,right_message_id,right_kind,right_key FROM meeting_link_decisions`)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var left, right meetingDecisionEndpoint
-		if err := rows.Scan(&left.ID, &left.Kind, &left.Key, &left.Anchor, &right.ID, &right.Kind, &right.Key, &right.Anchor); err != nil {
+		if err := rows.Scan(&left.ID, &left.Kind, &left.Key, &right.ID, &right.Kind, &right.Key); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -592,9 +609,6 @@ func (s *Store) futureMeetingYears(ctx context.Context, lastYear int) (map[int]b
 				continue
 			}
 			key := endpoint.Key
-			if key == "" {
-				key = endpoint.Anchor
-			}
 			if key == "" {
 				continue
 			}

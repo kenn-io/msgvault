@@ -211,6 +211,28 @@ func TestMeetingOccurrenceFutureLinkedNote(t *testing.T) {
 	}
 }
 
+func TestMeetingOccurrenceChoiceSurvivesDedup(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, survivor := projectionFixture(t, st, "survivor", "meeting_json", `{"transcript":"Notes"}`)
+	_, duplicate := projectionFixture(t, st, "duplicate", "meeting_json", `{"transcript":"Notes"}`)
+	_, other := projectionFixture(t, st, "other", "meeting_json", `{"transcript":"Notes"}`)
+	ref := func(id int64) MeetingLinkRef { return MeetingLinkRef{Kind: "msg", MessageID: id} }
+	_, err := st.DecideMeetingLinkContext(t.Context(), ref(duplicate), ref(other), "link")
+	require.NoError(t, err)
+	_, err = st.MergeDuplicates(t.Context(), survivor, []int64{duplicate}, "counts-dedup")
+	require.NoError(t, err)
+	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Now().UTC(), nil)
+	require.NoError(t, err)
+	keys := map[int64]string{}
+	for _, row := range rows {
+		if row.Counted {
+			keys[row.MessageID] = row.OccurrenceKey
+		}
+	}
+	assert.NotEmpty(t, keys[survivor])
+	assert.Equal(t, keys[survivor], keys[other])
+}
+
 func TestMeetingMetricsNoteLinkedToTwoDates(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "two-dates", `{"id":"series","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
