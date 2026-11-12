@@ -502,7 +502,7 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 			rsvp = "declined"
 		case "TENTATIVE":
 			rsvp = "tentative"
-		case "NEEDS-ACTION":
+		case "", "NEEDS-ACTION":
 			rsvp = "needs_action"
 		}
 		e.Attendees = append(e.Attendees, Attendee{Email: email, DisplayName: textutil.ReplaceNUL(a.Params.Get("CN")), Role: role, RSVP: rsvp})

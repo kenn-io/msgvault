@@ -90,6 +90,13 @@ func TestICSWindowsZoneRecurrence(t *testing.T) {
 
 const icsExample = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:invite@example.com\r\nSEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART;TZID=America/New_York:20270314T090000\r\nDTEND;TZID=America/New_York:20270314T100000\r\nSUMMARY:Example\\, meeting\r\nDESCRIPTION:First line\\nSecond\r\n line\r\nORGANIZER:mailto:ORGANIZER@EXAMPLE.COM\r\nATTENDEE;CN=Guest;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nATTENDEE;CUTYPE=ROOM:mailto:room@example.com\r\nLOCATION:https://meet.google.com/abc-defg-hij\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 
+func TestICSAttendeeDefaultParticipationStatus(t *testing.T) {
+	components, err := ParseICS([]byte(icsExample), "", "")
+	require.NoError(t, err)
+	require.Len(t, components, 1)
+	assert.Contains(t, components[0].Event.Attendees, Attendee{Email: "room@example.com", Role: "room", RSVP: "needs_action"})
+}
+
 func TestICSCalendarTimeZone(t *testing.T) {
 	for _, tc := range []struct{ name, declared, context, start, want string }{
 		{"declared", "America/New_York", "", "DTSTART:20270115T090000", "2027-01-15T14:00:00Z"},
