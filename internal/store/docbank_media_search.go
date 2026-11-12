@@ -144,9 +144,16 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 	return versions, nil
 }
 
+// DocumentOccurrencePage identifies the last emitted attachment in a photo page.
+type DocumentOccurrencePage struct {
+	VersionID    string
+	AttachmentID int64
+}
+
 // DocumentSearchOccurrences maps hit versions to their current visible attachments.
-// Each version returns at most limit+1 rows so callers can detect truncation.
-func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination string, scope *personscope.Scope, versionIDs []string, limit int) ([]DocumentSearchOccurrence, error) {
+// A nil page returns up to limit+1 rows per version. A photo page returns
+// up to limit+1 rows across versions, ordered by version and attachment ID.
+func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination string, scope *personscope.Scope, versionIDs []string, limit int, page *DocumentOccurrencePage) ([]DocumentSearchOccurrence, error) {
 	var result []DocumentSearchOccurrence
 	if len(versionIDs) == 0 {
 		return result, nil
@@ -156,16 +163,21 @@ func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination strin
 		versionArgs[i] = id
 	}
 	with, query, args := s.documentSearchRows(destination, scope, `d.version_id IN (?`+strings.Repeat(",?", len(versionIDs)-1)+`)`, versionArgs)
-	query = with + `, duplicates AS (
- SELECT d.version_id, d.attachment_id, m.id AS message_id, cv.id AS conversation_id,
+	columns := ` d.version_id, d.attachment_id, m.id AS message_id, cv.id AS conversation_id,
  d.filename, ` + containingTitleMCVSQL + ` AS containing_title,
- COALESCE(m.sent_at,m.received_at,m.internal_date) AS occurred_at,
+ COALESCE(m.sent_at,m.received_at,m.internal_date) AS occurred_at`
+	if page != nil {
+		query = with + ` SELECT ` + columns + query + ` AND (d.version_id > ? OR (d.version_id = ? AND d.attachment_id > ?)) ORDER BY d.version_id, d.attachment_id LIMIT ?`
+		args = append(args, page.VersionID, page.VersionID, page.AttachmentID, limit+1)
+	} else {
+		query = with + `, duplicates AS (SELECT ` + columns + `,
  ROW_NUMBER() OVER (PARTITION BY d.version_id, m.id ORDER BY d.attachment_id) AS duplicate_rank` + query + `
- ), ranked AS (SELECT *,
- ROW_NUMBER() OVER (PARTITION BY version_id ORDER BY occurred_at DESC NULLS LAST, attachment_id) AS occurrence_rank FROM duplicates WHERE duplicate_rank = 1
+ ), ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY version_id ORDER BY occurred_at DESC NULLS LAST, attachment_id) AS occurrence_rank FROM duplicates WHERE duplicate_rank = 1
  ) SELECT version_id, attachment_id, message_id, conversation_id, filename, containing_title, occurred_at
  FROM ranked WHERE occurrence_rank <= ? ORDER BY occurred_at DESC NULLS LAST, attachment_id`
-	args = append(args, limit+1)
+		args = append(args, limit+1)
+	}
+
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list document search occurrences: %w", err)

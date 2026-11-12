@@ -70,17 +70,17 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 		ids, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope)
 		require.NoError(err)
 		assert.Equal([]string{"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000008", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000009"}, ids)
-		occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids, 100)
+		occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids, 100, nil)
 		require.NoError(err)
 		var mids []int64
 		for _, o := range occurrences {
 			mids = append(mids, o.MessageID)
 		}
 		assert.Equal([]int64{visible[3], visible[1], visible[0], visible[4], visible[6], visible[2], visible[5]}, mids)
-		other, err := f.Store.DocumentSearchOccurrences(t.Context(), "other", scope, ids, 100)
+		other, err := f.Store.DocumentSearchOccurrences(t.Context(), "other", scope, ids, 100, nil)
 		require.NoError(err)
 		assert.Empty(other)
-		onlyNew, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, []string{"00000000-0000-4000-8000-000000000004"}, 100)
+		onlyNew, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, []string{"00000000-0000-4000-8000-000000000004"}, 100, nil)
 		require.NoError(err)
 		require.Len(onlyNew, 2)
 		assert.Equal("new.pdf", onlyNew[0].Filename)
@@ -110,13 +110,40 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 		var attachments int
 		require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM attachments`).Scan(&attachments))
 		require.Equal(20, attachments)
-		occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 2)
+		occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 2, nil)
 		require.NoError(err)
 		got := make(map[string][]int64)
 		for _, occurrence := range occurrences {
 			got[occurrence.VersionID] = append(got[occurrence.VersionID], occurrence.MessageID)
 		}
 		assert.Equal(want, got)
+	})
+	t.Run("photo pages", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := storetest.New(t)
+		versions := []string{"00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"}
+		for i, version := range versions {
+			hash := fmt.Sprintf("%064x", i+1)
+			require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash, MIMEType: "application/pdf"}, store.DocbankAttachmentRef{NodeID: int64(i + 1), VersionID: version}, ""))
+			for n := range 5 {
+				mid := f.CreateMessage(fmt.Sprintf("version-%d-message-%d", i, n))
+				for _, part := range []string{"original", "duplicate"} {
+					require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{SourcePartKey: part, ContentHash: hash, Filename: part, StoragePath: hash[:2] + "/" + hash, State: "stored"}))
+				}
+			}
+		}
+		first, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 2, &store.DocumentOccurrencePage{})
+		require.NoError(err)
+		require.Len(first, 3)
+		require.Equal(first[0].MessageID, first[1].MessageID)
+		require.NotEqual(first[0].AttachmentID, first[1].AttachmentID)
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), first[2].MessageID)
+		require.NoError(err)
+		next, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, versions, 100, &store.DocumentOccurrencePage{VersionID: first[1].VersionID, AttachmentID: first[1].AttachmentID})
+		require.NoError(err)
+		require.Len(next, 16)
+		assert.NotEqual(first[2].MessageID, next[0].MessageID)
 	})
 }
 

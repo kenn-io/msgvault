@@ -1,0 +1,81 @@
+package docbankmedia
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestResolveExternalPerson(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"escaping", 200, `{"person_id":"p1","system":"msgvault","archive_id":"a&b","requested_uid":"u+id","resolved_uid":"u+id","uid_state":"current","forwarded":false}`},
+		{"malformed", 200, `{"person_id":"p1","system":"msgvault","archive_id":"wrong","requested_uid":"u+id","resolved_uid":"u+id","uid_state":"current"}`},
+		{"not found", 404, `{"code":"not_found"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "a&b", r.URL.Query().Get("archive_id"))
+				assert.Equal(t, "u+id", r.URL.Query().Get("uid"))
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL, nil)
+			require.NoError(err)
+			resolved, err := client.ResolveExternalPerson(t.Context(), "a&b", "u+id")
+			switch tc.name {
+			case "escaping":
+				require.NoError(err)
+				require.Equal("p1", resolved.PersonID)
+			case "malformed":
+				require.ErrorIs(err, ErrInvalidReceipt)
+			default:
+				var remote *HTTPError
+				require.ErrorAs(err, &remote)
+				require.Equal("not_found", remote.Reason)
+			}
+		})
+	}
+}
+
+func TestSetExternalPersonIdentityRevision(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, `"4"`, r.Header.Get("If-Match"))
+		assert.Equal(t, "/api/v1/people/by-id/person%2Fone/external-identities", r.URL.EscapedPath())
+		w.Header().Set("ETag", `"5"`)
+		_, _ = w.Write([]byte(`{"system":"msgvault","archive_id":"a","uid":"u","uid_state":"current","uid_kind":"vcard_uid"}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, nil)
+	require.NoError(t, err)
+	_, revision, err := client.SetExternalPersonIdentity(t.Context(), "person/one", 4, ExternalPersonIdentity{System: "msgvault", ArchiveID: "a", UID: "u", UIDState: "current"})
+	require.NoError(t, err)
+	require.EqualValues(t, 5, revision)
+}
+
+func TestPersonAssertionsRejectsInvalidPage(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"mismatched person", `{"person_id":"p","state":"active","revision":1,"assertions":[{"person_id":"other","assertion_id":"a","content_version_id":"v","role":"depicted","action":"assert"}]}`},
+		{"missing assertions", `{"person_id":"p","state":"curated","revision":1}`},
+		{"too many assertions", `{"person_id":"p","state":"curated","revision":1,"assertions":[{"person_id":"p","assertion_id":"a","content_version_id":"v","role":"depicted","action":"assert"},{"person_id":"p","assertion_id":"b","content_version_id":"w","role":"depicted","action":"assert"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL, nil)
+			require.NoError(t, err)
+			_, err = client.PersonAssertions(t.Context(), "p", "")
+			require.ErrorIs(t, err, ErrInvalidReceipt)
+		})
+	}
+}

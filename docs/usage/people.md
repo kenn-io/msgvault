@@ -52,6 +52,41 @@ or a UID from one of its bound CardDAV cards. JSON profile reads include
 href, remote UID, and mapping status. UID lookup needs daemon API schema 3.10.0
 or newer.
 
+## Find confirmed photos
+
+When the Docbank integration and attachment upload consent are enabled, the
+HTTP API can link a saved profile to an explicitly chosen Docbank person and
+list confirmed photos in mirrored message attachments. This needs a Docbank
+service that supports external person identities. Names never establish a link.
+These routes need daemon API schema 5.1.0 or newer.
+
+Send `PUT /api/v1/people/by-uid/photo-link` with JSON containing `uid` (a
+current, retired, or bound CardDAV UID), the selected Docbank `person_id`, its
+current `revision`, and `state` set to `current` or `unlinked`. A current link
+uses the profile's canonical vCard UID. An unlink clears every UID that Docbank
+resolves to that person. The response returns the canonical `uid`, the resulting
+`state`, and the new Docbank `revision`. When no link exists, unlink makes no
+write and returns the supplied revision. A stale revision returns 412 on a
+write; conflicting links return 409 for review. Changing a selection after
+unlinking requires a Docbank version that allows the withdrawn UID to be linked
+to another person.
+
+`GET /api/v1/people/by-uid/photos?uid=<uid>` returns the canonical UID, a
+`link_state` of `linked` or `unlinked`, and confirmed photo assertions with
+current visible attachment occurrences. Results include Docbank assertion and
+content version IDs. A retained original remains queryable after a Docbank
+node is replaced; an assertion on the replacement version cannot match the
+original attachment receipt. Results do not include unconfirmed face
+suggestions. Each page reads one Docbank assertion and returns up to 100
+occurrences in attachment ID order. Separate attachments in the same message
+are returned separately. A page can be empty and still have a `next_cursor`;
+follow it to completion. Each page reflects current visible data. A linked
+person with no visible photos returns an empty list. A Docbank service without
+person identity routes returns 503.
+
+If a link write has an uncertain outcome, read the selected Docbank person's
+current link and revision before retrying.
+
 ## Review identity matches
 
 Msgvault can retain uncertain identity suggestions for a person to review.
