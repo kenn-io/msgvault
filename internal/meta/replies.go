@@ -126,6 +126,9 @@ func archiveReply(ctx context.Context, st *store.Store, source *store.Source, ta
 	m := target.metadata
 	edge := Posts
 	switch {
+	case m.InstagramAccountID != "" && m.Ad && !m.Organic:
+		// Media reached only through the ad phase is not organic.
+		edge = adCreativesEdge
 	case m.InstagramAccountID != "":
 		edge = instagramMediaEdge
 	case m.Visitor:

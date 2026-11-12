@@ -25,12 +25,25 @@ type adFixture struct {
 	creativeStatus                     int
 	creativeBody, creativeFailAfter    string
 	creativeReads, adReads, ownedReads atomic.Int32
+	firstCreativeReads                 atomic.Int32
+	// replies1000 answers GET /v26.0/1000/replies; empty means no replies.
+	replies1000 string
+	mu          sync.Mutex
+	requests    []string // "METHOD path" of every request, in order
+}
+
+// sent returns the "METHOD path" of every request so far.
+func (f *adFixture) sent() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.requests)
 }
 
 // newAdFixture serves one organic media item (300) and an ad account whose
 // creatives use: ad-only owned media 900 (twice), the organic media 300,
 // foreign media 901, unreadable media 902, media with no owner (903) or an
-// empty owner (904), and no Instagram media at all.
+// empty owner (904), and no Instagram media at all. It also accepts a hide,
+// delete or reply on comment 1000, answering a reply with comment 1001.
 func newAdFixture(t *testing.T) (*adFixture, *Client, *Client) {
 	t.Helper()
 	f := &adFixture{}
@@ -40,6 +53,25 @@ func newAdFixture(t *testing.T) (*adFixture, *Client, *Client) {
 			token = "synthetic-ad-secret"
 		}
 		assert.Equal(t, "Bearer "+token, r.Header.Get("Authorization"), r.URL.Path)
+		f.mu.Lock()
+		f.requests = append(f.requests, r.Method+" "+r.URL.Path)
+		f.mu.Unlock()
+		switch r.Method + " " + r.URL.Path {
+		case "POST /v26.0/1000", "DELETE /v26.0/1000":
+			_, _ = fmt.Fprint(w, `{"success":true}`)
+			return
+		case "POST /v26.0/1000/replies":
+			_, _ = fmt.Fprint(w, `{"id":"1001"}`)
+			return
+		case "GET /v26.0/1001":
+			_, _ = fmt.Fprint(w, `{"id":"1001","text":"Synthetic reply","timestamp":"2000-01-03T03:04:05+0000","parent_id":"1000"}`)
+			return
+		case "GET /v26.0/1000/replies":
+			if f.replies1000 != "" {
+				_, _ = fmt.Fprint(w, f.replies1000)
+				return
+			}
+		}
 		if f.mediaLookupsNotFound && slices.Contains([]string{"/v26.0/300", "/v26.0/900", "/v26.0/901", "/v26.0/902", "/v26.0/903", "/v26.0/904"}, r.URL.Path) {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -61,6 +93,7 @@ func newAdFixture(t *testing.T) (*adFixture, *Client, *Client) {
 				return
 			}
 			if r.URL.Query().Get("after") == "" {
+				f.firstCreativeReads.Add(1)
 				_, _ = fmt.Fprint(w, `{"data":[{"id":"600","effective_instagram_media_id":"900"},{"id":"601","effective_instagram_media_id":"900"},{"id":"602","effective_instagram_media_id":"300"}],"paging":{"cursors":{"after":"next"},"next":"https://example.test/unused"}}`)
 				return
 			}
@@ -87,7 +120,7 @@ func newAdFixture(t *testing.T) (*adFixture, *Client, *Client) {
 		case "/v26.0/900/comments":
 			f.ownedReads.Add(1)
 			_, _ = fmt.Fprint(w, `{"data":[{"id":"1000","text":"adorchardcomment"}]}`)
-		case "/v26.0/400/replies", "/v26.0/1000/replies":
+		case "/v26.0/400/replies", "/v26.0/1000/replies", "/v26.0/1001/replies":
 			_, _ = fmt.Fprint(w, `{"data":[]}`)
 		default:
 			assert.Fail(t, "unexpected ad fixture request", r.URL.Path)
