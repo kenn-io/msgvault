@@ -89,8 +89,7 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 		return 0, err
 	}
 	hasPhone := strings.HasPrefix(u.PhoneNumber, "+")
-	// An explicit phone always takes the phone rung; a cached phone may be stale.
-	if e, ok := r.rich[identifier]; ok && !hasPhone {
+	if e, ok := r.rich[identifier]; ok && (e.byPhone || !hasPhone) {
 		return e.pid, nil
 	}
 	switch {
@@ -101,9 +100,8 @@ func (r *participantResolver) resolveUser(ctx context.Context, u *User) (int64, 
 		}
 		// Upgrading an earlier email-based resolution: both rows are the
 		// same Beeper user, so fold the email participant's history into the
-		// phone one (which dedupes with SMS/WhatsApp archives). A previous
-		// phone participant stays separate, because numbers can be recycled.
-		if e, ok := r.rich[identifier]; ok && !e.byPhone && e.pid != pid {
+		// phone one (which dedupes with SMS/WhatsApp archives).
+		if e, ok := r.rich[identifier]; ok && e.pid != pid {
 			if err := r.merge(ctx, e.pid, pid); err != nil {
 				return 0, err
 			}

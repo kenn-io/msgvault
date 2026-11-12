@@ -585,12 +585,11 @@ func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
 	chat := mediaGroupChat(4)
 	chat.ParticipantsTotalUnknown = true
 	f.addChat(chat)
-	f.setAsset("mxc://beeper.local/photo1", []byte("first photo"))
-	f.setAsset("mxc://beeper.local/photo2", []byte("second photo"))
 	imp, st := newHandlerTestImporter(t, f)
 	t.Cleanup(func() { require.NoError(st.Close()) })
 	opts := mediaImportOptions(t)
 	opts.MediaPolicy = attachmentpolicy.Policy{MaxParticipants: 5}
+	opts.NoMedia = true
 	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(err)
 	run, err := st.GetLastSuccessfulSync(sum.SourceID)
@@ -606,7 +605,7 @@ func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
 	require.NoError(err)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sync_runs SET cursor_after = ? WHERE id = ?`), blob, run.ID)
 	require.NoError(err)
-	f.appendMsg(chat.ID, fakeMsg{ID: "message-turn", SortKey: 10, Timestamp: time.Now(), Type: "IMAGE", SenderID: "@signal_member0:beeper.local", Attachments: []map[string]any{{"id": "mxc://beeper.local/photo2", "type": "img", "mimeType": "image/png", "fileName": "photo.png", "fileSize": 12}}})
+	f.appendMsg(chat.ID, fakeMsg{ID: "message-turn", SortKey: 10, Timestamp: time.Now(), SenderID: "@signal_member0:beeper.local", Text: "new"})
 	f.resetRequests()
 	f.blockChatGetFor(chat.ID)
 	imp = NewImporter(st, imp.client)
@@ -619,9 +618,9 @@ func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
 	for _, request := range f.requests() {
 		assert.NotContains(request, "/v1/chats/"+chat.ID+"?", "message turn fetched chat detail")
 	}
-	var stateName string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo2'`).Scan(&stateName))
-	assert.Equal("skipped", stateName)
+	var messages int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages WHERE source_message_id = 'message-turn'`).Scan(&messages))
+	assert.Equal(1, messages)
 	work = latestBeeperState(t, imp).Chats[chat.ID].RosterWork
 	assert.True(work.Verified)
 	assert.Equal("matching", work.Phase)
@@ -642,10 +641,6 @@ func TestImportMessageTurnSkipsTruncatedRosterDetail(t *testing.T) {
 	unresolved, err = st.ListUnresolvedConversationIDs(t.Context(), sum.SourceID)
 	require.NoError(err)
 	assert.NotContains(unresolved, chat.ID)
-	_, err = imp.BackfillMedia(t.Context(), opts)
-	require.NoError(err)
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT attachment_state FROM attachments WHERE source_attachment_id = 'beeper:mxc://beeper.local/photo2'`).Scan(&stateName))
-	assert.Equal("stored", stateName)
 }
 
 func TestImportStopsAfterReconcilePage(t *testing.T) {

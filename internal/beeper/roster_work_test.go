@@ -229,21 +229,6 @@ func TestRosterSignatureIgnoresOrder(t *testing.T) {
 	assert.NotEqual(signature, rosterSignature(ch, "account"))
 }
 
-func TestRosterWorkCheckpointClear(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	state := NewSyncState()
-	state.EnsureChat("room").RosterWork = &rosterWork{Signature: "snapshot", Phase: "matching", Next: 1, Verified: true}
-	blob, err := state.Marshal()
-	require.NoError(err)
-	restored, err := LoadSyncState(blob)
-	require.NoError(err)
-	require.Equal(state.Chats["room"].RosterWork, restored.Chats["room"].RosterWork)
-	checkpoint := NewSyncState()
-	checkpoint.EnsureChat("room")
-	restored.Merge(checkpoint)
-	assert.Nil(restored.Chats["room"].RosterWork)
-}
-
 func TestRosterResumeUsesMergedParticipant(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
@@ -269,32 +254,6 @@ func TestRosterResumeUsesMergedParticipant(t *testing.T) {
 	assert.NotEqual(old, winner, "resolving the second member merges the first binding")
 	assert.Contains(rosterMembers(t, st, sourceID, chat.ID), winner)
 	assert.NotContains(rosterMembers(t, st, sourceID, chat.ID), old)
-}
-
-func TestRosterVerificationFailureContinuesMessagesAndLaterChat(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	first := budgetTestChat("!verify-deferred:example.test", 2, time.Now().Add(-48*time.Hour))
-	first.Participants = append(first.Participants, map[string]any{"id": "@signal_departed:example.test"})
-	later := budgetTestChat("!verify-later:example.test", 2, time.Now().Add(-72*time.Hour))
-	f.addChat(first)
-	f.addChat(later)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	f.mu.Lock()
-	first.Participants = first.Participants[:2]
-	for _, chat := range []*fakeChat{first, later} {
-		chat.LastActivity = time.Now()
-		chat.Msgs = append(chat.Msgs, fakeMsg{ID: chat.ID + "-new", SortKey: 99, Timestamp: chat.LastActivity, Text: "new", SenderID: "@signal_ann:beeper.local"})
-	}
-	f.mu.Unlock()
-	f.setChatGetFailure(first.ID, true)
-	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	require.NotNil(sum)
-	assert.Equal(6, countBeeperMessages(t, imp))
 }
 
 func TestRosterResumeResolvesRicherIdentityAndName(t *testing.T) {

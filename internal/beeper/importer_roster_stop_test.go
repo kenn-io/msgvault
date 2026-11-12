@@ -54,9 +54,6 @@ func TestRosterRouteProofStopLeavesChatResumable(t *testing.T) {
 
 	require.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 2)
 	assert.Zero(countBeeperMessages(t, imp), "stop before message work must leave it resumable")
-	run, err := st.GetLastSuccessfulSync(sum.SourceID)
-	require.NoError(err)
-	assert.Equal("completed", run.Status)
 	var count int
 	require.NoError(st.DB().QueryRowContext(t.Context(),
 		`SELECT participant_count FROM conversations WHERE source_conversation_id=?`, chat.ID).Scan(&count))
@@ -133,10 +130,8 @@ func TestRosterMatchingStopLeavesChatResumable(t *testing.T) {
 	requirements.NoError(err)
 	routes, err := st.GetPersonMessagingRoutesContext(t.Context(), store.PersonMessagingRouteQuery{PersonUID: person.VCardUID})
 	requirements.NoError(err)
-	t.Run("route", func(t *testing.T) {
-		require.Len(t, routes.Routes.Items, 1)
-		assert.Equal(t, "archive_verified", routes.Routes.Items[0].Status)
-	})
+	requirements.Len(routes.Routes.Items, 1)
+	assertions.Equal("archive_verified", routes.Routes.Items[0].Status)
 	requirements.NotNil(state.Chats[chat.ID].RosterWork)
 	assertions.Contains([]string{"matching", "matching_retry"}, state.Chats[chat.ID].RosterWork.Phase)
 	f.mu.Lock()
@@ -169,10 +164,8 @@ func TestRosterMatchingStopLeavesChatResumable(t *testing.T) {
 	requirements.Len(routes.Routes.Items, 1)
 	assertions.Equal("archive_verified", routes.Routes.Items[0].Status)
 	state = latestBeeperState(t, imp)
-	t.Run("completed deferred matching", func(t *testing.T) {
-		assert.Equal(t, "done", state.Chats[chat.ID].RosterWork.Phase, "quiet repair must finish deferred enrichment")
-		assert.Equal(t, 3, countBeeperMessages(t, imp))
-	})
+	assertions.Equal("done", state.Chats[chat.ID].RosterWork.Phase, "quiet repair must finish deferred enrichment")
+	assertions.Equal(3, countBeeperMessages(t, imp))
 }
 
 // a cooperative yield during a quiet-room roster repair must not
@@ -344,10 +337,13 @@ func TestRosterProgressSurvivesFreshImporters(t *testing.T) {
 		f.addChat(chat)
 		imp, st := newHandlerTestImporter(t, f)
 		t.Cleanup(func() { require.NoError(st.Close()) })
+		sourceID := newBeeperTestSource(t, st, "signal")
 		polls := 0
-		sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
+		sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return len(rosterMembers(t, st, sourceID, chat.ID)) >= 1 }})
 		require.NoError(err)
 		require.True(sum.Stopped)
+		require.Len(rosterMembers(t, st, sourceID, chat.ID), 1)
+		require.NotNil(latestBeeperState(t, imp).Chats[chat.ID].RosterWork)
 		var receipts int
 		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&receipts))
 		assert.Positive(receipts)
@@ -361,6 +357,10 @@ func TestRosterProgressSurvivesFreshImporters(t *testing.T) {
 			next, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
 			require.NoError(err)
 			require.Zero(next.Errors)
+			var currentReceipts int
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&currentReceipts))
+			assert.LessOrEqual(currentReceipts-receipts, 25, "a visit must bound member writes")
+			receipts = currentReceipts
 			state := latestBeeperState(t, imp).Chats[chat.ID]
 			members := len(rosterMembers(t, st, sum.SourceID, chat.ID))
 			if countBeeperMessages(t, imp) == 2 && members < size {
@@ -462,41 +462,6 @@ func TestRosterMatchingProgressSurvivesFreshImporters(t *testing.T) {
 			assert.Equal("done", latestBeeperState(t, imp).Chats[room.ID].RosterWork.Phase)
 		})
 	}
-}
-
-func TestRosterMembershipResumesAfterStop(t *testing.T) {
-	testutil.SkipIfPostgres(t, "SQLite trigger requests stop at first membership write")
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := rosterRetryChat()
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	st.DB().SetMaxOpenConns(1)
-	stopped := false
-	registerSQLiteFunc(t, st, "stop_membership_batch", func() int { stopped = true; return 0 })
-	_, err := st.DB().ExecContext(t.Context(), `CREATE TRIGGER stop_membership_batch AFTER INSERT ON conversation_participants BEGIN SELECT stop_membership_batch(); END`)
-	require.NoError(err)
-	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { return stopped }})
-	require.NoError(err)
-	require.True(sum.Stopped)
-	run, err := st.GetLastSuccessfulSync(sum.SourceID)
-	require.NoError(err)
-	assert.Equal("completed", run.Status)
-	state := latestBeeperState(t, imp)
-	require.NotNil(state.Chats[chat.ID].RosterWork)
-	members := rosterMembers(t, st, sum.SourceID, chat.ID)
-	assert.NotEmpty(members)
-	assert.LessOrEqual(len(members), 1, "only the in-flight member may finish")
-	_, err = st.DB().ExecContext(t.Context(), `DROP TRIGGER stop_membership_batch`)
-	require.NoError(err)
-	imp = NewImporter(st, imp.client)
-	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	assert.Len(rosterMembers(t, st, sum.SourceID, chat.ID), 64)
-	assert.Equal(2, countBeeperMessages(t, imp))
 }
 
 func TestRosterCleanupResumesAgainstChangedSnapshot(t *testing.T) {

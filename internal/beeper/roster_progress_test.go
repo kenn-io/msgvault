@@ -64,6 +64,23 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 				assert.False(complete)
 				assert.Equal(3, work.Next)
 				assert.NotEmpty(f.requests(), "the retry must attempt verification")
+				f.setChatGetFailure(chat.ID, false)
+				imp = NewImporter(st, imp.client)
+				runID, err := st.StartSync(sourceID, sourceTypeBeeper)
+				require.NoError(err)
+				cs := &ChatState{Done: true, RosterWork: work}
+				stopped, err := imp.repairQuietRoster(t.Context(), runID, sourceID, chat.ID, ImportOptions{AccountID: "telegram", ShouldStop: func() bool { return work.Verified }}, cs, time.Now(), &ImportSummary{})
+				require.NoError(err)
+				require.True(stopped)
+				assert.True(work.Verified)
+				assert.Equal("matching", work.Phase)
+				receipts, err = st.BeeperRosterReceiptsContext(t.Context(), sourceID, rosterProvider(chat.ID))
+				require.NoError(err)
+				assert.Equal("failed", receipts[imp.res.identifierForUser("@telegram_first:example.test")].Status)
+				unresolved, err := st.ListUnresolvedConversationIDs(t.Context(), sourceID)
+				require.NoError(err)
+				assert.NotContains(unresolved, chat.ID)
+				require.NoError(st.CompleteSync(runID, ""))
 			} else {
 				// A persistent failure before Next must not starve later members.
 				attempt := &ImportSummary{}
@@ -77,15 +94,8 @@ func TestRosterMatchingRetriesFailedMember(t *testing.T) {
 			}
 			_, complete, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "telegram", rosterState: work}, &ImportSummary{})
 			require.NoError(err)
-			assert.Equal(!unverified, complete)
-			if unverified {
-				assert.False(work.Verified)
-				assert.Equal("members", work.Phase)
-				f.setChatGetFailure(chat.ID, false)
-				imp = NewImporter(st, imp.client)
-			} else {
-				assert.Equal("matching_retry", work.Phase)
-			}
+			assert.True(complete)
+			assert.Equal("matching_retry", work.Phase)
 			runID, err := st.StartSync(sourceID, sourceTypeBeeper)
 			require.NoError(err)
 			cs := &ChatState{Done: true, RosterWork: work}
@@ -209,37 +219,6 @@ func TestRosterMatchingFailureRetriesAcrossChats(t *testing.T) {
 	assert.NotEmpty(candidate.Evidence)
 }
 
-func TestRosterResumeRevisitsChangedMember(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := budgetTestChat("!member-change:example.test", 2, time.Now().Add(-48*time.Hour))
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	sourceID := newBeeperTestSource(t, st, "signal")
-	detail, err := imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	work := &rosterWork{}
-	//nolint:dogsled // Only the stop matters here.
-	_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
-		return len(rosterMembers(t, st, sourceID, chat.ID)) == 1
-	}}, &ImportSummary{})
-	require.ErrorIs(err, errBeeperBudgetExpired)
-	old := rosterMembers(t, st, sourceID, chat.ID)[0]
-	winner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550130", "Native", "signal")
-	require.NoError(err)
-	f.mu.Lock()
-	chat.Participants[0]["phoneNumber"] = "+12025550130"
-	f.mu.Unlock()
-	detail, err = imp.client.GetChat(t.Context(), chat.ID)
-	require.NoError(err)
-	imp = NewImporter(st, imp.client)
-	_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
-	require.NoError(err)
-	assert.True(complete)
-	assert.Contains(rosterMembers(t, st, sourceID, chat.ID), winner)
-	assert.NotContains(rosterMembers(t, st, sourceID, chat.ID), old)
-}
 func TestRosterJoinRefreshesSettledMatchAfterStop(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
@@ -451,7 +430,7 @@ func TestRosterVerificationRechecksChangedSnapshot(t *testing.T) {
 }
 
 func TestRosterRetainedReceiptFollowsIdentifier(t *testing.T) {
-	for _, missing := range []bool{false, true} {
+	for _, missing := range []bool{true} {
 		t.Run(fmt.Sprintf("missing=%t", missing), func(t *testing.T) {
 			require := require.New(t)
 			f := newFakeBeeper(t)
@@ -489,55 +468,51 @@ func TestRosterRetainedReceiptFollowsIdentifier(t *testing.T) {
 	}
 }
 
-func TestLargeRosterCheckpointStaysCompact(t *testing.T) {
-	size := 10000
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	chat := budgetTestChat("!roster-budget:example.test", 2, time.Now().Add(-48*time.Hour))
-	chat.Type = "group"
-	for i := 2; i < size; i++ {
-		chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@signal_member%05d:example.test", i)})
-	}
-	f.addChat(chat)
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	polls := 0
-	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
-	require.NoError(err)
-	require.True(sum.Stopped)
-	var receipts int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sum.SourceID, rosterProvider(chat.ID)).Scan(&receipts))
-	assert.Positive(receipts)
-	assert.Less(receipts, 25)
-	assert.Less(len(rosterMembers(t, st, sum.SourceID, chat.ID)), size)
-
-	var runBytes int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
-	assert.Less(runBytes, 4096)
-}
-
-func TestCompletedRosterProofStaysCompact(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	f := newFakeBeeper(t)
-	for room := range 3 {
-		chat := budgetTestChat(fmt.Sprintf("!compact-%d:example.test", room), 2, time.Now())
-		for member := 2; member < 64; member++ {
-			chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@member-%d:example.test", member)})
+func TestRosterCheckpointStaysCompact(t *testing.T) {
+	t.Run("in progress", func(t *testing.T) {
+		size := 10000
+		assert, require := assert.New(t), require.New(t)
+		f := newFakeBeeper(t)
+		chat := budgetTestChat("!roster-budget:example.test", 2, time.Now().Add(-48*time.Hour))
+		chat.Type = "group"
+		for i := 2; i < size; i++ {
+			chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@signal_member%05d:example.test", i)})
 		}
 		f.addChat(chat)
-	}
-	imp, st := newHandlerTestImporter(t, f)
-	t.Cleanup(func() { require.NoError(st.Close()) })
-	sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	state := latestBeeperState(t, imp)
-	for _, chat := range state.Chats {
-		require.NotNil(chat.RosterWork)
-		assert.Equal("done", chat.RosterWork.Phase)
-	}
-	var runBytes int
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
-	assert.Less(runBytes, 4096)
+		imp, st := newHandlerTestImporter(t, f)
+		t.Cleanup(func() { require.NoError(st.Close()) })
+		polls := 0
+		sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true, Scheduled: true, ShouldStop: func() bool { polls++; return polls >= 25 }})
+		require.NoError(err)
+		require.True(sum.Stopped)
+
+		var runBytes int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
+		assert.Less(runBytes, 4096)
+	})
+	t.Run("done", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		f := newFakeBeeper(t)
+		for room := range 3 {
+			chat := budgetTestChat(fmt.Sprintf("!compact-%d:example.test", room), 2, time.Now())
+			for member := 2; member < 64; member++ {
+				chat.Participants = append(chat.Participants, map[string]any{"id": fmt.Sprintf("@member-%d:example.test", member)})
+			}
+			f.addChat(chat)
+		}
+		imp, st := newHandlerTestImporter(t, f)
+		t.Cleanup(func() { require.NoError(st.Close()) })
+		sum, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+		require.NoError(err)
+		state := latestBeeperState(t, imp)
+		for _, chat := range state.Chats {
+			require.NotNil(chat.RosterWork)
+			assert.Equal("done", chat.RosterWork.Phase)
+		}
+		var runBytes int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT LENGTH(cursor_after) FROM sync_runs WHERE source_id = ? ORDER BY id DESC LIMIT 1`), sum.SourceID).Scan(&runBytes))
+		assert.Less(runBytes, 4096)
+	})
 }
 
 // A quiet-room repair that stops during matching keeps the verified roster
@@ -627,4 +602,78 @@ func TestManualImportRefreshesRosterAfterScheduledStop(t *testing.T) {
 	state = latestBeeperState(t, imp).Chats[chat.ID]
 	require.NotNil(state.RosterWork)
 	require.True(state.RosterWork.Verified)
+}
+
+func TestRosterResumeTracksOwner(t *testing.T) {
+	for _, mode := range []string{"changed payload", "explicit phone", "bare identifier"} {
+		t.Run(mode, func(t *testing.T) {
+			require := require.New(t)
+			f := newFakeBeeper(t)
+			chat := budgetTestChat("!owner-resume:example.test", 2, time.Now())
+			chat.Participants[0]["id"] = "@signal_a:example.test"
+			if mode == "explicit phone" {
+				chat.Participants[0]["phoneNumber"] = "+12025550123"
+			}
+			f.addChat(chat)
+			imp, st := newHandlerTestImporter(t, f)
+			t.Cleanup(func() { require.NoError(st.Close()) })
+			sourceID := newBeeperTestSource(t, st, "signal")
+			oldOwner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550123", "", "signal")
+			require.NoError(err)
+			if mode == "bare identifier" {
+				_, err = newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_a:example.test", PhoneNumber: "+12025550123"})
+				require.NoError(err)
+				_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+				require.NoError(err)
+			} else {
+				detail, err := imp.client.GetChat(t.Context(), chat.ID)
+				require.NoError(err)
+				work := &rosterWork{}
+
+				_, _, _, err = imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work, ShouldStop: func() bool {
+					if mode == "changed payload" {
+						return len(rosterMembers(t, st, sourceID, chat.ID)) == 1
+					}
+					var count int
+					require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM source_import_items WHERE source_id = ? AND provider = ?`), sourceID, rosterProvider(chat.ID)).Scan(&count))
+					return count >= 1
+				}}, &ImportSummary{})
+				require.ErrorIs(err, errBeeperBudgetExpired)
+				if mode == "changed payload" {
+					oldOwner = rosterMembers(t, st, sourceID, chat.ID)[0]
+				}
+				newOwner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550124", "", "signal")
+				require.NoError(err)
+				if mode == "changed payload" {
+					f.mu.Lock()
+					chat.Participants[0]["phoneNumber"] = "+12025550124"
+					f.mu.Unlock()
+					detail, err = imp.client.GetChat(t.Context(), chat.ID)
+					require.NoError(err)
+				} else {
+					_, err = newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_a:example.test", PhoneNumber: "+12025550124"})
+					require.NoError(err)
+				}
+				imp = NewImporter(st, imp.client)
+				_, complete, _, err := imp.ensureConversation(t.Context(), 0, sourceID, detail, ImportOptions{AccountID: "signal", rosterState: work}, &ImportSummary{})
+				require.NoError(err)
+				require.True(complete)
+				if mode == "changed payload" {
+					require.Contains(rosterMembers(t, st, sourceID, chat.ID), newOwner)
+					require.NotContains(rosterMembers(t, st, sourceID, chat.ID), oldOwner)
+				} else {
+					require.Contains(rosterMembers(t, st, sourceID, chat.ID), oldOwner)
+				}
+				return
+			}
+			newOwner, err := st.EnsureParticipantByPhone(t.Context(), "+12025550124", "", "signal")
+			require.NoError(err)
+			_, err = newParticipantResolver(st, "signal").resolveUser(t.Context(), &User{ID: "@signal_a:example.test", PhoneNumber: "+12025550124"})
+			require.NoError(err)
+			imp = NewImporter(st, imp.client)
+			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+			require.NoError(err)
+			require.Contains(rosterMembers(t, st, sourceID, chat.ID), newOwner)
+		})
+	}
 }

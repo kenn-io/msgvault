@@ -47,6 +47,15 @@ func TestSyncStateMerge(t *testing.T) {
 	assert.Equal("1", base.Anchors[0].MessageID, "existing anchors are never replaced")
 }
 
+func TestSyncStateMergeClearsRosterWork(t *testing.T) {
+	state := NewSyncState()
+	state.EnsureChat("room").RosterWork = &rosterWork{Signature: "snapshot", Phase: "matching", Next: 1, Verified: true}
+	checkpoint := NewSyncState()
+	checkpoint.EnsureChat("room")
+	state.Merge(checkpoint)
+	assert.Nil(t, state.Chats["room"].RosterWork)
+}
+
 func TestSyncStateMergePreservesExplicitDoneReset(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

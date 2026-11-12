@@ -533,14 +533,40 @@ func TestRichUpgradeDoesNotAbsorbContactOwner(t *testing.T) {
 // gains a phone and that participant merges into the phone participant, the
 // other ID's cached owner must follow the merge, whatever the member order and
 // whether roster verification succeeds.
+func TestSharedEmailMergeKeepsResolverCacheCurrent(t *testing.T) {
+	for _, tc := range []struct{ name, upgraded, other string }{
+		{"upgraded member first", "@signal_a1:beeper.local", "@signal_a2:beeper.local"},
+		{"other member cached first", "@signal_b2:beeper.local", "@signal_b1:beeper.local"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			r := newParticipantResolver(st, "signal")
+			ids := []string{tc.upgraded, tc.other}
+			if tc.other < tc.upgraded {
+				ids[0], ids[1] = ids[1], ids[0]
+			}
+			for _, id := range ids {
+				_, err := r.resolveUser(t.Context(), &User{ID: id, Email: "shared@example.test"})
+				require.NoError(err)
+			}
+			phone, err := r.resolveUser(t.Context(), &User{ID: tc.upgraded, Email: "shared@example.test", PhoneNumber: "+12025550177"})
+			require.NoError(err)
+			for _, id := range []string{tc.upgraded, tc.other} {
+				owner, err := r.resolveID(t.Context(), id, "")
+				require.NoError(err)
+				require.Equal(phone, owner)
+			}
+		})
+	}
+}
+
 func TestSharedEmailMergeKeepsSenderCacheCurrent(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name, upgraded, other string
 		deferVerification     bool
 	}{
-		{name: "upgraded member first", upgraded: "@signal_a1:beeper.local", other: "@signal_a2:beeper.local"},
-		{name: "other member cached first", upgraded: "@signal_b2:beeper.local", other: "@signal_b1:beeper.local"},
 		{name: "deferred verification", upgraded: "@signal_c1:beeper.local", other: "@signal_c2:beeper.local", deferVerification: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -599,7 +625,12 @@ func TestSharedEmailMergeKeepsSenderCacheCurrent(t *testing.T) {
 			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 				`SELECT sender_id FROM messages WHERE source_message_id = ?`), chat.ID+"-other").Scan(&sender))
 			assert.Equal(phone, sender, "the other ID's new message belongs to the merged participant")
-			if !tc.deferVerification {
+			imp.client.http.Transport = handlerTransport(f.handler())
+			imp = NewImporter(st, imp.client)
+			_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal", NoMedia: true})
+			require.NoError(err)
+			require.True(latestBeeperState(t, imp).Chats[chat.ID].RosterWork.Verified)
+			{
 				source, err := st.GetOrCreateSource("beeper", "signal")
 				require.NoError(err)
 				receipts, err := st.BeeperRosterReceiptsContext(t.Context(), source.ID, rosterProvider(chat.ID))
