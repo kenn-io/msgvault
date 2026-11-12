@@ -18,6 +18,28 @@ func meetingCountActivityCTE(dates string) string {
 )`
 }
 
+func (e *DuckDBEngine) meetingScopeCTE(request ExploreRequest) (string, []any, error) {
+	unbounded := request
+	unbounded.Context.After, unbounded.Context.Before = nil, nil
+	conditions, args := buildExploreConditions(unbounded)
+	conditions, err := e.sentIdentityConditions(conditions)
+	if err != nil {
+		return "", nil, err
+	}
+	dates := ""
+	if request.Context.After != nil {
+		dates += " AND a.occurred_at >= CAST(? AS TIMESTAMP)"
+		args = append(args, request.Context.After.UTC())
+	}
+	if request.Context.Before != nil {
+		dates += " AND a.occurred_at < CAST(? AS TIMESTAMP)"
+		args = append(args, request.Context.Before.UTC())
+	}
+	return `selected_meeting_messages AS (
+	SELECT message_id FROM analytical_entries WHERE ` + conditions + `
+), ` + meetingCountActivityCTE(dates), args, nil
+}
+
 func identityRequestIsUnfiltered(request ExploreRequest) bool {
 	context := request.Context
 	return len(context.SourceIDs) == 0 &&
@@ -99,29 +121,15 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	if err != nil {
 		return "", nil, err
 	}
-	meetingRequest := request
-	meetingRequest.Context.After, meetingRequest.Context.Before = nil, nil
-	meetingConditions, meetingArgs := buildExploreConditions(meetingRequest)
-	meetingConditions, err = e.sentIdentityConditions(meetingConditions)
+	meetingCTE, meetingArgs, err := e.meetingScopeCTE(request)
 	if err != nil {
 		return "", nil, err
 	}
 	args = append(args, meetingArgs...)
-	meetingDates := ""
-	if request.Context.After != nil {
-		meetingDates += " AND a.occurred_at >= CAST(? AS TIMESTAMP)"
-		args = append(args, request.Context.After.UTC())
-	}
-	if request.Context.Before != nil {
-		meetingDates += " AND a.occurred_at < CAST(? AS TIMESTAMP)"
-		args = append(args, request.Context.Before.UTC())
-	}
 	// Numeric entry IDs keep the per-person deduplication hash compact. Message
 	// IDs are positive, chat IDs are negated, and meeting IDs lie below int64.
 	sql := buildExploreLogicalSQLNoLists(conditions) + `
-), selected_meeting_messages AS (
-	SELECT message_id FROM analytical_entries WHERE ` + meetingConditions + `
-), ` + meetingCountActivityCTE(meetingDates) + `, meeting_person AS (
+), ` + meetingCTE + `, meeting_person AS (
 	SELECT a.entry_num, a.canonical_id, a.source_type,
 	       bool_or(a.is_author) AS is_author, bool_or(a.is_owner) AS is_owner,
 	       min(a.occurred_at) AS occurred_at, bool_or(a.is_from_me) AS is_from_me,
@@ -223,30 +231,16 @@ func (e *DuckDBEngine) buildIdentityDomainLogicalSQL(
 	if err != nil {
 		return "", nil, err
 	}
-	meetingRequest := request
-	meetingRequest.Context.After, meetingRequest.Context.Before = nil, nil
-	meetingConditions, meetingArgs := buildExploreConditions(meetingRequest)
-	meetingConditions, err = e.sentIdentityConditions(meetingConditions)
+	meetingCTE, meetingArgs, err := e.meetingScopeCTE(request)
 	if err != nil {
 		return "", nil, err
 	}
 	args = append(args, meetingArgs...)
-	meetingDates := ""
-	if request.Context.After != nil {
-		meetingDates += " AND a.occurred_at >= CAST(? AS TIMESTAMP)"
-		args = append(args, request.Context.After.UTC())
-	}
-	if request.Context.Before != nil {
-		meetingDates += " AND a.occurred_at < CAST(? AS TIMESTAMP)"
-		args = append(args, request.Context.Before.UTC())
-	}
 	// entry_num mirrors buildIdentityLogicalSQL: the per-(entry, domain)
 	// dedup hash stays numeric-keyed so a broad filter fits the interactive
 	// memory budget.
 	sql := buildExploreLogicalSQLNoLists(conditions) + `
-), selected_meeting_messages AS (
-	SELECT message_id FROM analytical_entries WHERE ` + meetingConditions + `
-), ` + meetingCountActivityCTE(meetingDates) + `, logical_domains AS (
+), ` + meetingCTE + `, logical_domains AS (
 	SELECT le.anchor_message_id AS entry_num, a.participant_domain AS domain,
 	       le.occurred_at, le.attachment_count, le.source_type
 	FROM logical_entries le

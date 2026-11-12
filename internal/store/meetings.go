@@ -413,11 +413,7 @@ func newMeetingSelectionError(kind error, ids []int64) *MeetingSelectionError {
 }
 
 func (s *Store) buildMeetingScopeStatement(scope MeetingQueryScope) (meetingScopeStatement, error) {
-	return s.buildMeetingScopeStatementFor(scope, false)
-}
-
-func (s *Store) buildMeetingScopeStatementFor(scope MeetingQueryScope, includeCalendar bool) (meetingScopeStatement, error) {
-	return s.buildMeetingScopeStatementExcluding(scope, includeCalendar, nil)
+	return s.buildMeetingScopeStatementExcluding(scope, false, nil)
 }
 
 func (s *Store) buildMeetingScopeStatementExcluding(scope MeetingQueryScope, includeCalendar bool, excluded []int64) (meetingScopeStatement, error) {

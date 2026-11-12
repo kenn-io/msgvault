@@ -50,7 +50,7 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 	unbounded := scope
 	unbounded.After, unbounded.Before = nil, nil
 	unbounded.MessageIDs = nil
-	statement, err := s.buildMeetingScopeStatementFor(unbounded, true)
+	statement, err := s.buildMeetingScopeStatementExcluding(unbounded, true, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (s *Store) GetMeetingMetricsContext(ctx context.Context, scope MeetingQuery
 		member.basis = basis.String
 		members[member.id] = member
 	}
-	if err := errorsJoinRows(rows); err != nil {
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
 	}
 	owners, canonical, emailOwners, err := s.meetingMetricOwners(ctx)
@@ -258,15 +258,6 @@ func finishMeetingMetric(t *meetingcontent.DurationTotals) {
 		t.AverageKnownSeconds = &average
 	}
 }
-func errorsJoinRows(rows *loggedRows) error {
-	err := rows.Err()
-	closeErr := rows.Close()
-	if err != nil {
-		return err
-	}
-	return closeErr
-}
-
 func (s *Store) meetingMetricOwners(ctx context.Context) (map[string]bool, map[int64]int64, map[string][]int64, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT LOWER(TRIM(address)) FROM account_identities`)
 	if err != nil {
@@ -281,7 +272,7 @@ func (s *Store) meetingMetricOwners(ctx context.Context) (map[string]bool, map[i
 		}
 		owners[email] = true
 	}
-	if err := errorsJoinRows(rows); err != nil {
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, nil, nil, err
 	}
 	clusters, err := s.ParticipantClusters(ctx)
@@ -306,7 +297,7 @@ func (s *Store) meetingMetricOwners(ctx context.Context) (map[string]bool, map[i
 		a.email = strings.ToLower(strings.TrimSpace(a.email))
 		addresses = append(addresses, a)
 	}
-	if err := errorsJoinRows(rows); err != nil {
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, nil, nil, err
 	}
 	canonical := func(id int64) int64 {
@@ -399,7 +390,7 @@ func (s *Store) meetingMetricEligibleMembers(ctx context.Context, scope MeetingQ
 		}
 		result[id] = true
 	}
-	if err := errorsJoinRows(rows); err != nil {
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
 	}
 	return result, nil

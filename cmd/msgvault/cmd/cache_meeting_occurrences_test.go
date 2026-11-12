@@ -257,15 +257,7 @@ func TestMeetingCountsRefresh(t *testing.T) {
 	_, err = buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, count())
-	tx, err := st.DB().BeginTx(t.Context(), nil)
-	require.NoError(t, err)
-	_, err = tx.ExecContext(t.Context(), `UPDATE calendar_events SET content_hash='updated-evidence' WHERE message_id=?`, event)
-	require.NoError(t, err)
-	_, err = tx.ExecContext(t.Context(), `DELETE FROM calendar_event_attendees WHERE message_id=?`, event)
-	require.NoError(t, err)
-	_, err = tx.ExecContext(t.Context(), `INSERT INTO calendar_event_attendees (message_id, ordinal, email, role, rsvp) VALUES (?, 0, 'person-alias@example.com', 'required', 'declined')`, event)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
+	require.NoError(t, st.UpsertMessageRawWithFormatContext(t.Context(), event, []byte(`{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person-alias@example.com","responseStatus":"declined"}]}`), "gcal_json"))
 	result, err = buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
 	assert.True(t, result.IdentityOnly)
@@ -275,23 +267,13 @@ func TestMeetingCountsRefresh(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, count())
 	assert.Equal(t, note, makeMessage(notesSource.ID, "note", "meeting_transcript", "meeting_json", `{}`))
-	tx, err = st.DB().BeginTx(t.Context(), nil)
-	require.NoError(t, err)
-	_, err = tx.ExecContext(t.Context(), `UPDATE calendar_events SET content_hash='accepted-evidence' WHERE message_id=?`, event)
-	require.NoError(t, err)
-	_, err = tx.ExecContext(t.Context(), `DELETE FROM calendar_event_attendees WHERE message_id=?`, event)
-	require.NoError(t, err)
-	_, err = tx.ExecContext(t.Context(), `INSERT INTO calendar_event_attendees (message_id, ordinal, email, role, rsvp) VALUES (?, 0, 'person-alias@example.com', 'required', 'accepted')`, event)
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
+	require.NoError(t, st.UpsertMessageRawWithFormatContext(t.Context(), event, []byte(`{"id":"event","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person-alias@example.com","responseStatus":"accepted"}]}`), "gcal_json"))
 	_, err = buildCache(t.Context(), dbPath, analytics, false)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, count())
-	_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET status='tentative' WHERE message_id=?`, event)
-	require.NoError(t, err)
+	require.NoError(t, st.UpsertMessageRawWithFormatContext(t.Context(), event, []byte(`{"id":"event","status":"tentative","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person-alias@example.com","responseStatus":"accepted"}]}`), "gcal_json"))
 	derivedRefreshBeforeSnapshotHook = func() {
-		_, hookErr := st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET status='cancelled' WHERE message_id=?`, event)
-		require.NoError(t, hookErr)
+		require.NoError(t, st.UpsertMessageRawWithFormatContext(t.Context(), event, []byte(`{"id":"event","status":"cancelled","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"},"attendees":[{"email":"person-alias@example.com","responseStatus":"accepted"}]}`), "gcal_json"))
 	}
 	t.Cleanup(func() { derivedRefreshBeforeSnapshotHook = nil })
 	result, err = buildCache(t.Context(), dbPath, analytics, false)
@@ -347,7 +329,10 @@ func TestMeetingCountsPinnedSnapshot(t *testing.T) {
 					if change == "link" {
 						_, err = st.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "evt", MessageID: event}, store.MeetingLinkRef{Kind: "msg", MessageID: note}, "link")
 					} else {
-						_, err = st.DB().ExecContext(t.Context(), `UPDATE calendar_events SET status='cancelled' WHERE message_id=?`, event)
+						cancelled := persist(calendar.ID, "event", "calendar_event", "gcal_json", `{"id":"event","status":"cancelled","start":{"dateTime":"2024-01-02T10:00:00Z"},"end":{"dateTime":"2024-01-02T11:00:00Z"}}`)
+						if cancelled != event {
+							return fmt.Errorf("updated event ID changed")
+						}
 					}
 					if err != nil {
 						return err
@@ -471,7 +456,6 @@ func TestMeetingCountsAllDayCalendarUsesCivilDate(t *testing.T) {
 	require.NoError(t, err)
 	engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
 	require.NoError(t, err)
-	defer func() { require.NoError(t, engine.Close()) }()
 	for _, zone := range []string{"America/Los_Angeles", "Pacific/Kiritimati"} {
 		t.Run(zone, func(t *testing.T) {
 			calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: person, Year: 2024, Timezone: zone})
@@ -485,6 +469,22 @@ func TestMeetingCountsAllDayCalendarUsesCivilDate(t *testing.T) {
 			assert.Equal(t, []string{"2024-01-01", "2024-12-31"}, days)
 		})
 	}
+	require.NoError(t, engine.Close())
+	_, err = st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "later", MessageType: "email", SentAt: sql.NullTime{Time: time.Date(2024, 12, 31, 0, 0, 0, 0, time.UTC), Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "later", ConversationType: "email"},
+	})
+	require.NoError(t, err)
+	result, err := buildCache(t.Context(), dbPath, analytics, false)
+	require.NoError(t, err)
+	assert.False(t, result.IdentityOnly)
+	engine, err = query.NewDuckDBEngine(t.Context(), analytics, "", nil)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, engine.Close()) }()
+	detail, err := engine.GetPerson(t.Context(), person, query.Context{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, detail)
+	assert.EqualValues(t, 2, detail.MeetingCount)
 }
 
 func TestMeetingCountsAllDayRefresh(t *testing.T) {
@@ -581,17 +581,6 @@ func TestMeetingCountsAllDayRefresh(t *testing.T) {
 				}
 			}
 			require.NoError(t, engine.Close())
-			if tc.name == "tokyo" {
-				_, err := st.PersistMessage(&store.MessagePersistData{
-					Message:      &store.Message{SourceID: source.ID, SourceMessageID: "later", MessageType: "email", SentAt: sql.NullTime{Time: tc.date, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
-					Conversation: &store.ConversationPersistData{SourceConversationID: "later", ConversationType: "email"},
-				})
-				require.NoError(t, err)
-				result, err := buildCache(t.Context(), dbPath, analytics, false)
-				require.NoError(t, err)
-				assert.False(t, result.IdentityOnly)
-				assert.EqualValues(t, 1, count())
-			}
 		})
 	}
 }
@@ -651,6 +640,9 @@ func TestMeetingCountsDeletedAndSourceScope(t *testing.T) {
 				require.NotNil(t, detail)
 				timeline, err := engine.RelationshipTimeline(t.Context(), query.RelationshipTimelineRequest{CanonicalID: person, Timezone: "UTC"})
 				require.NoError(t, err)
+				if detail.MeetingCount > 0 {
+					require.NotEmpty(t, timeline.Rows)
+				}
 				for _, row := range timeline.Rows {
 					assert.Greater(t, row.OccurredAt.Year(), 1)
 				}
@@ -664,16 +656,16 @@ func TestMeetingCountsDeletedAndSourceScope(t *testing.T) {
 				_, err = buildCache(t.Context(), dbPath, analytics, false)
 				require.NoError(t, err)
 				assert.EqualValues(t, 1, count())
-				return
+			} else {
+				assert.EqualValues(t, 1, count())
+				_, err = st.DB().ExecContext(t.Context(), `UPDATE sources SET sync_config='{"calendar_id":"other@example.com","time_zone":"UTC"}' WHERE id=?`, source.ID)
+				require.NoError(t, err)
+				assert.True(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
+				result, err := buildCache(t.Context(), dbPath, analytics, false)
+				require.NoError(t, err)
+				assert.False(t, result.Skipped)
+				assert.EqualValues(t, 2, count())
 			}
-			assert.EqualValues(t, 1, count())
-			_, err = st.DB().ExecContext(t.Context(), `UPDATE sources SET sync_config='{"calendar_id":"other@example.com","time_zone":"UTC"}' WHERE id=?`, source.ID)
-			require.NoError(t, err)
-			assert.True(t, cacheNeedsBuild(dbPath, analytics).NeedsBuild)
-			result, err := buildCache(t.Context(), dbPath, analytics, false)
-			require.NoError(t, err)
-			assert.False(t, result.Skipped)
-			assert.EqualValues(t, 2, count())
 		})
 	}
 }

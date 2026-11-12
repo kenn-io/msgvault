@@ -71,17 +71,27 @@ func TestMeetingCountsPendingSourceScope(t *testing.T) {
 			}
 			people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Explore: query.ExploreRequest{Context: scope}})
 			require.NoError(t, err)
+			found := false
 			for _, p := range people.Rows {
 				if p.ID == person {
+					found = true
 					assert.Equal(t, tc.want, p.MeetingCount)
 				}
 			}
+			if tc.want > 0 {
+				assert.True(t, found)
+			}
 			relationships, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Context: scope, ShowAll: true})
 			require.NoError(t, err)
+			found = false
 			for _, p := range relationships.Rows {
 				if p.CanonicalID == person {
+					found = true
 					assert.Equal(t, tc.want, p.Signals.MeetingCount)
 				}
+			}
+			if tc.want > 0 {
+				assert.True(t, found)
 			}
 		})
 	}

@@ -49,7 +49,7 @@ func TestRecurrenceStatsCountUnderlyingCandidates(t *testing.T) {
 				occurrenceKeys = append(occurrenceKeys, o.Original.Key())
 			}
 			assertions.Equal(tc.wantKeys, occurrenceKeys)
-			batch, _ := ExpandWindows(t.Context(), s, time.Hour, 0, []Window{{From: start, To: until, Budget: 100}})
+			batch, _ := testExpandWindows(t.Context(), s, time.Hour, 0, []Window{{From: start, To: until, Budget: 100}})
 			requirements.NoError(batch[0].Err)
 			assertions.Equal(tc.candidates, batch[0].Candidates)
 			assertions.Equal(occurrences, batch[0].Occurrences)
@@ -70,7 +70,7 @@ func TestMeetingHistoryExpandsSeriesOnce(t *testing.T) {
 		from := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
 		windows = append(windows, Window{From: from.Add(-28 * time.Hour), To: from.AddDate(1, 0, 0).Add(28 * time.Hour), Budget: 50000})
 	}
-	results, physical := ExpandWindows(t.Context(), s, time.Hour, 0, windows)
+	results, physical := testExpandWindows(t.Context(), s, time.Hour, 0, windows)
 	require.Len(t, results, 2)
 	require.NoError(t, results[0].Err)
 	require.NoError(t, results[1].Err)
@@ -79,13 +79,13 @@ func TestMeetingHistoryExpandsSeriesOnce(t *testing.T) {
 	assert.LessOrEqual(t, physical, 734, "a shared traversal should generate each prefix once")
 	windows[0].Budget = 400
 	windows[1].Budget = 499999
-	results, _ = ExpandWindows(t.Context(), s, time.Hour, 0, windows)
+	results, _ = testExpandWindows(t.Context(), s, time.Hour, 0, windows)
 	require.NoError(t, results[0].Err)
 	require.NoError(t, results[1].Err)
 	assert.Equal(t, 369, results[0].Candidates)
 	assert.Equal(t, 734, results[1].Candidates)
 	windows[0].Budget = 100
-	results, _ = ExpandWindows(t.Context(), s, time.Hour, 0, windows)
+	results, _ = testExpandWindows(t.Context(), s, time.Hour, 0, windows)
 	assert.ErrorIs(t, results[0].Err, ErrBudgetExceeded)
 	assert.Equal(t, 101, results[0].Candidates)
 	assert.Empty(t, results[0].Occurrences)
@@ -103,7 +103,7 @@ func TestExpandWindowsMatchesIndependentHorizons(t *testing.T) {
 		{From: instant(t, "2027-03-01T00:00:00Z"), To: instant(t, "2027-03-22T00:00:00Z"), Budget: 100},
 		{From: instant(t, "2027-03-22T00:00:00Z"), To: instant(t, "2027-11-08T09:15:00Z"), Budget: 1000},
 	}
-	batch, _ := ExpandWindows(t.Context(), s, time.Hour, 0, windows)
+	batch, _ := testExpandWindows(t.Context(), s, time.Hour, 0, windows)
 	for i, w := range windows {
 		occurrences, count, err := Expand(t.Context(), s, time.Hour, 0, w.From, w.To, w.Budget)
 		require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestExpandWindowsUsesEachWindowsExceptions(t *testing.T) {
 	from, to := start.Add(-time.Hour), start.AddDate(0, 0, 20)
 	first := Identity{Instant: start}
 	second := Identity{Instant: start.AddDate(0, 0, 7)}
-	batch, _ := ExpandWindows(t.Context(), s, time.Hour, 0, []Window{
+	batch, _ := testExpandWindows(t.Context(), s, time.Hour, 0, []Window{
 		{From: from, To: to, Budget: 100, ExDates: []Identity{first}},
 		{From: from, To: to, Budget: 100, ExDates: []Identity{second}},
 	})
@@ -137,7 +137,7 @@ func TestExpandWindowsStopsPullingAfterBudgetFailure(t *testing.T) {
 	start := instant(t, "2020-01-01T00:00:00Z")
 	s, err := ParseSet(start, false, "", time.UTC, []string{"RRULE:FREQ=DAILY"})
 	require.NoError(t, err)
-	results, pulls := ExpandWindows(t.Context(), s, time.Hour, 0, []Window{
+	results, pulls := testExpandWindows(t.Context(), s, time.Hour, 0, []Window{
 		{From: start, To: instant(t, "2021-01-02T04:00:00Z"), Budget: 400},
 		{From: instant(t, "2021-01-01T00:00:00Z"), To: instant(t, "2022-01-02T04:00:00Z"), Budget: 0},
 	})
@@ -145,7 +145,7 @@ func TestExpandWindowsStopsPullingAfterBudgetFailure(t *testing.T) {
 	assert.ErrorIs(t, results[1].Err, ErrBudgetExceeded)
 	assert.Equal(t, 369, results[0].Candidates)
 	assert.Equal(t, 368, pulls)
-	results, pulls = ExpandWindows(t.Context(), s, time.Hour, 0, []Window{
+	results, pulls = testExpandWindows(t.Context(), s, time.Hour, 0, []Window{
 		{From: start, To: instant(t, "2021-01-02T04:00:00Z"), Budget: 400},
 		{From: instant(t, "2021-01-01T00:00:00Z"), To: instant(t, "2022-01-02T04:00:00Z"), Budget: 1},
 	})
@@ -164,7 +164,7 @@ func TestExpandWindowsAcrossSkippedCivilDate(t *testing.T) {
 		{From: instant(t, "2011-12-28T00:00:00Z"), To: instant(t, "2011-12-31T00:00:00Z"), Budget: 100},
 		{From: instant(t, "2011-12-31T00:00:00Z"), To: instant(t, "2012-01-03T00:00:00Z"), Budget: 100},
 	}
-	batch, _ := ExpandWindows(t.Context(), s, 0, 1, windows)
+	batch, _ := testExpandWindows(t.Context(), s, 0, 1, windows)
 	for i, w := range windows {
 		occurrences, count, err := Expand(t.Context(), s, 0, 1, w.From, w.To, w.Budget)
 		require.NoError(t, err)
@@ -208,7 +208,7 @@ func TestIterationStatsCountCandidateBeyondAbsoluteFoldHorizon(t *testing.T) {
 	// The rule pulled the civil 01:30 candidate, then rejected the supplied
 	// later-fold DTSTART because it is after the absolute horizon.
 	assertions.Equal(1, stats.Candidates)
-	batch, _ := ExpandWindows(t.Context(), s, time.Hour, 0, []Window{
+	batch, _ := testExpandWindows(t.Context(), s, time.Hour, 0, []Window{
 		{From: instant(t, "2027-11-01T00:00:00Z"), To: instant(t, "2027-11-07T09:15:00Z"), Budget: 100},
 		{From: instant(t, "2027-11-07T09:15:00Z"), To: instant(t, "2027-11-10T00:00:00Z"), Budget: 100},
 	})
@@ -282,4 +282,25 @@ func testConservativeEndWithStats(ctx context.Context, s Set, d time.Duration, d
 	counter := &candidateBudget{ctx: ctx, limit: budget}
 	end, ok := conservativeEnd(ctx, s, d, days, counter)
 	return end, ok, struct{ Candidates int }{counter.used}
+}
+
+func testExpandWindows(ctx context.Context, s Set, duration time.Duration, days int, windows []Window) ([]WindowResult, int) {
+	var horizon time.Time
+	for _, w := range windows {
+		if w.Budget > 0 && w.To.After(w.From) && w.To.After(horizon) {
+			horizon = w.To
+		}
+	}
+	if horizon.IsZero() {
+		horizon = windows[0].To
+	}
+	expander, err := NewWindowExpander(ctx, s, duration, days, horizon)
+	if err != nil {
+		return []WindowResult{{Err: err}}, 0
+	}
+	results := make([]WindowResult, len(windows))
+	for i, w := range windows {
+		results[i] = expander.Expand(ctx, w)
+	}
+	return results, expander.pulls
 }

@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 func newPeopleRankingFixture(t *testing.T) (engine *DuckDBEngine, exact, prefix, substring int64, when time.Time) {
@@ -614,19 +616,33 @@ func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testi
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("archive@example.test", "granola")
 	person := b.AddParticipant("alice@example.test", "example.test", "Alice Example")
+	owner := b.AddParticipant("archive@example.test", "example.test", "Owner")
+	b.AddOwnerParticipant(source, owner)
 	when := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
 	meeting := b.AddMessage(MessageOpt{
 		SourceID: source, ConversationID: 701, Subject: "Weekly sync", SentAt: when,
 		MessageType: "meeting_transcript", ConversationType: "meeting",
 	})
 	b.AddFrom(meeting, person, "Alice Example")
+	b.AddTo(meeting, owner, "Owner")
 	chat := b.AddMessage(MessageOpt{
 		SourceID: source, ConversationID: 702, SentAt: when.Add(time.Hour),
 		MessageType: "whatsapp", ConversationType: "direct_chat",
 	})
 	b.AddFrom(chat, person, "Alice Example")
 	b.AddConversationParticipant(702, person)
-	engine := b.BuildEngine()
+	pb := newParquetBuilder(t)
+	b.addMessageTables(pb)
+	b.addAuxiliaryTables(pb)
+	b.addAttachmentsTable(pb)
+	pb.addTable(identityindex.DatasetMeetingOccurrences, identityindex.DatasetMeetingOccurrences, "meeting_occurrences.parquet",
+		"message_id, occurrence_key, occurred_at, start_date, counted, declined_emails, occurrence_id",
+		fmt.Sprintf("(%d::BIGINT, 'msg:%d', TIMESTAMP '2026-08-20 09:00:00', NULL::DATE, true, []::VARCHAR[], -9223372036854775809::DECIMAL(38,0))", meeting, meeting))
+	dir, cleanup := pb.build()
+	t.Cleanup(cleanup)
+	engine, err := NewDuckDBEngine(t.Context(), dir, "", nil)
+	require.NoError(err)
+	t.Cleanup(func() { _ = engine.Close() })
 
 	result, err := engine.GetPerson(t.Context(), person, Context{}, nil)
 	require.NoError(err)

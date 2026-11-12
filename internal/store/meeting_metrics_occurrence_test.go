@@ -358,7 +358,7 @@ func TestMeetingOccurrenceFutureLinkedNote(t *testing.T) {
 			for _, row := range rows {
 				if row.MessageID == note {
 					found = true
-					assert.False(t, row.Counted && !row.OccurredAt.After(time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC)))
+					assert.False(t, row.Counted)
 				}
 			}
 			assert.True(t, found)

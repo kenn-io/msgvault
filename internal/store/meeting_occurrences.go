@@ -125,7 +125,55 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 	unexpandable := map[int64]bool{}
 	var tooBroadYears []int
 	hasEarliest := err == nil
-	futureYears, err := s.futureMeetingYears(ctx, lastYear)
+	var rows *sql.Rows
+	rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT m.id, COALESCE(m.sent_at, m.received_at, m.internal_date), d.link_key, COALESCE(d.transcript_state, '') FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+sourceScope, sourceArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("read meeting notes: %w", err)
+	}
+	var notes []occurrenceNote
+	for rows.Next() {
+		var note occurrenceNote
+		var at nullableTimestamp
+		var key sql.NullString
+		if err := rows.Scan(&note.id, &at, &key, &note.state); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("scan meeting note: %w", err)
+		}
+		if at.Valid {
+			note.at = at.Time
+		}
+		if key.Valid {
+			if err := json.Unmarshal([]byte(key.String), &note.key); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("decode meeting note key: %w", err)
+			}
+		}
+		notes = append(notes, note)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, fmt.Errorf("read meeting notes: %w", err)
+	}
+
+	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
+	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
+	decisionArgs := append(append([]any(nil), leftArgs...), rightArgs...)
+	rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE 1=1`+leftScope+rightScope, decisionArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("read meeting decisions: %w", err)
+	}
+	var decisions []meetingDecisionEdge
+	for rows.Next() {
+		var edge meetingDecisionEdge
+		if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		decisions = append(decisions, edge)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, fmt.Errorf("read meeting decisions: %w", err)
+	}
+	futureYears, err := s.futureMeetingYears(ctx, lastYear, notes, decisions)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +264,6 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 	}
 
 	fallbacks := map[int64]*meetingFallbackEvent{}
-	var rows *sql.Rows
 	if len(unexpandable) > 0 {
 		rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT e.message_id, e.start_at, e.end_at, e.all_day, e.start_date, e.status, m.deleted_from_source_at FROM calendar_events e JOIN messages m ON m.id=e.message_id WHERE m.deleted_at IS NULL`+sourceScope, sourceArgs...)
 		if err != nil {
@@ -273,34 +320,6 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 		}
 	}
 
-	rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT m.id, COALESCE(m.sent_at, m.received_at, m.internal_date), d.link_key, COALESCE(d.transcript_state, '') FROM messages m LEFT JOIN meeting_details d ON d.message_id=m.id WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+sourceScope, sourceArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("read meeting notes: %w", err)
-	}
-	var notes []occurrenceNote
-	for rows.Next() {
-		var note occurrenceNote
-		var at nullableTimestamp
-		var key sql.NullString
-		if err := rows.Scan(&note.id, &at, &key, &note.state); err != nil {
-			_ = rows.Close()
-			return nil, fmt.Errorf("scan meeting note: %w", err)
-		}
-		if at.Valid {
-			note.at = at.Time
-		}
-		if key.Valid {
-			if err := json.Unmarshal([]byte(key.String), &note.key); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("decode meeting note key: %w", err)
-			}
-		}
-		notes = append(notes, note)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, fmt.Errorf("read meeting notes: %w", err)
-	}
-
 	ownersBySource := map[int64]string{}
 	for refKey, occurrence := range occurrences {
 		if unexpandable[occurrence.MessageID] || unexpandable[occurrence.SeriesMessageID] {
@@ -319,25 +338,6 @@ func (s *Store) loadMeetingEvidence(ctx context.Context, through time.Time) (*Me
 		occurrences[refKey] = occurrence
 	}
 
-	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
-	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
-	decisionArgs := append(append([]any(nil), leftArgs...), rightArgs...)
-	rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT d.id,d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key,d.decision FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE 1=1`+leftScope+rightScope, decisionArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("read meeting decisions: %w", err)
-	}
-	var decisions []meetingDecisionEdge
-	for rows.Next() {
-		var edge meetingDecisionEdge
-		if err := rows.Scan(&edge.id, &edge.a.ID, &edge.a.Kind, &edge.a.Key, &edge.b.ID, &edge.b.Kind, &edge.b.Key, &edge.decision); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		decisions = append(decisions, edge)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, fmt.Errorf("read meeting decisions: %w", err)
-	}
 	known := map[string]bool{}
 	for ref := range occurrences {
 		known[ref] = true
@@ -664,7 +664,7 @@ func (e *MeetingEvidence) Reduce(ctx context.Context, owners map[string]bool) ([
 
 // futureMeetingYears identifies years named by archived events, note keys, or
 // saved choices, so future links can be resolved before applying the cutoff.
-func (s *Store) futureMeetingYears(ctx context.Context, lastYear int) (map[int]bool, error) {
+func (s *Store) futureMeetingYears(ctx context.Context, lastYear int, notes []occurrenceNote, decisions []meetingDecisionEdge) (map[int]bool, error) {
 	years := map[int]bool{}
 	sourceScope, sourceArgs := sourceScopeClause(ctx, "m.source_id")
 	add := func(at time.Time) {
@@ -689,21 +689,8 @@ func (s *Store) futureMeetingYears(ctx context.Context, lastYear int) (map[int]b
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
 	}
-	rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT d.link_key FROM meeting_details d JOIN messages m ON m.id=d.message_id WHERE d.link_key IS NOT NULL AND m.message_type='meeting_transcript' AND m.deleted_at IS NULL`+sourceScope, sourceArgs...)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		var key meetingLinkKey
-		if err := json.Unmarshal([]byte(raw), &key); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
+	for _, note := range notes {
+		key := note.key
 		if key[0] == "ical_uid" {
 			at, err := time.Parse(time.RFC3339Nano, key[3])
 			if err == nil {
@@ -719,31 +706,12 @@ func (s *Store) futureMeetingYears(ctx context.Context, lastYear int) (map[int]b
 			}
 		}
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
-	}
-	leftScope, leftArgs := sourceScopeClause(ctx, "l.source_id")
-	rightScope, rightArgs := sourceScopeClause(ctx, "r.source_id")
-	decisionArgs := append(append([]any(nil), leftArgs...), rightArgs...)
-	rows, err = s.meetingSQLReader(ctx).QueryContext(ctx, `SELECT d.left_message_id,d.left_kind,d.left_key,d.right_message_id,d.right_kind,d.right_key FROM meeting_link_decisions d JOIN messages l ON l.id=d.left_message_id JOIN messages r ON r.id=d.right_message_id WHERE 1=1`+leftScope+rightScope, decisionArgs...)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var left, right meetingDecisionEndpoint
-		if err := rows.Scan(&left.ID, &left.Kind, &left.Key, &right.ID, &right.Kind, &right.Key); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		for _, endpoint := range []meetingDecisionEndpoint{left, right} {
-			if endpoint.Kind != meetingRefEvent {
+	for _, edge := range decisions {
+		for _, endpoint := range []meetingDecisionEndpoint{edge.a, edge.b} {
+			if endpoint.Kind != meetingRefEvent || endpoint.Key == "" {
 				continue
 			}
-			key := endpoint.Key
-			if key == "" {
-				continue
-			}
-			ref, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@%s", endpoint.ID, key))
+			ref, err := ParseMeetingLinkRef(fmt.Sprintf("evt:%d@%s", endpoint.ID, endpoint.Key))
 			if err != nil {
 				continue
 			}
@@ -752,9 +720,6 @@ func (s *Store) futureMeetingYears(ctx context.Context, lastYear int) (map[int]b
 				add(at)
 			}
 		}
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
 	}
 	return years, nil
 }

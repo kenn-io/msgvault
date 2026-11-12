@@ -364,23 +364,11 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs,
 		e.parquetPath(datasetParticipantClusters))
 	args = append(args, entryArgs...)
-	meetingRequest := request.Explore
-	meetingRequest.Context.After, meetingRequest.Context.Before = nil, nil
-	meetingConditions, meetingArgs := buildExploreConditions(meetingRequest)
-	meetingConditions, err = e.sentIdentityConditions(meetingConditions)
+	meetingCTE, meetingArgs, err := e.meetingScopeCTE(request.Explore)
 	if err != nil {
 		return nil, err
 	}
 	args = append(args, meetingArgs...)
-	meetingDates := ""
-	if request.Explore.Context.After != nil {
-		meetingDates += " AND a.occurred_at >= CAST(? AS TIMESTAMP)"
-		args = append(args, request.Explore.Context.After.UTC())
-	}
-	if request.Explore.Context.Before != nil {
-		meetingDates += " AND a.occurred_at < CAST(? AS TIMESTAMP)"
-		args = append(args, request.Explore.Context.Before.UTC())
-	}
 	activity := "relationship_counting_activity"
 	meetingPerson := "a.canonical_id"
 	meetingMembership := ""
@@ -393,9 +381,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		meetingMembership = " AND a.message_id IN (SELECT message_id FROM person_message_ids) AND a.canonical_id IN (SELECT coalesce(c.canonical_id, p.id) FROM participants p LEFT JOIN read_parquet('" + quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters)) + "') c ON c.participant_id=p.id WHERE p.id IN (" + strings.Join(ids, ",") + "))"
 	}
 	entriesCTE += `
-), selected_meeting_messages AS (
-	SELECT message_id FROM analytical_entries WHERE ` + meetingConditions + `
-), ` + meetingCountActivityCTE(meetingDates) + `, meeting_counts AS (
+), ` + meetingCTE + `, meeting_counts AS (
 	SELECT ` + meetingPerson + ` AS person_id, count(DISTINCT a.entry_key)::BIGINT AS meeting_count
 	FROM meeting_activity a
 	WHERE true` + meetingMembership + `

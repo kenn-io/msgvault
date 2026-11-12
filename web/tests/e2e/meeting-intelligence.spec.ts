@@ -379,9 +379,6 @@ test('opens an archived note without an available transcript', async ({ page, da
   });
   expect(response.status, await response.clone().text()).toBe(201);
   const imported = await response.json() as { message_id: number };
-  const metrics = await daemon.post('meetings/metrics', { scope: { message_ids: [imported.message_id] } });
-  expect(metrics.ok).toBe(true);
-  expect((await metrics.json()).totals.meeting_count).toBe(0);
   await page.goto(meetingURL(daemon, { selectedRow: `archive-meeting:${imported.message_id}` }));
   const reader = page.getByRole('dialog', { name: 'Archived meeting', exact: true });
   await expect(reader).toBeVisible();

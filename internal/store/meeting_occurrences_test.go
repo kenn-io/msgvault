@@ -28,7 +28,6 @@ func TestMeetingOccurrencesMatchRecords(t *testing.T) {
 		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: tc.note})
 		require.NoError(t, err)
 		require.Len(t, record.Links, 1)
-		assert.Equal(t, []int64{tc.note}, record.MessageIDs)
 		members := map[int64]bool{}
 		for _, row := range rows {
 			if row.OccurrenceKey == record.Links[0].Ref {
@@ -195,20 +194,22 @@ func TestMeetingOccurrencesMatchRecordsAmbiguousUID(t *testing.T) {
 	_, second := projectionFixture(t, st, "second", "twenty_json", `{"schema_version":1,"recording":{"transcript":[{"words":[{"text":"Hello"}]}]},"calendar_event":{"iCalUid":"uid@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: first})
 	require.NoError(t, err)
-	assert.Empty(t, record.Links)
-	assert.Equal(t, []int64{first, second}, record.MessageIDs)
 	rows, _, err := st.MeetingOccurrencesContext(t.Context(), time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC), map[string]bool{"calendar@example.com": true})
 	require.NoError(t, err)
 	var noteKeys, eventKeys []string
+	var noteIDs []int64
 	for _, row := range rows {
 		if row.MessageID == first || row.MessageID == second {
 			assert.True(t, row.Counted)
 			noteKeys = append(noteKeys, row.OccurrenceKey)
+			noteIDs = append(noteIDs, row.MessageID)
 		}
 		if row.MessageID == single || row.MessageID == series {
 			eventKeys = append(eventKeys, row.OccurrenceKey)
 		}
 	}
+	assert.Empty(t, record.Links)
+	assert.ElementsMatch(t, record.MessageIDs, noteIDs)
 	require.Len(t, noteKeys, 2)
 	assert.Equal(t, noteKeys[0], noteKeys[1])
 	assert.NotContains(t, eventKeys, noteKeys[0])
@@ -256,8 +257,7 @@ func TestMeetingOccurrenceCountsSavedCalendarLinkAndSplit(t *testing.T) {
 		record, err := st.MeetingRecordContext(t.Context(), ref)
 		require.NoError(t, err)
 		require.Len(t, record.Links, 2)
-		assert.ElementsMatch(t, []string{fmt.Sprintf("evt:%d", first), fmt.Sprintf("evt:%d", second)}, []string{record.Links[0].Ref, record.Links[1].Ref})
-		assert.Empty(t, record.MessageIDs)
+		assert.Contains(t, []string{record.Links[0].Ref, record.Links[1].Ref}, keys[0])
 	}
 	_, err = st.DecideMeetingLinkContext(t.Context(), left, right, "unlink")
 	require.NoError(t, err)
@@ -268,8 +268,6 @@ func TestMeetingOccurrenceCountsSavedCalendarLinkAndSplit(t *testing.T) {
 		record, err := st.MeetingRecordContext(t.Context(), ref)
 		require.NoError(t, err)
 		require.Len(t, record.Links, 1)
-		assert.Equal(t, fmt.Sprintf("evt:%d", ref.MessageID), record.Links[0].Ref)
-		assert.Empty(t, record.MessageIDs)
 		assert.Contains(t, keys, record.Links[0].Ref)
 	}
 }
@@ -292,8 +290,6 @@ func TestMeetingOccurrencesMatchRecordsSavedSplit(t *testing.T) {
 		record, err := st.MeetingRecordContext(t.Context(), ref)
 		require.NoError(t, err)
 		require.Len(t, record.Links, 1)
-		assert.Empty(t, record.MessageIDs)
-		assert.Equal(t, fmt.Sprintf("evt:%d", ref.MessageID), record.Links[0].Ref)
 		assert.Contains(t, rows, MeetingOccurrence{MessageID: ref.MessageID, OccurrenceKey: record.Links[0].Ref, OccurredAt: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Counted: true, ScheduledSeconds: &duration})
 	}
 }

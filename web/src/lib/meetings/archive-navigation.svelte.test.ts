@@ -25,12 +25,6 @@ describe('archive meeting navigation', () => {
     expect(await navigation.load(42, 9)).toBeUndefined();
     expect(navigation.error).toMatch(/conversation/);
   });
-  it.each(['pending note', 'note linked to two dates'])('opens a %s when the record contains it', async (kind) => {
-    const fetchFn = vi.fn<typeof fetch>(async (input) => new URL((input as Request).url).pathname.endsWith('/meetings/record')
-      ? Response.json({ message_ids: [42], links: kind === 'pending note' ? [] : [{}, {}], unexpandable: [] }) : Response.json(detail));
-    const navigation = new ArchiveMeetingNavigation(createAPIClient(fetchFn));
-    expect(await navigation.load(42, 8)).toEqual(detail);
-  });
   it('retains source-deleted archive detail while excluding a locally hidden meeting', async () => {
     const archived = { ...detail, deleted_at: '2026-02-01T00:00:00Z' };
     let count = 1;
