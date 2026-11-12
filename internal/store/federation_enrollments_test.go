@@ -79,7 +79,10 @@ func TestFederationEnrollmentPersistsAndSchemaUpgrade(t *testing.T) {
 	requirements.NoError(err)
 	_, err = reopened.DB().ExecContext(t.Context(), "UPDATE archive_metadata SET value = '41' WHERE key = 'schema_version'")
 	requirements.NoError(err)
-	requirements.NoError(reopened.InitSchemaContext(t.Context()))
+	requirements.NoError(reopened.InitSchemaUnlessCurrentContext(t.Context()))
+	version, err := reopened.SchemaVersionContext(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(store.SchemaVersion, version)
 	_, _, err = reopened.CreateFederationEnrollmentContext(t.Context(), spoke, "alice", "")
 	requirements.NoError(err)
 }

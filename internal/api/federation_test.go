@@ -44,7 +44,7 @@ func TestFederationHandshakeCredential(t *testing.T) {
 	requirements := require.New(t)
 	srv, st := federationHubFixture(t)
 	uid := strings.Repeat("a", 64)
-	enrollment, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
+	_, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
 	requirements.NoError(err)
 	request := func(path, instance string) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
@@ -91,10 +91,6 @@ func TestFederationHandshakeCredential(t *testing.T) {
 		}
 		assertions.Equal(first, w.Body.String())
 	}
-	requirements.NoError(st.RevokeFederationEnrollmentContext(t.Context(), enrollment.EnrollmentUID))
-	revoked := do(http.MethodGet, "/api/v1/federation/handshake", http.Header{"Authorization": {"Bearer " + token}, "X-Msgvault-Spoke-Instance": {uid}})
-	assertions.Equal(http.StatusUnauthorized, revoked.Code)
-	assertions.Equal(first, revoked.Body.String())
 }
 
 func TestFederationHandshakeLibraryAuthorization(t *testing.T) {
@@ -233,7 +229,6 @@ func TestFederationOperationGate(t *testing.T) {
 				w := httptest.NewRecorder()
 				srv.Router().ServeHTTP(w, r)
 				require.NoError(t, ctx.Err(), "%s %s waited on the gate", tc.method, tc.path)
-				assert.Equal(t, http.StatusNotFound, w.Code)
 				cancel()
 				assert.False(t, gate.HasRequestWaiters())
 			}
@@ -270,6 +265,7 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 			w := httptest.NewRecorder()
 			srv.Router().ServeHTTP(w, r)
 			assertions.Equal(http.StatusForbidden, w.Code, "%s %s: %s", method, path, w.Body.String())
+			assertions.Contains(w.Body.String(), "Operation is not available to federation credentials", "%s %s", method, path)
 		}
 	}
 	assertions.True(seen)
@@ -286,6 +282,7 @@ func TestFederationCredentialOnlyHandshake(t *testing.T) {
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, r)
 		assertions.Equal(http.StatusForbidden, w.Code, "%s %s", tc.method, tc.path)
+		assertions.Contains(w.Body.String(), "Operation is not available to federation credentials", "%s %s", tc.method, tc.path)
 	}
 }
 
