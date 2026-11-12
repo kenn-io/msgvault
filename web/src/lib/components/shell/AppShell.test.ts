@@ -3360,6 +3360,7 @@ it.each(['ready', 'build required', 'build dismissed', 'unsupported', 'failure']
       await screen.findByText('Run msgvault build-cache to refresh related views.');
       expect(within(notice).getByRole('button', { name: 'Retry' })).toBeDefined();
       await fireEvent.click(within(notice).getByRole('button', { name: outcome === 'build required' ? 'Retry' : 'Dismiss' }));
+      if (outcome === 'build dismissed') expect(screen.queryByText('Run msgvault build-cache to refresh related views.')).toBeNull();
     } else if (outcome === 'failure') {
       await screen.findByText('Refresh failed.');
       await fireEvent.click(within(notice).getByRole('button', { name: 'Retry' }));
@@ -3367,6 +3368,7 @@ it.each(['ready', 'build required', 'build dismissed', 'unsupported', 'failure']
       await screen.findByText('People and relationship analytics are unavailable with PostgreSQL.');
       expect(within(notice).queryByRole('button', { name: 'Retry' })).toBeNull();
       await fireEvent.click(within(notice).getByRole('button', { name: 'Dismiss' }));
+      expect(screen.queryByText('People and relationship analytics are unavailable with PostgreSQL.')).toBeNull();
     }
     if (outcome !== 'unsupported' && outcome !== 'build dismissed') await screen.findByRole('heading', { name: 'Updated person' });
     await waitFor(() => expect(screen.queryByText('Changes saved, but related views may be out of date.')).toBeNull());
