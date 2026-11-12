@@ -347,8 +347,8 @@ What happens:
 
 Provider transcripts stay searchable through the normal message text. Set
 `integrations.docbank.voice_transcript_search` to search generated transcripts.
-Turning it off removes generated transcripts from the search index. Check progress
-with a query:
+Restart the daemon after changing this setting. Turning it off removes generated
+transcripts from the search index. Check progress with a query:
 
 ```sql
 SELECT retention_state, error_code, COUNT(*)

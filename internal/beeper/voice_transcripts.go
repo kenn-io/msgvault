@@ -2,15 +2,20 @@ package beeper
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"strings"
-	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/docbankmedia"
 )
 
 // readVoiceTranscripts reads a bounded page of completed transcripts each pass.
 func (w *MediaSubmitter) readVoiceTranscripts(ctx context.Context) error {
-	mappings, generation, err := w.store.VoiceTranscriptMappings(ctx, w.destination, w.transcriptAfter, 8)
+	archiveUID, err := w.store.ArchiveUIDContext(ctx)
+	if err != nil {
+		return err
+	}
+	mappings, err := w.store.VoiceTranscriptMappings(ctx, w.destination, w.transcriptAfter, 8)
 	if err != nil {
 		return err
 	}
@@ -18,10 +23,37 @@ func (w *MediaSubmitter) readVoiceTranscripts(ctx context.Context) error {
 		readCtx, cancel := context.WithTimeout(ctx, w.actionTimeout)
 		transcript, err := w.transcriptClient.Transcript(readCtx, mapping.DocbankSourceID, mapping.SourceVersionID, mapping.ContentVersionID)
 		cancel()
-		if err == nil && transcript.VaultUID == mapping.VaultUID {
-			text, valid := generatedVoiceText(transcript)
-			if valid {
-				if err := w.gated(ctx, func() error { return w.store.SaveVoiceTranscript(ctx, mapping, generation, text) }); err != nil {
+		if err == nil && transcript.VaultUID == mapping.VaultUID && transcript.EvidenceState == "ready" && transcript.CoverageState == "transcribed" {
+			text, _ := generatedVoiceText(transcript)
+			evidence, err := w.candidateEvidence(ctx, archiveUID, mapping.AttachmentID)
+			if err != nil {
+				return err
+			}
+			if !evidence.missing && evidence.gapCode == "" {
+				err = w.gated(ctx, func() error {
+					candidate, err := w.store.GetBeeperMediaCandidate(ctx, mapping.AttachmentID)
+					if errors.Is(err, sql.ErrNoRows) {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+					_, rawHash, err := w.rawMediaEvidence(ctx, candidate.SourceType, candidate.MessageID)
+					if errors.Is(err, errBeeperMediaRawInvalid) {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+					if !sameBeeperMediaCandidate(candidate, evidence.candidate) || rawHash != evidence.rawHash {
+						return nil
+					}
+					if evidence.transcript != "" {
+						return w.store.ReconcileBeeperMediaMapping(ctx, descriptorMapping(w.destination, candidate, evidence.descriptor))
+					}
+					return w.store.SaveVoiceTranscript(ctx, mapping, text)
+				})
+				if err != nil {
 					return err
 				}
 			}
@@ -44,7 +76,7 @@ func generatedVoiceText(t docbankmedia.MediaTranscript) (string, bool) {
 	}
 	var text strings.Builder
 	for _, unit := range e.Units {
-		if strings.TrimSpace(unit.Text) == "" || !utf8.ValidString(unit.Text) || strings.ContainsRune(unit.Text, 0) {
+		if strings.TrimSpace(unit.Text) == "" || strings.ContainsRune(unit.Text, 0) {
 			continue
 		}
 		if text.Len() > 0 {

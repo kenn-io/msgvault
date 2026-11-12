@@ -59,13 +59,13 @@ func (s *Store) SetVoiceTranscriptSearch(ctx context.Context, enabled bool) erro
 }
 
 // VoiceTranscriptMappings returns a bounded page of retained Beeper recordings.
-func (s *Store) VoiceTranscriptMappings(ctx context.Context, destination string, after int64, limit int) ([]BeeperMediaMapping, string, error) {
-	generation, err := archiveMetadataValue(ctx, s.db, voiceSearchSetting)
+func (s *Store) VoiceTranscriptMappings(ctx context.Context, destination string, after int64, limit int) ([]BeeperMediaMapping, error) {
+	enabled, err := archiveMetadataValue(ctx, s.db, voiceSearchSetting)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	if generation != "1" {
-		return nil, "", nil
+	if enabled != "1" {
+		return nil, nil
 	}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT `+beeperMediaOccurrenceColumns("o")+` FROM beeper_media_occurrences o`+beeperMediaCurrentJoin+`
 		AND o.destination_key=? AND o.source_type='beeper' AND a.media_type='voice_note' AND o.retention_state='retained'
@@ -73,7 +73,7 @@ func (s *Store) VoiceTranscriptMappings(ctx context.Context, destination string,
 		AND EXISTS (SELECT 1 FROM beeper_media_deliveries d WHERE d.destination_key=o.destination_key AND d.processing_key=o.processing_key AND d.phase='done' AND d.coverage_state='transcribed')
 		AND NOT EXISTS (SELECT 1 FROM voice_transcripts v WHERE v.message_id=o.message_id AND v.attachment_id=o.attachment_id) ORDER BY o.attachment_id LIMIT ?`), destination, after, limit)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 	var result []BeeperMediaMapping
@@ -83,17 +83,17 @@ func (s *Store) VoiceTranscriptMappings(ctx context.Context, destination string,
 		targets := beeperMediaOccurrenceScanTargets(&m)
 		targets[beeperMediaNextActionIndex] = &next
 		if err := rows.Scan(targets...); err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		result = append(result, m)
 	}
-	return result, generation, rows.Err()
+	return result, rows.Err()
 }
 
 // SaveVoiceTranscript checks the setting and retained version in the same transaction as the index update.
-func (s *Store) SaveVoiceTranscript(ctx context.Context, m BeeperMediaMapping, generation, text string) error {
+func (s *Store) SaveVoiceTranscript(ctx context.Context, m BeeperMediaMapping, text string) error {
 	return s.withSourceMaintenanceGateContext(ctx, func(tx *loggedTx) error {
-		result, err := tx.ExecContext(ctx, `UPDATE archive_metadata SET value=value WHERE key=? AND value=?`, voiceSearchSetting, generation)
+		result, err := tx.ExecContext(ctx, `UPDATE archive_metadata SET value=value WHERE key=? AND value='1'`, voiceSearchSetting)
 		if err != nil {
 			return err
 		}
