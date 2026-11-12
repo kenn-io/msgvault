@@ -237,11 +237,10 @@ func TestSettingsWideAndNarrowNavigationUseTheSameDraft(t *testing.T) {
 	assertions.Contains(model.renderView(), "enabled")
 }
 
-func TestSettingsRendersPendingRestartAndFieldMetadata(t *testing.T) {
+func TestSettingsRendersFieldMetadata(t *testing.T) {
 	snapshot := SettingsSnapshot{
-		ETag:           "etag-1",
-		PendingRestart: true,
-		Groups:         []SettingsGroup{{ID: "archive", Label: "Archive"}},
+		ETag:   "etag-1",
+		Groups: []SettingsGroup{{ID: "archive", Label: "Archive"}},
 		Fields: []SettingField{{
 			Key: "analytics.builder_threads", Group: "archive", Label: "Builder threads",
 			Description: "Threads used for cache builds.", Kind: SettingKindInteger,

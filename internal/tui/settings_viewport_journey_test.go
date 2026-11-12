@@ -35,7 +35,7 @@ func TestSettingsViewportShortScreenPeopleDisable(t *testing.T) {
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "[Esc]")
 	assert.Contains(t, screen.String(), "People inference disabled.")
-	assert.Contains(t, screen.String(), "restart its service")
+	assert.Contains(t, screen.String(), "Restart pending.")
 	model, _ = sendKey(t, model, key('v'))
 	screen = uv.NewScreenBuffer(40, 12)
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
@@ -114,7 +114,7 @@ func TestSettingsViewportShortScreenSaveErrorAfterDisable(t *testing.T) {
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, strings.Join(strings.Fields(screen.String()), " "), "disk full")
 	assert.Contains(t, screen.String(), "[Esc]")
-	assert.Contains(t, screen.String(), "restart its service")
+	assert.Contains(t, screen.String(), "Restart pending.")
 }
 
 func TestSettingsViewportStalePeopleLoadKeepsPage(t *testing.T) {
@@ -166,7 +166,7 @@ func TestSettingsViewportTinyScreenKeepsPagingAndBack(t *testing.T) {
 	assert.Contains(t, screen.String(), "[PgUp/PgDn]")
 	var pages strings.Builder
 	for range 30 {
-		pages.WriteString(screen.String())
+		pages.WriteString(strings.Join(strings.Split(screen.String(), "\n")[1:4], ""))
 		before := screen.String()
 		model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
 		uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
@@ -174,7 +174,8 @@ func TestSettingsViewportTinyScreenKeepsPagingAndBack(t *testing.T) {
 			break
 		}
 	}
-	for _, text := range []string{"msgvault", "daemon", "restart", "--home", "--config", "service", "foreground", "flags.", "[p]", "[i]"} {
+	assert.Contains(t, strings.Join(strings.Fields(pages.String()), ""), strings.Join(strings.Fields(settingsRestartNotice), ""))
+	for _, text := range []string{"[p]", "[i]"} {
 		assert.Contains(t, pages.String(), text)
 	}
 	model, _ = sendKey(t, model, keyEnter())
