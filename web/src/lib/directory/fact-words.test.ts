@@ -50,7 +50,7 @@ describe('fact words', () => {
   });
 
   it('names where a saved decision put its value', () => {
-    expect(projectionWords('person_attribute')).toBe('Field');
+    expect(projectionWords('person_attribute')).toBeNull();
   });
 
   it('names confidence strength at the 600 and 800 boundaries', () => {

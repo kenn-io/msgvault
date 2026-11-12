@@ -35,7 +35,7 @@
   function evidenceLabel(row: FactEvidenceRow): string {
     if (selectedField) return selectedField;
     const names = new Set(loadedClaims.filter(claim => claim.evidenceIDs.includes(row.evidenceID)).map(claim => controller.fieldName(claim, definitions)));
-    return names.size ? [...names].join(', ') : 'Evidence';
+    return [...names].join(', ');
   }
   function decisionClaim(row: FactDecisionRow): FactClaimRow | undefined { return loadedClaims.find(claim => claim.claimKey === row.claimKey); }
   function decisionLabel(row: FactDecisionRow): string { return controller.fieldName(row, definitions); }
@@ -115,7 +115,7 @@
           {#each controller.evidence.rows as row (row.rowToken)}
             {@const authority = authorityWords(row.authority)}
             <div aria-label="Fact evidence" data-fact-focus={`evidence:${row.evidenceID}`}><DetailRow exception={row.lostSupport ?? undefined}>
-              <div class="value"><strong class="field-label">{evidenceLabel(row)}</strong><span>{evidenceSourceWords(row.sourceClass, row.directness)}</span>{#if row.excerpt !== null && controller.revealedEvidence.has(row.rowToken)}<span class="meta">“{row.excerpt}”</span>{/if}</div>
+              <div class="value">{#if evidenceLabel(row)}<strong class="field-label">{evidenceLabel(row)}</strong>{/if}<span>{evidenceSourceWords(row.sourceClass, row.directness)}</span>{#if row.excerpt !== null && controller.revealedEvidence.has(row.rowToken)}<span class="meta">“{row.excerpt}”</span>{/if}</div>
               {#snippet actions()}{#if row.excerpt !== null && !controller.revealedEvidence.has(row.rowToken)}<Button label="Reveal excerpt" class="text-action" size="sm" onclick={() => controller.revealEvidence(row.rowToken)} />{/if}{/snippet}
               {#snippet details()}<dl>
                 {#if authority}<div><dt>Source</dt><dd>{authority}</dd></div>{/if}
@@ -157,15 +157,13 @@
               {#snippet details()}
                 <dl>
                   <div><dt>Reported confidence</dt><dd>{scoreWords(row.reportedScore)}</dd></div>
-                  <div><dt>Decision</dt><dd><Button label="Show decision" class="text-action" size="sm" onclick={() => void controller.showDecision(row.claimKey, row.targetCanonical)} /></dd></div>
-                  {#if row.evidenceIDs.length === 1}
-                    <div><dt>Source</dt><dd><Button label="Show evidence" class="text-action" size="sm" onclick={() => void controller.showEvidence(row.evidenceIDs[0]!, row.targetCanonical)} /></dd></div>
-                  {:else if row.evidenceIDs.length > 1}
+                  {#if row.evidenceIDs.length > 1}
                     <div><dt>Sources</dt><dd class="links">{#each row.evidenceIDs as id, index (id)}{@const words = relatedSource(id, index)}<Button label={words} ariaLabel={`Show source: ${words}`} class="text-action" size="sm" onclick={() => void controller.showEvidence(id, row.targetCanonical)} />{/each}</dd></div>
                   {/if}
                   {#if row.validFrom || row.validUntil}<div><dt>Valid</dt><dd>{row.validFrom ? formatShortDate(row.validFrom) : 'No start'} – {row.validUntil ? formatShortDate(row.validUntil) : 'No end'}</dd></div>{/if}
                   <div><dt>Created</dt><dd><time datetime={row.createdAt} title={formatDateTime(row.createdAt, 'long')}>{formatShortDateTime(row.createdAt)}</time></dd></div>
                 </dl>
+                <div class="links"><Button label="Show decision" class="text-action" size="sm" onclick={() => void controller.showDecision(row.claimKey, row.targetCanonical)} />{#if row.evidenceIDs.length === 1}<Button label="Show evidence" class="text-action" size="sm" onclick={() => void controller.showEvidence(row.evidenceIDs[0]!, row.targetCanonical)} />{/if}</div>
                 <Disclosure variant="plain" title="Raw values"><dl><div><dt>Origin</dt><dd><code>{row.origin}</code></dd></div><div><dt>Relation</dt><dd><code>{row.relation}</code></dd></div>{#if shown}<div><dt>Submitted</dt><dd><code>{row.submittedValue}</code></dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized</dt><dd><code>{row.normalizedValue}</code></dd></div>{/if}{/if}</dl></Disclosure>
               {/snippet}
               {#snippet meta()}<span class="meta">{#if originWords(row.origin)}{originWords(row.origin)}{' · '}{/if}<time datetime={row.createdAt} title={formatDateTime(row.createdAt)}>{formatShortDate(row.createdAt)}</time></span>{/snippet}

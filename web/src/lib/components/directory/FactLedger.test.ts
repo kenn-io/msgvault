@@ -352,7 +352,7 @@ describe('FactLedger', () => {
     const labels = () => Array.from(view.container.querySelectorAll('section[aria-label] .field-label'), node => node.textContent);
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Evidence' }));
-    expect(labels()).toEqual(['Home city', 'Home city, Employer', 'Evidence']);
+    expect(labels()).toEqual(['Home city', 'Home city, Employer']);
     await fireEvent.click(screen.getByRole('radio', { name: 'Decisions' }));
     expect(labels()).toEqual(['Employer', 'Unknown field']);
 

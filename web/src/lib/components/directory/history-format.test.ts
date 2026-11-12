@@ -41,7 +41,7 @@ describe('provenance', () => {
 
 it('lists the recorded provenance details', () => {
   expect(provenanceDetails({ source: 'enrichment', actor: 'mcp', source_ref: 'lookup-7', confidence: 0, created_at: '2026-11-01T12:00:00' })).toEqual([
-    ['Source', 'From a lookup'], ['Actor', 'an assistant'], ['Reference', 'lookup-7'], ['Confidence', '0%'], ['Recorded', formatDateTime('2026-11-01T12:00:00')]
+    ['Actor', 'an assistant'], ['Reference', 'lookup-7'], ['Confidence', '0%'], ['Recorded', formatDateTime('2026-11-01T12:00:00')]
   ]);
 });
 

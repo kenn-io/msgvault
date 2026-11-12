@@ -20,7 +20,7 @@
       {#if controller.history.rows.length === 0 && !controller.history.error}
         <EmptyLine message="No source history yet" />
       {:else}
-        <ul aria-label="Source history">
+        <ul>
           {#each controller.history.rows as event}
             <li>{event.reasonLabel} · <time datetime={event.createdAt} title={formatDateTime(event.createdAt)}>{formatShortDate(event.createdAt)}</time></li>
           {/each}
