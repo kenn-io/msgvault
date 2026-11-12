@@ -1,13 +1,16 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSettingsViewportEndpointDetail(t *testing.T) {
@@ -150,4 +153,25 @@ func TestSettingsViewportCodexPolicyEditorRemainsVisible(t *testing.T) {
 	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
 	assert.Contains(t, screen.String(), "Edit field 1:")
 	assert.Contains(t, screen.String(), "example-profile")
+}
+
+func TestSettingsViewportCodexLoginPollPreservesPage(t *testing.T) {
+	backend := &fakePeopleInferenceBackend{loads: []SettingsSnapshot{settingsFixture()}, login: CodexDeviceLogin{SessionID: "session-1", URL: "https://example.test/device/authorization/session", Code: "ABCD-EFGH", Deadline: time.Date(2026, 9, 23, 12, 5, 0, 0, time.UTC)}}
+	model := resizeModel(t, loadedSettingsModelWithBackend(t, &backend.fakeSettingsBackend), 40, 6)
+	model.settingsBackend = backend
+	model, start := startConfiguredCodex(t, model)
+	require.NotNil(t, start)
+	model = sendSettingsMsg(t, model, start())
+	screen := uv.NewScreenBuffer(40, 6)
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	require.NotContains(t, screen.String(), "ABCD-EFGH")
+	model, _ = sendKey(t, model, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	require.Contains(t, screen.String(), "ABCD-EFGH")
+	model = sendSettingsMsg(t, model, codexLoginPolledMsg{requestID: model.settings.codex.requestID})
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "ABCD-EFGH")
+	model = sendSettingsMsg(t, model, codexLoginPolledMsg{poll: CodexLoginPoll{Failed: true}, err: errors.New("sign-in expired"), requestID: model.settings.codex.requestID})
+	uv.NewStyledString(model.View().Content).Draw(screen, screen.Bounds())
+	assert.Contains(t, screen.String(), "sign-in expired")
 }

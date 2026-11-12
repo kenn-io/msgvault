@@ -14,7 +14,6 @@ func (m Model) settingsViewport(body, actions string) (viewport.Model, string) {
 	width := max(m.width, 20)
 	footer := wrapActions(actions, width)
 	v := viewport.New(viewport.WithWidth(width), viewport.WithHeight(max(m.height-len(footer)-1, 1)))
-	v.SoftWrap = true
 	wrapped := ansi.Wrap(body, width, "")
 	v.SetContent(wrapped)
 	if v.TotalLineCount() > v.Height() {
