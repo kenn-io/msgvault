@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,18 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+type failingFederationTouch struct {
+	FederationStore
+	fail bool
+}
+
+func (f *failingFederationTouch) TouchFederationEnrollmentContext(ctx context.Context, uid string) error {
+	if f.fail {
+		return errors.New("fixture failure")
+	}
+	return f.FederationStore.TouchFederationEnrollmentContext(ctx, uid)
+}
+
 func TestFederationHandshakeCredential(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -27,7 +40,8 @@ func TestFederationHandshakeCredential(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Federation.Role = "hub"
 	cfg.Server.APIKey = "owner-fixture"
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: st, Logger: testLogger()})
+	federation := &failingFederationTouch{FederationStore: st}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, FederationStore: federation, Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.WithoutCancel(t.Context()))) })
 	uid := strings.Repeat("a", 64)
 	enrollment, token, err := st.CreateFederationEnrollmentContext(t.Context(), uid, "alice", "")
@@ -47,8 +61,7 @@ func TestFederationHandshakeCredential(t *testing.T) {
 	var body federationHandshakeResponse
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 	assertions.Equal(enrollment.EnrollmentUID, body.Enrollment.EnrollmentUID)
-	_, err = st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_federation_touch BEFORE UPDATE OF last_seen_at ON federation_enrollments BEGIN SELECT RAISE(FAIL, 'fixture failure'); END`)
-	requirements.NoError(err)
+	federation.fail = true
 	w = request("/api/v1/federation/handshake", uid)
 	assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 	bad := request("/api/v1/federation/handshake", "")
@@ -292,7 +305,7 @@ func TestFederationRoleMatrix(t *testing.T) {
 				}
 				resp, err := httpServer.Client().Do(req)
 				requirements.NoError(err)
-				defer resp.Body.Close()
+				defer func() { assertions.NoError(resp.Body.Close()) }()
 				body, err := io.ReadAll(resp.Body)
 				requirements.NoError(err)
 				return resp.StatusCode, string(body)

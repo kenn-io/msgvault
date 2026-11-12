@@ -64,10 +64,10 @@ func (s *Store) CreateFederationEnrollmentContext(ctx context.Context, spokeUID,
 	id := make([]byte, 16)
 	secret := make([]byte, 32)
 	if _, err := rand.Read(id); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("generate enrollment UID: %w", err)
 	}
 	if _, err := rand.Read(secret); err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("generate enrollment token: %w", err)
 	}
 	token := "mvf1_" + base64.RawURLEncoding.EncodeToString(secret)
 	digest := sha256.Sum256([]byte(token))

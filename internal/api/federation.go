@@ -13,11 +13,11 @@ import (
 )
 
 type FederationStore interface {
-	CreateFederationEnrollmentContext(context.Context, string, string, string) (*store.FederationEnrollment, string, error)
-	ListFederationEnrollmentsContext(context.Context) ([]store.FederationEnrollment, error)
-	RevokeFederationEnrollmentContext(context.Context, string) error
-	AuthenticateFederationEnrollmentContext(context.Context, string, string) (*store.FederationEnrollment, error)
-	TouchFederationEnrollmentContext(context.Context, string) error
+	CreateFederationEnrollmentContext(ctx context.Context, spokeUID, member, name string) (*store.FederationEnrollment, string, error)
+	ListFederationEnrollmentsContext(ctx context.Context) ([]store.FederationEnrollment, error)
+	RevokeFederationEnrollmentContext(ctx context.Context, uid string) error
+	AuthenticateFederationEnrollmentContext(ctx context.Context, digest, spokeUID string) (*store.FederationEnrollment, error)
+	TouchFederationEnrollmentContext(ctx context.Context, uid string) error
 }
 type federationCreateRequest struct {
 	SpokeInstance string `json:"spoke_instance"`
@@ -62,7 +62,7 @@ func (s *Server) registerFederationRoutes(api huma.API) {
 }
 func (s *Server) federationRole(w http.ResponseWriter, r *http.Request, identity bool) bool {
 	role := s.cfg.Federation.Role
-	if role != "hub" && !(identity && role == "spoke") {
+	if role != "hub" && (!identity || role != "spoke") {
 		s.handleNotFound(w, r)
 		return false
 	}
@@ -70,7 +70,7 @@ func (s *Server) federationRole(w http.ResponseWriter, r *http.Request, identity
 }
 func (s *Server) federationOwner(w http.ResponseWriter, r *http.Request, identity bool) bool {
 	mode := s.requestAuthentication(r).Mode
-	if !s.ownerAccessAuthorized(r) && !(identity && mode == AuthModeLoopback) {
+	if !s.ownerAccessAuthorized(r) && (!identity || mode != AuthModeLoopback) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return false
 	}

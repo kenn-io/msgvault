@@ -31,7 +31,7 @@ func TestFederationEnrollmentLifecycle(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(enrollment.EnrollmentUID, got.EnrollmentUID)
 	_, err = st.AuthenticateFederationEnrollmentContext(ctx, hex.EncodeToString(digest[:]), strings.Repeat("b", 64))
-	assertions.ErrorIs(err, store.ErrNotFound)
+	requirements.ErrorIs(err, store.ErrNotFound)
 	requirements.NoError(st.TouchFederationEnrollmentContext(ctx, enrollment.EnrollmentUID))
 	list, err := st.ListFederationEnrollmentsContext(ctx)
 	requirements.NoError(err)
@@ -40,22 +40,21 @@ func TestFederationEnrollmentLifecycle(t *testing.T) {
 	requirements.NoError(st.RevokeFederationEnrollmentContext(ctx, enrollment.EnrollmentUID))
 	requirements.NoError(st.RevokeFederationEnrollmentContext(ctx, enrollment.EnrollmentUID))
 	_, err = st.AuthenticateFederationEnrollmentContext(ctx, hex.EncodeToString(digest[:]), uid)
-	assertions.ErrorIs(err, store.ErrNotFound)
-	assertions.ErrorIs(st.RevokeFederationEnrollmentContext(ctx, "missing"), store.ErrNotFound)
+	requirements.ErrorIs(err, store.ErrNotFound)
+	requirements.ErrorIs(st.RevokeFederationEnrollmentContext(ctx, "missing"), store.ErrNotFound)
 }
 
 func TestFederationHubSourceGuard(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
 	ctx := t.Context()
 	st := testutil.NewTestStore(t)
 	requirements.NoError(st.ConfigureFederationHubContext(ctx))
 	_, err := st.GetOrCreateSourceContext(ctx, "gmail", "federation:fixture")
-	assertions.ErrorIs(err, store.ErrFederationHubSource)
+	requirements.ErrorIs(err, store.ErrFederationHubSource)
 	other := testutil.NewTestStore(t)
 	_, err = other.GetOrCreateSourceContext(ctx, "gmail", "fixture@example.test")
 	requirements.NoError(err)
-	assertions.ErrorContains(other.ConfigureFederationHubContext(ctx), "already has 1 sources")
+	requirements.ErrorContains(other.ConfigureFederationHubContext(ctx), "already has 1 sources")
 }
 
 func TestFederationEnrollmentPersistsAndSchemaUpgrade(t *testing.T) {
@@ -83,11 +82,11 @@ func TestFederationEnrollmentPersistsAndSchemaUpgrade(t *testing.T) {
 	t.Cleanup(func() { requirements.NoError(upgraded.Close()) })
 	requirements.NoError(upgraded.InitSchemaUnlessCurrentContext(t.Context()))
 	_, _, err = upgraded.CreateFederationEnrollmentContext(t.Context(), spoke, "alice", "")
-	assertions.NoError(err)
+	requirements.NoError(err)
 }
 
 func TestFederationEnrollmentValidation(t *testing.T) {
-	assertions := assert.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	for _, tc := range []struct{ spoke, member, name, field string }{
 		{"bad", "alice", "", "spoke_instance"},
@@ -99,7 +98,7 @@ func TestFederationEnrollmentValidation(t *testing.T) {
 		{strings.Repeat("a", 64), "alice", "name\u009b", "spoke_name"},
 	} {
 		_, _, err := st.CreateFederationEnrollmentContext(t.Context(), tc.spoke, tc.member, tc.name)
-		assertions.ErrorIs(err, store.ErrFederationValidation)
-		assertions.ErrorContains(err, tc.field)
+		requirements.ErrorIs(err, store.ErrFederationValidation)
+		requirements.ErrorContains(err, tc.field)
 	}
 }

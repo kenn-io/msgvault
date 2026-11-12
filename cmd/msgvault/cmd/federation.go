@@ -16,7 +16,7 @@ import (
 
 func federationHubOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || (u.Fragment != "" || strings.Contains(raw, "#")) || (u.Scheme != "https" && !(u.Scheme == "http" && netguard.IsLoopbackHost(u.Hostname()))) {
+	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || (u.Fragment != "" || strings.Contains(raw, "#")) || (u.Scheme != "https" && (u.Scheme != "http" || !netguard.IsLoopbackHost(u.Hostname()))) {
 		return "", errors.New("--hub-url must be an HTTPS origin (HTTP only for loopback)")
 	}
 	u.Path = ""
@@ -33,8 +33,10 @@ func init() {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), out.ArchiveUID)
-		return err
+		if _, err = fmt.Fprintln(cmd.OutOrStdout(), out.ArchiveUID); err != nil {
+			return fmt.Errorf("write federation identity: %w", err)
+		}
+		return nil
 	}}
 	var spoke, member, name, hub string
 	var asJSON bool
@@ -65,14 +67,17 @@ func init() {
 			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), result, json.Deterministic(true))
 		}
 		if _, err := fmt.Fprintln(cmd.OutOrStdout(), result.Token); err != nil {
-			return err
+			return fmt.Errorf("write enrollment token: %w", err)
 		}
 		joinOrigin := origin
 		if cmd.Flags().Changed("hub-url") {
 			joinOrigin = oauth.ShellQuote(origin)
 		}
 		_, err = fmt.Fprintf(cmd.ErrOrStderr(), "Enrollment: %s\nMember: %s\nSpoke: %s\nJoin (upcoming, not in this release): msgvault federation join %s --hub-instance %s --token-file <path>\n", result.Enrollment.EnrollmentUID, result.Enrollment.Member, result.Enrollment.SpokeName, joinOrigin, result.HubInstance)
-		return err
+		if err != nil {
+			return fmt.Errorf("write enrollment details: %w", err)
+		}
+		return nil
 	}}
 	enroll.Flags().StringVar(&spoke, "spoke-instance", "", "Spoke archive UID (64 lowercase hexadecimal digits)")
 	enroll.Flags().StringVar(&member, "member", "", "Member handle: 1–64 lowercase ASCII letters, digits, dots, underscores or hyphens; start with a letter or digit")
@@ -93,7 +98,7 @@ func init() {
 			return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), map[string]any{"enrollments": entries}, json.Deterministic(true))
 		}
 		for _, e := range entries {
-			state := "active"
+			state := accountStateActive
 			if e.RevokedAt != nil {
 				state = "revoked"
 			}
@@ -119,8 +124,10 @@ func init() {
 		if err = c.RevokeFederationEnrollment(cmd.Context(), args[0]); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), "Enrollment revoked.")
-		return err
+		if _, err = fmt.Fprintln(cmd.OutOrStdout(), "Enrollment revoked."); err != nil {
+			return fmt.Errorf("write revocation result: %w", err)
+		}
+		return nil
 	}}
 	root.AddCommand(identity, enroll, enrollments, revoke)
 	rootCmd.AddCommand(root)
