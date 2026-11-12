@@ -98,7 +98,7 @@ func TestAppreciationStateMigration(t *testing.T) {
 	ctx := t.Context()
 	_, err := f.Store.DB().ExecContext(ctx, `DROP TABLE person_appreciation_state`)
 	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value='40' WHERE key='schema_version'`)
+	_, err = f.Store.DB().ExecContext(ctx, `UPDATE archive_metadata SET value='41' WHERE key='schema_version'`)
 	require.NoError(err)
 	require.NoError(f.Store.InitSchemaContext(ctx))
 	version, err := f.Store.SchemaVersionContext(ctx)

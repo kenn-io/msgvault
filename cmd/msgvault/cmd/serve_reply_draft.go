@@ -53,9 +53,12 @@ type draftReplyTarget struct {
 	raw              []byte
 	forward          bool
 	attachmentWrites *[]store.AttachmentWrite
+	grant            *agentgrant.Grant
 }
 
 type draftReplyOutput struct {
+	draftRecipientAdvisory
+
 	Status          string `json:"status"`
 	DraftID         string `json:"draft_id,omitempty"`
 	Revision        int64  `json:"revision,omitzero"`
@@ -434,7 +437,7 @@ func (a *storeAPIAdapter) resolveDraftTarget(
 		return draftReplyTarget{}, "", nil, draftReplyError("draft_disabled", fmt.Errorf("source %d is a %q source", source.ID, source.SourceType))
 	}
 
-	target := draftReplyTarget{parentSource: parentSource, source: source, mailbox: mailbox}
+	target := draftReplyTarget{parentSource: parentSource, source: source, mailbox: mailbox, grant: grant}
 	if parentID != nil {
 		parent, err := a.store.GetMessageContext(ctx, *parentID)
 		if err != nil {
@@ -591,6 +594,9 @@ func (a *storeAPIAdapter) createDraft(
 	result.DraftID = draftRecord.DraftID
 	result.Revision = draftRecord.Revision
 	result.MessageID = draftRecord.CurrentMessageID
+	if asJSON {
+		result.draftRecipientAdvisory = a.draftRecipientAdvisory(ctx, result.MessageID, result.SourceID, target.grant)
+	}
 	if err := emitDraftReplyOutput(emit, cliStreamStdout, asJSON, result); err != nil {
 		return draftReplyError("output_failed", err)
 	}

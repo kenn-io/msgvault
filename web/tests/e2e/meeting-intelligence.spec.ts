@@ -77,7 +77,7 @@ test("production imports expose archived actions, summary totals, and exact cont
   await expect(panel.getByText('Send the Circleback recap', { exact: true })).toBeVisible();
   await expect(panel.getByText('Publish the Notion recap', { exact: true })).toBeVisible();
   await panel.getByText('Evidence coverage', { exact: true }).click();
-  await expect(panel.getByText('Coverage: 3 available · 0 partial · 2 unsupported · 0 unavailable', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Action item records by meeting: 3 complete · 0 partial · 2 not supported · 0 unavailable', { exact: true })).toBeVisible();
   await panel.getByRole('button', { name: 'Close' }).click();
 
   // The production selection UI carries actual emitted row keys and authority.
