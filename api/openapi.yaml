@@ -34048,6 +34048,27 @@ paths:
       summary: List source sync status
       tags:
         - API
+  /api/v1/sources/{source_id}/account-attribution/repair:
+    post:
+      operationId: repairAccountAttribution
+      parameters:
+        - description: Source ID
+          in: path
+          name: source_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "202":
+          description: Accepted
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Retry account matching for one source
+      tags:
+        - API
   /api/v1/sources/{source_id}/identities:
     get:
       operationId: listSourceIdentities

@@ -168,6 +168,7 @@ same entries as their `account` argument: the keys that `get_stats` lists
 (`identity:...` or `unattributed:...`). A source's own address or display
 name, in any letter case, still selects that whole source; any other confirmed
 address selects the mail attributed to it on every source.
+Explore refreshes pending account matching and offers Retry for each affected source. Matching also resumes automatically after an identity change.
 
 Delivery headers are routing hints, not proof that you own an address, and
 attribution never lets msgvault send from it. The

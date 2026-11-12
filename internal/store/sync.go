@@ -2105,7 +2105,10 @@ func (s *Store) updateSourceIdentifierTx(ctx context.Context, tx *loggedTx, sour
 		return nil
 	}
 	*pending, err = s.markAccountAttributionPendingForAddressesTx(ctx, tx, sourceID, []string{oldSink, newSink})
-	return err
+	if err != nil {
+		return err
+	}
+	return s.bumpAccountIdentityRevisionContext(ctx, tx)
 }
 
 // GetSourceByIdentifier returns a source by its identifier (email address).

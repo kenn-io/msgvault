@@ -404,6 +404,7 @@ import type {
   RelationshipTypesResponse,
   RemoteImageRequest,
   ReopenLoopPathParameters,
+  RepairAccountAttributionPathParameters,
   ResolveCardDAVConflictPathParameters,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
@@ -4398,6 +4399,21 @@ export const listSourceStatus = (
 ) => {
   return orvalFetch<SourceStatusResponse>(
     { url: `/api/v1/sources/status`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Retry account matching for one source
+ */
+export const repairAccountAttribution = (
+  { sourceId }: RepairAccountAttributionPathParameters,
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/sources/${encodeURIComponent(String(sourceId))}/account-attribution/repair`,
+      method: "POST",
+    },
     options,
   );
 };
