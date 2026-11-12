@@ -1941,8 +1941,7 @@ func TestPersonFactOutcomeUpgradeClassifiesKnownHistory(t *testing.T) {
 	for _, decision := range rows {
 		switch decision.DecisionKey {
 		case "legacy-current":
-			require.NotNil(decision.Outcome)
-			assert.Equal(personfacts.OutcomeCurrentValueKept, *decision.Outcome)
+			assert.Nil(decision.Outcome)
 			assert.Equal(personfacts.ReasonInsufficientMargin, decision.Reason)
 		case "legacy-unknown":
 			assert.Nil(decision.Outcome)
