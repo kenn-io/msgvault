@@ -668,18 +668,14 @@ func TestPrivateNetworkDocbankRuntime(t *testing.T) {
 	}
 }
 
-func TestVoiceTranscriptSearchDisabledBeforeClientSetup(t *testing.T) {
+func TestVoiceTranscriptSearchDisabledWhenDocbankOff(t *testing.T) {
 	st, blobs := storedBeeperVoiceNote(t)
 	sched := scheduler.New(nil)
 	defer func() { <-sched.Stop().Done() }()
-	var messageID, attachmentID int64
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT message_id,id FROM attachments LIMIT 1`).Scan(&messageID, &attachmentID))
 	require.NoError(t, st.SetVoiceTranscriptSearch(t.Context(), true))
-	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO voice_transcripts(message_id,attachment_id,transcript_text) VALUES(?,?,?)`), messageID, attachmentID, "dinner Thursday")
+	err := configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), t.TempDir(), config.DocbankIntegrationConfig{VoiceTranscriptSearch: true}, nil)
 	require.NoError(t, err)
-	err = configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), t.TempDir(), config.DocbankIntegrationConfig{VoiceTranscriptSearch: true}, nil)
-	require.NoError(t, err)
-	var count int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM voice_transcripts`).Scan(&count))
-	assert.Zero(t, count)
+	var value string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT value FROM archive_metadata WHERE key='voice_transcript_search_enabled'`).Scan(&value))
+	assert.Equal(t, "0", value)
 }

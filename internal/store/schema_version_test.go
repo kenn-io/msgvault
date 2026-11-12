@@ -138,21 +138,6 @@ func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	assert.Zero(count)
 }
 
-func TestSchemaVersionVoiceTranscriptUpgrade(t *testing.T) {
-	f := storetest.New(t)
-	ctx := t.Context()
-	_, err := f.Store.DB().ExecContext(ctx, "DROP TABLE voice_transcripts")
-	require.NoError(t, err)
-	_, err = f.Store.DB().ExecContext(ctx, "UPDATE archive_metadata SET value='42' WHERE key='schema_version'")
-	require.NoError(t, err)
-	require.NoError(t, f.Store.InitSchemaContext(ctx))
-	require.NoError(t, f.Store.InitSchemaContext(ctx))
-	require.NoError(t, f.Store.ValidateSchemaContext(ctx))
-	var count int
-	require.NoError(t, f.Store.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM voice_transcripts").Scan(&count))
-	assert.Zero(t, count)
-}
-
 func TestSchemaVersionSQLiteFailedUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

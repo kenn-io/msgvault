@@ -110,30 +110,15 @@ func (s *Store) reindexVoiceMessages(ctx context.Context, tx *loggedTx, ids []in
 	if !s.fts5Available {
 		return nil
 	}
+	q := boundQuerier{ctx: ctx, q: tx}
 	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, "SAVEPOINT derived_fts"); err != nil {
-			return err
-		}
-		var err error
-		if s.IsPostgreSQL() {
-			q := boundQuerier{ctx: ctx, q: tx}
-			var row derivedEmailText
-			row, err = s.loadDerivedEmailText(q, id)
-			if err == nil {
-				row.fts.Body = row.body
-				err = s.dialect.FTSUpsert(q, row.fts)
-			}
-		} else {
-			_, err = tx.ExecContext(ctx, s.dialect.FTSBackfillBatchSQL(), id, id+1)
-		}
-		if s.dialect.IsFTSValueTooLargeError(err) {
-			_, err = markFTSOverflowUnsearchable(boundQuerier{ctx: ctx, q: tx}, id)
-		}
+		row, err := s.loadDerivedEmailText(q, id)
 		if err != nil {
-			return fmt.Errorf("index voice transcript: %w", err)
+			return fmt.Errorf("load voice transcript message: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, "RELEASE SAVEPOINT derived_fts"); err != nil {
-			return err
+		row.fts.Body = row.body
+		if _, err := s.upsertFTSOrUnsearchable(q, row.fts); err != nil {
+			return fmt.Errorf("index voice transcript: %w", err)
 		}
 	}
 	return nil

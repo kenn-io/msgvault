@@ -111,10 +111,10 @@ func (q *recordingFTSQuerier) Exec(query string, args ...any) (sql.Result, error
 }
 
 func (*recordingFTSQuerier) QueryRow(string, ...any) *sql.Row {
-	panic("QueryRow is not used by FTSUpsert")
+	panic("unexpected QueryRow")
 }
 
-func TestPostgreSQLDialect_FTSLayoutVersioned(t *testing.T) {
+func TestPostgreSQLDialect_FTSVectorWeights(t *testing.T) {
 	assert := assert.New(t)
 	vector, _ := pgFTSVector(FTSDoc{
 		MessageID: 1,

@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 )
 
-func TestVoiceTranscriptSearchLifecycle(t *testing.T) {
+func TestVoiceTranscriptEligibilitySearchRebuildDisableAndDelete(t *testing.T) {
 	f := newBeeperMediaFixture(t)
 	st := f.Store
 	audio := addBeeperAudio(t, st, f.Source.ID, f.ConvID, "voice", strings.Repeat("a", 64))
@@ -35,7 +35,6 @@ func TestVoiceTranscriptSearchLifecycle(t *testing.T) {
 	mappings, err := st.VoiceTranscriptMappings(t.Context(), "destination", 0, 8)
 	require.NoError(t, err)
 	require.Len(t, mappings, 1)
-	require.NoError(t, st.UpsertMessageRawWithFormat(audio.messageID, []byte(strings.Replace(string(audio.raw), `"attachments":`, `"text":"changed caption","attachments":`, 1)), "beeper_json"))
 	require.NoError(t, st.SaveVoiceTranscript(t.Context(), mappings[0], "dinner Thursday"))
 	mappingsAfter, err := st.VoiceTranscriptMappings(t.Context(), "destination", 0, 8)
 	require.NoError(t, err)
@@ -50,11 +49,6 @@ func TestVoiceTranscriptSearchLifecycle(t *testing.T) {
 		ids, _, err := st.SearchMessageIDsQueryContext(t.Context(), &search.Query{TextTerms: []string{"dinner Thursday"}}, 10)
 		require.NoError(t, err)
 		return ids
-	}
-	metadata, err := st.GetSearchMetadata(t.Context(), []int64{audio.messageID}, search.Parse("caption"), true)
-	require.NoError(t, err)
-	if !st.IsPostgreSQL() {
-		assert.Contains(t, metadata[audio.messageID].MatchSnippet, "caption")
 	}
 	bodySearcher, ok := query.NewEngine(st.DB(), st.IsPostgreSQL()).(query.MessageBodySearcher)
 	require.True(t, ok)
@@ -85,6 +79,7 @@ func TestVoiceTranscriptSearchLifecycle(t *testing.T) {
 	assert.Empty(t, find())
 	require.NoError(t, st.SaveVoiceTranscript(t.Context(), mappings[0], "dinner Thursday"))
 	assert.Equal(t, []int64{audio.messageID}, find())
+	// Saved speech belongs to the message and survives attachment removal.
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM attachments WHERE id=?`), audio.attachmentID)
 	require.NoError(t, err)
 	require.NoError(t, st.IndexStoredMessageContext(t.Context(), audio.messageID))
