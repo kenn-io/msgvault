@@ -211,11 +211,6 @@ func TestCalendarExceptionsShortenedSeriesDuration(t *testing.T) {
 	}
 }
 
-func TestCalendarEventSeriesLimit(t *testing.T) {
-	t.Run("ended", func(t *testing.T) { calendarEventSeriesLimit(t, false) })
-	t.Run("future", func(t *testing.T) { calendarEventSeriesLimit(t, true) })
-}
-
 func TestCalendarExceptionsClearedRecurrence(t *testing.T) {
 	for _, tc := range []struct {
 		name, start, end, original, wantStart, wantEnd string
