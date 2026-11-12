@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 func TestVoiceTranscriptReplacementWithReusedAttachmentID(t *testing.T) {
@@ -134,4 +135,23 @@ func TestVoiceTranscriptEligibilitySearchRebuildDisableAndDelete(t *testing.T) {
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM messages WHERE id=?`), audio.messageID)
 	require.NoError(err)
 	assert.Empty(find())
+}
+
+func TestVoiceTranscriptJoinsVerificationClassification(t *testing.T) {
+	require := require.New(t)
+	f := newBeeperMediaFixture(t)
+	st := f.Store
+	audio := addBeeperAudio(t, st, f.Source.ID, f.ConvID, "voice", strings.Repeat("a", 64))
+	retainAudio(t, st, audio.mapping("destination", "revision", ""), "occurrence")
+	require.NoError(st.SetVoiceTranscriptSearch(t.Context(), true))
+	mappings, err := st.VoiceTranscriptMappings(t.Context(), "destination", 0, 8)
+	require.NoError(err)
+	require.Len(mappings, 1)
+	messages := []store.APIMessage{{ID: audio.messageID}}
+	require.NoError(st.PopulateMessageBodiesContext(t.Context(), messages))
+	require.False(verification.Is(verification.Content{Text: messages[0].BodyText}))
+	require.NoError(st.SaveVoiceTranscript(t.Context(), mappings[0], "your verification code is 482193"))
+	messages = []store.APIMessage{{ID: audio.messageID}}
+	require.NoError(st.PopulateMessageBodiesContext(t.Context(), messages))
+	require.True(verification.Is(verification.Content{Text: messages[0].BodyText}))
 }
