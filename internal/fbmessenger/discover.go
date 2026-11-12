@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -128,7 +129,7 @@ func discover(root string, reportUnsupported bool) ([]ThreadDir, int, error) {
 					}
 					continue
 				}
-				format, ok, unsupported := detectFormat(threadPath)
+				format, ok, unsupported := detectFormat(threadPath, reportUnsupported)
 				skipped += unsupported
 				if !ok {
 					continue
@@ -306,13 +307,24 @@ func isKnownMetadataFile(name string) bool {
 	return false
 }
 
+// isNumberedMessageFile reports whether name is a message_<N>.json whose N
+// fits an int, matching what ParseJSONThread can order and read.
+func isNumberedMessageFile(name string) bool {
+	m := reMessageFile.FindStringSubmatch(name)
+	if m == nil {
+		return false
+	}
+	_, err := strconv.Atoi(m[1])
+	return err == nil
+}
+
 // detectFormat inspects a thread directory and reports whether it has a
 // numbered message_<N>.json, a message_*.html, or both. Directories with
 // neither are ignored (returns ok=false). The JSON match mirrors
 // ParseJSONThread's regex so a thread with only an unnumbered JSON
 // sibling (e.g. message_final.json) is not misclassified as JSON and
 // does not crowd out a sibling HTML file.
-func detectFormat(threadPath string) (string, bool, int) {
+func detectFormat(threadPath string, reportUnsupported bool) (string, bool, int) {
 	entries, err := os.ReadDir(threadPath)
 	if err != nil {
 		return "", false, 1
@@ -328,7 +340,7 @@ func detectFormat(threadPath string) (string, bool, int) {
 			continue
 		}
 		switch {
-		case reMessageFile.MatchString(name):
+		case reMessageFile.MatchString(name) && (!reportUnsupported || isNumberedMessageFile(name)):
 			hasJSON = true
 		case strings.HasPrefix(name, "message_") && strings.HasSuffix(name, ".html"):
 			html++

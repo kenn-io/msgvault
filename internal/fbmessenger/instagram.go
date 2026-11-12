@@ -659,8 +659,8 @@ func instagramAddress(account, name string) mime.Address {
 // Instagram media references use the same escaped UTF-8 encoding as names.
 func instagramJSONMessage(record rawJSONMessage) Message {
 	message := metaJSONMessage(record, 0, "")
-	if record.Share != nil && strings.ToLower(record.Type) != "share" {
-		message.Body = renderShareBody(record, DecodeMojibake(record.Content))
+	if record.Share != nil {
+		message.Body = renderShareBody(rawJSONMessage{Share: &rawJSONShare{Link: DecodeMojibake(record.Share.Link), ShareText: record.Share.ShareText}}, DecodeMojibake(record.Content))
 		if len(message.Reactions) > 0 {
 			message.Body = appendReactionSummary(message.Body, message.Reactions)
 		}

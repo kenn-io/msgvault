@@ -570,17 +570,22 @@ func TestInstagramRenameRollsBackWhenSubjectWriteFails(t *testing.T) {
 	assert.Equal(int64(2), total)
 }
 
-func TestInstagramSharedLinkWithoutType(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	root := t.TempDir()
-	record := instagramTestRecord("")
-	record["share"] = map[string]string{"link": "https://example.com/cafÃ©"}
-	instagramTestShard(t, root, "circle", "message_1.json", record)
-	_, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
-	require.NoError(t, err)
-	var body string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies`).Scan(&body))
-	assert.Equal(t, "[shared link] https://example.com/café", body)
+func TestInstagramSharedLink(t *testing.T) {
+	for _, kind := range []string{"", "Share"} {
+		t.Run("type="+kind, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			root := t.TempDir()
+			record := instagramTestRecord("")
+			record["type"] = kind
+			record["share"] = map[string]string{"link": "https://example.com/cafÃ©"}
+			instagramTestShard(t, root, "circle", "message_1.json", record)
+			_, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
+			require.NoError(t, err)
+			var body string
+			require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT body_text FROM message_bodies`).Scan(&body))
+			assert.Equal(t, "[shared link] https://example.com/café", body)
+		})
+	}
 }
 
 func TestInstagramReplayChangedUnknownMetadata(t *testing.T) {
@@ -1616,4 +1621,16 @@ func TestInstagramReportsPossibleSenderDuplicates(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, summary.PossibleDuplicates)
 	assert.Equal(t, 4, countMessages(t, st, ""))
+}
+
+func TestInstagramSkipsOverflowShardAndImportsOtherThreads(t *testing.T) {
+	st, root := testutil.NewTestStore(t), t.TempDir()
+	instagramTestShard(t, root, "a", "message_999999999999999999999.json", instagramTestRecord("unsupported"))
+	instagramTestShard(t, root, "b", "message_1.json", instagramTestRecord("valid"))
+	instagramTestShard(t, root, "b", "message_999999999999999999999.json", instagramTestRecord("also unsupported"))
+	summary, err := ImportDYI(t.Context(), st, ImportOptions{Source: "instagram", RootDir: root, Account: "example", SelfName: "Nova Example"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), summary.FilesSkipped)
+	assert.True(t, summary.Incomplete)
+	assert.Equal(t, 1, countMessages(t, st, ""))
 }

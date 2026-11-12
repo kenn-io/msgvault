@@ -371,7 +371,7 @@ func renderShareBody(m rawJSONMessage, content string) string {
 	var b strings.Builder
 	b.WriteString("[shared link] ")
 	if m.Share != nil {
-		b.WriteString(DecodeMojibake(m.Share.Link))
+		b.WriteString(m.Share.Link)
 		text := DecodeMojibake(m.Share.ShareText)
 		if text != "" {
 			b.WriteByte('\n')
