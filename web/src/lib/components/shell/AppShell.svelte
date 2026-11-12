@@ -1120,10 +1120,14 @@
     if (exploreState.current.selectedRow === row.key) return;
     commitNavigation({ selectedRow: row.key });
   }
+  function groupIsDrillable(dimension: ExploreGroupDimension | undefined): boolean {
+    return !!dimension && groupingByDimension(dimension).drillable && (exploreState.current.workspace !== 'files' || dimension !== 'kind');
+  }
+
   function drillGroup(row: ExploreGroupRow): void {
     const [dimension, ...remaining] = exploreState.current.groupingChain;
-    if (!dimension || !groupingByDimension(dimension).drillable) return;
-    const filters = filtersForGroup(exploreState.current.filters, dimension, row.key);
+    if (!dimension || !groupIsDrillable(dimension)) return;
+    const filters = filtersForGroup(exploreState.current.filters, dimension, row.key, exploreState.current.workspace === 'files');
     if (!filters) {
       commitNavigation({ selectedRow: `group:${dimension}:${row.key}` });
       return;
@@ -1468,7 +1472,7 @@
           {#if exploreState.current.groupingChain.length > 0}{@render filesToolbar(undefined, undefined, false)}{/if}
           <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
           {#if exploreState.current.groupingChain.length > 0}
-            <GroupTable
+            <GroupTable sources={shellData.jobs.sources}
               rows={loader.groupRows}
               dimension={exploreState.current.groupingChain[0]!}
               workspaceLabel="Files"
@@ -1480,7 +1484,7 @@
               error={loader.error}
               pageError={loader.pageError}
               unavailable={loader.unavailable}
-              drillable={groupingByDimension(exploreState.current.groupingChain[0]!).drillable}
+              drillable={groupIsDrillable(exploreState.current.groupingChain[0])}
               focusedKey={exploreState.current.activeRow}
               inspectedKey={readingTargetKey}
               scrollAnchor={exploreState.current.scrollAnchor}
@@ -1549,6 +1553,7 @@
         </main>
       {:else}
         <EverythingWorkspace
+          sources={shellData.jobs.sources}
           onAddSource={shellData.jobs.noSources ? addSource : undefined}
           bind:resultsWidth
           {client}
