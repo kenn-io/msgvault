@@ -343,6 +343,17 @@ func (c *Config) PrepareServerKey() error {
 		}
 		c.Server.credential.value = key
 	}
+	if c.Federation.Role == "hub" {
+		if c.Server.AuthenticationKey() == "" {
+			return errors.New("federation hub role requires an effective API key")
+		}
+		if len(c.Server.RemoteClients) != 0 {
+			return errors.New("federation hub role refuses [[server.remote_clients]] keys, which read the whole archive")
+		}
+		if strings.HasPrefix(c.Server.AuthenticationKey(), "mvf1_") {
+			return errors.New("federation hub owner key must not begin with mvf1_")
+		}
+	}
 	return c.loadRemoteClientKeys()
 }
 

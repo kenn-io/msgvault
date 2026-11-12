@@ -603,6 +603,7 @@ func (c SenderAuthConfig) Pins() map[int64][]string {
 }
 
 type Config struct {
+	Federation         FederationConfig          `toml:"federation"`
 	RelayedSenders     []mime.RelayedSenderRule  `toml:"relayed_senders"`
 	SenderAuth         SenderAuthConfig          `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig  `toml:"conversation_policy"`
@@ -1002,6 +1003,7 @@ func NewDefaultConfig() *Config {
 		Teams:    TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		IMessage: IMessageConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
+	cfg.Federation.Role = "off"
 	cfg.Vector.ApplyDefaults()
 	cfg.resolveCredentialPaths()
 	cfg.Server.ApplyDefaults()
@@ -1300,6 +1302,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 			return nil, fmt.Errorf("relayed_senders[%d]: address duplicates relayed_senders[%d]", i, j)
 		}
 		seen[key] = i
+	}
+	if err := cfg.Federation.Validate(); err != nil {
+		return nil, err
 	}
 	if err := cfg.OAuth.Validate(); err != nil {
 		return nil, fmt.Errorf("oauth: %w", err)
