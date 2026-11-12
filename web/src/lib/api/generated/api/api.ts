@@ -127,6 +127,11 @@ import type {
   EndEmploymentPathParameters,
   ExplainPersonTierPathParameters,
   FastSearchParams,
+  FederationCreateRequest,
+  FederationCreateResponse,
+  FederationHandshakeResponse,
+  FederationIdentityResponse,
+  FederationListResponse,
   FileMetadataResponse,
   FilterMessagesParams,
   FilteredMessagesResponse,
@@ -407,6 +412,7 @@ import type {
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
   RevokeAgentTokenPathParameters,
+  RevokeFederationEnrollmentPathParameters,
   RevokeSettingsPeopleInferenceProviderPathParameters,
   RunArchiveQueryParams,
   RunQueryParams,
@@ -1727,6 +1733,71 @@ export const setPrimaryEmployment = (
       url: `/api/v1/employments/${encodeURIComponent(String(id))}/primary`,
       method: "POST",
     },
+    options,
+  );
+};
+/**
+ * @summary List spoke enrollments
+ */
+export const listFederationEnrollments = (
+  options?: SecondParameter<typeof orvalFetch<FederationListResponse>>,
+) => {
+  return orvalFetch<FederationListResponse>(
+    { url: `/api/v1/federation/enrollments`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Enroll a spoke
+ */
+export const createFederationEnrollment = (
+  federationCreateRequest: FederationCreateRequest,
+  options?: SecondParameter<typeof orvalFetch<FederationCreateResponse>>,
+) => {
+  return orvalFetch<FederationCreateResponse>(
+    {
+      url: `/api/v1/federation/enrollments`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: federationCreateRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Revoke a spoke enrollment
+ */
+export const revokeFederationEnrollment = (
+  { uid }: RevokeFederationEnrollmentPathParameters,
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/federation/enrollments/${encodeURIComponent(String(uid))}`,
+      method: "DELETE",
+    },
+    options,
+  );
+};
+/**
+ * @summary Identify the hub for an enrolled spoke
+ */
+export const getFederationHandshake = (
+  options?: SecondParameter<typeof orvalFetch<FederationHandshakeResponse>>,
+) => {
+  return orvalFetch<FederationHandshakeResponse>(
+    { url: `/api/v1/federation/handshake`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Get this archive's federation identity
+ */
+export const getFederationIdentity = (
+  options?: SecondParameter<typeof orvalFetch<FederationIdentityResponse>>,
+) => {
+  return orvalFetch<FederationIdentityResponse>(
+    { url: `/api/v1/federation/identity`, method: "GET" },
     options,
   );
 };

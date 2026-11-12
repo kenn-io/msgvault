@@ -17297,6 +17297,15 @@ components:
       in: header
       name: X-Api-Key
       type: apiKey
+    federationSpoke:
+      description: Archive UID pinned to the federation enrollment.
+      in: header
+      name: X-Msgvault-Spoke-Instance
+      type: apiKey
+    federationToken:
+      description: Federation enrollment token (mvf1_ prefix).
+      scheme: bearer
+      type: http
 info:
   title: msgvault API
   version: 5.1.0
@@ -22914,7 +22923,8 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
       security:
-        - apiKey: []
+        - federationSpoke: []
+          federationToken: []
       summary: Identify the hub for an enrolled spoke
       tags:
         - API
