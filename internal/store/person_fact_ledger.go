@@ -496,28 +496,13 @@ func (s *Store) PersonFactSummaryContext(ctx context.Context, personID int64) (p
 			(SELECT MAX(created_at) FROM person_fact_claims WHERE person_id = ?),
 			(EXISTS(SELECT 1 FROM person_fact_claims WHERE person_id = ?)
 			 OR EXISTS(SELECT 1 FROM person_fact_evidence WHERE person_id = ?)
-			 OR EXISTS(SELECT 1 FROM person_fact_pin_events WHERE person_id = ?))`, personID, personID, personID, personID, personID).Scan(&summary.ClaimedFields, &latest, &summary.HasStoredFacts)
+			 OR EXISTS(SELECT 1 FROM person_fact_pin_events WHERE person_id = ?) OR EXISTS (`+personFactPinAttributeTargetCandidatesSQL+`) OR (`+personFactPinEmploymentTargetCandidateSQL+`))`,
+			personID, personID, personID, personID, personID, personID, ProvenanceUser, ProvenanceCardDAVImport, ProvenanceVCardImport, "person_attribute", personID, ProvenanceUser, ProvenanceCardDAVImport, ProvenanceVCardImport, personID, "employment", personFactDecisionSourceRefPrefix).Scan(&summary.ClaimedFields, &latest, &summary.HasStoredFacts)
 		if err != nil {
 			return fmt.Errorf("load person fact summary: %w", err)
 		}
-		if !summary.HasStoredFacts {
-			err = tx.QueryRowContext(ctx, `SELECT EXISTS (`+personFactPinAttributeTargetCandidatesSQL+`)`,
-				personID, ProvenanceUser, ProvenanceCardDAVImport, ProvenanceVCardImport, "person_attribute").Scan(&summary.HasStoredFacts)
-			if err != nil {
-				return fmt.Errorf("load saved attribute summary: %w", err)
-			}
-		}
-		if !summary.HasStoredFacts {
-			err = tx.QueryRowContext(ctx, personFactPinEmploymentTargetCandidateSQL,
-				personID, ProvenanceUser, ProvenanceCardDAVImport, ProvenanceVCardImport,
-				personID, "employment", personFactDecisionSourceRefPrefix).Scan(&summary.HasStoredFacts)
-			if err != nil {
-				return fmt.Errorf("load saved employment summary: %w", err)
-			}
-		}
 		if latest.Valid {
-			value := latest.Time.UTC()
-			summary.LatestClaimAt = &value
+			summary.LatestClaimAt = new(latest.Time.UTC())
 		}
 		return nil
 	})
