@@ -149,7 +149,7 @@ func TestMeetingCountsUnsupportedFutureRefresh(t *testing.T) {
 	require.NoError(t, err)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
 	require.NoError(t, err)
-	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	now := time.Date(time.Now().UTC().Year()+1, 6, 15, 10, 0, 0, 0, time.UTC)
 	oldNow := derivedRefreshNow
 	derivedRefreshNow = func() time.Time { return now }
 	t.Cleanup(func() { derivedRefreshNow = oldNow })

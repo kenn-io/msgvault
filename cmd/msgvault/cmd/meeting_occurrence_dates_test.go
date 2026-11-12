@@ -39,6 +39,14 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 	dec := time.Date(2024, 12, 31, 10, 0, 0, 0, time.UTC)
 	jan := dec.Add(24 * time.Hour)
 	left, right := persist(first.ID, "first", dec), persist(second.ID, "second", jan)
+	other, err := st.EnsureParticipant("other-person@example.com", "Other", "example.com")
+	require.NoError(t, err)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET source_is_from_me=1, sender_id=? WHERE id=?`, other, left)
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceMessageRecipients(left, "from", []int64{other}, []string{""}))
+	late, err := st.EnsureParticipant("late@example.com", "Late", "example.com")
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceMessageRecipients(right, "to", []int64{person, other, late}, []string{"", "", ""}))
 	_, err = st.DecideMeetingLinkContext(t.Context(), store.MeetingLinkRef{Kind: "evt", MessageID: left}, store.MeetingLinkRef{Kind: "evt", MessageID: right}, "link")
 	require.NoError(t, err)
 	_, err = buildCache(t.Context(), dbPath, analytics, true)
@@ -81,12 +89,23 @@ func TestLinkedMeetingCopiesUseScopedDate(t *testing.T) {
 			rel, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Context: tc.scope, ShowAll: true})
 			require.NoError(t, err)
 			got = 0
+			foundLate := false
 			for _, p := range rel.Rows {
+				if tc.name != "second_source_after" {
+					assert.NotEqual(t, other, p.CanonicalID)
+				}
+				if p.CanonicalID == late && tc.name == "unfiltered" {
+					foundLate = true
+					assert.Equal(t, dec, p.LastAt)
+				}
 				if p.CanonicalID == person {
 					got = p.Signals.MeetingCount
 				}
 			}
 			assert.Equal(t, tc.want, got)
+			if tc.name == "unfiltered" {
+				assert.True(t, foundLate)
+			}
 		})
 	}
 }

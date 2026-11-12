@@ -154,8 +154,8 @@ ORDER BY t.domain`
 func buildRelationshipDailySQL() string {
 	return fmt.Sprintf(`
 WITH logical_people AS (
-	SELECT entry_key, CASE WHEN entry_kind IN ('event','meeting') THEN min(occurred_at) OVER (PARTITION BY entry_key, canonical_id) ELSE occurred_at END AS occurred_at,
-	       entry_kind, is_from_me, canonical_id, is_author, is_owner, with_owner
+	SELECT entry_key, CASE WHEN entry_kind IN ('event','meeting') THEN min(occurred_at) OVER (PARTITION BY entry_key) ELSE occurred_at END AS occurred_at,
+	       entry_kind, is_from_me, canonical_id, is_author, CASE WHEN entry_kind IN ('event','meeting') THEN bool_or(is_owner) OVER (PARTITION BY entry_key, canonical_id) ELSE is_owner END AS is_owner, with_owner
 	FROM `+logicalBuildRelation+`
 	WHERE relation_kind = 1
 ), interactions AS (

@@ -28,7 +28,7 @@ describe('archive meeting navigation', () => {
   it('retains source-deleted archive detail while excluding a locally hidden meeting', async () => {
     const archived = { ...detail, deleted_at: '2026-02-01T00:00:00Z' };
     let count = 1;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => new URL((input as Request).url).pathname.endsWith('/meetings/record') ? eligibility(count ? 42 : 0) : Response.json(archived));
+    const fetchFn = vi.fn<typeof fetch>(async (input) => new URL((input as Request).url).pathname.endsWith('/meetings/record') ? (count ? eligibility() : Response.json({ error: 'meeting_not_found', message: 'Meeting or event occurrence not found; use msg:<id> for notes or copy REF from calendar events.' }, { status: 404 })) : Response.json(archived));
     const navigation = new ArchiveMeetingNavigation(createAPIClient(fetchFn));
     expect(await navigation.load(42, 8)).toEqual(archived);
     const request = fetchFn.mock.calls.map(([input]) => input as Request).find((request) => new URL(request.url).pathname.endsWith('/meetings/record'))!;
@@ -37,7 +37,7 @@ describe('archive meeting navigation', () => {
     count = 0;
     expect(await navigation.load(42)).toBeUndefined();
     expect(navigation.detail).toBeUndefined();
-    expect(navigation.error).toBe('This archived meeting is no longer available.');
+    expect(navigation.error).toBe('Meeting or event occurrence not found; use msg:<id> for notes or copy REF from calendar events.');
   });
   it.each([
     [{ id: 43, message_type: 'email', conversation_id: 0 }, 'This archived meeting is no longer available.'],

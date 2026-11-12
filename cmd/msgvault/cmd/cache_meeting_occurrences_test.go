@@ -385,7 +385,7 @@ func TestMeetingCountsExcludeFutureEventWithPastMessageDate(t *testing.T) {
 	require.NoError(t, err)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
 	require.NoError(t, err)
-	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	now := time.Date(time.Now().UTC().Year()+1, 6, 15, 10, 0, 0, 0, time.UTC)
 	oldNow := derivedRefreshNow
 	derivedRefreshNow = func() time.Time { return now }
 	t.Cleanup(func() { derivedRefreshNow = oldNow })
@@ -433,20 +433,28 @@ func TestMeetingCountsAllDayCalendarUsesCivilDate(t *testing.T) {
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	source, err := st.GetOrCreateSource("gcal", "owner@example.com")
 	require.NoError(t, err)
-	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"owner@example.com","time_zone":"UTC"}`))
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), source.ID, `{"calendar_id":"owner@example.com","time_zone":"Asia/Tokyo"}`))
+	western, err := st.GetOrCreateSource("gcal", "western@example.com")
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(t.Context(), western.ID, `{"calendar_id":"western@example.com","time_zone":"America/Los_Angeles"}`))
+	require.NoError(t, st.AddAccountIdentity(western.ID, "owner@example.com", "manual"))
 	require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
 	owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
 	require.NoError(t, err)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
 	require.NoError(t, err)
-	for _, date := range []string{"2024-01-01", "2024-12-31"} {
+	for _, tc := range []struct {
+		date, calendar string
+		source         int64
+	}{{"2024-01-01", "owner@example.com", source.ID}, {"2024-12-31", "western@example.com", western.ID}} {
+		date := tc.date
 		start, err := time.Parse(time.DateOnly, date)
 		require.NoError(t, err)
 		raw := fmt.Sprintf(`{"id":%q,"start":{"date":%q},"end":{"date":%q}}`, date, date, start.AddDate(0, 0, 1).Format(time.DateOnly))
 		id, err := st.PersistMessage(&store.MessagePersistData{
-			Message:      &store.Message{SourceID: source.ID, SourceMessageID: date, MessageType: "calendar_event", SentAt: sql.NullTime{Time: start, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
+			Message:      &store.Message{SourceID: tc.source, SourceMessageID: date, MessageType: "calendar_event", SentAt: sql.NullTime{Time: start, Valid: true}, SenderID: sql.NullInt64{Int64: owner, Valid: true}},
 			Conversation: &store.ConversationPersistData{SourceConversationID: date, ConversationType: "meeting"},
-			RawMIME:      []byte(raw), RawFormat: "gcal_json", Metadata: &sql.NullString{String: `{"calendar_id":"owner@example.com"}`, Valid: true},
+			RawMIME:      []byte(raw), RawFormat: "gcal_json", Metadata: &sql.NullString{String: fmt.Sprintf(`{"calendar_id":%q}`, tc.calendar), Valid: true},
 		})
 		require.NoError(t, err)
 		require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{""}))
@@ -456,7 +464,7 @@ func TestMeetingCountsAllDayCalendarUsesCivilDate(t *testing.T) {
 	require.NoError(t, err)
 	engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
 	require.NoError(t, err)
-	for _, zone := range []string{"America/Los_Angeles", "Pacific/Kiritimati"} {
+	for _, zone := range []string{"UTC", "America/Los_Angeles", "Pacific/Kiritimati"} {
 		t.Run(zone, func(t *testing.T) {
 			calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: person, Year: 2024, Timezone: zone})
 			require.NoError(t, err)
@@ -467,6 +475,12 @@ func TestMeetingCountsAllDayCalendarUsesCivilDate(t *testing.T) {
 				}
 			}
 			assert.Equal(t, []string{"2024-01-01", "2024-12-31"}, days)
+			assert.Positive(t, calendar.Current.Signals.MeetingSignal)
+			previous, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: person, Year: 2023, Timezone: zone})
+			require.NoError(t, err)
+			for _, day := range previous.Days {
+				assert.Zero(t, day.Meetings)
+			}
 		})
 	}
 	require.NoError(t, engine.Close())
@@ -488,7 +502,7 @@ func TestMeetingCountsAllDayCalendarUsesCivilDate(t *testing.T) {
 }
 
 func TestMeetingCountsAllDayRefresh(t *testing.T) {
-	year := 2024
+	year := time.Now().UTC().Year() + 1
 	for _, tc := range []struct {
 		name, zone          string
 		date, before, start time.Time
@@ -559,28 +573,6 @@ func TestMeetingCountsAllDayRefresh(t *testing.T) {
 			assert.True(t, cacheNeedsBuild(dbPath, analytics).HasMeetingTimeDrift)
 			refresh(tc.start.Add(30 * time.Minute))
 			assert.EqualValues(t, 1, count())
-			engine, err := query.NewDuckDBEngine(t.Context(), analytics, "", nil)
-			require.NoError(t, err)
-			for _, zone := range []string{"UTC", "America/Los_Angeles"} {
-				calendar, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: person, Year: tc.date.Year(), Timezone: zone})
-				require.NoError(t, err)
-				var dates []string
-				for _, day := range calendar.Days {
-					if day.Meetings > 0 {
-						dates = append(dates, day.Date)
-					}
-				}
-				assert.Equal(t, []string{tc.date.Format(time.DateOnly)}, dates)
-				assert.Positive(t, calendar.Current.Signals.MeetingSignal)
-				if tc.newYear {
-					previous, err := engine.RelationshipCalendar(t.Context(), query.RelationshipCalendarRequest{CanonicalID: person, Year: tc.date.Year() - 1, Timezone: zone})
-					require.NoError(t, err)
-					for _, day := range previous.Days {
-						assert.Zero(t, day.Meetings)
-					}
-				}
-			}
-			require.NoError(t, engine.Close())
 		})
 	}
 }

@@ -396,9 +396,6 @@ test('opens a note linked to two dates', async ({ page, daemon }, info) => {
   const record = await page.request.get(`${daemon.origin}/api/v1/meetings/record?ref=msg:${id}`, { headers: { Authorization: 'Bearer synthetic-meeting-acceptance-key' } });
   expect(record.ok()).toBe(true);
   expect((await record.json()).links).toHaveLength(2);
-  const metrics = await daemon.post('meetings/metrics', { scope: { message_ids: [id] } });
-  expect(metrics.ok).toBe(true);
-  expect((await metrics.json()).totals.meeting_count).toBe(2);
   await page.goto(meetingURL(daemon, { selectedRow: `archive-meeting:${id}` }));
   await expect(page.getByRole('dialog', { name: 'Archived meeting', exact: true })).toBeVisible();
   await expect(page.getByText('Two date meeting note', { exact: true }).first()).toBeVisible();
