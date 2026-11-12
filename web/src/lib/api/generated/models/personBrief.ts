@@ -5,10 +5,12 @@ import type { PersonBriefEvidencePointer } from "./personBriefEvidencePointer";
 import type { PersonBriefSentence } from "./personBriefSentence";
 
 export interface PersonBrief {
+  appreciation_dismissal_keys?: string[];
   boundary: unknown;
   dropped_item_count: number;
   evidence: PersonBriefEvidencePointer[];
   generated_at: string;
+  historical_snapshot?: boolean;
   model: string;
   program_id: string;
   program_version: string;

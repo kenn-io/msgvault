@@ -854,7 +854,9 @@ components:
         text:
           type: string
         thanked:
-          $ref: "#/components/schemas/BriefThanksEvidence"
+          oneOf:
+            - $ref: "#/components/schemas/BriefThanksEvidence"
+            - type: "null"
       required:
         - text
         - anchor_id

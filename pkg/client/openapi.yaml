@@ -839,12 +839,17 @@ components:
         text:
           type: string
         thanked:
-          $ref: "#/components/schemas/BriefThanksEvidence"
+          allOf:
+            - $ref: "#/components/schemas/BriefThanksEvidence"
+          nullable: true
+          type: object
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
       required:
         - text
         - anchor_id
         - quote
-        - thanked
       type: object
     BuildingSummary:
       properties:

@@ -761,13 +761,13 @@ func (b BriefThanksEvidence) Validate() error {
 }
 
 type BriefThanksSuggestion struct {
-	AnchorID    string              `json:"anchor_id" validate:"required"`
-	Key         *string             `json:"key,omitzero"`
-	PriorThanks *string             `json:"prior_thanks,omitzero"`
-	Quote       string              `json:"quote" validate:"required"`
-	State       *string             `json:"state,omitzero"`
-	Text        string              `json:"text" validate:"required"`
-	Thanked     BriefThanksEvidence `json:"thanked"`
+	AnchorID    string               `json:"anchor_id" validate:"required"`
+	Key         *string              `json:"key,omitzero"`
+	PriorThanks *string              `json:"prior_thanks,omitzero"`
+	Quote       string               `json:"quote" validate:"required"`
+	State       *string              `json:"state,omitzero"`
+	Text        string               `json:"text" validate:"required"`
+	Thanked     *BriefThanksEvidence `json:"thanked" validate:"omitempty"`
 }
 
 func (b BriefThanksSuggestion) Validate() error {
@@ -781,9 +781,11 @@ func (b BriefThanksSuggestion) Validate() error {
 	if err := typesValidator.Var(b.Text, "required"); err != nil {
 		errors = errors.Append("Text", err)
 	}
-	if v, ok := any(b.Thanked).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Thanked", err)
+	if b.Thanked != nil {
+		if v, ok := any(b.Thanked).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Thanked", err)
+			}
 		}
 	}
 	if len(errors) == 0 {
