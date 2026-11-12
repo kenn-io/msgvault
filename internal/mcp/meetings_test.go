@@ -273,6 +273,10 @@ func TestMeetingCatalogUsesClosedTypedSchemasAndStablePointers(t *testing.T) {
 	for _, definition := range without {
 		assertions.NotContains([]string{ToolGetMeetingContext, ToolListMeetingActionItems, ToolGetMeetingMetrics}, definition.name)
 	}
+	withoutDecisions := operationCatalog(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend, MeetingRecords: true}, &handlers{})
+	for _, definition := range withoutDecisions {
+		assertions.NotContains([]string{"link_meeting", "unlink_meeting", "reset_meeting_link"}, definition.name)
+	}
 }
 
 type meetingBackendFixture struct{}
@@ -304,7 +308,7 @@ func (b *recordingMeetingDecisionBackend) DecideMeetingLink(_ context.Context, l
 	return store.MeetingLinkDecisionResult{}, nil
 }
 
-func TestMeetingDecisionMCPWritesAndDiscovery(t *testing.T) {
+func TestMeetingDecisionMCPWrites(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	backend := &recordingMeetingDecisionBackend{}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -323,8 +327,4 @@ func TestMeetingDecisionMCPWritesAndDiscovery(t *testing.T) {
 		requirements.False(result.IsError)
 	}
 	assertions.Equal([][3]string{{"msg:11", "evt:22", "link"}, {"msg:11", "evt:22", "unlink"}, {"msg:11", "evt:22", "clear"}}, backend.calls)
-	without := operationCatalog(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend, MeetingRecords: true}, &handlers{})
-	for _, definition := range without {
-		assertions.NotContains([]string{"link_meeting", "unlink_meeting", "reset_meeting_link"}, definition.name)
-	}
 }
